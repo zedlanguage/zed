@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="213mm"
+   height="71mm"
+   viewBox="0 0 213 71"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   sodipodi:docname="twitter-banner.svg"
+   inkscape:export-filename="twitter-banner.png"
+   inkscape:export-xdpi="178.87325"
+   inkscape:export-ydpi="178.87325"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="0.74205539"
+     inkscape:cx="33.690207"
+     inkscape:cy="-303.21187"
+     inkscape:window-width="2560"
+     inkscape:window-height="1383"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1"
+     transform="translate(-69.585739,-113.58105)">
+    <rect
+       style="opacity:1;fill:#ffffff;fill-opacity:1;stroke:none;stroke-width:4.59061;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       id="rect1"
+       width="213"
+       height="71"
+       x="69.585739"
+       y="113.58105"
+       ry="0" />
+    <text
+       xml:space="preserve"
+       style="font-size:17.6389px;line-height:7.3114px;font-family:'Droid Sans';-inkscape-font-specification:'Droid Sans, Normal';font-variant-ligatures:none;text-align:center;letter-spacing:0px;word-spacing:0px;text-anchor:middle;fill:none;stroke:#000000;stroke-width:1.62594px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       x="135.94348"
+       y="141.0262"
+       id="text2"><tspan
+         sodipodi:role="line"
+         id="tspan1"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;line-height:7.3114px;font-family:'Anthropic Sans Web';-inkscape-font-specification:'Anthropic Sans Web';fill:#000000;fill-opacity:1;stroke:none;stroke-width:1.62594px"
+         x="135.94348"
+         y="141.0262">The</tspan></text>
+    <g
+       id="g2"
+       transform="translate(-15.331851,1.4262188)">
+      <path
+         id="text1"
+         style="font-size:75.7873px;line-height:31.414px;font-family:'Droid Sans';-inkscape-font-specification:'Droid Sans, Normal';font-variant-ligatures:none;text-align:center;letter-spacing:0px;word-spacing:0px;text-anchor:middle;stroke:#000000;stroke-width:1.29774;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+         d="m 169.31096,126.98632 v 1.80449 h 18.10293 l -11.19463,18.80189 h 2.06776 l 11.10175,-18.80189 v -1.80449 z m 11.30412,4.30248 -11.24503,18.68025 v 1.8047 h 20.0513 v -1.8047 H 171.4132 l 11.1835,-18.68025 z" />
+      <text
+         xml:space="preserve"
+         style="font-size:34.3229px;line-height:14.227px;font-family:'Droid Sans';-inkscape-font-specification:'Droid Sans, Normal';font-variant-ligatures:none;text-align:center;letter-spacing:0px;word-spacing:0px;text-anchor:middle;fill:none;stroke:#000000;stroke-width:1.62594px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+         x="210.48392"
+         y="152.07939"
+         id="text2-6"
+         inkscape:transform-center-x="110.35261"
+         inkscape:transform-center-y="-1.9793972"><tspan
+           sodipodi:role="line"
+           id="tspan1-2"
+           style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Anthropic Sans Web';-inkscape-font-specification:'Anthropic Sans Web';fill:#000000;fill-opacity:1;stroke:none;stroke-width:1.62594px"
+           x="210.48392"
+           y="152.07939">ed</tspan></text>
+    </g>
+    <text
+       xml:space="preserve"
+       style="font-size:17.6389px;line-height:7.31145px;font-family:'Droid Sans';-inkscape-font-specification:'Droid Sans, Normal';font-variant-ligatures:none;text-align:center;letter-spacing:0px;word-spacing:0px;text-anchor:middle;fill:none;stroke:#000000;stroke-width:0.837047px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       x="175.79028"
+       y="171.72919"
+       id="text2-6-9"
+       inkscape:transform-center-x="56.810376"
+       inkscape:transform-center-y="-1.018995"><tspan
+         sodipodi:role="line"
+         id="tspan1-2-2"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:17.6389px;line-height:7.31145px;font-family:'Anthropic Sans Web';-inkscape-font-specification:'Anthropic Sans Web';fill:#000000;fill-opacity:1;stroke:none;stroke-width:0.837047px"
+         x="175.79028"
+         y="171.72919">Programming Language</tspan></text>
+  </g>
+</svg>
