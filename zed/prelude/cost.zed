@@ -1,0 +1,70 @@
+// prelude unit cost (DESIGN.md sec:runtime, the cost model, written by step
+// M0.6): the target profile, the scalarization of a plan's symbolic cost, the
+// Pareto frontier, and the pick with its content-address tie-break. The
+// Rust-hosted checker's copy is crates/zedc/src/cost.rs. All arithmetic is on
+// integers and saturates at the int range.
+
+struct Device { name: String, cores: int, opTime: int, capacity: int }
+
+struct Target {
+  devices: [Device],         // the first runs unplaced code
+  transferLatency: int,      // per transfer over a cut edge
+  transferPerBlock: int,     // per 64 bytes, rounded up to whole blocks
+  nominalSize: int,          // the size of a cardinality the domains leave unbounded
+}
+
+// One CPU of 8 cores, one time unit (a nanosecond) per unit of work, 16 GiB.
+defaultTarget = Target(
+  devices: [Device(name: "cpu", cores: 8, opTime: 1, capacity: 17179869184)],
+  transferLatency: 0,
+  transferPerBlock: 0,
+  nominalSize: 1048576,
+);
+
+struct Region { device: int, work: int, depth: int, footprint: int }
+struct Plan { address: Any, regions: [Region], cutEdges: [int] }
+
+size(positional t, positional bound) = if bound == #unbounded { t.nominalSize } else { bound };
+
+blocks(positional bytes) = (bytes + 63) div 64;
+
+transfer(positional t, positional bytes) = t.transferLatency + blocks(bytes) * t.transferPerBlock;
+
+// Brent's theorem: the critical path, plus the rest of the work shared among
+// the cores, rounded up.
+brent(positional work, positional depth, positional cores) = {
+  d = min(depth, work);
+  (work - d + max(cores, 1) - 1) div max(cores, 1) + d
+};
+
+// The work, depth and footprint each device holds, in device order.
+perDevice(positional p, positional n) = (0..<n).map(d -> {
+  rs = p.regions.filter(r -> r.device == d);
+  [rs.map(r -> r.work).sum, rs.map(r -> r.depth).sum, rs.map(r -> r.footprint).sum]
+});
+
+feasible(positional p, positional t) =
+  p.regions.all(r -> r.device < t.devices::len)
+  && perDevice(p, t.devices::len).zip(t.devices).all(wd -> wd[0][2] <= wd[1].capacity);
+
+// Devices summed as if run one after another: an upper bound on the running
+// time, monotone in every component of costVector.
+scalarize(positional p, positional t) =
+  perDevice(p, t.devices::len).zip(t.devices).map(wd -> brent(wd[0][0], wd[0][1], wd[1].cores) * wd[1].opTime).sum
+  + p.cutEdges.map(b -> transfer(t, b)).sum;
+
+costVector(positional p, positional n) =
+  perDevice(p, n).flatMap(w -> w) ++ [p.cutEdges::len, p.cutEdges.map(blocks).sum];
+
+dominates(positional a, positional b) = a.zip(b).all(xy -> xy[0] <= xy[1]) && a != b;
+
+frontier(positional plans, positional t) = {
+  live = plans.filter(p -> feasible(p, t));
+  n = t.devices::len;
+  live.filter(p -> !live.any(q -> dominates(costVector(q, n), costVector(p, n)))).sort(by: (a, b) -> a.address <= b.address)
+};
+
+// The least scalar on the frontier, then the least content address; #none when
+// no plan is feasible (the placement solver then uses its list schedule).
+pick(positional plans, positional t) =
+  frontier(plans, t).minBy(p -> [scalarize(p, t), p.address]) else #none;

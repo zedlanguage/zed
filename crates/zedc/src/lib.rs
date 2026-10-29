@@ -6,4 +6,6 @@
 //! (step L1.30). It stays as the bootstrap root after the compiler is rewritten in Zed (row S),
 //! and its interpreter stays as the permanent differential oracle (step L1.37).
 
+pub mod address;
+pub mod cost;
 pub mod store;
