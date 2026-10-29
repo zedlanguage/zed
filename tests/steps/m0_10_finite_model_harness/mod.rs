@@ -13,6 +13,7 @@
 
 mod derived;
 mod laws_01_10;
+mod laws_11_20;
 
 use zed_kernel::Value;
 use zed_kernel::budgets::ENUMERATION_BUDGET;
