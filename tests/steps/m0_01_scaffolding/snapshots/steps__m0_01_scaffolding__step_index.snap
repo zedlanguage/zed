@@ -6,5 +6,6 @@ m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization
 m0_07_canonicalization
+m0_08_zed0_checklist
 m0_09_kernel_evaluator
 m0_10_finite_model_harness
