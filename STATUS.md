@@ -35,6 +35,18 @@ Last full run: `CI=true cargo test --workspace` gave 5 passed and 0 failed (2 un
 - Workspace lints: `missing_docs` warns, `unsafe_code` is forbidden. `zed-rt` will need
   `unsafe` when native code arrives (L1.34 and L1.36), so it will relax that lint for itself.
 
+- No step waits for a person (the author's instruction, 2026-10-29; spec commit 827385b).
+  M0(d) is now a prediction suite kept as tests, the M0(e) postmortems run alongside and gate
+  nothing, and the corpus programs are corrected to fit the language rather than the reverse.
+  When the spec is unclear, I choose, record the choice in DESIGN.md and here, and continue.
+
+## In progress
+
+- A full read of DESIGN.md by six agents, one line range each, listing what would otherwise need
+  the author's input. Each item is to be resolved in the spec before the step it affects.
+- Postmortems of related languages, written to the session scratchpad. Their lessons may amend
+  the spec.
+
 ## Open points
 
 - No coverage tool is installed yet. `cargo-llvm-cov` would need the author's approval to
