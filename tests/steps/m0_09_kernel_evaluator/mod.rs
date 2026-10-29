@@ -533,7 +533,7 @@ fn pushes_to_an_output_port_return_acknowledgments() {
     let greeting = Term::Read("stdin".into());
     let prog = let_(
         "a",
-        push("stdout", add(lit("hello, "), greeting)),
+        push("stdout", prim(Prim::Concat, vec![lit("hello, "), greeting])),
         let_(
             "b",
             push("stdout", lit("bye")),
@@ -714,11 +714,11 @@ fn match_destructures_tuples_and_atom_payloads() {
         let arms = vec![
             (
                 Pattern::Tuple(vec![Pattern::Bind("n".into()), Pattern::Lit(Value::Int(0))]),
-                add(var("n"), lit(": out of stock")),
+                prim(Prim::Concat, vec![var("n"), lit(": out of stock")]),
             ),
             (
                 Pattern::Tuple(vec![Pattern::Bind("n".into()), Pattern::Wild]),
-                add(var("n"), lit(": ok")),
+                prim(Prim::Concat, vec![var("n"), lit(": ok")]),
             ),
             (
                 Pattern::Atom(

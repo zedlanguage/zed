@@ -44,12 +44,13 @@ in docs/layout.md.
 - Done: **L1.14**, name resolution (`zedc::resolve`).
 - Done: **L1.15**, the kernel terms whole (the evidence record of `fold` and `fix`) and the
   kernel pretty-printer (`zed_kernel::print`).
-- Next: L1.16.
+- Done: **L1.16**, elaboration of the L1 surface to kernel terms (`zedc::elab`).
+- Next: L1.17.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 375 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 322 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 402 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 349 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -83,6 +84,7 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.13 | done | `zedc::format::format` writes a unit in one layout: two-space indentation, one statement per line, a block of one export on one line, the export last, the `test` cases of a function as one table on one line under it, and parentheses only where the grammar needs them (an `if` condition holding a block, a default or lambda body starting with one, a number receiving `.`). Comments are kept with their statements; blank lines collapse to one. `zedc::lex::comments` finds the comments between tokens; `zedc fmt <file>` prints the result or `line:col: error`. The AST builder now stores a block's export last, so a formatted unit builds to the same AST exactly. The 23 fences that build and the one corpus program that builds (09) format to a fixed point with the same AST and comments; the corpus program is already in the layout. Negative controls: no parentheses around a block condition, the export written first, a blank line kept for every newline, a comment on the next line taken as trailing, a left-associative chain's right operand left unparenthesized, `x: x` not shortened, comments dropped, the builder storing the export first, and a three-space indent each fail a test |
 | L1.14 | done | `zedc::resolve::resolve` ties each name a unit uses to its binders (an overload set's arrows together) or to an L1 prelude word, in the order block scopes, top level, prelude; it reports rebinding in one scope, unknown names and types, and prelude words of later layers. Tests: `tests/steps/l01_14_name_resolution/`, one per rule, the building fences and the corpus program. |
 | L1.15 | done | `Term::Fold` and `Term::Fix` carry the evidence record `ev` of sec:kernel (each tracked property with its grade, `zed_kernel::Grade`), which goes into the content address (canonicalization VERSION 2, both pinned addresses re-pinned) and which the evaluator does not read. `zed_kernel::print`: `Display` writes a term on one line in the notation of sec:kernel, `pretty(t, width)` breaks it into indented parts. Tests: `tests/steps/l01_15_kernel_terms/`, one term per generator, the evidence in the address, and the layout, with a random check that breaking changes only whitespace. |
+| L1.16 | done | `zedc::elab::elaborate` turns a resolved unit into its top-level definitions in dependency order (`Unit::close` wraps a term in them) and the cases of its `test` tables. Blocks are lets in dependency order over the export; calls of a declared function place the receiver, positional and named arguments, fill defaults and curry with `...`; `x.f` is the uniform call or an L1 prelude word; `f[k]` is a section, `t[1]` a tuple component; `&&` and `||` are `if` forms; strings are `++` chains with `String(hole)`; `else` and `?.` match any atom. New kernel primitives `Concat` (`++`) and `Pow` (`**`), and the pattern `AnyAtom` (`#_`). Tests: `tests/steps/l01_16_elaboration/`, programs elaborated and run on the kernel evaluator, printed terms, and one case per error. |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -208,6 +210,20 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
   ports as `port.read(stdin)` and `port.push(stdout, e)`. A term that does not fit puts each
   part of its outermost list on its own line, two spaces in, and an `if` breaks both branches
   together.
+- L1.16: `++` is its own kernel primitive `Concat`, not `Add`, since `+` and `++` are distinct
+  operators with different laws (DESIGN.md, Property tracking); `**` is `Pow`. Every binder
+  gets a kernel name unique in the unit: its own name, or `name@k` when another binder shares
+  the name or the name is a prelude word (so the word stays a free variable for the
+  interpreter, L1.18); temporaries are `$k`. Because names are unique, a default is filled by
+  let-binding the call's arguments under the parameters' names and then the defaults in their
+  own dependency order, with no capture. Statements of a scope are ordered by their uses; a
+  cycle, self-reference included, is an error that names layer L6 (recursion). `e else d` and
+  `x?.f` match any atom (`AnyAtom`, `#_`), exact while atoms are loose (before L2). A call
+  through a value (lambda, prelude word) passes arguments by position only; named arguments
+  there wait for types (L1.26). `test` tables belong to top-level functions; a key is the
+  argument, or the tuple of all arguments in declaration order. Deferred as errors: rationals,
+  integers beyond 64 bits and named atom payloads (L1.17), `is` (L1.22), lambda defaults
+  (L1.26), overloads and fields (L2).
   Self-reference resolves to itself; cycles are a later step's.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the

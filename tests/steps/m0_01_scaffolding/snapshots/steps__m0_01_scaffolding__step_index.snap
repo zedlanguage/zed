@@ -17,6 +17,7 @@ l01_12_declarations
 l01_13_formatter
 l01_14_name_resolution
 l01_15_kernel_terms
+l01_16_elaboration
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization

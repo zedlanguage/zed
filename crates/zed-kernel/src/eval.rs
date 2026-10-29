@@ -833,6 +833,7 @@ fn matches(pat: &Pattern, v: &Value, env: &mut Env) -> bool {
             true
         }
         (Pattern::Lit(l), v) => l == v,
+        (Pattern::AnyAtom, Value::Atom(_)) => true,
         (Pattern::Atom(name, ps), Value::Atom(a)) => {
             a.name == *name
                 && ps.len() == a.args.len()
@@ -878,7 +879,13 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Mul, [Float(a), Float(b)]) => Value::float(a.get() * b.get()),
         (Prim::Div, [Float(a), Float(b)]) => Value::float(a.get() / b.get()),
         (Prim::Neg, [Float(a)]) => Value::float(-a.get()),
-        (Prim::Add, [Str(a), Str(b)]) => Value::str(&format!("{a}{b}")),
+        (Prim::Concat, [Str(a), Str(b)]) => Value::str(&format!("{a}{b}")),
+        (Prim::Pow, [Int(a), Int(b)]) => match u32::try_from(*b) {
+            Ok(b) => a.checked_pow(b).map(Int).map_or_else(overflow, Ok)?,
+            Err(_) if *b < 0 => return ty(&vals),
+            Err(_) => return overflow(),
+        },
+        (Prim::Pow, [Float(a), Float(b)]) => Value::float(a.get().powf(b.get())),
         (Prim::Eq, [a, b]) => Bool(a == b),
         (Prim::Ne, [a, b]) => Bool(a != b),
         (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Min | Prim::Max, [a, b]) => {

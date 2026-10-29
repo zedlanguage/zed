@@ -76,7 +76,7 @@ fn a_value_of_almost_a_gibibyte_is_accepted() {
         var("me"),
         vec![
             var("me"),
-            prim(Prim::Add, vec![var("s"), var("s")]),
+            prim(Prim::Concat, vec![var("s"), var("s")]),
             prim(Prim::Sub, vec![var("k"), lit(1)]),
         ],
     );

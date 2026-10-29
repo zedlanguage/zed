@@ -11,6 +11,7 @@ pub mod ast;
 pub mod axioms;
 pub mod canon;
 pub mod cost;
+pub mod elab;
 pub mod fence;
 pub mod format;
 pub mod lex;

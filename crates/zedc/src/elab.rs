@@ -1,0 +1,1017 @@
+//! Elaboration (step L1.16): a resolved L1 unit to kernel terms, by the rules of DESIGN.md
+//! "Kernel desugaring".
+//!
+//! A unit is its definitions, not a term: each top-level binding and function is a [`Def`], in
+//! dependency order, and [`Unit::close`] wraps a term in them as nested lets so it can be
+//! evaluated. A block is the lets of its statements in dependency order over its export; a
+//! cycle among them is recursion, which arrives at L6. Every binder gets a kernel name unique
+//! in the unit: its own name when no other binder shares it and it is not a prelude word, else
+//! `name@k` for the `k`-th binder of that name. Temporaries are `$1`, `$2`, …. Because the
+//! names are unique, a default is filled by let-binding the call's arguments under the
+//! parameters' own names, with no capture.
+//!
+//! Where DESIGN.md does not say: `++` is its own primitive `Concat`, never `Add`; `e else d`
+//! matches any atom (`#_`), which is exact while every atom is loose (before L2's named atom
+//! families); a call through a value other than a declared function passes its arguments by
+//! position only, until types give a function value its parameter kinds (L1.26); a prelude
+//! word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
+//! belongs to a function at the unit's top level.
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+
+use zed_kernel::{Pattern as KPattern, Prim, Term, Value};
+
+use crate::ast::{
+    Error, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target,
+};
+use crate::lex::Span;
+use crate::resolve::{Kind, Ref, Resolution, prelude_layer};
+
+/// A top-level definition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Def {
+    /// Its source name, or the temporary's name for the tuple of `a, b = e;`.
+    pub name: String,
+    /// Its kernel name.
+    pub kernel: Arc<str>,
+    /// Its value.
+    pub term: Term,
+}
+
+/// A case of a `test` table: `f(input) == expected`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Test {
+    /// The function's source name.
+    pub function: String,
+    /// The bool term that checks the case, over the unit's definitions.
+    pub check: Term,
+    /// The case's text.
+    pub span: Span,
+}
+
+/// An elaborated unit.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Unit {
+    /// The definitions, each after those it uses.
+    pub defs: Vec<Def>,
+    /// The test cases, in written order.
+    pub tests: Vec<Test>,
+}
+
+impl Unit {
+    /// `body` under every definition, each a let.
+    pub fn close(&self, body: Term) -> Term {
+        self.defs.iter().rev().fold(body, |body, d| {
+            Term::Let(d.kernel.clone(), Arc::new(d.term.clone()), Arc::new(body))
+        })
+    }
+
+    /// The definition of source name `name`, closed over the others.
+    pub fn get(&self, name: &str) -> Option<Term> {
+        let d = self.defs.iter().find(|d| d.name == name)?;
+        Some(self.close(Term::Var(d.kernel.clone())))
+    }
+}
+
+/// The elaboration of `unit` under its resolution, or every error in it, in text order.
+pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
+    let mut e = Elab::new(unit, res);
+    let mut out = Unit::default();
+    if let Some((binds, _)) = e.scope(unit, true) {
+        out.defs = binds
+            .into_iter()
+            .map(|(name, kernel, term)| Def { name, kernel, term })
+            .collect();
+    }
+    out.tests = std::mem::take(&mut e.tests);
+    if e.errors.is_empty() {
+        Ok(out)
+    } else {
+        e.errors.sort_by_key(|e| e.span);
+        Err(e.errors)
+    }
+}
+
+/// A binding of a scope: source name, kernel name, value.
+type Bind = (String, Arc<str>, Term);
+
+struct Elab<'a> {
+    res: &'a Resolution,
+    /// Each binder's index, by its span and name.
+    ids: HashMap<(Span, &'a str), usize>,
+    /// Each binder's kernel name.
+    names: Vec<Arc<str>>,
+    /// Each function binder's declaration.
+    funcs: HashMap<usize, &'a Function>,
+    fresh: usize,
+    tests: Vec<Test>,
+    errors: Vec<Error>,
+}
+
+impl<'a> Elab<'a> {
+    fn new(unit: &'a [Stmt], res: &'a Resolution) -> Self {
+        let mut count: HashMap<&str, usize> = HashMap::new();
+        for b in &res.binders {
+            *count.entry(&b.name).or_default() += 1;
+        }
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        let names = res
+            .binders
+            .iter()
+            .map(|b| {
+                let k = seen.entry(&b.name).or_default();
+                *k += 1;
+                if count[b.name.as_str()] == 1 && prelude_layer(&b.name).is_none() {
+                    b.name.as_str().into()
+                } else {
+                    format!("{}@{k}", b.name).into()
+                }
+            })
+            .collect();
+        let ids = res
+            .binders
+            .iter()
+            .enumerate()
+            .map(|(i, b)| ((b.span, b.name.as_str()), i))
+            .collect();
+        let mut e = Elab {
+            res,
+            ids,
+            names,
+            funcs: HashMap::new(),
+            fresh: 0,
+            tests: Vec::new(),
+            errors: Vec::new(),
+        };
+        e.collect_functions(unit);
+        e
+    }
+
+    /// Records every function declaration of `stmts` and of the blocks inside them.
+    fn collect_functions(&mut self, stmts: &'a [Stmt]) {
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Function(f) => {
+                    if let Some(&id) = self.ids.get(&(s.span, f.name.as_str())) {
+                        self.funcs.insert(id, f);
+                    }
+                    for p in &f.params {
+                        if let Some(d) = &p.default {
+                            self.collect_in(d);
+                        }
+                    }
+                    self.collect_in(&f.body);
+                }
+                StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => {
+                    self.collect_in(value)
+                }
+                StmtKind::Return(es) => es.iter().for_each(|e| self.collect_in(e)),
+            }
+        }
+    }
+
+    fn collect_in(&mut self, e: &'a Expr) {
+        match &e.kind {
+            ExprKind::Block(stmts) => self.collect_functions(stmts),
+            ExprKind::Str(parts) => parts.iter().for_each(|p| {
+                if let StrPart::Hole(h) = p {
+                    self.collect_in(h)
+                }
+            }),
+            ExprKind::Unary(_, a) | ExprKind::Member { of: a, .. } | ExprKind::Is { of: a, .. } => {
+                self.collect_in(a)
+            }
+            ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
+                self.collect_in(a);
+                self.collect_in(b);
+            }
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                ..
+            } => {
+                self.collect_in(callee);
+                positional.iter().for_each(|a| self.collect_in(a));
+                named.iter().for_each(|(_, a)| self.collect_in(a));
+            }
+            ExprKind::Tuple(items) => items.iter().for_each(|i| self.collect_in(i)),
+            ExprKind::Lambda { body, .. } => self.collect_in(body),
+            ExprKind::Else { of, default, .. } => {
+                self.collect_in(of);
+                self.collect_in(default);
+            }
+            ExprKind::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                self.collect_in(cond);
+                self.collect_in(then);
+                self.collect_in(otherwise);
+            }
+            _ => {}
+        }
+    }
+
+    fn error<T>(&mut self, span: Span, message: impl Into<String>) -> Option<T> {
+        self.errors.push(Error {
+            span,
+            message: message.into(),
+        });
+        None
+    }
+
+    fn temp(&mut self) -> Arc<str> {
+        self.fresh += 1;
+        format!("${}", self.fresh).into()
+    }
+
+    fn id(&self, span: Span, name: &str) -> usize {
+        self.ids[&(span, name)]
+    }
+
+    /// The binders used in `span`, outside the spans in `skip`.
+    fn uses_in(&self, span: Span, skip: &[Span]) -> Vec<usize> {
+        let from = Span {
+            start: span.start,
+            end: 0,
+        };
+        let to = Span {
+            start: span.end,
+            end: 0,
+        };
+        self.res
+            .uses
+            .range(from..to)
+            .filter(|(u, _)| u.end <= span.end)
+            .filter(|(u, _)| !skip.iter().any(|s| s.start <= u.start && u.end <= s.end))
+            .flat_map(|(_, r)| match r {
+                Ref::Bound(ids) => ids.clone(),
+                Ref::Prelude(_) => Vec::new(),
+            })
+            .collect()
+    }
+
+    /// The statements of one scope: its bindings in dependency order, and its export. `top`
+    /// is the unit's top level, where a function's `test` table is elaborated.
+    fn scope(&mut self, stmts: &'a [Stmt], top: bool) -> Option<(Vec<Bind>, Option<Term>)> {
+        let mut export = None;
+        let mut items: Vec<&'a Stmt> = Vec::new();
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Return(es) => export = Some(es),
+                _ => items.push(s),
+            }
+        }
+        // The binders each statement makes, and those of this scope each one uses.
+        let owner: HashMap<usize, usize> = items
+            .iter()
+            .enumerate()
+            .flat_map(|(i, s)| self.binders_of(s).into_iter().map(move |b| (b, i)))
+            .collect();
+        let deps: Vec<Vec<usize>> = items
+            .iter()
+            .map(|s| {
+                let skip: Vec<Span> = match &s.kind {
+                    StmtKind::Function(f) => f
+                        .tests
+                        .iter()
+                        .map(|(a, b)| Span {
+                            start: a.span.start,
+                            end: b.span.end,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let mut d: Vec<usize> = self
+                    .uses_in(s.span, &skip)
+                    .into_iter()
+                    .filter_map(|b| owner.get(&b).copied())
+                    .collect();
+                d.sort_unstable();
+                d.dedup();
+                d
+            })
+            .collect();
+        let order = match topo(&deps) {
+            Ok(order) => order,
+            Err(cycle) => {
+                let names: Vec<String> = cycle.iter().map(|&i| what(items[i])).collect();
+                let message = match &names[..] {
+                    [one] => format!("{one} is defined in terms of itself"),
+                    _ => format!("{} are defined in terms of each other", names.join(", ")),
+                };
+                return self.error(
+                    items[cycle[0]].span,
+                    format!("{message}: recursion arrives at layer L6"),
+                );
+            }
+        };
+        let mut binds = Vec::new();
+        let mut ok = true;
+        for i in order {
+            ok &= self.stmt(items[i], top, &mut binds).is_some();
+        }
+        let export = match export {
+            None => None,
+            Some(es) => {
+                let mut ts = Vec::new();
+                for e in es {
+                    ts.push(self.expr(e));
+                }
+                let ts: Option<Vec<Term>> = ts.into_iter().collect();
+                let mut ts = ts?;
+                Some(if ts.len() == 1 {
+                    ts.pop().expect("one")
+                } else {
+                    Term::Prim(Prim::Tuple, ts)
+                })
+            }
+        };
+        ok.then_some((binds, export))
+    }
+
+    /// A block's term: the lets of its statements over its export, or `()` without one.
+    fn block(&mut self, stmts: &'a [Stmt]) -> Option<Term> {
+        let (binds, export) = self.scope(stmts, false)?;
+        let body = export.unwrap_or(Term::Prim(Prim::Tuple, Vec::new()));
+        Some(binds.into_iter().rev().fold(body, |body, (_, k, t)| {
+            Term::Let(k, Arc::new(t), Arc::new(body))
+        }))
+    }
+
+    fn binders_of(&self, s: &'a Stmt) -> Vec<usize> {
+        match &s.kind {
+            StmtKind::Bind { targets, .. } => targets
+                .iter()
+                .filter_map(|t| match t {
+                    Target::Name(n) => Some(self.id(s.span, n)),
+                    Target::Wild => None,
+                })
+                .collect(),
+            StmtKind::Function(f) => vec![self.id(s.span, &f.name)],
+            StmtKind::Push { .. } | StmtKind::Return(_) => Vec::new(),
+        }
+    }
+
+    fn stmt(&mut self, s: &'a Stmt, top: bool, out: &mut Vec<Bind>) -> Option<()> {
+        match &s.kind {
+            StmtKind::Bind { targets, value } => {
+                let v = self.expr(value)?;
+                match &targets[..] {
+                    [Target::Name(n)] => {
+                        let k = self.names[self.id(s.span, n)].clone();
+                        out.push((n.clone(), k, v));
+                    }
+                    [Target::Wild] => {
+                        let t = self.temp();
+                        out.push((t.to_string(), t, v));
+                    }
+                    _ => {
+                        let t = self.temp();
+                        out.push((t.to_string(), t.clone(), v));
+                        for (i, target) in targets.iter().enumerate() {
+                            if let Target::Name(n) = target {
+                                let k = self.names[self.id(s.span, n)].clone();
+                                let get = Term::Prim(
+                                    Prim::TupleGet,
+                                    vec![Term::Var(t.clone()), Term::Lit(Value::Int(i as i64))],
+                                );
+                                out.push((n.clone(), k, get));
+                            }
+                        }
+                    }
+                }
+            }
+            StmtKind::Function(f) => {
+                let id = self.id(s.span, &f.name);
+                let mut params = Vec::new();
+                for p in &f.params {
+                    params.push(self.names[self.id(p.span, &p.name)].clone());
+                }
+                let body = match &f.body.kind {
+                    ExprKind::Block(stmts) if !f.equation => self.block(stmts),
+                    _ => self.expr(&f.body),
+                };
+                let tests = self.tests(f, id, s.span, top);
+                let body = body?;
+                tests?;
+                out.push((
+                    f.name.clone(),
+                    self.names[id].clone(),
+                    Term::Lam(params, Arc::new(body)),
+                ));
+            }
+            StmtKind::Push { port, value } => {
+                let v = self.expr(value)?;
+                let t = self.temp();
+                out.push((
+                    t.to_string(),
+                    t,
+                    Term::Push(port.as_str().into(), Arc::new(v)),
+                ));
+            }
+            StmtKind::Return(_) => unreachable!("an export is not a binding"),
+        }
+        Some(())
+    }
+
+    /// The cases of `f`'s `test` tables: a key is the argument, or for a function of several
+    /// parameters the tuple of its arguments in declaration order.
+    fn tests(&mut self, f: &'a Function, id: usize, span: Span, top: bool) -> Option<()> {
+        if f.tests.is_empty() {
+            return Some(());
+        }
+        if !top {
+            return self.error(
+                span,
+                format!(
+                    "`{}` has a test table, which belongs to a function at the unit's top level",
+                    f.name
+                ),
+            );
+        }
+        let mut ok = true;
+        for (input, expected) in &f.tests {
+            let case = Span {
+                start: input.span.start,
+                end: expected.span.end,
+            };
+            let args = match (&input.kind, f.params.len()) {
+                (_, 1) => vec![input],
+                (ExprKind::Tuple(items), n) if items.len() == n => items.iter().collect(),
+                (_, n) => {
+                    ok = false;
+                    self.error::<()>(
+                        input.span,
+                        format!(
+                            "a test key of `{}` is the tuple of its {n} arguments",
+                            f.name
+                        ),
+                    );
+                    continue;
+                }
+            };
+            let args: Option<Vec<Term>> = args.into_iter().map(|a| self.expr(a)).collect();
+            let want = self.expr(expected);
+            let (Some(args), Some(want)) = (args, want) else {
+                ok = false;
+                continue;
+            };
+            let call = Term::App(Arc::new(Term::Var(self.names[id].clone())), args);
+            self.tests.push(Test {
+                function: f.name.clone(),
+                check: Term::Prim(Prim::Eq, vec![call, want]),
+                span: case,
+            });
+        }
+        ok.then_some(())
+    }
+
+    fn expr(&mut self, e: &'a Expr) -> Option<Term> {
+        let lit = |v: Value| Some(Term::Lit(v));
+        match &e.kind {
+            ExprKind::Int { radix, digits } => {
+                let digits: String = digits.chars().filter(|&c| c != '_').collect();
+                match i64::from_str_radix(&digits, *radix) {
+                    Ok(n) => lit(Value::Int(n)),
+                    Err(_) => self.error(
+                        e.span,
+                        "this integer is beyond 64 bits; big integers arrive at step L1.17",
+                    ),
+                }
+            }
+            ExprKind::Float(s) => {
+                let s: String = s.chars().filter(|&c| c != '_').collect();
+                lit(Value::float(s.parse().expect("the lexer's float text")))
+            }
+            ExprKind::Rat(_) => self.error(e.span, "rationals arrive at step L1.17"),
+            ExprKind::Bool(b) => lit(Value::Bool(*b)),
+            ExprKind::Atom(a) => lit(Value::atom(a)),
+            ExprKind::Str(parts) => self.string(parts),
+            ExprKind::Name(n) => self.name(n, e.span),
+            ExprKind::Unary(op, a) => {
+                let p = if *op == "-" { Prim::Neg } else { Prim::Not };
+                Some(Term::Prim(p, vec![self.expr(a)?]))
+            }
+            ExprKind::Binary(op, a, b) => {
+                let (a, b) = (self.expr(a), self.expr(b));
+                let (a, b) = (a?, b?);
+                let t = |v: bool| Term::Lit(Value::Bool(v));
+                let p = match *op {
+                    "||" => return Some(if_(a, t(true), b)),
+                    "&&" => return Some(if_(a, b, t(false))),
+                    "==" => Prim::Eq,
+                    "!=" => Prim::Ne,
+                    "<" => Prim::Lt,
+                    "<=" => Prim::Le,
+                    ">" => Prim::Gt,
+                    ">=" => Prim::Ge,
+                    "+" => Prim::Add,
+                    "-" => Prim::Sub,
+                    "*" => Prim::Mul,
+                    "/" => Prim::Div,
+                    "div" => Prim::IntDiv,
+                    "mod" => Prim::Mod,
+                    "**" => Prim::Pow,
+                    "++" => Prim::Concat,
+                    _ => return self.error(e.span, format!("`{op}` is not an L1 operator")),
+                };
+                Some(Term::Prim(p, vec![a, b]))
+            }
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry,
+            } => self.call(callee, positional, named, *curry, e.span),
+            ExprKind::Index(of, k) => self.index(of, k),
+            ExprKind::Tuple(items) => {
+                let ts: Vec<Option<Term>> = items.iter().map(|i| self.expr(i)).collect();
+                Some(Term::Prim(
+                    Prim::Tuple,
+                    ts.into_iter().collect::<Option<_>>()?,
+                ))
+            }
+            ExprKind::Lambda { params, body } => self.lambda(params, body),
+            ExprKind::Is { .. } => {
+                self.error(e.span, "`is` tests a type, and types arrive at step L1.22")
+            }
+            ExprKind::Else {
+                of,
+                pattern,
+                default,
+            } => {
+                let (v, d) = (self.expr(of), self.expr(default));
+                let pat = match pattern {
+                    Some(p) => self.pattern(p).map(Some),
+                    None => Some(None),
+                };
+                let (v, d, pat) = (v?, d?, pat?);
+                let t = self.temp();
+                let arm = pat.unwrap_or(KPattern::AnyAtom);
+                Some(Term::Match(
+                    Arc::new(v),
+                    vec![(arm, d), (KPattern::Bind(t.clone()), Term::Var(t))],
+                ))
+            }
+            ExprKind::Block(stmts) => self.block(stmts),
+            ExprKind::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                let (c, a, b) = (self.expr(cond), self.expr(then), self.expr(otherwise));
+                Some(if_(c?, a?, b?))
+            }
+            ExprKind::Member { of, name, safe } => {
+                self.member(of, name, *safe, e.span, &[], &[], false, e.span)
+            }
+        }
+    }
+
+    /// Interpolation: the nonempty parts joined by `++`, each hole `String(hole)`.
+    fn string(&mut self, parts: &'a [StrPart]) -> Option<Term> {
+        let mut terms = Vec::new();
+        for p in parts {
+            match p {
+                StrPart::Text(t) if t.is_empty() => {}
+                StrPart::Text(t) => terms.push(Term::Lit(Value::str(t))),
+                StrPart::Hole(h) => {
+                    let h = self.expr(h)?;
+                    terms.push(Term::App(Arc::new(Term::Var("String".into())), vec![h]));
+                }
+            }
+        }
+        let mut terms = terms.into_iter();
+        let first = terms.next().unwrap_or(Term::Lit(Value::str("")));
+        Some(terms.fold(first, |a, b| Term::Prim(Prim::Concat, vec![a, b])))
+    }
+
+    fn name(&mut self, n: &str, span: Span) -> Option<Term> {
+        match self.res.uses.get(&span) {
+            Some(Ref::Bound(ids)) if ids.len() > 1 => self.error(
+                span,
+                format!(
+                    "`{n}` names {} overloads; choosing among them arrives at L2",
+                    ids.len()
+                ),
+            ),
+            Some(Ref::Bound(ids)) if self.res.binders[ids[0]].kind == Kind::Port => self.error(
+                span,
+                format!("`{n}` is an output port, written with `{n} <- e`, not a value"),
+            ),
+            Some(Ref::Bound(ids)) => Some(Term::Var(self.names[ids[0]].clone())),
+            Some(Ref::Prelude(w)) => Some(Term::Var(w.as_str().into())),
+            None => unreachable!("a resolved unit records every name"),
+        }
+    }
+
+    /// The declared function that `e` names, if it names exactly one.
+    fn declared(&self, e: &Expr) -> Option<usize> {
+        match (&e.kind, self.res.uses.get(&e.span)) {
+            (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => {
+                self.funcs.contains_key(&ids[0]).then_some(ids[0])
+            }
+            _ => None,
+        }
+    }
+
+    fn call(
+        &mut self,
+        callee: &'a Expr,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        curry: bool,
+        span: Span,
+    ) -> Option<Term> {
+        if let ExprKind::Member { of, name, safe } = &callee.kind {
+            return self.member(of, name, *safe, callee.span, positional, named, curry, span);
+        }
+        if let Some(id) = self.declared(callee) {
+            return self.call_declared(id, None, positional, named, curry, span);
+        }
+        let f = self.expr(callee)?;
+        self.call_value(f, None, positional, named, curry, span)
+    }
+
+    /// A call through a value other than a declared function: by position only.
+    fn call_value(
+        &mut self,
+        f: Term,
+        receiver: Option<Term>,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        curry: bool,
+        span: Span,
+    ) -> Option<Term> {
+        if !named.is_empty() || curry {
+            return self.error(
+                span,
+                "named arguments and `...` need the declaration of the function called; \
+                 through a value they arrive with types at step L1.26",
+            );
+        }
+        let mut args: Vec<Term> = receiver.into_iter().collect();
+        let mut ok = true;
+        for a in positional {
+            match self.expr(a) {
+                Some(t) => args.push(t),
+                None => ok = false,
+            }
+        }
+        ok.then(|| Term::App(Arc::new(f), args))
+    }
+
+    /// A saturated or curried call of the declared function `id`; `receiver` fills its first
+    /// parameter, of either kind.
+    fn call_declared(
+        &mut self,
+        id: usize,
+        receiver: Option<Term>,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        curry: bool,
+        span: Span,
+    ) -> Option<Term> {
+        let f = self.funcs[&id];
+        let fname = &f.name;
+        let n = f.params.len();
+        let mut slots: Vec<Option<Term>> = vec![None; n];
+        let mut next = 0;
+        if let Some(r) = receiver {
+            if n == 0 {
+                return self.error(span, format!("`{fname}` has no parameter for a receiver"));
+            }
+            slots[0] = Some(r);
+            next = 1;
+        }
+        let mut ok = true;
+        for a in positional {
+            match f.params.get(next) {
+                None => {
+                    return self.error(a.span, format!("too many arguments: `{fname}` takes {n}"));
+                }
+                Some(p) if !p.positional => {
+                    return self.error(
+                        a.span,
+                        format!(
+                            "`{}` of `{fname}` is named: pass it as `{}: …`",
+                            p.name, p.name
+                        ),
+                    );
+                }
+                Some(_) => {
+                    slots[next] = self.expr(a);
+                    ok &= slots[next].is_some();
+                    next += 1;
+                }
+            }
+        }
+        for (name, a) in named {
+            match f.params.iter().position(|p| p.name == *name) {
+                None => {
+                    return self.error(a.span, format!("`{fname}` has no parameter `{name}`"));
+                }
+                Some(j) if f.params[j].positional => {
+                    return self.error(
+                        a.span,
+                        format!("`{name}` of `{fname}` is positional: pass it by position"),
+                    );
+                }
+                Some(j) if slots[j].is_some() => {
+                    return self.error(a.span, format!("`{name}` is already supplied"));
+                }
+                Some(j) => {
+                    slots[j] = self.expr(a);
+                    ok &= slots[j].is_some();
+                }
+            }
+        }
+        if !ok {
+            return None;
+        }
+        let kname = |e: &Self, p: &Param| e.names[e.id(p.span, &p.name)].clone();
+        let fv = Arc::new(Term::Var(self.names[id].clone()));
+        let missing: Vec<usize> = (0..n).filter(|&j| slots[j].is_none()).collect();
+        let all: Vec<Term> = f.params.iter().map(|p| Term::Var(kname(self, p))).collect();
+        let supplied = |e: &Self, slots: Vec<Option<Term>>, body: Term| {
+            slots
+                .into_iter()
+                .zip(&f.params)
+                .rev()
+                .fold(body, |body, (s, p)| match s {
+                    Some(t) => Term::Let(kname(e, p), Arc::new(t), Arc::new(body)),
+                    None => body,
+                })
+        };
+        if curry {
+            if let Some(&j) = missing.iter().find(|&&j| f.params[j].positional) {
+                return self.error(
+                    span,
+                    format!(
+                        "`...` curries named parameters only; the positional `{}` is left out",
+                        f.params[j].name
+                    ),
+                );
+            }
+            if missing.is_empty() {
+                return self.error(span, "`...` leaves no named parameter out");
+            }
+            let params = missing.iter().map(|&j| kname(self, &f.params[j])).collect();
+            let body = supplied(self, slots, Term::App(fv, all));
+            return Some(Term::Lam(params, Arc::new(body)));
+        }
+        if missing.is_empty() {
+            let args = slots.into_iter().map(|s| s.expect("supplied")).collect();
+            return Some(Term::App(fv, args));
+        }
+        let mut ok = true;
+        for &j in &missing {
+            if f.params[j].default.is_none() {
+                ok = false;
+                self.error::<()>(
+                    span,
+                    format!("missing argument `{}` of `{fname}`", f.params[j].name),
+                );
+            }
+        }
+        if !ok {
+            return None;
+        }
+        // The defaults, each after the defaulted parameters it reads.
+        let ids: Vec<usize> = missing
+            .iter()
+            .map(|&j| self.id(f.params[j].span, &f.params[j].name))
+            .collect();
+        let deps: Vec<Vec<usize>> = missing
+            .iter()
+            .map(|&j| {
+                let d = f.params[j].default.as_ref().expect("checked");
+                let mut deps: Vec<usize> = self
+                    .uses_in(d.span, &[])
+                    .into_iter()
+                    .filter_map(|b| ids.iter().position(|&i| i == b))
+                    .collect();
+                deps.sort_unstable();
+                deps.dedup();
+                deps
+            })
+            .collect();
+        let order = match topo(&deps) {
+            Ok(order) => order,
+            Err(cycle) => {
+                let names: Vec<String> = cycle
+                    .iter()
+                    .map(|&i| format!("`{}`", f.params[missing[i]].name))
+                    .collect();
+                return self.error(
+                    span,
+                    format!("the defaults of {} read each other", names.join(", ")),
+                );
+            }
+        };
+        let mut defaults = Vec::new();
+        for i in order {
+            let p = &f.params[missing[i]];
+            let d = self.expr(p.default.as_ref().expect("checked"))?;
+            defaults.push((kname(self, p), d));
+        }
+        let body = defaults
+            .into_iter()
+            .rev()
+            .fold(Term::App(fv, all), |body, (k, d)| {
+                Term::Let(k, Arc::new(d), Arc::new(body))
+            });
+        Some(supplied(self, slots, body))
+    }
+
+    /// `x.f(args)` and `x?.f(args)`: the uniform call `f(x, args)`, `?.` passing an atom `x`
+    /// through. Without parentheses the arguments are empty.
+    #[allow(clippy::too_many_arguments)]
+    fn member(
+        &mut self,
+        of: &'a Expr,
+        name: &str,
+        safe: bool,
+        member: Span,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        curry: bool,
+        span: Span,
+    ) -> Option<Term> {
+        let x = self.expr(of)?;
+        let (receiver, t) = if safe {
+            let t = self.temp();
+            (Term::Var(t.clone()), Some(t))
+        } else {
+            (x.clone(), None)
+        };
+        let call = match self.res.uses.get(&member) {
+            Some(Ref::Bound(ids)) if ids.len() > 1 => {
+                return self.error(
+                    member,
+                    format!(
+                        "`{name}` names {} overloads; choosing among them arrives at L2",
+                        ids.len()
+                    ),
+                );
+            }
+            Some(Ref::Bound(ids)) if self.funcs.contains_key(&ids[0]) => {
+                self.call_declared(ids[0], Some(receiver), positional, named, curry, span)?
+            }
+            Some(Ref::Bound(ids)) => {
+                let f = Term::Var(self.names[ids[0]].clone());
+                self.call_value(f, Some(receiver), positional, named, curry, span)?
+            }
+            _ => match prelude_layer(name) {
+                Some(1) => {
+                    let f = Term::Var(name.into());
+                    self.call_value(f, Some(receiver), positional, named, curry, span)?
+                }
+                Some(layer) => {
+                    return self.error(
+                        member,
+                        format!("`{name}` is a prelude word of layer L{layer}"),
+                    );
+                }
+                None => {
+                    return self.error(
+                        member,
+                        format!("`{name}` is not a function in scope, and fields arrive at L2"),
+                    );
+                }
+            },
+        };
+        Some(match t {
+            None => call,
+            Some(t) => Term::Let(
+                t.clone(),
+                Arc::new(x),
+                Arc::new(Term::Match(
+                    Arc::new(Term::Var(t.clone())),
+                    vec![(KPattern::AnyAtom, Term::Var(t)), (KPattern::Wild, call)],
+                )),
+            ),
+        })
+    }
+
+    /// `f[k]` on a declared function: the section filling its first parameter, no default
+    /// filled; `t[i]` with a literal `i`: the tuple component; else an application.
+    fn index(&mut self, of: &'a Expr, k: &'a Expr) -> Option<Term> {
+        if let Some(id) = self.declared(of) {
+            let f = self.funcs[&id];
+            let k = self.expr(k)?;
+            let fv = Arc::new(Term::Var(self.names[id].clone()));
+            return match f.params.len() {
+                0 => self.error(of.span, format!("`{}` takes no arguments", f.name)),
+                1 => Some(Term::App(fv, vec![k])),
+                n => {
+                    let rest: Vec<Arc<str>> = (1..n).map(|_| self.temp()).collect();
+                    let mut args = vec![k];
+                    args.extend(rest.iter().map(|r| Term::Var(r.clone())));
+                    Some(Term::Lam(rest, Arc::new(Term::App(fv, args))))
+                }
+            };
+        }
+        let (v, i) = (self.expr(of), self.expr(k));
+        let (v, i) = (v?, i?);
+        Some(match (&k.kind, i) {
+            (ExprKind::Int { .. }, i) => Term::Prim(Prim::TupleGet, vec![v, i]),
+            (_, i) => Term::App(Arc::new(v), vec![i]),
+        })
+    }
+
+    fn lambda(&mut self, params: &'a [Param], body: &'a Expr) -> Option<Term> {
+        let mut names = Vec::new();
+        for p in params {
+            if let Some(d) = &p.default {
+                return self.error(
+                    d.span,
+                    "a lambda's default arrives with its expected type at step L1.26",
+                );
+            }
+            names.push(self.names[self.id(p.span, &p.name)].clone());
+        }
+        let body = match &body.kind {
+            ExprKind::Block(stmts) => self.block(stmts)?,
+            _ => self.expr(body)?,
+        };
+        Some(Term::Lam(names, Arc::new(body)))
+    }
+
+    /// An `else` pattern: an atom, its payload matched by position.
+    fn pattern(&mut self, p: &Pattern) -> Option<KPattern> {
+        let Pattern::Atom {
+            name,
+            fields,
+            items,
+            span,
+        } = p;
+        if !fields.is_empty() {
+            return self.error(
+                *span,
+                "an atom's named payload arrives with value representation at step L1.17",
+            );
+        }
+        let items: Option<Vec<KPattern>> = items.iter().map(|i| self.pattern(i)).collect();
+        Some(KPattern::Atom(name.as_str().into(), items?))
+    }
+}
+
+fn if_(c: Term, a: Term, b: Term) -> Term {
+    Term::If(Arc::new(c), Arc::new(a), Arc::new(b))
+}
+
+/// How a statement is named in a cycle's error.
+fn what(s: &Stmt) -> String {
+    match &s.kind {
+        StmtKind::Bind { targets, .. } => {
+            let names: Vec<String> = targets
+                .iter()
+                .filter_map(|t| match t {
+                    Target::Name(n) => Some(format!("`{n}`")),
+                    Target::Wild => None,
+                })
+                .collect();
+            names.join(" and ")
+        }
+        StmtKind::Function(f) => format!("`{}`", f.name),
+        StmtKind::Push { port, .. } => format!("the push to `{port}`"),
+        StmtKind::Return(_) => "the export".into(),
+    }
+}
+
+/// An order of `0..deps.len()` with each item after its dependencies, ties by index; else the
+/// items of one cycle, in order along it.
+fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
+    let n = deps.len();
+    let mut done = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    while order.len() < n {
+        match (0..n).find(|&i| !done[i] && deps[i].iter().all(|&d| done[d])) {
+            Some(i) => {
+                done[i] = true;
+                order.push(i);
+            }
+            None => {
+                // Every item left waits on another left; walk until one repeats.
+                let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut path = Vec::new();
+                let mut i = (0..n).find(|&i| !done[i]).expect("an item left");
+                while !seen.contains_key(&i) {
+                    seen.insert(i, path.len());
+                    path.push(i);
+                    i = *deps[i]
+                        .iter()
+                        .find(|&&d| !done[d])
+                        .expect("a dependency left");
+                }
+                return Err(path.split_off(seen[&i]));
+            }
+        }
+    }
+    Ok(order)
+}

@@ -35,6 +35,7 @@ impl fmt::Display for Pattern {
             Pattern::Atom(name, ps) => write!(f, "#{name}({})", list(ps)),
             Pattern::Tuple(ps) if ps.len() == 1 => write!(f, "({},)", ps[0]),
             Pattern::Tuple(ps) => write!(f, "({})", list(ps)),
+            Pattern::AnyAtom => f.write_str("#_"),
         }
     }
 }
@@ -62,6 +63,8 @@ fn infix(p: Prim) -> Option<&'static str> {
         Ge => " >= ",
         And => " && ",
         Or => " || ",
+        Concat => " ++ ",
+        Pow => " ** ",
         _ => return None,
     })
 }

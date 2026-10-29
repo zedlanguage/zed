@@ -127,6 +127,7 @@ impl Out<'_> {
                 self.tag(4);
                 self.patterns(ps);
             }
+            Pattern::AnyAtom => self.tag(5),
         }
     }
 

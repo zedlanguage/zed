@@ -39,7 +39,8 @@ fn constant(c: Const) -> Value {
 /// controls can claim a law of a unary function that does not have it.
 fn call(op: &str, args: Vec<Term>) -> Term {
     let p = match op {
-        "+" | "++" => Prim::Add,
+        "+" => Prim::Add,
+        "++" => Prim::Concat,
         "-" => Prim::Sub,
         "*" => Prim::Mul,
         "neg" => Prim::Neg,

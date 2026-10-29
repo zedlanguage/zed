@@ -67,9 +67,10 @@ pub struct Resolution {
 }
 
 /// The value words of the prelude, each with the layer it belongs to (DESIGN.md, "Defined
-/// words by layer"): at L1 the numeric casts and the `String` functions the documentation
-/// uses.
+/// words by layer"): at L1 the numeric casts, the `String` cast that interpolation calls, and
+/// the `String` functions the documentation uses.
 const WORDS: &[(&str, u32)] = &[
+    ("String", 1),
     ("int", 1),
     ("rat", 1),
     ("f64", 1),
@@ -116,6 +117,14 @@ const WORDS: &[(&str, u32)] = &[
     ("chunkBy", 5),
     ("fix", 6),
 ];
+
+/// The layer of the prelude value word `name`, if it is one.
+pub fn prelude_layer(name: &str) -> Option<u32> {
+    WORDS
+        .iter()
+        .find(|(w, _)| *w == name)
+        .map(|&(_, layer)| layer)
+}
 
 /// The type names of the prelude at L1; a unit declares no type before L2.
 const TYPES: &[&str] = &["int", "rat", "f64", "bool", "String", "Lines", "Files"];
@@ -193,10 +202,7 @@ impl Resolver {
         if let Some(ids) = self.scopes.iter().rev().find_map(|s| s.get(name)) {
             return Some(Found::Bound(ids.clone()));
         }
-        WORDS
-            .iter()
-            .find(|(w, _)| *w == name)
-            .map(|&(_, layer)| Found::Word(layer))
+        prelude_layer(name).map(Found::Word)
     }
 
     /// Records the use of `name` at `span`, or the error that it names nothing at L1.

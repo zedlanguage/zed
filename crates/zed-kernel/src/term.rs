@@ -14,7 +14,7 @@ use crate::value::Value;
 /// only `match` inspects one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Prim {
-    /// `a + b` over two ints or two floats; also joins two strings.
+    /// `a + b` over two ints or two floats.
     Add,
     /// `a - b`.
     Sub,
@@ -67,6 +67,11 @@ pub enum Prim {
     Tuple,
     /// `t[i]`: component `i` of a tuple, counting from 0.
     TupleGet,
+    /// `a ++ b`, two strings joined. It is not `Add`, so no law of `+` (commutativity) is
+    /// ever read as one of `++`.
+    Concat,
+    /// `a ** b`: an int to a non-negative int power, or a float to a float power.
+    Pow,
 }
 
 impl Prim {
@@ -94,6 +99,9 @@ pub enum Pattern {
     Atom(Arc<str>, Vec<Pattern>),
     /// `(p, …)`, matching a tuple of that length.
     Tuple(Vec<Pattern>),
+    /// `#_`, any atom, its payload included: the arm `else` and `?.` write for the atom
+    /// members of a value until its type enumerates them (DESIGN.md, step L1.16).
+    AnyAtom,
 }
 
 /// Where a `gen` loop tests its guard (sec:generations).
