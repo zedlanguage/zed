@@ -62,7 +62,7 @@ fn scan(text: &str, pos: usize, lex_holes: bool) -> Result<(usize, Vec<Part>), E
                 raw.push(Raw::Lit(lit, i));
                 let end = hole_end(text, i, !triple)?;
                 let tokens = if lex_holes {
-                    lex_from(&text[..end], i + 2)?
+                    lex_from(&text[..end], i + 2, &mut Vec::new())?
                 } else {
                     Vec::new()
                 };

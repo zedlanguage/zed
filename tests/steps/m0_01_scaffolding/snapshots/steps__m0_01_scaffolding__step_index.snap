@@ -7,6 +7,7 @@ l01_02_lexer_names
 l01_03_lexer_integers
 l01_04_lexer_floats_and_rationals
 l01_05_lexer_strings
+l01_06_lexer_tokens
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization

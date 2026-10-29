@@ -27,12 +27,13 @@ in docs/layout.md.
 - Done: **L1.3**, integer literals (`zedc::lex::number`).
 - Done: **L1.4**, float and rational literals (`zedc::lex::number`).
 - Done: **L1.5**, string literals (`zedc::lex::string`), and `//` and nesting `/* */` comments (`zedc::lex::comment`), which a hole may hold.
-- Next: L1.6.
+- Done: **L1.6**, the lexical grammar whole: atoms, annotations, keywords, operators, doc comments (`zedc::lex::punct`, `lex_with_docs`).
+- Next: L1.7.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 261 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 208 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 271 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 218 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -56,6 +57,7 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.3 | done | `lex::number`: `Tok::Int { radix, digits }`, the digits kept exactly with `_` removed, so `2^128 + 1` lexes; a number running into a name character is one `BadNumber` error over the run, naming the defect (`_` not between digits, a digit outside base 2 or 8, `0x` with no digit, a letter as in `200ms`). Golden snapshot of ten malformed numbers. Negative controls: accepting a `_` with no digit after it, and dropping the `!XID_CONTINUE` check, each fail the golden test |
 | L1.4 | done | `Tok::Float` and `Tok::Rat` keep the decimal text without `_`; a digit must follow `.`, so `5.double`, `1..10`, `1.e5` and `12.` end the number before the `.`, and `.5` is no number; an exponent with no digits, an `r` after a hex, octal or binary literal, and a letter after a float are `BadNumber` errors. Golden snapshot of ten malformed literals. Negative controls: reading `.` without a following digit, and accepting `r` after any base, each fail a test |
 | L1.5 | done | `Tok::Str(Vec<Part>)`: decoded text parts and `Part::Hole { tokens, span }`, each hole lexed once into tokens with spans in the whole file; a hole's end is found by the `HoleText` rule, so a string or comment inside it neither opens nor closes it; the `"""` indentation rule; golden snapshots of eleven malformed strings and six malformed holes. Comments are skipped from here on, since a hole may hold one. Negative controls: dropping the indentation cut, scanning an inner string as plain characters, and dropping the one-line check each fail a test |
+| L1.6 | done | `Tok::Keyword`, `Tok::Op` (41 operators, longest first), `Tok::Atom`, `Tok::Annot`; `where` and `sep` stay names; `if'` is the keyword and a stray `'`; `lex_with_docs` returns the `///` comments beside the tokens. Golden snapshots: the `sec:tour_failure` example of EXAMPLES.md (copied into the test) and nine lexical errors. Negative controls: `->` ahead of `->?`, `////` read as a doc comment, and keywords read as names each fail a test |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -119,6 +121,8 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 - L1.5: `"""` stripping applies only when both delimiters are on their own lines (DESIGN,
   sec:lexical, string row); a `"` string has no line break, its holes included, and a `//`
   comment in such a hole is its own error. An empty string is `Str([])`.
+- L1.6: doc comments are kept outside the token stream, since the grammar discards every
+  comment; the parser attaches them by span.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which lie within the evaluator's own range limit.

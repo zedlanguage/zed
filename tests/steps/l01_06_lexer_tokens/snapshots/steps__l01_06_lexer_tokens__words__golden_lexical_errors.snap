@@ -1,0 +1,13 @@
+---
+source: tests/steps/l01_06_lexer_tokens/words.rs
+expression: "out.join(\"\\n\")"
+---
+# none       [0..1] no token starts with '#' (U+0023)
+x = @        [4..5] no token starts with '@' (U+0040)
+#pаypal      [1..8] the name "pаypal" mixes scripts: Latin, Cyrillic
+cost = $5    [7..8] no token starts with '$' (U+0024)
+a % b        [2..3] no token starts with '%' (U+0025)
+a ^ b        [2..3] no token starts with '^' (U+005E)
+x ~ y        [2..3] no token starts with '~' (U+007E)
+`cmd`        [0..1] no token starts with '`' (U+0060)
+x''          [2..3] no token starts with '\'' (U+0027)

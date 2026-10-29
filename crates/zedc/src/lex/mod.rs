@@ -7,11 +7,13 @@
 mod comment;
 mod name;
 mod number;
+mod punct;
 mod string;
 
 use std::fmt;
 
 pub use name::is_single_script;
+pub use punct::{KEYWORDS, OPERATORS};
 
 /// A byte range of the loaded text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +44,23 @@ pub enum Tok {
     Rat(String),
     /// A string: its text and its holes, in order, never two text parts in a row.
     Str(Vec<Part>),
+    /// An atom `#name`, without the `#`.
+    Atom(String),
+    /// An annotation `@name`, without the `@`.
+    Annot(String),
+    /// A keyword.
+    Keyword(&'static str),
+    /// An operator or punctuation mark.
+    Op(&'static str),
+}
+
+/// A doc comment: its text after `///` and one space, and its span.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Doc {
+    /// The text.
+    pub text: String,
+    /// The span, from the first `/` to the end of the line.
+    pub span: Span,
 }
 
 /// A part of a string literal.
@@ -113,11 +132,20 @@ impl fmt::Display for Error {
 
 /// The tokens of `text`, a loaded source text.
 pub fn lex(text: &str) -> Result<Vec<Token>, Error> {
-    lex_from(text, 0)
+    lex_from(text, 0, &mut Vec::new())
 }
 
-/// The tokens of `text` from byte `pos` to its end, with spans in `text`.
-fn lex_from(text: &str, mut pos: usize) -> Result<Vec<Token>, Error> {
+/// The tokens of `text` and its doc comments: a comment that starts with exactly three `/`
+/// (`////` is an ordinary comment). Doc comments inside a string's hole are not collected.
+pub fn lex_with_docs(text: &str) -> Result<(Vec<Token>, Vec<Doc>), Error> {
+    let mut docs = Vec::new();
+    let tokens = lex_from(text, 0, &mut docs)?;
+    Ok((tokens, docs))
+}
+
+/// The tokens of `text` from byte `pos` to its end, with spans in `text`, and its doc
+/// comments pushed onto `docs`.
+fn lex_from(text: &str, mut pos: usize, docs: &mut Vec<Doc>) -> Result<Vec<Token>, Error> {
     let mut out = Vec::new();
     while let Some(c) = text[pos..].chars().next() {
         let start = pos;
@@ -126,6 +154,13 @@ fn lex_from(text: &str, mut pos: usize) -> Result<Vec<Token>, Error> {
             None
         } else if let Some(end) = comment::comment(text, pos) {
             pos = end?;
+            let body = &text[start..pos];
+            if let Some(doc) = body.strip_prefix("///").filter(|d| !d.starts_with('/')) {
+                docs.push(Doc {
+                    text: doc.strip_prefix(' ').unwrap_or(doc).into(),
+                    span: Span { start, end: pos },
+                });
+            }
             None
         } else if let Some(number) = number::number(text, pos) {
             let (end, tok) = number?;
@@ -135,20 +170,31 @@ fn lex_from(text: &str, mut pos: usize) -> Result<Vec<Token>, Error> {
             let (end, tok) = string?;
             pos = end;
             Some(tok)
-        } else if let Some(end) = name::name(text, pos) {
+        } else if let Some(end) = matches!(c, '#' | '@')
+            .then(|| name::name(text, pos + 1))
+            .flatten()
+        {
             pos = end;
-            let word = &text[start..end];
-            if !is_single_script(word.trim_end_matches('\'')) {
-                let span = Span { start, end };
-                return Err(Error {
-                    kind: ErrorKind::MixedScript(word.into()),
-                    span,
-                });
+            let word = checked(text, start + 1, end)?;
+            Some(if c == '#' {
+                Tok::Atom(word)
+            } else {
+                Tok::Annot(word)
+            })
+        } else if let Some(end) = name::name(text, pos) {
+            if let Some(k) = punct::keyword(text[start..end].trim_end_matches('\'')) {
+                pos = start + k.len();
+                Some(Tok::Keyword(k))
+            } else {
+                pos = end;
+                Some(Tok::Name(checked(text, start, end)?))
             }
-            Some(Tok::Name(word.into()))
         } else if let Some(end) = name::wildcard(text, pos) {
             pos = end;
             Some(Tok::Wildcard)
+        } else if let Some(op) = punct::operator(text, pos) {
+            pos += op.len();
+            Some(Tok::Op(op))
         } else {
             let span = Span {
                 start,
@@ -167,4 +213,17 @@ fn lex_from(text: &str, mut pos: usize) -> Result<Vec<Token>, Error> {
         }
     }
     Ok(out)
+}
+
+/// The name from `start` to `end` of `text`, if its characters are of one script.
+fn checked(text: &str, start: usize, end: usize) -> Result<String, Error> {
+    let word = &text[start..end];
+    if is_single_script(word.trim_end_matches('\'')) {
+        Ok(word.into())
+    } else {
+        Err(Error {
+            kind: ErrorKind::MixedScript(word.into()),
+            span: Span { start, end },
+        })
+    }
 }

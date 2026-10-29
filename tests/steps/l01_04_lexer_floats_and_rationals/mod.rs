@@ -1,6 +1,6 @@
 //! Step L1.4: float literals, which need a leading digit, and exact `r` rationals.
 
-use zedc::lex::{ErrorKind, Tok, lex};
+use zedc::lex::{Tok, lex};
 
 fn toks(text: &str) -> Vec<Tok> {
     lex(text)
@@ -45,21 +45,17 @@ fn rationals_are_decimal_and_keep_their_text() {
 
 #[test]
 fn a_digit_must_follow_the_dot_so_member_access_and_ranges_start_with_the_integer() {
-    // Each number ends before the `.`, which is an operator (step L1.6); `.5` is no float.
-    for (text, at) in [
-        ("5.double", 1),
-        ("1..10", 1),
-        ("1.e5", 1),
-        (".5", 0),
-        ("12.", 2),
-    ] {
-        let e = lex(text).unwrap_err();
-        assert_eq!(
-            (e.kind, e.span.start),
-            (ErrorKind::Unexpected('.'), at),
-            "{text}"
-        );
-    }
+    // Each number ends before the `.`, an operator; `.5` is no float.
+    let int = |d: &str| Tok::Int {
+        radix: 10,
+        digits: d.into(),
+    };
+    let name = |n: &str| Tok::Name(n.into());
+    assert_eq!(toks("5.double"), [int("5"), Tok::Op("."), name("double")]);
+    assert_eq!(toks("1..10"), [int("1"), Tok::Op(".."), int("10")]);
+    assert_eq!(toks("1.e5"), [int("1"), Tok::Op("."), name("e5")]);
+    assert_eq!(toks(".5"), [Tok::Op("."), int("5")]);
+    assert_eq!(toks("12."), [int("12"), Tok::Op(".")]);
 }
 
 #[test]

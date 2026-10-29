@@ -1,0 +1,15 @@
+---
+source: tests/steps/l01_06_lexer_tokens/program.rs
+expression: "lines.join(\"\\n\")"
+---
+
+parse : ( String ) -> Config | #syntaxError ( pos : int )
+conf = parse ( text ) «else» defaultConfig ;
+port = parse ( text ) ?. server ?. port «else» 8080₍10₎ ;
+msg = «match» parse ( text ) { #syntaxError ( pos : ) -> str["bad at " ${pos}] , c -> c . name } ;
+results = files . map ( f -> read ( f ) ) . map ( b -> parse ( b ) ) ;
+good = results . where ( r -> r «is» Config ) ;
+bad = results . where ( r -> r «is» «not» Config ) ;
+amounts = files . map ( f -> int ( read ( f ) ) ) ;
+sumKept = amounts . where ( a -> a «is» int ) >< ( + ) ;
+sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
