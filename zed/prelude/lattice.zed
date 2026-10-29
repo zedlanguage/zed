@@ -1,0 +1,167 @@
+// prelude unit lattice (DESIGN.md sec:checking_in_zed, written by step M0.5)
+// The store's lattices and their widenings. The Rust-hosted checker's copy is
+// crates/zedc/src/store/{interval,lattice}.rs; until this unit first runs (its
+// last layer is L6), the tests of tests/steps/m0_05_widening_and_iteration/
+// check that copy.
+//
+// The struct signatures of Lattice and Facet are drafts: their field types are
+// written as the type language of L1.24 and L12 will spell them.
+
+struct Lattice {
+  bottom: Any,
+  top: Any,
+  leq: Any,      // (a, b) -> bool
+  join: Any,     // (a, b) -> element
+  meet: Any,     // (a, b) -> element
+  widen: Any,    // (old, new) -> element, for new above old; the join for finite height
+}
+
+struct Facet {
+  kind: #semantic | #evidence | #hint,
+  lattice: Lattice,
+  holds: Any,    // (fact, value) -> bool, for an evidence facet only
+  transfer: Any, // (op, a, b) -> fact
+}
+
+// The flat lattice over the given elements: #empty below each of them, top
+// above each of them, and the elements themselves unordered.
+flat(positional elems, top) = Lattice(
+  bottom: #empty,
+  top: top,
+  leq: (a, b) -> a == #empty || a == b || b == top,
+  join: (a, b) -> if a == #empty { b } else if b == #empty || a == b { a } else { top },
+  meet: (a, b) -> if a == top { b } else if b == top || a == b { a } else { #empty },
+  widen: (a, b) -> if a == #empty { b } else if b == #empty || a == b { a } else { top },
+);
+
+// ---- Interval unions --------------------------------------------------------
+// An element is a list of pieces [lo, hi], sorted, disjoint, and with at least
+// one integer missing between neighbors. An end is an int, #ninf or #pinf.
+
+pieceLimit = 8;
+
+endLe(positional a, positional b) = match a {
+  #ninf -> true,
+  #pinf -> b == #pinf,
+  _ -> match b { #ninf -> false, #pinf -> true, _ -> a <= b },
+};
+
+endMin(positional a, positional b) = if endLe(a, b) { a } else { b };
+endMax(positional a, positional b) = if endLe(a, b) { b } else { a };
+
+// The size of the gap between two neighboring pieces: the integers between them.
+gap(positional p, positional q) = q[0] - p[1] - 1;
+
+// Merges the two neighbors with the smallest gap, the lower pair on a tie, until
+// at most `limit` pieces remain. Not a join, and not monotone.
+cap(positional xs, positional limit) =
+  if xs::len <= limit { xs }
+  else {
+    i = smallestGap(xs, 0, 1);
+    cap(xs.take(i) ++ [[xs[i][0], xs[i + 1][1]]] ++ xs.drop(i + 2), limit)
+  };
+
+smallestGap(positional xs, positional best, positional i) =
+  if i + 1 >= xs::len { best }
+  else if gap(xs[i], xs[i + 1]) < gap(xs[best], xs[best + 1]) { smallestGap(xs, i, i + 1) }
+  else { smallestGap(xs, best, i + 1) };
+
+// old ∇ new, for new the join, which contains old. New is first capped to the
+// piece limit. Then every endpoint of new that is not an endpoint of old in the
+// same role is removed: a new lower endpoint joins its piece to the piece below,
+// or goes to #ninf when there is none, and a new upper endpoint joins its piece
+// to the piece above, or goes to #pinf. A strict step removes a finite endpoint,
+// so a chain above the bottom has at most 2 * pieceLimit + 1 elements. The
+// bottom widens to new, capped.
+intervalWiden(positional old, positional new) = {
+  xs = cap(new, pieceLimit);
+  if old::len == 0 || xs == old { xs }
+  else {
+    oldLo = old.map(p -> p[0]);
+    oldHi = old.map(p -> p[1]);
+    run = loop i {
+      out' = if out::len > 0 && (open || !oldLo.contains(xs[i][0])) {
+        out.take(out::len - 1) ++ [[(out.last else xs[i])[0], xs[i][1]]]
+      } else if !oldLo.contains(xs[i][0]) { [[#ninf, xs[i][1]]] }
+      else { out ++ [xs[i]] } with out = [];
+      open' = !oldHi.contains(xs[i][1]) with open = false;   // the last piece runs into the next
+      while i < xs::len;
+    };
+    if run.open { run.out.take(run.out::len - 1) ++ [[(run.out.last else xs[0])[0], #pinf]] }
+    else { run.out }
+  }
+};
+
+// ---- Congruences ------------------------------------------------------------
+// #class(modulus:, residue:), with modulus 0 for one value and 1 for every
+// integer, or #bottom. Ascending chains are finite (each modulus divides the
+// one before), so the widening is the join.
+
+gcd(positional a, positional b) = if b == 0 { a } else { gcd(b, a mod b) };
+
+congruence(positional m, positional r) =
+  #class(modulus: m, residue: if m == 0 { r } else { r mod m });
+
+congruenceJoin(positional a, positional b) = match a {
+  #bottom -> b,
+  #class(modulus: m, residue: r) -> match b {
+    #bottom -> a,
+    #class(modulus: n, residue: s) -> congruence(gcd(gcd(m, n), abs(r - s)), r),
+  },
+};
+
+member(positional c, positional v) = match c {
+  #bottom -> false,
+  #class(modulus: m, residue: r) -> if m == 0 { v == r } else { v mod m == r },
+};
+
+// The inverse of a modulo n, for a and n coprime: the extended Euclidean
+// algorithm, keeping only the coefficient of a.
+inverse(positional a, positional n) = inverseStep(a mod n, n, 1, 0, n);
+inverseStep(positional r0, positional r1, positional t0, positional t1, positional n) =
+  if r1 == 0 { t0 mod n }
+  else { q = r0 div r1; inverseStep(r1, r0 - q * r1, t1, t0 - q * t1, n) };
+
+// The Chinese remainder theorem: r mod m and s mod n meet iff r == s mod
+// g = gcd(m, n), in one class modulo lcm(m, n). A class whose modulus would
+// leave the integer range is not formed; the operand with the larger modulus is
+// kept, which is a sound bound.
+congruenceMeet(positional a, positional b) = match a {
+  #bottom -> #bottom,
+  #class(modulus: m, residue: r) -> match b {
+    #bottom -> #bottom,
+    #class(modulus: n, residue: s) ->
+      if m == 0 { if member(b, r) { a } else { #bottom } }
+      else if n == 0 { if member(a, s) { b } else { #bottom } }
+      else if (s - r) mod gcd(m, n) != 0 { #bottom }
+      else {
+        g = gcd(m, n);
+        l = m div g * n else #overflow;
+        k = (s - r) div g mod (n div g) * inverse(m div g, n div g) mod (n div g);
+        if l == #overflow { if m >= n { a } else { b } } else { congruence(l, r + m * k) }
+      },
+  },
+};
+
+congruenceLattice = Lattice(
+  bottom: #bottom,
+  top: congruence(1, 0),
+  leq: (a, b) -> congruenceJoin(a, b) == b,
+  join: congruenceJoin,
+  meet: congruenceMeet,
+  widen: congruenceJoin,
+);
+
+// ---- Finite sets and cardinalities ------------------------------------------
+
+finiteSetLimit = 64;
+
+// The join while it has at most finiteSetLimit members, else #top.
+finiteSetWiden(positional old, positional new) =
+  if old == #top || new == #top { #top }
+  else { j = (old ++ new).distinct; if j::len > finiteSetLimit { #top } else { j } };
+
+// A cardinality is one interval of [0, #pinf]: the interval widening, with a
+// lower end widened to #ninf read as 0.
+cardWiden(positional old, positional new) =
+  intervalWiden(old, new).map(p -> [endMax(p[0], 0), p[1]]);

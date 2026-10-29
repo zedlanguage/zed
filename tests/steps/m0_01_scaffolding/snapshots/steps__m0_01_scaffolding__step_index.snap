@@ -3,5 +3,6 @@ source: tests/steps/m0_01_scaffolding/mod.rs
 expression: "declared_modules().join(\"\\n\")"
 ---
 m0_01_scaffolding
+m0_05_widening_and_iteration
 m0_09_kernel_evaluator
 m0_10_finite_model_harness

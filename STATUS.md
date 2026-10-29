@@ -12,13 +12,16 @@ in docs/layout.md.
 - Done: **M0.10**, the finite-model harness (`tests/steps/m0_10_finite_model_harness/`): laws
   1–28, witness bijectivity, the recursion checks, the metatheory smoke cases; budget values
   in DESIGN.md M0.10 (spec commit fc58a1f).
-- Next: M0.5–M0.8, M0.11, then L1.
+- Done: **M0.5**, widening and iteration (`zedc::store`, `tests/steps/m0_05_widening_and_iteration/`,
+  prelude units in `zed/prelude/`); values in DESIGN.md M0.5.
+- Next: M0.6, M0.7, M0.8, M0.11, then L1.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 149 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 118 step tests: 3 in `m0_01_scaffolding`, 32 in
-`m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`). `cargo fmt --all --check` and
+Last full run: `cargo test --workspace` gave 190 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 18 of `zedc`, 141 step tests: 3 in `m0_01_scaffolding`, 23 in
+`m0_05_widening_and_iteration`, 32 in `m0_09_kernel_evaluator`, 83 in
+`m0_10_finite_model_harness`). `cargo fmt --all --check` and
 `cargo clippy --workspace --all-targets -- -D warnings` are clean. The steps binary takes
 about 30 s in a debug build.
 
@@ -28,6 +31,7 @@ about 30 s in a debug build.
 |---|---|---|
 | M0.1 | done | workspace (`zedc`, `zed-kernel`, `zed-rt`, `zed-cert`, `zed-tests`), CI workflow, insta snapshots. Both negative controls fail as they should: a corrupted snapshot, and an undeclared step folder |
 | M0.10 | done | `zed_kernel::budgets` holds the ladder budgets and the rung 6 instance. `zed_tests::{instances, check, kernel}` hold the enumerators, the equation checker, and the derived forms. Laws 1–28 with a counterexample per side condition; the eight layer-free witness entries with their side-condition counterexamples (truncated division fails the packing inverse on row -1); every schedule agrees on all 512 three-node graphs and 512 random ones, stalls included; smoke cases. Negative control: making an undefined read ignore which `fix` it belongs to fails both nested-fix tests. 11 s in a release build |
+| M0.5 | done | `zedc::store::{interval, lattice, wto, iterate, revision}`: interval unions with the piece limit and widening, congruences, finite sets, cardinalities; Bourdoncle's order and recursive strategy (phase 1) and Jacobi narrowing rounds (phase 2); the tonicity and HC4 tables and the reductions. Oracles: a declarative weak topological order (2,048 graphs), a stack machine for phase 1 (512 systems × 5 delays × 2 bounds), the concrete least fixpoint in a window, and brute-force soundness of one revision round (over 10^6 solutions). The prelude units `lattice`, `iteration`, `revision` parse (`ring.py`) and check at L6 together (`layer.py`). Negative controls: widening at `changes >= delay` fails 2 tests; dropping the zero guard of backward `*` fails 2; reversed successor order fails the order oracle; Gauss-Seidel narrowing fails 2 |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -56,6 +60,15 @@ about 30 s in a debug build.
   obligation; rung 6 cuts integers to `-8..=8`, sequences to length 4, loops to 16
   generations, floats to 0.0, -0.0, 1.0, 0.1, 0.2, 0.3, ±inf and NaN, and runs at most 65,536
   bindings in shortlex order; rung 3 saturates for at most 8 iterations or 10,000 e-nodes.
+- M0.5 values (DESIGN.md M0.5): piece limit 8; widening delay 3; 64 head updates per
+  stabilization, then the component goes to ⊤; 64 narrowing rounds; finite sets widen to ⊤
+  past 64 members; Presburger relations of at most 16 variables and 64 atoms, eliminations of at
+  most 4,096 atoms. Rule 1 of sec:constraints now says phase 1 is Bourdoncle's recursive
+  strategy and only phase 2 runs in rounds; the sec:domains example is the tested three-cell
+  loop. `flat(elems, top:)` is defined there (bottom `#empty`).
+- Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
+  (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
+  64-bit limits, which lie within the evaluator's own range limit.
 - The kernel `fold` term carries the depth of the folded family (M0.10). The evaluator cannot
   read the depth off a family with no leaves, so without it `fold` of an empty two-level
   family gave `#empty` where its type gives the empty family, and laws 4 and 8 failed on the

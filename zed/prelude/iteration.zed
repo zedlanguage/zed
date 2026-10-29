@@ -1,0 +1,146 @@
+// prelude unit iteration (DESIGN.md sec:domains and sec:constraints rule 1,
+// written by step M0.5): the weak topological order of the dependency graph,
+// the widening points, and the two-phase iteration strategy with its budgets.
+// The Rust-hosted checker's copy is crates/zedc/src/store/{wto,iterate}.rs.
+//
+// A system of equations has one cell per vertex 0..n in source order; reads[v]
+// lists the cells v's projection reads, and eval(v, cells) is that projection.
+// The dependency graph has an edge from u to every cell that reads u, the
+// successors in source order.
+
+wideningDelay = 3;      // a head's first 3 changes in one stabilization are joins
+headIterations = 64;    // head updates per stabilization before the component goes to top
+narrowingRounds = 64;   // rounds of phase 2
+
+put(positional xs, positional i, positional x) = xs.take(i) ++ [x] ++ xs.drop(i + 1);
+
+dependencyGraph(positional reads) =
+  for u -> _ in reads { (for v -> rs in reads { rs.contains(u) }).keys };
+
+// ---- The weak topological order [Bourdoncle 1993, figure 4] ------------------
+// The depth-first traversal starts from the vertices in source order and visits
+// successors in source order. An element is #vertex(v) or
+// #component(head: h, body: [element]). A depth-first number is 0 (unvisited),
+// a positive int (on the stack), or #done, which is above every int.
+
+struct W { dfn: [Any], num: int, stack: [int] }
+struct V { w: W, head: Any, isLoop: bool, out: [Any] }
+
+dfnLe(positional a, positional b) = b == #done || (a != #done && a <= b);
+
+wto(positional succ) = {
+  run = loop v {
+    st' = if st.w.dfn[v] == 0 { visit(succ, v, st.w, st.out) } else { st }
+      with st = V(w: W(dfn: succ.map(x -> 0), num: 0, stack: []), head: 0, isLoop: false, out: []);
+    while v < succ::len;
+  };
+  run.st.out.reverse
+};
+
+// Visits v and appends each finished element to out (reversed by the caller;
+// the paper prepends). The result's head is the least number v reaches.
+visit(positional succ, positional v, positional w, positional out) = {
+  n = w.num + 1;
+  w1 = W(dfn: put(w.dfn, v, n), num: n, stack: w.stack ++ [v]);
+  s = successors(succ, v, 0, V(w: w1, head: n, isLoop: false, out: out));
+  if s.head != s.w.dfn[v] { s }
+  else {
+    w2 = W(dfn: put(s.w.dfn, v, #done), num: s.w.num, stack: s.w.stack);
+    if s.isLoop {
+      w3 = unwind(w2, v);
+      c = component(succ, v, w3);
+      V(w: c.w, head: s.head, isLoop: s.isLoop, out: s.out ++ c.out)
+    } else {
+      V(w: W(dfn: w2.dfn, num: w2.num, stack: w2.stack.take(w2.stack::len - 1)),
+        head: s.head, isLoop: s.isLoop, out: s.out ++ [#vertex(v)])
+    }
+  }
+};
+
+successors(positional succ, positional v, positional i, positional s) =
+  if i >= succ[v]::len { s }
+  else {
+    x = succ[v][i];
+    r = if s.w.dfn[x] == 0 { visit(succ, x, s.w, s.out) } else { V(w: s.w, head: s.w.dfn[x], isLoop: false, out: s.out) };
+    reached = r.head;
+    better = dfnLe(reached, s.head);
+    successors(succ, v, i + 1,
+      V(w: r.w, head: if better { reached } else { s.head }, isLoop: s.isLoop || better, out: r.out))
+  };
+
+// Pops the stack down to v, resetting every vertex above it to unvisited.
+unwind(positional w, positional v) = {
+  top = w.stack.last else v;
+  rest = W(dfn: w.dfn, num: w.num, stack: w.stack.take(w.stack::len - 1));
+  if top == v { rest } else { unwind(W(dfn: put(rest.dfn, top, 0), num: rest.num, stack: rest.stack), v) }
+};
+
+// The component headed by v, whose other vertices were just reset.
+component(positional succ, positional v, positional w) = {
+  body = componentBody(succ, v, 0, V(w: w, head: 0, isLoop: false, out: []));
+  V(w: body.w, head: 0, isLoop: false, out: [#component(head: v, body: body.out.reverse)])
+};
+
+componentBody(positional succ, positional v, positional i, positional s) =
+  if i >= succ[v]::len { s }
+  else {
+    x = succ[v][i];
+    next = if s.w.dfn[x] == 0 { r = visit(succ, x, s.w, s.out); V(w: r.w, head: 0, isLoop: false, out: r.out) } else { s };
+    componentBody(succ, v, i + 1, next)
+  };
+
+vertices(positional e) = match e {
+  #vertex(v) -> [v],
+  #component(head: h, body: b) -> [h] ++ b.flatMap(vertices),
+};
+
+// ---- Phase 1: Bourdoncle's recursive strategy --------------------------------
+// Gauss-Seidel in the order, forward projections only, joining at every cell. A
+// component iterates "update the head, then stabilize the body" until the head
+// is unchanged in an iteration after the first; nested components stabilize in
+// full inside each iteration. Changes past the delay widen. A head still
+// changing after headIterations updates sets every cell of its component to the
+// top, since a value below the fixpoint is not sound.
+
+struct Sys { reads: Any, eval: Any, lattice: Lattice }
+
+phase1(positional sys, positional order) =
+  stabilize(sys, order, 0, sys.reads.map(x -> sys.lattice.bottom));
+
+stabilize(positional sys, positional order, positional i, positional cells) =
+  if i >= order::len { cells }
+  else { stabilize(sys, order, i + 1, element(sys, order[i], cells)) };
+
+element(positional sys, positional e, positional cells) = match e {
+  #vertex(v) -> put(cells, v, sys.lattice.join(cells[v], sys.eval(v, cells))),
+  #component(head: h, body: b) -> headLoop(sys, e, h, b, 0, 0, cells),
+};
+
+headLoop(positional sys, positional e, positional h, positional b, positional i, positional changes, positional cells) = {
+  next = sys.lattice.join(cells[h], sys.eval(h, cells));
+  if i > 0 && next == cells[h] { cells }
+  else if i == headIterations { vertices(e).fold(cells, (cs, v) -> put(cs, v, sys.lattice.top)) }
+  else {
+    changed = next != cells[h];
+    c = if changed { changes + 1 } else { changes };
+    value = if !changed { cells[h] } else if c > wideningDelay { sys.lattice.widen(cells[h], next) } else { next };
+    headLoop(sys, e, h, b, i + 1, c, stabilize(sys, b, 0, put(cells, h, value)))
+  }
+};
+
+// ---- Phase 2: narrowing in rounds --------------------------------------------
+// Each round meets every cell with its projection computed from the state at
+// the start of the round (Jacobi), until a round changes nothing or the round
+// budget is spent. Every value on the way is sound, so the budget may stop it
+// anywhere.
+
+phase2(positional sys, positional cells) = rounds(sys, cells, 0);
+
+rounds(positional sys, positional cells, positional r) =
+  if r == narrowingRounds { cells }
+  else {
+    next = for v -> c in cells { sys.lattice.meet(c, sys.eval(v, cells)) };
+    if next == cells { cells } else { rounds(sys, next, r + 1) }
+  };
+
+solve(positional sys) = phase2(sys, phase1(sys, wto(dependencyGraph(sys.reads))));

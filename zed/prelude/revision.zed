@@ -1,0 +1,87 @@
+// prelude unit revision (DESIGN.md sec:constraints, the propagator, written by
+// step M0.5): the tonicity table of the integer operators, the HC4 backward
+// table, and the reductions between the interval facet and the congruence and
+// finite-set facets. The Rust-hosted checker's copy is
+// crates/zedc/src/store/revision.rs.
+//
+// Forward revision maps each operand interval through the operator. An operand
+// that straddles 0 is split at 0 into its sign parts, each part's image is
+// computed from its corners (the operator is monotone on a part of one sign),
+// and the images are joined. Endpoint arithmetic rounds outward, and 0 times an
+// infinite end is 0.
+
+// How z = op(x, y) moves with argument `arg` (0 for x, 1 for y) when the other
+// argument is held fixed.
+tonicity(positional op, positional arg) = match op {
+  #add -> #up,
+  #min -> #up,
+  #max -> #up,
+  #sub -> if arg == 0 { #up } else { #down },
+  #neg -> #down,
+  #mul -> #upWhereOtherNonneg,
+  #pow(k: 0) -> #const,
+  #pow(k:) -> if k mod 2 == 1 { #up } else { #downThenUp },
+  #abs -> #downThenUp,
+  #div -> if arg == 0 { #upWhereOtherNonneg } else { #downWhereOtherNonneg },
+  #mod -> #none,
+};
+
+arity(positional op) = match op { #neg -> 1, #pow(k:) -> 1, #abs -> 1, _ -> 2 };
+
+// The HC4 backward table: for z = op(x, y), the set that argument `arg` is met
+// with, written as interval expressions over x, y and z (the interval
+// operators of the forward pass). Each entry keeps every member of the operand
+// that has a partner in the other operand giving a result in z.
+//
+//   +        x := z - y;           y := z - x
+//   -        x := z + y;           y := x - z
+//   neg      x := -z
+//   *        no bound when 0 is in both z and the other argument; otherwise
+//            z / other over the nonzero sign parts of the other argument,
+//            rounded outward
+//   ** k     k = 0: no bound; odd k: the signed integer k-th roots of z, one
+//            piece; even k: the roots of z cut to 0.., in two pieces of
+//            opposite sign
+//   abs      two pieces, -z and z, with z cut to 0..
+//   min      x := z.lo.. ; and x := z when the other argument lies above z
+//   max      x := ..z.hi ; and x := z when the other argument lies below z
+//   div      x := z * y + [0, max abs(y) - 1]; the divisor: no bound
+//   mod      the divisor: abs(y) > r for r the least remainder in z, when r >= 0;
+//            the dividend: no bound
+//   len      the identity on the cardinality facet
+hc4 = [#add, #sub, #neg, #mul, #pow, #abs, #min, #max, #div, #mod, #len];
+
+// ---- Reductions --------------------------------------------------------------
+// The reduced product of the interval facet with the congruence facet: each
+// piece's endpoints move inward to the nearest members of the class, an empty
+// interval empties the class, and a single value fixes the class to it. An
+// interval cannot always represent the meet exactly (int[..=-4] with 0 mod 2
+// keeps -5), so the reduction tightens the endpoints only.
+
+roundUp(positional v, positional m, positional r) = match v {
+  #ninf -> v, #pinf -> v, _ -> v + (r - v) mod m,
+};
+
+roundDown(positional v, positional m, positional r) = match v {
+  #ninf -> v, #pinf -> v, _ -> v - (v - r) mod m,
+};
+
+reduceCongruence(positional xs, positional c) = match c {
+  #bottom -> [[], #bottom],
+  #class(modulus: m, residue: r) -> {
+    moved = if m == 0 { xs.filter(p -> endLe(p[0], r) && endLe(r, p[1])).map(p -> [r, r]) }
+      else if m == 1 { xs }
+      else { xs.map(p -> [roundUp(p[0], m, r), roundDown(p[1], m, r)]).filter(p -> endLe(p[0], p[1])) };
+    single = moved::len == 1 && moved[0][0] == moved[0][1];
+    [moved, if moved::len == 0 { #bottom } else if single { congruenceMeet(c, congruence(0, moved[0][0])) } else { c }]
+  },
+};
+
+// The reduced product with a finite set of integers: each is met with the
+// other.
+reduceFinite(positional xs, positional s) =
+  if s == #top { [xs, #top] }
+  else {
+    kept = s.filter(v -> xs.any(p -> endLe(p[0], v) && endLe(v, p[1])));
+    [kept.sort.map(v -> [v, v]), kept]   // neighboring points are one piece once normalized
+  };

@@ -5,3 +5,5 @@
 //! code generation. It is structured from L1 as content-hash-keyed incremental queries
 //! (step L1.30). It stays as the bootstrap root after the compiler is rewritten in Zed (row S),
 //! and its interpreter stays as the permanent differential oracle (step L1.37).
+
+pub mod store;
