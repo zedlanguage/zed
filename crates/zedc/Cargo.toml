@@ -1,0 +1,13 @@
+[package]
+name = "zedc"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+zed-kernel.workspace = true
+
+[lints]
+workspace = true

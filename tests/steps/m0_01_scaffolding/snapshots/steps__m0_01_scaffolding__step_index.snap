@@ -1,0 +1,5 @@
+---
+source: tests/steps/m0_01_scaffolding/mod.rs
+expression: "declared_modules().join(\"\\n\")"
+---
+m0_01_scaffolding

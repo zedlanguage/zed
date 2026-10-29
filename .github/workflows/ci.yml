@@ -1,0 +1,21 @@
+# Every test on every commit (DESIGN.md step M0.1). CI=true makes insta fail on a
+# snapshot mismatch instead of writing a pending one.
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

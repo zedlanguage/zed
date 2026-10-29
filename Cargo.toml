@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/zedc",
+    "crates/zed-kernel",
+    "crates/zed-rt",
+    "crates/zed-cert",
+    "tests",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license-file = "LICENSE"
+repository = "https://github.com/zedlanguage/zed"
+publish = false
+
+[workspace.dependencies]
+zed-kernel = { path = "crates/zed-kernel" }
+zed-rt = { path = "crates/zed-rt" }
+zed-cert = { path = "crates/zed-cert" }
+zedc = { path = "crates/zedc" }
+insta = "1.49.0"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

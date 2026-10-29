@@ -1,0 +1,31 @@
+# Every generated file goes under build/ (docs/layout.md).
+/build/
+
+# Rust. Cargo.lock is committed, since the workspace builds binaries.
+/target/
+**/*.rs.bk
+*.pdb
+
+# insta writes a pending snapshot beside the accepted one when a test fails.
+*.snap.new
+*.pending-snap
+
+# Coverage and profiling output, should a tool write it outside build/.
+*.profraw
+*.profdata
+lcov.info
+perf.data
+perf.data.old
+flamegraph.svg
+
+# Python helper scripts.
+__pycache__/
+*.pyc
+
+# Editors and operating systems.
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store

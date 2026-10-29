@@ -1,0 +1,23 @@
+[package]
+name = "zed-tests"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+# One test binary for every step folder, so that adding a step adds a module, not a link.
+[[test]]
+name = "steps"
+path = "steps/main.rs"
+
+[dependencies]
+insta.workspace = true
+zedc.workspace = true
+zed-kernel.workspace = true
+
+[lints]
+workspace = true
