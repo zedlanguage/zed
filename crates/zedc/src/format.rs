@@ -273,7 +273,7 @@ impl Formatter<'_> {
                 if let Some(ports) = &f.ports {
                     let ps: Vec<String> = ports
                         .iter()
-                        .map(|(n, t)| format!("{n}: {}", ty(t, 0)))
+                        .map(|p| format!("{}: {}", p.name, ty(&p.ty, 0)))
                         .collect();
                     out += &format!(" -> ({})", ps.join(", "));
                 }

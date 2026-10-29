@@ -15,5 +15,6 @@ pub mod fence;
 pub mod format;
 pub mod lex;
 pub mod parse;
+pub mod resolve;
 pub mod source;
 pub mod store;

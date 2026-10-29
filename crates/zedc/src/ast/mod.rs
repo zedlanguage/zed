@@ -17,7 +17,7 @@ mod types;
 
 use std::fmt;
 
-pub use stmts::{Function, Stmt, StmtKind, Target};
+pub use stmts::{Function, Port, Stmt, StmtKind, Target};
 pub use types::{Param, Pattern, Type, TypeKind, TypeParam};
 
 use crate::lex::{Part, Span, Tok, Token};
@@ -98,8 +98,8 @@ pub enum ExprKind {
         /// The default.
         default: Box<Expr>,
     },
-    /// A block `{ … }`: its statements in written order, one of them its `return` (none in
-    /// a function's body block that only pushes).
+    /// A block `{ … }`: its statements in written order, except that its `return` is last
+    /// (none in a function's body block that only pushes).
     Block(Vec<Stmt>),
     /// `if c { a } else { b }`; `else if` is an `If` in the `else` branch.
     If {

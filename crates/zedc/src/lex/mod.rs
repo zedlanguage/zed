@@ -16,7 +16,7 @@ pub use name::is_single_script;
 pub use punct::{KEYWORDS, OPERATORS};
 
 /// A byte range of the loaded text.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Span {
     /// The first byte.
     pub start: usize,

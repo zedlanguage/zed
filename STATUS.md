@@ -41,13 +41,13 @@ in docs/layout.md.
 - Done: **L1.12**, declarations (`zedc::ast::stmts`, `zedc::ast::unit`): functions in
   equation and block form with their `test` tables, `main`'s port header, the push `p <- e`,
   and `if`/`else`.
-- Done: **L1.13**, the source formatter (`zedc::format`, `zedc fmt <file>`).
-- Next: L1.14.
+- Done: **L1.14**, name resolution (`zedc::resolve`).
+- Next: L1.15.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 337 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 284 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 357 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 304 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -79,6 +79,7 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.11 | done | `zedc::ast::stmts`: `ExprKind::Block` of `Stmt`s: `a, _ = e;` bindings (`Target::Name`, `Target::Wild`) and `return e;` / `return a, b;`, the trailing expression built as its `return`. A block in expression position exports exactly once: a second export is an error at it, naming the first's byte, and a block with none is an error. A function or push in a block names L1.12, an expression statement `e;` layer L6, a `with` boundary L6. The fences hold one block in expression position, which builds; most blocks sit in `if`, loops and declaration bodies, built with those forms. Negative controls: a second export allowed, a missing export allowed, `_` read as a name, and the first export's position misreported each fail a test; the `_` test found that `Target = Name \| WILD` is one alternative, so a wildcard is told by its missing `Name` child (fixed) |
 | L1.12 | done | `StmtKind::Function` (name, parameters, the port header `-> (stdout: Lines, …)`, an equation body or a block body, the cases of every `test` table in written order), `StmtKind::Push` for `p <- e`, `ExprKind::If` with `else if` nested in the `else` branch, and `zedc::ast::unit` for a whole unit. A body block may export nothing; an `if` branch block, being an expression, must export. `return` at a unit's top level is an error. Every L1 form is now built, so a form not built names its layer from the grammar (`-> T` L10, `t[i] <- e` L7). Of the 136 code fences, 23 build as whole units and 113 name a later-layer form. Negative controls: a body block required to export, a test case's sides swapped, the indexed push read as the whole push, equation and block bodies swapped, the `else` branch read as the `then` branch, and a top-level `return` allowed each fail a test |
 | L1.13 | done | `zedc::format::format` writes a unit in one layout: two-space indentation, one statement per line, a block of one export on one line, the export last, the `test` cases of a function as one table on one line under it, and parentheses only where the grammar needs them (an `if` condition holding a block, a default or lambda body starting with one, a number receiving `.`). Comments are kept with their statements; blank lines collapse to one. `zedc::lex::comments` finds the comments between tokens; `zedc fmt <file>` prints the result or `line:col: error`. The AST builder now stores a block's export last, so a formatted unit builds to the same AST exactly. The 23 fences that build and the one corpus program that builds (09) format to a fixed point with the same AST and comments; the corpus program is already in the layout. Negative controls: no parentheses around a block condition, the export written first, a blank line kept for every newline, a comment on the next line taken as trailing, a left-associative chain's right operand left unparenthesized, `x: x` not shortened, comments dropped, the builder storing the export first, and a three-space indent each fail a test |
+| L1.14 | done | `zedc::resolve::resolve` ties each name a unit uses to its binders (an overload set's arrows together) or to an L1 prelude word, in the order block scopes, top level, prelude; it reports rebinding in one scope, unknown names and types, and prelude words of later layers. Tests: `tests/steps/l01_14_name_resolution/`, one per rule, the building fences and the corpus program. |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -184,6 +185,15 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
   the statement. A block that is an operand opens with a statement at L1, so its export is
   written `return e;`. The builder stores a block's export last, so "the same AST" holds
   exactly.
+- L1.14: where DESIGN.md is silent, recorded there: a function's or lambda's parameters and
+  output ports share one scope with its body block's statements; a parameter's type and
+  default see the parameters but not the body; `test` cases are read around the function;
+  an `else` pattern's `f:` fields are in scope in its default only; functions of one name
+  whose written parameter types differ form an overload set; a member `x.f` is recorded only
+  when `f` is bound in the unit (fields are told apart at L1.16); the L1 prelude words are the
+  numeric casts and `abs`, `len`, `lower`, `upper`, `trim`, `sum` (`count` takes a family, so
+  L3); the L1 type names are `int`, `rat`, `f64`, `bool`, `String`, `Lines`, `Files`.
+  Self-reference resolves to itself; cycles are a later step's.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which lie within the evaluator's own range limit.

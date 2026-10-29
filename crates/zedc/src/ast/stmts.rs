@@ -46,7 +46,7 @@ pub struct Function {
     /// Its parameters.
     pub params: Vec<Param>,
     /// Its output ports, `-> (stdout: Lines)`, if declared.
-    pub ports: Option<Vec<(String, Type)>>,
+    pub ports: Option<Vec<Port>>,
     /// Whether its body is an equation `= e`; otherwise it is a block, which may export
     /// nothing, as a `main` that only pushes does.
     pub equation: bool,
@@ -54,6 +54,17 @@ pub struct Function {
     pub body: Expr,
     /// The cases of its `test` tables, `input -> expected`, in written order.
     pub tests: Vec<(Expr, Expr)>,
+}
+
+/// An output port of a function's header: `stdout: Lines`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Port {
+    /// Its name.
+    pub name: String,
+    /// Its type.
+    pub ty: Type,
+    /// Its text.
+    pub span: Span,
 }
 
 /// A binding target.
@@ -173,10 +184,11 @@ impl Builder<'_> {
                 _ if self.tree.nodes[k].alt == 0 => {
                     let port = |p: &usize| {
                         let pk = self.kids(*p);
-                        Ok((
-                            self.word(self.tree.nodes[pk[0]].start).into(),
-                            self.ty(pk[1])?,
-                        ))
+                        Ok(Port {
+                            name: self.word(self.tree.nodes[pk[0]].start).into(),
+                            ty: self.ty(pk[1])?,
+                            span: self.span(*p),
+                        })
                     };
                     ports = Some(
                         self.kids(k)
@@ -243,8 +255,10 @@ impl fmt::Display for Stmt {
                 let ps: Vec<String> = func.params.iter().map(|p| p.to_string()).collect();
                 write!(f, "(def {} ({})", func.name, ps.join(" "))?;
                 if let Some(ports) = &func.ports {
-                    let ps: Vec<String> =
-                        ports.iter().map(|(n, t)| format!("({n}: {t})")).collect();
+                    let ps: Vec<String> = ports
+                        .iter()
+                        .map(|p| format!("({}: {})", p.name, p.ty))
+                        .collect();
                     write!(f, " (-> {})", ps.join(" "))?;
                 }
                 write!(f, " {}{}", if func.equation { "= " } else { "" }, func.body)?;
