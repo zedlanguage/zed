@@ -1,0 +1,16 @@
+---
+source: tests/steps/l01_05_lexer_strings/holes.rs
+expression: "out.join(\"\\n\")"
+---
+"\"${name\""
+    [7..8] malformed string: the string is not closed
+"\"${x // c}\""
+    [5..11] malformed string: a `//` comment in a hole of a `"` string runs to the end of the line, past the `}`; write `/* … */`
+"\"${x\n}\""
+    [1..4] malformed string: a hole in a `"` string closes on its line
+"\"${\"inner}\""
+    [1..11] malformed string: the `${` hole is not closed
+"\"${x /* open }\""
+    [5..15] the block comment is not closed (1 `*/` missing)
+"\"\"\"\n  ${x}\n    \"\"\""
+    [4..6] malformed string: this line is indented less than the closing `"""`

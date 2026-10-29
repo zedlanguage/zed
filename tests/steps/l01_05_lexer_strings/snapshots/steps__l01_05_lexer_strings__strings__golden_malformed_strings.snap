@@ -1,0 +1,26 @@
+---
+source: tests/steps/l01_05_lexer_strings/strings.rs
+expression: "out.join(\"\\n\")"
+---
+"\"unclosed"
+    [0..9] malformed string: the string is not closed
+"\"two\nlines\""
+    [0..4] malformed string: a `"` string ends on its line; a string over several lines is written `"""`
+"\"\"\"never closed\n"
+    [0..16] malformed string: the string is not closed
+"\"\\q is not an escape\""
+    [1..3] malformed string: no such escape; the escapes are \n \t \r \0 \\ \" \$ \u{…}
+"\"\\u{110000}\""
+    [1..11] malformed string: this is no Unicode scalar value: a code point is at most 10FFFF and not a surrogate (D800 to DFFF)
+"\"\\u{D800}\""
+    [1..9] malformed string: this is no Unicode scalar value: a code point is at most 10FFFF and not a surrogate (D800 to DFFF)
+"\"\\u0041\""
+    [1..3] malformed string: a code point is written `\u{1F600}`
+"\"\\u{}\""
+    [1..3] malformed string: a code point is written `\u{1F600}`
+"\"\"\"\n    in\n  out\n    \"\"\""
+    [11..13] malformed string: this line is indented less than the closing `"""`
+"\"\"\"\n    in\n\tout\n    \"\"\""
+    [11..12] malformed string: this line is indented less than the closing `"""`
+"\"ends in a backslash\\"
+    [20..21] malformed string: no such escape; the escapes are \n \t \r \0 \\ \" \$ \u{…}

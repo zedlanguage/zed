@@ -4,8 +4,10 @@
 //! Tokens are read by ordered choice, as the lexical grammar orders them. A character no rule
 //! reads is an error at that character, and lexing stops there.
 
+mod comment;
 mod name;
 mod number;
+mod string;
 
 use std::fmt;
 
@@ -38,6 +40,22 @@ pub enum Tok {
     Float(String),
     /// An exact rational, as its decimal text without `_` and the `r` (`0.1`).
     Rat(String),
+    /// A string: its text and its holes, in order, never two text parts in a row.
+    Str(Vec<Part>),
+}
+
+/// A part of a string literal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Part {
+    /// Text, with its escapes decoded and, in a `"""` string, its indentation stripped.
+    Text(String),
+    /// A `${…}` hole: the tokens of its expression, and the span of the whole hole.
+    Hole {
+        /// The tokens between `${` and `}`.
+        tokens: Vec<Token>,
+        /// The span from `$` to `}`.
+        span: Span,
+    },
 }
 
 /// A token and its span.
@@ -58,6 +76,10 @@ pub enum ErrorKind {
     MixedScript(String),
     /// A malformed number, and what is wrong with it.
     BadNumber(String),
+    /// A malformed string, and what is wrong with it.
+    BadString(String),
+    /// A block comment that is not closed.
+    BadComment(String),
 }
 
 /// A lexical error and its span.
@@ -76,6 +98,8 @@ impl fmt::Display for Error {
                 write!(f, "no token starts with {c:?} (U+{:04X})", *c as u32)
             }
             ErrorKind::BadNumber(why) => write!(f, "malformed number: {why}"),
+            ErrorKind::BadString(why) => write!(f, "malformed string: {why}"),
+            ErrorKind::BadComment(why) => write!(f, "{why}"),
             ErrorKind::MixedScript(name) => {
                 write!(
                     f,
@@ -89,15 +113,26 @@ impl fmt::Display for Error {
 
 /// The tokens of `text`, a loaded source text.
 pub fn lex(text: &str) -> Result<Vec<Token>, Error> {
+    lex_from(text, 0)
+}
+
+/// The tokens of `text` from byte `pos` to its end, with spans in `text`.
+fn lex_from(text: &str, mut pos: usize) -> Result<Vec<Token>, Error> {
     let mut out = Vec::new();
-    let mut pos = 0;
     while let Some(c) = text[pos..].chars().next() {
         let start = pos;
         let tok = if matches!(c, ' ' | '\t' | '\r' | '\n') {
             pos += 1;
             None
+        } else if let Some(end) = comment::comment(text, pos) {
+            pos = end?;
+            None
         } else if let Some(number) = number::number(text, pos) {
             let (end, tok) = number?;
+            pos = end;
+            Some(tok)
+        } else if let Some(string) = string::string(text, pos) {
+            let (end, tok) = string?;
             pos = end;
             Some(tok)
         } else if let Some(end) = name::name(text, pos) {
