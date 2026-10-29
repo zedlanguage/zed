@@ -16,7 +16,7 @@ fn plus() -> Term {
     Term::PrimFn(Prim::Add)
 }
 
-fn pf(p: Prim) -> Term {
+pub(super) fn pf(p: Prim) -> Term {
     Term::PrimFn(p)
 }
 
@@ -314,13 +314,13 @@ fn law_14_a_counted_affine_loop_is_one_power_of_its_step() {
 // Law 15: fix runs semi-naive.
 
 /// A relation on the nodes `0..N` as the two-level family `u -> v -> true`.
-const N: i64 = 4;
+pub(super) const N: i64 = 4;
 
-fn nodes() -> Term {
+pub(super) fn nodes() -> Term {
     lit(Value::Family(Family::set(0..N)))
 }
 
-fn relation(pairs: &[(i64, i64)]) -> Term {
+pub(super) fn relation(pairs: &[(i64, i64)]) -> Term {
     let leaves: Vec<_> = pairs
         .iter()
         .map(|&(u, v)| (vec![Value::Int(u), Value::Int(v)], Value::Bool(true)))
@@ -329,7 +329,7 @@ fn relation(pairs: &[(i64, i64)]) -> Term {
 }
 
 /// `r · s`: the pairs `(u, w)` with some `v` such that `(u, v)` is in `r` and `(v, w)` in `s`.
-fn compose(r: Term, s: Term) -> Term {
+pub(super) fn compose(r: Term, s: Term) -> Term {
     fam_with(nodes(), |u| {
         let row = fam_with(nodes(), |w| {
             let via = discard_with(nodes(), |p, _| {
@@ -345,7 +345,7 @@ fn compose(r: Term, s: Term) -> Term {
     })
 }
 
-fn union(a: Term, b: Term) -> Term {
+pub(super) fn union(a: Term, b: Term) -> Term {
     prim(Prim::Union, vec![a, b])
 }
 
@@ -380,7 +380,7 @@ fn semi_naive(e: Term, cand: impl Fn(Term, Term, Term) -> Term) -> Term {
 }
 
 /// Every relation on three of the nodes, then random ones on all four.
-fn relations() -> Vec<Vec<(i64, i64)>> {
+pub(super) fn relations() -> Vec<Vec<(i64, i64)>> {
     let pairs3: Vec<(i64, i64)> = (0..3).flat_map(|u| (0..3).map(move |v| (u, v))).collect();
     let mut out: Vec<Vec<(i64, i64)>> = (0..1u32 << pairs3.len())
         .map(|mask| {

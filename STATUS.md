@@ -10,25 +10,25 @@ in docs/layout.md.
   (kernel reference evaluator), and in the spec, M0.2 and M0.3 (the desugaring rules, spec
   commit e3b217f).
 - In progress: **M0.10**, the finite-model harness, in `tests/steps/m0_10_finite_model_harness/`.
-  Laws 1–20 are done. Next: laws 21–28 (`laws_21_28.rs`), then
+  Laws 1–28 are done. Next:
   `witnesses.rs`, `recursion.rs` (schedules, memo-pull, cycle stall, the nested-fix
   regression) and `smoke.rs`. After that the spec text of M0.10 gets the budget values.
 - After M0.10: M0.5–M0.8, M0.11, then L1.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 112 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 81 step tests: 3 in `m0_01_scaffolding`, 32 in
-`m0_09_kernel_evaluator`, 46 in `m0_10_finite_model_harness`). `cargo fmt --all --check` and
+Last full run: `cargo test --workspace` gave 128 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 97 step tests: 3 in `m0_01_scaffolding`, 32 in
+`m0_09_kernel_evaluator`, 62 in `m0_10_finite_model_harness`). `cargo fmt --all --check` and
 `cargo clippy --workspace --all-targets -- -D warnings` are clean. The steps binary takes
-about 15 s in a debug build.
+about 30 s in a debug build.
 
 ## Steps
 
 | Step | State | Notes |
 |---|---|---|
 | M0.1 | done | workspace (`zedc`, `zed-kernel`, `zed-rt`, `zed-cert`, `zed-tests`), CI workflow, insta snapshots. Both negative controls fail as they should: a corrupted snapshot, and an undeclared step folder |
-| M0.10 | in progress | `zed_kernel::budgets` holds the ladder budgets and the rung 6 instance. `zed_tests::{instances, check, kernel}` hold the enumerators, the equation checker, and the derived forms. Laws 1–20 done |
+| M0.10 | in progress | `zed_kernel::budgets` holds the ladder budgets and the rung 6 instance. `zed_tests::{instances, check, kernel}` hold the enumerators, the equation checker, and the derived forms. Laws 1–28 done |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
