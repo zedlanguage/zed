@@ -15,6 +15,9 @@ mod derived;
 mod laws_01_10;
 mod laws_11_20;
 mod laws_21_28;
+mod recursion;
+mod smoke;
+mod witnesses;
 
 use zed_kernel::Value;
 use zed_kernel::budgets::ENUMERATION_BUDGET;

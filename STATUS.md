@@ -9,17 +9,16 @@ in docs/layout.md.
 - Done: **M0.1** (repository scaffolding), **M0.4** (the corpus, in `zed/corpus/`), **M0.9**
   (kernel reference evaluator), and in the spec, M0.2 and M0.3 (the desugaring rules, spec
   commit e3b217f).
-- In progress: **M0.10**, the finite-model harness, in `tests/steps/m0_10_finite_model_harness/`.
-  Laws 1–28 are done. Next:
-  `witnesses.rs`, `recursion.rs` (schedules, memo-pull, cycle stall, the nested-fix
-  regression) and `smoke.rs`. After that the spec text of M0.10 gets the budget values.
-- After M0.10: M0.5–M0.8, M0.11, then L1.
+- Done: **M0.10**, the finite-model harness (`tests/steps/m0_10_finite_model_harness/`): laws
+  1–28, witness bijectivity, the recursion checks, the metatheory smoke cases; budget values
+  in DESIGN.md M0.10 (spec commit fc58a1f).
+- Next: M0.5–M0.8, M0.11, then L1.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 128 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 97 step tests: 3 in `m0_01_scaffolding`, 32 in
-`m0_09_kernel_evaluator`, 62 in `m0_10_finite_model_harness`). `cargo fmt --all --check` and
+Last full run: `cargo test --workspace` gave 149 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 118 step tests: 3 in `m0_01_scaffolding`, 32 in
+`m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`). `cargo fmt --all --check` and
 `cargo clippy --workspace --all-targets -- -D warnings` are clean. The steps binary takes
 about 30 s in a debug build.
 
@@ -28,7 +27,7 @@ about 30 s in a debug build.
 | Step | State | Notes |
 |---|---|---|
 | M0.1 | done | workspace (`zedc`, `zed-kernel`, `zed-rt`, `zed-cert`, `zed-tests`), CI workflow, insta snapshots. Both negative controls fail as they should: a corrupted snapshot, and an undeclared step folder |
-| M0.10 | in progress | `zed_kernel::budgets` holds the ladder budgets and the rung 6 instance. `zed_tests::{instances, check, kernel}` hold the enumerators, the equation checker, and the derived forms. Laws 1–28 done |
+| M0.10 | done | `zed_kernel::budgets` holds the ladder budgets and the rung 6 instance. `zed_tests::{instances, check, kernel}` hold the enumerators, the equation checker, and the derived forms. Laws 1–28 with a counterexample per side condition; the eight layer-free witness entries with their side-condition counterexamples (truncated division fails the packing inverse on row -1); every schedule agrees on all 512 three-node graphs and 512 random ones, stalls included; smoke cases. Negative control: making an undefined read ignore which `fix` it belongs to fails both nested-fix tests. 11 s in a release build |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
