@@ -1,0 +1,6 @@
+// layer L4
+// negative control: the grammar parses this at L1, but take is an L5 word,
+// so the program, labeled L4, must be reported as a mismatch
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.take(3);
+}

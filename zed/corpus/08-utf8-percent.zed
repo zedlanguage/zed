@@ -1,0 +1,39 @@
+// layer L6
+// 08 percent-decoding fused with UTF-8 decoding: each input line is a
+// percent-encoded string; %XX gives one byte, any other character stands for
+// itself, and runs of bytes are decoded as UTF-8. Two recurrences in sequence
+// (escape skipping, then the UTF-8 decoder state); the plan must fuse them so
+// that neither the token sequence nor the decoder states are materialized.
+// Malformed UTF-8 is dropped, not repaired.
+struct Dec { need: int, cp: int, out: String }   // bytes still owed, code point so far, text emitted at this step
+
+hexVal(positional c) = "0123456789ABCDEF".indexOf(c.upper) else 0;
+
+step(positional d, positional t) = match t {
+  #char(c:) -> Dec(need: 0, cp: 0, out: "${c}"),
+  #byte(b:) -> if d.need == 0 {
+      if b < 128 { Dec(need: 0, cp: 0, out: "${Scalar(b)}") }
+      else if b < 192 { Dec(need: 0, cp: 0, out: "") }              // a stray continuation byte
+      else if b < 224 { Dec(need: 1, cp: b mod 32, out: "") }
+      else if b < 240 { Dec(need: 2, cp: b mod 16, out: "") }
+      else { Dec(need: 3, cp: b mod 8, out: "") }
+    } else {
+      cp = d.cp * 64 + b mod 64;
+      if d.need == 1 { Dec(need: 0, cp: 0, out: "${Scalar(cp)}") }
+      else { Dec(need: d.need - 1, cp:, out: "") }
+    },
+};
+
+decode(positional s) = {
+  skip[i in 0..<s::len] = if s[i] == "%" && skip[i - 1] == 0 { 2 } else { max(skip[i - 1] - 1, 0) }
+    with skip[-1] = 0;                                     // skip[i]: characters after i that belong to i's escape
+  toks = (for i -> c in s where skip[i - 1] == 0 {
+    if c == "%" { #byte(b: hexVal(s[i + 1]) * 16 + hexVal(s[i + 2])) } else { #char(c:) }
+  }).rank;
+  st[k in 0..<toks::len] = step(st[k - 1], toks[k]) with st[-1] = Dec(need: 0, cp: 0, out: "");
+  st.map(d -> d.out).concat("")
+};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.map(l -> decode(l));
+}

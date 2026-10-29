@@ -1,0 +1,12 @@
+// unit json (07-json-parser/json.zed): a JSON subset as struct grammars.
+// Struct grammars are phrase level (whitespace between elements is skipped);
+// the token types below are exact. Strings hold letters, digits and spaces only:
+// grammar blocks have no character-class negation to say "any character but a
+// quote", so the subset is what the grammar notation can state.
+struct KeyVal  grammar { key: JsonStr ":" value: Json }
+struct JsonObj grammar { "{" entries: KeyVal* sep "," "}" }
+struct JsonArr grammar { "[" items: Json* sep "," "]" }
+type JsonStr = String matching grammar { "\"" (alpha | digit | " ")* "\"" };
+type JsonNum = String matching grammar { "-"? digit+ ("." digit+)? };
+type JsonLit = String matching grammar { "true" | "false" | "null" };
+type Json    = JsonObj | JsonArr | JsonStr | JsonNum | JsonLit;

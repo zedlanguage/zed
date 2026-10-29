@@ -1,0 +1,19 @@
+// layer L20
+// 30 a tiny client/server app written as one program: the client reads
+// requests, the server unit answers them from its price table. At L24 the
+// compiler splits the program at the keypath cut between `req` and
+// `answer(req)`, so a request crosses to the server and a response back, each
+// as the text its struct grammar serializes to (grammar-serialized boundary).
+// Below L24 the program runs in one process, and the split build must print
+// the same lines; a boundary that loses a field or reorders responses shows.
+// Units: the package root is 30-client-server/, so `api` is
+// 30-client-server/api.zed and `server` is 30-client-server/server.zed.
+import api.{Request};
+import server.{answer};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.map(l -> match Request.parse(l) {
+    #syntaxError(pos:) -> "bad request at ${pos}",
+    req -> answer(req).serialize,
+  });
+}

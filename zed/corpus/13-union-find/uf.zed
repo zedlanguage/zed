@@ -1,0 +1,15 @@
+// unit uf (13-union-find/uf.zed): connected components of the nodes 0..<n.
+// Each node's label falls to the least label among its neighbours until no
+// label changes; the step is monotone (labels only fall) on a finite carrier,
+// so the loop is a fix, and the result is each node's least node id in its
+// component.
+struct Edge { a: int, b: int }
+
+components(positional n, positional edges) = loop {
+  label' = for v in 0..<n {
+    min(label[v], (for e in edges where e.a == v || e.b == v {
+      label[if e.a == v { e.b } else { e.a }]
+    }) >< min else label[v])
+  } with label = for v in 0..<n { v };
+  until label' == label;
+}.label;

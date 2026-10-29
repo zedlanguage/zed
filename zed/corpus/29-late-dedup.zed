@@ -1,0 +1,28 @@
+// layer L7
+// 29 late-arrival sensor dedup: readings "id t value" arrive on a stream out
+// of event-time order and with retransmitted duplicates. Per tumbling
+// event-time window of 10, each sensor id keeps its first arrival (dedup);
+// a reading that arrives after its window has closed is dropped by the
+// window's late policy. The window closes when the watermark (the largest
+// event time seen so far, minus the allowed lateness 5) reaches its end, so
+// later waves overtake a held window and the output port re-sequences them in
+// window order. A policy that keeps late readings, or closes windows early,
+// prints different lines.
+// `.window(width:, time:, lateness:, late:)` is the signature this corpus
+// assumes (its real signature is written at step L7.5), as in 17 plus the
+// lateness bound and the policy #drop.
+struct Reading { id: String, t: int, v: int }
+
+parse(positional l) = {
+  w = l.split(" ");
+  Reading(id: w[0] else "", t: int(w[1] else "") else -1, v: int(w[2] else "") else 0)
+};
+
+main(sensors: Stream(String)) -> (stdout: Lines) {
+  rs   = sensors.map(l -> parse(l)).where(r -> r.t >= 0);
+  wins = rs.window(width: 10, time: r -> r.t, lateness: 5, late: #drop);
+  stdout <- for w -> win in wins {
+    firsts = win.group(r -> r.id).map(g -> g.first);
+    "${w}: ${(for id -> r in firsts { "${id}=${r.v}" }).concat(" ")}"
+  };
+}

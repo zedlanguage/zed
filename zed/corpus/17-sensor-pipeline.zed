@@ -1,0 +1,29 @@
+// layer L7
+// 17 a streaming sensor pipeline: readings "t sensor value" in time order,
+// malformed lines dropped, then per tumbling window of 10 time units and per
+// sensor the count, sum and maximum. The same text runs over a finite file and
+// over a live stream: the compiler turns the batch plan into a streaming one,
+// each window emitted as soon as the input frontier passes its end. A window
+// emitted early misses readings; one held too long delays every line after it.
+// `.window(width:, time:)` is the signature this corpus assumes (its real
+// signature is written at step L7.5): tumbling windows keyed by start time
+// (time div width * width), absent when empty, each holding its readings
+// under their source keys.
+struct Reading { t: int, sensor: String, v: int }
+
+parse(positional l) = {
+  w = l.split(" ");
+  Reading(t: int(w[0] else "") else -1, sensor: w[1] else "", v: int(w[2] else "") else -1)
+};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  rs   = stdin.map(l -> parse(l)).where(r -> r.t >= 0 && r.v >= 0);
+  wins = rs.window(width: 10, time: r -> r.t);
+  stdout <- for w -> win in wins {
+    parts = for s -> g in win.group(r -> r.sensor) {
+      vs = g.map(r -> r.v);
+      "${s} n=${vs.count} sum=${vs.sum} max=${vs >< max else 0}"
+    };
+    "${w}: ${parts.concat("; ")}"
+  };
+}

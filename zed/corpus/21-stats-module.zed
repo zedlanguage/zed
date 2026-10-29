@@ -1,0 +1,19 @@
+// layer L3
+// 21 a stats module with demand-pruned outputs: stats(xs, ys) returns one
+// record display { mean:, sd:, cov: } whose fields share the centered
+// sub-graph dx. main reads only mean and sd, so the planner must keep the
+// shared dx, compute sd from it once, and prune cov and everything only cov
+// needs (my, dy). Wrong sharing computes dx twice; wrong pruning computes cov.
+// The printed numbers check the values; `zed build --explain-plan` checks
+// the pruning (no node for cov, my or dy).
+// Units: the package root is 21-stats-module/, so `stats` is
+// 21-stats-module/stats.zed.
+// Input lines: "x y", decimal numbers.
+import stats.{stats};
+
+col(positional ls, positional k) = ls.map(l -> f64(l.split(" ")[k] else "") else 0.0);
+
+main(stdin: Lines) -> (stdout: Lines) {
+  s = stats(col(stdin, 0), col(stdin, 1));
+  stdout <- ["mean ${s.mean}", "sd ${s.sd}"];
+}

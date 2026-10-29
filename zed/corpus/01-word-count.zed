@@ -1,0 +1,9 @@
+// layer L4
+// 01 word count: how often each word occurs, case folded, one line per word in
+// code-point order of the folded word. Breaks if grouping (L4) merges or splits
+// groups wrongly, or if the push into stdout loses the key order.
+main(stdin: Lines) -> (stdout: Lines) {
+  words  = stdin.concat(" ").split(" ").where(w -> w != "");   // empty pieces from runs of spaces dropped
+  counts = words.group(w -> w.lower).count;                    // Lower ->? int
+  stdout <- for w -> n in counts { "${w} ${n}" };
+}

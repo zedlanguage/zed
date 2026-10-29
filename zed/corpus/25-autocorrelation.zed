@@ -1,0 +1,13 @@
+// layer L5
+// 25 autocorrelation r(l) = sum over i of x[i] * x[i + l], for the lags
+// 0..=3. The pairing is the rank zip of xs with xs shifted by l
+// (xs.drop(l).rank, ranks 0..<n - l), so the valid range of i, 0..<n - l, is
+// implicit: it is the intersection of the two rank domains that the equality
+// join keeps. A plan that pads the short side, or keeps xs's full domain,
+// prints different sums.
+// Input: one line of integers.
+main(stdin: Lines) -> (stdout: Lines) {
+  xs = (stdin[0] else "").split(" ").map(s -> int(s) else 0);
+  ac(positional l) = xs.zip(xs.drop(l).rank).map(((a, b)) -> a * b).sum;
+  stdout <- for l in 0..=3 { "${l} ${ac(l)}" };
+}

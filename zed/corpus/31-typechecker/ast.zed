@@ -1,0 +1,30 @@
+// unit ast (31-typechecker/ast.zed): the expression language and its parser.
+// Expr is a recursive union; #bad stands for a right side that does not
+// reduce to exactly one expression.
+type Expr = #num(n: int) | #bool(b: bool) | #var(name: String)
+          | #add(l: Expr, r: Expr) | #eq(l: Expr, r: Expr)
+          | #cond(c: Expr, t: Expr, e: Expr) | #bad;
+
+struct Decl { line: int, name: String, expr: Expr }
+
+push(positional st, positional tok) =
+  if tok == "+" || tok == "==" {
+    a = st[st::len - 2] else #bad;
+    b = st.last else #bad;
+    st.take(max(0, st::len - 2)) ++ [if tok == "+" { #add(l: a, r: b) } else { #eq(l: a, r: b) }]
+  }
+  else if tok == "?" {
+    c = st[st::len - 3] else #bad;
+    t = st[st::len - 2] else #bad;
+    e = st.last else #bad;
+    st.take(max(0, st::len - 3)) ++ [#cond(c:, t:, e:)]
+  }
+  else if tok == "true" || tok == "false" { st ++ [#bool(b: tok == "true")] }
+  else { match int(tok) { #invalid -> st ++ [#var(name: tok)], n -> st ++ [#num(n:)] } };
+
+parseDecl(positional line, positional l) = {
+  w  = l.split(" ");
+  st = w.drop(2).foldl([], (s, tok) -> push(s, tok));
+  ok = (w[1] else "") == "=" && st::len == 1;
+  Decl(line:, name: w[0] else "", expr: if ok { st.first else #bad } else { #bad })
+};

@@ -1,0 +1,6 @@
+// layer L7
+// negative control: #gpu as the argument of target(…) is the L27 target value
+main(stdin: Lines) -> (stdout: Lines) {
+  lens = stdin.map(l -> l.len) with target(#gpu);
+  stdout <- lens.map(n -> "${n}");
+}

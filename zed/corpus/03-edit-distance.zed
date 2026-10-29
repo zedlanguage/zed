@@ -1,0 +1,32 @@
+// layer L6
+// 03 edit distance (Levenshtein), written top-down as a plain recursion that
+// the compiler must memoize (memo-pull), and bottom-up as an indexed family
+// whose dependencies give an anti-diagonal wavefront. The two must converge
+// and print the same number; an unmemoized top-down plan is exponential.
+cost(positional a, positional b, positional i, positional j) =
+  if a[i - 1] == b[j - 1] { 0 } else { 1 };
+
+topDown(positional a, positional b) = {
+  go(positional i, positional j) =
+    if i == 0 { j }
+    else if j == 0 { i }
+    else { min(min(go(i - 1, j) + 1, go(i, j - 1) + 1), go(i - 1, j - 1) + cost(a, b, i, j)) };
+  go(a::len, b::len)
+};
+
+bottomUp(positional a, positional b) = {
+  d[i in 0..=a::len][j in 0..=b::len] =
+    if i == 0 { j }
+    else if j == 0 { i }
+    else { min(min(d[i - 1][j] + 1, d[i][j - 1] + 1), d[i - 1][j - 1] + cost(a, b, i, j)) };
+  d[a::len][b::len]
+};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- for l in stdin {
+    w = l.split(" ");
+    a = w[0] else "";
+    b = w[1] else "";
+    "${a} ${b} ${topDown(a, b)} ${bottomUp(a, b)}"
+  };
+}

@@ -1,0 +1,12 @@
+0 temp 20
+1 hum 55
+3 temp 22
+9 temp 25
+10 hum 60
+12 temp x
+14 temp 19
+15 hum 58
+27 temp 30
+29 hum 61
+bad line
+31 temp 18

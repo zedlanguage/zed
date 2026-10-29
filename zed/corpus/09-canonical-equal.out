@@ -1,0 +1,6 @@
+same: Jean-Luc Picard | jeanluc picard
+same: New York | new-york
+different: New York | Newark
+different: ab-c | A B C D
+same:  | - -
+different: Zed | zed!

@@ -1,0 +1,11 @@
+open alice
+open bob
+dep alice 100
+dep bob 50
+wd bob 80
+dep bob 100
+wd alice 30
+open carol
+dep carol 10
+wd carol 10
+wd alice 60

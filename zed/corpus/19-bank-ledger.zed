@@ -1,0 +1,48 @@
+// layer L6
+// 19 a bank ledger whose failures are values: a withdrawal larger than the
+// balance makes the account's balance #insufficient(tx:, short:), and that
+// value passes through every later transaction on the account (an operand
+// that selects no arrow of `-` or `+` propagates unchanged) and surfaces in
+// the final report, while the other accounts are unaffected. patch is total
+// on a carrier holding the failure, so the per-account failure is a running
+// value (sec:reduction, unlifted-carrier rule, point 3); `closing.sum` would be
+// a static error, since #insufficient selects no arrow of (+), so the program
+// splits the level and reduces the good side. A plan that drops the failure,
+// or lets it poison the total of the good accounts, prints something else.
+// Input lines: "open id", "dep id amount", "wd id amount".
+type Tx = #open(id: String) | #deposit(id: String, amt: int) | #withdraw(id: String, amt: int) | #bad;
+
+parse(positional l) = {
+  w = l.split(" ");
+  kind = w[0] else "";
+  id = w[1] else "";
+  amt = int(w[2] else "") else 0;
+  if kind == "open" { #open(id:) }
+  else if kind == "dep" { #deposit(id:, amt:) }
+  else if kind == "wd" { #withdraw(id:, amt:) }
+  else { #bad }
+};
+
+edits(positional tx, positional t) = match tx {
+  #open(id:) -> { id -> #insert(0) },
+  #deposit(id:, amt:) -> { id -> #update(b -> b + amt) },
+  #withdraw(id:, amt:) -> { id -> #update(b -> if b is int && amt > b { #insufficient(tx: t, short: amt - b) } else { b - amt }) },
+  #bad -> {},
+};
+
+show(positional id, positional v) = match v {
+  #insufficient(tx:, short:) -> "${id}: insufficient at tx ${tx}, short ${short}",
+  b -> "${id}: ${b}",
+};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  txs  = stdin.map(l -> parse(l));
+  book = loop t {
+    accts' = accts.patch(edits(txs[t], t)) with accts = {};
+    while t in txs::domain;
+  };
+  closing = book.accts;
+  good    = closing.where(v -> v is int);
+  report  = (for id -> v in closing { show(id, v) }).rank;
+  stdout <- report ++ ["total ${good.sum} over ${good::card} accounts, ${closing::card - good::card} failed"];
+}

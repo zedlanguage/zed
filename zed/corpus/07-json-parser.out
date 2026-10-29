@@ -1,0 +1,7 @@
+{"a":1,"b":[true,false,null],"c":{"d":"x y"}}
+[1,-2.5,"three",[],{}]
+error at 8
+"just a string"
+error at 5
+error at 5
+42

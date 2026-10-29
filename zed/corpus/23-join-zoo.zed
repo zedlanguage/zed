@@ -1,0 +1,37 @@
+// layer L5
+// 23 the join zoo: orders and payments keyed by order id, and every region
+// triple over (left only, both, right only): inner, left, right, outer, the
+// two differences, the symmetric difference as a disjoint concatenation (++ of
+// two key sets proved disjoint, overlap #assertEmpty), and a split by key
+// range rejoined with ++ (the range facts k < 10 and k >= 10 make the overlap
+// region statically empty). A plan that keeps or drops the wrong region
+// prints a different line. variants/23-join-zoo-remap.zed spells the four
+// joins as output-keypath constraints (L8).
+// Input lines: "O id amount" (an order) or "P id amount" (a payment).
+struct Row { side: String, id: int, n: int }
+
+parse(positional l) = {
+  w = l.split(" ");
+  Row(side: w[0] else "", id: int(w[1] else "") else -1, n: int(w[2] else "") else 0)
+};
+
+opt(positional x) = match x { #notFound -> "-", n -> "${n}" };
+
+ids(positional s) = (for k in s { "${k}" }).concat(" ");
+
+main(stdin: Lines) -> (stdout: Lines) {
+  rows   = stdin.map(l -> parse(l));
+  orders = rows.where(r -> r.side == "O").group(r -> r.id).map(g -> g.map(r -> r.n).sum);
+  pays   = rows.where(r -> r.side == "P").group(r -> r.id).map(g -> g.map(r -> r.n).sum);
+  inner  = for k -> a in orders where k in pays::domain { "inner ${k} ${a} ${pays[k]}" };
+  left   = for k -> a in orders { "left ${k} ${a} ${opt(pays[k])}" };
+  right  = for k -> p in pays { "right ${k} ${opt(orders[k])} ${p}" };
+  outer  = for k in orders::domain.union(pays::domain) { "outer ${k} ${opt(orders[k])} ${opt(pays[k])}" };
+  onlyL  = orders::domain.diff(pays::domain);
+  onlyR  = pays::domain.diff(orders::domain);
+  low    = for k -> a in orders where k < 10 { a };
+  high   = for k -> a in orders where k >= 10 { a };
+  stdout <- inner.rank ++ left.rank ++ right.rank ++ outer.rank
+         ++ ["unpaid ${ids(onlyL)}", "unordered ${ids(onlyR)}", "symdiff ${ids(onlyL ++ onlyR)}",
+             "rejoined ${if low ++ high == orders { "equal" } else { "different" }}"];
+}

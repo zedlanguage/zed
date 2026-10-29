@@ -1,0 +1,20 @@
+bad : error
+base : int
+broken : error
+flag : bool
+ghost : error
+loopA : unknown
+loopB : unknown
+mixed : error
+pick : int
+total : int
+worse : error
+x : error
+y : error
+line 5: type error in bad
+line 8: duplicate x (first at line 7)
+line 10: loopA is cyclic
+line 11: loopB is cyclic
+line 12: unbound missing
+line 13: malformed broken
+line 14: type error in mixed

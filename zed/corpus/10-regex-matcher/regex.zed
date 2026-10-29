@@ -1,0 +1,28 @@
+// unit regex (10-regex-matcher/regex.zed): regular expressions and a matcher
+// by Brzozowski derivatives. Characters are one-character Strings, compared in
+// code-point order.
+type Re = #void | #eps | #lit(c: String) | #range(lo: String, hi: String)
+        | #seq(a: Re, b: Re) | #alt(a: Re, b: Re) | #star(r: Re);
+
+nullable(positional re) = match re {
+  #void -> false,
+  #eps -> true,
+  #lit(c: _) -> false,
+  #range(lo: _, hi: _) -> false,
+  #seq(a:, b:) -> nullable(a) && nullable(b),
+  #alt(a:, b:) -> nullable(a) || nullable(b),
+  #star(r: _) -> true,
+};
+
+deriv(positional re, positional ch) = match re {
+  #void -> #void,
+  #eps -> #void,
+  #lit(c:) -> if c == ch { #eps } else { #void },
+  #range(lo:, hi:) -> if lo <= ch && ch <= hi { #eps } else { #void },
+  #seq(a:, b:) -> if nullable(a) { #alt(a: #seq(a: deriv(a, ch), b:), b: deriv(b, ch)) }
+                  else { #seq(a: deriv(a, ch), b:) },
+  #alt(a:, b:) -> #alt(a: deriv(a, ch), b: deriv(b, ch)),
+  #star(r:) -> #seq(a: deriv(r, ch), b: #star(r:)),
+};
+
+matches(positional re, positional s) = nullable(s.foldl(re, (r, c) -> deriv(r, "${c}")));

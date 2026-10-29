@@ -19,6 +19,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # The corpus outputs against their Python reference scripts (step M0.4).
+      - run: sh zed/corpus/refcheck.sh
 
   # Line coverage of the compiler crates, printed in the job log. No threshold yet: the plan
   # asks for near-full coverage, judged per step from this report.

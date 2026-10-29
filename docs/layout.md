@@ -15,7 +15,9 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
   zed-cert/           the independent certificate checker; depends on zed-kernel only
 zed/                  Zed source code
   prelude/            the normative prelude (from step M0.5)
-  corpus/             the 31 corpus programs, one folder each (step M0.4)
+  corpus/             the 31 corpus programs (step M0.4): NN-name.zed with its .in and .out,
+                      a folder NN-name/ for the other units of a multi-unit program,
+                      ref/NN.py computing each .out, variants/, controls/, LEDGER.md
   compiler/           the compiler written in Zed (row S); empty until then
 tests/                the step tests (the `zed-tests` crate)
   src/                helpers shared by every step

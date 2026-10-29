@@ -1,0 +1,20 @@
+// layer L19
+// 10 a statically known regular expression specialized to a matcher: `matches`
+// is a Brzozowski-derivative interpreter for any expression; `mix` (the first
+// Futamura projection) specializes it to the static pattern for HH:MM times,
+// ([01][0-9]|2[0-3]):[0-5][0-9], so the residual program is a matcher with no
+// expression left in it. A wrong specialization changes some answer below.
+// Units: the package root is 10-regex-matcher/, so `regex` is
+// 10-regex-matcher/regex.zed.
+import regex.{matches};
+
+hhmm = #seq(a: #alt(a: #seq(a: #range(lo: "0", hi: "1"), b: #range(lo: "0", hi: "9")),
+                    b: #seq(a: #lit(c: "2"), b: #range(lo: "0", hi: "3"))),
+            b: #seq(a: #lit(c: ":"),
+                    b: #seq(a: #range(lo: "0", hi: "5"), b: #range(lo: "0", hi: "9"))));
+
+isTime = mix(matches, hhmm);          // matches with its first parameter fixed to hhmm
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.map(l -> if isTime(l) { "yes ${l}" } else { "no ${l}" });
+}

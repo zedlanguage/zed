@@ -1,0 +1,15 @@
+// unit server (30-client-server/server.zed): the server's state and logic.
+// Nothing here reads a port, so the split can place it anywhere.
+import api.{Get, Buy, Price, Missing, Count};
+
+prices = { "apple" -> 3, "pear" -> 5, "plum" -> 2 };
+
+quote(positional item, positional qty) = match prices[item] {
+  #notFound -> Missing(item:),
+  p -> Price(item:, amount: Count("${p * qty}")),
+};
+
+answer(positional req) = match req {
+  Get(item:) -> quote(item, 1),
+  Buy(item:, qty:) -> quote(item, int(qty) else 0),
+};

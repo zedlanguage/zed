@@ -1,0 +1,6 @@
+3 [a] [b] [c]
+2 ["x,y"] [z]
+2 ["he said ""hi, you"""] [2]
+3 [] [] []
+1 [plain]
+1 ["unclosed,quote,here]

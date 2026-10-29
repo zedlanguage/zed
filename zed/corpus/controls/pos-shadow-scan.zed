@@ -1,0 +1,6 @@
+// layer L3
+// positive control: the program binds scan, so its use resolves to the program, not to the L5 word
+main(stdin: Lines) -> (stdout: Lines) {
+  scan = stdin.map(l -> l.len);
+  stdout <- scan.map(n -> "${n}");
+}

@@ -1,0 +1,13 @@
+// layer L4
+// 02 histogram of word lengths, written twice: as a scatter (a group-by on the
+// length) and as a filter (for each length, count the words of that length).
+// The two plans must converge on the lengths both produce; the program prints
+// both counts side by side, so a wrong grouping or a wrong filter shows as a
+// mismatch in one row.
+main(stdin: Lines) -> (stdout: Lines) {
+  words  = stdin.concat(" ").split(" ").where(w -> w != "");
+  histA  = words.group(w -> w.len).count;                         // scatter: int ->? int
+  maxLen = words.map(w -> w.len) >< max else 0;                   // #empty on no words
+  histB  = for n in 1..=maxLen { words.where(w -> w.len == n).count };   // filter: int[1..=maxLen] -> int
+  stdout <- for n in 1..=maxLen { "${n} ${histA[n] else 0} ${histB[n]}" };
+}

@@ -1,0 +1,14 @@
+total = base 2 +
+base = 40
+flag = total 42 ==
+pick = flag total 0 ?
+bad = flag 1 +
+worse = bad 1 +
+x = 1
+x = true
+y = x 1 +
+loopA = loopB 1 +
+loopB = loopA
+ghost = missing 1 +
+broken = 1 2
+mixed = flag 1 true ?

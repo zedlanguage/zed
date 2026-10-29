@@ -1,0 +1,4 @@
+0: hum n=1 sum=55 max=55; temp n=3 sum=67 max=25
+10: hum n=2 sum=118 max=60; temp n=1 sum=19 max=19
+20: hum n=1 sum=61 max=61; temp n=1 sum=30 max=30
+30: temp n=1 sum=18 max=18

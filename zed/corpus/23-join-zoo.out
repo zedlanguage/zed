@@ -1,0 +1,20 @@
+inner 3 100 100
+inner 20 5 5
+left 3 100 100
+left 7 50 -
+left 12 75 -
+left 20 5 5
+right 1 - 9
+right 3 100 100
+right 15 - 20
+right 20 5 5
+outer 1 - 9
+outer 3 100 100
+outer 7 50 -
+outer 12 75 -
+outer 15 - 20
+outer 20 5 5
+unpaid 7 12
+unordered 1 15
+symdiff 1 7 12 15
+rejoined equal

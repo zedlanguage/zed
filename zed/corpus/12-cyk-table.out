@@ -1,0 +1,7 @@
+balanced 1 ()
+balanced 4 (())()
+unbalanced 1 (()
+unbalanced 0 )(
+balanced 5 ((()()))
+unbalanced 0 
+unbalanced 3 (()))(()

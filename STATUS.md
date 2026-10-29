@@ -6,14 +6,14 @@ in docs/layout.md.
 
 ## Current position
 
-- Done: **M0.1** (repository scaffolding), **M0.9** (kernel reference evaluator), and in the
-  spec, M0.2 and M0.3 (the desugaring rules, spec commit e3b217f).
+- Done: **M0.1** (repository scaffolding), **M0.4** (the corpus, in `zed/corpus/`), **M0.9**
+  (kernel reference evaluator), and in the spec, M0.2 and M0.3 (the desugaring rules, spec
+  commit e3b217f).
 - In progress: **M0.10**, the finite-model harness, in `tests/steps/m0_10_finite_model_harness/`.
   Laws 1–10 are done. Next: laws 11–20 (`laws_11_20.rs`), 21–28 (`laws_21_28.rs`), then
   `witnesses.rs`, `recursion.rs` (schedules, memo-pull, cycle stall, the nested-fix
   regression) and `smoke.rs`. After that the spec text of M0.10 gets the budget values.
-- After M0.10: M0.4 (the corpus, being written by a background agent into the session
-  scratchpad), M0.5–M0.8, M0.11, then L1.
+- After M0.10: M0.5–M0.8, M0.11, then L1.
 
 ## Test baseline
 
@@ -29,6 +29,7 @@ about 5 s in a debug build.
 |---|---|---|
 | M0.1 | done | workspace (`zedc`, `zed-kernel`, `zed-rt`, `zed-cert`, `zed-tests`), CI workflow, insta snapshots. Both negative controls fail as they should: a corrupted snapshot, and an undeclared step folder |
 | M0.10 | in progress | `zed_kernel::budgets` holds the ladder budgets and the rung 6 instance. `zed_tests::{instances, check, kernel}` hold the enumerators, the equation checker, and the derived forms. Laws 1–10 done |
+| M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
 ## Decisions made
@@ -74,6 +75,15 @@ about 5 s in a debug build.
   the spec.
 
 ## Open points
+
+- Corpus outputs that rest on rules the spec has not fixed yet; each is a choice stated in
+  the program's `ref/NN.py`, to be revisited at the step that fixes the rule: the `.window`
+  signature and late-drop rule (programs 17, 18, 29; step L7.5), where a parse error is
+  reported (7, 30), `serialize` writing no whitespace, `++` on int-keyed sets reading in key
+  order, `zip` keeping the overlap of two rank ranges (25), stdin keyed by rank from 0.
+  The programs are only parsed and layer-checked so far, not type-checked or run.
+- Programs 14 and 15 are labeled L7 for incremental reuse (L7.6), though their syntax only
+  reaches L6.
 
 - Apply the batch of resolutions from the six-part read of DESIGN.md (scan files in the
   session scratchpad), prose and grammar together, before the steps they affect.

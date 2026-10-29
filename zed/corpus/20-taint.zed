@@ -1,0 +1,12 @@
+// layer L13
+// 20 input-sanitization taint demo: lines from stdin carry taint(#user), and
+// the page written to stdout demands taint(#clean). Interpolation is `++`, so
+// taint flows through it; the commented line is the compile error (taint(#user)
+// reaches a taint(#clean) sink), and the line after it is the fix: `sanitize`
+// is the only edge that lowers the taint. variants/20-taint-error.zed is the
+// program with the error left in. This corpus assumes sanitize HTML-escapes
+// the five characters & < > " ' (the library fixes its text at step L13.2).
+main(stdin: Lines with taint(#user)) -> (stdout: Lines with taint(#clean)) {
+  // stdout <- stdin.map(l -> "<li>${l}</li>");             // ✗ taint(#user) reaches a taint(#clean) port
+  stdout <- stdin.map(l -> "<li>${sanitize(l)}</li>");       // ✓
+}

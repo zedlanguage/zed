@@ -1,0 +1,12 @@
+// layer L14
+// 06, the standard-library method `matmul` (sec:linalg). Input and output:
+// those of 06-matrix-multiply.
+main(stdin: Lines) -> (stdout: Lines) {
+  rows = stdin.map(l -> l.split(" ").map(t -> f64(t) else 0.0));
+  hdr  = (stdin[0] else "").split(" ").map(t -> int(t) else 0);
+  n = hdr[0] else 0;
+  m = hdr[1] else 0;
+  a = rows.slice(1, 1 + n);
+  b = rows.slice(1 + n, 1 + n + m);
+  stdout <- a.matmul(b).map(r -> r.map(v -> "${v}").concat(" "));
+}

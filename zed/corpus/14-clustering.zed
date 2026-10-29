@@ -1,0 +1,33 @@
+// layer L7
+// 14 agglomerative clustering (single linkage) of points in the plane, down to
+// k clusters. Each generation recomputes the closest pair of clusters over all
+// pairs of points; between generations only the pairs touching the two merged
+// clusters change, so the incremental engine (memo cache keyed by fact address,
+// L7.6) must reuse every other pair's result. A stale reuse merges the wrong
+// pair and prints different clusters.
+// Input: k on the first line, then one point "x y" per line. Output: each
+// cluster as its least point index followed by its members.
+struct Pt { x: int, y: int }
+
+d2(positional p, positional q) = (p.x - q.x) ** 2 + (p.y - q.y) ** 2;
+
+closest(positional pts, positional label) =      // (distance², cluster, cluster), least first
+  (for i -> p in pts, j -> q in pts where i < j && label[i] != label[j] {
+    (d2(p, q), min(label[i], label[j]), max(label[i], label[j]))
+  }) >< min else #none;
+
+merge(positional label, positional link) = match link {
+  #none -> label,
+  (_, a, b) -> label.map(l -> if l == b { a } else { l }),
+};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  k   = int(stdin[0] else "") else 1;
+  pts = stdin.drop(1).map(l -> { w = l.split(" "); Pt(x: int(w[0] else "") else 0, y: int(w[1] else "") else 0) });
+  run = loop t {
+    label' = merge(label, closest(pts, label)) with label = for i -> _ in pts { i };
+    while t < pts::len - k;
+  };
+  clusters = run.label.group(l -> l);
+  stdout <- for c -> ms in clusters { "${c}: ${(for i -> _ in ms { "${i}" }).concat(" ")}" };
+}

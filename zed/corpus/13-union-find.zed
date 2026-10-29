@@ -1,0 +1,23 @@
+// layer L6
+// 13 union-find through the library path: the program states connectivity
+// (edges, then queries) and calls the library's `components`, whose loop is a
+// monotone label-lowering fixpoint; the certified implementation behind it
+// (path compression, union by rank) must give the same labels. A wrong
+// certificate or a wrong fixpoint test gives a wrong yes/no or count below.
+// Units: the package root is 13-union-find/, so `uf` is 13-union-find/uf.zed.
+// Input lines: "a b" adds an edge; "? a b" asks whether a and b are connected
+// (queries are answered against all edges).
+import uf.{components, Edge};
+
+num(positional t) = int(t else "") else 0;
+
+main(stdin: Lines) -> (stdout: Lines) {
+  ws    = stdin.map(l -> l.split(" "));
+  edges = (for w in ws where w[0] != "?" { Edge(a: num(w[0]), b: num(w[1])) }).rank;
+  qs    = (for w in ws where w[0] == "?" { Edge(a: num(w[1]), b: num(w[2])) }).rank;
+  n     = (edges.map(e -> max(e.a, e.b)) >< max else -1) + 1;
+  label = components(n, edges);
+  same(positional x, positional y) = (label[x] else x) == (label[y] else y);   // a node on no edge is alone
+  roots = (0..<n).where(v -> label[v] == v).count;
+  stdout <- qs.map(q -> "${q.a} ${q.b} ${if same(q.a, q.b) { "yes" } else { "no" }}") ++ ["components ${roots}"];
+}

@@ -1,0 +1,13 @@
+// unit stats (21-stats-module/stats.zed): population mean, standard deviation
+// and covariance. Each field of the result is pruned on its own; dx is shared
+// by sd and cov.
+stats(positional xs, positional ys) {
+  n   = f64(xs::len);
+  mx  = xs.sum / n;
+  my  = ys.sum / n;
+  dx  = xs.map(x -> x - mx);
+  dy  = ys.map(y -> y - my);
+  sd  = (dx.map(d -> d * d).sum / n).sqrt;
+  cov = (for i -> d in dx { d * (dy[i] else 0.0) }).sum / n;
+  return { mean: mx, sd:, cov: };
+}

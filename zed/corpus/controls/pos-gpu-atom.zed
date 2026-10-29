@@ -1,0 +1,6 @@
+// layer L3
+// positive control: #gpu outside target(…) is an ordinary atom; @require's target: and target(…) are the only positions it counts in
+main(stdin: Lines) -> (stdout: Lines) {
+  kinds = stdin.map(l -> if l == "gpu" { #gpu } else { #other });
+  stdout <- kinds.map(k -> match k { #gpu -> "accelerator", _ -> "host" });
+}

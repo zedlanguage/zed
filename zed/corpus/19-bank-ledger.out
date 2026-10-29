@@ -1,0 +1,4 @@
+alice: 10
+bob: insufficient at tx 4, short 30
+carol: 0
+total 10 over 2 accounts, 1 failed

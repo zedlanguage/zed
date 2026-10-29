@@ -1,0 +1,16 @@
+// layer L5
+// 04 running variance: after each input value, the mean and the population
+// variance of the values so far, from three prefix sums (count, sum, sum of
+// squares). Tupling synthesis must fuse the three scans into one scan over a
+// triple; the float `+` scans are exact prefix sums rounded once (sec:reduction),
+// so the printed digits do not depend on the plan.
+main(stdin: Lines) -> (stdout: Lines) {
+  xs = stdin.map(l -> f64(l) else 0.0);
+  n  = xs.map(x -> 1.0).scan((+));
+  s1 = xs.scan((+));
+  s2 = xs.map(x -> x * x).scan((+));
+  stdout <- for i -> x in xs {
+    m = s1[i] / n[i];
+    "${x} ${m} ${s2[i] / n[i] - m * m}"
+  };
+}

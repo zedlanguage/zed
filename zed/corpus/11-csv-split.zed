@@ -1,0 +1,30 @@
+// layer L5
+// 11 a state-machine text pass parallelized by scan: splitting CSV lines into
+// fields, where a comma inside double quotes does not separate. The quote state
+// at each character is a three-state machine; each character is mapped to its
+// transition table and the tables are composed by a scan, which is associative,
+// so the pass runs in parallel. A wrong composition order misplaces a field
+// boundary. States: 0 outside quotes, 1 inside quotes, 2 a quote seen inside
+// quotes (the end of the quoted part, or the first half of "").
+struct T3 { a: int, b: int, c: int }               // next state from state 0, 1, 2
+
+pick(positional t, positional s) = if s == 0 { t.a } else if s == 1 { t.b } else { t.c };
+compose(positional f, positional g) =               // f, then g
+  T3(a: pick(g, f.a), b: pick(g, f.b), c: pick(g, f.c));
+
+quote = T3(a: 1, b: 2, c: 1);
+other = T3(a: 0, b: 1, c: 0);
+
+fields(positional l) = {
+  after = l.map(c -> if c == "\"" { quote } else { other }).scan(compose).map(t -> t.a);
+  sep   = for i -> c in l { c == "," && (after[i - 1] else 0) != 1 };   // the state before i
+  cuts  = [-1] ++ (for i -> s in sep where s { i }).rank ++ [l::len];
+  for k in 0..<cuts::len - 1 { l.slice((cuts[k] else 0) + 1, cuts[k + 1] else 0) }
+};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.map(l -> {
+    fs = fields(l);
+    "${fs::len} ${fs.map(f -> "[${f}]").concat(" ")}"
+  });
+}

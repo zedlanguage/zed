@@ -1,0 +1,34 @@
+// layer L6
+// 12 a grammar-table recurrence: CYK recognition of balanced brackets with the
+// grammar in Chomsky normal form
+//   S -> L R | L T | S S,   T -> S R,   L -> "(",   R -> ")".
+// cyk[w][i] is the set of nonterminals deriving the substring of width w at i.
+// Each cell reads cells of smaller width only, so the table is a definedness
+// fixpoint the planner schedules by width; a wrong dependency order reads an
+// undefined cell. The program prints whether the line is balanced and how many
+// of its substrings are.
+struct Cell { s: bool, t: bool, l: bool, r: bool }
+
+noCell = Cell(s: false, t: false, l: false, r: false);
+leaf(positional c) = Cell(s: false, t: false, l: c == "(", r: c == ")");
+join2(positional x, positional y) =
+  Cell(s: x.l && (y.r || y.t) || x.s && y.s, t: x.s && y.r, l: false, r: false);
+orCell(positional x, positional y) =
+  Cell(s: x.s || y.s, t: x.t || y.t, l: x.l || y.l, r: x.r || y.r);
+
+table(positional s) = {
+  n = s::len;
+  cyk[w in 1..=n][i in 0..=n - w] =
+    if w == 1 { leaf(s[i]) }
+    else { (for k in 1..<w { join2(cyk[k][i], cyk[w - k][i + k]) }) >< orCell else noCell };
+  cyk
+};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.map(l -> {
+    cyk = table(l);
+    whole = if l::len == 0 { false } else { (cyk[l::len][0] else noCell).s };
+    count = (for w -> row in cyk { row.where(c -> c.s).count }).sum;
+    "${if whole { "balanced" } else { "unbalanced" }} ${count} ${l}"
+  });
+}

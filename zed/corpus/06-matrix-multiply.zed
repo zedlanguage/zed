@@ -1,0 +1,19 @@
+// layer L5
+// 06 matrix multiply, method register: entry (i, k) of A·B is the zip of row i
+// of A with column k of B, multiplied and summed (an equality join on ranks,
+// then a `+` reduction). The calculus-register spelling (L8) and the stdlib
+// method (L14) are in variants/; all three must converge.
+// Input: a line "n m p", then n rows of A (m numbers each), then m rows of B
+// (p numbers each). Output: the n rows of A·B.
+main(stdin: Lines) -> (stdout: Lines) {
+  rows = stdin.map(l -> l.split(" ").map(t -> f64(t) else 0.0));
+  hdr  = (stdin[0] else "").split(" ").map(t -> int(t) else 0);   // stdin is keyed by line rank from 0
+  n = hdr[0] else 0;
+  m = hdr[1] else 0;
+  p = hdr[2] else 0;
+  a = rows.slice(1, 1 + n);
+  b = rows.slice(1 + n, 1 + n + m);
+  col(positional k) = for r in b { r[k] else 0.0 };
+  prod = for i -> row in a { for k in 0..<p { row.zip(col(k)).map(((x, y)) -> x * y).sum } };
+  stdout <- prod.map(r -> r.map(v -> "${v}").concat(" "));
+}

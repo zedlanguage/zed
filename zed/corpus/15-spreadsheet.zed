@@ -1,0 +1,28 @@
+// layer L7
+// 15 a spreadsheet engine, the L7 flagship demo scaled down: each input line
+// edits one cell ("name = formula", a formula being terms joined by "+", each
+// an integer or a cell name), and after every edit the program prints every
+// cell's value. Values are a recursive definition over the sheet (a cell reads
+// the cells its formula names), so one edit dirties only its downstream cone;
+// the incremental engine must recompute that cone and reuse the rest. A wrong
+// dirty set prints a stale value. An empty cell reads as 0; the input has no
+// reference cycle.
+edit(positional l) = {
+  parts = l.split(" = ");
+  { (parts[0] else "") -> #set(parts[1] else "0") }
+};
+
+valueOf(positional sheet, positional name) = match sheet[name] {
+  #notFound -> 0,
+  f -> f.split("+").map(t -> int(t) else valueOf(sheet, t)).sum,
+};
+
+show(positional sheet) = (for c -> _ in sheet { "${c}=${valueOf(sheet, c)}" }).concat(" ");
+
+main(stdin: Lines) -> (stdout: Lines) {
+  run = loop t {
+    sheet' = sheet.patch(edit(stdin[t])) with sheet = {};
+    while t in stdin::domain;
+  };
+  stdout <- run::frames.map(f -> show(f.sheet));
+}

@@ -1,0 +1,35 @@
+// unit check (31-typechecker/check.zed): the two passes over Expr. Every
+// operator's transfer is monotone in the lattice #unknown < #int, #bool <
+// #error: an #error operand gives #error, else an #unknown operand gives
+// #unknown, else the rule decides, so the fix in main converges.
+fv(positional e) = match e {
+  #var(name:) -> [name],
+  #add(l:, r:) -> fv(l) ++ fv(r),
+  #eq(l:, r:) -> fv(l) ++ fv(r),
+  #cond(c:, t:, e: f) -> fv(c) ++ fv(t) ++ fv(f),
+  _ -> [],
+};
+
+lift(positional a, positional b, positional ok) =
+  if a == #error || b == #error { #error }
+  else if a == #unknown || b == #unknown { #unknown }
+  else { ok };
+
+arith(positional a, positional b) = lift(a, b, if a == #int && b == #int { #int } else { #error });
+same(positional a, positional b)  = lift(a, b, if a == b { #bool } else { #error });
+cond(positional c, positional a, positional b) =
+  lift(c, lift(a, b, a), if c == #bool && a == b { a } else { #error });
+
+infer(positional e, positional ty) = match e {
+  #num(n:) -> #int,
+  #bool(b:) -> #bool,
+  #var(name:) -> match ty[name] { #notFound -> #error, t -> t },
+  #add(l:, r:) -> arith(infer(l, ty), infer(r, ty)),
+  #eq(l:, r:) -> same(infer(l, ty), infer(r, ty)),
+  #cond(c:, t:, e: f) -> cond(infer(c, ty), infer(t, ty), infer(f, ty)),
+  #bad -> #error,
+};
+
+tyName(positional t) = match t {
+  #int -> "int", #bool -> "bool", #unknown -> "unknown", _ -> "error",
+};

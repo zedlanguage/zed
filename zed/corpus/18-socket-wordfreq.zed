@@ -1,0 +1,19 @@
+// layer L7
+// 18 windowed word frequency over a socket: each message "t word word ..."
+// arrives on the stream port `sock`; per tumbling window of 5 time units the
+// program prints each word's count (case folded, in word order). A window's
+// counts are final only when the frontier passes the window's end, so a
+// window's line must come out then: not before (it would miss words), and not
+// only when the socket closes (frontier completion). The test harness feeds
+// `sock` from 18-socket-wordfreq.in in arrival order. `.window` as in 17.
+main(sock: Stream(String)) -> (stdout: Lines) {
+  msgs = sock.map(l -> {
+    w = l.split(" ");
+    (int(w[0] else "") else -1, w.drop(1))
+  }).where(m -> m[0] >= 0);
+  wins = msgs.window(width: 5, time: m -> m[0]);
+  stdout <- for w -> win in wins {
+    counts = win.flatMap(m -> m[1]).where(x -> x != "").group(x -> x.lower).count;
+    "${w}: ${(for x -> n in counts { "${x}=${n}" }).concat(" ")}"
+  };
+}

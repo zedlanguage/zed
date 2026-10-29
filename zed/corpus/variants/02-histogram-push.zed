@@ -1,0 +1,13 @@
+// layer L7
+// 02, keyed-push spelling (sec:push_pull): hist[w.len] <- 1 into an
+// accumulator declared with reducer((+)). It elaborates to the same grouping
+// remap as program 02's histA, so the three spellings must converge.
+// Input and output: those of 02-histogram.
+main(stdin: Lines) -> (stdout: Lines) {
+  words  = stdin.concat(" ").split(" ").where(w -> w != "");
+  hist: int ->? int with reducer((+));
+  for w in words { hist[w.len] <- 1; };
+  maxLen = words.map(w -> w.len) >< max else 0;
+  histB  = for n in 1..=maxLen { words.where(w -> w.len == n).count };
+  stdout <- for n in 1..=maxLen { "${n} ${hist[n] else 0} ${histB[n]}" };
+}

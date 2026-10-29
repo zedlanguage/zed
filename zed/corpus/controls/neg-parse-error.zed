@@ -1,0 +1,6 @@
+// layer L3
+// negative control: a binding with no `;` before the next statement must fail to parse at every ring
+main(stdin: Lines) -> (stdout: Lines) {
+  lens = stdin.map(l -> l.len)
+  stdout <- lens.map(n -> "${n}");
+}

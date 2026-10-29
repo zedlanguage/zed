@@ -1,0 +1,26 @@
+// layer L7
+// 16 a reactive game tick: input events "tick player dx" move players along a
+// track 0..=10. Events of one tick coalesce: the keyed pushes into `moves` are
+// summed per player and tick by the declared reducer, and each tick (one
+// generation) applies the coalesced move once, clamped to the track. Applying
+// the events one by one instead clamps in between and prints other positions.
+struct Ev { tick: int, player: String, dx: int }
+
+parse(positional l) = {
+  w = l.split(" ");
+  Ev(tick: int(w[0] else "") else 0, player: w[1] else "", dx: int(w[2] else "") else 0)
+};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  evs = stdin.map(l -> parse(l));
+  moves: int ->? String ->? int with reducer((+));
+  for e in evs { moves[e.tick][e.player] <- e.dx; };
+  players = evs.group(e -> e.player);
+  last = evs.map(e -> e.tick) >< max else -1;
+  game = loop t {
+    pos' = for p -> x in pos { min(10, max(0, x + (moves[t][p] else 0))) }
+      with pos = for p -> _ in players { 5 };
+    while t <= last;
+  };
+  stdout <- for t -> f in game::frames { "${t} ${(for p -> x in f.pos { "${p}=${x}" }).concat(" ")}" };
+}

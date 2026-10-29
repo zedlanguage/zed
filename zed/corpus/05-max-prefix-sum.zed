@@ -1,0 +1,12 @@
+// layer L5
+// 05 maximum prefix sum, twice: directly as the maximum of a `+` scan, and as
+// a left fold whose state is (running sum, best so far). The fold is serial as
+// written; combiner synthesis must find its associative combiner
+// ((s1, b1), (s2, b2)) -> (s1 + s2, max(b1, s1 + b2)) for it to run in
+// parallel, and a wrong combiner prints a different second number.
+main(stdin: Lines) -> (stdout: Lines) {
+  xs     = stdin.map(l -> int(l) else 0);
+  direct = max(0, xs.scan((+)) >< max else 0);           // the empty prefix counts: never below 0
+  total, best = xs.foldl((0, 0), ((s, b), x) -> (s + x, max(b, s + x)));
+  stdout <- ["${direct} ${best} ${total}"];
+}

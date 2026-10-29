@@ -1,0 +1,20 @@
+// layer L6
+// 26 heat diffusion on a rod, as one indexed family over time and position:
+// u[t][i] reads u[t - 1] at i - 1, i, i + 1, so the dependence cone allows
+// wavefront skewing (tiles of time steps over position), and the ends are
+// held fixed (Dirichlet boundary). Integer arithmetic keeps the result exact:
+// each step adds (left - 2*mid + right) div 4, Euclidean div, so a skewed plan
+// that reads a cell of the wrong time step prints different rows.
+// Input: the first line is the number of steps T, the second the initial row.
+// Output: the rows at t = 0, 1, 2, then the row at t = T.
+main(stdin: Lines) -> (stdout: Lines) {
+  steps = int(stdin[0] else "") else 0;
+  init  = (stdin[1] else "").split(" ").map(s -> int(s) else 0);
+  n     = init::len;
+  u[t in 0..=steps][i in 0..<n] =
+    if t == 0 { init[i] }
+    else if i == 0 || i == n - 1 { u[t - 1][i] }
+    else { u[t - 1][i] + (u[t - 1][i - 1] - 2 * u[t - 1][i] + u[t - 1][i + 1]) div 4 };
+  row(positional t) = "t=${t}: ${(for i in 0..<n { "${u[t][i]}" }).concat(" ")}";
+  stdout <- [row(0), row(1), row(2), row(steps)];
+}

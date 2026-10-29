@@ -1,0 +1,13 @@
+// layer L5
+// 22 top-K by score: the three highest scores, ties broken by name. `.take(3)`
+// after `.sort(...)` lets the planner keep only a 3-entry heap instead of
+// sorting everything (sort pruning); a pruned plan that keeps the wrong
+// entries on a tie, or drops the tie order, prints a different list.
+// Input lines: "name score".
+struct Entry { name: String, score: int }
+
+main(stdin: Lines) -> (stdout: Lines) {
+  es  = stdin.map(l -> { w = l.split(" "); Entry(name: w[0] else "", score: int(w[1] else "") else 0) });
+  top = es.sort(desc e -> e.score, asc e -> e.name).take(3);
+  stdout <- for i -> e in top { "${i + 1} ${e.name} ${e.score}" };
+}

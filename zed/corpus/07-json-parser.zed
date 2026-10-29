@@ -1,0 +1,16 @@
+// layer L20
+// 07 JSON parser: one struct-grammar declaration gives the parser and the
+// serializer (sec:tooling). Each input line is one document; the program prints
+// its canonical form (serialize: no insignificant whitespace) or the error
+// position of the line's #syntaxError. A bad line does not stop the next one,
+// and a round trip that loses or reorders anything shows in the output.
+// Units: the package root is the directory 07-json-parser/, so the unit
+// 07-json-parser/json.zed is named `json` and `import json.{Json};` resolves to it.
+import json.{Json};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.map(l -> match Json.parse(l) {
+    #syntaxError(pos:) -> "error at ${pos}",
+    doc -> doc.serialize,
+  });
+}

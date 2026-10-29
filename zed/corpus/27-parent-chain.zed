@@ -1,0 +1,30 @@
+// layer L6
+// 27 a parent-chain walk in three spellings that must converge to one plan:
+// plain recursion, a fixpoint loop, and an indexed family of ancestors at
+// distance k (pointer jumping is a valid plan for all three). Each node prints
+// its root and its depth from the three spellings; any disagreement prints
+// MISMATCH. Input lines: "child parent", where parent "-" marks a root.
+struct Link { child: String, parent: String }
+
+main(stdin: Lines) -> (stdout: Lines) {
+  links = stdin.map(l -> { w = l.split(" "); Link(child: w[0] else "", parent: w[1] else "-") });
+  par   = links.group(e -> e.child).map(g -> g.first.parent);
+  up(positional v) = if (par[v] else "-") == "-" { v } else { par[v] else v };
+  n = par::card;
+
+  rootRec(positional v) = if up(v) == v { v } else { rootRec(up(v)) };
+  depthRec(positional v) = if up(v) == v { 0 } else { 1 + depthRec(up(v)) };
+
+  rootLoop(positional v0) = loop { v' = up(v) with v = v0; until v' == v; }.v;
+
+  anc[k in 0..=n][v in par::domain] = if k == 0 { v } else { up(anc[k - 1][v]) };
+  rootIdx(positional v) = anc[n][v];
+  depthIdx(positional v) = (0..<n).where(k -> anc[k][v] != anc[k + 1][v]).count;
+
+  stdout <- for v -> _ in par {
+    r = rootRec(v);
+    d = depthRec(v);
+    ok = r == rootLoop(v) && r == rootIdx(v) && d == depthIdx(v);
+    "${v} ${r} ${d}${if ok { "" } else { " MISMATCH" }}"
+  };
+}

@@ -1,0 +1,5 @@
+// layer L4
+// negative control: sort is an L5 word, so this program, labeled L4, must be reported as a mismatch
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.sort(asc l -> l);
+}

@@ -1,0 +1,13 @@
+// layer L8
+// 06, calculus-register spelling: one remap joins A and B on the inner level c
+// and reduces it away (sec:joins). Input and output: those of 06-matrix-multiply.
+main(stdin: Lines) -> (stdout: Lines) {
+  rows = stdin.map(l -> l.split(" ").map(t -> f64(t) else 0.0));
+  hdr  = (stdin[0] else "").split(" ").map(t -> int(t) else 0);
+  n = hdr[0] else 0;
+  m = hdr[1] else 0;
+  a = rows.slice(1, 1 + n);
+  b = rows.slice(1 + n, 1 + n + m);
+  prod = (a, b) into (r -> k -> c >< (+) -> a[r][c] * b[c][k]);
+  stdout <- prod.map(r -> r.map(v -> "${v}").concat(" "));
+}

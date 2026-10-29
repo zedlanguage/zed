@@ -1,0 +1,26 @@
+// layer L8
+// 23, calculus register: the four joins as output-keypath constraints in a
+// remap of the pair (orders, pays). i is orders' key and j is pays' key (each
+// bound by its use as an index); `i && j` keeps the matched region, `i && ?j`
+// adds the left-only region with pays[j] as #notFound, `j && ?i` the
+// right-only, and `i || j` all three. Must print what 23-join-zoo.zed prints
+// for those four blocks.
+struct Row { side: String, id: int, n: int }
+
+parse(positional l) = {
+  w = l.split(" ");
+  Row(side: w[0] else "", id: int(w[1] else "") else -1, n: int(w[2] else "") else 0)
+};
+
+opt(positional x) = match x { #notFound -> "-", n -> "${n}" };
+
+main(stdin: Lines) -> (stdout: Lines) {
+  rows   = stdin.map(l -> parse(l));
+  orders = rows.where(r -> r.side == "O").group(r -> r.id).map(g -> g.map(r -> r.n).sum);
+  pays   = rows.where(r -> r.side == "P").group(r -> r.id).map(g -> g.map(r -> r.n).sum);
+  inner  = (orders, pays) into (i && j -> "inner ${i} ${orders[i]} ${pays[j]}");
+  left   = (orders, pays) into (i && ?j -> "left ${i} ${orders[i]} ${opt(pays[j])}");
+  right  = (orders, pays) into (j && ?i -> "right ${j} ${opt(orders[i])} ${pays[j]}");
+  outer  = (orders, pays) into (i || j -> "outer ${i} ${opt(orders[i])} ${opt(pays[j])}");
+  stdout <- inner.rank ++ left.rank ++ right.rank ++ outer.rank;
+}

@@ -1,0 +1,62 @@
+// layer L6
+// 31 a tiny typechecker, shaped like the compiler: declarations "name = rpn",
+// where the right side is in postfix (integers, true, false, names, and the
+// operators +, == and ? (if: cond then else)). The checker
+//  1. builds the symbol table as `group` by name followed by a
+//     singleton-or-#collision fold (the checked form that a sub-proof
+//     @injective elaborates to, written out, since a bare unwitnessed rekey
+//     is rejected); each #collision is a diagnostic;
+//  2. makes two passes over the recursive union Expr: free names (unbound
+//     names are diagnostics) and type inference;
+//  3. runs inference as one fix over the lattice #unknown < #int, #bool <
+//     #error, so declarations may come in any order, and a cycle stays
+//     #unknown (a diagnostic);
+//  4. keys every diagnostic by its fact address in the checked program, (the
+//     declaration's line, the check's name), and prints them in that order.
+// Units: the package root is 31-typechecker/, so `ast` is
+// 31-typechecker/ast.zed and `check` is 31-typechecker/check.zed.
+import ast.{Decl, parseDecl};
+import check.{fv, infer, tyName};
+
+symbol(positional g) = g.foldl(#none, (acc, d) -> match acc {
+  #none -> #one(decl: d),
+  #one(decl:) -> #collision(first: decl.line, again: [d.line]),
+  #collision(first:, again:) -> #collision(first:, again: again ++ [d.line]),
+});
+
+note(positional cond, positional msg) = if cond { [msg] } else { [] };
+
+main(stdin: Lines) -> (stdout: Lines) {
+  decls = for i -> l in stdin { parseDecl(i + 1, l) };
+  syms  = decls.group(d -> d.name).map(g -> symbol(g));
+
+  ty = loop {
+    ty' = for n -> s in syms {
+      match s { #one(decl:) -> infer(decl.expr, ty), _ -> #error }
+    } with ty = for n -> _ in syms { #unknown };
+    until ty' == ty;
+  }.ty;
+
+  bound(positional x) = match syms[x] { #one(decl:) -> true, _ -> false };
+  clean(positional x) = bound(x) && ty[x] != #error;
+
+  diagsOf(positional d) = {
+    s    = syms[d.name];
+    mine = match s { #one(decl:) -> decl.line == d.line, _ -> false };
+    dup  = match s {
+      #collision(first:, again:) -> note(d.line != first, "line ${d.line}: duplicate ${d.name} (first at line ${first})"),
+      _ -> [],
+    };
+    names = fv(d.expr);
+    ub    = names.where(x -> syms[x] is #notFound);
+    cyc   = note(mine && ty[d.name] == #unknown, "line ${d.line}: ${d.name} is cyclic");
+    mal   = note(d.expr == #bad, "line ${d.line}: malformed ${d.name}");
+    typ   = note(mine && d.expr != #bad && ty[d.name] == #error && names.where(x -> clean(x) == false).count == 0,
+                 "line ${d.line}: type error in ${d.name}");
+    unb   = note(ub.count > 0, "line ${d.line}: unbound ${ub.concat(", ")}");
+    cyc ++ dup ++ mal ++ typ ++ unb       // the check names in code-point order: cyclic, duplicate, malformed, type, unbound
+  };
+
+  typings = for n -> _ in syms { "${n} : ${tyName(ty[n])}" };
+  stdout <- typings.rank ++ decls.flatMap(d -> diagsOf(d)).rank;
+}

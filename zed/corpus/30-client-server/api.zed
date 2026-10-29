@@ -1,0 +1,12 @@
+// unit api (30-client-server/api.zed): the messages, as struct grammars. A
+// struct grammar is phrase level (whitespace between elements is skipped);
+// serialize writes no whitespace, so every response grammar puts a
+// punctuation token between adjacent words.
+type Word  = String matching grammar { alpha+ };
+type Count = String matching grammar { digit+ };
+struct Get     grammar { "get" item: Word }
+struct Buy     grammar { "buy" item: Word qty: Count }
+type Request   = Get | Buy;
+struct Price   grammar { item: Word "=" amount: Count }
+struct Missing grammar { "missing:" item: Word }
+type Response  = Price | Missing;

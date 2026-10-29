@@ -1,0 +1,54 @@
+// layer L6
+// 28 a precedence-climbing evaluator as a loop over tokens with operand and
+// operator stacks. Operators + - * ^ (^ right associative, binding tightest);
+// all arithmetic wraps modulo 65536 with Euclidean mod, so a negative
+// intermediate wraps to a nonnegative value (a truncating mod prints a
+// negative number). The loop runs for t in 0..=toks::len: steps 0..<len push
+// tokens and step len flushes the operator stack, so the end test is
+// inclusive; an exclusive test leaves operators unapplied.
+// Input: one expression per line, tokens separated by single spaces.
+struct S { vals: [int], ops: [String] }
+
+wrap(positional x) = x mod 65536;
+
+prec(positional o) = if o == "+" || o == "-" { 1 } else if o == "*" { 2 } else { 3 };
+
+isOp(positional tok) = tok == "+" || tok == "-" || tok == "*" || tok == "^";
+
+pow(positional a, positional b) = if b <= 0 { 1 } else { wrap(a * pow(a, b - 1)) };
+
+apply(positional o, positional a, positional b) = wrap(
+  if o == "+" { a + b } else if o == "-" { a - b } else if o == "*" { a * b } else { pow(a, b) });
+
+reduce1(positional s) = {
+  b = s.vals.last else 0;
+  a = s.vals[s.vals::len - 2] else 0;
+  o = s.ops.last else "+";
+  S(vals: s.vals.take(s.vals::len - 2) ++ [apply(o, a, b)], ops: s.ops.take(s.ops::len - 1))
+};
+
+pops(positional s, positional o) =
+  if s.ops::len == 0 { false }
+  else if prec(s.ops.last else "+") > prec(o) { true }
+  else { prec(s.ops.last else "+") == prec(o) && o != "^" };
+
+reduceFor(positional s, positional o) = if pops(s, o) { reduceFor(reduce1(s), o) } else { s };
+
+flush(positional s) = if s.ops::len == 0 { s } else { flush(reduce1(s)) };
+
+step(positional s, positional tok) =
+  if isOp(tok) { r = reduceFor(s, tok); S(vals: r.vals, ops: r.ops ++ [tok]) }
+  else { S(vals: s.vals ++ [wrap(int(tok) else 0)], ops: s.ops) };
+
+evalLine(positional l) = {
+  toks = l.split(" ");
+  run = loop t {
+    s' = if t == toks::len { flush(s) } else { step(s, toks[t] else "") } with s = S(vals: [], ops: []);
+    while t <= toks::len;
+  };
+  run.s.vals.first else 0
+};
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.map(l -> "${l} = ${evalLine(l)}");
+}

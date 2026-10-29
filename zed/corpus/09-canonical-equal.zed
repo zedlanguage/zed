@@ -1,0 +1,16 @@
+// layer L3
+// 09 string equality against a canonical form: two names are the same when
+// they agree after case folding and removing hyphens and spaces. The canonical
+// forms are never needed as strings, so the plan must compare them as streams
+// (fused, early exit at the first difference) without building either one.
+// Input lines: two names separated by " | ".
+canon(positional s) = s.lower.split("-").concat("").split(" ").concat("");
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.map(l -> {
+    parts = l.split(" | ");
+    a = parts[0] else "";
+    b = parts[1] else "";
+    if canon(a) == canon(b) { "same: ${a} | ${b}" } else { "different: ${a} | ${b}" }
+  });
+}
