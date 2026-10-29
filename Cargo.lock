@@ -183,6 +183,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -214,6 +229,7 @@ name = "zed-tests"
 version = "0.0.0"
 dependencies = [
  "insta",
+ "unicode-normalization",
  "zed-kernel",
  "zedc",
 ]
@@ -223,5 +239,6 @@ name = "zedc"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "unicode-normalization",
  "zed-kernel",
 ]

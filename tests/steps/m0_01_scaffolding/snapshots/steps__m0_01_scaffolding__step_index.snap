@@ -2,6 +2,7 @@
 source: tests/steps/m0_01_scaffolding/mod.rs
 expression: "declared_modules().join(\"\\n\")"
 ---
+l01_01_source_loading
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization

@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 blake3 = "1"
+unicode-normalization = "0.1.26"
 zed-kernel.workspace = true
 
 [lints]

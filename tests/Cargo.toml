@@ -18,6 +18,7 @@ path = "steps/main.rs"
 insta.workspace = true
 zedc.workspace = true
 zed-kernel.workspace = true
+unicode-normalization = "0.1.26"
 
 [lints]
 workspace = true

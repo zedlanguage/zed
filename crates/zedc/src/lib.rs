@@ -10,4 +10,5 @@ pub mod address;
 pub mod axioms;
 pub mod canon;
 pub mod cost;
+pub mod source;
 pub mod store;
