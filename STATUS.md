@@ -57,3 +57,18 @@ Last full run: `CI=true cargo test --workspace` gave 55 passed and 0 failed (19 
 
 - Apply the batch of resolutions from the six-part read of DESIGN.md (scan files in the
   session scratchpad), prose and grammar together, before the steps they affect.
+
+## Postmortem amendments (spec commit after 678e2d1)
+
+The postmortem of related languages (array, dataflow, Datalog and incremental languages; report kept outside the repo) proposed nine amendments. Applied to DESIGN.md:
+- A3: `@export("c", "symbol")` lets C call pure Zed functions (sec:ffi; tested in L7.4).
+- A1: `zed build --explain-plan` (L5.10).
+- A2: a lowering stays within a constant factor of `f::cost`; `@cost(depth: …)`.
+- A6: recompute or incremental is chosen per wave by cost; the L7 gate adds a 50%-dirty check.
+- A7: the L5 ratios are one core against one core, and efficiency is measured against the Rust baseline. L5.14 now agrees with the gate table.
+
+Not applied:
+- A4 (name a first domain): a product decision with no effect on what is built.
+- A5 (license): the repo already has LICENSE; the choice belongs to the owner.
+- A8 (two-process test at L7): distribution is post-v1 in sec:targets.
+- A9 (count programs needing generations): no decision depends on the count.
