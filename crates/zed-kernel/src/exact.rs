@@ -54,9 +54,10 @@ fn any_below(acc: &Acc, i: u32) -> bool {
 
 /// Rounds the magnitude `acc × 2^-1074` to the nearest double, ties to even.
 fn round(acc: &Acc) -> f64 {
-    let Some(top) = (0..LIMBS).rev().find(|&i| acc[i] != 0) else {
-        return 0.0;
-    };
+    let top = (0..LIMBS)
+        .rev()
+        .find(|&i| acc[i] != 0)
+        .expect("exact_sum rounds only a nonzero magnitude");
     let high = top as u32 * 64 + 63 - acc[top].leading_zeros();
     if high < 53 {
         // Below 2^53 units the value is a subnormal or the smallest binade, exactly
@@ -194,6 +195,18 @@ mod tests {
         assert_eq!(exact_sum(&[two53, 3.0]), two53 + 4.0);
         // A tie broken by a sticky bit far below rounds up.
         assert_eq!(exact_sum(&[two53, 1.0, 1e-300]), two53 + 2.0);
+    }
+
+    #[test]
+    fn carries_and_round_up_into_the_next_binade() {
+        // Three values with all-ones mantissas fill bits 0..159 of the accumulator; one more
+        // unit carries through two whole limbs, giving exactly 2^159 units, 2^-915.
+        let ones = |biased: u64| f64::from_bits(biased << 52 | ((1 << 52) - 1));
+        let xs = [ones(1), ones(54), ones(107), f64::from_bits(1)];
+        assert_eq!(exact_sum(&xs), 2f64.powi(-915));
+        // 2^54 - 1 is a tie between 2^54 - 2, whose mantissa is odd, and 2^54.
+        let two54 = 18014398509481984.0;
+        assert_eq!(exact_sum(&[two54 - 2.0, 1.0]), two54);
     }
 
     #[test]

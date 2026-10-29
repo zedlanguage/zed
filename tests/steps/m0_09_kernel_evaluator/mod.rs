@@ -666,3 +666,211 @@ fn ill_typed_terms_are_reported() {
         assert_eq!(eval(&t).unwrap_err(), KernelError::Type(msg.into()));
     }
 }
+
+#[test]
+fn a_signup_rule_uses_every_comparison() {
+    // Accept an applicant aged 18 to 65 with a name, or any applicant on the invite list.
+    let rule = |name: &str, age: i64, invited: bool| {
+        let in_range = prim(
+            Prim::And,
+            vec![
+                prim(Prim::Ge, vec![lit(age), lit(18)]),
+                prim(Prim::Le, vec![lit(age), lit(65)]),
+            ],
+        );
+        let named = prim(Prim::Ne, vec![lit(name), lit("")]);
+        let ok = prim(
+            Prim::Or,
+            vec![prim(Prim::And, vec![in_range, named]), lit(invited)],
+        );
+        eval(&ok).unwrap()
+    };
+    assert_eq!(rule("ada", 36, false), Value::Bool(true));
+    assert_eq!(rule("", 36, false), Value::Bool(false));
+    assert_eq!(rule("tim", 70, false), Value::Bool(false));
+    assert_eq!(rule("tim", 70, true), Value::Bool(true));
+    assert_eq!(rule("kid", 17, false), Value::Bool(false));
+}
+
+#[test]
+fn temperature_conversion_and_negation() {
+    // Fahrenheit to Celsius, (f - 32) * 5 / 9, and a freezer's offset below zero.
+    let c = |f: f64| {
+        prim(
+            Prim::Div,
+            vec![
+                prim(
+                    Prim::Mul,
+                    vec![
+                        prim(
+                            Prim::Sub,
+                            vec![lit(Value::float(f)), lit(Value::float(32.0))],
+                        ),
+                        lit(Value::float(5.0)),
+                    ],
+                ),
+                lit(Value::float(9.0)),
+            ],
+        )
+    };
+    assert_eq!(eval(&c(212.0)).unwrap(), Value::float(100.0));
+    assert_eq!(
+        eval(&prim(Prim::Neg, vec![c(-4.0)])).unwrap(),
+        Value::float(20.0)
+    );
+    assert_eq!(
+        eval(&prim(Prim::Neg, vec![lit(18)])).unwrap(),
+        Value::Int(-18)
+    );
+    assert_eq!(
+        eval(&prim(Prim::Neg, vec![lit(i64::MIN)])).unwrap_err(),
+        KernelError::Overflow
+    );
+}
+
+#[test]
+fn a_missing_price_flows_through_if_and_sum() {
+    let prices = lit(Family::of(
+        [("tea", 250), ("cake", 400)].map(|(k, v)| (s(k), Value::Int(v))),
+    ));
+    // `if price > 300 { "dear" } else { "cheap" }` on a missing item is the atom itself.
+    let label = |item: &str| {
+        if_(
+            prim(Prim::Gt, vec![get(prices.clone(), lit(s(item))), lit(300)]),
+            lit("dear"),
+            lit("cheap"),
+        )
+    };
+    assert_eq!(eval(&label("cake")).unwrap(), s("dear"));
+    assert_eq!(eval(&label("scone")).unwrap(), Value::atom("notFound"));
+    // A basket total with one unknown item is `#notFound`, not a partial sum.
+    let basket = Family::set([s("tea"), s("scone"), s("cake")]);
+    let total = fold(
+        fam(lit(basket), "i", get(prices, var("i"))),
+        Term::PrimFn(Prim::Add),
+        Some(lit(0)),
+    );
+    assert_eq!(eval(&total).unwrap(), Value::atom("notFound"));
+}
+
+#[test]
+fn org_chart_depth_by_recursion() {
+    // depth(e) = depth(manager(e)) + 1; the head has no manager, so the read is `#notFound`.
+    let managers = lit(Family::of(
+        [("bo", "ann"), ("cy", "bo"), ("di", "bo")].map(|(e, m)| (s(e), s(m))),
+    ));
+    let domain = lit(Family::set(["ann", "bo", "cy", "di"].map(s)));
+    let up = add(get(var("this"), get(managers, var("i"))), lit(1));
+    let body = Term::Match(
+        rc(up),
+        vec![
+            (Pattern::Atom("notFound".into(), vec![]), lit(0)),
+            (Pattern::Bind("d".into()), var("d")),
+        ],
+    );
+    let out = eval(&definedness(domain, body)).unwrap();
+    assert_eq!(
+        out.to_string(),
+        r#"{"ann" -> 0, "bo" -> 1, "cy" -> 2, "di" -> 2}"#
+    );
+}
+
+#[test]
+fn match_destructures_tuples_and_atom_payloads() {
+    // A parser's result: a record `(name, qty)` or `#parseError(pos, msg)`.
+    let report = |r: Value| {
+        let arms = vec![
+            (
+                Pattern::Tuple(vec![Pattern::Bind("n".into()), Pattern::Lit(Value::Int(0))]),
+                add(var("n"), lit(": out of stock")),
+            ),
+            (
+                Pattern::Tuple(vec![Pattern::Bind("n".into()), Pattern::Wild]),
+                add(var("n"), lit(": ok")),
+            ),
+            (
+                Pattern::Atom(
+                    "parseError".into(),
+                    vec![Pattern::Bind("pos".into()), Pattern::Wild],
+                ),
+                var("pos"),
+            ),
+        ];
+        eval(&Term::Match(rc(lit(r)), arms)).unwrap()
+    };
+    assert_eq!(
+        report(Value::Tuple(vec![s("fig"), Value::Int(0)])),
+        s("fig: out of stock")
+    );
+    assert_eq!(
+        report(Value::Tuple(vec![s("fig"), Value::Int(4)])),
+        s("fig: ok")
+    );
+    assert_eq!(
+        report(Value::atom_with(
+            "parseError",
+            vec![Value::Int(17), s("expected ,")]
+        )),
+        Value::Int(17)
+    );
+}
+
+#[test]
+fn a_step_or_guard_of_the_wrong_kind_is_reported() {
+    let id = lam(&["x"], var("x"));
+    let cases = [
+        (
+            Term::Fix {
+                init: rc(lit(Family::new())),
+                step: rc(lam(&["r"], id.clone())),
+                this: "this".into(),
+                key: "k".into(),
+                kind: FixKind::Lattice {
+                    join: rc(Term::PrimFn(Prim::Union)),
+                },
+            },
+            "a fix step returned a function",
+        ),
+        (
+            definedness(lit(Family::set([Value::Int(0)])), id.clone()),
+            "a fix entry is a function",
+        ),
+        (
+            definedness(
+                lit(Family::set([Value::Int(0)])),
+                app(var("this"), vec![lit(0)]),
+            ),
+            "a family is read with `[]`, not called",
+        ),
+        (
+            Term::Gen {
+                init: rc(lit(0)),
+                step: rc(lam(&["f"], id.clone())),
+                guard: rc(lam(&["f"], lit(true))),
+                pos: GuardPos::Before,
+            },
+            "a gen step returned a function",
+        ),
+        (
+            Term::Gen {
+                init: rc(lit(0)),
+                step: rc(id.clone()),
+                guard: rc(lam(&["f"], lit(3))),
+                pos: GuardPos::Before,
+            },
+            "a gen guard returned 3",
+        ),
+        (
+            fold(lit(3), Term::PrimFn(Prim::Add), None),
+            "expected a family, found 3",
+        ),
+        (
+            if_(id.clone(), lit(1), lit(2)),
+            "expected data, found a function",
+        ),
+        (add(id, lit(1)), "Add applied to a function"),
+    ];
+    for (t, msg) in cases {
+        assert_eq!(eval(&t).unwrap_err(), KernelError::Type(msg.into()));
+    }
+}

@@ -13,8 +13,8 @@ in docs/layout.md.
 
 ## Test baseline
 
-Last full run: `CI=true cargo test --workspace` gave 48 passed and 0 failed (18 unit tests of
-`zed-kernel`, 2 of `zed-tests`, 28 step tests: 3 in `m0_01_scaffolding`, 25 in
+Last full run: `CI=true cargo test --workspace` gave 55 passed and 0 failed (19 unit tests of
+`zed-kernel`, 2 of `zed-tests`, 34 step tests: 3 in `m0_01_scaffolding`, 31 in
 `m0_09_kernel_evaluator`). `cargo fmt --all --check` and
 `cargo clippy --workspace --all-targets -- -D warnings` are clean.
 

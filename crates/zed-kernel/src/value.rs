@@ -228,5 +228,9 @@ mod tests {
         assert!(Value::from(Family::default()).as_family().is_some());
         assert_eq!(Value::from(true), Value::Bool(true));
         assert_eq!(F64::new(2.5).get(), 2.5);
+        assert_eq!(
+            F64::new(1.0).partial_cmp(&F64::new(2.0)),
+            Some(Ordering::Less)
+        );
     }
 }
