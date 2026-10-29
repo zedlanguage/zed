@@ -25,5 +25,9 @@ fn every_expression_in_the_fences_builds_or_names_its_step() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-    assert_eq!((built, later), (1505, 309), "built, later");
+    // 1505 and 309 at step L1.10; later steps build more.
+    assert!(
+        built >= 1505 && built + later == 1814,
+        "built {built}, later {later}"
+    );
 }

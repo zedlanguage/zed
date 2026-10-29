@@ -36,12 +36,14 @@ in docs/layout.md.
   and postfix chains, built from the parse tree.
 - Done: **L1.10**, lambdas, `is` / `is not`, `else` and tuples (`zedc::ast`), with the L1 type
   expressions, parameter lists and atom patterns they are written with (`zedc::ast::types`).
-- Next: L1.11.
+- Done: **L1.11**, statements (`zedc::ast::stmts`): a block's bindings, with tuple
+  destructuring targets and `_`, and its one export, `return` or the trailing expression.
+- Next: L1.12.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 307 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 254 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 314 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 261 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -70,6 +72,7 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.8 | done | `zedc::parse`: `Grammar::read` reads `zed/grammar/syntax.peg` and `notation.peg` (copied by `sync.py`, with a drift test); `parse(text, tokens, start, ring)` matches as `check.py`'s `Parser` does (ordered choice, packrat memo on rule, token and the `head` flag, alternatives above the ring skipped, a literal matching a keyword, operator or name by text) and gives a tree whose nodes record rule, alternative and token span, plus a tree per string hole. All 319 cases of `cases.txt` give their s-expressions; all 149 fences first parse at the ring `sync.py` recorded, as a `Unit` or a `DocFence`; each variant fixture parses as its fence does. An error names the furthest token reached and what was expected there (golden snapshot). Negative controls: the ring filter off, `head(…)` ignored, `!` keeping its failures, inline choices reversed each fail a test |
 | L1.9 | done | `zedc::ast::{build, expr}`: literals, names, atoms, grouping, the L1 prefix and binary operators (left-associative but `**`), and the suffixes call, index, `.` and `?.`; a call keeps positional, named and `...` apart, `x:` is `x: x`, and a name given twice is an error at the second. A form of a later step or layer is an error naming it (`this form (Expr) is built from step L1.10`). Every postfix chain in the 149 fences builds (512) or names its later form (170), and a built chain's span is its parse node's. Negative controls: right-associative folding, `?.` read as `.`, no duplicate check, `...` ignored, and every string reading the first hole each fail a test; the fence test found that grouped expressions lost their parentheses from the span (fixed) |
 | L1.10 | done | `zedc::ast`: lambdas (one name, or a declaration's parameter list with `positional`, types and defaults; a brace after the arrow is a block, built at L1.11), `is` and `is not`, `else` chains read left to right with an optional atom pattern (`#e(pos:)`, `#add(#zero, #zero)`), and tuples of two or more. `zedc::ast::types`: the L1 type expressions (names with unit paths, atoms, tuples, `\|`, `&`, `\`, arrows with `->` and `->?`, one parameter level per arrow, right-associative, parameter names and `positional`). Every expression in the 149 fences builds (1505) or names its later form (309), none of them an L1.10 form. Negative controls: `is not` read as `is`, the atom pattern dropped, `->?` read as `->`, a lambda's name read as positional, a tuple type read as a union, the operands of `\` swapped, and `positional` dropped from a type parameter each fail a test |
+| L1.11 | done | `zedc::ast::stmts`: `ExprKind::Block` of `Stmt`s: `a, _ = e;` bindings (`Target::Name`, `Target::Wild`) and `return e;` / `return a, b;`, the trailing expression built as its `return`. A block in expression position exports exactly once: a second export is an error at it, naming the first's byte, and a block with none is an error. A function or push in a block names L1.12, an expression statement `e;` layer L6, a `with` boundary L6. The fences hold one block in expression position, which builds; most blocks sit in `if`, loops and declaration bodies, built with those forms. Negative controls: a second export allowed, a missing export allowed, `_` read as a name, and the first export's position misreported each fail a test; the `_` test found that `Target = Name \| WILD` is one alternative, so a wildcard is told by its missing `Name` child (fixed) |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -160,6 +163,10 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 - L1.10: the type expressions are built here, ahead of their L1.12 listing, since `is T` and a
   lambda's `x: T` are written with them; L1.12 still adds the declarations that use them. A
   destructuring parameter `((s, c)) -> …` and patterns other than atom patterns are L2.
+- L1.11: a block in expression position must export; a declaration's body block need not
+  (`Counter.tick() { n' = n + 1; }`), and L1.12 builds those. Statement order has no
+  meaning, so a `return` may precede a binding. A name bound twice in one block is left to
+  name resolution (L1.14).
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which lie within the evaluator's own range limit.

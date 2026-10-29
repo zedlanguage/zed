@@ -1,4 +1,4 @@
-//! The syntax tree of expressions (steps L1.9 and L1.10), built from a parse tree
+//! The syntax tree of expressions (steps L1.9 to L1.11), built from a parse tree
 //! (`crate::parse`).
 //!
 //! A node of the parse tree records only its rule and tokens; here an expression is one node
@@ -8,13 +8,16 @@
 //! whether it ends in `...`; an index `e[k]`; a member `e.n` or `e?.n`. A uniform call
 //! `x.f(a)` stays a call of the member `x.f`, since whether `f` is a field or a function is
 //! known only after name resolution (step L1.14). A lambda keeps its parameters as written;
-//! an `else` chain is built left to right. A form not built yet is an error naming the step or
+//! an `else` chain is built left to right. A block is its statements, exactly one of them its
+//! export. A form not built yet is an error naming the step or
 //! layer that builds it.
 
+mod stmts;
 mod types;
 
 use std::fmt;
 
+pub use stmts::{Stmt, StmtKind, Target};
 pub use types::{Param, Pattern, Type, TypeKind, TypeParam};
 
 use crate::lex::{Part, Span, Tok, Token};
@@ -95,6 +98,8 @@ pub enum ExprKind {
         /// The default.
         default: Box<Expr>,
     },
+    /// A block `{ … }`: its statements in written order, one of them its `return`.
+    Block(Vec<Stmt>),
     /// A member `e.n`, or `e?.n` when `safe`.
     Member {
         /// The value.
@@ -167,9 +172,9 @@ struct Builder<'a> {
 
 /// The step that builds each form of layer L1 this step leaves out, by rule and alternative.
 const LATER: &[(&str, usize, &str)] = &[
-    ("Block", 0, "L1.11"),
+    ("Function", 0, "L1.12"),
+    ("Push", 1, "L1.12"),
     ("Primary", 7, "L1.12"),
-    ("Primary", 13, "L1.11"),
 ];
 
 impl Builder<'_> {
@@ -284,7 +289,7 @@ impl Builder<'_> {
                         span: self.span(n),
                     })
                 }
-                2 => self.node(kids[0]),
+                2 | 13 => self.node(kids[0]),
                 5 => Ok(Expr {
                     span: self.span(n),
                     ..self.node(kids[0])?
@@ -299,6 +304,7 @@ impl Builder<'_> {
                 }),
                 _ => Err(self.later(n)),
             },
+            "Block" => self.block(n),
             "Name" => Ok(Expr {
                 kind: ExprKind::Name(self.word(self.tree.nodes[n].start).into()),
                 span: self.span(n),
@@ -550,6 +556,13 @@ impl fmt::Display for Expr {
                 f.write_str(")")
             }
             ExprKind::Index(e, k) => write!(f, "(index {e} {k})"),
+            ExprKind::Block(stmts) => {
+                f.write_str("(block")?;
+                for s in stmts {
+                    write!(f, " {s}")?;
+                }
+                f.write_str(")")
+            }
             ExprKind::Tuple(es) => {
                 f.write_str("(tuple")?;
                 for e in es {

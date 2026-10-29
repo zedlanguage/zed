@@ -30,9 +30,6 @@ fn else_and_its_atom_pattern_form() {
         ),
         ("a || b else c", "(else (|| a b) c)"),
         ("e else (x -> d)", "(else e (fn (x) d))"),
-        (
-            "e else { d }",
-            "error: this form (Block) is built from step L1.11",
-        ),
+        ("e else { d }", "(else e (block (return d)))"),
     ]);
 }

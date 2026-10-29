@@ -30,10 +30,7 @@ fn parameters_are_a_name_or_a_list() {
 #[test]
 fn a_brace_after_the_arrow_is_a_block() {
     check(&[
-        (
-            "x -> { x }",
-            "error: this form (Block) is built from step L1.11",
-        ),
+        ("x -> { x }", "(fn (x) (block (return x)))"),
         // A record display after the arrow is parenthesized; displays arrive at L2.
         (
             "p -> ({ x: p.x })",
