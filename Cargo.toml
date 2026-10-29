@@ -28,3 +28,8 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# The reference evaluator runs the step tests' largest programs (10^7 steps, step M0.11); it is
+# optimized in test builds too, with its overflow checks kept.
+[profile.dev.package.zed-kernel]
+opt-level = 2

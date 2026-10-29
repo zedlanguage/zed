@@ -16,8 +16,20 @@ use std::sync::Arc;
 use crate::term::{FixKind, GuardPos, Pattern, Prim, Term};
 use crate::value::Value;
 
+/// The minimum resource limits of compile-time evaluation (DESIGN.md sec:verification,
+/// "Budgets"; fixed by step M0.11). A conforming compiler never rejects an evaluation within
+/// them; past them, running out is a build failure, the machine's and not the program's.
+///
+/// Steps of the definitional interpreter, counted as [`DEFAULT_FUEL`] counts them.
+pub const MIN_STEPS: u64 = 10_000_000;
+/// Bytes of memory. The reference evaluator sets no memory limit of its own, so it is bounded
+/// only by the machine.
+pub const MIN_MEMORY: u64 = 1 << 30;
+/// Nested calls.
+pub const MIN_NESTED_CALLS: usize = 20_000;
+
 /// The default fuel: the number of function calls, `fix` rounds and `gen` steps one
-/// evaluation may take, the 10^8-step compile-time budget of (sec:verification).
+/// evaluation may take, ten times [`MIN_STEPS`].
 pub const DEFAULT_FUEL: u64 = 100_000_000;
 
 /// The deepest nesting of calls the evaluator follows before it stops with
@@ -29,6 +41,8 @@ pub const MAX_DEPTH: usize = 20_000;
 /// a run touches. A debug build uses 10 to 20 KB per nested call (a 2 MB stack held 100
 /// nested calls and not 200), so [`MAX_DEPTH`] calls need at most 400 MB.
 const STACK_BYTES: usize = 1 << 30;
+
+const _: () = assert!(DEFAULT_FUEL >= MIN_STEPS && MAX_DEPTH >= MIN_NESTED_CALLS);
 
 /// A run-time value: a data value, or a function, which families never hold.
 #[derive(Clone, Debug)]

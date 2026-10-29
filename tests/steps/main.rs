@@ -7,3 +7,4 @@ mod m0_07_canonicalization;
 mod m0_08_zed0_checklist;
 mod m0_09_kernel_evaluator;
 mod m0_10_finite_model_harness;
+mod m0_11_prelude_axioms_and_limits;

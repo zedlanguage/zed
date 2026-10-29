@@ -1,0 +1,111 @@
+// prelude unit axioms (DESIGN.md sec:property_tracking, the Axiom grade;
+// written by step M0.11, read by the obligation record of step L3.8): the laws
+// each built-in operator carries by axiom, one entry per arrow. The
+// Rust-hosted checker's copy is crates/zedc/src/axioms.rs, and the tests of
+// tests/steps/m0_11_prelude_axioms_and_limits/ keep the two equal and check
+// every entry on the finite-model harness of step M0.10.
+//
+// An operator with no entry here (`-` at f64, `/`, `div`, `mod`) carries no
+// law by axiom. Later layers add the arrows of their carriers (rat, the
+// algebras of sec:linalg).
+
+struct Axiom {
+  op: String,      // as written; `neg` is unary minus
+  carrier: #int | #f64 | #bool | #string,
+  law: Any,        // a tracked property of sec:property_tracking, as an atom
+}
+
+axioms = [
+  // `+`: commutative at every arrow (sec:lexical); associative only where it is exact.
+  Axiom(op: "+", carrier: #int, law: #associative),
+  Axiom(op: "+", carrier: #int, law: #commutative),
+  Axiom(op: "+", carrier: #int, law: #identity(0)),
+  Axiom(op: "+", carrier: #int, law: #monotone([#up, #up])),
+  Axiom(op: "+", carrier: #f64, law: #commutative),
+  // -0.0, not 0.0, which fails at -0.0: -0.0 + 0.0 is 0.0.
+  Axiom(op: "+", carrier: #f64, law: #identity(-0.0)),
+  Axiom(op: "-", carrier: #int, law: #monotone([#up, #down])),
+  Axiom(op: "*", carrier: #int, law: #associative),
+  Axiom(op: "*", carrier: #int, law: #commutative),
+  Axiom(op: "*", carrier: #int, law: #identity(1)),
+  Axiom(op: "*", carrier: #int, law: #zero(0)),
+  Axiom(op: "*", carrier: #int, law: #leftDistributesOver("+")),
+  Axiom(op: "*", carrier: #int, law: #rightDistributesOver("+")),
+  Axiom(op: "*", carrier: #f64, law: #commutative),
+  Axiom(op: "*", carrier: #f64, law: #identity(1.0)),
+  Axiom(op: "neg", carrier: #int, law: #inverse("neg")),
+  Axiom(op: "neg", carrier: #int, law: #injective),
+  Axiom(op: "neg", carrier: #int, law: #monotone([#down])),
+  Axiom(op: "neg", carrier: #f64, law: #inverse("neg")),
+  Axiom(op: "neg", carrier: #f64, law: #injective),
+  // `++`: associative, not commutative.
+  Axiom(op: "++", carrier: #string, law: #associative),
+  Axiom(op: "++", carrier: #string, law: #identity("")),
+  // `min` and `max` in the total order of values: no identity on an unbounded carrier.
+  Axiom(op: "min", carrier: #int, law: #associative),
+  Axiom(op: "min", carrier: #int, law: #commutative),
+  Axiom(op: "min", carrier: #int, law: #idempotent),
+  Axiom(op: "min", carrier: #int, law: #monotone([#up, #up])),
+  Axiom(op: "min", carrier: #f64, law: #associative),
+  Axiom(op: "min", carrier: #f64, law: #commutative),
+  Axiom(op: "min", carrier: #f64, law: #idempotent),
+  Axiom(op: "max", carrier: #int, law: #associative),
+  Axiom(op: "max", carrier: #int, law: #commutative),
+  Axiom(op: "max", carrier: #int, law: #idempotent),
+  Axiom(op: "max", carrier: #int, law: #monotone([#up, #up])),
+  Axiom(op: "max", carrier: #f64, law: #associative),
+  Axiom(op: "max", carrier: #f64, law: #commutative),
+  Axiom(op: "max", carrier: #f64, law: #idempotent),
+  Axiom(op: "&&", carrier: #bool, law: #associative),
+  Axiom(op: "&&", carrier: #bool, law: #commutative),
+  Axiom(op: "&&", carrier: #bool, law: #idempotent),
+  Axiom(op: "&&", carrier: #bool, law: #identity(true)),
+  Axiom(op: "&&", carrier: #bool, law: #zero(false)),
+  Axiom(op: "&&", carrier: #bool, law: #leftDistributesOver("||")),
+  Axiom(op: "||", carrier: #bool, law: #associative),
+  Axiom(op: "||", carrier: #bool, law: #commutative),
+  Axiom(op: "||", carrier: #bool, law: #idempotent),
+  Axiom(op: "||", carrier: #bool, law: #identity(false)),
+  Axiom(op: "||", carrier: #bool, law: #zero(true)),
+  Axiom(op: "||", carrier: #bool, law: #leftDistributesOver("&&")),
+  Axiom(op: "!", carrier: #bool, law: #inverse("!")),
+  Axiom(op: "!", carrier: #bool, law: #injective),
+  Axiom(op: "!", carrier: #bool, law: #monotone([#down])),
+  // `==` is structural, so it is an equivalence at every carrier, floats included.
+  Axiom(op: "==", carrier: #int, law: #reflexive),
+  Axiom(op: "==", carrier: #int, law: #symmetric),
+  Axiom(op: "==", carrier: #int, law: #transitive),
+  Axiom(op: "==", carrier: #f64, law: #reflexive),
+  Axiom(op: "==", carrier: #f64, law: #symmetric),
+  Axiom(op: "==", carrier: #f64, law: #transitive),
+  Axiom(op: "==", carrier: #string, law: #reflexive),
+  Axiom(op: "==", carrier: #string, law: #symmetric),
+  Axiom(op: "==", carrier: #string, law: #transitive),
+  Axiom(op: "!=", carrier: #int, law: #irreflexive),
+  Axiom(op: "!=", carrier: #int, law: #symmetric),
+  // The comparisons are the total order of values at every carrier.
+  Axiom(op: "<", carrier: #int, law: #irreflexive),
+  Axiom(op: "<", carrier: #int, law: #transitive),
+  Axiom(op: "<", carrier: #f64, law: #irreflexive),
+  Axiom(op: "<", carrier: #f64, law: #transitive),
+  Axiom(op: "<", carrier: #string, law: #irreflexive),
+  Axiom(op: "<", carrier: #string, law: #transitive),
+  Axiom(op: "<=", carrier: #int, law: #reflexive),
+  Axiom(op: "<=", carrier: #int, law: #antisymmetric),
+  Axiom(op: "<=", carrier: #int, law: #transitive),
+  Axiom(op: "<=", carrier: #int, law: #total),
+  Axiom(op: "<=", carrier: #f64, law: #reflexive),
+  Axiom(op: "<=", carrier: #f64, law: #antisymmetric),
+  Axiom(op: "<=", carrier: #f64, law: #transitive),
+  Axiom(op: "<=", carrier: #f64, law: #total),
+  Axiom(op: "<=", carrier: #string, law: #reflexive),
+  Axiom(op: "<=", carrier: #string, law: #antisymmetric),
+  Axiom(op: "<=", carrier: #string, law: #transitive),
+  Axiom(op: "<=", carrier: #string, law: #total),
+  Axiom(op: ">", carrier: #int, law: #irreflexive),
+  Axiom(op: ">", carrier: #int, law: #transitive),
+  Axiom(op: ">=", carrier: #int, law: #reflexive),
+  Axiom(op: ">=", carrier: #int, law: #antisymmetric),
+  Axiom(op: ">=", carrier: #int, law: #transitive),
+  Axiom(op: ">=", carrier: #int, law: #total),
+];

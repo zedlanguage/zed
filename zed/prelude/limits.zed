@@ -1,0 +1,16 @@
+// prelude unit limits (DESIGN.md sec:verification, "Budgets"; written by step
+// M0.11): the minimum resource limits of compile-time evaluation, as the C
+// standard sets translation limits. A conforming compiler never rejects an
+// evaluation within all three; past them, running out is a build failure,
+// reported as the machine's and not as a rejection of the program. The
+// Rust-hosted copy is zed_kernel::eval::MIN_* in crates/zed-kernel/src/eval.rs.
+
+// Steps of the definitional interpreter, whose strategy is fixed: one step per
+// function call, `fix` round and `gen` step.
+minSteps = 10000000;
+
+// Bytes of memory: 1 GiB.
+minMemory = 1073741824;
+
+// Calls nested in one another.
+minNestedCalls = 20000;

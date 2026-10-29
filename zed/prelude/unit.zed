@@ -1,0 +1,25 @@
+// prelude unit unit (DESIGN.md sec:ir, "Identity", and step L2.8; written by
+// step M0.11): how a unit, a prelude unit included, is versioned and addressed.
+// The Rust-hosted checker's copy is zedc::canon::unit_address in
+// crates/zedc/src/canon/mod.rs.
+//
+// A unit has no version number. Its address is the hash of its exported
+// declarations, each named and given its content address (step M0.7), so a
+// changed export, or a changed local declaration an export uses, gives a new
+// address, and an unused local declaration or the unit's path does not. An
+// import's pin names this address; the prelude is pinned as an ordinary unit
+// (step L2.8). The canonicalization VERSION is hashed in, so a change to the
+// canonical form changes every address.
+//
+// blake3 and the 8-byte little-endian `word` are the checker core's built-ins
+// (step S.3); `version` is the canonicalization VERSION, 1.
+
+struct Export { name: String, address: Bytes }
+
+unitAddress(positional exports, positional version) = {
+  sorted = exports.sortBy(e -> (e.name, e.address));
+  blake3(
+    utf8("zed-unit\0") ++ u32le(version) ++ word(sorted.count())
+      ++ sorted.foldl([], (out, e) -> out ++ word(utf8(e.name).count()) ++ utf8(e.name) ++ e.address)
+  )
+};

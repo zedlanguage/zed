@@ -21,6 +21,10 @@
 //! The address is the BLAKE3-256 hash of [`VERSION`] and the normal form's serialization.
 //! Any change to a rule or to the serialization increments [`VERSION`], so every address
 //! changes with it and no address is shared across rule sets.
+//!
+//! A unit, the prelude's units included, is addressed by its exported declarations
+//! ([`unit_address`], step M0.11). It has no version number of its own: a changed unit has a new
+//! address, and the address is what an import's pin names (step L2.8).
 
 pub mod binders;
 pub mod domain;
@@ -174,4 +178,25 @@ pub fn address_at(
 /// so two normal forms with equal serializations are equal.
 pub fn serialize(d: &Def, refs: &dyn Fn(&str) -> Option<ContentAddress>) -> Vec<u8> {
     serial::def(d, refs)
+}
+
+/// The content address of a unit (step M0.11): the BLAKE3-256 hash of `zed-unit\0`,
+/// [`VERSION`], and the unit's exported declarations sorted by name and then by address (the
+/// arrows of an overloaded name), each written as its name and its address. The unit's path and
+/// its local declarations are not hashed: a local declaration reaches the address through the
+/// address of every export that uses it, and one that no export uses cannot change a value an
+/// importer sees.
+pub fn unit_address(exports: &[(&str, ContentAddress)]) -> ContentAddress {
+    let mut exports = exports.to_vec();
+    exports.sort();
+    let mut h = blake3::Hasher::new();
+    h.update(b"zed-unit\0");
+    h.update(&VERSION.to_le_bytes());
+    h.update(&(exports.len() as u64).to_le_bytes());
+    for (name, address) in exports {
+        h.update(&(name.len() as u64).to_le_bytes());
+        h.update(name.as_bytes());
+        h.update(&address.0);
+    }
+    ContentAddress(*h.finalize().as_bytes())
 }
