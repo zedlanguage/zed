@@ -1,4 +1,5 @@
-//! The syntax tree of expressions (step L1.9), built from a parse tree (`crate::parse`).
+//! The syntax tree of expressions (steps L1.9 and L1.10), built from a parse tree
+//! (`crate::parse`).
 //!
 //! A node of the parse tree records only its rule and tokens; here an expression is one node
 //! per operation, with its operands. Parentheses group and leave no node; the grouped
@@ -6,10 +7,15 @@
 //! built left to right: a call with its positional arguments, then its named ones, and
 //! whether it ends in `...`; an index `e[k]`; a member `e.n` or `e?.n`. A uniform call
 //! `x.f(a)` stays a call of the member `x.f`, since whether `f` is a field or a function is
-//! known only after name resolution (step L1.14). A form this step does not build is an error
-//! naming the step or layer that builds it.
+//! known only after name resolution (step L1.14). A lambda keeps its parameters as written;
+//! an `else` chain is built left to right. A form not built yet is an error naming the step or
+//! layer that builds it.
+
+mod types;
 
 use std::fmt;
+
+pub use types::{Param, Pattern, Type, TypeKind, TypeParam};
 
 use crate::lex::{Part, Span, Tok, Token};
 use crate::parse::Tree;
@@ -62,6 +68,33 @@ pub enum ExprKind {
     },
     /// An index `e[k]`.
     Index(Box<Expr>, Box<Expr>),
+    /// A tuple `(a, b, …)`.
+    Tuple(Vec<Expr>),
+    /// A lambda `x -> e` or `(params) -> e`.
+    Lambda {
+        /// The parameters.
+        params: Vec<Param>,
+        /// The body.
+        body: Box<Expr>,
+    },
+    /// A type test `e is T`, or `e is not T` when `negated`.
+    Is {
+        /// The value tested.
+        of: Box<Expr>,
+        /// The type.
+        ty: Type,
+        /// Whether it is `is not`.
+        negated: bool,
+    },
+    /// `e else d`, or `e else #a -> d` with its atom pattern.
+    Else {
+        /// The value whose atom members are replaced.
+        of: Box<Expr>,
+        /// The members replaced: every loose atom member when `None`.
+        pattern: Option<Pattern>,
+        /// The default.
+        default: Box<Expr>,
+    },
     /// A member `e.n`, or `e?.n` when `safe`.
     Member {
         /// The value.
@@ -134,10 +167,7 @@ struct Builder<'a> {
 
 /// The step that builds each form of layer L1 this step leaves out, by rule and alternative.
 const LATER: &[(&str, usize, &str)] = &[
-    ("Expr", 0, "L1.10"),
-    ("Expr12", 0, "L1.10"),
-    ("RelTail", 1, "L1.10"),
-    ("Primary", 6, "L1.10"),
+    ("Block", 0, "L1.11"),
     ("Primary", 7, "L1.12"),
     ("Primary", 13, "L1.11"),
 ];
@@ -179,7 +209,14 @@ impl Builder<'_> {
         let alt = self.tree.nodes[n].alt;
         match self.tree.name(n) {
             "Expr" if alt == 2 => self.node(kids[0]),
-            "Expr12" if kids.len() == 1 => self.node(kids[0]),
+            "Expr" if alt == 0 => self.lambda(n),
+            "Expr12" => {
+                let mut e = self.node(kids[0])?;
+                for &t in &kids[1..] {
+                    e = self.else_tail(e, t)?;
+                }
+                Ok(e)
+            }
             "Or" | "And" | "Additive" | "Multiplicative" => self.fold(n),
             "Equality" if alt == 1 => self.fold(n),
             "Relation" if alt == 2 => match kids {
@@ -188,6 +225,23 @@ impl Builder<'_> {
                     let r = self.kids(*tail)[0];
                     let op = self.op(self.tree.nodes[*tail].start);
                     self.binary(op, *l, r)
+                }
+                [l, tail] if self.tree.nodes[*tail].alt == 1 => {
+                    let of = self.node(*l)?;
+                    let t = self.tree.nodes[*tail].start;
+                    let ty = self.ty(self.kids(*tail)[0])?;
+                    let span = Span {
+                        start: of.span.start,
+                        end: ty.span.end,
+                    };
+                    Ok(Expr {
+                        kind: ExprKind::Is {
+                            of: Box::new(of),
+                            ty,
+                            negated: self.word(t + 1) == "not",
+                        },
+                        span,
+                    })
                 }
                 [_, tail] => Err(self.later(*tail)),
                 _ => unreachable!("Relation = Reduce RelTail?"),
@@ -234,6 +288,14 @@ impl Builder<'_> {
                 5 => Ok(Expr {
                     span: self.span(n),
                     ..self.node(kids[0])?
+                }),
+                6 => Ok(Expr {
+                    kind: ExprKind::Tuple(
+                        kids.iter()
+                            .map(|&k| self.node(k))
+                            .collect::<Result<_, _>>()?,
+                    ),
+                    span: self.span(n),
                 }),
                 _ => Err(self.later(n)),
             },
@@ -284,6 +346,54 @@ impl Builder<'_> {
             };
         }
         Ok(e)
+    }
+
+    /// A lambda: `Name '->' body` or `'(' Params? ')' '->' body`.
+    fn lambda(&self, n: usize) -> Result<Expr, Error> {
+        let lam = self.kids(n)[0];
+        let kids = self.kids(lam);
+        let body = *kids.last().expect("Lambda ends in its body");
+        let params = match kids {
+            [_] => Vec::new(),
+            [p, _] if self.tree.name(*p) == "Name" => vec![Param {
+                name: self.word(self.tree.nodes[*p].start).into(),
+                positional: false,
+                ty: None,
+                default: None,
+                span: self.span(*p),
+            }],
+            [p, _] => self.params(*p)?,
+            _ => unreachable!("Lambda = (Name | '(' Params? ')') '->' body"),
+        };
+        Ok(Expr {
+            kind: ExprKind::Lambda {
+                params,
+                body: Box::new(self.node(body)?),
+            },
+            span: self.span(n),
+        })
+    }
+
+    /// `of` followed by the `ElseTail` node `t`.
+    fn else_tail(&self, of: Expr, t: usize) -> Result<Expr, Error> {
+        let kids = self.kids(t);
+        let (pattern, default) = match kids {
+            [p, d] => (Some(self.pattern(*p)?), self.node(*d)?),
+            [d] => (None, self.node(*d)?),
+            _ => unreachable!("ElseTail = 'else' AtomPattern? '->' default"),
+        };
+        let span = Span {
+            start: of.span.start,
+            end: default.span.end,
+        };
+        Ok(Expr {
+            kind: ExprKind::Else {
+                of: Box::new(of),
+                pattern,
+                default: Box::new(default),
+            },
+            span,
+        })
     }
 
     fn suffix(&self, of: Expr, s: usize) -> Result<Expr, Error> {
@@ -390,7 +500,8 @@ impl Builder<'_> {
     }
 }
 
-/// An s-expression: `(call f 1 (x: 2) ...)`, `(index m k)`, `(. p x)`, `(?. p x)`, `(+ a b)`.
+/// An s-expression: `(call f 1 (x: 2) ...)`, `(index m k)`, `(. p x)`, `(?. p x)`, `(+ a b)`,
+/// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`.
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
@@ -439,6 +550,28 @@ impl fmt::Display for Expr {
                 f.write_str(")")
             }
             ExprKind::Index(e, k) => write!(f, "(index {e} {k})"),
+            ExprKind::Tuple(es) => {
+                f.write_str("(tuple")?;
+                for e in es {
+                    write!(f, " {e}")?;
+                }
+                f.write_str(")")
+            }
+            ExprKind::Lambda { params, body } => {
+                let ps: Vec<String> = params.iter().map(|p| p.to_string()).collect();
+                write!(f, "(fn ({}) {body})", ps.join(" "))
+            }
+            ExprKind::Is { of, ty, negated } => {
+                write!(f, "(is {}{of} {ty})", if *negated { "not " } else { "" })
+            }
+            ExprKind::Else {
+                of,
+                pattern,
+                default,
+            } => match pattern {
+                Some(p) => write!(f, "(else {of} {p} {default})"),
+                None => write!(f, "(else {of} {default})"),
+            },
             ExprKind::Member { of, name, safe } => {
                 write!(f, "({} {of} {name})", if *safe { "?." } else { "." })
             }

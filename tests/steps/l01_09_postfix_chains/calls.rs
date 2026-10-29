@@ -73,10 +73,6 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
 fn a_form_of_a_later_step_names_that_step() {
     let cases = [
         (
-            "xs.map(x -> x + 1)",
-            "this form (Expr) is built from step L1.10",
-        ),
-        (
             "f(if ok { 1 } else { 2 })",
             "this form (Primary) is built from step L1.12",
         ),
