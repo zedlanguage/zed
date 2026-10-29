@@ -34,6 +34,10 @@ pub enum Tok {
         /// The digits.
         digits: String,
     },
+    /// A float, as its decimal text without `_` (`1.5e-3`).
+    Float(String),
+    /// An exact rational, as its decimal text without `_` and the `r` (`0.1`).
+    Rat(String),
 }
 
 /// A token and its span.

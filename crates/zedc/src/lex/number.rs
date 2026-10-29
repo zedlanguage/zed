@@ -1,13 +1,18 @@
 //! Number literals (steps L1.3 and L1.4):
 //!
 //! ```peg
-//! Number  = (Rational | Float | Integer) !XID_CONTINUE
-//! Integer = '0x' Hex ('_'? Hex)* | '0o' [0-7] ('_'? [0-7])* | '0b' [01] ('_'? [01])* | Decimal
-//! Decimal = [0-9] ('_'? [0-9])*
+//! Number   = (Rational | Float | Integer) !XID_CONTINUE
+//! Rational = (Float | Decimal) 'r'
+//! Float    = Decimal '.' Decimal Exponent? | Decimal Exponent
+//! Exponent = [eE] [+\-]? Decimal
+//! Integer  = '0x' Hex ('_'? Hex)* | '0o' [0-7] ('_'? [0-7])* | '0b' [01] ('_'? [01])* | Decimal
+//! Decimal  = [0-9] ('_'? [0-9])*
 //! ```
 //!
 //! A literal keeps its digits, with the `_` removed, and its base: its width is chosen later
-//! from its use (sec:domains), so the lexer never rounds or overflows. A number that runs into a
+//! from its use (sec:domains), so the lexer never rounds or overflows. A float or a rational
+//! keeps its decimal text, and a rational is exact (`0.1r` is one tenth). A digit must follow
+//! the `.`, so `5.double` and `1..10` begin with the integer. A number that runs into a
 //! character that continues a name is one error over the number and that run, since no other
 //! rule reads a token starting with a digit: `200ms`, `1__000`, `1_000_`, `0b102`, `0x`.
 
@@ -27,14 +32,33 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
         .find(|&(p, r)| prefixed(p) && b.get(pos + 2).is_some_and(|&d| digit(d, r)))
         .map_or(10, |(_, r)| r);
     let start = if radix == 10 { pos } else { pos + 2 };
-    let end = digits(b, start, radix);
-    match text[end..].chars().next() {
-        Some(c) if is_xid_continue(c) => Some(Err(run_on(text, pos, end, radix))),
-        _ => {
-            let digits = text[start..end].replace('_', "");
-            Some(Ok((end, Tok::Int { radix, digits })))
+    let mut end = digits(b, start, radix);
+    let int_end = end;
+    if radix == 10 {
+        if b.get(end) == Some(&b'.') && b.get(end + 1).is_some_and(u8::is_ascii_digit) {
+            end = digits(b, end + 1, 10);
+        }
+        if matches!(b.get(end), Some(b'e' | b'E')) {
+            let sign = usize::from(matches!(b.get(end + 1), Some(b'+' | b'-')));
+            if b.get(end + 1 + sign).is_some_and(u8::is_ascii_digit) {
+                end = digits(b, end + 1 + sign, 10);
+            }
         }
     }
+    let rational = radix == 10 && b.get(end) == Some(&b'r');
+    let after = end + usize::from(rational);
+    if text[after..].chars().next().is_some_and(is_xid_continue) {
+        return Some(Err(run_on(text, pos, after, radix)));
+    }
+    let digits = text[start..end].replace('_', "");
+    let tok = if rational {
+        Tok::Rat(digits)
+    } else if end > int_end {
+        Tok::Float(digits)
+    } else {
+        Tok::Int { radix, digits }
+    };
+    Some(Ok((after, tok)))
 }
 
 fn digit(d: u8, radix: u32) -> bool {
@@ -61,7 +85,11 @@ fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
         .map_or(text.len(), |(i, _)| end + i);
     let next = text[end..].chars().next().expect("a character follows");
     let base = if radix == 2 { "a binary" } else { "an octal" };
-    let why = if next == '_' {
+    let why = if matches!(next, 'e' | 'E') && radix == 10 && !text[pos..end].contains(['e', 'E']) {
+        "an exponent needs digits: `1e3`, `1e-3`".to_string()
+    } else if next == 'r' && radix != 10 {
+        "a rational is written in decimal: `16r`, not `0x10r`".to_string()
+    } else if next == '_' {
         "`_` goes only between two digits".to_string()
     } else if radix == 10 && end == pos + 1 && text[pos..].starts_with('0') && "xob".contains(next)
     {
