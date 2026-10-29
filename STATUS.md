@@ -72,3 +72,11 @@ Not applied:
 - A5 (license): the repo already has LICENSE; the choice belongs to the owner.
 - A8 (two-process test at L7): distribution is post-v1 in sec:targets.
 - A9 (count programs needing generations): no decision depends on the count.
+
+## M0.3 — desugaring rules (done, in the spec)
+
+The spec's sec:grammar now has a `desugar` fence with one rule per syntactic production (107), and the spec repo's `tools/grammar/check.py` checks that rules and productions match one to one. A negative control (an extra rule and a duplicate) is caught. Nothing in this repo changes until the L1 elaborator, which implements these rules. Decisions:
+- `&&` and `||` desugar to `if`, not to the strict primitives; the spec calls them selection nodes that short-circuit observationally.
+- Recursion enters at L6. A recursive function is the definedness fix over its parameter domain, evaluated on demand. The M0.9 evaluator computes that fix over a finite domain only; the L1/L6 interpreter evaluates on demand.
+- Kernel primitives the rules name that the M0.9 kernel lacks: `pow` (L1), `range` (L3), and the type test `is` (L1). They are added at those steps.
+- `break e`: the step's guard returns `#break(e)` and the loop's result is `e`.
