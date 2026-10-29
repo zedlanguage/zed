@@ -8,6 +8,7 @@ mod l01_05_lexer_strings;
 mod l01_06_lexer_tokens;
 mod l01_07_fences;
 mod l01_08_parser;
+mod l01_09_postfix_chains;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;

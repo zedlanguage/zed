@@ -10,6 +10,7 @@ l01_05_lexer_strings
 l01_06_lexer_tokens
 l01_07_fences
 l01_08_parser
+l01_09_postfix_chains
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization
