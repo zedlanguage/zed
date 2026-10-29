@@ -1,5 +1,28 @@
-//! The `zedc` command.
+//! The `zedc` command: `zedc fmt <file>` writes the file in the formatter's layout to standard
+//! output; with no arguments it prints its version.
 
-fn main() {
-    println!("zedc {}", env!("CARGO_PKG_VERSION"));
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match &args[..] {
+        [] => println!("zedc {}", env!("CARGO_PKG_VERSION")),
+        [cmd, file] if cmd == "fmt" => {
+            let out = std::fs::read(file)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| zedc::format::format_source(&bytes));
+            match out {
+                Ok(text) => print!("{text}"),
+                Err(e) => {
+                    eprintln!("{file}:{e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        _ => {
+            eprintln!("usage: zedc [fmt <file>]");
+            return ExitCode::from(2);
+        }
+    }
+    ExitCode::SUCCESS
 }

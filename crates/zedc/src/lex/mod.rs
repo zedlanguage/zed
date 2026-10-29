@@ -150,6 +150,30 @@ pub fn lex_with_docs(text: &str) -> Result<(Vec<Token>, Vec<Doc>), Error> {
     Ok((tokens, docs))
 }
 
+/// The comments of `text`, lexed as `tokens`, in order: those between tokens, since a comment
+/// in a string's hole is part of the string's token.
+pub fn comments(text: &str, tokens: &[Token]) -> Vec<Span> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    let end = Span {
+        start: text.len(),
+        end: text.len(),
+    };
+    for next in tokens.iter().map(|t| t.span).chain([end]) {
+        while pos < next.start {
+            match comment::comment(text, pos) {
+                Some(Ok(e)) => {
+                    out.push(Span { start: pos, end: e });
+                    pos = e;
+                }
+                _ => pos += text[pos..].chars().next().map_or(1, char::len_utf8),
+            }
+        }
+        pos = next.end;
+    }
+    out
+}
+
 /// The tokens of `text` from byte `pos` to its end, with spans in `text`, and its doc
 /// comments pushed onto `docs`; with `elisions`, `…` is a name.
 fn lex_from(

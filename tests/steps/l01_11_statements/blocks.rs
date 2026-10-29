@@ -27,11 +27,12 @@ fn bindings_and_the_trailing_expression() {
             "f(x -> { y = x * 2; y + 1 })",
             "(call f (fn (x) (block (= (y) (* x 2)) (return (+ y 1)))))",
         ),
-        // Statement order has no meaning, so a binding may follow the export.
+        // Statement order has no meaning, so a binding may follow the export, which is stored
+        // last, where the formatter writes it (step L1.13).
         ("x -> { y + 1; y = x }", "syntax"),
         (
             "x -> { return y + 1; y = x * 2; }",
-            "(fn (x) (block (return (+ y 1)) (= (y) (* x 2))))",
+            "(fn (x) (block (= (y) (* x 2)) (return (+ y 1))))",
         ),
     ]);
 }

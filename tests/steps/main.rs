@@ -12,6 +12,7 @@ mod l01_09_postfix_chains;
 mod l01_10_lambdas_types_else_tuples;
 mod l01_11_statements;
 mod l01_12_declarations;
+mod l01_13_formatter;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;

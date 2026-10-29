@@ -12,6 +12,7 @@ pub mod axioms;
 pub mod canon;
 pub mod cost;
 pub mod fence;
+pub mod format;
 pub mod lex;
 pub mod parse;
 pub mod source;

@@ -67,7 +67,9 @@ pub enum Target {
 
 impl Builder<'_> {
     /// The block of node `n`, a `Block`: its statements, of which at most one is a `return`,
-    /// and exactly one when `export_needed`, as for a block that is an expression.
+    /// and exactly one when `export_needed`, as for a block that is an expression. The export
+    /// is stored last, where the formatter writes it (step L1.13); the order of the others is
+    /// kept.
     pub(super) fn block(&self, n: usize, export_needed: bool) -> Result<Expr, Error> {
         let mut stmts = Vec::new();
         let mut export: Option<Span> = None;
@@ -94,6 +96,13 @@ impl Builder<'_> {
                 export = Some(s.span);
             }
             stmts.push(s);
+        }
+        if let Some(i) = stmts
+            .iter()
+            .position(|s| matches!(s.kind, StmtKind::Return(_)))
+        {
+            let export = stmts.remove(i);
+            stmts.push(export);
         }
         let span = self.span(n);
         if export_needed && export.is_none() {
