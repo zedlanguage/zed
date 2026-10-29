@@ -8,7 +8,9 @@ publish.workspace = true
 
 [dependencies]
 blake3 = "1"
+unicode-ident = "1.0.27"
 unicode-normalization = "0.1.26"
+unicode-script = "0.5.8"
 zed-kernel.workspace = true
 
 [lints]

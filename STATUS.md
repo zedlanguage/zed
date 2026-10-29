@@ -23,12 +23,13 @@ in docs/layout.md.
   limits (`zed_kernel::eval::MIN_*`, prelude unit `limits`). M0 is complete.
 - Done: **L1.1**, source loading (`zedc::source`): UTF-8 and NFC checked, rejected with a
   span, line endings normalized.
-- Next: L1.2.
+- Done: **L1.2**, names and the wildcard (`zedc::lex`), with the one-script rule.
+- Next: L1.3.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 233 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 180 step tests: 6 in `l01_01_source_loading`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 241 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 188 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -48,6 +49,7 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 | M0.8 | done | `zed/compiler/ZED0.md` and `audit.py`: program 31 needs 91 grammar alternatives (L1, L2, L3, L6) and 13 words (up to L5), each found by deleting the alternative and reparsing; Part B adds the compiler's needs beyond program 31, all at L1–L6 but the built-in Cranelift ports (step S.4). The audit needs the spec's grammar tools, so it runs by hand; the step test keeps the stated layer equal to the highest item and to program 31's label. Negative controls: one entry deleted from the checklist makes the audit exit 1 naming it; program 17 audits to `window` at L7; stating L5 fails the step test |
 | M0.11 | done | `zedc::axioms`: 86 axioms, one per operator, carrier and law, over the kernel's carriers `int`, `f64`, `bool`, `String`; each holds on the M0.10 instances (rung 6 ints and floats, both bools, strings over `a`, `b` up to length 3), run on the reference evaluator, and `zed/prelude/axioms.zed` is checked equal to the table. `zedc::canon::unit_address` hashes the exports by name and address. `MIN_STEPS` 10^7, `MIN_MEMORY` 1 GiB, `MIN_NESTED_CALLS` 20,000, with a compile-time assertion that the evaluator's fuel and depth meet them; tests run a 9,999,999-step program, a 20,000-deep chain and a 2^30 - 1 byte live string, and one step or call more is shown to cross the step and depth limits. Negative controls: a false claim of each kind of law is refuted (16 claims); claiming `+` associative at `f64` fails on 1.0, 0.1, 0.1; dropping the name length from the unit hash breaks the pinned address; `MAX_DEPTH` 19,999 does not compile |
 | L1.1 | done | `zedc::source::load`: UTF-8 (the first invalid sequence's bytes are the span), no leading byte order mark, NFC (the span is the first piece cut before a character of combining class 0, or pair of such pieces, that NFC changes, and the message gives its NFC spelling); `\r\n` and `\r` become `\n`. Golden rejections of ten files as tools write them (ISO-8859-1, a macOS decomposed name, Notepad's mark, a truncated download, CESU-8, an overlong `/`, U+212B, marks out of order, Hangul jamo, a CRLF file), each repaired by its NFC spelling; a 20,000-string fuzz checks the span against `is_nfc`. Negative controls: checking the pair before the single piece widens the span and fails the fuzz; dropping the lone-`\r` rule fails the line-ending test |
+| L1.2 | done | `zedc::lex`: the lexer, whose token kinds grow through L1.6 (a character no rule reads yet is an `Unexpected` error); `lex::name` reads `Name` and `Wildcard` by the lexical grammar, and `is_single_script` is UTS #39 Highly Restrictive. Tests: names in eleven scripts and three Latin-with-East-Asian mixes lex; Cyrillic and Greek lookalikes, `ΔT` and Hangul with kana are rejected with the span and the scripts named; `_`, `_x`, `__init__`, one trailing `'`. Negative controls: without the East Asian sets `user名` is rejected; reading a bare `_` as a name fails the wildcard test (the test's helper first printed both as `_` and missed it; fixed) |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -101,6 +103,8 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 - L1.1 (DESIGN.md sec:lexical): a leading byte order mark is rejected, like a file not in NFC;
   a lone `\r` is a line break. A U+FEFF after the start is the lexer's to reject. Dependency:
   `unicode-normalization`.
+- L1.2 (DESIGN.md sec:lexical): mixed script is the complement of UTS #39 Highly Restrictive,
+  so Greek with Latin (`ΔT`) is rejected. Dependencies: `unicode-ident`, `unicode-script`.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which lie within the evaluator's own range limit.

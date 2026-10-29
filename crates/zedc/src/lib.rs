@@ -10,5 +10,6 @@ pub mod address;
 pub mod axioms;
 pub mod canon;
 pub mod cost;
+pub mod lex;
 pub mod source;
 pub mod store;

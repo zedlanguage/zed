@@ -1,6 +1,7 @@
 //! The step tests: one module per step of DESIGN.md Part G, in plan order.
 
 mod l01_01_source_loading;
+mod l01_02_lexer_names;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;
