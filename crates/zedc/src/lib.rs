@@ -7,5 +7,6 @@
 //! and its interpreter stays as the permanent differential oracle (step L1.37).
 
 pub mod address;
+pub mod canon;
 pub mod cost;
 pub mod store;

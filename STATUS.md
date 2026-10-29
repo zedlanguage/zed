@@ -15,13 +15,15 @@ in docs/layout.md.
 - Done: **M0.5**, widening and iteration (`zedc::store`, `tests/steps/m0_05_widening_and_iteration/`,
   prelude units in `zed/prelude/`); values in DESIGN.md M0.5.
 - Done: **M0.6**, the cost scalarization (`zedc::cost`, `zedc::address`, prelude unit `cost`).
-- Next: M0.7, M0.8, M0.11, then L1.
+- Done: **M0.7**, the canonicalizer (`zedc::canon`); values in DESIGN.md M0.7.
+- Next: M0.8, M0.11, then L1.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 202 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 149 step tests: 3 in `m0_01_scaffolding`, 23 in
-`m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 32 in
+Last full run: `cargo test --workspace` gave 216 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 163 step tests: 3 in `m0_01_scaffolding`, 23 in
+`m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
+`m0_07_canonicalization`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`). `cargo fmt --all --check` and
 `cargo clippy --workspace --all-targets -- -D warnings` are clean. The steps binary takes
 about 30 s in a debug build.
@@ -34,6 +36,7 @@ about 30 s in a debug build.
 | M0.10 | done | `zed_kernel::budgets` holds the ladder budgets and the rung 6 instance. `zed_tests::{instances, check, kernel}` hold the enumerators, the equation checker, and the derived forms. Laws 1–28 with a counterexample per side condition; the eight layer-free witness entries with their side-condition counterexamples (truncated division fails the packing inverse on row -1); every schedule agrees on all 512 three-node graphs and 512 random ones, stalls included; smoke cases. Negative control: making an undefined read ignore which `fix` it belongs to fails both nested-fix tests. 11 s in a release build |
 | M0.5 | done | `zedc::store::{interval, lattice, wto, iterate, revision}`: interval unions with the piece limit and widening, congruences, finite sets, cardinalities; Bourdoncle's order and recursive strategy (phase 1) and Jacobi narrowing rounds (phase 2); the tonicity and HC4 tables and the reductions. Oracles: a declarative weak topological order (2,048 graphs), a stack machine for phase 1 (512 systems × 5 delays × 2 bounds), the concrete least fixpoint in a window, and brute-force soundness of one revision round (over 10^6 solutions). The prelude units `lattice`, `iteration`, `revision` parse (`ring.py`) and check at L6 together (`layer.py`). Negative controls: widening at `changes >= delay` fails 2 tests; dropping the zero guard of backward `*` fails 2; reversed successor order fails the order oracle; Gauss-Seidel narrowing fails 2 |
 | M0.6 | done | `zedc::cost`: target profiles (default: one 8-core CPU, 16 GiB), per-device Brent bounds plus one transfer per cut edge, the per-device Pareto frontier, the pick with content-address tie-break. `zedc::address::ContentAddress` (bytes, hex, byte order; hashing comes at M0.7). Negative controls: reversing the tie-break, dropping the transfer latency, a frontier over totals, ignoring capacity, and flooring the Brent bound each fail a test |
+| M0.7 | done | `zedc::canon`: four rules (binders to de Bruijn levels with the written name kept as a hint, hints dropped, facets sorted and deduplicated, domain normal form), each with a rank; the tagged serialization; BLAKE3 address over a domain tag, `VERSION` = 1 and the serialization, with resolved free names hashed as their definitions' addresses. Over kernel terms until ZIR exists (L1.32). Oracles: de Bruijn-index α-equivalence on 2,048 random term pairs; domain normal forms against membership in -60..=60 on 4,096 random domains; rank decrease and rule-order independence on 512 random definitions. Negative controls: ignoring shadowing (two places), dropping a lambda's arity, ignoring resolution, hashing `abs` of floats, skipping the run merge, skipping the point-class join, keeping the first duplicate facet, and dropping the version each fail a test |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -72,6 +75,11 @@ about 30 s in a debug build.
   the running time; L24 may refine the estimate but must keep it monotone in the frontier's
   quantities. The frontier is per device, because the scalar is not monotone in plan totals
   (work moved to a slower device costs more).
+- M0.7 (DESIGN.md M0.7): the canonicalizer runs over kernel terms now and moves onto ZIR at
+  L1.32. A canonical binder name is NUL then its level, which no source name can contain. The
+  definition's own name, port names, atom names and catalog witnesses are part of the
+  interface and so of the address. Renaming one binder per pass is O(n²) in the binders;
+  L1.32 may do it in one pass if it gives the same normal form.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which lie within the evaluator's own range limit.
