@@ -13,6 +13,7 @@ l01_08_parser
 l01_09_postfix_chains
 l01_10_lambdas_types_else_tuples
 l01_11_statements
+l01_12_declarations
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization

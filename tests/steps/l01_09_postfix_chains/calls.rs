@@ -70,12 +70,8 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
 }
 
 #[test]
-fn a_form_of_a_later_step_names_that_step() {
+fn a_form_of_a_later_layer_names_that_layer() {
     let cases = [
-        (
-            "f(if ok { 1 } else { 2 })",
-            "this form (Primary) is built from step L1.12",
-        ),
         ("data::len", "this form (Suffix) is built from layer L3"),
         ("rows*.price", "this form (Suffix) is built from layer L6"),
         (

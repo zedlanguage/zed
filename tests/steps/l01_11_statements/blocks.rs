@@ -77,16 +77,8 @@ fn a_block_exports_exactly_once() {
 }
 
 #[test]
-fn a_statement_of_a_later_step_names_that_step() {
+fn a_statement_of_a_later_layer_names_that_layer() {
     check(&[
-        (
-            "x -> { sq(v) = v * v; sq(x) }",
-            "error: this form (Function) is built from step L1.12",
-        ),
-        (
-            "x -> { out <- x; x }",
-            "error: this form (Push) is built from step L1.12",
-        ),
         (
             "x -> { n: int = x; n }",
             "error: this form (Binding) is built from layer L10",

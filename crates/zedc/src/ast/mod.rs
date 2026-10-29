@@ -1,5 +1,5 @@
-//! The syntax tree of expressions (steps L1.9 to L1.11), built from a parse tree
-//! (`crate::parse`).
+//! The syntax tree of expressions, statements and units (steps L1.9 to L1.12), built from a
+//! parse tree (`crate::parse`).
 //!
 //! A node of the parse tree records only its rule and tokens; here an expression is one node
 //! per operation, with its operands. Parentheses group and leave no node; the grouped
@@ -8,16 +8,16 @@
 //! whether it ends in `...`; an index `e[k]`; a member `e.n` or `e?.n`. A uniform call
 //! `x.f(a)` stays a call of the member `x.f`, since whether `f` is a field or a function is
 //! known only after name resolution (step L1.14). A lambda keeps its parameters as written;
-//! an `else` chain is built left to right. A block is its statements, exactly one of them its
-//! export. A form not built yet is an error naming the step or
-//! layer that builds it.
+//! an `else` chain is built left to right. A block is its statements, one of them its export.
+//! A unit is its declarations and statements. A form of a later layer is an error naming that
+//! layer.
 
 mod stmts;
 mod types;
 
 use std::fmt;
 
-pub use stmts::{Stmt, StmtKind, Target};
+pub use stmts::{Function, Stmt, StmtKind, Target};
 pub use types::{Param, Pattern, Type, TypeKind, TypeParam};
 
 use crate::lex::{Part, Span, Tok, Token};
@@ -98,8 +98,18 @@ pub enum ExprKind {
         /// The default.
         default: Box<Expr>,
     },
-    /// A block `{ … }`: its statements in written order, one of them its `return`.
+    /// A block `{ … }`: its statements in written order, one of them its `return` (none in
+    /// a function's body block that only pushes).
     Block(Vec<Stmt>),
+    /// `if c { a } else { b }`; `else if` is an `If` in the `else` branch.
+    If {
+        /// The condition.
+        cond: Box<Expr>,
+        /// The branch taken when it holds.
+        then: Box<Expr>,
+        /// The other branch.
+        otherwise: Box<Expr>,
+    },
     /// A member `e.n`, or `e?.n` when `safe`.
     Member {
         /// The value.
@@ -142,6 +152,29 @@ pub fn build(text: &str, tokens: &[Token], tree: &Tree) -> Result<Expr, Error> {
 
 /// The expression of node `n` of `tree`, a node of a rule from `Expr` down to `Primary`.
 pub fn expr(text: &str, tokens: &[Token], tree: &Tree, n: usize) -> Result<Expr, Error> {
+    builder(text, tokens, tree).node(n)
+}
+
+/// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, in written order. A
+/// unit's top level exports its declarations, so `return` there is an error.
+pub fn unit(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Error> {
+    let b = builder(text, tokens, tree);
+    let items = b.kids(tree.root).iter().map(|&k| b.item(k));
+    items
+        .map(|s| match s? {
+            Stmt {
+                kind: StmtKind::Return(_),
+                span,
+            } => Err(Error {
+                span,
+                message: "`return` exports from a block; a unit's top level has none".into(),
+            }),
+            s => Ok(s),
+        })
+        .collect()
+}
+
+fn builder<'a>(text: &'a str, tokens: &'a [Token], tree: &'a Tree) -> Builder<'a> {
     let mut holes = Vec::new();
     let mut count = 0;
     for t in tokens {
@@ -159,7 +192,6 @@ pub fn expr(text: &str, tokens: &[Token], tree: &Tree, n: usize) -> Result<Expr,
         tree,
         holes,
     }
-    .node(n)
 }
 
 struct Builder<'a> {
@@ -169,13 +201,6 @@ struct Builder<'a> {
     /// For each token, the index in `tree.holes` of its first hole.
     holes: Vec<usize>,
 }
-
-/// The step that builds each form of layer L1 this step leaves out, by rule and alternative.
-const LATER: &[(&str, usize, &str)] = &[
-    ("Function", 0, "L1.12"),
-    ("Push", 1, "L1.12"),
-    ("Primary", 7, "L1.12"),
-];
 
 impl Builder<'_> {
     fn span(&self, n: usize) -> Span {
@@ -195,17 +220,15 @@ impl Builder<'_> {
         &self.tree.nodes[n].kids
     }
 
+    /// The error for node `n`, of a form of a layer after L1.
     fn later(&self, n: usize) -> Error {
-        let (rule, alt) = (self.tree.name(n), self.tree.nodes[n].alt);
-        let layer = self.tree.layer(n);
-        let when = match LATER.iter().find(|&&(r, a, _)| (r, a) == (rule, alt)) {
-            Some((_, _, step)) => format!("step {step}"),
-            None if layer > 1 => format!("layer L{layer}"),
-            None => "a later step".into(),
-        };
         Error {
             span: self.span(n),
-            message: format!("this form ({rule}) is built from {when}"),
+            message: format!(
+                "this form ({}) is built from layer L{}",
+                self.tree.name(n),
+                self.tree.layer(n)
+            ),
         }
     }
 
@@ -289,7 +312,7 @@ impl Builder<'_> {
                         span: self.span(n),
                     })
                 }
-                2 | 13 => self.node(kids[0]),
+                2 | 7 | 13 => self.node(kids[0]),
                 5 => Ok(Expr {
                     span: self.span(n),
                     ..self.node(kids[0])?
@@ -304,7 +327,15 @@ impl Builder<'_> {
                 }),
                 _ => Err(self.later(n)),
             },
-            "Block" => self.block(n),
+            "Block" => self.block(n, true),
+            "If" => Ok(Expr {
+                kind: ExprKind::If {
+                    cond: Box::new(self.node(kids[0])?),
+                    then: Box::new(self.node(kids[1])?),
+                    otherwise: Box::new(self.node(kids[2])?),
+                },
+                span: self.span(n),
+            }),
             "Name" => Ok(Expr {
                 kind: ExprKind::Name(self.word(self.tree.nodes[n].start).into()),
                 span: self.span(n),
@@ -556,6 +587,11 @@ impl fmt::Display for Expr {
                 f.write_str(")")
             }
             ExprKind::Index(e, k) => write!(f, "(index {e} {k})"),
+            ExprKind::If {
+                cond,
+                then,
+                otherwise,
+            } => write!(f, "(if {cond} {then} {otherwise})"),
             ExprKind::Block(stmts) => {
                 f.write_str("(block")?;
                 for s in stmts {
