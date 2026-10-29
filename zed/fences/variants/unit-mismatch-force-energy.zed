@@ -1,0 +1,130 @@
+// variant: // e = energy + force;            // ✗ unit mismatch at compile time: kg m s^-2 is not kg m^2 s^-2
+// 1 — Deterministic parallel float sum: bit-identical at any core count.
+total = readings >< (+);
+// Elsewhere: parallel float reduction is nondeterministic unless you build the tree yourself.
+
+// 2 — Scatter and gather are the same computation; the compiler proves it and picks the plan.
+histA = words.group(w -> w.len).count;
+histB = for n in 0..=maxLen { words.where(w -> w.len == n).count };
+// Same kernel term up to the stated domain (law 24): histB's dense domain also states the zero
+// buckets (outer-join histA with 0s to convert); the plans converge on the shared part.
+// Elsewhere: two different programs, two different performance cliffs, no equivalence check.
+
+// 3 — Edit distance, written both ways, one meaning: memoized recursion or wavefront table.
+d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
+  with d[-1][j in -1..<b::len] = j + 1, d[i in 0..][-1] = i + 1;  // disjoint pieces: the corner
+  // d[-1][-1] = 0 is the first family's j = -1 entry — overlap would be a collision
+// The demanded corner pulls (memoized); dense demand pushes (wavefront). Same source.
+
+// 4 — "Inherently serial" text scan, parallelized because the state domain is finite.
+state[i] = csvStep(state[i-1], text[i])  with state[-1] = #outsideQuotes;
+// state : #outsideQuotes | #inQuotes | #escape (finite) — so the compiler reifies
+// csvStep into a transition table and runs a parallel prefix scan.
+
+// 5 — First prime above N: speculative parallel search with automatic cancellation.
+firstPrime = (for i in n.. { i }).where(isPrime).first;
+// Pure ⇒ higher candidates run speculatively and are canceled the instant a lower hit lands.
+// Typed `int | #none`: the source is infinite but primality is not the checker's business,
+// so a use site still says what an empty selection means (sec:corner_cases).
+
+// 6 — Sessionize a log: the group-boundary/flush-the-last-group bug cannot be written.
+sessions = clicks.chunkBy(c -> c.userId).map(s -> Session(start: s.first.time, count: s.count));
+// a chunk exists only because a click fell into it (L ≠ ∅), so .first is exact — no #none case
+
+// 7 — Undo, redo, and time travel are field reads, not an architecture.
+run  = loop t { while t < edits::len && !closed; doc' = doc.patch(edits[t])  with doc = empty; };
+     // history bounded by edits::len; retained because ::frames is demanded below
+past = run::frames[run::len - 2].doc else empty;  // any past state, O(log n), shared
+
+// 8 — A spreadsheet cell is just a memoized value; editing one input reflows in milliseconds.
+@memoized report = sales.join(costs, on: #sku).group(((s, c)) -> s.region).map(rows -> rows.map(((s, c)) -> margin(s, c)).sum);
+// Edit one row of sales ⇒ exactly the dirty cone recomputes, with provenance for every cell.
+
+// 9 — SQL injection is a compile error, not a code-review hope.
+// rows = exec(db, "SELECT * WHERE name = " ++ userName);      // ✗ taint #userInput reaches #clean sink
+rows = exec(db, "SELECT * WHERE name = " ++ sanitize(userName));  // ✓ and the sanitizer is auditable
+
+// 10 — Wrong physics doesn't build.
+energy = 0.5 * m * v * v;         // energy::units == "kg m^2 s^-2"  (a joule)
+e = energy + force;            // ✗ unit mismatch at compile time: kg m s^-2 is not kg m^2 s^-2
+
+// 11 — One declaration = type + parser + printer, with round-trip guaranteed.
+struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
+v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0.0, y: 0.0, z: 0.0);
+s = v.serialize;                   // "(1.0,2.0,3.0)" — phrase grammars skip input whitespace, serialize emits the canonical none; parse ∘ serialize == id
+
+// 12 — Compute only what's asked: one stats module, demand-pruned.
+stats(positional data: [f64]) {
+  n = f64(data::len);                // conversion by type application — no cast syntax
+  mean = data.sum / n;
+  sd   = (data.map(x -> (x - mean) ** 2).sum / n).sqrt;
+  return { mean:, sd: };     // one export, a record display: each field is its own node
+}
+m = stats(xs).mean;                // sd's sub-graph never runs
+// Elsewhere: you split the API, or you pay for everything every call.
+
+// 13 — Invert any finite map in one line — grouping is a type, not a runtime surprise.
+whoTeaches = teacherOf as (teacher -> course) into (course -> teacher -> _);   // teacherOf : Teacher -> Course; result Course ->? {Teacher}
+
+// 14 — A tiny service, split into client and server by the compiler.
+main(req: Stream(Query)) -> (resp: Stream(Answer)) {
+  resp <- req.map(q -> lookup(db, q) else #unknown);
+}
+// Deploy with a keypath cut: the boundary serializes via struct grammars — RPC without stubs.
+
+// 15 — Exhaustive correctness, free, when domains are small.
+@exhaustive romanDigit(n: int[1..=9]) -> String { … }
+  test { 1 -> "I", 4 -> "IV", 9 -> "IX" }
+  // @exhaustive: all nine inputs run at build time — totality, the declared
+  // properties, and the test table are checked on every one. (A complete
+  // expected-output table makes this a full proof; with a partial table,
+  // unlisted inputs are verified for totality and properties only.)
+  // (@checked is different: it marks representation-capped integers whose
+  //  overflow surfaces as a value instead of widening)
+
+// 16 — A ten-hour pipeline survives its bad records and can prove which they were.
+out = files.map(read).map(parse).map(transform);
+bad = out.where(r -> r is not Row);   // every failure carries file, offset, wave, and cause
+
+// 17 — Declared history, inferred storage: the compiler keeps exactly two frames.
+pos[i in 0..<n] = 2*pos[i-1] - pos[i-2] + accel(pos[i-1]) * dt ** 2
+  with pos[-1] = p0, pos[-2] = p0 - v0*dt;
+last = pos[n-1] else p0;    // dependence window = 2 ⇒ a two-slot ring; no array exists
+// traj = pos::frames;      // demanding the history would turn storage back on — a different plan
+// Elsewhere: you hand-rewrite the array into two variables and lose the history option.
+
+// 18 — Indexes are demand: no keyed lookups, no index — the "table" stays a flat run.
+report = logs.map(rowCost).sum;       // logs : Id ->? Row, but only ever scanned here:
+                                      //   the id index has no dependents — pruned;
+                                      //   contents compile to a linear unindexed run
+// hot = logs[someId];                // one keyed probe would demand the index, built
+                                      //   lazily or eagerly by the cost arithmetic
+// Elsewhere: the index exists because the schema says so, and you pay for it either way.
+
+// 19 — Maximum subarray, a non-associative scan, parallelized because its step is affine over (max, +).
+cur[i] = max(xs[i], cur[i-1] + xs[i])  with cur[-1] = 0;
+best = cur >< max else 0;
+// xs : int[0..<n] -> int. The step c -> max(xs[i], c + xs[i]) is the (max, +) affine map
+// (a, b) = (xs[i], xs[i]), and two such maps compose to (max(a2, a1 + b2), b1 + b2),
+// so cur is a parallel prefix scan (sec:optimizer). Floats do not take this path.
+// Elsewhere: Kadane's loop is serial, and its parallel form is a research exercise.
+
+// 20 — A generic JSON decoder, specialized by partial evaluation into a decoder for one struct.
+struct User { id: int, name: String }
+u: User | #parseError(pos: int, msg: String) = Json.decode(text);
+// The ascription fixes decode's result type at User (sec:type_resolution, rule 2), and User
+// is known at build, so mix specializes decode on it (sec:staging): the generic JSON parser,
+// the schema check, and the unpacker into a native struct become one deserializer that reads
+// the two fields of User directly into a User, with no intermediate Json tree, and with the
+// field names of User compiled into the matcher. text : String has no finite domain, so mix
+// does not specialize on it: the checks on its contents stay in the residual program, and
+// #parseError stays in the type.
+ok:  User | #parseError(pos: int, msg: String) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
+bad: User | #parseError(pos: int, msg: String) = Json.decode("{\"id\": \"5\", \"name\": \"John\"}");
+// Here the input is a literal, whose domain is a singleton (sec:domains), so the whole call
+// runs at build: ok is the constant User(id: 5, name: "John"), and bad is the constant
+// #parseError(pos: 7, msg: "expected int for field 'id', got string"). Neither residual
+// program contains a parser. decode is written in Zed, in the prelude unit Json, with the
+// reads of (sec:introspection): T::shape selects the arm, T::fields gives the names and types.
+// Elsewhere: a generic decoder reflects on the type at run time (Jackson), or a macro or a
+// code generator writes the specialized decoder (serde, protoc), as a second tool.

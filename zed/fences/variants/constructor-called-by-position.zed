@@ -1,0 +1,6 @@
+// variant: // q = Point(3.0, 4.0);            // ✗ a constructor is called by name: Point(x: 3.0, y: 4.0)
+// [d4*] sec:power (Vec3) — a constructor takes its fields by name only; `x:` supplies the variable x
+// layer L2
+x = 3.0;
+y = 4.0;
+q = Point(3.0, 4.0);            // ✗ a constructor is called by name: Point(x: 3.0, y: 4.0)

@@ -132,20 +132,32 @@ impl fmt::Display for Error {
 
 /// The tokens of `text`, a loaded source text.
 pub fn lex(text: &str) -> Result<Vec<Token>, Error> {
-    lex_from(text, 0, &mut Vec::new())
+    lex_from(text, 0, &mut Vec::new(), false)
+}
+
+/// The tokens of `text`, a fence of the documentation, where `…` outside strings and comments
+/// marks elided code and is read as the name `…` (DESIGN.md sec:grammar, "Documentation
+/// notation"). No program can write that name.
+pub fn lex_fence(text: &str) -> Result<Vec<Token>, Error> {
+    lex_from(text, 0, &mut Vec::new(), true)
 }
 
 /// The tokens of `text` and its doc comments: a comment that starts with exactly three `/`
 /// (`////` is an ordinary comment). Doc comments inside a string's hole are not collected.
 pub fn lex_with_docs(text: &str) -> Result<(Vec<Token>, Vec<Doc>), Error> {
     let mut docs = Vec::new();
-    let tokens = lex_from(text, 0, &mut docs)?;
+    let tokens = lex_from(text, 0, &mut docs, false)?;
     Ok((tokens, docs))
 }
 
 /// The tokens of `text` from byte `pos` to its end, with spans in `text`, and its doc
-/// comments pushed onto `docs`.
-fn lex_from(text: &str, mut pos: usize, docs: &mut Vec<Doc>) -> Result<Vec<Token>, Error> {
+/// comments pushed onto `docs`; with `elisions`, `…` is a name.
+fn lex_from(
+    text: &str,
+    mut pos: usize,
+    docs: &mut Vec<Doc>,
+    elisions: bool,
+) -> Result<Vec<Token>, Error> {
     let mut out = Vec::new();
     while let Some(c) = text[pos..].chars().next() {
         let start = pos;
@@ -192,6 +204,9 @@ fn lex_from(text: &str, mut pos: usize, docs: &mut Vec<Doc>) -> Result<Vec<Token
         } else if let Some(end) = name::wildcard(text, pos) {
             pos = end;
             Some(Tok::Wildcard)
+        } else if elisions && c == '…' {
+            pos += c.len_utf8();
+            Some(Tok::Name(c.into()))
         } else if let Some(op) = punct::operator(text, pos) {
             pos += op.len();
             Some(Tok::Op(op))

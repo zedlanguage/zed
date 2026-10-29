@@ -19,6 +19,8 @@ zed/                  Zed source code
                       a folder NN-name/ for the other units of a multi-unit program,
                       ref/NN.py computing each .out, variants/, controls/, LEDGER.md
   compiler/           the compiler written in Zed (row S); empty until then
+  fences/             the spec's `zed` fences (step L1.7): design.md and examples.md, written
+                      by sync.py, and variants/, one fixture per commented ✗ variant
 tests/                the step tests (the `zed-tests` crate)
   src/                helpers shared by every step
   steps/main.rs       declares one module per step, in plan order

@@ -28,12 +28,14 @@ in docs/layout.md.
 - Done: **L1.4**, float and rational literals (`zedc::lex::number`).
 - Done: **L1.5**, string literals (`zedc::lex::string`), and `//` and nesting `/* */` comments (`zedc::lex::comment`), which a hole may hold.
 - Done: **L1.6**, the lexical grammar whole: atoms, annotations, keywords, operators, doc comments (`zedc::lex::punct`, `lex_with_docs`).
-- Next: L1.7.
+- Done: **L1.7**, the fence extractor: the 149 `zed` fences of DESIGN.md and EXAMPLES.md are
+  copied into `zed/fences/` with their layers, lexed, and their ✗ marks recorded (`zedc::fence`).
+- Next: L1.8.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 271 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 218 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 282 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 229 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -58,6 +60,7 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.4 | done | `Tok::Float` and `Tok::Rat` keep the decimal text without `_`; a digit must follow `.`, so `5.double`, `1..10`, `1.e5` and `12.` end the number before the `.`, and `.5` is no number; an exponent with no digits, an `r` after a hex, octal or binary literal, and a letter after a float are `BadNumber` errors. Golden snapshot of ten malformed literals. Negative controls: reading `.` without a following digit, and accepting `r` after any base, each fail a test |
 | L1.5 | done | `Tok::Str(Vec<Part>)`: decoded text parts and `Part::Hole { tokens, span }`, each hole lexed once into tokens with spans in the whole file; a hole's end is found by the `HoleText` rule, so a string or comment inside it neither opens nor closes it; the `"""` indentation rule; golden snapshots of eleven malformed strings and six malformed holes. Comments are skipped from here on, since a hole may hold one. Negative controls: dropping the indentation cut, scanning an inner string as plain characters, and dropping the one-line check each fail a test |
 | L1.6 | done | `Tok::Keyword`, `Tok::Op` (41 operators, longest first), `Tok::Atom`, `Tok::Annot`; `where` and `sep` stay names; `if'` is the keyword and a stray `'`; `lex_with_docs` returns the `///` comments beside the tokens. Golden snapshots: the `sec:tour_failure` example of EXAMPLES.md (copied into the test) and nine lexical errors. Negative controls: `->` ahead of `->?`, `////` read as a doc comment, and keywords read as names each fail a test |
+| L1.7 | done | `zedc::fence` (`extract`, `marks`, `label`) and `lex::lex_fence`, which reads `…` as a name. `zed/fences/sync.py` records each fence's layer with the spec's grammar tools: its lowest ring (as a `Unit`, or else under the documentation notation; 13 fences), raised to its defined words and its label; the rings agree with `check.py` on all 149. All 149 fences lex; their tokens and ✗ marks are golden snapshots. The 11 commented ✗ variants each have a fixture in `zed/fences/variants/`, matched by the variant's text, with exactly one live ✗ line. Negative controls: no variant rule, a label read from the first line only, `…` not elided, a stale copy (also `sync.py --check`), and a layer recorded below its label each fail a test |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -67,9 +70,11 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 - Cargo's target directory is `build/cargo`, set in `.cargo/config.toml`.
 - Language tests: `tests/steps/<step>/`, all in one test binary. Unit tests of internal
   functions: `#[cfg(test)]` beside the code.
-- Fences: CI must not read the spec repository (the author's instruction, 2026-10-29). Step
-  L1.7 copies the fences into fixture files in this repository, with a drift check that runs
-  where `../zed` exists.
+- Fences: CI must not read the spec repository (the author's instruction, 2026-10-29).
+  `zed/fences/sync.py`, run by hand, copies the fences into `zed/fences/design.md` and
+  `examples.md`, each under a header with its source line and layer; `sync.py --check` exits 1
+  when a copy is stale, and the step test `the_copies_match_the_spec_where_it_is_present`
+  compares the texts where `../zed` exists (it passes without checking in CI).
 - The reference evaluator uses `i64` with checked arithmetic (overflow is an error), a fuel
   of 10^8 calls, at most 20 000 nested calls, and runs on its own thread with a 1 GiB stack.
 - Coverage runs in CI (`cargo llvm-cov`, job `coverage`), not locally: this machine has no
@@ -123,6 +128,14 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
   comment in such a hole is its own error. An empty string is `Str([])`.
 - L1.6: doc comments are kept outside the token stream, since the grammar discards every
   comment; the parser attaches them by span.
+- L1.7: a fence's `// layer Lk` label may be on any whole comment line, since a fence's first
+  line is usually its `// [d4]` header; the spec's `layer.label_of` reads only a program's first
+  line, which gave EXAMPLES.md:432 layer L1 under its `// layer L2`. `sync.py` reads every line.
+- L1.7: where a variant replaces a line instead of adding one (the loop variants of the fence
+  at DESIGN.md:2420, a second `q =` or `rows =`), its fixture replaces that line, so the fixture has one
+  error. The two column variants of the `orders` store edit its field type and put the ✗ there.
+- L1.7: `…` is the name `…` (sec:grammar, "Documentation notation"); Part G said "a hole, not a
+  token", now aligned to sec:grammar in DESIGN.md.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which lie within the evaluator's own range limit.

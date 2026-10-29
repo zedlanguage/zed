@@ -1,0 +1,383 @@
+---
+source: tests/steps/l01_07_fences/copies.rs
+expression: "golden_tokens(\"design.md\")"
+---
+== DESIGN.md:196 L8
+  1 | src «as» ( sourceKeypathPattern ) «into» ( outputKeypathPattern -> leaf )
+== DESIGN.md:217 L8
+  1 | «as» ( k1 -> k2 -> v ) «into» ( k2 -> k1 -> v )
+  2 | «as» ( k1 -> k2 -> v ) «into» ( ( k1 , k2 ) -> v )
+  3 | «as» ( k -> v ) «into» ( k + 1₍10₎ -> v )
+== DESIGN.md:224 L8
+  1 | «as» ( k1 -> k2 -> v ) «into» ( k1 -> ( k2 , v ) -> v )
+  2 | «as» ( k -> v ) «into» ( ( k , f ( k ) ) -> v )
+== DESIGN.md:229 L8
+  1 | «as» ( k1 -> k2 -> v ) «into» ( k1 -> k2 -> _ )
+  3 | «as» ( k1 -> k2 -> v ) «into» ( k1 -> k2 )
+== DESIGN.md:240 L8
+  1 | «as» ( k1 -> k2 -> v ) «into» ( k1 -> v )
+== DESIGN.md:258 L8
+  1 | «as» ( k1 -> k2 -> v ) «into» ( k1 -> k2 >< ( + ) -> v )
+== DESIGN.md:268 L8
+  1 | byScore = scores «into» ( «desc» score -> name -> score ) ;
+== DESIGN.md:283 L8
+  1 | byLower = words «into» ( w . lower -> i -> w ) ;
+  3 | byId = users . rekey ( u -> u . id ) ;
+== DESIGN.md:343 L8
+  1 | matmul ( «positional» a : ( r -> c -> f64 ) , «positional» b : ( c -> k -> f64 ) ) =
+  2 | ( a , b ) «into» ( r -> k -> c >< ( + ) -> a [ r ] [ c ] * b [ c ] [ k ] ) ;
+== DESIGN.md:402 L6
+  1 | sim = «loop» {
+  2 | pos' = pos + vel * dt «with» pos = p0 ;
+  3 | vel' = vel + a ( pos ) * dt «with» vel = v0 ;
+  4 | «until» pos' . x > bound ;
+  5 | } ;
+== DESIGN.md:422 L6
+  1 | x [ i «in» 0₍10₎ ..< warm ] = coldStart ( i ) ;
+  2 | x [ i «in» warm ..< n ] = anneal ( x [ i - 1₍10₎ ] ) ;
+== DESIGN.md:461 L10
+  1 | ( «div» ) : ( ( int , int \ 0₍10₎ ) -> int ) & ( ( int , 0₍10₎ ) -> #divByZero )
+== DESIGN.md:599 L10
+  1 | «type» Small = ( x : int where x * x < 100₍10₎ ) ;
+  2 | «type» Even = ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) ;
+  3 | «type» Prime = ( p : int [ 2₍10₎ .. ] where isPrime ( p ) ) ;
+  4 | «type» Short = ( s : String where s . len < 100₍10₎ ) ;
+  5 | area ( a : int [ 1₍10₎ .. ] , b : int [ 1₍10₎ .. ] where a * b <= 99₍10₎ ) -> int = a * b ;
+== DESIGN.md:648 L11
+  1 | «type» Bound = int | Ast | #unbounded ;
+  2 | «struct» Interval { min : Bound , max : Bound }
+  3 | «struct» Congruence { modulus : int [ 0₍10₎ .. ] , residue : int }
+  4 | «struct» FloatClass { finite : bool , nonNaN : bool , width : #f16 | #f32 | #f64 }
+  5 | «struct» Constraints {
+  6 | subject : Ast ,
+  7 | interval : Interval | [ Interval ] | #none ,
+  8 | congruence : Congruence | #none ,
+  9 | values : [ _ ] | #unknown ,
+ 10 | length : Interval | #none ,
+ 11 | floats : FloatClass | #none ,
+ 12 | relations : [ Ast ] ,
+ 13 | written : [ Ast ] ,
+ 14 | }
+== DESIGN.md:715 L2
+  1 | «import» geometry . shapes ;
+  2 | «import» geometry . shapes «as» g ;
+  3 | «import» geometry . shapes . { area , Rect } ;
+== DESIGN.md:772 L20
+  1 | «type» Nonzero = String «matching» «grammar» { str["0"] * ( str["1"] | str["2"] | str["3"] | str["4"] | str["5"] | str["6"] | str["7"] | str["8"] | str["9"] ) digit * } ;
+  2 | «type» UnitName = String «matching» «grammar» { alpha ( alpha | str["_"] ) * } ;
+  3 | «type» UnitPower = String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
+  4 | «type» UnitFactor = String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;
+  5 | «type» UnitProduct = String «matching» «grammar» { UnitFactor sep ( str[" "] | str["*"] | str["·"] ) } ;
+  6 | «type» UnitText = String «matching» «grammar» { ( UnitProduct | str["1"] ) ( str["/"] ( UnitFactor | str["("] UnitProduct str[")"] ) ) ? } ;
+== DESIGN.md:797 L14
+  1 | matmul ( «positional» v : ( c -> T ) , «positional» b : ( c -> k -> T ) ) = ( v , b ) «into» ( k -> c >< ( + ) -> v [ c ] * b [ c ] [ k ] ) ;
+  2 | matmul ( «positional» a : ( r -> c -> T ) , «positional» v : ( c -> T ) ) = ( a , v ) «into» ( r -> c >< ( + ) -> a [ r ] [ c ] * v [ c ] ) ;
+  3 | dot ( «positional» u : ( i -> T ) , «positional» v : ( i -> T ) ) = ( u , v ) «into» ( i >< ( + ) -> conj ( u [ i ] ) * v [ i ] ) ;
+  4 | cross ( «positional» u : ( int [ 0₍10₎ ..< 3₍10₎ ] -> T ) , «positional» v : ( int [ 0₍10₎ ..< 3₍10₎ ] -> T ) ) = ( quat ( 0₍10₎ , u ) * quat ( 0₍10₎ , v ) ) . im ;
+  5 | cross ( «positional» u : ( int [ 0₍10₎ ..< 7₍10₎ ] -> T ) , «positional» v : ( int [ 0₍10₎ ..< 7₍10₎ ] -> T ) ) = ( oct ( 0₍10₎ , u ) * oct ( 0₍10₎ , v ) ) . im ;
+== DESIGN.md:809 L14
+  1 | «type» Rgb = [ f32 ; 3₍10₎ ] ;
+  2 | «type» Batch = [ f32 ; n : _ , h : 224₍10₎ , w : 224₍10₎ , c : 3₍10₎ ] «with» layout ( n , h , w , c ) ;
+  3 | scale ( «positional» s : T , «positional» v : [ T ; n ] ) = s * v ;
+== DESIGN.md:821 L14
+  1 | «type» State = int [ 0₍10₎ ..< 2₍10₎ ] ;
+  2 | step ( «positional» f : ( ( i : State «with» units ( [ str["m"] , str["m/s"] ] ) ) -> ( j : State «with» units ( [ str["1/m"] , str["s/m"] ] ) ) -> f64 ) ,
+  3 | «positional» x : ( ( j : State «with» units ( [ str["m"] , str["m/s"] ] ) ) -> f64 ) ) = f . matmul ( x ) ;
+== DESIGN.md:863 L11
+  1 | «type» Shape =
+  2 | #scalar ( name : String , constraints : Constraints )
+  3 | | #string ( syntax : Grammar | #none , constraints : Constraints )
+  4 | | #atom ( name : String , payload : Type | #none )
+  5 | | #struct ( name : String | #none , fields : [ Field ] , syntax : Grammar | #none )
+  6 | | #interface ( name : String , fields : [ Field ] )
+  7 | | #tuple ( items : [ Type ] )
+  8 | | #union ( name : String | #none , members : [ Type ] )
+  9 | | #morphism ( key : Type , value : Type , partial : bool )
+ 10 | | #function ( params : [ Param ] , result : Type )
+ 11 | | #refined ( base : Type , predicate : Ast )
+ 12 | | #negation ( of : Type )
+ 13 | | #intersection ( parts : [ Type ] ) ;
+ 14 | «struct» Field { key : _ , name : String , valueType : Type , default : Ast | #none , facets : [ Ast ] }
+ 15 | «struct» Param { name : String | #none , kind : #positional | #named , valueType : Type , default : Ast | #none }
+== DESIGN.md:903 L11
+  1 | encode ( «positional» v : T ) -> String = «match» T :: shape {
+  2 | #struct ( fields : ) -> str["{"] ++ ( fields . map ( f -> quote ( f . name ) ++ str[": "] ++ encode ( v [ f . key ] ) ) >< ( ( a , b ) -> a ++ str[", "] ++ b ) «else» str[] ) ++ str["}"] ,
+  3 | #string -> quote ( v ) ,
+  4 | #atom ( name : , payload : #none ) -> quote ( name ) ,
+  5 | _ -> String ( v ) ,
+  6 | } ;
+== DESIGN.md:924 L22
+  1 | p = ( ( x : rat ) -> ( x + 1₍10₎ ) ** 2₍10₎ ) :: source ;
+  2 | e = expand ( p ) ;
+  3 | d = derivative ( p ) ;
+== DESIGN.md:945 L15
+  1 | «law» addComm ( a : int , b : int ) = a + b == b + a ;
+  2 | «law» sortIdempotent ( xs : [ int ] ) = xs . sort ( «asc» x -> x ) . sort ( «asc» x -> x ) == xs . sort ( «asc» x -> x ) ;
+  3 | «law» noOverdraft ( s : Account , t : Txn where t . amount > 0₍10₎ ) = ( apply ( s , t ) «else» s ) . balance >= 0₍10₎ ;
+== DESIGN.md:977 L11
+  1 | «type» Proof = #eval
+  2 | | #domain
+  3 | | #rewrite ( rule : LawId , at : Path , bindings : Bindings )
+  4 | | #chain ( steps : [ Proof ] , claims : [ Ast ] )
+  5 | | #cases ( on : Binder , arms : Member -> Proof )
+  6 | | #induction ( on : Binder , base : Proof , step : Proof )
+  7 | | #use ( rule : LawId , args : [ Ast ] )
+  8 | | #implies ( assume : Ast , then : Proof )
+  9 | | #reflect ( sound : LawId )
+ 10 | | #assume ( why : String ) ;
+== DESIGN.md:1044 L12
+  1 | «type» Parity = #even | #odd | #either ;
+  2 | parity = Facet (
+  3 | kind : #evidence ,
+  4 | lattice : flat ( [ #even , #odd ] , top : #either ) ,
+  5 | holds : ( p , x : int ) -> «match» p { #even -> x «mod» 2₍10₎ == 0₍10₎ , #odd -> x «mod» 2₍10₎ == 1₍10₎ , #either -> «true» } ,
+  6 | transfer : ( op , a , b ) -> «match» op {
+  7 | #add -> «if» a == #either || b == #either { #either } «else» «if» a == b { #even } «else» { #odd } ,
+  8 | #mul -> «if» a == #even || b == #even { #even } «else» «if» a == #odd && b == #odd { #odd } «else» { #either } ,
+  9 | _ -> #either ,
+ 10 | } ,
+ 11 | ) ;
+ 13 | half ( «positional» x : int «with» parity ( #even ) ) = x «div» 2₍10₎ ;
+ 14 | g ( n : int «with» parity ( #odd ) ) = half ( n + n ) ;
+ 15 | h ( n : int «with» parity ( #odd ) , m : int «with» parity ( #even ) ) = half ( n * m ) ;
+ 16 | seven = 7₍10₎ «with» parity ( #odd ) ;
+== DESIGN.md:1096 L22
+  1 | «interface» Semigroup ( T ) {
+  2 | mul : ( T , T ) -> T ,
+  3 | «law» mulAssoc ( a : T , b : T , c : T ) = mul ( mul ( a , b ) , c ) == mul ( a , mul ( b , c ) ) ,
+  4 | }
+  6 | «interface» Monoid ( T ) {
+  7 | «import» Semigroup ( T ) ,
+  8 | one : T ,
+  9 | «law» oneMul ( a : T ) = mul ( one , a ) == a ,
+ 10 | «law» mulOne ( a : T ) = mul ( a , one ) == a ,
+ 11 | }
+ 13 | «interface» CommRing ( T ) {
+ 14 | «import» Monoid ( T ) ,
+ 15 | add : ( T , T ) -> T ,
+ 16 | zero : T ,
+ 17 | neg : ( T ) -> T ,
+ 18 | «law» mulComm ( a : T , b : T ) = mul ( a , b ) == mul ( b , a ) ,
+ 19 | «law» addAssoc ( a : T , b : T , c : T ) = add ( add ( a , b ) , c ) == add ( a , add ( b , c ) ) ,
+ 20 | «law» addComm ( a : T , b : T ) = add ( a , b ) == add ( b , a ) ,
+ 21 | «law» addZero ( a : T ) = add ( a , zero ) == a ,
+ 22 | «law» addNeg ( a : T ) = add ( a , neg ( a ) ) == zero ,
+ 23 | «law» distrib ( a : T , b : T , c : T ) = mul ( a , add ( b , c ) ) == add ( mul ( a , b ) , mul ( a , c ) ) ,
+ 24 | }
+ 26 | intRing : CommRing ( int ) = { mul : ( * ) , one : 1₍10₎ , add : ( + ) , zero : 0₍10₎ , neg : ( a -> - a ) } ;
+== DESIGN.md:1133 L22
+  1 | «law» square ( R : CommRing ( T ) , a : T , b : T ) = ( a + b ) * ( a + b ) == a * a + 2₍10₎ * a * b + b * b
+  2 | «proof» {
+  3 | ( a + b ) * ( a + b )
+  4 | == ( a + b ) * a + ( a + b ) * b
+  5 | == a * a + b * a + ( a * b + b * b )
+  6 | == a * a + 2₍10₎ * a * b + b * b
+  7 | }
+== DESIGN.md:1147 L22
+  1 | pow ( M : Monoid ( T ) , x : T , n : int [ 0₍10₎ .. ] ) -> T = «if» n == 0₍10₎ { 1₍10₎ } «else» { pow ( M : , x : , n : n - 1₍10₎ ) * x } ;
+  3 | «law» powAdd ( M : Monoid ( T ) , x : T , m : int [ 0₍10₎ .. ] , n : int [ 0₍10₎ .. ] ) =
+  4 | pow ( M : , x : , n : m + n ) == pow ( M : , x : , n : m ) * pow ( M : , x : , n : n )
+  5 | «proof» { byInduction ( n ) }
+== DESIGN.md:1157 L22
+  1 | additive ( R : CommRing ( T ) ) -> Monoid ( T ) = { mul : R . add , one : R . zero } ;
+== DESIGN.md:1196 L22
+  1 | «interface» MonoInt {
+  2 | f : ( int ) -> int ,
+  3 | «law» mono ( a : int , b : int ) = ( a <= b ) . implies ( f ( a ) <= f ( b ) ) ,
+  4 | }
+  6 | «law» monoTwice ( M : MonoInt , a : int , b : int ) = ( a <= b ) . implies ( M . f ( M . f ( a ) ) <= M . f ( M . f ( b ) ) ) «proof» {
+  7 | #implies ( assume : a <= b , then : #chain ( steps : [
+  8 | #use ( rule : M . mono , args : [ a , b ] ) ,
+  9 | #use ( rule : M . mono , args : [ M . f ( a ) , M . f ( b ) ] ) ,
+ 10 | ] , claims : [ M . f ( a ) <= M . f ( b ) , M . f ( M . f ( a ) ) <= M . f ( M . f ( b ) ) ] ) )
+ 11 | }
+== DESIGN.md:1442 L7
+  1 | @foreign «struct» SockAddr { family : int «with» bits ( 16₍10₎ ) , data : [ byte ] «with» length ( 14₍10₎ ) }
+  2 | @foreign «struct» AddrInfo {
+  3 | flags : i32 , family : i32 , socktype : i32 , protocol : i32 ,
+  4 | addrlen : int «with» bits ( 32₍10₎ ) ,
+  5 | addr : Ptr ( SockAddr ) | #none ,
+  6 | canonname : Ptr ( [ byte ] «with» terminated ( 0₍10₎ ) ) | #none ,
+  7 | next : Ptr ( AddrInfo ) | #none ,
+  8 | }
+  9 | @foreign ( str["c"] , str["freeaddrinfo"] ) freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
+ 10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ byte ] «with» terminated ( 0₍10₎ ) , service : [ byte ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> { rc : i32 , res : Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) } ;
+== DESIGN.md:2380 L10
+  2 | x = 42₍10₎ ;
+  3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
+  4 | name = str["Zed"] ;
+  5 | color = #green ;
+ 10 | double ( «positional» x ) = x * 2₍10₎ ;
+ 11 | clamp ( «positional» v , «positional» lo , «positional» hi ) -> int {
+ 12 | «if» v < lo { lo } «else» «if» v > hi { hi } «else» { v }
+ 13 | }
+ 14 | greet ( «positional» name : String , punct = str["!"] ) = str["Hi, "] ++ name ++ punct ;
+ 15 | y = 5₍10₎ . double . clamp ( 0₍10₎ , 8₍10₎ ) ;
+ 16 | ann = greet ( str["Ann"] , punct : str["?"] ) ;
+ 17 | hiAnn = greet ( str["Ann"] , ... ) ;
+ 20 | «struct» Point { x : f64 , y : f64 }
+ 21 | «struct» Circle { c : Point , r : f64 = 1.0f }
+ 22 | «struct» Rect { lo : Point , hi : Point }
+ 23 | «type» Shape = Circle | Rect ;
+ 25 | area ( s : Shape ) = «match» s {
+ 26 | Circle ( r : ) -> pi * r * r ,
+ 27 | Rect ( lo : , hi : ) -> ( hi . x - lo . x ) * ( hi . y - lo . y ) ,
+ 28 | } ;
+ 30 | p = Point ( x : 1.0f , y : 2.0f ) ;
+ 31 | p2 = p «with» { x = 3.0f } ;
+ 32 | unit = Circle ( c : p ) ;
+ 33 | onAxis = Point ( x : 0.0f , ... ) ;
+ 35 | «struct» Round { «import» Rect , r : f64 }
+== DESIGN.md:2420 L10
+  1 | «struct» Counter { n : int , hi : int }
+  3 | Counter . tick ( ) {
+  4 | n' = n + 1₍10₎ ;
+  5 | hi' = max ( hi , n + 1₍10₎ ) ;
+  6 | }
+  7 | Counter . bump ( «positional» by ) -> int {
+  8 | n' = n + by ;
+  9 | hi' = max ( hi , n + by ) ;
+ 10 | «return» n ;
+ 11 | }
+ 12 | Counter . atHi = n == hi ;
+ 14 | p = Counter ( n : 0₍10₎ , hi : 9₍10₎ ) ;
+ 15 | p2 = p . tick ( ) . tick ( ) ;
+ 16 | p3 , was = p . bump ( 2₍10₎ ) ;
+ 17 | p4 , w2 = bump ( p , 2₍10₎ ) ;
+ 20 | run = «loop» {
+ 21 | «mutable» c = Counter ( n : 0₍10₎ , hi : 9₍10₎ ) ;
+ 22 | prev = c *. bump ( 3₍10₎ ) ;
+ 23 | «until» prev > 20₍10₎ ;
+ 32 | } ;
+== DESIGN.md:2464 L5
+  1 | xs = [ 3₍10₎ , 1₍10₎ , 4₍10₎ , 1₍10₎ , 5₍10₎ ] ;
+  2 | m = { str["a"] -> 1₍10₎ , str["b"] -> 2₍10₎ } ;
+  4 | tags = { #red , #green } ;
+  5 | word = str["never"] ++ str["the"] ++ str["less"] ;
+  7 | tens = xs . map ( x -> x * 10₍10₎ ) ;
+  8 | big = xs . where ( x -> x > 2₍10₎ ) ;
+  9 | srt = xs . sort ( «desc» x -> x ) ;
+ 10 | tot = xs . sum ;
+ 13 | counts = text . split ( str[" "] ) . group ( w -> w . lower ) . count ;
+== DESIGN.md:2481 L8
+  2 | counts = text . split ( str[" "] ) «as» ( i -> w ) «into» ( w . lower -> i -> 1₍10₎ ) >< ( + ) ;
+== DESIGN.md:2486 L4
+  2 | byId = users . rekey ( u -> u . id ) ;
+== DESIGN.md:2493 L5
+  1 | byId = users . group ( u -> u . id ) ;
+  4 | best = scores . maxBy ( v -> v ) ;
+  5 | one = best ?. first ;
+== DESIGN.md:2504 L5
+  4 | paid = orders . join ( payments , on : #orderId , kind : #left ) ;
+== DESIGN.md:2512 L3
+  2 | paid = «for» o «in» orders {
+  3 | payment = payments [ o . orderId ] «else» #none ;
+  4 | ( o , payment )
+  5 | } ;
+== DESIGN.md:2520 L5
+  2 | unpaid = orders . diff ( payments , on : #orderId ) ;
+== DESIGN.md:2525 L8
+  1 | unpaid = orders . where ( o -> payments [ o . orderId ] «is» #notFound ) ;
+  6 | shipped = «for» o «in» orders , s «in» shipments where o . orderId == s . orderId { ( o , s ) } ;
+ 10 | pairs = «for» i «in» 0₍10₎ ..< n , j «in» i + 1₍10₎ ..< n { ( i , j ) } ;
+ 13 | matmul ( «positional» a : ( r -> c -> f64 ) , «positional» b : ( c -> k -> f64 ) ) =
+ 14 | ( a , b ) «into» ( r -> k -> c >< ( + ) -> a [ r ] [ c ] * b [ c ] [ k ] ) ;
+ 17 | prod = a . matmul ( b ) ;
+== DESIGN.md:2547 L6
+  2 | sq = «for» i «in» 0₍10₎ ..< n { i * i } ;
+  5 | cdf [ i ] = cdf [ i - 1₍10₎ ] + hist [ i ] «with» cdf [ - 1₍10₎ ] = 0₍10₎ ;
+  6 | total = cdf . last «else» 0₍10₎ ;
+  9 | sim = «loop» {
+ 10 | pos' = pos + vel * dt «with» pos = p0 ;
+ 11 | vel' = vel + a ( pos ) * dt «with» vel = v0 ;
+ 12 | «until» pos' . x > bound ;
+ 13 | } ;
+ 14 | final = sim . pos ;
+ 15 | history = sim :: frames ;
+ 16 | steps = sim :: len ;
+ 19 | simplified = «loop» {
+ 20 | terms' = simplifyOnce ( terms ) «with» terms = input ;
+ 21 | «until» terms' == terms ;
+ 22 | } ;
+ 25 | sessions = events . chunkBy ( e -> e . userId ) ;
+ 26 | report = sessions . map ( s -> summarize ( s ) ) ;
+== DESIGN.md:2578 L3
+  1 | parse : ( String ) -> Config | #syntaxError ( pos : int )
+  3 | conf = parse ( text ) «else» defaultConfig ;
+  4 | port = parse ( text ) ?. server ?. port «else» 8080₍10₎ ;
+  6 | results = files . map ( f -> read ( f ) ) . map ( b -> parse ( b ) ) ;
+  8 | good = results . where ( r -> r «is» Config ) ;
+  9 | bad = results . where ( r -> r «is» «not» Config ) ;
+ 11 | amounts = files . map ( f -> int ( read ( f ) ) ) ;
+ 12 | sum = amounts >< ( + ) ;
+ 16 | sumKept = amounts . where ( a -> a «is» int ) >< ( + ) ;
+ 17 | sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
+ 18 | badAmounts = amounts . where ( a -> a «is» «not» int ) ;
+ 20 | sumAll = amounts . allOk >< ( + ) ;
+== DESIGN.md:2603 L21
+  2 | «struct» KeyVal «grammar» { key : Ident str[":"] value : Json }
+  3 | «struct» JsonObj «grammar» { str["{"] entries : KeyVal sep str[","] str["}"] }
+  4 | «type» Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null ;
+  6 | cfg = Json . parse ( bytes ) ;
+  7 | out = cfg ?. serialize ;
+  9 | «type» Ident = String «matching» «grammar» { alpha ( alpha | digit ) * } ;
+ 14 | double ( «positional» x ) = x * 2₍10₎
+ 15 | «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
+ 16 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
+ 19 | main ( stdin : Lines ) -> ( stdout : Lines ) {
+ 20 | stdout <- stdin . map ( l -> l . upper ) ;
+ 21 | }
+ 24 | orders : OrderId ->? { total : rat , note : String | #none }
+ 25 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
+ 27 | n = orders [ id ] ?. note ;
+ 32 | v = 3.0f «with» units ( str["m/s"] ) ;
+ 33 | t = 2.0f «with» units ( str["s"] ) ;
+ 34 | d = v * t ;
+ 37 | exec : ( Db , String «with» taint ( #clean ) ) -> Rows | #sqlError
+ 39 | rows = exec ( db , sanitize ( userInput ) ) ;
+== DESIGN.md:2696 L3
+  2 | priceOf ( «positional» items , «positional» id ) = items [ id ] ?. price * ( 1₍10₎ + taxRate ) ;
+== DESIGN.md:2703 L2
+  1 | priceOf : ( K ->? { price : f64 } , K ) -> f64 | #notFound
+== DESIGN.md:2715 L20
+  2 | total = readings >< ( + ) ;
+  6 | histA = words . group ( w -> w . len ) . count ;
+  7 | histB = «for» n «in» 0₍10₎ ..= maxLen { words . where ( w -> w . len == n ) . count } ;
+ 13 | d [ i ] [ j ] = min ( d [ i - 1₍10₎ ] [ j ] + 1₍10₎ , d [ i ] [ j - 1₍10₎ ] + 1₍10₎ , d [ i - 1₍10₎ ] [ j - 1₍10₎ ] + cost ( a [ i ] , b [ j ] ) )
+ 14 | «with» d [ - 1₍10₎ ] [ j «in» - 1₍10₎ ..< b :: len ] = j + 1₍10₎ , d [ i «in» 0₍10₎ .. ] [ - 1₍10₎ ] = i + 1₍10₎ ;
+ 19 | state [ i ] = csvStep ( state [ i - 1₍10₎ ] , text [ i ] ) «with» state [ - 1₍10₎ ] = #outsideQuotes ;
+ 24 | firstPrime = ( «for» i «in» n .. { i } ) . where ( isPrime ) . first ;
+ 30 | sessions = clicks . chunkBy ( c -> c . userId ) . map ( s -> Session ( start : s . first . time , count : s . count ) ) ;
+ 34 | run = «loop» t { «while» t < edits :: len && ! closed ; doc' = doc . patch ( edits [ t ] ) «with» doc = empty ; } ;
+ 36 | past = run :: frames [ run :: len - 2₍10₎ ] . doc «else» empty ;
+ 39 | @memoized report = sales . join ( costs , on : #sku ) . group ( ( ( s , c ) ) -> s . region ) . map ( rows -> rows . map ( ( ( s , c ) ) -> margin ( s , c ) ) . sum ) ;
+ 44 | rows = exec ( db , str["SELECT * WHERE name = "] ++ sanitize ( userName ) ) ;
+ 47 | energy = 0.5f * m * v * v ;
+ 51 | «struct» Vec3 «grammar» { str["("] x : f64 str[","] y : f64 str[","] z : f64 str[")"] }
+ 52 | v = Vec3 . parse ( str["(1.0, 2.0, 3.0)"] ) «else» Vec3 ( x : 0.0f , y : 0.0f , z : 0.0f ) ;
+ 53 | s = v . serialize ;
+ 56 | stats ( «positional» data : [ f64 ] ) {
+ 57 | n = f64 ( data :: len ) ;
+ 58 | mean = data . sum / n ;
+ 59 | sd = ( data . map ( x -> ( x - mean ) ** 2₍10₎ ) . sum / n ) . sqrt ;
+ 60 | «return» { mean : , sd : } ;
+ 61 | }
+ 62 | m = stats ( xs ) . mean ;
+ 66 | whoTeaches = teacherOf «as» ( teacher -> course ) «into» ( course -> teacher -> _ ) ;
+ 69 | main ( req : Stream ( Query ) ) -> ( resp : Stream ( Answer ) ) {
+ 70 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
+ 71 | }
+ 75 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> String { … }
+ 76 | «test» { 1₍10₎ -> str["I"] , 4₍10₎ -> str["IV"] , 9₍10₎ -> str["IX"] }
+ 85 | out = files . map ( read ) . map ( parse ) . map ( transform ) ;
+ 86 | bad = out . where ( r -> r «is» «not» Row ) ;
+ 89 | pos [ i «in» 0₍10₎ ..< n ] = 2₍10₎ * pos [ i - 1₍10₎ ] - pos [ i - 2₍10₎ ] + accel ( pos [ i - 1₍10₎ ] ) * dt ** 2₍10₎
+ 90 | «with» pos [ - 1₍10₎ ] = p0 , pos [ - 2₍10₎ ] = p0 - v0 * dt ;
+ 91 | last = pos [ n - 1₍10₎ ] «else» p0 ;
+ 96 | report = logs . map ( rowCost ) . sum ;
+104 | cur [ i ] = max ( xs [ i ] , cur [ i - 1₍10₎ ] + xs [ i ] ) «with» cur [ - 1₍10₎ ] = 0₍10₎ ;
+105 | best = cur >< max «else» 0₍10₎ ;
+112 | «struct» User { id : int , name : String }
+113 | u : User | #parseError ( pos : int , msg : String ) = Json . decode ( text ) ;
+121 | ok : User | #parseError ( pos : int , msg : String ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;
+122 | bad : User | #parseError ( pos : int , msg : String ) = Json . decode ( str["{\"id\": \"5\", \"name\": \"John\"}"] ) ;

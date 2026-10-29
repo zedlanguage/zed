@@ -1,0 +1,40 @@
+// variant: // total: f64                      // ✗ NUMERIC is not a binary float
+// one declaration: type + parser + serializer (round-trip canonical)
+struct KeyVal  grammar { key: Ident  ":"  value: Json }
+struct JsonObj grammar { "{"  entries: KeyVal sep ","  "}" }
+type   Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null;
+
+cfg = Json.parse(bytes);         // Json | #syntaxError(pos: int)  — recovery structural
+out = cfg?.serialize;            // keys sorted: parse(serialize(x)) == x; ?. carries the union
+
+type Ident = String matching grammar { alpha (alpha | digit)* };  // typed strings, not regexes
+// whitespace: struct grammars (phrase level) skip insignificant whitespace between elements;
+// matching grammars (token level, as here) are exact. serialize emits none — the canonical form.
+
+// tests are data, attached to the definition, run in the dirty cone only
+double(positional x) = x * 2       // the `test` clause ends the declaration, so no `;` here
+  test { 0 -> 0, 2 -> 4, -3 -> -6 }
+law doubleIsSum(x: int) = double(x) == x + x;   // a test over the whole domain: graded, never run (sec:verification)
+
+// ports are the only outside world
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- stdin.map(l -> l.upper);
+}
+
+// a stored collection is a port too; its schema is a build input, matched statically
+orders: OrderId ->? { total: f64, note: String | #none }   // ✗ NUMERIC is not a binary float
+  with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
+
+n = orders[id]?.note;              // String | #none | #notFound | #dbError — NULL, no row, no db
+// note:  String                   // ✗ the column is nullable: #none missing from the field type
+// total: f64                      // ✗ NUMERIC is not a binary float
+
+// facets: units and taint are checked like types
+v = 3.0 with units("m/s");
+t = 2.0 with units("s");
+d = v * t;                         // d::units == "m"
+// e = v + t;                      // ✗ compile error: unit mismatch
+
+exec : (Db, String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type
+// exec(db, userInput);            // ✗ #userInput taint reaches a #clean sink
+rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers

@@ -1,0 +1,32 @@
+// variant: // _ = c*.bump(1); _ = c*.bump(2); // ✗ two chains, two writers of c': the collision error
+struct Counter { n: int, hi: int }
+
+Counter.tick() {                 // no declared return ⇒ the next receiver is the whole result
+  n'  = n + 1;                   // primes build the next version of the receiver;
+  hi' = max(hi, n + 1);          //   unassigned fields carry forward
+}
+Counter.bump(positional by) -> int {  // declared -> int, and primed, so the result is (Counter, int)
+  n'  = n + by;
+  hi' = max(hi, n + by);
+  return n;                      // the old count rides beside the mutated receiver
+}
+Counter.atHi = n == hi;          // no primes, no prefix — an ordinary read
+
+p       = Counter(n: 0, hi: 9);  // `.` is pure, so every spelling below is pure
+p2      = p.tick().tick();       //   T -> T chains by composition
+p3, was = p.bump(2);             //   two results, two targets — the non-OO spelling
+p4, w2  = bump(p, 2);            //   ≡ the same call, written without UFCS
+// p*.bump(3);                   // ✗ p is a value binding — no next generation to write
+
+run = loop {
+  mutable c = Counter(n: 0, hi: 9); // state receiver: carry-forward, boundary at t = -1
+  until c.n > 20;                    //   — one write of c' per step, as always
+
+  // each variant below replaces the `prev = …` line; none may join it (one writer of c')
+  // a, b = c*.bump(1).bump(2);     // a chain threads the receiver: ONE write of c' at the
+                                    //   end, its value the links' returns, in order
+  // c*.tick().tick();              // no returns ⇒ a statement, still exactly one write
+  _ = c*.bump(1); _ = c*.bump(2);   // ✗ two chains, two writers of c': the collision error
+  // c.bump(3);                     // ✗ `.` never mutates, so this writes nothing: dead
+  // c', prev = c.bump(3);          // the explicit spelling; `*.` abbreviates it, both legal
+};

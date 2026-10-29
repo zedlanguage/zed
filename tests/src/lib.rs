@@ -7,8 +7,10 @@
 use std::path::PathBuf;
 
 pub mod check;
+pub mod fences;
 pub mod instances;
 pub mod kernel;
+pub mod tokens;
 
 /// The folder that holds every step folder.
 pub fn steps_dir() -> PathBuf {

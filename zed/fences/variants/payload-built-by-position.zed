@@ -1,0 +1,6 @@
+// variant: // e2 = #syntaxError(3, "unexpected )");         // ✗ a payload with named fields is built by name
+// [d4] sec:failure — a payload is a struct, so it is built and matched like one
+type Fail = #syntaxError(pos: int, msg: String);
+e1 = #syntaxError(pos: 3, msg: "unexpected )");  // built by name, like a struct
+e2 = #syntaxError(3, "unexpected )");         // ✗ a payload with named fields is built by name
+position(f: Fail) = match f { #syntaxError(pos:) -> pos };   // matched by name too; msg omitted

@@ -1,4 +1,5 @@
 use super::render;
+use zed_tests::tokens::render_lines;
 use zedc::lex::{Doc, lex, lex_with_docs};
 
 /// The `sec:tour_failure` example of EXAMPLES.md, copied.
@@ -18,21 +19,7 @@ sumZeroed = amounts.map(a -> a else 0) >< (+);
 #[test]
 fn golden_example_program() {
     let tokens = lex(TOUR_FAILURE).unwrap();
-    // One rendered line per source line.
-    let mut lines: Vec<String> = Vec::new();
-    for line in TOUR_FAILURE.lines().scan(0, |at, l| {
-        let start = *at;
-        *at += l.len() + 1;
-        Some((start, *at))
-    }) {
-        let on: Vec<_> = tokens
-            .iter()
-            .filter(|t| t.span.start >= line.0 && t.span.start < line.1)
-            .cloned()
-            .collect();
-        lines.push(render(&on));
-    }
-    insta::assert_snapshot!(lines.join("\n"));
+    insta::assert_snapshot!(render_lines(TOUR_FAILURE, &tokens));
 }
 
 #[test]
