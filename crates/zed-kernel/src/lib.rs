@@ -4,5 +4,18 @@
 //!
 //! Every surface form elaborates to these terms, so this crate is the contract between the
 //! front end, which produces kernel terms, and every back end, which consumes them. Step M0.9
-//! adds the executable small-step reference evaluator here; the inventory is fixed by M0 and
+//! adds the executable big-step reference evaluator here; the inventory is fixed by M0 and
 //! built whole at L1 (steps L1.15 and L1.31), so later layers add no term and no node kind.
+
+pub mod error;
+pub mod eval;
+pub mod exact;
+pub mod family;
+pub mod term;
+pub mod value;
+
+pub use error::KernelError;
+pub use eval::{Evaluator, World, eval};
+pub use family::{Family, Keypath};
+pub use term::{FixKind, GuardPos, Pattern, Prim, Term, Witness};
+pub use value::{Atom, F64, Value};
