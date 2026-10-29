@@ -1,10 +1,10 @@
 // layer L6
 // 24 prefix sum plus binary search: the first line holds nonnegative weights;
 // each later line is a query q, answered with the least index i whose
-// cumulative weight cum[i] exceeds q (weighted sampling by inversion), or
-// "none" when q is at least the total. cum is an indexed family over the rank
-// domain of the weights with the sentinel cum[-1] = 0; the search keeps the
-// invariant cum[lo] <= q < cum[hi] with the sentinels lo = -1 and
+// cumulative weight cumul[i] exceeds q (weighted sampling by inversion), or
+// "none" when q is at least the total. cumul is an indexed family over the rank
+// domain of the weights with the sentinel cumul[-1] = 0; the search keeps the
+// invariant cumul[lo] <= q < cumul[hi] with the sentinels lo = -1 and
 // hi = n (treated as +infinity), so an off-by-one in either sentinel or in the
 // rank domain shows in the answers (zero weights make ties).
 struct Range { lo: int, hi: int }
@@ -12,9 +12,9 @@ struct Range { lo: int, hi: int }
 main(stdin: Lines) -> (stdout: Lines) {
   w = (stdin[0] else "").split(" ").map(s -> int(s) else 0);
   n = w::len;
-  cum[i in 0..<n] = cum[i - 1] + w[i] with cum[-1] = 0;
-  total = cum[n - 1] else 0;
-  below(positional q, positional i) = i < 0 || (i < n && (cum[i] else 0) <= q);
+  cumul[i in 0..<n] = cumul[i - 1] + w[i] with cumul[-1] = 0;
+  total = cumul[n - 1] else 0;
+  below(positional q, positional i) = i < 0 || (i < n && (cumul[i] else 0) <= q);
   half(positional q, positional r) = {
     m = (r.lo + r.hi) div 2;
     if below(q, m) { Range(lo: m, hi: r.hi) } else { Range(lo: r.lo, hi: m) }
