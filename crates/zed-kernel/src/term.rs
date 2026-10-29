@@ -4,6 +4,7 @@
 //! Every surface form elaborates to a [`Term`]. Names are plain strings: the front end has
 //! resolved scopes before a term is built, so a term never needs renaming.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::value::Value;
@@ -117,6 +118,42 @@ pub enum Witness {
     Catalog(Arc<str>),
 }
 
+/// How strongly a tracked property is established (DESIGN.md sec:property_tracking), in the
+/// order of that section: `Axiom > CheckedExhaustive | Proved > Bounded > Obligated > Assumed`,
+/// the two in the middle incomparable. A property derived by the derivation rules has the meet
+/// of its premises' grades, and that meet is what a record holds; the rule and the premises are
+/// the property tracker's to keep.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Grade {
+    /// A built-in's law, such as `+` on exact numerics being associative.
+    Axiom,
+    /// Checked over the whole of a small finite domain at compile time.
+    CheckedExhaustive,
+    /// A certificate the independent checker accepted.
+    Proved,
+    /// Checked up to a bound (rung 6 of the discharge ladder).
+    Bounded,
+    /// Emitted as a generated property test bound to the definition.
+    Obligated,
+    /// Waived by `@assume`.
+    Assumed,
+}
+
+impl Grade {
+    /// Whether the grade is proof grade, the grades that may change a type.
+    pub fn is_proof_grade(self) -> bool {
+        matches!(
+            self,
+            Grade::Axiom | Grade::CheckedExhaustive | Grade::Proved
+        )
+    }
+}
+
+/// The evidence record `ev` of a `fold` or a `fix`: each tracked property established, with
+/// its grade. A property absent is unknown. `fold` reads the Boom row (`associative`,
+/// `commutative`, `idempotent`), `fix` reads `monotone`, `inflationary` and the ACC fact.
+pub type Evidence = BTreeMap<Arc<str>, Grade>;
+
 /// The evidence of a `fix` (T-Fix): which instance of the least-fixed-point rule it is.
 #[derive(Clone, PartialEq, Debug)]
 pub enum FixKind {
@@ -196,6 +233,8 @@ pub enum Term {
         /// with no leaves does not show its depth, and folds to the empty family when the
         /// depth is above 1.
         depth: usize,
+        /// The evidence for `op`, which the reduction checker reads (T-Fold).
+        ev: Evidence,
     },
     /// `fix(F0, step, ev)`: the least fixed point of `step` above `F0`.
     Fix {
@@ -210,6 +249,8 @@ pub enum Term {
         key: Arc<str>,
         /// Which instance of the rule.
         kind: FixKind,
+        /// The evidence for `step`, which T-Fix reads.
+        ev: Evidence,
     },
     /// `gen(init, step, guard)`: a loop over generations. The result is the family from
     /// generation number (0 for `init`) to committed frame; a guard result that is not a bool

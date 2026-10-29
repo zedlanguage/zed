@@ -378,6 +378,7 @@ impl Evaluator {
                 op,
                 identity,
                 depth,
+                ..
             } => {
                 let family = self.family(family, env)?;
                 let op = self.eval(op, env)?;
@@ -393,6 +394,7 @@ impl Evaluator {
                 this,
                 key,
                 kind,
+                ..
             } => {
                 self.pure += 1;
                 let out = match kind {

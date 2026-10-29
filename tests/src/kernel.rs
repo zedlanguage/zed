@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
-use zed_kernel::{Family, FixKind, Pattern, Prim, Term, Value, Witness};
+use zed_kernel::{Evidence, Family, FixKind, Pattern, Prim, Term, Value, Witness};
 
 /// Wraps a term for a field that holds a shared subterm.
 pub fn rc(t: Term) -> Arc<Term> {
@@ -65,6 +65,7 @@ pub fn fold_at(family: Term, depth: usize, op: Term, identity: Option<Term>) -> 
         op: rc(op),
         identity: identity.map(rc),
         depth,
+        ev: Evidence::new(),
     }
 }
 
@@ -266,6 +267,7 @@ pub fn fix_defined(domain: Term, body: impl FnOnce(Term, Term) -> Term) -> Term 
         this: this.as_str().into(),
         key: k.as_str().into(),
         kind: FixKind::Definedness,
+        ev: Evidence::new(),
     }
 }
 
@@ -277,6 +279,7 @@ pub fn fix_lattice(init: Term, step: Term, join: Term) -> Term {
         this: "".into(),
         key: "".into(),
         kind: FixKind::Lattice { join: rc(join) },
+        ev: Evidence::new(),
     }
 }
 

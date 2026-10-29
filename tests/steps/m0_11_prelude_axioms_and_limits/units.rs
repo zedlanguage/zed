@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use zed_kernel::Prim;
-use zed_kernel::term::Term;
 use zed_kernel::term::build::{lam, lit, prim, var};
+use zed_kernel::term::{Evidence, Term};
 use zedc::address::ContentAddress;
 use zedc::canon::{Def, address, unit_address};
 
@@ -37,6 +37,7 @@ fn invoicing(rate: i64, line: &str) -> Vec<Def> {
         op: Arc::new(Term::PrimFn(Prim::Add)),
         identity: Some(Arc::new(lit(0))),
         depth: 1,
+        ev: Evidence::new(),
     };
     let tax = lam(
         &["amount"],
@@ -73,7 +74,7 @@ fn the_address_is_pinned() {
     // canonicalization VERSION.
     assert_eq!(
         unit(&invoicing(8, "line"), &EXPORTS).to_string(),
-        "78a530b07f6ac83dcab2cc4be645fd9d4db61e8e0c3d1cfb3b65ba7a328a5577"
+        "f59b01a226a8aa9dffe695c452c6daf4274c7160aa447522ace60cefd8b32f8a"
     );
 }
 

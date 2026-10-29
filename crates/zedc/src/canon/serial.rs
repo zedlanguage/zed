@@ -6,7 +6,7 @@
 //! Binders are canonical by then, so a binder is written by its count alone (a lambda's
 //! parameters, a pattern's `Bind`), and a bound variable by its level.
 
-use zed_kernel::term::{FixKind, GuardPos, Pattern, Term, Witness};
+use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
 use zed_kernel::value::Value;
 
 use super::binders::level_of;
@@ -135,6 +135,22 @@ impl Out<'_> {
         ps.iter().for_each(|p| self.pattern(p));
     }
 
+    /// An evidence record, its properties in name order, each with its grade.
+    fn evidence(&mut self, ev: &Evidence) {
+        self.word(ev.len() as u64);
+        for (property, grade) in ev {
+            self.str(property);
+            self.tag(match grade {
+                Grade::Axiom => 0,
+                Grade::CheckedExhaustive => 1,
+                Grade::Proved => 2,
+                Grade::Bounded => 3,
+                Grade::Obligated => 4,
+                Grade::Assumed => 5,
+            });
+        }
+    }
+
     fn terms(&mut self, ts: &[Term]) {
         self.word(ts.len() as u64);
         ts.iter().for_each(|t| self.term(t));
@@ -234,6 +250,7 @@ impl Out<'_> {
                 op,
                 identity,
                 depth,
+                ev,
             } => {
                 self.tag(15);
                 self.term(family);
@@ -246,9 +263,14 @@ impl Out<'_> {
                     }
                 }
                 self.word(*depth as u64);
+                self.evidence(ev);
             }
             Term::Fix {
-                init, step, kind, ..
+                init,
+                step,
+                kind,
+                ev,
+                ..
             } => {
                 self.tag(16);
                 self.term(init);
@@ -260,6 +282,7 @@ impl Out<'_> {
                     }
                     FixKind::Definedness => self.tag(1),
                 }
+                self.evidence(ev);
             }
             Term::Gen {
                 init,

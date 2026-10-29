@@ -12,11 +12,12 @@ pub mod error;
 pub mod eval;
 pub mod exact;
 pub mod family;
+pub mod print;
 pub mod term;
 pub mod value;
 
 pub use error::KernelError;
 pub use eval::{Evaluator, Schedule, World, eval};
 pub use family::{Family, Keypath};
-pub use term::{FixKind, GuardPos, Pattern, Prim, Term, Witness};
+pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
 pub use value::{Atom, F64, Value};

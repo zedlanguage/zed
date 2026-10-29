@@ -140,16 +140,16 @@ fn the_normal_form_does_not_depend_on_the_order_of_the_rules() {
 #[test]
 fn the_version_tag_separates_rule_sets() {
     let d = balance("deposits", "withdrawals");
-    assert_eq!(VERSION, 1);
+    assert_eq!(VERSION, 2);
     assert_ne!(
         address_at(VERSION, &d, &none),
         address_at(VERSION + 1, &d, &none)
     );
-    // The address of this definition under version 1. A change to a rule or to the
+    // The address of this definition under version 2. A change to a rule or to the
     // serialization changes it: increment VERSION, and pin the new address here.
     assert_eq!(
         addr(&d).to_string(),
-        "be65b80382f4b68a0b5903f3072c53f66325fa4b82c213d043ccf4f1d51238a4"
+        "44c341e4f0e9d1f74b145c2678686615f33c73594579e44571313e589ba55425"
     );
 }
 

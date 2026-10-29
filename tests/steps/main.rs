@@ -14,6 +14,7 @@ mod l01_11_statements;
 mod l01_12_declarations;
 mod l01_13_formatter;
 mod l01_14_name_resolution;
+mod l01_15_kernel_terms;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;

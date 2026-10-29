@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
-use zed_kernel::term::{FixKind, Pattern, Prim, Term};
+use zed_kernel::term::{Evidence, FixKind, Pattern, Prim, Term};
 use zed_kernel::value::Value;
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::address::ContentAddress;
@@ -25,6 +25,7 @@ fn invoice(v: &str) -> Term {
         op: Arc::new(Term::PrimFn(Prim::Add)),
         identity: Some(Arc::new(lit(0))),
         depth: 1,
+        ev: Evidence::new(),
     }
 }
 
@@ -142,6 +143,7 @@ fn pattern_and_recursion_binders_are_normalized() {
         this: this.into(),
         key: n.into(),
         kind: FixKind::Definedness,
+        ev: Evidence::new(),
     };
     let fib = |this: &str, n: &str| step(this, n, this, n);
     assert_eq!(

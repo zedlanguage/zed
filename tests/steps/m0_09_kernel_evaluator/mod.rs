@@ -5,7 +5,8 @@
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{
-    Evaluator, Family, FixKind, GuardPos, KernelError, Pattern, Prim, Term, Value, World, eval,
+    Evaluator, Evidence, Family, FixKind, GuardPos, KernelError, Pattern, Prim, Term, Value, World,
+    eval,
 };
 use zed_tests::kernel::*;
 
@@ -303,6 +304,7 @@ fn reachability_is_a_lattice_fixpoint() {
         kind: FixKind::Lattice {
             join: rc(Term::PrimFn(Prim::Union)),
         },
+        ev: Evidence::new(),
     };
     let out = eval(&reach).unwrap();
     assert_eq!(
@@ -318,6 +320,7 @@ fn definedness(domain: Term, body: Term) -> Term {
         this: "this".into(),
         key: "i".into(),
         kind: FixKind::Definedness,
+        ev: Evidence::new(),
     }
 }
 
@@ -757,6 +760,7 @@ fn a_step_or_guard_of_the_wrong_kind_is_reported() {
                 kind: FixKind::Lattice {
                     join: rc(Term::PrimFn(Prim::Union)),
                 },
+                ev: Evidence::new(),
             },
             "a fix step returned a function",
         ),

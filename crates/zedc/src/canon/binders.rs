@@ -74,6 +74,7 @@ fn each_binder(t: &Term, f: &mut impl FnMut(&str)) {
             this,
             key,
             kind: FixKind::Definedness,
+            ..
         } => {
             each_binder(init, f);
             f(this);
@@ -161,11 +162,13 @@ fn map_children(t: &Term, f: &mut impl FnMut(&Term) -> Term) -> Term {
             op,
             identity,
             depth,
+            ev,
         } => Term::Fold {
             family: a(family, f),
             op: a(op, f),
             identity: identity.as_ref().map(|i| a(i, f)),
             depth: *depth,
+            ev: ev.clone(),
         },
         Term::Fix {
             init,
@@ -173,6 +176,7 @@ fn map_children(t: &Term, f: &mut impl FnMut(&Term) -> Term) -> Term {
             this,
             key,
             kind,
+            ev,
         } => Term::Fix {
             init: a(init, f),
             step: a(step, f),
@@ -182,6 +186,7 @@ fn map_children(t: &Term, f: &mut impl FnMut(&Term) -> Term) -> Term {
                 FixKind::Lattice { join } => FixKind::Lattice { join: a(join, f) },
                 FixKind::Definedness => FixKind::Definedness,
             },
+            ev: ev.clone(),
         },
         Term::Gen {
             init,
@@ -321,6 +326,7 @@ fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
             this,
             key,
             kind: FixKind::Definedness,
+            ev,
         } => {
             let fix = |init: &Arc<Term>, this: &Arc<str>, key: &Arc<str>, step: Term| Term::Fix {
                 init: init.clone(),
@@ -328,6 +334,7 @@ fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
                 this: this.clone(),
                 key: key.clone(),
                 kind: FixKind::Definedness,
+                ev: ev.clone(),
             };
             if let Some((i, old)) = rename_first(init, depth) {
                 return Some((fix(&arc(i), this, key, (**step).clone()), old));
@@ -414,12 +421,14 @@ fn rename(t: &Term, old: &str, new: &Arc<str>) -> Term {
             this,
             key,
             kind: FixKind::Definedness,
+            ev,
         } => Term::Fix {
             init: arc(rename(init, old, new)),
             step: arc(under(&[this, key], step)),
             this: this.clone(),
             key: key.clone(),
             kind: FixKind::Definedness,
+            ev: ev.clone(),
         },
         _ => map_children(t, &mut |c| rename(c, old, new)),
     }

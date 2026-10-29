@@ -39,7 +39,7 @@ use crate::address::ContentAddress;
 pub use domain::Domain;
 
 /// The version of the rule set and the serialization, hashed into every address.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// A facet of a definition: a named fact about it, such as its units or a proved property.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
