@@ -3,100 +3,11 @@
 //! Each test builds the kernel term that a small real program elaborates to and checks what
 //! it computes: one or more tests per generator, the failure rules, ports, and the limits.
 
-use std::sync::Arc;
-
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{
-    Evaluator, Family, FixKind, GuardPos, KernelError, Pattern, Prim, Term, Value, Witness, World,
-    eval,
+    Evaluator, Family, FixKind, GuardPos, KernelError, Pattern, Prim, Term, Value, World, eval,
 };
-
-fn rc(t: Term) -> Arc<Term> {
-    Arc::new(t)
-}
-
-fn s(x: &str) -> Value {
-    Value::str(x)
-}
-
-fn get(f: Term, k: Term) -> Term {
-    prim(Prim::Get, vec![f, k])
-}
-
-fn path(keys: Vec<Term>) -> Term {
-    prim(Prim::Path, keys)
-}
-
-fn key(p: Term, i: i64) -> Term {
-    prim(Prim::PathKey, vec![p, lit(i)])
-}
-
-fn nth(t: Term, i: i64) -> Term {
-    prim(Prim::TupleGet, vec![t, lit(i)])
-}
-
-fn add(a: Term, b: Term) -> Term {
-    prim(Prim::Add, vec![a, b])
-}
-
-fn reindex(family: Term, kf: Term, vf: Term) -> Term {
-    Term::Reindex {
-        family: rc(family),
-        kf: rc(kf),
-        vf: rc(vf),
-        witness: Witness::Residue,
-    }
-}
-
-fn fold(family: Term, op: Term, identity: Option<Term>) -> Term {
-    Term::Fold {
-        family: rc(family),
-        op: rc(op),
-        identity: identity.map(rc),
-    }
-}
-
-fn discard(family: Term, sel: Term) -> Term {
-    Term::Discard {
-        family: rc(family),
-        sel: rc(sel),
-    }
-}
-
-fn fam(domain: Term, var: &str, body: Term) -> Term {
-    Term::Fam {
-        domain: rc(domain),
-        var: var.into(),
-        body: rc(body),
-    }
-}
-
-fn found(e: Term) -> Term {
-    Term::Match(
-        rc(e),
-        vec![
-            (Pattern::Atom("notFound".into(), vec![]), lit(false)),
-            (Pattern::Wild, lit(true)),
-        ],
-    )
-}
-
-/// `group(f)` of (sec:kernel): each leaf `(k, v)` moves to keypath `(f(v), k)`.
-fn group_by(family: Term, f: impl Fn(Term) -> Term) -> Term {
-    let kf = lam(&["p", "v"], path(vec![f(var("v")), key(var("p"), 0)]));
-    reindex(family, kf, lam(&["p", "v"], var("v")))
-}
-
-fn lines_of(text: &[&[&str]]) -> Value {
-    // A document as `line -> position -> word`, the shape `split` gives.
-    let mut leaves = Vec::new();
-    for (i, line) in text.iter().enumerate() {
-        for (j, w) in line.iter().enumerate() {
-            leaves.push((vec![Value::Int(i as i64), Value::Int(j as i64)], s(w)));
-        }
-    }
-    Value::Family(Family::from_leaves(leaves).unwrap())
-}
+use zed_tests::kernel::*;
 
 #[test]
 fn word_count_groups_then_folds() {
@@ -111,8 +22,8 @@ fn word_count_groups_then_folds() {
         path(vec![var("w"), key(var("p"), 0), key(var("p"), 1)]),
     );
     let ones = reindex(lit(doc), kf, lam(&["p", "w"], lit(1)));
-    let per_line = fold(ones, Term::PrimFn(Prim::Add), None);
-    let counts = fold(per_line, Term::PrimFn(Prim::Add), None);
+    let per_line = fold_at(ones, 3, Term::PrimFn(Prim::Add), None);
+    let counts = fold_at(per_line, 2, Term::PrimFn(Prim::Add), None);
     let out = eval(&counts).unwrap();
     assert_eq!(
         out.to_string(),
@@ -143,8 +54,9 @@ fn revenue_by_region_is_the_exact_sum() {
         lam(&["p", "o"], path(vec![nth(var("o"), 1), key(var("p"), 0)])),
         lam(&["p", "o"], nth(var("o"), 2)),
     );
-    let revenue = fold(
+    let revenue = fold_at(
         amounts,
+        2,
         Term::PrimFn(Prim::Add),
         Some(lit(Value::float(0.0))),
     );
@@ -281,7 +193,7 @@ fn fold_collapses_the_innermost_level() {
         Family::from_leaves(leaves.map(|(st, d, n)| (vec![s(st), Value::Int(d)], Value::Int(n))))
             .unwrap(),
     );
-    let per_store = fold(lit(takings), Term::PrimFn(Prim::Add), None);
+    let per_store = fold_at(lit(takings), 2, Term::PrimFn(Prim::Add), None);
     assert_eq!(
         eval(&per_store).unwrap().to_string(),
         r#"{"east" -> 200, "west" -> 135}"#
@@ -291,7 +203,7 @@ fn fold_collapses_the_innermost_level() {
         Value::Int(335)
     );
     let best_day = fold(
-        lit(eval(&fold(lit(stock()), Term::PrimFn(Prim::Max), None)).unwrap()),
+        lit(eval(&fold_at(lit(stock()), 2, Term::PrimFn(Prim::Max), None)).unwrap()),
         Term::PrimFn(Prim::Max),
         None,
     );
@@ -308,7 +220,7 @@ fn folding_leaves_at_mixed_depths_is_an_error() {
         .unwrap(),
     );
     assert_eq!(
-        eval(&fold(lit(ragged), Term::PrimFn(Prim::Add), None)).unwrap_err(),
+        eval(&fold_at(lit(ragged), 2, Term::PrimFn(Prim::Add), None)).unwrap_err(),
         KernelError::MixedDepth
     );
 }
@@ -323,6 +235,23 @@ fn an_empty_level_folds_to_the_identity_or_empty() {
     assert_eq!(
         eval(&fold(none, Term::PrimFn(Prim::Max), None)).unwrap(),
         Value::atom("empty")
+    );
+}
+
+#[test]
+fn an_empty_family_folds_by_the_depth_its_type_gives() {
+    // Sales by store and day with no sales yet: the per-store totals are an empty table, not
+    // `#empty`, which is what folding one empty level gives.
+    let none = lit(Family::new());
+    assert_eq!(
+        eval(&fold_at(none, 2, Term::PrimFn(Prim::Add), None)).unwrap(),
+        Value::Family(Family::new())
+    );
+    // A one-level table folded as two levels has a leaf at the wrong depth.
+    let flat = lit(Family::of([("east", 3i64)]));
+    assert_eq!(
+        eval(&fold_at(flat, 2, Term::PrimFn(Prim::Add), None)).unwrap_err(),
+        KernelError::MixedDepth
     );
 }
 

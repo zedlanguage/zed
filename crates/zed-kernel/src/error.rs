@@ -19,8 +19,8 @@ pub enum KernelError {
     },
     /// A leaf with no keys, which only a key map that returns an empty keypath can make.
     EmptyKeypath,
-    /// A fold met a family whose leaves lie at different depths, so it has no one level to
-    /// collapse.
+    /// A fold met a family with a leaf at another depth than the fold's, so it has no one
+    /// level to collapse.
     MixedDepth,
     /// A value had the wrong shape for the construct reading it, which a well-typed term
     /// never does.
@@ -56,7 +56,7 @@ impl fmt::Display for KernelError {
                 write!(f, "]")
             }
             KernelError::EmptyKeypath => write!(f, "a key map returned an empty keypath"),
-            KernelError::MixedDepth => write!(f, "fold over leaves at different depths"),
+            KernelError::MixedDepth => write!(f, "fold over leaves at another depth than its own"),
             KernelError::Type(msg) => write!(f, "type error: {msg}"),
             KernelError::UnknownPort(name) => write!(f, "unknown port `{name}`"),
             KernelError::OutOfFuel => write!(f, "out of fuel"),
@@ -98,7 +98,7 @@ mod tests {
         );
         assert_eq!(
             KernelError::MixedDepth.to_string(),
-            "fold over leaves at different depths"
+            "fold over leaves at another depth than its own"
         );
         assert_eq!(KernelError::Type("x".into()).to_string(), "type error: x");
         assert_eq!(

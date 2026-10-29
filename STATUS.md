@@ -6,23 +6,29 @@ in docs/layout.md.
 
 ## Current position
 
-- Done: **M0.1** (repository scaffolding), **M0.9** (kernel reference evaluator).
-- Next: M0.2 and M0.3. Both are spec artifacts. M0.2 is marked done in the spec; its test is
-  `tools/grammar/cases.py` in the spec repository. M0.3 still lacks the kernel desugaring
-  rules, one per production. After those come M0.4 (the corpus) and the rest of M0.
+- Done: **M0.1** (repository scaffolding), **M0.9** (kernel reference evaluator), and in the
+  spec, M0.2 and M0.3 (the desugaring rules, spec commit e3b217f).
+- In progress: **M0.10**, the finite-model harness, in `tests/steps/m0_10_finite_model_harness/`.
+  Laws 1–10 are done. Next: laws 11–20 (`laws_11_20.rs`), 21–28 (`laws_21_28.rs`), then
+  `witnesses.rs`, `recursion.rs` (schedules, memo-pull, cycle stall, the nested-fix
+  regression) and `smoke.rs`. After that the spec text of M0.10 gets the budget values.
+- After M0.10: M0.4 (the corpus, being written by a background agent into the session
+  scratchpad), M0.5–M0.8, M0.11, then L1.
 
 ## Test baseline
 
-Last full run: `CI=true cargo test --workspace` gave 55 passed and 0 failed (19 unit tests of
-`zed-kernel`, 2 of `zed-tests`, 34 step tests: 3 in `m0_01_scaffolding`, 31 in
-`m0_09_kernel_evaluator`). `cargo fmt --all --check` and
-`cargo clippy --workspace --all-targets -- -D warnings` are clean.
+Last full run: `cargo test --workspace` gave 91 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 60 step tests: 3 in `m0_01_scaffolding`, 32 in
+`m0_09_kernel_evaluator`, 25 in `m0_10_finite_model_harness`). `cargo fmt --all --check` and
+`cargo clippy --workspace --all-targets -- -D warnings` are clean. The steps binary takes
+about 5 s in a debug build.
 
 ## Steps
 
 | Step | State | Notes |
 |---|---|---|
 | M0.1 | done | workspace (`zedc`, `zed-kernel`, `zed-rt`, `zed-cert`, `zed-tests`), CI workflow, insta snapshots. Both negative controls fail as they should: a corrupted snapshot, and an undeclared step folder |
+| M0.10 | in progress | `zed_kernel::budgets` holds the ladder budgets and the rung 6 instance. `zed_tests::{instances, check, kernel}` hold the enumerators, the equation checker, and the derived forms. Laws 1–10 done |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
 ## Decisions made
@@ -45,6 +51,20 @@ Last full run: `CI=true cargo test --workspace` gave 55 passed and 0 failed (19 
   M0(d) is now a prediction suite kept as tests, the M0(e) postmortems run alongside and gate
   nothing, and the corpus programs are corrected to fit the language rather than the reverse.
   When the spec is unclear, I choose, record the choice in DESIGN.md and here, and continue.
+
+- Budgets (M0.10, in `zed_kernel::budgets`): enumeration of at most 4,096 bindings per
+  obligation; rung 6 cuts integers to `-8..=8`, sequences to length 4, loops to 16
+  generations, floats to 0.0, -0.0, 1.0, 0.1, 0.2, 0.3, ±inf and NaN, and runs at most 65,536
+  bindings in shortlex order; rung 3 saturates for at most 8 iterations or 10,000 e-nodes.
+- The kernel `fold` term carries the depth of the folded family (M0.10). The evaluator cannot
+  read the depth off a family with no leaves, so without it `fold` of an empty two-level
+  family gave `#empty` where its type gives the empty family, and laws 4 and 8 failed on the
+  empty input. Typing supplies the depth; a leaf at another depth is the mixed-depth error.
+- Kernel values are normalized: a key over an empty level is dropped, so the nonempty-level
+  conditions of laws 1, 2 and 7 have no counterexample among values. They constrain the
+  guaranteed domains, and are checked where `card` facts are (L1.24, L3.6).
+- The harness compares outcomes as values (floats bitwise after NaN canonicalization) or as
+  errors of one kind, since two sides that both collide may name different keypaths.
 
 ## In progress
 

@@ -192,6 +192,10 @@ pub enum Term {
         /// The identity, which is the result of folding an empty level; without one an
         /// empty level folds to `#empty`.
         identity: Option<Arc<Term>>,
+        /// The number of key levels of `family`, at least 1, which its type gives. A family
+        /// with no leaves does not show its depth, and folds to the empty family when the
+        /// depth is above 1.
+        depth: usize,
     },
     /// `fix(F0, step, ev)`: the least fixed point of `step` above `F0`.
     Fix {

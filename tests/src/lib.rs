@@ -6,6 +6,10 @@
 
 use std::path::PathBuf;
 
+pub mod check;
+pub mod instances;
+pub mod kernel;
+
 /// The folder that holds every step folder.
 pub fn steps_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("steps")

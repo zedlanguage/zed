@@ -7,6 +7,7 @@
 //! adds the executable big-step reference evaluator here; the inventory is fixed by M0 and
 //! built whole at L1 (steps L1.15 and L1.31), so later layers add no term and no node kind.
 
+pub mod budgets;
 pub mod error;
 pub mod eval;
 pub mod exact;
@@ -15,7 +16,7 @@ pub mod term;
 pub mod value;
 
 pub use error::KernelError;
-pub use eval::{Evaluator, World, eval};
+pub use eval::{Evaluator, Schedule, World, eval};
 pub use family::{Family, Keypath};
 pub use term::{FixKind, GuardPos, Pattern, Prim, Term, Witness};
 pub use value::{Atom, F64, Value};

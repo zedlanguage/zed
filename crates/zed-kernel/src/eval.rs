@@ -54,6 +54,9 @@ pub struct Closure {
 /// The family a definedness `fix` has defined so far, over its whole domain.
 #[derive(Debug)]
 pub struct Partial {
+    /// Which `fix` evaluation this family belongs to, so that a read of an undefined entry
+    /// postpones the entry of that `fix` and not of a `fix` nested inside its body.
+    fix: u64,
     domain: BTreeSet<Value>,
     defined: BTreeMap<Value, Value>,
 }
@@ -87,10 +90,29 @@ fn lookup(env: &Env, name: &str) -> Option<V> {
 }
 
 /// Why an evaluation stopped: an error, or, inside a definedness `fix`, a read of an entry
-/// not yet defined, which postpones the entry being computed to a later round.
+/// not yet defined, which postpones the entry being computed. The read names the `fix` whose
+/// family it read and the key it read there.
 enum Stop {
     Error(KernelError),
-    Undefined,
+    Undefined { fix: u64, key: Value },
+}
+
+/// The order in which a definedness `fix` defines its entries. Every schedule reaches the
+/// same family, or stalls on the same keys, which step M0.10 checks; the reference is
+/// [`Schedule::Rounds`], and the others exist to be checked against it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Schedule {
+    /// Jacobi rounds, the wavefront: each round evaluates every undefined entry against the
+    /// family as the round began.
+    #[default]
+    Rounds,
+    /// Chaotic iteration: each round tries the undefined entries in an order drawn from the
+    /// seed, and an entry defined in a round is visible to the entries after it.
+    Chaotic(u64),
+    /// Memoized demand: the entries are demanded in key order, and a read of an undefined
+    /// entry evaluates that entry first. A read of an entry already being demanded is a
+    /// cycle, and every entry waiting on it stalls.
+    Pull,
 }
 
 impl From<KernelError> for Stop {
@@ -169,6 +191,9 @@ pub struct Evaluator {
     /// Above zero while evaluating the closure of a pure region (`fam`, `reindex`,
     /// `discard`, `fold`, `fix`), where a port operation is a type error.
     pure: usize,
+    schedule: Schedule,
+    /// The number of definedness `fix` evaluations begun, which names each one's family.
+    fixes: u64,
 }
 
 /// Evaluates a closed term with no ports and the default fuel, expecting data.
@@ -184,7 +209,15 @@ impl Evaluator {
             fuel: DEFAULT_FUEL,
             depth: 0,
             pure: 0,
+            schedule: Schedule::default(),
+            fixes: 0,
         }
+    }
+
+    /// Sets the order in which definedness `fix` entries are defined.
+    pub fn with_schedule(mut self, schedule: Schedule) -> Self {
+        self.schedule = schedule;
+        self
     }
 
     /// Sets the fuel.
@@ -214,7 +247,9 @@ impl Evaluator {
                 "the program's result is a function".into(),
             )),
             Err(Stop::Error(e)) => Err(e),
-            Err(Stop::Undefined) => unreachable!("only a definedness fix binds a partial family"),
+            Err(Stop::Undefined { .. }) => {
+                unreachable!("only a definedness fix binds a partial family")
+            }
         }
     }
 
@@ -328,12 +363,13 @@ impl Evaluator {
                 family,
                 op,
                 identity,
+                depth,
             } => {
                 let family = self.family(family, env)?;
                 let op = self.eval(op, env)?;
                 let identity = identity.as_ref().map(|t| self.data(t, env)).transpose()?;
                 self.pure += 1;
-                let out = self.fold(&family, &op, identity);
+                let out = self.fold(&family, &op, identity, *depth);
                 self.pure -= 1;
                 Ok(V::Data(out?))
             }
@@ -446,7 +482,10 @@ impl Evaluator {
             }
             return match part.defined.get(k) {
                 Some(v) => Ok(V::Data(v.clone())),
-                None if part.domain.contains(k) => Err(Stop::Undefined),
+                None if part.domain.contains(k) => Err(Stop::Undefined {
+                    fix: part.fix,
+                    key: k.clone(),
+                }),
                 None => Ok(V::Data(Value::atom("notFound"))),
             };
         }
@@ -506,9 +545,8 @@ impl Evaluator {
         Ok(Family::from_leaves(out)?)
     }
 
-    fn fold(&mut self, family: &Family, op: &V, identity: Option<Value>) -> R<Value> {
+    fn fold(&mut self, family: &Family, op: &V, identity: Option<Value>, depth: usize) -> R<Value> {
         let leaves = family.leaves();
-        let depth = leaves.first().map_or(1, |(p, _)| p.len());
         if leaves.iter().any(|(p, _)| p.len() != depth) {
             return Err(KernelError::MixedDepth.into());
         }
@@ -579,47 +617,127 @@ impl Evaluator {
         env: &Env,
     ) -> R<Value> {
         let domain: BTreeSet<Value> = self.family(init, env)?.keys().cloned().collect();
+        self.fixes += 1;
+        let fix = Definedness {
+            id: self.fixes,
+            domain,
+            body,
+            this,
+            key,
+            env,
+        };
         let mut defined = BTreeMap::new();
+        let stalled = match self.schedule {
+            Schedule::Rounds => self.define_in_rounds(&fix, &mut defined, None)?,
+            Schedule::Chaotic(seed) => self.define_in_rounds(&fix, &mut defined, Some(seed))?,
+            Schedule::Pull => self.define_on_demand(&fix, &mut defined)?,
+        };
+        if !stalled.is_empty() {
+            return Err(KernelError::Stalled { keys: stalled }.into());
+        }
+        let leaves = defined.into_iter().map(|(k, v)| (vec![k], v));
+        Ok(Value::Family(Family::from_leaves(leaves)?))
+    }
+
+    /// Evaluates the entry at `k` against the entries in `defined`: its value, or the key of
+    /// the undefined entry of this `fix` it read first.
+    fn entry(
+        &mut self,
+        fix: &Definedness,
+        defined: &BTreeMap<Value, Value>,
+        k: &Value,
+    ) -> R<Result<Value, Value>> {
+        let part = V::Partial(Rc::new(Partial {
+            fix: fix.id,
+            domain: fix.domain.clone(),
+            defined: defined.clone(),
+        }));
+        let env = bind(
+            &bind(fix.env, fix.this.clone(), part),
+            fix.key.clone(),
+            V::Data(k.clone()),
+        );
+        match self.eval(fix.body, &env) {
+            Ok(V::Data(v)) => Ok(Ok(v)),
+            Ok(_) => type_err("a fix entry is a function"),
+            Err(Stop::Undefined { fix: id, key }) if id == fix.id => Ok(Err(key)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Defines entries in rounds until every entry is defined or a round defines none, and
+    /// returns the keys left undefined. Without a seed each round reads the family as it
+    /// began (Jacobi); with one, each round visits the entries in a shuffled order and reads
+    /// the entries defined before it in the same round.
+    fn define_in_rounds(
+        &mut self,
+        fix: &Definedness,
+        defined: &mut BTreeMap<Value, Value>,
+        seed: Option<u64>,
+    ) -> R<Vec<Value>> {
+        let mut rng = seed.map(SplitMix);
         loop {
             self.burn()?;
-            let part = V::Partial(Rc::new(Partial {
-                domain: domain.clone(),
-                defined: defined.clone(),
-            }));
-            let mut progress = false;
-            let pending: Vec<Value> = domain
+            let mut pending: Vec<Value> = fix
+                .domain
                 .iter()
                 .filter(|k| !defined.contains_key(*k))
                 .cloned()
                 .collect();
+            if pending.is_empty() {
+                return Ok(pending);
+            }
+            if let Some(rng) = &mut rng {
+                rng.shuffle(&mut pending);
+            }
+            let start = defined.clone();
+            let mut progress = false;
             for k in pending {
-                let env2 = bind(
-                    &bind(env, this.clone(), part.clone()),
-                    key.clone(),
-                    V::Data(k.clone()),
-                );
-                match self.eval(body, &env2) {
-                    Ok(V::Data(v)) => {
-                        defined.insert(k, v);
-                        progress = true;
-                    }
-                    Ok(_) => return type_err("a fix entry is a function"),
-                    Err(Stop::Undefined) => {}
-                    Err(e) => return Err(e),
+                let read = if rng.is_some() { &*defined } else { &start };
+                if let Ok(v) = self.entry(fix, read, &k)? {
+                    defined.insert(k, v);
+                    progress = true;
                 }
             }
-            if defined.len() == domain.len() {
-                let leaves = defined.into_iter().map(|(k, v)| (vec![k], v));
-                return Ok(Value::Family(Family::from_leaves(leaves)?));
-            }
             if !progress {
-                let keys = domain
-                    .into_iter()
-                    .filter(|k| !defined.contains_key(k))
-                    .collect();
-                return Err(KernelError::Stalled { keys }.into());
+                return Ok(fix
+                    .domain
+                    .iter()
+                    .filter(|k| !defined.contains_key(*k))
+                    .cloned()
+                    .collect());
             }
         }
+    }
+
+    /// Demands each entry in key order, evaluating first each undefined entry it reads, and
+    /// returns the keys that stalled: those on a cycle and those waiting on one.
+    fn define_on_demand(
+        &mut self,
+        fix: &Definedness,
+        defined: &mut BTreeMap<Value, Value>,
+    ) -> R<Vec<Value>> {
+        let mut stalled = BTreeSet::new();
+        for k0 in &fix.domain {
+            if defined.contains_key(k0) || stalled.contains(k0) {
+                continue;
+            }
+            let mut demanded = vec![k0.clone()];
+            while let Some(k) = demanded.last().cloned() {
+                self.burn()?;
+                match self.entry(fix, defined, &k)? {
+                    Ok(v) => {
+                        defined.insert(k, v);
+                        demanded.pop();
+                    }
+                    Err(read) if demanded.contains(&read) || stalled.contains(&read) => {
+                        stalled.extend(demanded.drain(..));
+                    }
+                    Err(read) => demanded.push(read),
+                }
+            }
+        }
+        Ok(stalled.into_iter().collect())
     }
 
     fn generations(&mut self, init: Value, step: &V, guard: &V, pos: GuardPos) -> R<Value> {
@@ -657,6 +775,36 @@ impl Evaluator {
             }
             V::Data(other) => type_err(format!("a gen guard returned {other}")),
             _ => type_err("a gen guard returned a function"),
+        }
+    }
+}
+
+/// One definedness `fix` being evaluated: its family's name, domain, and entry body.
+struct Definedness<'a> {
+    id: u64,
+    domain: BTreeSet<Value>,
+    body: &'a Term,
+    this: &'a Arc<str>,
+    key: &'a Arc<str>,
+    env: &'a Env,
+}
+
+/// The SplitMix64 generator, which draws the visiting order of [`Schedule::Chaotic`].
+struct SplitMix(u64);
+
+impl SplitMix {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    /// A Fisher–Yates shuffle.
+    fn shuffle<T>(&mut self, xs: &mut [T]) {
+        for i in (1..xs.len()).rev() {
+            xs.swap(i, (self.next() % (i as u64 + 1)) as usize);
         }
     }
 }
