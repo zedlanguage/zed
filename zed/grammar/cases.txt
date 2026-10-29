@@ -1,0 +1,331 @@
+Expr ::: -x ** 2 ::: (- (x ** 2))
+Expr ::: a ** b ** c ::: (a ** (b ** c))
+Expr ::: 2 ** -1 ::: (2 ** (- 1))
+Expr ::: !x.isNaN ::: (! (x (. isNaN)))
+Expr ::: -1 div 4 ::: ((- 1) div 4)
+Expr ::: 0..<s::len - 1 ::: (0 (..< ((s (:: len)) - 1)))
+Expr ::: (data >< (+)) / n ::: ((( (data (>< (( + )))) )) / n)
+Expr ::: xs >< max else 0 ::: ((xs (>< max)) (else 0))
+Expr ::: parse(text)?.server?.port else 8080 ::: ((parse (( text )) (?. server) (?. port)) (else 8080))
+Expr ::: a < b < c ::: (a < b < c)
+Expr ::: a == b == c ::: (a == b == c)
+Expr ::: x != #none && x < 10 ::: ((x != #none) && (x (< 10)))
+Expr ::: age >= 18 && member || override ::: (((age (>= 18)) && member) || override)
+Expr ::: a -> a else 0 ::: (a -> (a (else 0)))
+Expr ::: a -> a is int ::: (a -> (a (is int)))
+Expr ::: (a, b) -> a + b ::: (( (a , b) ) -> (a + b))
+Expr ::: if c { a } else { b } + 1 ::: ((if c ({ a }) else ({ b })) + 1)
+Expr ::: if a { 1 } else if b { 2 } else { 3 } ::: (if a ({ 1 }) else (if b ({ 2 }) else ({ 3 })))
+Expr ::: { e } ::: ({ e })
+Expr ::: {} ::: { }
+Expr ::: { x = 1; x } ::: ({ (x = 1 ;) x })
+Expr ::: x -> { x } ::: (x -> ({ x }))
+Expr ::: x -> ({ x }) ::: (x -> (( ({ x }) )))
+Expr ::: { 1 -> 2, 3 -> 4 } ::: ({ (1 -> 2) , (3 -> 4) })
+Expr ::: { x: 0.0, y: 0.0 } ::: ({ x : 0.0 , y : 0.0 })
+Expr ::: p with { x = 3 } ::: (p (with { (x = 3) }))
+Expr ::: s with { c.x = 0.0 } ::: (s (with { (c . x = 0.0) }))
+Expr ::: v with units("km/s") ::: (v (with (units ( "km/s" ))))
+Expr ::: (x + y) with units("m") ::: ((( (x + y) )) (with (units ( "m" ))))
+Expr ::: m into (k -> v) >< op ::: (m (into ( (k -> v) )) (>< op))
+Expr ::: m into (k2 -> k1 -> v).rank ::: (m (into ( (k2 -> k1 -> v) ) (. rank)))
+Expr ::: x is not int ::: (x (is not int))
+Expr ::: k in m::domain ::: (k (in (m (:: domain))))
+Expr ::: k not in m ::: (k (not in m))
+Expr ::: x in 1..=10 ::: (x (in (1 (..= 10))))
+Expr ::: a.b(c)[d].e ::: (a (. b) (( c )) ([ d ]) (. e))
+Expr ::: total + (extra else 0) ::: (total + (( (extra (else 0)) )))
+Expr ::: e else #x(_) -> d ::: (e (else (#x ( _ )) -> d))
+Expr ::: match v { #a -> 1, x where x > 0 -> { y = x; y }, _ -> 0 } ::: (match v { (#a -> 1) , (x where (x (> 0)) -> ({ (y = x ;) y })) , (_ -> 0) })
+Expr ::: for x in xs where x > 0 { emit x; } ::: (for (x in xs) where (x (> 0)) ({ (emit x ;) }))
+Expr ::: for k -> v in m { emit k; } ::: (for ((k -> v) in m) ({ (emit k ;) }))
+Expr ::: loop t { x' = x + 1; until x' > 3; } ::: (loop t ({ (x' = (x + 1) ;) (until (x' (> 3)) ;) }))
+Expr ::: fsum = samples >< (+) unordered; ::: ERROR
+Item ::: fsum = samples >< (+) unordered; ::: (fsum = (samples (>< (( + )) unordered)) ;)
+Item ::: x' = x + 1 with x = 0; ::: (x' = (x + 1) (with (x = 0)) ;)
+Item ::: pos[i in 0..<n] = 2*pos[i-1] - pos[i-2] with pos[-1] = a, pos[-2] = b; ::: (pos [ (i in (0 (..< n))) ] = ((2 * (pos ([ (i - 1) ]))) - (pos ([ (i - 2) ]))) (with (pos [ (- 1) ] = a) , (pos [ (- 2) ] = b)) ;)
+Item ::: p[k] <- v; ::: (p [ k ] <- v ;)
+Item ::: run = loop t { x' = x; until true; }; ::: (run = (loop t ({ (x' = x ;) (until true ;) })) ;)
+Item ::: f(x) = x + 1 test { 1 -> 2, 2 -> 3 } ::: (f ( x ) (= (x + 1) (test { (1 -> 2) , (2 -> 3) })))
+Item ::: f(x, y) = x test { (1, 2) -> 1 } ::: (f ( (x , y) ) (= x (test { ((( 1 , 2 )) -> 1) })))
+Item ::: main(stdin: Lines) -> (stdout: Lines) { stdout <- stdin; } ::: (main ( (stdin : Lines) ) (-> ( (stdout : Lines) )) ({ (stdout <- stdin ;) }))
+Item ::: @strict; ::: (@strict ;)
+Item ::: @memoized fib(n) = n; ::: (@memoized (fib ( n ) (= n ;)))
+Item ::: import a.b.{c, d}; ::: (import (a . b) . { c , d } ;)
+Item ::: import units as u; ::: (import units as u ;)
+Item ::: struct Point { x: f64, y: f64 } ::: (struct Point { (x : f64) , (y : f64) })
+Item ::: type Color = #red | #green | #blue; ::: (type Color = (#red | #green | #blue) ;)
+Type ::: r -> c -> f64 ::: (r -> (c -> f64))
+Type ::: (A, B) -> C ::: ((( A , B )) -> C)
+Type ::: ((A, B)) -> C ::: ((( (( A , B )) )) -> C)
+Type ::: A | B -> C ::: ((A | B) -> C)
+Type ::: int[0..<n] ::: (int ([ (0 ..< n) ]))
+Type ::: int where x > 0 ::: (int (where (x (> 0))))
+Type ::: A | B \ C & D ::: ERROR
+Type ::: K ->? V with reducer((+)) ::: ((K ->? V) (with (reducer ( (( + )) ))))
+Type ::: Config | #syntaxError(pos: int) ::: (Config | (#syntaxError ( (pos : int) )))
+Type ::: String matching grammar { digit digit* } ::: (String (matching (grammar { (digit (digit *)) })))
+Expr ::: x<-1 ::: ERROR
+Item ::: x <- -1; ::: (x <- (- 1) ;)
+Expr ::: f(x: 1, y: 2) ::: (f (( ((x : 1) , (y : 2)) )))
+Expr ::: xs.sort(desc x.size) ::: (xs (. sort) (( (desc (x (. size))) )))
+Expr ::: "a${x + 1}b" ::: "a${x + 1}b"
+Expr ::: (+) ::: (( + ))
+Expr ::: [1, 2, 3] ::: ([ 1 , 2 , 3 ])
+Expr ::: m *. f ::: (m (*. f))
+Expr ::: ? ::: ?
+Expr ::: x -> y -> x + y ::: (x -> (y -> (x + y)))
+Expr ::: f(x -> x else 0, 1) ::: (f (( ((x -> (x (else 0))) , 1) )))
+Expr ::: a else b else c ::: (a (else b) (else c))
+Expr ::: -x.abs ::: (- (x (. abs)))
+Expr ::: if x { a } ::: ERROR
+Expr ::: { x: int = 1; x } ::: ({ (x : int = 1 ;) x })
+Expr ::: { k -> (x -> x) } ::: ({ (k -> (( (x -> x) ))) })
+Expr ::: "${x +}" ::: ERROR
+Expr ::: 1..5 ::: ERROR
+Expr ::: a.. ::: (a ..)
+Expr ::: 3r + 0.1r + 1e10 + 0x_ff ::: ERROR
+Expr ::: 3r + 0.1r + 1e10 + 0xff + 1_000 ::: (3r + 0.1r + 1e10 + 0xff + 1_000)
+Expr ::: if p with { x = 1 } == q { 1 } else { 2 } ::: (if ((p (with { (x = 1) })) == q) ({ 1 }) else ({ 2 }))
+Expr ::: if (p with { x = 1 }) == q { 1 } else { 2 } ::: (if ((( (p (with { (x = 1) })) )) == q) ({ 1 }) else ({ 2 }))
+Expr ::: for x in xs, y in ys { emit x; } ::: (for (x in xs) (, (y in ys)) ({ (emit x ;) }))
+Expr ::: xs >< (+) >< f ::: (xs (>< (( + ))) (>< f))
+Expr ::: a + b >< f ::: ((a + b) (>< f))
+Expr ::: x is int | #none ::: (x (is (int | #none)))
+Expr ::: m into (asc k -> v) ::: (m (into ( ((asc k) -> v) )))
+Expr ::: a into (x.id && y.id -> v) ::: (a (into ( (((x (. id)) && (y (. id))) -> v) )))
+Expr ::: break x ::: (break x)
+Expr ::: this.x ::: (this (. x))
+Expr ::: m into (desc s, asc n -> v) ::: (m (into ( (((desc s) , (asc n)) -> v) )))
+Expr ::: ((s, c)) -> s.region ::: (( (( s , c )) ) -> (s (. region)))
+Type ::: (x: int where x * x < 100) ::: (( x : (int (where ((x * x) (< 100)))) ))
+# head-brace rule: a display, brace-led type or struct update in a head needs no parentheses; a block does
+Expr ::: if k in ({1, 2}) { 1 } else { 2 } ::: (if (k (in (( ({ 1 , 2 }) )))) ({ 1 }) else ({ 2 }))
+Expr ::: if k in {1, 2} { 1 } else { 2 } ::: (if (k (in ({ 1 , 2 }))) ({ 1 }) else ({ 2 }))
+# arrows: a parameter list is curried, a doubled pair is one tuple-keyed level
+Type ::: (int, int) -> int ::: ((( int , int )) -> int)
+Type ::: ((int, int)) -> int ::: ((( (( int , int )) )) -> int)
+Type ::: (a: int, b: int) -> int ::: ((( (a : int) , (b : int) )) -> int)
+Item ::: p[k] <- v; ::: (p [ k ] <- v ;)
+# a brace after a fallback's else or an arrow is a block, never a display
+Expr ::: parse(s) else { 0 } ::: ((parse (( s ))) (else ({ 0 })))
+Expr ::: x else { 1, 2 } ::: ERROR
+Expr ::: x -> { x, y } ::: ERROR
+Expr ::: x else ({ 1, 2 }) ::: (x (else (( ({ 1 , 2 }) ))))
+Item ::: f(x: int) -> (k: K) -> V = g(x); ::: (f ( (x : int) ) (-> ((( k : K )) -> V)) (= (g (( x ))) ;))
+# as, into, and a value with apply to the whole arithmetic expression to their left
+Expr ::: a + b with units("m") ::: ((a + b) (with (units ( "m" ))))
+Expr ::: a ++ b into (k -> v) ::: ((a ++ b) (into ( (k -> v) )))
+Expr ::: price * qty with units("USD") > limit ::: (((price * qty) (with (units ( "USD" )))) (> limit))
+Expr ::: p with { x = 3 }.norm ::: (p (with { (x = 3) } (. norm)))
+Expr ::: x else 0 with bound(3) ::: (x (else (0 (with (bound ( 3 ))))))
+# difference does not mix with union or intersection without parentheses
+Type ::: A \ B & C ::: ERROR
+Type ::: A & B \ C ::: ERROR
+Type ::: (A | B) \ C ::: ((( (A | B) )) \ C)
+Type ::: A \ B \ C ::: (A \ B \ C)
+Type ::: A | B & C ::: (A | (B & C))
+# a value-less key supplies the variable of the same name; without the colon it is a set
+Expr ::: { x:, y:, z: someZ } ::: ({ x : , y : , z : someZ })
+Expr ::: Point(x:, y:) ::: (Point (( ((x :) , (y :)) )))
+Expr ::: { x, y } ::: ({ x , y })
+Expr ::: { x: , y } ::: ERROR
+Expr ::: match t { Node(l:, v: _, r: x) -> x } ::: (match t { ((Node ( (l :) , (v : _) , (r : x) )) -> x) })
+Expr ::: match t { Node(r:) -> r, #leaf -> 0 } ::: (match t { ((Node ( (r :) )) -> r) , (#leaf -> 0) })
+Expr ::: match f { #syntaxError(pos: 0..<10) -> 1, #add(a, b) -> 2 } ::: (match f { ((#syntaxError ( (pos : (0 ..< 10)) )) -> 1) , ((#add ( a , b )) -> 2) })
+Expr ::: match t { Node(l, v, r) -> v } ::: ERROR
+Expr ::: match t { #add(a:, b) -> 1 } ::: ERROR
+Item ::: asc = 1; ::: ERROR
+Expr ::: m into ((a && b) || c -> v) ::: (m (into ( (((( (a && b) )) || c) -> v) )))
+Expr ::: m into (a && (b || c) -> v) ::: (m (into ( ((a && (( (b || c) ))) -> v) )))
+Expr ::: m into (a && b || c -> v) ::: ERROR
+Expr ::: m into ((i + 1) * 2 -> v) ::: (m (into ( (((( (i + 1) )) * 2) -> v) )))
+Expr ::: m into ((i, j).f -> v) ::: (m (into ( (((( i , j )) (. f)) -> v) )))
+Expr ::: "${1" ::: ERROR
+Expr ::: "\${1" ::: "\${1"
+Expr ::: "${1 /* } */ + 2}" ::: "${1 /* } */ + 2}"
+Expr ::: "${{ x = 1; x }}" ::: "${{ x = 1; x }}"
+Expr ::: "${"${1}"}" ::: "${"${1}"}"
+Expr ::: if x is int[0..<{1, 2}::card] { 1 } else { 0 } ::: (if (x (is (int ([ (0 ..< (({ 1 , 2 }) (:: card))) ])))) ({ 1 }) else ({ 0 }))
+Expr ::: if x is (v: int where v in {1, 2}) { 1 } else { 0 } ::: (if (x (is (( v : (int (where (v (in ({ 1 , 2 }))))) )))) ({ 1 }) else ({ 0 }))
+Expr ::: if p is { x: int } { 1 } else { 0 } ::: (if (p (is ({ x : int }))) ({ 1 }) else ({ 0 }))
+Expr ::: if p is ({ x: int }) { 1 } else { 0 } ::: (if (p (is (( ({ x : int }) )))) ({ 1 }) else ({ 0 }))
+Expr ::: if x is {1, 2} { 1 } else { 0 } ::: (if (x (is ({ 1 , 2 }))) ({ 1 }) else ({ 0 }))
+Expr ::: match p { #fail(pos:,) -> pos, _ -> 0 } ::: (match p { ((#fail ( (pos :) , )) -> pos) , (_ -> 0) })
+Expr ::: match p { #add(a, b,) -> a + b, _ -> 0 } ::: (match p { ((#add ( a , b , )) -> (a + b)) , (_ -> 0) })
+Expr ::: match f { #syntaxError() -> 0 } ::: ERROR
+Expr ::: match t { Point() -> 0 } ::: ERROR
+Type ::: (A, B,) -> C ::: ((( A , B , )) -> C)
+Type ::: #fail(pos: int,) ::: (#fail ( (pos : int) , ))
+Type ::: Map(A, B,) ::: (Map ( A , B , ))
+Type ::: {1, 2,} ::: ({ 1 , 2 , })
+Item ::: type Pair(A, B,) = (A, B); ::: (type Pair (( A , B , )) = (( A , B )) ;)
+Item ::: f((a, b,)) = a; ::: (f ( (( a , b , )) ) (= a ;))
+Item ::: import a @hash("h",); ::: (import a @hash ( "h" , ) ;)
+Item ::: main() -> (stdout: Lines,) { stdout <- ["a"]; } ::: (main ( ) (-> ( (stdout : Lines) , )) ({ (stdout <- ([ "a" ]) ;) }))
+Expr ::: m into ((a && b || c) -> v) ::: ERROR
+Expr ::: m into ((a && b || c) || d -> v) ::: ERROR
+Expr ::: m into (a && (b || c && d) -> v) ::: ERROR
+Expr ::: m into (((a && b || c)) -> v) ::: ERROR
+Expr ::: m into ((a && b == c) -> v) ::: ERROR
+Expr ::: m into ((a == b && c) -> v) ::: ERROR
+Expr ::: m into ((x > 0 && y > 0) -> v) ::: ERROR
+Expr ::: m into ((x > 0) -> v) ::: (m (into ( ((( (x (> 0)) )) -> v) )))
+Type ::: (x: T,) -> R ::: ((( x : T , )) -> R)
+Type ::: (x: T,) ->? R ::: ((( x : T , )) ->? R)
+Type ::: (T,) ::: ERROR
+Type ::: (T,) -> R ::: ERROR
+Expr ::: for x in m into (k -> { v }) { x } ::: (for (x in (m (into ( (k -> ({ v })) )))) ({ x }))
+Expr ::: if m into (k -> { v }) == n { 1 } else { 0 } ::: (if ((m (into ( (k -> ({ v })) ))) == n) ({ 1 }) else ({ 0 }))
+Expr ::: m into (k -> asc a, desc b,) ::: (m (into ( (k -> ((asc a) , (desc b) ,)) )))
+Expr ::: m into (asc a, desc b, -> v) ::: ERROR
+Expr ::: (1,) ::: ERROR
+Expr ::: "${x // c}" ::: ERROR
+Expr ::: "${x /* c */ + 2}" ::: "${x /* c */ + 2}"
+Expr ::: if x with { a = 1 } == y { 1 } else { 0 } ::: (if ((x (with { (a = 1) })) == y) ({ 1 }) else ({ 0 }))
+Expr ::: if (x with { a = 1 }) == y { 1 } else { 0 } ::: (if ((( (x (with { (a = 1) })) )) == y) ({ 1 }) else ({ 0 }))
+Expr ::: m into (((a && b) || c && d) -> v) ::: ERROR
+Expr ::: m into (((a && b) && c || d) -> v) ::: ERROR
+Expr ::: m into (((a == b) || c && d) -> v) ::: ERROR
+Expr ::: m into (((a || b) && c == d) -> v) ::: ERROR
+Expr ::: m into ((((a && b) || c && d)) -> v) ::: ERROR
+Expr ::: m into (k && ((a && b) || c && d) -> v) ::: ERROR
+Expr ::: m into (desc score,) ::: ERROR
+Expr ::: m into ((a || b).x -> v) ::: (m (into ( (((( (a || b) )) (. x)) -> v) )))
+Expr ::: m into (!(a && b) -> v) ::: (m (into ( ((! (( (a && b) ))) -> v) )))
+Expr ::: m into (((a && b) != c) -> v) ::: (m (into ( ((( ((( (a && b) )) != c) )) -> v) )))
+Expr ::: m into ((a && b || c else false) -> v) ::: (m (into ( ((( (((a && b) || c) (else false)) )) -> v) )))
+Expr ::: m into ((a == b else false) -> v) ::: (m (into ( ((( ((a == b) (else false)) )) -> v) )))
+Expr ::: m into (a && (b || c else false) -> v) ::: (m (into ( ((a && (( ((b || c) (else false)) ))) -> v) )))
+Expr ::: m into ((a == (b else c)) -> v) ::: (m (into ( ((( (a == (( (b (else c)) ))) )) -> v) )))
+Expr ::: match v { p is {name: String} -> p.name, is int[0..<10] -> 1, _ -> 2 } ::: (match v { ((p is ({ name : String })) -> (p (. name))) , ((is (int ([ (0 ..< 10) ]))) -> 1) , (_ -> 2) })
+Expr ::: match v { is #red | #blue -> 1, n is (int, String) -> 2, _ -> 3 } ::: (match v { ((is (#red | #blue)) -> 1) , ((n is (( int , String ))) -> 2) , (_ -> 3) })
+Expr ::: match v { p is {name: _, age: int} where p.age > 0 -> p, _ -> v } ::: (match v { ((p is ({ name : _ , age : int })) where ((p (. age)) (> 0)) -> p) , (_ -> v) })
+Expr ::: match v { Point(x: n is int, y:) -> n + y, _ -> 0 } ::: (match v { ((Point ( (x : (n is int)) , (y :) )) -> (n + y)) , (_ -> 0) })
+Expr ::: match v { is (int -> int) -> 1, _ -> 2 } ::: (match v { ((is (( (int -> int) ))) -> 1) , (_ -> 2) })
+Expr ::: match v { _ is int -> 1, _ -> 2 } ::: ERROR
+Expr ::: match v { is int -> int -> 1, _ -> 2 } ::: (match v { ((is int) -> (int -> 1)) , (_ -> 2) })
+Expr ::: if v is {name: _} { 1 } else { 2 } ::: (if (v (is ({ name : _ }))) ({ 1 }) else ({ 2 }))
+Expr ::: if (v is {name: _}) { 1 } else { 2 } ::: (if (( (v (is ({ name : _ }))) )) ({ 1 }) else ({ 2 }))
+Type ::: int[0..<_] -> T ::: ((int ([ (0 ..< _) ])) -> T)
+Type ::: int[_..<_] -> T ::: ((int ([ _ ..< _ ])) -> T)
+Type ::: int[0..<_ + 1] -> T ::: ERROR
+# positional-then-named calls, `, ...` currying, `positional x` parameters, struct field defaults
+Expr ::: f(x: 1, ...) ::: (f (( ((x : 1) , ...) )))
+Expr ::: f(r: 0.., ...) ::: (f (( ((r : (0 ..)) , ...) )))
+Expr ::: f(n: 1, ...) ::: (f (( ((n : 1) , ...) )))
+Expr ::: f(x:, ...) ::: (f (( ((x :) , ...) )))
+Expr ::: f(1, x: 2) ::: (f (( (1 , (x : 2)) )))
+Expr ::: f(1, x: 2, ...) ::: (f (( (1 , (x : 2) , ...) )))
+Expr ::: f(1, ...) ::: (f (( (1 , ...) )))
+Expr ::: f(1, 2, x: 3, y:) ::: (f (( (1 , 2 , (x : 3) , (y :)) )))
+Expr ::: f(asc a, x: 2) ::: (f (( ((asc a) , (x : 2)) )))
+Expr ::: f(x: 2, 1) ::: ERROR
+Expr ::: f(1, x: 2, 3) ::: ERROR
+Expr ::: f(...) ::: ERROR
+Expr ::: f(x: 1, ..., y: 2) ::: ERROR
+Item ::: f(positional x, y = 2) = x + y; ::: (f ( ((positional x) , (y = 2)) ) (= (x + y) ;))
+Item ::: f(positional x: int = 0) = x; ::: (f ( (positional x : int = 0) ) (= x ;))
+Item ::: f((a, b), c) = a + b + c; ::: (f ( ((( a , b )) , c) ) (= (a + b + c) ;))
+Item ::: f(c, (a, b)) = a + b + c; ::: ERROR
+Item ::: f(positional (a, b)) = a + b; ::: ERROR
+Item ::: f(y, positional x) = x + y; ::: ERROR
+Item ::: f(_ x) = x; ::: ERROR
+Item ::: positional = 1; ::: ERROR
+Item ::: greet(positional name: String, punct = "!") = name ++ punct; ::: (greet ( ((positional name : String) , (punct = "!")) ) (= (name ++ punct) ;))
+Item ::: struct Circle { c: Point, r: f64 = 1.0 } ::: (struct Circle { (c : Point) , (r : f64 = 1.0) })
+Item ::: struct P { x: f64 = 0.0, y: f64 = 0.0, } ::: (struct P { (x : f64 = 0.0) , (y : f64 = 0.0) , })
+Item ::: interface Named { name: String = "" } ::: ERROR
+Item ::: struct S { positional x: int } ::: ERROR
+Expr ::: Point(x: 0.0, ...) ::: (Point (( ((x : 0.0) , ...) )))
+Expr ::: (a, b) -> a + b ::: (( (a , b) ) -> (a + b))
+Expr ::: ((s, c)) -> s ::: (( (( s , c )) ) -> s)
+Expr ::: t.fold(n -> match n { #leaf -> 0, Node(l:, r:) -> 1 + max(l, r) }) ::: (t (. fold) (( (n -> (match n { (#leaf -> 0) , ((Node ( (l :) , (r :) )) -> (1 + (max (( (l , r) ))))) })) )))
+Expr ::: (0..<xs::len).where(i -> xs[i] >= t).first ::: ((( (0 (..< (xs (:: len)))) )) (. where) (( (i -> ((xs ([ i ])) (>= t))) )) (. first))
+Item ::: depth(positional t: Tree) = t.fold(n -> match n { #leaf -> 0, Node(l:, r:) -> 1 + l + r }); ::: (depth ( (positional t : Tree) ) (= (t (. fold) (( (n -> (match n { (#leaf -> 0) , ((Node ( (l :) , (r :) )) -> (1 + l + r)) })) ))) ;))
+Item ::: struct Entry { score: int with order(#desc), name: String with order(collate: "de"), id: int } ::: (struct Entry { (score : (int (with (order ( #desc ))))) , (name : (String (with (order ( (collate : "de") ))))) , (id : int) })
+Expr ::: words.sort(by: (a, b) -> a.len <= b.len) ::: (words (. sort) (( (by : (( (a , b) ) -> ((a (. len)) (<= (b (. len)))))) )))
+Expr ::: ages.map(a -> "${a} ") >< (++) ::: ((ages (. map) (( (a -> "${a} ") ))) (>< (( ++ ))))
+# head-brace rule: a block in a head is parenthesized
+Expr ::: if k in {a; b} { 1 } else { 2 } ::: ERROR
+Expr ::: for x in {1, 2, 3} { emit x; } ::: (for (x in ({ 1 , 2 , 3 })) ({ (emit x ;) }))
+# keyed steps in a struct update path (L5)
+Expr ::: m with { players[id].pos.x = 1 } ::: (m (with { (players [ id ] . pos . x = 1) }))
+Expr ::: accts with { [id].bal = accts[id].bal + amt } ::: (accts (with { ([ id ] . bal = ((accts ([ id ]) (. bal)) + amt)) }))
+Expr ::: g with { [r][c] = 0, [r][d] = 1 } ::: (g (with { ([ r ] [ c ] = 0) , ([ r ] [ d ] = 1) }))
+Expr ::: if m with { [k] = v } == n { 1 } else { 2 } ::: (if ((m (with { ([ k ] = v) })) == n) ({ 1 }) else ({ 2 }))
+# a field refinement naming another field; a mutual-recursion fold; the finite() facet; maximum subarray
+Item ::: struct Span { lo: int, hi: int[lo..] } ::: (struct Span { (lo : int) , (hi : (int ([ (lo ..) ]))) })
+Expr ::: e.fold(Expr: fe, Stmt: fs) ::: (e (. fold) (( ((Expr : fe) , (Stmt : fs)) )))
+Item ::: same(a: String ->? int with finite(), b: String ->? int with finite()) = a == b; ::: (same ( ((a : ((String ->? int) (with (finite ( ))))) , (b : ((String ->? int) (with (finite ( )))))) ) (= (a == b) ;))
+Item ::: best = cur >< max else 0; ::: (best = ((cur (>< max)) (else 0)) ;)
+# `break e` stands at the level of Expr and requires its operand, so it never captures a head's body or what follows it (CRITIQUE-AGY-2 1.1, 1.3)
+Expr ::: if c || break { 1 } else { 2 } ::: ERROR
+Expr ::: if c || (break x) { 1 } else { 2 } ::: (if (c || (( (break x) ))) ({ 1 }) else ({ 2 }))
+Expr ::: if break {} else {} ::: ERROR
+Expr ::: match break { #a -> 1 } ::: ERROR
+Expr ::: a < break b < c ::: ERROR
+Expr ::: a < (break b) ::: (a (< (( (break b) ))))
+Expr ::: a else (break b) ::: (a (else (( (break b) ))))
+Expr ::: break ::: ERROR
+Expr ::: if c { break i } else { i } ::: (if c ({ (break i) }) else ({ i }))
+Expr ::: match v { #a -> break 1, _ -> 2 } ::: (match v { (#a -> (break 1)) , (_ -> 2) })
+# an annotation's arguments are the parentheses after it only when the declaration after them still parses (CRITIQUE-AGY-2 3.6)
+Item ::: @fused (a + b).map(f); ::: (@fused (((( (a + b) )) (. map) (( f ))) ;))
+Item ::: @fused () -> { }; ::: (@fused ((( ) -> { }) ;))
+Item ::: @cost(n) f(x) = x; ::: ((@cost ( n )) (f ( x ) (= x ;)))
+Item ::: @fused @memoized (a + b).map(f); ::: (@fused @memoized (((( (a + b) )) (. map) (( f ))) ;))
+Item ::: @cost(n) @fused (a + b).map(f); ::: ((@cost ( n )) @fused (((( (a + b) )) (. map) (( f ))) ;))
+Item ::: @cost(n) @fused @memoized (x) -> 1; ::: ((@cost ( n )) @fused @memoized ((( x ) -> 1) ;))
+Arm ::: Span(lo: a, hi: b) -> b - a ::: ((Span ( (lo : a) , (hi : b) )) -> (b - a))
+Expr ::: m as (k -> v) into (w(k) -> k -> v) ::: (m (as ( (k -> v) )) (into ( ((w (( k ))) -> k -> v) )))
+Item ::: law r(xs: [int]) = xs.foldl(e, f) == xs.foldr(g, e); ::: (law r ( (xs : ([ int ])) ) = ((xs (. foldl) (( (e , f) ))) == (xs (. foldr) (( (g , e) )))) ;)
+Expr ::: f64(n) else round(n) ::: ((f64 (( n ))) (else (round (( n )))))
+Expr ::: describe(c with { area = area(s: c) }) ::: (describe (( (c (with { (area = (area (( (s : c) )))) })) )))
+Type ::: (positional a: int) -> int ::: ((( positional a : int )) -> int)
+Type ::: (positional a: int, b: int) -> int ::: ((( (positional a : int) , (b : int) )) -> int)
+Type ::: (key: String) -> String ::: ((( key : String )) -> String)
+Expr ::: (positional x, y = 2) -> x + y ::: (( ((positional x) , (y = 2)) ) -> (x + y))
+Type ::: (positional int) -> int ::: ERROR
+Expr ::: User::fields ::: (User (:: fields))
+Expr ::: T::shape.fields ::: (T (:: shape) (. fields))
+Expr ::: match T::shape { #struct(fields:) -> 1, _ -> 0 } ::: (match (T (:: shape)) { ((#struct ( (fields :) )) -> 1) , (_ -> 0) })
+Expr ::: { F = f.valueType; v: F = g(j); v } ::: ({ (F = (f (. valueType)) ;) (v : F = (g (( j ))) ;) v })
+Expr ::: a <= b < c <= d ::: (a <= b < c <= d)
+Expr ::: a > b >= c ::: (a > b >= c)
+Expr ::: a < b > c ::: ERROR
+Expr ::: a != b != c ::: ERROR
+Expr ::: a == b <= c ::: (a == (b (<= c)))
+Expr ::: a == b != c ::: ERROR
+Item ::: interface Monoid(T) { import Semigroup(T), one: T, law oneMul(a: T) = mul(one, a) == a } ::: (interface Monoid (( T )) { (import Semigroup ( T )) , (one : T) , (law oneMul ( (a : T) ) = ((mul (( (one , a) ))) == a)) })
+Item ::: struct S { import Monoid(T) } ::: ERROR
+Item ::: law square(R: CommRing(T), a: T) = a * a == a * a proof { a * a == a * a == a * a } ::: (law square ( ((R : (CommRing ( T ))) , (a : T)) ) = ((a * a) == (a * a)) (proof ({ ((a * a) == (a * a) == (a * a)) })))
+Expr@21 ::: a < b < c ::: ERROR
+Expr@21 ::: a == b == c ::: ERROR
+Expr@21 ::: a >= b > c ::: ERROR
+Expr@22 ::: a >= b > c ::: (a >= b > c)
+Item@21 ::: interface I(T) { law l(a: T) = a == a } ::: ERROR
+Item@21 ::: interface Monoid(T) { import Semigroup(T), one: T } ::: ERROR
+Item@10 ::: interface Pointed { import Base, one: T } ::: (interface Pointed { (import Base) , (one : T) })
+Item ::: interface I(T) { law l(a: T) = a == a proof { #eval } } ::: ERROR
+Type@13 ::: [f64; 3] ::: ERROR
+Type@14 ::: [f64; 3] ::: ([ f64 ; 3 ])
+Type@14 ::: [T; n, n] ::: ([ T ; n , n ])
+Type@14 ::: [T; n: _, c: 3] ::: ([ T ; (n : _) , (c : 3) ])
+Type@14 ::: [T; n + m] ::: ([ T ; (n + m) ])
+Type@14 ::: [T;] ::: ERROR
+Expr@11 ::: ((x: rat) -> x + 1)::source ::: ((( (( (x : rat) ) -> (x + 1)) )) (:: source))
+Expr@11 ::: (() -> f(3))::ast ::: ((( (( ) -> (f (( 3 )))) )) (:: ast))
+Expr@14 ::: v with layout(r, c) ::: (v (with (layout ( (r , c) ))))
+Expr@14 ::: v with layout(r,) ::: (v (with (layout ( (r ,) ))))
+Expr ::: fs[p] with retry(2, backoff: #exp(d, max: m)) ::: ((fs ([ p ])) (with (retry ( (2 , (backoff : (#exp (( (d , (max : m)) ))))) ))))
+Expr ::: (fs[a] ++ fs[b]) with timeout(2 with units("s")) ::: ((( ((fs ([ a ])) ++ (fs ([ b ]))) )) (with (timeout ( (2 (with (units ( "s" )))) ))))
+Expr ::: w with target(#cluster, nodes: 4..=64, load: 0.7) ::: (w (with (target ( (#cluster , (nodes : (4 (..= 64))) , (load : 0.7)) ))))
+Item ::: @foreign struct SockAddr { family: int with bits(16), data: [byte] with length(14) } ::: (@foreign (struct SockAddr { (family : (int (with (bits ( 16 ))))) , (data : (([ byte ]) (with (length ( 14 ))))) }))
+Item ::: @foreign("c", "getaddrinfo") g: (node: [byte] with terminated(0)) -> {rc: i32, res: Ptr(AddrInfo) | #none with release(f)}; ::: ((@foreign ( ("c" , "getaddrinfo") )) (g : ((( node : (([ byte ]) (with (terminated ( 0 )))) )) -> ({ rc : i32 , res : (((Ptr ( AddrInfo )) | #none) (with (release ( f )))) })) ;))
+Item ::: @foreign struct S { shape: Circle | Rect with tagged(kind, 0, 1) } ::: (@foreign (struct S { (shape : ((Circle | Rect) (with (tagged ( (kind , 0 , 1) ))))) }))
+Item ::: @stateless @foreign("c", "strlen") strlen: (s: [byte] with terminated(0)) -> (int with bits(64)); ::: (@stateless (@foreign ( ("c" , "strlen") )) (strlen : ((( s : (([ byte ]) (with (terminated ( 0 )))) )) -> (( (int (with (bits ( 64 )))) ))) ;))
+Item ::: @foreign struct F { a: int with bits(3, unit: 32), b: byte } ::: (@foreign (struct F { (a : (int (with (bits ( (3 , (unit : 32)) ))))) , (b : byte) }))
+Item ::: @foreign struct G { a: i32 with bits(3), b: byte } ::: (@foreign (struct G { (a : (i32 (with (bits ( 3 ))))) , (b : byte) }))
+Item ::: f(x: int) -> int { log <- "seen"; return x; } ::: (f ( (x : int) ) (-> int) ({ (log <- "seen" ;) (return x ;) }))
+Expr ::: log <- x ::: ERROR

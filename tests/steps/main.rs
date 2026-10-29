@@ -7,6 +7,7 @@ mod l01_04_lexer_floats_and_rationals;
 mod l01_05_lexer_strings;
 mod l01_06_lexer_tokens;
 mod l01_07_fences;
+mod l01_08_parser;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;

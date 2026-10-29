@@ -30,12 +30,14 @@ in docs/layout.md.
 - Done: **L1.6**, the lexical grammar whole: atoms, annotations, keywords, operators, doc comments (`zedc::lex::punct`, `lex_with_docs`).
 - Done: **L1.7**, the fence extractor: the 149 `zed` fences of DESIGN.md and EXAMPLES.md are
   copied into `zed/fences/` with their layers, lexed, and their ✗ marks recorded (`zedc::fence`).
-- Next: L1.8.
+- Done: **L1.8**, the parser (`zedc::parse`): the grammar of sec:grammar, copied into
+  `zed/grammar/`, run as a packrat parser at a ring; all 319 bracketing cases give their trees.
+- Next: L1.9.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 282 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 229 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 289 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 236 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -61,6 +63,7 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.5 | done | `Tok::Str(Vec<Part>)`: decoded text parts and `Part::Hole { tokens, span }`, each hole lexed once into tokens with spans in the whole file; a hole's end is found by the `HoleText` rule, so a string or comment inside it neither opens nor closes it; the `"""` indentation rule; golden snapshots of eleven malformed strings and six malformed holes. Comments are skipped from here on, since a hole may hold one. Negative controls: dropping the indentation cut, scanning an inner string as plain characters, and dropping the one-line check each fail a test |
 | L1.6 | done | `Tok::Keyword`, `Tok::Op` (41 operators, longest first), `Tok::Atom`, `Tok::Annot`; `where` and `sep` stay names; `if'` is the keyword and a stray `'`; `lex_with_docs` returns the `///` comments beside the tokens. Golden snapshots: the `sec:tour_failure` example of EXAMPLES.md (copied into the test) and nine lexical errors. Negative controls: `->` ahead of `->?`, `////` read as a doc comment, and keywords read as names each fail a test |
 | L1.7 | done | `zedc::fence` (`extract`, `marks`, `label`) and `lex::lex_fence`, which reads `…` as a name. `zed/fences/sync.py` records each fence's layer with the spec's grammar tools: its lowest ring (as a `Unit`, or else under the documentation notation; 13 fences), raised to its defined words and its label; the rings agree with `check.py` on all 149. All 149 fences lex; their tokens and ✗ marks are golden snapshots. The 11 commented ✗ variants each have a fixture in `zed/fences/variants/`, matched by the variant's text, with exactly one live ✗ line. Negative controls: no variant rule, a label read from the first line only, `…` not elided, a stale copy (also `sync.py --check`), and a layer recorded below its label each fail a test |
+| L1.8 | done | `zedc::parse`: `Grammar::read` reads `zed/grammar/syntax.peg` and `notation.peg` (copied by `sync.py`, with a drift test); `parse(text, tokens, start, ring)` matches as `check.py`'s `Parser` does (ordered choice, packrat memo on rule, token and the `head` flag, alternatives above the ring skipped, a literal matching a keyword, operator or name by text) and gives a tree whose nodes record rule, alternative and token span, plus a tree per string hole. All 319 cases of `cases.txt` give their s-expressions; all 149 fences first parse at the ring `sync.py` recorded, as a `Unit` or a `DocFence`; each variant fixture parses as its fence does. An error names the furthest token reached and what was expected there (golden snapshot). Negative controls: the ring filter off, `head(…)` ignored, `!` keeping its failures, inline choices reversed each fail a test |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -136,6 +139,13 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
   error. The two column variants of the `orders` store edit its field type and put the ✗ there.
 - L1.7: `…` is the name `…` (sec:grammar, "Documentation notation"); Part G said "a hole, not a
   token", now aligned to sec:grammar in DESIGN.md.
+- L1.8: the parser runs the copied grammar instead of a hand-written precedence climber, so
+  its trees are `check.py`'s by construction and the grammar cannot drift from the spec
+  unnoticed (DESIGN.md L1.8 now says so). It parses every form of every layer at L1; steps
+  L1.9–L1.12 add the elaboration of their forms, and the elaborator rejects a node whose
+  alternative's layer (`Tree::layer`) is above the program's.
+- L1.8: a variant of a documentation-notation fence is parsed as a `DocFence`, as its fence
+  is (`exec : … -> Rows | #sqlError` is a signature without its `;`).
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which lie within the evaluator's own range limit.

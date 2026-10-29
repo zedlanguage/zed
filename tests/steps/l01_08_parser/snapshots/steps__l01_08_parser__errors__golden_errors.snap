@@ -1,0 +1,16 @@
+---
+source: tests/steps/l01_08_parser/errors.rs
+expression: out
+---
+"total = price * ;"
+  line 1, at ";": expected '!' or '(' or '-' or '?' or '[' or 'false' or 'for' or 'if' or 'loop' or 'match' or 'this' or 'true' or '{' or ATOM or FLOAT or IDENT or INT or RAT or STRING
+"discount = if member { 0.1 }; // `if` needs its `else`"
+  line 1, at ";": expected 'else'
+"area(w, h) = w * h\nmain = area(2, 3);"
+  line 2, at "main": expected '!=' or '&&' or '(' or '*' or '**' or '*.' or '+' or '++' or '-' or '.' or '..' or '..<' or '..=' or '/' or '::' or ';' or '<' or '<=' or '==' or '>' or '><' or '>=' or '?.' or '[' or 'as' or 'div' or 'else' or 'in' or 'into' or 'is' or 'mod' or 'not' or 'proof' or 'test' or 'with' or '||'
+"xs = [1, 2, 3;"
+  line 1, at ";": expected '!=' or '&&' or '(' or '*' or '**' or '*.' or '+' or '++' or ',' or '-' or '.' or '..' or '..<' or '..=' or '/' or '::' or '<' or '<=' or '==' or '>' or '><' or '>=' or '?.' or '[' or ']' or 'as' or 'div' or 'else' or 'in' or 'into' or 'is' or 'mod' or 'not' or 'with' or '||'
+"p = Point(x: 1 y: 2);"
+  line 1, at "y": expected '!=' or '&&' or '(' or ')' or '*' or '**' or '*.' or '+' or '++' or ',' or '-' or '.' or '..' or '..<' or '..=' or '/' or '::' or '<' or '<=' or '==' or '>' or '><' or '>=' or '?.' or '[' or 'as' or 'div' or 'else' or 'in' or 'into' or 'is' or 'mod' or 'not' or 'with' or '||'
+"type Bound = int | #unbounded\nlimit: Bound = 10;"
+  line 2, at "limit": expected '&' or '(' or '->' or '->?' or ';' or '[' or 'matching' or 'where' or 'with' or '|'

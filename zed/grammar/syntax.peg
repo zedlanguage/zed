@@ -1,0 +1,231 @@
+Unit          = Item* END                                                          L1
+Name          = IDENT                                                              L1
+
+Item          = Annot+ Decl                                                        L2
+              | ANNOT+ Decl                                                        L2
+              | Annot ';'                                                          L15
+              | Decl                                                               L1
+              | (Annot &ANNOT)* ANNOT Decl                                         L2
+Annot         = ANNOT ('(' nest(Args?) ')')?                                       L2
+
+Decl          = 'local' Decl                                                       L2
+              | 'mutable' Binding                                                  L6
+              | Import                                                             L2
+              | Struct                                                             L2
+              | TypeDecl                                                           L2
+              | Interface                                                          L10
+              | Law                                                                L15
+              | 'return' Expr % ',' ';'                                            L1
+              | 'emit' Expr ';'                                                    L4
+              | 'while' Expr ';'                                                   L6
+              | 'until' Expr ';'                                                   L6
+              | Function                                                           L1
+              | Method                                                             L2
+              | IndexedDef                                                         L6
+              | Push                                                               L1
+              | Binding                                                            L1
+              | Signature                                                          L7
+              | Expr ';'                                                           L6
+
+Import        = 'import' Path '.' '{' Name % ',' ','? '}' Pin? ';'                 L2
+              | 'import' Path ('as' Name)? Pin? ';'                                L2
+Path          = Name ('.' Name)*                                                   L1
+Pin           = ANNOT '(' STRING ','? ')'                                          L2
+
+Struct        = 'struct' Name '{' (StructField % ',' ','?)? '}'                    L2
+              | 'struct' Name 'grammar' '{' GAlt '}'                               L20
+StructField   = Name ':' Type '=' Expr                                             L2
+              | Field                                                              L2
+Field         = 'import' Path                                                      L2
+              | Name ':' Type                                                      L2
+TypeDecl      = 'type' Name TypeParams? '=' Type ';'                               L2
+TypeParams    = '(' Name % ',' ','? ')'                                            L2
+Interface     = 'interface' Name TypeParams? '{' (Member % ',' ','?)? '}'          L10
+Member        = 'law' Name '(' Params ')' '=' Expr                                 L22
+              | 'import' Path '(' nest(Type % ',' ','?) ')'                        L22
+              | Field                                                              L10
+Law           = 'law' Name '(' Params ')' '=' Expr (';' | Proof)                   L15
+
+Function      = Name '(' Params? ')' Result? Body                                  L1
+Method        = Name '.' Name ('(' Params? ')')? Result? Body                      L2
+Params        = PosParam % ',' (',' Param % ',')? ','?                             L1
+              | Param % ',' ','?                                                   L1
+PosParam      = '(' Target (',' Target)+ ','? ')' (':' Type)?                      L2
+              | 'positional' Name (':' Type)? ('=' Expr)?                          L1
+Param         = Name (':' Type)? ('=' Expr)?                                       L1
+Result        = '->' '(' Port % ',' ','? ')' &('=' | '{')                          L1
+              | '->' Type                                                          L10
+Port          = Name ':' Type                                                      L1
+Body          = '=' Expr (';' | Trailer+)                                          L1
+              | Block Trailer*                                                     L1
+Trailer       = 'test' '{' TestCase % ',' ','? '}'                                 L1
+              | Proof                                                              L15
+TestCase      = Expr12 '->' Expr12                                                 L1
+Proof         = 'proof' Block                                                      L15
+
+IndexedDef    = Name ('[' IndexKey ']')+ '=' Expr Boundary? ';'                    L6
+IndexKey      = Name 'in' Expr                                                     L6
+              | Expr                                                               L6
+Push          = Name ('[' Expr ']')+ '<-' Expr ';'                                 L7
+              | Name '<-' Expr ';'                                                 L1
+Binding       = Name ':' Type '=' Expr Boundary? ';'                               L10
+              | Target % ',' '=' Expr Boundary? ';'                                L1
+Target        = Name | WILD                                                        L1
+Boundary      = 'with' BoundaryItem % ','                                          L6
+BoundaryItem  = Name ('[' IndexKey ']')* '=' Expr                                  L6
+Signature     = Name ':' Type ';'                                                  L7
+
+Expr          = Lambda                                                             L1
+              | 'break' Expr12                                                     L6
+              | Expr12                                                             L1
+Lambda        = (Name | '(' Params? ')') '->' (Block | !'{' Expr)                  L1
+Expr12        = Or ElseTail*                                                       L1
+ElseTail      = 'else' AtomPattern '->' (!HEAD Block | !'{' Or)                    L1
+              | 'else' (!HEAD Block | !'{' Or)                                     L1
+Or            = And ('||' And)*                                                    L1
+And           = Equality ('&&' Equality)*                                          L1
+Equality      = Relation '==' Relation ('==' Relation)+                            L22
+              | Relation (('==' | '!=') Relation)?                                 L1
+Relation      = Reduce ('<=' | '<') Reduce (('<=' | '<') Reduce)+                  L22
+              | Reduce ('>=' | '>') Reduce (('>=' | '>') Reduce)+                  L22
+              | Reduce RelTail?                                                    L1
+RelTail       = ('<=' | '<' | '>=' | '>') Reduce                                   L1
+              | 'is' 'not'? TypeUnion                                              L1
+              | 'not'? 'in' Reduce                                                 L3
+Reduce        = Range ReduceTail*                                                  L1
+ReduceTail    = '><' Postfix Unordered?                                            L3
+              | 'as' '(' InPattern ')' Suffix*                                     L8
+              | 'into' '(' nest(OutPattern) ')' Suffix*                            L8
+              | 'with' '{' nest(Update % ',' ','?) '}' Suffix*                     L2
+              | 'with' FacetCall Suffix*                                           L7
+Unordered     = 'unordered'                                                        L9
+Range         = Additive RangeTail?                                                L1
+RangeTail     = '..<' Additive | '..=' Additive | '..'                             L3
+Additive      = Multiplicative (('+' | '-' | '++') Multiplicative)*                L1
+Multiplicative = Prefix (('*' | '/' | 'div' | 'mod') Prefix)*                      L1
+Prefix        = ('-' | '!') Prefix                                                 L1
+              | Power                                                              L1
+Power         = Postfix ('**' Prefix)?                                             L1
+Postfix       = Primary Suffix*                                                    L1
+Suffix        = '(' nest(Args?) ')'                                                L1
+              | '[' nest(Expr) ']'                                                 L1
+              | '.' Name                                                           L1
+              | '?.' Name                                                          L1
+              | '*.' Name                                                          L6
+              | '::' Name                                                          L3
+Update        = Name ('.' Name)* '=' Expr                                          L2
+              | (Name | '[' nest(Expr) ']') ('.' Name | '[' nest(Expr) ']')* '=' Expr  L5
+FacetCall     = Name '(' nest(Args?) ')'                                           L7
+Args          = NamedArg % ',' (',' '...' | ','?)                                  L1
+              | PosArg % ',' (',' NamedArg % ',')? (',' '...' | ','?)              L1
+NamedArg      = Name ':' Expr?                                                     L1
+PosArg        = ('asc' | 'desc') Expr                                              L5
+              | !(Name ':') Expr                                                   L1
+
+Primary       = Literal                                                            L1
+              | ATOM                                                               L1
+              | Name                                                               L1
+              | 'this'                                                             L2
+              | '(' BinOp ')'                                                      L3
+              | '(' nest(Expr) ')'                                                 L1
+              | '(' nest(Expr (',' Expr)+ ','?) ')'                                L1
+              | If                                                                 L1
+              | Match                                                              L2
+              | For                                                                L3
+              | Loop                                                               L6
+              | '[' nest((Expr12 % ',' ','?)?) ']'                                 L3
+              | Display                                                            L2
+              | !HEAD &('{' Item) Block                                            L1
+              | '?'                                                                L15
+Literal       = INT | FLOAT | RAT | STRING | 'true' | 'false'                      L1
+BinOp         = '+' | '-' | '*' | '/' | '**' | '++' | 'div' | 'mod' | '&&' | '||' | '==' | '!=' | '<=' | '<' | '>=' | '>'   L3
+
+Block         = '{' nest(Item* Expr?) '}'                                          L1
+Display       = '{' nest((Name ':' Expr12?) % ',' ','?) '}'                          L2
+              | '{' '}'                                                            L3
+              | '{' nest(Entry % ',' ','?) '}'                                     L3
+Entry         = Expr12 '->' Expr12                                                 L3
+              | Expr12                                                             L3
+If            = 'if' head(Expr12) Block 'else' (If | Block)                        L1
+Match         = 'match' head(Expr12) '{' nest(Arm % ',' ','?) '}'                  L2
+Arm           = Pattern ('where' Expr12)? '->' (Block | !'{' Expr)                 L2
+For           = 'for' Generator MoreGen* ('where' head(Expr12))? Block             L3
+MoreGen       = ',' Generator                                                      L5
+Generator     = InPattern 'in' head(Expr12)                                        L3
+Loop          = 'loop' Name? Block                                                 L6
+
+Pattern       = SignedLit ('..<' SignedLit | '..=' SignedLit | '..')               L3
+              | AtomPattern                                                        L1
+              | WILD                                                               L2
+              | Name? 'is' TypeUnion                                               L2
+              | Name '(' FieldPat % ',' ','? ')'                                   L2
+              | '(' Pattern (',' Pattern)+ ','? ')'                                L2
+              | SignedLit                                                          L2
+              | Name                                                               L2
+AtomPattern   = ATOM ('(' (FieldPat % ',' | Pattern % ',') ','? ')')?              L1
+FieldPat      = Name ':' Pattern?                                                  L1
+SignedLit     = '-'? (INT | FLOAT | RAT) | STRING | 'true' | 'false'               L2
+
+InPattern     = Binder ('->' Binder)*                                              L3
+Binder        = Name | WILD                                                        L3
+OutPattern    = Level ('->' Level)*                                                L8
+Level         = SortKey (',' SortKey)+ (',' &')')?                                 L8
+              | ('asc' | 'desc')? JoinTerm ('><' Postfix Unordered?)?              L8
+SortKey       = ('asc' | 'desc') JoinTerm                                          L8
+JoinTerm      = KeyTerm ('&&' ('?' | '!')? KeyTerm)+                               L8
+              | KeyTerm ('||' KeyTerm)+                                            L8
+              | KeyTerm '==' KeyTerm                                               L8
+              | KeyTerm                                                            L8
+KeyTerm       = '(' nest(JoinTerm) ')' !KeyOp                                      L8
+              | !('(' nest(JoinExpr) ')' !KeyOp) Key                               L8
+JoinExpr      = And ('||' And)+                                                    L8
+              | Equality ('&&' Equality)+                                          L8
+              | Relation '==' Relation                                             L8
+              | '(' nest(JoinExpr) ')'                                             L8
+Key           = WILD | Additive                                                    L8
+KeyOp         = '(' | '[' | '.' | '?.' | '*.' | '::' | '**' | '*' | '/' | 'div' | 'mod' | '+' | '-' | '++'   L8
+
+Type          = Arrow TypeFacet* TypeWhere?                                        L1
+TypeFacet     = 'with' FacetCall                                                   L7
+TypeWhere     = 'where' Expr12                                                     L10
+Arrow         = ArrowParams ('->' | '->?') Arrow                                   L1
+              | TypeUnion (('->' | '->?') Arrow)?                                  L1
+ArrowParams   = '(' ')'                                                            L1
+              | '(' nest(TypeParam ',' TypeParam % ',' ','?) ')'                   L1
+              | '(' nest('positional'? Name ':' Type ','?) ')'                     L1
+TypeParam     = 'positional'? Name ':' Type | Type                                 L1
+TypeUnion     = TypeNot ('\\' TypeNot)+ !('|' | '&')                                L1
+              | TypeAnd ('|' TypeAnd)* !'\\'                                       L1
+TypeAnd       = TypeNot ('&' TypeNot)*                                             L1
+TypeNot       = '!' TypeNot                                                        L10
+              | TypePostfix                                                        L1
+TypePostfix   = TypePrimary TypeSuffix*                                            L1
+TypeSuffix    = '[' nest(Refinement) ']'                                           L10
+              | 'matching' GrammarBlock                                            L20
+Refinement    = Name ('<=' | '<' | '>=' | '>' | '==') Additive                     L10
+              | Name RangeLit                                                      L10
+              | RangeLit                                                           L10
+              | Name                                                               L10
+RangeLit      = (WILD | Additive) ('..<' (WILD | Additive) | '..=' (WILD | Additive) | '..') L10
+TypePrimary   = Path '(' nest(TypeParam % ',' ','?) ')'                            L2
+              | Path                                                               L1
+              | ATOM '(' nest(TypeParam % ',' ','?) ')'                            L2
+              | ATOM                                                               L1
+              | '[' nest(Type ';' ShapeDim % ',' ','?) ']'                          L14
+              | '[' nest(Type) ']'                                                 L3
+              | '(' nest(Type (',' Type)+ ','?) ')'                                L1
+              | '(' nest(Name ':' Type) ')'                                        L10
+              | '(' nest(Type) ')'                                                 L1
+              | '{' nest((Name ':' Type) % ',' ','?) '}'                             L2
+              | '{' nest(SignedLit % ',' ','?) '}'                                 L10
+              | SignedLit                                                          L10
+              | WILD                                                               L10
+              | '?'                                                                L15
+
+ShapeDim      = (Name ':')? (WILD | Additive)                                     L14
+
+GrammarBlock  = 'grammar' '{' GAlt '}'                                             L20
+GAlt          = GSeq ('|' GSeq)*                                                   L20
+GSeq          = GItem+                                                             L20
+GItem         = (Name ':')? GPrimary ('*' | '+' | '?')? ('sep' GPrimary)?          L20
+GPrimary      = STRING | !'sep' Name | '(' GAlt ')'                                L20

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Copy the `zed` fences of the spec's DESIGN.md and EXAMPLES.md into design.md and
-examples.md here, each under a header naming its source line and its layer (step L1.7).
+examples.md here, each under a header naming its source line and its layer (step L1.7), and
+the syntactic grammar and the bracketing cases into ../grammar (step L1.8).
 
 CI does not read the spec repository, so the copies are the fixtures; run this by hand after
 the spec changes.  The layer is computed with the spec's grammar tools, as the M0.4 layer
@@ -73,12 +74,23 @@ def render(path, g):
     return '\n'.join(out) + '\n'
 
 
+def copies(g):
+    """(destination, text) of every copy: the fences here, and in ../grammar the syntactic
+    grammar and the documentation notation of sec:grammar and the bracketing cases (step L1.8)."""
+    for doc in ('DESIGN.md', 'EXAMPLES.md'):
+        yield os.path.join(HERE, doc.split('.')[0].lower() + '.md'), render(os.path.join(SPEC, doc), g)
+    syng, docg = peg_fences(ring.DESIGN)[1:3]
+    grammar = os.path.join(HERE, '..', 'grammar')
+    yield os.path.join(grammar, 'syntax.peg'), syng + '\n'
+    yield os.path.join(grammar, 'notation.peg'), docg + '\n'
+    yield os.path.join(grammar, 'cases.txt'), open(os.path.join(SPEC, 'tools', 'grammar', 'cases.txt'),
+                                                   encoding='utf-8').read()
+
+
 def main():
     g = grammars()
     stale = 0
-    for doc in ('DESIGN.md', 'EXAMPLES.md'):
-        want = render(os.path.join(SPEC, doc), g)
-        dest = os.path.join(HERE, doc.split('.')[0].lower() + '.md')
+    for dest, want in copies(g):
         have = open(dest, encoding='utf-8').read() if os.path.exists(dest) else None
         if have != want:
             stale += 1

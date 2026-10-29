@@ -12,6 +12,8 @@ pub struct DocFence {
     pub at: String,
     /// The layer from which it is parsed, checked and run.
     pub layer: u32,
+    /// The lowest ring of sec:grammar at which it parses.
+    pub ring: u32,
     /// Whether it parses only under the documentation notation of sec:grammar.
     pub notation: bool,
     /// Its text.
@@ -48,9 +50,14 @@ pub fn of(file: &str) -> Vec<DocFence> {
             let layer = rest[..rest.find(':').expect("a `:`")]
                 .parse()
                 .expect("a layer number");
+            let ring = head
+                .split_once(": ring L")
+                .and_then(|(_, r)| r[..r.find(',')?].parse().ok())
+                .expect("a ring");
             DocFence {
                 at: at.into(),
                 layer,
+                ring,
                 notation: head.ends_with(", documentation notation -->"),
                 text: f.text,
             }

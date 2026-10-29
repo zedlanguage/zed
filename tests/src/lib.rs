@@ -11,6 +11,7 @@ pub mod fences;
 pub mod instances;
 pub mod kernel;
 pub mod tokens;
+pub mod trees;
 
 /// The folder that holds every step folder.
 pub fn steps_dir() -> PathBuf {

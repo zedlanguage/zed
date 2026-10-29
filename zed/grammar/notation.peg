@@ -1,0 +1,4 @@
+DocFence      = DocItem* Expr? END                                                 L1
+DocItem       = Item                                                               L1
+              | (Name | '(' BinOp ')') ':' Type                                    L1
+              | 'as' '(' InPattern ')' 'into' '(' OutPattern ')'                   L8

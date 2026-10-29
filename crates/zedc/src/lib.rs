@@ -12,5 +12,6 @@ pub mod canon;
 pub mod cost;
 pub mod fence;
 pub mod lex;
+pub mod parse;
 pub mod source;
 pub mod store;
