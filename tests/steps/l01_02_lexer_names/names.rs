@@ -11,6 +11,7 @@ fn toks(text: &str) -> Result<Vec<String>, (ErrorKind, usize)> {
             .map(|t| match t.tok {
                 Tok::Name(n) => n,
                 Tok::Wildcard => "(wildcard)".into(),
+                other => format!("{other:?}"),
             })
             .collect()),
         Err(e) => Err((e.kind, e.span.start)),
@@ -54,7 +55,8 @@ fn a_trailing_prime_is_part_of_the_name_and_only_one_is_read() {
 
 #[test]
 fn a_name_cannot_start_with_a_digit_or_a_combining_mark() {
-    assert_eq!(toks("1st"), Err((ErrorKind::Unexpected('1'), 0)));
+    // A digit starts a number, which must not run into a name (step L1.3).
+    assert!(matches!(toks("1st"), Err((ErrorKind::BadNumber(_), 0))));
     assert_eq!(toks("\u{301}a"), Err((ErrorKind::Unexpected('\u{301}'), 0)));
 }
 

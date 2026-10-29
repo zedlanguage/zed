@@ -5,6 +5,7 @@
 //! reads is an error at that character, and lexing stops there.
 
 mod name;
+mod number;
 
 use std::fmt;
 
@@ -26,6 +27,13 @@ pub enum Tok {
     Name(String),
     /// The discard wildcard `_`.
     Wildcard,
+    /// An integer: its base (2, 8, 10 or 16) and its digits, without `_`.
+    Int {
+        /// The base.
+        radix: u32,
+        /// The digits.
+        digits: String,
+    },
 }
 
 /// A token and its span.
@@ -44,6 +52,8 @@ pub enum ErrorKind {
     Unexpected(char),
     /// A name whose characters are not all of one script (UTS #39, "Highly Restrictive").
     MixedScript(String),
+    /// A malformed number, and what is wrong with it.
+    BadNumber(String),
 }
 
 /// A lexical error and its span.
@@ -61,6 +71,7 @@ impl fmt::Display for Error {
             ErrorKind::Unexpected(c) => {
                 write!(f, "no token starts with {c:?} (U+{:04X})", *c as u32)
             }
+            ErrorKind::BadNumber(why) => write!(f, "malformed number: {why}"),
             ErrorKind::MixedScript(name) => {
                 write!(
                     f,
@@ -81,6 +92,10 @@ pub fn lex(text: &str) -> Result<Vec<Token>, Error> {
         let tok = if matches!(c, ' ' | '\t' | '\r' | '\n') {
             pos += 1;
             None
+        } else if let Some(number) = number::number(text, pos) {
+            let (end, tok) = number?;
+            pos = end;
+            Some(tok)
         } else if let Some(end) = name::name(text, pos) {
             pos = end;
             let word = &text[start..end];

@@ -4,6 +4,7 @@ expression: "declared_modules().join(\"\\n\")"
 ---
 l01_01_source_loading
 l01_02_lexer_names
+l01_03_lexer_integers
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization
