@@ -384,6 +384,78 @@ impl Type {
         self.p().morphisms.is_all()
     }
 
+    /// Every value of `self`, when there are at most `cap` of them and each can be listed:
+    /// bools, finite literal sets, bare atoms, and tuples of such components. `None` for a
+    /// type with more values, an infinite part, a payload, a struct or a function.
+    pub fn values(&self, cap: usize) -> Option<Vec<Value>> {
+        if !matches!(&*self.0, Node::Parts(_)) {
+            return None;
+        }
+        let p = self.p();
+        if p.structs || !p.morphisms.0.is_empty() || p.atoms.cofinite {
+            return None;
+        }
+        let mut out = BTreeSet::new();
+        let add = |v: Value, out: &mut BTreeSet<Value>| {
+            out.insert(v);
+            out.len() <= cap
+        };
+        for b in [false, true] {
+            if p.bools & (1 << u8::from(b)) != 0 && !add(Value::Bool(b), &mut out) {
+                return None;
+            }
+        }
+        for lits in [&p.ints, &p.rats, &p.floats, &p.strings] {
+            if lits.cofinite {
+                return None;
+            }
+            for v in &lits.values {
+                if !add(v.clone(), &mut out) {
+                    return None;
+                }
+            }
+        }
+        for (name, part) in &p.atoms.names {
+            if part.payload != Type::empty() {
+                return None;
+            }
+            if part.bare && !add(Value::atom(name), &mut out) {
+                return None;
+            }
+        }
+        for clause in &p.tuples.0 {
+            let ([items], true) = (
+                &clause.pos.iter().collect::<Vec<_>>()[..],
+                clause.neg.is_empty(),
+            ) else {
+                return None;
+            };
+            let mut rows = vec![Vec::new()];
+            for item in items.iter() {
+                let vs = item.values(cap)?;
+                rows = rows
+                    .iter()
+                    .flat_map(|r| {
+                        vs.iter().map(move |v| {
+                            let mut r = r.clone();
+                            r.push(v.clone());
+                            r
+                        })
+                    })
+                    .collect();
+                if rows.len() > cap {
+                    return None;
+                }
+            }
+            for r in rows {
+                if !add(Value::Tuple(r), &mut out) {
+                    return None;
+                }
+            }
+        }
+        Some(out.into_iter().collect())
+    }
+
     /// Whether `v` is in `self`, for a decidable `self`.
     pub fn contains(&self, v: &Value) -> bool {
         let p = self.p();

@@ -21,7 +21,7 @@ use zed_kernel::{Evaluator, Family, Lookup, Provenance, Term, Value, World};
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::{Unit, elaborate};
 use crate::parse::{TOP, parse};
-use crate::{interp, lex, resolve, source};
+use crate::{interp, lex, resolve, source, stage};
 
 /// The kinds of input port `main` declares at L1.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -153,6 +153,23 @@ impl Program {
     /// The input ports, in header order.
     pub fn inputs(&self) -> &[(String, PortKind)] {
         &self.inputs
+    }
+
+    /// The elaboration.
+    pub fn unit(&self) -> &Unit {
+        &self.unit
+    }
+
+    /// This program with its demanded build-stage terms evaluated under `fuel` each (step
+    /// L1.28), and what the build did.
+    pub fn stage(&self, fuel: u64) -> (Program, stage::Report) {
+        let (unit, report) = stage::mix(&self.unit, &["main"], fuel);
+        let program = Program {
+            unit,
+            inputs: self.inputs.clone(),
+            outputs: self.outputs.clone(),
+        };
+        (program, report)
     }
 
     /// The output ports, in header order.

@@ -22,6 +22,11 @@ const WORDS: &[(&str, Prim)] = &[
     ("sum", Prim::Sum),
 ];
 
+/// Whether `name` is a prelude word.
+pub fn word(name: &str) -> bool {
+    WORDS.iter().any(|(w, _)| *w == name)
+}
+
 /// `body` under the prelude: each word it may read bound to its primitive.
 pub fn prelude(body: Term) -> Term {
     WORDS.iter().rev().fold(body, |body, (name, p)| {

@@ -21,5 +21,6 @@ pub mod parse;
 pub mod resolve;
 pub mod run;
 pub mod source;
+pub mod stage;
 pub mod store;
 pub mod testing;

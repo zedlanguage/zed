@@ -27,6 +27,7 @@ mod l01_24_refinement_lattices;
 mod l01_25_preimage_catalog;
 mod l01_26_type_resolution;
 mod l01_27_absences;
+mod l01_28_staging;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;
