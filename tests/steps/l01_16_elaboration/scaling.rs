@@ -204,3 +204,47 @@ fn ordering_a_function_with_many_rows_scales() {
         assert_eq!(u.tests.len(), n);
     });
 }
+
+/// Functions nested `n` deep, each with a parameter of no declared type, the innermost
+/// adding all of them.
+fn open(n: usize) -> String {
+    let mut src = String::new();
+    for i in 0..n {
+        src += &format!("f{i}(positional x{i}) {{\n");
+    }
+    let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    src += &format!("{}\n", xs.join(" + "));
+    for i in (0..n).rev() {
+        if i + 1 < n {
+            src += &format!("f{}(x{i})\n", i + 1);
+        }
+        src += "}\n";
+    }
+    src + "main = f0(1);\n"
+}
+
+#[test]
+fn searches_through_nested_functions_scale() {
+    // Each run of a search checks the functions declared in its body again, in a context
+    // that is new whenever they read the parameter it searches: the innermost function's
+    // signature depends on the type of every parameter around it. Each search runs its body
+    // at least twice, with `_` and with type variables, so the contexts, all distinct, grew
+    // about 1.6 times with each level, until the budget stopped them (167 s at 32 deep). A
+    // function is now searched in at most `CONTEXTS` contexts, and gives `_` in the rest.
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            zed_tests::scaling::check("searches through n nested functions", 8, |n| {
+                elab(&open(n)).unwrap();
+            });
+            assert_eq!(value(&open(4), "main"), "4");
+            let int = (Some("int".to_string()), Some("(int) -> int".to_string()));
+            assert_eq!(found(&open(6), 5), int);
+            // At 8 deep, the context that types `x7` as int is past the first 64.
+            let unknown = (Some("_".to_string()), Some("(_) -> _".to_string()));
+            assert_eq!(found(&open(8), 7), unknown);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

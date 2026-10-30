@@ -114,6 +114,13 @@ pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
 /// most `RUNS` times its size, however they nest.
 const RUNS: usize = 20_000;
 
+/// How many contexts, the types of the binders it reads from outside, one function declared
+/// inside another is searched in, inside a search not inside another; in any further context
+/// its signature gives `_` for its undeclared parameters and its result. A search in a new
+/// context checks the functions declared inside it in new contexts, so without this the
+/// contexts, and the searches, multiply with the depth of the nesting.
+const CONTEXTS: usize = 64;
+
 /// The most piece combinations one application checks before it gives the unknown.
 const COMBOS: usize = 256;
 
@@ -209,7 +216,7 @@ struct Ck<'t, 'a> {
     contexts: Vec<usize>,
     /// The number of each context: by the function's statement, the context of the search
     /// around it and the types of the binders it reads from the function around it.
-    numbers: HashMap<Span, HashMap<Context, usize>>,
+    numbers: HashMap<Span, HashMap<Context, (usize, usize)>>,
     /// How many contexts are numbered.
     numbered: usize,
     /// The adoptions of the nested searches found inside the outermost search, each with
@@ -509,12 +516,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.searching += 1;
         let context = (key.around, key.outer.clone());
         let numbers = self.numbers.entry(span).or_default();
-        let number = *numbers.entry(context).or_insert(self.numbered);
+        let count = numbers.len();
+        let (number, nth) = *numbers.entry(context).or_insert((self.numbered, count));
         if number == self.numbered {
             self.numbered += 1;
         }
         self.contexts.push(number);
-        let sig = self.infer(f, span);
+        let sig = self.infer(f, span, nth >= CONTEXTS);
         self.contexts.pop();
         self.searching -= 1;
         if self.searching == 0 {
@@ -596,8 +604,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// The signature of a declared function, inferred where a parameter has no type.
-    fn infer(&mut self, f: &'a Function, span: Span) -> Arc<Sig> {
+    /// The signature of a declared function, inferred where a parameter has no type, or with
+    /// `_` for those parameters and the result if `unknown`.
+    fn infer(&mut self, f: &'a Function, span: Span, unknown: bool) -> Arc<Sig> {
         let params: Vec<SParam> = f
             .params
             .iter()
@@ -685,6 +694,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 arrows,
             })
         };
+        if unknown && !open.is_empty() {
+            return sig(vec![Arrow {
+                params: with(&|_| Ty::dynamic()),
+                result: Ty::dynamic(),
+            }]);
+        }
         if open.is_empty() {
             let tys = with(&|_| unreachable!());
             let result = run(self, &tys);
