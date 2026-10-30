@@ -8,14 +8,14 @@
 //! every diagnostic is on a line marked ✗ and every marked line has one; its tables do not
 //! run. A wave that aborts fails its row: no form expects an abort at L1.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Lookup, Term, Value, World};
 
 use crate::ast::StmtKind;
-use crate::elab::{Test, Unit};
+use crate::elab::{Cones, Test};
 use crate::query::{self, Db, Query};
 use crate::run::{self, PortKind, Program, Through};
 use crate::{fence, interp, source};
@@ -53,8 +53,14 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
     let mut out = Vec::new();
     match &*db.front(text) {
         Err(diagnostics) => {
+            // The first diagnostic on each line, and the marked lines, each found in a map.
+            let mut first = BTreeMap::new();
+            for d in diagnostics {
+                first.entry(d.line).or_insert(d);
+            }
+            let is_marked: BTreeSet<usize> = marked.iter().copied().collect();
             for &line in &marked {
-                let d = diagnostics.iter().find(|d| d.line == line);
+                let d = first.get(&line);
                 out.push(Outcome {
                     line,
                     col: d.map_or(1, |d| d.col),
@@ -63,7 +69,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
                         .then(|| "the line is marked ✗ and has no diagnostic".into()),
                 });
             }
-            for d in diagnostics.iter().filter(|d| !marked.contains(&d.line)) {
+            for d in diagnostics.iter().filter(|d| !is_marked.contains(&d.line)) {
                 out.push(Outcome {
                     line: d.line,
                     col: d.col,
@@ -81,6 +87,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
         }
         Ok((stmts, unit)) => {
             let lines = source::Lines::new(text.as_bytes());
+            let cones = Cones::new(unit);
             for &line in &marked {
                 out.push(Outcome {
                     line,
@@ -116,13 +123,14 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
                         let mut roots = vec![&main, &t.want];
                         roots.extend(&t.args);
                         let ports = format!("{:?} {:?}", p.inputs(), p.outputs());
-                        let k = query::key("wave", &[&query::cone(unit, &roots), ports.as_bytes()]);
-                        db.row(Query::Wave, k, || wave(unit, p, t, map)).err()
+                        let k =
+                            query::key("wave", &[&query::cone(&cones, &roots), ports.as_bytes()]);
+                        db.row(Query::Wave, k, || wave(&cones, p, t, map)).err()
                     }
                     (None, "main") => continue,
                     _ => {
-                        let k = query::key("row", &[&query::cone(unit, &[&t.check])]);
-                        db.row(Query::Row, k, || row(unit, t, map)).err()
+                        let k = query::key("row", &[&query::cone(&cones, &[&t.check])]);
+                        db.row(Query::Row, k, || row(&cones, t, map)).err()
                     }
                 };
                 out.push(Outcome {
@@ -137,34 +145,34 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
     out
 }
 
-/// The value of `term` under the unit's definitions and the prelude.
-fn value(unit: &Unit, term: &Term, map: &Through<'_>) -> Result<Value, String> {
+/// The value of `term` under the definitions it reaches and the prelude.
+fn value(cones: &Cones<'_>, term: &Term, map: &Through<'_>) -> Result<Value, String> {
     map(
-        &interp::prelude(unit.close(term.clone())),
+        &interp::prelude(cones.close(term.clone())),
         &mut Evaluator::new(World::new()),
     )
 }
 
 /// Checks a row of a function's table.
-fn row(unit: &Unit, t: &Test, map: &Through<'_>) -> Result<(), String> {
-    match value(unit, &t.check, map)? {
+fn row(cones: &Cones<'_>, t: &Test, map: &Through<'_>) -> Result<(), String> {
+    match value(cones, &t.check, map)? {
         Value::Bool(true) => Ok(()),
         _ => {
             let Term::Prim(_, sides) = &t.check else {
                 unreachable!("a check is `call == want`")
             };
-            Err(format!("the result is {}", value(unit, &sides[0], map)?))
+            Err(format!("the result is {}", value(cones, &sides[0], map)?))
         }
     }
 }
 
 /// Checks a row of `main`'s table: runs the wave its key gives, and compares the writes.
-fn wave(unit: &Unit, program: &Program, t: &Test, map: &Through<'_>) -> Result<(), String> {
+fn wave(cones: &Cones<'_>, program: &Program, t: &Test, map: &Through<'_>) -> Result<(), String> {
     let mut lines = BTreeMap::new();
     let mut files: BTreeMap<&str, Arc<dyn Lookup>> = BTreeMap::new();
     for ((name, kind), arg) in program.inputs().iter().zip(&t.args) {
         match kind {
-            PortKind::Lines => match value(unit, arg, map)? {
+            PortKind::Lines => match value(cones, arg, map)? {
                 Value::Str(s) => {
                     lines.insert(name.clone(), s.as_bytes().to_vec());
                 }
@@ -177,14 +185,14 @@ fn wave(unit: &Unit, program: &Program, t: &Test, map: &Through<'_>) -> Result<(
             PortKind::Files => {
                 files.insert(
                     name,
-                    Arc::new(Given(interp::prelude(unit.close(arg.clone())))),
+                    Arc::new(Given(interp::prelude(cones.close(arg.clone())))),
                 );
             }
         }
     }
     let wave = program.run_through(&lines, |name| files[name].clone(), map)?;
     let outputs = program.outputs();
-    let wants = match (outputs.len(), value(unit, &t.want, map)?) {
+    let wants = match (outputs.len(), value(cones, &t.want, map)?) {
         (1, v) => vec![v],
         (n, Value::Tuple(xs)) if xs.len() == n => xs,
         (n, v) => {

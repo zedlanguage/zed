@@ -21,15 +21,14 @@
 //! evicted, which a long-lived process (the language server, step L25.1) must bound; the
 //! interpreter and the prelude are fixed for one build of the compiler, so they are not hashed.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use zed_kernel::Term;
 
 use crate::ast::Stmt;
-use crate::elab::Unit;
+use crate::elab::{Cones, Unit};
 use crate::run::{self, Diagnostic};
-use crate::stage;
 
 /// A query's key: a content hash of its inputs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -64,7 +63,7 @@ pub enum Query {
 pub type Front = Result<(Vec<Stmt>, Unit), Vec<Diagnostic>>;
 
 /// The memoized results, and how many times each query was computed rather than reused.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Db {
     front: HashMap<Key, Arc<Front>>,
     rows: HashMap<(Query, Key), Result<(), String>>,
@@ -112,22 +111,15 @@ impl Db {
     }
 }
 
-/// The syntactic bytes of the definitions of `unit` that `roots` reach, in the unit's order,
+/// The syntactic bytes of the definitions of the unit of `cones` that `roots` reach, in the unit's order,
 /// followed by the roots: what a term evaluated under the unit can read.
-pub fn cone(unit: &Unit, roots: &[&Term]) -> Vec<u8> {
-    let mut reach: BTreeSet<Arc<str>> = roots.iter().flat_map(|t| stage::free(t)).collect();
-    // Each definition comes after those it uses, so one backward pass closes the set.
-    for d in unit.defs.iter().rev() {
-        if reach.contains(&d.kernel) {
-            reach.extend(stage::free(&d.term));
-        }
-    }
+pub fn cone(cones: &Cones<'_>, roots: &[&Term]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut put = |s: String| {
         out.extend_from_slice(&(s.len() as u64).to_le_bytes());
         out.extend_from_slice(s.as_bytes());
     };
-    for d in unit.defs.iter().filter(|d| reach.contains(&d.kernel)) {
+    for d in cones.defs(roots) {
         put(format!("{}={:?}", d.kernel, d.term));
     }
     for t in roots {

@@ -18,7 +18,7 @@
 //! belongs to a function at the unit's top level.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::types::Type as KType;
@@ -71,17 +71,76 @@ pub struct Unit {
 }
 
 impl Unit {
-    /// `body` under every definition, each a let.
+    /// `body` under the definitions it reaches, each a let, in the unit's order. For many
+    /// terms of one unit, make its [`Cones`] once.
     pub fn close(&self, body: Term) -> Term {
-        self.defs.iter().rev().fold(body, |body, d| {
-            Term::Let(d.kernel.clone(), Arc::new(d.term.clone()), Arc::new(body))
-        })
+        Cones::new(self).close(body)
     }
 
     /// The definition of source name `name`, closed over the others.
     pub fn get(&self, name: &str) -> Option<Term> {
         let d = self.defs.iter().find(|d| d.name == name)?;
         Some(self.close(Term::Var(d.kernel.clone())))
+    }
+}
+
+/// The definitions each term of a unit reaches, from an index of the unit made once: each
+/// kernel name's definition, and the names each definition reads, found when first needed. A
+/// term's cone then costs the definitions in it, not a pass over the unit.
+pub struct Cones<'u> {
+    unit: &'u Unit,
+    by_kernel: BTreeMap<&'u str, usize>,
+    free: Vec<std::cell::OnceCell<BTreeSet<Arc<str>>>>,
+}
+
+impl<'u> Cones<'u> {
+    /// The index of `unit`.
+    pub fn new(unit: &'u Unit) -> Self {
+        Cones {
+            unit,
+            by_kernel: unit
+                .defs
+                .iter()
+                .enumerate()
+                .map(|(i, d)| (&*d.kernel, i))
+                .collect(),
+            free: unit
+                .defs
+                .iter()
+                .map(|_| std::cell::OnceCell::new())
+                .collect(),
+        }
+    }
+
+    /// The definitions `roots` read, and those they read in turn: their positions in the
+    /// unit, in its order.
+    pub fn reach(&self, roots: &[&Term]) -> Vec<usize> {
+        let mut seen = BTreeSet::new();
+        let mut todo: Vec<Arc<str>> = roots.iter().flat_map(|t| crate::stage::free(t)).collect();
+        while let Some(x) = todo.pop() {
+            if let Some(&i) = self.by_kernel.get(&*x)
+                && seen.insert(i)
+            {
+                let free = self.free[i].get_or_init(|| crate::stage::free(&self.unit.defs[i].term));
+                todo.extend(free.iter().cloned());
+            }
+        }
+        seen.into_iter().collect()
+    }
+
+    /// The definitions `roots` reach, in the unit's order.
+    pub fn defs(&self, roots: &[&Term]) -> impl Iterator<Item = &'u Def> + use<'u> {
+        let unit = self.unit;
+        self.reach(roots).into_iter().map(move |i| &unit.defs[i])
+    }
+
+    /// `body` under the definitions it reaches, each a let, in the unit's order: each after
+    /// those it uses, as in the unit.
+    pub fn close(&self, body: Term) -> Term {
+        let defs: Vec<&Def> = self.defs(&[&body]).collect();
+        defs.into_iter().rev().fold(body, |body, d| {
+            Term::Let(d.kernel.clone(), Arc::new(d.term.clone()), Arc::new(body))
+        })
     }
 }
 

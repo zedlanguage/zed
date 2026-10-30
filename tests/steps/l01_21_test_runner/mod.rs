@@ -3,8 +3,10 @@
 //! `zedc test` checks. The tests here check the runner itself.
 
 mod command;
+mod cones;
 mod fences;
 mod marks;
+mod scaling;
 mod tables;
 mod zed;
 

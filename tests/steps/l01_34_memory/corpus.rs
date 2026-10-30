@@ -43,10 +43,10 @@ fn every_row_passes_through_the_machine() {
             rows += got.len();
         }
         assert_eq!(rows, 41);
-        // The seven corpus units evaluate 58 closed terms, which allocate 125 cells; fusion
+        // The seven corpus units evaluate 58 closed terms, which allocate 109 cells; fusion
         // saves 10 count writes.
-        let want = if fuse { 129 } else { 139 };
-        assert_eq!((runs.get(), cells.get(), writes.get()), (58, 125, want));
+        let want = if fuse { 113 } else { 123 };
+        assert_eq!((runs.get(), cells.get(), writes.get()), (58, 109, want));
     }
 }
 

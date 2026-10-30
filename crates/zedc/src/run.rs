@@ -45,6 +45,8 @@ pub fn direct(t: &Term, ev: &mut Evaluator) -> Result<Value, String> {
 /// A program ready to run: its elaboration and `main`'s ports.
 pub struct Program {
     pub(crate) unit: Unit,
+    /// `main` closed over the definitions it reaches, made at the first wave.
+    main: std::sync::OnceLock<Term>,
     inputs: Vec<(String, PortKind)>,
     outputs: Vec<String>,
 }
@@ -236,6 +238,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, String> {
     }
     Ok(Program {
         unit,
+        main: std::sync::OnceLock::new(),
         inputs,
         outputs,
     })
@@ -258,6 +261,7 @@ impl Program {
         let (unit, report) = stage::mix(&self.unit, &["main"], fuel);
         let program = Program {
             unit,
+            main: std::sync::OnceLock::new(),
             inputs: self.inputs.clone(),
             outputs: self.outputs.clone(),
         };
@@ -325,7 +329,10 @@ impl Program {
         for name in &self.outputs {
             world = world.output(name);
         }
-        let main = self.unit.get("main").expect("`main` was elaborated");
+        let main = self
+            .main
+            .get_or_init(|| self.unit.get("main").expect("`main` was elaborated"))
+            .clone();
         let args = self
             .inputs
             .iter()

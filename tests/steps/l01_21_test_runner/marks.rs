@@ -44,3 +44,16 @@ fn a_commented_variant_is_no_mark_and_a_rejected_unit_runs_no_row() {
         ["2:21: `1 -> 3` of `f`: the result is 2"]
     );
 }
+
+#[test]
+fn a_marked_line_is_placed_at_its_first_diagnostic_and_others_stay_failures() {
+    let src = "a = 1;\nb = missing1 + missing2;  // ✗\nc = missing3;\nd = missing4;  // ✗\n";
+    let got = checks(src);
+    assert_eq!(got.len(), 3, "{got:?}");
+    assert_eq!(got[0], "2:5: ok");
+    assert!(
+        got[1].starts_with("3:5: `missing3` is not defined"),
+        "{got:?}"
+    );
+    assert_eq!(got[2], "4:5: ok");
+}

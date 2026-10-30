@@ -55,7 +55,7 @@ fn every_row_passes_natively_with_the_machines_counts() {
             rows += got.len();
         }
         assert_eq!(rows, 41);
-        let want = if fuse { 129 } else { 139 };
-        assert_eq!((runs.get(), cells.get(), writes.get()), (58, 125, want));
+        let want = if fuse { 113 } else { 123 };
+        assert_eq!((runs.get(), cells.get(), writes.get()), (58, 109, want));
     }
 }
