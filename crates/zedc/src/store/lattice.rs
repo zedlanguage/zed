@@ -27,6 +27,11 @@ pub trait Lattice: Clone + PartialEq + fmt::Debug {
     /// `self ∇ next` for `next ⊒ self`: an upper bound of both such that every chain of
     /// widenings is finite. For a lattice of finite height it is the join.
     fn widen(&self, next: &Self) -> Self;
+    /// The order: whether `self ⊑ other`. The default reads it off the meet, which is exact
+    /// for a lattice whose elements have one representation each.
+    fn leq(&self, other: &Self) -> bool {
+        self.meet(other) == *self
+    }
 }
 
 impl Lattice for IntervalSet {
@@ -103,6 +108,21 @@ impl Congruence {
                 residue,
             } => v == residue,
             Congruence::Class { modulus, residue } => v.rem_euclid(modulus as i64) == residue,
+        }
+    }
+}
+
+impl std::fmt::Display for Congruence {
+    /// `{}`, `5`, `1 mod 3`, or `any` for every integer.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Congruence::Bottom => write!(f, "{{}}"),
+            Congruence::Class {
+                modulus: 0,
+                residue,
+            } => write!(f, "{residue}"),
+            Congruence::Class { modulus: 1, .. } => write!(f, "any"),
+            Congruence::Class { modulus, residue } => write!(f, "{residue} mod {modulus}"),
         }
     }
 }
