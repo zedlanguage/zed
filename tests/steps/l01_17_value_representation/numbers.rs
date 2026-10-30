@@ -86,14 +86,14 @@ fn rational_division_by_zero_is_an_atom() {
 
 #[test]
 fn numbers_of_different_kinds_do_not_mix() {
+    // Values of two kinds do not mix; the checker finds it before anything runs.
     assert_eq!(
-        value("a = 1r + 1;\n", "a"),
-        "error: type error: Add applied to 1r, 1"
+        errors("x = 1r;\na = x + f64(1);\n"),
+        ["`+` does not take (1r, f64) [x + f64(1)]"]
     );
-    assert_eq!(
-        value("b = 1r < 2.0;\n", "b"),
-        "error: type error: Lt applied to 1r, 2.0"
-    );
-    // `==` across kinds is false: the values differ, though their order ties them by value.
-    assert_eq!(value("c = 1 == 1.0;\n", "c"), "false");
+    // A bare literal adopts the kind the other side expects, exactly (step L1.26); `1r` is
+    // decorated and keeps its kind.
+    assert_eq!(value("a = 1r + 1;\n", "a"), "2r");
+    assert_eq!(value("b = 1r < 2.0;\n", "b"), "true");
+    assert_eq!(value("c = 1 == 1.0;\n", "c"), "true");
 }

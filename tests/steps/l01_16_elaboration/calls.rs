@@ -36,7 +36,7 @@ fn named_arguments_go_in_parameter_order_whatever_the_written_order() {
 #[test]
 fn curry_is_a_lambda_over_the_named_parameters_left_out() {
     let src = "greet(positional name, punct = \"!\", lead = \"hi\") = \"${lead}, ${name}${punct}\";\n\
-               h = greet(\"Al\", lead: \"yo\", ...);\nq = h(\"?\");\n";
+               h = greet(\"Al\", lead: \"yo\", ...);\nq = h(punct: \"?\");\n";
     assert_eq!(
         term(src, "h"),
         "punct -> { name = \"Al\"; lead = \"yo\"; greet(name, punct, lead) }"

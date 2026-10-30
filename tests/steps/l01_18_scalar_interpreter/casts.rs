@@ -2,6 +2,7 @@
 //! number has no equal `T`, and `#invalid` when the source is not a `T` at all.
 
 use super::x;
+use crate::l01_16_elaboration::errors;
 
 #[test]
 fn reading_a_quantity_from_a_form_field() {
@@ -80,10 +81,12 @@ fn a_float_reads_correctly_rounded_and_overflow_is_inexact() {
 
 #[test]
 fn a_cast_of_a_kind_it_does_not_take_is_a_type_error() {
-    assert!(
-        x("int(true)").starts_with("error: type error"),
-        "{}",
-        x("int(true)")
+    assert_eq!(
+        errors("x = int(true);\n"),
+        ["`int` does not take (true) [int(true)]"]
     );
-    assert!(x("len(3)").starts_with("error: type error"));
+    assert_eq!(
+        errors("x = len(3);\n"),
+        ["`len` does not take (3) [len(3)]"]
+    );
 }

@@ -12,8 +12,8 @@
 //!
 //! Where DESIGN.md does not say: `++` is its own primitive `Concat`, never `Add`; `e else d`
 //! matches any atom (`#_`), which is exact while every atom is loose (before L2's named atom
-//! families); a call through a value other than a declared function passes its arguments by
-//! position only, until types give a function value its parameter kinds (L1.26); a prelude
+//! families); a call through a value other than a declared function takes named arguments,
+//! closed defaults and `...` from the signature the checker gives the value (L1.26); a prelude
 //! word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
 //! belongs to a function at the unit's top level.
 
@@ -27,6 +27,7 @@ use crate::ast::{
     Error, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
     TypeKind,
 };
+use crate::check::{self, Fit, Info};
 use crate::lex::Span;
 use crate::resolve::{Kind, Ref, Resolution, prelude_layer};
 
@@ -82,7 +83,10 @@ impl Unit {
 
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.
 pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
-    let mut e = Elab::new(unit, res);
+    let t = Tables::new(unit, res);
+    let mut info = check::check_with(&t, unit);
+    let checked = std::mem::take(&mut info.errors);
+    let mut e = Elab::new(t, info);
     let mut out = Unit::default();
     if let Some((binds, _)) = e.scope(unit, true) {
         out.defs = binds
@@ -91,10 +95,13 @@ pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
             .collect();
     }
     out.tests = std::mem::take(&mut e.tests);
+    e.errors.extend(checked);
     if e.errors.is_empty() {
         Ok(out)
     } else {
-        e.errors.sort_by_key(|e| e.span);
+        e.errors
+            .sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
+        e.errors.dedup();
         Err(e.errors)
     }
 }
@@ -102,56 +109,41 @@ pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
 /// A binding of a scope: source name, kernel name, value.
 type Bind = (String, Arc<str>, Term);
 
-struct Elab<'a> {
-    res: &'a Resolution,
+/// The binders of a unit, shared by the checker and elaboration.
+pub(crate) struct Tables<'a> {
+    pub(crate) res: &'a Resolution,
     /// Each binder's index, by its span and name.
-    ids: HashMap<(Span, &'a str), usize>,
+    pub(crate) ids: HashMap<(Span, &'a str), usize>,
+    /// Each function binder's declaration.
+    pub(crate) funcs: HashMap<usize, &'a Function>,
+}
+
+struct Elab<'a> {
+    t: Tables<'a>,
     /// Each binder's kernel name.
     names: Vec<Arc<str>>,
-    /// Each function binder's declaration.
-    funcs: HashMap<usize, &'a Function>,
+    /// The checker's findings.
+    info: Info,
     fresh: usize,
     tests: Vec<Test>,
     errors: Vec<Error>,
 }
 
-impl<'a> Elab<'a> {
-    fn new(unit: &'a [Stmt], res: &'a Resolution) -> Self {
-        let mut count: HashMap<&str, usize> = HashMap::new();
-        for b in &res.binders {
-            *count.entry(&b.name).or_default() += 1;
-        }
-        let mut seen: HashMap<&str, usize> = HashMap::new();
-        let names = res
-            .binders
-            .iter()
-            .map(|b| {
-                let k = seen.entry(&b.name).or_default();
-                *k += 1;
-                if count[b.name.as_str()] == 1 && prelude_layer(&b.name).is_none() {
-                    b.name.as_str().into()
-                } else {
-                    format!("{}@{k}", b.name).into()
-                }
-            })
-            .collect();
+impl<'a> Tables<'a> {
+    pub(crate) fn new(unit: &'a [Stmt], res: &'a Resolution) -> Self {
         let ids = res
             .binders
             .iter()
             .enumerate()
             .map(|(i, b)| ((b.span, b.name.as_str()), i))
             .collect();
-        let mut e = Elab {
+        let mut t = Tables {
             res,
             ids,
-            names,
             funcs: HashMap::new(),
-            fresh: 0,
-            tests: Vec::new(),
-            errors: Vec::new(),
         };
-        e.collect_functions(unit);
-        e
+        t.collect_functions(unit);
+        t
     }
 
     /// Records every function declaration of `stmts` and of the blocks inside them.
@@ -221,25 +213,12 @@ impl<'a> Elab<'a> {
         }
     }
 
-    fn error<T>(&mut self, span: Span, message: impl Into<String>) -> Option<T> {
-        self.errors.push(Error {
-            span,
-            message: message.into(),
-        });
-        None
-    }
-
-    fn temp(&mut self) -> Arc<str> {
-        self.fresh += 1;
-        format!("${}", self.fresh).into()
-    }
-
-    fn id(&self, span: Span, name: &str) -> usize {
+    pub(crate) fn id(&self, span: Span, name: &str) -> usize {
         self.ids[&(span, name)]
     }
 
     /// The binders used in `span`, outside the spans in `skip`.
-    fn uses_in(&self, span: Span, skip: &[Span]) -> Vec<usize> {
+    pub(crate) fn uses_in(&self, span: Span, skip: &[Span]) -> Vec<usize> {
         let from = Span {
             start: span.start,
             end: 0,
@@ -260,18 +239,23 @@ impl<'a> Elab<'a> {
             .collect()
     }
 
-    /// The statements of one scope: its bindings in dependency order, and its export. `top`
-    /// is the unit's top level, where a function's `test` table is elaborated.
-    fn scope(&mut self, stmts: &'a [Stmt], top: bool) -> Option<(Vec<Bind>, Option<Term>)> {
-        let mut export = None;
-        let mut items: Vec<&'a Stmt> = Vec::new();
-        for s in stmts {
-            match &s.kind {
-                StmtKind::Return(es) => export = Some(es),
-                _ => items.push(s),
-            }
+    pub(crate) fn binders_of(&self, s: &'a Stmt) -> Vec<usize> {
+        match &s.kind {
+            StmtKind::Bind { targets, .. } => targets
+                .iter()
+                .filter_map(|t| match t {
+                    Target::Name(n) => Some(self.id(s.span, n)),
+                    Target::Wild => None,
+                })
+                .collect(),
+            StmtKind::Function(f) => vec![self.id(s.span, &f.name)],
+            StmtKind::Push { .. } | StmtKind::Return(_) => Vec::new(),
         }
-        // The binders each statement makes, and those of this scope each one uses.
+    }
+
+    /// The order the statements of one scope are bound in, each after those it uses, a
+    /// function's `test` tables aside; else the statements of one cycle.
+    pub(crate) fn order(&self, items: &[&'a Stmt]) -> Result<Vec<usize>, Vec<usize>> {
         let owner: HashMap<usize, usize> = items
             .iter()
             .enumerate()
@@ -301,7 +285,70 @@ impl<'a> Elab<'a> {
                 d
             })
             .collect();
-        let order = match topo(&deps) {
+        topo(&deps)
+    }
+}
+
+impl<'a> Elab<'a> {
+    fn new(t: Tables<'a>, info: Info) -> Self {
+        let res = t.res;
+        let mut count: HashMap<&str, usize> = HashMap::new();
+        for b in &res.binders {
+            *count.entry(&b.name).or_default() += 1;
+        }
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        let names = res
+            .binders
+            .iter()
+            .map(|b| {
+                let k = seen.entry(&b.name).or_default();
+                *k += 1;
+                if count[b.name.as_str()] == 1 && prelude_layer(&b.name).is_none() {
+                    b.name.as_str().into()
+                } else {
+                    format!("{}@{k}", b.name).into()
+                }
+            })
+            .collect();
+        Elab {
+            t,
+            names,
+            info,
+            fresh: 0,
+            tests: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    fn error<T>(&mut self, span: Span, message: impl Into<String>) -> Option<T> {
+        self.errors.push(Error {
+            span,
+            message: message.into(),
+        });
+        None
+    }
+
+    fn temp(&mut self) -> Arc<str> {
+        self.fresh += 1;
+        format!("${}", self.fresh).into()
+    }
+
+    fn id(&self, span: Span, name: &str) -> usize {
+        self.t.id(span, name)
+    }
+
+    /// The statements of one scope: its bindings in dependency order, and its export. `top`
+    /// is the unit's top level, where a function's `test` table is elaborated.
+    fn scope(&mut self, stmts: &'a [Stmt], top: bool) -> Option<(Vec<Bind>, Option<Term>)> {
+        let mut export = None;
+        let mut items: Vec<&'a Stmt> = Vec::new();
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Return(es) => export = Some(es),
+                _ => items.push(s),
+            }
+        }
+        let order = match self.t.order(&items) {
             Ok(order) => order,
             Err(cycle) => {
                 let names: Vec<String> = cycle.iter().map(|&i| what(items[i])).collect();
@@ -346,20 +393,6 @@ impl<'a> Elab<'a> {
         Some(binds.into_iter().rev().fold(body, |body, (_, k, t)| {
             Term::Let(k, Arc::new(t), Arc::new(body))
         }))
-    }
-
-    fn binders_of(&self, s: &'a Stmt) -> Vec<usize> {
-        match &s.kind {
-            StmtKind::Bind { targets, .. } => targets
-                .iter()
-                .filter_map(|t| match t {
-                    Target::Name(n) => Some(self.id(s.span, n)),
-                    Target::Wild => None,
-                })
-                .collect(),
-            StmtKind::Function(f) => vec![self.id(s.span, &f.name)],
-            StmtKind::Push { .. } | StmtKind::Return(_) => Vec::new(),
-        }
     }
 
     fn stmt(&mut self, s: &'a Stmt, top: bool, out: &mut Vec<Bind>) -> Option<()> {
@@ -479,6 +512,12 @@ impl<'a> Elab<'a> {
     }
 
     fn expr(&mut self, e: &'a Expr) -> Option<Term> {
+        if let Some(fit) = self.info.fits.get(&e.span).cloned() {
+            return self.fit(e, fit);
+        }
+        if let Some(v) = self.info.adopt.get(&e.span) {
+            return Some(Term::Lit(v.clone()));
+        }
         let lit = |v: Value| Some(Term::Lit(v));
         match &e.kind {
             ExprKind::Int { radix, digits } => {
@@ -609,7 +648,7 @@ impl<'a> Elab<'a> {
     }
 
     fn name(&mut self, n: &str, span: Span) -> Option<Term> {
-        match self.res.uses.get(&span) {
+        match self.t.res.uses.get(&span) {
             Some(Ref::Bound(ids)) if ids.len() > 1 => self.error(
                 span,
                 format!(
@@ -617,7 +656,7 @@ impl<'a> Elab<'a> {
                     ids.len()
                 ),
             ),
-            Some(Ref::Bound(ids)) if self.res.binders[ids[0]].kind == Kind::Port => self.error(
+            Some(Ref::Bound(ids)) if self.t.res.binders[ids[0]].kind == Kind::Port => self.error(
                 span,
                 format!("`{n}` is an output port, written with `{n} <- e`, not a value"),
             ),
@@ -629,9 +668,9 @@ impl<'a> Elab<'a> {
 
     /// The declared function that `e` names, if it names exactly one.
     fn declared(&self, e: &Expr) -> Option<usize> {
-        match (&e.kind, self.res.uses.get(&e.span)) {
+        match (&e.kind, self.t.res.uses.get(&e.span)) {
             (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => {
-                self.funcs.contains_key(&ids[0]).then_some(ids[0])
+                self.t.funcs.contains_key(&ids[0]).then_some(ids[0])
             }
             _ => None,
         }
@@ -688,7 +727,9 @@ impl<'a> Elab<'a> {
         ok.then_some(Term::Prim(Prim::Atom, args))
     }
 
-    /// A call through a value other than a declared function: by position only.
+    /// A call through a value other than a declared function. With the signature the
+    /// checker gives the value, named arguments, closed defaults and `...` work as for a
+    /// declared function; without one, the arguments are positional.
     fn call_value(
         &mut self,
         f: Term,
@@ -698,22 +739,177 @@ impl<'a> Elab<'a> {
         curry: bool,
         span: Span,
     ) -> Option<Term> {
-        if !named.is_empty() || curry {
-            return self.error(
-                span,
-                "named arguments and `...` need the declaration of the function called; \
-                 through a value they arrive with types at step L1.26",
-            );
+        let Some(sig) = self.info.calls.get(&span).cloned() else {
+            if !named.is_empty() || curry {
+                return self.error(
+                    span,
+                    "named arguments and `...` need the parameter names of the function \
+                     called, which a prelude word and a value of unknown type do not give",
+                );
+            }
+            let mut args: Vec<Term> = receiver.into_iter().collect();
+            let mut ok = true;
+            for a in positional {
+                match self.expr(a) {
+                    Some(t) => args.push(t),
+                    None => ok = false,
+                }
+            }
+            return ok.then(|| Term::App(Arc::new(f), args));
+        };
+        let n = sig.params.len();
+        let mut slots: Vec<Option<Term>> = vec![None; n];
+        let mut next = 0;
+        if let Some(r) = receiver {
+            if n == 0 {
+                return self.error(span, format!("`{sig}` has no parameter for a receiver"));
+            }
+            slots[0] = Some(r);
+            next = 1;
         }
-        let mut args: Vec<Term> = receiver.into_iter().collect();
         let mut ok = true;
         for a in positional {
-            match self.expr(a) {
-                Some(t) => args.push(t),
-                None => ok = false,
+            match sig.params.get(next) {
+                None => {
+                    return self.error(a.span, format!("too many arguments: `{sig}` takes {n}"));
+                }
+                Some(p) if !p.positional => {
+                    return self.error(
+                        a.span,
+                        format!(
+                            "`{}` of `{sig}` is named: pass it as `{}: …`",
+                            p.name, p.name
+                        ),
+                    );
+                }
+                Some(_) => {
+                    slots[next] = self.expr(a);
+                    ok &= slots[next].is_some();
+                    next += 1;
+                }
             }
         }
-        ok.then(|| Term::App(Arc::new(f), args))
+        for (name, a) in named {
+            match sig.params.iter().position(|p| *p.name == **name) {
+                None => return self.error(a.span, format!("`{sig}` has no parameter `{name}`")),
+                Some(j) if sig.params[j].positional => {
+                    return self.error(
+                        a.span,
+                        format!("`{name}` of `{sig}` is positional: pass it by position"),
+                    );
+                }
+                Some(j) if slots[j].is_some() => {
+                    return self.error(a.span, format!("`{name}` is already supplied"));
+                }
+                Some(j) => {
+                    slots[j] = self.expr(a);
+                    ok &= slots[j].is_some();
+                }
+            }
+        }
+        if !ok {
+            return None;
+        }
+        let missing: Vec<usize> = (0..n).filter(|&j| slots[j].is_none()).collect();
+        if curry {
+            if let Some(&j) = missing.iter().find(|&&j| sig.params[j].positional) {
+                return self.error(
+                    span,
+                    format!(
+                        "`...` curries named parameters only; the positional `{}` is left out",
+                        sig.params[j].name
+                    ),
+                );
+            }
+            if missing.is_empty() {
+                return self.error(span, "`...` leaves no named parameter out");
+            }
+            // The function value is bound once, outside the lambda.
+            let fv = self.temp();
+            let temps: Vec<Arc<str>> = missing.iter().map(|_| self.temp()).collect();
+            let mut k = 0;
+            let args = slots
+                .into_iter()
+                .map(|s| {
+                    s.unwrap_or_else(|| {
+                        k += 1;
+                        Term::Var(temps[k - 1].clone())
+                    })
+                })
+                .collect();
+            let call = Term::App(Arc::new(Term::Var(fv.clone())), args);
+            return Some(Term::Let(
+                fv,
+                Arc::new(f),
+                Arc::new(Term::Lam(temps, Arc::new(call))),
+            ));
+        }
+        for &j in &missing {
+            let p = &sig.params[j];
+            let filled = match p.default {
+                Some((fid, idx, true)) => {
+                    let d = self.t.funcs[&fid].params[idx]
+                        .default
+                        .as_ref()
+                        .expect("a default");
+                    self.expr(d)
+                }
+                Some((_, _, false)) => {
+                    return self.error(
+                        span,
+                        format!(
+                            "the default of `{}` reads the function's other parameters, so only \
+                             a call of the declared function fills it: pass `{}`",
+                            p.name, p.name
+                        ),
+                    );
+                }
+                None => {
+                    return self.error(span, format!("missing argument `{}` of `{sig}`", p.name));
+                }
+            };
+            slots[j] = Some(filled?);
+        }
+        let args = slots.into_iter().map(|s| s.expect("filled")).collect();
+        Some(Term::App(Arc::new(f), args))
+    }
+
+    /// A function argument fitted to the function type its slot expects: a lambda whose
+    /// parameters are in another order or carry defaults, or a declared function whose
+    /// named parameters are in another order.
+    fn fit(&mut self, e: &'a Expr, fit: Fit) -> Option<Term> {
+        match (fit, &e.kind) {
+            (Fit::Lambda { order, extra }, ExprKind::Lambda { params, body }) => {
+                let mut names = Vec::new();
+                for o in &order {
+                    names.push(match o {
+                        Some(i) => self.names[self.id(params[*i].span, &params[*i].name)].clone(),
+                        None => self.temp(),
+                    });
+                }
+                let mut body = match &body.kind {
+                    ExprKind::Block(stmts) => self.block(stmts)?,
+                    _ => self.expr(body)?,
+                };
+                for &i in extra.iter().rev() {
+                    let p = &params[i];
+                    let d = self.expr(p.default.as_ref().expect("an extra has a default"))?;
+                    let k = self.names[self.id(p.span, &p.name)].clone();
+                    body = Term::Let(k, Arc::new(d), Arc::new(body));
+                }
+                Some(Term::Lam(names, Arc::new(body)))
+            }
+            (Fit::Adapter { from }, _) => {
+                let ExprKind::Name(n) = &e.kind else {
+                    unreachable!("an adapter is recorded on a name")
+                };
+                let f = self.name(n, e.span)?;
+                let temps: Vec<Arc<str>> = from.iter().map(|_| self.temp()).collect();
+                let args = from.iter().map(|&j| Term::Var(temps[j].clone())).collect();
+                Some(Term::Lam(temps, Arc::new(Term::App(Arc::new(f), args))))
+            }
+            _ => unreachable!("a lambda fit is recorded on a lambda"),
+        }
     }
 
     /// A saturated or curried call of the declared function `id`; `receiver` fills its first
@@ -727,7 +923,7 @@ impl<'a> Elab<'a> {
         curry: bool,
         span: Span,
     ) -> Option<Term> {
-        let f = self.funcs[&id];
+        let f = self.t.funcs[&id];
         let fname = &f.name;
         let n = f.params.len();
         let mut slots: Vec<Option<Term>> = vec![None; n];
@@ -842,6 +1038,7 @@ impl<'a> Elab<'a> {
             .map(|&j| {
                 let d = f.params[j].default.as_ref().expect("checked");
                 let mut deps: Vec<usize> = self
+                    .t
                     .uses_in(d.span, &[])
                     .into_iter()
                     .filter_map(|b| ids.iter().position(|&i| i == b))
@@ -900,7 +1097,7 @@ impl<'a> Elab<'a> {
         } else {
             (x.clone(), None)
         };
-        let call = match self.res.uses.get(&member) {
+        let call = match self.t.res.uses.get(&member) {
             Some(Ref::Bound(ids)) if ids.len() > 1 => {
                 return self.error(
                     member,
@@ -910,7 +1107,7 @@ impl<'a> Elab<'a> {
                     ),
                 );
             }
-            Some(Ref::Bound(ids)) if self.funcs.contains_key(&ids[0]) => {
+            Some(Ref::Bound(ids)) if self.t.funcs.contains_key(&ids[0]) => {
                 self.call_declared(ids[0], Some(receiver), positional, named, curry, span)?
             }
             Some(Ref::Bound(ids)) => {
@@ -953,7 +1150,7 @@ impl<'a> Elab<'a> {
     /// filled; `t[i]` with a literal `i`: the tuple component; else an application.
     fn index(&mut self, of: &'a Expr, k: &'a Expr) -> Option<Term> {
         if let Some(id) = self.declared(of) {
-            let f = self.funcs[&id];
+            let f = self.t.funcs[&id];
             let k = self.expr(k)?;
             let fv = Arc::new(Term::Var(self.names[id].clone()));
             return match f.params.len() {
@@ -981,7 +1178,8 @@ impl<'a> Elab<'a> {
             if let Some(d) = &p.default {
                 return self.error(
                     d.span,
-                    "a lambda's default arrives with its expected type at step L1.26",
+                    "a lambda's parameter has a default only where an expected function type \
+                     leaves it out",
                 );
             }
             names.push(self.names[self.id(p.span, &p.name)].clone());
@@ -1108,7 +1306,7 @@ fn what(s: &Stmt) -> String {
 
 /// An order of `0..deps.len()` with each item after its dependencies, ties by index; else the
 /// items of one cycle, in order along it.
-fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
+pub(crate) fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
     let n = deps.len();
     let mut done = vec![false; n];
     let mut order = Vec::with_capacity(n);

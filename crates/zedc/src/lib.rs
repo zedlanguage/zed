@@ -10,6 +10,7 @@ pub mod address;
 pub mod ast;
 pub mod axioms;
 pub mod canon;
+pub mod check;
 pub mod cost;
 pub mod elab;
 pub mod fence;

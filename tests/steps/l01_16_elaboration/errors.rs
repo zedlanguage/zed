@@ -78,12 +78,20 @@ fn defaults_that_read_each_other() {
 }
 
 #[test]
-fn named_arguments_through_a_value_need_types() {
+fn named_arguments_through_a_value_need_its_parameter_names() {
+    // A lambda with no expected type takes its arguments by position.
     let e = one("inc = x -> x + 1;\ny = inc(x: 1);\n");
-    assert!(
-        e.starts_with("named arguments and `...` need the declaration"),
-        "{e}"
+    assert_eq!(
+        e,
+        "`x` of `(_) -> _` is positional: pass it by position [1]"
     );
+    // A prelude word, and a value of unknown type, give no parameter names.
+    let want = "named arguments and `...` need the parameter names of the function called, \
+                which a prelude word and a value of unknown type do not give";
+    let e = one("y = len(s: \"ab\");\n");
+    assert_eq!(e, format!("{want} [len(s: \"ab\")]"));
+    let e = one("g(f) = f(x: 1);\n");
+    assert_eq!(e, format!("{want} [f(x: 1)]"));
 }
 
 #[test]
@@ -99,7 +107,8 @@ fn forms_of_later_steps_and_layers() {
         ),
         (
             "f = (x = 1) -> x;",
-            "a lambda's default arrives with its expected type at step L1.26 [1]",
+            "a lambda's parameter has a default only where an expected function type leaves \
+             it out [1]",
         ),
         (
             "f(x: int) = 1;\nf(x: String) = 2;\ny = f(x: 1);",

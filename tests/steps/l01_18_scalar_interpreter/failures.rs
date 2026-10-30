@@ -2,6 +2,7 @@
 //! on, and the atoms of several operands merge into `#errs` of the set of them.
 
 use super::x;
+use crate::l01_16_elaboration::errors;
 
 #[test]
 fn one_failure_flows_through_the_arithmetic() {
@@ -59,7 +60,15 @@ fn euclidean_division_keeps_the_remainder_non_negative() {
 
 #[test]
 fn mixed_kinds_select_no_arrow() {
-    assert!(x("1 + 1.0").starts_with("error: type error"));
-    assert!(x("\"a\" ++ 1").starts_with("error: type error"));
-    assert!(x("1r/2r * 2").starts_with("error: type error"));
+    assert_eq!(
+        errors("x = \"a\" ++ 1;\n"),
+        ["`++` does not take (\"a\", 1) [\"a\" ++ 1]"]
+    );
+    assert_eq!(
+        errors("n = 1;\nx = n + 1.5;\n"),
+        ["`+` does not take (1, 1.5) [n + 1.5]"]
+    );
+    // A bare literal adopts the other operand's kind (step L1.26).
+    assert_eq!(x("1 + 1.0"), "2.0");
+    assert_eq!(x("1r/2r * 2"), "1r");
 }

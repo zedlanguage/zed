@@ -1,6 +1,7 @@
 //! `String`, `abs`, `sum` and the string words.
 
 use super::x;
+use crate::l01_16_elaboration::errors;
 
 #[test]
 fn string_writes_any_value_and_leaves_a_string_alone() {
@@ -45,5 +46,8 @@ fn summing_an_order() {
     assert_eq!(x("sum((1.5, 2.25))"), "3.75");
     assert_eq!(x("sum((1r/2r, 1r/3r))"), "5r/6r");
     assert_eq!(x("sum((9, int(\"x\")))"), "#invalid");
-    assert!(x("sum((1, 2.0))").starts_with("error: type error"));
+    assert_eq!(
+        errors("x = sum((1, 2.0));\n"),
+        ["`sum` does not take (1, 2.0) [sum((1, 2.0))]"]
+    );
 }
