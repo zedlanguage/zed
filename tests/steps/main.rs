@@ -22,6 +22,7 @@ mod l01_19_whole_file_ports;
 mod l01_20_provenance;
 mod l01_21_test_runner;
 mod l01_22_type_representation;
+mod l01_23_subtyping;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;

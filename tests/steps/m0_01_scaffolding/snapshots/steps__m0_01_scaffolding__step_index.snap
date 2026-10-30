@@ -24,6 +24,7 @@ l01_19_whole_file_ports
 l01_20_provenance
 l01_21_test_runner
 l01_22_type_representation
+l01_23_subtyping
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization

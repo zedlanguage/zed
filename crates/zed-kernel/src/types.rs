@@ -14,17 +14,68 @@
 //! A morphism type bounds its domain from both sides: the keys it guarantees and the keys it
 //! permits, with every present key's value in the value type. `K -> V` is exact and
 //! `K ->? V` guarantees no key.
+//!
+//! A recursive type (step L1.23, module `rec`) is a node that stands for its definition's body
+//! and unfolds to it when a connective needs its parts. A node unfolds one level at a time: a
+//! tuple component, atom payload or morphism bound that mentions a recursive type is kept
+//! as written rather than met with another, so no connective unfolds a type without end.
+//! Whether a type is empty, and so subtyping, is decided in module `empty`.
+
+mod empty;
+pub mod rec;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{BitAnd, BitOr, Not, Sub};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use crate::value::Value;
 
 /// A type: the set of values it denotes.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct Type(Arc<Parts>);
+pub struct Type(Arc<Node>);
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Node {
+    Parts(Parts),
+    Rec(Rec),
+}
+
+/// A recursive type, or a part of a recursive definition's body kept unevaluated: its parts are
+/// `make()`, computed on first use. Two nodes are one type only when they are one node.
+struct Rec {
+    id: u64,
+    name: String,
+    body: OnceLock<Type>,
+    make: Box<dyn Fn() -> Type + Send + Sync>,
+}
+
+impl PartialEq for Rec {
+    fn eq(&self, other: &Rec) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Rec {}
+
+impl PartialOrd for Rec {
+    fn partial_cmp(&self, other: &Rec) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Rec {
+    fn cmp(&self, other: &Rec) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+impl fmt::Debug for Rec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.name)
+    }
+}
 
 /// The universes of values, within each of which a complement is taken.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -111,7 +162,47 @@ struct Clause<A: Ord> {
 
 impl Type {
     fn new(p: Parts) -> Type {
-        Type(Arc::new(p))
+        Type(Arc::new(Node::Parts(p)))
+    }
+
+    /// The node named `name` whose parts are `make()`'s, computed when first needed. `make`
+    /// must not need this node's parts, which a contractive definition ensures.
+    fn rec(name: String, make: impl Fn() -> Type + Send + Sync + 'static) -> Type {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Type(Arc::new(Node::Rec(Rec {
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
+            name,
+            body: OnceLock::new(),
+            make: Box::new(make),
+        })))
+    }
+
+    /// The parts, unfolding a recursive node.
+    fn p(&self) -> &Parts {
+        match &*self.0 {
+            Node::Parts(p) => p,
+            Node::Rec(r) => r.body.get_or_init(|| (r.make)()).p(),
+        }
+    }
+
+    /// Whether no recursive node is reachable from `self` without unfolding one.
+    fn ground(&self) -> bool {
+        let Node::Parts(p) = &*self.0 else {
+            return false;
+        };
+        let lits = |d: &Dnf<Vec<Type>>| {
+            d.0.iter()
+                .all(|c| c.pos.iter().chain(&c.neg).flatten().all(Type::ground))
+        };
+        let maps = |d: &Dnf<Morphism>| {
+            d.0.iter().all(|c| {
+                c.pos
+                    .iter()
+                    .chain(&c.neg)
+                    .all(|m| m.guarantee.ground() && m.permission.ground() && m.value.ground())
+            })
+        };
+        p.atoms.names.values().all(|a| a.payload.ground()) && lits(&p.tuples) && maps(&p.morphisms)
     }
 
     /// No value.
@@ -135,7 +226,7 @@ impl Type {
     }
 
     fn with(f: impl FnOnce(&mut Parts)) -> Type {
-        let mut p = (*Type::empty().0).clone();
+        let mut p = Type::empty().p().clone();
         f(&mut p);
         Type::new(p)
     }
@@ -257,31 +348,45 @@ impl Type {
     /// test against such a type is not decidable (sec:type_notation: run-time type tests are
     /// restricted to decidable checks).
     fn has_morphism_bounds(&self) -> bool {
-        let m = &self.0.morphisms;
+        let m = &self.p().morphisms;
         !(m.0.is_empty() || m.is_all())
     }
 
     /// Whether membership in `self` is decidable at run time: no part of it, nor of a tuple
     /// component or atom payload it holds, is a proper subset of the morphisms.
     pub fn decidable(&self) -> bool {
-        let p = &*self.0;
+        self.decidable_from(&mut BTreeSet::new())
+    }
+
+    /// `decidable`, with `seen` the recursive nodes already being checked.
+    fn decidable_from(&self, seen: &mut BTreeSet<Type>) -> bool {
+        if matches!(&*self.0, Node::Rec(_)) && !seen.insert(self.clone()) {
+            return true;
+        }
+        let p = self.p();
         !self.has_morphism_bounds()
-            && p.atoms.names.values().all(|a| a.payload.decidable())
-            && p.tuples
-                .0
-                .iter()
-                .all(|c| c.pos.iter().chain(&c.neg).flatten().all(Type::decidable))
+            && p.atoms
+                .names
+                .values()
+                .all(|a| a.payload.decidable_from(seen))
+            && p.tuples.0.iter().all(|c| {
+                c.pos
+                    .iter()
+                    .chain(&c.neg)
+                    .flatten()
+                    .all(|t| t.decidable_from(seen))
+            })
     }
 
     /// Whether every function is in `self`; for a decidable type, either every function is or
     /// none is.
     pub fn functions(&self) -> bool {
-        self.0.morphisms.is_all()
+        self.p().morphisms.is_all()
     }
 
     /// Whether `v` is in `self`, for a decidable `self`.
     pub fn contains(&self, v: &Value) -> bool {
-        let p = &*self.0;
+        let p = self.p();
         match v {
             Value::Bool(b) => p.bools & (1 << u8::from(*b)) != 0,
             Value::Int(_) | Value::Big(_) => p.ints.contains(v),
@@ -297,7 +402,7 @@ impl Type {
                 } else if a.fields.is_empty() {
                     part.payload.contains(&Value::Tuple(a.args.clone()))
                 } else {
-                    part.payload.0.structs
+                    part.payload.p().structs
                 }
             }
             Value::Tuple(xs) | Value::Path(xs) => p.tuples.0.iter().any(|c| {
@@ -311,7 +416,7 @@ impl Type {
     }
 
     fn zip(&self, other: &Type, op: Op) -> Type {
-        let (a, b) = (&*self.0, &*other.0);
+        let (a, b) = (self.p(), other.p());
         Type::new(Parts {
             bools: match op {
                 Op::Or => a.bools | b.bools,
@@ -459,26 +564,28 @@ trait Literal: Ord + Clone {
 impl Literal for Morphism {}
 
 /// Two tuple types of one length intersect component by component, and of two lengths are
-/// disjoint; a tuple type with an empty component is empty.
+/// disjoint; a tuple type with an empty component is empty. Tuple types with a recursive
+/// component are kept apart rather than met, since a meet would unfold them.
 impl Literal for Vec<Type> {
     fn clause(c: Clause<Self>) -> Option<Clause<Self>> {
-        let mut pos = c.pos.into_iter();
-        let pos = match pos.next() {
-            None => BTreeSet::new(),
-            Some(first) => {
-                let mut meet = first;
-                for p in pos {
-                    if p.len() != meet.len() {
-                        return None;
-                    }
-                    meet = meet.iter().zip(&p).map(|(a, b)| a & b).collect();
-                }
-                if meet.iter().any(|t| *t == Type::empty()) {
-                    return None;
-                }
-                BTreeSet::from([meet])
-            }
+        let Some(len) = c.pos.first().map(Vec::len) else {
+            return c.pos.is_disjoint(&c.neg).then_some(c);
         };
+        if c.pos.iter().any(|p| p.len() != len) {
+            return None;
+        }
+        let (ground, kept): (Vec<_>, Vec<_>) =
+            c.pos.into_iter().partition(|p| p.iter().all(Type::ground));
+        let mut pos: BTreeSet<Vec<Type>> = kept.into_iter().collect();
+        if let Some(meet) = ground
+            .into_iter()
+            .reduce(|m, p| m.iter().zip(&p).map(|(a, b)| a & b).collect())
+        {
+            if meet.iter().any(|t| *t == Type::empty()) {
+                return None;
+            }
+            pos.insert(meet);
+        }
         let neg = match pos.first() {
             Some(p) => c.neg.into_iter().filter(|n| n.len() == p.len()).collect(),
             None => c.neg,
@@ -612,7 +719,7 @@ impl<A: Ord + Clone> Clause<A> {
 impl Not for &Type {
     type Output = Type;
     fn not(self) -> Type {
-        let p = &*self.0;
+        let p = self.p();
         Type::new(Parts {
             bools: !p.bools & 3,
             ints: p.ints.not(),
@@ -687,7 +794,10 @@ impl fmt::Display for Type {
         if *self == Type::top() {
             return f.write_str("_");
         }
-        let p = &*self.0;
+        let p = match &*self.0 {
+            Node::Parts(p) => p,
+            Node::Rec(r) => return f.write_str(&r.name),
+        };
         let mut items: Vec<String> = Vec::new();
         match p.bools {
             1 => items.push("false".into()),

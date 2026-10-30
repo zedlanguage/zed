@@ -1,0 +1,3 @@
+# A type's order and equality read only its parts and node ids, never the lazily filled
+# body of a recursive node (zed-kernel src/types.rs).
+ignore-interior-mutability = ["zed_kernel::types::Type"]
