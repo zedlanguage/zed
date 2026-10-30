@@ -46,6 +46,10 @@ pub struct Test {
     pub function: String,
     /// The bool term that checks the case, over the unit's definitions.
     pub check: Term,
+    /// The arguments the key gives, in declaration order.
+    pub args: Vec<Term>,
+    /// The expected value.
+    pub want: Term,
     /// The case's text.
     pub span: Span,
 }
@@ -460,10 +464,12 @@ impl<'a> Elab<'a> {
                 ok = false;
                 continue;
             };
-            let call = Term::App(Arc::new(Term::Var(self.names[id].clone())), args);
+            let call = Term::App(Arc::new(Term::Var(self.names[id].clone())), args.clone());
             self.tests.push(Test {
                 function: f.name.clone(),
-                check: Term::Prim(Prim::Eq, vec![call, want]),
+                check: Term::Prim(Prim::Eq, vec![call, want.clone()]),
+                args,
+                want,
                 span: case,
             });
         }

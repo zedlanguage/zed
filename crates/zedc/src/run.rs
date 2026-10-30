@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Family, Lookup, Provenance, Term, Value, World};
 
-use crate::ast::{self, Function, StmtKind, TypeKind};
+use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::{Unit, elaborate};
 use crate::parse::{TOP, parse};
 use crate::{interp, lex, resolve, source};
@@ -34,7 +34,7 @@ pub enum PortKind {
 
 /// A program ready to run: its elaboration and `main`'s ports.
 pub struct Program {
-    unit: Unit,
+    pub(crate) unit: Unit,
     inputs: Vec<(String, PortKind)>,
     outputs: Vec<String>,
 }
@@ -59,27 +59,54 @@ pub struct Record {
 /// The program in `bytes`, or its errors, one per line as `line:col: why`.
 pub fn load(bytes: &[u8]) -> Result<Program, String> {
     let text = source::load(bytes).map_err(|e| e.to_string())?;
-    let at = |errors: Vec<ast::Error>| {
-        let lines: Vec<String> = errors
-            .iter()
-            .map(|e| {
-                let (line, col) = source::line_col(text.as_bytes(), e.span.start);
-                format!("{line}:{col}: {}", e.message)
-            })
-            .collect();
+    let (stmts, unit) = compile(&text).map_err(|ds| {
+        let lines: Vec<String> = ds.iter().map(Diagnostic::to_string).collect();
         lines.join("\n")
+    })?;
+    program(&stmts, unit)
+}
+
+/// A message of the compiler, at a line and column of the source, both counted from 1.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Diagnostic {
+    /// The line.
+    pub line: usize,
+    /// The column.
+    pub col: usize,
+    /// Why.
+    pub message: String,
+}
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}: {}", self.line, self.col, self.message)
+    }
+}
+
+/// The statements and elaboration of the unit `text`, or the diagnostics of the first phase
+/// that rejects it.
+pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> {
+    let at = |start: usize, message: String| {
+        let (line, col) = source::line_col(text.as_bytes(), start);
+        Diagnostic { line, col, message }
     };
-    let tokens = lex::lex(&text).map_err(|e| {
-        let (line, col) = source::line_col(text.as_bytes(), e.span.start);
-        format!("{line}:{col}: {e}")
-    })?;
-    let tree = parse(&text, &tokens, "Unit", TOP).map_err(|e| {
-        let (line, col) = source::line_col(text.as_bytes(), e.span.start);
-        format!("{line}:{col}: {e}")
-    })?;
-    let stmts = ast::unit(&text, &tokens, &tree).map_err(|e| at(vec![e]))?;
-    let res = resolve::resolve(&stmts).map_err(at)?;
-    let unit = elaborate(&stmts, &res).map_err(at)?;
+    let all = |errors: Vec<ast::Error>| {
+        errors
+            .into_iter()
+            .map(|e| at(e.span.start, e.message))
+            .collect::<Vec<_>>()
+    };
+    let tokens = lex::lex(text).map_err(|e| vec![at(e.span.start, e.to_string())])?;
+    let tree =
+        parse(text, &tokens, "Unit", TOP).map_err(|e| vec![at(e.span.start, e.to_string())])?;
+    let stmts = ast::unit(text, &tokens, &tree).map_err(|e| all(vec![e]))?;
+    let res = resolve::resolve(&stmts).map_err(all)?;
+    let unit = elaborate(&stmts, &res).map_err(all)?;
+    Ok((stmts, unit))
+}
+
+/// The program `unit` is, with the ports its one `main` declares.
+pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, String> {
     let mains: Vec<&Function> = stmts
         .iter()
         .filter_map(|s| match &s.kind {

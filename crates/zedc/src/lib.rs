@@ -21,3 +21,4 @@ pub mod resolve;
 pub mod run;
 pub mod source;
 pub mod store;
+pub mod testing;

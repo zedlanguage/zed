@@ -1,0 +1,12 @@
+// Greets the name on the first line of input, or the world when the line is blank.
+greeting(positional name) = if trim(name) == "" { "Hello, world!" } else { "Hello, ${trim(name)}!" }
+test { "Ada" -> "Hello, Ada!", "  Bo " -> "Hello, Bo!", "" -> "Hello, world!" }
+
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- greeting(stdin[1]);
+}
+test {
+  "Ada\n" -> "Hello, Ada!\n",
+  "Ada\r\nlater lines are not read\n" -> "Hello, Ada!\n",
+  "   \n" -> "Hello, world!\n",
+}
