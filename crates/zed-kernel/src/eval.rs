@@ -59,6 +59,8 @@ pub enum V {
     Prim(Prim),
     /// The partial family a definedness `fix` is building, as its body sees it.
     Partial(Rc<Partial>),
+    /// An input port read by lookup, such as a `Files` port: the port's name.
+    Source(Arc<str>),
 }
 
 /// A lambda with its environment.
@@ -154,14 +156,27 @@ pub struct Output {
     pub capacity: Option<usize>,
 }
 
+/// An input port read by lookup (step L1.19): a `Files` port is `Path ->? String | #ioError`,
+/// a partial map too large to hold whole, so the world answers each key when it is read.
+pub trait Lookup: std::fmt::Debug + Send + Sync {
+    /// The value at `key`, or why the port could not answer, which stops the wave.
+    fn get(&self, key: &Value) -> Result<Value, String>;
+}
+
 /// The ports a program runs against: one wave of inputs, and the outputs it writes
-/// (sec:ports). Each input port holds its whole value for the wave.
+/// (sec:ports). Each input port holds its whole value for the wave; a lookup port answers
+/// each key once, and the answers are kept, so the wave sees one value at each key.
 #[derive(Clone, Debug, Default)]
 pub struct World {
     /// The input ports by name.
     pub inputs: BTreeMap<String, Value>,
     /// The output ports by name.
     pub outputs: BTreeMap<String, Output>,
+    /// The lookup ports by name.
+    pub sources: BTreeMap<String, Arc<dyn Lookup>>,
+    /// The keys read from each lookup port and the values read there, in key order: what a
+    /// replay of the wave must supply.
+    pub reads: BTreeMap<String, BTreeMap<Value, Value>>,
 }
 
 impl World {
@@ -173,6 +188,12 @@ impl World {
     /// Adds an input port holding `value`.
     pub fn input(mut self, name: &str, value: impl Into<Value>) -> Self {
         self.inputs.insert(name.into(), value.into());
+        self
+    }
+
+    /// Adds a lookup port.
+    pub fn source(mut self, name: &str, port: Arc<dyn Lookup>) -> Self {
+        self.sources.insert(name.into(), port);
         self
     }
 
@@ -422,6 +443,7 @@ impl Evaluator {
                 self.check_impure(port)?;
                 match self.world.inputs.get(&**port) {
                     Some(v) => Ok(V::Data(v.clone())),
+                    None if self.world.sources.contains_key(&**port) => Ok(V::Source(port.clone())),
                     None => Err(KernelError::UnknownPort(port.to_string()).into()),
                 }
             }
@@ -471,7 +493,12 @@ impl Evaluator {
                 out
             }
             V::Prim(p) => self.prim(*p, args),
-            V::Partial(_) => type_err("a family is read with `[]`, not called"),
+            // Until types arrive (step L1.22), the elaboration of `v[k]` cannot tell a family
+            // from a function, so a family or a lookup port applied to one key reads it.
+            V::Source(_) | V::Data(Value::Family(_)) if args.len() == 1 => {
+                self.prim(Prim::Get, [vec![f.clone()], args].concat())
+            }
+            V::Partial(_) | V::Source(_) => type_err("a family is read with `[]`, not called"),
             V::Data(Value::Atom(a)) => Ok(V::Data(Value::Atom(a.clone()))),
             V::Data(other) => type_err(format!("{other} is not a function")),
         }
@@ -508,6 +535,27 @@ impl Evaluator {
                 }),
                 None => Ok(V::Data(Value::atom("notFound"))),
             };
+        }
+        // `fs[k]` on a lookup port: the world answers once, and the answer is kept.
+        if matches!(p, Prim::Get | Prim::TupleGet)
+            && let V::Source(port) = &args[0]
+        {
+            self.check_impure(port)?;
+            let V::Data(k) = &args[1] else {
+                return type_err("a key must be data");
+            };
+            if let Value::Atom(_) = k {
+                return Ok(V::Data(k.clone()));
+            }
+            if let Some(v) = self.world.reads.get(&**port).and_then(|r| r.get(k)) {
+                return Ok(V::Data(v.clone()));
+            }
+            let v = self.world.sources[&**port]
+                .get(k)
+                .map_err(|why| KernelError::Port(port.to_string(), why))?;
+            let reads = self.world.reads.entry(port.to_string()).or_default();
+            reads.insert(k.clone(), v.clone());
+            return Ok(V::Data(v));
         }
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
@@ -1003,7 +1051,8 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::And, [Bool(a), Bool(b)]) => Bool(*a && *b),
         (Prim::Or, [Bool(a), Bool(b)]) => Bool(*a || *b),
         (Prim::Not, [Bool(a)]) => Bool(!a),
-        (Prim::Get, [Value::Family(f), k]) => {
+        // `v[0]` elaborates to `tupleGet` before types tell a family from a tuple (L1.22).
+        (Prim::Get | Prim::TupleGet, [Value::Family(f), k]) => {
             f.get(k).cloned().unwrap_or_else(|| Value::atom("notFound"))
         }
         (Prim::Count, [Value::Family(f)]) => Int(f.len() as i64),

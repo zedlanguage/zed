@@ -19,7 +19,7 @@ pub mod value;
 pub mod words;
 
 pub use error::KernelError;
-pub use eval::{Evaluator, Schedule, World, eval};
+pub use eval::{Evaluator, Lookup, Schedule, World, eval};
 pub use family::{Family, Keypath};
 pub use num::Rat;
 pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};

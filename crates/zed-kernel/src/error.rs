@@ -27,6 +27,8 @@ pub enum KernelError {
     Type(String),
     /// The term named a port the world does not have.
     UnknownPort(String),
+    /// A lookup port could not answer a read: the port and why.
+    Port(String, String),
     /// The evaluation used up its fuel: a `fix` whose ascent or a `gen` that did not stop
     /// within the step budget (sec:generations, divergence).
     OutOfFuel,
@@ -60,6 +62,7 @@ impl fmt::Display for KernelError {
             KernelError::MixedDepth => write!(f, "fold over leaves at another depth than its own"),
             KernelError::Type(msg) => write!(f, "type error: {msg}"),
             KernelError::UnknownPort(name) => write!(f, "unknown port `{name}`"),
+            KernelError::Port(name, why) => write!(f, "port `{name}`: {why}"),
             KernelError::OutOfFuel => write!(f, "out of fuel"),
             KernelError::TooDeep => write!(f, "calls nested too deeply"),
             KernelError::Overflow => write!(f, "a number beyond the evaluator's size limit"),

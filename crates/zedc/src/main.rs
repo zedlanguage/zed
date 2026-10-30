@@ -1,5 +1,6 @@
 //! The `zedc` command: `zedc fmt <file>` writes the file in the formatter's layout to standard
-//! output; with no arguments it prints its version.
+//! output; `zedc run` and `zedc replay` run a program ([`zedc::run::command`]); with no
+//! arguments it prints its version.
 
 use std::process::ExitCode;
 
@@ -19,8 +20,18 @@ fn main() -> ExitCode {
                 }
             }
         }
+        [cmd, ..] if cmd == "run" || cmd == "replay" => {
+            let (mut stdin, mut stdout, mut stderr) =
+                (std::io::stdin(), std::io::stdout(), std::io::stderr());
+            return ExitCode::from(zedc::run::command(
+                &args,
+                &mut stdin,
+                &mut stdout,
+                &mut stderr,
+            ));
+        }
         _ => {
-            eprintln!("usage: zedc [fmt <file>]");
+            eprintln!("usage: zedc [fmt <file> | run <file> … | replay <file> <record> …]");
             return ExitCode::from(2);
         }
     }

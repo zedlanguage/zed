@@ -20,6 +20,7 @@ l01_15_kernel_terms
 l01_16_elaboration
 l01_17_value_representation
 l01_18_scalar_interpreter
+l01_19_whole_file_ports
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization

@@ -49,12 +49,15 @@ in docs/layout.md.
   across number kinds, IEEE `==`, atom payloads by name (`zed_kernel::num`, `Value`).
 - Done: **L1.18**, the interpreter's scalar tier: the L1 prelude words (`zedc::interp`,
   `zed_kernel::words`), the `#errs` merge, float printing with the exact round trip.
-- Next: L1.19.
+- Done: **L1.19**, whole-file ports (`zedc::run`, `zedc run` and `zedc replay`): `Lines` and
+  `Files` inputs read once, `Lines` outputs written once when the wave ends, acknowledgments,
+  and the replay record.
+- Next: L1.20.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 443 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 390 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 462 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 409 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -91,6 +94,7 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.16 | done | `zedc::elab::elaborate` turns a resolved unit into its top-level definitions in dependency order (`Unit::close` wraps a term in them) and the cases of its `test` tables. Blocks are lets in dependency order over the export; calls of a declared function place the receiver, positional and named arguments, fill defaults and curry with `...`; `x.f` is the uniform call or an L1 prelude word; `f[k]` is a section, `t[1]` a tuple component; `&&` and `||` are `if` forms; strings are `++` chains with `String(hole)`; `else` and `?.` match any atom. New kernel primitives `Concat` (`++`) and `Pow` (`**`), and the pattern `AnyAtom` (`#_`). Tests: `tests/steps/l01_16_elaboration/`, programs elaborated and run on the kernel evaluator, printed terms, and one case per error. |
 | L1.17 | done | `int` is unbounded: `Value::Int(i64)` while it fits, `Value::Big` beyond, arithmetic widening instead of failing. `Value::Rat`, exact and reduced, from `0.1r` literals, with `+ - * /` and `#divByZero`. A manual `Ord` gives the natural order: kinds atom, bool, number, string, tuple, path, family; numbers by exact value across kinds (`num::Exact`), tie broken int, rat, float. Language `==` is `Value::surface_eq` (IEEE at floats, at any depth) and compares atoms as data; `<` and the others are IEEE on floats and same-kind only. Atoms gain `fields`: `#e(code: 3)` builds by `Prim::Atom`, matches by `Pattern::Fields` (a subset of fields). Canon tags 8–10 for big, rat and named atoms; positional atoms keep their addresses. Four f64 axioms that IEEE breaks are removed (82 left). Tests: `tests/steps/l01_17_value_representation/`. Negative controls: bitwise float `==`, no kind tie-break, exact-field matching, unreduced rationals, wrapping `+`, and `==` passing atoms through each fail a test |
 | L1.18 | done | `zedc::interp::prelude` binds the ten L1 words to new kernel primitives (`Show`, `CastInt`, `CastRat`, `CastF64`, `Abs`, `Len`, `Lower`, `Upper`, `Trim`, `Sum`; `zed_kernel::words`). Several loose atoms of one application merge by `Value::merge_failures` into `#errs({…})`: set union, flattened, a singleton unwrapped; a family mapping each key to itself prints `{a, b}`. Casts are exact, `#inexact` or `#invalid`; `f64` of a number checks exact representability (`num::exact_f64`). Floats print by `num::show_f64`: shortest digits, fixed for exponents -6..<21, else `d.ddde-7`, and `inf`, `-inf`, `nan`; 20 000 random bit patterns read back bit for bit. Tests: `tests/steps/l01_18_scalar_interpreter/`. Negative controls: leftmost atom winning, no flattening, no singleton unwrap, both ends of the fixed range, f32 digits, truncating `int`, rounding `f64` casts, overflow not `#inexact`, non-finite `int` as `#inexact`, byte `len`, ASCII `trim`, a `+` sign accepted, `sum` ignoring atoms, and one-step scaling in `exact_f64` each fail a test |
+| L1.19 | done | `zedc::run` loads a program, binds `main`'s parameters as input ports and its header's ports as outputs, runs one wave, and commits the buffered writes with their acknowledgments (`commit`). A `Lines` input is the family of its lines from key 1 (`split_lines`); a `Files` port is a kernel lookup port (`zed_kernel::Lookup`, `V::Source`), answered once per path and kept in `World::reads`. A second push to one port in a wave is an error naming L7. `Record` saves the inputs in a length-prefixed text format, and `Program::replay` runs from it alone. `zedc run` and `zedc replay` (`run::command`). Tests: `tests/steps/l01_19_whole_file_ports/`. Negative controls: no memo of reads, lines from 0, `\r` kept, a trailing empty line kept, two pushes allowed, commit going on after a failure, a failed write ignored, no `\n` after a line, `#notFound` as `#ioError`, replay reading the disk, the record dropping `#notFound` reads, a record's entry end unchecked, a family applied as a type error, and outputs kept after an error each fail a test |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -248,6 +252,14 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
   text past the float range is `#inexact`. `+5`, `.5` and `infinity` are `#invalid`.
   `upper` uses full case mapping (`"straße"` to `"STRASSE"`). Fixed notation up to 10^21
   means `1e16` prints as `10000000000000000.0`.
+- L1.19: read failures are the bare `#ioError` the types write (`Files = Path ->? String |
+  #ioError`, `LineNo -> String | #ioError`), since payload patterns arrive at L2; only the
+  write acknowledgment carries `#ioError(why)`, and the program never sees it. A port pushed
+  twice is caught at run time, not statically, because two push sites on two branches are
+  legal. Elaboration turns `v[k]` into `tupleGet` for a literal key and an application
+  otherwise, so until L1.22 the evaluator reads a family or a lookup port either way.
+  Files are written through `Lines` ports bound to paths (`out=path`); a `Files` output
+  waits for families (L3).
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which the evaluator's integers now pass (L1.17): revisit with the store's
