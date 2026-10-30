@@ -38,7 +38,7 @@ fn numbers_order_by_value_across_kinds() {
             "2",
             "100000000000000000000",
             "inf",
-            "NaN"
+            "nan"
         ]
     );
 }

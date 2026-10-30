@@ -16,6 +16,7 @@ pub mod num;
 pub mod print;
 pub mod term;
 pub mod value;
+pub mod words;
 
 pub use error::KernelError;
 pub use eval::{Evaluator, Schedule, World, eval};

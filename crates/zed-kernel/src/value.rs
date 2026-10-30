@@ -147,6 +147,39 @@ impl Value {
         }))
     }
 
+    /// The failure several loose atoms make together (DESIGN.md sec:failure): the set of the
+    /// distinct ones as `#errs({…})`, an `#errs` among them giving its members, and a single
+    /// failure as itself.
+    pub fn merge_failures<'a>(atoms: impl IntoIterator<Item = &'a Value>) -> Value {
+        let mut set = std::collections::BTreeSet::new();
+        for a in atoms {
+            match a.errs() {
+                Some(members) => set.extend(members.iter().map(|(k, _)| k.clone())),
+                None => {
+                    set.insert(a.clone());
+                }
+            }
+        }
+        if set.len() == 1 {
+            return set.pop_first().expect("one member");
+        }
+        let members = Family::of(set.into_iter().map(|a| (a.clone(), a)));
+        Value::atom_with("errs", vec![Value::Family(members)])
+    }
+
+    /// The set of an `#errs({…})`.
+    fn errs(&self) -> Option<&Family> {
+        match self {
+            Value::Atom(a) if &*a.name == "errs" && a.fields.is_empty() => {
+                match a.args.as_slice() {
+                    [Value::Family(f)] => Some(f),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// The integer `n`, as an `Int` when it is in the 64-bit range.
     pub fn int(n: BigInt) -> Self {
         match n.to_i64() {
@@ -219,7 +252,8 @@ impl Value {
         }
     }
 
-    fn exact(&self) -> Exact {
+    /// The number's exact place on the extended line.
+    pub(crate) fn exact(&self) -> Exact {
         match self {
             Value::Int(n) => Exact::Finite(Rat::int(BigInt::from(*n))),
             Value::Big(n) => Exact::Finite(Rat::int((**n).clone())),
@@ -330,7 +364,7 @@ impl fmt::Display for Value {
             Value::Int(n) => write!(f, "{n}"),
             Value::Big(n) => write!(f, "{n}"),
             Value::Rat(r) => write!(f, "{r}"),
-            Value::Float(x) => write!(f, "{x:?}"),
+            Value::Float(x) => write!(f, "{}", crate::num::show_f64(x.get())),
             Value::Str(s) => write!(f, "{s:?}"),
             Value::Atom(a) => {
                 write!(f, "#{}", a.name)?;

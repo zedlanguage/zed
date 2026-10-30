@@ -165,12 +165,18 @@ impl Family {
 
 impl fmt::Display for Family {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A set, each leaf its own key (`k -> k`), is written by its members.
+        let set = !self.0.is_empty() && self.0.iter().all(|(k, v)| k == v);
         write!(f, "{{")?;
         for (i, (k, v)) in self.0.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{k} -> {v}")?;
+            if set {
+                write!(f, "{k}")?;
+            } else {
+                write!(f, "{k} -> {v}")?;
+            }
         }
         write!(f, "}}")
     }
@@ -262,7 +268,7 @@ mod tests {
     #[test]
     fn a_set_maps_each_key_to_itself() {
         let s = Family::set([3, 1]);
-        assert_eq!(s.to_string(), "{1 -> 1, 3 -> 3}");
+        assert_eq!(s.to_string(), "{1, 3}", "a set is written by its members");
         assert_eq!(s.get(&Value::Int(3)), Some(&Value::Int(3)));
         assert_eq!(
             s.keys().cloned().collect::<Vec<_>>(),

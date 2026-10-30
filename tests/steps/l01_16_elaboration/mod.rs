@@ -6,8 +6,6 @@ mod calls;
 mod errors;
 mod programs;
 
-use std::sync::Arc;
-
 use zed_kernel::{Evaluator, Term, World};
 use zedc::ast::unit;
 use zedc::elab::{Unit, elaborate};
@@ -28,11 +26,9 @@ pub(crate) fn elab(text: &str) -> Result<Unit, Vec<String>> {
     })
 }
 
-/// `t` under a stand-in for the prelude's `String`, the identity, which the interpreter
-/// replaces at step L1.18; the programs here interpolate only strings.
+/// `t` under the interpreter's prelude words (step L1.18).
 pub(crate) fn with_prelude(t: Term) -> Term {
-    let id = Term::Lam(vec!["s".into()], Arc::new(Term::Var("s".into())));
-    Term::Let("String".into(), Arc::new(id), Arc::new(t))
+    zedc::interp::prelude(t)
 }
 
 /// The value of the definition `name` of `text`, printed.

@@ -14,6 +14,7 @@ pub mod cost;
 pub mod elab;
 pub mod fence;
 pub mod format;
+pub mod interp;
 pub mod lex;
 pub mod parse;
 pub mod resolve;

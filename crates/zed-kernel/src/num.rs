@@ -180,3 +180,58 @@ impl Exact {
         Exact::Finite(r)
     }
 }
+
+/// How `String` writes a float (DESIGN.md sec:numeric): the shortest digits that read back
+/// to it, in fixed notation when the decimal exponent is in -6..<21 and with an exponent
+/// otherwise, so `f64(String(x))` is `x`, bit for bit.
+pub fn show_f64(x: f64) -> String {
+    if x.is_nan() {
+        return "nan".into();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "inf" } else { "-inf" }.into();
+    }
+    // `{:e}` gives the shortest digits: `-1.25e-7`, `5e0`.
+    let sci = format!("{x:e}");
+    let (mantissa, exp) = sci.split_once('e').expect("an exponent");
+    let exp: i32 = exp.parse().expect("an integer exponent");
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(m) => ("-", m),
+        None => ("", mantissa),
+    };
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let n = digits.len() as i32;
+    let body = if (-6..21).contains(&exp) {
+        if exp < 0 {
+            format!("0.{}{digits}", "0".repeat((-exp - 1) as usize))
+        } else if n <= exp + 1 {
+            format!("{digits}{}.0", "0".repeat((exp + 1 - n) as usize))
+        } else {
+            let (whole, frac) = digits.split_at(exp as usize + 1);
+            format!("{whole}.{frac}")
+        }
+    } else {
+        let (first, rest) = digits.split_at(1);
+        let rest = if rest.is_empty() { "0" } else { rest };
+        format!("{first}.{rest}e{exp}")
+    };
+    format!("{sign}{body}")
+}
+
+/// The float equal to `r`, when there is one.
+pub(crate) fn exact_f64(r: &Rat) -> Option<f64> {
+    // A double is m * 2^k with |m| < 2^53, so its denominator is a power of two.
+    let den_bits = r.den.bits() - 1;
+    if r.den != BigInt::one() << den_bits {
+        return None;
+    }
+    let mut x = num_traits::ToPrimitive::to_f64(&r.num)?;
+    // Two exact scalings, the first staying normal, so the only rounding is the last one.
+    let mut k = den_bits as i32;
+    if k > 1022 {
+        x *= 2f64.powi(-1022);
+        k -= 1022;
+    }
+    x *= 2f64.powi(-k);
+    (Exact::float(x) == Exact::Finite(r.clone())).then_some(x)
+}

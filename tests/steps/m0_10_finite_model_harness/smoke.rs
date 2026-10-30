@@ -188,5 +188,8 @@ fn confluence_a_pure_pipeline_gives_one_result_for_every_arrival_order() {
     });
     assert_eq!(n, 120);
     // And the result is the exact sums, rounded once: 0.1 + 0.3 + 1e16 and 0.2 + -0.0.
-    assert_eq!(first.to_string(), r#"{"east" -> 1e16, "west" -> 0.2}"#);
+    assert_eq!(
+        first.to_string(),
+        r#"{"east" -> 10000000000000000.0, "west" -> 0.2}"#
+    );
 }

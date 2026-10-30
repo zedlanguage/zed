@@ -523,11 +523,12 @@ impl Evaluator {
             }
         }
         // A tuple and an atom's payload hold atoms as data, and `==` has an arrow at every
-        // type, atoms included; every other primitive passes its leftmost atom through.
+        // type, atoms included; every other primitive passes its atoms through, merged.
         if !matches!(p, Prim::Tuple | Prim::Atom | Prim::Eq | Prim::Ne)
-            && let Some(atom) = vals.iter().find(|v| matches!(v, Value::Atom(_)))
+            && vals.iter().any(|v| matches!(v, Value::Atom(_)))
         {
-            return Ok(V::Data(atom.clone()));
+            let atoms = vals.iter().filter(|v| matches!(v, Value::Atom(_)));
+            return Ok(V::Data(Value::merge_failures(atoms)));
         }
         Ok(V::Data(prim_data(p, vals)?))
     }
@@ -1047,6 +1048,36 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
                 Some(v) => v.clone(),
                 None => return ty(&vals),
             }
+        }
+        (
+            Prim::Show
+            | Prim::CastInt
+            | Prim::CastRat
+            | Prim::CastF64
+            | Prim::Abs
+            | Prim::Len
+            | Prim::Lower
+            | Prim::Upper
+            | Prim::Trim,
+            [x],
+        ) => crate::words::word(p, x)?,
+        (Prim::Sum, [Value::Tuple(items)]) => {
+            if items.iter().any(|v| matches!(v, Value::Atom(_))) {
+                return Ok(Value::merge_failures(
+                    items.iter().filter(|v| matches!(v, Value::Atom(_))),
+                ));
+            }
+            let Some((first, rest)) = items.split_first() else {
+                return Ok(Int(0));
+            };
+            if first.number_kind().is_none() {
+                return ty(&vals);
+            }
+            let mut total = first.clone();
+            for x in rest {
+                total = prim_data(Prim::Add, vec![total, x.clone()])?;
+            }
+            total
         }
         _ => return ty(&vals),
     };

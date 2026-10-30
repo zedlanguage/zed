@@ -476,9 +476,11 @@ fn failure_atoms_propagate_through_primitives() {
     let line = |item: &str| prim(Prim::Mul, vec![get(prices.clone(), lit(s(item))), lit(3)]);
     assert_eq!(eval(&line("tea")).unwrap(), Value::Int(750));
     assert_eq!(eval(&line("scone")).unwrap(), Value::atom("notFound"));
-    // The leftmost atom wins.
+    // Two failures merge into the set of them, whichever side each is on (step L1.18).
     let both = add(lit(Value::atom("a")), lit(Value::atom("b")));
-    assert_eq!(eval(&both).unwrap(), Value::atom("a"));
+    assert_eq!(eval(&both).unwrap().to_string(), "#errs({#a, #b})");
+    let swapped = add(lit(Value::atom("b")), lit(Value::atom("a")));
+    assert_eq!(eval(&swapped).unwrap(), eval(&both).unwrap());
     // `match` sees the atom and can supply a default.
     let priced = Term::Match(
         rc(line("scone")),

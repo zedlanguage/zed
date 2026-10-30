@@ -91,6 +91,16 @@ fn name(p: Prim) -> &'static str {
         Tuple => "tuple",
         TupleGet => "tupleGet",
         Atom => "atom",
+        Show => "String",
+        CastInt => "int",
+        CastRat => "rat",
+        CastF64 => "f64",
+        Abs => "abs",
+        Len => "len",
+        Lower => "lower",
+        Upper => "upper",
+        Trim => "trim",
+        Sum => "sum",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),

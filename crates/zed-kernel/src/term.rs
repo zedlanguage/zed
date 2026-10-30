@@ -77,6 +77,27 @@ pub enum Prim {
     /// `#err(code: 3)`. The first argument is the name, the second the field names of a
     /// struct payload, empty for a tuple payload, and the rest the payload's values.
     Atom,
+    /// `String(x)`: a string as itself, any other value as it prints (step L1.18).
+    Show,
+    /// `int(x)`, the checked cast: exact, `#inexact`, or `#invalid` (DESIGN.md, "Casts are
+    /// domain proofs").
+    CastInt,
+    /// `rat(x)`, the checked cast.
+    CastRat,
+    /// `f64(x)`, the checked cast; from a string it reads what `String` prints.
+    CastF64,
+    /// `abs(x)` of a number.
+    Abs,
+    /// `len(s)`, the number of Unicode scalars of a string.
+    Len,
+    /// `lower(s)`, Unicode lowercase.
+    Lower,
+    /// `upper(s)`, Unicode uppercase.
+    Upper,
+    /// `trim(s)`, without leading and trailing Unicode white space.
+    Trim,
+    /// `sum(t)`, the `+` of a tuple's components, `0` for the empty tuple.
+    Sum,
 }
 
 impl Prim {
@@ -84,7 +105,8 @@ impl Prim {
     pub fn arity(self) -> Option<usize> {
         use Prim::*;
         match self {
-            Neg | Not | Count | PathLen => Some(1),
+            Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | Abs | Len
+            | Lower | Upper | Trim | Sum => Some(1),
             Path | Tuple | Atom => None,
             _ => Some(2),
         }
