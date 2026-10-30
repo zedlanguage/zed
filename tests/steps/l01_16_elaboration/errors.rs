@@ -89,11 +89,6 @@ fn named_arguments_through_a_value_need_types() {
 #[test]
 fn forms_of_later_steps_and_layers() {
     let cases = [
-        ("x = 1r;", "rationals arrive at step L1.17 [1r]"),
-        (
-            "x = 99999999999999999999;",
-            "this integer is beyond 64 bits; big integers arrive at step L1.17 [99999999999999999999]",
-        ),
         (
             "x = 1 is int;",
             "`is` tests a type, and types arrive at step L1.22 [1 is int]",
@@ -105,10 +100,6 @@ fn forms_of_later_steps_and_layers() {
         (
             "p = 1;\nx = p.map(1);",
             "`map` is a prelude word of layer L3 [p.map]",
-        ),
-        (
-            "x = #err(1) else #err(code:) -> 0;",
-            "an atom's named payload arrives with value representation at step L1.17 [#err(code:)]",
         ),
         (
             "f = (x = 1) -> x;",

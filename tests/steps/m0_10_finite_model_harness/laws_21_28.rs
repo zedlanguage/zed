@@ -632,11 +632,9 @@ fn update(v: Term, p: &[Term], a: Term) -> Term {
     let level = fam_with(v.clone(), |j| {
         if_(eq(j.clone(), k.clone()), inner, get(v.clone(), j))
     });
-    // `v == v` is `true` on data and is the atom itself on an atom, which `if` returns.
-    if_(
-        eq(v.clone(), v.clone()),
+    unless_atom(
+        v.clone(),
         if_(found(get(v, k.clone())), level, atom("missing")),
-        lit(false),
     )
 }
 

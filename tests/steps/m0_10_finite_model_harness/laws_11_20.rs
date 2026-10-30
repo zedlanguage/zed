@@ -3,9 +3,7 @@
 //! contraction, and naturality.
 
 use zed_kernel::term::build::{app, if_, let_, lit, prim, var};
-use zed_kernel::{
-    Evaluator, Family, GuardPos, KernelError, Pattern, Prim, Term, Value, World, eval,
-};
+use zed_kernel::{Evaluator, Family, GuardPos, Pattern, Prim, Term, Value, World, eval};
 use zed_tests::check::{holds, refuted};
 use zed_tests::instances::{Rng, bmc_floats, bmc_ints, shortlex};
 use zed_tests::kernel::*;
@@ -53,11 +51,10 @@ fn law_11_a_binding_no_demand_reaches_deletes() {
         });
         assert!(n >= 1_800);
     }
-    // A dead binding the reference evaluator cannot compute, because it leaves the 64-bit
-    // range, is a limit of that evaluator and not a counterexample: `Int` is unbounded in
-    // the language (reference semantics (b)), where the binding is an unread number.
+    // A dead binding past the 64-bit range is an unread number: `int` is unbounded
+    // (reference semantics (b); widened by step L1.17).
     let big = let_("unused", mul(lit(i64::MAX), lit(2)), lit(1));
-    assert_eq!(eval(&big), Err(KernelError::Overflow));
+    assert_eq!(eval(&big), Ok(Value::Int(1)));
 }
 
 #[test]

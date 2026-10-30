@@ -9,9 +9,10 @@ use std::sync::Arc;
 
 use crate::value::Value;
 
-/// A primitive operation. Applied to a failure atom, every primitive but `Tuple` returns its
-/// leftmost atom argument without computing (sec:failure); `Tuple` stores atoms as data, and
-/// only `match` inspects one.
+/// A primitive operation. Applied to a failure atom, every primitive but `Tuple`, `Atom`,
+/// `Eq` and `Ne` returns its leftmost atom argument without computing (sec:failure): a loose
+/// atom selects no arrow. `Tuple` and `Atom` store atoms as data, and `==` and `!=` compare
+/// them, having an arrow at every type (step L1.17).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Prim {
     /// `a + b` over two ints or two floats.
@@ -28,11 +29,11 @@ pub enum Prim {
     Mod,
     /// `-a`.
     Neg,
-    /// `a == b`, bitwise on floats.
+    /// `a == b`: structural, but two floats compare as IEEE 754 does ([`Value::surface_eq`]).
     Eq,
     /// `a != b`.
     Ne,
-    /// `a < b` in the total order of values.
+    /// `a < b` in the total order of values, two floats compared as IEEE 754 does.
     Lt,
     /// `a <= b`.
     Le,
@@ -72,6 +73,10 @@ pub enum Prim {
     Concat,
     /// `a ** b`: an int to a non-negative int power, or a float to a float power.
     Pow,
+    /// Builds an atom: `atom("err", (), 1)` is `#err(1)` and `atom("err", ("code",), 3)` is
+    /// `#err(code: 3)`. The first argument is the name, the second the field names of a
+    /// struct payload, empty for a tuple payload, and the rest the payload's values.
+    Atom,
 }
 
 impl Prim {
@@ -80,7 +85,7 @@ impl Prim {
         use Prim::*;
         match self {
             Neg | Not | Count | PathLen => Some(1),
-            Path | Tuple => None,
+            Path | Tuple | Atom => None,
             _ => Some(2),
         }
     }
@@ -95,8 +100,11 @@ pub enum Pattern {
     Bind(Arc<str>),
     /// A literal, matching an equal value.
     Lit(Value),
-    /// `#name(p, …)`, matching an atom of that name whose payload matches.
+    /// `#name(p, …)`, matching an atom of that name whose tuple payload matches.
     Atom(Arc<str>, Vec<Pattern>),
+    /// `#name(f: p, …)`, matching an atom of that name with a struct payload that has each
+    /// field named, its value matching; the payload may have other fields.
+    Fields(Arc<str>, Vec<(Arc<str>, Pattern)>),
     /// `(p, …)`, matching a tuple of that length.
     Tuple(Vec<Pattern>),
     /// `#_`, any atom, its payload included: the arm `else` and `?.` write for the atom

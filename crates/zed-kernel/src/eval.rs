@@ -13,6 +13,10 @@ use crate::exact::{canonical_tree, exact_sum};
 use crate::family::{Family, Keypath};
 use std::sync::Arc;
 
+use num_bigint::BigInt;
+use num_traits::{Euclid, Signed, Zero};
+
+use crate::num::MAX_BITS;
 use crate::term::{FixKind, GuardPos, Pattern, Prim, Term};
 use crate::value::Value;
 
@@ -509,11 +513,18 @@ impl Evaluator {
         for a in args {
             match a {
                 V::Data(v) => vals.push(v),
+                _ if matches!(p, Prim::Eq | Prim::Ne) => {
+                    return type_err(
+                        "`==` on functions compares them at every point of an enumerable \
+                         domain, which their types give (step L1.22)",
+                    );
+                }
                 _ => return type_err(format!("{p:?} applied to a function")),
             }
         }
-        // A tuple holds atoms as data; every other primitive passes its leftmost atom through.
-        if p != Prim::Tuple
+        // A tuple and an atom's payload hold atoms as data, and `==` has an arrow at every
+        // type, atoms included; every other primitive passes its leftmost atom through.
+        if !matches!(p, Prim::Tuple | Prim::Atom | Prim::Eq | Prim::Ne)
             && let Some(atom) = vals.iter().find(|v| matches!(v, Value::Atom(_)))
         {
             return Ok(V::Data(atom.clone()));
@@ -836,8 +847,17 @@ fn matches(pat: &Pattern, v: &Value, env: &mut Env) -> bool {
         (Pattern::AnyAtom, Value::Atom(_)) => true,
         (Pattern::Atom(name, ps), Value::Atom(a)) => {
             a.name == *name
+                && a.fields.is_empty()
                 && ps.len() == a.args.len()
                 && ps.iter().zip(&a.args).all(|(p, x)| matches(p, x, env))
+        }
+        (Pattern::Fields(name, fs), Value::Atom(a)) => {
+            a.name == *name
+                && !a.fields.is_empty()
+                && fs.iter().all(|(f, p)| match a.fields.binary_search(f) {
+                    Ok(i) => matches(p, &a.args[i], env),
+                    Err(_) => false,
+                })
         }
         (Pattern::Tuple(ps), Value::Tuple(xs)) => {
             ps.len() == xs.len() && ps.iter().zip(xs).all(|(p, x)| matches(p, x, env))
@@ -848,6 +868,59 @@ fn matches(pat: &Pattern, v: &Value, env: &mut Env) -> bool {
 
 fn overflow<T>() -> Result<T, KernelError> {
     Err(KernelError::Overflow)
+}
+
+/// The integer `n`, unless it is beyond the evaluator's size limit.
+fn sized(n: BigInt) -> Result<Value, KernelError> {
+    if n.bits() > MAX_BITS {
+        return overflow();
+    }
+    Ok(Value::int(n))
+}
+
+/// An integer `+`, `-`, `*`, `div`, `mod` or `**` of two integers, either of either width:
+/// in a machine word when the result fits, else unbounded. `None` for a negative power.
+fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelError> {
+    if let (Value::Int(x), Value::Int(y)) = (a, b) {
+        let fast = match p {
+            Prim::Add => x.checked_add(*y),
+            Prim::Sub => x.checked_sub(*y),
+            Prim::Mul => x.checked_mul(*y),
+            Prim::IntDiv if *y != 0 => x.checked_div_euclid(*y),
+            Prim::Mod if *y != 0 => x.checked_rem_euclid(*y),
+            Prim::Pow => u32::try_from(*y).ok().and_then(|y| x.checked_pow(y)),
+            _ => None,
+        };
+        if let Some(n) = fast {
+            return Ok(Some(Value::Int(n)));
+        }
+    }
+    let (x, y) = (
+        a.as_bigint().expect("an integer"),
+        b.as_bigint().expect("an integer"),
+    );
+    let n = match p {
+        Prim::Add => x + y,
+        Prim::Sub => x - y,
+        Prim::Mul => x * y,
+        Prim::IntDiv | Prim::Mod if y.is_zero() => return Ok(Some(Value::atom("divByZero"))),
+        Prim::IntDiv => x.div_euclid(&y),
+        Prim::Mod => x.rem_euclid(&y),
+        _ if y.is_negative() => return Ok(None),
+        // `0`, `1` and `-1` stay small at any power.
+        _ if x.magnitude() <= &1u32.into() => {
+            if y.is_zero() || (x.is_negative() && (&y % 2u32).is_zero()) {
+                BigInt::from(1)
+            } else {
+                x
+            }
+        }
+        _ => match u32::try_from(&y) {
+            Ok(e) if x.bits().saturating_mul(u64::from(e)) <= MAX_BITS + 64 => x.pow(e),
+            _ => return overflow(),
+        },
+    };
+    sized(n).map(Some)
 }
 
 /// A primitive on data none of which is an atom.
@@ -861,35 +934,60 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         )))
     };
     let out = match (p, vals.as_slice()) {
-        (Prim::Add, [Int(a), Int(b)]) => a.checked_add(*b).map(Int).map_or_else(overflow, Ok)?,
-        (Prim::Sub, [Int(a), Int(b)]) => a.checked_sub(*b).map(Int).map_or_else(overflow, Ok)?,
-        (Prim::Mul, [Int(a), Int(b)]) => a.checked_mul(*b).map(Int).map_or_else(overflow, Ok)?,
-        (Prim::IntDiv | Prim::Mod, [Int(_), Int(0)]) => Value::atom("divByZero"),
-        (Prim::IntDiv, [Int(a), Int(b)]) => a
-            .checked_div_euclid(*b)
-            .map(Int)
-            .map_or_else(overflow, Ok)?,
-        (Prim::Mod, [Int(a), Int(b)]) => a
-            .checked_rem_euclid(*b)
-            .map(Int)
-            .map_or_else(overflow, Ok)?,
-        (Prim::Neg, [Int(a)]) => a.checked_neg().map(Int).map_or_else(overflow, Ok)?,
+        (Prim::Add | Prim::Sub | Prim::Mul | Prim::IntDiv | Prim::Mod | Prim::Pow, [a, b])
+            if a.number_kind() == Some(0) && b.number_kind() == Some(0) =>
+        {
+            match int_binary(p, a, b)? {
+                Some(v) => v,
+                None => return ty(&vals),
+            }
+        }
+        (Prim::Neg, [Int(a)]) => match a.checked_neg() {
+            Some(n) => Int(n),
+            None => sized(-BigInt::from(*a))?,
+        },
+        (Prim::Neg, [Value::Big(a)]) => sized(-(**a).clone())?,
+        (Prim::Add | Prim::Sub | Prim::Mul | Prim::Div, [Value::Rat(a), Value::Rat(b)]) => {
+            let r = match p {
+                Prim::Add => a.add(b),
+                Prim::Sub => a.sub(b),
+                Prim::Mul => a.mul(b),
+                _ => match a.div(b) {
+                    Some(r) => r,
+                    None => return Ok(Value::atom("divByZero")),
+                },
+            };
+            if r.bits() > MAX_BITS {
+                return overflow();
+            }
+            Value::rat(r)
+        }
+        (Prim::Neg, [Value::Rat(a)]) => Value::rat(a.neg()),
         (Prim::Add, [Float(a), Float(b)]) => Value::float(a.get() + b.get()),
         (Prim::Sub, [Float(a), Float(b)]) => Value::float(a.get() - b.get()),
         (Prim::Mul, [Float(a), Float(b)]) => Value::float(a.get() * b.get()),
         (Prim::Div, [Float(a), Float(b)]) => Value::float(a.get() / b.get()),
         (Prim::Neg, [Float(a)]) => Value::float(-a.get()),
         (Prim::Concat, [Str(a), Str(b)]) => Value::str(&format!("{a}{b}")),
-        (Prim::Pow, [Int(a), Int(b)]) => match u32::try_from(*b) {
-            Ok(b) => a.checked_pow(b).map(Int).map_or_else(overflow, Ok)?,
-            Err(_) if *b < 0 => return ty(&vals),
-            Err(_) => return overflow(),
-        },
         (Prim::Pow, [Float(a), Float(b)]) => Value::float(a.get().powf(b.get())),
-        (Prim::Eq, [a, b]) => Bool(a == b),
-        (Prim::Ne, [a, b]) => Bool(a != b),
+        (Prim::Eq, [a, b]) => Bool(a.surface_eq(b)),
+        (Prim::Ne, [a, b]) => Bool(!a.surface_eq(b)),
+        // Two floats compare as IEEE 754 does, so every comparison with a NaN is false.
+        (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge, [Float(a), Float(b)]) => {
+            let (a, b) = (a.get(), b.get());
+            Bool(match p {
+                Prim::Lt => a < b,
+                Prim::Le => a <= b,
+                Prim::Gt => a > b,
+                _ => a >= b,
+            })
+        }
         (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Min | Prim::Max, [a, b]) => {
-            if std::mem::discriminant(a) != std::mem::discriminant(b) {
+            let same = match (a.number_kind(), b.number_kind()) {
+                (None, None) => std::mem::discriminant(a) == std::mem::discriminant(b),
+                (x, y) => x == y,
+            };
+            if !same {
                 return ty(&vals);
             }
             match p {
@@ -920,6 +1018,23 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             Value::Family(Family::from_leaves(leaves)?)
         }
         (Prim::Path, keys) => Value::Path(keys.to_vec()),
+        (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.is_empty() => {
+            Value::atom_with(name, args.to_vec())
+        }
+        (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.len() == args.len() => {
+            let fields: Option<Vec<(Arc<str>, Value)>> = names
+                .iter()
+                .zip(args)
+                .map(|(n, v)| match n {
+                    Str(n) => Some((n.clone(), v.clone())),
+                    _ => None,
+                })
+                .collect();
+            match fields.and_then(|fs| Value::atom_named(name, fs)) {
+                Some(v) => v,
+                None => return ty(&vals),
+            }
+        }
         (Prim::PathKey, [Value::Path(keys), Int(i)]) => usize::try_from(*i)
             .ok()
             .and_then(|i| keys.get(i))

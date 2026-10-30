@@ -11,6 +11,7 @@
 use std::fmt;
 
 use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
+use crate::value::Value;
 
 /// `t` broken into lines of at most `width` columns where its parts allow.
 pub fn pretty(t: &Term, width: usize) -> String {
@@ -33,6 +34,10 @@ impl fmt::Display for Pattern {
             Pattern::Lit(v) => write!(f, "{v}"),
             Pattern::Atom(name, ps) if ps.is_empty() => write!(f, "#{name}"),
             Pattern::Atom(name, ps) => write!(f, "#{name}({})", list(ps)),
+            Pattern::Fields(name, fs) => {
+                let fs: Vec<String> = fs.iter().map(|(k, p)| format!("{k}: {p}")).collect();
+                write!(f, "#{name}({})", fs.join(", "))
+            }
             Pattern::Tuple(ps) if ps.len() == 1 => write!(f, "({},)", ps[0]),
             Pattern::Tuple(ps) => write!(f, "({})", list(ps)),
             Pattern::AnyAtom => f.write_str("#_"),
@@ -85,9 +90,18 @@ fn name(p: Prim) -> &'static str {
         PathLen => "pathLen",
         Tuple => "tuple",
         TupleGet => "tupleGet",
+        Atom => "atom",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),
+    }
+}
+
+/// A field name stored as a string value, written bare.
+fn field(v: &Value) -> String {
+    match v {
+        Value::Str(s) => s.to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -186,6 +200,33 @@ fn doc(t: &Term) -> Doc {
             sep: ", ",
             close: ")",
         },
+        // An atom built from a literal name and field names is written as Zed writes it.
+        Term::Prim(Prim::Atom, args)
+            if matches!(
+                &args[..],
+                [Term::Lit(Value::Str(_)), Term::Lit(Value::Tuple(fs)), rest @ ..]
+                    if fs.is_empty() || fs.len() == rest.len()
+            ) =>
+        {
+            let (Term::Lit(Value::Str(name)), Term::Lit(Value::Tuple(fs))) = (&args[0], &args[1])
+            else {
+                unreachable!("matched above")
+            };
+            let items = args[2..]
+                .iter()
+                .enumerate()
+                .map(|(i, a)| match fs.get(i) {
+                    Some(f) => Doc::Cat(vec![text(format!("{}: ", field(f))), doc(a)]),
+                    None => doc(a),
+                })
+                .collect();
+            Doc::List {
+                open: format!("#{name}("),
+                items,
+                sep: ", ",
+                close: ")",
+            }
+        }
         Term::Prim(p, args) => match (infix(*p), &args[..]) {
             (Some(sep), [a, b]) => Doc::List {
                 open: "(".into(),

@@ -245,7 +245,7 @@ fn every_axiom_holds_on_the_harness_instances() {
             Err(why) => panic!("{} at {:?}: {:?} fails on {why}", a.op, a.carrier, a.law),
         }
     }
-    assert_eq!(AXIOMS.len(), 86);
+    assert_eq!(AXIOMS.len(), 82);
     assert!(total > 50_000, "{total} instances");
 }
 

@@ -17,10 +17,10 @@
 //! word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
 //! belongs to a function at the unit's top level.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use zed_kernel::{Pattern as KPattern, Prim, Term, Value};
+use zed_kernel::{Pattern as KPattern, Prim, Rat, Term, Value};
 
 use crate::ast::{
     Error, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target,
@@ -475,19 +475,16 @@ impl<'a> Elab<'a> {
         match &e.kind {
             ExprKind::Int { radix, digits } => {
                 let digits: String = digits.chars().filter(|&c| c != '_').collect();
-                match i64::from_str_radix(&digits, *radix) {
-                    Ok(n) => lit(Value::Int(n)),
-                    Err(_) => self.error(
-                        e.span,
-                        "this integer is beyond 64 bits; big integers arrive at step L1.17",
-                    ),
-                }
+                lit(Value::int_text(&digits, *radix).expect("the lexer's digits"))
             }
             ExprKind::Float(s) => {
                 let s: String = s.chars().filter(|&c| c != '_').collect();
                 lit(Value::float(s.parse().expect("the lexer's float text")))
             }
-            ExprKind::Rat(_) => self.error(e.span, "rationals arrive at step L1.17"),
+            ExprKind::Rat(s) => match Rat::decimal(s) {
+                Some(r) => lit(Value::rat(r)),
+                None => self.error(e.span, "this rational is beyond the evaluator's size limit"),
+            },
             ExprKind::Bool(b) => lit(Value::Bool(*b)),
             ExprKind::Atom(a) => lit(Value::atom(a)),
             ExprKind::Str(parts) => self.string(parts),
@@ -630,11 +627,44 @@ impl<'a> Elab<'a> {
         if let ExprKind::Member { of, name, safe } = &callee.kind {
             return self.member(of, name, *safe, callee.span, positional, named, curry, span);
         }
+        if let ExprKind::Atom(name) = &callee.kind {
+            return self.atom(name, positional, named, curry, span);
+        }
         if let Some(id) = self.declared(callee) {
             return self.call_declared(id, None, positional, named, curry, span);
         }
         let f = self.expr(callee)?;
         self.call_value(f, None, positional, named, curry, span)
+    }
+
+    /// An atom with a payload, `#name(a, b)` by position or `#name(f: a)` by name.
+    fn atom(
+        &mut self,
+        name: &str,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        curry: bool,
+        span: Span,
+    ) -> Option<Term> {
+        if curry {
+            return self.error(
+                span,
+                "`...` curries a function's named parameters; an atom has none",
+            );
+        }
+        if !positional.is_empty() && !named.is_empty() {
+            return self.error(span, "an atom's payload is all by position or all by name");
+        }
+        let fields = named.iter().map(|(f, _)| Value::str(f)).collect();
+        let mut args = vec![Term::Lit(Value::str(name)), Term::Lit(Value::Tuple(fields))];
+        let mut ok = true;
+        for a in positional.iter().chain(named.iter().map(|(_, a)| a)) {
+            match self.expr(a) {
+                Some(t) => args.push(t),
+                None => ok = false,
+            }
+        }
+        ok.then_some(Term::Prim(Prim::Atom, args))
     }
 
     /// A call through a value other than a declared function: by position only.
@@ -942,7 +972,8 @@ impl<'a> Elab<'a> {
         Some(Term::Lam(names, Arc::new(body)))
     }
 
-    /// An `else` pattern: an atom, its payload matched by position.
+    /// An `else` pattern: an atom, its payload matched by position or by name; a field
+    /// written `f:` binds `f`.
     fn pattern(&mut self, p: &Pattern) -> Option<KPattern> {
         let Pattern::Atom {
             name,
@@ -950,15 +981,32 @@ impl<'a> Elab<'a> {
             items,
             span,
         } = p;
-        if !fields.is_empty() {
-            return self.error(
-                *span,
-                "an atom's named payload arrives with value representation at step L1.17",
-            );
+        if fields.is_empty() {
+            let items: Option<Vec<KPattern>> = items.iter().map(|i| self.pattern(i)).collect();
+            return Some(KPattern::Atom(name.as_str().into(), items?));
         }
-        let items: Option<Vec<KPattern>> = items.iter().map(|i| self.pattern(i)).collect();
-        Some(KPattern::Atom(name.as_str().into(), items?))
+        if !items.is_empty() {
+            return self.error(*span, "an atom's payload is all by position or all by name");
+        }
+        if let Some(f) = repeated(fields.iter().map(|(f, _)| f.as_str())) {
+            return self.error(*span, format!("the pattern names `{f}` twice"));
+        }
+        let mut out = Vec::new();
+        for (f, sub) in fields {
+            let sub = match sub {
+                Some(sub) => self.pattern(sub)?,
+                None => KPattern::Bind(self.names[self.id(*span, f)].clone()),
+            };
+            out.push((f.as_str().into(), sub));
+        }
+        Some(KPattern::Fields(name.as_str().into(), out))
     }
+}
+
+/// A name that occurs twice in `names`.
+fn repeated<'n>(names: impl Iterator<Item = &'n str>) -> Option<&'n str> {
+    let mut seen = HashSet::new();
+    names.into_iter().find(|n| !seen.insert(*n))
 }
 
 fn if_(c: Term, a: Term, b: Term) -> Term {

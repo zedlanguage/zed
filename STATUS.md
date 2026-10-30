@@ -45,12 +45,14 @@ in docs/layout.md.
 - Done: **L1.15**, the kernel terms whole (the evidence record of `fold` and `fix`) and the
   kernel pretty-printer (`zed_kernel::print`).
 - Done: **L1.16**, elaboration of the L1 surface to kernel terms (`zedc::elab`).
-- Next: L1.17.
+- Done: **L1.17**, value representation: unbounded integers, rationals, the natural order
+  across number kinds, IEEE `==`, atom payloads by name (`zed_kernel::num`, `Value`).
+- Next: L1.18.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 402 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 349 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 421 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 368 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -85,6 +87,7 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.14 | done | `zedc::resolve::resolve` ties each name a unit uses to its binders (an overload set's arrows together) or to an L1 prelude word, in the order block scopes, top level, prelude; it reports rebinding in one scope, unknown names and types, and prelude words of later layers. Tests: `tests/steps/l01_14_name_resolution/`, one per rule, the building fences and the corpus program. |
 | L1.15 | done | `Term::Fold` and `Term::Fix` carry the evidence record `ev` of sec:kernel (each tracked property with its grade, `zed_kernel::Grade`), which goes into the content address (canonicalization VERSION 2, both pinned addresses re-pinned) and which the evaluator does not read. `zed_kernel::print`: `Display` writes a term on one line in the notation of sec:kernel, `pretty(t, width)` breaks it into indented parts. Tests: `tests/steps/l01_15_kernel_terms/`, one term per generator, the evidence in the address, and the layout, with a random check that breaking changes only whitespace. |
 | L1.16 | done | `zedc::elab::elaborate` turns a resolved unit into its top-level definitions in dependency order (`Unit::close` wraps a term in them) and the cases of its `test` tables. Blocks are lets in dependency order over the export; calls of a declared function place the receiver, positional and named arguments, fill defaults and curry with `...`; `x.f` is the uniform call or an L1 prelude word; `f[k]` is a section, `t[1]` a tuple component; `&&` and `||` are `if` forms; strings are `++` chains with `String(hole)`; `else` and `?.` match any atom. New kernel primitives `Concat` (`++`) and `Pow` (`**`), and the pattern `AnyAtom` (`#_`). Tests: `tests/steps/l01_16_elaboration/`, programs elaborated and run on the kernel evaluator, printed terms, and one case per error. |
+| L1.17 | done | `int` is unbounded: `Value::Int(i64)` while it fits, `Value::Big` beyond, arithmetic widening instead of failing. `Value::Rat`, exact and reduced, from `0.1r` literals, with `+ - * /` and `#divByZero`. A manual `Ord` gives the natural order: kinds atom, bool, number, string, tuple, path, family; numbers by exact value across kinds (`num::Exact`), tie broken int, rat, float. Language `==` is `Value::surface_eq` (IEEE at floats, at any depth) and compares atoms as data; `<` and the others are IEEE on floats and same-kind only. Atoms gain `fields`: `#e(code: 3)` builds by `Prim::Atom`, matches by `Pattern::Fields` (a subset of fields). Canon tags 8–10 for big, rat and named atoms; positional atoms keep their addresses. Four f64 axioms that IEEE breaks are removed (82 left). Tests: `tests/steps/l01_17_value_representation/`. Negative controls: bitwise float `==`, no kind tie-break, exact-field matching, unreduced rationals, wrapping `+`, and `==` passing atoms through each fail a test |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -99,7 +102,8 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
   `examples.md`, each under a header with its source line and layer; `sync.py --check` exits 1
   when a copy is stale, and the step test `the_copies_match_the_spec_where_it_is_present`
   compares the texts where `../zed` exists (it passes without checking in CI).
-- The reference evaluator uses `i64` with checked arithmetic (overflow is an error), a fuel
+- The reference evaluator computes integers in `i64` and widens to a big integer instead of
+  overflowing; a number past 2^20 bits is its `Overflow` error (L1.17). It has a fuel
   of 10^8 calls, at most 20 000 nested calls, and runs on its own thread with a 1 GiB stack.
 - Coverage runs in CI (`cargo llvm-cov`, job `coverage`), not locally: this machine has no
   LLVM tools, and installing them is a system package change.
@@ -225,9 +229,18 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
   integers beyond 64 bits and named atom payloads (L1.17), `is` (L1.22), lambda defaults
   (L1.26), overloads and fields (L2).
   Self-reference resolves to itself; cycles are a later step's.
+- L1.17: the spec said both IEEE `==` (sec:numeric) and "`==` reflexive at f64, bitwise"
+  (M0.11); IEEE wins for the language's `==` and the comparisons, and bitwise identity stays
+  for keys and law checks (Rust `Eq` on `Value`). M0.11 and the axioms are corrected. `==`
+  compares atoms instead of passing them through, since it has an arrow at every type; the
+  m0.10 helpers that used `x == x` to pass a failure now match `#_`. Comparing numbers of two
+  kinds, or `1r + 1`, is a type error; `1 == 1.0` is false. A payload is all by position or
+  all by name; field order is not part of the value. `==` on functions is a type error naming
+  L1.22. The size limit is 2^20 bits; a rat literal past it is an elaboration error.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
-  64-bit limits, which lie within the evaluator's own range limit.
+  64-bit limits, which the evaluator's integers now pass (L1.17): revisit with the store's
+  big-integer bounds at L1.24.
 - The kernel `fold` term carries the depth of the folded family (M0.10). The evaluator cannot
   read the depth off a family with no leaves, so without it `fold` of an empty two-level
   family gave `#empty` where its type gives the empty family, and laws 4 and 8 failed on the
@@ -235,10 +248,10 @@ about 27 s in a debug build, with `zed-kernel` built at opt-level 2.
 - Kernel values are normalized: a key over an empty level is dropped, so the nonempty-level
   conditions of laws 1, 2 and 7 have no counterexample among values. They constrain the
   guaranteed domains, and are checked where `card` facts are (L1.24, L3.6).
-- Integer overflow, like fuel and nesting depth, is a limit of the reference evaluator and not
-  a meaning (spec reference semantics (i), commit after a1ed53b). Law 11 deletes a dead binding
-  whose computation would overflow; that is not a counterexample, and the laws are checked on
-  instances the evaluator can run.
+- The size limit on numbers, like fuel and nesting depth, is a limit of the reference
+  evaluator and not a meaning (spec reference semantics (i), commit after a1ed53b). Law 11
+  deletes a dead binding whose computation would pass a limit; that is not a counterexample,
+  and the laws are checked on instances the evaluator can run.
 - The harness compares outcomes as values (floats bitwise after NaN canonicalization) or as
   errors of one kind, since two sides that both collide may name different keypaths.
 

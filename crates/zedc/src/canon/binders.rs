@@ -91,6 +91,7 @@ pub fn pattern_binds(p: &Pattern) -> Vec<Arc<str>> {
         match p {
             Pattern::Bind(x) => out.push(x.clone()),
             Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter().for_each(|p| go(p, out)),
+            Pattern::Fields(_, fs) => fs.iter().for_each(|(_, p)| go(p, out)),
             Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom => {}
         }
     }
@@ -376,6 +377,12 @@ fn rename_pattern_bind(p: &Pattern, i: &mut usize, new: &Arc<str>) -> Pattern {
         Pattern::Tuple(ps) => {
             Pattern::Tuple(ps.iter().map(|p| rename_pattern_bind(p, i, new)).collect())
         }
+        Pattern::Fields(name, fs) => Pattern::Fields(
+            name.clone(),
+            fs.iter()
+                .map(|(f, p)| (f.clone(), rename_pattern_bind(p, i, new)))
+                .collect(),
+        ),
         Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom => p.clone(),
     }
 }

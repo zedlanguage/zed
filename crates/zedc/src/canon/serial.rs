@@ -81,10 +81,26 @@ impl Out<'_> {
                 self.tag(3);
                 self.str(s);
             }
-            Value::Atom(a) => {
+            Value::Atom(a) if a.fields.is_empty() => {
                 self.tag(4);
                 self.str(&a.name);
                 self.values(&a.args);
+            }
+            Value::Atom(a) => {
+                self.tag(10);
+                self.str(&a.name);
+                self.word(a.fields.len() as u64);
+                a.fields.iter().for_each(|f| self.str(f));
+                self.values(&a.args);
+            }
+            Value::Big(n) => {
+                self.tag(8);
+                self.str(&n.to_string());
+            }
+            Value::Rat(r) => {
+                self.tag(9);
+                self.str(&r.numer().to_string());
+                self.str(&r.denom().to_string());
             }
             Value::Tuple(vs) => {
                 self.tag(5);
@@ -128,6 +144,15 @@ impl Out<'_> {
                 self.patterns(ps);
             }
             Pattern::AnyAtom => self.tag(5),
+            Pattern::Fields(name, fs) => {
+                self.tag(6);
+                self.str(name);
+                self.word(fs.len() as u64);
+                for (f, p) in fs {
+                    self.str(f);
+                    self.pattern(p);
+                }
+            }
         }
     }
 

@@ -12,7 +12,7 @@
 pub enum Carrier {
     /// Integers.
     Int,
-    /// 64-bit floats, compared bitwise after NaN canonicalization.
+    /// 64-bit floats; `==` and the comparisons are IEEE 754 on them.
     F64,
     /// Booleans.
     Bool,
@@ -156,11 +156,11 @@ pub const AXIOMS: &[Axiom] = &[
     ax("!", Bool, Inverse("!")),
     ax("!", Bool, Injective),
     ax("!", Bool, Monotone(&[Down])),
-    // `==` is structural, so it is an equivalence at every carrier, floats included.
+    // `==` is an equivalence at every carrier but `f64`, where it is IEEE 754 equality, which a
+    // NaN makes irreflexive (step L1.17).
     ax("==", Int, Reflexive),
     ax("==", Int, Symmetric),
     ax("==", Int, Transitive),
-    ax("==", F64, Reflexive),
     ax("==", F64, Symmetric),
     ax("==", F64, Transitive),
     ax("==", String, Reflexive),
@@ -168,7 +168,8 @@ pub const AXIOMS: &[Axiom] = &[
     ax("==", String, Transitive),
     ax("!=", Int, Irreflexive),
     ax("!=", Int, Symmetric),
-    // The comparisons are the total order of values at every carrier.
+    // The comparisons are the total order of values at every carrier but `f64`, where they are
+    // IEEE 754 comparisons: a strict order, and `<=` only transitive, since a NaN compares false.
     ax("<", Int, Irreflexive),
     ax("<", Int, Transitive),
     ax("<", F64, Irreflexive),
@@ -179,10 +180,7 @@ pub const AXIOMS: &[Axiom] = &[
     ax("<=", Int, Antisymmetric),
     ax("<=", Int, Transitive),
     ax("<=", Int, Total),
-    ax("<=", F64, Reflexive),
-    ax("<=", F64, Antisymmetric),
     ax("<=", F64, Transitive),
-    ax("<=", F64, Total),
     ax("<=", String, Reflexive),
     ax("<=", String, Antisymmetric),
     ax("<=", String, Transitive),

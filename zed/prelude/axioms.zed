@@ -71,11 +71,11 @@ axioms = [
   Axiom(op: "!", carrier: #bool, law: #inverse("!")),
   Axiom(op: "!", carrier: #bool, law: #injective),
   Axiom(op: "!", carrier: #bool, law: #monotone([#down])),
-  // `==` is structural, so it is an equivalence at every carrier, floats included.
+  // `==` is an equivalence at every carrier but `f64`, where it is IEEE 754 equality, which a
+  // NaN makes irreflexive (step L1.17).
   Axiom(op: "==", carrier: #int, law: #reflexive),
   Axiom(op: "==", carrier: #int, law: #symmetric),
   Axiom(op: "==", carrier: #int, law: #transitive),
-  Axiom(op: "==", carrier: #f64, law: #reflexive),
   Axiom(op: "==", carrier: #f64, law: #symmetric),
   Axiom(op: "==", carrier: #f64, law: #transitive),
   Axiom(op: "==", carrier: #string, law: #reflexive),
@@ -83,7 +83,8 @@ axioms = [
   Axiom(op: "==", carrier: #string, law: #transitive),
   Axiom(op: "!=", carrier: #int, law: #irreflexive),
   Axiom(op: "!=", carrier: #int, law: #symmetric),
-  // The comparisons are the total order of values at every carrier.
+  // The comparisons are the total order of values at every carrier but `f64`, where they are
+  // IEEE 754 comparisons: a strict order, and `<=` only transitive, since a NaN compares false.
   Axiom(op: "<", carrier: #int, law: #irreflexive),
   Axiom(op: "<", carrier: #int, law: #transitive),
   Axiom(op: "<", carrier: #f64, law: #irreflexive),
@@ -94,10 +95,7 @@ axioms = [
   Axiom(op: "<=", carrier: #int, law: #antisymmetric),
   Axiom(op: "<=", carrier: #int, law: #transitive),
   Axiom(op: "<=", carrier: #int, law: #total),
-  Axiom(op: "<=", carrier: #f64, law: #reflexive),
-  Axiom(op: "<=", carrier: #f64, law: #antisymmetric),
   Axiom(op: "<=", carrier: #f64, law: #transitive),
-  Axiom(op: "<=", carrier: #f64, law: #total),
   Axiom(op: "<=", carrier: #string, law: #reflexive),
   Axiom(op: "<=", carrier: #string, law: #antisymmetric),
   Axiom(op: "<=", carrier: #string, law: #transitive),

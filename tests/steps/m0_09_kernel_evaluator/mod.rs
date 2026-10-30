@@ -499,26 +499,29 @@ fn integer_division_is_euclidean() {
     assert_eq!((div(7, -2), rem(7, -2)), (Value::Int(-3), Value::Int(1)));
     assert_eq!(div(1, 0), Value::atom("divByZero"));
     assert_eq!(rem(1, 0), Value::atom("divByZero"));
+    // `int` is unbounded (step L1.17): past 64 bits an integer widens.
     assert_eq!(
-        eval(&add(lit(i64::MAX), lit(1))).unwrap_err(),
-        KernelError::Overflow
+        eval(&add(lit(i64::MAX), lit(1))).unwrap().to_string(),
+        "9223372036854775808"
     );
 }
 
 #[test]
-fn floats_compare_bitwise() {
+fn floats_compare_as_ieee() {
+    // The language's `==` follows IEEE 754 (step L1.17); the values stay distinct keys.
     let eq = prim(
         Prim::Eq,
         vec![lit(Value::float(0.0)), lit(Value::float(-0.0))],
     );
-    assert_eq!(eval(&eq).unwrap(), Value::Bool(false));
+    assert_eq!(eval(&eq).unwrap(), Value::Bool(true));
+    assert_ne!(Value::float(0.0), Value::float(-0.0));
     let nan = prim(
         Prim::Div,
         vec![lit(Value::float(0.0)), lit(Value::float(0.0))],
     );
     assert_eq!(
         eval(&prim(Prim::Eq, vec![nan.clone(), nan])).unwrap(),
-        Value::Bool(true)
+        Value::Bool(false)
     );
     let mixed = prim(Prim::Lt, vec![lit(1), lit(Value::float(2.0))]);
     assert!(matches!(eval(&mixed).unwrap_err(), KernelError::Type(_)));
@@ -655,8 +658,10 @@ fn temperature_conversion_and_negation() {
         Value::Int(-18)
     );
     assert_eq!(
-        eval(&prim(Prim::Neg, vec![lit(i64::MIN)])).unwrap_err(),
-        KernelError::Overflow
+        eval(&prim(Prim::Neg, vec![lit(i64::MIN)]))
+            .unwrap()
+            .to_string(),
+        "9223372036854775808"
     );
 }
 

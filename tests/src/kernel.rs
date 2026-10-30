@@ -323,14 +323,20 @@ pub fn flip(op: Term) -> Term {
 pub fn refine(x: Term, p: Term) -> Term {
     let name = fresh("x");
     let x_ = var(&name);
-    // `x == x` is `true` on data and is the atom itself on an atom, which `if` returns.
     let_(
         &name,
         x,
-        if_(
-            eq(x_.clone(), x_.clone()),
+        unless_atom(
+            x_.clone(),
             if_(app(p, vec![x_.clone()]), x_, atom("invalid")),
-            lit(false),
         ),
+    )
+}
+
+/// `v` itself when it is an atom, `then` otherwise: how a helper passes a failure through.
+pub fn unless_atom(v: Term, then: Term) -> Term {
+    Term::Match(
+        Arc::new(v.clone()),
+        vec![(Pattern::AnyAtom, v), (Pattern::Wild, then)],
     )
 }

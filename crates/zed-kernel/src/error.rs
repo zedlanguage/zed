@@ -32,7 +32,8 @@ pub enum KernelError {
     OutOfFuel,
     /// Calls nested deeper than the reference evaluator follows ([`crate::eval::MAX_DEPTH`]).
     TooDeep,
-    /// An integer left the 64-bit range the reference evaluator computes in.
+    /// A number beyond the size the reference evaluator builds ([`crate::num::MAX_BITS`]): a
+    /// limit of its memory, since `int` and `rat` are unbounded.
     Overflow,
     /// A definedness `fix` stopped with these entries undefined: each reads an entry of the
     /// cycle, which is divergence (T-Fix), never `#notFound`.
@@ -61,7 +62,7 @@ impl fmt::Display for KernelError {
             KernelError::UnknownPort(name) => write!(f, "unknown port `{name}`"),
             KernelError::OutOfFuel => write!(f, "out of fuel"),
             KernelError::TooDeep => write!(f, "calls nested too deeply"),
-            KernelError::Overflow => write!(f, "integer overflow"),
+            KernelError::Overflow => write!(f, "a number beyond the evaluator's size limit"),
             KernelError::Stalled { keys } => {
                 write!(f, "recursion stalled: entries ")?;
                 for (i, k) in keys.iter().enumerate() {
@@ -107,7 +108,10 @@ mod tests {
         );
         assert_eq!(KernelError::OutOfFuel.to_string(), "out of fuel");
         assert_eq!(KernelError::TooDeep.to_string(), "calls nested too deeply");
-        assert_eq!(KernelError::Overflow.to_string(), "integer overflow");
+        assert_eq!(
+            KernelError::Overflow.to_string(),
+            "a number beyond the evaluator's size limit"
+        );
         let s = KernelError::Stalled {
             keys: vec![Value::Int(1), Value::Int(2)],
         };

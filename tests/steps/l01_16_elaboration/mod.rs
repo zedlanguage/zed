@@ -16,7 +16,7 @@ use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve;
 
 /// The elaboration of the unit `text`, or its errors as `message [text]`.
-fn elab(text: &str) -> Result<Unit, Vec<String>> {
+pub(crate) fn elab(text: &str) -> Result<Unit, Vec<String>> {
     let tokens = lex_fence(text).unwrap();
     let tree = parse(text, &tokens, "Unit", TOP).unwrap();
     let stmts = unit(text, &tokens, &tree).unwrap();
@@ -30,13 +30,13 @@ fn elab(text: &str) -> Result<Unit, Vec<String>> {
 
 /// `t` under a stand-in for the prelude's `String`, the identity, which the interpreter
 /// replaces at step L1.18; the programs here interpolate only strings.
-fn with_prelude(t: Term) -> Term {
+pub(crate) fn with_prelude(t: Term) -> Term {
     let id = Term::Lam(vec!["s".into()], Arc::new(Term::Var("s".into())));
     Term::Let("String".into(), Arc::new(id), Arc::new(t))
 }
 
 /// The value of the definition `name` of `text`, printed.
-fn value(text: &str, name: &str) -> String {
+pub(crate) fn value(text: &str, name: &str) -> String {
     let u = elab(text).unwrap_or_else(|e| panic!("{text}: {e:?}"));
     let t = u
         .get(name)
@@ -48,7 +48,7 @@ fn value(text: &str, name: &str) -> String {
 }
 
 /// The term of the definition `name` of `text`, not closed over the others.
-fn term(text: &str, name: &str) -> String {
+pub(crate) fn term(text: &str, name: &str) -> String {
     let u = elab(text).unwrap_or_else(|e| panic!("{text}: {e:?}"));
     let d = u.defs.iter().find(|d| d.name == name);
     d.unwrap_or_else(|| panic!("no definition `{name}`"))
@@ -57,7 +57,7 @@ fn term(text: &str, name: &str) -> String {
 }
 
 /// The errors of `text`.
-fn errors(text: &str) -> Vec<String> {
+pub(crate) fn errors(text: &str) -> Vec<String> {
     match elab(text) {
         Ok(_) => panic!("{text}: elaborated without error"),
         Err(e) => e,
