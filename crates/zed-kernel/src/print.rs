@@ -22,7 +22,9 @@ pub fn pretty(t: &Term, width: usize) -> String {
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&doc(self).flat())
+        let mut out = String::new();
+        doc(self).write_flat(&mut out);
+        f.write_str(&out)
     }
 }
 
@@ -131,6 +133,8 @@ fn grade(g: Grade) -> &'static str {
 /// of their own when they do not.
 enum Doc {
     Text(String),
+    /// A doc always written on one line, as the head of a call.
+    Flat(Box<Doc>),
     /// Docs written one after another, on the line where they start.
     Cat(Vec<Doc>),
     /// As `Cat`, but when it does not fit every list in it breaks, so the two branches of
@@ -195,13 +199,16 @@ fn doc(t: &Term) -> Doc {
         Term::Lit(v) => text(v.to_string()),
         Term::Var(x) => text(&**x),
         Term::Lam(params, body) => lambda(params, doc(body)),
-        Term::App(f, args) => {
-            let head = match &**f {
-                Term::Var(_) | Term::PrimFn(_) => doc(f).flat(),
-                _ => format!("({})", doc(f).flat()),
-            };
-            call(&head, args.iter().map(doc).collect())
-        }
+        Term::App(f, args) => match &**f {
+            Term::Var(_) | Term::PrimFn(_) => call(&doc(f).flat(), args.iter().map(doc).collect()),
+            // The head is a doc of its own, not a copy of its text, so heads nested in heads
+            // stay linear; it is written on one line, as the list after it starts where it
+            // ends.
+            _ => Doc::Cat(vec![
+                Doc::Flat(Box::new(Doc::Cat(vec![text("("), doc(f), text(")")]))),
+                call("", args.iter().map(doc).collect()),
+            ]),
+        },
         Term::Prim(Prim::Tuple, items) if items.len() == 1 => {
             Doc::Cat(vec![text("("), doc(&items[0]), text(",)")])
         }
@@ -375,22 +382,67 @@ fn block(d: Doc) -> Doc {
 impl Doc {
     /// The one-line text.
     fn flat(&self) -> String {
+        let mut out = String::new();
+        self.write_flat(&mut out);
+        out
+    }
+
+    /// Writes the one-line text.
+    fn write_flat(&self, out: &mut String) {
         match self {
-            Doc::Text(s) => s.clone(),
-            Doc::Cat(ds) | Doc::Together(ds) => ds.iter().map(Doc::flat).collect(),
+            Doc::Text(s) => *out += s,
+            Doc::Flat(d) => d.write_flat(out),
+            Doc::Cat(ds) | Doc::Together(ds) => ds.iter().for_each(|d| d.write_flat(out)),
             Doc::List {
                 open,
                 items,
                 sep,
                 close,
             } => {
-                let items: Vec<String> = items.iter().map(Doc::flat).collect();
-                let pad = if *close == "}" && !items.is_empty() {
-                    " "
-                } else {
-                    ""
-                };
-                format!("{open}{pad}{}{pad}{close}", items.join(sep))
+                let pad = Doc::pad(close, items);
+                *out += open;
+                *out += pad;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        *out += sep;
+                    }
+                    item.write_flat(out);
+                }
+                *out += pad;
+                *out += close;
+            }
+        }
+    }
+
+    /// The space inside the braces of a nonempty `{ … }` written on one line.
+    fn pad(close: &str, items: &[Doc]) -> &'static str {
+        if close == "}" && !items.is_empty() {
+            " "
+        } else {
+            ""
+        }
+    }
+
+    /// The room left after the one-line text in `room` columns, or `None` when it does not
+    /// fit. It stops once the room runs out, so it reads at most `room` columns of text.
+    fn fits(&self, room: usize) -> Option<usize> {
+        let take = |room: usize, s: &str| room.checked_sub(s.len());
+        match self {
+            Doc::Text(s) => take(room, s),
+            Doc::Flat(d) => d.fits(room),
+            Doc::Cat(ds) | Doc::Together(ds) => ds.iter().try_fold(room, |room, d| d.fits(room)),
+            Doc::List {
+                open,
+                items,
+                sep,
+                close,
+            } => {
+                let pad = Doc::pad(close, items);
+                let room = take(take(room, open)?, pad)?;
+                let room = items.iter().enumerate().try_fold(room, |room, (i, item)| {
+                    item.fits(if i > 0 { take(room, sep)? } else { room })
+                })?;
+                take(take(room, pad)?, close)
             }
         }
     }
@@ -398,13 +450,15 @@ impl Doc {
     /// Writes the doc at column `col` of a line indented `ind`, in at most `width` columns
     /// where it can; returns the column it ends at.
     fn render(&self, ind: usize, col: usize, width: usize, out: &mut String) -> usize {
-        let flat = self.flat();
-        if col + flat.len() <= width || matches!(self, Doc::Text(_)) {
-            *out += &flat;
-            return col + flat.len();
+        if matches!(self, Doc::Text(_) | Doc::Flat(_))
+            || self.fits(width.saturating_sub(col)).is_some()
+        {
+            let start = out.len();
+            self.write_flat(out);
+            return col + out.len() - start;
         }
         match self {
-            Doc::Text(_) => unreachable!("written flat above"),
+            Doc::Text(_) | Doc::Flat(_) => unreachable!("written flat above"),
             Doc::Cat(ds) => ds.iter().fold(col, |col, d| d.render(ind, col, width, out)),
             Doc::Together(ds) => ds.iter().fold(col, |col, d| match d {
                 Doc::List { .. } => d.broken(ind, out, width),

@@ -122,7 +122,8 @@ in docs/layout.md.
   negated types disjoint from a piece passed over, 4,096 splits a query; unions of many types
   joined in pairs), and the formatter's blocks of one statement (rendered once, not twice
   per level), and defaults (a compound default is one definition its calls call, not a copy
-  at each), and the dependency order (a heap of ready items). Scaling tests
+  at each), the dependency order (a heap of ready items), and the kernel printer (a fit test that
+  stops at the line's width). Scaling tests
   use `zed_tests::scaling::check` (n against 8n, at most 24 times as long).
 - Next: the remaining COMPLEXITY.md items, then L1.40.
 - Plan extended (spec, 2026-10-30): **L30 — the editor**, a VS Code extension on the L25
@@ -131,8 +132,8 @@ in docs/layout.md.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 831 passed and 0 failed (23 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 24 of `zedc`, 6 of `zed-rt`, 768 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 13 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 31 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 21 in `l01_23_subtyping`, 24 in `l01_24_refinement_lattices`, 29 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 12 in `l01_32_canonical_zir`, 28 in `l01_33_lowering`, 20 in `l01_34_memory`, 4 in `l01_35_mlir_study`, 18 in `l01_36_cranelift`, 7 in `l01_37_oracle`, 15 in `l01_38_presburger`, 21 in `l01_39_reduced_product`, 3 in `m0_01_scaffolding`, 27 in
+Last full run: `cargo test --workspace` gave 833 passed and 0 failed (23 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 24 of `zedc`, 6 of `zed-rt`, 770 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 13 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 20 in `l01_15_kernel_terms`, 31 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 21 in `l01_23_subtyping`, 24 in `l01_24_refinement_lattices`, 29 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 12 in `l01_32_canonical_zir`, 28 in `l01_33_lowering`, 20 in `l01_34_memory`, 4 in `l01_35_mlir_study`, 18 in `l01_36_cranelift`, 7 in `l01_37_oracle`, 15 in `l01_38_presburger`, 21 in `l01_39_reduced_product`, 3 in `m0_01_scaffolding`, 27 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 12 in
