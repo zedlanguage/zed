@@ -85,3 +85,14 @@ reduceFinite(positional xs, positional s) =
     kept = s.filter(v -> xs.any(p -> endLe(p[0], v) && endLe(v, p[1])));
     [kept.sort.map(v -> [v, v]), kept]   // neighboring points are one piece once normalized
   };
+
+// The scalar entries of the preimage catalog (DESIGN.md sec:domains, "Backward
+// transfer", written by step L1.25) read this table backward. The Rust-hosted
+// checker's copy is crates/zedc/src/store/preimage.rs. A test moves with its
+// arguments in the order false < true: `x < y` and `x <= y` fall with x and
+// rise with y, `x > y` and `x >= y` the other way, `!x` falls, `&&` and `||`
+// rise in both, and `==` and `!=` have no tonicity. Shifts and scalings by a
+// constant, Euclidean `div` by a constant, and `x ** k` invert exactly at their
+// endpoints; `mod` by a constant inverts exactly within the operand's bounded
+// interval; a branch is the union of its arms under their guards; any other
+// operator takes the HC4 table above, necessary only.

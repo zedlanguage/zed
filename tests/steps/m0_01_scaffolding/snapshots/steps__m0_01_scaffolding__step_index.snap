@@ -26,6 +26,7 @@ l01_21_test_runner
 l01_22_type_representation
 l01_23_subtyping
 l01_24_refinement_lattices
+l01_25_preimage_catalog
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization

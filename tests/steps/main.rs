@@ -24,6 +24,7 @@ mod l01_21_test_runner;
 mod l01_22_type_representation;
 mod l01_23_subtyping;
 mod l01_24_refinement_lattices;
+mod l01_25_preimage_catalog;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;

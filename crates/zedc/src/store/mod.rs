@@ -11,5 +11,6 @@ pub mod float;
 pub mod interval;
 pub mod iterate;
 pub mod lattice;
+pub mod preimage;
 pub mod revision;
 pub mod wto;
