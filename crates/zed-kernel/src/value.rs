@@ -352,8 +352,16 @@ impl PartialOrd for Value {
 }
 
 impl PartialEq for Value {
+    /// Equal exactly when [`Ord::cmp`] says so. Two families are compared by their maps,
+    /// which differ at once in size and skip the nodes they share, so the test of a lattice
+    /// `fix` for its fixpoint does not read the whole iterate each round.
     fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
+        use Value::*;
+        match (self, other) {
+            (Family(a), Family(b)) => a == b,
+            (Tuple(a), Tuple(b)) | (Path(a), Path(b)) => a == b,
+            _ => self.cmp(other) == Ordering::Equal,
+        }
     }
 }
 

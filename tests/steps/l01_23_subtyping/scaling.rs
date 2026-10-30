@@ -178,12 +178,13 @@ fn nested_tuples_scale() {
     // The nodes of a diagram were ordered by their contents, so placing a tuple among those
     // of its thread read down the nested tuples to where they differ: building a tuple
     // nested `d` deep took `O(d²)` steps (ratio 27 to 71 from depth 100). Types and nodes are
-    // now ordered by a hash of their contents, kept in each when it is made.
+    // now ordered by a hash of their contents, kept in each when it is made. From depth 100
+    // the small run took a millisecond, and the ratio under the full suite's load reached 43.
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {
             let fresh = std::cell::Cell::new(1);
-            scaling::check("a nested tuple and a query on it, by depth", 100, |d| {
+            scaling::check("a nested tuple and a query on it, by depth", 400, |d| {
                 let b = 100_000 * fresh.replace(fresh.get() + 1);
                 let x = nested(d, b);
                 assert!(x.subtype(&(&nested(d, b) | &lit(1))), "at depth {d}");

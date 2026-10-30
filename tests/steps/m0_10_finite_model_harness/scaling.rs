@@ -190,3 +190,48 @@ fn a_demanded_entry_has_the_facts_it_has_in_rounds() {
         assert_eq!(run(&t, Schedule::Pull), v, "d = {d}, untraced");
     }
 }
+
+/// The ascent from `{}` whose step is the key `count(x)` alone, joined to `x`, until `x`
+/// has `n` keys.
+fn ascent(n: usize) -> Term {
+    let step = func(|[x]| {
+        let c = count(x.clone());
+        let one = reindex(
+            lit(Value::Family(Family::set([0]))),
+            func(|[_, _]| c.clone()),
+            func(|[_, _]| lit(Value::Bool(true))),
+        );
+        if_(
+            lt(c.clone(), lit(n as i64)),
+            one,
+            lit(Value::Family(Family::default())),
+        )
+    });
+    fix_lattice(
+        lit(Value::Family(Family::default())),
+        step,
+        Term::PrimFn(zed_kernel::Prim::Union),
+    )
+}
+
+#[test]
+fn a_lattice_ascent_by_one_key_a_round_scales() {
+    // The test for the fixpoint compared the iterate with the one before in the total order
+    // of values, reading both in full each round: `n` rounds took `O(n²)` steps (ratio 40 to
+    // 44). Families are now equal by their maps, which differ at once in size.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            scaling::check(
+                "a lattice ascent adding a key a round, by keys",
+                1000,
+                |n| {
+                    let v = run(&ascent(n), Schedule::Rounds);
+                    assert_eq!(v.as_family().unwrap().len(), n);
+                },
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
