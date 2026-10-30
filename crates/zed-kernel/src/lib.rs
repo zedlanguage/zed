@@ -21,7 +21,7 @@ pub mod value;
 pub mod words;
 
 pub use error::KernelError;
-pub use eval::{Evaluator, Lookup, Schedule, World, eval};
+pub use eval::{Evaluator, Lookup, Schedule, Stack, World, eval, on_stack};
 pub use family::{Family, Keypath};
 pub use num::Rat;
 pub use provenance::{Fact, FactAddress, NodeAddress, Provenance};

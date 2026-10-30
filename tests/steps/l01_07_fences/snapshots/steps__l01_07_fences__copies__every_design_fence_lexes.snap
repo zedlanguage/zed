@@ -202,7 +202,7 @@ expression: "golden_tokens(\"design.md\")"
   8 | }
   9 | @foreign ( str["c"] , str["freeaddrinfo"] ) freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
  10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ byte ] «with» terminated ( 0₍10₎ ) , service : [ byte ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> { rc : i32 , res : Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) } ;
-== DESIGN.md:2436 L10
+== DESIGN.md:2439 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
   4 | name = str["Zed"] ;
@@ -228,7 +228,7 @@ expression: "golden_tokens(\"design.md\")"
  32 | unit = Circle ( c : p ) ;
  33 | onAxis = Point ( x : 0.0f , ... ) ;
  35 | «struct» Round { «import» Rect , r : f64 }
-== DESIGN.md:2476 L10
+== DESIGN.md:2479 L10
   1 | «struct» Counter { n : int , hi : int }
   3 | Counter . tick ( ) {
   4 | n' = n + 1₍10₎ ;
@@ -249,7 +249,7 @@ expression: "golden_tokens(\"design.md\")"
  22 | prev = c *. bump ( 3₍10₎ ) ;
  23 | «until» prev > 20₍10₎ ;
  32 | } ;
-== DESIGN.md:2520 L5
+== DESIGN.md:2523 L5
   1 | xs = [ 3₍10₎ , 1₍10₎ , 4₍10₎ , 1₍10₎ , 5₍10₎ ] ;
   2 | m = { str["a"] -> 1₍10₎ , str["b"] -> 2₍10₎ } ;
   4 | tags = { #red , #green } ;
@@ -259,31 +259,31 @@ expression: "golden_tokens(\"design.md\")"
   9 | srt = xs . sort ( «desc» x -> x ) ;
  10 | tot = xs . sum ;
  13 | counts = text . split ( str[" "] ) . group ( w -> w . lower ) . count ;
-== DESIGN.md:2537 L8
+== DESIGN.md:2540 L8
   2 | counts = text . split ( str[" "] ) «as» ( i -> w ) «into» ( w . lower -> i -> 1₍10₎ ) >< ( + ) ;
-== DESIGN.md:2542 L4
+== DESIGN.md:2545 L4
   2 | byId = users . rekey ( u -> u . id ) ;
-== DESIGN.md:2549 L5
+== DESIGN.md:2552 L5
   1 | byId = users . group ( u -> u . id ) ;
   4 | best = scores . maxBy ( v -> v ) ;
   5 | one = best ?. first ;
-== DESIGN.md:2560 L5
+== DESIGN.md:2563 L5
   4 | paid = orders . join ( payments , on : #orderId , kind : #left ) ;
-== DESIGN.md:2568 L3
+== DESIGN.md:2571 L3
   2 | paid = «for» o «in» orders {
   3 | payment = payments [ o . orderId ] «else» #none ;
   4 | ( o , payment )
   5 | } ;
-== DESIGN.md:2576 L5
+== DESIGN.md:2579 L5
   2 | unpaid = orders . diff ( payments , on : #orderId ) ;
-== DESIGN.md:2581 L8
+== DESIGN.md:2584 L8
   1 | unpaid = orders . where ( o -> payments [ o . orderId ] «is» #notFound ) ;
   6 | shipped = «for» o «in» orders , s «in» shipments where o . orderId == s . orderId { ( o , s ) } ;
  10 | pairs = «for» i «in» 0₍10₎ ..< n , j «in» i + 1₍10₎ ..< n { ( i , j ) } ;
  13 | matmul ( «positional» a : ( r -> c -> f64 ) , «positional» b : ( c -> k -> f64 ) ) =
  14 | ( a , b ) «into» ( r -> k -> c >< ( + ) -> a [ r ] [ c ] * b [ c ] [ k ] ) ;
  17 | prod = a . matmul ( b ) ;
-== DESIGN.md:2603 L6
+== DESIGN.md:2606 L6
   2 | sq = «for» i «in» 0₍10₎ ..< n { i * i } ;
   5 | cdf [ i ] = cdf [ i - 1₍10₎ ] + hist [ i ] «with» cdf [ - 1₍10₎ ] = 0₍10₎ ;
   6 | total = cdf . last «else» 0₍10₎ ;
@@ -301,7 +301,7 @@ expression: "golden_tokens(\"design.md\")"
  22 | } ;
  25 | sessions = events . chunkBy ( e -> e . userId ) ;
  26 | report = sessions . map ( s -> summarize ( s ) ) ;
-== DESIGN.md:2634 L3
+== DESIGN.md:2637 L3
   1 | parse : ( String ) -> Config | #syntaxError ( pos : int )
   3 | conf = parse ( text ) «else» defaultConfig ;
   4 | port = parse ( text ) ?. server ?. port «else» 8080₍10₎ ;
@@ -314,7 +314,7 @@ expression: "golden_tokens(\"design.md\")"
  17 | sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
  18 | badAmounts = amounts . where ( a -> a «is» «not» int ) ;
  20 | sumAll = amounts . allOk >< ( + ) ;
-== DESIGN.md:2659 L21
+== DESIGN.md:2662 L21
   2 | «struct» KeyVal «grammar» { key : Ident str[":"] value : Json }
   3 | «struct» JsonObj «grammar» { str["{"] entries : KeyVal sep str[","] str["}"] }
   4 | «type» Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null ;
@@ -335,11 +335,11 @@ expression: "golden_tokens(\"design.md\")"
  34 | d = v * t ;
  37 | exec : ( Db , String «with» taint ( #clean ) ) -> Rows | #sqlError
  39 | rows = exec ( db , sanitize ( userInput ) ) ;
-== DESIGN.md:2752 L3
+== DESIGN.md:2755 L3
   2 | priceOf ( «positional» items , «positional» id ) = items [ id ] ?. price * ( 1₍10₎ + taxRate ) ;
-== DESIGN.md:2759 L2
+== DESIGN.md:2762 L2
   1 | priceOf : ( K ->? { price : f64 } , K ) -> f64 | #notFound
-== DESIGN.md:2771 L20
+== DESIGN.md:2774 L20
   2 | total = readings >< ( + ) ;
   6 | histA = words . group ( w -> w . len ) . count ;
   7 | histB = «for» n «in» 0₍10₎ ..= maxLen { words . where ( w -> w . len == n ) . count } ;

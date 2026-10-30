@@ -13,5 +13,6 @@ pub mod iterate;
 pub mod lattice;
 pub mod preimage;
 pub mod presburger;
+pub mod product;
 pub mod revision;
 pub mod wto;

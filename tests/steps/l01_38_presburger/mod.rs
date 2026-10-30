@@ -11,7 +11,7 @@
 mod controls;
 mod entailment;
 mod preimage;
-mod random;
+pub(crate) mod random;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

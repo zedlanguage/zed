@@ -44,13 +44,15 @@
 //! that meet the demand, exact when they form a box. An enumeration that meets a term the
 //! evaluator cannot run removes nothing.
 
-use std::collections::BTreeMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::budgets::ENUMERATION_BUDGET;
-use zed_kernel::{Prim, Term, Value, eval};
+use zed_kernel::budgets::{ENUMERATION_BUDGET, ENUMERATION_FUEL};
+use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, eval, on_stack};
 
 use super::interval::{End, IntervalSet, PIECE_LIMIT};
 use super::presburger::{self, Con, Formula, Lin, Over, Relation};
@@ -61,7 +63,7 @@ use End::{Fin, NegInf, PosInf};
 pub type Domains = BTreeMap<Arc<str>, IntervalSet>;
 
 /// What the term's value must be.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Demand {
     /// An integer in the set.
     Ints(IntervalSet),
@@ -98,6 +100,8 @@ pub enum StopKind {
     /// A term the scalar catalog does not cover: families, folds, `fix`, patterns, ports, or
     /// calls nested past the inlining depth.
     Outside,
+    /// The transfer visited [`TRANSFER_FUEL`] terms of one preimage.
+    Budget,
 }
 
 /// A reported stop: its kind and the term it stopped at.
@@ -115,6 +119,10 @@ impl fmt::Display for Stop {
             StopKind::String(p) => write!(f, "string operation {p:?} stops the transfer at ")?,
             StopKind::Foreign(n) => write!(f, "foreign name `{n}` stops the transfer at ")?,
             StopKind::Outside => write!(f, "no scalar catalog entry for ")?,
+            StopKind::Budget => write!(
+                f,
+                "the transfer's budget of {TRANSFER_FUEL} visited terms stops it at "
+            )?,
         }
         write!(f, "{}", self.term)
     }
@@ -140,13 +148,26 @@ pub struct Preimage {
 /// The deepest nesting of calls read through before the transfer stops.
 pub const CALL_DEPTH: u32 = 64;
 
+/// The most terms the transfer computes for one preimage, each pair of a term and a scope
+/// once; past it the transfer stops, as at [`CALL_DEPTH`].
+pub const TRANSFER_FUEL: u32 = 100_000;
+
+/// The most factors read as one power: an integer power past 64 of anything but -1, 0 and 1
+/// leaves `i64`.
+const POWER_FACTORS: usize = 64;
+
 /// The preimage of `demand` under `term`, whose free names in `inputs` range over their
 /// domains.
 pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
+    // One evaluation thread serves every evaluation of the transfer.
+    on_stack(|_| preimage_in(term, inputs, demand))
+}
+
+fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
     let root = Rc::new(Scope::Empty);
-    let mut cx = Cx::new(inputs);
+    let cx = Cx::new(inputs);
     let mut r = cx.back(term, &root, demand);
-    let mut stops = std::mem::take(&mut cx.stops);
+    let mut stops = cx.stops.take();
     let mut enumerated = false;
     // The piece limit of step M0.5 holds for every element.
     for d in r.dom.values_mut() {
@@ -156,7 +177,7 @@ pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
         }
     }
     if !r.exact && !is_empty(&r.dom) {
-        let mut over = Cx::new(&r.dom);
+        let over = Cx::new(&r.dom);
         if over.fwd(term, &root, 0).meets(demand) {
             r.exact = true;
         }
@@ -204,6 +225,10 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
     let root = Rc::new(Scope::Empty);
     let mut out = Vec::new();
     for t in terms {
+        // An auxiliary variable belongs to the relation of the term that made it.
+        cx.memo.lin.borrow_mut().clear();
+        cx.memo.formula.borrow_mut().clear();
+        cx.memo.log.borrow_mut().clear();
         let first = tr.defs.len();
         let body = cx.formula(&mut tr, t, &root, 0)?;
         out.push(Relation {
@@ -247,14 +272,22 @@ fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool,
             Ok(Formula::and(parts))
         };
         let whole = Formula::and(vec![rel.defined(), within(dom)?, rel.body.clone()]);
-        let mentioned = rel.body.atoms();
+        let mut mentioned = rel.body.atoms();
+        for (_, _, f) in &rel.defs {
+            mentioned.extend(f.atoms());
+        }
+        let syms: Vec<presburger::Atom> = dom
+            .keys()
+            .map(|k| presburger::Atom::Sym(k.clone()))
+            .filter(|a| mentioned.contains(a))
+            .collect();
+        let mut each = presburger::project_each(&whole, &syms)?.into_iter();
         let mut out = Domains::new();
         for (k, v) in dom {
-            let a = presburger::Atom::Sym(k.clone());
-            let p = if mentioned.contains(&a)
-                || rel.defs.iter().any(|(_, _, f)| f.atoms().contains(&a))
-            {
-                presburger::project(&whole, &a)?.meet(v)
+            let p = if mentioned.contains(&presburger::Atom::Sym(k.clone())) {
+                each.next()
+                    .expect("one projection for each mentioned input")?
+                    .meet(v)
             } else {
                 v.clone()
             };
@@ -299,6 +332,18 @@ impl Tr {
         self.defs.push((n, what, def));
         presburger::Atom::Aux(n)
     }
+
+    /// Whether `k` more auxiliary variables stay within the atoms a relation takes; past
+    /// them every relation is over the budget of step M0.5.
+    fn room(&self, k: usize) -> bool {
+        self.defs.len() + k <= presburger::VARIABLES
+    }
+}
+
+/// A formula within the constraints a relation takes; past them it is over the budget of
+/// step M0.5.
+fn small(f: Formula) -> Option<Formula> {
+    (f.cons().len() <= presburger::ATOMS).then_some(f)
 }
 
 /// The tonicity of a scalar primitive in argument `arg`, the others fixed, with `false` below
@@ -383,6 +428,7 @@ struct Res {
 }
 
 /// What forward transfer knows of a term's value.
+#[derive(Clone)]
 struct Fwd {
     /// The integers it may be.
     ints: IntervalSet,
@@ -451,17 +497,142 @@ impl Fwd {
     }
 }
 
+/// A pair of a term and the scope it is read in, by address.
+type Key = (usize, usize);
+
+fn key(t: &Term, env: &Env) -> Key {
+    (t as *const Term as usize, Rc::as_ptr(env) as usize)
+}
+
+/// What the transfer has computed, for each pair of a term and a scope, so that a name bound
+/// once is followed once however often it is read (the rule of low complexity, Part G). Every
+/// scope and term the transfer makes is kept here for the life of the context, so that no
+/// address in a key is used again.
+#[derive(Default)]
+struct Memo {
+    /// The scopes of `let` bodies, call bodies and lambda bodies, by the term that makes them.
+    envs: RefCell<HashMap<Key, Env>>,
+    /// The primitive applications that calls of prelude words stand for.
+    calls: RefCell<HashMap<Key, Rc<Term>>>,
+    /// The differences that comparisons of two terms stand for, by the two terms.
+    diffs: RefCell<HashMap<Key, Rc<Term>>>,
+    mentions: RefCell<HashMap<Key, Option<bool>>>,
+    constant: RefCell<HashMap<Key, Option<Value>>>,
+    fwd: RefCell<HashMap<Key, Fwd>>,
+    back: RefCell<HashMap<(Key, Demand), Res>>,
+    scan: RefCell<HashSet<Key>>,
+    lin: RefCell<HashMap<Key, Option<Lin>>>,
+    formula: RefCell<HashMap<Key, Option<Formula>>>,
+    /// The `lin` (false) and `formula` (true) entries in the order they were made, which a
+    /// translation that is undone removes.
+    log: RefCell<Vec<(bool, Key)>>,
+}
+
 struct Cx<'a> {
     inputs: &'a Domains,
-    stops: Vec<Stop>,
+    stops: RefCell<Vec<Stop>>,
+    seen: RefCell<HashSet<String>>,
+    /// Terms left to compute before [`TRANSFER_FUEL`] stops the transfer.
+    fuel: Cell<u32>,
+    /// Whether the result being computed was cut short by the depth limit or the budget; such
+    /// a result is not remembered, since it depends on where it was reached.
+    cut: Cell<bool>,
+    memo: Memo,
 }
 
 impl<'a> Cx<'a> {
     fn new(inputs: &'a Domains) -> Self {
         Cx {
             inputs,
-            stops: Vec::new(),
+            stops: RefCell::new(Vec::new()),
+            seen: RefCell::new(HashSet::new()),
+            fuel: Cell::new(TRANSFER_FUEL),
+            cut: Cell::new(false),
+            memo: Memo::default(),
         }
+    }
+
+    /// Why the transfer stops at this depth, if it does; otherwise one term is counted.
+    fn spent(&self, depth: u32) -> Option<StopKind> {
+        let why = if depth > CALL_DEPTH {
+            StopKind::Outside
+        } else if self.fuel.get() == 0 {
+            StopKind::Budget
+        } else {
+            self.fuel.set(self.fuel.get() - 1);
+            return None;
+        };
+        self.cut.set(true);
+        Some(why)
+    }
+
+    /// `f()`, remembered under `k` in `map` unless the depth limit or the budget cut it short.
+    fn cached<K: Hash + Eq, V: Clone>(
+        &self,
+        map: &RefCell<HashMap<K, V>>,
+        k: K,
+        f: impl FnOnce() -> V,
+    ) -> V {
+        if let Some(v) = map.borrow().get(&k) {
+            return v.clone();
+        }
+        let outer = self.cut.replace(false);
+        let v = f();
+        let cut = self.cut.get();
+        if !cut {
+            map.borrow_mut().insert(k, v.clone());
+        }
+        self.cut.set(outer || cut);
+        v
+    }
+
+    /// [`Cx::cached`] for the translation into the linear-relation domain, whose entries a
+    /// translation that is undone removes.
+    fn translated<V: Clone>(
+        &self,
+        formula: bool,
+        map: &RefCell<HashMap<Key, V>>,
+        k: Key,
+        f: impl FnOnce() -> V,
+    ) -> V {
+        let known = map.borrow().contains_key(&k);
+        let v = self.cached(map, k, f);
+        if !known && map.borrow().contains_key(&k) {
+            self.memo.log.borrow_mut().push((formula, k));
+        }
+        v
+    }
+
+    /// Removes the translation's entries made after the first `mark`.
+    fn forget(&self, mark: usize) {
+        let undone: Vec<(bool, Key)> = self.memo.log.borrow_mut().drain(mark..).collect();
+        for (formula, k) in undone {
+            if formula {
+                self.memo.formula.borrow_mut().remove(&k);
+            } else {
+                self.memo.lin.borrow_mut().remove(&k);
+            }
+        }
+    }
+
+    /// The scope of a `let` body, made once for each `let` and scope.
+    fn let_env(&self, t: &Term, n: &Arc<str>, e: &Term, env: &Env) -> Env {
+        self.memo
+            .envs
+            .borrow_mut()
+            .entry(key(t, env))
+            .or_insert_with(|| bind(env, n, e, env))
+            .clone()
+    }
+
+    /// The primitive application a call `t` of a prelude word stands for.
+    fn call_prim(&self, t: &Term, env: &Env, p: Prim, args: &[Term]) -> Rc<Term> {
+        self.memo
+            .calls
+            .borrow_mut()
+            .entry(key(t, env))
+            .or_insert_with(|| Rc::new(Term::Prim(p, args.to_vec())))
+            .clone()
     }
 
     fn all(&self) -> Res {
@@ -482,13 +653,13 @@ impl<'a> Cx<'a> {
         }
     }
 
-    fn stop(&mut self, kind: StopKind, t: &Term) -> Res {
+    fn stop(&self, kind: StopKind, t: &Term) -> Res {
         let s = Stop {
             kind,
             term: t.to_string(),
         };
-        if !self.stops.contains(&s) {
-            self.stops.push(s);
+        if self.seen.borrow_mut().insert(s.to_string()) {
+            self.stops.borrow_mut().push(s);
         }
         Res {
             dom: self.inputs.clone(),
@@ -536,7 +707,13 @@ impl<'a> Cx<'a> {
     /// The input names the term reads, or `None` when it reads a term the catalog does not
     /// follow.
     fn mentions(&self, t: &Term, env: &Env, depth: u32) -> Option<bool> {
-        if depth > CALL_DEPTH {
+        self.cached(&self.memo.mentions, key(t, env), || {
+            self.mentions_at(t, env, depth)
+        })
+    }
+
+    fn mentions_at(&self, t: &Term, env: &Env, depth: u32) -> Option<bool> {
+        if self.spent(depth).is_some() {
             return None;
         }
         let any = |cx: &Self, ts: &mut dyn Iterator<Item = (&Term, Env)>| -> Option<bool> {
@@ -553,15 +730,24 @@ impl<'a> Cx<'a> {
                 None => Some(self.inputs.contains_key(x)),
             },
             Term::Let(n, e, b) => {
-                let inner = bind(env, n, e, env);
+                let inner = self.let_env(t, n, e, env);
                 any(self, &mut [(&**e, env.clone()), (&**b, inner)].into_iter())
             }
             Term::Lam(ps, b) => {
                 // A parameter is not an input, even where it shadows one.
-                let mut inner = env.clone();
-                for p in ps {
-                    inner = bind(&inner, p, &Term::Lit(Value::Bool(false)), &inner);
-                }
+                let inner = self
+                    .memo
+                    .envs
+                    .borrow_mut()
+                    .entry(key(t, env))
+                    .or_insert_with(|| {
+                        let mut inner = env.clone();
+                        for p in ps {
+                            inner = bind(&inner, p, &Term::Lit(Value::Bool(false)), &inner);
+                        }
+                        inner
+                    })
+                    .clone();
                 self.mentions(b, &inner, depth + 1)
             }
             Term::App(f, args) => any(
@@ -585,11 +771,11 @@ impl<'a> Cx<'a> {
 
     /// The term with every bound name replaced by the closed term it is bound to, for a term
     /// that reads no input.
-    fn close(t: &Term, env: &Env, depth: u32) -> Option<Term> {
-        if depth > CALL_DEPTH {
+    fn close(&self, t: &Term, env: &Env, depth: u32) -> Option<Term> {
+        if self.spent(depth).is_some() {
             return None;
         }
-        let c = |t: &Term, e: &Env| Cx::close(t, e, depth + 1);
+        let c = |t: &Term, e: &Env| self.close(t, e, depth + 1);
         Some(match t {
             Term::Var(x) => match lookup(env, x) {
                 Some((bt, benv)) => c(bt, benv)?,
@@ -627,10 +813,33 @@ impl<'a> Cx<'a> {
 
     /// The value of a term that reads no input, when the evaluator can compute it.
     fn constant(&self, t: &Term, env: &Env) -> Option<Value> {
-        if self.mentions(t, env, 0)? {
-            return None;
-        }
-        eval(&Cx::close(t, env, 0)?).ok()
+        self.cached(&self.memo.constant, key(t, env), || {
+            if self.mentions(t, env, 0)? || self.spent(0).is_some() {
+                return None;
+            }
+            // From the values of the parts where the catalog reads them, so that a part is
+            // run once; otherwise the closed term.
+            match t {
+                Term::Lit(v) => Some(v.clone()),
+                Term::Var(x) if let Some((bt, benv)) = lookup(env, x) => {
+                    self.constant(bt, &benv.clone())
+                }
+                Term::Let(n, e, b) => self.constant(b, &self.let_env(t, n, e, env)),
+                Term::Prim(p, args) => {
+                    let vs = args
+                        .iter()
+                        .map(|a| self.constant(a, env).map(Term::Lit))
+                        .collect::<Option<_>>()?;
+                    eval(&Term::Prim(*p, vs)).ok()
+                }
+                Term::If(g, a, b) => match self.constant(g, env)? {
+                    Value::Bool(true) => self.constant(a, env),
+                    Value::Bool(false) => self.constant(b, env),
+                    _ => eval(&self.close(t, env, 0)?).ok(),
+                },
+                _ => eval(&self.close(t, env, 0)?).ok(),
+            }
+        })
     }
 
     fn constant_int(&self, t: &Term, env: &Env) -> Option<i64> {
@@ -658,12 +867,19 @@ impl<'a> Cx<'a> {
 
     /// The scope of a call's body: the lambda's scope with each parameter bound to its
     /// argument, read in the caller's scope.
-    fn call_env(ps: &[Arc<str>], args: &[Term], lam: &Env, caller: &Env) -> Env {
-        let mut e = lam.clone();
-        for (p, a) in ps.iter().zip(args) {
-            e = bind(&e, p, a, caller);
-        }
-        e
+    fn call_env(&self, t: &Term, ps: &[Arc<str>], args: &[Term], lam: &Env, caller: &Env) -> Env {
+        self.memo
+            .envs
+            .borrow_mut()
+            .entry(key(t, caller))
+            .or_insert_with(|| {
+                let mut e = lam.clone();
+                for (p, a) in ps.iter().zip(args) {
+                    e = bind(&e, p, a, caller);
+                }
+                e
+            })
+            .clone()
     }
 
     /// The factors of a product of one value read `k` times, as that value and `k`.
@@ -676,6 +892,7 @@ impl<'a> Cx<'a> {
                 (t, env) = (bt, benv);
             }
             match t {
+                _ if out.len() > POWER_FACTORS => {}
                 Term::Prim(Prim::Mul, args) if args.len() == 2 => {
                     factors(&args[0], env, out);
                     factors(&args[1], env, out);
@@ -690,15 +907,25 @@ impl<'a> Cx<'a> {
             (Term::Var(x), Term::Var(y)) if x == y => true,
             _ => t == first && Rc::ptr_eq(e, fenv),
         };
-        (fs.len() >= 2 && fs.iter().all(one)).then_some((first, fenv, fs.len() as u32))
+        (fs.len() >= 2 && fs.len() <= POWER_FACTORS && fs.iter().all(one)).then_some((
+            first,
+            fenv,
+            fs.len() as u32,
+        ))
     }
 
     // ---- Into the linear-relation domain ------------------------------------------------
 
     /// The linear term an integer term states over the inputs.
     fn lin(&self, tr: &mut Tr, t: &Term, env: &Env, depth: u32) -> Option<Lin> {
+        self.translated(false, &self.memo.lin, key(t, env), || {
+            self.lin_at(tr, t, env, depth)
+        })
+    }
+
+    fn lin_at(&self, tr: &mut Tr, t: &Term, env: &Env, depth: u32) -> Option<Lin> {
         use Prim::*;
-        if depth > CALL_DEPTH {
+        if self.spent(depth).is_some() {
             return None;
         }
         let d = depth + 1;
@@ -716,18 +943,21 @@ impl<'a> Cx<'a> {
                     .contains_key(x)
                     .then(|| Lin::atom(presburger::Atom::Sym(x.clone()))),
             },
-            Term::Let(n, e, b) => self.lin(tr, b, &bind(env, n, e, env), d),
+            Term::Let(n, e, b) => self.lin(tr, b, &self.let_env(t, n, e, env), d),
             Term::App(f, args) => match self.callee(f, env).ok()? {
                 Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
-                    let inner = Cx::call_env(ps, args, lam, env);
+                    let inner = self.call_env(t, ps, args, lam, env);
                     self.lin(tr, body, &inner, d)
                 }
-                Callee::Prim(p) => self.lin(tr, &Term::Prim(p, args.clone()), env, d),
+                Callee::Prim(p) => self.lin(tr, &self.call_prim(t, env, p, args), env, d),
                 Callee::Lam(..) => None,
             },
             Term::If(g, a, b) => {
                 let g = self.formula(tr, g, env, d)?;
                 let (la, lb) = (self.lin(tr, a, env, d)?, self.lin(tr, b, env, d)?);
+                if !tr.room(1) {
+                    return None;
+                }
                 let v = presburger::Atom::Aux(tr.defs.len() as u32);
                 let x = Lin::atom(v.clone());
                 let def = Formula::or(vec![
@@ -765,6 +995,9 @@ impl<'a> Cx<'a> {
                     IntDiv | Mod => {
                         let c = self.constant_int(&args[1], env).filter(|c| *c != 0)?;
                         let a = arg(tr, 0)?;
+                        if !tr.room(2) {
+                            return None;
+                        }
                         // `a == c·q + r` and `0 <= r < |c|`: Euclidean.
                         let n = tr.defs.len() as u32;
                         let (q, r) = (
@@ -789,6 +1022,9 @@ impl<'a> Cx<'a> {
                         } else {
                             arg(tr, 1)?
                         };
+                        if !tr.room(1) {
+                            return None;
+                        }
                         let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
                         // `min` takes `a` where `a <= b`, `max` and `abs` where `a >= b`.
                         let (lo, hi) = if *p == Min { (&a, &b) } else { (&b, &a) };
@@ -815,8 +1051,14 @@ impl<'a> Cx<'a> {
 
     /// The formula a test states over the inputs.
     fn formula(&self, tr: &mut Tr, t: &Term, env: &Env, depth: u32) -> Option<Formula> {
+        self.translated(true, &self.memo.formula, key(t, env), || {
+            self.formula_at(tr, t, env, depth).and_then(small)
+        })
+    }
+
+    fn formula_at(&self, tr: &mut Tr, t: &Term, env: &Env, depth: u32) -> Option<Formula> {
         use Prim::*;
-        if depth > CALL_DEPTH {
+        if self.spent(depth).is_some() {
             return None;
         }
         let d = depth + 1;
@@ -832,13 +1074,13 @@ impl<'a> Cx<'a> {
                 let (bt, benv) = lookup(env, x)?;
                 self.formula(tr, bt, &benv.clone(), d)
             }
-            Term::Let(n, e, b) => self.formula(tr, b, &bind(env, n, e, env), d),
+            Term::Let(n, e, b) => self.formula(tr, b, &self.let_env(t, n, e, env), d),
             Term::App(f, args) => match self.callee(f, env).ok()? {
                 Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
-                    let inner = Cx::call_env(ps, args, lam, env);
+                    let inner = self.call_env(t, ps, args, lam, env);
                     self.formula(tr, body, &inner, d)
                 }
-                Callee::Prim(p) => self.formula(tr, &Term::Prim(p, args.clone()), env, d),
+                Callee::Prim(p) => self.formula(tr, &self.call_prim(t, env, p, args), env, d),
                 Callee::Lam(..) => None,
             },
             Term::If(g, a, b) => {
@@ -863,7 +1105,7 @@ impl<'a> Cx<'a> {
                     })
                 }
                 Lt | Le | Gt | Ge | Eq | Ne => {
-                    let mark = tr.defs.len();
+                    let (mark, logged) = (tr.defs.len(), self.memo.log.borrow().len());
                     if let (Some(a), Some(b)) = (
                         self.lin(tr, &args[0], env, d),
                         self.lin(tr, &args[1], env, d),
@@ -881,6 +1123,7 @@ impl<'a> Cx<'a> {
                         return Some(if *p == Ne { Formula::negate(f) } else { f });
                     }
                     tr.defs.truncate(mark);
+                    self.forget(logged);
                     if !matches!(p, Eq | Ne) {
                         return None;
                     }
@@ -907,8 +1150,12 @@ impl<'a> Cx<'a> {
 
     // ---- Forward transfer -------------------------------------------------------------
 
-    fn fwd(&mut self, t: &Term, env: &Env, depth: u32) -> Fwd {
-        if depth > CALL_DEPTH {
+    fn fwd(&self, t: &Term, env: &Env, depth: u32) -> Fwd {
+        self.cached(&self.memo.fwd, key(t, env), || self.fwd_at(t, env, depth))
+    }
+
+    fn fwd_at(&self, t: &Term, env: &Env, depth: u32) -> Fwd {
+        if self.spent(depth).is_some() {
             return Fwd::top();
         }
         let d = depth + 1;
@@ -930,7 +1177,7 @@ impl<'a> Cx<'a> {
                     None => Fwd::top(),
                 },
             },
-            Term::Let(n, e, b) => self.fwd(b, &bind(env, n, e, env), d),
+            Term::Let(n, e, b) => self.fwd(b, &self.let_env(t, n, e, env), d),
             Term::If(g, a, b) => {
                 let g = self.fwd(g, env, d);
                 // A guard that is not a test is a failure.
@@ -951,10 +1198,10 @@ impl<'a> Cx<'a> {
             }
             Term::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
-                    let inner = Cx::call_env(ps, args, lam, env);
+                    let inner = self.call_env(t, ps, args, lam, env);
                     self.fwd(body, &inner, d)
                 }
-                Ok(Callee::Prim(p)) => self.fwd(&Term::Prim(p, args.clone()), env, d),
+                Ok(Callee::Prim(p)) => self.fwd(&self.call_prim(t, env, p, args), env, d),
                 _ => Fwd::top(),
             },
             Term::Prim(p, args) => self.fwd_prim(t, *p, args, env, d),
@@ -962,7 +1209,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    fn fwd_prim(&mut self, t: &Term, p: Prim, args: &[Term], env: &Env, d: u32) -> Fwd {
+    fn fwd_prim(&self, t: &Term, p: Prim, args: &[Term], env: &Env, d: u32) -> Fwd {
         use Prim::*;
         if p.arity().is_some_and(|n| n != args.len()) {
             return Fwd::top();
@@ -1042,13 +1289,19 @@ impl<'a> Cx<'a> {
 
     // ---- Backward transfer ------------------------------------------------------------
 
-    fn back(&mut self, t: &Term, env: &Env, d: &Demand) -> Res {
+    fn back(&self, t: &Term, env: &Env, d: &Demand) -> Res {
         self.back_at(t, env, d, 0)
     }
 
-    fn back_at(&mut self, t: &Term, env: &Env, d: &Demand, depth: u32) -> Res {
-        if depth > CALL_DEPTH {
-            return self.stop(StopKind::Outside, t);
+    fn back_at(&self, t: &Term, env: &Env, d: &Demand, depth: u32) -> Res {
+        self.cached(&self.memo.back, (key(t, env), d.clone()), || {
+            self.back_in(t, env, d, depth)
+        })
+    }
+
+    fn back_in(&self, t: &Term, env: &Env, d: &Demand, depth: u32) -> Res {
+        if let Some(why) = self.spent(depth) {
+            return self.stop(why, t);
         }
         if let Demand::Ints(z) = d
             && z.is_empty()
@@ -1082,7 +1335,7 @@ impl<'a> Cx<'a> {
                     self.none()
                 }
             }
-            Term::Let(n, e, b) => self.back_at(b, &bind(env, n, e, env), d, next),
+            Term::Let(n, e, b) => self.back_at(b, &self.let_env(t, n, e, env), d, next),
             Term::If(g, a, b) => {
                 let gt = self.back_at(g, env, &Demand::Bool(true), next);
                 let at = self.back_at(a, env, d, next);
@@ -1094,10 +1347,10 @@ impl<'a> Cx<'a> {
             }
             Term::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
-                    let inner = Cx::call_env(ps, args, lam, env);
+                    let inner = self.call_env(t, ps, args, lam, env);
                     self.back_at(body, &inner, d, next)
                 }
-                Ok(Callee::Prim(p)) => self.back_at(&Term::Prim(p, args.clone()), env, d, next),
+                Ok(Callee::Prim(p)) => self.back_at(&self.call_prim(t, env, p, args), env, d, next),
                 Err(Some(name)) => self.stop(StopKind::Foreign(name), t),
                 _ => self.stop(StopKind::Outside, t),
             },
@@ -1112,7 +1365,7 @@ impl<'a> Cx<'a> {
     }
 
     fn back_prim(
-        &mut self,
+        &self,
         t: &Term,
         p: Prim,
         args: &[Term],
@@ -1176,7 +1429,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    fn back_compare(&mut self, p: Prim, a: &Term, b: &Term, env: &Env, depth: u32) -> Res {
+    fn back_compare(&self, p: Prim, a: &Term, b: &Term, env: &Env, depth: u32) -> Res {
         let (fa, fb) = (self.fwd(a, env, depth), self.fwd(b, env, depth));
         // Two tests are equal where both are true or both false.
         if matches!(p, Prim::Eq | Prim::Ne) && fa.is_bool() && fb.is_bool() {
@@ -1207,7 +1460,13 @@ impl<'a> Cx<'a> {
         let one_int = fa.is_int() || fb.is_int();
         if ints || (ordered_or_eq(&fa) && ordered_or_eq(&fb) && (p != Prim::Eq || one_int)) {
             // Between two integers, `a op b` is `a - b op 0`.
-            let diff = Term::Prim(Prim::Sub, vec![a.clone(), b.clone()]);
+            let diff = self
+                .memo
+                .diffs
+                .borrow_mut()
+                .entry((a as *const Term as usize, b as *const Term as usize))
+                .or_insert_with(|| Rc::new(Term::Prim(Prim::Sub, vec![a.clone(), b.clone()])))
+                .clone();
             return self.back_at(&diff, env, &Demand::Ints(ray(p, 0)), depth);
         }
         // Operands of other kinds, or two that may both fail, which `==` finds equal.
@@ -1219,9 +1478,13 @@ impl<'a> Cx<'a> {
     }
 
     /// Reports the stops in a term whose value the transfer does not follow.
-    fn scan(&mut self, t: &Term, env: &Env, depth: u32) {
-        if depth > CALL_DEPTH {
-            self.stop(StopKind::Outside, t);
+    fn scan(&self, t: &Term, env: &Env, depth: u32) {
+        // A term is scanned once in each scope: its stops are reported the first time.
+        if !self.memo.scan.borrow_mut().insert(key(t, env)) {
+            return;
+        }
+        if let Some(why) = self.spent(depth) {
+            self.stop(why, t);
             return;
         }
         if self.mentions(t, env, 0) == Some(false) {
@@ -1234,7 +1497,7 @@ impl<'a> Cx<'a> {
                     self.scan(bt, &benv.clone(), d);
                 }
             }
-            Term::Let(n, e, b) => self.scan(b, &bind(env, n, e, env), d),
+            Term::Let(n, e, b) => self.scan(b, &self.let_env(t, n, e, env), d),
             Term::If(g, a, b) => {
                 for u in [g, a, b] {
                     self.scan(u, env, d);
@@ -1242,10 +1505,10 @@ impl<'a> Cx<'a> {
             }
             Term::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
-                    let inner = Cx::call_env(ps, args, lam, env);
+                    let inner = self.call_env(t, ps, args, lam, env);
                     self.scan(body, &inner, d);
                 }
-                Ok(Callee::Prim(p)) => self.scan(&Term::Prim(p, args.clone()), env, d),
+                Ok(Callee::Prim(p)) => self.scan(&self.call_prim(t, env, p, args), env, d),
                 Err(Some(name)) => {
                     self.stop(StopKind::Foreign(name), t);
                 }
@@ -1271,7 +1534,7 @@ impl<'a> Cx<'a> {
     }
 
     fn back_arith(
-        &mut self,
+        &self,
         t: &Term,
         p: Prim,
         args: &[Term],
@@ -1364,7 +1627,7 @@ impl<'a> Cx<'a> {
 
     /// `op(c)` in `z`, for an operator the revision table inverts exactly within the forward
     /// interval of `c`.
-    fn back_unary(&mut self, o: Op, c: &Term, env: &Env, z: &IntervalSet, depth: u32) -> Res {
+    fn back_unary(&self, o: Op, c: &Term, env: &Env, z: &IntervalSet, depth: u32) -> Res {
         if o == Op::Pow(0) {
             // `c ** 0` is 1 wherever `c` is an integer.
             return if z.contains(1) {
@@ -1379,15 +1642,7 @@ impl<'a> Cx<'a> {
     }
 
     /// The HC4 projection onto each operand: necessary, not exact.
-    fn project(
-        &mut self,
-        p: Prim,
-        a: &Term,
-        b: &Term,
-        env: &Env,
-        z: &IntervalSet,
-        depth: u32,
-    ) -> Res {
+    fn project(&self, p: Prim, a: &Term, b: &Term, env: &Env, z: &IntervalSet, depth: u32) -> Res {
         let o = op(p, None).expect("binary scalar operator");
         let fa = self.fwd(a, env, depth).ints;
         let fb = self.fwd(b, env, depth).ints;
@@ -1400,7 +1655,7 @@ impl<'a> Cx<'a> {
         r
     }
 
-    fn both_ints(&mut self, a: &Term, b: &Term, env: &Env, depth: u32) -> Res {
+    fn both_ints(&self, a: &Term, b: &Term, env: &Env, depth: u32) -> Res {
         let top = Demand::Ints(IntervalSet::top());
         let ra = self.back_at(a, env, &top, depth);
         let rb = self.back_at(b, env, &top, depth);
@@ -1643,15 +1898,26 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Res> {
         });
         axes.push((k.clone(), vs.collect()));
     }
-    let mut met: Vec<Vec<i64>> = vec![Vec::new(); axes.len()];
-    let mut count: u64 = 0;
-    let mut point = vec![0usize; axes.len()];
     if axes.iter().any(|(_, vs)| vs.is_empty()) {
         return Some(Res {
             dom: dom.clone(),
             exact: true,
         });
     }
+    on_stack(|stack| enumerate_on(stack, term, &axes, demand))
+}
+
+/// The enumeration of [`enumerate`] over `axes`, each point evaluated on `stack` within
+/// [`ENUMERATION_FUEL`].
+fn enumerate_on(
+    stack: &Stack,
+    term: &Term,
+    axes: &[(Arc<str>, Vec<i64>)],
+    demand: &Demand,
+) -> Option<Res> {
+    let mut met: Vec<Vec<i64>> = vec![Vec::new(); axes.len()];
+    let mut count: u64 = 0;
+    let mut point = vec![0usize; axes.len()];
     loop {
         let mut t = term.clone();
         for ((k, vs), &i) in axes.iter().zip(&point).rev() {
@@ -1661,7 +1927,11 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Res> {
                 Arc::new(t),
             );
         }
-        if demand.holds(&eval(&t).ok()?) {
+        let v = Evaluator::new(World::new())
+            .with_fuel(ENUMERATION_FUEL)
+            .run_on(stack, &t)
+            .ok()?;
+        if demand.holds(&v) {
             count += 1;
             for (j, &i) in point.iter().enumerate() {
                 met[j].push(axes[j].1[i]);

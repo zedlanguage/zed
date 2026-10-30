@@ -40,6 +40,7 @@ l01_35_mlir_study
 l01_36_cranelift
 l01_37_oracle
 l01_38_presburger
+l01_39_reduced_product
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization

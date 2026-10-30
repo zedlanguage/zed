@@ -276,6 +276,40 @@ pub struct Evaluator {
     trace: Option<Trace>,
 }
 
+/// Proof that the current thread is one [`on_stack`] started, whose stack holds [`MAX_DEPTH`]
+/// nested calls. It cannot be made elsewhere or passed to another thread.
+pub struct Stack(std::marker::PhantomData<*const ()>);
+
+thread_local! {
+    /// Whether this thread is one [`on_stack`] started.
+    static EVALUATION_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether an evaluation is running on this thread, so that its stack is in use.
+    static EVALUATING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with a stack that holds [`MAX_DEPTH`] nested calls, passing it the [`Stack`] that
+/// [`Evaluator::run_on`] asks for: on the current thread when it is an evaluation thread with
+/// no evaluation running, else on a new one. Starting a thread reserves 1 GiB of address
+/// space and costs tens of microseconds, so a caller that evaluates many terms calls this
+/// once around all of them.
+pub fn on_stack<R: Send>(f: impl FnOnce(&Stack) -> R + Send) -> R {
+    if EVALUATION_THREAD.get() && !EVALUATING.get() {
+        return f(&Stack(std::marker::PhantomData));
+    }
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new()
+            .stack_size(STACK_BYTES)
+            .spawn_scoped(scope, || {
+                EVALUATION_THREAD.set(true);
+                f(&Stack(std::marker::PhantomData))
+            });
+        match worker.expect("the evaluator thread starts").join() {
+            Ok(out) => out,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
 /// Evaluates a closed term with no ports and the default fuel, expecting data.
 pub fn eval(term: &Term) -> Result<Value, KernelError> {
     Evaluator::new(World::new()).run(term)
@@ -330,15 +364,16 @@ impl Evaluator {
     /// Evaluates a closed term, expecting data. The evaluation runs on its own thread, whose
     /// stack holds [`MAX_DEPTH`] nested calls.
     pub fn run(&mut self, term: &Term) -> Result<Value, KernelError> {
-        std::thread::scope(|scope| {
-            let worker = std::thread::Builder::new()
-                .stack_size(STACK_BYTES)
-                .spawn_scoped(scope, || self.run_here(term));
-            match worker.expect("the evaluator thread starts").join() {
-                Ok(out) => out,
-                Err(panic) => std::panic::resume_unwind(panic),
-            }
-        })
+        on_stack(|stack| self.run_on(stack, term))
+    }
+
+    /// [`Evaluator::run`] on the current thread, which `stack` shows is one [`on_stack`]
+    /// started. Many short evaluations then share one thread instead of starting one each.
+    pub fn run_on(&mut self, _stack: &Stack, term: &Term) -> Result<Value, KernelError> {
+        let outer = EVALUATING.replace(true);
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.run_here(term)));
+        EVALUATING.set(outer);
+        out.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 
     fn run_here(&mut self, term: &Term) -> Result<Value, KernelError> {

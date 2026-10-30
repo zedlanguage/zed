@@ -980,17 +980,28 @@ fn choose(rows: &[Row], j: usize, m: &Vals) -> Result<i128, Over> {
 /// the symbol's values over each conjunction the formula splits into. A bound past `i64` is
 /// read as no bound.
 pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Over> {
-    let mut out = IntervalSet::empty();
-    for conj in conjunctions(f)? {
+    project_each(f, std::slice::from_ref(sym))?.remove(0)
+}
+
+/// [`project`] onto each of `syms`, splitting the formula into conjunctions once: one result
+/// for each symbol, so that a symbol past a budget leaves the others projected.
+pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Vec<Result<IntervalSet, Over>>, Over> {
+    let mut out: Vec<Result<IntervalSet, Over>> =
+        syms.iter().map(|_| Ok(IntervalSet::empty())).collect();
+    for (conj, model) in conjunctions(f)? {
         let c = Formula::and(conj.into_iter().map(Formula::Con).collect());
-        out = out.join(&hull(&c, sym)?);
+        for (o, sym) in out.iter_mut().zip(syms) {
+            if let Ok(acc) = o {
+                *o = hull_from(&c, sym, &model).map(|h| acc.join(&h));
+            }
+        }
     }
     Ok(out)
 }
 
-/// The conjunctions a formula splits into, each a list of constraints, those found
-/// unsatisfiable dropped.
-fn conjunctions(f: &Formula) -> Result<Vec<Vec<Con>>, Over> {
+/// The conjunctions a formula splits into, each a list of constraints with a point that
+/// meets it, those found unsatisfiable dropped.
+fn conjunctions(f: &Formula) -> Result<Vec<(Vec<Con>, Model)>, Over> {
     fn go(
         pending: &mut Vec<(Formula, bool)>,
         cons: Vec<Con>,
@@ -1058,19 +1069,26 @@ fn conjunctions(f: &Formula) -> Result<Vec<Vec<Con>>, Over> {
     let mut live = Vec::new();
     for c in out {
         let f = Formula::and(c.iter().cloned().map(Formula::Con).collect());
-        if satisfiable(&f)?.is_some() {
-            live.push(c);
+        if let Some(m) = satisfiable(&f)? {
+            live.push((c, m));
         }
     }
     Ok(live)
 }
 
-/// The least and greatest values of a symbol over a conjunction, found by the monotone
-/// questions "is there a point with the symbol at most `v`" and "at least `v`".
+/// The least and greatest values of a symbol over a conjunction.
 fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Over> {
-    let Some(m) = satisfiable(c)? else {
-        return Ok(IntervalSet::empty());
-    };
+    match satisfiable(c)? {
+        Some(m) => hull_from(c, sym, &m),
+        None => Ok(IntervalSet::empty()),
+    }
+}
+
+/// [`hull`] given a point `m` of the conjunction, found by the monotone questions "is there a
+/// point with the symbol at most `v`" and "at least `v`". Each bound is searched outward
+/// from the point's value with steps that double, then by bisection, so it takes O(log d)
+/// questions for a bound at distance d, and one when the symbol is unbounded that way.
+fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Over> {
     let x = Lin::atom(sym.clone());
     let at = *m.get(sym).unwrap_or(&0);
     let with = |con: Con| -> Result<bool, Over> {
@@ -1079,26 +1097,41 @@ fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Over> {
     let below = |v: i128| with(Con::ge(&Lin::constant(v), &x)?);
     let above = |v: i128| with(Con::ge(&x, &Lin::constant(v))?);
     let (min, max) = (i128::from(i64::MIN), i128::from(i64::MAX));
+    // The last value of the monotone `holds` that is true, moving from `start` (true) by
+    // `dir` toward `end` (false).
+    let edge = |holds: &dyn Fn(i128) -> Result<bool, Over>,
+                start: i128,
+                end: i128,
+                dir: i128|
+     -> Result<i128, Over> {
+        let (mut good, mut step) = (start, 1i128);
+        let bad = loop {
+            let next = good + dir * step;
+            if (next - end) * dir >= 0 {
+                break end;
+            }
+            if !holds(next)? {
+                break next;
+            }
+            good = next;
+            step *= 2;
+        };
+        let (mut good, mut bad) = (good, bad);
+        while (bad - good).abs() > 1 {
+            let mid = good + (bad - good) / 2;
+            if holds(mid)? { good = mid } else { bad = mid }
+        }
+        Ok(good)
+    };
     let lo = if below(min)? {
         End::NegInf
     } else {
-        // The least `v` in `(min, at]` with a point at or below it.
-        let (mut l, mut h) = (min, at);
-        while h - l > 1 {
-            let mid = l + (h - l) / 2;
-            if below(mid)? { h = mid } else { l = mid }
-        }
-        End::from_i128(h)
+        End::from_i128(edge(&below, at, min, -1)?)
     };
     let hi = if above(max)? {
         End::PosInf
     } else {
-        let (mut l, mut h) = (at, max);
-        while h - l > 1 {
-            let mid = l + (h - l) / 2;
-            if above(mid)? { l = mid } else { h = mid }
-        }
-        End::from_i128(l)
+        End::from_i128(edge(&above, at, max, 1)?)
     };
     Ok(IntervalSet::range(lo, hi))
 }

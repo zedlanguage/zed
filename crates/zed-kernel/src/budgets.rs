@@ -12,6 +12,11 @@ use std::ops::RangeInclusive;
 /// product is enumerated in full and its proposition run at each.
 pub const ENUMERATION_BUDGET: u64 = 4_096;
 
+/// The fuel of the evaluation at one binding of an enumeration, so that an enumeration takes
+/// at most [`ENUMERATION_BUDGET`] times this many steps. A binding whose evaluation runs out
+/// removes nothing.
+pub const ENUMERATION_FUEL: u64 = 10_000;
+
 /// Rung 6: an integer binder's domain is cut to this interval.
 pub const BMC_INT: RangeInclusive<i64> = -8..=8;
 

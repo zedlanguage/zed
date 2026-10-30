@@ -30,7 +30,7 @@ fn prim(p: Prim, args: Vec<Term>) -> Term {
 }
 
 /// A random integer term over `x` and `y` that the domain states, of depth at most `d`.
-fn int_term(rng: &mut Rng, d: u32) -> Term {
+pub(crate) fn int_term(rng: &mut Rng, d: u32) -> Term {
     if d == 0 || rng.below(3) == 0 {
         return match rng.below(5) {
             0 | 1 => Term::Var("x".into()),
@@ -61,7 +61,7 @@ fn int_term(rng: &mut Rng, d: u32) -> Term {
 }
 
 /// A random test over `x` and `y` that the domain states, of depth at most `d`.
-fn bool_term(rng: &mut Rng, d: u32) -> Term {
+pub(crate) fn bool_term(rng: &mut Rng, d: u32) -> Term {
     let cmp = |rng: &mut Rng| {
         let p = rng.pick(&[Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge, Prim::Eq, Prim::Ne]);
         prim(p, vec![int_term(rng, d), int_term(rng, d)])

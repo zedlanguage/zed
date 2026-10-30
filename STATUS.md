@@ -102,15 +102,23 @@ in docs/layout.md.
 - Done: **L1.38**, the linear-relation domain (`zedc::store::presburger`): the Omega test,
   projection, and rung 2 with products of two symbols as atoms; the preimage keeps the relation
   a necessary box was projected from.
-- Next: L1.39.
+- Done: **L1.39**, the reduced product (`zedc::store::product`): each name's cell, type and
+  binding time, the scope's linear relation and written constraints, the reductions in rounds,
+  the enumeration within its budget and fuel, narrowing by tests, and the arms of a body.
+- Complexity audit (2026-10-30, DESIGN.md Part G, "Every algorithm is of low complexity"):
+  every finding is listed in COMPLEXITY.md with its state. Fixed so far: the preimage transfer
+  (exponential in `let` depth and guard nesting, now one computation per term and scope) and
+  the projection (one split into conjunctions for all names, galloping bounds). Scaling tests
+  use `zed_tests::scaling::check` (n against 8n, at most 24 times as long).
+- Next: the remaining COMPLEXITY.md items, then L1.40.
 - Plan extended (spec, 2026-10-30): **L30 — the editor**, a VS Code extension on the L25
   language server (static information per position, the dependency margin, recomputation of
   dirty nodes, values in place with visualizers), steps L30.1–L30.6.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 773 passed and 0 failed (22 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 24 of `zedc`, 6 of `zed-rt`, 711 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 25 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 10 in `l01_32_canonical_zir`, 23 in `l01_33_lowering`, 19 in `l01_34_memory`, 4 in `l01_35_mlir_study`, 17 in `l01_36_cranelift`, 7 in `l01_37_oracle`, 13 in `l01_38_presburger`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 792 passed and 0 failed (22 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 24 of `zedc`, 6 of `zed-rt`, 730 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 27 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 10 in `l01_32_canonical_zir`, 23 in `l01_33_lowering`, 19 in `l01_34_memory`, 4 in `l01_35_mlir_study`, 17 in `l01_36_cranelift`, 7 in `l01_37_oracle`, 13 in `l01_38_presburger`, 17 in `l01_39_reduced_product`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 12 in
@@ -167,6 +175,7 @@ about 48 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.36 | done | `zed-native::{run, object, through}` on `zed-rt::{Heap, Word, Rope, ports}`: values as two-word tags and payloads; integer, float and boolean arithmetic and comparisons inline with overflow, least-integer negation and NaN canonicalization matching the kernel; direct calls of resolved callees, entry functions for the rest; dups, drops and fused releases as runtime calls. Every corpus row, fused and unfused, gives the interpreter's outcome with the machine's allocations, count writes, frees, peak and sharing per run (58 runs, 125 cells, 129/139 writes). Strings are ropes copied once at the end; `Lines` ports equal the interpreter's on all 19 531 strings up to length 6 over a five-symbol alphabet; object files are reproducible. Negative controls: a missed drop, a missing dup, a missing result dup and a borrowed argument to a consuming parameter each fail; mutants: skipping one drop per node fails the corpus test. |
 | L1.37 | done | `zed_tests::oracle::{unit, program, native}`: each top-level binding with no function component (by the checker's type, `elab::Def::first_order`) and every table check, `main`'s waves included, run by the interpreter and by native code fused and unfused, outcomes compared as printed text; programs compared by the bytes of each port. Covers the L1 fences (6 comparisons), the step units (12), the enabled corpus programs (none at L1; each must also write its `.out`) and the four step programs on all 31 corpus inputs (248). Negative controls: an engine off by one on integers, one that drops a wave's writes and one that fails are each caught with both outcomes named; mutant: inline integer `+` emitted as `-` fails three of the four oracle tests. |
 | L1.38 | done | `zedc::store::presburger::{satisfiable, project, entails}`: the Omega test (Pugh's equality reduction, real and dark shadows, splinters) on negation normal form split into conjunctions; `preimage::relations` states a kernel term over its inputs (`+ - neg`, constant products, `** 0..=2`, `div`/`mod` by a constant, `abs min max`, branches, comparisons, `! && ||`). Tests: rung 2 proves `y * w + x < h * w` from the bounds and refutes it from `y <= h` with countermodel `h = 0, w = 1, x = 0, y = 0`; `xs[i + 1]`'s bound refuted at `i = 0, n = 1`; the z3 fixture `x ∈ [0..=49]` exact; the relation `a + b + c <= 49` kept past the enumeration budget; 60 random terms checked point by point, by model, by projection and by entailment against the interpreter on `[-5..=5]²`; budgets (17 symbols, 65 constraints) dropped; controls for each check. |
+| L1.39 | done | `zedc::store::product::{Product, Scope, arms, forward}`: the reduced product of the cell, the type and the binding time, with the scope's linear relation and written constraints; `Scope::reduce` in at most 16 rounds; enumeration within 4,096 members and 10,000 steps of fuel; `Scope::assume` narrows by a test's preimage, relation, congruence and literal equality. Tests: the design's arms (`n` in `1..=9`; an unreachable arm accepted; a static `if` read as static); negated equality by complement; a two-name relation; binding times; each reduction and budget alone; 300 random bodies checked against the interpreter at every point of a window, with a control that a wrong scope is caught. |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -451,6 +460,14 @@ about 48 s in a debug build, with `zed-kernel` built at opt-level 2.
   bounds, unioned; a product atom's countermodel is checked against the real product, and a
   point where it fails is "not proved". `Preimage::relation` is kept only on a result that is
   not exact. The congruence `x mod 7 != 3` is left to the enumeration until L1.39.
+- L1.39 (DESIGN.md L1.39): reductions at most 16 rounds; a type widens to its whole base
+  type; enumeration fuel 10,000 steps per evaluation (`zed_kernel::budgets::ENUMERATION_FUEL`),
+  out of fuel removes nothing; enumerations remembered per constraint and static values; a
+  false static constraint gives bottom; a test's linear relation is kept only when it needs no
+  auxiliary variable; the walk to the arms skips tests, function bodies and patterns;
+  `zed_kernel::on_stack` and `Evaluator::run_on` let many evaluations share one thread. The
+  `isPrime` example waits for L3. The preimage transfer remembers each (term, scope) result
+  and stops after `preimage::TRANSFER_FUEL` (100,000) terms with `StopKind::Budget`.
 - Checker performance (L1.38): the elaboration retried each carrier combination with full
   derivations, so a sum of five inputs took 23.7 s; the trial runs are now quiet and only a
   shown failure is re-run with its derivation (3.7 s; the step tests 55 s → 45 s; snapshots

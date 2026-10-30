@@ -5,11 +5,13 @@
 //! value, over a box of parameter domains. The interpreter is the oracle: `entries` checks
 //! the preimages of ordinary preconditions and guards against the points that meet them,
 //! `random` checks soundness, and exactness where it is claimed, on random terms and domains,
-//! `stops` checks that each term the scalar catalog does not cover is reported, and
-//! `tonicity` checks each claimed tonicity by running the primitive.
+//! `stops` checks that each term the scalar catalog does not cover is reported, `tonicity`
+//! checks each claimed tonicity by running the primitive, and `scaling` checks that the
+//! transfer's time grows no faster than the rule of low complexity allows.
 
 mod entries;
 mod random;
+mod scaling;
 mod stops;
 mod tonicity;
 
