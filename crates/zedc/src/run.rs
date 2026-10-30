@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Family, Lookup, Term, Value, World};
+use zed_kernel::{Evaluator, Family, Lookup, Provenance, Term, Value, World};
 
 use crate::ast::{self, Function, StmtKind, TypeKind};
 use crate::elab::{Unit, elaborate};
@@ -140,6 +140,26 @@ impl Program {
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<Wave, String> {
+        Ok(self.wave(lines, files, false)?.0)
+    }
+
+    /// Runs one wave as [`Program::run`] does, and records its provenance (step L1.20): the
+    /// fact address of every value, the wave stamp 0 first in each keypath.
+    pub fn provenance(
+        &self,
+        lines: &BTreeMap<String, Vec<u8>>,
+        files: impl Fn(&str) -> Arc<dyn Lookup>,
+    ) -> Result<(Wave, Provenance), String> {
+        let (wave, prov) = self.wave(lines, files, true)?;
+        Ok((wave, prov.expect("provenance was recorded")))
+    }
+
+    fn wave(
+        &self,
+        lines: &BTreeMap<String, Vec<u8>>,
+        files: impl Fn(&str) -> Arc<dyn Lookup>,
+        trace: bool,
+    ) -> Result<(Wave, Option<Provenance>), String> {
         let mut world = World::new();
         let mut record = Record::default();
         for (name, kind) in &self.inputs {
@@ -165,6 +185,9 @@ impl Program {
             .collect();
         let term = interp::prelude(Term::App(Arc::new(main), args));
         let mut ev = Evaluator::new(world);
+        if trace {
+            ev = ev.with_provenance(vec![Value::Int(0)]);
+        }
         ev.run(&term).map_err(|e| e.to_string())?;
         let mut writes = Vec::new();
         for name in &self.outputs {
@@ -181,7 +204,7 @@ impl Program {
             }
         }
         record.files = std::mem::take(&mut ev.world.reads);
-        Ok(Wave { writes, record })
+        Ok((Wave { writes, record }, ev.provenance()))
     }
 
     /// Runs the wave `record` holds, reading nothing from the world.

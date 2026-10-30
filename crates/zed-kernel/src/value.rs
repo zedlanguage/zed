@@ -168,7 +168,7 @@ impl Value {
     }
 
     /// The set of an `#errs({…})`.
-    fn errs(&self) -> Option<&Family> {
+    pub fn errs(&self) -> Option<&Family> {
         match self {
             Value::Atom(a) if &*a.name == "errs" && a.fields.is_empty() => {
                 match a.args.as_slice() {

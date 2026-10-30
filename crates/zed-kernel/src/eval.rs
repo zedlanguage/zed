@@ -5,7 +5,7 @@
 //! the spec leaves to the reference semantics are recorded in DESIGN.md sec:kernel,
 //! "Reference semantics", and repeated on the item they govern here.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::error::KernelError;
@@ -17,6 +17,7 @@ use num_bigint::BigInt;
 use num_traits::{Euclid, Signed, Zero};
 
 use crate::num::MAX_BITS;
+use crate::provenance::{Fact, FactAddress, NodeAddress, Provenance, children, unshare};
 use crate::term::{FixKind, GuardPos, Pattern, Prim, Term};
 use crate::value::Value;
 
@@ -85,17 +86,35 @@ pub struct Partial {
 struct Frame {
     name: Arc<str>,
     value: V,
+    /// The fact the value came from, when provenance is recorded and it came from one.
+    fact: Option<usize>,
     next: Env,
 }
 
 type Env = Option<Rc<Frame>>;
 
 fn bind(env: &Env, name: Arc<str>, value: V) -> Env {
+    bind_fact(env, name, value, None)
+}
+
+fn bind_fact(env: &Env, name: Arc<str>, value: V, fact: Option<usize>) -> Env {
     Some(Rc::new(Frame {
         name,
         value,
+        fact,
         next: env.clone(),
     }))
+}
+
+fn lookup_fact(env: &Env, name: &str) -> Option<usize> {
+    let mut cur = env;
+    while let Some(frame) = cur {
+        if &*frame.name == name {
+            return frame.fact;
+        }
+        cur = &frame.next;
+    }
+    None
 }
 
 fn lookup(env: &Env, name: &str) -> Option<V> {
@@ -221,6 +240,26 @@ impl World {
     }
 }
 
+/// What a run records for its provenance (step L1.20).
+#[derive(Debug, Default)]
+struct Trace {
+    /// The preorder position of each node of the evaluated term, by the node's address in
+    /// memory, which is used during the run only and never enters a fact address.
+    positions: HashMap<usize, u32>,
+    term: Option<Term>,
+    facts: Vec<Fact>,
+    /// The positions of the call sites the run is inside.
+    calls: Vec<u32>,
+    /// The keypath of the region instance the run is inside.
+    keys: Vec<Value>,
+    /// The facts read so far by the node being evaluated, one entry per subterm evaluated,
+    /// `None` for a value that came from no fact, such as a family key.
+    reads: Vec<Option<usize>>,
+    /// The call site and the facts of the arguments of the next closure call.
+    site: Option<u32>,
+    args: Vec<Option<usize>>,
+}
+
 /// The reference evaluator, holding the world and the remaining fuel.
 pub struct Evaluator {
     /// The ports.
@@ -233,6 +272,7 @@ pub struct Evaluator {
     schedule: Schedule,
     /// The number of definedness `fix` evaluations begun, which names each one's family.
     fixes: u64,
+    trace: Option<Trace>,
 }
 
 /// Evaluates a closed term with no ports and the default fuel, expecting data.
@@ -250,7 +290,28 @@ impl Evaluator {
             pure: 0,
             schedule: Schedule::default(),
             fixes: 0,
+            trace: None,
         }
+    }
+
+    /// Records the provenance of the next run (step L1.20), which
+    /// [`Evaluator::provenance`] then returns. Every keypath begins with `root`, the wave
+    /// stamp of a port region's wave, or nothing.
+    pub fn with_provenance(mut self, root: Vec<Value>) -> Self {
+        self.trace = Some(Trace {
+            keys: root,
+            ..Trace::default()
+        });
+        self
+    }
+
+    /// The provenance the last run recorded, if it was asked for and the run gave a value.
+    pub fn provenance(&mut self) -> Option<Provenance> {
+        let t = self.trace.as_mut()?;
+        Some(Provenance {
+            term: t.term.take()?,
+            facts: std::mem::take(&mut t.facts),
+        })
     }
 
     /// Sets the order in which definedness `fix` entries are defined.
@@ -280,7 +341,29 @@ impl Evaluator {
     }
 
     fn run_here(&mut self, term: &Term) -> Result<Value, KernelError> {
-        match self.eval(term, &None) {
+        let copy;
+        let term = match &mut self.trace {
+            Some(_) => {
+                copy = unshare(term);
+                &copy
+            }
+            None => term,
+        };
+        if let Some(t) = &mut self.trace {
+            t.positions.clear();
+            let mut stack = vec![term];
+            while let Some(node) = stack.pop() {
+                let n = t.positions.len() as u32;
+                t.positions.insert(node as *const Term as usize, n);
+                stack.extend(children(node).into_iter().rev());
+            }
+            t.facts.clear();
+        }
+        let out = self.eval(term, &None);
+        if let (Some(t), Ok(_)) = (&mut self.trace, &out) {
+            t.term = Some(term.clone());
+        }
+        match out {
             Ok(V::Data(v)) => Ok(v),
             Ok(_) => Err(KernelError::Type(
                 "the program's result is a function".into(),
@@ -314,7 +397,78 @@ impl Evaluator {
         }
     }
 
+    /// Evaluates `term`, and when provenance is recorded, records its fact, whose inputs are
+    /// the facts its subterms read. A variable is an edge, not a node: it passes on the fact
+    /// of the value it names.
     fn eval(&mut self, term: &Term, env: &Env) -> R<V> {
+        let Some(t) = &mut self.trace else {
+            return self.eval_node(term, env);
+        };
+        if let Term::Var(name) = term {
+            let out = self.eval_node(term, env);
+            if out.is_ok() {
+                let fact = lookup_fact(env, name);
+                self.trace.as_mut().expect("on").reads.push(fact);
+            }
+            return out;
+        }
+        let outer = std::mem::take(&mut t.reads);
+        let out = self.eval_node(term, env);
+        let t = self.trace.as_mut().expect("on");
+        let inputs = std::mem::replace(&mut t.reads, outer);
+        if let Ok(v) = &out {
+            let mut node = t.calls.clone();
+            node.push(t.positions[&(term as *const Term as usize)]);
+            t.facts.push(Fact {
+                address: FactAddress {
+                    node: NodeAddress(node),
+                    keypath: t.keys.clone(),
+                },
+                value: match v {
+                    V::Data(d) => Some(d.clone()),
+                    _ => None,
+                },
+                inputs: inputs.into_iter().flatten().collect(),
+            });
+            let id = t.facts.len() - 1;
+            t.reads.push(Some(id));
+        }
+        out
+    }
+
+    /// The fact of the value the last subterm evaluated gave.
+    fn last_fact(&self) -> Option<usize> {
+        self.trace.as_ref()?.reads.last().copied().flatten()
+    }
+
+    /// The position of `term`, when provenance is recorded.
+    fn pos(&self, term: &Term) -> Option<u32> {
+        Some(self.trace.as_ref()?.positions[&(term as *const Term as usize)])
+    }
+
+    /// Names the call site and the argument facts of the next closure call.
+    fn aim(&mut self, site: Option<u32>, args: Vec<Option<usize>>) {
+        if let Some(t) = &mut self.trace {
+            t.site = site;
+            t.args = args;
+        }
+    }
+
+    /// Enters the region instance at `keys`, below the current one.
+    fn enter(&mut self, keys: &[Value]) {
+        if let Some(t) = &mut self.trace {
+            t.keys.extend_from_slice(keys);
+        }
+    }
+
+    /// Leaves the last `n` coordinates of the keypath.
+    fn leave(&mut self, n: usize) {
+        if let Some(t) = &mut self.trace {
+            t.keys.truncate(t.keys.len() - n);
+        }
+    }
+
+    fn eval_node(&mut self, term: &Term, env: &Env) -> R<V> {
         match term {
             Term::Lit(v) => Ok(V::Data(v.clone())),
             Term::Var(name) => match lookup(env, name) {
@@ -333,6 +487,11 @@ impl Evaluator {
                     .iter()
                     .map(|a| self.eval(a, env))
                     .collect::<R<Vec<_>>>()?;
+                let facts = match &self.trace {
+                    Some(t) => t.reads[t.reads.len() - args.len()..].to_vec(),
+                    None => Vec::new(),
+                };
+                self.aim(self.pos(term), facts);
                 self.apply(&f, args)
             }
             Term::Prim(p, args) => {
@@ -344,7 +503,8 @@ impl Evaluator {
             }
             Term::Let(name, e, body) => {
                 let v = self.eval(e, env)?;
-                self.eval(body, &bind(env, name.clone(), v))
+                let fact = self.last_fact();
+                self.eval(body, &bind_fact(env, name.clone(), v, fact))
             }
             Term::If(c, a, b) => match self.data(c, env)? {
                 Value::Bool(true) => self.eval(a, env),
@@ -354,9 +514,10 @@ impl Evaluator {
             },
             Term::Match(scrutinee, arms) => {
                 let v = self.data(scrutinee, env)?;
+                let fact = self.last_fact();
                 for (pat, body) in arms {
                     let mut env2 = env.clone();
-                    if matches(pat, &v, &mut env2) {
+                    if matches(pat, &v, &mut env2, fact) {
                         return self.eval(body, &env2);
                     }
                 }
@@ -368,10 +529,10 @@ impl Evaluator {
                 let out = domain
                     .keys()
                     .map(|k| {
-                        Ok((
-                            vec![k.clone()],
-                            self.data(body, &bind(env, var.clone(), V::Data(k.clone())))?,
-                        ))
+                        self.enter(std::slice::from_ref(k));
+                        let v = self.data(body, &bind(env, var.clone(), V::Data(k.clone())));
+                        self.leave(1);
+                        Ok((vec![k.clone()], v?))
                     })
                     .collect::<R<Vec<_>>>();
                 self.pure -= 1;
@@ -384,17 +545,21 @@ impl Evaluator {
                 witness: _,
             } => {
                 let family = self.family(family, env)?;
+                let from = self.last_fact();
+                let sites = (self.pos(kf), self.pos(vf));
                 let (kf, vf) = (self.eval(kf, env)?, self.eval(vf, env)?);
                 self.pure += 1;
-                let out = self.reindex(&family, &kf, &vf);
+                let out = self.reindex(&family, (&kf, sites.0), (&vf, sites.1), from);
                 self.pure -= 1;
                 Ok(V::Data(Value::Family(out?)))
             }
             Term::Discard { family, sel } => {
                 let family = self.family(family, env)?;
+                let from = self.last_fact();
+                let site = self.pos(sel);
                 let sel = self.eval(sel, env)?;
                 self.pure += 1;
-                let out = self.discard(&family, &sel, &mut Vec::new());
+                let out = self.discard(&family, (&sel, site), from, &mut Vec::new());
                 self.pure -= 1;
                 Ok(V::Data(Value::Family(out?)))
             }
@@ -406,10 +571,12 @@ impl Evaluator {
                 ..
             } => {
                 let family = self.family(family, env)?;
+                let from = self.last_fact();
+                let site = self.pos(op);
                 let op = self.eval(op, env)?;
                 let identity = identity.as_ref().map(|t| self.data(t, env)).transpose()?;
                 self.pure += 1;
-                let out = self.fold(&family, &op, identity, *depth);
+                let out = self.fold(&family, (&op, site), from, identity, *depth);
                 self.pure -= 1;
                 Ok(V::Data(out?))
             }
@@ -436,8 +603,11 @@ impl Evaluator {
                 pos,
             } => {
                 let init = self.data(init, env)?;
+                let from = self.last_fact();
+                let sites = (self.pos(step), self.pos(guard));
                 let (step, guard) = (self.eval(step, env)?, self.eval(guard, env)?);
-                Ok(V::Data(self.generations(init, &step, &guard, *pos)?))
+                let (step, guard) = ((&step, sites.0), (&guard, sites.1));
+                Ok(V::Data(self.generations(init, from, step, guard, *pos)?))
             }
             Term::Read(port) => {
                 self.check_impure(port)?;
@@ -471,6 +641,10 @@ impl Evaluator {
 
     fn apply(&mut self, f: &V, args: Vec<V>) -> R<V> {
         self.burn()?;
+        let (site, mut facts) = match &mut self.trace {
+            Some(t) => (t.site.take(), std::mem::take(&mut t.args)),
+            None => (None, Vec::new()),
+        };
         match f {
             V::Closure(c) => {
                 if c.params.len() != args.len() {
@@ -483,13 +657,20 @@ impl Evaluator {
                 if self.depth >= MAX_DEPTH {
                     return Err(KernelError::TooDeep.into());
                 }
+                facts.resize(args.len(), None);
                 let mut env = c.env.clone();
-                for (p, a) in c.params.iter().zip(args) {
-                    env = bind(&env, p.clone(), a);
+                for ((p, a), fact) in c.params.iter().zip(args).zip(facts) {
+                    env = bind_fact(&env, p.clone(), a, fact);
+                }
+                if let (Some(t), Some(site)) = (&mut self.trace, site) {
+                    t.calls.push(site);
                 }
                 self.depth += 1;
                 let out = self.eval(&c.body, &env);
                 self.depth -= 1;
+                if let (Some(t), Some(_)) = (&mut self.trace, site) {
+                    t.calls.pop();
+                }
                 out
             }
             V::Prim(p) => self.prim(*p, args),
@@ -581,29 +762,53 @@ impl Evaluator {
         Ok(V::Data(prim_data(p, vals)?))
     }
 
-    fn reindex(&mut self, family: &Family, kf: &V, vf: &V) -> R<Family> {
+    /// Each region call below reads its argument from the fact `from`, the region's input,
+    /// and runs at the call site of the operand it calls, inside the region instance of its
+    /// leaf, entry, step or iterate.
+    fn reindex(
+        &mut self,
+        family: &Family,
+        (kf, kf_site): (&V, Option<u32>),
+        (vf, vf_site): (&V, Option<u32>),
+        from: Option<usize>,
+    ) -> R<Family> {
         let mut out = Vec::new();
         for (path, v) in family.leaves() {
-            let p = Value::Path(path);
-            let key = match self.call2(kf, p.clone(), v.clone())? {
+            self.enter(&path);
+            let p = Value::Path(path.clone());
+            self.aim(kf_site, vec![from; 2]);
+            let key = self.call2(kf, p.clone(), v.clone());
+            self.aim(vf_site, vec![from; 2]);
+            let value = key.and_then(|key| Ok((key, self.call2(vf, p, v)?)));
+            self.leave(path.len());
+            let (key, value) = value?;
+            let key = match key {
                 Value::Path(keys) => keys,
                 single => vec![single],
             };
-            out.push((key, self.call2(vf, p, v)?));
+            out.push((key, value));
         }
         Ok(Family::from_leaves(out)?)
     }
 
-    fn discard(&mut self, family: &Family, sel: &V, prefix: &mut Keypath) -> R<Family> {
+    fn discard(
+        &mut self,
+        family: &Family,
+        (sel, site): (&V, Option<u32>),
+        from: Option<usize>,
+        prefix: &mut Keypath,
+    ) -> R<Family> {
         let mut out = Vec::new();
         for (k, v) in family.iter() {
             prefix.push(k.clone());
+            self.enter(std::slice::from_ref(k));
+            self.aim(site, vec![from; 2]);
             let verdict = self.call2(sel, Value::Path(prefix.clone()), v.clone())?;
             match verdict {
                 Value::Bool(true) => match v {
                     Value::Family(sub) => out.push((
                         vec![k.clone()],
-                        Value::Family(self.discard(sub, sel, prefix)?),
+                        Value::Family(self.discard(sub, (sel, site), from, prefix)?),
                     )),
                     leaf => out.push((vec![k.clone()], leaf.clone())),
                 },
@@ -616,19 +821,27 @@ impl Evaluator {
                     return type_err(format!("a discard selector returned {other}"));
                 }
             }
+            self.leave(1);
             prefix.pop();
         }
         Ok(Family::from_leaves(out)?)
     }
 
-    fn fold(&mut self, family: &Family, op: &V, identity: Option<Value>, depth: usize) -> R<Value> {
+    fn fold(
+        &mut self,
+        family: &Family,
+        op: (&V, Option<u32>),
+        from: Option<usize>,
+        identity: Option<Value>,
+        depth: usize,
+    ) -> R<Value> {
         let leaves = family.leaves();
         if leaves.iter().any(|(p, _)| p.len() != depth) {
             return Err(KernelError::MixedDepth.into());
         }
         if depth == 1 {
             let values: Vec<Value> = leaves.into_iter().map(|(_, v)| v).collect();
-            return self.reduce(&values, op, identity);
+            return self.reduce(&values, op, from, identity);
         }
         // Collapse the innermost level beneath each outer keypath.
         let mut groups: BTreeMap<Keypath, Vec<Value>> = BTreeMap::new();
@@ -638,14 +851,24 @@ impl Evaluator {
         }
         let mut out = Vec::new();
         for (path, values) in groups {
-            out.push((path, self.reduce(&values, op, identity.clone())?));
+            self.enter(&path);
+            let v = self.reduce(&values, op, from, identity.clone());
+            self.leave(path.len());
+            out.push((path, v?));
         }
         Ok(Value::Family(Family::from_leaves(out)?))
     }
 
     /// Reduces one level in key order. A fold of the primitive `+` over floats is the exact
     /// sum, rounded once; any other operator runs on the canonical tree.
-    fn reduce(&mut self, values: &[Value], op: &V, identity: Option<Value>) -> R<Value> {
+    /// The `i`th application of `op` runs at step `i` of the level.
+    fn reduce(
+        &mut self,
+        values: &[Value],
+        (op, site): (&V, Option<u32>),
+        from: Option<usize>,
+        identity: Option<Value>,
+    ) -> R<Value> {
         if values.is_empty() {
             return Ok(identity.unwrap_or_else(|| Value::atom("empty")));
         }
@@ -664,24 +887,44 @@ impl Evaluator {
                 return Ok(Value::float(exact_sum(&xs)));
             }
         }
-        canonical_tree(values, &mut |a, b| self.call2(op, a, b))
+        let mut step = 0;
+        canonical_tree(values, &mut |a, b| {
+            self.enter(&[Value::Int(step)]);
+            step += 1;
+            self.aim(site, vec![from; 2]);
+            let v = self.call2(op, a, b);
+            self.leave(1);
+            v
+        })
     }
 
+    /// Iterate `i`'s step and join run at coordinate `i`, the step reading the fact of the
+    /// iterate before.
     fn fix_lattice(&mut self, init: &Term, step: &Term, join: &Term, env: &Env) -> R<Value> {
         let mut x = self.data(init, env)?;
+        let mut from = self.last_fact();
+        let sites = (self.pos(step), self.pos(join));
         let (step, join) = (self.eval(step, env)?, self.eval(join, env)?);
-        loop {
+        for i in 0.. {
             self.burn()?;
-            let next = match self.apply(&step, vec![V::Data(x.clone())])? {
-                V::Data(v) => v,
-                _ => return type_err("a fix step returned a function"),
-            };
-            let joined = self.call2(&join, x.clone(), next)?;
+            self.enter(&[Value::Int(i)]);
+            self.aim(sites.0, vec![from]);
+            let next = self.apply(&step, vec![V::Data(x.clone())]);
+            let next_fact = self.last_fact();
+            self.aim(sites.1, vec![from, next_fact]);
+            let joined = next.and_then(|next| match next {
+                V::Data(next) => self.call2(&join, x.clone(), next),
+                _ => type_err("a fix step returned a function"),
+            });
+            self.leave(1);
+            let joined = joined?;
+            from = self.last_fact();
             if joined == x {
                 return Ok(x);
             }
             x = joined;
         }
+        unreachable!("the fuel ends the ascent")
     }
 
     fn fix_definedness(
@@ -733,10 +976,26 @@ impl Evaluator {
             fix.key.clone(),
             V::Data(k.clone()),
         );
-        match self.eval(fix.body, &env) {
+        // An attempt that reads an undefined entry is not a fact: what it recorded is
+        // dropped, and the entry's fact is the attempt that defines it.
+        let mark = self
+            .trace
+            .as_ref()
+            .map(|t| (t.facts.len(), t.calls.len(), t.keys.len()));
+        self.enter(std::slice::from_ref(k));
+        let out = self.eval(fix.body, &env);
+        self.leave(1);
+        match out {
             Ok(V::Data(v)) => Ok(Ok(v)),
             Ok(_) => type_err("a fix entry is a function"),
-            Err(Stop::Undefined { fix: id, key }) if id == fix.id => Ok(Err(key)),
+            Err(Stop::Undefined { fix: id, key }) if id == fix.id => {
+                if let (Some(t), Some((facts, calls, keys))) = (&mut self.trace, mark) {
+                    t.facts.truncate(facts);
+                    t.calls.truncate(calls);
+                    t.keys.truncate(keys);
+                }
+                Ok(Err(key))
+            }
             Err(e) => Err(e),
         }
     }
@@ -816,19 +1075,33 @@ impl Evaluator {
         Ok(stalled.into_iter().collect())
     }
 
-    fn generations(&mut self, init: Value, step: &V, guard: &V, pos: GuardPos) -> R<Value> {
+    /// The step making generation `t` and the guard testing it run at coordinate `t`, each
+    /// reading the fact of the frame before.
+    fn generations(
+        &mut self,
+        init: Value,
+        mut from: Option<usize>,
+        (step, step_site): (&V, Option<u32>),
+        guard: (&V, Option<u32>),
+        pos: GuardPos,
+    ) -> R<Value> {
         let mut frames = vec![init];
         loop {
-            if pos == GuardPos::Before && !self.go_on(guard, &mut frames)? {
+            if pos == GuardPos::Before && !self.go_on(guard, from, &mut frames)? {
                 break;
             }
             self.burn()?;
             let last = frames.last().expect("generation 0 is present").clone();
-            match self.apply(step, vec![V::Data(last)])? {
+            self.enter(&[Value::Int(frames.len() as i64)]);
+            self.aim(step_site, vec![from]);
+            let next = self.apply(step, vec![V::Data(last)]);
+            self.leave(1);
+            match next? {
                 V::Data(next) => frames.push(next),
                 _ => return type_err("a gen step returned a function"),
             }
-            if pos == GuardPos::After && !self.go_on(guard, &mut frames)? {
+            from = self.last_fact();
+            if pos == GuardPos::After && !self.go_on(guard, from, &mut frames)? {
                 break;
             }
         }
@@ -841,9 +1114,18 @@ impl Evaluator {
 
     /// Tests a `gen` guard on the last frame. A result that is not a bool ends the loop and
     /// is appended as the stream's last entry.
-    fn go_on(&mut self, guard: &V, frames: &mut Vec<Value>) -> R<bool> {
+    fn go_on(
+        &mut self,
+        (guard, site): (&V, Option<u32>),
+        from: Option<usize>,
+        frames: &mut Vec<Value>,
+    ) -> R<bool> {
         let last = frames.last().expect("generation 0 is present").clone();
-        match self.apply(guard, vec![V::Data(last)])? {
+        self.enter(&[Value::Int(frames.len() as i64 - 1)]);
+        self.aim(site, vec![from]);
+        let verdict = self.apply(guard, vec![V::Data(last)]);
+        self.leave(1);
+        match verdict? {
             V::Data(Value::Bool(b)) => Ok(b),
             V::Data(end @ Value::Atom(_)) => {
                 frames.push(end);
@@ -885,11 +1167,13 @@ impl SplitMix {
     }
 }
 
-fn matches(pat: &Pattern, v: &Value, env: &mut Env) -> bool {
+/// Whether `v` matches `pat`, binding its variables in `env` to parts of `v`, which came
+/// from `fact`.
+fn matches(pat: &Pattern, v: &Value, env: &mut Env, fact: Option<usize>) -> bool {
     match (pat, v) {
         (Pattern::Wild, _) => true,
         (Pattern::Bind(name), v) => {
-            *env = bind(env, name.clone(), V::Data(v.clone()));
+            *env = bind_fact(env, name.clone(), V::Data(v.clone()), fact);
             true
         }
         (Pattern::Lit(l), v) => l == v,
@@ -898,18 +1182,21 @@ fn matches(pat: &Pattern, v: &Value, env: &mut Env) -> bool {
             a.name == *name
                 && a.fields.is_empty()
                 && ps.len() == a.args.len()
-                && ps.iter().zip(&a.args).all(|(p, x)| matches(p, x, env))
+                && ps
+                    .iter()
+                    .zip(&a.args)
+                    .all(|(p, x)| matches(p, x, env, fact))
         }
         (Pattern::Fields(name, fs), Value::Atom(a)) => {
             a.name == *name
                 && !a.fields.is_empty()
                 && fs.iter().all(|(f, p)| match a.fields.binary_search(f) {
-                    Ok(i) => matches(p, &a.args[i], env),
+                    Ok(i) => matches(p, &a.args[i], env, fact),
                     Err(_) => false,
                 })
         }
         (Pattern::Tuple(ps), Value::Tuple(xs)) => {
-            ps.len() == xs.len() && ps.iter().zip(xs).all(|(p, x)| matches(p, x, env))
+            ps.len() == xs.len() && ps.iter().zip(xs).all(|(p, x)| matches(p, x, env, fact))
         }
         _ => false,
     }
