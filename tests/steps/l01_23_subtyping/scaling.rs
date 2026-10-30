@@ -210,3 +210,57 @@ fn a_type_built_on_another_thread_is_the_same_type() {
     assert!(here.subtype(&there) && there.subtype(&here));
     assert!(!here.subtype(&nested(20, 8)));
 }
+
+#[test]
+fn literals_and_atoms_joined_one_at_a_time_scale() {
+    // A union or difference copied both sets of literals or atom names, and a type's hash
+    // read every one, so joining `n` of them one at a time took `O(n²)` steps (ratio 66).
+    // The sets are now persistent, each operation walks the smaller one, and the hash of a
+    // set is a sum kept as it changes.
+    let atom = |i: usize| Type::atom(&format!("a{i}"));
+    scaling::check("literals joined one at a time, by count", 1000, |n| {
+        let u = (0..n).fold(Type::empty(), |u, i| &u | &lit(i));
+        assert!(lit(n / 2).subtype(&u) && !lit(n).subtype(&u));
+        assert_eq!(u, Type::union_all((0..n).rev().map(lit)));
+    });
+    scaling::check("atoms joined one at a time, by count", 1000, |n| {
+        let u = (0..n).fold(Type::empty(), |u, i| &u | &atom(i));
+        assert!(atom(n / 2).subtype(&u) && !atom(n).subtype(&u));
+        assert_eq!(u, Type::union_all((0..n).rev().map(atom)));
+    });
+    scaling::check(
+        "literals and atoms removed one at a time, by count",
+        1000,
+        |n| {
+            let all = &Type::union_all((0..n).map(lit)) | &Type::union_all((0..n).map(atom));
+            let left = (1..n).fold(all, |u, i| &(&u - &lit(i)) - &atom(i));
+            assert_eq!(left, &lit(0) | &atom(0));
+        },
+    );
+}
+
+#[test]
+fn literal_and_atom_sets_combine_exactly() {
+    // Every pair of signs and both connectives, with sets of unequal sizes in either order.
+    let atom = |i: usize| Type::atom(&format!("a{i}"));
+    let set = |r: std::ops::Range<usize>| {
+        &Type::union_all(r.clone().map(lit)) | &Type::union_all(r.map(atom))
+    };
+    let (a, b) = (set(0..6), set(4..5));
+    let both = &lit(4) | &atom(4);
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        for (nx, ny) in [(false, false), (false, true), (true, false), (true, true)] {
+            let x = if nx { !x } else { x.clone() };
+            let y = if ny { !y } else { y.clone() };
+            let (or, and) = (&x | &y, &x & &y);
+            for v in (0..8).flat_map(|i| [lit(i), atom(i)]) {
+                let (in_x, in_y) = (v.subtype(&x), v.subtype(&y));
+                assert_eq!(v.subtype(&or), in_x || in_y, "{v} in {x} | {y}");
+                assert_eq!(v.subtype(&and), in_x && in_y, "{v} in {x} & {y}");
+            }
+            assert_eq!(&(&or - &and) | &and, or);
+        }
+    }
+    assert_eq!(&a & &b, both);
+    assert_eq!(&(&a - &b) | &both, a);
+}

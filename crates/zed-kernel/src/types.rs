@@ -25,6 +25,7 @@ mod bdd;
 mod empty;
 pub mod rec;
 
+use imbl::{OrdMap, OrdSet};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{BitAnd, BitOr, Not, Sub};
@@ -182,18 +183,23 @@ struct Parts {
     morphisms: Part<Morphism>,
 }
 
-/// A finite set of literals, or the complement of one within its base type.
+/// A finite set of literals, or the complement of one within its base type. The set is
+/// persistent, so that a union or difference with a small set copies nothing else, and `sum`,
+/// the wrapping sum of its literals' hashes, is kept as it changes.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 struct Lits {
     cofinite: bool,
-    values: BTreeSet<Value>,
+    values: OrdSet<Value>,
+    sum: u64,
 }
 
 /// Per atom name, its part; a name not listed has every payload when `cofinite`, else none.
+/// The map is persistent, and `sum` is the wrapping sum of its entries' hashes.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 struct Atoms {
     cofinite: bool,
-    names: BTreeMap<Arc<str>, AtomPart>,
+    names: OrdMap<Arc<str>, AtomPart>,
+    sum: u64,
 }
 
 /// The atoms of one name in a type: the bare atom, and those whose payload is in `payload`, a
@@ -219,20 +225,11 @@ thread_local! {
 
 impl Parts {
     fn hash(&self) -> u64 {
-        let lits = |h, l: &Lits| {
-            l.values
-                .iter()
-                .fold(mix(h, u64::from(l.cofinite)), |h, v| mix(h, scalar(v)))
-        };
         let mut h = mix(0, u64::from(self.bools));
         for l in [&self.ints, &self.rats, &self.floats, &self.strings] {
-            h = lits(h, l);
+            h = mix(mix(h, u64::from(l.cofinite)), l.sum);
         }
-        h = mix(h, u64::from(self.atoms.cofinite));
-        for (name, a) in &self.atoms.names {
-            h = mix(mix(h, bytes(name.as_bytes())), u64::from(a.bare));
-            h = mix(h, a.payload.digest());
-        }
+        h = mix(mix(h, u64::from(self.atoms.cofinite)), self.atoms.sum);
         h = mix(h, u64::from(self.tuples.rest));
         for (len, part) in &self.tuples.lens {
             h = mix(mix(h, *len as u64), part.digest());
@@ -363,9 +360,7 @@ impl Type {
 
     /// The type of one scalar literal or bare atom; `None` for any other value.
     pub fn lit(v: &Value) -> Option<Type> {
-        let one = |l: &mut Lits| {
-            l.values.insert(v.clone());
-        };
+        let one = |l: &mut Lits| l.insert(v);
         Some(match v {
             Value::Bool(b) => Type::with(|p| p.bools = 1 << u8::from(*b)),
             Value::Int(_) | Value::Big(_) => Type::with(|p| one(&mut p.ints)),
@@ -391,9 +386,7 @@ impl Type {
     fn atom_part(name: &str, bare: bool, payload: Type) -> Type {
         let part = AtomPart { bare, payload };
         let mut atoms = Atoms::default();
-        if !part.is_none() {
-            atoms.names.insert(name.into(), part);
-        }
+        atoms.set(&name.into(), part);
         Type::with(|p| p.atoms = atoms)
     }
 
@@ -636,25 +629,83 @@ impl Lits {
         self.values.contains(v) != self.cofinite
     }
 
+    fn insert(&mut self, v: &Value) {
+        if self.values.insert(v.clone()).is_none() {
+            self.sum = self.sum.wrapping_add(scalar(v));
+        }
+    }
+
+    fn remove(&mut self, v: &Value) {
+        if self.values.remove(v).is_some() {
+            self.sum = self.sum.wrapping_sub(scalar(v));
+        }
+    }
+
+    /// The sets combined by `op`, each in `O(s log l)` steps for the smaller set's `s`
+    /// literals and the larger's `l`: the result is the larger set changed by the smaller's
+    /// literals, or the smaller set's literals filtered.
     fn zip(&self, other: &Lits, op: Op) -> Lits {
-        let (a, b) = (&self.values, &other.values);
-        let (cofinite, values) = match (op, self.cofinite, other.cofinite) {
-            (Op::Or, false, false) => (false, a | b),
-            (Op::Or, false, true) => (true, b - a),
-            (Op::Or, true, false) => (true, a - b),
-            (Op::Or, true, true) => (true, a & b),
-            (Op::And, false, false) => (false, a & b),
-            (Op::And, false, true) => (false, a - b),
-            (Op::And, true, false) => (false, b - a),
-            (Op::And, true, true) => (true, a | b),
+        let (a, b) = (self, other);
+        let (cofinite, mut out) = match (op, a.cofinite, b.cofinite) {
+            (Op::Or, false, false) => (false, Lits::union(a, b)),
+            (Op::Or, false, true) => (true, Lits::minus(b, a)),
+            (Op::Or, true, false) => (true, Lits::minus(a, b)),
+            (Op::Or, true, true) => (true, Lits::meet(a, b)),
+            (Op::And, false, false) => (false, Lits::meet(a, b)),
+            (Op::And, false, true) => (false, Lits::minus(a, b)),
+            (Op::And, true, false) => (false, Lits::minus(b, a)),
+            (Op::And, true, true) => (true, Lits::union(a, b)),
         };
-        Lits { cofinite, values }
+        out.cofinite = cofinite;
+        out
+    }
+
+    fn union(a: &Lits, b: &Lits) -> Lits {
+        let (large, small) = if a.values.len() >= b.values.len() {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let mut out = large.clone();
+        for v in &small.values {
+            out.insert(v);
+        }
+        out
+    }
+
+    fn meet(a: &Lits, b: &Lits) -> Lits {
+        let (large, small) = if a.values.len() >= b.values.len() {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let mut out = Lits::default();
+        for v in small.values.iter().filter(|&v| large.values.contains(v)) {
+            out.insert(v);
+        }
+        out
+    }
+
+    /// The literals of `a` not in `b`.
+    fn minus(a: &Lits, b: &Lits) -> Lits {
+        if a.values.len() <= b.values.len() {
+            let mut out = Lits::default();
+            for v in a.values.iter().filter(|&v| !b.values.contains(v)) {
+                out.insert(v);
+            }
+            return out;
+        }
+        let mut out = a.clone();
+        for v in &b.values {
+            out.remove(v);
+        }
+        out
     }
 
     fn not(&self) -> Lits {
         Lits {
             cofinite: !self.cofinite,
-            values: self.values.clone(),
+            ..self.clone()
         }
     }
 }
@@ -672,10 +723,6 @@ impl AtomPart {
             bare: false,
             payload: Type::empty(),
         }
-    }
-
-    fn is_none(&self) -> bool {
-        *self == AtomPart::none()
     }
 
     fn zip(&self, other: &AtomPart, op: Op) -> AtomPart {
@@ -705,38 +752,63 @@ impl Atoms {
         }
     }
 
-    /// Drops the names whose part is what an unlisted name has.
-    fn normal(cofinite: bool, names: BTreeMap<Arc<str>, AtomPart>) -> Atoms {
-        let default = if cofinite {
+    fn entry(name: &str, p: &AtomPart) -> u64 {
+        mix(
+            mix(bytes(name.as_bytes()), u64::from(p.bare)),
+            p.payload.digest(),
+        )
+    }
+
+    /// Gives `name` the part `p`, unlisting it when `p` is what an unlisted name has.
+    fn set(&mut self, name: &Arc<str>, p: AtomPart) {
+        if let Some(old) = self.names.remove(name) {
+            self.sum = self.sum.wrapping_sub(Atoms::entry(name, &old));
+        }
+        let default = if self.cofinite {
             AtomPart::all()
         } else {
             AtomPart::none()
         };
-        let names = names.into_iter().filter(|(_, p)| *p != default).collect();
-        Atoms { cofinite, names }
+        if p != default {
+            self.sum = self.sum.wrapping_add(Atoms::entry(name, &p));
+            self.names.insert(name.clone(), p);
+        }
     }
 
+    /// The parts combined by `op`, in `O(s log l)` steps for the smaller map's `s` names and
+    /// the larger's `l`. A name the smaller map does not list has every payload or none, and
+    /// a part combined with all or none is itself, all or none: so the result is the larger
+    /// map, or nothing, changed at the smaller map's names.
     fn zip(&self, other: &Atoms, op: Op) -> Atoms {
         let cofinite = match op {
             Op::Or => self.cofinite || other.cofinite,
             Op::And => self.cofinite && other.cofinite,
         };
-        let names = self
-            .names
-            .keys()
-            .chain(other.names.keys())
-            .map(|n| (n.clone(), self.get(n).zip(&other.get(n), op)))
-            .collect();
-        Atoms::normal(cofinite, names)
+        let (large, small) = if self.names.len() >= other.names.len() {
+            (self, other)
+        } else {
+            (other, self)
+        };
+        let mut out = match (op, small.cofinite) {
+            (Op::Or, false) | (Op::And, true) => large.clone(),
+            _ => Atoms::default(),
+        };
+        out.cofinite = cofinite;
+        for (n, p) in &small.names {
+            out.set(n, large.get(n).zip(p, op));
+        }
+        out
     }
 
     fn not(&self) -> Atoms {
-        let names = self
-            .names
-            .iter()
-            .map(|(n, p)| (n.clone(), p.not()))
-            .collect();
-        Atoms::normal(!self.cofinite, names)
+        let mut out = Atoms {
+            cofinite: !self.cofinite,
+            ..Atoms::default()
+        };
+        for (n, p) in &self.names {
+            out.set(n, p.not());
+        }
+        out
     }
 }
 
@@ -942,7 +1014,7 @@ impl fmt::Display for Type {
     }
 }
 
-fn spaced(vs: &BTreeSet<Value>) -> String {
+fn spaced(vs: &OrdSet<Value>) -> String {
     vs.iter()
         .map(Value::to_string)
         .collect::<Vec<_>>()
