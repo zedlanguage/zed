@@ -72,12 +72,13 @@ fn a_product_covered_by_its_cells_scales() {
     // the split of the product makes one piece per cell; splitting on every cell in turn made
     // `n^(n²)` pieces in the worst order (4.3 s at `n = 5`). Building the cells one at a time
     // made `O(n⁴)` nodes (6 s at `n = 32`). Each run takes a new `b`, so no run reads
-    // another's results.
+    // another's results. Below about 512 cells fixed costs dominate building the grid, so
+    // its ratio from 64 cells is near 15 alone and passed 24 under the full suite's load.
     std::thread::Builder::new()
         .stack_size(1 << 28)
         .spawn(|| {
             let fresh = std::cell::Cell::new(1);
-            scaling::check("a grid and its cells, by cell count", 64, |c| {
+            scaling::check("a grid and its cells, by cell count", 512, |c| {
                 let n = (c as f64).sqrt().round() as usize;
                 let (p, cells) = grid(n, 10_000 * fresh.replace(fresh.get() + 1));
                 assert!(

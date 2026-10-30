@@ -5,6 +5,7 @@
 mod calls;
 mod errors;
 mod programs;
+mod scaling;
 
 use zed_kernel::{Evaluator, Term, World};
 use zedc::ast::unit;

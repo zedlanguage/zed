@@ -135,6 +135,9 @@ struct Elab<'a> {
     fresh: usize,
     tests: Vec<Test>,
     errors: Vec<Error>,
+    /// The term a call leaving a parameter out binds it to, by the function's binder and the
+    /// parameter's index.
+    defaults: HashMap<(usize, usize), Term>,
 }
 
 impl<'a> Tables<'a> {
@@ -325,6 +328,7 @@ impl<'a> Elab<'a> {
             fresh: 0,
             tests: Vec::new(),
             errors: Vec::new(),
+            defaults: HashMap::new(),
         }
     }
 
@@ -439,6 +443,35 @@ impl<'a> Elab<'a> {
                 for p in &f.params {
                     params.push(self.names[self.id(p.span, &p.name)].clone());
                 }
+                // A default other than a literal or a name is a definition of its own, `f$x`, a
+                // function of the parameters it reads, so a call leaving it out calls it rather
+                // than holding a copy of it, and defaults that call functions with defaults stay
+                // linear in size. A literal or a name is copied: no copy is captured, the kernel
+                // names being unique in the unit.
+                let ids: Vec<usize> = f.params.iter().map(|p| self.id(p.span, &p.name)).collect();
+                let mut thunks = Vec::new();
+                let mut ok = true;
+                for (j, p) in f.params.iter().enumerate() {
+                    let Some(d) = &p.default else { continue };
+                    let read: HashSet<usize> = self.t.uses_in(d.span, &[]).into_iter().collect();
+                    let reads: Vec<Arc<str>> = (0..ids.len())
+                        .filter(|i| read.contains(&ids[*i]))
+                        .map(|i| params[i].clone())
+                        .collect();
+                    let Some(t) = self.expr(d) else {
+                        ok = false;
+                        continue;
+                    };
+                    let at_call = if matches!(t, Term::Lit(_) | Term::Var(_)) {
+                        t
+                    } else {
+                        let k: Arc<str> = format!("{}${}", self.names[id], params[j]).into();
+                        let args = reads.iter().map(|r| Term::Var(r.clone())).collect();
+                        thunks.push((k.to_string(), k.clone(), Term::Lam(reads, Arc::new(t))));
+                        Term::App(Arc::new(Term::Var(k)), args)
+                    };
+                    self.defaults.insert((id, j), at_call);
+                }
                 let body = match &f.body.kind {
                     ExprKind::Block(stmts) if !f.equation => self.block(stmts),
                     _ => self.expr(&f.body),
@@ -446,11 +479,13 @@ impl<'a> Elab<'a> {
                 let tests = self.tests(f, id, s.span, top);
                 let body = body?;
                 tests?;
+                ok.then_some(())?;
                 out.push((
                     f.name.clone(),
                     self.names[id].clone(),
                     Term::Lam(params, Arc::new(body)),
                 ));
+                out.extend(thunks);
             }
             StmtKind::Push { port, value } => {
                 let v = self.expr(value)?;
@@ -1073,7 +1108,11 @@ impl<'a> Elab<'a> {
         let mut defaults = Vec::new();
         for i in order {
             let p = &f.params[missing[i]];
-            let d = self.expr(p.default.as_ref().expect("checked"))?;
+            let d = match self.defaults.get(&(id, missing[i])) {
+                Some(t) => t.clone(),
+                // A call inside the function's own declaration, before its defaults are bound.
+                None => self.expr(p.default.as_ref().expect("checked"))?,
+            };
             defaults.push((kname(self, p), d));
         }
         let body = defaults
