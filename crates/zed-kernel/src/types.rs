@@ -34,9 +34,61 @@ use std::sync::{Arc, OnceLock};
 use crate::value::Value;
 use bdd::{Form, Part};
 
-/// A type: the set of values it denotes.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+/// A type: the set of values it denotes. Types are ordered by their digests first, so two
+/// types are ordered without reading their contents unless their digests are equal.
+#[derive(Clone, Debug)]
 pub struct Type(Arc<Node>);
+
+impl Ord for Type {
+    fn cmp(&self, other: &Type) -> std::cmp::Ordering {
+        if Arc::ptr_eq(&self.0, &other.0) {
+            return std::cmp::Ordering::Equal;
+        }
+        self.digest()
+            .cmp(&other.digest())
+            .then_with(|| self.0.cmp(&other.0))
+    }
+}
+
+impl PartialOrd for Type {
+    fn partial_cmp(&self, other: &Type) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Type) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for Type {}
+
+/// Combines two hashes; the digests of types, nodes and expressions are built with it from
+/// their children's, so that each is computed once, when it is made.
+pub(crate) fn mix(a: u64, b: u64) -> u64 {
+    // splitmix64's finalizer.
+    let mut z = (a.rotate_left(29) ^ b).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// FNV-1a over `b`.
+fn bytes(b: &[u8]) -> u64 {
+    b.iter().fold(0xcbf2_9ce4_8422_2325, |h, &x| {
+        (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3)
+    })
+}
+
+/// A hash of a literal: equal literals print alike.
+fn scalar(v: &Value) -> u64 {
+    match v {
+        Value::Int(i) => mix(1, *i as u64),
+        Value::Str(s) => mix(2, bytes(s.as_bytes())),
+        other => mix(3, bytes(other.to_string().as_bytes())),
+    }
+}
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Node {
@@ -116,6 +168,8 @@ pub struct Morphism {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct Parts {
+    /// The hash of the other fields, set by [`Type::new`].
+    digest: u64,
     /// Bit 0 for `false`, bit 1 for `true`.
     bools: u8,
     ints: Lits,
@@ -158,9 +212,48 @@ struct Tuples {
     lens: BTreeMap<usize, Part<Vec<Type>>>,
 }
 
+thread_local! {
+    static EMPTY: Type = Type::build_empty();
+    static TOP: Type = !Type::build_empty();
+}
+
+impl Parts {
+    fn hash(&self) -> u64 {
+        let lits = |h, l: &Lits| {
+            l.values
+                .iter()
+                .fold(mix(h, u64::from(l.cofinite)), |h, v| mix(h, scalar(v)))
+        };
+        let mut h = mix(0, u64::from(self.bools));
+        for l in [&self.ints, &self.rats, &self.floats, &self.strings] {
+            h = lits(h, l);
+        }
+        h = mix(h, u64::from(self.atoms.cofinite));
+        for (name, a) in &self.atoms.names {
+            h = mix(mix(h, bytes(name.as_bytes())), u64::from(a.bare));
+            h = mix(h, a.payload.digest());
+        }
+        h = mix(h, u64::from(self.tuples.rest));
+        for (len, part) in &self.tuples.lens {
+            h = mix(mix(h, *len as u64), part.digest());
+        }
+        mix(mix(h, u64::from(self.structs)), self.morphisms.digest())
+    }
+}
+
 impl Type {
-    fn new(p: Parts) -> Type {
+    fn new(mut p: Parts) -> Type {
+        p.digest = p.hash();
         Type(Arc::new(Node::Parts(p)))
+    }
+
+    /// The hash of the contents, computed when the type was made; a recursive node's is its
+    /// identity's, since two such nodes are one type only when they are one node.
+    pub(crate) fn digest(&self) -> u64 {
+        match &*self.0 {
+            Node::Parts(p) => p.digest,
+            Node::Rec(r) => mix(4, r.id),
+        }
     }
 
     /// The node named `name` whose parts are `make()`'s, computed when first needed. `make`
@@ -185,7 +278,12 @@ impl Type {
 
     /// No value.
     pub fn empty() -> Type {
+        EMPTY.with(Type::clone)
+    }
+
+    fn build_empty() -> Type {
         Type::new(Parts {
+            digest: 0,
             bools: 0,
             ints: Lits::default(),
             rats: Lits::default(),
@@ -200,7 +298,7 @@ impl Type {
 
     /// Every value, `_`.
     pub fn top() -> Type {
-        !Type::empty()
+        TOP.with(Type::clone)
     }
 
     /// The union of `ts`, joined in pairs: `k` tuple or morphism types, each ordered after the
@@ -507,6 +605,7 @@ impl Type {
     fn zip(&self, other: &Type, op: Op) -> Type {
         let (a, b) = (self.p(), other.p());
         Type::new(Parts {
+            digest: 0,
             bools: match op {
                 Op::Or => a.bools | b.bools,
                 Op::And => a.bools & b.bools,
@@ -695,6 +794,7 @@ impl Not for &Type {
     fn not(self) -> Type {
         let p = self.p();
         Type::new(Parts {
+            digest: 0,
             bools: !p.bools & 3,
             ints: p.ints.not(),
             rats: p.rats.not(),
@@ -877,7 +977,8 @@ fn tuples(items: &mut Vec<String>, t: &Tuples) {
 }
 
 /// One item per path of a diagram: the intersection of the atoms it takes, or `all` when it
-/// takes none, and the complements of those it refuses. Past the budget of nodes visited
+/// takes none, and the complements of those it refuses. The items, and the atoms within each,
+/// are sorted as text, since the diagram's order of atoms is that of their digests. Past the budget of nodes visited
 /// (`bdd::WALK`) the rest is `…`. A part kept as an expression is its connective applied to the items of its operands.
 fn clauses<A: bdd::Literal>(
     items: &mut Vec<String>,
@@ -909,21 +1010,27 @@ fn clauses<A: bdd::Literal>(
         }
     };
     let mut budget = bdd::WALK;
+    let mut found = Vec::new();
     let done = b.paths(&mut budget, &mut |pos, neg| {
         let mut lits: Vec<String> = pos.iter().map(|a| show(a)).collect();
+        lits.sort();
         if lits.is_empty() {
             lits.push(all.into());
         }
-        lits.extend(neg.iter().map(|n| format!("(! {})", show(n))));
+        let mut refused: Vec<String> = neg.iter().map(|n| format!("(! {})", show(n))).collect();
+        refused.sort();
+        lits.extend(refused);
         match lits.len() {
-            1 => items.push(lits.remove(0)),
-            _ => items.push(format!(
+            1 => found.push(lits.remove(0)),
+            _ => found.push(format!(
                 "(&{})",
                 lits.iter().map(|l| format!(" {l}")).collect::<String>()
             )),
         }
         true
     });
+    found.sort();
+    items.extend(found);
     if done.is_none() {
         items.push("…".into());
     }

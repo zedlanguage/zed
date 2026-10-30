@@ -167,3 +167,46 @@ fn many_negated_types_passed_over_scale() {
         .join()
         .unwrap();
 }
+
+/// The tuple `(… ((b, b), b + 1) …, b + d - 1)`, nested `d` deep.
+fn nested(d: usize, b: usize) -> Type {
+    (0..d).fold(lit(b), |t, i| Type::tuple(vec![t, lit(b + i)]))
+}
+
+#[test]
+fn nested_tuples_scale() {
+    // The nodes of a diagram were ordered by their contents, so placing a tuple among those
+    // of its thread read down the nested tuples to where they differ: building a tuple
+    // nested `d` deep took `O(d²)` steps (ratio 27 to 71 from depth 100). Types and nodes are
+    // now ordered by a hash of their contents, kept in each when it is made.
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            let fresh = std::cell::Cell::new(1);
+            scaling::check("a nested tuple and a query on it, by depth", 100, |d| {
+                let b = 100_000 * fresh.replace(fresh.get() + 1);
+                let x = nested(d, b);
+                assert!(x.subtype(&(&nested(d, b) | &lit(1))), "at depth {d}");
+                assert!(!x.subtype(&nested(d, b + 1)), "at depth {d}");
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn a_type_built_on_another_thread_is_the_same_type() {
+    // Each thread keeps its own table of nodes, so the two copies are distinct nodes, and are
+    // equal by their contents.
+    let here = &nested(20, 7) | &Type::morphism(Type::empty(), Type::top(), nested(5, 3));
+    let there = std::thread::spawn(|| {
+        &nested(20, 7) | &Type::morphism(Type::empty(), Type::top(), nested(5, 3))
+    })
+    .join()
+    .unwrap();
+    assert_eq!(here, there);
+    assert_eq!(here.to_string(), there.to_string());
+    assert!(here.subtype(&there) && there.subtype(&here));
+    assert!(!here.subtype(&nested(20, 8)));
+}

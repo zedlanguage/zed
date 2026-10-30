@@ -10,8 +10,9 @@
 //! types each a union of `2^C` clauses.
 //!
 //! Nodes are shared: the nodes of a thread are kept in a table, so that one atom with one pair
-//! of children is one node, and two equal diagrams built on one thread are one pointer. The
-//! comparison of two diagrams stops at a shared node, so it walks one path of each.
+//! of children is one node, and two equal diagrams built on one thread are one pointer. Each
+//! node and expression keeps a hash of its contents made from its children's, and two are
+//! ordered by it first, so a comparison reads their contents only when the hashes are equal.
 //!
 //! A diagram is canonical, so some functions have only diagrams exponential in the number of
 //! their atoms: `(m1 & !n1) | … | (mC & !nC)`, with every `m` ordered before every `n`, has
@@ -28,7 +29,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering as Atomic};
 use std::sync::{Arc, OnceLock};
 
-use super::{Morphism, Op, Type};
+use super::{Morphism, Op, Type, mix};
 
 #[derive(Clone)]
 pub(super) enum Bdd<A> {
@@ -59,6 +60,7 @@ pub(super) fn with_budget<R>(n: usize, f: impl FnOnce() -> R) -> R {
 
 pub(super) struct Branch<A> {
     id: u64,
+    digest: u64,
     atom: A,
     hi: Bdd<A>,
     lo: Bdd<A>,
@@ -69,6 +71,8 @@ type Table<A> = BTreeMap<(A, u64, u64), Arc<Branch<A>>>;
 /// The atoms of a universe, each kind with its thread's table of nodes.
 pub(super) trait Literal: Ord + Clone + 'static {
     fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R;
+    /// A hash of the atom, equal for equal atoms.
+    fn digest(&self) -> u64;
 }
 
 thread_local! {
@@ -80,11 +84,18 @@ impl Literal for Vec<Type> {
     fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R {
         TUPLES.with(|t| f(&mut t.borrow_mut()))
     }
+    fn digest(&self) -> u64 {
+        self.iter().fold(5, |h, t| mix(h, t.digest()))
+    }
 }
 
 impl Literal for Morphism {
     fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R {
         MORPHISMS.with(|t| f(&mut t.borrow_mut()))
+    }
+    fn digest(&self) -> u64 {
+        let m = mix(6, self.guarantee.digest());
+        mix(mix(m, self.permission.digest()), self.value.digest())
     }
 }
 
@@ -100,6 +111,13 @@ impl<A: Literal> Bdd<A> {
         }
     }
 
+    fn digest(&self) -> u64 {
+        match self {
+            Bdd::Leaf(b) => mix(7, u64::from(*b)),
+            Bdd::Node(n) => n.digest,
+        }
+    }
+
     fn node(atom: A, hi: Bdd<A>, lo: Bdd<A>) -> Bdd<A> {
         static NEXT: AtomicU64 = AtomicU64::new(2);
         if hi == lo {
@@ -111,6 +129,7 @@ impl<A: Literal> Bdd<A> {
         }
         let n = Arc::new(Branch {
             id: NEXT.fetch_add(1, Atomic::Relaxed),
+            digest: mix(mix(key.0.digest(), hi.digest()), lo.digest()),
             atom: key.0.clone(),
             hi,
             lo,
@@ -263,6 +282,7 @@ pub(super) enum Part<A: Ord> {
 }
 
 pub(super) struct Expr<A: Ord> {
+    digest: u64,
     form: Form<A>,
     bounds: OnceLock<(Bdd<A>, Bdd<A>)>,
 }
@@ -275,6 +295,14 @@ pub(super) enum Form<A: Ord> {
 }
 
 impl<A: Literal> Part<A> {
+    /// The hash of the part's contents.
+    pub(super) fn digest(&self) -> u64 {
+        match self {
+            Part::Bdd(b) => b.digest(),
+            Part::Expr(e) => e.digest,
+        }
+    }
+
     pub(super) fn leaf(b: bool) -> Part<A> {
         Part::Bdd(Bdd::Leaf(b))
     }
@@ -292,7 +320,13 @@ impl<A: Literal> Part<A> {
     }
 
     fn expr(form: Form<A>) -> Part<A> {
+        let digest = match &form {
+            Form::Not(p) => mix(8, p.digest()),
+            Form::Or(a, b) => mix(mix(9, a.digest()), b.digest()),
+            Form::And(a, b) => mix(mix(10, a.digest()), b.digest()),
+        };
         Part::Expr(Arc::new(Expr {
+            digest,
             form,
             bounds: OnceLock::new(),
         }))
@@ -422,7 +456,9 @@ impl<A: Ord> Ord for Expr<A> {
         if std::ptr::eq(self, other) {
             return Ordering::Equal;
         }
-        self.form.cmp(&other.form)
+        self.digest
+            .cmp(&other.digest)
+            .then_with(|| self.form.cmp(&other.form))
     }
 }
 
@@ -454,8 +490,9 @@ impl<A: Ord> Ord for Bdd<A> {
             (Bdd::Node(_), Bdd::Leaf(_)) => Ordering::Greater,
             (Bdd::Node(a), Bdd::Node(b)) if Arc::ptr_eq(a, b) => Ordering::Equal,
             (Bdd::Node(a), Bdd::Node(b)) => a
-                .atom
-                .cmp(&b.atom)
+                .digest
+                .cmp(&b.digest)
+                .then_with(|| a.atom.cmp(&b.atom))
                 .then_with(|| a.hi.cmp(&b.hi))
                 .then_with(|| a.lo.cmp(&b.lo)),
         }
