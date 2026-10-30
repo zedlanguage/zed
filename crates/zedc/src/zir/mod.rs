@@ -19,7 +19,7 @@
 //! | `port push` | state, value | | acknowledgment, state |
 //! | `fam` | domain, captures | function: key, captures → entry | family |
 //! | `group`, `rank`, `scan`, `join` | any | function: the certificate | any |
-//! | `prim` | the primitive's arguments | | value |
+//! | `prim` | the primitive's arguments, or none | | value, or the primitive as a function |
 //! | `apply` | function, arguments | | value |
 //! | `lambda` | captures | function: parameters, captures → value | function |
 //! | `if` | condition, captures | match: then, match: else | any |
@@ -45,6 +45,7 @@
 
 pub mod binary;
 pub mod canon;
+pub mod lower;
 pub mod text;
 
 use std::sync::Arc;
@@ -169,7 +170,9 @@ pub enum Op {
     Fam,
     /// A derived node.
     Derived(Derived),
-    /// A primitive.
+    /// A primitive, applied to its arguments; with no inputs, a primitive of fixed arity is
+    /// itself, as a function value (step L1.33), which the kernel tells apart from a lambda
+    /// that calls it (a fold of `+` itself sums exactly).
     Prim(Prim),
     /// A call.
     Apply,
@@ -289,6 +292,7 @@ fn shape(n: &Node) -> Result<Shape, String> {
             captures(0, None, vec![(RegionKind::Function, 0, outs)])
         }
         Op::Prim(p) => match p.arity() {
+            Some(_) if ins == 0 => leaf(0),
             Some(k) => leaf(k),
             None => captures(0, Some(1), Vec::new()),
         },

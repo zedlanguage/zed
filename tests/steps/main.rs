@@ -32,6 +32,7 @@ mod l01_29_diagnostics;
 mod l01_30_queries;
 mod l01_31_zir;
 mod l01_32_canonical_zir;
+mod l01_33_lowering;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;

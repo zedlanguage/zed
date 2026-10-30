@@ -32,6 +32,9 @@ pub enum PortKind {
     Files,
 }
 
+/// A map from a closed term to one with the same value, run in its place.
+pub type Through<'a> = dyn Fn(&Term) -> Result<Term, String> + 'a;
+
 /// A program ready to run: its elaboration and `main`'s ports.
 pub struct Program {
     pub(crate) unit: Unit,
@@ -267,7 +270,19 @@ impl Program {
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<Wave, String> {
-        Ok(self.wave(lines, files, false)?.0)
+        Ok(self.wave(lines, files, false, &|t| Ok(t.clone()))?.0)
+    }
+
+    /// Runs one wave as [`Program::run`] does, with the wave's term replaced by what `map`
+    /// makes of it: the test runner's way to run a program through another form, such as
+    /// ZIR lowered and raised back (step L1.33).
+    pub fn run_through(
+        &self,
+        lines: &BTreeMap<String, Vec<u8>>,
+        files: impl Fn(&str) -> Arc<dyn Lookup>,
+        map: &Through<'_>,
+    ) -> Result<Wave, String> {
+        Ok(self.wave(lines, files, false, map)?.0)
     }
 
     /// Runs one wave as [`Program::run`] does, and records its provenance (step L1.20): the
@@ -277,7 +292,7 @@ impl Program {
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<(Wave, Provenance), String> {
-        let (wave, prov) = self.wave(lines, files, true)?;
+        let (wave, prov) = self.wave(lines, files, true, &|t| Ok(t.clone()))?;
         Ok((wave, prov.expect("provenance was recorded")))
     }
 
@@ -286,6 +301,7 @@ impl Program {
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         trace: bool,
+        map: &Through<'_>,
     ) -> Result<(Wave, Option<Provenance>), String> {
         let mut world = World::new();
         let mut record = Record::default();
@@ -310,7 +326,7 @@ impl Program {
             .iter()
             .map(|(name, _)| Term::Read(name.as_str().into()))
             .collect();
-        let term = interp::prelude(Term::App(Arc::new(main), args));
+        let term = map(&interp::prelude(Term::App(Arc::new(main), args)))?;
         let mut ev = Evaluator::new(world);
         if trace {
             ev = ev.with_provenance(vec![Value::Int(0)]);

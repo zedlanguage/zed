@@ -17,7 +17,7 @@ use zed_kernel::{Evaluator, Lookup, Term, Value, World};
 use crate::ast::StmtKind;
 use crate::elab::{Test, Unit};
 use crate::query::{self, Db, Query};
-use crate::run::{self, PortKind, Program};
+use crate::run::{self, PortKind, Program, Through};
 use crate::{fence, interp, source};
 
 /// One check of a unit: a row of a table, a marked line, or a diagnostic on an unmarked line.
@@ -38,6 +38,17 @@ pub fn test(text: &str) -> Vec<Outcome> {
 
 /// The checks of the unit `text`, in source order, reusing what `db` holds (step L1.30).
 pub fn test_in(db: &mut Db, text: &str) -> Vec<Outcome> {
+    checks(db, text, &|t| Ok(t.clone()))
+}
+
+/// The checks of the unit `text`, each row's closed term replaced by what `map` makes of it
+/// before it runs (step L1.33): a way to run the tables through another form of the program.
+/// Nothing is cached, since the outcomes depend on `map`.
+pub fn test_through(text: &str, map: &Through<'_>) -> Vec<Outcome> {
+    checks(&mut Db::new(), text, map)
+}
+
+fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
     let marked = fence::marks(text).lines;
     let mut out = Vec::new();
     match &*db.front(text) {
@@ -105,12 +116,12 @@ pub fn test_in(db: &mut Db, text: &str) -> Vec<Outcome> {
                         roots.extend(&t.args);
                         let ports = format!("{:?} {:?}", p.inputs(), p.outputs());
                         let k = query::key("wave", &[&query::cone(unit, &roots), ports.as_bytes()]);
-                        db.row(Query::Wave, k, || wave(unit, p, t)).err()
+                        db.row(Query::Wave, k, || wave(unit, p, t, map)).err()
                     }
                     (None, "main") => continue,
                     _ => {
                         let k = query::key("row", &[&query::cone(unit, &[&t.check])]);
-                        db.row(Query::Row, k, || row(unit, t)).err()
+                        db.row(Query::Row, k, || row(unit, t, map)).err()
                     }
                 };
                 out.push(Outcome {
@@ -126,32 +137,32 @@ pub fn test_in(db: &mut Db, text: &str) -> Vec<Outcome> {
 }
 
 /// The value of `term` under the unit's definitions and the prelude.
-fn value(unit: &Unit, term: &Term) -> Result<Value, String> {
+fn value(unit: &Unit, term: &Term, map: &Through<'_>) -> Result<Value, String> {
     Evaluator::new(World::new())
-        .run(&interp::prelude(unit.close(term.clone())))
+        .run(&map(&interp::prelude(unit.close(term.clone())))?)
         .map_err(|e| e.to_string())
 }
 
 /// Checks a row of a function's table.
-fn row(unit: &Unit, t: &Test) -> Result<(), String> {
-    match value(unit, &t.check)? {
+fn row(unit: &Unit, t: &Test, map: &Through<'_>) -> Result<(), String> {
+    match value(unit, &t.check, map)? {
         Value::Bool(true) => Ok(()),
         _ => {
             let Term::Prim(_, sides) = &t.check else {
                 unreachable!("a check is `call == want`")
             };
-            Err(format!("the result is {}", value(unit, &sides[0])?))
+            Err(format!("the result is {}", value(unit, &sides[0], map)?))
         }
     }
 }
 
 /// Checks a row of `main`'s table: runs the wave its key gives, and compares the writes.
-fn wave(unit: &Unit, program: &Program, t: &Test) -> Result<(), String> {
+fn wave(unit: &Unit, program: &Program, t: &Test, map: &Through<'_>) -> Result<(), String> {
     let mut lines = BTreeMap::new();
     let mut files: BTreeMap<&str, Arc<dyn Lookup>> = BTreeMap::new();
     for ((name, kind), arg) in program.inputs().iter().zip(&t.args) {
         match kind {
-            PortKind::Lines => match value(unit, arg)? {
+            PortKind::Lines => match value(unit, arg, map)? {
                 Value::Str(s) => {
                     lines.insert(name.clone(), s.as_bytes().to_vec());
                 }
@@ -169,9 +180,9 @@ fn wave(unit: &Unit, program: &Program, t: &Test) -> Result<(), String> {
             }
         }
     }
-    let wave = program.run(&lines, |name| files[name].clone())?;
+    let wave = program.run_through(&lines, |name| files[name].clone(), map)?;
     let outputs = program.outputs();
-    let wants = match (outputs.len(), value(unit, &t.want)?) {
+    let wants = match (outputs.len(), value(unit, &t.want, map)?) {
         (1, v) => vec![v],
         (n, Value::Tuple(xs)) if xs.len() == n => xs,
         (n, v) => {

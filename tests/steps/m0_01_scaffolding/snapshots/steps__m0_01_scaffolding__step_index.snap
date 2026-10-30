@@ -34,6 +34,7 @@ l01_29_diagnostics
 l01_30_queries
 l01_31_zir
 l01_32_canonical_zir
+l01_33_lowering
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization
