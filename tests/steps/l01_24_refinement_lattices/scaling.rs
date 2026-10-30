@@ -146,3 +146,32 @@ fn the_interval_operations_scale() {
         assert!(hits <= n);
     });
 }
+
+/// `k` lower and `k` upper bounds, each on a symbol of its own and each with a floor.
+fn many(k: usize, shift: i64) -> zedc::store::affine::Bounds {
+    use zedc::store::affine::{Affine, Bound, Bounds};
+    let side = |c: i64, floor: End| {
+        (0..k)
+            .map(move |i| Bound {
+                affine: Affine::sym(&format!("s{i}")).plus(c).expect("small"),
+                floor,
+            })
+            .collect::<Vec<_>>()
+    };
+    Bounds::from_bounds(
+        IntervalSet::top(),
+        side(shift, Fin(-1)),
+        side(shift + 10, Fin(1)),
+    )
+}
+
+#[test]
+fn bounds_on_many_symbols_scale() {
+    use zedc::store::lattice::Lattice;
+    scaling::check("symbolic bounds on distinct symbols", 200, |k| {
+        let (a, b) = (many(k, 0), many(k, 1));
+        let j = a.join(&b);
+        assert_eq!(j.bounds(zedc::store::affine::Side::Lower).len(), k);
+        a.meet(&b);
+    });
+}

@@ -323,10 +323,16 @@ impl Bounds {
             return;
         }
         let set = self.side_mut(side);
-        if set.iter().any(|o| o.implies(side, &b)) {
+        if same_terms(set, &b.affine.terms).any(|o| o.implies(side, &b)) {
             return;
         }
-        set.retain(|o| !b.implies(side, o));
+        let implied: Vec<Bound> = same_terms(set, &b.affine.terms)
+            .filter(|o| b.implies(side, o))
+            .cloned()
+            .collect();
+        for o in implied {
+            set.remove(&o);
+        }
         set.insert(b);
     }
 
@@ -340,9 +346,8 @@ impl Bounds {
                 .retain(|b| side.looser_end(b.floor, end) != b.floor);
         }
         let crossed = self.lower.iter().any(|l| {
-            self.upper.iter().any(|u| {
-                u.affine.terms == l.affine.terms
-                    && l.floor == End::PosInf
+            same_terms(&self.upper, &l.affine.terms).any(|u| {
+                l.floor == End::PosInf
                     && u.floor == End::NegInf
                     && l.affine.constant > u.affine.constant
             })
@@ -394,7 +399,7 @@ impl Bounds {
         let (sa, sb) = (a.bounds(side), b.bounds(side));
         let mut out: Vec<Bound> = sa
             .iter()
-            .flat_map(|x| sb.iter().filter_map(|y| x.loosen(side, y)))
+            .flat_map(|x| same_terms(sb, &x.affine.terms).filter_map(|y| x.loosen(side, y)))
             .collect();
         out.extend(
             sa.iter()
@@ -406,6 +411,23 @@ impl Bounds {
         );
         out
     }
+}
+
+/// The bounds of `set` with the given terms, which are neighbors since a bound is ordered by
+/// its terms first: a range of the set, not a scan of it, so the operations on bounds over
+/// many symbols are `O(k log k)` and not `O(k²)` (DESIGN.md Part G).
+fn same_terms<'a>(
+    set: &'a BTreeSet<Bound>,
+    terms: &BTreeMap<Sym, i64>,
+) -> impl Iterator<Item = &'a Bound> {
+    let at = |constant, floor| Bound {
+        affine: Affine {
+            terms: terms.clone(),
+            constant,
+        },
+        floor,
+    };
+    set.range(at(i64::MIN, End::NegInf)..=at(i64::MAX, End::PosInf))
 }
 
 fn shift_end(e: End, c: i64) -> End {
@@ -464,7 +486,7 @@ impl Lattice for Bounds {
     fn leq(&self, other: &Self) -> bool {
         let implied = |side: Side| {
             other.bounds(side).iter().all(|t| {
-                self.bounds(side).iter().any(|m| m.implies(side, t))
+                same_terms(self.bounds(side), &t.affine.terms).any(|m| m.implies(side, t))
                     || side.looser_end(t.floor, side.hull_end(&self.ints)) == t.floor
             })
         };
