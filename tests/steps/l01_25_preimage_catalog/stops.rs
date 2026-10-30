@@ -95,3 +95,28 @@ fn a_length_under_arithmetic_is_read_through_to_its_stop() {
         "x [..]; necessary; stop: string operation Show stops the transfer at String(x)"
     );
 }
+
+#[test]
+fn a_call_that_never_returns_stops_at_the_call_depth() {
+    // `w(w) >= x` with `w = \g. g(g)`: each call makes another, so only the call depth ends
+    // the transfer.
+    let g = || Term::Var("g".into());
+    let w = Term::Lam(
+        vec!["g".into()],
+        Arc::new(Term::App(Arc::new(g()), vec![g()])),
+    );
+    let t = Term::Prim(
+        Prim::Ge,
+        vec![
+            Term::App(Arc::new(w.clone()), vec![w]),
+            Term::Var("x".into()),
+        ],
+    );
+    let p = preimage(&t, &doms(&[("x", None, None)]), &Demand::Bool(true));
+    assert!(!p.exact, "{}", shown(&p));
+    assert!(
+        p.stops.iter().any(|s| s.kind == StopKind::Outside),
+        "{}",
+        shown(&p)
+    );
+}

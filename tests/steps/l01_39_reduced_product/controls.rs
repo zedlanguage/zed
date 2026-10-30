@@ -1,7 +1,6 @@
 //! Each reduction on its own, the budgets of step M0.5, and controls: the check of `random`
 //! rejects a scope that leaves out a value reaching its arm.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use zed_kernel::budgets::ENUMERATION_BUDGET;
@@ -16,8 +15,8 @@ use zedc::store::product::{Product, Scope};
 use super::ints;
 use super::random::{Shape, check};
 
-fn none() -> BTreeSet<zedc::store::cell::Premise> {
-    BTreeSet::new()
+fn none() -> zedc::store::cell::Premises {
+    zedc::store::cell::Premises::new()
 }
 
 /// The scope of `n` within `lo..=hi`.
@@ -34,7 +33,7 @@ fn within(lo: i64, hi: i64) -> Scope {
 
 /// `s` with `t` written as holding, reduced.
 fn written(mut s: Scope, t: Term) -> Scope {
-    s.written.insert(t.to_string(), t);
+    s.write(t);
     s.reduce();
     s
 }

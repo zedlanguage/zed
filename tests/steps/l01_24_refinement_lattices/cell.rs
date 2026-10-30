@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use zed_kernel::Value;
 use zed_kernel::provenance::{FactAddress, NodeAddress};
 use zedc::store::affine::{Affine, Bounds};
-use zedc::store::cell::{Cell, Entry, Premise, Store};
+use zedc::store::cell::{Cell, Entry, Premise, Premises, Store};
 use zedc::store::float::{FloatClass, Kind, Width};
 use zedc::store::interval::IntervalSet;
 use zedc::store::lattice::{FiniteSet, Lattice};
@@ -18,8 +18,8 @@ fn addr(n: u32) -> FactAddress {
     }
 }
 
-fn because(n: u32) -> BTreeSet<Premise> {
-    BTreeSet::from([Premise::Constraint(addr(n))])
+fn because(n: u32) -> Premises {
+    Premises::one(Premise::Constraint(addr(n)))
 }
 
 #[test]
@@ -38,10 +38,7 @@ fn a_meet_adds_its_premises_only_when_it_narrows() {
     assert_eq!(e.element.to_string(), "[0..=min(9, n - 1)]");
     assert_eq!(
         e.premises,
-        because(1)
-            .union(&because(2))
-            .cloned()
-            .collect::<BTreeSet<_>>()
+        BTreeSet::from([Premise::Constraint(addr(1)), Premise::Constraint(addr(2))])
     );
     assert!(e.proof_grade());
 }

@@ -38,7 +38,7 @@ use zed_kernel::types::{Type, Universe};
 use zed_kernel::{Evaluator, KernelError, Prim, Stack, Term, Value, World, on_stack};
 
 use super::affine::Bounds;
-use super::cell::{Cell, Entry, Premise};
+use super::cell::{Cell, Entry, Premise, Premises};
 use super::interval::{End, IntervalSet, PIECE_LIMIT};
 use super::lattice::{Congruence, FINITE_SET_LIMIT, FiniteSet, Lattice};
 use super::preimage::{Demand, Domains, preimage, relations};
@@ -224,10 +224,10 @@ impl Product {
     }
 
     /// The premises of every entry.
-    pub fn premises(&self) -> BTreeSet<Premise> {
+    pub fn premises(&self) -> Premises {
         let mut out = self.cell.premises();
-        out.extend(self.ty.premises.iter().cloned());
-        out.extend(self.time.premises.iter().cloned());
+        out.extend(&self.ty.premises);
+        out.extend(&self.time.premises);
         out
     }
 
@@ -252,7 +252,7 @@ impl Product {
     }
 
     /// Meets the interval domain with `x`.
-    fn meet_ints(&mut self, x: &IntervalSet, premises: &BTreeSet<Premise>) {
+    fn meet_ints(&mut self, x: &IntervalSet, premises: &Premises) {
         self.cell.ints.meet(&Bounds::ints(x.clone()), premises);
     }
 
@@ -355,14 +355,27 @@ pub struct Scope {
     pub names: BTreeMap<Arc<str>, Product>,
     /// The relation the integer names meet, with no auxiliary variable.
     pub relation: Formula,
-    /// The written constraints that hold, a test and its negations by printed text.
-    pub written: BTreeMap<String, Term>,
+    /// The written constraints that hold, a test and its negations by printed text, each
+    /// with its free names; at most [`presburger::ATOMS`] of them.
+    pub written: BTreeMap<String, (Term, Vec<Arc<str>>)>,
     /// Whether no state reaches this scope.
     pub bottom: bool,
-    /// The written constraints already enumerated, each as its text with the static names
-    /// bound and its one open name. A second enumeration removes nothing more: the members a
-    /// constraint holds at do not depend on the interval, which already lies within them.
-    pub enumerated: BTreeSet<String>,
+    /// The written constraints already enumerated, each as its text with the values of its
+    /// static names. A second enumeration removes nothing more: the members a constraint holds
+    /// at do not depend on the interval, which already lies within them.
+    pub enumerated: BTreeSet<Enumerated>,
+}
+
+/// A written constraint's text with the values of its static names.
+pub type Enumerated = (String, Vec<(Arc<str>, Value)>);
+
+/// What [`Scope::unbind`] needs to undo a [`Scope::bind`].
+#[derive(Debug)]
+pub enum Unbind {
+    /// The name was not in scope and nothing else changed: remove it.
+    Fresh(Arc<str>),
+    /// The scope as it was before.
+    Saved(Box<Scope>),
 }
 
 impl Scope {
@@ -377,6 +390,73 @@ impl Scope {
         };
         s.reduce();
         s
+    }
+
+    /// The scope of a `let` body that binds `x` to `p`, in place. A name already in scope is
+    /// forgotten first: the relation is weakened to say nothing of it and the written
+    /// constraints on it go, since they hold of the value it shadows. Nothing else in the
+    /// scope then mentions `x`, so `p`'s own reductions are the whole reduction, and the
+    /// scope is not copied unless `x` shadows a name or `p` is empty.
+    pub fn bind(&mut self, x: &Arc<str>, mut p: Product) -> Unbind {
+        for _ in 0..REDUCTION_ROUNDS {
+            let before = p.clone();
+            p.reduce_domains();
+            if p == before {
+                break;
+            }
+        }
+        if !self.bottom && !p.is_empty() && !self.names.contains_key(x) {
+            self.names.insert(x.clone(), p);
+            return Unbind::Fresh(x.clone());
+        }
+        let saved = Unbind::Saved(Box::new(self.clone()));
+        if self.bottom {
+            return saved;
+        }
+        self.relation = self.relation.forget(x);
+        self.written.retain(|_, (_, free)| !free.contains(x));
+        self.names.insert(x.clone(), p);
+        if self.names[x].is_empty() {
+            self.bottom = true;
+            for p in self.names.values_mut() {
+                *p = Product::bottom();
+            }
+        }
+        saved
+    }
+
+    /// Undoes the [`Scope::bind`] that returned `u`.
+    pub fn unbind(&mut self, u: Unbind) {
+        match u {
+            Unbind::Fresh(x) => {
+                self.names.remove(&x);
+            }
+            Unbind::Saved(s) => *self = *s,
+        }
+    }
+
+    /// Records `t` as a written constraint that holds, unless the scope already holds
+    /// [`presburger::ATOMS`] of them: dropping a constraint only weakens the scope.
+    pub fn write(&mut self, t: Term) {
+        let key = t.to_string();
+        if self.written.len() < presburger::ATOMS || self.written.contains_key(&key) {
+            let free = stage::free(&t).into_iter().collect();
+            self.written.insert(key, (t, free));
+        }
+    }
+
+    /// The static names among `names`, and their values.
+    fn statics_of<'a>(
+        &self,
+        names: impl IntoIterator<Item = &'a Arc<str>>,
+    ) -> BTreeMap<Arc<str>, Value> {
+        names
+            .into_iter()
+            .filter_map(|n| {
+                let v = self.names.get(n)?.value()?;
+                Some((n.clone(), v.clone()))
+            })
+            .collect()
     }
 
     /// The product of `name`; the top for a name not in scope.
@@ -451,14 +531,14 @@ impl Scope {
     }
 
     /// This scope where `test` gave `outcome`, reduced.
-    pub fn assume(&self, test: &Term, outcome: bool, premises: &BTreeSet<Premise>) -> Scope {
+    pub fn assume(&self, test: &Term, outcome: bool, premises: &Premises) -> Scope {
         let mut s = self.clone();
         s.narrow(test, outcome, premises);
         s.reduce();
         s
     }
 
-    fn narrow(&mut self, test: &Term, outcome: bool, prem: &BTreeSet<Premise>) {
+    fn narrow(&mut self, test: &Term, outcome: bool, prem: &Premises) {
         if self.bottom {
             return;
         }
@@ -505,8 +585,8 @@ impl Scope {
     }
 
     /// Narrows by one atomic test.
-    fn atom(&mut self, test: &Term, outcome: bool, prem: &BTreeSet<Premise>) {
-        let statics = self.statics();
+    fn atom(&mut self, test: &Term, outcome: bool, prem: &Premises) {
+        let statics = self.statics_of(&stage::free(test));
         let t = substitute(test, &statics);
         // A bare name of bool type.
         if let Term::Var(x) = &t
@@ -557,9 +637,26 @@ impl Scope {
             })
             .cloned()
             .collect();
-        // The linear relation, when the test needs no auxiliary variable.
+        // The preimage of the outcome.
+        let mut exact = false;
+        if !inputs.is_empty() {
+            let doms: Domains = inputs
+                .iter()
+                .map(|n| (n.clone(), self.get(n).ints().clone()))
+                .collect();
+            let pre = preimage(&t, &doms, &Demand::Bool(outcome));
+            exact = pre.exact;
+            for (n, d) in &pre.domains {
+                if let Some(p) = self.names.get_mut(n) {
+                    p.meet_ints(d, prem);
+                }
+            }
+        }
+        // The linear relation, when the test needs no auxiliary variable and says more than
+        // the intervals: a test of one name whose preimage is exact is the interval itself.
         if !inputs.is_empty()
             && inputs.len() == free.len()
+            && (inputs.len() > 1 || !exact)
             && let Some(rs) = relations(&[&t], &inputs, false)
             && let Some(r) = rs.into_iter().next()
             && r.defs.is_empty()
@@ -571,26 +668,13 @@ impl Scope {
             };
             self.relation = Formula::and(vec![self.relation.clone(), body]).bounded();
         }
-        // The preimage of the outcome.
-        if !inputs.is_empty() {
-            let doms: Domains = inputs
-                .iter()
-                .map(|n| (n.clone(), self.get(n).ints().clone()))
-                .collect();
-            let pre = preimage(&t, &doms, &Demand::Bool(outcome));
-            for (n, d) in &pre.domains {
-                if let Some(p) = self.names.get_mut(n) {
-                    p.meet_ints(d, prem);
-                }
-            }
-        }
         // The written constraint.
         let kept = if outcome {
             test.clone()
         } else {
             Term::Prim(Prim::Not, vec![test.clone()])
         };
-        self.written.insert(kept.to_string(), kept);
+        self.write(kept);
     }
 
     /// Passes information between the domains of every product, the relation and the written
@@ -658,23 +742,22 @@ impl Scope {
     /// names only. Each constraint is enumerated once for its static names, and every
     /// evaluation of one call shares one thread.
     fn enumerate(&mut self) {
-        let statics = self.statics();
-        let pending: Vec<(Term, Vec<Arc<str>>, String)> = self
+        let pending: Vec<(Term, Vec<Arc<str>>, Enumerated)> = self
             .written
-            .values()
-            .filter_map(|c| {
-                let free = stage::free(c);
+            .iter()
+            .filter_map(|(text, (c, free))| {
                 if !free.iter().all(|n| self.names.contains_key(n)) {
                     return None;
                 }
+                let statics = self.statics_of(free);
                 let open: Vec<Arc<str>> = free
                     .iter()
                     .filter(|n| !statics.contains_key(*n))
                     .cloned()
                     .collect();
-                let bound = substitute(c, &statics);
-                let key = format!("{bound} | {}", open.join(" "));
-                (open.len() <= 1 && !self.enumerated.contains(&key)).then_some((bound, open, key))
+                let key = (text.clone(), statics.clone().into_iter().collect());
+                (open.len() <= 1 && !self.enumerated.contains(&key))
+                    .then(|| (substitute(c, &statics), open, key))
             })
             .collect();
         if pending.is_empty() {
@@ -683,7 +766,7 @@ impl Scope {
         on_stack(|stack| self.enumerate_on(stack, pending));
     }
 
-    fn enumerate_on(&mut self, stack: &Stack, pending: Vec<(Term, Vec<Arc<str>>, String)>) {
+    fn enumerate_on(&mut self, stack: &Stack, pending: Vec<(Term, Vec<Arc<str>>, Enumerated)>) {
         let int = Type::int();
         for (c, open, key) in pending {
             let at = |extra: Option<(&Arc<str>, i64)>| {
@@ -798,7 +881,7 @@ fn is_test(t: &Term) -> bool {
 
 /// The product of a literal equality's outcome on `p`: the literal itself, or every value but
 /// it, excluded by complement in the type, the interval and the finite set.
-fn equality(p: &mut Product, v: &Value, equal: bool, prem: &BTreeSet<Premise>) {
+fn equality(p: &mut Product, v: &Value, equal: bool, prem: &Premises) {
     if equal {
         let lit = Product::literal(v);
         p.ty.meet(&lit.ty.element, prem);
@@ -835,29 +918,31 @@ fn substitute(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Term {
 
 /// The element of `e`'s value in `scope`: a literal, a value computed from static names, the
 /// revision table's forward transfer over integers, or the join of an `if`'s reachable arms.
-pub fn forward(e: &Term, scope: &Scope) -> Product {
+/// `scope` is as it was on return.
+pub fn forward(e: &Term, scope: &mut Scope) -> Product {
     on_stack(|_| forward_in(e, scope))
 }
 
-fn forward_in(e: &Term, scope: &Scope) -> Product {
+fn forward_in(e: &Term, scope: &mut Scope) -> Product {
     if scope.bottom {
         return Product::bottom();
     }
-    let none = BTreeSet::new();
+    let none = Premises::new();
     match e {
         Term::Lit(v) => return Product::literal(v),
         Term::Var(x) => return scope.get(x),
         Term::Let(x, v, b) => {
-            let mut s = scope.clone();
-            s.names.insert(x.clone(), forward_in(v, scope));
-            s.reduce();
-            return forward_in(b, &s);
+            let p = forward_in(v, scope);
+            let u = scope.bind(x, p);
+            let out = forward_in(b, scope);
+            scope.unbind(u);
+            return out;
         }
         Term::If(c, a, b) => {
-            let t = scope.assume(c, true, &none);
-            let f = scope.assume(c, false, &none);
-            let mut p = forward_in(a, &t);
-            p.join(&forward_in(b, &f));
+            let mut t = scope.assume(c, true, &none);
+            let mut f = scope.assume(c, false, &none);
+            let mut p = forward_in(a, &mut t);
+            p.join(&forward_in(b, &mut f));
             return p;
         }
         Term::Prim(op, args) => return forward_prim(*op, args, scope),
@@ -869,7 +954,7 @@ fn forward_in(e: &Term, scope: &Scope) -> Product {
         .iter()
         .map(|n| scope.get(n).time.element)
         .fold(Time::Build, |a, b| a.join(&b));
-    let statics = scope.statics();
+    let statics = scope.statics_of(&free);
     if !matches!(e, Term::Lam(..))
         && free.iter().all(|n| statics.contains_key(n))
         && let Some(p) = run_static(&substitute(e, &statics))
@@ -893,7 +978,7 @@ fn run_static(t: &Term) -> Option<Product> {
 
 /// [`forward`] of a primitive: its value when every argument has one, else the revision
 /// table's transfer over integers. Each argument is visited once.
-fn forward_prim(op: Prim, args: &[Term], scope: &Scope) -> Product {
+fn forward_prim(op: Prim, args: &[Term], scope: &mut Scope) -> Product {
     let xs: Vec<Product> = args.iter().map(|a| forward_in(a, scope)).collect();
     if let Some(vs) = xs.iter().map(Product::value).collect::<Option<Vec<_>>>() {
         let t = Term::Prim(op, vs.into_iter().map(|v| Term::Lit(v.clone())).collect());
@@ -964,19 +1049,19 @@ pub fn arms(term: &Term, scope: &Scope) -> Vec<Arm> {
     on_stack(|_| {
         let mut out = Vec::new();
         let mut count = 0;
-        walk(term, scope, &mut out, &mut count);
+        walk(term, &mut scope.clone(), &mut out, &mut count);
         out
     })
 }
 
-fn walk(t: &Term, scope: &Scope, out: &mut Vec<Arm>, count: &mut u32) {
+fn walk(t: &Term, scope: &mut Scope, out: &mut Vec<Arm>, count: &mut u32) {
     match t {
         Term::Let(x, e, b) => {
             walk(e, scope, out, count);
-            let mut s = scope.clone();
-            s.names.insert(x.clone(), forward(e, scope));
-            s.reduce();
-            walk(b, &s, out, count);
+            let p = forward(e, scope);
+            let u = scope.bind(x, p);
+            walk(b, scope, out, count);
+            scope.unbind(u);
         }
         Term::If(c, a, b) => {
             let at = FactAddress {
@@ -984,15 +1069,15 @@ fn walk(t: &Term, scope: &Scope, out: &mut Vec<Arm>, count: &mut u32) {
                 keypath: Vec::new(),
             };
             *count += 1;
-            let prem = BTreeSet::from([Premise::Constraint(at)]);
+            let prem = Premises::one(Premise::Constraint(at));
             for (o, arm) in [(true, a), (false, b)] {
-                let s = scope.assume(c, o, &prem);
+                let mut s = scope.assume(c, o, &prem);
                 out.push(Arm {
                     guard: c.to_string(),
                     outcome: o,
                     scope: s.clone(),
                 });
-                walk(arm, &s, out, count);
+                walk(arm, &mut s, out, count);
             }
         }
         Term::Prim(_, args) => {

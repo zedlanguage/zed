@@ -719,14 +719,14 @@ impl<'a> Cx<'a> {
         let any = |cx: &Self, ts: &mut dyn Iterator<Item = (&Term, Env)>| -> Option<bool> {
             let mut m = false;
             for (t, e) in ts {
-                m |= cx.mentions(t, &e, depth + 1)?;
+                m |= cx.mentions(t, &e, depth)?;
             }
             Some(m)
         };
         match t {
             Term::Lit(_) | Term::PrimFn(_) => Some(false),
             Term::Var(x) => match lookup(env, x) {
-                Some((bt, benv)) => self.mentions(bt, benv, depth + 1),
+                Some((bt, benv)) => self.mentions(bt, benv, depth),
                 None => Some(self.inputs.contains_key(x)),
             },
             Term::Let(n, e, b) => {
@@ -748,7 +748,7 @@ impl<'a> Cx<'a> {
                         inner
                     })
                     .clone();
-                self.mentions(b, &inner, depth + 1)
+                self.mentions(b, &inner, depth)
             }
             Term::App(f, args) => any(
                 self,
@@ -775,7 +775,7 @@ impl<'a> Cx<'a> {
         if self.spent(depth).is_some() {
             return None;
         }
-        let c = |t: &Term, e: &Env| self.close(t, e, depth + 1);
+        let c = |t: &Term, e: &Env| self.close(t, e, depth);
         Some(match t {
             Term::Var(x) => match lookup(env, x) {
                 Some((bt, benv)) => c(bt, benv)?,
@@ -928,7 +928,7 @@ impl<'a> Cx<'a> {
         if self.spent(depth).is_some() {
             return None;
         }
-        let d = depth + 1;
+        let d = depth;
         if let Some(v) = self.constant(t, env) {
             return match v {
                 Value::Int(n) => Some(Lin::constant(n.into())),
@@ -947,7 +947,7 @@ impl<'a> Cx<'a> {
             Term::App(f, args) => match self.callee(f, env).ok()? {
                 Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
                     let inner = self.call_env(t, ps, args, lam, env);
-                    self.lin(tr, body, &inner, d)
+                    self.lin(tr, body, &inner, d + 1)
                 }
                 Callee::Prim(p) => self.lin(tr, &self.call_prim(t, env, p, args), env, d),
                 Callee::Lam(..) => None,
@@ -1061,7 +1061,7 @@ impl<'a> Cx<'a> {
         if self.spent(depth).is_some() {
             return None;
         }
-        let d = depth + 1;
+        let d = depth;
         if let Some(v) = self.constant(t, env) {
             return match v {
                 Value::Bool(true) => Some(Formula::top()),
@@ -1078,7 +1078,7 @@ impl<'a> Cx<'a> {
             Term::App(f, args) => match self.callee(f, env).ok()? {
                 Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
                     let inner = self.call_env(t, ps, args, lam, env);
-                    self.formula(tr, body, &inner, d)
+                    self.formula(tr, body, &inner, d + 1)
                 }
                 Callee::Prim(p) => self.formula(tr, &self.call_prim(t, env, p, args), env, d),
                 Callee::Lam(..) => None,
@@ -1155,10 +1155,11 @@ impl<'a> Cx<'a> {
     }
 
     fn fwd_at(&self, t: &Term, env: &Env, depth: u32) -> Fwd {
-        if self.spent(depth).is_some() {
+        if let Some(why) = self.spent(depth) {
+            self.stop(why, t);
             return Fwd::top();
         }
-        let d = depth + 1;
+        let d = depth;
         match t {
             Term::Lit(Value::Int(n)) => Fwd::int(IntervalSet::single(*n)),
             Term::Lit(Value::Bool(b)) => Fwd::bools(*b, !*b),
@@ -1199,7 +1200,7 @@ impl<'a> Cx<'a> {
             Term::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
                     let inner = self.call_env(t, ps, args, lam, env);
-                    self.fwd(body, &inner, d)
+                    self.fwd(body, &inner, d + 1)
                 }
                 Ok(Callee::Prim(p)) => self.fwd(&self.call_prim(t, env, p, args), env, d),
                 _ => Fwd::top(),
@@ -1314,7 +1315,7 @@ impl<'a> Cx<'a> {
         {
             return if d.holds(&v) { self.all() } else { self.none() };
         }
-        let next = depth + 1;
+        let next = depth;
         match t {
             Term::Var(x) => match lookup(env, x) {
                 Some((bt, benv)) => self.back_at(bt, &benv.clone(), d, next),
@@ -1348,7 +1349,7 @@ impl<'a> Cx<'a> {
             Term::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
                     let inner = self.call_env(t, ps, args, lam, env);
-                    self.back_at(body, &inner, d, next)
+                    self.back_at(body, &inner, d, next + 1)
                 }
                 Ok(Callee::Prim(p)) => self.back_at(&self.call_prim(t, env, p, args), env, d, next),
                 Err(Some(name)) => self.stop(StopKind::Foreign(name), t),
@@ -1490,7 +1491,7 @@ impl<'a> Cx<'a> {
         if self.mentions(t, env, 0) == Some(false) {
             return;
         }
-        let d = depth + 1;
+        let d = depth;
         match t {
             Term::Var(x) => {
                 if let Some((bt, benv)) = lookup(env, x) {
@@ -1506,7 +1507,7 @@ impl<'a> Cx<'a> {
             Term::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
                     let inner = self.call_env(t, ps, args, lam, env);
-                    self.scan(body, &inner, d);
+                    self.scan(body, &inner, d + 1);
                 }
                 Ok(Callee::Prim(p)) => self.scan(&self.call_prim(t, env, p, args), env, d),
                 Err(Some(name)) => {

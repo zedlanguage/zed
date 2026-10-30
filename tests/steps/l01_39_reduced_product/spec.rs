@@ -56,7 +56,7 @@ fn a_binding_read_from_a_static_if_is_static() {
         arm(&a, "debug", false).scope.to_string(),
         "debug:\n  finite {false}\n  type false\n  time build\n"
     );
-    let mode = forward(&t, &Scope::new([]));
+    let mode = forward(&t, &mut Scope::new([]));
     assert_eq!(
         mode.to_string(),
         "ints [2..=2]\ncongruence 2\nfinite {2}\ntype 2\ntime build\n"

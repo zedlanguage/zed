@@ -425,6 +425,32 @@ impl Formula {
         }
     }
 
+    /// The formula with every constraint that mentions `sym`, alone or in a product,
+    /// replaced by `true` where it occurs under an even number of negations and by `false`
+    /// where under an odd number: a formula implied by `self` that says nothing of `sym`.
+    pub fn forget(&self, sym: &Arc<str>) -> Formula {
+        fn go(f: &Formula, sym: &Arc<str>, pos: bool) -> Formula {
+            match f {
+                Formula::Con(c) => {
+                    let mentions = c.lin.terms.keys().any(|a| match a {
+                        Atom::Sym(n) => n == sym,
+                        Atom::Product(x, y) => x == sym || y == sym,
+                        Atom::Aux(_) => false,
+                    });
+                    match (mentions, pos) {
+                        (false, _) => f.clone(),
+                        (true, true) => Formula::top(),
+                        (true, false) => Formula::bottom(),
+                    }
+                }
+                Formula::Not(g) => Formula::negate(go(g, sym, !pos)),
+                Formula::And(gs) => Formula::and(gs.iter().map(|g| go(g, sym, pos)).collect()),
+                Formula::Or(gs) => Formula::or(gs.iter().map(|g| go(g, sym, pos)).collect()),
+            }
+        }
+        go(self, sym, true)
+    }
+
     /// The negation, with double negations and constants removed.
     pub fn negate(f: Formula) -> Formula {
         match f {

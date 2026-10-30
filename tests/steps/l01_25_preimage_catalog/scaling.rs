@@ -84,3 +84,15 @@ fn the_transfer_scales() {
     scaling::check("branches nested in guard position", 6, run(guards));
     scaling::check("a conjunction of tests", 8, run(conjunction));
 }
+
+/// The call depth counts calls, not the nesting of terms: a chain of `let`s of any length up
+/// to 64 is followed to the end and memoized, never cut. The old count cut every chain of 22
+/// or more, ran out of the transfer's budget and fell back on enumeration.
+#[test]
+fn a_long_chain_of_lets_is_not_cut() {
+    let ds = doms(&[("i", Some(-50), Some(50))]);
+    for k in 1..=64 {
+        let p = preimage(&doubling(k), &ds, &Demand::Bool(true));
+        assert_eq!(shown(&p), "i [0..=50]; exact", "a chain of {k} `let`s");
+    }
+}
