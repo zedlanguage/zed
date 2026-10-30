@@ -1,6 +1,8 @@
 //! The definedness `fix` at the rule of low complexity (DESIGN.md Part G). Each attempt at an
 //! entry reads the family defined so far; copying the domain and that family into every
 //! attempt made a `fix` over `D` keys cost `O(D²)` even when each entry is tried at most twice.
+//! An entry postponed on an undefined key waits on it, so a chain, such as the accumulators of
+//! a `foldl`, costs `D` attempts under every schedule rather than `D²/2` in rounds.
 
 use zed_kernel::term::build::if_;
 use zed_kernel::term::build::lit;
@@ -42,10 +44,12 @@ fn the_definedness_fix_scales() {
             scaling::check("chaotic, entries reading entry 0, by keys", 1000, |d| {
                 run(&counts(d, false), Schedule::Chaotic(7));
             });
-            // Each entry demands the one before it, once.
-            scaling::check("pull, a chain, by keys", 1000, |d| {
-                run(&counts(d, true), Schedule::Pull);
-            });
+            // Each entry waits on, or demands, the one before it.
+            for schedule in [Schedule::Rounds, Schedule::Chaotic(7), Schedule::Pull] {
+                scaling::check(&format!("{schedule:?}, a chain, by keys"), 1000, |d| {
+                    run(&counts(d, true), schedule);
+                });
+            }
         })
         .unwrap()
         .join()

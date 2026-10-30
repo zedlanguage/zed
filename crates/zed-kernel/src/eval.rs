@@ -1057,38 +1057,50 @@ impl Evaluator {
 
     /// Defines entries in rounds until every entry is defined or a round defines none, and
     /// returns the keys left undefined. Without a seed each round reads the family as it
-    /// began (Jacobi); with one, each round visits the entries in a shuffled order and reads
+    /// began (Jacobi); with one, each round visits its entries in a shuffled order and reads
     /// the entries defined before it in the same round.
+    ///
+    /// An attempt that read the undefined entry `j` reads the same entries again, and stops
+    /// at `j`, while `j` stays undefined, since entries never change once defined. So it
+    /// waits on `j` and is tried again in the round after `j` is defined: each round tries
+    /// only the entries whose wait ended, and a chain of `D` entries costs `D` attempts, not
+    /// `D²/2`. Jacobi rounds define the same entries in the same rounds as trying them all.
     fn define_in_rounds(&mut self, fix: &Definedness, seed: Option<u64>) -> R<Vec<Value>> {
         let mut rng = seed.map(SplitMix);
-        let undefined = |fix: &Definedness| -> Vec<Value> {
-            let defined = fix.defined.borrow();
-            let left = fix.domain.iter().filter(|k| !defined.contains_key(*k));
-            left.cloned().collect()
-        };
+        let mut waiting: BTreeMap<Value, Vec<Value>> = BTreeMap::new();
+        let mut ready: Vec<Value> = fix.domain.iter().cloned().collect();
         for round in 1.. {
             self.burn()?;
-            let mut pending = undefined(fix);
-            if pending.is_empty() {
-                return Ok(pending);
+            if ready.is_empty() {
+                break;
             }
             if let Some(rng) = &mut rng {
-                rng.shuffle(&mut pending);
+                rng.shuffle(&mut ready);
             }
             // Jacobi rounds read the entries of earlier rounds; chaotic ones read every entry.
             let sees = if rng.is_some() { u64::MAX } else { round };
-            let mut progress = false;
-            for k in pending {
-                if let Ok(v) = self.entry(fix, sees, &k)? {
-                    fix.defined.borrow_mut().insert(k, (v, round));
-                    progress = true;
+            let mut defined = Vec::new();
+            for k in std::mem::take(&mut ready) {
+                match self.entry(fix, sees, &k)? {
+                    Ok(v) => {
+                        fix.defined.borrow_mut().insert(k.clone(), (v, round));
+                        defined.push(k);
+                    }
+                    Err(read) => waiting.entry(read).or_default().push(k),
                 }
             }
-            if !progress {
-                return Ok(undefined(fix));
+            if defined.is_empty() {
+                break;
             }
+            for k in defined {
+                ready.extend(waiting.remove(&k).unwrap_or_default());
+            }
+            // The order of trying a round's entries is the key order, as when all are tried.
+            ready.sort();
         }
-        unreachable!("the rounds end when every entry is defined or a round defines none")
+        let defined = fix.defined.borrow();
+        let left = fix.domain.iter().filter(|k| !defined.contains_key(*k));
+        Ok(left.cloned().collect())
     }
 
     /// Demands each entry in key order, evaluating first each undefined entry it reads, and
@@ -1388,17 +1400,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             f.get(k).cloned().unwrap_or_else(|| Value::atom("notFound"))
         }
         (Prim::Count, [Value::Family(f)]) => Int(f.len() as i64),
-        (Prim::Union, [Value::Family(a), Value::Family(b)]) => {
-            let mut leaves = a.leaves();
-            let have: BTreeMap<Keypath, Value> = leaves.iter().cloned().collect();
-            for (path, v) in b.leaves() {
-                match have.get(&path) {
-                    Some(w) if *w == v => {}
-                    _ => leaves.push((path, v)),
-                }
-            }
-            Value::Family(Family::from_leaves(leaves)?)
-        }
+        (Prim::Union, [Value::Family(a), Value::Family(b)]) => Value::Family(a.union(b)?),
         (Prim::Path, keys) => Value::Path(keys.to_vec()),
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.is_empty() => {
             Value::atom_with(name, args.to_vec())

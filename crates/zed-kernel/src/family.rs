@@ -8,7 +8,8 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
+
+use imbl::OrdMap;
 
 use crate::error::KernelError;
 use crate::value::Value;
@@ -17,17 +18,52 @@ use crate::value::Value;
 pub type Keypath = Vec<Value>;
 
 /// A finite family. No level of a family is empty except a whole family that has no entries.
-/// Its entries are shared, so a copy of a family costs O(1) whatever its size.
+/// Its entries sit in a persistent map: a copy of a family costs O(1) whatever its size, and
+/// a family one entry larger than another shares all but O(log n) of its nodes with it.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
-pub struct Family(Arc<BTreeMap<Value, Value>>);
+pub struct Family(OrdMap<Value, Value>);
 
+/// A level being built. A leaf may hold a whole family, shared, until a leaf beneath it is
+/// added, when its top level is expanded into an inner node.
 enum Node {
     Leaf(Value),
     Inner(BTreeMap<Value, Node>),
 }
 
+/// Expands a leaf holding a family into an inner node over the family's top level.
+fn expand(node: &mut Node) {
+    let level = match node {
+        Node::Leaf(Value::Family(f)) => f.iter().map(|(k, v)| (k.clone(), Node::Leaf(v.clone()))),
+        _ => return,
+    };
+    *node = Node::Inner(level.collect());
+}
+
+/// Puts the nonempty family `sub` at `path` as one shared leaf, and returns true, when no leaf
+/// is at `path` and none above it. Otherwise returns false, having added only inner nodes
+/// that the leaves of `sub` would add.
+fn place(level: &mut BTreeMap<Value, Node>, path: &[Value], sub: &Family) -> bool {
+    let (key, rest) = path.split_first().expect("keypaths are nonempty");
+    let key = key.key();
+    if rest.is_empty() {
+        if level.contains_key(&key) {
+            return false;
+        }
+        level.insert(key, Node::Leaf(Value::Family(sub.clone())));
+        return true;
+    }
+    let node = level
+        .entry(key)
+        .or_insert_with(|| Node::Inner(BTreeMap::new()));
+    expand(node);
+    match node {
+        Node::Inner(inner) => place(inner, rest, sub),
+        Node::Leaf(_) => false,
+    }
+}
+
 fn into_family(level: BTreeMap<Value, Node>) -> Family {
-    Family(Arc::new(
+    Family(
         level
             .into_iter()
             .map(|(k, node)| match node {
@@ -35,7 +71,7 @@ fn into_family(level: BTreeMap<Value, Node>) -> Family {
                 Node::Inner(inner) => (k, Value::Family(into_family(inner))),
             })
             .collect(),
-    ))
+    )
 }
 
 fn insert(
@@ -56,10 +92,11 @@ fn insert(
         level.insert(key.clone(), Node::Leaf(leaf));
         return Ok(());
     }
-    match level
+    let node = level
         .entry(key.clone())
-        .or_insert_with(|| Node::Inner(BTreeMap::new()))
-    {
+        .or_insert_with(|| Node::Inner(BTreeMap::new()));
+    expand(node);
+    match node {
         Node::Leaf(_) => Err(collision()),
         Node::Inner(inner) => insert(inner, rest, leaf, whole),
     }
@@ -86,18 +123,19 @@ impl Family {
     /// A set: each key maps to itself, as a set leaf does, so a membership lookup yields
     /// the element (sec:kernel, `discard`).
     pub fn set<K: Into<Value>>(keys: impl IntoIterator<Item = K>) -> Self {
-        Family(Arc::new(
+        Family(
             keys.into_iter()
                 .map(|k| {
                     let k = k.into().key();
                     (k.clone(), k)
                 })
                 .collect(),
-        ))
+        )
     }
 
     /// Builds a family from its leaves. A leaf whose value is a family contributes that
-    /// family's leaves beneath it. Fails with [`KernelError::Collision`] when two leaves
+    /// family's leaves beneath it, sharing the family when nothing else is written there.
+    /// Fails with [`KernelError::Collision`] when two leaves
     /// share a keypath, or one leaf's keypath is a prefix of another's, and with
     /// [`KernelError::EmptyKeypath`] for a leaf with no keys.
     pub fn from_leaves(
@@ -109,6 +147,7 @@ impl Family {
                 return Err(KernelError::EmptyKeypath);
             }
             match value {
+                Value::Family(sub) if sub.is_empty() || place(&mut root, &path, &sub) => {}
                 Value::Family(sub) => {
                     for (mut sub_path, leaf) in sub.leaves() {
                         let mut whole = path.clone();
@@ -155,6 +194,15 @@ impl Family {
         self.0.keys()
     }
 
+    /// The union of two families: the leaves of both, where a keypath both write holds the
+    /// same leaf in each. Fails with [`KernelError::Collision`], at the first such keypath in
+    /// order, when the leaves differ or one family has a leaf above the other's subtree. It
+    /// costs O(m log n) for the smaller size m and the larger n: the larger family's entries
+    /// are shared, not copied.
+    pub fn union(&self, other: &Family) -> Result<Family, KernelError> {
+        union_at(self, other, &mut Vec::new())
+    }
+
     /// The number of top-level entries.
     pub fn len(&self) -> usize {
         self.0.len()
@@ -163,6 +211,49 @@ impl Family {
     /// Whether the family has no entries.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+/// The union of `a` and `b`, the levels beneath `prefix`. A collision is reported as building
+/// `a`'s leaves and then `b`'s would report it: at `b`'s leaf, or, where `a` has a leaf above a
+/// subtree of `b`, at the subtree's first leaf.
+fn union_at(a: &Family, b: &Family, prefix: &mut Keypath) -> Result<Family, KernelError> {
+    let small_is_b = a.len() >= b.len();
+    let (big, small) = if small_is_b { (a, b) } else { (b, a) };
+    let mut out = big.0.clone();
+    for (k, s) in small.0.iter() {
+        let Some(g) = big.0.get(k) else {
+            out.insert(k.clone(), s.clone());
+            continue;
+        };
+        let (x, y) = if small_is_b { (g, s) } else { (s, g) };
+        prefix.push(k.clone());
+        let merged = match (x, y) {
+            (Value::Family(x), Value::Family(y)) => Value::Family(union_at(x, y, prefix)?),
+            (Value::Family(_), _) => None.ok_or_else(|| collision(prefix))?,
+            (_, Value::Family(y)) => {
+                let mut sub = y;
+                loop {
+                    let (k, v) = sub.0.get_min().expect("no level of a family is empty");
+                    prefix.push(k.clone());
+                    match v {
+                        Value::Family(f) => sub = f,
+                        _ => return Err(collision(prefix)),
+                    }
+                }
+            }
+            (x, y) if x == y => x.clone(),
+            _ => return Err(collision(prefix)),
+        };
+        prefix.pop();
+        out.insert(k.clone(), merged);
+    }
+    Ok(Family(out))
+}
+
+fn collision(keypath: &Keypath) -> KernelError {
+    KernelError::Collision {
+        keypath: keypath.clone(),
     }
 }
 
