@@ -5,6 +5,7 @@ members = [
     "crates/zed-kernel",
     "crates/zed-rt",
     "crates/zed-cert",
+    "crates/zed-native",
     "tests",
 ]
 
@@ -20,6 +21,7 @@ zed-kernel = { path = "crates/zed-kernel" }
 zed-rt = { path = "crates/zed-rt" }
 zed-cert = { path = "crates/zed-cert" }
 zedc = { path = "crates/zedc" }
+zed-native = { path = "crates/zed-native" }
 insta = "1.49.0"
 
 [workspace.lints.rust]

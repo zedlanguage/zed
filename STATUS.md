@@ -93,15 +93,18 @@ in docs/layout.md.
   checks every count after every node.
 - Done: **L1.35**, the MLIR study (`zed/compiler/MLIR.md`): ZIR is lowered into MLIR's
   dialects, not written as one; the compact back end stays Cranelift.
-- Next: L1.36.
+- Done: **L1.36**, codegen via Cranelift (`zed-native`, with the runtime `zed-rt`): one
+  generator for the JIT and object files, scalar nodes inline, every other node run by the
+  runtime as the counting machine runs it, strings as ropes, `Lines` ports in the runtime.
+- Next: L1.37.
 - Plan extended (spec, 2026-10-30): **L30 — the editor**, a VS Code extension on the L25
   language server (static information per position, the dependency margin, recomputation of
   dirty nodes, values in place with visualizers), steps L30.1–L30.6.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 728 passed and 0 failed (22 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 674 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 25 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 10 in `l01_32_canonical_zir`, 23 in `l01_33_lowering`, 19 in `l01_34_memory`, 4 in `l01_35_mlir_study`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 751 passed and 0 failed (22 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 6 of `zed-rt`, 691 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 25 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 10 in `l01_32_canonical_zir`, 23 in `l01_33_lowering`, 19 in `l01_34_memory`, 4 in `l01_35_mlir_study`, 17 in `l01_36_cranelift`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 12 in
@@ -155,6 +158,7 @@ about 29 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.33 | done | `zir::lower::{lower, raise}`: one node per operation, lets as name hints, primitives as values kept as no-input `prim` nodes (a fold of `+` stays exact), literal lambda calls lowered in place, captures and state edges taken on demand, port-using functions inlined, CSE by content address. Every corpus row passes through lower, validate and raise with its outcome unchanged; mutation-tested (15 mutants caught). |
 | L1.34 | done | `zir::memory::{plan, run}`: values as cells (strings, big numbers, keypaths, families; tuples, atoms with payloads and closures with children), edges owned or borrowed, parameters borrowed unless consumed, a dup before each consuming use but the last, a drop at each last use that borrows, `match` releasing its scrutinee fused (1 count write against 4 for a fresh destructured pair). The checking machine runs every corpus row, fused and unfused, with outcomes unchanged and no cell left; it reports a missed drop, an extra or missing dup and a borrowed argument to a consuming parameter. Mutation-tested: 20 of 21 mutants caught; the survivor is the mode for a known lambda called with the wrong number of arguments, which no row reaches. |
 | L1.35 | done | `zed/compiler/MLIR.md`: a lowering into MLIR's `func`, `arith`, `math`, `scf`, `memref`, `async` and `llvm` dialects for each of the 19 operations, the 5 region kinds and both edge kinds; ZIR is not an MLIR dialect; graph regions are not used, since the lowering starts after scheduling; state edges become call order, or `!async.token`s between concurrent regions of a wave; content addresses become locations; certificates stop at the lowering, with the differential oracle checking MLIR and LLVM; the compact back end stays Cranelift. The step test fails when an operation or region kind lacks a row (negative control: two rows removed, two tests fail). |
+| L1.36 | done | `zed-native::{run, object, through}` on `zed-rt::{Heap, Word, Rope, ports}`: values as two-word tags and payloads; integer, float and boolean arithmetic and comparisons inline with overflow, least-integer negation and NaN canonicalization matching the kernel; direct calls of resolved callees, entry functions for the rest; dups, drops and fused releases as runtime calls. Every corpus row, fused and unfused, gives the interpreter's outcome with the machine's allocations, count writes, frees, peak and sharing per run (58 runs, 125 cells, 129/139 writes). Strings are ropes copied once at the end; `Lines` ports equal the interpreter's on all 19 531 strings up to length 6 over a five-symbol alphabet; object files are reproducible. Negative controls: a missed drop, a missing dup, a missing result dup and a borrowed argument to a consuming parameter each fail; mutants: skipping one drop per node fails the corpus test. |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -174,8 +178,8 @@ about 29 s in a debug build, with `zed-kernel` built at opt-level 2.
   of 10^8 calls, at most 20 000 nested calls, and runs on its own thread with a 1 GiB stack.
 - Coverage runs in CI (`cargo llvm-cov`, job `coverage`), not locally: this machine has no
   LLVM tools, and installing them is a system package change.
-- Workspace lints: `missing_docs` warns, `unsafe_code` is forbidden. `zed-rt` will need
-  `unsafe` when native code arrives (L1.34 and L1.36), so it will relax that lint for itself.
+- Workspace lints: `missing_docs` warns, `unsafe_code` is forbidden. `zed-native` denies it
+  instead and allows it at the two places that call and free JIT code; `zed-rt` needs none.
 
 - No step waits for a person (the author's instruction, 2026-10-29; spec commit 827385b).
   M0(d) is now a prediction suite kept as tests, the M0(e) postmortems run alongside and gate
@@ -419,6 +423,14 @@ about 29 s in a debug build, with `zed-kernel` built at opt-level 2.
   so no C++ build enters the tree; the C API is adopted only if compile time measured at L28
   shows the process boundary matters. MLIR's bufferization and ownership-based deallocation
   are not used for Zed values; the L1.34 plan is applied before the lowering.
+- L1.36 (DESIGN.md L1.36): a value is a word of a tag and a payload, returned in two
+  registers. Arms are inline; a lambda body is a function, with an entry function taking every
+  argument owned for calls the plan cannot resolve. Nodes outside the inline tier are run by
+  the runtime through the kernel, so the native and machine counts agree one for one; the
+  runtime's state is thread-local, and a hook never calls generated code. A match that native
+  pattern matching does not decide is decided by the kernel, and the two must agree. The
+  object file is checked for reproducibility and its symbols; linking it into an executable
+  comes with `zed build`. The workspace's `unsafe_code` lint is relaxed only in `zed-native`.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which the evaluator's integers now pass (L1.17): revisit with the store's

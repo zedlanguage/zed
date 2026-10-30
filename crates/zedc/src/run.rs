@@ -411,7 +411,7 @@ pub fn split_lines(bytes: &[u8]) -> Value {
 }
 
 /// The bytes a push of `v` writes to `Lines` port `port`: each string, then `\n`.
-fn join_lines(port: &str, v: &Value) -> Result<Vec<u8>, String> {
+pub fn join_lines(port: &str, v: &Value) -> Result<Vec<u8>, String> {
     let lines: Vec<Value> = match v {
         Value::Family(f) => f.leaves().into_iter().map(|(_, v)| v).collect(),
         v => vec![v.clone()],

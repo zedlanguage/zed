@@ -1,0 +1,26 @@
+[package]
+name = "zed-native"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+cranelift-codegen = "0.137.1"
+cranelift-frontend = "0.137.1"
+cranelift-jit = "0.137.1"
+cranelift-module = "0.137.1"
+cranelift-native = "0.137.1"
+cranelift-object = "0.137.1"
+zed-kernel.workspace = true
+zed-rt.workspace = true
+zedc.workspace = true
+
+# The workspace forbids `unsafe`; calling JIT-compiled code needs it once, at the entry.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
