@@ -260,3 +260,50 @@ fn an_inner_binding_hides_an_outer_one_within_its_scope_only() {
     );
     assert_eq!(run(&param), Value::Int(6));
 }
+
+/// `discard(F, (p, w) -> true)`, keeping every entry of `F`.
+fn keep_all(f: Family) -> Term {
+    discard(
+        lit(Value::Family(f)),
+        lam(&["p", "w"], lit(Value::Bool(true))),
+    )
+}
+
+#[test]
+fn a_discard_scales_with_its_entries_and_the_keypaths_it_gives() {
+    // Each level of a discard was rebuilt from the leaves of the levels below it: a family of
+    // depth `d` cost `O(L·d²)`. Now a level keeps each kept family whole. A discard gives
+    // the selector the keypath of each entry, so a chain of depth `d` with a leaf beside each
+    // level gives keypaths of lengths 1 to `d`, `d²` keys in all: work of order `d²`, which
+    // it is allowed. Rebuilding each level from its leaves cost `d³/3`.
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            let wide = |n: usize| {
+                let leaves = (0..n as i64).flat_map(|i| {
+                    (0..2).map(move |j| (vec![Value::Int(i), Value::Int(j)], Value::Int(i + j)))
+                });
+                Family::from_leaves(leaves).unwrap()
+            };
+            scaling::check("a discard of n pairs, by n", 2000, |n| {
+                let f = wide(n);
+                assert_eq!(run(&keep_all(f.clone())), Value::Family(f));
+            });
+            // The leaf `i` at the keypath of `i` zeros and then a one.
+            let caterpillar = |d: usize| {
+                let leaves = (0..d).map(|i| {
+                    let mut path = vec![Value::Int(0); i];
+                    path.push(Value::Int(1));
+                    (path, Value::Int(i as i64))
+                });
+                Family::from_leaves(leaves).unwrap()
+            };
+            scaling::check_order("a discard of a caterpillar, by depth", 200, 2, |d| {
+                let f = caterpillar(d);
+                assert_eq!(run(&keep_all(f.clone())), Value::Family(f));
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
