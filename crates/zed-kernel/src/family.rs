@@ -181,7 +181,11 @@ impl Family {
 
     /// The value at key `k` of the top level.
     pub fn get(&self, k: &Value) -> Option<&Value> {
-        self.0.get(&k.key())
+        // Copied only when it holds a `-0.0`, which its key does not.
+        match k.is_key() {
+            true => self.0.get(k),
+            false => self.0.get(&k.key()),
+        }
     }
 
     /// The top-level entries, in key order.

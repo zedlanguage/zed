@@ -10,7 +10,7 @@
 
 /// The persistent vector of a fact address's node and keypath.
 pub use imbl::Vector;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -79,18 +79,27 @@ impl Provenance {
         self.facts.len() - 1
     }
 
-    /// The term at `node`'s position.
+    /// The term at `node`'s position. It walks the term to the position, so the terms of
+    /// many facts are read from [`Provenance::terms`].
     pub fn term(&self, node: &NodeAddress) -> &Term {
+        let at = node.position() as usize;
+        self.preorder()
+            .nth(at)
+            .unwrap_or_else(|| panic!("no node at position {at}"))
+    }
+
+    /// The term at each position, in one walk: `terms()[f.address.node.position()]`.
+    pub fn terms(&self) -> Vec<&Term> {
+        self.preorder().collect()
+    }
+
+    fn preorder(&self) -> impl Iterator<Item = &Term> {
         let mut stack = vec![&self.term];
-        let mut n = 0;
-        while let Some(t) = stack.pop() {
-            if n == node.position() {
-                return t;
-            }
-            n += 1;
+        std::iter::from_fn(move || {
+            let t = stack.pop()?;
             stack.extend(children(t).into_iter().rev());
-        }
-        panic!("no node at position {}", node.position())
+            Some(t)
+        })
     }
 
     /// The addresses held by more than one fact; a correct run has none (sec:keypaths, one
@@ -114,47 +123,58 @@ impl Provenance {
         let Some(v @ Value::Atom(_)) = &self.facts[i].value else {
             return BTreeSet::new();
         };
-        let members: Vec<Value> = match v.errs() {
+        let members: BTreeSet<Value> = match v.errs() {
             Some(set) => set.keys().cloned().collect(),
-            None => vec![v.clone()],
+            None => BTreeSet::from([v.clone()]),
         };
-        members.iter().flat_map(|m| self.first(i, m)).collect()
-    }
-
-    fn first(&self, i: usize, atom: &Value) -> BTreeSet<usize> {
+        // The members each fact reached holds, its value walked once: each member's search
+        // walked every value it tested, an `#errs` of up to all the members.
+        let mut held: BTreeMap<usize, BTreeSet<&Value>> = BTreeMap::new();
         let mut out = BTreeSet::new();
-        let mut stack = vec![i];
-        let mut seen = BTreeSet::new();
-        while let Some(j) = stack.pop() {
-            if !seen.insert(j) {
-                continue;
+        for m in &members {
+            let mut stack = vec![i];
+            let mut seen = BTreeSet::new();
+            while let Some(j) = stack.pop() {
+                if !seen.insert(j) {
+                    continue;
+                }
+                let from: Vec<usize> = self.facts[j]
+                    .inputs
+                    .iter()
+                    .copied()
+                    .filter(|&k| {
+                        held.entry(k)
+                            .or_insert_with(|| {
+                                let mut found = BTreeSet::new();
+                                if let Some(v) = &self.facts[k].value {
+                                    holds(v, &members, &mut found);
+                                }
+                                found
+                            })
+                            .contains(m)
+                    })
+                    .collect();
+                if from.is_empty() {
+                    out.insert(j);
+                }
+                stack.extend(from);
             }
-            let from: Vec<usize> = self.facts[j]
-                .inputs
-                .iter()
-                .copied()
-                .filter(|&k| self.facts[k].value.as_ref().is_some_and(|v| holds(v, atom)))
-                .collect();
-            if from.is_empty() {
-                out.insert(j);
-            }
-            stack.extend(from);
         }
         out
     }
 }
 
-/// Whether `v` holds the failure `atom`: is it, is an `#errs` with it as a member, or holds it
-/// in a tuple, a family or a payload.
-fn holds(v: &Value, atom: &Value) -> bool {
-    if v == atom {
-        return true;
+/// Adds to `found` each failure of `members` that `v` holds: that `v` is, has as a member of
+/// an `#errs`, or holds in a tuple, a family or a payload.
+fn holds<'a>(v: &Value, members: &'a BTreeSet<Value>, found: &mut BTreeSet<&'a Value>) {
+    if let Some(m) = members.get(v) {
+        found.insert(m);
     }
     match v {
-        Value::Atom(a) => a.args.iter().any(|x| holds(x, atom)),
-        Value::Tuple(xs) | Value::Path(xs) => xs.iter().any(|x| holds(x, atom)),
-        Value::Family(f) => f.leaves().iter().any(|(_, x)| holds(x, atom)),
-        _ => false,
+        Value::Atom(a) => a.args.iter().for_each(|x| holds(x, members, found)),
+        Value::Tuple(xs) | Value::Path(xs) => xs.iter().for_each(|x| holds(x, members, found)),
+        Value::Family(f) => f.iter().for_each(|(_, x)| holds(x, members, found)),
+        _ => {}
     }
 }
 

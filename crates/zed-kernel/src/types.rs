@@ -101,7 +101,10 @@ enum Node {
 /// `make()`, computed on first use. Two nodes are one type only when they are one node.
 struct Rec {
     id: u64,
-    name: String,
+    /// The name, made when first printed: a name spells out its part of the definition, so
+    /// making every part's name at once cost the product of the definition's size and depth.
+    name: OnceLock<String>,
+    naming: Box<dyn Fn() -> String + Send + Sync>,
     body: OnceLock<Type>,
     make: Box<dyn Fn() -> Type + Send + Sync>,
 }
@@ -126,9 +129,15 @@ impl Ord for Rec {
     }
 }
 
+impl Rec {
+    fn name(&self) -> &str {
+        self.name.get_or_init(|| (self.naming)())
+    }
+}
+
 impl fmt::Debug for Rec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.name)
+        f.write_str(self.name())
     }
 }
 
@@ -253,13 +262,17 @@ impl Type {
         }
     }
 
-    /// The node named `name` whose parts are `make()`'s, computed when first needed. `make`
-    /// must not need this node's parts, which a contractive definition ensures.
-    fn rec(name: String, make: impl Fn() -> Type + Send + Sync + 'static) -> Type {
+    /// The node named `naming()` whose parts are `make()`'s, each computed when first needed.
+    /// `make` must not need this node's parts, which a contractive definition ensures.
+    fn rec(
+        naming: impl Fn() -> String + Send + Sync + 'static,
+        make: impl Fn() -> Type + Send + Sync + 'static,
+    ) -> Type {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         Type(Arc::new(Node::Rec(Rec {
             id: NEXT.fetch_add(1, Ordering::Relaxed),
-            name,
+            name: OnceLock::new(),
+            naming: Box::new(naming),
             body: OnceLock::new(),
             make: Box::new(make),
         })))
@@ -483,7 +496,9 @@ impl Type {
 
     /// Every value of `self`, when there are at most `cap` of them and each can be listed:
     /// bools, finite literal sets, bare atoms, and tuples of such components. `None` for a
-    /// type with more values, an infinite part, a payload, a struct or a function.
+    /// type with more values, an infinite part, a payload, a struct or a function, and for a
+    /// tuple type one of whose paths has more than `cap` rows before its negated tuples are
+    /// taken out.
     pub fn values(&self, cap: usize) -> Option<Vec<Value>> {
         if !matches!(&*self.0, Node::Parts(_)) {
             return None;
@@ -534,6 +549,10 @@ impl Type {
                     let Some(vs) = item.values(cap) else {
                         return false;
                     };
+                    // Compared with the cap before the product is built, which can be `cap²`.
+                    if found.len().saturating_mul(vs.len()) > cap {
+                        return false;
+                    }
                     found = found
                         .iter()
                         .flat_map(|r| {
@@ -544,15 +563,14 @@ impl Type {
                             })
                         })
                         .collect();
-                    if found.len() > cap {
-                        return false;
-                    }
                 }
                 let fits =
                     |t: &Vec<Type>, r: &Vec<Value>| t.iter().zip(r).all(|(t, v)| t.contains(v));
                 found.retain(|r| !neg.iter().any(|n| fits(n, r)));
-                rows.get_or_insert_with(Vec::new).extend(found);
-                true
+                // The paths are disjoint, so their rows are distinct values.
+                let rows = rows.get_or_insert_with(Vec::new);
+                rows.extend(found);
+                rows.len() <= cap
             });
             if listed != Some(true) {
                 return None;
@@ -582,17 +600,23 @@ impl Type {
                 if a.args.is_empty() {
                     part.bare
                 } else if a.fields.is_empty() {
-                    part.payload.contains(&Value::Tuple(a.args.clone()))
+                    part.payload.contains_tuple(&a.args)
                 } else {
                     part.payload.p().structs
                 }
             }
-            Value::Tuple(xs) | Value::Path(xs) => p
-                .tuples
-                .get(xs.len())
-                .eval(&|t: &Vec<Type>| t.iter().zip(xs).all(|(t, x)| t.contains(x))),
+            Value::Tuple(xs) | Value::Path(xs) => self.contains_tuple(xs),
             Value::Family(_) => self.functions(),
         }
+    }
+
+    /// Whether the tuple of `xs` is in `self`, read in place: an atom's payload was copied
+    /// into a tuple to be tested, so a value nested `d` deep was copied `d` times.
+    fn contains_tuple(&self, xs: &[Value]) -> bool {
+        self.p()
+            .tuples
+            .get(xs.len())
+            .eval(&|t: &Vec<Type>| t.iter().zip(xs).all(|(t, x)| t.contains(x)))
     }
 
     fn zip(&self, other: &Type, op: Op) -> Type {
@@ -942,7 +966,7 @@ impl fmt::Display for Type {
         }
         let p = match &*self.0 {
             Node::Parts(p) => p,
-            Node::Rec(r) => return f.write_str(&r.name),
+            Node::Rec(r) => return f.write_str(r.name()),
         };
         let mut items: Vec<String> = Vec::new();
         match p.bools {

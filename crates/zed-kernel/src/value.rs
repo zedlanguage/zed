@@ -225,6 +225,16 @@ impl Value {
         }
     }
 
+    /// Whether the value is its own key: whether it holds no `-0.0`.
+    pub fn is_key(&self) -> bool {
+        match self {
+            Value::Float(x) => !(x.get() == 0.0 && x.get().is_sign_negative()),
+            Value::Tuple(vs) | Value::Path(vs) => vs.iter().all(Value::is_key),
+            Value::Atom(a) => a.args.iter().all(Value::is_key),
+            _ => true,
+        }
+    }
+
     /// The language's order on two values of one kind: structural, except that two floats
     /// compare as IEEE 754 does, so `-0.0` and `0.0` are equal and a NaN is unordered, and
     /// tuples compare component by component in that order. `None` when they are unordered.

@@ -24,9 +24,10 @@ pub(crate) fn unique(p: &Provenance) {
 
 /// The facts at the node whose term prints as `text`.
 pub(crate) fn at<'a>(p: &'a Provenance, text: &str) -> Vec<&'a Fact> {
+    let terms = p.terms();
     p.facts()
         .iter()
-        .filter(|f| p.term(&f.address.node).to_string() == text)
+        .filter(|f| terms[f.address.node.position() as usize].to_string() == text)
         .collect()
 }
 

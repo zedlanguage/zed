@@ -51,3 +51,48 @@ fn the_facts_of_a_recursion_are_at_their_call_sites() {
     assert_eq!(depths.len(), 31, "{depths:?}");
     assert_eq!(depths[30] - depths[0], 30, "{depths:?}");
 }
+
+/// The balanced tree of `op` over the leaves `leaf(lo..hi)`.
+fn tree(lo: usize, hi: usize, op: fn(Term, Term) -> Term, leaf: &dyn Fn(usize) -> Term) -> Term {
+    match hi - lo {
+        1 => leaf(lo),
+        _ => {
+            let mid = (lo + hi) / 2;
+            op(tree(lo, mid, op, leaf), tree(mid, hi, op, leaf))
+        }
+    }
+}
+
+#[test]
+fn the_term_of_every_fact_scales() {
+    // The term at a node is found by walking the term in preorder to its position, so
+    // reading the term of each of the `O(n)` facts of an `n`-node term one at a time took
+    // `O(n²)` steps (ratio 61). `terms()` reads them all in one walk.
+    scaling::check("the term at each fact, by term size", 1000, |n| {
+        let (v, p) = trace(&tree(0, n, add, &|_| lit(Value::Int(1))));
+        assert_eq!(v, Value::Int(n as i64));
+        let terms = p.terms();
+        let adds = p
+            .facts()
+            .iter()
+            .filter(|f| matches!(terms[f.address.node.position() as usize], Term::Prim(..)))
+            .count();
+        assert_eq!(adds, n - 1);
+    });
+}
+
+#[test]
+fn the_origins_of_a_failure_with_many_members_scale() {
+    // The product of `n` distinct loose atoms: its `#errs` has `n` members, each first
+    // appearing at its literal. Each member's search tested every input fact by walking its
+    // value, an `#errs` of up to `n` members: `O(n² log n)` steps.
+    scaling::check("the origins of an n-member failure, by n", 64, |n| {
+        let leaf = |i: usize| lit(Value::atom(&format!("e{i}")));
+        let (v, p) = trace(&tree(0, n, mul, &leaf));
+        assert_eq!(v.errs().map(|e| e.len()), Some(n), "{v}");
+        let o = p.origins(p.result());
+        assert_eq!(o.len(), n);
+        let at = |j: usize| p.term(&p.facts()[j].address.node);
+        assert!(o.iter().all(|&j| matches!(at(j), Term::Lit(_))));
+    });
+}

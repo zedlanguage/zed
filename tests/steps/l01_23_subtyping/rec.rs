@@ -264,3 +264,86 @@ fn recursive_types_are_decidable_unless_they_bound_functions() {
     )]);
     assert!(!w.decidable());
 }
+
+#[test]
+fn recursive_definitions_scale() {
+    // The check for contractiveness searched from each definition in turn, so a chain of `d`
+    // definitions took `O(d²)` steps (ratio 31); one pass of Tarjan's components now finds
+    // the cycles. A body nested `d` deep had each part kept unevaluated copied, walked for
+    // recursive occurrences and named in full, and an atom's payload was copied to test a
+    // value, each once per level: `O(d²)` (ratio 68). The body is now a shared tree whose
+    // nodes know whether they mention the group, a part's name is made when it is printed,
+    // and a payload is tested in place.
+    use zed_tests::scaling;
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            scaling::check("chain of definitions", 100, |d| {
+                let defs = (0..d)
+                    .map(|i| {
+                        let body = if i + 1 < d {
+                            or(vec![r(i + 1, vec![]), bare(&format!("a{i}"))])
+                        } else {
+                            bare("end")
+                        };
+                        def(&format!("T{i}"), &[], body)
+                    })
+                    .collect();
+                let t = one(defs);
+                assert!(t.contains(&Value::atom("end")));
+            });
+            scaling::check("nested body", 100, |d| {
+                let mut body = Expr::Tuple(vec![r(0, vec![]), ty(Type::int())]);
+                for _ in 0..d {
+                    body = atom("n", vec![body]);
+                }
+                let t = one(vec![def("T", &[], or(vec![body, bare("z")]))]);
+                let mut v = Value::Tuple(vec![Value::atom("z"), Value::Int(1)]);
+                for _ in 0..d {
+                    v = Value::atom_with("n", vec![v]);
+                }
+                assert!(t.contains(&v));
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn the_lowest_definition_on_a_cycle_is_named() {
+    // `A = B | int` reaches the cycle `B = C | int`, `C = B | #c` but is not on it.
+    let (b, c) = (|| r(1, vec![]), || r(2, vec![]));
+    let g = Group::new(vec![
+        def("A", &[], or(vec![b(), ty(Type::int())])),
+        def("B", &[], or(vec![c(), ty(Type::int())])),
+        def("C", &[], or(vec![b(), bare("c")])),
+    ]);
+    let e = g.unwrap_err();
+    assert_eq!(e.def, 1, "{}", e.message);
+    assert!(
+        e.message.contains("`B` is not contractive"),
+        "{}",
+        e.message
+    );
+    // Two cycles: `{B, C}` is completed first, and `A`, the lowest, is named.
+    let g = Group::new(vec![
+        def("A", &[], or(vec![b(), r(0, vec![])])),
+        def("B", &[], or(vec![c(), ty(Type::int())])),
+        def("C", &[], or(vec![b(), bare("c")])),
+    ]);
+    assert_eq!(g.unwrap_err().def, 0);
+    // A definition naming itself is a cycle of one, and a guarded cycle is none.
+    let g = Group::new(vec![
+        def("A", &[], atom("a", vec![r(1, vec![])])),
+        def("B", &[], or(vec![r(1, vec![]), bare("b")])),
+    ]);
+    assert_eq!(g.unwrap_err().def, 1);
+    assert!(
+        Group::new(vec![
+            def("A", &[], atom("a", vec![r(1, vec![])])),
+            def("B", &[], or(vec![r(0, vec![]), bare("b")])),
+        ])
+        .is_ok()
+    );
+}

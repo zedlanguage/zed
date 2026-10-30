@@ -265,3 +265,24 @@ fn literal_and_atom_sets_combine_exactly() {
     assert_eq!(&a & &b, both);
     assert_eq!(&(&a - &b) | &both, a);
 }
+
+#[test]
+fn listing_values_past_the_cap_stops_early() {
+    // `(S, S)` for a set `S` of `n` literals has `n²` values, past a cap of `n`. The product of
+    // the components' values was built before it was compared with the cap: `n²` rows.
+    scaling::check("the values of a square past the cap, by n", 200, |n| {
+        let s = Type::union_all((0..n).map(lit));
+        let square = Type::tuple(vec![s.clone(), s.clone()]);
+        assert_eq!(square.values(n), None, "n = {n}");
+        assert_eq!(s.values(n).map(|v| v.len()), Some(n));
+    });
+    let s = Type::union_all((0..3).map(lit));
+    let square = Type::tuple(vec![s.clone(), s]);
+    assert_eq!(square.values(9).map(|v| v.len()), Some(9));
+    assert_eq!(square.values(8), None);
+    // A path is listed when the product of its positive parts is within the cap, before the
+    // negated tuples are taken out, so 8 values from a product of 9 need a cap of 9.
+    let rest = &square - &Type::tuple(vec![lit(0), lit(0)]);
+    assert_eq!(rest.values(8), None);
+    assert_eq!(rest.values(9).map(|v| v.len()), Some(8));
+}
