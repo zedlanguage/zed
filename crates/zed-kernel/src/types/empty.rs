@@ -3,8 +3,9 @@
 //!
 //! A type is empty when every part is. The scalar and struct parts are exact, so their
 //! emptiness is read off. A tuple clause is empty when the meet of its positive tuple types is
-//! covered by its negated ones, which is decided by splitting the meet on each negated type's
-//! components in turn. A morphism clause is empty when its positive types admit no morphism,
+//! covered by its negated ones, which is decided by splitting the meet into disjoint pieces
+//! outside each negated type in turn, passing over a negated type disjoint from the piece; past
+//! the budget of splits the piece is not shown covered. A morphism clause is empty when its positive types admit no morphism,
 //! or one negated type contains every morphism they admit, which the variance law decides:
 //! contravariant in the guarantee, covariant in the permission and the value type. A union of
 //! negated morphism types is taken one type at a time, so a clause whose positive part is
@@ -13,7 +14,8 @@
 //!
 //! A tuple or morphism part kept as an expression (module `bdd`) is decided through its upper
 //! bound: it is empty when the bound is. A part whose bound, or whose diagram, has more than
-//! `WALK` nodes on its paths is not shown empty. So `is_empty` answers `true` only for an
+//! `WALK` nodes on its paths is not shown empty, and so is a tuple clause whose split passes
+//! the budget. So `is_empty` answers `true` only for an
 //! empty type, and `false` for a type that is inhabited or that the check could not decide
 //! within the budget; every caller takes `false` as "may have a value".
 //!
@@ -26,7 +28,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::bdd::WALK;
+use super::bdd::{self, WALK};
 use super::{Morphism, Parts, Type};
 
 thread_local! {
@@ -41,9 +43,16 @@ impl Type {
         }
         let mut s = Search::default();
         let b = s.empty(self);
+        // Past the budget a `false` may be one a query of its own would decide `true`.
+        let cut = s.splits > bdd::budget();
         MEMO.with(|m| {
             let mut m = m.borrow_mut();
-            m.extend(s.done.into_iter().map(|(t, (b, _))| (t, b)));
+            m.extend(
+                s.done
+                    .into_iter()
+                    .filter(|(_, (b, _))| *b || !cut)
+                    .map(|(t, (b, _))| (t, b)),
+            );
         });
         b
     }
@@ -68,12 +77,13 @@ impl Type {
 }
 
 /// One query's state: the types being decided, assumed empty, and those decided, each with
-/// the order it was decided in.
+/// the order it was decided in; and the splits of products made.
 #[derive(Default)]
 struct Search {
     busy: BTreeSet<Type>,
     done: BTreeMap<Type, (bool, usize)>,
     count: usize,
+    splits: usize,
 }
 
 impl Search {
@@ -129,17 +139,34 @@ impl Search {
         self.product(meet, neg)
     }
 
-    /// Whether the tuples with components in `p` are all in some type of `neg`. Outside the
-    /// first negated type means outside it in some component.
+    /// Whether the tuples with components in `p` are all in some type of `neg`. A negated
+    /// type disjoint from `p` in some component is passed over. Outside a negated type means
+    /// outside it first in component `j`, so the pieces are disjoint: the components before `j`
+    /// inside it, component `j` outside it, and the rest as in `p`. Past `bdd::budget()` splits
+    /// in one query, `p` is not shown covered.
     fn product(&mut self, p: Vec<Type>, neg: &[&Vec<Type>]) -> bool {
         if p.iter().any(|t| self.empty(t)) {
             return true;
         }
-        let Some((n, rest)) = neg.split_first() else {
-            return false;
+        let mut rest = neg;
+        let n = loop {
+            let Some((n, r)) = rest.split_first() else {
+                return false;
+            };
+            rest = r;
+            if !p.iter().zip(n.iter()).any(|(a, b)| self.empty(&(a & b))) {
+                break n;
+            }
         };
+        self.splits += 1;
+        if self.splits > bdd::budget() {
+            return false;
+        }
         (0..p.len()).all(|j| {
             let mut q = p.clone();
+            for i in 0..j {
+                q[i] = &p[i] & &n[i];
+            }
             q[j] = &p[j] - &n[j];
             self.product(q, rest)
         })

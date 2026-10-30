@@ -2,7 +2,9 @@
 //! `C` differences `m(i) - m(i + 1000)` has a decision diagram of `2^C` nodes, since every
 //! `m(i)` is ordered before every `m(i + 1000)`. A connective whose diagram would pass the
 //! budget keeps its operands instead, so building the union, its complement and a subtype query
-//! on it stay linear in `C`; the query is then not shown to hold, the cost of the budget.
+//! on it stay linear in `C`; the query is then not shown to hold, the cost of the budget. A
+//! product of tuple types covered by many negated ones is split into disjoint pieces, and
+//! a negated type disjoint from a piece is passed over.
 
 use zed_kernel::Value;
 use zed_kernel::types::Type;
@@ -55,4 +57,75 @@ fn small_unions_are_still_decided() {
         assert!(!b.subtype(&atom(0)), "{b}");
         assert!((&b - &b).is_empty(), "{b}");
     }
+}
+
+/// The tuples `(i, b + j)` for `i, j < n`, as a product and as the union of its `n²` cells.
+fn grid(n: usize, b: usize) -> (Type, Type) {
+    let set = |b: usize| Type::union_all((0..n).map(|i| lit(b + i)));
+    let cells = Type::union_all((0..n * n).map(|k| Type::tuple(vec![lit(k / n), lit(b + k % n)])));
+    (Type::tuple(vec![set(0), set(b)]), cells)
+}
+
+#[test]
+fn a_product_covered_by_its_cells_scales() {
+    // Each cell is disjoint from all but one piece of the split, and contains that piece, so
+    // the split of the product makes one piece per cell; splitting on every cell in turn made
+    // `n^(n²)` pieces in the worst order (4.3 s at `n = 5`). Building the cells one at a time
+    // made `O(n⁴)` nodes (6 s at `n = 32`). Each run takes a new `b`, so no run reads
+    // another's results.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            let fresh = std::cell::Cell::new(1);
+            scaling::check("a grid and its cells, by cell count", 64, |c| {
+                let n = (c as f64).sqrt().round() as usize;
+                let (p, cells) = grid(n, 10_000 * fresh.replace(fresh.get() + 1));
+                assert!(
+                    (&p - &cells).is_empty(),
+                    "the cells cover the grid at n = {n}"
+                );
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn a_cell_left_out_is_found() {
+    for n in [2, 3, 5, 8] {
+        let (p, cells) = grid(n, 0);
+        let hole = Type::tuple(vec![lit(n / 2), lit(n - 1)]);
+        let rest = &(&p - &cells) | &hole;
+        assert!(!(&p - &(&cells - &hole)).is_empty(), "n = {n}");
+        assert!((&rest - &hole).is_empty(), "n = {n}");
+    }
+}
+
+#[test]
+fn an_answer_past_the_budget_is_not_kept() {
+    let (p, cells) = grid(6, 0);
+    let d = &p - &cells;
+    assert!(
+        !Type::with_budget(2, || d.is_empty()),
+        "two splits do not cover 36 cells"
+    );
+    assert!(d.is_empty(), "the full budget does, after the cut answer");
+}
+
+#[test]
+fn negated_types_disjoint_from_the_product_are_passed_over() {
+    // The decoy `(bits(i), 1000 + i)`, with `bits(i)` the numbers below 8192 with bit `i` set,
+    // misses `(0..8192, 0)` in the second component, and splitting on it would cut every piece
+    // in two in the first: `2^13` pieces for the 13 decoys, past a budget of 256 splits,
+    // unless a disjoint one is passed over. The pieces are all met only when the answer is
+    // `true`, here once the two halves of the product are reached.
+    let set = |r: std::ops::Range<usize>| Type::union_all(r.map(lit));
+    let bits = |i: usize| Type::union_all((0..8192).filter(|x| x >> i & 1 == 1).map(lit));
+    let p = Type::tuple(vec![set(0..8192), lit(0)]);
+    let halves =
+        &Type::tuple(vec![set(0..4096), lit(0)]) | &Type::tuple(vec![set(4096..8192), lit(0)]);
+    let decoys = Type::union_all((0..13).map(|i| Type::tuple(vec![bits(i), lit(1000 + i)])));
+    assert!(!Type::with_budget(256, || (&p - &decoys).is_empty()));
+    assert!(Type::with_budget(256, || (&p - &(&decoys | &halves)).is_empty()));
 }

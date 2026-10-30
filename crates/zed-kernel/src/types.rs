@@ -203,6 +203,35 @@ impl Type {
         !Type::empty()
     }
 
+    /// The union of `ts`, joined in pairs: `k` tuple or morphism types, each ordered after the
+    /// last in the diagrams, cost `O(k log k)` nodes joined this way and `O(k²)` one at a time.
+    pub fn union_all(ts: impl IntoIterator<Item = Type>) -> Type {
+        Type::pairwise(ts, Type::empty(), |a, b| a | b)
+    }
+
+    /// The intersection of `ts`, joined in pairs as in [`Type::union_all`].
+    pub fn meet_all(ts: impl IntoIterator<Item = Type>) -> Type {
+        Type::pairwise(ts, Type::top(), |a, b| a & b)
+    }
+
+    fn pairwise(
+        ts: impl IntoIterator<Item = Type>,
+        unit: Type,
+        op: impl Fn(Type, Type) -> Type,
+    ) -> Type {
+        let mut ts: Vec<Type> = ts.into_iter().collect();
+        while ts.len() > 1 {
+            let mut it = std::mem::take(&mut ts).into_iter();
+            while let Some(a) = it.next() {
+                ts.push(match it.next() {
+                    Some(b) => op(a, b),
+                    None => a,
+                });
+            }
+        }
+        ts.pop().unwrap_or(unit)
+    }
+
     fn with(f: impl FnOnce(&mut Parts)) -> Type {
         let mut p = Type::empty().p().clone();
         f(&mut p);

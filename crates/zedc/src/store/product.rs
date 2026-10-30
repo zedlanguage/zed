@@ -288,16 +288,14 @@ impl Product {
         if self.ints().is_empty() || self.cell.congruence.element == Congruence::Bottom {
             self.ty.meet(&!&int, &prem);
         } else if let Some(vs) = members(self.ints(), FINITE_SET_LIMIT as u64) {
-            let lits = vs
-                .iter()
-                .filter_map(|&n| Type::lit(&Value::Int(n)))
-                .fold(Type::empty(), |a, b| &a | &b);
+            let lits = vs.iter().filter_map(|&n| Type::lit(&Value::Int(n)));
+            let lits = Type::union_all(lits);
             self.ty.meet(&(&!&int | &lits), &prem);
         }
         if let FiniteSet::Set(vs) = &self.cell.finite.element {
             let lits: Option<Vec<Type>> = vs.iter().map(Type::lit).collect();
             if let Some(lits) = lits {
-                let t = lits.iter().fold(Type::empty(), |a, b| &a | b);
+                let t = Type::union_all(lits);
                 self.ty.meet(&t, &prem);
             }
         }

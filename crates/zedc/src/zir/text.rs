@@ -824,8 +824,8 @@ impl<'a> P<'a> {
                 }
             };
             return Ok(match head {
-                "|" => ts.iter().fold(Type::empty(), |a, t| &a | t),
-                "&" => ts.iter().fold(Type::top(), |a, t| &a & t),
+                "|" => Type::union_all(ts.iter().cloned()),
+                "&" => Type::meet_all(ts.iter().cloned()),
                 "!" => {
                     arity(1)?;
                     !&ts[0]
