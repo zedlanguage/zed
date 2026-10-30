@@ -108,7 +108,10 @@ pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
     (out, ck.info.errors.into_iter().map(|e| e.message).collect())
 }
 
-/// The most bodies one unit's signature searches check.
+/// How many checks of a function's whole body a signature search that is not inside another
+/// may make. A check costs the function's size less the functions declared in it, the
+/// searches of those counted at their own sizes, so the searches inside one function cost at
+/// most `RUNS` times its size, however they nest.
 const RUNS: usize = 20_000;
 
 /// The most piece combinations one application checks before it gives the unknown.
@@ -184,7 +187,10 @@ struct Ck<'t, 'a> {
     /// is undone by what it wrote rather than by a copy of all of `info`.
     log: Vec<Undo>,
     fresh: usize,
+    /// What the outermost search under way has spent, in bytes of bodies checked.
     runs: usize,
+    /// What it may spend: `RUNS` times the size of its function.
+    budget: usize,
     /// Each expression's type, by its span, as last found.
     seen: HashMap<Span, Seen<'a>>,
     /// Where each binder's type comes from.
@@ -194,6 +200,22 @@ struct Ck<'t, 'a> {
     /// Whether a signature search is checking a combination whose errors it discards, so
     /// that they carry no notes.
     quiet: bool,
+    /// How many signature searches are under way, one inside another.
+    searching: usize,
+    /// The signatures found inside the outermost search, by the function's statement and
+    /// what its search reads from outside it.
+    memo: HashMap<Span, HashMap<Key, Arc<Searched>>>,
+    /// The context of each search under way, the outermost first.
+    contexts: Vec<usize>,
+    /// The number of each context: by the function's statement, the context of the search
+    /// around it and the types of the binders it reads from the function around it.
+    numbers: HashMap<Span, HashMap<Context, usize>>,
+    /// How many contexts are numbered.
+    numbered: usize,
+    /// The adoptions of the nested searches found inside the outermost search, each with
+    /// its number: those differing from before the search, and the numbers of the nested
+    /// searches inside it with any.
+    summaries: BTreeMap<Adoptions, usize>,
 }
 
 impl<'t, 'a> Ck<'t, 'a> {
@@ -205,10 +227,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             log: Vec::new(),
             fresh: 0,
             runs: 0,
+            budget: 0,
             seen: HashMap::new(),
             whence: HashMap::new(),
             trying: false,
             quiet: false,
+            searching: 0,
+            memo: HashMap::new(),
+            contexts: Vec::new(),
+            numbers: HashMap::new(),
+            numbered: 0,
+            summaries: BTreeMap::new(),
         }
     }
 
@@ -408,7 +437,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             StmtKind::Function(f) => {
                 let id = self.id(s.span, &f.name);
-                let sig = self.infer(f, s.span);
+                let sig = self.signature(f, s.span);
                 let text = format!("`{}` is declared here, `{sig}`", f.name);
                 self.origin(id, s.span, text, None);
                 self.env.insert(id, Ty::func(sig.clone()));
@@ -444,6 +473,129 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
+    /// The signature of a declared function. Each run of a search checks the functions
+    /// declared in its body again, so inside the outermost search a function's signature is
+    /// found once for each set of types of the binders it reads from outside: the searches
+    /// of nested functions cost the sum of their runs, not the product. Those types are
+    /// numbered as a context, from the context of the search around it and the types of the
+    /// binders it reads from the function around it, so the key costs no more than those. A search inside
+    /// another leaves its writes in the log as one entry, which the maps do not hold, so
+    /// that finding it again costs `O(1)`, not the size of the function; the outermost
+    /// search makes them once, when it ends.
+    fn signature(&mut self, f: &'a Function, span: Span) -> Arc<Sig> {
+        let key = Key {
+            around: self.contexts.last().copied(),
+            quiet: self.quiet,
+            trying: self.trying,
+            outer: self
+                .t
+                .outer(span)
+                .iter()
+                .map(|b| self.env.get(b).cloned())
+                .collect(),
+        };
+        let found = self.memo.get(&span).and_then(|m| m.get(&key)).cloned();
+        if let Some(s) = found {
+            self.info.errors.extend(s.errors.iter().cloned());
+            let sig = s.sig.clone();
+            self.log.push(Undo::Nested(s));
+            return sig;
+        }
+        let start = self.mark();
+        if self.searching == 0 {
+            self.runs = 0;
+            self.budget = RUNS * (span.end - span.start).max(1);
+        }
+        self.searching += 1;
+        let context = (key.around, key.outer.clone());
+        let numbers = self.numbers.entry(span).or_default();
+        let number = *numbers.entry(context).or_insert(self.numbered);
+        if number == self.numbered {
+            self.numbered += 1;
+        }
+        self.contexts.push(number);
+        let sig = self.infer(f, span);
+        self.contexts.pop();
+        self.searching -= 1;
+        if self.searching == 0 {
+            self.memo.clear();
+            self.summaries.clear();
+            self.numbers.clear();
+            self.numbered = 0;
+            let mut todo: Vec<Arc<Searched>> = self.log[start.log..]
+                .iter()
+                .filter_map(|w| match w {
+                    Undo::Nested(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect();
+            while let Some(s) = todo.pop() {
+                for w in &s.wrote {
+                    match w {
+                        Undo::Nested(c) => todo.push(c.clone()),
+                        w => self.put(w.clone()),
+                    }
+                }
+            }
+            return sig;
+        }
+        let wrote = self.wrote(&start);
+        let errors = self.info.errors[start.errors..].to_vec();
+        while self.log.len() > start.log {
+            let w = self.log.pop().expect("longer than the mark");
+            self.set(w);
+        }
+        let adopted = self.adopted(&wrote, span);
+        let summary = match adopted.count {
+            0 => None,
+            count => {
+                let n = self.summaries.len();
+                let id = *self.summaries.entry(adopted.of).or_insert(n);
+                Some((id, count))
+            }
+        };
+        let s = Arc::new(Searched {
+            span,
+            sig: sig.clone(),
+            wrote,
+            errors,
+            summary,
+        });
+        self.memo
+            .entry(span)
+            .or_default()
+            .entry(key)
+            .or_insert(s.clone());
+        self.log.push(Undo::Nested(s));
+        sig
+    }
+
+    /// The adoptions of the writes `wrote` inside `span` that differ from those the maps
+    /// hold, and of the nested searches among them.
+    fn adopted(&self, wrote: &[Undo], span: Span) -> Adopted {
+        let own: Vec<(Span, Value)> = adoptions_in(wrote, span)
+            .into_iter()
+            .filter(|(s, v)| self.info.adopt.get(s) != Some(v))
+            .collect();
+        let mut nested = BTreeMap::new();
+        for w in wrote {
+            if let Undo::Nested(c) = w {
+                match c.summary {
+                    Some(n) => nested.insert(c.span, n),
+                    None => nested.remove(&c.span),
+                };
+            }
+        }
+        let count = own.len() + nested.values().map(|&(_, n)| n).sum::<usize>();
+        Adopted {
+            of: (
+                own,
+                nested.into_iter().map(|(s, (id, _))| (s, id)).collect(),
+            ),
+            count,
+        }
+    }
+
     /// The signature of a declared function, inferred where a parameter has no type.
     fn infer(&mut self, f: &'a Function, span: Span) -> Arc<Sig> {
         let params: Vec<SParam> = f
@@ -476,8 +628,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let open: Vec<usize> = (0..f.params.len())
             .filter(|&i| given[i].is_none())
             .collect();
+        let own = self.t.own(span).max(1);
         let run = |ck: &mut Self, tys: &[Ty]| -> Ty {
-            ck.runs += 1;
+            ck.runs += own;
             for ((id, t), (p, g)) in ids.iter().zip(tys).zip(f.params.iter().zip(&given)) {
                 let text = match (&p.ty, g) {
                     (Some(a), _) if *t == Ty::dynamic() => format!(
@@ -544,7 +697,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // With the open parameters unknown: an error here does not depend on them.
         let tys = with(&|_| Ty::dynamic());
         let result = run(self, &tys);
-        if self.info.errors.len() > start.errors || self.runs > RUNS || open.len() > 5 {
+        if self.info.errors.len() > start.errors || self.runs > self.budget || open.len() > 5 {
             return sig(vec![Arrow {
                 params: tys,
                 result,
@@ -583,7 +736,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for level in 1..=n {
             for mask in (0..1usize << n).filter(|m| m.count_ones() as usize == level) {
                 for k in 0..width.pow(level as u32) {
-                    if self.runs > RUNS {
+                    if self.runs > self.budget {
                         self.undo(&start);
                         return sig(vec![Arrow {
                             params: with(&|_| Ty::dynamic()),
@@ -606,6 +759,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     });
                     let quiet = std::mem::replace(&mut self.quiet, true);
+                    let before = (self.runs, self.fresh);
                     let result = run(self, &tys);
                     self.quiet = quiet;
                     if self.info.errors.len() > start.errors {
@@ -614,11 +768,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                             .filter(|n| n.text.starts_with("with "))
                             .count()
                             < SHOWN;
+                        let quiet_error =
+                            (level == n).then(|| self.info.errors[start.errors].clone());
                         if level == n && shown {
-                            // Again with notes, the counters as they were, so that the
-                            // combinations after it run as they would have.
+                            // Again with notes, from the counters the run without them
+                            // started at, so that it checks as that run did; then with the
+                            // counters that run left, so that the combinations after it run
+                            // as they would have.
                             let (runs, fresh) = (self.runs, self.fresh);
                             self.undo(&start);
+                            (self.runs, self.fresh) = before;
                             run(self, &tys);
                             (self.runs, self.fresh) = (runs, fresh);
                         }
@@ -629,7 +788,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                                     format!("`{}`: {}", f.params[open[j]].name, c.name())
                                 })
                                 .collect();
-                            let e = &self.info.errors[start.errors];
+                            // The run with notes can find a nested search's signature anew
+                            // where the run without them found it again, and so reach the
+                            // budget where that run did not.
+                            let e = match self.info.errors.get(start.errors) {
+                                Some(e) => e,
+                                None => quiet_error.as_ref().expect("a failed run"),
+                            };
                             let with = format!("with {}, {}", names.join(", "), e.message);
                             first_error.get_or_insert(with.clone());
                             if failures
@@ -654,13 +819,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         continue;
                     }
                     let wrote = self.wrote(&start);
-                    let mine = adoptions_in(&wrote, span);
                     self.undo(&start);
-                    let adopted = mine
-                        .iter()
-                        .filter(|&(s, v)| self.info.adopt.get(s) != Some(v))
-                        .count();
-                    found.push((tys, result, wrote, mine, adopted));
+                    let mine = adoptions_in(&wrote, span);
+                    let adopted = self.adopted(&wrote, span);
+                    let nested = adopted.of.1;
+                    found.push((tys, result, wrote, (mine, nested), adopted.count));
                 }
             }
             if !found.is_empty() {
@@ -698,12 +861,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let keep: Vec<_> = found.into_iter().filter(|f| f.4 == fewest).collect();
         // A combination whose adoptions inside the body are the first's: each adoption as
         // written, or as before the search where the run did not write it.
-        let first = &keep[0].3;
+        let (first, first_nested) = &keep[0].3;
         let before = |s: &Span| self.info.adopt.get(s);
-        let same = |mine: &BTreeMap<Span, Value>| {
-            mine.keys()
-                .chain(first.keys())
-                .all(|s| mine.get(s).or(before(s)) == first.get(s).or(before(s)))
+        let same = |(mine, nested): &(BTreeMap<Span, Value>, Vec<(Span, usize)>)| {
+            nested == first_nested
+                && mine
+                    .keys()
+                    .chain(first.keys())
+                    .all(|s| mine.get(s).or(before(s)) == first.get(s).or(before(s)))
         };
         let arrows = keep
             .iter()
@@ -2120,17 +2285,64 @@ fn adoptions_in(wrote: &[Undo], span: Span) -> BTreeMap<Span, Value> {
 
 /// A write to one of [`Info`]'s maps: the key and the value, `None` for no entry. In the log,
 /// the value is the one the write replaced.
+#[derive(Clone)]
 enum Undo {
     Adopt(Span, Option<Value>),
     Call(Span, Option<Arc<Sig>>),
     Fit(Span, Option<Fit>),
     Sig(usize, Option<Arc<Sig>>),
     Top(String, Option<Ty>),
+    /// A nested search's writes, which the maps do not hold until the outermost search ends.
+    Nested(Arc<Searched>),
 }
 
 /// A combination of a signature's search that checks: its types, its result, what its run
-/// wrote, its adoptions inside the body, and how many differ from those before the search.
-type Found = (Vec<Ty>, Ty, Vec<Undo>, BTreeMap<Span, Value>, usize);
+/// wrote, its adoptions inside the body and the numbers of the nested searches' adoptions,
+/// and how many differ from those before the search.
+type Found = (
+    Vec<Ty>,
+    Ty,
+    Vec<Undo>,
+    (BTreeMap<Span, Value>, Vec<(Span, usize)>),
+    usize,
+);
+
+/// Adoptions differing from before a search: those of its own writes, and the number of
+/// each nested search's, by the nested function's statement.
+type Adoptions = (Vec<(Span, Value)>, Vec<(Span, usize)>);
+
+/// The adoptions of a search's writes that differ from before it, and how many there are,
+/// the nested searches' counted.
+struct Adopted {
+    of: Adoptions,
+    count: usize,
+}
+
+/// The context of a search: the number of the context of the search around it and the type
+/// of each binder it reads from the function around it.
+type Context = (Option<usize>, Vec<Option<Ty>>);
+
+/// What a function's signature search reads from outside the function: the context of the
+/// search around it, whether its errors carry notes or offer repairs, and the type of each binder it reads
+/// from the function around it, in the order of [`Tables::outer`].
+#[derive(PartialEq, Eq, Hash)]
+struct Key {
+    around: Option<usize>,
+    quiet: bool,
+    trying: bool,
+    outer: Vec<Option<Ty>>,
+}
+
+/// A function's signature search: the function's statement, the signature, the writes it
+/// left, each with the value it wrote, its errors, and the number and count of its
+/// adoptions differing from before the search, if any differ.
+struct Searched {
+    span: Span,
+    sig: Arc<Sig>,
+    wrote: Vec<Undo>,
+    errors: Vec<Error>,
+    summary: Option<(usize, usize)>,
+}
 
 /// How long the log and the errors were at a point of a search.
 struct Mark {
@@ -2167,6 +2379,7 @@ impl Ck<'_, '_> {
                 let old = set!(i.tops, k, v);
                 Undo::Top(k, old)
             }
+            Undo::Nested(s) => Undo::Nested(s),
         }
     }
 
@@ -2198,6 +2411,7 @@ impl Ck<'_, '_> {
                 Undo::Fit(k, _) => Undo::Fit(*k, i.fits.get(k).cloned()),
                 Undo::Sig(k, _) => Undo::Sig(*k, i.sigs.get(k).cloned()),
                 Undo::Top(k, _) => Undo::Top(k.clone(), i.tops.get(k).cloned()),
+                Undo::Nested(s) => Undo::Nested(s.clone()),
             })
             .collect()
     }

@@ -15,7 +15,7 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::{Universe, Value};
 
 /// A type.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty {
     /// The scalars and atoms, never a tuple or a function.
     pub set: KType,
@@ -34,7 +34,7 @@ pub struct Ty {
 
 /// A function's signature: its parameters' names and kinds, shared by its arrows, which
 /// together are an intersection.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Sig {
     /// The parameters.
     pub params: Vec<SParam>,
@@ -43,7 +43,7 @@ pub struct Sig {
 }
 
 /// A parameter of a signature.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SParam {
     /// Its name.
     pub name: Arc<str>,
@@ -56,7 +56,7 @@ pub struct SParam {
 }
 
 /// One arrow: a type for each parameter, and the result.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Arrow {
     /// The parameters' types.
     pub params: Vec<Ty>,

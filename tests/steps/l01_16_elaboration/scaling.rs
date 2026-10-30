@@ -105,3 +105,102 @@ fn the_dependency_order_scales() {
         assert_eq!(zedc::elab::topo(&deps).unwrap()[0], n - 1);
     });
 }
+
+/// Functions nested `n` deep, each declaring a local and the next function, which it calls.
+fn nested(n: usize) -> String {
+    let mut src = String::new();
+    for i in 0..n {
+        src += &format!("f{i}(positional x) {{\ny{i} = x + 1;\n");
+    }
+    src += "x\n";
+    for i in (0..n).rev() {
+        if i + 1 < n {
+            src += &format!("f{}(y{i})\n", i + 1);
+        }
+        src += "}\n";
+    }
+    src + "main = f0(1);\n"
+}
+
+/// Functions nested `n` deep, each declaring `w` functions beside the next, and calling one.
+fn wide(n: usize, w: usize) -> String {
+    let mut src = String::new();
+    for i in 0..n {
+        src += &format!("f{i}(positional x) {{\n");
+        for j in 0..w {
+            src += &format!("g{i}_{j}(positional z) = z;\n");
+        }
+        src += &format!("y{i} = g{i}_0(x) + 1;\n");
+    }
+    src += "x\n";
+    for i in (0..n).rev() {
+        if i + 1 < n {
+            src += &format!("f{}(y{i})\n", i + 1);
+        }
+        src += "}\n";
+    }
+    src + "main = f0(1);\n"
+}
+
+/// The type of `main` in `src` and the signature of `f{last}`, which a search stopped by
+/// its budget does not find.
+fn found(src: &str, last: usize) -> (Option<String>, Option<String>) {
+    let (i, names) = crate::l01_26_type_resolution::info(src);
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
+    let name = format!("f{last}");
+    let sig = i.sigs.iter().find(|(id, _)| names[**id] == name);
+    (
+        i.tops.get("main").map(|t| t.to_string()),
+        sig.map(|(_, s)| s.to_string()),
+    )
+}
+
+#[test]
+fn checking_and_ordering_nested_functions_scales() {
+    // Each scope ordered its statements by the uses inside them, those of the scopes nested
+    // in them too, so a use was read once for each scope around it. Each run of a signature
+    // search checked the functions declared inside it again, so the runs multiplied with the
+    // depth; and once found, a nested function's writes were made again at each finding.
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            zed_tests::scaling::check("functions nested n deep", 100, |n| {
+                let u = elab(&nested(n)).unwrap();
+                assert!(u.defs.iter().any(|d| d.name == "main"));
+            });
+            assert_eq!(value(&nested(3), "main"), "3");
+            let want = (Some("int".to_string()), Some("(int) -> int".to_string()));
+            assert_eq!(found(&nested(3), 2), want);
+            assert_eq!(found(&nested(100), 99), want);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn checking_nested_functions_beside_many_others_scales() {
+    // A nested function's writes were made again each time its signature was found again,
+    // the writes of the functions inside it too.
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            zed_tests::scaling::check("functions nested n deep beside 20 others", 50, |n| {
+                assert_eq!(found(&wide(n, 20), n - 1).0.as_deref(), Some("int"));
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn ordering_a_function_with_many_rows_scales() {
+    // Each use in a row was tested against every row of the function.
+    zed_tests::scaling::check("a function with n rows naming a constant", 250, |n| {
+        let rows: Vec<String> = (0..n).map(|_| "c -> c".to_string()).collect();
+        let src = format!("c = 2;\nf(x) = x test {{ {} }}\n", rows.join(", "));
+        let u = elab(&src).unwrap();
+        assert_eq!(u.tests.len(), n);
+    });
+}

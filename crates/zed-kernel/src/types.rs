@@ -65,6 +65,13 @@ impl PartialEq for Type {
 
 impl Eq for Type {}
 
+impl std::hash::Hash for Type {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        // Equal types have equal digests.
+        self.digest().hash(h);
+    }
+}
+
 /// Combines two hashes; the digests of types, nodes and expressions are built with it from
 /// their children's, so that each is computed once, when it is made.
 pub(crate) fn mix(a: u64, b: u64) -> u64 {

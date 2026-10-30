@@ -17,6 +17,7 @@
 //! word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
 //! belongs to a function at the unit's top level.
 
+use std::cell::OnceCell;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
@@ -184,6 +185,15 @@ pub(crate) struct Tables<'a> {
     pub(crate) ids: HashMap<(Span, &'a str), usize>,
     /// Each function binder's declaration.
     pub(crate) funcs: HashMap<usize, &'a Function>,
+    /// The uses of each binder, in the order of the text.
+    uses_of: Vec<Vec<Span>>,
+    /// Each function's size in bytes less those of the functions declared directly in it, by
+    /// its statement: what one check of its body reads, a nested function's signature found
+    /// again costing `O(1)`.
+    own: HashMap<Span, usize>,
+    /// The binders each function's statement reads that are bound in the nearest function
+    /// around it, by the statement; built when first asked for.
+    outer: OnceCell<HashMap<Span, Vec<usize>>>,
 }
 
 struct Elab<'a> {
@@ -208,13 +218,45 @@ impl<'a> Tables<'a> {
             .enumerate()
             .map(|(i, b)| ((b.span, b.name.as_str()), i))
             .collect();
+        let mut uses_of = vec![Vec::new(); res.binders.len()];
+        for (u, r) in &res.uses {
+            if let Ref::Bound(ids) = r {
+                for &b in ids {
+                    uses_of[b].push(*u);
+                }
+            }
+        }
         let mut t = Tables {
             res,
             ids,
             funcs: HashMap::new(),
+            uses_of,
+            own: HashMap::new(),
+            outer: OnceCell::new(),
         };
         t.collect_functions(unit);
+        let mut funcs: Vec<Span> = t.funcs.keys().map(|&id| res.binders[id].span).collect();
+        funcs.sort_unstable_by_key(|s| (s.start, Reverse(s.end)));
+        let mut open: Vec<Span> = Vec::new();
+        for s in funcs {
+            while open.last().is_some_and(|o| o.end < s.end) {
+                open.pop();
+            }
+            t.own.insert(s, s.end - s.start);
+            if let Some(o) = open.last() {
+                *t.own.get_mut(o).expect("an open function") -= s.end - s.start;
+            }
+            open.push(s);
+        }
         t
+    }
+
+    /// The size of the function declared at `span` less the functions declared in it.
+    pub(crate) fn own(&self, span: Span) -> usize {
+        self.own
+            .get(&span)
+            .copied()
+            .unwrap_or(span.end - span.start)
     }
 
     /// Records every function declaration of `stmts` and of the blocks inside them.
@@ -325,39 +367,97 @@ impl<'a> Tables<'a> {
     }
 
     /// The order the statements of one scope are bound in, each after those it uses, a
-    /// function's `test` tables aside; else the statements of one cycle.
+    /// function's `test` tables aside; else the statements of one cycle. Each use of a
+    /// binder of the scope is placed in its statement by a binary search, so the order
+    /// reads the uses of the scope's own binders only, not those of the scopes inside it.
     pub(crate) fn order(&self, items: &[&'a Stmt]) -> Result<Vec<usize>, Vec<usize>> {
-        let owner: HashMap<usize, usize> = items
-            .iter()
-            .enumerate()
-            .flat_map(|(i, s)| self.binders_of(s).into_iter().map(move |b| (b, i)))
-            .collect();
-        let deps: Vec<Vec<usize>> = items
-            .iter()
-            .map(|s| {
-                let skip: Vec<Span> = match &s.kind {
-                    StmtKind::Function(f) => f
-                        .tests
-                        .iter()
-                        .map(|(a, b)| Span {
-                            start: a.span.start,
-                            end: b.span.end,
-                        })
-                        .collect(),
-                    _ => Vec::new(),
-                };
-                let mut d: Vec<usize> = self
-                    .uses_in(s.span, &skip)
-                    .into_iter()
-                    .filter_map(|b| owner.get(&b).copied())
-                    .collect();
-                d.sort_unstable();
-                d.dedup();
-                d
-            })
-            .collect();
+        let mut deps: Vec<Vec<usize>> = vec![Vec::new(); items.len()];
+        for (i, s) in items.iter().enumerate() {
+            for b in self.binders_of(s) {
+                for u in &self.uses_of[b] {
+                    let k = items.partition_point(|s| s.span.start <= u.start);
+                    let Some(user) = k.checked_sub(1) else {
+                        continue;
+                    };
+                    let at = items[user];
+                    if u.end > at.span.end || in_tests(at, *u) {
+                        continue;
+                    }
+                    deps[user].push(i);
+                }
+            }
+        }
+        for d in &mut deps {
+            d.sort_unstable();
+            d.dedup();
+        }
         topo(&deps)
     }
+
+    /// The binders the function declared at `span` reads, in it or in the functions inside
+    /// it, that are bound in the nearest function around it, outside it, its own name among
+    /// them: those its signature search reads from outside, beyond what the search around
+    /// it reads. A use adds its binder to one function only, so the lists hold `O(uses)`.
+    pub(crate) fn outer(&self, span: Span) -> &[usize] {
+        let outer = self.outer.get_or_init(|| {
+            // The functions' statements, and the uses, in the order of the text, a statement
+            // before the uses it starts with; the open statements form a chain.
+            let mut funcs: Vec<(Span, usize)> = self
+                .funcs
+                .keys()
+                .map(|&id| (self.res.binders[id].span, id))
+                .collect();
+            funcs.sort_unstable_by_key(|&(s, _)| (s.start, Reverse(s.end)));
+            let inside = |s: Span, t: Span| s.start <= t.start && t.end <= s.end;
+            let mut out: HashMap<Span, Vec<usize>> =
+                funcs.iter().map(|&(s, _)| (s, Vec::new())).collect();
+            let mut open: Vec<(Span, usize)> = Vec::new();
+            let mut next = 0;
+            for (u, r) in &self.res.uses {
+                let Ref::Bound(ids) = r else { continue };
+                while next < funcs.len() && funcs[next].0.start <= u.start {
+                    while open.last().is_some_and(|&(s, _)| !inside(s, funcs[next].0)) {
+                        open.pop();
+                    }
+                    open.push(funcs[next]);
+                    next += 1;
+                }
+                while open.last().is_some_and(|&(s, _)| !inside(s, *u)) {
+                    open.pop();
+                }
+                for &b in ids {
+                    // The functions around the binder's text are the first of the chain;
+                    // the one after them reads it from outside, as does the function the
+                    // binder names.
+                    let at = self.res.binders[b].span;
+                    let around = open.partition_point(|&(s, _)| inside(s, at));
+                    let reader = match around.checked_sub(1) {
+                        Some(j) if open[j].1 == b => j,
+                        _ => around,
+                    };
+                    if let Some(&(s, _)) = open.get(reader) {
+                        out.get_mut(&s).expect("a function").push(b);
+                    }
+                }
+            }
+            for v in out.values_mut() {
+                v.sort_unstable();
+                v.dedup();
+            }
+            out
+        });
+        outer.get(&span).map_or(&[], |v| v)
+    }
+}
+
+/// Whether `u` lies in one of the `test` tables of the function `s` declares.
+fn in_tests(s: &Stmt, u: Span) -> bool {
+    let StmtKind::Function(f) = &s.kind else {
+        return false;
+    };
+    let k = f.tests.partition_point(|(a, _)| a.span.start <= u.start);
+    k.checked_sub(1)
+        .is_some_and(|k| u.end <= f.tests[k].1.span.end)
 }
 
 impl<'a> Elab<'a> {
