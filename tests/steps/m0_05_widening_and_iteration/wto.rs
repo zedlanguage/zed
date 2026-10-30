@@ -188,3 +188,39 @@ fn the_traversal_order_picks_the_head() {
         "(0 2 1)"
     );
 }
+
+/// Larger graphs, with successor lists out of order and repeated, the traversal's order
+/// following the lists as written.
+#[test]
+fn the_order_agrees_with_the_declarative_definition_on_larger_graphs() {
+    let mut rng = Rng::new(0x5f06);
+    let mut nested = 0;
+    for _ in 0..2 * RANDOM_INSTANCES {
+        let n = 1 + rng.below(40);
+        let g: Vec<Vec<usize>> = (0..n)
+            .map(|v| {
+                (0..rng.below(4))
+                    .map(|_| {
+                        // Mostly near, so that loops nest.
+                        if rng.below(3) == 0 {
+                            rng.below(n)
+                        } else {
+                            (v + 2 * n + rng.below(5) - 2) % n
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let got = weak_topological_order(&g);
+        assert_eq!(show(&got), show(&oracle(&g)), "graph {g:?}");
+        fn nests(e: &Element) -> bool {
+            matches!(e, Element::Component { body, .. }
+                if body.iter().any(|b| matches!(b, Element::Component { .. }) || nests(b)))
+        }
+        if got.iter().any(nests) {
+            nested += 1;
+        }
+    }
+    // The sample exercises nested components.
+    assert!(nested > RANDOM_INSTANCES / 4, "{nested} with nesting");
+}

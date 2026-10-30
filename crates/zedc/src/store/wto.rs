@@ -25,16 +25,20 @@ pub enum Element {
 }
 
 impl Element {
-    /// The vertices of the element, in order.
+    /// The vertices of the element, in order, each copied once.
     pub fn vertices(&self) -> Vec<usize> {
-        match self {
-            Element::Vertex(v) => vec![*v],
-            Element::Component { head, body } => {
-                let mut out = vec![*head];
-                out.extend(body.iter().flat_map(Element::vertices));
-                out
+        let mut out = Vec::new();
+        let mut todo = vec![self];
+        while let Some(e) = todo.pop() {
+            match e {
+                Element::Vertex(v) => out.push(*v),
+                Element::Component { head, body } => {
+                    out.push(*head);
+                    todo.extend(body.iter().rev());
+                }
             }
         }
+        out
     }
 }
 
@@ -65,86 +69,196 @@ pub fn show(order: &[Element]) -> String {
 
 /// The weak topological order of the graph whose vertex `v` has the successors `succ[v]`.
 ///
-/// The recursion is as deep as the longest simple path; the store's graphs are the program's
-/// own value graph, which the M0.11 limit of 20 000 nested calls bounds in the same way.
+/// It is the order Bourdoncle's recursive algorithm gives, computed from one depth-first
+/// traversal in `O((V + E) log V)` (the rule of low complexity, DESIGN.md Part G), where the
+/// recursive algorithm traverses each component again at every level of nesting and costs
+/// `O(d·(V + E))` for nesting depth `d`. A vertex is a head when an edge returns to it from its
+/// own subtree, and its component is the part of its subtree that reaches it there, found as a
+/// loop of the loop-nesting forest (the method of Havlak, "Nesting of reducible and irreducible
+/// loops", 1997, with each edge read once as in Ramalingam, "Identifying loops in almost linear
+/// time", 1999): an edge that is not a back edge is filed at the common ancestor of its ends,
+/// the first vertex whose component can hold both. Each level lists its elements in decreasing
+/// order of the time the traversal finished them. The step tests check the result against the
+/// declarative definition (`m0_05_widening_and_iteration::wto`).
 pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
-    let mut b = Bourdoncle {
-        succ,
-        dfn: vec![Dfn::Unvisited; succ.len()],
-        num: 0,
-        stack: Vec::new(),
-    };
-    let mut partition = Vec::new();
-    for v in 0..succ.len() {
-        if b.dfn[v] == Dfn::Unvisited {
-            b.visit(v, &mut partition);
-        }
-    }
-    partition.reverse();
-    partition
-}
-
-/// A vertex's depth-first number: unvisited, on the current path or stack, or finished.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Dfn {
-    Unvisited,
-    Number(usize),
-    Done,
-}
-
-struct Bourdoncle<'a> {
-    succ: &'a [Vec<usize>],
-    dfn: Vec<Dfn>,
-    num: usize,
-    stack: Vec<usize>,
-}
-
-impl Bourdoncle<'_> {
-    /// Visits `v`, appending each finished element to `partition` (reversed by the caller,
-    /// where the paper prepends), and returns the least depth-first number `v` reaches.
-    fn visit(&mut self, v: usize, partition: &mut Vec<Element>) -> Dfn {
-        self.stack.push(v);
-        self.num += 1;
-        self.dfn[v] = Dfn::Number(self.num);
-        let mut head = self.dfn[v];
-        let mut is_loop = false;
-        for &w in &self.succ[v] {
-            let min = match self.dfn[w] {
-                Dfn::Unvisited => self.visit(w, partition),
-                d => d,
-            };
-            if min <= head {
-                head = min;
-                is_loop = true;
+    let n = succ.len();
+    let t = Traversal::of(succ);
+    let mut preds_back: Vec<Vec<usize>> = vec![Vec::new(); n];
+    // Each non-back edge, filed at the common ancestor of its ends where it can first lie
+    // inside a component.
+    let mut filed: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
+    let up = t.ancestors();
+    for (u, ws) in succ.iter().enumerate() {
+        for &w in ws {
+            if t.ancestor_or_self(w, u) {
+                preds_back[w].push(u);
+            } else if let Some(a) = t.common_ancestor(&up, u, w) {
+                filed[a].push((u, w));
             }
         }
-        if head == self.dfn[v] {
-            self.dfn[v] = Dfn::Done;
-            let mut e = self.stack.pop().expect("v is on the stack");
-            if is_loop {
-                while e != v {
-                    self.dfn[e] = Dfn::Unvisited;
-                    e = self.stack.pop().expect("v is below e");
+    }
+    let mut set: Vec<usize> = (0..n).collect();
+    // The edges into each set whose source is not yet known to be inside a component with it.
+    let mut entries: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut head_of = vec![NONE; n];
+    let mut is_head = vec![false; n];
+    let mut taken = vec![NONE; n];
+    for &h in t.order.iter().rev() {
+        for (u, w) in std::mem::take(&mut filed[h]) {
+            let r = find(&mut set, w);
+            entries[r].push(u);
+        }
+        let mut work = Vec::new();
+        for &u in &preds_back[h] {
+            is_head[h] = true;
+            let r = find(&mut set, u);
+            if r != h && taken[r] != h {
+                taken[r] = h;
+                work.push(r);
+            }
+        }
+        let mut members = Vec::new();
+        while let Some(x) = work.pop() {
+            members.push(x);
+            for u in std::mem::take(&mut entries[x]) {
+                let r = find(&mut set, u);
+                if r != h && taken[r] != h {
+                    taken[r] = h;
+                    work.push(r);
                 }
-                let c = self.component(v);
-                partition.push(c);
-            } else {
-                partition.push(Element::Vertex(v));
             }
         }
-        head
+        // Each member's entries were read when it was taken, so only the set changes.
+        for x in members {
+            head_of[x] = h;
+            set[x] = h;
+        }
+    }
+    // Each level's elements, in decreasing order of finishing.
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n + 1];
+    for &v in t.finished.iter().rev() {
+        let level = if head_of[v] == NONE { n } else { head_of[v] };
+        children[level].push(v);
+    }
+    let mut built: Vec<Option<Element>> = (0..n).map(|_| None).collect();
+    for &v in &t.finished {
+        built[v] = Some(if is_head[v] {
+            let body = std::mem::take(&mut children[v])
+                .into_iter()
+                .map(|c| built[c].take().expect("a member finishes before its head"))
+                .collect();
+            Element::Component { head: v, body }
+        } else {
+            Element::Vertex(v)
+        });
+    }
+    std::mem::take(&mut children[n])
+        .into_iter()
+        .map(|c| built[c].take().expect("every vertex is built"))
+        .collect()
+}
+
+const NONE: usize = usize::MAX;
+
+/// The set that holds `v`, named by its outermost head found so far; halves the path.
+fn find(set: &mut [usize], mut v: usize) -> usize {
+    while set[v] != v {
+        set[v] = set[set[v]];
+        v = set[v];
+    }
+    v
+}
+
+/// The depth-first traversal from the vertices in order, each vertex's successors in order.
+struct Traversal {
+    /// Each vertex's number in the order the traversal reached it.
+    pre: Vec<usize>,
+    /// One more than the largest number in the vertex's subtree.
+    end: Vec<usize>,
+    /// The vertex's parent in the traversal's forest.
+    parent: Vec<usize>,
+    /// The vertices in the order the traversal reached them.
+    order: Vec<usize>,
+    /// The vertices in the order the traversal finished them.
+    finished: Vec<usize>,
+}
+
+impl Traversal {
+    fn of(succ: &[Vec<usize>]) -> Traversal {
+        let n = succ.len();
+        let mut t = Traversal {
+            pre: vec![NONE; n],
+            end: vec![0; n],
+            parent: vec![NONE; n],
+            order: Vec::with_capacity(n),
+            finished: Vec::with_capacity(n),
+        };
+        let mut stack: Vec<(usize, usize)> = Vec::new();
+        for root in 0..n {
+            if t.pre[root] != NONE {
+                continue;
+            }
+            t.pre[root] = t.order.len();
+            t.order.push(root);
+            stack.push((root, 0));
+            while let Some(&mut (v, ref mut i)) = stack.last_mut() {
+                if let Some(&w) = succ[v].get(*i) {
+                    *i += 1;
+                    if t.pre[w] == NONE {
+                        t.pre[w] = t.order.len();
+                        t.parent[w] = v;
+                        t.order.push(w);
+                        stack.push((w, 0));
+                    }
+                } else {
+                    stack.pop();
+                    t.end[v] = t.order.len();
+                    t.finished.push(v);
+                }
+            }
+        }
+        t
     }
 
-    /// The component headed by `v`, whose other vertices have just been reset to unvisited.
-    fn component(&mut self, v: usize) -> Element {
-        let mut body = Vec::new();
-        for &w in &self.succ[v] {
-            if self.dfn[w] == Dfn::Unvisited {
-                self.visit(w, &mut body);
+    /// Whether `a` is `v` or an ancestor of it.
+    fn ancestor_or_self(&self, a: usize, v: usize) -> bool {
+        self.pre[a] <= self.pre[v] && self.pre[v] < self.end[a]
+    }
+
+    /// For each `k`, each vertex's ancestor `2^k` levels up, or itself at a root.
+    fn ancestors(&self) -> Vec<Vec<usize>> {
+        let n = self.pre.len();
+        let first = (0..n)
+            .map(|v| {
+                if self.parent[v] == NONE {
+                    v
+                } else {
+                    self.parent[v]
+                }
+            })
+            .collect();
+        let mut up: Vec<Vec<usize>> = vec![first];
+        while (1usize << up.len()) < n.max(1) {
+            let last = up.last().expect("one level");
+            let next = (0..n).map(|v| last[last[v]]).collect();
+            up.push(next);
+        }
+        up
+    }
+
+    /// The deepest common ancestor of `u` and `w`, if they are in one tree.
+    fn common_ancestor(&self, up: &[Vec<usize>], u: usize, w: usize) -> Option<usize> {
+        if self.ancestor_or_self(u, w) {
+            return Some(u);
+        }
+        let mut a = u;
+        for level in up.iter().rev() {
+            if !self.ancestor_or_self(level[a], w) {
+                a = level[a];
             }
         }
-        body.reverse();
-        Element::Component { head: v, body }
+        let p = up[0][a];
+        self.ancestor_or_self(p, w).then_some(p)
     }
 }
 

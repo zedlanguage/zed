@@ -88,3 +88,20 @@ fn the_nest_scales() {
         evals(depth);
     });
 }
+
+/// The order of the nest: the recursive algorithm traversed each component again at every
+/// level, so its cost grew as the square of the depth (COMPLEXITY.md S9).
+#[test]
+fn the_order_of_nested_loops_takes_time_linear_in_the_depth() {
+    // A deep nest is dropped one level per stack frame.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            scaling::check("the weak topological order of nested loops", 1000, |d| {
+                weak_topological_order(&dependency_graph(Nest::new(d).reads()));
+            });
+        })
+        .expect("a thread")
+        .join()
+        .expect("the check passes");
+}
