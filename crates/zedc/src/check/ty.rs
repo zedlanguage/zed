@@ -27,6 +27,9 @@ pub struct Ty {
     pub vars: BTreeSet<Arc<str>>,
     /// Whether the type holds the unknown `_`.
     pub dynamic: bool,
+    /// The atoms of `set` that are members of a named atom family: data, which `else` keeps
+    /// and an operator rejects (sec:failure). The other atoms are loose.
+    pub family: KType,
 }
 
 /// A function's signature: its parameters' names and kinds, shared by its arrows, which
@@ -178,6 +181,7 @@ impl Ty {
             fns: Vec::new(),
             vars: BTreeSet::new(),
             dynamic: false,
+            family: KType::empty(),
         }
     }
 
@@ -243,6 +247,7 @@ impl Ty {
     pub fn union(&self, other: &Ty) -> Ty {
         let mut out = self.clone();
         out.set = &out.set | &other.set;
+        out.family = &out.family | &other.family;
         for t in &other.tuples {
             if !out.tuples.contains(t) {
                 out.tuples.push(t.clone());
@@ -272,6 +277,38 @@ impl Ty {
     pub fn without_atoms(&self) -> Ty {
         Ty {
             set: &self.set - &atoms(),
+            family: KType::empty(),
+            ..self.clone()
+        }
+    }
+
+    /// It with every atom it holds made a member of a named family, as a `type` declaration
+    /// names a union.
+    pub fn named(&self) -> Ty {
+        Ty {
+            family: self.atoms(),
+            ..self.clone()
+        }
+    }
+
+    /// It as a written type reads it: every atom loose, the ascription being the visible act
+    /// of re-classifying (sec:failure).
+    pub fn written(&self) -> Ty {
+        Ty {
+            family: KType::empty(),
+            ..self.clone()
+        }
+    }
+
+    /// Its loose atoms: those of no named family.
+    pub fn loose(&self) -> KType {
+        &self.atoms() - &self.family
+    }
+
+    /// It without its loose atoms, as `e else d` narrows `e`.
+    pub fn without_loose(&self) -> Ty {
+        Ty {
+            set: &self.set - &self.loose(),
             ..self.clone()
         }
     }
@@ -340,6 +377,7 @@ impl Ty {
             return self.clone();
         }
         let mut out = Ty::set(&self.set & &t.set);
+        out.family = &self.family & &out.set;
         for a in &self.tuples {
             for b in &t.tuples {
                 if a.len() == b.len() {
@@ -364,6 +402,7 @@ impl Ty {
     pub fn diff(&self, t: &Ty) -> Ty {
         let mut out = self.clone();
         out.set = &self.set - &t.set;
+        out.family = &self.family - &t.set;
         out.tuples.retain(|a| {
             !Ty::tuple(a.clone()).subtype(&Ty {
                 set: KType::empty(),
@@ -388,6 +427,7 @@ impl Ty {
             fns: self.fns.clone(),
             vars: BTreeSet::new(),
             dynamic: self.dynamic,
+            family: self.family.clone(),
         };
         for v in &self.vars {
             match binds.get(v) {

@@ -17,6 +17,9 @@
 //! atom passes through the operators and the prelude words, as the kernel's primitives pass
 //! it, but not through a declared function, which binds it; a call matching several arrows
 //! takes the first one's result.
+//!
+//! Step L1.27: an atom of a named family is data (sec:failure). `else` strips only the loose
+//! atoms, and a family atom that selects no arrow is an error, where a loose one flows on.
 
 pub mod ty;
 
@@ -27,7 +30,8 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::{Prim, Rat, Term, Value, eval};
 
 use crate::ast::{
-    Error, Expr, ExprKind, Function, Param, Stmt, StmtKind, StrPart, Target, Type, TypeKind,
+    Error, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
+    TypeKind,
 };
 use crate::elab::Tables;
 use crate::lex::Span;
@@ -89,6 +93,29 @@ pub(crate) fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
         .sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
     ck.info.errors.dedup();
     ck.info
+}
+
+/// The type of the binary operator `op` applied to arguments of the types `args`, with the
+/// errors the application reports: how an operator treats loose and family atoms.
+pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
+    let res = crate::resolve::resolve(&[]).expect("the empty unit resolves");
+    let t = Tables::new(&[], &res);
+    let mut ck = Ck {
+        t: &t,
+        env: HashMap::new(),
+        info: Info::default(),
+        fresh: 0,
+        runs: 0,
+    };
+    let args = args.iter().map(|a| Some(Arg::of(a.clone()))).collect();
+    let (out, _) = ck.apply(
+        &format!("`{op}`"),
+        &op_sig(op),
+        args,
+        true,
+        Span { start: 0, end: 0 },
+    );
+    (out, ck.info.errors.into_iter().map(|e| e.message).collect())
 }
 
 /// The most bodies one unit's signature searches check.
@@ -209,7 +236,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Component `i` of `v`, destructured into `n` names: of each tuple shape, with `v`'s
     /// atoms, which `TupleGet` passes.
     fn component(&mut self, v: &Ty, i: usize, n: usize, span: Span) -> Ty {
-        let mut out = Ty::set(v.atoms());
+        let mut out = self.passing(v, "a tuple", span);
         for p in v.pieces() {
             match p {
                 Piece::Tuple(cs) if cs.len() == n => out = out.union(&cs[i]),
@@ -584,7 +611,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 let d = self.expr(default);
                 match pattern {
-                    None => v.without_atoms().union(&d),
+                    None => v.without_loose().union(&d),
+                    Some(Pattern::Atom {
+                        name,
+                        fields,
+                        items,
+                        ..
+                    }) if fields.is_empty() && items.is_empty() => {
+                        v.diff(&Ty::set(KType::atom(name))).union(&d)
+                    }
                     Some(_) => v.union(&d),
                 }
             }
@@ -595,7 +630,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 otherwise,
             } => {
                 let (c, yes, no) = self.cond(cond);
-                let mut out = Ty::set(c.atoms());
+                let mut out = self.passing(&c, "the condition of `if`", cond.span);
                 for p in c.pieces() {
                     let ok = matches!(p, Piece::Dyn)
                         || p.is_atoms()
@@ -614,6 +649,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.member(of, name, *safe, e.span, &[], &[], false, e.span)
             }
         }
+    }
+
+    /// The loose atoms of `t`, which flow through `what` unchanged: an atom of a named family
+    /// is data, and data that selects no arrow is an error (sec:failure).
+    fn passing(&mut self, t: &Ty, what: &str, span: Span) -> Ty {
+        if !t.family.is_empty() {
+            self.error(
+                span,
+                format!("{what} does not take {}", Ty::set(t.family.clone())),
+            );
+        }
+        Ty::set(t.loose())
     }
 
     /// `e` checked with the binders of `facts` narrowed.
@@ -868,7 +915,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `sum` of a tuple: its components added in turn, `0` for the empty tuple; atoms pass.
     fn sum(&mut self, t: Ty, span: Span) -> Ty {
-        let mut out = Ty::set(t.atoms());
+        let mut out = self.passing(&t, "`sum`", span);
         let add = op_sig("+");
         for p in t.pieces() {
             match p {
@@ -918,7 +965,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         curry: bool,
         span: Span,
     ) -> Ty {
-        let mut out = Ty::set(f.atoms());
+        let mut out = self.passing(f, "a call", span);
         let mut checked = false;
         if let Some(s) = f.fns.first()
             && f.fns.iter().all(|g| g.same_kinds(s))
@@ -1060,9 +1107,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
     ) -> Ty {
         let mut x = self.arg(of, None);
-        let atoms = x.ty.atoms();
+        let atoms = x.ty.loose();
         if safe {
-            x = Arg::of(x.ty.without_atoms());
+            x = Arg::of(x.ty.without_loose());
         }
         let out = match self.t.res.uses.get(&member) {
             Some(Ref::Bound(ids)) if ids.len() == 1 => {
@@ -1103,7 +1150,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let v = self.expr(of);
         let ExprKind::Int { .. } = &k.kind else {
             let x = self.arg(k, None);
-            let mut out = Ty::set(v.atoms());
+            let mut out = self.passing(&v, "a call", span);
             for p in v.pieces() {
                 match p {
                     Piece::Fn(sig) => {
@@ -1126,7 +1173,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(Value::Int(i)) => i,
             _ => return Ty::dynamic(),
         };
-        let mut out = Ty::set(v.atoms());
+        let mut out = self.passing(&v, "an index", span);
         for p in v.pieces() {
             match p {
                 Piece::Tuple(cs) => match usize::try_from(i).ok().and_then(|i| cs.get(i)) {
@@ -1429,11 +1476,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .iter()
                 .flatten()
                 .filter(|a| a.lit.is_none())
-                .map(|a| Ty::set(a.ty.atoms()))
+                .map(|a| Ty::set(a.ty.loose()))
                 .collect();
             passed(&mut out, atoms.iter());
             for a in args.iter_mut().flatten() {
-                a.ty = a.ty.without_atoms();
+                a.ty = a.ty.without_loose();
             }
         }
         // The adoptions each arrow needs.
