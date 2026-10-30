@@ -70,6 +70,8 @@ pub struct Info {
     pub fits: HashMap<Span, Fit>,
     /// Each declared function's signature, by its binder.
     pub sigs: BTreeMap<usize, Arc<Sig>>,
+    /// The type of each top-level name bound by `=` (step L1.37).
+    pub tops: HashMap<String, Ty>,
     /// The type errors.
     pub errors: Vec<Error>,
 }
@@ -347,6 +349,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.stmt(items[i]);
         }
         if top {
+            for s in &items {
+                if let StmtKind::Bind { targets, .. } = &s.kind
+                    && let [Target::Name(n)] = &targets[..]
+                    && let Some(ty) = self.env.get(&self.id(s.span, n))
+                {
+                    self.info.tops.insert(n.clone(), ty.clone());
+                }
+            }
             for s in &items {
                 if let StmtKind::Function(f) = &s.kind {
                     self.tests(f, self.id(s.span, &f.name));

@@ -40,6 +40,9 @@ pub struct Def {
     pub kernel: Arc<str>,
     /// Its value.
     pub term: Term,
+    /// Whether it is bound by `=` to a value whose type, as the checker gives it, has no
+    /// function component (step L1.37).
+    pub first_order: bool,
 }
 
 /// A case of a `test` table: `f(input) == expected`.
@@ -91,7 +94,12 @@ pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
     if let Some((binds, _)) = e.scope(unit, true) {
         out.defs = binds
             .into_iter()
-            .map(|(name, kernel, term)| Def { name, kernel, term })
+            .map(|(name, kernel, term)| Def {
+                first_order: e.info.tops.get(&name).is_some_and(|t| t.first_order()),
+                name,
+                kernel,
+                term,
+            })
             .collect();
     }
     out.tests = std::mem::take(&mut e.tests);

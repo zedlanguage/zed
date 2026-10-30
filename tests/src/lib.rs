@@ -10,6 +10,7 @@ pub mod check;
 pub mod fences;
 pub mod instances;
 pub mod kernel;
+pub mod oracle;
 pub mod tokens;
 pub mod trees;
 

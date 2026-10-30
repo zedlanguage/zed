@@ -360,6 +360,12 @@ impl Ty {
         self.vars.is_empty() && !self.dynamic && self.tuples.iter().flatten().all(Ty::closed)
     }
 
+    /// Whether it holds no function at any depth (a variable or the unknown may still stand
+    /// for one): a type whose values the differential oracle compares (step L1.37).
+    pub fn first_order(&self) -> bool {
+        self.fns.is_empty() && self.tuples.iter().flatten().all(Ty::first_order)
+    }
+
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
     pub fn sub(&self, other: &Ty, binds: &mut Binds) -> bool {
         self.pieces().iter().all(|p| accepts(other, p, binds))

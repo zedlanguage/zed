@@ -38,6 +38,7 @@ l01_33_lowering
 l01_34_memory
 l01_35_mlir_study
 l01_36_cranelift
+l01_37_oracle
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization
