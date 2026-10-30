@@ -37,3 +37,71 @@ fn a_compound_default_reads_the_parameters_it_names() {
     assert_eq!(term(src, "a"), "{ w = 3; h = area$h(w); area(w, h) }");
     assert_eq!(term(src, "area$h"), "w -> (w + 1)");
 }
+
+/// The order `topo` gave before it kept the ready items in a heap: the first ready item by
+/// index, found by a scan of all of them, at each step.
+fn topo_by_scan(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
+    let n = deps.len();
+    let mut done = vec![false; n];
+    let mut order = Vec::new();
+    while order.len() < n {
+        match (0..n).find(|&i| !done[i] && deps[i].iter().all(|&d| done[d])) {
+            Some(i) => {
+                done[i] = true;
+                order.push(i);
+            }
+            None => {
+                let mut seen = std::collections::BTreeMap::new();
+                let mut path = Vec::new();
+                let mut i = (0..n).find(|&i| !done[i]).unwrap();
+                while !seen.contains_key(&i) {
+                    seen.insert(i, path.len());
+                    path.push(i);
+                    i = *deps[i].iter().find(|&&d| !done[d]).unwrap();
+                }
+                return Err(path.split_off(seen[&i]));
+            }
+        }
+    }
+    Ok(order)
+}
+
+#[test]
+fn the_dependency_order_is_the_first_ready_by_index() {
+    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut next = |m: usize| {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        (x % m as u64) as usize
+    };
+    let (mut orders, mut cycles) = (0, 0);
+    for _ in 0..2000 {
+        let n = 1 + next(12);
+        let deps: Vec<Vec<usize>> = (0..n)
+            .map(|_| (0..next(3)).map(|_| next(n)).collect())
+            .collect();
+        let want = topo_by_scan(&deps);
+        match &want {
+            Ok(_) => orders += 1,
+            Err(_) => cycles += 1,
+        }
+        assert_eq!(zedc::elab::topo(&deps), want, "{deps:?}");
+    }
+    assert!(
+        orders > 200 && cycles > 200,
+        "{orders} orders, {cycles} cycles"
+    );
+}
+
+#[test]
+fn the_dependency_order_scales() {
+    // Each item waits on the next, so the scan for the first ready item passed every item
+    // before it: `n²/2` steps.
+    zed_tests::scaling::check("a reversed chain of dependencies, by length", 4000, |n| {
+        let deps: Vec<Vec<usize>> = (0..n)
+            .map(|i| if i + 1 < n { vec![i + 1] } else { Vec::new() })
+            .collect();
+        assert_eq!(zedc::elab::topo(&deps).unwrap()[0], n - 1);
+    });
+}

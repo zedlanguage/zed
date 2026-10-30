@@ -17,7 +17,8 @@
 //! word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
 //! belongs to a function at the unit's top level.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::types::Type as KType;
@@ -1353,33 +1354,46 @@ fn what(s: &Stmt) -> String {
 }
 
 /// An order of `0..deps.len()` with each item after its dependencies, ties by index; else the
-/// items of one cycle, in order along it.
-pub(crate) fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
+/// items of one cycle, in order along it. The ready items wait in a heap, smallest first, each
+/// counting the dependencies it still waits on, so the order takes `O((n + e) log n)`.
+#[doc(hidden)]
+pub fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
     let n = deps.len();
+    let mut waits: Vec<usize> = deps.iter().map(Vec::len).collect();
+    let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, ds) in deps.iter().enumerate() {
+        for &d in ds {
+            users[d].push(i);
+        }
+    }
+    let mut ready: BinaryHeap<Reverse<usize>> =
+        (0..n).filter(|&i| waits[i] == 0).map(Reverse).collect();
     let mut done = vec![false; n];
     let mut order = Vec::with_capacity(n);
-    while order.len() < n {
-        match (0..n).find(|&i| !done[i] && deps[i].iter().all(|&d| done[d])) {
-            Some(i) => {
-                done[i] = true;
-                order.push(i);
-            }
-            None => {
-                // Every item left waits on another left; walk until one repeats.
-                let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
-                let mut path = Vec::new();
-                let mut i = (0..n).find(|&i| !done[i]).expect("an item left");
-                while !seen.contains_key(&i) {
-                    seen.insert(i, path.len());
-                    path.push(i);
-                    i = *deps[i]
-                        .iter()
-                        .find(|&&d| !done[d])
-                        .expect("a dependency left");
-                }
-                return Err(path.split_off(seen[&i]));
+    while let Some(Reverse(i)) = ready.pop() {
+        done[i] = true;
+        order.push(i);
+        for &u in &users[i] {
+            waits[u] -= 1;
+            if waits[u] == 0 {
+                ready.push(Reverse(u));
             }
         }
+    }
+    if order.len() < n {
+        // Every item left waits on another left; walk until one repeats.
+        let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut path = Vec::new();
+        let mut i = (0..n).find(|&i| !done[i]).expect("an item left");
+        while !seen.contains_key(&i) {
+            seen.insert(i, path.len());
+            path.push(i);
+            i = *deps[i]
+                .iter()
+                .find(|&&d| !done[d])
+                .expect("a dependency left");
+        }
+        return Err(path.split_off(seen[&i]));
     }
     Ok(order)
 }
