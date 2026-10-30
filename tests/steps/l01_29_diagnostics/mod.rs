@@ -6,6 +6,7 @@
 mod derivations;
 mod layout;
 mod repairs;
+mod scaling;
 mod variants;
 
 use zedc::run::load;

@@ -154,17 +154,50 @@ fn first_not_nfc(text: &str) -> Span {
 
 /// The 1-based line and column of byte `offset` of `bytes`, the column counted in Unicode
 /// scalars. `\r\n`, `\r` and `\n` each end a line. The bytes before `offset` must be UTF-8,
-/// as they are for the start of every rejection's span.
+/// as they are for the start of every rejection's span. For many offsets in one text, make
+/// its [`Lines`] once.
 pub fn line_col(bytes: &[u8], offset: usize) -> (usize, usize) {
-    let before = std::str::from_utf8(&bytes[..offset]).expect("the bytes before a span are UTF-8");
-    let (mut line, mut col) = (1, 1);
-    let mut chars = before.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\r' if chars.peek() == Some(&'\n') => {}
-            '\r' | '\n' => (line, col) = (line + 1, 1),
-            _ => col += 1,
+    Lines::new(&bytes[..offset]).line_col(bytes, offset)
+}
+
+/// Where the lines of a text start, found once, so that the line and column of an offset cost
+/// a binary search and a count of the scalars before it on its line, not a decoding of the
+/// text up to it.
+pub struct Lines {
+    /// The byte offsets after a line break, each with the 1-based number of the line it
+    /// starts, in increasing order, beginning with `(0, 1)`. Inside a `\r\n` both the offset
+    /// after `\r` and the one after `\n` start the next line.
+    starts: Vec<(usize, usize)>,
+}
+
+impl Lines {
+    /// The line starts of `bytes`.
+    pub fn new(bytes: &[u8]) -> Self {
+        let mut starts = vec![(0, 1)];
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'\n' if i > 0 && bytes[i - 1] == b'\r' => {
+                    starts.push((i + 1, starts.last().unwrap().1))
+                }
+                b'\r' | b'\n' => starts.push((i + 1, starts.last().unwrap().1 + 1)),
+                _ => {}
+            }
         }
+        Lines { starts }
     }
-    (line, col)
+
+    /// The start of the line holding byte `offset`, and that line's number.
+    pub fn line_start(&self, offset: usize) -> (usize, usize) {
+        let k = self.starts.partition_point(|&(start, _)| start <= offset);
+        self.starts[k - 1]
+    }
+
+    /// The 1-based line and column of byte `offset` of `bytes`, the text these are the lines
+    /// of; the bytes of its line before `offset` must be UTF-8.
+    pub fn line_col(&self, bytes: &[u8], offset: usize) -> (usize, usize) {
+        let (start, line) = self.line_start(offset);
+        let before =
+            std::str::from_utf8(&bytes[start..offset]).expect("the bytes before a span are UTF-8");
+        (line, before.chars().count() + 1)
+    }
 }

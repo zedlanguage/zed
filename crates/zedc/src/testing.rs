@@ -80,6 +80,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
             }
         }
         Ok((stmts, unit)) => {
+            let lines = source::Lines::new(text.as_bytes());
             for &line in &marked {
                 out.push(Outcome {
                     line,
@@ -95,7 +96,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
                 match run::program(stmts, unit.clone()) {
                     Ok(p) => program = Some(p),
                     Err(why) => {
-                        let (line, col) = source::line_col(text.as_bytes(), main.span.start);
+                        let (line, col) = lines.line_col(text.as_bytes(), main.span.start);
                         out.push(Outcome {
                             line,
                             col,
@@ -106,7 +107,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
             }
             let main_def = unit.defs.iter().find(|d| d.name == "main");
             for t in &unit.tests {
-                let (line, col) = source::line_col(text.as_bytes(), t.span.start);
+                let (line, col) = lines.line_col(text.as_bytes(), t.span.start);
                 let case = &text[t.span.start..t.span.end];
                 let failure = match (&program, t.function.as_str()) {
                     (Some(p), "main") => {

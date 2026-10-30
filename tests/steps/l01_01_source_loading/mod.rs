@@ -2,4 +2,5 @@
 //! endings normalize to `\n`.
 
 mod accepted;
+mod places;
 mod rejected;

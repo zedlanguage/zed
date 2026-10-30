@@ -149,8 +149,9 @@ impl std::fmt::Display for Diagnostic {
 /// The statements and elaboration of the unit `text`, or the diagnostics of the first phase
 /// that rejects it.
 pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> {
+    let lines = source::Lines::new(text.as_bytes());
     let at = |start: usize, message: String| {
-        let (line, col) = source::line_col(text.as_bytes(), start);
+        let (line, col) = lines.line_col(text.as_bytes(), start);
         Diagnostic {
             line,
             col,
@@ -162,7 +163,7 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
         errors
             .into_iter()
             .map(|e| Diagnostic {
-                steps: e.notes.iter().map(|n| step(text, n)).collect(),
+                steps: e.notes.iter().map(|n| step(text, &lines, n)).collect(),
                 ..at(e.span.start, e.message)
             })
             .collect::<Vec<_>>()
@@ -178,11 +179,9 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
 
 /// The step a note is in `text`: its line and column, the source line, and the characters of
 /// the note's span on that line.
-fn step(text: &str, n: &ast::Note) -> Step {
-    let (line, col) = source::line_col(text.as_bytes(), n.span.start);
-    let begin = text[..n.span.start]
-        .rfind(['\n', '\r'])
-        .map_or(0, |i| i + 1);
+fn step(text: &str, lines: &source::Lines, n: &ast::Note) -> Step {
+    let (line, col) = lines.line_col(text.as_bytes(), n.span.start);
+    let begin = lines.line_start(n.span.start).0;
     let end = text[n.span.start..]
         .find(['\n', '\r'])
         .map_or(text.len(), |i| n.span.start + i);
