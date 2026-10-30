@@ -1,0 +1,181 @@
+//! The canonicalizer on ZIR (step L1.32): the four rules of step M0.7 ([`crate::canon`]),
+//! moved onto the graph unchanged, and the content address taken over the normal form.
+//!
+//! A graph has no local names but one kind: a match pattern's binders, whose written names a
+//! region reads by position, never by name. So the *binders* rule renames the first written
+//! pattern binder in preorder to its level, its index among the binders of its pattern, which
+//! is the number of the arm region's arguments before the one it binds; its written name
+//! becomes a hint facet `binder (index, name)` on that argument's edge. The *hints*, *facets*
+//! and *domain* rules are [`crate::canon::RULES`] themselves, applied to one edge at a time,
+//! the edges taken in preorder: a region's arguments, then each node's outputs and then its
+//! regions, in order. Each rule applies at the first place it applies, in priority order,
+//! until none applies; the ranks are the sums of the per-edge ranks, and the tuple of them
+//! decreases lexicographically at every step, as it does on kernel terms.
+//!
+//! The address is the BLAKE3-256 hash of `zed-zir\0`, [`crate::canon::VERSION`], and the
+//! binary form ([`super::binary`]) of the normal form. Two graphs that differ only in binder
+//! names, hints, facet order or repeats, or the spelling of one set of integers, share it.
+
+use zed_kernel::term::{Pattern, Term};
+use zed_kernel::value::Value;
+
+use super::{Edge, Op, Region, binary};
+use crate::address::ContentAddress;
+use crate::canon::binders::{level_name, level_of};
+use crate::canon::{self, Def, Facet, RULES};
+
+/// The ranks of the four rules on `g`, in rule order.
+pub fn ranks(g: &Region) -> [u64; 4] {
+    let mut r = [written(g), 0, 0, 0];
+    each_edge(g, &mut |e| {
+        if let Edge::Value(v) = e {
+            let d = def(v);
+            for (k, rule) in RULES.iter().enumerate().skip(1) {
+                r[k] += (rule.rank)(&d);
+            }
+        }
+    });
+    r
+}
+
+/// One rewrite: the first rule that applies anywhere, applied at the first place it applies.
+/// Returns the rule's name, or `None` when `g` is in normal form.
+pub fn step(g: &mut Region) -> Option<&'static str> {
+    if rename_first(g) {
+        return Some(RULES[0].name);
+    }
+    for rule in &RULES[1..] {
+        let mut done = false;
+        each_edge_mut(g, &mut |e| {
+            if let (false, Edge::Value(v)) = (done, &mut *e) {
+                let mut d = def(v);
+                if (rule.apply)(&mut d) {
+                    v.domain = d.domain.expect("an edge has a domain");
+                    v.facets = d.facets;
+                    done = true;
+                }
+            }
+        });
+        if done {
+            return Some(rule.name);
+        }
+    }
+    None
+}
+
+/// The normal form of `g`.
+pub fn canonicalize(g: &Region) -> Region {
+    let mut g = g.clone();
+    while step(&mut g).is_some() {}
+    g
+}
+
+/// The content address of `g`.
+pub fn address(g: &Region) -> ContentAddress {
+    let mut h = blake3::Hasher::new();
+    h.update(b"zed-zir\0");
+    h.update(&canon::VERSION.to_le_bytes());
+    h.update(&binary::encode(&canonicalize(g)));
+    ContentAddress(*h.finalize().as_bytes())
+}
+
+/// An edge's facts as the M0.7 rules see a definition: no name and no body.
+fn def(v: &super::ValueEdge) -> Def {
+    Def {
+        name: "".into(),
+        domain: Some(v.domain.clone()),
+        facets: v.facets.clone(),
+        body: Term::Lit(Value::Tuple(Vec::new())),
+    }
+}
+
+/// The pattern binders of `g` that still carry their written names.
+fn written(g: &Region) -> u64 {
+    let mut n = 0;
+    for node in &g.nodes {
+        if let Op::Match(ps) = &node.op {
+            for p in ps {
+                binds(p, &mut |name| n += u64::from(level_of(name).is_none()));
+            }
+        }
+        for r in &node.regions {
+            n += written(r);
+        }
+    }
+    n
+}
+
+/// The binder rule: the first written pattern binder in preorder renamed to its level, its
+/// written name a hint on the argument it binds.
+fn rename_first(g: &mut Region) -> bool {
+    for node in &mut g.nodes {
+        if let Op::Match(ps) = &mut node.op {
+            for (arm, p) in ps.iter_mut().enumerate() {
+                let mut index = 0;
+                if let Some(name) = rename_in(p, &mut index) {
+                    if let Edge::Value(v) = &mut node.regions[arm].args[index] {
+                        v.facets.push(Facet {
+                            hint: true,
+                            kind: "binder".into(),
+                            value: Value::Tuple(vec![Value::Int(index as i64), Value::Str(name)]),
+                        });
+                    }
+                    return true;
+                }
+            }
+        }
+        if node.regions.iter_mut().any(rename_first) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Renames the first written binder of `p`, counting in `index` the binders before it, and
+/// returns its written name.
+fn rename_in(p: &mut Pattern, index: &mut usize) -> Option<std::sync::Arc<str>> {
+    match p {
+        Pattern::Bind(name) if level_of(name).is_none() => {
+            let written = name.clone();
+            *name = level_name(*index);
+            Some(written)
+        }
+        Pattern::Bind(_) => {
+            *index += 1;
+            None
+        }
+        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => {
+            ps.iter_mut().find_map(|q| rename_in(q, index))
+        }
+        Pattern::Fields(_, fs) => fs.iter_mut().find_map(|(_, q)| rename_in(q, index)),
+        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => None,
+    }
+}
+
+/// Calls `f` on each binder name of `p`, in preorder.
+fn binds(p: &Pattern, f: &mut dyn FnMut(&str)) {
+    match p {
+        Pattern::Bind(name) => f(name),
+        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter().for_each(|q| binds(q, f)),
+        Pattern::Fields(_, fs) => fs.iter().for_each(|(_, q)| binds(q, f)),
+        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+    }
+}
+
+/// Calls `f` on each edge of `g`, in preorder.
+fn each_edge(g: &Region, f: &mut dyn FnMut(&Edge)) {
+    g.args.iter().for_each(&mut *f);
+    for node in &g.nodes {
+        node.outputs.iter().for_each(&mut *f);
+        node.regions.iter().for_each(|r| each_edge(r, f));
+    }
+}
+
+/// Calls `f` on each edge of `g`, in preorder, mutably.
+fn each_edge_mut(g: &mut Region, f: &mut dyn FnMut(&mut Edge)) {
+    g.args.iter_mut().for_each(&mut *f);
+    for node in &mut g.nodes {
+        node.outputs.iter_mut().for_each(&mut *f);
+        node.regions.iter_mut().for_each(|r| each_edge_mut(r, f));
+    }
+}

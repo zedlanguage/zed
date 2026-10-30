@@ -44,6 +44,7 @@
 //!   question, already answered for the kernel term the graph is lowered from (step L1.33).
 
 pub mod binary;
+pub mod canon;
 pub mod text;
 
 use std::sync::Arc;
