@@ -466,10 +466,15 @@ impl Formatter<'_> {
             && matches!(s.kind, StmtKind::Return(_))
             && !self.has_comment(e.span)
         {
-            let line = self.stmt(s, ind, bare);
-            if !line.contains('\n') {
-                return format!("{{ {line} }}");
-            }
+            // With no comment inside, the block is this one statement: on the block's line when
+            // its text has no line break, which no indentation then enters, and on a line of
+            // its own otherwise. Rendering it once keeps nested blocks linear in their depth.
+            let line = self.stmt(s, ind + 1, bare);
+            return if line.contains('\n') {
+                format!("{{\n{}{line}\n{}}}", indent(ind + 1), indent(ind))
+            } else {
+                format!("{{ {line} }}")
+            };
         }
         if stmts.is_empty() && !self.has_comment(e.span) {
             return "{ }".into();

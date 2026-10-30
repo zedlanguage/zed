@@ -53,7 +53,7 @@ Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason)
 
 | ID | Where | Class | Status |
 |---|---|---|---|
-| F1 | `format.rs` `Formatter::block` renders a one-statement block twice | 2^depth | open |
+| F1 | `format.rs` `Formatter::block` renders a one-statement block twice | 2^depth | fixed: the statement is rendered once, at the inner indentation, and written on the block's line when its text has no line break (no indentation enters such a text, and the first attempt runs only when the block holds no comment, so the two renderings were the same text); output identical to the old at depths 1 to 10. `l01_13_formatter::scaling::nested_one_statement_blocks_scale` (old: 8 s at depth 20, ratio 454 between depths 2 and 16; new: 6 ms at depth 20) |
 | F2 | `elab.rs`: a default argument is elaborated again at every call site | exponential (inferred) | open |
 | F3 | `elab::topo`: linear scan for the next ready definition | O(n³) | open |
 | F4 | `stage::Mixer::mix`: `free` and `effects` per node, bound names in a `Vec` | O(k³) | open |
