@@ -5,6 +5,7 @@
 //! the spec leaves to the reference semantics are recorded in DESIGN.md sec:kernel,
 //! "Reference semantics", and repeated on the item they govern here.
 
+use imbl::OrdMap;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -90,50 +91,37 @@ pub struct Partial {
 /// attempt shares the one map, so an attempt costs nothing for the entries it does not read.
 type Defined = BTreeMap<Value, (Value, u64)>;
 
-#[derive(Debug)]
-struct Frame {
-    name: Arc<str>,
+/// A name's binding in an environment.
+#[derive(Clone, Debug)]
+struct Binding {
     value: V,
     /// The fact the value came from, when provenance is recorded and it came from one.
     fact: Option<usize>,
-    next: Env,
 }
 
-type Env = Option<Rc<Frame>>;
+/// The names in scope, in a persistent map: binding a name and looking one up cost
+/// `O(log n)` in the names in scope, and a closure's copy of its environment costs `O(1)`.
+/// A binding replaces an outer one of the same name.
+type Env = Option<OrdMap<Arc<str>, Binding>>;
 
 fn bind(env: &Env, name: Arc<str>, value: V) -> Env {
     bind_fact(env, name, value, None)
 }
 
 fn bind_fact(env: &Env, name: Arc<str>, value: V, fact: Option<usize>) -> Env {
-    Some(Rc::new(Frame {
-        name,
-        value,
-        fact,
-        next: env.clone(),
-    }))
+    Some(
+        env.clone()
+            .unwrap_or_default()
+            .update(name, Binding { value, fact }),
+    )
 }
 
 fn lookup_fact(env: &Env, name: &str) -> Option<usize> {
-    let mut cur = env;
-    while let Some(frame) = cur {
-        if &*frame.name == name {
-            return frame.fact;
-        }
-        cur = &frame.next;
-    }
-    None
+    env.as_ref()?.get(name)?.fact
 }
 
 fn lookup(env: &Env, name: &str) -> Option<V> {
-    let mut cur = env;
-    while let Some(frame) = cur {
-        if &*frame.name == name {
-            return Some(frame.value.clone());
-        }
-        cur = &frame.next;
-    }
-    None
+    Some(env.as_ref()?.get(name)?.value.clone())
 }
 
 /// Why an evaluation stopped: an error, or, inside a definedness `fix`, a read of an entry

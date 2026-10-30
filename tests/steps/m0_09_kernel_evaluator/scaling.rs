@@ -1,7 +1,9 @@
 //! The evaluator's values at the rule of low complexity (DESIGN.md Part G). A family is
 //! shared, not copied, when a variable, a literal or a lookup yields it, so reading a family
 //! of `n` entries once per entry costs `O(n log n)`, not `O(n²)`. A union shares the larger
-//! family's entries, so a `foldl` that adds one entry per step costs `O(n log n)` too.
+//! family's entries, so a `foldl` that adds one entry per step costs `O(n log n)` too. The
+//! names in scope sit in a persistent map, so a name read past `n` later bindings costs
+//! `O(log n)`, not `O(n)`.
 
 use std::cmp::Ordering;
 use zed_kernel::term::build::{app, lam, lit, prim, var};
@@ -190,4 +192,71 @@ fn a_family_built_with_families_as_leaves_agrees_with_its_leaves() {
         built > 2000 && collisions > 2000,
         "{built} built, {collisions} collisions"
     );
+}
+
+/// `let x0 = 0 in let x1 = x0 + 1 in … let x(n) = x0 + n in x0 + x(n)`: each `let` reads the
+/// first name past all the names bound after it.
+fn lets(n: usize) -> Term {
+    let mut body = add(var("x0"), var(&format!("x{n}")));
+    for i in (1..=n).rev() {
+        let e = add(var("x0"), lit(Value::Int(i as i64)));
+        body = Term::Let(format!("x{i}").into(), rc(e), rc(body));
+    }
+    Term::Let("x0".into(), rc(lit(Value::Int(0))), rc(body))
+}
+
+#[test]
+fn a_name_read_past_many_bindings_scales() {
+    // Each lookup walked the frames from the innermost binding out: a chain of `n` lets cost
+    // `n²/2` comparisons of names.
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            scaling::check(
+                "a chain of lets reading the first name, by lets",
+                2000,
+                |n| {
+                    assert_eq!(run(&lets(n)), Value::Int(n as i64));
+                },
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn an_inner_binding_hides_an_outer_one_within_its_scope_only() {
+    let int = |i: i64| lit(Value::Int(i));
+    let let_ = |x: &str, e: Term, body: Term| Term::Let(x.into(), rc(e), rc(body));
+    // `let x = 1 in (let x = 2 in x) * 10 + x` is 21.
+    let scoped = let_(
+        "x",
+        int(1),
+        add(mul(let_("x", int(2), var("x")), int(10)), var("x")),
+    );
+    assert_eq!(run(&scoped), Value::Int(21));
+    // `let x = 1 in let f = y -> x + y in let x = 10 in f(0) * 100 + x` is 110: the closure
+    // keeps the `x` it captured.
+    let captured = let_(
+        "x",
+        int(1),
+        let_(
+            "f",
+            lam(&["y"], add(var("x"), var("y"))),
+            let_(
+                "x",
+                int(10),
+                add(mul(app(var("f"), vec![int(0)]), int(100)), var("x")),
+            ),
+        ),
+    );
+    assert_eq!(run(&captured), Value::Int(110));
+    // A parameter hides the name it shares: `let x = 1 in (x -> x)(5) + x` is 6.
+    let param = let_(
+        "x",
+        int(1),
+        add(app(lam(&["x"], var("x")), vec![int(5)]), var("x")),
+    );
+    assert_eq!(run(&param), Value::Int(6));
 }

@@ -60,15 +60,11 @@ pub fn check_order(what: &str, n: usize, power: u32, run: impl Fn(usize)) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::hint::black_box;
 
-    /// `n^power` additions.
-    fn work(n: usize, power: u32) {
-        let mut sum = 0u64;
-        for i in 0..n.pow(power) {
-            sum = black_box(sum.wrapping_add(i as u64));
-        }
-        black_box(sum);
+    /// Work of order `n^power`: a sleep of `n^power` units of `unit` nanoseconds. A sleep
+    /// takes no processor time and overruns by little, so it tests the limits, not the clock.
+    fn work(n: usize, power: u32, unit: u64) {
+        std::thread::sleep(Duration::from_nanos(n.pow(power) as u64 * unit));
     }
 
     fn fails(run: impl FnOnce()) -> bool {
@@ -77,13 +73,15 @@ mod tests {
 
     #[test]
     fn work_of_the_order_given_passes() {
-        check("linear work", 200_000, |n| work(n, 1));
-        check_order("quadratic work", 400, 2, |n| work(n, 2));
+        check("linear work", 1000, |n| work(n, 1, 1000));
+        check_order("quadratic work", 100, 2, |n| work(n, 2, 100));
     }
 
     #[test]
     fn work_a_power_of_n_above_the_order_given_fails() {
-        assert!(fails(|| check("quadratic work", 400, |n| work(n, 2))));
-        assert!(fails(|| check_order("cubic work", 40, 2, |n| work(n, 3))));
+        assert!(fails(|| check("quadratic work", 100, |n| work(n, 2, 100))));
+        assert!(fails(|| check_order("cubic work", 10, 2, |n| work(
+            n, 3, 200
+        ))));
     }
 }
