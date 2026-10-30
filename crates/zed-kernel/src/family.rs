@@ -46,6 +46,7 @@ fn insert(
         keypath: whole.to_vec(),
     };
     let (key, rest) = path.split_first().expect("keypaths are nonempty");
+    let key = &key.key();
     if rest.is_empty() {
         if level.contains_key(key) {
             return Err(collision());
@@ -86,7 +87,7 @@ impl Family {
         Family(
             keys.into_iter()
                 .map(|k| {
-                    let k = k.into();
+                    let k = k.into().key();
                     (k.clone(), k)
                 })
                 .collect(),
@@ -139,7 +140,7 @@ impl Family {
 
     /// The value at key `k` of the top level.
     pub fn get(&self, k: &Value) -> Option<&Value> {
-        self.0.get(k)
+        self.0.get(&k.key())
     }
 
     /// The top-level entries, in key order.
@@ -281,5 +282,27 @@ mod tests {
     #[should_panic(expected = "repeats a key")]
     fn a_literal_with_a_repeated_key_panics() {
         Family::of([("a", 1), ("a", 2)]);
+    }
+
+    #[test]
+    fn the_two_zeros_are_one_key() {
+        let neg = || Value::float(-0.0);
+        let f = Family::from_leaves([(vec![neg()], Value::Int(1))]).unwrap();
+        assert_eq!(f.to_string(), "{0.0 -> 1}", "the key holds 0.0's bits");
+        assert_eq!(f.get(&Value::float(0.0)), Some(&Value::Int(1)));
+        assert_eq!(f.get(&neg()), Some(&Value::Int(1)));
+        let both = [
+            (vec![neg()], Value::Int(1)),
+            (vec![Value::float(0.0)], Value::Int(2)),
+        ];
+        assert!(matches!(
+            Family::from_leaves(both),
+            Err(KernelError::Collision { .. })
+        ));
+        // At any depth: inside a tuple key, and at an inner level.
+        let t = |z| Value::Tuple(vec![Value::str("x"), Value::float(z)]);
+        let g = Family::from_leaves([(vec![t(-0.0), neg()], Value::Int(3))]).unwrap();
+        assert_eq!(g.to_string(), "{(\"x\", 0.0) -> {0.0 -> 3}}");
+        assert_eq!(Family::set([neg(), Value::float(0.0)]).len(), 1);
     }
 }

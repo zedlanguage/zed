@@ -207,6 +207,42 @@ impl Value {
         }
     }
 
+    /// The value as a key (sec:type_resolution, "Equality and order corner rules"): `-0.0` becomes `0.0` at any depth, since `0.0 == -0.0`
+    /// makes the two zeros one key, which then holds the same bits whichever zero arrived
+    /// first. NaN is already one value.
+    pub fn key(&self) -> Value {
+        let all = |vs: &[Value]| vs.iter().map(Value::key).collect();
+        match self {
+            Value::Float(x) if x.get() == 0.0 => Value::float(0.0),
+            Value::Tuple(vs) => Value::Tuple(all(vs)),
+            Value::Path(vs) => Value::Path(all(vs)),
+            Value::Atom(a) if !a.args.is_empty() => Value::Atom(Atom {
+                args: all(&a.args),
+                ..a.clone()
+            }),
+            v => v.clone(),
+        }
+    }
+
+    /// The language's order on two values of one kind: structural, except that two floats
+    /// compare as IEEE 754 does, so `-0.0` and `0.0` are equal and a NaN is unordered, and
+    /// tuples compare component by component in that order. `None` when they are unordered.
+    pub fn surface_cmp(&self, other: &Value) -> Option<Ordering> {
+        match (self, other) {
+            (Value::Float(a), Value::Float(b)) => a.get().partial_cmp(&b.get()),
+            (Value::Tuple(a), Value::Tuple(b)) => {
+                for (x, y) in a.iter().zip(b) {
+                    match x.surface_cmp(y)? {
+                        Ordering::Equal => {}
+                        o => return Some(o),
+                    }
+                }
+                Some(a.len().cmp(&b.len()))
+            }
+            (a, b) => Some(a.cmp(b)),
+        }
+    }
+
     /// The language's `==` (sec:failure, M0.11): structural, except that two floats compare
     /// as IEEE 754 does, so `NaN != NaN` and `0.0 == -0.0`, at any depth.
     pub fn surface_eq(&self, other: &Value) -> bool {

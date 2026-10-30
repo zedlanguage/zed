@@ -23,27 +23,27 @@ expression: "golden_tokens(\"design.md\")"
 == DESIGN.md:283 L8
   1 | byLower = words «into» ( w . lower -> i -> w ) ;
   3 | byId = users . rekey ( u -> u . id ) ;
-== DESIGN.md:343 L8
+== DESIGN.md:344 L8
   1 | matmul ( «positional» a : ( r -> c -> f64 ) , «positional» b : ( c -> k -> f64 ) ) =
   2 | ( a , b ) «into» ( r -> k -> c >< ( + ) -> a [ r ] [ c ] * b [ c ] [ k ] ) ;
-== DESIGN.md:402 L6
+== DESIGN.md:403 L6
   1 | sim = «loop» {
   2 | pos' = pos + vel * dt «with» pos = p0 ;
   3 | vel' = vel + a ( pos ) * dt «with» vel = v0 ;
   4 | «until» pos' . x > bound ;
   5 | } ;
-== DESIGN.md:422 L6
+== DESIGN.md:423 L6
   1 | x [ i «in» 0₍10₎ ..< warm ] = coldStart ( i ) ;
   2 | x [ i «in» warm ..< n ] = anneal ( x [ i - 1₍10₎ ] ) ;
-== DESIGN.md:461 L10
+== DESIGN.md:462 L10
   1 | ( «div» ) : ( ( int , int \ 0₍10₎ ) -> int ) & ( ( int , 0₍10₎ ) -> #divByZero )
-== DESIGN.md:599 L10
+== DESIGN.md:600 L10
   1 | «type» Small = ( x : int where x * x < 100₍10₎ ) ;
   2 | «type» Even = ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) ;
   3 | «type» Prime = ( p : int [ 2₍10₎ .. ] where isPrime ( p ) ) ;
   4 | «type» Short = ( s : String where s . len < 100₍10₎ ) ;
   5 | area ( a : int [ 1₍10₎ .. ] , b : int [ 1₍10₎ .. ] where a * b <= 99₍10₎ ) -> int = a * b ;
-== DESIGN.md:648 L11
+== DESIGN.md:649 L11
   1 | «type» Bound = int | Ast | #unbounded ;
   2 | «struct» Interval { min : Bound , max : Bound }
   3 | «struct» Congruence { modulus : int [ 0₍10₎ .. ] , residue : int }
@@ -58,32 +58,32 @@ expression: "golden_tokens(\"design.md\")"
  12 | relations : [ Ast ] ,
  13 | written : [ Ast ] ,
  14 | }
-== DESIGN.md:715 L2
+== DESIGN.md:716 L2
   1 | «import» geometry . shapes ;
   2 | «import» geometry . shapes «as» g ;
   3 | «import» geometry . shapes . { area , Rect } ;
-== DESIGN.md:772 L20
+== DESIGN.md:773 L20
   1 | «type» Nonzero = String «matching» «grammar» { str["0"] * ( str["1"] | str["2"] | str["3"] | str["4"] | str["5"] | str["6"] | str["7"] | str["8"] | str["9"] ) digit * } ;
   2 | «type» UnitName = String «matching» «grammar» { alpha ( alpha | str["_"] ) * } ;
   3 | «type» UnitPower = String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
   4 | «type» UnitFactor = String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;
   5 | «type» UnitProduct = String «matching» «grammar» { UnitFactor sep ( str[" "] | str["*"] | str["·"] ) } ;
   6 | «type» UnitText = String «matching» «grammar» { ( UnitProduct | str["1"] ) ( str["/"] ( UnitFactor | str["("] UnitProduct str[")"] ) ) ? } ;
-== DESIGN.md:797 L14
+== DESIGN.md:798 L14
   1 | matmul ( «positional» v : ( c -> T ) , «positional» b : ( c -> k -> T ) ) = ( v , b ) «into» ( k -> c >< ( + ) -> v [ c ] * b [ c ] [ k ] ) ;
   2 | matmul ( «positional» a : ( r -> c -> T ) , «positional» v : ( c -> T ) ) = ( a , v ) «into» ( r -> c >< ( + ) -> a [ r ] [ c ] * v [ c ] ) ;
   3 | dot ( «positional» u : ( i -> T ) , «positional» v : ( i -> T ) ) = ( u , v ) «into» ( i >< ( + ) -> conj ( u [ i ] ) * v [ i ] ) ;
   4 | cross ( «positional» u : ( int [ 0₍10₎ ..< 3₍10₎ ] -> T ) , «positional» v : ( int [ 0₍10₎ ..< 3₍10₎ ] -> T ) ) = ( quat ( 0₍10₎ , u ) * quat ( 0₍10₎ , v ) ) . im ;
   5 | cross ( «positional» u : ( int [ 0₍10₎ ..< 7₍10₎ ] -> T ) , «positional» v : ( int [ 0₍10₎ ..< 7₍10₎ ] -> T ) ) = ( oct ( 0₍10₎ , u ) * oct ( 0₍10₎ , v ) ) . im ;
-== DESIGN.md:809 L14
+== DESIGN.md:810 L14
   1 | «type» Rgb = [ f32 ; 3₍10₎ ] ;
   2 | «type» Batch = [ f32 ; n : _ , h : 224₍10₎ , w : 224₍10₎ , c : 3₍10₎ ] «with» layout ( n , h , w , c ) ;
   3 | scale ( «positional» s : T , «positional» v : [ T ; n ] ) = s * v ;
-== DESIGN.md:821 L14
+== DESIGN.md:822 L14
   1 | «type» State = int [ 0₍10₎ ..< 2₍10₎ ] ;
   2 | step ( «positional» f : ( ( i : State «with» units ( [ str["m"] , str["m/s"] ] ) ) -> ( j : State «with» units ( [ str["1/m"] , str["s/m"] ] ) ) -> f64 ) ,
   3 | «positional» x : ( ( j : State «with» units ( [ str["m"] , str["m/s"] ] ) ) -> f64 ) ) = f . matmul ( x ) ;
-== DESIGN.md:863 L11
+== DESIGN.md:864 L11
   1 | «type» Shape =
   2 | #scalar ( name : String , constraints : Constraints )
   3 | | #string ( syntax : Grammar | #none , constraints : Constraints )
@@ -99,22 +99,22 @@ expression: "golden_tokens(\"design.md\")"
  13 | | #intersection ( parts : [ Type ] ) ;
  14 | «struct» Field { key : _ , name : String , valueType : Type , default : Ast | #none , facets : [ Ast ] }
  15 | «struct» Param { name : String | #none , kind : #positional | #named , valueType : Type , default : Ast | #none }
-== DESIGN.md:903 L11
+== DESIGN.md:904 L11
   1 | encode ( «positional» v : T ) -> String = «match» T :: shape {
   2 | #struct ( fields : ) -> str["{"] ++ ( fields . map ( f -> quote ( f . name ) ++ str[": "] ++ encode ( v [ f . key ] ) ) >< ( ( a , b ) -> a ++ str[", "] ++ b ) «else» str[] ) ++ str["}"] ,
   3 | #string -> quote ( v ) ,
   4 | #atom ( name : , payload : #none ) -> quote ( name ) ,
   5 | _ -> String ( v ) ,
   6 | } ;
-== DESIGN.md:924 L22
+== DESIGN.md:925 L22
   1 | p = ( ( x : rat ) -> ( x + 1₍10₎ ) ** 2₍10₎ ) :: source ;
   2 | e = expand ( p ) ;
   3 | d = derivative ( p ) ;
-== DESIGN.md:945 L15
+== DESIGN.md:946 L15
   1 | «law» addComm ( a : int , b : int ) = a + b == b + a ;
   2 | «law» sortIdempotent ( xs : [ int ] ) = xs . sort ( «asc» x -> x ) . sort ( «asc» x -> x ) == xs . sort ( «asc» x -> x ) ;
   3 | «law» noOverdraft ( s : Account , t : Txn where t . amount > 0₍10₎ ) = ( apply ( s , t ) «else» s ) . balance >= 0₍10₎ ;
-== DESIGN.md:977 L11
+== DESIGN.md:978 L11
   1 | «type» Proof = #eval
   2 | | #domain
   3 | | #rewrite ( rule : LawId , at : Path , bindings : Bindings )
@@ -125,7 +125,7 @@ expression: "golden_tokens(\"design.md\")"
   8 | | #implies ( assume : Ast , then : Proof )
   9 | | #reflect ( sound : LawId )
  10 | | #assume ( why : String ) ;
-== DESIGN.md:1044 L12
+== DESIGN.md:1045 L12
   1 | «type» Parity = #even | #odd | #either ;
   2 | parity = Facet (
   3 | kind : #evidence ,
@@ -141,7 +141,7 @@ expression: "golden_tokens(\"design.md\")"
  14 | g ( n : int «with» parity ( #odd ) ) = half ( n + n ) ;
  15 | h ( n : int «with» parity ( #odd ) , m : int «with» parity ( #even ) ) = half ( n * m ) ;
  16 | seven = 7₍10₎ «with» parity ( #odd ) ;
-== DESIGN.md:1096 L22
+== DESIGN.md:1097 L22
   1 | «interface» Semigroup ( T ) {
   2 | mul : ( T , T ) -> T ,
   3 | «law» mulAssoc ( a : T , b : T , c : T ) = mul ( mul ( a , b ) , c ) == mul ( a , mul ( b , c ) ) ,
@@ -165,7 +165,7 @@ expression: "golden_tokens(\"design.md\")"
  23 | «law» distrib ( a : T , b : T , c : T ) = mul ( a , add ( b , c ) ) == add ( mul ( a , b ) , mul ( a , c ) ) ,
  24 | }
  26 | intRing : CommRing ( int ) = { mul : ( * ) , one : 1₍10₎ , add : ( + ) , zero : 0₍10₎ , neg : ( a -> - a ) } ;
-== DESIGN.md:1133 L22
+== DESIGN.md:1134 L22
   1 | «law» square ( R : CommRing ( T ) , a : T , b : T ) = ( a + b ) * ( a + b ) == a * a + 2₍10₎ * a * b + b * b
   2 | «proof» {
   3 | ( a + b ) * ( a + b )
@@ -173,14 +173,14 @@ expression: "golden_tokens(\"design.md\")"
   5 | == a * a + b * a + ( a * b + b * b )
   6 | == a * a + 2₍10₎ * a * b + b * b
   7 | }
-== DESIGN.md:1147 L22
+== DESIGN.md:1148 L22
   1 | pow ( M : Monoid ( T ) , x : T , n : int [ 0₍10₎ .. ] ) -> T = «if» n == 0₍10₎ { 1₍10₎ } «else» { pow ( M : , x : , n : n - 1₍10₎ ) * x } ;
   3 | «law» powAdd ( M : Monoid ( T ) , x : T , m : int [ 0₍10₎ .. ] , n : int [ 0₍10₎ .. ] ) =
   4 | pow ( M : , x : , n : m + n ) == pow ( M : , x : , n : m ) * pow ( M : , x : , n : n )
   5 | «proof» { byInduction ( n ) }
-== DESIGN.md:1157 L22
+== DESIGN.md:1158 L22
   1 | additive ( R : CommRing ( T ) ) -> Monoid ( T ) = { mul : R . add , one : R . zero } ;
-== DESIGN.md:1196 L22
+== DESIGN.md:1197 L22
   1 | «interface» MonoInt {
   2 | f : ( int ) -> int ,
   3 | «law» mono ( a : int , b : int ) = ( a <= b ) . implies ( f ( a ) <= f ( b ) ) ,
@@ -191,7 +191,7 @@ expression: "golden_tokens(\"design.md\")"
   9 | #use ( rule : M . mono , args : [ M . f ( a ) , M . f ( b ) ] ) ,
  10 | ] , claims : [ M . f ( a ) <= M . f ( b ) , M . f ( M . f ( a ) ) <= M . f ( M . f ( b ) ) ] ) )
  11 | }
-== DESIGN.md:1442 L7
+== DESIGN.md:1443 L7
   1 | @foreign «struct» SockAddr { family : int «with» bits ( 16₍10₎ ) , data : [ byte ] «with» length ( 14₍10₎ ) }
   2 | @foreign «struct» AddrInfo {
   3 | flags : i32 , family : i32 , socktype : i32 , protocol : i32 ,
@@ -202,7 +202,7 @@ expression: "golden_tokens(\"design.md\")"
   8 | }
   9 | @foreign ( str["c"] , str["freeaddrinfo"] ) freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
  10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ byte ] «with» terminated ( 0₍10₎ ) , service : [ byte ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> { rc : i32 , res : Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) } ;
-== DESIGN.md:2423 L10
+== DESIGN.md:2424 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
   4 | name = str["Zed"] ;
@@ -228,7 +228,7 @@ expression: "golden_tokens(\"design.md\")"
  32 | unit = Circle ( c : p ) ;
  33 | onAxis = Point ( x : 0.0f , ... ) ;
  35 | «struct» Round { «import» Rect , r : f64 }
-== DESIGN.md:2463 L10
+== DESIGN.md:2464 L10
   1 | «struct» Counter { n : int , hi : int }
   3 | Counter . tick ( ) {
   4 | n' = n + 1₍10₎ ;
@@ -249,7 +249,7 @@ expression: "golden_tokens(\"design.md\")"
  22 | prev = c *. bump ( 3₍10₎ ) ;
  23 | «until» prev > 20₍10₎ ;
  32 | } ;
-== DESIGN.md:2507 L5
+== DESIGN.md:2508 L5
   1 | xs = [ 3₍10₎ , 1₍10₎ , 4₍10₎ , 1₍10₎ , 5₍10₎ ] ;
   2 | m = { str["a"] -> 1₍10₎ , str["b"] -> 2₍10₎ } ;
   4 | tags = { #red , #green } ;
@@ -259,31 +259,31 @@ expression: "golden_tokens(\"design.md\")"
   9 | srt = xs . sort ( «desc» x -> x ) ;
  10 | tot = xs . sum ;
  13 | counts = text . split ( str[" "] ) . group ( w -> w . lower ) . count ;
-== DESIGN.md:2524 L8
+== DESIGN.md:2525 L8
   2 | counts = text . split ( str[" "] ) «as» ( i -> w ) «into» ( w . lower -> i -> 1₍10₎ ) >< ( + ) ;
-== DESIGN.md:2529 L4
+== DESIGN.md:2530 L4
   2 | byId = users . rekey ( u -> u . id ) ;
-== DESIGN.md:2536 L5
+== DESIGN.md:2537 L5
   1 | byId = users . group ( u -> u . id ) ;
   4 | best = scores . maxBy ( v -> v ) ;
   5 | one = best ?. first ;
-== DESIGN.md:2547 L5
+== DESIGN.md:2548 L5
   4 | paid = orders . join ( payments , on : #orderId , kind : #left ) ;
-== DESIGN.md:2555 L3
+== DESIGN.md:2556 L3
   2 | paid = «for» o «in» orders {
   3 | payment = payments [ o . orderId ] «else» #none ;
   4 | ( o , payment )
   5 | } ;
-== DESIGN.md:2563 L5
+== DESIGN.md:2564 L5
   2 | unpaid = orders . diff ( payments , on : #orderId ) ;
-== DESIGN.md:2568 L8
+== DESIGN.md:2569 L8
   1 | unpaid = orders . where ( o -> payments [ o . orderId ] «is» #notFound ) ;
   6 | shipped = «for» o «in» orders , s «in» shipments where o . orderId == s . orderId { ( o , s ) } ;
  10 | pairs = «for» i «in» 0₍10₎ ..< n , j «in» i + 1₍10₎ ..< n { ( i , j ) } ;
  13 | matmul ( «positional» a : ( r -> c -> f64 ) , «positional» b : ( c -> k -> f64 ) ) =
  14 | ( a , b ) «into» ( r -> k -> c >< ( + ) -> a [ r ] [ c ] * b [ c ] [ k ] ) ;
  17 | prod = a . matmul ( b ) ;
-== DESIGN.md:2590 L6
+== DESIGN.md:2591 L6
   2 | sq = «for» i «in» 0₍10₎ ..< n { i * i } ;
   5 | cdf [ i ] = cdf [ i - 1₍10₎ ] + hist [ i ] «with» cdf [ - 1₍10₎ ] = 0₍10₎ ;
   6 | total = cdf . last «else» 0₍10₎ ;
@@ -301,7 +301,7 @@ expression: "golden_tokens(\"design.md\")"
  22 | } ;
  25 | sessions = events . chunkBy ( e -> e . userId ) ;
  26 | report = sessions . map ( s -> summarize ( s ) ) ;
-== DESIGN.md:2621 L3
+== DESIGN.md:2622 L3
   1 | parse : ( String ) -> Config | #syntaxError ( pos : int )
   3 | conf = parse ( text ) «else» defaultConfig ;
   4 | port = parse ( text ) ?. server ?. port «else» 8080₍10₎ ;
@@ -314,7 +314,7 @@ expression: "golden_tokens(\"design.md\")"
  17 | sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
  18 | badAmounts = amounts . where ( a -> a «is» «not» int ) ;
  20 | sumAll = amounts . allOk >< ( + ) ;
-== DESIGN.md:2646 L21
+== DESIGN.md:2647 L21
   2 | «struct» KeyVal «grammar» { key : Ident str[":"] value : Json }
   3 | «struct» JsonObj «grammar» { str["{"] entries : KeyVal sep str[","] str["}"] }
   4 | «type» Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null ;
@@ -335,11 +335,11 @@ expression: "golden_tokens(\"design.md\")"
  34 | d = v * t ;
  37 | exec : ( Db , String «with» taint ( #clean ) ) -> Rows | #sqlError
  39 | rows = exec ( db , sanitize ( userInput ) ) ;
-== DESIGN.md:2739 L3
+== DESIGN.md:2740 L3
   2 | priceOf ( «positional» items , «positional» id ) = items [ id ] ?. price * ( 1₍10₎ + taxRate ) ;
-== DESIGN.md:2746 L2
+== DESIGN.md:2747 L2
   1 | priceOf : ( K ->? { price : f64 } , K ) -> f64 | #notFound
-== DESIGN.md:2758 L20
+== DESIGN.md:2759 L20
   2 | total = readings >< ( + ) ;
   6 | histA = words . group ( w -> w . len ) . count ;
   7 | histB = «for» n «in» 0₍10₎ ..= maxLen { words . where ( w -> w . len == n ) . count } ;

@@ -5,6 +5,7 @@
 //! the spec leaves to the reference semantics are recorded in DESIGN.md sec:kernel,
 //! "Reference semantics", and repeated on the item they govern here.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
@@ -1340,11 +1341,12 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             if !same {
                 return ty(&vals);
             }
+            let o = a.surface_cmp(b);
             match p {
-                Prim::Lt => Bool(a < b),
-                Prim::Le => Bool(a <= b),
-                Prim::Gt => Bool(a > b),
-                Prim::Ge => Bool(a >= b),
+                Prim::Lt => Bool(o == Some(Ordering::Less)),
+                Prim::Le => Bool(matches!(o, Some(Ordering::Less | Ordering::Equal))),
+                Prim::Gt => Bool(o == Some(Ordering::Greater)),
+                Prim::Ge => Bool(matches!(o, Some(Ordering::Greater | Ordering::Equal))),
                 Prim::Min => a.min(b).clone(),
                 _ => a.max(b).clone(),
             }
