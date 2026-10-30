@@ -24,7 +24,8 @@
 //!
 //! The budgets of step M0.5: a relation takes at most [`VARIABLES`] atoms and [`ATOMS`]
 //! constraints, and every intermediate problem at most [`INTERMEDIATE`] constraints; the same
-//! bound caps the conjunctions a formula splits into and the splinters one elimination tries.
+//! bound caps the conjunctions a formula splits into, and the splinters and the problems
+//! solved (each shadow and splinter one) in one test of satisfiability.
 //! A coefficient past `i128` is past the budget too. Past a budget the relation is dropped and
 //! the answer is unknown, which is sound: the written constraint is kept.
 
@@ -593,6 +594,7 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Over> {
         solver: Omega {
             next: atoms.len(),
             splinters: 0,
+            steps: 0,
         },
     };
     let found = split.go(vec![(f.clone(), true)], Vec::new())?;
@@ -788,11 +790,15 @@ struct Omega {
     next: usize,
     /// The splinters tried so far.
     splinters: usize,
+    /// The problems solved so far, each elimination's shadows and splinters counted.
+    steps: usize,
 }
 
 impl Omega {
     fn solve(&mut self, eqs: Vec<Row>, ges: Vec<Row>) -> Result<Option<Vals>, Over> {
-        if eqs.len() + ges.len() > INTERMEDIATE {
+        // Both shadows recurse, so without this budget the steps double with each variable.
+        self.steps += 1;
+        if eqs.len() + ges.len() > INTERMEDIATE || self.steps > INTERMEDIATE {
             return Err(Over);
         }
         let mut es = Vec::new();
@@ -991,11 +997,18 @@ impl Omega {
             let r = self.solve(Vec::new(), shadow(false)?)?;
             return pick(r);
         }
-        if self.solve(Vec::new(), shadow(false)?)?.is_none() {
+        // Both shadows recurse below, so an empty problem would cost twice per variable;
+        // the real shadows alone show most empty problems empty in one pass.
+        if relaxed_empty(&gs) {
             return Ok(None);
         }
+        // The dark shadow lies within the real one, so a point of it settles the problem with
+        // one recursion; only when it has none is the real shadow solved.
         if let Some(m) = self.solve(Vec::new(), shadow(true)?)? {
             return pick(Some(m));
+        }
+        if self.solve(Vec::new(), shadow(false)?)?.is_none() {
+            return Ok(None);
         }
         // The splinters: `a·x + l == i` for `0 <= i <= (m·a - m - a) / m`, `m` the largest
         // upper coefficient.
@@ -1021,6 +1034,87 @@ impl Omega {
             }
         }
         Ok(None)
+    }
+}
+
+/// Whether the inequalities have no rational point, by Fourier–Motzkin elimination with the
+/// real shadow alone, each row normalized (which keeps every integer point). A `false` is
+/// "not shown": elimination past [`INTERMEDIATE`] rows, or an overflow, stops it. One pass
+/// eliminates each variable once.
+fn relaxed_empty(gs: &[Row]) -> bool {
+    let mut rows: Vec<Row> = gs.to_vec();
+    loop {
+        let mut tight: BTreeMap<BTreeMap<usize, i128>, i128> = BTreeMap::new();
+        for r in rows {
+            match r.normal() {
+                Norm::False => return true,
+                Norm::True => {}
+                Norm::Row(r) => {
+                    let k = tight.entry(r.a).or_insert(r.k);
+                    *k = (*k).min(r.k);
+                }
+            }
+        }
+        for (a, k) in &tight {
+            let opp: BTreeMap<usize, i128> = a.iter().map(|(i, c)| (*i, -c)).collect();
+            if tight
+                .get(&opp)
+                .is_some_and(|k2| k.checked_add(*k2).is_some_and(|s| s < 0))
+            {
+                return true;
+            }
+        }
+        let gs: Vec<Row> = tight
+            .into_iter()
+            .map(|(a, k)| Row { a, k, eq: false })
+            .collect();
+        let mut sides: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+        for r in &gs {
+            for (i, c) in &r.a {
+                let e = sides.entry(*i).or_default();
+                if *c > 0 { e.0 += 1 } else { e.1 += 1 }
+            }
+        }
+        let Some((&j, _)) = sides.iter().min_by_key(|(j, (lo, hi))| (lo * hi, **j)) else {
+            return false;
+        };
+        let (with, mut out): (Vec<Row>, Vec<Row>) =
+            gs.into_iter().partition(|r| r.a.contains_key(&j));
+        let (lo, hi) = sides[&j];
+        if out.len() + lo * hi > INTERMEDIATE {
+            return false;
+        }
+        for l in with.iter().filter(|r| r.a[&j] > 0) {
+            for u in with.iter().filter(|r| r.a[&j] < 0) {
+                let (a, b) = (l.a[&j], -u.a[&j]);
+                let mut r = Row {
+                    a: BTreeMap::new(),
+                    k: 0,
+                    eq: false,
+                };
+                for (src, f) in [(u, a), (l, b)] {
+                    for (i, c) in src.a.iter().filter(|(i, _)| **i != j) {
+                        let Some(v) = c
+                            .checked_mul(f)
+                            .and_then(|v| v.checked_add(*r.a.get(i).unwrap_or(&0)))
+                        else {
+                            return false;
+                        };
+                        if v == 0 {
+                            r.a.remove(i);
+                        } else {
+                            r.a.insert(*i, v);
+                        }
+                    }
+                    let Some(k) = src.k.checked_mul(f).and_then(|v| v.checked_add(r.k)) else {
+                        return false;
+                    };
+                    r.k = k;
+                }
+                out.push(r);
+            }
+        }
+        rows = out;
     }
 }
 

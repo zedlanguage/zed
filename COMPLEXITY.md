@@ -18,7 +18,7 @@ Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason)
 | S2 | `product::Scope::join` builds `Or(R∧A, R∧B)`, copying the common prefix | 2^k in connectives | fixed: `Formula::either` takes the shared conjuncts out, `Formula::bounded` keeps at most 64 constraints and 64 conjunctions; `l01_39_reduced_product::scaling` (about 3 ms per clause, linear) |
 | S3 | `iterate::stabilize` restarts inner heads' counters on each outer round | 64^h in loop nesting | open |
 | S4 | `revision::forward` and `IntervalSet::lift2` multiply piece counts with no cap; `cap` is O(n²) | P^k pieces | fixed: `map2` and `lift2` cap operands and image to the piece limit; `cap` by a heap, O(n log n); `l01_24_refinement_lattices::scaling` (old `cap`: ratio 65; old chain: 64 pieces after one `+`) |
-| S5 | Omega test: real and dark shadow both recursed with no step budget | 2^V per leaf | open |
+| S5 | Omega test: real and dark shadow both recursed with no step budget | 2^V per leaf | fixed: the dark shadow first, the real shadows alone (`relaxed_empty`) before both recurse, at most 4,096 problems solved; `l01_38_presburger::scaling` (15 variables: 1.03 s → 2 ms; the rising chain passes the budget without `relaxed_empty`). What remains is polynomial in at most 16 variables |
 | S6 | `preimage::Cx::constant` walks the subtree at every node | O(n·depth) | fixed: bottom up from the parts' remembered values |
 | S7 | `presburger::project` per name: DNF built once per name, hull by 128 bisection steps | O(V·C·128) | fixed (`project_each`, galloping hull) |
 | S8 | `product::walk`/`reduce`: whole scope cloned per `let`, constraints printed per round | O(n²) | open |
