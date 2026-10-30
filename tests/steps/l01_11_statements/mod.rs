@@ -15,8 +15,16 @@ fn sx(text: &str) -> String {
     let tokens = lex(text).unwrap();
     match parse(text, &tokens, "Expr", TOP) {
         Err(_) => "syntax".into(),
-        Ok(tree) => zedc::ast::build(text, &tokens, &tree)
-            .map_or_else(|e| format!("error: {e}"), |e| e.to_string()),
+        Ok(tree) => zedc::ast::build(text, &tokens, &tree).map_or_else(
+            |e| {
+                let mut out = format!("error: {e}");
+                for n in &e.notes {
+                    out += &format!("; {} at byte {}", n.text, n.span.start);
+                }
+                out
+            },
+            |e| e.to_string(),
+        ),
     }
 }
 

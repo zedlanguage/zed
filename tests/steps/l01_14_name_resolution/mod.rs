@@ -11,14 +11,21 @@ use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
 use zedc::resolve::{Kind, Ref, Resolution, resolve};
 
-/// The resolution of the unit `text`, or its errors as `message [text]`.
+/// The resolution of the unit `text`, or its errors as `message [text]`, each note after it
+/// as `; note [text]`.
 fn run(text: &str) -> Result<Resolution, Vec<String>> {
     let tokens = lex_fence(text).unwrap();
     let tree = parse(text, &tokens, "Unit", TOP).unwrap();
     let stmts = unit(text, &tokens, &tree).unwrap();
     resolve(&stmts).map_err(|es| {
         es.iter()
-            .map(|e| format!("{} [{}]", e.message, &text[e.span.start..e.span.end]))
+            .map(|e| {
+                let mut out = format!("{} [{}]", e.message, &text[e.span.start..e.span.end]);
+                for n in &e.notes {
+                    out += &format!("; {} [{}]", n.text, &text[n.span.start..n.span.end]);
+                }
+                out
+            })
             .collect()
     })
 }

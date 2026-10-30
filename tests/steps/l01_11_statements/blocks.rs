@@ -60,15 +60,15 @@ fn a_block_exports_exactly_once() {
     check(&[
         (
             "x -> { return x; x + 1 }",
-            "error: a block exports once; its export is already at byte 7",
+            "error: a block exports once; the block's first export at byte 7",
         ),
         (
             "x -> { return x; return x + 1; }",
-            "error: a block exports once; its export is already at byte 7",
+            "error: a block exports once; the block's first export at byte 7",
         ),
         (
             "x -> { y = x * 2; return y; y + 1 }",
-            "error: a block exports once; its export is already at byte 18",
+            "error: a block exports once; the block's first export at byte 18",
         ),
         (
             "x -> { y = x; }",

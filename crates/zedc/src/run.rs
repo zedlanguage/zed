@@ -66,7 +66,8 @@ pub fn load(bytes: &[u8]) -> Result<Program, String> {
     program(&stmts, unit)
 }
 
-/// A message of the compiler, at a line and column of the source, both counted from 1.
+/// A message of the compiler, at a line and column of the source, both counted from 1, with
+/// its derivation (DESIGN.md "Diagnostics").
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Diagnostic {
     /// The line.
@@ -75,11 +76,63 @@ pub struct Diagnostic {
     pub col: usize,
     /// Why.
     pub message: String,
+    /// Each constraint and step that led to it, in the order the compiler met them.
+    pub steps: Vec<Step>,
+}
+
+/// One step of a derivation, placed in the source.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Step {
+    /// The line.
+    pub line: usize,
+    /// The column.
+    pub col: usize,
+    /// What holds there.
+    pub text: String,
+    /// The source line.
+    pub source: String,
+    /// How many characters of the source line the step covers, at least 1.
+    pub width: usize,
 }
 
 impl std::fmt::Display for Diagnostic {
+    /// The message on one line; then each step numbered, with its source line and the text
+    /// it covers underlined, a source line shown once for consecutive steps on one place.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}: {}", self.line, self.col, self.message)
+        write!(f, "{}:{}: {}", self.line, self.col, self.message)?;
+        let gutter = self
+            .steps
+            .iter()
+            .map(|s| s.line.to_string().len())
+            .max()
+            .unwrap_or(0);
+        let number = self.steps.len().to_string().len();
+        let pad = " ".repeat(number + 4);
+        let mut last = None;
+        for (i, s) in self.steps.iter().enumerate() {
+            let n = format!("[{}]", i + 1);
+            write!(
+                f,
+                "\n  {n:<w$} {}:{}: {}",
+                s.line,
+                s.col,
+                s.text,
+                w = number + 2
+            )?;
+            if last == Some((s.line, s.col, s.width)) {
+                continue;
+            }
+            last = Some((s.line, s.col, s.width));
+            write!(f, "\n{pad} {:>gutter$} | {}", s.line, s.source)?;
+            write!(
+                f,
+                "\n{pad} {:>gutter$} | {}{}",
+                "",
+                " ".repeat(s.col - 1),
+                "^".repeat(s.width)
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -88,12 +141,20 @@ impl std::fmt::Display for Diagnostic {
 pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> {
     let at = |start: usize, message: String| {
         let (line, col) = source::line_col(text.as_bytes(), start);
-        Diagnostic { line, col, message }
+        Diagnostic {
+            line,
+            col,
+            message,
+            steps: Vec::new(),
+        }
     };
     let all = |errors: Vec<ast::Error>| {
         errors
             .into_iter()
-            .map(|e| at(e.span.start, e.message))
+            .map(|e| Diagnostic {
+                steps: e.notes.iter().map(|n| step(text, n)).collect(),
+                ..at(e.span.start, e.message)
+            })
             .collect::<Vec<_>>()
     };
     let tokens = lex::lex(text).map_err(|e| vec![at(e.span.start, e.to_string())])?;
@@ -103,6 +164,28 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
     let res = resolve::resolve(&stmts).map_err(all)?;
     let unit = elaborate(&stmts, &res).map_err(all)?;
     Ok((stmts, unit))
+}
+
+/// The step a note is in `text`: its line and column, the source line, and the characters of
+/// the note's span on that line.
+fn step(text: &str, n: &ast::Note) -> Step {
+    let (line, col) = source::line_col(text.as_bytes(), n.span.start);
+    let begin = text[..n.span.start]
+        .rfind(['\n', '\r'])
+        .map_or(0, |i| i + 1);
+    let end = text[n.span.start..]
+        .find(['\n', '\r'])
+        .map_or(text.len(), |i| n.span.start + i);
+    let width = text[n.span.start..n.span.end.clamp(n.span.start, end)]
+        .chars()
+        .count();
+    Step {
+        line,
+        col,
+        text: n.text.clone(),
+        source: text[begin..end].to_string(),
+        width: width.max(1),
+    }
 }
 
 /// The program `unit` is, with the ports its one `main` declares.

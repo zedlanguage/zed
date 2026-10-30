@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::ast::{Error, Expr, ExprKind, Param, Pattern, Port, Stmt, StmtKind, StrPart, Target};
-use crate::ast::{Type, TypeKind};
+use crate::ast::{Note, Type, TypeKind};
 use crate::lex::Span;
 
 /// What binds a name.
@@ -171,18 +171,28 @@ impl Resolver {
                     .iter()
                     .all(|i| self.signatures.get(i) != signature.as_ref());
             if !overload {
-                let message = match &signature {
-                    Some(_) if first.kind == Kind::Function => format!(
-                        "`{name}` is already declared in this scope with these parameter \
-                         types, at byte {}",
-                        first.span.start
+                let (message, note) = match &signature {
+                    Some(_) if first.kind == Kind::Function => (
+                        format!(
+                            "`{name}` is already declared in this scope with these parameter \
+                             types"
+                        ),
+                        format!("the first `{name}` with these parameter types"),
                     ),
-                    _ => format!(
-                        "`{name}` is already bound in this scope, at byte {}",
-                        first.span.start
+                    _ => (
+                        format!("`{name}` is already bound in this scope"),
+                        format!("the first binding of `{name}`"),
                     ),
                 };
-                self.errors.push(Error { span, message });
+                let notes = vec![Note {
+                    span: first.span,
+                    text: note,
+                }];
+                self.errors.push(Error {
+                    span,
+                    message,
+                    notes,
+                });
                 return;
             }
         }
@@ -219,7 +229,11 @@ impl Resolver {
             Some(Found::Word(layer)) => format!("`{name}` is a prelude word of layer L{layer}"),
             None => format!("`{name}` is not defined"),
         };
-        self.errors.push(Error { span, message });
+        self.errors.push(Error {
+            span,
+            message,
+            notes: Vec::new(),
+        });
     }
 
     /// The statements of the innermost scope: their binders first, since order has no meaning.
@@ -388,6 +402,7 @@ impl Resolver {
             TypeKind::Name(n) => self.errors.push(Error {
                 span: t.span,
                 message: format!("the type `{n}` is not defined"),
+                notes: Vec::new(),
             }),
             TypeKind::Atom(_) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => {

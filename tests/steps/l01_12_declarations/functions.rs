@@ -66,7 +66,7 @@ fn the_unit_top_level_exports_nothing_and_block_bodies_still_export_once() {
         ),
         (
             "f(x) { return x; x }",
-            "error: a block exports once; its export is already at byte 7",
+            "error: a block exports once; the block's first export at byte 7",
         ),
     ]);
 }

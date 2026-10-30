@@ -63,10 +63,12 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
     let err = ast(text).unwrap_err();
     assert_eq!(&text[err.span.start..err.span.end], "w");
     assert_eq!(err.span.start, 17);
-    assert_eq!(
-        err.message,
-        "the argument `w` is named twice; the first is at byte 5"
-    );
+    assert_eq!(err.message, "the argument `w` is named twice");
+    let [first] = &err.notes[..] else {
+        panic!("one note: {:?}", err.notes)
+    };
+    assert_eq!(first.text, "the first argument named `w`");
+    assert_eq!(first.span.start, 5);
 }
 
 #[test]

@@ -16,7 +16,13 @@ fn sx(text: &str) -> String {
     match parse(text, &tokens, "Unit", TOP) {
         Err(_) => "syntax".into(),
         Ok(tree) => match zedc::ast::unit(text, &tokens, &tree) {
-            Err(e) => format!("error: {e}"),
+            Err(e) => {
+                let mut out = format!("error: {e}");
+                for n in &e.notes {
+                    out += &format!("; {} at byte {}", n.text, n.span.start);
+                }
+                out
+            }
             Ok(stmts) => stmts
                 .iter()
                 .map(|s| s.to_string())

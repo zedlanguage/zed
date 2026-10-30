@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::{Builder, Error, Expr, ExprKind, Param, Type};
+use super::{Builder, Error, Expr, ExprKind, Note, Param, Type};
 use crate::lex::Span;
 
 /// A statement and its span.
@@ -98,10 +98,11 @@ impl Builder<'_> {
                 if let Some(first) = export {
                     return Err(Error {
                         span: s.span,
-                        message: format!(
-                            "a block exports once; its export is already at byte {}",
-                            first.start
-                        ),
+                        message: "a block exports once".into(),
+                        notes: vec![Note {
+                            span: first,
+                            text: "the block's first export".into(),
+                        }],
                     });
                 }
                 export = Some(s.span);
@@ -121,6 +122,7 @@ impl Builder<'_> {
                 span,
                 message: "this block exports nothing: end it with an expression or `return e;`"
                     .into(),
+                notes: Vec::new(),
             });
         }
         Ok(Expr {

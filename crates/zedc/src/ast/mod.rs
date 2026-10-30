@@ -137,6 +137,17 @@ pub struct Error {
     pub span: Span,
     /// Why.
     pub message: String,
+    /// How the checker reached it: each constraint and step, in the order it met them.
+    pub notes: Vec<Note>,
+}
+
+/// One step of a derivation: a place in the source and what holds there.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Note {
+    /// Where.
+    pub span: Span,
+    /// What holds there.
+    pub text: String,
 }
 
 impl fmt::Display for Error {
@@ -168,6 +179,7 @@ pub fn unit(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Erro
             } => Err(Error {
                 span,
                 message: "`return` exports from a block; a unit's top level has none".into(),
+                notes: Vec::new(),
             }),
             s => Ok(s),
         })
@@ -229,6 +241,7 @@ impl Builder<'_> {
                 self.tree.name(n),
                 self.tree.layer(n)
             ),
+            notes: Vec::new(),
         }
     }
 
@@ -487,10 +500,11 @@ impl Builder<'_> {
             if let Some((_, first)) = seen.iter().find(|(w, _)| w == word) {
                 return Err(Error {
                     span: name.span,
-                    message: format!(
-                        "the argument `{word}` is named twice; the first is at byte {}",
-                        first.start
-                    ),
+                    message: format!("the argument `{word}` is named twice"),
+                    notes: vec![Note {
+                        span: *first,
+                        text: format!("the first argument named `{word}`"),
+                    }],
                 });
             }
             seen.push((word.clone(), name.span));

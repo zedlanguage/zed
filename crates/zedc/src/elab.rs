@@ -324,6 +324,7 @@ impl<'a> Elab<'a> {
         self.errors.push(Error {
             span,
             message: message.into(),
+            notes: Vec::new(),
         });
         None
     }
