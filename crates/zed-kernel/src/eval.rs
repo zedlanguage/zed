@@ -5,6 +5,7 @@
 //! the spec leaves to the reference semantics are recorded in DESIGN.md sec:kernel,
 //! "Reference semantics", and repeated on the item they govern here.
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
@@ -79,9 +80,15 @@ pub struct Partial {
     /// Which `fix` evaluation this family belongs to, so that a read of an undefined entry
     /// postpones the entry of that `fix` and not of a `fix` nested inside its body.
     fix: u64,
-    domain: BTreeSet<Value>,
-    defined: BTreeMap<Value, Value>,
+    domain: Rc<BTreeSet<Value>>,
+    defined: Rc<RefCell<Defined>>,
+    /// The attempt sees the entries defined in rounds before this one.
+    round: u64,
 }
+
+/// The entries a definedness `fix` has defined, each with the round that defined it. Every
+/// attempt shares the one map, so an attempt costs nothing for the entries it does not read.
+type Defined = BTreeMap<Value, (Value, u64)>;
 
 #[derive(Debug)]
 struct Frame {
@@ -757,13 +764,14 @@ impl Evaluator {
             if let Value::Atom(_) = k {
                 return Ok(V::Data(k.clone()));
             }
-            return match part.defined.get(k) {
-                Some(v) => Ok(V::Data(v.clone())),
-                None if part.domain.contains(k) => Err(Stop::Undefined {
+            return match part.defined.borrow().get(k) {
+                Some((v, r)) if *r < part.round => Ok(V::Data(v.clone())),
+                // An entry defined in this Jacobi round is not yet visible to it.
+                _ if part.domain.contains(k) => Err(Stop::Undefined {
                     fix: part.fix,
                     key: k.clone(),
                 }),
-                None => Ok(V::Data(Value::atom("notFound"))),
+                _ => Ok(V::Data(Value::atom("notFound"))),
             };
         }
         // `fs[k]` on a lookup port: the world answers once, and the answer is kept.
@@ -984,7 +992,8 @@ impl Evaluator {
         key: &Arc<str>,
         env: &Env,
     ) -> R<Value> {
-        let domain: BTreeSet<Value> = self.family(init, env)?.keys().cloned().collect();
+        let domain: Rc<BTreeSet<Value>> =
+            Rc::new(self.family(init, env)?.keys().cloned().collect());
         self.fixes += 1;
         let fix = Definedness {
             id: self.fixes,
@@ -993,32 +1002,29 @@ impl Evaluator {
             this,
             key,
             env,
+            defined: Rc::default(),
         };
-        let mut defined = BTreeMap::new();
         let stalled = match self.schedule {
-            Schedule::Rounds => self.define_in_rounds(&fix, &mut defined, None)?,
-            Schedule::Chaotic(seed) => self.define_in_rounds(&fix, &mut defined, Some(seed))?,
-            Schedule::Pull => self.define_on_demand(&fix, &mut defined)?,
+            Schedule::Rounds => self.define_in_rounds(&fix, None)?,
+            Schedule::Chaotic(seed) => self.define_in_rounds(&fix, Some(seed))?,
+            Schedule::Pull => self.define_on_demand(&fix)?,
         };
         if !stalled.is_empty() {
             return Err(KernelError::Stalled { keys: stalled }.into());
         }
-        let leaves = defined.into_iter().map(|(k, v)| (vec![k], v));
+        let defined = std::mem::take(&mut *fix.defined.borrow_mut());
+        let leaves = defined.into_iter().map(|(k, (v, _))| (vec![k], v));
         Ok(Value::Family(Family::from_leaves(leaves)?))
     }
 
-    /// Evaluates the entry at `k` against the entries in `defined`: its value, or the key of
-    /// the undefined entry of this `fix` it read first.
-    fn entry(
-        &mut self,
-        fix: &Definedness,
-        defined: &BTreeMap<Value, Value>,
-        k: &Value,
-    ) -> R<Result<Value, Value>> {
+    /// Evaluates the entry at `k` against the entries defined before `round`: its value, or
+    /// the key of the undefined entry of this `fix` it read first.
+    fn entry(&mut self, fix: &Definedness, round: u64, k: &Value) -> R<Result<Value, Value>> {
         let part = V::Partial(Rc::new(Partial {
             fix: fix.id,
             domain: fix.domain.clone(),
-            defined: defined.clone(),
+            defined: fix.defined.clone(),
+            round,
         }));
         let env = bind(
             &bind(fix.env, fix.this.clone(), part),
@@ -1053,65 +1059,52 @@ impl Evaluator {
     /// returns the keys left undefined. Without a seed each round reads the family as it
     /// began (Jacobi); with one, each round visits the entries in a shuffled order and reads
     /// the entries defined before it in the same round.
-    fn define_in_rounds(
-        &mut self,
-        fix: &Definedness,
-        defined: &mut BTreeMap<Value, Value>,
-        seed: Option<u64>,
-    ) -> R<Vec<Value>> {
+    fn define_in_rounds(&mut self, fix: &Definedness, seed: Option<u64>) -> R<Vec<Value>> {
         let mut rng = seed.map(SplitMix);
-        loop {
+        let undefined = |fix: &Definedness| -> Vec<Value> {
+            let defined = fix.defined.borrow();
+            let left = fix.domain.iter().filter(|k| !defined.contains_key(*k));
+            left.cloned().collect()
+        };
+        for round in 1.. {
             self.burn()?;
-            let mut pending: Vec<Value> = fix
-                .domain
-                .iter()
-                .filter(|k| !defined.contains_key(*k))
-                .cloned()
-                .collect();
+            let mut pending = undefined(fix);
             if pending.is_empty() {
                 return Ok(pending);
             }
             if let Some(rng) = &mut rng {
                 rng.shuffle(&mut pending);
             }
-            let start = defined.clone();
+            // Jacobi rounds read the entries of earlier rounds; chaotic ones read every entry.
+            let sees = if rng.is_some() { u64::MAX } else { round };
             let mut progress = false;
             for k in pending {
-                let read = if rng.is_some() { &*defined } else { &start };
-                if let Ok(v) = self.entry(fix, read, &k)? {
-                    defined.insert(k, v);
+                if let Ok(v) = self.entry(fix, sees, &k)? {
+                    fix.defined.borrow_mut().insert(k, (v, round));
                     progress = true;
                 }
             }
             if !progress {
-                return Ok(fix
-                    .domain
-                    .iter()
-                    .filter(|k| !defined.contains_key(*k))
-                    .cloned()
-                    .collect());
+                return Ok(undefined(fix));
             }
         }
+        unreachable!("the rounds end when every entry is defined or a round defines none")
     }
 
     /// Demands each entry in key order, evaluating first each undefined entry it reads, and
     /// returns the keys that stalled: those on a cycle and those waiting on one.
-    fn define_on_demand(
-        &mut self,
-        fix: &Definedness,
-        defined: &mut BTreeMap<Value, Value>,
-    ) -> R<Vec<Value>> {
+    fn define_on_demand(&mut self, fix: &Definedness) -> R<Vec<Value>> {
         let mut stalled = BTreeSet::new();
-        for k0 in &fix.domain {
-            if defined.contains_key(k0) || stalled.contains(k0) {
+        for k0 in fix.domain.iter() {
+            if fix.defined.borrow().contains_key(k0) || stalled.contains(k0) {
                 continue;
             }
             let mut demanded = vec![k0.clone()];
             while let Some(k) = demanded.last().cloned() {
                 self.burn()?;
-                match self.entry(fix, defined, &k)? {
+                match self.entry(fix, u64::MAX, &k)? {
                     Ok(v) => {
-                        defined.insert(k, v);
+                        fix.defined.borrow_mut().insert(k, (v, 0));
                         demanded.pop();
                     }
                     Err(read) if demanded.contains(&read) || stalled.contains(&read) => {
@@ -1189,7 +1182,8 @@ impl Evaluator {
 /// One definedness `fix` being evaluated: its family's name, domain, and entry body.
 struct Definedness<'a> {
     id: u64,
-    domain: BTreeSet<Value>,
+    domain: Rc<BTreeSet<Value>>,
+    defined: Rc<RefCell<Defined>>,
     body: &'a Term,
     this: &'a Arc<str>,
     key: &'a Arc<str>,
