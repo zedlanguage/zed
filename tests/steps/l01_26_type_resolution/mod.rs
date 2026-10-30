@@ -8,6 +8,7 @@ mod calls;
 mod fits;
 mod narrowing;
 mod random;
+mod scaling;
 mod signatures;
 
 use zedc::ast::unit;

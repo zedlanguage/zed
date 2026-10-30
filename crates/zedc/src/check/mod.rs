@@ -180,6 +180,9 @@ struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
     info: Info,
+    /// Each write to `info`'s maps, with the value it replaced, so that a run of a search
+    /// is undone by what it wrote rather than by a copy of all of `info`.
+    log: Vec<Undo>,
     fresh: usize,
     runs: usize,
     /// Each expression's type, by its span, as last found.
@@ -199,6 +202,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             t,
             env: HashMap::new(),
             info: Info::default(),
+            log: Vec::new(),
             fresh: 0,
             runs: 0,
             seen: HashMap::new(),
@@ -361,7 +365,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     && let [Target::Name(n)] = &targets[..]
                     && let Some(ty) = self.env.get(&self.id(s.span, n))
                 {
-                    self.info.tops.insert(n.clone(), ty.clone());
+                    self.put(Undo::Top(n.clone(), Some(ty.clone())));
                 }
             }
             for s in &items {
@@ -408,7 +412,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let text = format!("`{}` is declared here, `{sig}`", f.name);
                 self.origin(id, s.span, text, None);
                 self.env.insert(id, Ty::func(sig.clone()));
-                self.info.sigs.insert(id, sig);
+                self.put(Undo::Sig(id, Some(sig)));
             }
             StmtKind::Push { value, .. } => {
                 self.expr(value);
@@ -536,17 +540,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 result,
             }]);
         }
-        let start = self.info.clone();
+        let start = self.mark();
         // With the open parameters unknown: an error here does not depend on them.
         let tys = with(&|_| Ty::dynamic());
         let result = run(self, &tys);
-        if self.info.errors.len() > start.errors.len() || self.runs > RUNS || open.len() > 5 {
+        if self.info.errors.len() > start.errors || self.runs > RUNS || open.len() > 5 {
             return sig(vec![Arrow {
                 params: tys,
                 result,
             }]);
         }
-        self.info = start.clone();
+        self.undo(&start);
         // With a type variable for each.
         let vars: Vec<Arc<str>> = open
             .iter()
@@ -559,7 +563,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let quiet = std::mem::replace(&mut self.quiet, true);
         let result = run(self, &tys);
         self.quiet = quiet;
-        if self.info.errors.len() == start.errors.len() {
+        if self.info.errors.len() == start.errors {
             return Arc::new(rename(
                 &sig(vec![Arrow {
                     params: tys,
@@ -572,7 +576,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // first count at which some combination checks gives the arrows.
         let n = open.len();
         let width = Carrier::ALL.len();
-        let mut found: Vec<(Vec<Ty>, Ty, Info, usize)> = Vec::new();
+        let mut found: Vec<Found> = Vec::new();
         let mut first_error = None;
         let mut failures: Vec<Note> = Vec::new();
         let mut unshown = 0;
@@ -580,13 +584,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             for mask in (0..1usize << n).filter(|m| m.count_ones() as usize == level) {
                 for k in 0..width.pow(level as u32) {
                     if self.runs > RUNS {
-                        self.info = start;
+                        self.undo(&start);
                         return sig(vec![Arrow {
                             params: with(&|_| Ty::dynamic()),
                             result: Ty::dynamic(),
                         }]);
                     }
-                    self.info = start.clone();
+                    self.undo(&start);
                     // The carrier of open parameter `j`, if the mask fixes it.
                     let pick = |j: usize| {
                         (mask >> j & 1 == 1).then(|| {
@@ -604,7 +608,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let quiet = std::mem::replace(&mut self.quiet, true);
                     let result = run(self, &tys);
                     self.quiet = quiet;
-                    if self.info.errors.len() > start.errors.len() {
+                    if self.info.errors.len() > start.errors {
                         let shown = failures
                             .iter()
                             .filter(|n| n.text.starts_with("with "))
@@ -614,7 +618,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             // Again with notes, the counters as they were, so that the
                             // combinations after it run as they would have.
                             let (runs, fresh) = (self.runs, self.fresh);
-                            self.info = start.clone();
+                            self.undo(&start);
                             run(self, &tys);
                             (self.runs, self.fresh) = (runs, fresh);
                         }
@@ -625,7 +629,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                     format!("`{}`: {}", f.params[open[j]].name, c.name())
                                 })
                                 .collect();
-                            let e = &self.info.errors[start.errors.len()];
+                            let e = &self.info.errors[start.errors];
                             let with = format!("with {}, {}", names.join(", "), e.message);
                             first_error.get_or_insert(with.clone());
                             if failures
@@ -649,16 +653,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                         continue;
                     }
-                    let adopted = adoptions(&self.info, &start, span);
-                    found.push((tys, result, self.info.clone(), adopted));
+                    let wrote = self.wrote(&start);
+                    let mine = adoptions_in(&wrote, span);
+                    self.undo(&start);
+                    let adopted = mine
+                        .iter()
+                        .filter(|&(s, v)| self.info.adopt.get(s) != Some(v))
+                        .count();
+                    found.push((tys, result, wrote, mine, adopted));
                 }
             }
             if !found.is_empty() {
                 break;
             }
         }
-        let Some(fewest) = found.iter().map(|f| f.3).min() else {
-            self.info = start;
+        self.undo(&start);
+        let Some(fewest) = found.iter().map(|f| f.4).min() else {
             let names: Vec<String> = open
                 .iter()
                 .map(|&i| format!("`{}`", f.params[i].name))
@@ -685,19 +695,28 @@ impl<'t, 'a> Ck<'t, 'a> {
                 result: Ty::dynamic(),
             }]);
         };
-        let keep: Vec<&(Vec<Ty>, Ty, Info, usize)> =
-            found.iter().filter(|f| f.3 == fewest).collect();
-        let first = keep[0].2.clone();
-        let same = |i: &Info| within(&i.adopt, span) == within(&first.adopt, span);
+        let keep: Vec<_> = found.into_iter().filter(|f| f.4 == fewest).collect();
+        // A combination whose adoptions inside the body are the first's: each adoption as
+        // written, or as before the search where the run did not write it.
+        let first = &keep[0].3;
+        let before = |s: &Span| self.info.adopt.get(s);
+        let same = |mine: &BTreeMap<Span, Value>| {
+            mine.keys()
+                .chain(first.keys())
+                .all(|s| mine.get(s).or(before(s)) == first.get(s).or(before(s)))
+        };
         let arrows = keep
             .iter()
-            .filter(|f| same(&f.2))
-            .map(|(tys, result, _, _)| Arrow {
+            .filter(|f| same(&f.3))
+            .map(|(tys, result, ..)| Arrow {
                 params: tys.clone(),
                 result: result.clone(),
             })
             .collect();
-        self.info = first;
+        let wrote = keep.into_iter().next().expect("a kept combination").2;
+        for w in wrote {
+            self.put(w);
+        }
         Arc::new(rename(&sig(arrows), &vars))
     }
 
@@ -784,7 +803,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Ok(None) => lit_ty(&l.value, l.neg),
             Ok(Some(v)) => {
                 let t = lit_ty(&v, l.neg);
-                self.info.adopt.insert(l.span, v);
+                self.put(Undo::Adopt(l.span, Some(v)));
                 t
             }
             Err(m) => {
@@ -1264,7 +1283,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Some(s) = f.fns.first()
             && f.fns.iter().all(|g| g.same_kinds(s))
         {
-            self.info.calls.insert(span, s.clone());
+            self.put(Undo::Call(span, Some(s.clone())));
         }
         for p in f.pieces() {
             match p {
@@ -1612,7 +1631,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let identity = extra.is_empty() && order.iter().enumerate().all(|(j, o)| *o == Some(j));
         if !identity {
-            self.info.fits.insert(span, Fit::Lambda { order, extra });
+            self.put(Undo::Fit(span, Some(Fit::Lambda { order, extra })));
         }
         Ty::func(e.clone())
     }
@@ -1694,7 +1713,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.error(span, format!("`{}` is `{s}`, not `{e}`", f.name));
         }
         if from.iter().enumerate().any(|(i, &j)| i != j) {
-            self.info.fits.insert(span, Fit::Adapter { from });
+            self.put(Undo::Fit(span, Some(Fit::Adapter { from })));
         }
         Ty::func(e.clone())
     }
@@ -1811,12 +1830,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 let mut with = args.to_vec();
                 with[i] = Some(Arg::of(r));
-                let saved = self.info.clone();
+                let saved = self.mark();
                 self.trying = true;
                 self.apply(what, sig, with, pass, span);
-                let ok = self.info.errors.len() == saved.errors.len();
+                let ok = self.info.errors.len() == saved.errors;
                 self.trying = false;
-                self.info = saved;
+                self.undo(&saved);
                 if ok {
                     out.push(Note {
                         span: *at,
@@ -1935,7 +1954,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     a.ty = lit_ty(&v, neg);
                 }
             }
-            self.info.adopt.insert(s, v);
+            self.put(Undo::Adopt(s, Some(v)));
         }
         // Each combination of pieces.
         let pieces: Vec<Vec<Option<Piece>>> = args
@@ -2086,20 +2105,102 @@ fn only_fn(t: &Ty) -> Option<Arc<Sig>> {
     }
 }
 
-/// The adoptions in `info` that `start` does not have, inside `span`.
-fn adoptions(info: &Info, start: &Info, span: Span) -> usize {
-    within(&info.adopt, span)
-        .into_iter()
-        .filter(|(s, v)| start.adopt.get(s) != Some(v))
-        .count()
+/// The adoptions among the writes `wrote` inside `span`, each as last written.
+fn adoptions_in(wrote: &[Undo], span: Span) -> BTreeMap<Span, Value> {
+    wrote
+        .iter()
+        .filter_map(|w| match w {
+            Undo::Adopt(s, Some(v)) if span.start <= s.start && s.end <= span.end => {
+                Some((*s, v.clone()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
-fn within(adopt: &HashMap<Span, Value>, span: Span) -> BTreeMap<Span, Value> {
-    adopt
-        .iter()
-        .filter(|(s, _)| span.start <= s.start && s.end <= span.end)
-        .map(|(s, v)| (*s, v.clone()))
-        .collect()
+/// A write to one of [`Info`]'s maps: the key and the value, `None` for no entry. In the log,
+/// the value is the one the write replaced.
+enum Undo {
+    Adopt(Span, Option<Value>),
+    Call(Span, Option<Arc<Sig>>),
+    Fit(Span, Option<Fit>),
+    Sig(usize, Option<Arc<Sig>>),
+    Top(String, Option<Ty>),
+}
+
+/// A combination of a signature's search that checks: its types, its result, what its run
+/// wrote, its adoptions inside the body, and how many differ from those before the search.
+type Found = (Vec<Ty>, Ty, Vec<Undo>, BTreeMap<Span, Value>, usize);
+
+/// How long the log and the errors were at a point of a search.
+struct Mark {
+    log: usize,
+    errors: usize,
+}
+
+/// Sets `$map[$key]` to `$value`, removing it for `None`, and gives the value it replaces.
+macro_rules! set {
+    ($map:expr, $key:expr, $value:expr) => {
+        match $value {
+            Some(v) => $map.insert($key.clone(), v),
+            None => $map.remove(&$key),
+        }
+    };
+}
+
+impl Ck<'_, '_> {
+    /// Makes the write `w`, logging the value it replaces.
+    fn put(&mut self, w: Undo) {
+        let undo = self.set(w);
+        self.log.push(undo);
+    }
+
+    /// Makes the write `w` and gives the write that undoes it.
+    fn set(&mut self, w: Undo) -> Undo {
+        let i = &mut self.info;
+        match w {
+            Undo::Adopt(k, v) => Undo::Adopt(k, set!(i.adopt, k, v)),
+            Undo::Call(k, v) => Undo::Call(k, set!(i.calls, k, v)),
+            Undo::Fit(k, v) => Undo::Fit(k, set!(i.fits, k, v)),
+            Undo::Sig(k, v) => Undo::Sig(k, set!(i.sigs, k, v)),
+            Undo::Top(k, v) => {
+                let old = set!(i.tops, k, v);
+                Undo::Top(k, old)
+            }
+        }
+    }
+
+    /// The point the search is at.
+    fn mark(&self) -> Mark {
+        Mark {
+            log: self.log.len(),
+            errors: self.info.errors.len(),
+        }
+    }
+
+    /// Undoes every write and error since `m`, the latest first.
+    fn undo(&mut self, m: &Mark) {
+        while self.log.len() > m.log {
+            let w = self.log.pop().expect("longer than the mark");
+            self.set(w);
+        }
+        self.info.errors.truncate(m.errors);
+    }
+
+    /// The writes since `m`, each with the value its key now has, in the order made.
+    fn wrote(&self, m: &Mark) -> Vec<Undo> {
+        let i = &self.info;
+        self.log[m.log..]
+            .iter()
+            .map(|w| match w {
+                Undo::Adopt(k, _) => Undo::Adopt(*k, i.adopt.get(k).cloned()),
+                Undo::Call(k, _) => Undo::Call(*k, i.calls.get(k).cloned()),
+                Undo::Fit(k, _) => Undo::Fit(*k, i.fits.get(k).cloned()),
+                Undo::Sig(k, _) => Undo::Sig(*k, i.sigs.get(k).cloned()),
+                Undo::Top(k, _) => Undo::Top(k.clone(), i.tops.get(k).cloned()),
+            })
+            .collect()
+    }
 }
 
 /// `e` as a numeric literal, perhaps under one `-`.
