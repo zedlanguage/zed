@@ -733,6 +733,12 @@ pub fn raise(g: &Region) -> Result<Term, String> {
     raise_region(g, &units, &mut n, "r")
 }
 
+/// The term region `r` computes, its arguments being `args`: [`raise`] for a region that is
+/// not a root, such as a function's body with its captured values (step L1.34).
+pub fn raise_with(r: &Region, args: &[Term]) -> Result<Term, String> {
+    raise_region(r, args, &mut 0, "r")
+}
+
 fn unit() -> Term {
     Term::Lit(zed_kernel::Value::Tuple(Vec::new()))
 }

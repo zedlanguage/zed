@@ -88,15 +88,18 @@ in docs/layout.md.
 - Done: **L1.32**, the canonicalizer on ZIR (`zedc::zir::canon`) and the graph's content address.
 - Done: **L1.33**, the lowering of kernel terms to ZIR (`zedc::zir::lower`), with CSE by
   content address and the inverse `raise`.
-- Next: L1.34.
+- Done: **L1.34**, memory (`zedc::zir::memory`): the plan of owned and borrowed edges, dups,
+  last-use drops and fused `match` releases, and a machine that runs a graph under the plan and
+  checks every count after every node.
+- Next: L1.35.
 - Plan extended (spec, 2026-10-30): **L30 — the editor**, a VS Code extension on the L25
   language server (static information per position, the dependency margin, recomputation of
   dirty nodes, values in place with visualizers), steps L30.1–L30.6.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 705 passed and 0 failed (22 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 651 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 25 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 10 in `l01_32_canonical_zir`, 23 in `l01_33_lowering`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 724 passed and 0 failed (22 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 670 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 25 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 10 in `l01_32_canonical_zir`, 23 in `l01_33_lowering`, 19 in `l01_34_memory`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 12 in
@@ -148,6 +151,7 @@ about 29 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.31 | done | `zir::{Region, Node, Op, Edge, Src, validate}`, `zir::text::{print, parse, parse_edge, parse_type, parse_value, parse_pattern}`, `zir::binary::{encode, decode}`. Ten graphs of real shapes (a price total, a greeting, an echo, a default, a countdown, reachability, a group, tiered shipping, mutual recursion, constants) go through every round trip; 29 text and 7 binary rejections pinned. Mutants caught (16): fold depth 0, state in any region, state reused, a forward or own-output reference, capture types unchecked, the certificate flag dropped, duplicate lines, a sibling region's edge, header order, interval facts, hints read as facets, the one-tuple mark, the identity bit, trailing bytes, bad tags, unsorted fields. |
 | L1.32 | done | `zir::canon::{ranks, step, canonicalize, address}`: the M0.7 rules on ZIR, the binder rule on match patterns, the other three per edge. Addresses kept under binder renaming (top level and nested), hint changes, facet order and repeats, and three spellings of one integer set; changed by an operator, an input order, a domain, a pattern, a result, a port name. Fuzz: 300 random graphs, every step lowering the ranks, normal forms checked; 200 seeds renamed and with facets reversed keep their address. Mutants caught (9): the binder rule off, levels uncounted, the hint rule skipped, outputs or nested regions not rewritten, nested binders not renamed, the raw graph hashed, the rank ignoring nesting or outputs. |
 | L1.33 | done | `zir::lower::{lower, raise}`: one node per operation, lets as name hints, primitives as values kept as no-input `prim` nodes (a fold of `+` stays exact), literal lambda calls lowered in place, captures and state edges taken on demand, port-using functions inlined, CSE by content address. Every corpus row passes through lower, validate and raise with its outcome unchanged; mutation-tested (15 mutants caught). |
+| L1.34 | done | `zir::memory::{plan, run}`: values as cells (strings, big numbers, keypaths, families; tuples, atoms with payloads and closures with children), edges owned or borrowed, parameters borrowed unless consumed, a dup before each consuming use but the last, a drop at each last use that borrows, `match` releasing its scrutinee fused (1 count write against 4 for a fresh destructured pair). The checking machine runs every corpus row, fused and unfused, with outcomes unchanged and no cell left; it reports a missed drop, an extra or missing dup and a borrowed argument to a consuming parameter. Mutation-tested: 20 of 21 mutants caught; the survivor is the mode for a known lambda called with the wrong number of arguments, which no row reaches. |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -402,6 +406,12 @@ about 29 s in a debug build, with `zed-kernel` built at opt-level 2.
   form. Captures and state edges are taken on demand; a function that uses a port is inlined
   at each call. CSE keys a node by the address of a one-node region; a node with a state input
   never repeats one, so effects are never merged. Edges carry `_` until code generation.
+- L1.34 (DESIGN.md L1.34): a constant is static and never counted; integers, floats, booleans,
+  the empty tuple and bare atoms are unboxed. A call to a callee the plan cannot see passes
+  owned. Loop and family regions run in the kernel, which borrows their inputs; a family's
+  entries are kernel data until L3.17. Scalar, family and port nodes take their value from the
+  kernel, which runs each node alone; tuples, closures, calls, branches and matches run in the
+  checking machine, so it keeps the program's sharing.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which the evaluator's integers now pass (L1.17): revisit with the store's

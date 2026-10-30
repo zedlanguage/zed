@@ -24,12 +24,12 @@ fn units() -> Vec<PathBuf> {
 #[test]
 fn every_row_passes_through_zir() {
     let (lowered, ported) = (Cell::new(0), Cell::new(0));
-    let through = |t: &zed_kernel::Term| {
+    let through = |t: &zed_kernel::Term, ev: &mut zed_kernel::Evaluator| {
         let g = lower(t)?;
         validate(&g)?;
         lowered.set(lowered.get() + 1);
         ported.set(ported.get() + usize::from(!g.args.is_empty()));
-        raise(&g)
+        ev.run(&raise(&g)?).map_err(|e| e.to_string())
     };
     let mut rows = 0;
     for path in units() {
@@ -39,9 +39,9 @@ fn every_row_passes_through_zir() {
         assert_eq!(got, want, "{}", path.display());
         rows += got.len();
     }
-    // The seven corpus units hold 41 checks, which evaluate 58 closed terms; the 11 waves among them lower to port
-    // regions. A
-    // runner that skipped the map would pass the comparison above.
+    // The seven corpus units hold 41 checks, which evaluate 58 closed terms; the 11 waves
+    // among them lower to port regions. A runner that skipped the map would pass the
+    // comparison above.
     assert_eq!(rows, 41);
     assert_eq!((lowered.get(), ported.get()), (58, 11));
 }

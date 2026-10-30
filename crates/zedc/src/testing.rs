@@ -38,12 +38,12 @@ pub fn test(text: &str) -> Vec<Outcome> {
 
 /// The checks of the unit `text`, in source order, reusing what `db` holds (step L1.30).
 pub fn test_in(db: &mut Db, text: &str) -> Vec<Outcome> {
-    checks(db, text, &|t| Ok(t.clone()))
+    checks(db, text, &run::direct)
 }
 
-/// The checks of the unit `text`, each row's closed term replaced by what `map` makes of it
-/// before it runs (step L1.33): a way to run the tables through another form of the program.
-/// Nothing is cached, since the outcomes depend on `map`.
+/// The checks of the unit `text`, each row's closed term run by `map` (steps L1.33, L1.34): a
+/// way to run the tables through another form of the program. Nothing is cached, since the
+/// outcomes depend on `map`.
 pub fn test_through(text: &str, map: &Through<'_>) -> Vec<Outcome> {
     checks(&mut Db::new(), text, map)
 }
@@ -138,9 +138,10 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
 
 /// The value of `term` under the unit's definitions and the prelude.
 fn value(unit: &Unit, term: &Term, map: &Through<'_>) -> Result<Value, String> {
-    Evaluator::new(World::new())
-        .run(&map(&interp::prelude(unit.close(term.clone())))?)
-        .map_err(|e| e.to_string())
+    map(
+        &interp::prelude(unit.close(term.clone())),
+        &mut Evaluator::new(World::new()),
+    )
 }
 
 /// Checks a row of a function's table.

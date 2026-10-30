@@ -46,6 +46,7 @@
 pub mod binary;
 pub mod canon;
 pub mod lower;
+pub mod memory;
 pub mod text;
 
 use std::sync::Arc;

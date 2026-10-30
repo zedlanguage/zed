@@ -32,8 +32,15 @@ pub enum PortKind {
     Files,
 }
 
-/// A map from a closed term to one with the same value, run in its place.
-pub type Through<'a> = dyn Fn(&Term) -> Result<Term, String> + 'a;
+/// A way to run a closed term in an evaluator, in place of [`Evaluator::run`]: through
+/// another form, such as ZIR lowered and raised back (step L1.33) or run by the reference
+/// counting machine (step L1.34). The evaluator holds the wave's ports.
+pub type Through<'a> = dyn Fn(&Term, &mut Evaluator) -> Result<Value, String> + 'a;
+
+/// [`Evaluator::run`] itself.
+pub fn direct(t: &Term, ev: &mut Evaluator) -> Result<Value, String> {
+    ev.run(t).map_err(|e| e.to_string())
+}
 
 /// A program ready to run: its elaboration and `main`'s ports.
 pub struct Program {
@@ -270,12 +277,11 @@ impl Program {
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<Wave, String> {
-        Ok(self.wave(lines, files, false, &|t| Ok(t.clone()))?.0)
+        Ok(self.wave(lines, files, false, &direct)?.0)
     }
 
-    /// Runs one wave as [`Program::run`] does, with the wave's term replaced by what `map`
-    /// makes of it: the test runner's way to run a program through another form, such as
-    /// ZIR lowered and raised back (step L1.33).
+    /// Runs one wave as [`Program::run`] does, with the wave's term run by `map`: the test
+    /// runner's way to run a program through another form.
     pub fn run_through(
         &self,
         lines: &BTreeMap<String, Vec<u8>>,
@@ -292,7 +298,7 @@ impl Program {
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<(Wave, Provenance), String> {
-        let (wave, prov) = self.wave(lines, files, true, &|t| Ok(t.clone()))?;
+        let (wave, prov) = self.wave(lines, files, true, &direct)?;
         Ok((wave, prov.expect("provenance was recorded")))
     }
 
@@ -326,12 +332,12 @@ impl Program {
             .iter()
             .map(|(name, _)| Term::Read(name.as_str().into()))
             .collect();
-        let term = map(&interp::prelude(Term::App(Arc::new(main), args)))?;
+        let term = interp::prelude(Term::App(Arc::new(main), args));
         let mut ev = Evaluator::new(world);
         if trace {
             ev = ev.with_provenance(vec![Value::Int(0)]);
         }
-        ev.run(&term).map_err(|e| e.to_string())?;
+        map(&term, &mut ev)?;
         let mut writes = Vec::new();
         for name in &self.outputs {
             match ev.world.log(name) {
