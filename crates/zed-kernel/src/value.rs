@@ -16,6 +16,7 @@ use num_traits::ToPrimitive;
 
 use crate::family::Family;
 use crate::num::{Exact, Rat};
+use crate::text::Text;
 
 /// A 64-bit float that compares bitwise after NaN canonicalization, as every kernel equation
 /// on a float-bearing value does (sec:kernel, the law catalog): `-0.0` and `0.0` are different
@@ -91,7 +92,7 @@ pub enum Value {
     /// A float, compared bitwise.
     Float(F64),
     /// A string.
-    Str(Arc<str>),
+    Str(Text),
     /// A failure atom.
     Atom(Atom),
     /// A tuple, such as a composite key.

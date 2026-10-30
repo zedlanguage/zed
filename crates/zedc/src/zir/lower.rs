@@ -512,7 +512,7 @@ impl Lower {
                         e.facets.push(Facet {
                             hint: true,
                             kind: "name".into(),
-                            value: zed_kernel::Value::Str(x.clone()),
+                            value: zed_kernel::Value::Str(x.clone().into()),
                         });
                     }
                 }

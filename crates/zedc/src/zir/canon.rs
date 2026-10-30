@@ -224,7 +224,10 @@ fn rename_first(g: &mut Region) -> bool {
                         v.facets.push(Facet {
                             hint: true,
                             kind: "binder".into(),
-                            value: Value::Tuple(vec![Value::Int(index as i64), Value::Str(name)]),
+                            value: Value::Tuple(vec![
+                                Value::Int(index as i64),
+                                Value::Str(name.into()),
+                            ]),
                         });
                     }
                     return true;

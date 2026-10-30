@@ -219,7 +219,7 @@ fn rope(s: &State, w: Word) -> Result<Option<Rope>, String> {
             _ => None,
         },
         Word::VAL => match s.heap.value_ref(w) {
-            Value::Str(x) => Some(Rope::leaf(x.clone())),
+            Value::Str(x) => Some(Rope::leaf(x.clone().into())),
             _ => None,
         },
         _ => None,
@@ -252,7 +252,7 @@ fn node(s: &mut State, id: usize, ins: Vec<Word>) -> Result<Word, String> {
                                 true => i,
                                 false => names
                                     .iter()
-                                    .position(|n| *n == Value::Str(a.fields[i].clone()))
+                                    .position(|n| *n == Value::Str(a.fields[i].clone().into()))
                                     .expect("a field the atom was made with"),
                             };
                             ins[2 + from]

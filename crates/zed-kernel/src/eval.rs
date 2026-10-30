@@ -1437,7 +1437,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Mul, [Float(a), Float(b)]) => Value::float(a.get() * b.get()),
         (Prim::Div, [Float(a), Float(b)]) => Value::float(a.get() / b.get()),
         (Prim::Neg, [Float(a)]) => Value::float(-a.get()),
-        (Prim::Concat, [Str(a), Str(b)]) => Value::str(&format!("{a}{b}")),
+        (Prim::Concat, [Str(a), Str(b)]) => Str(crate::text::Text::join(a, b)),
         (Prim::Pow, [Float(a), Float(b)]) => Value::float(a.get().powf(b.get())),
         (Prim::Eq, [a, b]) => Bool(a.surface_eq(b)),
         (Prim::Ne, [a, b]) => Bool(!a.surface_eq(b)),
@@ -1487,7 +1487,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
                 .iter()
                 .zip(args)
                 .map(|(n, v)| match n {
-                    Str(n) => Some((n.clone(), v.clone())),
+                    Str(n) => Some((n.clone().into(), v.clone())),
                     _ => None,
                 })
                 .collect();

@@ -86,7 +86,7 @@ pub const RULES: [Rule; 4] = [
                 d.facets.push(Facet {
                     hint: true,
                     kind: "binder".into(),
-                    value: Value::Tuple(vec![Value::Int(index as i64), Value::Str(written)]),
+                    value: Value::Tuple(vec![Value::Int(index as i64), Value::Str(written.into())]),
                 });
                 true
             }

@@ -658,7 +658,7 @@ impl<'g> Machine<'g, '_> {
                                     true => i,
                                     false => names
                                         .iter()
-                                        .position(|n| *n == Value::Str(a.fields[i].clone()))
+                                        .position(|n| *n == Value::Str(a.fields[i].clone().into()))
                                         .expect("a field the atom was made with"),
                                 };
                                 ins[2 + from].cell()

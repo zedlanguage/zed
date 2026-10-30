@@ -235,3 +235,40 @@ fn a_lattice_ascent_by_one_key_a_round_scales() {
         .join()
         .unwrap();
 }
+
+/// `"ab…"`, the `n` letters of the sequence `0..n -> letter` joined by a `foldl` of `++`.
+fn joined(n: usize) -> Term {
+    let letters = Family::from_leaves((0..n as i64).map(|i| {
+        (
+            vec![Value::Int(i)],
+            Value::str(["a", "b", "c"][i as usize % 3]),
+        )
+    }))
+    .unwrap();
+    foldl(
+        lit(Value::Family(letters)),
+        lit(Value::str("")),
+        Term::PrimFn(zed_kernel::Prim::Concat),
+    )
+}
+
+#[test]
+fn a_string_joined_by_a_fold_scales() {
+    // `++` copied both strings, and a `foldl` keeps every accumulator, so joining `n` pieces
+    // took `O(n²)` time and memory (8,000 against 64,000 pieces: ratio 26.5). A join is now
+    // the node of its two parts, written out once when it is read as text.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            scaling::check("a foldl of ++, by pieces", 8000, |n| {
+                let Value::Str(s) = run(&joined(n), Schedule::Rounds) else {
+                    panic!("not a string")
+                };
+                assert_eq!(s.len(), n);
+                assert!(s.starts_with("abcab"));
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

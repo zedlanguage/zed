@@ -249,7 +249,7 @@ impl Heap {
                     args,
                 })
             }
-            Value::Str(s) => self.alloc(Obj::Str(Rope::leaf(s.clone()))),
+            Value::Str(s) => self.alloc(Obj::Str(Rope::leaf(s.clone().into()))),
             _ => self.alloc(Obj::Data(v.clone())),
         }
     }
@@ -285,7 +285,7 @@ impl Heap {
             Word::BOOL => Value::Bool(w.bits != 0),
             Word::VAL => self.vals[w.bits as usize].clone(),
             Word::CELL => match self.obj(w)?.cloned() {
-                Some(Obj::Str(r)) => Value::Str(r.flat(&mut self.stats.copied)),
+                Some(Obj::Str(r)) => Value::Str(r.flat(&mut self.stats.copied).into()),
                 Some(Obj::Tuple(xs)) => Value::Tuple(
                     xs.iter()
                         .map(|x| self.value(*x))
