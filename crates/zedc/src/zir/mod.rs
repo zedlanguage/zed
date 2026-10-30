@@ -35,7 +35,10 @@
 //!   received as the matching argument after the region's own, with the same edge type.
 //! - **State edges are linear**: each is used exactly once in its region, by a node or as a
 //!   result, so the effects on a port are totally ordered. A state edge enters only a match
-//!   or port region (a `gen` step with an effect waits for the scheduler of step L4).
+//!   or port region, or the function region of a `lambda`, which takes one state argument
+//!   for each port its body uses, after its parameters, and returns the states after its
+//!   value; an `apply` passes the states in after its arguments and has them as outputs after
+//!   the value (a `gen` step with an effect waits for the scheduler of step L4).
 //! - **A certificate is kernel-only**: a derived node's region holds no derived node, at any
 //!   depth, so its definition bottoms out in the generators. Its arguments are the node's
 //!   inputs and its results the node's outputs.
@@ -301,14 +304,14 @@ fn shape(n: &Node) -> Result<Shape, String> {
             if ins == 0 {
                 return Err("`apply` has no function input".into());
             }
-            captures(1, Some(1), Vec::new())
+            captures(1, None, Vec::new())
         }
         Op::Lambda => {
-            let params = n
-                .regions
-                .first()
-                .map_or(0, |r| r.args.len().saturating_sub(ins));
-            captures(0, Some(1), vec![(RegionKind::Function, params, 1)])
+            let (params, states) = n.regions.first().map_or((0, 0), |r| {
+                let lead = r.args.len().saturating_sub(ins);
+                (lead, r.args[..lead].iter().filter(|a| a.is_state()).count())
+            });
+            captures(0, Some(1), vec![(RegionKind::Function, params, 1 + states)])
         }
         Op::If => captures(
             1,
@@ -380,17 +383,43 @@ pub fn kind_name(k: RegionKind) -> &'static str {
 /// Checks the structure of the graph rooted at `root`. The error names the node or region at
 /// fault by its path in the text form (`r.2/0.1`) and says what is wrong.
 pub fn validate(root: &Region) -> Result<(), String> {
-    region(root, "r", false)
+    region(root, "r", false, false)
 }
 
-fn region(r: &Region, path: &str, in_certificate: bool) -> Result<(), String> {
+/// `of_lambda` when `r` is the region of a `lambda` node, whose state arguments are the ports
+/// its body uses.
+fn region(r: &Region, path: &str, in_certificate: bool, of_lambda: bool) -> Result<(), String> {
     if !matches!(r.kind, RegionKind::Match | RegionKind::Port)
+        && !of_lambda
         && let Some(i) = r.args.iter().position(Edge::is_state)
     {
         return Err(format!(
             "{path}^{i}: a state edge cannot enter a {} region",
             kind_name(r.kind)
         ));
+    }
+    if of_lambda {
+        let states: Vec<&Edge> = r.args.iter().filter(|a| a.is_state()).collect();
+        let back: Vec<Edge> = r.results.iter().skip(1).map(|s| r.edge(s)).collect();
+        if r.results.first().is_some_and(|s| r.edge(s).is_state())
+            || back.len() != states.len()
+            || back.iter().zip(&states).any(|(b, a)| b != *a)
+        {
+            return Err(format!(
+                "{path}: a lambda's region returns its value and then the state of each port it \
+                 takes, in the order of its arguments ({}), and returns ({})",
+                states
+                    .iter()
+                    .map(|e| text::edge(e))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                r.results
+                    .iter()
+                    .map(|s| text::edge(&r.edge(s)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
     }
     // How many times each state edge of the region is used.
     let mut uses: Vec<(String, usize)> = Vec::new();
@@ -562,7 +591,12 @@ fn node(r: &Region, n: &Node, at: &str, in_certificate: bool) -> Result<(), Stri
                 written(sub.results.len())
             ));
         }
-        region(sub, &sp, in_certificate || matches!(n.op, Op::Derived(_)))?;
+        region(
+            sub,
+            &sp,
+            in_certificate || matches!(n.op, Op::Derived(_)),
+            matches!(n.op, Op::Lambda),
+        )?;
         // A region's results stand for the node's outputs, kind for kind.
         if s.outputs.is_none() {
             for (i, (res, out)) in sub.results.iter().zip(&n.outputs).enumerate() {
@@ -603,6 +637,33 @@ fn edges(r: &Region, n: &Node, at: &str) -> Result<(), String> {
                     "{at}: `{name}` has outputs (a value; state {port}), and has ({}; {})",
                     text::edge(&n.outputs[0]),
                     text::edge(&n.outputs[1])
+                ));
+            }
+        }
+        Op::Apply => {
+            let ins: Vec<Edge> = n.inputs.iter().map(|s| r.edge(s)).collect();
+            let first = ins.iter().position(Edge::is_state).unwrap_or(ins.len());
+            if first == 0 {
+                return Err(format!(
+                    "{at}: input 0 of `{name}`, the function, is a state edge"
+                ));
+            }
+            if let Some(i) = (first..ins.len()).find(|&i| !ins[i].is_state()) {
+                return Err(format!(
+                    "{at}: input {i} of `{name}` is a value after a state edge, and the states \
+                     come after the arguments"
+                ));
+            }
+            let outs = &n.outputs;
+            if outs.first().is_none_or(Edge::is_state) || outs[1..] != ins[first..] {
+                return Err(format!(
+                    "{at}: `{name}` has outputs (a value; {}), the states it takes, and has ({})",
+                    ins[first..]
+                        .iter()
+                        .map(text::edge)
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                    outs.iter().map(text::edge).collect::<Vec<_>>().join("; ")
                 ));
             }
         }

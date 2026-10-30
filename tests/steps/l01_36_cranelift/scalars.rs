@@ -105,3 +105,40 @@ fn an_overflow_goes_to_the_runtime_once() {
     let o = native(&prim(Prim::Add, vec![lit(i64::MAX - 1), lit(1i64)])).unwrap();
     assert_eq!(o.kernel_calls, 0);
 }
+
+/// A function that pushes and is called twice is one compiled body: each call passes the state
+/// words in, and the pushes come out in the order of the calls.
+#[test]
+fn a_function_that_pushes_and_is_called_twice_runs_natively() {
+    use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
+    use zed_kernel::{Evaluator, Prim, Term, World};
+    let say = lam(
+        &["m"],
+        let_(
+            "_",
+            Term::Push("stdout".into(), var("m").into()),
+            prim(Prim::Concat, vec![var("m"), lit("!")]),
+        ),
+    );
+    let t = let_(
+        "say",
+        say,
+        prim(
+            Prim::Tuple,
+            vec![
+                app(var("say"), vec![lit("a")]),
+                app(var("say"), vec![lit("b")]),
+            ],
+        ),
+    );
+    let (g, p) = super::planned(&t);
+    assert_eq!(super::super::l01_33_lowering::count(&g, "lambda"), 1);
+    let world = || World::new().output("stdout");
+    let mut ev = Evaluator::new(world());
+    let got = zed_native::run(&g, &p, &mut ev).unwrap();
+    let mut kev = Evaluator::new(world());
+    let want = kev.run(&t).unwrap();
+    assert_eq!(got.value, want);
+    assert_eq!(ev.world.log("stdout"), kev.world.log("stdout"));
+    assert_eq!(ev.world.log("stdout").len(), 2);
+}

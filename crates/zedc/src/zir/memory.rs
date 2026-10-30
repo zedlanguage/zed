@@ -274,11 +274,14 @@ impl Planner {
             return m.clone();
         }
         let k = body.up.as_ref().map_or(0, |u| u.first_arg);
+        // A state argument holds no value, so it is borrowed, as in an arm.
         let m: Vec<Mode> = (0..k)
-            .map(|i| match self.consumes(&body, i) {
-                true => Mode::Owned,
-                false => Mode::Borrowed,
-            })
+            .map(
+                |i| match !body.r.args[i].is_state() && self.consumes(&body, i) {
+                    true => Mode::Owned,
+                    false => Mode::Borrowed,
+                },
+            )
             .collect();
         self.params
             .borrow_mut()
@@ -736,7 +739,9 @@ impl<'g> Machine<'g, '_> {
                 _ => {
                     let v = self.kernel(node, &ins)?;
                     self.consume(np, &ins)?;
-                    vec![self.fresh(v)]
+                    let mut out = vec![self.fresh(v)];
+                    out.resize(node.outputs.len(), Mv::State);
+                    out
                 }
             },
             Op::If => {

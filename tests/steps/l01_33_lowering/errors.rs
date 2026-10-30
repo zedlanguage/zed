@@ -17,8 +17,9 @@ fn a_port_inside_a_fold_is_refused() {
     assert_eq!(
         lower(&leak).unwrap_err(),
         "port `stdout` is used inside a function region, and a state edge enters only a match \
-         or port region (step L1.31): a port is read or pushed outside functions, loops and \
-         families, or in a function inlined there"
+         or port region or the region of a `let`-bound lambda (step L1.31): a port is read or \
+         pushed outside loops and families, and a function that uses one is bound by `let` \
+         and called by its name"
     );
 }
 
@@ -28,8 +29,9 @@ fn a_function_that_pushes_is_only_called() {
     let as_value = let_("say", say(), prim(Prim::Tuple, vec![var("say")]));
     assert_eq!(
         lower(&as_value).unwrap_err(),
-        "a function of 1 parameter that uses a port is used as a value: a function region \
-         carries no state edge, so such a function is only called, and each call is inlined"
+        "a function of 1 parameter that uses the ports `stdout` is used as a value: a call \
+         threads the states of those ports, and only a call by the function's name knows them, \
+         so such a function is only called"
     );
     let two = let_(
         "say",

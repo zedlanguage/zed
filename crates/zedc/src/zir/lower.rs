@@ -18,10 +18,15 @@
 //!   `match` and `port` regions carry state (step L1.31), so a `match` or `if` whose arms touch
 //!   different ports passes each port's state through the arm that does not touch it, and the
 //!   root region is a `port` region when the term uses a port and a `function` region when not.
-//! - **A function that uses a port is inlined.** A function region carries no state, so a
-//!   `let`-bound lambda whose body reads or pushes a port, or calls such a function, makes no
-//!   node, and each call lowers its body in place. L1 has no recursion, so this ends; used as a
-//!   value, such a function is an error.
+//! - **A function that uses a port threads its state.** A `let`-bound lambda whose body reads
+//!   or pushes a port, or calls such a function, is inlined at its call when its name occurs
+//!   once in the term. Otherwise it is one `lambda` node whose region takes a state argument
+//!   for each of those ports after its parameters and returns their states after its value,
+//!   and each call is an `apply` that passes the current states in and takes the new ones
+//!   out. So each body is lowered once, and a chain of such functions, each calling the one
+//!   before twice, is linear in size, not exponential as inlining every call would make it
+//!   (DESIGN.md Part G). Used as a value, such a function is an error, since a call through
+//!   an unknown function could not thread the states.
 //! - **CSE by content address.** A node is entered in its region under the address of its
 //!   canonical form ([`super::canon::address`] of a one-node region), and a
 //!   second node with that address is not added: its uses read the first. Nodes that differ
@@ -51,15 +56,26 @@ enum Val {
     Src(Src, usize),
     /// A prelude word, not yet a node.
     Prim(Prim),
-    /// A function that uses a port, inlined at each call.
+    /// A function that uses a port, called only by name.
     Closure(Arc<Closure>),
 }
 
-/// A `let`-bound lambda whose body uses a port, with the bindings it was defined under.
+/// A `let`-bound lambda whose body uses `ports`, in the order of their first use.
 struct Closure {
     params: Vec<Arc<str>>,
-    body: Arc<Term>,
-    env: Vec<(Arc<str>, Val)>,
+    ports: Vec<Arc<str>>,
+    call: Call,
+}
+
+/// How a call of a [`Closure`] lowers.
+enum Call {
+    /// Its body in place, under the bindings it was defined under: the name occurs once.
+    Inline {
+        body: Arc<Term>,
+        env: Vec<(Arc<str>, Val)>,
+    },
+    /// An `apply` of its `lambda` node's output, in the region at depth `at`.
+    Node { fun: Src, at: usize },
 }
 
 /// A region being built.
@@ -105,15 +121,24 @@ struct Lower {
     frames: Vec<Frame>,
     scope: Vec<(Arc<str>, Val)>,
     fresh: usize,
+    /// How often each name occurs in the term, binders of the same name counted together.
+    uses: HashMap<Arc<str>, usize>,
 }
 
 /// The graph of the closed term `t`, validated. A prelude word is read only where the term
 /// binds it, as [`crate::interp::prelude`] does.
 pub fn lower(t: &Term) -> Result<Region, String> {
+    let mut uses: HashMap<Arc<str>, usize> = HashMap::new();
+    visit(t, &mut |s| {
+        if let Term::Var(x) = s {
+            *uses.entry(x.clone()).or_default() += 1;
+        }
+    });
     let mut l = Lower {
         frames: vec![Frame::new(RegionKind::Function, Vec::new())],
         scope: Vec::new(),
         fresh: 0,
+        uses,
     };
     let v = l.term(t)?;
     let out = l.src(v)?;
@@ -167,10 +192,15 @@ impl Lower {
             Val::Src(s, at) => Ok(self.bring(s, at)),
             Val::Prim(p) => self.prim_fn(p),
             Val::Closure(c) => Err(format!(
-                "a function of {} that uses a port is used as a value: a function region \
-                 carries no state edge, so such a function is only called, and each call is \
-                 inlined",
-                plural(c.params.len(), "parameter")
+                "a function of {} that uses the ports {} is used as a value: a call threads \
+                 the states of those ports, and only a call by the function's name knows them, \
+                 so such a function is only called",
+                plural(c.params.len(), "parameter"),
+                c.ports
+                    .iter()
+                    .map(|p| format!("`{p}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )),
         }
     }
@@ -211,8 +241,9 @@ impl Lower {
             if !matches!(kind, RegionKind::Match | RegionKind::Port) {
                 return Err(format!(
                     "port `{p}` is used inside a {} region, and a state edge enters only a \
-                     match or port region (step L1.31): a port is read or pushed outside \
-                     functions, loops and families, or in a function inlined there",
+                     match or port region or the region of a `let`-bound lambda (step L1.31): \
+                     a port is read or pushed outside loops and families, and a function that \
+                     uses one is bound by `let` and called by its name",
                     kind_name(kind)
                 ));
             }
@@ -286,8 +317,25 @@ impl Lower {
         params: &[Arc<str>],
         body: &Term,
     ) -> Result<Built, String> {
-        let args = params.iter().map(|_| top()).collect();
-        self.frames.push(Frame::new(kind, args));
+        self.region_with(kind, params, &[], body)
+    }
+
+    /// A region whose arguments are `params` and then the states of `ports`, which it returns
+    /// after its value.
+    fn region_with(
+        &mut self,
+        kind: RegionKind,
+        params: &[Arc<str>],
+        ports: &[Arc<str>],
+        body: &Term,
+    ) -> Result<Built, String> {
+        let mut args: Vec<Edge> = params.iter().map(|_| top()).collect();
+        args.extend(ports.iter().map(|p| Edge::State(p.clone())));
+        let mut frame = Frame::new(kind, args);
+        for (j, p) in ports.iter().enumerate() {
+            frame.states.push((p.clone(), Src::Arg(params.len() + j)));
+        }
+        self.frames.push(frame);
         let depth = self.top();
         let mark = self.scope.len();
         for (i, p) in params.iter().enumerate() {
@@ -297,6 +345,10 @@ impl Lower {
         self.scope.truncate(mark);
         let mut f = self.frames.pop().expect("the region's frame");
         f.region.results.push(out?);
+        for p in ports {
+            let (_, s) = f.states.iter().find(|(q, _)| q == p).expect("a port taken");
+            f.region.results.push(s.clone());
+        }
         Ok(Built {
             region: f.region,
             fixed: f.fixed,
@@ -384,19 +436,25 @@ impl Lower {
         Ok(s)
     }
 
-    /// Whether `t`, a lambda body, reads or pushes a port or calls a function that does.
-    fn effectful(&self, t: &Term) -> bool {
-        let mut hit = false;
+    /// The ports `t`, a lambda body, reads or pushes, itself or by calling a function that
+    /// does, in the order of their first use in the text.
+    fn ports(&self, t: &Term) -> Vec<Arc<str>> {
+        let mut out: Vec<Arc<str>> = Vec::new();
+        let mut add = |p: &Arc<str>| {
+            if !out.contains(p) {
+                out.push(p.clone());
+            }
+        };
         visit(t, &mut |s| match s {
-            Term::Read(_) | Term::Push(..) => hit = true,
+            Term::Read(p) | Term::Push(p, _) => add(p),
             Term::Var(x) => {
-                if let Ok(Val::Closure(_)) = self.lookup(x) {
-                    hit = true;
+                if let Ok(Val::Closure(c)) = self.lookup(x) {
+                    c.ports.iter().for_each(&mut add);
                 }
             }
             _ => {}
         });
-        hit
+        out
     }
 
     fn term(&mut self, t: &Term) -> Result<Val, String> {
@@ -406,12 +464,31 @@ impl Lower {
             Term::Var(x) => self.lookup(x)?,
             Term::PrimFn(p) => Val::Prim(*p),
             Term::Let(x, e, body) => {
+                let ports = match &**e {
+                    Term::Lam(_, b) => self.ports(b),
+                    _ => Vec::new(),
+                };
                 let v = match &**e {
-                    Term::Lam(ps, b) if self.effectful(b) => Val::Closure(Arc::new(Closure {
-                        params: ps.clone(),
-                        body: b.clone(),
-                        env: self.scope.clone(),
-                    })),
+                    Term::Lam(ps, b) if !ports.is_empty() => {
+                        let call = if self.uses.get(x).is_none_or(|&n| n <= 1) {
+                            Call::Inline {
+                                body: b.clone(),
+                                env: self.scope.clone(),
+                            }
+                        } else {
+                            let built = self.region_with(RegionKind::Function, ps, &ports, b)?;
+                            let Val::Src(fun, at) = self.node(Op::Lambda, Vec::new(), vec![built])
+                            else {
+                                unreachable!("a node's output")
+                            };
+                            Call::Node { fun, at }
+                        };
+                        Val::Closure(Arc::new(Closure {
+                            params: ps.clone(),
+                            ports,
+                            call,
+                        }))
+                    }
                     e => self.term(e)?,
                 };
                 if let Val::Src(Src::Out(n, p), d) = &v
@@ -460,14 +537,36 @@ impl Lower {
                                 plural(args.len(), "argument")
                             ));
                         }
-                        let vs = args
-                            .iter()
-                            .map(|a| self.term(a))
-                            .collect::<Result<Vec<_>, _>>()?;
-                        let saved = std::mem::replace(&mut self.scope, c.env.clone());
-                        let out = self.bound(&c.params, vs, &c.body);
-                        self.scope = saved;
-                        out?
+                        let (fun, at_fun) = match &c.call {
+                            Call::Inline { body, env } => {
+                                let vs = args
+                                    .iter()
+                                    .map(|a| self.term(a))
+                                    .collect::<Result<Vec<_>, _>>()?;
+                                let saved = std::mem::replace(&mut self.scope, env.clone());
+                                let out = self.bound(&c.params, vs, body);
+                                self.scope = saved;
+                                return out;
+                            }
+                            Call::Node { fun, at } => (fun.clone(), *at),
+                        };
+                        let mut ins = vec![self.bring(fun, at_fun)];
+                        ins.extend(self.values(args)?);
+                        let mut outputs = vec![top()];
+                        for p in &c.ports {
+                            ins.push(self.state(at, p)?);
+                            outputs.push(Edge::State(p.clone()));
+                        }
+                        let n = self.add(Node {
+                            op: Op::Apply,
+                            inputs: ins,
+                            outputs,
+                            regions: Vec::new(),
+                        });
+                        for (j, p) in c.ports.iter().enumerate() {
+                            self.set_state(p, Src::Out(n, 1 + j));
+                        }
+                        Val::Src(Src::Out(n, 0), at)
                     }
                     fv => {
                         let mut ins = vec![self.src(fv)?];
@@ -768,11 +867,22 @@ fn raise_region(r: &Region, args: &[Term], fresh: &mut usize, path: &str) -> Res
         let t = match &node.op {
             Op::Prim(p) if ins.is_empty() && p.arity().is_some() => Term::PrimFn(*p),
             Op::Prim(p) => Term::Prim(*p, ins.clone()),
-            Op::Apply => Term::App(a(0), ins[1..].to_vec()),
+            // A state edge has no term: the kernel orders effects by evaluation. The states
+            // are the last inputs, one for each output after the value.
+            Op::Apply => Term::App(a(0), ins[1..ins.len() + 1 - node.outputs.len()].to_vec()),
             Op::Lambda => {
-                let k = node.regions[0].args.len() - ins.len();
-                let ps: Vec<Arc<str>> = (0..k).map(|_| name(fresh)).collect();
-                let vars = ps.iter().map(|p| Term::Var(p.clone())).collect();
+                let lead = &node.regions[0].args[..node.regions[0].args.len() - ins.len()];
+                let mut ps: Vec<Arc<str>> = Vec::new();
+                let mut vars = Vec::new();
+                for e in lead {
+                    if e.is_state() {
+                        vars.push(unit());
+                    } else {
+                        let p = name(fresh);
+                        vars.push(Term::Var(p.clone()));
+                        ps.push(p);
+                    }
+                }
                 Term::Lam(ps, Arc::new(sub(0, vars, 0, fresh)?))
             }
             Op::If => Term::If(

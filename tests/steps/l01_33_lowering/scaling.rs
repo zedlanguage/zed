@@ -1,0 +1,76 @@
+//! The size of the graph at the rule of low complexity (DESIGN.md Part G): a function that uses
+//! a port is one `lambda` node, called by `apply` nodes that thread the state, so a chain of
+//! such functions, each calling the one before twice, lowers to a graph linear in the chain's
+//! length and not exponential in it.
+
+use zed_kernel::term::build::{app, lam, let_, lit, var};
+use zed_kernel::{Evaluator, Term, World};
+use zed_tests::scaling;
+use zedc::zir::Region;
+use zedc::zir::lower::{lower, raise};
+
+fn push(port: &str, v: Term) -> Term {
+    Term::Push(port.into(), v.into())
+}
+
+/// `f0 m = push m`, and `f{i} m = (f{i-1} m; f{i-1} m)`, with `f{k}` called once.
+pub(crate) fn chain(k: usize) -> Term {
+    let mut t = app(var(&format!("f{k}")), vec![lit("x")]);
+    for i in (1..=k).rev() {
+        let g = var(&format!("f{}", i - 1));
+        let body = let_("a", app(g.clone(), vec![var("m")]), app(g, vec![var("m")]));
+        t = let_(&format!("f{i}"), lam(&["m"], body), t);
+    }
+    let_("f0", lam(&["m"], push("stdout", var("m"))), t)
+}
+
+fn nodes(g: &Region) -> usize {
+    g.nodes
+        .iter()
+        .map(|n| 1 + n.regions.iter().map(nodes).sum::<usize>())
+        .sum()
+}
+
+#[test]
+fn a_chain_of_functions_that_push_lowers_to_a_graph_linear_in_its_length() {
+    let (small, large) = (
+        nodes(&lower(&chain(4)).unwrap()),
+        nodes(&lower(&chain(16)).unwrap()),
+    );
+    assert!(
+        large <= 5 * small,
+        "a chain of 4 functions that push lowers to {small} nodes and one of 16 to {large}, \
+         and the graph is to grow linearly in the chain's length"
+    );
+}
+
+#[test]
+fn the_chain_raises_to_a_term_that_pushes_as_often_as_the_original() {
+    for k in [0, 1, 3] {
+        let t = chain(k);
+        let back = raise(&lower(&t).unwrap()).unwrap();
+        let log = |t: &Term| {
+            let mut ev = Evaluator::new(World::new().output("stdout"));
+            ev.run(t).unwrap();
+            ev.world.log("stdout").len()
+        };
+        assert_eq!(log(&back), 1 << k);
+        assert_eq!(log(&back), log(&t));
+    }
+}
+
+#[test]
+fn lowering_the_chain_scales() {
+    // The lowering recurses once for each nested `let`, so the chain of 800 runs on a stack
+    // large enough for a debug build.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            scaling::check("lowering a chain of functions that push", 100, |k| {
+                lower(&chain(k)).unwrap();
+            })
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

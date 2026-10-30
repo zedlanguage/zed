@@ -180,11 +180,24 @@ impl<M: Module> Gen<'_, M> {
         let l = &self.t.lambdas[i];
         let node = &self.t.nodes[l.node].node;
         let region = &node.regions[0];
-        if region.results.len() != 1 {
+        // A body that uses ports takes their states after its parameters, as state words
+        // like any other, and returns them after its value; the states order nothing here,
+        // since the code runs the effects in the order of the nodes.
+        let states = region.args[..l.params]
+            .iter()
+            .filter(|a| a.is_state())
+            .count();
+        if region.results.len() != 1 + states {
             return Err(format!(
-                "native: lambda body `{}` has {} results; a body returns one value",
+                "native: lambda body `{}` has {} results; a body returns one value and the \
+                 states of the {} it takes",
                 l.path,
-                region.results.len()
+                region.results.len(),
+                if states == 1 {
+                    "1 port".to_string()
+                } else {
+                    format!("{states} ports")
+                }
             ));
         }
         let caps = node.inputs.len();
@@ -196,7 +209,7 @@ impl<M: Module> Gen<'_, M> {
                 let w = cg.call(fx, "rt_cap", &[env.0, env.1, k]);
                 args.push(cg.checked(fx, (w[0], w[1])));
             }
-            cg.region(fx, region, &l.path, args)
+            Ok(vec![cg.region(fx, region, &l.path, args)?[0]])
         })
     }
 

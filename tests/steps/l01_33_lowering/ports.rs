@@ -75,7 +75,7 @@ fn an_arm_that_does_not_push_passes_the_state_through() {
 }
 
 #[test]
-fn a_function_that_pushes_is_inlined_at_each_call() {
+fn a_function_that_pushes_and_is_called_twice_is_one_lambda_that_threads_the_state() {
     let say = lam(&["m"], push("stdout", var("m")));
     let t = let_(
         "say",
@@ -89,9 +89,36 @@ fn a_function_that_pushes_is_inlined_at_each_call() {
         ),
     );
     let g = lower(&t).unwrap();
-    assert_eq!((count(&g, "port"), count(&g, "lambda")), (2, 0));
+    assert_eq!(
+        (count(&g, "port"), count(&g, "lambda"), count(&g, "apply")),
+        (1, 1, 2)
+    );
+    // The body takes the state after its parameter and returns it after its value.
+    let body = &g.nodes[0].regions[0];
+    assert_eq!(
+        (body.args.len(), &body.args[1]),
+        (2, &Edge::State("stdout".into()))
+    );
+    assert_eq!(body.results[1], Src::Out(0, 1));
+    // The second call takes the state the first gives.
+    let (first, second) = (&g.nodes[1], &g.nodes[2]);
+    assert_eq!(first.inputs[2], Src::Arg(0));
+    assert_eq!(second.inputs[2], Src::Out(1, 1));
+    assert_eq!(first.outputs[1], Edge::State("stdout".into()));
     same(&t, "");
     assert_eq!(run(&t, "").1, [Value::str("a"), Value::str("b")]);
+}
+
+#[test]
+fn a_function_that_pushes_and_is_called_once_is_inlined() {
+    let t = let_(
+        "say",
+        lam(&["m"], push("stdout", var("m"))),
+        Term::App(var("say").into(), vec![lit("a")]),
+    );
+    let g = lower(&t).unwrap();
+    assert_eq!((count(&g, "port"), count(&g, "lambda")), (1, 0));
+    same(&t, "");
 }
 
 #[test]

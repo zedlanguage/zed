@@ -49,3 +49,40 @@ fn every_row_passes_through_the_machine() {
         assert_eq!((runs.get(), cells.get(), writes.get()), (58, 125, want));
     }
 }
+
+/// A function that pushes and is called twice runs as one closure whose calls thread the
+/// state: the machine's counts check, and the value and the pushes are the kernel's.
+#[test]
+fn a_function_that_pushes_and_is_called_twice_passes_through_the_machine() {
+    use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
+    use zed_kernel::{Evaluator, Prim, Term, World};
+    let say = lam(
+        &["m"],
+        let_(
+            "_",
+            Term::Push("stdout".into(), var("m").into()),
+            prim(Prim::Concat, vec![var("m"), lit("!")]),
+        ),
+    );
+    let t = let_(
+        "say",
+        say,
+        prim(
+            Prim::Tuple,
+            vec![
+                app(var("say"), vec![lit("a")]),
+                app(var("say"), vec![lit("b")]),
+            ],
+        ),
+    );
+    let g = lower(&t).unwrap();
+    for fuse in [true, false] {
+        let world = || World::new().output("stdout");
+        let mut ev = Evaluator::new(world());
+        let (v, _) = run(&g, &plan(&g, fuse), &mut ev).unwrap();
+        let mut kev = Evaluator::new(world());
+        assert_eq!(v, kev.run(&t).unwrap());
+        assert_eq!(ev.world.log("stdout"), kev.world.log("stdout"));
+        assert_eq!(ev.world.log("stdout").len(), 2);
+    }
+}

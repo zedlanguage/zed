@@ -8,6 +8,7 @@ mod cse;
 mod errors;
 mod forms;
 mod ports;
+mod scaling;
 
 use zed_kernel::{Evaluator, Term, World};
 use zedc::elab::Unit;

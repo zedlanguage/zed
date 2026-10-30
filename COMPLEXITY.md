@@ -75,7 +75,7 @@ Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason)
 
 | ID | Where | Class | Status |
 |---|---|---|---|
-| Z1 | `zir/lower.rs`: an effectful `let`-bound lambda is inlined at every call, recursively | c^k nodes | open |
+| Z1 | `zir/lower.rs`: an effectful `let`-bound lambda is inlined at every call, recursively | c^k nodes | fixed: a function that uses a port and whose name occurs more than once is one `lambda` node whose region takes and returns the ports' states, and each call is an `apply` that threads them (DESIGN L1.31, L1.33); a name used once is still inlined; `l01_33_lowering::scaling` (a chain of k functions each calling the one before twice: 3k+1 nodes, 25 ms at k = 800 in release; the old code runs out of memory at k = 16, and inlining every call gives 65,536 nodes there) |
 | Z2 | `Lower::add` canonicalizes and encodes the whole subtree of each new node | O(n³) | open |
 | Z3 | `zir/canon.rs` restarts from the top after every rewrite | O(k²) | open |
 | Z4 | `memory.rs` planner: `consumes` and `Uses::of` recomputed down nested branches | O(k²·d²) | open |
