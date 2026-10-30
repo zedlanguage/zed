@@ -80,12 +80,15 @@ in docs/layout.md.
   `run::Diagnostic.steps`), rendered as numbered steps with the source underlined; failed
   signature searches list each failing combination; repairs that the checker discharges
   (wrapping in `String`, `int`, `rat` or `f64`) are offered only when the re-check passes.
-- Next: L1.30.
+- Done: **L1.30**, the compiler as queries (`zedc::query`): the front end keyed by the text,
+  each table row keyed by the definitions its check reaches, so an edit reruns only the rows
+  whose definitions changed; `zedc test` shares one database across its files.
+- Next: L1.31.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 640 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 587 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 25 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 649 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 596 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 25 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -133,6 +136,7 @@ about 29 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.27 | done | `Ty.family` holds the atoms of named families: kept by a join when either side has it, by `meet` and `diff`, cleared by `written()`; `Ty::named()` sets it (L2.1's `type` will). `e else d` strips the loose atoms only; `e else #a -> d` removes `#a` from the type and keeps the other absences; a family atom reaching an operator, a call, an index, `sum`, destructuring or a condition is rejected; `?.` passes loose atoms only. `check::operator(op, args)` types one operator application. Tests: `l01_27_absences` (11): the three absences defaulted, handled one at a time and merged into `#errs`, with run values; the family rules on the type representation and the operator rule. Negative controls: `else` stripping family atoms, a join dropping one side's marking, a written type keeping it, the pattern form not removing its atom, family atoms passing operators, `meet` dropping the marking, `else` keeping loose atoms; each fail a test |
 | L1.28 | done | `stage::color`, `stage::mix`, `Program::stage`: demand from `main` and the tests, one fuel of 10^6 per build-stage term, a stopped term left whole and its name made run-stage, `if` on a literal cut; `stage::trick`/`split` over `Domain::Type` (via `Type::values(cap)`) or `Domain::Ints`, the general body kept as the last arm. 11 tests in `l01_28_staging`; 9 mutants caught. |
 | L1.29 | done | `ast::Note`, `Error.notes`; `check::Ck` records each expression's type and source (`seen`) and each binder's origin (`whence`, narrowing chained), derives at the error (`derive`, at most 16 steps back, deduplicated); `applied` lists argument derivations and the callee's arrows; `infer` collects failing combinations (at most 12, the rest counted); `repairs` re-checks each wrapped argument; `run::Step` and the renderer; duplicate bindings, arguments and exports point at the first. Tests: full rendered chains, search failures, caps, layout, repairs applied and re-loaded, the ✗ variants pinned. |
+| L1.30 | done | `query::{Db, Key, Query, key, cone}`: `Db::front` memoizes `run::compile` by the text's hash; `Db::row` memoizes a table row under the hash of `cone` (the printed definitions its roots reach, closed by one backward pass over the unit's dependency order); `testing::test_in` runs a unit against a database, and the outcome of a diagnostic now carries its derivation. Mutants caught: the cone unclosed, the roots omitted, the parts unprefixed, the name unhashed, the wave key without `main`, either memo bypassed. |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -363,6 +367,12 @@ about 29 s in a debug build, with `zed-kernel` built at opt-level 2.
   subexpression before deriving any error in it. A step of a block derives no further than
   the block (its export is not followed yet), and a literal binding shows as "this
   expression is 4" rather than as a literal.
+- L1.30: keys are syntactic (the `Debug` print of kernel terms), so an alpha-renaming or a
+  renumbered `name@k` binder reruns a row that a canonical key would reuse. Kernel names are
+  numbered per source name in binder order, so adding a same-named binder before another
+  renames it and reruns the rows that reach it. Results are never evicted. `zedc run`
+  compiles its one unit once, so it calls `run::compile` directly. Found on the way:
+  `zedc test` printed a rejection's message without its derivation; fixed.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which the evaluator's integers now pass (L1.17): revisit with the store's

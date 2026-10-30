@@ -29,6 +29,7 @@ mod l01_26_type_resolution;
 mod l01_27_absences;
 mod l01_28_staging;
 mod l01_29_diagnostics;
+mod l01_30_queries;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;

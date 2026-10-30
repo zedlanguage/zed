@@ -16,6 +16,7 @@ use zed_kernel::{Evaluator, Lookup, Term, Value, World};
 
 use crate::ast::StmtKind;
 use crate::elab::{Test, Unit};
+use crate::query::{self, Db, Query};
 use crate::run::{self, PortKind, Program};
 use crate::{fence, interp, source};
 
@@ -32,9 +33,14 @@ pub struct Outcome {
 
 /// The checks of the unit `text`, in source order.
 pub fn test(text: &str) -> Vec<Outcome> {
+    test_in(&mut Db::new(), text)
+}
+
+/// The checks of the unit `text`, in source order, reusing what `db` holds (step L1.30).
+pub fn test_in(db: &mut Db, text: &str) -> Vec<Outcome> {
     let marked = fence::marks(text).lines;
     let mut out = Vec::new();
-    match run::compile(text) {
+    match &*db.front(text) {
         Err(diagnostics) => {
             for &line in &marked {
                 let d = diagnostics.iter().find(|d| d.line == line);
@@ -50,7 +56,15 @@ pub fn test(text: &str) -> Vec<Outcome> {
                 out.push(Outcome {
                     line: d.line,
                     col: d.col,
-                    failure: Some(d.message.clone()),
+                    // The message and its derivation (DESIGN.md "Diagnostics"), after the place
+                    // the outcome already gives.
+                    failure: Some(
+                        d.to_string()
+                            .split_once(": ")
+                            .expect("`line:col: `")
+                            .1
+                            .into(),
+                    ),
                 });
             }
         }
@@ -67,7 +81,7 @@ pub fn test(text: &str) -> Vec<Outcome> {
                 .find(|s| matches!(&s.kind, StmtKind::Function(f) if f.name == "main"));
             let mut program = None;
             if let Some(main) = main {
-                match run::program(&stmts, unit.clone()) {
+                match run::program(stmts, unit.clone()) {
                     Ok(p) => program = Some(p),
                     Err(why) => {
                         let (line, col) = source::line_col(text.as_bytes(), main.span.start);
@@ -79,13 +93,25 @@ pub fn test(text: &str) -> Vec<Outcome> {
                     }
                 }
             }
+            let main_def = unit.defs.iter().find(|d| d.name == "main");
             for t in &unit.tests {
                 let (line, col) = source::line_col(text.as_bytes(), t.span.start);
                 let case = &text[t.span.start..t.span.end];
                 let failure = match (&program, t.function.as_str()) {
-                    (Some(p), "main") => wave(&unit, p, t).err(),
+                    (Some(p), "main") => {
+                        let main =
+                            Term::Var(main_def.expect("`main` was elaborated").kernel.clone());
+                        let mut roots = vec![&main, &t.want];
+                        roots.extend(&t.args);
+                        let ports = format!("{:?} {:?}", p.inputs(), p.outputs());
+                        let k = query::key("wave", &[&query::cone(unit, &roots), ports.as_bytes()]);
+                        db.row(Query::Wave, k, || wave(unit, p, t)).err()
+                    }
                     (None, "main") => continue,
-                    _ => row(&unit, t).err(),
+                    _ => {
+                        let k = query::key("row", &[&query::cone(unit, &[&t.check])]);
+                        db.row(Query::Row, k, || row(unit, t)).err()
+                    }
                 };
                 out.push(Outcome {
                     line,
@@ -195,6 +221,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         return 2;
     }
     let (mut passed, mut failed) = (0, 0);
+    let mut db = Db::new();
     for file in args {
         let text = match std::fs::read(file) {
             Ok(bytes) => source::load(&bytes).map_err(|e| e.to_string()),
@@ -211,7 +238,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
                 continue;
             }
         };
-        for o in test(&text) {
+        for o in test_in(&mut db, &text) {
             match o.failure {
                 None => passed += 1,
                 Some(why) => {

@@ -18,6 +18,7 @@ pub mod format;
 pub mod interp;
 pub mod lex;
 pub mod parse;
+pub mod query;
 pub mod resolve;
 pub mod run;
 pub mod source;

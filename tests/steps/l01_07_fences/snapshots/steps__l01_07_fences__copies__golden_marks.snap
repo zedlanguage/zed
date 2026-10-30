@@ -3,11 +3,11 @@ source: tests/steps/l01_07_fences/copies.rs
 expression: "out.join(\"\\n\")"
 ---
 DESIGN.md:240    ✗ [1] variants []
-DESIGN.md:2438   ✗ [] variants [18, 29, 30]
-DESIGN.md:2504   ✗ [2] variants []
-DESIGN.md:2596   ✗ [12] variants []
-DESIGN.md:2621   ✗ [] variants [28, 29, 35, 38]
-DESIGN.md:2733   ✗ [] variants [43, 48]
+DESIGN.md:2440   ✗ [] variants [18, 29, 30]
+DESIGN.md:2506   ✗ [2] variants []
+DESIGN.md:2598   ✗ [12] variants []
+DESIGN.md:2623   ✗ [] variants [28, 29, 35, 38]
+DESIGN.md:2735   ✗ [] variants [43, 48]
 EXAMPLES.md:78   ✗ [4] variants []
 EXAMPLES.md:92   ✗ [13] variants []
 EXAMPLES.md:216  ✗ [5, 6, 9] variants []
