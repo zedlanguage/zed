@@ -158,11 +158,10 @@ impl IntervalSet {
         }
     }
 
-    /// Whether `v` is a member.
+    /// Whether `v` is a member, by binary search of the pieces.
     pub fn contains(&self, v: i64) -> bool {
-        self.pieces
-            .iter()
-            .any(|&(lo, hi)| lo <= Fin(v) && Fin(v) <= hi)
+        let below = self.pieces.partition_point(|&(lo, _)| lo <= Fin(v));
+        below > 0 && Fin(v) <= self.pieces[below - 1].1
     }
 
     /// The finite endpoints, each with whether it is a lower one; the infinities are left out.
@@ -174,11 +173,25 @@ impl IntervalSet {
             .sum()
     }
 
-    /// The union.
+    /// The union, by one merge of the two sorted lists of pieces.
     pub fn join(&self, other: &Self) -> Self {
-        let mut all = self.pieces.clone();
-        all.extend_from_slice(&other.pieces);
-        IntervalSet::from_pieces(all)
+        let (a, b) = (&self.pieces, &other.pieces);
+        let (mut i, mut j) = (0, 0);
+        let mut out: Vec<(End, End)> = Vec::with_capacity(a.len() + b.len());
+        while i < a.len() || j < b.len() {
+            let next = if j == b.len() || (i < a.len() && a[i] <= b[j]) {
+                i += 1;
+                a[i - 1]
+            } else {
+                j += 1;
+                b[j - 1]
+            };
+            match out.last_mut() {
+                Some(last) if next.0 <= last.1.succ() => last.1 = last.1.max(next.1),
+                _ => out.push(next),
+            }
+        }
+        IntervalSet { pieces: out }
     }
 
     /// The intersection.
@@ -206,20 +219,45 @@ impl IntervalSet {
     /// (sec:constraints). This is not a join and need not be monotone; it is applied only at a
     /// widening point.
     pub fn cap(&self, limit: usize) -> Self {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
         let limit = limit.max(1);
-        let mut pieces = self.pieces.clone();
-        while pieces.len() > limit {
-            let gap = |i: usize| match (pieces[i].1, pieces[i + 1].0) {
-                (Fin(hi), Fin(lo)) => lo as i128 - hi as i128,
-                _ => unreachable!("only the outer endpoints are infinite"),
-            };
-            let at = (0..pieces.len() - 1)
-                .min_by(|&a, &b| gap(a).cmp(&gap(b)).then(a.cmp(&b)))
-                .expect("at least two pieces");
-            pieces[at].1 = pieces[at + 1].1;
-            pieces.remove(at + 1);
+        let n = self.pieces.len();
+        if n <= limit {
+            return self.clone();
         }
-        IntervalSet { pieces }
+        // The pieces as a list linked by index, so that a merge is O(1), and the gaps in a
+        // heap, smallest first and the lower pair on a tie; a gap whose pieces have changed
+        // since it was pushed is skipped when it comes up.
+        let mut pieces = self.pieces.clone();
+        let mut next: Vec<usize> = (1..=n).collect();
+        let mut alive = vec![true; n];
+        let gap = |left: (End, End), right: (End, End)| match (left.1, right.0) {
+            (Fin(hi), Fin(lo)) => lo as i128 - hi as i128,
+            _ => unreachable!("only the outer endpoints are infinite"),
+        };
+        let mut heap: BinaryHeap<Reverse<(i128, usize, End)>> = (0..n - 1)
+            .map(|i| Reverse((gap(pieces[i], pieces[i + 1]), i, pieces[i + 1].0)))
+            .collect();
+        let mut count = n;
+        while count > limit {
+            let Reverse((_, at, right_lo)) = heap.pop().expect("a gap for each pair");
+            let right = next[at];
+            if !alive[at] || right >= n || pieces[right].0 != right_lo {
+                continue;
+            }
+            pieces[at].1 = pieces[right].1;
+            alive[right] = false;
+            next[at] = next[right];
+            if next[at] < n {
+                let r = next[at];
+                heap.push(Reverse((gap(pieces[at], pieces[r]), at, pieces[r].0)));
+            }
+            count -= 1;
+        }
+        IntervalSet {
+            pieces: (0..n).filter(|&i| alive[i]).map(|i| pieces[i]).collect(),
+        }
     }
 
     /// The widening `self ∇ next` (step M0.5), for `next` the value that the join would give,
@@ -237,8 +275,9 @@ impl IntervalSet {
         if self.is_empty() || next == *self {
             return next;
         }
-        let old_lo = |e: End| self.pieces.iter().any(|p| p.0 == e);
-        let old_hi = |e: End| self.pieces.iter().any(|p| p.1 == e);
+        // The pieces are sorted and disjoint, so both endpoint lists are sorted.
+        let old_lo = |e: End| self.pieces.binary_search_by(|p| p.0.cmp(&e)).is_ok();
+        let old_hi = |e: End| self.pieces.binary_search_by(|p| p.1.cmp(&e)).is_ok();
         let mut out: Vec<(End, End)> = Vec::new();
         // Whether the last piece of `out` lost its upper endpoint and so runs into the next.
         let mut open = false;
@@ -267,19 +306,21 @@ impl IntervalSet {
     }
 
     /// The image of each pair of pieces under `f`, joined. `f` maps two single intervals to a
-    /// list of intervals that contains their image.
+    /// list of intervals that contains their image. Both operands and the image are capped to
+    /// [`PIECE_LIMIT`] pieces, so the pairs are at most `PIECE_LIMIT²`.
     pub fn lift2(
         &self,
         other: &Self,
         f: impl Fn((End, End), (End, End)) -> Vec<(End, End)>,
     ) -> Self {
+        let (a, b) = (self.cap(PIECE_LIMIT), other.cap(PIECE_LIMIT));
         let mut out = Vec::new();
-        for &a in &self.pieces {
-            for &b in &other.pieces {
+        for &a in &a.pieces {
+            for &b in &b.pieces {
                 out.extend(f(a, b));
             }
         }
-        IntervalSet::from_pieces(out)
+        IntervalSet::from_pieces(out).cap(PIECE_LIMIT)
     }
 
     /// The image of each piece under `f`, joined.

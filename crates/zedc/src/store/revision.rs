@@ -14,7 +14,7 @@
 use std::cmp::Ordering;
 use std::ops::Neg;
 
-use super::interval::{End, IntervalSet};
+use super::interval::{End, IntervalSet, PIECE_LIMIT};
 use super::lattice::{Congruence, FiniteSet, Lattice};
 use End::{Fin, NegInf, PosInf};
 
@@ -233,17 +233,31 @@ impl IntervalSet {
     }
 }
 
-/// The image of each pair of parts under `f`, joined.
+/// The image of each pair of parts under `f`, joined. An operand past twice the piece limit
+/// is capped first and the image is capped after, so the pairs are bounded by a constant and
+/// no transfer multiplies piece counts along a chain of operators (the rule of low
+/// complexity, Part G).
 fn map2(
     a: &[(End, End)],
     b: &[(End, End)],
     f: impl Fn((End, End), (End, End)) -> Vec<(End, End)>,
 ) -> IntervalSet {
+    let bounded = |parts: &[(End, End)]| {
+        if parts.len() > 2 * PIECE_LIMIT {
+            IntervalSet::from_pieces(parts.to_vec())
+                .cap(PIECE_LIMIT)
+                .sign_parts()
+        } else {
+            parts.to_vec()
+        }
+    };
+    let (a, b) = (bounded(a), bounded(b));
     IntervalSet::from_pieces(
         a.iter()
             .flat_map(|&p| b.iter().flat_map(|&q| f(p, q)).collect::<Vec<_>>())
             .collect(),
     )
+    .cap(PIECE_LIMIT)
 }
 
 /// The real quotient `z / y` at two endpoints, rounded outward in `dir`.

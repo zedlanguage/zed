@@ -15,15 +15,15 @@ Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason)
 |---|---|---|---|
 | S1 | `preimage`: every use of a `let`-bound name transfers the bound term again (`mentions`, `close`, `fwd`, `back_at`, `lin`, `formula`, `scan`) | 2^k in `let` depth | fixed: one result per (term, scope), `TRANSFER_FUEL`; `l01_25_preimage_catalog::scaling` (k = 14: 296 ms → 0.37 ms) |
 | S1b | `preimage`: `if` in guard position and equality of tests walk and copy the guard twice | 2^k in nesting | fixed: as S1, and translations past the M0.5 budget stop early; `l01_25_preimage_catalog::scaling` |
-| S2 | `product::Scope::join` builds `Or(R∧A, R∧B)`, copying the common prefix | 2^k in connectives | open |
+| S2 | `product::Scope::join` builds `Or(R∧A, R∧B)`, copying the common prefix | 2^k in connectives | fixed: `Formula::either` takes the shared conjuncts out, `Formula::bounded` keeps at most 64 constraints and 64 conjunctions; `l01_39_reduced_product::scaling` (about 3 ms per clause, linear) |
 | S3 | `iterate::stabilize` restarts inner heads' counters on each outer round | 64^h in loop nesting | open |
-| S4 | `revision::forward` and `IntervalSet::lift2` multiply piece counts with no cap; `cap` is O(n²) | P^k pieces | open |
+| S4 | `revision::forward` and `IntervalSet::lift2` multiply piece counts with no cap; `cap` is O(n²) | P^k pieces | fixed: `map2` and `lift2` cap operands and image to the piece limit; `cap` by a heap, O(n log n); `l01_24_refinement_lattices::scaling` (old `cap`: ratio 65; old chain: 64 pieces after one `+`) |
 | S5 | Omega test: real and dark shadow both recursed with no step budget | 2^V per leaf | open |
 | S6 | `preimage::Cx::constant` walks the subtree at every node | O(n·depth) | fixed: bottom up from the parts' remembered values |
 | S7 | `presburger::project` per name: DNF built once per name, hull by 128 bisection steps | O(V·C·128) | fixed (`project_each`, galloping hull) |
 | S8 | `product::walk`/`reduce`: whole scope cloned per `let`, constraints printed per round | O(n²) | open |
 | S9 | `wto`: components revisited at each nesting level | O(V·E) | open |
-| S10 | `affine::Bounds::add`, `IntervalSet::join` re-sorts, `contains` linear | O(k²), small k | open |
+| S10 | `affine::Bounds::add`, `IntervalSet::join` re-sorts, `contains` linear | O(k²), small k | `join` (one merge), `contains` (binary search) and `widen`'s endpoint checks fixed with S4; `Bounds::add` open |
 
 ## Kernel (`crates/zed-kernel`)
 

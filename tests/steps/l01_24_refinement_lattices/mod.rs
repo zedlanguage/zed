@@ -11,6 +11,7 @@ mod bounds;
 mod cell;
 mod float;
 mod loops;
+mod scaling;
 
 use zed_tests::instances::Rng;
 use zedc::store::affine::{Affine, Bound, Bounds, Sym};

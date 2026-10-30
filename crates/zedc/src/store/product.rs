@@ -434,7 +434,7 @@ impl Scope {
         }
         Scope {
             names,
-            relation: Formula::or(vec![self.relation.clone(), other.relation.clone()]),
+            relation: Formula::either(&self.relation, &other.relation).bounded(),
             written: self
                 .written
                 .iter()
@@ -569,7 +569,7 @@ impl Scope {
             } else {
                 Formula::negate(r.body)
             };
-            self.relation = Formula::and(vec![self.relation.clone(), body]);
+            self.relation = Formula::and(vec![self.relation.clone(), body]).bounded();
         }
         // The preimage of the outcome.
         if !inputs.is_empty() {

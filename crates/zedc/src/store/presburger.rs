@@ -43,6 +43,10 @@ pub const ATOMS: usize = 64;
 /// The most constraints an intermediate problem of an elimination takes (step M0.5).
 pub const INTERMEDIATE: usize = 4_096;
 
+/// The most conjunctions a relation a scope keeps splits into (step L1.39): each projection
+/// of the relation tests each of them.
+pub const KEPT_CONJUNCTIONS: u64 = 64;
+
 /// A variable of a relation.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Atom {
@@ -297,7 +301,7 @@ impl fmt::Display for Con {
 }
 
 /// A quantifier-free formula over linear constraints.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Formula {
     /// A constraint.
     Con(Con),
@@ -351,6 +355,72 @@ impl Formula {
             out.pop().expect("one")
         } else {
             Formula::Or(out)
+        }
+    }
+
+    /// The disjunction of `a` and `b` with the conjuncts they share taken out of it, so that
+    /// joining two narrowings of one relation does not copy the relation into each disjunct.
+    pub fn either(a: &Formula, b: &Formula) -> Formula {
+        fn parts(f: &Formula) -> &[Formula] {
+            match f {
+                Formula::And(gs) => gs,
+                g => std::slice::from_ref(g),
+            }
+        }
+        let (pa, pb) = (parts(a), parts(b));
+        let in_b: std::collections::HashSet<&Formula> = pb.iter().collect();
+        let shared: std::collections::HashSet<&Formula> =
+            pa.iter().filter(|g| in_b.contains(g)).collect();
+        let rest = |p: &[Formula]| {
+            Formula::and(p.iter().filter(|g| !shared.contains(g)).cloned().collect())
+        };
+        let mut out: Vec<Formula> = pa.iter().filter(|g| shared.contains(g)).cloned().collect();
+        out.push(Formula::or(vec![rest(pa), rest(pb)]));
+        Formula::and(out)
+    }
+
+    /// The conjuncts of `self`, in order, while they hold at most [`ATOMS`] constraints and
+    /// split into at most [`KEPT_CONJUNCTIONS`] conjunctions in all. Past the constraints a
+    /// relation is over the budget of step M0.5 for every use, and past the conjunctions each
+    /// projection of it costs a test of each; a conjunction implies each part of it.
+    pub fn bounded(self) -> Formula {
+        if self.cons().len() <= ATOMS && self.split_count(false) <= KEPT_CONJUNCTIONS {
+            return self;
+        }
+        let Formula::And(gs) = self else {
+            return Formula::top();
+        };
+        let (mut cons, mut split) = (0, 1u64);
+        let kept = gs
+            .into_iter()
+            .filter(|g| {
+                let (n, k) = (
+                    cons + g.cons().len(),
+                    split.saturating_mul(g.split_count(false)),
+                );
+                let fits = n <= ATOMS && k <= KEPT_CONJUNCTIONS;
+                if fits {
+                    (cons, split) = (n, k);
+                }
+                fits
+            })
+            .collect();
+        Formula::and(kept)
+    }
+
+    /// How many conjunctions the formula, negated when `neg`, splits into before any is
+    /// found unsatisfiable, saturating.
+    fn split_count(&self, neg: bool) -> u64 {
+        match (self, neg) {
+            (Formula::Con(c), true) if c.rel == Rel::Eq => 2,
+            (Formula::Con(_), _) => 1,
+            (Formula::Not(g), _) => g.split_count(!neg),
+            (Formula::And(gs), false) | (Formula::Or(gs), true) => gs
+                .iter()
+                .fold(1u64, |a, g| a.saturating_mul(g.split_count(neg))),
+            (Formula::And(gs), true) | (Formula::Or(gs), false) => gs
+                .iter()
+                .fold(0u64, |a, g| a.saturating_add(g.split_count(neg))),
         }
     }
 

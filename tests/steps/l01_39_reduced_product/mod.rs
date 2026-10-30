@@ -11,6 +11,7 @@
 
 mod controls;
 mod random;
+mod scaling;
 mod spec;
 
 use std::sync::Arc;
