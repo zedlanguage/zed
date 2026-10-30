@@ -11,6 +11,12 @@
 //! covered by several negated types together, and by none alone, counts as inhabited: the
 //! check is sound but not complete there.
 //!
+//! A tuple or morphism part kept as an expression (module `bdd`) is decided through its upper
+//! bound: it is empty when the bound is. A part whose bound, or whose diagram, has more than
+//! `WALK` nodes on its paths is not shown empty. So `is_empty` answers `true` only for an
+//! empty type, and `false` for a type that is inhabited or that the check could not decide
+//! within the budget; every caller takes `false` as "may have a value".
+//!
 //! The check is coinductive: a type met again while its own emptiness is being decided is
 //! assumed empty. Values are finite, so a type whose every value would contain a smaller value
 //! of the same type is empty, which is the answer the assumption gives; contractive, regular
@@ -20,7 +26,8 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Clause, Morphism, Parts, Type};
+use super::bdd::WALK;
+use super::{Morphism, Parts, Type};
 
 thread_local! {
     static MEMO: RefCell<BTreeMap<Type, bool>> = const { RefCell::new(BTreeMap::new()) };
@@ -49,6 +56,14 @@ impl Type {
     /// Whether `self` and `other` denote one set of values.
     pub fn equiv(&self, other: &Type) -> bool {
         self.subtype(other) && other.subtype(self)
+    }
+
+    /// Runs `f` with the budget of a union or intersection of tuple or morphism parts (module
+    /// `bdd`) set to `n` pairs of nodes on this thread, for tests of the budget. Results decided meanwhile stay in the thread's
+    /// tables; a `false` among them may be one the default budget would decide `true`.
+    #[doc(hidden)]
+    pub fn with_budget<R>(n: usize, f: impl FnOnce() -> R) -> R {
+        super::bdd::with_budget(n, f)
     }
 }
 
@@ -95,21 +110,23 @@ impl Search {
                 .values()
                 .all(|a| !a.bare && self.empty(&a.payload))
             && !p.structs
-            && p.tuples.0.iter().all(|c| self.tuples(c))
-            && p.morphisms.0.iter().all(|c| self.morphisms(c))
+            && !p.tuples.rest
+            && p.tuples.lens.iter().all(|(len, b)| {
+                let up = b.bounds().1;
+                up.paths(&mut { WALK }, &mut |pos, neg| self.tuples(*len, pos, neg)) == Some(true)
+            })
+            && {
+                let up = p.morphisms.bounds().1;
+                up.paths(&mut { WALK }, &mut |pos, neg| self.morphisms(pos, neg)) == Some(true)
+            }
     }
 
-    /// A clause with no positive tuple type holds every tuple of a length no negated type has.
-    fn tuples(&mut self, c: &Clause<Vec<Type>>) -> bool {
-        let mut pos = c.pos.iter();
-        let Some(first) = pos.next() else {
-            return false;
-        };
-        let meet = pos.fold(first.clone(), |m, p| {
-            m.iter().zip(p).map(|(a, b)| a & b).collect()
+    /// The tuples of length `len` in every type of `pos` and in none of `neg`.
+    fn tuples(&mut self, len: usize, pos: &[&Vec<Type>], neg: &[&Vec<Type>]) -> bool {
+        let meet = pos.iter().fold(vec![Type::top(); len], |m, p| {
+            m.iter().zip(p.iter()).map(|(a, b)| a & b).collect()
         });
-        let neg: Vec<&Vec<Type>> = c.neg.iter().collect();
-        self.product(meet, &neg)
+        self.product(meet, neg)
     }
 
     /// Whether the tuples with components in `p` are all in some type of `neg`. Outside the
@@ -128,8 +145,8 @@ impl Search {
         })
     }
 
-    fn morphisms(&mut self, c: &Clause<Morphism>) -> bool {
-        let meet = c.pos.iter().fold(
+    fn morphisms(&mut self, pos: &[&Morphism], neg: &[&Morphism]) -> bool {
+        let meet = pos.iter().fold(
             Morphism {
                 guarantee: Type::empty(),
                 permission: Type::top(),
@@ -152,7 +169,7 @@ impl Search {
         }
         // With no value, the empty morphism is the only one, and its domain is the guarantee.
         let no_value = self.empty(v);
-        c.neg.iter().any(|n| {
+        neg.iter().any(|n| {
             self.empty(&(&n.guarantee - l))
                 && (no_value || self.empty(&(u - &n.permission)))
                 && (no_value || self.empty(u) || self.empty(&(v - &n.value)))

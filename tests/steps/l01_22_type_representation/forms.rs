@@ -84,16 +84,15 @@ fn atoms_are_scalars_named_one_by_one() {
 fn tuples_meet_componentwise_and_lengths_are_disjoint() {
     let p = |a: Type, b: Type| Type::tuple(vec![a, b]);
     let num = Type::int() | Type::f64();
-    assert_eq!(
-        p(num.clone(), Type::top()) & p(Type::int(), Type::string()),
-        p(Type::int(), Type::string())
-    );
+    // Tuple types of one length are not met when built (L1.22): the meet is equal to the
+    // componentwise one as a set, and disjoint components make it empty.
+    let meet = p(num.clone(), Type::top()) & p(Type::int(), Type::string());
+    assert!(meet.equiv(&p(Type::int(), Type::string())), "{meet}");
+    assert!(!meet.equiv(&p(num.clone(), Type::string())), "{meet}");
+    assert!((p(Type::int(), Type::string()) & p(Type::string(), Type::top())).is_empty());
+    // Two lengths are disjoint as built.
     assert_eq!(
         p(Type::int(), Type::top()) & Type::tuple(vec![Type::top()]),
-        Type::empty()
-    );
-    assert_eq!(
-        p(Type::int(), Type::string()) & p(Type::string(), Type::top()),
         Type::empty()
     );
     assert_eq!(s(&Type::tuple(vec![])), "(tuple)");

@@ -167,6 +167,14 @@ fn random(r: &mut Rng) -> E {
     })
 }
 
+/// A deeper combination, mostly of tuples, whose tuple part has diagrams of many nodes.
+fn deep(r: &mut Rng) -> E {
+    boolean(r, 6, &mut |r| match r.below(4) {
+        0 => leaf(r),
+        n => E::Tuple((0..n.min(2)).map(|_| leaf(r)).collect()),
+    })
+}
+
 #[test]
 fn emptiness_agrees_with_the_oracle() {
     let reps = reps();
@@ -213,4 +221,43 @@ fn subtyping_agrees_with_the_oracle() {
         }
     }
     assert!(yes > 400 && no > 400, "{yes} {no}");
+}
+
+#[test]
+fn a_small_budget_leaves_the_check_sound() {
+    // With a budget of a few nodes most tuple parts are kept as expressions and decided
+    // through their bounds. `is_empty` may then miss an empty type, but never calls an
+    // inhabited one empty; and subtyping holds only where the oracle says it does.
+    let reps = reps();
+    let (mut shown, mut missed) = (0, 0);
+    for budget in [1, 2, 3, 4, 6, 8, 12, 16] {
+        Type::with_budget(budget, || {
+            let mut r = Rng::new(23);
+            for _ in 0..1500 {
+                let e = deep(&mut r);
+                let t = build(&e);
+                let tuples = t.part(Universe::Tuple);
+                let inhabited = |tuple_only: bool| {
+                    reps.iter()
+                        .any(|v| (!tuple_only || matches!(v, Rep::Tuple(_))) && holds(&e, v))
+                };
+                for (t, tuple_only) in [(&t, false), (&tuples, true)] {
+                    match (t.is_empty(), inhabited(tuple_only)) {
+                        (true, true) => panic!("budget {budget}: {t} is inhabited, from {e:?}"),
+                        (true, false) => shown += 1,
+                        (false, false) => missed += 1,
+                        (false, true) => {}
+                    }
+                }
+                let a = E::And(Box::new(deep(&mut r)), Box::new(e.clone()));
+                let ta = build(&a);
+                if ta.subtype(&t) {
+                    let want = reps.iter().all(|v| !holds(&a, v) || holds(&e, v));
+                    assert!(want, "budget {budget}: {ta} <: {t}");
+                }
+            }
+        });
+    }
+    // The budget is reached, so some empty types go undecided; most are still shown.
+    assert!(missed > 20 && shown > 600, "{shown} {missed}");
 }

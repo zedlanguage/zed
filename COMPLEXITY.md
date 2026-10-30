@@ -31,9 +31,9 @@ Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason)
 
 | ID | Where | Class | Status |
 |---|---|---|---|
-| K1 | `types.rs` `Dnf::not` (De Morgan by full product); also reached from `Display for Type` | 2^C | open |
+| K1 | `types.rs` `Dnf::not` (De Morgan by full product); also reached from `Display for Type` | 2^C | fixed: the tuple and morphism parts are reduced ordered decision diagrams with shared nodes (`types/bdd.rs`), so a complement is linear in the nodes; a union or intersection whose diagram would pass 4,096 pairs of nodes keeps its operands as an expression, built in constant time, and emptiness reads an upper bound of it within the budget (Kept). `l01_23_subtyping::scaling::the_parts_scale` (union of C differences `m(i) - m(i+1000)`, whose diagram has 2^C nodes: build about 48 ms at every C from 16 to 128 and complement about 1 µs; old DNF 18 s at C = 12; with the budget check removed the test does not finish in 300 s). Bounds are checked by `types::bdd::tests::bounds_enclose_the_part` (4 mutants caught) and the check's soundness under budgets of 1 to 16 by `l01_23_subtyping::oracle::a_small_budget_leaves_the_check_sound` (2 of 3 mutants caught; the third, an And lower bound, only by the unit test) |
 | K2 | `types/empty.rs` `Search::product`: no pruning of disjoint negatives | n^k | open |
-| K3 | `Dnf::normal`: all pairs, restarted after each merge; unions folded pairwise | O(C³) | open |
+| K3 | `Dnf::normal`: all pairs, restarted after each merge; unions folded pairwise | O(C³) | fixed with K1: the clause lists are gone; a diagram is canonical with no merging step |
 | K4 | `print.rs` `Doc::render` calls `flat` at every node | O(n³) | open |
 | K5 | `eval.rs` definedness `fix` in rounds: domain and map copied per attempt | O(D³) | open |
 | K6 | values deep-copied on every variable, literal and read (`Family`, `Tuple`, `Path` own their contents) | O(n²) | open |
@@ -100,4 +100,5 @@ Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason)
 | Fourier–Motzkin pairs, Omega `cost` scan, DNF split cloning | bounded by the Presburger budgets (16 atoms, 64 constraints, 4096 items) |
 | signature search runs (check), `apply` combinations | exponential by design, capped at RUNS 20000 and COMBOS 256; only the per-run cost (F6) is a defect |
 | `cost::frontier` Pareto filter | O(P²·devices) for a handful of plans |
+| emptiness and subtyping of tuple and morphism parts (`types/bdd.rs`, `types/empty.rs`) | deciding emptiness of a Boolean combination of tuple or morphism types is coNP-hard, and any canonical form of some combinations is exponential in their atoms. A union or intersection stops at 4,096 pairs of nodes and keeps its operands; emptiness is decided through bounds within that budget and a walk of at most 65,536 nodes, and past it the type is not shown empty, so `is_empty` and `subtype` answer `false`, which every caller reads as "may have a value". Display prints at most the same walk, then `…` |
 | memory test machine (`memory::Machine::check`) | test-only checking machine |

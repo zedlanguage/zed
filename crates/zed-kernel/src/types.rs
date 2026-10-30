@@ -6,10 +6,10 @@
 //! and the morphisms. A connective acts on each part on its own, so a complement is taken
 //! within each universe. A scalar part is exact: a finite or cofinite set of literals per base
 //! type, and per atom name whether the bare atom is in it and which payloads are. The tuple
-//! and morphism parts are unions of clauses, each the intersection of some types of its
-//! universe and the complements of others; whether one is empty is decided by subtyping (step
-//! L1.23), so two of them may denote one set and differ. Structs join at L2: until then the
-//! struct part is every struct or none.
+//! part is, per length, and the morphism part is, a decision diagram over types of the universe
+//! (module `bdd`): a Boolean function of tuple or morphism types. Whether one is empty is
+//! decided by subtyping (step L1.23), so two of them may denote one set and differ. Structs
+//! join at L2: until then the struct part is every struct or none.
 //!
 //! A morphism type bounds its domain from both sides: the keys it guarantees and the keys it
 //! permits, with every present key's value in the value type. `K -> V` is exact and
@@ -21,6 +21,7 @@
 //! as written rather than met with another, so no connective unfolds a type without end.
 //! Whether a type is empty, and so subtyping, is decided in module `empty`.
 
+mod bdd;
 mod empty;
 pub mod rec;
 
@@ -31,6 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::value::Value;
+use bdd::{Form, Part};
 
 /// A type: the set of values it denotes.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -121,9 +123,9 @@ struct Parts {
     floats: Lits,
     strings: Lits,
     atoms: Atoms,
-    tuples: Dnf<Vec<Type>>,
+    tuples: Tuples,
     structs: bool,
-    morphisms: Dnf<Morphism>,
+    morphisms: Part<Morphism>,
 }
 
 /// A finite set of literals, or the complement of one within its base type.
@@ -148,16 +150,12 @@ struct AtomPart {
     payload: Type,
 }
 
-/// A union of clauses; the empty union is no value of the universe, and the empty clause is
-/// every value of it.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-struct Dnf<A: Ord>(BTreeSet<Clause<A>>);
-
-/// The intersection of `pos` and the complements of `neg`.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-struct Clause<A: Ord> {
-    pos: BTreeSet<A>,
-    neg: BTreeSet<A>,
+/// Per length, the tuples of that length, as a part over tuple types of it; a
+/// length not listed has every tuple when `rest`, else none. Tuples of two lengths are disjoint.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+struct Tuples {
+    rest: bool,
+    lens: BTreeMap<usize, Part<Vec<Type>>>,
 }
 
 impl Type {
@@ -185,26 +183,6 @@ impl Type {
         }
     }
 
-    /// Whether no recursive node is reachable from `self` without unfolding one.
-    fn ground(&self) -> bool {
-        let Node::Parts(p) = &*self.0 else {
-            return false;
-        };
-        let lits = |d: &Dnf<Vec<Type>>| {
-            d.0.iter()
-                .all(|c| c.pos.iter().chain(&c.neg).flatten().all(Type::ground))
-        };
-        let maps = |d: &Dnf<Morphism>| {
-            d.0.iter().all(|c| {
-                c.pos
-                    .iter()
-                    .chain(&c.neg)
-                    .all(|m| m.guarantee.ground() && m.permission.ground() && m.value.ground())
-            })
-        };
-        p.atoms.names.values().all(|a| a.payload.ground()) && lits(&p.tuples) && maps(&p.morphisms)
-    }
-
     /// No value.
     pub fn empty() -> Type {
         Type::new(Parts {
@@ -214,9 +192,9 @@ impl Type {
             floats: Lits::default(),
             strings: Lits::default(),
             atoms: Atoms::default(),
-            tuples: Dnf::none(),
+            tuples: Tuples::default(),
             structs: false,
-            morphisms: Dnf::none(),
+            morphisms: Part::leaf(false),
         })
     }
 
@@ -294,13 +272,13 @@ impl Type {
 
     /// The tuple type `(t1, …, tn)`.
     pub fn tuple(items: Vec<Type>) -> Type {
-        Type::with(|p| p.tuples = Dnf::literal(items))
+        Type::with(|p| p.tuples = Tuples::literal(items))
     }
 
     /// The morphism type with the given bounds and value type.
     pub fn morphism(guarantee: Type, permission: Type, value: Type) -> Type {
         Type::with(|p| {
-            p.morphisms = Dnf::literal(Morphism {
+            p.morphisms = Part::literal(Morphism {
                 guarantee,
                 permission,
                 value,
@@ -328,9 +306,14 @@ impl Type {
                 }
                 p.atoms.cofinite = true;
             }
-            Universe::Tuple => p.tuples = Dnf::all(),
+            Universe::Tuple => {
+                p.tuples = Tuples {
+                    rest: true,
+                    lens: BTreeMap::new(),
+                }
+            }
             Universe::Struct => p.structs = true,
-            Universe::Morphism => p.morphisms = Dnf::all(),
+            Universe::Morphism => p.morphisms = Part::leaf(true),
         })
     }
 
@@ -348,8 +331,7 @@ impl Type {
     /// test against such a type is not decidable (sec:type_notation: run-time type tests are
     /// restricted to decidable checks).
     fn has_morphism_bounds(&self) -> bool {
-        let m = &self.p().morphisms;
-        !(m.0.is_empty() || m.is_all())
+        self.p().morphisms.is_leaf().is_none()
     }
 
     /// Whether membership in `self` is decidable at run time: no part of it, nor of a tuple
@@ -369,19 +351,14 @@ impl Type {
                 .names
                 .values()
                 .all(|a| a.payload.decidable_from(seen))
-            && p.tuples.0.iter().all(|c| {
-                c.pos
-                    .iter()
-                    .chain(&c.neg)
-                    .flatten()
-                    .all(|t| t.decidable_from(seen))
-            })
+            && p.tuples
+                .atoms(&mut |t| t.iter().all(|t| t.decidable_from(seen)))
     }
 
     /// Whether every function is in `self`; for a decidable type, either every function is or
     /// none is.
     pub fn functions(&self) -> bool {
-        self.p().morphisms.is_all()
+        self.p().morphisms.is_leaf() == Some(true)
     }
 
     /// Every value of `self`, when there are at most `cap` of them and each can be listed:
@@ -392,7 +369,7 @@ impl Type {
             return None;
         }
         let p = self.p();
-        if p.structs || !p.morphisms.0.is_empty() || p.atoms.cofinite {
+        if p.structs || p.morphisms.is_leaf() != Some(false) || p.atoms.cofinite || p.tuples.rest {
             return None;
         }
         let mut out = BTreeSet::new();
@@ -423,31 +400,44 @@ impl Type {
                 return None;
             }
         }
-        for clause in &p.tuples.0 {
-            let ([items], true) = (
-                &clause.pos.iter().collect::<Vec<_>>()[..],
-                clause.neg.is_empty(),
-            ) else {
+        for (len, part) in &p.tuples.lens {
+            let Part::Bdd(b) = part else {
                 return None;
             };
-            let mut rows = vec![Vec::new()];
-            for item in items.iter() {
-                let vs = item.values(cap)?;
-                rows = rows
-                    .iter()
-                    .flat_map(|r| {
-                        vs.iter().map(move |v| {
-                            let mut r = r.clone();
-                            r.push(v.clone());
-                            r
+            let mut rows = None;
+            let listed = b.paths(&mut { bdd::WALK }, &mut |pos, neg| {
+                let meet = pos.iter().fold(vec![Type::top(); *len], |m, p| {
+                    m.iter().zip(p.iter()).map(|(a, b)| a & b).collect()
+                });
+                let mut found = vec![Vec::new()];
+                for item in &meet {
+                    let Some(vs) = item.values(cap) else {
+                        return false;
+                    };
+                    found = found
+                        .iter()
+                        .flat_map(|r| {
+                            vs.iter().map(move |v| {
+                                let mut r = r.clone();
+                                r.push(v.clone());
+                                r
+                            })
                         })
-                    })
-                    .collect();
-                if rows.len() > cap {
-                    return None;
+                        .collect();
+                    if found.len() > cap {
+                        return false;
+                    }
                 }
+                let fits =
+                    |t: &Vec<Type>, r: &Vec<Value>| t.iter().zip(r).all(|(t, v)| t.contains(v));
+                found.retain(|r| !neg.iter().any(|n| fits(n, r)));
+                rows.get_or_insert_with(Vec::new).extend(found);
+                true
+            });
+            if listed != Some(true) {
+                return None;
             }
-            for r in rows {
+            for r in rows.into_iter().flatten() {
                 if !add(Value::Tuple(r), &mut out) {
                     return None;
                 }
@@ -477,12 +467,10 @@ impl Type {
                     part.payload.p().structs
                 }
             }
-            Value::Tuple(xs) | Value::Path(xs) => p.tuples.0.iter().any(|c| {
-                let fits = |t: &Vec<Type>| {
-                    t.len() == xs.len() && t.iter().zip(xs).all(|(t, x)| t.contains(x))
-                };
-                c.pos.iter().all(fits) && !c.neg.iter().any(fits)
-            }),
+            Value::Tuple(xs) | Value::Path(xs) => p
+                .tuples
+                .get(xs.len())
+                .eval(&|t: &Vec<Type>| t.iter().zip(xs).all(|(t, x)| t.contains(x))),
             Value::Family(_) => self.functions(),
         }
     }
@@ -509,7 +497,7 @@ impl Type {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Op {
     Or,
     And,
@@ -624,167 +612,52 @@ impl Atoms {
     }
 }
 
-/// How the clauses of a universe simplify: by default, a clause is empty when one type is in
-/// both its positive and negated sets.
-trait Literal: Ord + Clone {
-    /// The clause simplified, or `None` when it is empty.
-    fn clause(c: Clause<Self>) -> Option<Clause<Self>> {
-        c.pos.is_disjoint(&c.neg).then_some(c)
-    }
-}
-
-impl Literal for Morphism {}
-
-/// Two tuple types of one length intersect component by component, and of two lengths are
-/// disjoint; a tuple type with an empty component is empty. Tuple types with a recursive
-/// component are kept apart rather than met, since a meet would unfold them.
-impl Literal for Vec<Type> {
-    fn clause(c: Clause<Self>) -> Option<Clause<Self>> {
-        let Some(len) = c.pos.first().map(Vec::len) else {
-            return c.pos.is_disjoint(&c.neg).then_some(c);
-        };
-        if c.pos.iter().any(|p| p.len() != len) {
-            return None;
+impl Tuples {
+    fn literal(items: Vec<Type>) -> Tuples {
+        Tuples {
+            rest: false,
+            lens: BTreeMap::from([(items.len(), Part::literal(items))]),
         }
-        let (ground, kept): (Vec<_>, Vec<_>) =
-            c.pos.into_iter().partition(|p| p.iter().all(Type::ground));
-        let mut pos: BTreeSet<Vec<Type>> = kept.into_iter().collect();
-        if let Some(meet) = ground
+    }
+
+    fn get(&self, len: usize) -> Part<Vec<Type>> {
+        match self.lens.get(&len) {
+            Some(b) => b.clone(),
+            None => Part::leaf(self.rest),
+        }
+    }
+
+    /// Drops the lengths whose part is what an unlisted length has.
+    fn normal(rest: bool, lens: BTreeMap<usize, Part<Vec<Type>>>) -> Tuples {
+        let lens = lens
             .into_iter()
-            .reduce(|m, p| m.iter().zip(&p).map(|(a, b)| a & b).collect())
-        {
-            if meet.iter().any(|t| *t == Type::empty()) {
-                return None;
-            }
-            pos.insert(meet);
-        }
-        let neg = match pos.first() {
-            Some(p) => c.neg.into_iter().filter(|n| n.len() == p.len()).collect(),
-            None => c.neg,
+            .filter(|(_, b)| b.is_leaf() != Some(rest))
+            .collect();
+        Tuples { rest, lens }
+    }
+
+    fn zip(&self, other: &Tuples, op: Op) -> Tuples {
+        let rest = match op {
+            Op::Or => self.rest || other.rest,
+            Op::And => self.rest && other.rest,
         };
-        let c = Clause { pos, neg };
-        c.pos.is_disjoint(&c.neg).then_some(c)
-    }
-}
-
-impl<A: Literal> Dnf<A> {
-    fn none() -> Dnf<A> {
-        Dnf(BTreeSet::new())
-    }
-
-    fn all() -> Dnf<A> {
-        Dnf(BTreeSet::from([Clause {
-            pos: BTreeSet::new(),
-            neg: BTreeSet::new(),
-        }]))
+        let lens = self
+            .lens
+            .keys()
+            .chain(other.lens.keys())
+            .map(|n| (*n, self.get(*n).zip(&other.get(*n), op)))
+            .collect();
+        Tuples::normal(rest, lens)
     }
 
-    fn is_all(&self) -> bool {
-        *self == Dnf::all()
+    fn not(&self) -> Tuples {
+        let lens = self.lens.iter().map(|(n, b)| (*n, b.not())).collect();
+        Tuples::normal(!self.rest, lens)
     }
 
-    fn literal(a: A) -> Dnf<A> {
-        Dnf::normal(
-            [Clause {
-                pos: BTreeSet::from([a]),
-                neg: BTreeSet::new(),
-            }]
-            .into_iter(),
-        )
-    }
-
-    /// The union of `clauses`, each simplified, with a clause dropped when another's types are
-    /// a subset of its own, and two clauses merged when they differ only in the sign of one
-    /// type, to a fixed point.
-    fn normal(clauses: impl Iterator<Item = Clause<A>>) -> Dnf<A> {
-        let mut set: BTreeSet<Clause<A>> = clauses.filter_map(A::clause).collect();
-        loop {
-            let v: Vec<Clause<A>> = set.iter().cloned().collect();
-            let mut merged = None;
-            'outer: for (i, a) in v.iter().enumerate() {
-                for b in &v[i + 1..] {
-                    if let Some(c) = a.resolve(b) {
-                        merged = Some((a.clone(), b.clone(), c));
-                        break 'outer;
-                    }
-                }
-            }
-            match merged {
-                Some((a, b, c)) => {
-                    set.remove(&a);
-                    set.remove(&b);
-                    set.extend(A::clause(c));
-                }
-                None => break,
-            }
-        }
-        let v: Vec<Clause<A>> = set.iter().cloned().collect();
-        Dnf(v
-            .iter()
-            .filter(|b| !v.iter().any(|a| a != *b && a.within(b)))
-            .cloned()
-            .collect())
-    }
-
-    fn zip(&self, other: &Dnf<A>, op: Op) -> Dnf<A> {
-        match op {
-            Op::Or => Dnf::normal(self.0.iter().chain(&other.0).cloned()),
-            Op::And => Dnf::normal(self.0.iter().flat_map(|a| {
-                other.0.iter().map(move |b| Clause {
-                    pos: &a.pos | &b.pos,
-                    neg: &a.neg | &b.neg,
-                })
-            })),
-        }
-    }
-
-    /// De Morgan: the complement of a union is the intersection of the complements, and the
-    /// complement of a clause is the union of its types' complements.
-    fn not(&self) -> Dnf<A> {
-        self.0.iter().fold(Dnf::all(), |acc, c| {
-            let flipped = c
-                .pos
-                .iter()
-                .map(|p| Clause {
-                    pos: BTreeSet::new(),
-                    neg: BTreeSet::from([p.clone()]),
-                })
-                .chain(c.neg.iter().map(|n| Clause {
-                    pos: BTreeSet::from([n.clone()]),
-                    neg: BTreeSet::new(),
-                }));
-            acc.zip(&Dnf::normal(flipped), Op::And)
-        })
-    }
-}
-
-impl<A: Ord + Clone> Clause<A> {
-    /// Whether every type of `self` is one of `other`'s, so that `other` is within `self`.
-    fn within(&self, other: &Clause<A>) -> bool {
-        self.pos.is_subset(&other.pos) && self.neg.is_subset(&other.neg)
-    }
-
-    /// `(X & t) | (X & !t)` is `X`.
-    fn resolve(&self, other: &Clause<A>) -> Option<Clause<A>> {
-        for t in self.pos.intersection(&other.neg) {
-            let mut a = self.clone();
-            let mut b = other.clone();
-            a.pos.remove(t);
-            b.neg.remove(t);
-            if a == b {
-                return Some(a);
-            }
-        }
-        for t in self.neg.intersection(&other.pos) {
-            let mut a = self.clone();
-            let mut b = other.clone();
-            a.neg.remove(t);
-            b.pos.remove(t);
-            if a == b {
-                return Some(a);
-            }
-        }
-        None
+    /// Whether `f` holds of every tuple type in a part.
+    fn atoms(&self, f: &mut impl FnMut(&Vec<Type>) -> bool) -> bool {
+        self.lens.values().all(|b| b.atoms(f))
     }
 }
 
@@ -915,14 +788,7 @@ impl fmt::Display for Type {
         } else {
             items.extend(p.atoms.names.iter().flat_map(|(n, part)| atom(n, part)));
         }
-        let tuple = |t: &Vec<Type>| {
-            let mut s = String::from("(tuple");
-            for c in t {
-                s += &format!(" {c}");
-            }
-            s + ")"
-        };
-        clauses(&mut items, "tuple", &p.tuples, tuple);
+        tuples(&mut items, &p.tuples);
         if p.structs {
             items.push("struct".into());
         }
@@ -935,7 +801,7 @@ impl fmt::Display for Type {
                 format!("(-> {} {} {})", m.guarantee, m.permission, m.value)
             }
         };
-        clauses(&mut items, "morphism", &p.morphisms, morphism);
+        clauses(&mut items, "morphism", &p.morphisms, &morphism);
         match items.len() {
             1 => f.write_str(&items[0]),
             _ => write!(
@@ -954,18 +820,72 @@ fn spaced(vs: &BTreeSet<Value>) -> String {
         .join(" ")
 }
 
-fn clauses<A: Ord>(
-    items: &mut Vec<String>,
-    universe: &str,
-    dnf: &Dnf<A>,
-    show: impl Fn(&A) -> String,
-) {
-    for c in &dnf.0 {
-        let mut lits: Vec<String> = c.pos.iter().map(&show).collect();
-        if lits.is_empty() {
-            lits.push(universe.into());
+/// The items of a tuple part. With `rest`, it is every tuple outside its complement's items.
+fn tuples(items: &mut Vec<String>, t: &Tuples) {
+    if t.rest {
+        let mut except = Vec::new();
+        tuples(&mut except, &t.not());
+        items.push(match except.len() {
+            0 => "tuple".into(),
+            1 => format!("(& tuple (! {}))", except[0]),
+            _ => format!(
+                "(& tuple (! (|{})))",
+                except.iter().map(|i| format!(" {i}")).collect::<String>()
+            ),
+        });
+        return;
+    }
+    let tuple = |t: &Vec<Type>| {
+        let mut s = String::from("(tuple");
+        for c in t {
+            s += &format!(" {c}");
         }
-        lits.extend(c.neg.iter().map(|n| format!("(! {})", show(n))));
+        s + ")"
+    };
+    for (len, b) in &t.lens {
+        clauses(items, &tuple(&vec![Type::top(); *len]), b, &tuple);
+    }
+}
+
+/// One item per path of a diagram: the intersection of the atoms it takes, or `all` when it
+/// takes none, and the complements of those it refuses. Past the budget of nodes visited
+/// (`bdd::WALK`) the rest is `…`. A part kept as an expression is its connective applied to the items of its operands.
+fn clauses<A: bdd::Literal>(
+    items: &mut Vec<String>,
+    all: &str,
+    part: &Part<A>,
+    show: &impl Fn(&A) -> String,
+) {
+    let b = match part.view() {
+        Ok(b) => b,
+        Err(form) => {
+            let item = |p: &Part<A>| {
+                let mut sub = Vec::new();
+                clauses(&mut sub, all, p, show);
+                match sub.len() {
+                    0 => "(|)".to_string(),
+                    1 => sub.remove(0),
+                    _ => format!(
+                        "(|{})",
+                        sub.iter().map(|i| format!(" {i}")).collect::<String>()
+                    ),
+                }
+            };
+            items.push(match form {
+                Form::Not(a) => format!("(& {all} (! {}))", item(a)),
+                Form::Or(a, b) => format!("(| {} {})", item(a), item(b)),
+                Form::And(a, b) => format!("(& {} {})", item(a), item(b)),
+            });
+            return;
+        }
+    };
+    let mut budget = bdd::WALK;
+    let done = b.paths(&mut budget, &mut |pos, neg| {
+        let mut lits: Vec<String> = pos.iter().map(|a| show(a)).collect();
+        if lits.is_empty() {
+            lits.push(all.into());
+        }
+        lits.extend(neg.iter().map(|n| format!("(! {})", show(n))));
         match lits.len() {
             1 => items.push(lits.remove(0)),
             _ => items.push(format!(
@@ -973,5 +893,9 @@ fn clauses<A: Ord>(
                 lits.iter().map(|l| format!(" {l}")).collect::<String>()
             )),
         }
+        true
+    });
+    if done.is_none() {
+        items.push("…".into());
     }
 }
