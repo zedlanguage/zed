@@ -32,6 +32,7 @@ l01_27_absences
 l01_28_staging
 l01_29_diagnostics
 l01_30_queries
+l01_31_zir
 m0_01_scaffolding
 m0_05_widening_and_iteration
 m0_06_cost_scalarization

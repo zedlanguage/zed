@@ -83,12 +83,17 @@ in docs/layout.md.
 - Done: **L1.30**, the compiler as queries (`zedc::query`): the front end keyed by the text,
   each table row keyed by the definitions its check reaches, so an edit reruns only the rows
   whose definitions changed; `zedc test` shares one database across its files.
-- Next: L1.31.
+- Done: **L1.31**, ZIR (`zedc::zir`): regions, value and state edges, the node inventory, the
+  validator, and the text and binary forms.
+- Next: L1.32.
+- Plan extended (spec, 2026-10-30): **L30 — the editor**, a VS Code extension on the L25
+  language server (static information per position, the dependency margin, recomputation of
+  dirty nodes, values in place with visualizers), steps L30.1–L30.6.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 649 passed and 0 failed (21 unit tests of
-`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 596 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 25 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 3 in `m0_01_scaffolding`, 23 in
+Last full run: `cargo test --workspace` gave 669 passed and 0 failed (21 unit tests of
+`zed-kernel`, 10 of `zed-tests`, 22 of `zedc`, 616 step tests: 6 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 12 in `l01_13_formatter`, 20 in `l01_14_name_resolution`, 18 in `l01_15_kernel_terms`, 27 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 16 in `l01_20_provenance`, 18 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 14 in `l01_23_subtyping`, 19 in `l01_24_refinement_lattices`, 25 in `l01_25_preimage_catalog`, 36 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 11 in `l01_28_staging`, 16 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 3 in `m0_01_scaffolding`, 23 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 14 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 32 in
 `m0_09_kernel_evaluator`, 83 in `m0_10_finite_model_harness`, 10 in
@@ -137,6 +142,7 @@ about 29 s in a debug build, with `zed-kernel` built at opt-level 2.
 | L1.28 | done | `stage::color`, `stage::mix`, `Program::stage`: demand from `main` and the tests, one fuel of 10^6 per build-stage term, a stopped term left whole and its name made run-stage, `if` on a literal cut; `stage::trick`/`split` over `Domain::Type` (via `Type::values(cap)`) or `Domain::Ints`, the general body kept as the last arm. 11 tests in `l01_28_staging`; 9 mutants caught. |
 | L1.29 | done | `ast::Note`, `Error.notes`; `check::Ck` records each expression's type and source (`seen`) and each binder's origin (`whence`, narrowing chained), derives at the error (`derive`, at most 16 steps back, deduplicated); `applied` lists argument derivations and the callee's arrows; `infer` collects failing combinations (at most 12, the rest counted); `repairs` re-checks each wrapped argument; `run::Step` and the renderer; duplicate bindings, arguments and exports point at the first. Tests: full rendered chains, search failures, caps, layout, repairs applied and re-loaded, the ✗ variants pinned. |
 | L1.30 | done | `query::{Db, Key, Query, key, cone}`: `Db::front` memoizes `run::compile` by the text's hash; `Db::row` memoizes a table row under the hash of `cone` (the printed definitions its roots reach, closed by one backward pass over the unit's dependency order); `testing::test_in` runs a unit against a database, and the outcome of a diagnostic now carries its derivation. Mutants caught: the cone unclosed, the roots omitted, the parts unprefixed, the name unhashed, the wave key without `main`, either memo bypassed. |
+| L1.31 | done | `zir::{Region, Node, Op, Edge, Src, validate}`, `zir::text::{print, parse, parse_edge, parse_type, parse_value, parse_pattern}`, `zir::binary::{encode, decode}`. Ten graphs of real shapes (a price total, a greeting, an echo, a default, a countdown, reachability, a group, tiered shipping, mutual recursion, constants) go through every round trip; 29 text and 7 binary rejections pinned. Mutants caught (16): fold depth 0, state in any region, state reused, a forward or own-output reference, capture types unchecked, the certificate flag dropped, duplicate lines, a sibling region's edge, header order, interval facts, hints read as facets, the one-tuple mark, the identity bit, trailing bytes, bad tags, unsorted fields. |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 
@@ -373,6 +379,14 @@ about 29 s in a debug build, with `zed-kernel` built at opt-level 2.
   renames it and reruns the rows that reach it. Results are never evicted. `zedc run`
   compiles its one unit once, so it calls `run::compile` directly. Found on the way:
   `zedc test` printed a rejection's message without its derivation; fixed.
+- L1.31 (DESIGN.md L1.31): regions are isolated; a value from outside enters as a capture,
+  an input after the node's fixed ones received as a trailing argument. State edges are linear
+  and enter only match and port regions. A certificate region holds only kernel nodes. The
+  validator checks structure only; edge-type fit is the checker's, for the term lowered from.
+  The text form starts `zir 1`, one line per header, node and results, keyed by path, read
+  back in any order; a literal pattern is `=v`; a recursive type has no text form until L2.
+  The binary form starts `ZIR\0` and the version, stores edges as their text, floats by their
+  bits. Errors give line and column, or byte offset.
 - Known limits of the M0.5 store: the order and the stabilization recurse as deep as the graph
   (revisit at L1.24, where real programs give large graphs); `End::from_i128` saturates at the
   64-bit limits, which the evaluator's integers now pass (L1.17): revisit with the store's

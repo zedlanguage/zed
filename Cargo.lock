@@ -290,6 +290,7 @@ name = "zedc"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "num-bigint",
  "unicode-ident",
  "unicode-normalization",
  "unicode-script",

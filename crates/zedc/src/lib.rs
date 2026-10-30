@@ -25,3 +25,4 @@ pub mod source;
 pub mod stage;
 pub mod store;
 pub mod testing;
+pub mod zir;
