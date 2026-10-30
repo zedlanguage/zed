@@ -4,6 +4,7 @@
 
 mod kernel;
 mod programs;
+mod scaling;
 
 use zed_kernel::{Evaluator, Fact, Provenance, Term, Value, World};
 

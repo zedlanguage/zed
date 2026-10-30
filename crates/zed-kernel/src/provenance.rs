@@ -8,6 +8,8 @@
 //! [`Evaluator::with_provenance`](crate::Evaluator::with_provenance) asks for them; the
 //! record is the run graph, each fact naming the facts it read.
 
+/// The persistent vector of a fact address's node and keypath.
+pub use imbl::Vector;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
@@ -20,7 +22,7 @@ use crate::value::Value;
 /// the node's number in the preorder of the evaluated term. Only equality and order mean
 /// anything; the numbers change with the build (sec:keypaths, the opaque token).
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct NodeAddress(pub Vec<u32>);
+pub struct NodeAddress(pub Vector<u32>);
 
 impl NodeAddress {
     /// The node's own position, the last.
@@ -37,7 +39,7 @@ pub struct FactAddress {
     /// The code identity.
     pub node: NodeAddress,
     /// The data identity.
-    pub keypath: Vec<Value>,
+    pub keypath: Vector<Value>,
 }
 
 impl fmt::Display for FactAddress {

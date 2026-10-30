@@ -63,6 +63,6 @@ fn every_keypath_of_a_wave_starts_with_its_stamp() {
     assert!(
         p.facts()
             .iter()
-            .all(|f| f.address.keypath.first() == Some(&Value::Int(0)))
+            .all(|f| f.address.keypath.front() == Some(&Value::Int(0)))
     );
 }

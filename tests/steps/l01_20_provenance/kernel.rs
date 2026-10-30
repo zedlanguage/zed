@@ -136,7 +136,7 @@ fn word_count_has_a_fact_per_word_and_per_group() {
     // The value function runs once per word, keyed by the word's line and position.
     let ones: Vec<_> = at(&p, "1")
         .into_iter()
-        .map(|f| f.address.keypath.clone())
+        .map(|f| f.address.keypath.iter().cloned().collect::<Vec<_>>())
         .collect();
     assert_eq!(ones.len(), 6);
     assert!(ones.contains(&vec![Value::Int(0), Value::Int(1), Value::Int(2)]));
@@ -161,7 +161,7 @@ fn a_combine_step_is_named_by_its_group_and_index() {
     unique(&p);
     let mut steps: Vec<_> = at(&p, "(a + b)")
         .into_iter()
-        .map(|f| f.address.keypath.clone())
+        .map(|f| f.address.keypath.iter().cloned().collect::<Vec<_>>())
         .collect();
     steps.sort();
     assert_eq!(
@@ -214,7 +214,7 @@ fn a_family_body_runs_once_per_key() {
     unique(&p);
     let keys: Vec<_> = at(&p, "(n * n)")
         .into_iter()
-        .map(|f| f.address.keypath.clone())
+        .map(|f| f.address.keypath.iter().cloned().collect::<Vec<_>>())
         .collect();
     assert_eq!(keys, [1, 2, 3].map(|n| vec![Value::Int(0), Value::Int(n)]));
 }
@@ -252,7 +252,7 @@ fn a_lattice_fixpoint_names_each_iterate() {
         .facts()
         .iter()
         .filter(|f| matches!(p.term(&f.address.node), Term::Fam { .. }))
-        .map(|f| f.address.keypath.clone())
+        .map(|f| f.address.keypath.iter().cloned().collect::<Vec<_>>())
         .collect();
     iterates.dedup();
     assert_eq!(
@@ -299,7 +299,7 @@ fn a_generation_names_its_step_and_guard_by_t() {
     unique(&p);
     let steps: Vec<_> = at(&p, "(x div 2)")
         .into_iter()
-        .map(|f| f.address.keypath.clone())
+        .map(|f| f.address.keypath.iter().cloned().collect::<Vec<_>>())
         .collect();
     assert_eq!(steps, [1, 2, 3].map(|t| vec![Value::Int(0), Value::Int(t)]));
     let guards = at(&p, "((x mod 2) == 0)");
@@ -325,7 +325,7 @@ fn every_keypath_starts_with_the_wave_stamp() {
     assert!(
         p.facts()
             .iter()
-            .all(|f| f.address.keypath.first() == Some(&Value::Int(7)))
+            .all(|f| f.address.keypath.front() == Some(&Value::Int(7)))
     );
 }
 

@@ -5,7 +5,7 @@
 //! the spec leaves to the reference semantics are recorded in DESIGN.md sec:kernel,
 //! "Reference semantics", and repeated on the item they govern here.
 
-use imbl::OrdMap;
+use imbl::{OrdMap, Vector};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -244,10 +244,11 @@ struct Trace {
     positions: HashMap<usize, u32>,
     term: Option<Term>,
     facts: Vec<Fact>,
-    /// The positions of the call sites the run is inside.
-    calls: Vec<u32>,
-    /// The keypath of the region instance the run is inside.
-    keys: Vec<Value>,
+    /// The positions of the call sites the run is inside, in a persistent vector that each
+    /// fact's address shares rather than copies.
+    calls: Vector<u32>,
+    /// The keypath of the region instance the run is inside, shared the same way.
+    keys: Vector<Value>,
     /// The facts read so far by the node being evaluated, one entry per subterm evaluated,
     /// `None` for a value that came from no fact, such as a family key.
     reads: Vec<Option<usize>>,
@@ -329,7 +330,7 @@ impl Evaluator {
     /// stamp of a port region's wave, or nothing.
     pub fn with_provenance(mut self, root: Vec<Value>) -> Self {
         self.trace = Some(Trace {
-            keys: root,
+            keys: root.into(),
             ..Trace::default()
         });
         self
@@ -449,7 +450,7 @@ impl Evaluator {
         let inputs = std::mem::replace(&mut t.reads, outer);
         if let Ok(v) = &out {
             let mut node = t.calls.clone();
-            node.push(t.positions[&(term as *const Term as usize)]);
+            node.push_back(t.positions[&(term as *const Term as usize)]);
             t.facts.push(Fact {
                 address: FactAddress {
                     node: NodeAddress(node),
@@ -488,7 +489,7 @@ impl Evaluator {
     /// Enters the region instance at `keys`, below the current one.
     fn enter(&mut self, keys: &[Value]) {
         if let Some(t) = &mut self.trace {
-            t.keys.extend_from_slice(keys);
+            t.keys.extend(keys.iter().cloned());
         }
     }
 
@@ -707,13 +708,13 @@ impl Evaluator {
                     env = bind_fact(&env, p.clone(), a, fact);
                 }
                 if let (Some(t), Some(site)) = (&mut self.trace, site) {
-                    t.calls.push(site);
+                    t.calls.push_back(site);
                 }
                 self.depth += 1;
                 let out = self.eval(&c.body, &env);
                 self.depth -= 1;
                 if let (Some(t), Some(_)) = (&mut self.trace, site) {
-                    t.calls.pop();
+                    t.calls.pop_back();
                 }
                 out
             }

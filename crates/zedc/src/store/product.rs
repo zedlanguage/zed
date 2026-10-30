@@ -33,7 +33,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use zed_kernel::budgets::{ENUMERATION_BUDGET, ENUMERATION_FUEL};
-use zed_kernel::provenance::{FactAddress, NodeAddress};
+use zed_kernel::provenance::{FactAddress, NodeAddress, Vector};
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::{Evaluator, KernelError, Prim, Stack, Term, Value, World, on_stack};
 
@@ -1063,8 +1063,8 @@ fn walk(t: &Term, scope: &mut Scope, out: &mut Vec<Arm>, count: &mut u32) {
         }
         Term::If(c, a, b) => {
             let at = FactAddress {
-                node: NodeAddress(vec![*count]),
-                keypath: Vec::new(),
+                node: NodeAddress(Vector::unit(*count)),
+                keypath: Vector::new(),
             };
             *count += 1;
             let prem = Premises::one(Premise::Constraint(at));

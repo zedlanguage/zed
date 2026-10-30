@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use zed_kernel::Value;
-use zed_kernel::provenance::{FactAddress, NodeAddress};
+use zed_kernel::provenance::{FactAddress, NodeAddress, Vector};
 use zedc::store::affine::{Affine, Bounds};
 use zedc::store::cell::{Cell, Entry, Premise, Premises, Store};
 use zedc::store::float::{FloatClass, Kind, Width};
@@ -13,8 +13,8 @@ use zedc::store::lattice::{FiniteSet, Lattice};
 /// The fact at node `n` with no keypath.
 fn addr(n: u32) -> FactAddress {
     FactAddress {
-        node: NodeAddress(vec![0, n]),
-        keypath: Vec::new(),
+        node: NodeAddress(Vector::from(vec![0, n])),
+        keypath: Vector::new(),
     }
 }
 
