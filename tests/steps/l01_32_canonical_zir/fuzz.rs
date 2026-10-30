@@ -3,7 +3,7 @@
 //! facets or renaming binders leaves the address alone.
 
 use super::graph;
-use zedc::zir::canon::{address, ranks, step};
+use zedc::zir::canon::{address, canonicalize, key, ranks, step};
 use zedc::zir::{Edge, Op};
 
 /// A linear congruential generator, so that every run sees the same graphs.
@@ -167,4 +167,65 @@ fn reverse_facets(g: &mut zedc::zir::Region) {
         }
         n.regions.iter_mut().for_each(reverse_facets);
     }
+}
+
+/// The one pass of `canonicalize` reaches the graph the steps reach.
+#[test]
+fn the_one_pass_normal_form_is_the_one_the_steps_reach() {
+    let mut rng = Lcg(11);
+    let mut changed = 0;
+    for _ in 0..300 {
+        let g = graph(&random(&mut rng, &|i| {
+            NAMES[i % NAMES.len()].to_string() + &i.to_string()
+        }));
+        let mut stepped = g.clone();
+        while step(&mut stepped).is_some() {}
+        let once = canonicalize(&g);
+        assert_eq!(once, stepped);
+        changed += usize::from(once != g);
+    }
+    assert!(
+        changed > 250,
+        "{changed} of 300 graphs were not already normal"
+    );
+}
+
+/// The bottom-up key the lowering uses tells graphs apart exactly as the address does.
+#[test]
+fn the_key_agrees_with_the_address() {
+    let mut graphs: Vec<_> = (0..120)
+        .flat_map(|seed| {
+            [
+                graph(&random(&mut Lcg(seed), &|i| format!("v{i}"))),
+                graph(&random(&mut Lcg(seed), &|i| format!("w{}", 100 - i))),
+            ]
+        })
+        .collect();
+    // Copies that differ from their graph only inside a node's region.
+    let inner: Vec<_> = graphs
+        .iter()
+        .filter_map(|g| {
+            let mut c = g.clone();
+            let n = c.nodes.iter_mut().find(|n| !n.regions.is_empty())?;
+            n.regions[0].results[0] = zedc::zir::Src::Const(zed_kernel::Value::Int(99));
+            Some(c)
+        })
+        .collect();
+    assert!(inner.len() > 100, "{} copies", inner.len());
+    graphs.extend(inner);
+    let both: Vec<_> = graphs.iter().map(|g| (address(g), key(g))).collect();
+    let (mut same, mut differ) = (0, 0);
+    for a in &both {
+        for b in &both {
+            let by_address = a.0 == b.0;
+            assert_eq!(a.1 == b.1, by_address);
+            if by_address {
+                same += 1;
+            } else {
+                differ += 1;
+            }
+        }
+    }
+    // Each graph equals its renamed copy, and most pairs differ.
+    assert!(same >= 2 * graphs.len() && differ > graphs.len() * graphs.len() / 2);
 }

@@ -27,9 +27,10 @@
 //!   before twice, is linear in size, not exponential as inlining every call would make it
 //!   (DESIGN.md Part G). Used as a value, such a function is an error, since a call through
 //!   an unknown function could not thread the states.
-//! - **CSE by content address.** A node is entered in its region under the address of its
-//!   canonical form ([`super::canon::address`] of a one-node region), and a
-//!   second node with that address is not added: its uses read the first. Nodes that differ
+//! - **CSE by content address.** A node is entered in its region under the key of its
+//!   canonical form ([`super::canon::node_key`], hashed from the keys of its regions, so
+//!   equal keys mean equal normal forms of the one-node regions holding the nodes), and a
+//!   second node with that key is not added: its uses read the first. Nodes that differ
 //!   only in hints, binder names or facet order are one node. A read, a push, or a node an
 //!   effect passes through is never merged, since its state input is used once.
 //! - **Edges carry `_` and no facts but hints.** The checker's types and the store's domains
@@ -89,6 +90,8 @@ struct Frame {
     states: Vec<(Arc<str>, Src)>,
     /// The nodes entered by content address.
     seen: HashMap<ContentAddress, usize>,
+    /// The keys of each node's regions, in node order.
+    keys: Vec<Vec<ContentAddress>>,
 }
 
 impl Frame {
@@ -104,6 +107,7 @@ impl Frame {
             captures: Vec::new(),
             states: Vec::new(),
             seen: HashMap::new(),
+            keys: Vec::new(),
         }
     }
 }
@@ -115,6 +119,7 @@ struct Built {
     captures: Vec<Src>,
     states: Vec<(Arc<str>, Src)>,
     values: usize,
+    keys: Vec<Vec<ContentAddress>>,
 }
 
 struct Lower {
@@ -268,18 +273,15 @@ impl Lower {
     /// Adds `node` to the current region, or finds the node with its content address. A node
     /// that takes a state edge never repeats one, since each state edge is used once, so the
     /// effects stay apart without a test of their own.
-    fn add(&mut self, node: Node) -> usize {
-        let key = canon::address(&Region {
-            kind: RegionKind::Function,
-            args: Vec::new(),
-            nodes: vec![node.clone()],
-            results: Vec::new(),
-        });
+    /// Adds `node`, whose regions have the keys `regions`, unless a node of its key is there.
+    fn add(&mut self, node: Node, regions: Vec<ContentAddress>) -> usize {
+        let key = canon::node_key(&node, &regions);
         let f = self.frame();
         if let Some(&n) = f.seen.get(&key) {
             return n;
         }
         f.region.nodes.push(node);
+        f.keys.push(regions);
         let n = f.region.nodes.len() - 1;
         f.seen.insert(key, n);
         n
@@ -287,12 +289,15 @@ impl Lower {
 
     /// A one-output node with no region.
     fn leaf(&mut self, op: Op, inputs: Vec<Src>) -> Val {
-        let n = self.add(Node {
-            op,
-            inputs,
-            outputs: vec![top()],
-            regions: Vec::new(),
-        });
+        let n = self.add(
+            Node {
+                op,
+                inputs,
+                outputs: vec![top()],
+                regions: Vec::new(),
+            },
+            Vec::new(),
+        );
         Val::Src(Src::Out(n, 0), self.top())
     }
 
@@ -355,6 +360,7 @@ impl Lower {
             captures: f.captures,
             states: f.states,
             values: 1,
+            keys: f.keys,
         })
     }
 
@@ -383,6 +389,7 @@ impl Lower {
             .collect();
         let values = built.first().map_or(1, |b| b.values);
         let mut regions = Vec::new();
+        let mut keys = Vec::new();
         for b in built {
             let map: Vec<usize> = (0..b.fixed)
                 .chain(
@@ -403,18 +410,22 @@ impl Lower {
                 };
                 r.results.push(fin);
             }
+            keys.push(canon::region_key(&r, &b.keys));
             regions.push(r);
         }
         let mut outputs = vec![top(); values];
         outputs.extend(ports.iter().map(|(_, p)| Edge::State(p.clone())));
         let mut inputs = fixed;
         inputs.extend(caps);
-        let n = self.add(Node {
-            op,
-            inputs,
-            outputs,
-            regions,
-        });
+        let n = self.add(
+            Node {
+                op,
+                inputs,
+                outputs,
+                regions,
+            },
+            keys,
+        );
         for (j, (_, p)) in ports.iter().enumerate() {
             self.set_state(p, Src::Out(n, values + j));
         }
@@ -557,12 +568,15 @@ impl Lower {
                             ins.push(self.state(at, p)?);
                             outputs.push(Edge::State(p.clone()));
                         }
-                        let n = self.add(Node {
-                            op: Op::Apply,
-                            inputs: ins,
-                            outputs,
-                            regions: Vec::new(),
-                        });
+                        let n = self.add(
+                            Node {
+                                op: Op::Apply,
+                                inputs: ins,
+                                outputs,
+                                regions: Vec::new(),
+                            },
+                            Vec::new(),
+                        );
                         for (j, p) in c.ports.iter().enumerate() {
                             self.set_state(p, Src::Out(n, 1 + j));
                         }
@@ -687,24 +701,30 @@ impl Lower {
             }
             Term::Read(p) => {
                 let s = self.state(at, p)?;
-                let n = self.add(Node {
-                    op: Op::Read(p.clone()),
-                    inputs: vec![s],
-                    outputs: vec![top(), Edge::State(p.clone())],
-                    regions: Vec::new(),
-                });
+                let n = self.add(
+                    Node {
+                        op: Op::Read(p.clone()),
+                        inputs: vec![s],
+                        outputs: vec![top(), Edge::State(p.clone())],
+                        regions: Vec::new(),
+                    },
+                    Vec::new(),
+                );
                 self.set_state(p, Src::Out(n, 1));
                 Val::Src(Src::Out(n, 0), at)
             }
             Term::Push(p, v) => {
                 let v = self.value(v)?;
                 let s = self.state(at, p)?;
-                let n = self.add(Node {
-                    op: Op::Push(p.clone()),
-                    inputs: vec![s, v],
-                    outputs: vec![top(), Edge::State(p.clone())],
-                    regions: Vec::new(),
-                });
+                let n = self.add(
+                    Node {
+                        op: Op::Push(p.clone()),
+                        inputs: vec![s, v],
+                        outputs: vec![top(), Edge::State(p.clone())],
+                        regions: Vec::new(),
+                    },
+                    Vec::new(),
+                );
                 self.set_state(p, Src::Out(n, 1));
                 Val::Src(Src::Out(n, 0), at)
             }

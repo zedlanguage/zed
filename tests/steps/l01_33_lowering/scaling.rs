@@ -74,3 +74,37 @@ fn lowering_the_chain_scales() {
         .join()
         .unwrap();
 }
+
+/// `if i < d then (let y{i} = (if ...) + 1 in y{i}) else i`, `d` deep: each level a match node
+/// whose arm holds the next, its edge carrying the hint of a `let`.
+pub(crate) fn nest(d: usize) -> Term {
+    use zed_kernel::Prim;
+    use zed_kernel::term::build::{if_, prim};
+    let mut t = lit(0);
+    for i in 0..d {
+        let y = format!("y{i}");
+        let inner = let_(&y, prim(Prim::Add, vec![t, lit(1)]), var(&y));
+        t = if_(
+            prim(Prim::Lt, vec![lit(i as i64), lit(d as i64)]),
+            inner,
+            lit(i as i64),
+        );
+    }
+    t
+}
+
+/// CSE keys each node by the hashes of its regions, so a nest is not canonicalized again at
+/// every level above it (COMPLEXITY.md Z2, Z3).
+#[test]
+fn lowering_a_deep_nest_scales() {
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            scaling::check("lowering a nest of `if`s", 100, |d| {
+                lower(&nest(d)).unwrap();
+            })
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

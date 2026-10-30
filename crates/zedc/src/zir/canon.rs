@@ -15,11 +15,17 @@
 //! The address is the BLAKE3-256 hash of `zed-zir\0`, [`crate::canon::VERSION`], and the
 //! binary form ([`super::binary`]) of the normal form. Two graphs that differ only in binder
 //! names, hints, facet order or repeats, or the spelling of one set of integers, share it.
+//!
+//! Every rule acts on one edge, or on one pattern, alone, and the binder rule's hint is
+//! removed by the hints rule. So [`canonicalize`] normalizes each edge and each pattern in one
+//! pass and reaches the normal form that [`step`] reaches, in time linear in the graph; and
+//! [`key`] hashes a node from the keys of its regions, so the lowering keys each new node
+//! without walking the regions below it again.
 
 use zed_kernel::term::{Pattern, Term};
 use zed_kernel::value::Value;
 
-use super::{Edge, Op, Region, binary};
+use super::{Edge, Node, Op, Region, RegionKind, binary};
 use crate::address::ContentAddress;
 use crate::canon::binders::{level_name, level_of};
 use crate::canon::{self, Def, Facet, RULES};
@@ -63,11 +69,112 @@ pub fn step(g: &mut Region) -> Option<&'static str> {
     None
 }
 
-/// The normal form of `g`.
+/// The normal form of `g`: the graph [`step`] reaches, in one pass.
 pub fn canonicalize(g: &Region) -> Region {
     let mut g = g.clone();
-    while step(&mut g).is_some() {}
+    normalize(&mut g);
     g
+}
+
+fn normalize(g: &mut Region) {
+    g.args.iter_mut().for_each(normal_edge);
+    for n in &mut g.nodes {
+        normal_shell(n);
+        n.regions.iter_mut().for_each(normalize);
+    }
+}
+
+/// A node's operation and outputs in normal form; its regions are left alone.
+fn normal_shell(n: &mut Node) {
+    n.outputs.iter_mut().for_each(normal_edge);
+    if let Op::Match(ps) = &mut n.op {
+        for p in ps {
+            rename_all(p, &mut 0);
+        }
+    }
+}
+
+/// An edge in normal form: the first rule in priority order that applies, until none does.
+fn normal_edge(e: &mut Edge) {
+    if let Edge::Value(v) = e {
+        let mut d = def(v);
+        while RULES[1..].iter().any(|rule| (rule.apply)(&mut d)) {}
+        v.domain = d.domain.expect("an edge has a domain");
+        v.facets = d.facets;
+    }
+}
+
+/// Each written binder of `p` renamed to its level, the number of binders before it.
+fn rename_all(p: &mut Pattern, index: &mut usize) {
+    match p {
+        Pattern::Bind(name) => {
+            if level_of(name).is_none() {
+                *name = level_name(*index);
+            }
+            *index += 1;
+        }
+        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => {
+            ps.iter_mut().for_each(|q| rename_all(q, index))
+        }
+        Pattern::Fields(_, fs) => fs.iter_mut().for_each(|(_, q)| rename_all(q, index)),
+        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+    }
+}
+
+/// The key of node `n` whose regions have the keys `regions`: equal keys mean equal normal
+/// forms of the one-node regions holding the nodes (up to the hash).
+pub fn node_key(n: &Node, regions: &[ContentAddress]) -> ContentAddress {
+    let mut shell = Node {
+        op: n.op.clone(),
+        inputs: n.inputs.clone(),
+        outputs: n.outputs.clone(),
+        regions: Vec::new(),
+    };
+    normal_shell(&mut shell);
+    let mut h = blake3::Hasher::new();
+    h.update(b"zed-zir-node\0");
+    h.update(&canon::VERSION.to_le_bytes());
+    h.update(&binary::encode(&Region {
+        kind: RegionKind::Function,
+        args: Vec::new(),
+        nodes: vec![shell],
+        results: Vec::new(),
+    }));
+    h.update(&(regions.len() as u64).to_le_bytes());
+    for r in regions {
+        h.update(&r.0);
+    }
+    ContentAddress(*h.finalize().as_bytes())
+}
+
+/// The key of region `r` whose nodes' regions have the keys `inner`, one list per node.
+pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> ContentAddress {
+    let mut shell = Region {
+        kind: r.kind,
+        args: r.args.clone(),
+        nodes: Vec::new(),
+        results: r.results.clone(),
+    };
+    shell.args.iter_mut().for_each(normal_edge);
+    let mut h = blake3::Hasher::new();
+    h.update(b"zed-zir-region\0");
+    h.update(&canon::VERSION.to_le_bytes());
+    h.update(&binary::encode(&shell));
+    h.update(&(r.nodes.len() as u64).to_le_bytes());
+    for (n, keys) in r.nodes.iter().zip(inner) {
+        h.update(&node_key(n, keys).0);
+    }
+    ContentAddress(*h.finalize().as_bytes())
+}
+
+/// The key of `g` from the bottom up: what [`region_key`] gives with every region's key.
+pub fn key(g: &Region) -> ContentAddress {
+    let inner: Vec<Vec<ContentAddress>> = g
+        .nodes
+        .iter()
+        .map(|n| n.regions.iter().map(key).collect())
+        .collect();
+    region_key(g, &inner)
 }
 
 /// The content address of `g`.
