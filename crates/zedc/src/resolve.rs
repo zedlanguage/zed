@@ -15,7 +15,7 @@
 //! naming the layer. A member `x.f` whose `f` is in scope may be a uniform call `f(x)`; its
 //! resolution is recorded, and elaboration (step L1.16) tells a field from a function.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::ast::{Error, Expr, ExprKind, Param, Pattern, Port, Stmt, StmtKind, StrPart, Target};
 use crate::ast::{Note, Type, TypeKind};
@@ -132,7 +132,7 @@ const TYPES: &[&str] = &["int", "rat", "f64", "bool", "String", "Lines", "Files"
 /// The resolution of `unit`, or every error in it, in text order.
 pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
     let mut r = Resolver::default();
-    r.scopes.push(HashMap::new());
+    r.scopes.push(Vec::new());
     r.stmts(unit);
     if r.errors.is_empty() {
         Ok(r.out)
@@ -152,24 +152,36 @@ enum Found {
 struct Resolver {
     out: Resolution,
     errors: Vec<Error>,
-    /// The scopes, outermost first: each name's binders.
-    scopes: Vec<HashMap<String, Vec<usize>>>,
-    /// Each function binder's written parameter types, which tell an overload's arrows apart.
-    signatures: HashMap<usize, Vec<Option<String>>>,
+    /// The scopes, outermost first: the names each binds.
+    scopes: Vec<Vec<String>>,
+    /// The bindings of each name in the open scopes, innermost last, so a name is found in
+    /// `O(1)` however deep the scopes nest.
+    visible: HashMap<String, Vec<Bound>>,
+}
+
+/// A name's binders in one scope.
+struct Bound {
+    /// How many scopes are open around the scope, itself included.
+    level: usize,
+    ids: Vec<usize>,
+    /// The written parameter types of each, which tell an overload's arrows apart: a set, so
+    /// declaring `K` overloads costs `O(K)`, not `O(K²)`.
+    signatures: HashSet<Option<Vec<Option<String>>>>,
 }
 
 impl Resolver {
     /// Binds `name` in the innermost scope; `signature` is a function's parameter types.
     fn bind(&mut self, name: &str, span: Span, kind: Kind, signature: Option<Vec<Option<String>>>) {
         let id = self.out.binders.len();
-        let scope = self.scopes.last_mut().expect("a scope");
-        if let Some(ids) = scope.get(name) {
-            let first = &self.out.binders[ids[0]];
+        let level = self.scopes.len();
+        let here = (self.visible.get(name))
+            .and_then(|v| v.last())
+            .filter(|b| b.level == level);
+        if let Some(b) = here {
+            let first = &self.out.binders[b.ids[0]];
             let overload = kind == Kind::Function
                 && first.kind == Kind::Function
-                && ids
-                    .iter()
-                    .all(|i| self.signatures.get(i) != signature.as_ref());
+                && !b.signatures.contains(&signature);
             if !overload {
                 let (message, note) = match &signature {
                     Some(_) if first.kind == Kind::Function => (
@@ -196,10 +208,18 @@ impl Resolver {
                 return;
             }
         }
-        scope.entry(name.into()).or_default().push(id);
-        if let Some(s) = signature {
-            self.signatures.insert(id, s);
+        let v = self.visible.entry(name.into()).or_default();
+        if v.last().is_none_or(|b| b.level != level) {
+            v.push(Bound {
+                level,
+                ids: Vec::new(),
+                signatures: HashSet::new(),
+            });
+            self.scopes.last_mut().expect("a scope").push(name.into());
         }
+        let b = v.last_mut().expect("pushed above");
+        b.ids.push(id);
+        b.signatures.insert(signature);
         self.out.binders.push(Binder {
             name: name.into(),
             span,
@@ -207,10 +227,25 @@ impl Resolver {
         });
     }
 
+    fn open(&mut self) {
+        self.scopes.push(Vec::new());
+    }
+
+    /// Closes the innermost scope, so its names name what they named outside it.
+    fn close(&mut self) {
+        for name in self.scopes.pop().expect("an open scope") {
+            let v = self.visible.get_mut(&name).expect("bound in the scope");
+            v.pop();
+            if v.is_empty() {
+                self.visible.remove(&name);
+            }
+        }
+    }
+
     /// What `name` names here, or `None`.
     fn find(&self, name: &str) -> Option<Found> {
-        if let Some(ids) = self.scopes.iter().rev().find_map(|s| s.get(name)) {
-            return Some(Found::Bound(ids.clone()));
+        if let Some(b) = self.visible.get(name).and_then(|v| v.last()) {
+            return Some(Found::Bound(b.ids.clone()));
         }
         prelude_layer(name).map(Found::Word)
     }
@@ -283,7 +318,7 @@ impl Resolver {
     /// A function's or lambda's parameters, ports and body: one scope, which a body block's
     /// statements share.
     fn function(&mut self, params: &[Param], ports: &[Port], body: &Expr) {
-        self.scopes.push(HashMap::new());
+        self.open();
         for p in params {
             self.bind(&p.name, p.span, Kind::Param, None);
         }
@@ -302,7 +337,7 @@ impl Resolver {
             ExprKind::Block(stmts) => self.stmts(stmts),
             _ => self.expr(body),
         }
-        self.scopes.pop();
+        self.close();
     }
 
     fn expr(&mut self, e: &Expr) {
@@ -347,17 +382,17 @@ impl Resolver {
                 default,
             } => {
                 self.expr(of);
-                self.scopes.push(HashMap::new());
+                self.open();
                 if let Some(p) = pattern {
                     self.pattern(p);
                 }
                 self.expr(default);
-                self.scopes.pop();
+                self.close();
             }
             ExprKind::Block(stmts) => {
-                self.scopes.push(HashMap::new());
+                self.open();
                 self.stmts(stmts);
-                self.scopes.pop();
+                self.close();
             }
             ExprKind::If {
                 cond,
