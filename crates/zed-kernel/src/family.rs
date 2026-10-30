@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::error::KernelError;
 use crate::value::Value;
@@ -16,8 +17,9 @@ use crate::value::Value;
 pub type Keypath = Vec<Value>;
 
 /// A finite family. No level of a family is empty except a whole family that has no entries.
+/// Its entries are shared, so a copy of a family costs O(1) whatever its size.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
-pub struct Family(BTreeMap<Value, Value>);
+pub struct Family(Arc<BTreeMap<Value, Value>>);
 
 enum Node {
     Leaf(Value),
@@ -25,7 +27,7 @@ enum Node {
 }
 
 fn into_family(level: BTreeMap<Value, Node>) -> Family {
-    Family(
+    Family(Arc::new(
         level
             .into_iter()
             .map(|(k, node)| match node {
@@ -33,7 +35,7 @@ fn into_family(level: BTreeMap<Value, Node>) -> Family {
                 Node::Inner(inner) => (k, Value::Family(into_family(inner))),
             })
             .collect(),
-    )
+    ))
 }
 
 fn insert(
@@ -84,14 +86,14 @@ impl Family {
     /// A set: each key maps to itself, as a set leaf does, so a membership lookup yields
     /// the element (sec:kernel, `discard`).
     pub fn set<K: Into<Value>>(keys: impl IntoIterator<Item = K>) -> Self {
-        Family(
+        Family(Arc::new(
             keys.into_iter()
                 .map(|k| {
                     let k = k.into().key();
                     (k.clone(), k)
                 })
                 .collect(),
-        )
+        ))
     }
 
     /// Builds a family from its leaves. A leaf whose value is a family contributes that
@@ -128,7 +130,7 @@ impl Family {
     }
 
     fn collect_leaves(&self, prefix: &mut Keypath, out: &mut Vec<(Keypath, Value)>) {
-        for (k, v) in &self.0 {
+        for (k, v) in self.0.iter() {
             prefix.push(k.clone());
             match v {
                 Value::Family(sub) => sub.collect_leaves(prefix, out),

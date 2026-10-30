@@ -10,6 +10,8 @@ use zed_kernel::{
 };
 use zed_tests::kernel::*;
 
+mod scaling;
+
 #[test]
 fn word_count_groups_then_folds() {
     let doc = lines_of(&[
