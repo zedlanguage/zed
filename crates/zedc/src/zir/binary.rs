@@ -20,6 +20,10 @@ use super::{Derived, Edge, Node, Op, Region, RegionKind, Src};
 
 const MAGIC: &[u8; 4] = b"ZIR\0";
 
+/// The one NaN word the form writes: the quiet NaN with a zero payload. Rust does not fix the
+/// bits of `f64::NAN`, so the form fixes them itself.
+pub const NAN_BITS: u64 = 0x7ff8_0000_0000_0000;
+
 const KINDS: [RegionKind; 5] = [
     RegionKind::Function,
     RegionKind::Match,
@@ -136,7 +140,8 @@ impl W {
             }
             Value::Float(x) => {
                 self.tag(4);
-                self.n(x.get().to_bits());
+                let x = x.get();
+                self.n(if x.is_nan() { NAN_BITS } else { x.to_bits() });
             }
             Value::Str(s) => {
                 self.tag(5);

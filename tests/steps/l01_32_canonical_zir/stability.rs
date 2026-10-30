@@ -148,3 +148,37 @@ fn the_normal_form() {
     assert_eq!(binary::decode(&binary::encode(&n)), Ok(n));
     assert_eq!(address(&g).to_string().len(), 64, "64 lowercase hex digits");
 }
+
+#[test]
+fn the_address_is_pinned() {
+    // The binary form fixes its own layout (little-endian 64-bit words, floats by their
+    // IEEE-754 bits, big numbers in decimal), so this hash is the same on every machine.
+    assert_eq!(
+        address(&graph(DISCOUNT)).to_string(),
+        "800ef82a27b7bce0e3dbb8d28e72373e6e875532698f89294af97adbb2847b41"
+    );
+}
+
+#[test]
+fn every_nan_is_one_word() {
+    // A NaN with another payload reads as the one NaN, and is written as the fixed word.
+    let mut bytes = zedc::zir::binary::encode(&graph(NAN_CONST));
+    let at = bytes
+        .windows(8)
+        .position(|w| w == zedc::zir::binary::NAN_BITS.to_le_bytes())
+        .expect("the NaN word");
+    bytes[at] ^= 1;
+    let g = zedc::zir::binary::decode(&bytes).expect("a graph");
+    assert_eq!(
+        zedc::zir::binary::encode(&g)[at],
+        zedc::zir::binary::NAN_BITS.to_le_bytes()[0]
+    );
+    assert_eq!(address(&g), address(&graph(NAN_CONST)));
+}
+
+const NAN_CONST: &str = "\
+zir 1
+r region function ()
+r.0 prim tuple (nan, 1.5) -> (_)
+r results (r.0^0)
+";
