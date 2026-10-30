@@ -10,6 +10,7 @@
 
 mod iteration;
 mod revision;
+mod scaling;
 mod widening;
 mod wto;
 

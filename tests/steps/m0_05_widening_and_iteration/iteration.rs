@@ -40,7 +40,7 @@ fn flatten(order: &[Element], out: &mut Vec<Instr>) {
 }
 
 /// Phase 1 as a machine over the flattened order, with one frame per open component
-/// holding its iteration count and its number of head changes.
+/// holding its iteration count, and one count per head of its changes in the whole phase.
 fn machine(eq: &System, s: Strategy) -> Vec<IntervalSet> {
     let mut program = Vec::new();
     flatten(
@@ -48,8 +48,9 @@ fn machine(eq: &System, s: Strategy) -> Vec<IntervalSet> {
         &mut program,
     );
     let mut cells = vec![IntervalSet::empty(); eq.init.len()];
-    // Frames: (instruction of the head, iteration, changes).
-    let mut frames: Vec<(usize, u32, u32)> = Vec::new();
+    let mut changes = vec![0; eq.init.len()];
+    // Frames: (instruction of the head, iteration).
+    let mut frames: Vec<(usize, u32)> = Vec::new();
     let mut pc = 0;
     while pc < program.len() {
         match program[pc] {
@@ -59,14 +60,14 @@ fn machine(eq: &System, s: Strategy) -> Vec<IntervalSet> {
             }
             Instr::Head { head, end } => {
                 if frames.last().is_none_or(|f| f.0 != pc) {
-                    frames.push((pc, 0, 0));
+                    frames.push((pc, 0));
                 }
-                let (_, i, changes) = *frames.last().unwrap();
+                let (_, i) = *frames.last().unwrap();
                 let next = cells[head].join(&eq.eval(head, &cells));
                 if i > 0 && next == cells[head] {
                     frames.pop();
                     pc = end + 1;
-                } else if i == s.head_iterations {
+                } else if next != cells[head] && changes[head] == s.head_iterations {
                     for instr in &program[pc..end] {
                         if let Instr::Eval(v) | Instr::Head { head: v, .. } = *instr {
                             cells[v] = IntervalSet::top();
@@ -75,16 +76,15 @@ fn machine(eq: &System, s: Strategy) -> Vec<IntervalSet> {
                     frames.pop();
                     pc = end + 1;
                 } else {
-                    let mut changes = changes;
                     if next != cells[head] {
-                        changes += 1;
-                        cells[head] = if changes > s.delay {
+                        changes[head] += 1;
+                        cells[head] = if changes[head] > s.delay {
                             cells[head].widen(&next)
                         } else {
                             next
                         };
                     }
-                    *frames.last_mut().unwrap() = (pc, i + 1, changes);
+                    *frames.last_mut().unwrap() = (pc, i + 1);
                     pc += 1;
                 }
             }

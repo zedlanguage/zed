@@ -8,8 +8,8 @@
 // The dependency graph has an edge from u to every cell that reads u, the
 // successors in source order.
 
-wideningDelay = 3;      // a head's first 3 changes in one stabilization are joins
-headIterations = 64;    // head updates per stabilization before the component goes to top
+wideningDelay = 3;      // a head's first 3 changes in phase 1 are joins
+headIterations = 64;    // head changes in phase 1 before the component goes to top
 narrowingRounds = 64;   // rounds of phase 2
 
 put(positional xs, positional i, positional x) = xs.take(i) ++ [x] ++ xs.drop(i + 1);
@@ -98,33 +98,42 @@ vertices(positional e) = match e {
 // Gauss-Seidel in the order, forward projections only, joining at every cell. A
 // component iterates "update the head, then stabilize the body" until the head
 // is unchanged in an iteration after the first; nested components stabilize in
-// full inside each iteration. Changes past the delay widen. A head still
-// changing after headIterations updates sets every cell of its component to the
-// top, since a value below the fixpoint is not sound.
+// full inside each iteration. Each head's changes are counted over the whole
+// phase, not per stabilization, so an enclosing loop entering a component again
+// does not restart its delay or its bound. Changes past the delay widen. A head that would change after
+// headIterations changes sets every cell of its component to the top, since a
+// value below the fixpoint is not sound. An implementation may skip a
+// component none of whose cells read from outside it has changed since it last
+// stabilized, since its cells are then a post-fixpoint of its own equations;
+// the checker does, which makes the work of nested loops linear in their number.
 
 struct Sys { reads: Any, eval: Any, lattice: Lattice }
+struct State { cells: Any, changes: Any }
 
 phase1(positional sys, positional order) =
-  stabilize(sys, order, 0, sys.reads.map(x -> sys.lattice.bottom));
+  stabilize(sys, order, 0, State(cells: sys.reads.map(x -> sys.lattice.bottom), changes: sys.reads.map(x -> 0))).cells;
 
-stabilize(positional sys, positional order, positional i, positional cells) =
-  if i >= order::len { cells }
-  else { stabilize(sys, order, i + 1, element(sys, order[i], cells)) };
+stabilize(positional sys, positional order, positional i, positional st) =
+  if i >= order::len { st }
+  else { stabilize(sys, order, i + 1, element(sys, order[i], st)) };
 
-element(positional sys, positional e, positional cells) = match e {
-  #vertex(v) -> put(cells, v, sys.lattice.join(cells[v], sys.eval(v, cells))),
-  #component(head: h, body: b) -> headLoop(sys, e, h, b, 0, 0, cells),
+element(positional sys, positional e, positional st) = match e {
+  #vertex(v) -> State(cells: put(st.cells, v, sys.lattice.join(st.cells[v], sys.eval(v, st.cells))), changes: st.changes),
+  #component(head: h, body: b) -> headLoop(sys, e, h, b, 0, st),
 };
 
-headLoop(positional sys, positional e, positional h, positional b, positional i, positional changes, positional cells) = {
+headLoop(positional sys, positional e, positional h, positional b, positional i, positional st) = {
+  cells = st.cells;
   next = sys.lattice.join(cells[h], sys.eval(h, cells));
-  if i > 0 && next == cells[h] { cells }
-  else if i == headIterations { vertices(e).fold(cells, (cs, v) -> put(cs, v, sys.lattice.top)) }
+  changed = next != cells[h];
+  if i > 0 && !changed { st }
+  else if changed && st.changes[h] == headIterations {
+    State(cells: vertices(e).fold(cells, (cs, v) -> put(cs, v, sys.lattice.top)), changes: st.changes)
+  }
   else {
-    changed = next != cells[h];
-    c = if changed { changes + 1 } else { changes };
+    c = if changed { st.changes[h] + 1 } else { st.changes[h] };
     value = if !changed { cells[h] } else if c > wideningDelay { sys.lattice.widen(cells[h], next) } else { next };
-    headLoop(sys, e, h, b, i + 1, c, stabilize(sys, b, 0, put(cells, h, value)))
+    headLoop(sys, e, h, b, i + 1, stabilize(sys, b, 0, State(cells: put(cells, h, value), changes: put(st.changes, h, c))))
   }
 };
 

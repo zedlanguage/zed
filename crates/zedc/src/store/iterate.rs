@@ -15,12 +15,12 @@
 use super::lattice::Lattice;
 use super::wto::{Element, weak_topological_order};
 
-/// A head's first changes in one stabilization of its component are joins; from this many
-/// on, each change is a widening (step M0.5).
+/// A head's first this many changes in phase 1 are joins; each later change is a widening
+/// (step M0.5).
 pub const WIDENING_DELAY: u32 = 3;
 
-/// The most times a head is updated in one stabilization of its component; a component still
-/// changing after that is set to the top (step M0.5).
+/// The most times a head changes in phase 1; a component whose head would change again is
+/// set to the top (step M0.5).
 pub const HEAD_ITERATIONS: u32 = 64;
 
 /// The most rounds of phase 2 (step M0.5).
@@ -81,38 +81,125 @@ pub fn solve<L: Lattice>(eq: &impl Equations<L>, strategy: Strategy) -> Vec<L> {
 
 /// Phase 1 over the given order, from every cell at the bottom.
 pub fn phase1<L: Lattice>(eq: &impl Equations<L>, order: &[Element], strategy: Strategy) -> Vec<L> {
-    let mut cells = vec![L::bottom(); eq.reads().len()];
-    stabilize(eq, order, strategy, &mut cells);
-    cells
+    let n = eq.reads().len();
+    let mut w = Walk {
+        cells: vec![L::bottom(); n],
+        changes: vec![0; n],
+        dirty: vec![true; n],
+        succ: dependency_graph(eq.reads()),
+        pos: vec![0; n],
+        end: vec![0; n],
+        parent: vec![NONE; n],
+        inner: vec![NONE; n],
+    };
+    w.number(order, NONE, &mut 0);
+    w.stabilize(eq, order, strategy);
+    w.cells
 }
 
-fn stabilize<L: Lattice>(eq: &impl Equations<L>, order: &[Element], s: Strategy, cells: &mut [L]) {
-    for element in order {
-        match element {
-            Element::Vertex(v) => cells[*v] = cells[*v].join(&eq.eval(*v, cells)),
-            Element::Component { head, body } => {
-                let h = *head;
-                let mut changes = 0;
-                for i in 0.. {
-                    let next = cells[h].join(&eq.eval(h, cells));
-                    if i > 0 && next == cells[h] {
-                        break;
+const NONE: usize = usize::MAX;
+
+/// The state of phase 1. Components are named by their heads. `changes[h]` counts head `h`'s
+/// changes in the whole phase, not in one stabilization, so the delay and the bound on changes
+/// do not restart when an enclosing loop enters the component again. `dirty[h]` says whether a
+/// cell that the component reads from outside it has changed since the component last
+/// stabilized; a clean component is skipped, which changes nothing, since its cells are then
+/// a post-fixpoint of its own equations (in a weak topological order every edge back into the
+/// component's cells goes to a head inside it). So a component is stabilized once per change
+/// of a cell it reads from outside, not once per change of every enclosing head, and nested
+/// loops cost work linear in their number, where restarted counters made it exponential in
+/// the depth.
+struct Walk<L> {
+    cells: Vec<L>,
+    changes: Vec<u32>,
+    dirty: Vec<bool>,
+    succ: Vec<Vec<usize>>,
+    /// Each vertex's place in the flattened order; a component's vertices are the places from
+    /// its head's to `end[head]`.
+    pos: Vec<usize>,
+    end: Vec<usize>,
+    /// The enclosing component of a component.
+    parent: Vec<usize>,
+    /// The innermost component holding a vertex (for a head, its own).
+    inner: Vec<usize>,
+}
+
+impl<L: Lattice> Walk<L> {
+    fn number(&mut self, order: &[Element], within: usize, at: &mut usize) {
+        for element in order {
+            match element {
+                Element::Vertex(v) => {
+                    self.pos[*v] = *at;
+                    self.inner[*v] = within;
+                    *at += 1;
+                }
+                Element::Component { head, body } => {
+                    let h = *head;
+                    self.pos[h] = *at;
+                    self.inner[h] = h;
+                    self.parent[h] = within;
+                    *at += 1;
+                    self.number(body, h, at);
+                    self.end[h] = *at - 1;
+                }
+            }
+        }
+    }
+
+    fn holds(&self, c: usize, u: usize) -> bool {
+        self.pos[c] <= self.pos[u] && self.pos[u] <= self.end[c]
+    }
+
+    /// Sets cell `v`; on a change, every component that reads `v` from outside it is dirty.
+    fn set(&mut self, v: usize, value: L) {
+        if value == self.cells[v] {
+            return;
+        }
+        self.cells[v] = value;
+        for i in 0..self.succ[v].len() {
+            let mut c = self.inner[self.succ[v][i]];
+            while c != NONE && !self.holds(c, v) {
+                self.dirty[c] = true;
+                c = self.parent[c];
+            }
+        }
+    }
+
+    fn stabilize(&mut self, eq: &impl Equations<L>, order: &[Element], s: Strategy) {
+        for element in order {
+            match element {
+                Element::Vertex(v) => {
+                    let next = self.cells[*v].join(&eq.eval(*v, &self.cells));
+                    self.set(*v, next);
+                }
+                Element::Component { head, body } => {
+                    let h = *head;
+                    if !self.dirty[h] {
+                        continue;
                     }
-                    if i == s.head_iterations {
-                        for v in element.vertices() {
-                            cells[v] = L::top();
+                    for i in 0.. {
+                        let next = self.cells[h].join(&eq.eval(h, &self.cells));
+                        if i > 0 && next == self.cells[h] {
+                            break;
                         }
-                        break;
+                        if next != self.cells[h] {
+                            if self.changes[h] == s.head_iterations {
+                                for v in element.vertices() {
+                                    self.set(v, L::top());
+                                }
+                                break;
+                            }
+                            self.changes[h] += 1;
+                            let value = if self.changes[h] > s.delay {
+                                self.cells[h].widen(&next)
+                            } else {
+                                next
+                            };
+                            self.set(h, value);
+                        }
+                        self.stabilize(eq, body, s);
                     }
-                    if next != cells[h] {
-                        changes += 1;
-                        cells[h] = if changes > s.delay {
-                            cells[h].widen(&next)
-                        } else {
-                            next
-                        };
-                    }
-                    stabilize(eq, body, s, cells);
+                    self.dirty[h] = false;
                 }
             }
         }
