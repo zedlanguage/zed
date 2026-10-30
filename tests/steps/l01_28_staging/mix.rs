@@ -95,3 +95,30 @@ fn a_dead_branch_is_cut_at_build() {
     assert!(!main.contains("read: "), "{main}");
     assert_eq!(out(&s, "abc\n"), out(&p, "abc\n"));
 }
+
+#[test]
+fn a_local_definition_is_computed_where_it_is_read() {
+    // `k` is build-stage, so its reads are computed and its definition dropped; `inc`, a
+    // function nothing reads, is never evaluated; `n` reads the port and stays.
+    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  k = 6 * 7;\n  \
+               inc(y: int) = y + 1;\n  n = int(stdin[1]) else 0;\n  \
+               stdout <- String(n + k);\n}\n";
+    let (p, s, report) = staged(src, BUILD_FUEL);
+    let main = term(&s, "main");
+    assert!(main.contains("42"), "{main}");
+    assert!(!main.contains('k') && !main.contains("inc"), "{main}");
+    assert!(report.unread.contains(&"inc".to_string()), "{report:?}");
+    assert_eq!(out(&s, "8\n"), "50\n");
+    assert_eq!(out(&s, "8\n"), out(&p, "8\n"));
+}
+
+#[test]
+fn a_write_of_a_constant_is_left_to_run() {
+    // The text is build-stage; the write is an effect, so the build does not run it.
+    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"a\" ++ \"b\";\n}\n";
+    let (p, s, report) = staged(src, BUILD_FUEL);
+    assert_eq!(report.left, []);
+    assert!(term(&s, "main").contains("\"ab\""), "{}", term(&s, "main"));
+    assert_eq!(out(&s, "x\n"), "ab\n");
+    assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
+}

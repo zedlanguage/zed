@@ -5,6 +5,7 @@
 //! on a parameter only when the parameter's domain is finite and small.
 
 mod mix;
+mod scaling;
 mod trick;
 
 use std::collections::BTreeMap;
