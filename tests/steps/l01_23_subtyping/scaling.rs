@@ -130,3 +130,40 @@ fn negated_types_disjoint_from_the_product_are_passed_over() {
     assert!(!Type::with_budget(256, || (&p - &decoys).is_empty()));
     assert!(Type::with_budget(256, || (&p - &(&decoys | &halves)).is_empty()));
 }
+
+#[test]
+fn many_negated_types_passed_over_scale() {
+    // The product `P` of the sets `b + 10_000·k + (0..n)` for `k < 5`, then `b`, less the
+    // `n` tuples `T_i` of `b + 10_000·k + i`, then `b - 1`. Each `T_i` meets `P` in the first
+    // five components and misses it in the last, so it is passed over, after five non-empty
+    // intersections. Each non-empty result discarded every emptiness decided since its query
+    // began by scanning all of them: `O(n²)` steps for the `5n` results (ratio 35); the
+    // time to build the types hid them at one component. Now the types decided empty are
+    // kept in the order decided, and only those since the query began are dropped. Each run
+    // takes a new `b`, so no run reads another's results.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            let fresh = std::cell::Cell::new(1);
+            scaling::check("a product less n tuples passed over, by n", 1000, |n| {
+                let b = 100_000 * fresh.replace(fresh.get() + 1);
+                let meets = |i: usize| (0..5).map(move |k| lit(b + 10_000 * k + i));
+                let p = Type::tuple(
+                    (0..5)
+                        .map(|k| Type::union_all((0..n).map(|i| lit(b + 10_000 * k + i))))
+                        .chain([lit(b)])
+                        .collect(),
+                );
+                let decoys = Type::union_all(
+                    (0..n).map(|i| Type::tuple(meets(i).chain([lit(b - 1)]).collect())),
+                );
+                assert!(
+                    !(&p - &decoys).is_empty(),
+                    "the decoys miss the product at n = {n}"
+                );
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

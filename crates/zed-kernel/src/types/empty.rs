@@ -47,12 +47,7 @@ impl Type {
         let cut = s.splits > bdd::budget();
         MEMO.with(|m| {
             let mut m = m.borrow_mut();
-            m.extend(
-                s.done
-                    .into_iter()
-                    .filter(|(_, (b, _))| *b || !cut)
-                    .map(|(t, (b, _))| (t, b)),
-            );
+            m.extend(s.done.into_iter().filter(|(_, b)| *b || !cut));
         });
         b
     }
@@ -76,13 +71,13 @@ impl Type {
     }
 }
 
-/// One query's state: the types being decided, assumed empty, and those decided, each with
-/// the order it was decided in; and the splits of products made.
+/// One query's state: the types being decided, assumed empty, and those decided; the types
+/// decided empty, in the order they were decided; and the splits of products made.
 #[derive(Default)]
 struct Search {
     busy: BTreeSet<Type>,
-    done: BTreeMap<Type, (bool, usize)>,
-    count: usize,
+    done: BTreeMap<Type, bool>,
+    empties: Vec<Type>,
     splits: usize,
 }
 
@@ -91,22 +86,25 @@ impl Search {
         if let Some(b) = MEMO.with(|m| m.borrow().get(t).copied()) {
             return b;
         }
-        if let Some((b, _)) = self.done.get(t) {
+        if let Some(b) = self.done.get(t) {
             return *b;
         }
         if self.busy.contains(t) {
             return true;
         }
         self.busy.insert(t.clone());
-        let mark = self.count;
+        let mark = self.empties.len();
         let b = self.parts(t.p());
         self.busy.remove(t);
-        if !b {
+        if b {
+            self.empties.push(t.clone());
+        } else {
             // Every emptiness decided since `t` was assumed empty may rest on that.
-            self.done.retain(|_, (e, at)| !*e || *at < mark);
+            for e in self.empties.drain(mark..) {
+                self.done.remove(&e);
+            }
         }
-        self.done.insert(t.clone(), (b, self.count));
-        self.count += 1;
+        self.done.insert(t.clone(), b);
         b
     }
 
