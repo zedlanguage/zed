@@ -16,6 +16,7 @@ pub mod num;
 pub mod print;
 pub mod provenance;
 pub mod term;
+pub mod types;
 pub mod value;
 pub mod words;
 
@@ -25,4 +26,5 @@ pub use family::{Family, Keypath};
 pub use num::Rat;
 pub use provenance::{Fact, FactAddress, NodeAddress, Provenance};
 pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
+pub use types::Universe;
 pub use value::{Atom, F64, Value};

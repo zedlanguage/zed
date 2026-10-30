@@ -20,10 +20,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
+use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Term, Value};
 
 use crate::ast::{
-    Error, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target,
+    Error, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
+    TypeKind,
 };
 use crate::lex::Span;
 use crate::resolve::{Kind, Ref, Resolution, prelude_layer};
@@ -539,8 +541,21 @@ impl<'a> Elab<'a> {
                 ))
             }
             ExprKind::Lambda { params, body } => self.lambda(params, body),
-            ExprKind::Is { .. } => {
-                self.error(e.span, "`is` tests a type, and types arrive at step L1.22")
+            ExprKind::Is { of, ty, negated } => {
+                let (v, t) = (self.expr(of), self.ty(ty));
+                let (v, t) = (v?, t?);
+                if !t.decidable() {
+                    return self.error(
+                        ty.span,
+                        "`is` cannot test a value against a function type at run time",
+                    );
+                }
+                let arms = [(KPattern::Is(t), true), (KPattern::Wild, false)];
+                Some(Term::Match(
+                    Arc::new(v),
+                    arms.map(|(p, b)| (p, Term::Lit(Value::Bool(b != *negated))))
+                        .to_vec(),
+                ))
             }
             ExprKind::Else {
                 of,
@@ -976,6 +991,59 @@ impl<'a> Elab<'a> {
             _ => self.expr(body)?,
         };
         Some(Term::Lam(names, Arc::new(body)))
+    }
+
+    /// The type a type expression denotes. A function type is curried, one level per
+    /// parameter, and `->?` makes each level partial; `() -> V` has the empty tuple as its
+    /// one key.
+    fn ty(&mut self, t: &Type) -> Option<KType> {
+        let all = |b: &mut Self, ts: &[Type]| -> Option<Vec<KType>> {
+            let ts: Vec<Option<KType>> = ts.iter().map(|t| b.ty(t)).collect();
+            ts.into_iter().collect()
+        };
+        Some(match &t.kind {
+            TypeKind::Name(n) => match n.as_str() {
+                "int" => KType::int(),
+                "rat" => KType::rat(),
+                "f64" => KType::f64(),
+                "bool" => KType::bool(),
+                "String" => KType::string(),
+                _ => {
+                    return self.error(
+                        t.span,
+                        format!("`{n}` is the type of a port, and no value has it"),
+                    );
+                }
+            },
+            TypeKind::Atom(a) => KType::atom(a),
+            TypeKind::Tuple(ts) => KType::tuple(all(self, ts)?),
+            TypeKind::Union(ts) => all(self, ts)?
+                .into_iter()
+                .fold(KType::empty(), |a, b| a | b),
+            TypeKind::And(ts) => all(self, ts)?.into_iter().fold(KType::top(), |a, b| a & b),
+            TypeKind::Diff(a, b) => {
+                let (a, b) = (self.ty(a), self.ty(b));
+                a? - &b?
+            }
+            TypeKind::Arrow {
+                params,
+                partial,
+                result,
+            } => {
+                let keys: Vec<Option<KType>> = params.iter().map(|p| self.ty(&p.ty)).collect();
+                let result = self.ty(result);
+                let mut keys: Vec<KType> = keys.into_iter().collect::<Option<_>>()?;
+                if keys.is_empty() {
+                    keys.push(KType::tuple(Vec::new()));
+                }
+                let level = if *partial {
+                    KType::partial
+                } else {
+                    KType::exact
+                };
+                keys.into_iter().rev().fold(result?, |v, k| level(k, v))
+            }
+        })
     }
 
     /// An `else` pattern: an atom, its payload matched by position or by name; a field

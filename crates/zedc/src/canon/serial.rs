@@ -144,6 +144,10 @@ impl Out<'_> {
                 self.patterns(ps);
             }
             Pattern::AnyAtom => self.tag(5),
+            Pattern::Is(t) => {
+                self.tag(7);
+                self.str(&t.to_string());
+            }
             Pattern::Fields(name, fs) => {
                 self.tag(6);
                 self.str(name);

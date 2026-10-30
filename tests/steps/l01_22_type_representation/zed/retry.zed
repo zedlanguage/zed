@@ -1,0 +1,11 @@
+// Whether a fetch result should be retried: anything that is not a page of text or a
+// permanent failure.
+retry(r) = r is not String | #notFound | #forbidden
+test {
+  "<html>" -> false,
+  #notFound -> false,
+  #forbidden -> false,
+  #timeout -> true,
+  #reset -> true,
+  503 -> true,
+}

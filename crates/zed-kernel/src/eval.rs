@@ -513,15 +513,28 @@ impl Evaluator {
                 other => type_err(format!("`if` on {other}")),
             },
             Term::Match(scrutinee, arms) => {
-                let v = self.data(scrutinee, env)?;
+                let v = self.eval(scrutinee, env)?;
                 let fact = self.last_fact();
                 for (pat, body) in arms {
                     let mut env2 = env.clone();
-                    if matches(pat, &v, &mut env2, fact) {
+                    let hit = match (&v, pat) {
+                        (V::Data(v), pat) => matches(pat, v, &mut env2, fact),
+                        (_, Pattern::Wild) => true,
+                        (f, Pattern::Bind(name)) => {
+                            env2 = bind_fact(env, name.clone(), f.clone(), fact);
+                            true
+                        }
+                        (_, Pattern::Is(t)) => t.functions(),
+                        _ => false,
+                    };
+                    if hit {
                         return self.eval(body, &env2);
                     }
                 }
-                type_err(format!("no arm matches {v}"))
+                match v {
+                    V::Data(v) => type_err(format!("no arm matches {v}")),
+                    _ => type_err("no arm matches the function"),
+                }
             }
             Term::Fam { domain, var, body } => {
                 let domain = self.family(domain, env)?;
@@ -1178,6 +1191,7 @@ fn matches(pat: &Pattern, v: &Value, env: &mut Env, fact: Option<usize>) -> bool
         }
         (Pattern::Lit(l), v) => l == v,
         (Pattern::AnyAtom, Value::Atom(_)) => true,
+        (Pattern::Is(t), v) => t.contains(v),
         (Pattern::Atom(name, ps), Value::Atom(a)) => {
             a.name == *name
                 && a.fields.is_empty()

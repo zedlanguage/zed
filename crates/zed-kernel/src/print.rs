@@ -41,6 +41,7 @@ impl fmt::Display for Pattern {
             Pattern::Tuple(ps) if ps.len() == 1 => write!(f, "({},)", ps[0]),
             Pattern::Tuple(ps) => write!(f, "({})", list(ps)),
             Pattern::AnyAtom => f.write_str("#_"),
+            Pattern::Is(t) => write!(f, "(is {t})"),
         }
     }
 }

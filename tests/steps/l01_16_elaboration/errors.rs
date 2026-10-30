@@ -90,10 +90,6 @@ fn named_arguments_through_a_value_need_types() {
 fn forms_of_later_steps_and_layers() {
     let cases = [
         (
-            "x = 1 is int;",
-            "`is` tests a type, and types arrive at step L1.22 [1 is int]",
-        ),
-        (
             "p = 1;\nx = p.size;",
             "`size` is not a function in scope, and fields arrive at L2 [p.size]",
         ),

@@ -1,0 +1,4 @@
+// A run-time test cannot ask whether a value is a particular kind of function (it can
+// only tell a function from other values), and a port's type is not a type of values.
+handler(h) = h is (String -> int); // ✗
+input(x) = x is Lines; // ✗

@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::types::Type;
 use crate::value::Value;
 
 /// A primitive operation. Applied to a failure atom, every primitive but `Tuple`, `Atom`,
@@ -132,6 +133,8 @@ pub enum Pattern {
     /// `#_`, any atom, its payload included: the arm `else` and `?.` write for the atom
     /// members of a value until its type enumerates them (DESIGN.md, step L1.16).
     AnyAtom,
+    /// `x is T` as a pattern: a value of the type `T`, which is decidable (step L1.22).
+    Is(Type),
 }
 
 /// Where a `gen` loop tests its guard (sec:generations).
