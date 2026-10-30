@@ -85,3 +85,108 @@ fn a_jacobi_round_reads_the_family_as_the_round_began() {
     assert!(with(40).is_err(), "40 rounds do not finish a chain of 40");
     assert!(with(41).is_ok());
 }
+
+/// The family over `0..d` whose entry 0 sums the entries `1..d`, each `k` itself.
+fn fan_in(d: usize) -> Term {
+    let keys = lit(Value::Family(Family::set(0..d as i64)));
+    let rest = lit(Value::Family(Family::set(1..d as i64)));
+    fix_defined(keys, |this, k| {
+        let sum = fold(
+            fam_with(rest, |j| get(this, j)),
+            Term::PrimFn(zed_kernel::Prim::Add),
+            Some(lit(0)),
+        );
+        if_(eq(k.clone(), lit(0)), sum, k)
+    })
+}
+
+/// The family over `0..2d` whose entry `k < d` reads the leaf `d + k`, then the entry
+/// after it: `f[k] = f[d + k] + f[k + 1]`, with `f[d - 1] = f[2d - 1]` and `f[d + k] = k`.
+fn reverse_chain(d: usize) -> Term {
+    let n = d as i64;
+    let keys = lit(Value::Family(Family::set(0..2 * n)));
+    fix_defined(keys, |this, k| {
+        let leaf = get(this.clone(), add(k.clone(), lit(n)));
+        let next = get(this, add(k.clone(), lit(1)));
+        if_(
+            lt(k.clone(), lit(n - 1)),
+            add(leaf.clone(), next),
+            if_(lt(k.clone(), lit(n)), leaf, sub(k, lit(n))),
+        )
+    })
+}
+
+/// `Σ_{j=k}^{d-1} j`, the entry `k < d` of [`reverse_chain`].
+fn tail_sum(d: usize, k: usize) -> i64 {
+    ((k + d - 1) * (d - k) / 2) as i64
+}
+
+#[test]
+fn an_entry_reading_many_undefined_entries_scales_under_demand() {
+    // Each read of an undefined entry stopped the attempt, and the entry was tried again from
+    // the start once the entry read was defined: entry 0 of `fan_in(d)` was tried `d` times
+    // and read `d²/2` entries. Now the entry read is evaluated where it is read.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            scaling::check("pull, one entry reading every other, by keys", 1000, |d| {
+                let v = run(&fan_in(d), Schedule::Pull);
+                let sum = (d * (d - 1) / 2) as i64;
+                assert_eq!(
+                    v.as_family().unwrap().get(&Value::Int(0)),
+                    Some(&Value::Int(sum))
+                );
+            });
+            scaling::check(
+                "pull, entries reading the ones after them, by keys",
+                1000,
+                |d| {
+                    let v = run(&reverse_chain(d), Schedule::Pull);
+                    let f = v.as_family().unwrap();
+                    assert_eq!(f.get(&Value::Int(0)), Some(&Value::Int(tail_sum(d, 0))));
+                },
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// The address and value of every fact of a run of `t` under `schedule`, sorted.
+fn facts(t: &Term, schedule: Schedule) -> (Value, Vec<String>) {
+    let mut ev = Evaluator::new(World::new())
+        .with_schedule(schedule)
+        .with_provenance(vec![]);
+    let v = ev.run(t).unwrap();
+    let p = ev.provenance().unwrap();
+    let mut out: Vec<String> = p
+        .facts()
+        .iter()
+        .map(|f| format!("{:?} {:?}", f.address, f.value))
+        .collect();
+    out.sort();
+    (v, out)
+}
+
+#[test]
+fn a_demanded_entry_has_the_facts_it_has_in_rounds() {
+    // An entry demanded where it is read records its facts at its own keypath, not inside the
+    // entry reading it. A chain longer than the depth of nested demands falls back to the
+    // stack of demands, and an attempt stopped there drops the entries it demanded with its
+    // facts, so each entry is still one set of facts.
+    for d in [5, 40, zed_kernel::eval::MAX_DEPTH + 500] {
+        let t = reverse_chain(d);
+        let (v, pull) = facts(&t, Schedule::Pull);
+        let (w, rounds) = facts(&t, Schedule::Rounds);
+        assert_eq!(v, w, "d = {d}");
+        let f = v.as_family().unwrap();
+        for k in [0, d / 2, d - 1] {
+            assert_eq!(
+                f.get(&Value::Int(k as i64)),
+                Some(&Value::Int(tail_sum(d, k)))
+            );
+        }
+        assert!(pull == rounds, "d = {d}: the facts differ");
+        assert_eq!(run(&t, Schedule::Pull), v, "d = {d}, untraced");
+    }
+}

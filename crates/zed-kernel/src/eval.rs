@@ -76,15 +76,18 @@ pub struct Closure {
 }
 
 /// The family a definedness `fix` has defined so far, over its whole domain.
-#[derive(Debug)]
 pub struct Partial {
-    /// Which `fix` evaluation this family belongs to, so that a read of an undefined entry
-    /// postpones the entry of that `fix` and not of a `fix` nested inside its body.
-    fix: u64,
-    domain: Rc<BTreeSet<Value>>,
-    defined: Rc<RefCell<Defined>>,
+    /// The `fix` evaluation this family belongs to, so that a read of an undefined entry
+    /// postpones or demands the entry of that `fix` and not of a `fix` nested inside its body.
+    of: Rc<Definedness>,
     /// The attempt sees the entries defined in rounds before this one.
     round: u64,
+}
+
+impl std::fmt::Debug for Partial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Partial({}, round {})", self.of.id, self.round)
+    }
 }
 
 /// The entries a definedness `fix` has defined, each with the round that defined it. Every
@@ -753,14 +756,26 @@ impl Evaluator {
             if let Value::Atom(_) = k {
                 return Ok(V::Data(k.clone()));
             }
-            return match part.defined.borrow().get(k) {
-                Some((v, r)) if *r < part.round => Ok(V::Data(v.clone())),
+            let fix = &part.of;
+            let found = match fix.defined.borrow().get(k) {
+                Some((v, r)) if *r < part.round => Some(v.clone()),
+                _ => None,
+            };
+            return match found {
+                Some(v) => Ok(V::Data(v)),
+                None if !fix.domain.contains(k) => Ok(V::Data(Value::atom("notFound"))),
+                None if self.schedule == Schedule::Pull
+                    && self.depth < MAX_DEPTH
+                    && !fix.busy.borrow().contains(k)
+                    && !fix.stalled.borrow().contains(k) =>
+                {
+                    self.demand(&fix.clone(), k).map(V::Data)
+                }
                 // An entry defined in this Jacobi round is not yet visible to it.
-                _ if part.domain.contains(k) => Err(Stop::Undefined {
-                    fix: part.fix,
+                None => Err(Stop::Undefined {
+                    fix: fix.id,
                     key: k.clone(),
                 }),
-                _ => Ok(V::Data(Value::atom("notFound"))),
             };
         }
         // `fs[k]` on a lookup port: the world answers once, and the answer is kept.
@@ -976,7 +991,7 @@ impl Evaluator {
     fn fix_definedness(
         &mut self,
         init: &Term,
-        body: &Term,
+        body: &Arc<Term>,
         this: &Arc<str>,
         key: &Arc<str>,
         env: &Env,
@@ -984,15 +999,24 @@ impl Evaluator {
         let domain: Rc<BTreeSet<Value>> =
             Rc::new(self.family(init, env)?.keys().cloned().collect());
         self.fixes += 1;
-        let fix = Definedness {
+        let (calls, keys) = match &self.trace {
+            Some(t) => (t.calls.clone(), t.keys.clone()),
+            None => Default::default(),
+        };
+        let fix = Rc::new(Definedness {
             id: self.fixes,
             domain,
-            body,
-            this,
-            key,
-            env,
+            body: body.clone(),
+            this: this.clone(),
+            key: key.clone(),
+            env: env.clone(),
+            calls,
+            keys,
             defined: Rc::default(),
-        };
+            busy: RefCell::default(),
+            stalled: RefCell::default(),
+            nested: RefCell::default(),
+        });
         let stalled = match self.schedule {
             Schedule::Rounds => self.define_in_rounds(&fix, None)?,
             Schedule::Chaotic(seed) => self.define_in_rounds(&fix, Some(seed))?,
@@ -1008,35 +1032,40 @@ impl Evaluator {
 
     /// Evaluates the entry at `k` against the entries defined before `round`: its value, or
     /// the key of the undefined entry of this `fix` it read first.
-    fn entry(&mut self, fix: &Definedness, round: u64, k: &Value) -> R<Result<Value, Value>> {
+    fn entry(&mut self, fix: &Rc<Definedness>, round: u64, k: &Value) -> R<Result<Value, Value>> {
         let part = V::Partial(Rc::new(Partial {
-            fix: fix.id,
-            domain: fix.domain.clone(),
-            defined: fix.defined.clone(),
+            of: fix.clone(),
             round,
         }));
         let env = bind(
-            &bind(fix.env, fix.this.clone(), part),
+            &bind(&fix.env, fix.this.clone(), part),
             fix.key.clone(),
             V::Data(k.clone()),
         );
         // An attempt that reads an undefined entry is not a fact: what it recorded is
-        // dropped, and the entry's fact is the attempt that defines it.
+        // dropped, and the entry's fact is the attempt that defines it. So are the entries it
+        // demanded, whose facts are among those dropped.
+        let nested = fix.nested.borrow().len();
         let mark = self
             .trace
             .as_ref()
             .map(|t| (t.facts.len(), t.calls.len(), t.keys.len()));
         self.enter(std::slice::from_ref(k));
-        let out = self.eval(fix.body, &env);
+        let out = self.eval(&fix.body, &env);
         self.leave(1);
         match out {
             Ok(V::Data(v)) => Ok(Ok(v)),
             Ok(_) => type_err("a fix entry is a function"),
             Err(Stop::Undefined { fix: id, key }) if id == fix.id => {
+                let undone = fix.nested.borrow_mut().split_off(nested);
                 if let (Some(t), Some((facts, calls, keys))) = (&mut self.trace, mark) {
                     t.facts.truncate(facts);
                     t.calls.truncate(calls);
                     t.keys.truncate(keys);
+                    let mut defined = fix.defined.borrow_mut();
+                    for k in &undone {
+                        defined.remove(k);
+                    }
                 }
                 Ok(Err(key))
             }
@@ -1054,7 +1083,7 @@ impl Evaluator {
     /// waits on `j` and is tried again in the round after `j` is defined: each round tries
     /// only the entries whose wait ended, and a chain of `D` entries costs `D` attempts, not
     /// `D²/2`. Jacobi rounds define the same entries in the same rounds as trying them all.
-    fn define_in_rounds(&mut self, fix: &Definedness, seed: Option<u64>) -> R<Vec<Value>> {
+    fn define_in_rounds(&mut self, fix: &Rc<Definedness>, seed: Option<u64>) -> R<Vec<Value>> {
         let mut rng = seed.map(SplitMix);
         let mut waiting: BTreeMap<Value, Vec<Value>> = BTreeMap::new();
         let mut ready: Vec<Value> = fix.domain.iter().cloned().collect();
@@ -1094,28 +1123,80 @@ impl Evaluator {
 
     /// Demands each entry in key order, evaluating first each undefined entry it reads, and
     /// returns the keys that stalled: those on a cycle and those waiting on one.
-    fn define_on_demand(&mut self, fix: &Definedness) -> R<Vec<Value>> {
-        let mut stalled = BTreeSet::new();
+    ///
+    /// A read of an undefined entry evaluates it where it is read ([`Evaluator::demand`]), so
+    /// an entry reading `m` undefined entries is evaluated once, not `m` times from the
+    /// start. A read that cannot be demanded there, of an entry on a cycle or past
+    /// [`MAX_DEPTH`] nested demands, stops the attempt, and the entry read is demanded from
+    /// this stack instead, which has no depth limit.
+    fn define_on_demand(&mut self, fix: &Rc<Definedness>) -> R<Vec<Value>> {
         for k0 in fix.domain.iter() {
-            if fix.defined.borrow().contains_key(k0) || stalled.contains(k0) {
+            if fix.defined.borrow().contains_key(k0) || fix.stalled.borrow().contains(k0) {
                 continue;
             }
             let mut demanded = vec![k0.clone()];
+            fix.busy.borrow_mut().insert(k0.clone());
             while let Some(k) = demanded.last().cloned() {
                 self.burn()?;
                 match self.entry(fix, u64::MAX, &k)? {
                     Ok(v) => {
-                        fix.defined.borrow_mut().insert(k, (v, 0));
+                        fix.defined.borrow_mut().insert(k.clone(), (v, 0));
+                        fix.busy.borrow_mut().remove(&k);
                         demanded.pop();
                     }
-                    Err(read) if demanded.contains(&read) || stalled.contains(&read) => {
-                        stalled.extend(demanded.drain(..));
+                    Err(read)
+                        if fix.busy.borrow().contains(&read)
+                            || fix.stalled.borrow().contains(&read) =>
+                    {
+                        let mut busy = fix.busy.borrow_mut();
+                        for d in demanded.drain(..) {
+                            busy.remove(&d);
+                            fix.stalled.borrow_mut().insert(d);
+                        }
                     }
-                    Err(read) => demanded.push(read),
+                    Err(read) => {
+                        fix.busy.borrow_mut().insert(read.clone());
+                        demanded.push(read);
+                    }
                 }
             }
         }
-        Ok(stalled.into_iter().collect())
+        Ok(fix.stalled.take().into_iter().collect())
+    }
+
+    /// Evaluates the undefined entry `k` where an attempt reads it, with the call sites and
+    /// keypath of the `fix` itself, so that its facts are those it would have had demanded
+    /// from the stack. A read it cannot demand stops it and the attempt reading it.
+    fn demand(&mut self, fix: &Rc<Definedness>, k: &Value) -> R<Value> {
+        self.burn()?;
+        let outer = self.trace.as_mut().map(|t| {
+            (
+                std::mem::replace(&mut t.calls, fix.calls.clone()),
+                std::mem::replace(&mut t.keys, fix.keys.clone()),
+                std::mem::take(&mut t.reads),
+                t.site.take(),
+                std::mem::take(&mut t.args),
+            )
+        });
+        fix.busy.borrow_mut().insert(k.clone());
+        self.depth += 1;
+        let out = self.entry(fix, u64::MAX, k);
+        self.depth -= 1;
+        fix.busy.borrow_mut().remove(k);
+        if let (Some(t), Some((calls, keys, reads, site, args))) = (&mut self.trace, outer) {
+            (t.calls, t.keys, t.reads, t.site, t.args) = (calls, keys, reads, site, args);
+        }
+        match out? {
+            Ok(v) => {
+                fix.defined.borrow_mut().insert(k.clone(), (v.clone(), 0));
+                fix.nested.borrow_mut().push(k.clone());
+                Ok(v)
+            }
+            Err(read) => Err(Stop::Undefined {
+                fix: fix.id,
+                key: read,
+            }),
+        }
     }
 
     /// The step making generation `t` and the guard testing it run at coordinate `t`, each
@@ -1180,15 +1261,22 @@ impl Evaluator {
     }
 }
 
-/// One definedness `fix` being evaluated: its family's name, domain, and entry body.
-struct Definedness<'a> {
+/// One definedness `fix` being evaluated: its family's name, domain, and entry body, the
+/// call sites and keypath it runs inside, and, for demand, the entries being demanded,
+/// those stalled, and those defined by a demand nested in an attempt, in order.
+struct Definedness {
     id: u64,
     domain: Rc<BTreeSet<Value>>,
     defined: Rc<RefCell<Defined>>,
-    body: &'a Term,
-    this: &'a Arc<str>,
-    key: &'a Arc<str>,
-    env: &'a Env,
+    body: Arc<Term>,
+    this: Arc<str>,
+    key: Arc<str>,
+    env: Env,
+    calls: Vector<u32>,
+    keys: Vector<Value>,
+    busy: RefCell<BTreeSet<Value>>,
+    stalled: RefCell<BTreeSet<Value>>,
+    nested: RefCell<Vec<Value>>,
 }
 
 /// The SplitMix64 generator, which draws the visiting order of [`Schedule::Chaotic`].
