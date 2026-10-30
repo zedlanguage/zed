@@ -118,14 +118,7 @@ pub const RULES: [Rule; 4] = [
             }
             None => false,
         },
-        rank: |d| {
-            let f = &d.facets;
-            let inversions = (0..f.len())
-                .flat_map(|i| (i + 1..f.len()).map(move |j| (i, j)))
-                .filter(|&(i, j)| f[i] > f[j])
-                .count();
-            (inversions + f.len()) as u64
-        },
+        rank: |d| (inversions(&mut d.facets.clone()) + d.facets.len()) as u64,
     },
     Rule {
         name: "domain",
@@ -140,6 +133,31 @@ pub const RULES: [Rule; 4] = [
     },
 ];
 
+/// The pairs of `f` out of order, counted while merge-sorting it: `O(F log F)`.
+fn inversions(f: &mut [Facet]) -> usize {
+    if f.len() < 2 {
+        return 0;
+    }
+    let mid = f.len() / 2;
+    let mut n = inversions(&mut f[..mid]) + inversions(&mut f[mid..]);
+    let (mut merged, mut i, mut j) = (Vec::with_capacity(f.len()), 0, mid);
+    while i < mid && j < f.len() {
+        if f[j] < f[i] {
+            // `f[j]` comes before each of the left half's remaining facets.
+            n += mid - i;
+            merged.push(f[j].clone());
+            j += 1;
+        } else {
+            merged.push(f[i].clone());
+            i += 1;
+        }
+    }
+    merged.extend_from_slice(&f[i..mid]);
+    merged.extend_from_slice(&f[j..]);
+    f.clone_from_slice(&merged);
+    n
+}
+
 /// The ranks of every rule on `d`, in rule order: the measure that decreases
 /// lexicographically at every step.
 pub fn ranks(d: &Def) -> [u64; 4] {
@@ -149,9 +167,17 @@ pub fn ranks(d: &Def) -> [u64; 4] {
 /// The normal form of `d`: the rules applied, the first that applies each time, until none
 /// does.
 pub fn canonicalize(d: &Def) -> Def {
-    let mut d = d.clone();
-    while RULES.iter().any(|r| (r.apply)(&mut d)) {}
-    d
+    // The rules' normal form, reached directly: every binder renamed, the hints the renaming
+    // adds and the written ones dropped, the facets sorted without repeats, the domain normal.
+    let mut facets: Vec<Facet> = d.facets.iter().filter(|f| !f.hint).cloned().collect();
+    facets.sort();
+    facets.dedup();
+    Def {
+        name: d.name.clone(),
+        domain: d.domain.as_ref().map(Domain::normal),
+        facets,
+        body: binders::canonical(&d.body),
+    }
 }
 
 /// The content address of `d`. A free variable that `refs` resolves names another

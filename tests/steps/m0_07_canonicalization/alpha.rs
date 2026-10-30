@@ -348,3 +348,42 @@ fn addresses_agree_with_an_independent_alpha_equivalence_test() {
         "{same} alike, {differ} different"
     );
 }
+
+/// `canonicalize` renames every binder in one pass; the rules rename one per step. Both must
+/// give the same definition.
+fn one_pass_is_stepwise(t: Term) {
+    let mut d = def("f", t);
+    let one_pass = zedc::canon::canonicalize(&d);
+    while zedc::canon::RULES.iter().any(|r| (r.apply)(&mut d)) {}
+    assert_eq!(one_pass, d);
+}
+
+#[test]
+fn the_normal_form_is_the_rules_applied_one_step_at_a_time() {
+    for seed in 0..RANDOM_INSTANCES as u64 {
+        one_pass_is_stepwise(random(
+            &mut Rng::new(seed),
+            &mut Rng::new(!seed),
+            4,
+            &mut Vec::new(),
+        ));
+    }
+    // A step reading `this` and the key, which are bound in that order.
+    let key = |k: &str| prim(Prim::Sub, vec![var(k), lit(1)]);
+    one_pass_is_stepwise(Term::Fix {
+        init: Arc::new(var("upTo")),
+        step: Arc::new(app(var("fib"), vec![key("n")])),
+        this: "fib".into(),
+        key: "n".into(),
+        kind: FixKind::Definedness,
+        ev: Evidence::new(),
+    });
+    // `(x -> x)(x)`: the last `x` is outside the binder's scope and stays free.
+    one_pass_is_stepwise(app(lam(&["x"], var("x")), vec![var("x")]));
+    // A binder already carrying a level name, though not its own level, keeps it.
+    let level = binders::level_name(5);
+    one_pass_is_stepwise(lam(
+        &["y", &level],
+        prim(Prim::Add, vec![var("y"), var(&level)]),
+    ));
+}

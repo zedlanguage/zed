@@ -440,3 +440,132 @@ fn rename(t: &Term, old: &str, new: &Arc<str>) -> Term {
         _ => map_children(t, &mut |c| rename(c, old, new)),
     }
 }
+
+/// `t` with every binder renamed as the rule renames them one per step, in one walk: each
+/// written binder gets its level, and each variable the name of the binder it means. A binder
+/// already canonical keeps its name, as the rule leaves it. `O(t log t)` for a term of size `t`.
+pub fn canonical(t: &Term) -> Term {
+    Levels::default().term(t, 0)
+}
+
+/// The names in scope during the walk: each written name to the new names of the binders of
+/// that name around the current subterm, innermost last.
+#[derive(Default)]
+struct Levels {
+    scope: std::collections::BTreeMap<Arc<str>, Vec<Arc<str>>>,
+}
+
+impl Levels {
+    /// The new names of `names`, bound together at levels `depth`, `depth + 1`, …, brought
+    /// into scope in order, so that a later name of the group shadows an earlier one.
+    fn bind(&mut self, names: &[Arc<str>], depth: usize) -> Vec<Arc<str>> {
+        let new: Vec<Arc<str>> = names
+            .iter()
+            .enumerate()
+            .map(|(i, x)| match level_of(x) {
+                Some(_) => x.clone(),
+                None => level_name(depth + i),
+            })
+            .collect();
+        for (x, n) in names.iter().zip(&new) {
+            self.scope.entry(x.clone()).or_default().push(n.clone());
+        }
+        new
+    }
+
+    /// Takes `names` out of scope again, in the reverse order.
+    fn unbind(&mut self, names: &[Arc<str>]) {
+        for x in names.iter().rev() {
+            let stack = self.scope.get_mut(x).expect("bound by `bind`");
+            stack.pop();
+            if stack.is_empty() {
+                self.scope.remove(x);
+            }
+        }
+    }
+
+    /// `body` with `names` in scope at levels from `depth`, and the new names.
+    fn under(&mut self, names: &[Arc<str>], depth: usize, body: &Term) -> (Vec<Arc<str>>, Term) {
+        let new = self.bind(names, depth);
+        let body = self.term(body, depth + names.len());
+        self.unbind(names);
+        (new, body)
+    }
+
+    fn term(&mut self, t: &Term, depth: usize) -> Term {
+        let arc = |t: Term| Arc::new(t);
+        match t {
+            Term::Var(x) => match self.scope.get(x).and_then(|s| s.last()) {
+                Some(n) => Term::Var(n.clone()),
+                None => t.clone(),
+            },
+            Term::Lam(params, body) => {
+                let (new, body) = self.under(params, depth, body);
+                Term::Lam(new, arc(body))
+            }
+            Term::Let(x, e, body) => {
+                let e = self.term(e, depth);
+                let (new, body) = self.under(std::slice::from_ref(x), depth, body);
+                Term::Let(new[0].clone(), arc(e), arc(body))
+            }
+            Term::Match(e, arms) => {
+                let e = self.term(e, depth);
+                let arms = arms
+                    .iter()
+                    .map(|(p, arm)| {
+                        let binds = pattern_binds(p);
+                        let (new, arm) = self.under(&binds, depth, arm);
+                        (set_binds(p, &mut new.iter()), arm)
+                    })
+                    .collect();
+                Term::Match(arc(e), arms)
+            }
+            Term::Fam { domain, var, body } => {
+                let domain = arc(self.term(domain, depth));
+                let (new, body) = self.under(std::slice::from_ref(var), depth, body);
+                Term::Fam {
+                    domain,
+                    var: new[0].clone(),
+                    body: arc(body),
+                }
+            }
+            Term::Fix {
+                init,
+                step,
+                this,
+                key,
+                kind: FixKind::Definedness,
+                ev,
+            } => {
+                let init = arc(self.term(init, depth));
+                let (new, step) = self.under(&[this.clone(), key.clone()], depth, step);
+                Term::Fix {
+                    init,
+                    step: arc(step),
+                    this: new[0].clone(),
+                    key: new[1].clone(),
+                    kind: FixKind::Definedness,
+                    ev: ev.clone(),
+                }
+            }
+            _ => map_children(t, &mut |c| self.term(c, depth)),
+        }
+    }
+}
+
+/// `p` with its binders, left to right, named by `names` in turn.
+fn set_binds<'a>(p: &Pattern, names: &mut impl Iterator<Item = &'a Arc<str>>) -> Pattern {
+    let mut all = |ps: &[Pattern]| ps.iter().map(|p| set_binds(p, names)).collect();
+    match p {
+        Pattern::Bind(_) => Pattern::Bind(names.next().expect("one name per binder").clone()),
+        Pattern::Atom(name, ps) => Pattern::Atom(name.clone(), all(ps)),
+        Pattern::Tuple(ps) => Pattern::Tuple(all(ps)),
+        Pattern::Fields(name, fs) => Pattern::Fields(
+            name.clone(),
+            fs.iter()
+                .map(|(f, p)| (f.clone(), set_binds(p, names)))
+                .collect(),
+        ),
+        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => p.clone(),
+    }
+}

@@ -118,6 +118,17 @@ fn every_rule_decreases_its_rank_and_no_later_rule_raises_an_earlier_one() {
 }
 
 #[test]
+fn the_facet_rank_counts_the_pairs_out_of_order_and_the_facets() {
+    let mut d = def("d", lit(0));
+    let (a, b, c) = (facet("doc", 1), facet("doc", 2), facet("doc", 3));
+    // `c a a b`: `c` is before three smaller facets; the equal `a`s are not out of order.
+    d.facets = vec![c.clone(), a.clone(), a.clone(), b.clone()];
+    assert_eq!(ranks(&d)[2], 3 + 4);
+    d.facets = vec![b, c, a];
+    assert_eq!(ranks(&d)[2], 2 + 3);
+}
+
+#[test]
 fn the_normal_form_does_not_depend_on_the_order_of_the_rules() {
     let mut rng = Rng::new(0xc0f1);
     for _ in 0..RANDOM_INSTANCES {

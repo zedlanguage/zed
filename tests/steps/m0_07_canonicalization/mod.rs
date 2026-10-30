@@ -6,6 +6,7 @@
 mod alpha;
 mod domains;
 mod rules;
+mod scaling;
 
 use std::sync::Arc;
 
