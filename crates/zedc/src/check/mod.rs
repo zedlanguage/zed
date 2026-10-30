@@ -188,6 +188,9 @@ struct Ck<'t, 'a> {
     whence: HashMap<usize, Origin>,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
+    /// Whether a signature search is checking a combination whose errors it discards, so
+    /// that they carry no notes.
+    quiet: bool,
 }
 
 impl<'t, 'a> Ck<'t, 'a> {
@@ -201,6 +204,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             seen: HashMap::new(),
             whence: HashMap::new(),
             trying: false,
+            quiet: false,
         }
     }
 
@@ -222,6 +226,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// call, where the binder's type comes from, followed through each definition.
     fn derive(&self, spans: &[Span]) -> Vec<Note> {
         let mut out = Vec::new();
+        if self.quiet {
+            return out;
+        }
         for &s in spans {
             self.derive_into(s, &mut out, 0);
         }
@@ -549,7 +556,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
             .collect();
         let tys = with(&|i| Ty::var(vars[open.iter().position(|&j| j == i).unwrap()].clone()));
+        let quiet = std::mem::replace(&mut self.quiet, true);
         let result = run(self, &tys);
+        self.quiet = quiet;
         if self.info.errors.len() == start.errors.len() {
             return Arc::new(rename(
                 &sig(vec![Arrow {
@@ -592,8 +601,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                             None => Ty::var(vars[j].clone()),
                         }
                     });
+                    let quiet = std::mem::replace(&mut self.quiet, true);
                     let result = run(self, &tys);
+                    self.quiet = quiet;
                     if self.info.errors.len() > start.errors.len() {
+                        let shown = failures
+                            .iter()
+                            .filter(|n| n.text.starts_with("with "))
+                            .count()
+                            < SHOWN;
+                        if level == n && shown {
+                            // Again with notes, the counters as they were, so that the
+                            // combinations after it run as they would have.
+                            let (runs, fresh) = (self.runs, self.fresh);
+                            self.info = start.clone();
+                            run(self, &tys);
+                            (self.runs, self.fresh) = (runs, fresh);
+                        }
                         if level == n {
                             let names: Vec<String> = (0..n)
                                 .map(|j| {
@@ -1731,6 +1755,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// arrow of `sig`, the constraints it failed.
     fn applied(&self, what: &str, sig: &Sig, args: &[Option<Arg>], span: Span) -> Vec<Note> {
         let mut out = Vec::new();
+        if self.quiet {
+            return out;
+        }
         for a in args.iter().flatten() {
             match (&a.lit, a.at) {
                 (Some(l), Some(at)) => out.push(Note {
@@ -1766,7 +1793,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
     ) -> Vec<Note> {
         let mut out = Vec::new();
-        if self.trying {
+        if self.trying || self.quiet {
             return out;
         }
         for (i, a) in args.iter().enumerate() {

@@ -23,7 +23,7 @@ use crate::l01_16_elaboration::{elab, with_prelude};
 
 /// The parameters and the body of the function `ok` that `src` defines, under the
 /// interpreter's prelude and the unit's other definitions.
-fn function(src: &str) -> (Vec<Arc<str>>, Term) {
+pub(crate) fn function(src: &str) -> (Vec<Arc<str>>, Term) {
     let u = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
     let mut t = u.get("ok").expect("a definition `ok`");
     let mut lets = Vec::new();
@@ -44,7 +44,7 @@ fn function(src: &str) -> (Vec<Arc<str>>, Term) {
 }
 
 /// The domains `name: [lo..=hi]`, `None` for an unbounded end.
-fn doms(ds: &[(&str, Option<i64>, Option<i64>)]) -> Domains {
+pub(crate) fn doms(ds: &[(&str, Option<i64>, Option<i64>)]) -> Domains {
     ds.iter()
         .map(|&(n, lo, hi)| {
             let e = |v: Option<i64>, inf| v.map_or(inf, End::Fin);
@@ -64,7 +64,7 @@ fn pre(src: &str, ds: &[(&str, Option<i64>, Option<i64>)], demand: &Demand) -> P
 
 /// The preimage of `true`, printed: each parameter's set, then `exact` or `necessary`, then
 /// `enumerated` when it was.
-fn shown(p: &Preimage) -> String {
+pub(crate) fn shown(p: &Preimage) -> String {
     let mut out: Vec<String> = p.domains.iter().map(|(k, v)| format!("{k} {v}")).collect();
     out.push(if p.exact { "exact" } else { "necessary" }.into());
     if p.enumerated {

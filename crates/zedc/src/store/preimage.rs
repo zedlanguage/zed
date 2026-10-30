@@ -34,11 +34,15 @@
 //!
 //! A union of two boxes is a box, and so exact, only when one contains the other or they differ
 //! in one input. After the catalog, a result not marked exact is checked by forward transfer
-//! over it: when every point it holds must meet the demand, it is exact. And a result that is
-//! still not exact, finite and within the enumeration budget of step M0.10 is enumerated: the
-//! term is run at each point, and the result is the projection of the points that meet the
-//! demand, exact when they form a box. An enumeration that meets a term the evaluator cannot
-//! run removes nothing.
+//! over it: when every point it holds must meet the demand, it is exact. A result still not
+//! exact whose term the linear-relation domain states (step L1.38: sums, constant multiples,
+//! Euclidean `div` and `mod` by a constant, `min`, `max`, `abs`, branches and the tests over
+//! them) is narrowed to the relation's projection on each input, within the box, and is exact
+//! when the box entails the relation; when it is not, the relation is kept with the box. And a
+//! result that is still not exact, finite and within the enumeration budget of step M0.10 is
+//! enumerated: the term is run at each point, and the result is the projection of the points
+//! that meet the demand, exact when they form a box. An enumeration that meets a term the
+//! evaluator cannot run removes nothing.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -49,6 +53,7 @@ use zed_kernel::budgets::ENUMERATION_BUDGET;
 use zed_kernel::{Prim, Term, Value, eval};
 
 use super::interval::{End, IntervalSet, PIECE_LIMIT};
+use super::presburger::{self, Con, Formula, Lin, Over, Relation};
 use super::revision::{self, Op, Tonicity};
 use End::{Fin, NegInf, PosInf};
 
@@ -126,6 +131,10 @@ pub struct Preimage {
     pub enumerated: bool,
     /// Where the transfer stopped.
     pub stops: Vec<Stop>,
+    /// The relation the inputs must meet, when the box is not exact and the linear-relation
+    /// domain states the demand: every point meeting the demand meets it, and every point of
+    /// the box meeting it meets the demand.
+    pub relation: Option<Relation>,
 }
 
 /// The deepest nesting of calls read through before the transfer stops.
@@ -152,11 +161,22 @@ pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
             r.exact = true;
         }
     }
+    let mut relation = None;
+    if !r.exact
+        && !is_empty(&r.dom)
+        && let Some((dom, exact, rel)) = linear(term, &r.dom, demand)
+    {
+        r = Res { dom, exact };
+        relation = (!exact).then_some(rel);
+    }
     if !r.exact
         && let Some(e) = enumerate(term, &r.dom, demand)
     {
         r = e;
         enumerated = true;
+        if r.exact {
+            relation = None;
+        }
     }
     stops.dedup();
     Preimage {
@@ -164,6 +184,120 @@ pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
         exact: r.exact,
         enumerated,
         stops,
+        relation,
+    }
+}
+
+/// The relations the linear-relation domain states for `terms`, tests over the free names
+/// `inputs`, with one numbering of auxiliary variables; products of two symbols are atoms
+/// when `products` holds. `None` when a term is outside the domain.
+pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option<Vec<Relation>> {
+    let doms: Domains = inputs
+        .iter()
+        .map(|n| (n.clone(), IntervalSet::top()))
+        .collect();
+    let cx = Cx::new(&doms);
+    let mut tr = Tr {
+        defs: Vec::new(),
+        products,
+    };
+    let root = Rc::new(Scope::Empty);
+    let mut out = Vec::new();
+    for t in terms {
+        let first = tr.defs.len();
+        let body = cx.formula(&mut tr, t, &root, 0)?;
+        out.push(Relation {
+            body,
+            defs: tr.defs[first..].to_vec(),
+        });
+    }
+    Some(out)
+}
+
+/// The linear stage: the relation of the demand over the box `dom`, the box narrowed to its
+/// projections, whether the box entails the relation, and the relation. `None` when the term
+/// is outside the domain or a budget is passed.
+fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool, Relation)> {
+    let cx = Cx::new(dom);
+    let mut tr = Tr {
+        defs: Vec::new(),
+        products: false,
+    };
+    let root = Rc::new(Scope::Empty);
+    let body = match demand {
+        Demand::Bool(w) => {
+            let f = cx.formula(&mut tr, term, &root, 0)?;
+            if *w { f } else { Formula::negate(f) }
+        }
+        Demand::Ints(z) => {
+            let l = cx.lin(&mut tr, term, &root, 0)?;
+            presburger::within(&l, z).ok()?
+        }
+    };
+    let rel = Relation {
+        body,
+        defs: tr.defs,
+    };
+    let go = || -> Result<(Domains, bool), Over> {
+        let within = |d: &Domains| -> Result<Formula, Over> {
+            let parts = d
+                .iter()
+                .map(|(k, v)| presburger::member(&presburger::Atom::Sym(k.clone()), v))
+                .collect::<Result<_, _>>()?;
+            Ok(Formula::and(parts))
+        };
+        let whole = Formula::and(vec![rel.defined(), within(dom)?, rel.body.clone()]);
+        let mentioned = rel.body.atoms();
+        let mut out = Domains::new();
+        for (k, v) in dom {
+            let a = presburger::Atom::Sym(k.clone());
+            let p = if mentioned.contains(&a)
+                || rel.defs.iter().any(|(_, _, f)| f.atoms().contains(&a))
+            {
+                presburger::project(&whole, &a)?.meet(v)
+            } else {
+                v.clone()
+            };
+            out.insert(k.clone(), p);
+        }
+        if is_empty(&out) {
+            let none = out
+                .keys()
+                .map(|k| (k.clone(), IntervalSet::empty()))
+                .collect();
+            return Ok((none, true));
+        }
+        let mut capped = false;
+        for v in out.values_mut() {
+            if v.pieces().len() > PIECE_LIMIT {
+                *v = v.cap(PIECE_LIMIT);
+                capped = true;
+            }
+        }
+        let outside = Formula::and(vec![
+            rel.defined(),
+            within(&out)?,
+            Formula::negate(rel.body.clone()),
+        ]);
+        let exact = !capped && presburger::satisfiable(&outside)?.is_none();
+        Ok((out, exact))
+    };
+    let (out, exact) = go().ok()?;
+    Some((out, exact, rel))
+}
+
+/// The translation of terms into the linear-relation domain: the definitions of the auxiliary
+/// variables made so far.
+struct Tr {
+    defs: Vec<(u32, String, Formula)>,
+    products: bool,
+}
+
+impl Tr {
+    fn aux(&mut self, what: String, def: Formula) -> presburger::Atom {
+        let n = self.defs.len() as u32;
+        self.defs.push((n, what, def));
+        presburger::Atom::Aux(n)
     }
 }
 
@@ -557,6 +691,218 @@ impl<'a> Cx<'a> {
             _ => t == first && Rc::ptr_eq(e, fenv),
         };
         (fs.len() >= 2 && fs.iter().all(one)).then_some((first, fenv, fs.len() as u32))
+    }
+
+    // ---- Into the linear-relation domain ------------------------------------------------
+
+    /// The linear term an integer term states over the inputs.
+    fn lin(&self, tr: &mut Tr, t: &Term, env: &Env, depth: u32) -> Option<Lin> {
+        use Prim::*;
+        if depth > CALL_DEPTH {
+            return None;
+        }
+        let d = depth + 1;
+        if let Some(v) = self.constant(t, env) {
+            return match v {
+                Value::Int(n) => Some(Lin::constant(n.into())),
+                _ => None,
+            };
+        }
+        match t {
+            Term::Var(x) => match lookup(env, x) {
+                Some((bt, benv)) => self.lin(tr, bt, &benv.clone(), d),
+                None => self
+                    .inputs
+                    .contains_key(x)
+                    .then(|| Lin::atom(presburger::Atom::Sym(x.clone()))),
+            },
+            Term::Let(n, e, b) => self.lin(tr, b, &bind(env, n, e, env), d),
+            Term::App(f, args) => match self.callee(f, env).ok()? {
+                Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
+                    let inner = Cx::call_env(ps, args, lam, env);
+                    self.lin(tr, body, &inner, d)
+                }
+                Callee::Prim(p) => self.lin(tr, &Term::Prim(p, args.clone()), env, d),
+                Callee::Lam(..) => None,
+            },
+            Term::If(g, a, b) => {
+                let g = self.formula(tr, g, env, d)?;
+                let (la, lb) = (self.lin(tr, a, env, d)?, self.lin(tr, b, env, d)?);
+                let v = presburger::Atom::Aux(tr.defs.len() as u32);
+                let x = Lin::atom(v.clone());
+                let def = Formula::or(vec![
+                    Formula::and(vec![g.clone(), Formula::Con(Con::eq(&x, &la).ok()?)]),
+                    Formula::and(vec![
+                        Formula::negate(g),
+                        Formula::Con(Con::eq(&x, &lb).ok()?),
+                    ]),
+                ]);
+                tr.aux(t.to_string(), def);
+                Some(x)
+            }
+            Term::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
+                let arg = |tr: &mut Tr, i: usize| self.lin(tr, &args[i], env, d);
+                match p {
+                    Add => arg(tr, 0)?.plus(&arg(tr, 1)?).ok(),
+                    Sub => arg(tr, 0)?.minus(&arg(tr, 1)?).ok(),
+                    Neg => arg(tr, 0)?.times(-1).ok(),
+                    Mul => {
+                        let (a, b) = (arg(tr, 0)?, arg(tr, 1)?);
+                        if !tr.products && !a.terms.is_empty() && !b.terms.is_empty() {
+                            return None;
+                        }
+                        a.product(&b)?.ok()
+                    }
+                    Pow => match self.constant_int(&args[1], env)? {
+                        0 => Some(Lin::constant(1)),
+                        1 => arg(tr, 0),
+                        2 if tr.products => {
+                            let a = arg(tr, 0)?;
+                            a.product(&a)?.ok()
+                        }
+                        _ => None,
+                    },
+                    IntDiv | Mod => {
+                        let c = self.constant_int(&args[1], env).filter(|c| *c != 0)?;
+                        let a = arg(tr, 0)?;
+                        // `a == c·q + r` and `0 <= r < |c|`: Euclidean.
+                        let n = tr.defs.len() as u32;
+                        let (q, r) = (
+                            Lin::atom(presburger::Atom::Aux(n)),
+                            Lin::atom(presburger::Atom::Aux(n + 1)),
+                        );
+                        let c = i128::from(c);
+                        let def = Formula::and(vec![
+                            Formula::Con(Con::eq(&a, &q.times(c).ok()?.plus(&r).ok()?).ok()?),
+                            Formula::Con(Con::ge(&r, &Lin::constant(0)).ok()?),
+                            Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r).ok()?),
+                        ]);
+                        let shown = |op: &str| format!("{} {op} {c}", args[0]);
+                        tr.defs.push((n, shown("div"), def));
+                        tr.defs.push((n + 1, shown("mod"), Formula::top()));
+                        Some(if *p == IntDiv { q } else { r })
+                    }
+                    Min | Max | Abs => {
+                        let a = arg(tr, 0)?;
+                        let b = if *p == Abs {
+                            a.times(-1).ok()?
+                        } else {
+                            arg(tr, 1)?
+                        };
+                        let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
+                        // `min` takes `a` where `a <= b`, `max` and `abs` where `a >= b`.
+                        let (lo, hi) = if *p == Min { (&a, &b) } else { (&b, &a) };
+                        let first = Con::ge(hi, lo).ok()?;
+                        let def = Formula::or(vec![
+                            Formula::and(vec![
+                                Formula::Con(first.clone()),
+                                Formula::Con(Con::eq(&x, &a).ok()?),
+                            ]),
+                            Formula::and(vec![
+                                Formula::negate(Formula::Con(first)),
+                                Formula::Con(Con::eq(&x, &b).ok()?),
+                            ]),
+                        ]);
+                        tr.aux(t.to_string(), def);
+                        Some(x)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The formula a test states over the inputs.
+    fn formula(&self, tr: &mut Tr, t: &Term, env: &Env, depth: u32) -> Option<Formula> {
+        use Prim::*;
+        if depth > CALL_DEPTH {
+            return None;
+        }
+        let d = depth + 1;
+        if let Some(v) = self.constant(t, env) {
+            return match v {
+                Value::Bool(true) => Some(Formula::top()),
+                Value::Bool(false) => Some(Formula::bottom()),
+                _ => None,
+            };
+        }
+        match t {
+            Term::Var(x) => {
+                let (bt, benv) = lookup(env, x)?;
+                self.formula(tr, bt, &benv.clone(), d)
+            }
+            Term::Let(n, e, b) => self.formula(tr, b, &bind(env, n, e, env), d),
+            Term::App(f, args) => match self.callee(f, env).ok()? {
+                Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
+                    let inner = Cx::call_env(ps, args, lam, env);
+                    self.formula(tr, body, &inner, d)
+                }
+                Callee::Prim(p) => self.formula(tr, &Term::Prim(p, args.clone()), env, d),
+                Callee::Lam(..) => None,
+            },
+            Term::If(g, a, b) => {
+                let g = self.formula(tr, g, env, d)?;
+                let (fa, fb) = (self.formula(tr, a, env, d)?, self.formula(tr, b, env, d)?);
+                Some(Formula::or(vec![
+                    Formula::and(vec![g.clone(), fa]),
+                    Formula::and(vec![Formula::negate(g), fb]),
+                ]))
+            }
+            Term::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => match p {
+                Not => Some(Formula::negate(self.formula(tr, &args[0], env, d)?)),
+                And | Or => {
+                    let (a, b) = (
+                        self.formula(tr, &args[0], env, d)?,
+                        self.formula(tr, &args[1], env, d)?,
+                    );
+                    Some(if *p == And {
+                        Formula::and(vec![a, b])
+                    } else {
+                        Formula::or(vec![a, b])
+                    })
+                }
+                Lt | Le | Gt | Ge | Eq | Ne => {
+                    let mark = tr.defs.len();
+                    if let (Some(a), Some(b)) = (
+                        self.lin(tr, &args[0], env, d),
+                        self.lin(tr, &args[1], env, d),
+                    ) {
+                        let one = Lin::constant(1);
+                        let c = match p {
+                            Lt => Con::ge(&b, &a.plus(&one).ok()?),
+                            Le => Con::ge(&b, &a),
+                            Gt => Con::ge(&a, &b.plus(&one).ok()?),
+                            Ge => Con::ge(&a, &b),
+                            _ => Con::eq(&a, &b),
+                        }
+                        .ok()?;
+                        let f = Formula::Con(c);
+                        return Some(if *p == Ne { Formula::negate(f) } else { f });
+                    }
+                    tr.defs.truncate(mark);
+                    if !matches!(p, Eq | Ne) {
+                        return None;
+                    }
+                    // Two tests are equal where both hold or neither does.
+                    let (a, b) = (
+                        self.formula(tr, &args[0], env, d)?,
+                        self.formula(tr, &args[1], env, d)?,
+                    );
+                    let same = Formula::or(vec![
+                        Formula::and(vec![a.clone(), b.clone()]),
+                        Formula::and(vec![Formula::negate(a), Formula::negate(b)]),
+                    ]);
+                    Some(if *p == Ne {
+                        Formula::negate(same)
+                    } else {
+                        same
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     // ---- Forward transfer -------------------------------------------------------------

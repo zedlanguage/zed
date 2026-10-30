@@ -37,6 +37,7 @@ mod l01_34_memory;
 mod l01_35_mlir_study;
 mod l01_36_cranelift;
 mod l01_37_oracle;
+mod l01_38_presburger;
 mod m0_01_scaffolding;
 mod m0_05_widening_and_iteration;
 mod m0_06_cost_scalarization;
