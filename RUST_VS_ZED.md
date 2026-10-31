@@ -113,7 +113,7 @@ The Dart columns are filled as the port reaches each step.
 | other (CI) | 0:01 | 0:02 | 0 (0) | 0 (0) | | | |
 | other (STATUS) | 0:08 | 0:06 | 0 (0) | 0 (0) | | | |
 | M0.9 | 0:15 | 0:01 | 1 (1) | 2 (1) | 0:28 | 0:00 | 0 (0) |
-| M0.10 | 0:49 | 0:10 | 4 (3) | 20 (9) | | | |
+| M0.10 | 0:49 | 0:10 | 4 (3) | 20 (9) | 0:09 | 0:01 | 3 (2) |
 | M0.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | | | |
 | M0.5 | 0:54 | 0:59 | 0 (0) | 7 (3) | | | |
 | M0.6 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -745,9 +745,9 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/zir/memory.rs` | 45,377 | | | |
 | `crates/zedc/src/zir/mod.rs` | 24,971 | | | |
 | `crates/zedc/src/zir/text.rs` | 36,164 | | | |
-| `tests/src/check.rs` | 5,056 | | | |
+| `tests/src/check.rs` | 5,056 | `test/support/check.dart`<br>`test/support/check_test.dart` | 4,359 | 0.86 |
 | `tests/src/fences.rs` | 3,325 | | | |
-| `tests/src/instances.rs` | 5,466 | `test/support/instances.dart` | 1,064 | 0.19 |
+| `tests/src/instances.rs` | 5,466 | `test/support/instances.dart`<br>`test/support/instances_test.dart` | 4,397 | 0.80 |
 | `tests/src/kernel.rs` | 10,041 | `test/support/kernel.dart` | 7,960 | 0.79 |
 | `tests/src/lib.rs` | 2,590 | `test/support/support.dart`<br>`test/support/support_test.dart` | 3,467 | 1.34 |
 | `tests/src/oracle.rs` | 7,128 | | | |
@@ -947,15 +947,15 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_08_zed0_checklist/mod.rs` | 2,069 | | | |
 | `tests/steps/m0_09_kernel_evaluator/mod.rs` | 26,083 | `test/steps/m0_09_kernel_evaluator/kernel_evaluator_test.dart` | 20,101 | 0.77 |
 | `tests/steps/m0_09_kernel_evaluator/scaling.rs` | 11,009 | `test/steps/m0_09_kernel_evaluator/scaling_test.dart` | 9,446 | 0.86 |
-| `tests/steps/m0_10_finite_model_harness/derived.rs` | 3,184 | | | |
-| `tests/steps/m0_10_finite_model_harness/laws_01_10.rs` | 24,999 | | | |
-| `tests/steps/m0_10_finite_model_harness/laws_11_20.rs` | 29,305 | | | |
-| `tests/steps/m0_10_finite_model_harness/laws_21_28.rs` | 26,308 | | | |
-| `tests/steps/m0_10_finite_model_harness/mod.rs` | 2,211 | | | |
-| `tests/steps/m0_10_finite_model_harness/recursion.rs` | 12,275 | | | |
-| `tests/steps/m0_10_finite_model_harness/scaling.rs` | 9,925 | | | |
-| `tests/steps/m0_10_finite_model_harness/smoke.rs` | 7,212 | | | |
-| `tests/steps/m0_10_finite_model_harness/witnesses.rs` | 11,966 | | | |
+| `tests/steps/m0_10_finite_model_harness/derived.rs` | 3,184 | `test/steps/m0_10_finite_model_harness/derived_test.dart` | 2,836 | 0.89 |
+| `tests/steps/m0_10_finite_model_harness/laws_01_10.rs` | 24,999 | `test/steps/m0_10_finite_model_harness/laws_01_10_test.dart` | 20,586 | 0.82 |
+| `tests/steps/m0_10_finite_model_harness/laws_11_20.rs` | 29,305 | `test/steps/m0_10_finite_model_harness/laws_11_20_test.dart` | 23,078 | 0.79 |
+| `tests/steps/m0_10_finite_model_harness/laws_21_28.rs` | 26,308 | `test/steps/m0_10_finite_model_harness/laws_21_28_test.dart` | 21,866 | 0.83 |
+| `tests/steps/m0_10_finite_model_harness/mod.rs` | 2,211 | `test/steps/m0_10_finite_model_harness/harness.dart` | 3,543 | 1.60 |
+| `tests/steps/m0_10_finite_model_harness/recursion.rs` | 12,275 | `test/steps/m0_10_finite_model_harness/recursion_test.dart` | 10,312 | 0.84 |
+| `tests/steps/m0_10_finite_model_harness/scaling.rs` | 9,925 | `test/steps/m0_10_finite_model_harness/scaling_test.dart` | 6,608 | 0.67 |
+| `tests/steps/m0_10_finite_model_harness/smoke.rs` | 7,212 | `test/steps/m0_10_finite_model_harness/smoke_test.dart` | 5,993 | 0.83 |
+| `tests/steps/m0_10_finite_model_harness/witnesses.rs` | 11,966 | `test/steps/m0_10_finite_model_harness/witnesses_test.dart` | 10,392 | 0.87 |
 | `tests/steps/m0_11_prelude_axioms_and_limits/axioms.rs` | 11,459 | | | |
 | `tests/steps/m0_11_prelude_axioms_and_limits/limits.rs` | 3,277 | | | |
 | `tests/steps/m0_11_prelude_axioms_and_limits/mod.rs` | 453 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | | | |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **197,541** | | **142,288** | **0.72** |
+| **the Rust files ported so far** | **329,982** | | **255,194** | **0.77** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -997,10 +997,22 @@ Dart:
   (step L1.22), which the Rust `eval.rs` already holds, so its size ratio of 0.56 is low for
   that reason. One mistake caught before the analyzer ran: `lib/kernel.dart` exported
   `family.dart` and `num.dart`, which are `part` files of `value.dart`.
+- **M0.10, finite-model harness.** 90 step tests and 13 support tests, all passing. Three
+  compile errors in two runs, all from Dart's rules on constants and patterns: a record
+  pattern cannot assign to list elements (a swap), a `const` record cannot be destructured,
+  and `Float` has no `const` constructor. One test needed a fix to its matcher (`contains` on
+  a list of records) and one an explicit `<int>[]`. The Rust step's 4 borrow errors, from
+  mutating the model while iterating it and moving values into closures, have no counterpart.
+  The relation helpers that laws 21–28 share with law 15 sit in `harness.dart` rather than in
+  the law-15 file, which is why `harness.dart` is 1.6 times its Rust file and
+  `laws_11_20_test.dart` 0.79. The Rust scaling file compares the provenance facts of a
+  demanded entry with those of rounds; the Dart test compares values only until provenance is
+  ported with step L1.20, so its size ratio of 0.67 is low for that reason. No test needed a
+  thread with a large stack.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1028,8 +1040,20 @@ performance pass yet, so the second number is 0 throughout.
 | `test/kernel/text_test.dart` | 1 | 0 |
 | `test/kernel/value_test.dart` | 1 | 0 |
 | `test/support/kernel.dart` | 1 | 0 |
-| `test/support/instances.dart` | 1 | 0 |
+| `test/support/instances.dart` | 2 | 0 |
+| `test/support/instances_test.dart` | 3 | 0 |
+| `test/support/check.dart` | 1 | 0 |
+| `test/support/check_test.dart` | 1 | 0 |
 | `test/steps/m0_09_kernel_evaluator/kernel_evaluator_test.dart` | 1 | 0 |
 | `test/steps/m0_09_kernel_evaluator/scaling_test.dart` | 1 | 0 |
+| `test/steps/m0_10_finite_model_harness/harness.dart` | 2 | 0 |
+| `test/steps/m0_10_finite_model_harness/derived_test.dart` | 1 | 0 |
+| `test/steps/m0_10_finite_model_harness/smoke_test.dart` | 1 | 0 |
+| `test/steps/m0_10_finite_model_harness/witnesses_test.dart` | 1 | 0 |
+| `test/steps/m0_10_finite_model_harness/recursion_test.dart` | 2 | 0 |
+| `test/steps/m0_10_finite_model_harness/laws_01_10_test.dart` | 2 | 0 |
+| `test/steps/m0_10_finite_model_harness/laws_11_20_test.dart` | 1 | 0 |
+| `test/steps/m0_10_finite_model_harness/laws_21_28_test.dart` | 1 | 0 |
+| `test/steps/m0_10_finite_model_harness/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
