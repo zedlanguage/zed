@@ -46,9 +46,9 @@ void main() {
 
   test('errors are listed in text order, those of one span in the order met', () {
     // `b` is elaborated before `a`, which reads it.
-    expect(errors('a = b + 1r;\nb = 2r;\n'), [
-      'rationals arrive at step L1.17 [1r]',
-      'rationals arrive at step L1.17 [2r]',
+    expect(errors('a = b + (1 is int);\nb = (2 is int);\n'), [
+      '`is` tests a type, and types arrive at step L1.22 [(1 is int)]',
+      '`is` tests a type, and types arrive at step L1.22 [(2 is int)]',
     ]);
     expect(errors('f(a, b) = a;\ny = f();\n'), [
       'missing argument `a` of `f` [f()]',
@@ -79,23 +79,12 @@ void main() {
 
   test('forms of later steps and layers', () {
     const cases = [
-      ('x = 1r;', 'rationals arrive at step L1.17 [1r]'),
-      (
-        'x = 99999999999999999999;',
-        'this integer is beyond 64 bits; big integers arrive at step L1.17 '
-            '[99999999999999999999]',
-      ),
       ('x = 1 is int;', '`is` tests a type, and types arrive at step L1.22 [1 is int]'),
       (
         'p = 1;\nx = p.size;',
         '`size` is not a function in scope, and fields arrive at L2 [p.size]',
       ),
       ('p = 1;\nx = p.map(1);', '`map` is a prelude word of layer L3 [p.map]'),
-      (
-        'x = #err(1) else #err(code:) -> 0;',
-        "an atom's named payload arrives with value representation at step L1.17 "
-            '[#err(code:)]',
-      ),
       ('f = (x = 1) -> x;', "a lambda's default arrives with its expected type at step L1.26 [1]"),
       (
         'f(x: int) = 1;\nf(x: String) = 2;\ny = f(x: 1);',

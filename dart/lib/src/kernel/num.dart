@@ -70,6 +70,12 @@ final class Rat extends Value {
   bool get isNegative => num.isNegative;
 
   int compareRat(Rat other) => (num * other.den).compareTo(other.num * den);
+
+  @override
+  int get hashCode => Object.hash(num, den);
+
+  @override
+  String toString() => den == BigInt.one ? '${num}r' : '${num}r/${den}r';
 }
 
 /// A number placed on the extended line, for comparing numbers of different kinds:

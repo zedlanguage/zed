@@ -367,6 +367,22 @@ final class Atom extends Value {
     return Atom.raw(name, [for (final f in sorted) f.$1], [for (final f in sorted) f.$2]);
   }
 
+  /// The value of the struct payload's field `f`, found by binary search; null when it has none.
+  Value? field(String f) {
+    var lo = 0, hi = fields.length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      final c = compareUtf8(fields[mid], f);
+      if (c == 0) return args[mid];
+      if (c < 0) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return null;
+  }
+
   @override
   int get hashCode => Object.hash(name, Object.hashAll(fields), Object.hashAll(args));
 

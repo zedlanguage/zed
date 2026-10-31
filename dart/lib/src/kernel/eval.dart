@@ -940,9 +940,9 @@ _Env? _match(Pattern pat, Value v, _Env env) {
       if (a.name != name || a.fields.isEmpty) return null;
       _Env? e = env;
       for (final (f, p) in fields) {
-        final i = a.fields.indexOf(f);
-        if (i < 0) return null;
-        e = _match(p, a.args[i], e!);
+        final v = a.field(f);
+        if (v == null) return null;
+        e = _match(p, v, e!);
         if (e == null) return null;
       }
       return e;

@@ -377,15 +377,14 @@ final class _Elab {
   _Steps expr(Expr e) sync* {
     switch (e) {
       case IntLit(:final radix, :final digits):
-        final n = int.tryParse(digits.replaceAll('_', ''), radix: radix);
-        if (n == null) {
-          error(e.span, 'this integer is beyond 64 bits; big integers arrive at step L1.17');
-        }
-        _got = k.Lit(k.Int(n));
+        _got = k.Lit(k.Value.integer(BigInt.parse(digits.replaceAll('_', ''), radix: radix)));
       case FloatLit(:final text):
         _got = k.Lit(k.Float(double.parse(text.replaceAll('_', ''))));
-      case RatLit():
-        error(e.span, 'rationals arrive at step L1.17');
+      case RatLit(:final text):
+        _got = k.Lit(
+          k.Rat.decimal(text) ??
+              error(e.span, "this rational is beyond the evaluator's size limit"),
+        );
       case BoolLit(:final value):
         _got = k.Lit(k.Bool(value));
       case AtomLit(:final name):
@@ -488,12 +487,31 @@ final class _Elab {
   ) sync* {
     if (callee case Member(:final of, :final name, :final safe)) {
       yield* member(of, name, safe, callee.span, positional, named, curry, span);
+    } else if (callee case AtomLit(:final name)) {
+      yield* atom(name, positional, named, curry, span);
     } else if (declared(callee) case final b?) {
       yield* callDeclared(b, null, positional, named, curry, span);
     } else {
       yield expr(callee);
       yield* callValue(term, null, positional, named, curry, span);
     }
+  }
+
+  /// An atom with a payload, `#name(a, b)` by position or `#name(f: a)` by name.
+  _Steps atom(
+    String name,
+    List<Expr> positional,
+    List<(String, Expr)> named,
+    bool curry,
+    Span span,
+  ) sync* {
+    if (curry) error(span, "`...` curries a function's named parameters; an atom has none");
+    if (positional.isNotEmpty && named.isNotEmpty) {
+      error(span, "an atom's payload is all by position or all by name");
+    }
+    final fields = k.Tuple([for (final (f, _) in named) k.Str(f)]);
+    yield each([...positional, for (final (_, a) in named) a]);
+    _got = k.PrimApp(k.Prim.atom, [k.Lit(k.Str(name)), k.Lit(fields), ...result<List<k.Term>>()]);
   }
 
   /// A call through a value other than a declared function: by position only.
@@ -725,11 +743,27 @@ final class _Elab {
     _got = k.Lam(ps, term);
   }
 
-  /// An `else` pattern: an atom, its payload matched by position.
+  /// An `else` pattern: an atom, its payload matched by position or by name; a field written
+  /// `f:` binds `f`.
   _Steps pattern(Pattern p) sync* {
     final AtomPattern(:name, :fields, :items, :span) = p as AtomPattern;
     if (fields.isNotEmpty) {
-      error(span, "an atom's named payload arrives with value representation at step L1.17");
+      if (items.isNotEmpty) error(span, "an atom's payload is all by position or all by name");
+      final seen = <String>{};
+      for (final (f, _) in fields) {
+        if (!seen.add(f)) error(span, 'the pattern names `$f` twice');
+      }
+      final out = <(String, k.Pattern)>[];
+      for (final (f, sub) in fields) {
+        if (sub == null) {
+          out.add((f, k.BindP(kname(span, f))));
+        } else {
+          yield pattern(sub);
+          out.add((f, result<k.Pattern>()));
+        }
+      }
+      _got = k.FieldsP(name, out);
+      return;
     }
     final args = <k.Pattern>[];
     for (final i in items) {

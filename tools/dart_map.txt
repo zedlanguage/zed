@@ -150,3 +150,8 @@ dart/test/steps/l01_16_elaboration/calls_test.dart tests/steps/l01_16_elaboratio
 dart/test/steps/l01_16_elaboration/errors_test.dart tests/steps/l01_16_elaboration/errors.rs
 dart/test/steps/l01_16_elaboration/programs_test.dart tests/steps/l01_16_elaboration/programs.rs
 dart/test/steps/l01_16_elaboration/scaling_test.dart tests/steps/l01_16_elaboration/scaling.rs
+dart/test/steps/l01_17_value_representation/atoms_test.dart tests/steps/l01_17_value_representation/atoms.rs
+dart/test/steps/l01_17_value_representation/equality_test.dart tests/steps/l01_17_value_representation/equality.rs
+dart/test/steps/l01_17_value_representation/numbers_test.dart tests/steps/l01_17_value_representation/numbers.rs
+dart/test/steps/l01_17_value_representation/order_test.dart tests/steps/l01_17_value_representation/order.rs
+dart/test/steps/l01_17_value_representation/scaling_test.dart tests/steps/l01_17_value_representation/mod.rs
