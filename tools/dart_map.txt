@@ -68,3 +68,4 @@ dart/test/steps/m0_07_canonicalization/alpha_test.dart tests/steps/m0_07_canonic
 dart/test/steps/m0_07_canonicalization/domains_test.dart tests/steps/m0_07_canonicalization/domains.rs
 dart/test/steps/m0_07_canonicalization/rules_test.dart tests/steps/m0_07_canonicalization/rules.rs
 dart/test/steps/m0_07_canonicalization/scaling_test.dart tests/steps/m0_07_canonicalization/scaling.rs
+dart/test/steps/m0_08_zed0_checklist/checklist_test.dart tests/steps/m0_08_zed0_checklist/mod.rs

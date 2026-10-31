@@ -119,7 +119,7 @@ The Dart columns are filled as the port reaches each step.
 | M0.6 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:02 | 0:00 | 1 (1) |
 | other (Corpus 24) | 0:05 | 0:00 | 0 (0) | 0 (0) | | | |
 | M0.7 | 0:04 | 0:12 | 1 (1) | 5 (2) | 0:07 | 0:00 | 1 (1) |
-| M0.8 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
+| M0.8 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:00 | 0:00 | 0 (0) |
 | M0.11 | 0:07 | 0:02 | 0 (0) | 1 (1) | | | |
 | L1.1 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.2 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -944,7 +944,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_07_canonicalization/mod.rs` | 1,083 | `test/steps/m0_07_canonicalization/harness.dart` | 793 | 0.73 |
 | `tests/steps/m0_07_canonicalization/rules.rs` | 6,095 | `test/steps/m0_07_canonicalization/rules_test.dart` | 5,713 | 0.94 |
 | `tests/steps/m0_07_canonicalization/scaling.rs` | 1,973 | `test/steps/m0_07_canonicalization/scaling_test.dart` | 1,525 | 0.77 |
-| `tests/steps/m0_08_zed0_checklist/mod.rs` | 2,069 | | | |
+| `tests/steps/m0_08_zed0_checklist/mod.rs` | 2,069 | `test/steps/m0_08_zed0_checklist/checklist_test.dart` | 1,786 | 0.86 |
 | `tests/steps/m0_09_kernel_evaluator/mod.rs` | 26,083 | `test/steps/m0_09_kernel_evaluator/kernel_evaluator_test.dart` | 20,101 | 0.77 |
 | `tests/steps/m0_09_kernel_evaluator/scaling.rs` | 11,009 | `test/steps/m0_09_kernel_evaluator/scaling_test.dart` | 9,446 | 0.86 |
 | `tests/steps/m0_10_finite_model_harness/derived.rs` | 3,184 | `test/steps/m0_10_finite_model_harness/derived_test.dart` | 2,836 | 0.89 |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | | | |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **559,037** | | **462,002** | **0.83** |
+| **the Rust files ported so far** | **561,106** | | **463,788** | **0.83** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1043,10 +1043,13 @@ Dart:
   child that holds a written binder, where the Rust counted the written binders of each
   child first. Breaking the shadowing lookup of the one-pass normal form makes 5 of the 18
   tests fail.
+- **M0.8, the Zed₀ checklist.** One test, which reads the checklist and corpus program 31
+  from the spec copy in `zed/` and passed on its first run. It took under a minute in both
+  languages; Dart's `split` and a regular expression stand in for Rust's iterator chain.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1122,5 +1125,6 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/m0_07_canonicalization/domains_test.dart` | 1 | 0 |
 | `test/steps/m0_07_canonicalization/rules_test.dart` | 1 | 0 |
 | `test/steps/m0_07_canonicalization/scaling_test.dart` | 1 | 0 |
+| `test/steps/m0_08_zed0_checklist/checklist_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
