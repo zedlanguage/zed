@@ -16,6 +16,7 @@
 //! resolution is recorded, and elaboration (step L1.16) tells a field from a function.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Range;
 
 use crate::ast::{Error, Expr, ExprKind, Param, Pattern, Port, Stmt, StmtKind, StrPart, Target};
 use crate::ast::{Note, Type, TypeKind};
@@ -64,6 +65,8 @@ pub struct Resolution {
     /// Each use, by its text: a name, a type name, a push's statement (whose port it names),
     /// or a member whose name is in scope.
     pub uses: BTreeMap<Span, Ref>,
+    /// The binders of each `else` pattern, by the `else`'s text: a range of `binders`.
+    pub patterns: BTreeMap<Span, Range<usize>>,
 }
 
 /// The value words of the prelude, each with the layer it belongs to (DESIGN.md, "Defined
@@ -384,7 +387,10 @@ impl Resolver {
                 self.expr(of);
                 self.open();
                 if let Some(p) = pattern {
+                    let start = self.out.binders.len();
                     self.pattern(p);
+                    let end = self.out.binders.len();
+                    self.out.patterns.insert(e.span, start..end);
                 }
                 self.expr(default);
                 self.close();

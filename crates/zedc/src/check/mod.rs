@@ -39,7 +39,7 @@ use crate::ast::{
 };
 use crate::elab::Tables;
 use crate::lex::Span;
-use crate::resolve::{Kind, Ref, Resolution};
+use crate::resolve::{Ref, Resolution};
 
 use ty::{Arrow, Binds, Carrier, EVERY, OTHER, Piece, SParam, Sig, Ty, atoms, errs, mask_text};
 
@@ -1133,11 +1133,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 default,
             } => {
                 let v = self.expr(of);
-                if pattern.is_some() {
-                    for (i, b) in self.t.res.binders.iter().enumerate() {
-                        if b.kind == Kind::Pattern && default.span.start >= b.span.start {
-                            self.env.entry(i).or_insert_with(Ty::dynamic);
-                        }
+                if let Some(ids) = self.t.res.patterns.get(&e.span) {
+                    for i in ids.clone() {
+                        self.env.entry(i).or_insert_with(Ty::dynamic);
                     }
                 }
                 let d = self.expr(default);

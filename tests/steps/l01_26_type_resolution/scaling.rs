@@ -74,3 +74,15 @@ fn a_chain_of_functions_with_untyped_parameters_scales() {
         assert_eq!(info.sigs.len(), n);
     });
 }
+
+#[test]
+fn many_else_patterns_scale() {
+    // Each `else` with a pattern read every binder of the unit to find its own.
+    scaling::check("n bindings each with an else pattern", 1000, |n| {
+        let text: String = (0..n)
+            .map(|i| format!("v{i} = #e(code: {i}) else #e(code:) -> code;\n"))
+            .collect();
+        let (info, _) = info(&text);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
