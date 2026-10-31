@@ -114,7 +114,7 @@ The Dart columns are filled as the port reaches each step.
 | other (STATUS) | 0:08 | 0:06 | 0 (0) | 0 (0) | | | |
 | M0.9 | 0:15 | 0:01 | 1 (1) | 2 (1) | 0:28 | 0:00 | 0 (0) |
 | M0.10 | 0:49 | 0:10 | 4 (3) | 20 (9) | 0:09 | 0:01 | 3 (2) |
-| M0.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | | | |
+| M0.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | — | — | — |
 | M0.5 | 0:54 | 0:59 | 0 (0) | 7 (3) | 0:14 | 0:21 | 6 (3) |
 | M0.6 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:02 | 0:00 | 1 (1) |
 | other (Corpus 24) | 0:05 | 0:00 | 0 (0) | 0 (0) | | | |
@@ -987,6 +987,14 @@ Dart:
 
 - **M0.1, scaffolding.** No compile errors. The test harness and the scaling helper were
   small; Dart has no stack-size or thread setup to port.
+- **M0.2, M0.3 and M0.4.** M0.2 (operator precedence) and M0.3 (the normative grammar) are
+  written in DESIGN.md alone, and M0.4 (the corpus) is Zed programs with their inputs and
+  expected outputs; none of the three has Rust code to port. M0.4's reference programs, which
+  compute each expected output, were written in Python and rewritten in Dart
+  (`zed/corpus/ref/*.dart`) by the separate task that removed all Python, after M0.10 was
+  ported, not as a step of this port, so no time or
+  errors are recorded for them here. All 31 match their expected outputs (`refcheck.sh`, exit
+  0).
 - **M0.9, kernel evaluator.** No compile errors and no failing test on the first run. The
   evaluator was written in its final shape from the start, the one the Rust version reached
   only after the performance pass: families on a persistent ordered map (`pmap.dart`, in place
@@ -1164,7 +1172,7 @@ Dart:
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
