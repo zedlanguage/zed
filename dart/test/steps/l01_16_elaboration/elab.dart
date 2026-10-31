@@ -7,6 +7,7 @@ import 'dart:convert';
 
 import 'package:zed/ast.dart';
 import 'package:zed/elab.dart';
+import 'package:zed/interp.dart';
 import 'package:zed/kernel.dart';
 import 'package:zed/lex.dart';
 import 'package:zed/parse.dart';
@@ -24,9 +25,8 @@ Unit elab(String text) {
   return elaborate(stmts, resolve(stmts));
 }
 
-/// `t` under a stand-in for the prelude's `String`, the identity, which the interpreter
-/// replaces at step L1.18; the programs here interpolate only strings.
-Term withPrelude(Term t) => Let('String', const Lam(['s'], Var('s')), t);
+/// `t` under the interpreter's prelude words (step L1.18).
+Term withPrelude(Term t) => prelude(t);
 
 /// The value of the definition `name` of `text`, printed.
 String value(String text, String name) {

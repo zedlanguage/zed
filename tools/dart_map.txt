@@ -155,3 +155,10 @@ dart/test/steps/l01_17_value_representation/equality_test.dart tests/steps/l01_1
 dart/test/steps/l01_17_value_representation/numbers_test.dart tests/steps/l01_17_value_representation/numbers.rs
 dart/test/steps/l01_17_value_representation/order_test.dart tests/steps/l01_17_value_representation/order.rs
 dart/test/steps/l01_17_value_representation/scaling_test.dart tests/steps/l01_17_value_representation/mod.rs
+dart/lib/interp.dart crates/zedc/src/interp.rs
+dart/test/steps/l01_18_scalar_interpreter/scalar.dart tests/steps/l01_18_scalar_interpreter/mod.rs
+dart/test/steps/l01_18_scalar_interpreter/words_test.dart tests/steps/l01_18_scalar_interpreter/words.rs
+dart/test/steps/l01_18_scalar_interpreter/casts_test.dart tests/steps/l01_18_scalar_interpreter/casts.rs
+dart/test/steps/l01_18_scalar_interpreter/failures_test.dart tests/steps/l01_18_scalar_interpreter/failures.rs
+dart/test/steps/l01_18_scalar_interpreter/floats_test.dart tests/steps/l01_18_scalar_interpreter/floats.rs
+dart/test/steps/l01_18_scalar_interpreter/scaling_test.dart tests/steps/l01_18_scalar_interpreter/mod.rs

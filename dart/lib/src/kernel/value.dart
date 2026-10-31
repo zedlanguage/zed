@@ -30,18 +30,37 @@ sealed class Value implements Comparable<Value> {
   /// The failure several loose atoms make together (DESIGN.md sec:failure): the set of the
   /// distinct ones as `#errs({…})`, an `#errs` among them giving its members, and a single
   /// failure as itself.
+  ///
+  /// The largest `#errs` set among them is extended rather than copied, so a chain of `n`
+  /// failures merged one at a time takes O(n log n), not O(n²).
   static Value mergeFailures(Iterable<Value> atoms) {
-    final set = SplayTreeSet<Value>();
-    for (final a in atoms) {
+    final all = atoms.toList();
+    Family? base;
+    for (final a in all) {
       final members = a.errs;
-      if (members != null) {
-        set.addAll(members.keys);
-      } else {
-        set.add(a);
+      if (members != null && (base == null || members.length > base.length)) base = members;
+    }
+    var map = base?._map ?? const PMap<Value, Value>.empty(_cmp);
+    // The one failure met so far, while there is only one.
+    Value? one = base != null && base.length == 1 ? base.keys.first : null;
+    var several = base != null && base.length > 1;
+    for (final a in all) {
+      final members = a.errs;
+      if (members != null && identical(members, base)) continue;
+      for (final m in members?.keys ?? [a]) {
+        if (!several) {
+          if (one == null) {
+            one = m;
+          } else if (one.compareTo(m) != 0) {
+            several = true;
+          }
+        }
+        final k = m.key();
+        if (!map.containsKey(k)) map = map.put(k, k);
       }
     }
-    if (set.length == 1) return set.first;
-    return Atom('errs', [Family.set(set)]);
+    if (!several) return one!;
+    return Atom('errs', [Family._(map)]);
   }
 
   /// The set of an `#errs({…})`.
