@@ -42,12 +42,9 @@ use super::cell::{Cell, Entry, Premise, Premises};
 use super::interval::{End, IntervalSet, PIECE_LIMIT};
 use super::lattice::{Congruence, FINITE_SET_LIMIT, FiniteSet, Lattice};
 use super::preimage::{Demand, Domains, preimage, relations};
-use super::presburger::{self, Atom, Formula};
+use super::presburger::{self, Atom, Con, Formula, Lin};
 use super::revision::{self, Op, reduce_congruence};
 use crate::stage;
-
-/// The most rounds of [`Scope::reduce`]; each round that changes nothing ends it.
-pub const REDUCTION_ROUNDS: usize = 16;
 
 /// When a value is known.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -396,7 +393,7 @@ impl Scope {
     /// scope then mentions `x`, so `p`'s own reductions are the whole reduction, and the
     /// scope is not copied unless `x` shadows a name or `p` is empty.
     pub fn bind(&mut self, x: &Arc<str>, mut p: Product) -> Unbind {
-        for _ in 0..REDUCTION_ROUNDS {
+        loop {
             let before = p.clone();
             p.reduce_domains();
             if p == before {
@@ -676,14 +673,25 @@ impl Scope {
     }
 
     /// Passes information between the domains of every product, the relation and the written
-    /// constraints until nothing changes or [`REDUCTION_ROUNDS`] have run.
+    /// constraints until nothing changes. This ends with no bound on the rounds
+    /// (docs/thresholds.md, replacement 3). Every pass only narrows. The relation is projected
+    /// again only when another reduction has changed a product since its last projection, and
+    /// the others change only finitely often: a class narrows only to one value or none, a
+    /// finite set or a type's literals only lose members, enumeration runs once per
+    /// constraint, and an interval is narrowed only by these and by the class, whose
+    /// rounding moves no endpoint the projection gave, since the projection reads every
+    /// congruence and so its hulls end at members of each class.
     pub fn reduce(&mut self) {
-        for _ in 0..REDUCTION_ROUNDS {
+        let mut projected: Option<BTreeMap<Arc<str>, Product>> = None;
+        loop {
             if self.bottom || self.names.values().any(Product::is_empty) {
                 break;
             }
             let before = self.names.clone();
-            self.project();
+            if projected.as_ref() != Some(&self.names) {
+                self.project();
+                projected = Some(self.names.clone());
+            }
             for p in self.names.values_mut() {
                 p.reduce_domains();
             }
@@ -716,6 +724,27 @@ impl Scope {
         let Ok(mut parts) = within else {
             return;
         };
+        // Each name's congruence, `x == m * k + r` with `k` free, so that the projection
+        // already lies in the class: otherwise the class moves an endpoint, the relation moves
+        // another name's to match, and the two pass a bound back and forth without end.
+        for a in &mentioned {
+            if let Atom::Sym(n) = a
+                && let Congruence::Class { modulus, residue } = self.get(n).cell.congruence.element
+                && modulus > 1
+            {
+                let k = Lin::atom(Atom::Sym(format!("{n} mod").into()));
+                let Ok(Ok(rhs)) = k
+                    .times(modulus.into())
+                    .map(|m| m.plus(&Lin::constant(residue.into())))
+                else {
+                    return;
+                };
+                let Ok(c) = Con::eq(&Lin::atom(a.clone()), &rhs) else {
+                    return;
+                };
+                parts.push(Formula::Con(c));
+            }
+        }
         parts.push(self.relation.clone());
         let whole = Formula::and(parts);
         let syms: Vec<Atom> = mentioned

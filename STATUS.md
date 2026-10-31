@@ -103,7 +103,8 @@ in docs/layout.md.
   projection, and rung 2 with products of two symbols as atoms; the preimage keeps the relation
   a necessary box was projected from.
 - Done: **L1.39**, the reduced product (`zedc::store::product`): each name's cell, type and
-  binding time, the scope's linear relation and written constraints, the reductions in rounds,
+  binding time, the scope's linear relation and written constraints, the reductions in rounds
+  until none changes (no cap; the projection reads the congruences, docs/thresholds.md 3),
   the enumeration within its budget and fuel, narrowing by tests, and the arms of a body.
 - Complexity audit (2026-10-30, DESIGN.md Part G, "Every algorithm is of low complexity"):
   every finding is listed in COMPLEXITY.md with its state. Fixed so far: the preimage transfer

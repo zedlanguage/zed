@@ -29,7 +29,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `WIDENING_DELAY` 3 | store/iterate.rs | which changes of a loop head are joins and which widenings |
 | `HEAD_ITERATIONS` 64 | store/iterate.rs | a component is set to the top |
 | `NARROWING_ROUNDS` 64 | store/iterate.rs | phase 2 stops with the values it has |
-| `REDUCTION_ROUNDS` 16 | store/product.rs | the reduction stops with the values it has |
+| `REDUCTION_ROUNDS` 16 | store/product.rs | removed (3) |
 | `VARIABLES` 16, `ATOMS` 64, `INTERMEDIATE` 4096, `KEPT_CONJUNCTIONS` 64 | store/presburger.rs | a relation is dropped and its written constraint kept |
 | `CALL_DEPTH` 64, `TRANSFER_FUEL` 100000 | store/preimage.rs | the transfer through calls stops |
 | `BUILD_FUEL` 10^6 | stage.rs | a build-stage term is left to run whole |
@@ -131,6 +131,21 @@ at most L + 1 pieces there; a finite set at a widening point keeps only written 
 otherwise becomes their interval hull. Narrowing refines only the bounds a widening set,
 each at most once to each landmark, so it ends by the same height. Reduction rounds descend
 the same way.
+
+**Reduction rounds: done.** The plan above was wrong about them: they need no landmarks.
+`REDUCTION_ROUNDS` hid an endless descent, not a slow one. The projection of the relation read
+each name's interval but not its congruence, so `x == y` with `x` even and `y` odd moved the
+two lower bounds up one step per round (after 16 rounds `x` was in `32..` and the arm was
+still reachable). The projection now adds `x == m * k + r`, `k` a fresh variable, for each
+name whose class has a modulus above 1, so its hulls end at members of every class and the
+class moves no endpoint it gave. A projection of a box of several pieces can still narrow
+again when it is run on its own output, since the narrowed pieces split the formula into
+finer conjunctions, so it runs again only when another reduction has changed a product
+since it last ran. The other reductions change only finitely often (a class only to one
+value or none, a finite set and a type's literals only by losing members, enumeration once
+per constraint), so the loop ends with no bound on its rounds. Test:
+`l01_39_reduced_product::controls::an_equality_between_names_of_different_parity_is_unreachable`
+(fails without the congruences in the projection).
 
 ### 4. Presburger relations (replaces VARIABLES, ATOMS, INTERMEDIATE, KEPT_CONJUNCTIONS)
 

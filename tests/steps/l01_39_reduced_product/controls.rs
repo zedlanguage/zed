@@ -231,3 +231,15 @@ fn the_check_rejects_a_scope_that_leaves_out_a_reached_value() {
     ]);
     assert!(check(&s, &arms).unwrap_err().contains("reaches arm 1"));
 }
+
+#[test]
+fn an_equality_between_names_of_different_parity_is_unreachable() {
+    // `x` even, `y` odd and `x == y`: no value meets all three. Passing the relation and the
+    // congruences to each other one at a time moves `x`'s lower bound up by one step per
+    // pass, without end; the relation must read the congruences itself.
+    let src =
+        "ok = (x, y) -> if x mod 2 == 0 && y mod 2 == 1 && x >= 0 && x == y { x } else { 0 };";
+    let (_, _, a) = super::arms_of(src);
+    let then = super::arm(&a, "(x == y)", true);
+    assert!(!then.reachable(), "{}", then.scope);
+}
