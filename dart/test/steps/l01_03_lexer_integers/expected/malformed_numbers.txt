@@ -1,0 +1,10 @@
+timeout 200ms    [8..13] malformed number: a number must not run into a name: `ms`
+count 1__000     [6..12] malformed number: `_` goes only between two digits
+count 1_000_     [6..12] malformed number: `_` goes only between two digits
+mask 0b1012      [5..11] malformed number: 2 is not a binary digit
+mode 0o789       [5..10] malformed number: 8 is not an octal digit
+color 0x         [6..8] malformed number: `0x` must be followed by a digit
+color 0xG0       [6..10] malformed number: `0x` must be followed by a digit
+big 0X1F         [4..8] malformed number: a number must not run into a name: `X1F`
+flags 0b_101     [6..12] malformed number: `0b` must be followed by a digit
+day 1d           [4..6] malformed number: a number must not run into a name: `d`

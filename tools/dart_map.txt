@@ -86,3 +86,4 @@ dart/lib/src/lex/punct.dart crates/zedc/src/lex/punct.rs
 dart/lib/src/lex/string.dart crates/zedc/src/lex/string.rs
 dart/test/steps/l01_02_lexer_names/names_test.dart tests/steps/l01_02_lexer_names/names.rs
 dart/test/steps/l01_02_lexer_names/scripts_test.dart tests/steps/l01_02_lexer_names/scripts.rs
+dart/test/steps/l01_03_lexer_integers/integers_test.dart tests/steps/l01_03_lexer_integers/mod.rs

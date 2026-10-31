@@ -123,7 +123,7 @@ The Dart columns are filled as the port reaches each step.
 | M0.11 | 0:07 | 0:02 | 0 (0) | 1 (1) | 0:02 | 0:00 | 0 (0) |
 | L1.1 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:04 | 0:00 | 1 (1) |
 | L1.2 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:06 | 0:01 | 4 (1) |
-| L1.3 | 0:01 | 0:01 | 0 (0) | 0 (0) | | | |
+| L1.3 | 0:01 | 0:01 | 0 (0) | 0 (0) | 0:00 | 0:00 | 0 (0) |
 | L1.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | | | |
 | L1.5 | 0:05 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.6 | 0:02 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -761,7 +761,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_02_lexer_names/mod.rs` | 126 | | | |
 | `tests/steps/l01_02_lexer_names/names.rs` | 2,106 | `test/steps/l01_02_lexer_names/names_test.dart` | 1,857 | 0.88 |
 | `tests/steps/l01_02_lexer_names/scripts.rs` | 2,205 | `test/steps/l01_02_lexer_names/scripts_test.dart` | 2,478 | 1.12 |
-| `tests/steps/l01_03_lexer_integers/mod.rs` | 2,418 | | | |
+| `tests/steps/l01_03_lexer_integers/mod.rs` | 2,418 | `test/steps/l01_03_lexer_integers/integers_test.dart` | 2,159 | 0.89 |
 | `tests/steps/l01_04_lexer_floats_and_rationals/mod.rs` | 2,411 | | | |
 | `tests/steps/l01_05_lexer_strings/holes.rs` | 2,265 | | | |
 | `tests/steps/l01_05_lexer_strings/mod.rs` | 1,138 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **638,448** | | **537,180** | **0.84** |
+| **the Rust files ported so far** | **640,866** | | **539,339** | **0.84** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1081,10 +1081,14 @@ Dart:
   standard library are at Unicode 17.0. Four compile errors in one run, all from one
   misescaped record field in a test. The two tests, with a scaling test added, pass; two
   negative controls (not reading the trailing `'`; refusing Latin with Han) each fail tests.
+- **L1.3, integers.** The lexer of step L1.2 already reads integers, so only the tests are
+  ported, with the malformed-number messages kept as expected output and a scaling test
+  added. No compile errors. Two negative controls (taking every base of 10 or more as hex
+  digits; keeping the `_` in the digits) each fail one test.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1184,5 +1188,7 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_02_lexer_names/names_test.dart` | 1 | 0 |
 | `test/steps/l01_02_lexer_names/scripts_test.dart` | 1 | 0 |
 | `test/steps/l01_02_lexer_names/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_03_lexer_integers/integers_test.dart` | 1 | 0 |
+| `test/steps/l01_03_lexer_integers/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
