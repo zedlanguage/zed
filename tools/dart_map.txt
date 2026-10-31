@@ -110,3 +110,10 @@ dart/test/steps/l01_09_postfix_chains/ast.dart tests/steps/l01_09_postfix_chains
 dart/test/steps/l01_09_postfix_chains/calls_test.dart tests/steps/l01_09_postfix_chains/calls.rs
 dart/test/steps/l01_09_postfix_chains/chains_test.dart tests/steps/l01_09_postfix_chains/chains.rs
 dart/test/steps/l01_09_postfix_chains/fences_test.dart tests/steps/l01_09_postfix_chains/fences.rs
+dart/lib/src/ast/types.dart crates/zedc/src/ast/types.rs
+dart/test/steps/l01_10_lambdas_types_else_tuples/sx.dart tests/steps/l01_10_lambdas_types_else_tuples/mod.rs
+dart/test/steps/l01_10_lambdas_types_else_tuples/lambdas_test.dart tests/steps/l01_10_lambdas_types_else_tuples/lambdas.rs
+dart/test/steps/l01_10_lambdas_types_else_tuples/elses_test.dart tests/steps/l01_10_lambdas_types_else_tuples/elses.rs
+dart/test/steps/l01_10_lambdas_types_else_tuples/types_test.dart tests/steps/l01_10_lambdas_types_else_tuples/tests_of_types.rs
+dart/test/steps/l01_10_lambdas_types_else_tuples/tuples_test.dart tests/steps/l01_10_lambdas_types_else_tuples/tuples.rs
+dart/test/steps/l01_10_lambdas_types_else_tuples/fences_test.dart tests/steps/l01_10_lambdas_types_else_tuples/fences.rs
