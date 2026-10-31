@@ -232,6 +232,14 @@ mixin _Types {
     }
   }
 
+  /// The parameters of node `n`, a `Params`, added to `out`.
+  _Steps params(Node n, List<Param> out) sync* {
+    for (final k in n.kids) {
+      yield param(k);
+      out.add(_got as Param);
+    }
+  }
+
   /// The parameter of node `n`, a `Param` or a `PosParam`.
   _Steps param(Node n) sync* {
     if (n.name == 'PosParam' && n.alt == 0) throw later(n);

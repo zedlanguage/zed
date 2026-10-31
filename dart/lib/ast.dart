@@ -1,5 +1,5 @@
-/// The syntax tree of expressions (steps L1.9 to L1.11), built from a parse tree
-/// (`parse.dart`).
+/// The syntax tree of expressions, statements and units (steps L1.9 to L1.12), built from a
+/// parse tree (`parse.dart`).
 ///
 /// A node of the parse tree records only its rule and tokens; here an expression is one node
 /// per operation, with its operands. Parentheses group and leave no node; the grouped
@@ -8,8 +8,8 @@
 /// member `e.n` or `e?.n`. A uniform call `x.f(a)` stays a call of the member `x.f`, since
 /// whether `f` is a field or a function is known only after name resolution (step L1.14). A
 /// lambda keeps its parameters as written; an `else` chain is built left to right. A block is
-/// its statements, exactly one of them its export. A form not built yet is an error naming its
-/// layer.
+/// its statements, one of them its export. A unit is its declarations and statements. A form
+/// of a later layer is an error naming that layer.
 library;
 
 import 'dart:convert';
@@ -230,6 +230,18 @@ final class Else extends Expr {
   String toString() => '(else $of ${pattern == null ? '' : '$pattern '}$fallback)';
 }
 
+/// `if c { a } else { b }`; `else if` is an `If` in the `else` branch.
+final class If extends Expr {
+  final Expr cond;
+  final Expr then;
+  final Expr otherwise;
+
+  If(this.cond, this.then, this.otherwise, super.span);
+
+  @override
+  String toString() => '(if $cond $then $otherwise)';
+}
+
 /// A member `e.n`, or `e?.n` when `safe`, which passes an atom member of the value's type
 /// through.
 final class Member extends Expr {
@@ -267,6 +279,21 @@ Expr build(String text, List<Token> tokens, Tree tree) => expr(text, tokens, tre
 Expr expr(String text, List<Token> tokens, Tree tree, Node n) {
   _run(_Builder(utf8.encode(text), tokens, tree).node(n));
   return _expr;
+}
+
+/// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, in written order. A
+/// unit's top level exports its declarations, so `return` there is an error.
+List<Stmt> unit(String text, List<Token> tokens, Tree tree) {
+  final b = _Builder(utf8.encode(text), tokens, tree);
+  final stmts = <Stmt>[];
+  for (final k in tree.root.kids) {
+    _run(b.item(k));
+    if (_stmt case Return(:final span)) {
+      throw BuildError(span, "`return` exports from a block; a unit's top level has none");
+    }
+    stmts.add(_stmt);
+  }
+  return stmts;
 }
 
 /// Each part of the tree is built by a generator that yields the generators of the parts it
@@ -329,7 +356,7 @@ final class _Builder with _Types, _Stmts {
   _Steps node(Node n) sync* {
     final kids = n.kids;
     switch ((n.name, n.alt)) {
-      case ('Expr', 2) || ('Prefix', 1) || ('Primary', 0 || 2 || 13):
+      case ('Expr', 2) || ('Prefix', 1) || ('Primary', 0 || 2 || 7 || 13):
         yield node(kids[0]);
       case ('Expr', 0):
         yield* lambda(n);
@@ -387,7 +414,14 @@ final class _Builder with _Types, _Stmts {
         yield node(kids[0]);
         _expr.span = span(n);
       case ('Block', _):
-        yield* block(n);
+        yield* block(n, true);
+      case ('If', _):
+        yield node(kids[0]);
+        final cond = _expr;
+        yield node(kids[1]);
+        final then = _expr;
+        yield node(kids[2]);
+        _got = If(cond, then, _expr, span(n));
       case ('Primary', 6):
         final items = <Expr>[];
         for (final k in kids) {
@@ -419,10 +453,7 @@ final class _Builder with _Types, _Stmts {
       case [final p, _] when p.name == 'Name':
         params.add(Param(word(p.start), false, null, null, span(p)));
       case [final p, _]:
-        for (final k in p.kids) {
-          yield param(k);
-          params.add(_got as Param);
-        }
+        yield* this.params(p, params);
     }
     yield node(kids.last);
     _got = Lambda(params, _expr, span(n));

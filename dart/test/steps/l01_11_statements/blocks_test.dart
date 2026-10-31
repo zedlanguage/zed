@@ -65,11 +65,8 @@ void main() {
     ]);
   });
 
-  test('a statement of a later step names its layer', () {
+  test('a statement of a later layer names that layer', () {
     check([
-      // Functions and pushes are built from step L1.12.
-      ('x -> { sq(v) = v * v; sq(x) }', 'error: this form (Function) is built from layer L1'),
-      ('x -> { out <- x; x }', 'error: this form (Push) is built from layer L1'),
       ('x -> { n: int = x; n }', 'error: this form (Binding) is built from layer L10'),
       ('x -> { y = x with z = 1; y }', 'error: this form (Boundary) is built from layer L6'),
       ('x -> { local y = x; y }', 'error: this form (Decl) is built from layer L2'),

@@ -122,3 +122,8 @@ dart/test/steps/l01_11_statements/sx.dart tests/steps/l01_11_statements/mod.rs
 dart/test/steps/l01_11_statements/blocks_test.dart tests/steps/l01_11_statements/blocks.rs
 dart/test/steps/l01_11_statements/returns_test.dart tests/steps/l01_11_statements/returns.rs
 dart/test/steps/l01_11_statements/fences_test.dart tests/steps/l01_11_statements/fences.rs
+dart/test/steps/l01_12_declarations/sx.dart tests/steps/l01_12_declarations/mod.rs
+dart/test/steps/l01_12_declarations/functions_test.dart tests/steps/l01_12_declarations/functions.rs
+dart/test/steps/l01_12_declarations/ifs_test.dart tests/steps/l01_12_declarations/ifs.rs
+dart/test/steps/l01_12_declarations/pushes_test.dart tests/steps/l01_12_declarations/pushes.rs
+dart/test/steps/l01_12_declarations/fences_test.dart tests/steps/l01_12_declarations/fences.rs
