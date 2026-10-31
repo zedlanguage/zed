@@ -136,7 +136,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.13 | 0:09 | 0:03 | 0 (0) | 0 (0) | 0:06 | 0:01 | 1 (1) |
 | L1.14 | 0:07 | 0:02 | 0 (0) | 0 (0) | 0:04 | 0:01 | 0 (0) |
 | L1.15 | 0:08 | 0:03 | 1 (1) | 16 (3) | 0:04 | 0:03 | 2 (2) |
-| L1.16 | 0:15 | 0:01 | 0 (0) | 1 (1) | | | |
+| L1.16 | 0:15 | 0:01 | 0 (0) | 1 (1) | 0:12 | 0:10 | 0 (0) |
 | L1.17 | 0:13 | 0:04 | 0 (0) | 5 (2) | | | |
 | L1.18 | 0:08 | 0:04 | 0 (0) | 2 (1) | | | |
 | L1.19 | 0:12 | 0:03 | 0 (0) | 1 (1) | | | |
@@ -707,7 +707,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/check/mod.rs` | 109,155 | | | |
 | `crates/zedc/src/check/ty.rs` | 26,843 | | | |
 | `crates/zedc/src/cost.rs` | 8,807 | `lib/cost.dart`<br>`test/cost_test.dart` | 10,032 | 1.14 |
-| `crates/zedc/src/elab.rs` | 56,580 | | | |
+| `crates/zedc/src/elab.rs` | 56,580 | `lib/elab.dart` | 27,801 | 0.49 |
 | `crates/zedc/src/fence.rs` | 2,991 | `lib/fence.dart` | 2,352 | 0.79 |
 | `crates/zedc/src/format.rs` | 23,772 | `lib/format.dart` | 20,819 | 0.88 |
 | `crates/zedc/src/interp.rs` | 1,137 | | | |
@@ -810,11 +810,11 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_15_kernel_terms/mod.rs` | 288 | | | |
 | `tests/steps/l01_15_kernel_terms/notation.rs` | 5,524 | `test/steps/l01_15_kernel_terms/notation_test.dart` | 4,233 | 0.77 |
 | `tests/steps/l01_15_kernel_terms/scaling.rs` | 2,895 | `test/steps/l01_15_kernel_terms/scaling_test.dart` | 2,032 | 0.70 |
-| `tests/steps/l01_16_elaboration/calls.rs` | 2,863 | | | |
-| `tests/steps/l01_16_elaboration/errors.rs` | 4,274 | | | |
-| `tests/steps/l01_16_elaboration/mod.rs` | 2,130 | | | |
-| `tests/steps/l01_16_elaboration/programs.rs` | 6,170 | | | |
-| `tests/steps/l01_16_elaboration/scaling.rs` | 8,985 | | | |
+| `tests/steps/l01_16_elaboration/calls.rs` | 2,863 | `test/steps/l01_16_elaboration/calls_test.dart` | 2,775 | 0.97 |
+| `tests/steps/l01_16_elaboration/errors.rs` | 4,274 | `test/steps/l01_16_elaboration/errors_test.dart` | 4,129 | 0.97 |
+| `tests/steps/l01_16_elaboration/mod.rs` | 2,130 | `test/steps/l01_16_elaboration/elab.dart` | 2,068 | 0.97 |
+| `tests/steps/l01_16_elaboration/programs.rs` | 6,170 | `test/steps/l01_16_elaboration/programs_test.dart` | 5,480 | 0.89 |
+| `tests/steps/l01_16_elaboration/scaling.rs` | 8,985 | `test/steps/l01_16_elaboration/scaling_test.dart` | 3,469 | 0.39 |
 | `tests/steps/l01_17_value_representation/atoms.rs` | 3,143 | | | |
 | `tests/steps/l01_17_value_representation/equality.rs` | 1,900 | | | |
 | `tests/steps/l01_17_value_representation/mod.rs` | 439 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,774** | | | |
-| **the Rust files ported so far** | **865,153** | | **734,474** | **0.85** |
+| **the Rust files ported so far** | **946,155** | | **780,196** | **0.82** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1210,10 +1210,27 @@ Dart:
   whole text; no space inside one-line braces) each fail tests; the head copy and the
   whole-text fit test fail the scaling test, the second at 65 to 74 times as long at eight
   times the size, over the limit of 24.
+- **L1.16** (elaboration to kernel terms). Moderate. The first version recursed, and blocks
+  nested more than about 1,000 deep overflowed the stack; it was rewritten as generators on
+  an explicit stack, like the resolver. The Rust stops a term with `?` on an `Option`; the
+  Dart stops one by throwing, and the stack driver catches the throw and leaves it as the
+  stopped step's result. A function's uses are found by binary search among its scope's
+  statements, so a use is read once per scope it belongs to, not once per scope around it.
+  The L1.16 Rust elaborated a default again at each call that left its parameter out, so a
+  chain of defaults that call functions with defaults took time doubling with each function
+  (440 ms at 16); each default's term is now made once and shared, which keeps every printed
+  term as the Rust prints it (the Rust fixed this later, in F2, by making each default a
+  definition). No compile errors. Six negative controls each fail tests: a scan for the
+  next ready statement (31 to 37 times as long at eight times the size, over the limit of
+  24, once the test's size was raised from 1,000 to 4,000, where the scan's cost shows), a
+  scan of every use at each scope (47 to 54 times), a scan of the defaults' uses from the
+  start of the unit (47 to 55 times), each default elaborated again (up to 9,805 times),
+  ties broken by the greatest index, and errors of one span sorted in reverse order or not
+  sorted by start. The last two needed a new test, of two errors on one span.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1225,7 +1242,7 @@ which the case was shorter, clearer or cheaper to run.
 | case | better in | why |
 |---|---|---|
 | Shared subterms and graphs with back references | Dart | The garbage collector lets any number of owners hold the same object. The Rust needs `Arc` or `Rc` for sharing, clones to satisfy the borrow checker, and graphs stored as vectors addressed by index. |
-| Deep recursion (16,000-deep terms, deeply nested blocks) | Rust | A Rust thread can be given a larger stack (`stack_size(1 << 29)` for the L1.15 printer, 4 GiB for the L1.14 resolver), so plain recursion works. A Dart isolate's stack cannot be raised, so each deep walk is rewritten on an explicit stack; `sync*` generators keep that rewrite short (L1.14, L1.15). |
+| Deep recursion (16,000-deep terms, deeply nested blocks) | Rust | A Rust thread can be given a larger stack (`stack_size(1 << 29)` for the L1.15 printer, 4 GiB for the L1.14 resolver), so plain recursion works. A Dart isolate's stack cannot be raised, so each deep walk is rewritten on an explicit stack; `sync*` generators keep that rewrite short (L1.14, L1.15, L1.16). |
 | A map whose keys must be read in order | Rust | `BTreeMap` keeps the evidence record sorted. A Dart `Map` keeps insertion order, so the printer and the serializer each sort the keys (L1.15). |
 | Looping while a value matches a pattern | Rust | `while let Term::Let(x, e, body) = t` walks a chain of `let`s. Dart has `if`-`case` but no `while`-`case`, so the loop becomes `for (; t is Let; t = t.body)` (L1.15). |
 | Adding a behavior to a type from another file | Rust | `impl fmt::Display for Term` can live in the printer's module. In Dart `toString` must be declared in the class, so the printer is a `part` of the term library and the base class's `toString` calls it (L1.15). |
@@ -1233,6 +1250,11 @@ which the case was shorter, clearer or cheaper to run.
 | Building a value lazily, once | Dart | A `late final` field computes on first read. The Rust needs `OnceCell` or builds everything ahead (L1.15). |
 | Lists built with conditions and loops | Dart | Collection `for` and `if` elements (`[a, if (c) b, for (x in xs) f(x)]`) replace Rust's `iter().map().collect()` chains and `push` sequences (L1.15 `fold` and `fix` arguments). |
 | Matching on a closed set of variants | equal | Dart's sealed classes with object patterns in `switch` expressions are as short as Rust's `match` and are also checked for exhaustiveness. |
+| Stopping a computation that met an error | Rust | `?` on an `Option` returns `None` from the function at once, and the caller's `?` passes it on. Dart's `?` exists only for null-aware access, so the elaborator stops by throwing, and each generator step that may stop is caught by the stack driver (L1.16). |
+| Reading the keys of a sorted map in a range | Rust | `BTreeMap::range(a..b)` reads the keys between two bounds. A Dart `SplayTreeMap` has only `firstKeyAfter`, so a range is a loop calling it once per key, each call a new search from the root (L1.16). |
+| Maps keyed by object identity | Dart | Any object is a map key, compared by identity unless it defines `==`, so the elaborator's tables are keyed by the binder or the parameter itself. The Rust keys them by index or by span, because its objects are borrowed or cloned and have no identity of their own (L1.16). |
+| Sharing one computed value among many users | Dart | A default's term is made once and the same object placed in every call that leaves its parameter out. The Rust would need `Rc<Term>` throughout the term type to do the same; the L1.16 Rust copied the term instead (L1.16). |
+| A list with an optional first element | Dart | `[?receiver, ...args]` adds the receiver only when it is not null. The Rust writes `receiver.into_iter().chain(args).collect()` (L1.16). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
 
 ### Changes per Dart file
@@ -1333,6 +1355,7 @@ performance pass yet, so the second number is 0 throughout.
 | `lib/format.dart` | 2 | 0 |
 | `bin/zedc.dart` | 1 | 0 |
 | `lib/resolve.dart` | 3 | 0 |
+| `lib/elab.dart` | 5 | 0 |
 | `lib/src/lex/text.dart` | 1 | 0 |
 | `lib/src/lex/comment.dart` | 1 | 0 |
 | `lib/src/lex/name.dart` | 1 | 0 |
@@ -1399,5 +1422,10 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_15_kernel_terms/layout_test.dart` | 1 | 0 |
 | `test/steps/l01_15_kernel_terms/evidence_test.dart` | 2 | 0 |
 | `test/steps/l01_15_kernel_terms/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_16_elaboration/elab.dart` | 1 | 0 |
+| `test/steps/l01_16_elaboration/calls_test.dart` | 1 | 0 |
+| `test/steps/l01_16_elaboration/errors_test.dart` | 2 | 0 |
+| `test/steps/l01_16_elaboration/programs_test.dart` | 1 | 0 |
+| `test/steps/l01_16_elaboration/scaling_test.dart` | 6 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
