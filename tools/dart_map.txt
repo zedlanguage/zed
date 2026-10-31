@@ -92,3 +92,6 @@ dart/test/steps/l01_05_lexer_strings/parts.dart tests/steps/l01_05_lexer_strings
 dart/test/steps/l01_05_lexer_strings/strings_test.dart tests/steps/l01_05_lexer_strings/strings.rs
 dart/test/steps/l01_05_lexer_strings/holes_test.dart tests/steps/l01_05_lexer_strings/holes.rs
 dart/test/steps/l01_05_lexer_strings/scaling_test.dart tests/steps/l01_05_lexer_strings/scaling.rs
+dart/test/support/tokens.dart tests/src/tokens.rs
+dart/test/steps/l01_06_lexer_tokens/program_test.dart tests/steps/l01_06_lexer_tokens/program.rs
+dart/test/steps/l01_06_lexer_tokens/words_test.dart tests/steps/l01_06_lexer_tokens/words.rs

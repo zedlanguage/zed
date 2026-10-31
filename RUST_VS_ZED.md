@@ -126,7 +126,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.3 | 0:01 | 0:01 | 0 (0) | 0 (0) | 0:00 | 0:00 | 0 (0) |
 | L1.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | 0:00 | 0:00 | 0 (0) |
 | L1.5 | 0:05 | 0:01 | 0 (0) | 0 (0) | 0:06 | 0:06 | 3 (1) |
-| L1.6 | 0:02 | 0:01 | 0 (0) | 0 (0) | | | |
+| L1.6 | 0:02 | 0:01 | 0 (0) | 0 (0) | 0:01 | 0:00 | 0 (0) |
 | L1.7 | 0:06 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.8 | 0:06 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.9 | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -752,7 +752,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/src/lib.rs` | 2,590 | `test/support/support.dart`<br>`test/support/support_test.dart` | 3,467 | 1.34 |
 | `tests/src/oracle.rs` | 7,128 | | | |
 | `tests/src/scaling.rs` | 3,377 | `test/support/scaling.dart` | 2,230 | 0.66 |
-| `tests/src/tokens.rs` | 1,819 | | | |
+| `tests/src/tokens.rs` | 1,819 | `test/support/tokens.dart` | 1,557 | 0.86 |
 | `tests/src/trees.rs` | 1,371 | | | |
 | `tests/steps/l01_01_source_loading/accepted.rs` | 1,455 | `test/steps/l01_01_source_loading/accepted_test.dart` | 1,467 | 1.01 |
 | `tests/steps/l01_01_source_loading/mod.rs` | 163 | | | |
@@ -768,8 +768,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_05_lexer_strings/scaling.rs` | 1,663 | `test/steps/l01_05_lexer_strings/scaling_test.dart` | 1,567 | 0.94 |
 | `tests/steps/l01_05_lexer_strings/strings.rs` | 3,036 | `test/steps/l01_05_lexer_strings/strings_test.dart` | 2,798 | 0.92 |
 | `tests/steps/l01_06_lexer_tokens/mod.rs` | 198 | | | |
-| `tests/steps/l01_06_lexer_tokens/program.rs` | 2,380 | | | |
-| `tests/steps/l01_06_lexer_tokens/words.rs` | 3,054 | | | |
+| `tests/steps/l01_06_lexer_tokens/program.rs` | 2,380 | `test/steps/l01_06_lexer_tokens/program_test.dart` | 2,424 | 1.02 |
+| `tests/steps/l01_06_lexer_tokens/words.rs` | 3,054 | `test/steps/l01_06_lexer_tokens/words_test.dart` | 2,910 | 0.95 |
 | `tests/steps/l01_07_fences/copies.rs` | 4,090 | | | |
 | `tests/steps/l01_07_fences/extractor.rs` | 1,624 | | | |
 | `tests/steps/l01_07_fences/mod.rs` | 287 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,774** | | | |
-| **the Rust files ported so far** | **651,378** | | **553,413** | **0.85** |
+| **the Rust files ported so far** | **658,631** | | **560,304** | **0.85** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1096,10 +1096,14 @@ Dart:
   stack: 128,000 levels lex in 0.2 s. Three compile errors in one run, from a destructuring
   declaration in a test, rewritten as an `if case`. Two negative controls (stripping no
   indentation; never recording a hole's end) each fail tests.
+- **L1.6, the other tokens.** Tests only, with the token renderer of the tests ported; its
+  per-line rendering, which compared every token with every line, now walks the tokens once.
+  A scaling test is added. No compile errors. Two negative controls (trying the shortest
+  operator first; block comments that do not nest) each fail tests.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1207,5 +1211,9 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_05_lexer_strings/strings_test.dart` | 1 | 0 |
 | `test/steps/l01_05_lexer_strings/holes_test.dart` | 2 | 0 |
 | `test/steps/l01_05_lexer_strings/scaling_test.dart` | 2 | 0 |
+| `test/support/tokens.dart` | 3 | 0 |
+| `test/steps/l01_06_lexer_tokens/program_test.dart` | 1 | 0 |
+| `test/steps/l01_06_lexer_tokens/words_test.dart` | 1 | 0 |
+| `test/steps/l01_06_lexer_tokens/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
