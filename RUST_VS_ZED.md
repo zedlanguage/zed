@@ -686,7 +686,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-kernel/src/types/empty.rs` | 7,024 | | | |
 | `crates/zed-kernel/src/types/rec.rs` | 18,327 | | | |
 | `crates/zed-kernel/src/value.rs` | 16,674 | `lib/src/kernel/value.dart`<br>`test/kernel/value_test.dart` | 14,226 | 0.85 |
-| `crates/zed-kernel/src/words.rs` | 5,277 | `lib/src/kernel/words.dart` | 4,024 | 0.76 |
+| `crates/zed-kernel/src/words.rs` | 5,277 | `lib/src/kernel/words.dart` | 4,040 | 0.77 |
 | `crates/zed-native/src/codegen.rs` | 27,147 | | | |
 | `crates/zed-native/src/hooks.rs` | 18,557 | | | |
 | `crates/zed-native/src/lib.rs` | 3,845 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,774** | | | |
-| **the Rust files ported so far** | **640,865** | | **539,338** | **0.84** |
+| **the Rust files ported so far** | **640,865** | | **539,354** | **0.84** |
 <!-- /sizes -->
 
 ## Ease of each step in each language

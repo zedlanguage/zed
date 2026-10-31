@@ -2,7 +2,8 @@
 /// read (steps L1.1 and L1.2), from a copy of the Unicode Character Database: each code point's
 /// canonical combining class, its full canonical decomposition, the pairs that canonical
 /// composition joins, the XID_Start and XID_Continue properties, each code point's script and
-/// script extensions, and the code points a quoted character shows as an escape.
+/// script extensions, the code points a quoted character shows as an escape, and the full case
+/// mappings with the Cased and Case_Ignorable properties that the final sigma reads.
 ///
 /// Usage: dart tools/bin/unicode_tables.dart [UCD directory, default /usr/share/unicode/ucd]
 library;
@@ -17,6 +18,7 @@ void main(List<String> args) {
 
   final ccc = <int, int>{};
   final mapping = <int, List<int>>{};
+  final lower = <int, List<int>>{}, upper = <int, List<int>>{};
   for (final line in lines('UnicodeData.txt')) {
     final f = line.split(';');
     final cp = int.parse(f[0], radix: 16);
@@ -24,6 +26,22 @@ void main(List<String> args) {
     if (f[5].isNotEmpty && !f[5].startsWith('<')) {
       mapping[cp] = [for (final x in f[5].split(' ')) int.parse(x, radix: 16)];
     }
+    if (f[12].isNotEmpty) upper[cp] = [int.parse(f[12], radix: 16)];
+    if (f[13].isNotEmpty) lower[cp] = [int.parse(f[13], radix: 16)];
+  }
+  // The full case mappings: SpecialCasing's mappings that hold in every context and every
+  // language, else the simple ones of UnicodeData. Of the rest, the final sigma holds in every
+  // language, and the code reading the tables applies it.
+  for (final line in lines('SpecialCasing.txt')) {
+    final f = [for (final x in line.split('#')[0].split(';')) x.trim()];
+    if (f.length < 5 || f[4].isNotEmpty) continue;
+    final cp = int.parse(f[0], radix: 16);
+    List<int> read(String m) => [for (final x in m.split(' ')) int.parse(x, radix: 16)];
+    lower[cp] = read(f[1]);
+    upper[cp] = read(f[3]);
+  }
+  for (final m in [lower, upper]) {
+    m.removeWhere((cp, to) => to.length == 1 && to[0] == cp);
   }
 
   /// The code points of each value of a file of `first..last ; value` lines.
@@ -56,6 +74,9 @@ void main(List<String> args) {
   final decomposed = mapping.keys.toList()..sort();
   final decomp = [
     for (final cp in decomposed) ...[cp, full(cp).length, ...full(cp)],
+  ];
+  List<int> flat(Map<int, List<int>> m) => [
+    for (final cp in m.keys.toList()..sort()) ...[cp, m[cp]!.length, ...m[cp]!],
   ];
   final pairs = [
     for (final cp in decomposed)
@@ -113,6 +134,14 @@ void main(List<String> args) {
             'code point in no run has its script as its only extension.', _runs(ext)),
         _literal('escapedInQuotes', 'Runs of code points a quoted character shows as an '
             'escape, in hexadecimal: first, last, 1.', _runs({for (final cp in escaped) cp: 1})),
+        _literal('lowercaseMappings', 'Each code point whose full lowercase mapping is not '
+            'itself, the length of the mapping, and the mapping, in hexadecimal.', flat(lower)),
+        _literal('uppercaseMappings', 'Each code point whose full uppercase mapping is not '
+            'itself, the length of the mapping, and the mapping, in hexadecimal.', flat(upper)),
+        _literal('cased', 'Runs of code points with the Cased property, in hexadecimal: '
+            'first, last, 1.', _runs({for (final cp in derived('Cased')) cp: 1})),
+        _literal('caseIgnorable', 'Runs of code points with the Case_Ignorable property, in '
+            'hexadecimal: first, last, 1.', _runs({for (final cp in derived('Case_Ignorable')) cp: 1})),
         '/// The names of the scripts.\nconst scriptNames = [\n'
             '${scriptNames.map((n) => "  '$n',\n").join()}];\n',
         '/// The values of the Script_Extensions property, each a list of indexes in '
@@ -125,7 +154,8 @@ void main(List<String> args) {
   print(
     'Unicode $version: ${classRuns.length ~/ 3} class runs, ${mapping.length} decompositions, '
     '${pairs.length ~/ 3} compositions, ${scriptNames.length} scripts, '
-    '${extSets.length} extension sets',
+    '${extSets.length} extension sets, ${lower.length} lowercase and ${upper.length} '
+    'uppercase mappings',
   );
 }
 

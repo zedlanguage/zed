@@ -1,6 +1,7 @@
 /// Unicode Normalization Form C (Unicode Standard Annex #15), the canonical combining class,
 /// the identifier properties of Unicode Standard Annex #31, and the scripts of Unicode Standard
-/// Annex #24, over code points, from the tables of `unicode_tables.dart`.
+/// Annex #24, and the full case mappings, over code points, from the tables of
+/// `unicode_tables.dart`.
 library;
 
 import 'unicode_tables.dart';
@@ -16,6 +17,8 @@ final _xidContinue = _numbers(xidContinue);
 final _scripts = _numbers(scripts);
 final _extensions = _numbers(scriptExtensions);
 final _escaped = _numbers(escapedInQuotes);
+final _cased = _numbers(cased);
+final _caseIgnorable = _numbers(caseIgnorable);
 
 /// The value of the run of `runs` (first, last, value) holding `c`, or `none`.
 int _lookup(List<int> runs, int c, int none) {
@@ -32,14 +35,21 @@ int _lookup(List<int> runs, int c, int none) {
   return lo > 0 && c <= runs[3 * lo - 2] ? runs[3 * lo - 1] : none;
 }
 
-final Map<int, List<int>> _decompositions = () {
-  final ns = _numbers(decompositions);
+final _decompositions = _mappings(decompositions);
+
+/// The mappings of a table of `unicode_tables.dart` listing each code point, the length of
+/// its mapping, and the mapping.
+Map<int, List<int>> _mappings(String table) {
+  final ns = _numbers(table);
   final out = <int, List<int>>{};
   for (var i = 0; i < ns.length; i += 2 + ns[i + 1]) {
     out[ns[i]] = ns.sublist(i + 2, i + 2 + ns[i + 1]);
   }
   return out;
-}();
+}
+
+final _lower = _mappings(lowercaseMappings);
+final _upper = _mappings(uppercaseMappings);
 
 final Map<int, int> _compositions = () {
   final ns = _numbers(compositions);
@@ -191,4 +201,53 @@ String quoted(String text, String quote) {
     });
   }
   return (out..write(quote)).toString();
+}
+
+/// The full lowercase mapping of `s` (the Unicode Standard, section 3.13, "Default Case
+/// Conversion"): each character's full mapping, except that a capital sigma becomes the final
+/// `ς` when it ends a word (Final_Sigma: a cased character comes before it and none after it,
+/// case-ignorable characters between not counting), and `σ` otherwise.
+String toLower(String s) {
+  final cs = s.runes.toList();
+  final out = <int>[];
+  for (var i = 0; i < cs.length; i++) {
+    final c = cs[i];
+    if (c == 0x3a3) {
+      out.add(_endsWord(cs, i) ? 0x3c2 : 0x3c3);
+    } else if (_lower[c] case final m?) {
+      out.addAll(m);
+    } else {
+      out.add(c);
+    }
+  }
+  return String.fromCharCodes(out);
+}
+
+/// The full uppercase mapping of `s`: each character's full mapping.
+String toUpper(String s) {
+  final out = <int>[];
+  for (final c in s.runes) {
+    if (_upper[c] case final m?) {
+      out.addAll(m);
+    } else {
+      out.add(c);
+    }
+  }
+  return String.fromCharCodes(out);
+}
+
+/// Whether the capital sigma at `i` of `cs` ends a word. Each scan stops at the first character
+/// that is not case-ignorable, and a sigma is not, so each character is scanned by at most the
+/// sigmas on either side of it: the whole string costs time linear in its length.
+bool _endsWord(List<int> cs, int i) {
+  var j = i - 1;
+  while (j >= 0 && _lookup(_caseIgnorable, cs[j], 0) == 1) {
+    j--;
+  }
+  if (j < 0 || _lookup(_cased, cs[j], 0) != 1) return false;
+  var k = i + 1;
+  while (k < cs.length && _lookup(_caseIgnorable, cs[k], 0) == 1) {
+    k++;
+  }
+  return k == cs.length || _lookup(_cased, cs[k], 0) != 1;
 }

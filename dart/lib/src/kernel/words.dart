@@ -2,6 +2,7 @@
 /// words `len`, `lower`, `upper` and `trim`.
 library;
 
+import '../unicode.dart';
 import 'error.dart';
 import 'term.dart';
 import 'value.dart';
@@ -52,9 +53,9 @@ Value word(Prim p, Value x) {
     case (Prim.len, Str(:final text)):
       return Int(text.text.runes.length);
     case (Prim.lower, Str(:final text)):
-      return Str(text.text.toLowerCase());
+      return Str(toLower(text.text));
     case (Prim.upper, Str(:final text)):
-      return Str(text.text.toUpperCase());
+      return Str(toUpper(text.text));
     case (Prim.trim, Str(:final text)):
       return Str(_trim(text.text));
     default:
