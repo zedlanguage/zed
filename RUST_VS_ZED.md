@@ -36,9 +36,42 @@ directory so that the first build is cold.
 | `cargo clippy` after the build | 28.2 s |
 | Clean release build, libraries and binaries | 67.8 s |
 | Full test run, parallel, already built | 99.7 s |
-| Full test run, one thread | *pending* |
+| Full test run, one thread, with per-test times | 402.2 s |
 
-Per-test times: *pending* (the single-threaded run with `--report-time` is still running).
+Per-test times, from the single-threaded run (930 tests, 0 failed, 384.8 s of test time). The
+time per step, summed over its tests, for every step above one second:
+
+| Step | Tests | Time |
+|---|---:|---:|
+| L1.25 | 42 | 71.4 s |
+| L1.26 | 42 | 51.8 s |
+| M0.10 | 90 | 41.0 s |
+| M0.11 | 13 | 37.4 s |
+| L1.14 | 22 | 28.9 s |
+| L1.16 | 35 | 20.8 s |
+| L1.28 | 18 | 20.1 s |
+| L1.38 | 16 | 16.4 s |
+| store unit tests | 20 | 13.0 s |
+| L1.39 | 28 | 12.1 s |
+| L1.24 | 26 | 10.5 s |
+| L1.29 | 19 | 10.0 s |
+| L1.23 | 29 | 9.8 s |
+| M0.5 | 34 | 9.5 s |
+| L1.37 | 7 | 5.9 s |
+| L1.13 | 14 | 3.5 s |
+| M0.9 | 41 | 3.0 s |
+| L1.33 | 29 | 2.9 s |
+| scaling unit tests | 2 | 2.9 s |
+| L1.21 | 22 | 2.3 s |
+| types unit tests | 1 | 2.0 s |
+| L1.36 | 18 | 2.0 s |
+| L1.18 | 22 | 1.4 s |
+| L1.15 | 20 | 1.2 s |
+
+Every other step takes under one second in all. The slowest single tests are M0.11's ten
+million steps (19.5 s) and its axioms on the harness instances (16.0 s), and L1.25's random
+preimage tests (16.4 s and 14.6 s). Most of the time in the slow steps is in scaling tests,
+which run each pass at two sizes, five times each.
 
 ## Compile errors in the Rust work
 
@@ -627,6 +660,311 @@ The Dart port records the same two numbers for its own files in the Dart section
 | `zed/prelude/unit.zed` | 1 | 0 |
 | `zedc/src/zir/lower.rs` | 1 | 0 |
 | **total (437 files)** | **1165** | **986** |
+
+## Code size per file
+
+The bytes of each Rust source and test file, and of the Dart files that port it once they pass.
+`tools/sizes.py` writes this table from `tools/dart_map.txt`, which pairs each Dart file with
+the Rust file it ports; a Rust file only partly ported so far shows the Dart written so far.
+
+<!-- sizes -->
+| Rust file | bytes | Dart files | bytes | Dart / Rust |
+|---|---:|---|---:|---:|
+| `crates/zed-cert/src/lib.rs` | 371 | | | |
+| `crates/zed-kernel/src/error.rs` | 4,895 | | | |
+| `crates/zed-kernel/src/eval.rs` | 60,185 | | | |
+| `crates/zed-kernel/src/exact.rs` | 9,165 | | | |
+| `crates/zed-kernel/src/family.rs` | 13,904 | | | |
+| `crates/zed-kernel/src/lib.rs` | 1,148 | | | |
+| `crates/zed-kernel/src/num.rs` | 7,397 | | | |
+| `crates/zed-kernel/src/print.rs` | 16,237 | | | |
+| `crates/zed-kernel/src/provenance.rs` | 10,812 | | | |
+| `crates/zed-kernel/src/term.rs` | 13,219 | | | |
+| `crates/zed-kernel/src/text.rs` | 5,582 | | | |
+| `crates/zed-kernel/src/types.rs` | 37,473 | | | |
+| `crates/zed-kernel/src/types/bdd.rs` | 27,452 | | | |
+| `crates/zed-kernel/src/types/empty.rs` | 7,024 | | | |
+| `crates/zed-kernel/src/types/rec.rs` | 18,327 | | | |
+| `crates/zed-kernel/src/value.rs` | 16,674 | | | |
+| `crates/zed-kernel/src/words.rs` | 5,277 | | | |
+| `crates/zed-native/src/codegen.rs` | 27,147 | | | |
+| `crates/zed-native/src/hooks.rs` | 18,557 | | | |
+| `crates/zed-native/src/lib.rs` | 3,845 | | | |
+| `crates/zed-native/src/tables.rs` | 7,653 | | | |
+| `crates/zed-rt/src/heap.rs` | 18,978 | | | |
+| `crates/zed-rt/src/lib.rs` | 764 | | | |
+| `crates/zed-rt/src/ports.rs` | 2,581 | | | |
+| `crates/zed-rt/src/rope.rs` | 4,631 | | | |
+| `crates/zedc/src/address.rs` | 2,176 | | | |
+| `crates/zedc/src/ast/mod.rs` | 21,974 | | | |
+| `crates/zedc/src/ast/stmts.rs` | 9,682 | | | |
+| `crates/zedc/src/ast/types.rs` | 11,772 | | | |
+| `crates/zedc/src/axioms.rs` | 7,016 | | | |
+| `crates/zedc/src/canon/binders.rs` | 20,447 | | | |
+| `crates/zedc/src/canon/domain.rs` | 4,086 | | | |
+| `crates/zedc/src/canon/mod.rs` | 8,601 | | | |
+| `crates/zedc/src/canon/serial.rs` | 10,637 | | | |
+| `crates/zedc/src/check/mod.rs` | 109,155 | | | |
+| `crates/zedc/src/check/ty.rs` | 26,843 | | | |
+| `crates/zedc/src/cost.rs` | 8,807 | | | |
+| `crates/zedc/src/elab.rs` | 56,580 | | | |
+| `crates/zedc/src/fence.rs` | 2,991 | | | |
+| `crates/zedc/src/format.rs` | 23,772 | | | |
+| `crates/zedc/src/interp.rs` | 1,137 | | | |
+| `crates/zedc/src/lex/comment.rs` | 1,304 | | | |
+| `crates/zedc/src/lex/mod.rs` | 8,813 | | | |
+| `crates/zedc/src/lex/name.rs` | 3,147 | | | |
+| `crates/zedc/src/lex/number.rs` | 4,413 | | | |
+| `crates/zedc/src/lex/punct.rs` | 1,719 | | | |
+| `crates/zedc/src/lex/string.rs` | 11,031 | | | |
+| `crates/zedc/src/lib.rs` | 835 | | | |
+| `crates/zedc/src/main.rs` | 1,770 | | | |
+| `crates/zedc/src/parse/grammar.rs` | 10,399 | | | |
+| `crates/zedc/src/parse/mod.rs` | 10,459 | | | |
+| `crates/zedc/src/query.rs` | 4,746 | | | |
+| `crates/zedc/src/resolve.rs` | 15,634 | | | |
+| `crates/zedc/src/run.rs` | 24,727 | | | |
+| `crates/zedc/src/source.rs` | 7,459 | | | |
+| `crates/zedc/src/stage.rs` | 31,611 | | | |
+| `crates/zedc/src/store/affine.rs` | 19,512 | | | |
+| `crates/zedc/src/store/cell.rs` | 13,091 | | | |
+| `crates/zedc/src/store/float.rs` | 5,956 | | | |
+| `crates/zedc/src/store/interval.rs` | 21,092 | | | |
+| `crates/zedc/src/store/iterate.rs` | 9,869 | | | |
+| `crates/zedc/src/store/lattice.rs` | 16,014 | | | |
+| `crates/zedc/src/store/mod.rs` | 690 | | | |
+| `crates/zedc/src/store/preimage.rs` | 100,503 | | | |
+| `crates/zedc/src/store/presburger.rs` | 56,642 | | | |
+| `crates/zedc/src/store/product.rs` | 51,610 | | | |
+| `crates/zedc/src/store/revision.rs` | 25,960 | | | |
+| `crates/zedc/src/store/wto.rs` | 10,717 | | | |
+| `crates/zedc/src/testing.rs` | 10,643 | | | |
+| `crates/zedc/src/zir/binary.rs` | 16,518 | | | |
+| `crates/zedc/src/zir/canon.rs` | 10,571 | | | |
+| `crates/zedc/src/zir/lower.rs` | 40,730 | | | |
+| `crates/zedc/src/zir/memory.rs` | 45,377 | | | |
+| `crates/zedc/src/zir/mod.rs` | 24,971 | | | |
+| `crates/zedc/src/zir/text.rs` | 36,164 | | | |
+| `tests/src/check.rs` | 5,056 | | | |
+| `tests/src/fences.rs` | 3,325 | | | |
+| `tests/src/instances.rs` | 5,466 | | | |
+| `tests/src/kernel.rs` | 10,041 | | | |
+| `tests/src/lib.rs` | 2,590 | `test/support/support.dart`<br>`test/support/support_test.dart` | 3,467 | 1.34 |
+| `tests/src/oracle.rs` | 7,128 | | | |
+| `tests/src/scaling.rs` | 3,377 | `test/support/scaling.dart` | 2,230 | 0.66 |
+| `tests/src/tokens.rs` | 1,819 | | | |
+| `tests/src/trees.rs` | 1,371 | | | |
+| `tests/steps/l01_01_source_loading/accepted.rs` | 1,455 | | | |
+| `tests/steps/l01_01_source_loading/mod.rs` | 163 | | | |
+| `tests/steps/l01_01_source_loading/places.rs` | 1,478 | | | |
+| `tests/steps/l01_01_source_loading/rejected.rs` | 5,272 | | | |
+| `tests/steps/l01_02_lexer_names/mod.rs` | 126 | | | |
+| `tests/steps/l01_02_lexer_names/names.rs` | 2,106 | | | |
+| `tests/steps/l01_02_lexer_names/scripts.rs` | 2,205 | | | |
+| `tests/steps/l01_03_lexer_integers/mod.rs` | 2,418 | | | |
+| `tests/steps/l01_04_lexer_floats_and_rationals/mod.rs` | 2,411 | | | |
+| `tests/steps/l01_05_lexer_strings/holes.rs` | 2,265 | | | |
+| `tests/steps/l01_05_lexer_strings/mod.rs` | 1,138 | | | |
+| `tests/steps/l01_05_lexer_strings/scaling.rs` | 1,663 | | | |
+| `tests/steps/l01_05_lexer_strings/strings.rs` | 3,036 | | | |
+| `tests/steps/l01_06_lexer_tokens/mod.rs` | 198 | | | |
+| `tests/steps/l01_06_lexer_tokens/program.rs` | 2,380 | | | |
+| `tests/steps/l01_06_lexer_tokens/words.rs` | 3,054 | | | |
+| `tests/steps/l01_07_fences/copies.rs` | 4,073 | | | |
+| `tests/steps/l01_07_fences/extractor.rs` | 1,624 | | | |
+| `tests/steps/l01_07_fences/mod.rs` | 275 | | | |
+| `tests/steps/l01_08_parser/cases.rs` | 4,059 | | | |
+| `tests/steps/l01_08_parser/errors.rs` | 969 | | | |
+| `tests/steps/l01_08_parser/mod.rs` | 214 | | | |
+| `tests/steps/l01_08_parser/rings.rs` | 1,697 | | | |
+| `tests/steps/l01_09_postfix_chains/calls.rs` | 2,767 | | | |
+| `tests/steps/l01_09_postfix_chains/chains.rs` | 2,422 | | | |
+| `tests/steps/l01_09_postfix_chains/fences.rs` | 1,560 | | | |
+| `tests/steps/l01_09_postfix_chains/mod.rs` | 609 | | | |
+| `tests/steps/l01_10_lambdas_types_else_tuples/elses.rs` | 1,137 | | | |
+| `tests/steps/l01_10_lambdas_types_else_tuples/fences.rs` | 1,170 | | | |
+| `tests/steps/l01_10_lambdas_types_else_tuples/lambdas.rs` | 1,491 | | | |
+| `tests/steps/l01_10_lambdas_types_else_tuples/mod.rs` | 1,042 | | | |
+| `tests/steps/l01_10_lambdas_types_else_tuples/tests_of_types.rs` | 2,064 | | | |
+| `tests/steps/l01_10_lambdas_types_else_tuples/tuples.rs` | 402 | | | |
+| `tests/steps/l01_11_statements/blocks.rs` | 3,631 | | | |
+| `tests/steps/l01_11_statements/fences.rs` | 1,382 | | | |
+| `tests/steps/l01_11_statements/mod.rs` | 1,308 | | | |
+| `tests/steps/l01_11_statements/returns.rs` | 675 | | | |
+| `tests/steps/l01_12_declarations/fences.rs` | 945 | | | |
+| `tests/steps/l01_12_declarations/functions.rs` | 2,328 | | | |
+| `tests/steps/l01_12_declarations/ifs.rs` | 703 | | | |
+| `tests/steps/l01_12_declarations/mod.rs` | 1,390 | | | |
+| `tests/steps/l01_12_declarations/pushes.rs` | 304 | | | |
+| `tests/steps/l01_13_formatter/fences.rs` | 1,584 | | | |
+| `tests/steps/l01_13_formatter/layout.rs` | 3,440 | | | |
+| `tests/steps/l01_13_formatter/mod.rs` | 1,943 | | | |
+| `tests/steps/l01_13_formatter/scaling.rs` | 1,811 | | | |
+| `tests/steps/l01_14_name_resolution/fences.rs` | 1,432 | | | |
+| `tests/steps/l01_14_name_resolution/mod.rs` | 2,673 | | | |
+| `tests/steps/l01_14_name_resolution/order.rs` | 2,255 | | | |
+| `tests/steps/l01_14_name_resolution/scaling.rs` | 2,201 | | | |
+| `tests/steps/l01_14_name_resolution/scopes.rs` | 3,843 | | | |
+| `tests/steps/l01_15_kernel_terms/evidence.rs` | 3,397 | | | |
+| `tests/steps/l01_15_kernel_terms/layout.rs` | 4,320 | | | |
+| `tests/steps/l01_15_kernel_terms/mod.rs` | 288 | | | |
+| `tests/steps/l01_15_kernel_terms/notation.rs` | 5,524 | | | |
+| `tests/steps/l01_15_kernel_terms/scaling.rs` | 2,895 | | | |
+| `tests/steps/l01_16_elaboration/calls.rs` | 2,863 | | | |
+| `tests/steps/l01_16_elaboration/errors.rs` | 4,274 | | | |
+| `tests/steps/l01_16_elaboration/mod.rs` | 2,130 | | | |
+| `tests/steps/l01_16_elaboration/programs.rs` | 6,170 | | | |
+| `tests/steps/l01_16_elaboration/scaling.rs` | 8,985 | | | |
+| `tests/steps/l01_17_value_representation/atoms.rs` | 3,143 | | | |
+| `tests/steps/l01_17_value_representation/equality.rs` | 1,900 | | | |
+| `tests/steps/l01_17_value_representation/mod.rs` | 439 | | | |
+| `tests/steps/l01_17_value_representation/numbers.rs` | 3,876 | | | |
+| `tests/steps/l01_17_value_representation/order.rs` | 2,591 | | | |
+| `tests/steps/l01_18_scalar_interpreter/casts.rs` | 3,013 | | | |
+| `tests/steps/l01_18_scalar_interpreter/failures.rs` | 2,066 | | | |
+| `tests/steps/l01_18_scalar_interpreter/floats.rs` | 2,591 | | | |
+| `tests/steps/l01_18_scalar_interpreter/mod.rs` | 472 | | | |
+| `tests/steps/l01_18_scalar_interpreter/words.rs` | 1,770 | | | |
+| `tests/steps/l01_19_whole_file_ports/files.rs` | 3,361 | | | |
+| `tests/steps/l01_19_whole_file_ports/lines.rs` | 2,653 | | | |
+| `tests/steps/l01_19_whole_file_ports/mod.rs` | 1,734 | | | |
+| `tests/steps/l01_19_whole_file_ports/replay.rs` | 2,909 | | | |
+| `tests/steps/l01_19_whole_file_ports/writes.rs` | 5,039 | | | |
+| `tests/steps/l01_20_provenance/kernel.rs` | 11,110 | | | |
+| `tests/steps/l01_20_provenance/mod.rs` | 1,709 | | | |
+| `tests/steps/l01_20_provenance/programs.rs` | 2,221 | | | |
+| `tests/steps/l01_20_provenance/scaling.rs` | 3,753 | | | |
+| `tests/steps/l01_21_test_runner/command.rs` | 1,961 | | | |
+| `tests/steps/l01_21_test_runner/cones.rs` | 2,773 | | | |
+| `tests/steps/l01_21_test_runner/fences.rs` | 1,302 | | | |
+| `tests/steps/l01_21_test_runner/marks.rs` | 1,835 | | | |
+| `tests/steps/l01_21_test_runner/mod.rs` | 672 | | | |
+| `tests/steps/l01_21_test_runner/scaling.rs` | 1,563 | | | |
+| `tests/steps/l01_21_test_runner/tables.rs` | 3,635 | | | |
+| `tests/steps/l01_21_test_runner/zed.rs` | 1,016 | | | |
+| `tests/steps/l01_22_type_representation/forms.rs` | 5,811 | | | |
+| `tests/steps/l01_22_type_representation/is.rs` | 1,718 | | | |
+| `tests/steps/l01_22_type_representation/laws.rs` | 7,730 | | | |
+| `tests/steps/l01_22_type_representation/mod.rs` | 387 | | | |
+| `tests/steps/l01_23_subtyping/cases.rs` | 6,177 | | | |
+| `tests/steps/l01_23_subtyping/mod.rs` | 549 | | | |
+| `tests/steps/l01_23_subtyping/oracle.rs` | 8,422 | | | |
+| `tests/steps/l01_23_subtyping/rec.rs` | 12,986 | | | |
+| `tests/steps/l01_23_subtyping/scaling.rs` | 14,517 | | | |
+| `tests/steps/l01_24_refinement_lattices/bounds.rs` | 6,164 | | | |
+| `tests/steps/l01_24_refinement_lattices/cell.rs` | 6,341 | | | |
+| `tests/steps/l01_24_refinement_lattices/float.rs` | 3,442 | | | |
+| `tests/steps/l01_24_refinement_lattices/loops.rs` | 6,177 | | | |
+| `tests/steps/l01_24_refinement_lattices/mod.rs` | 3,301 | | | |
+| `tests/steps/l01_24_refinement_lattices/scaling.rs` | 9,294 | | | |
+| `tests/steps/l01_25_preimage_catalog/entries.rs` | 10,757 | | | |
+| `tests/steps/l01_25_preimage_catalog/exact.rs` | 4,245 | | | |
+| `tests/steps/l01_25_preimage_catalog/mod.rs` | 5,544 | | | |
+| `tests/steps/l01_25_preimage_catalog/random.rs` | 15,145 | | | |
+| `tests/steps/l01_25_preimage_catalog/scaling.rs` | 8,378 | | | |
+| `tests/steps/l01_25_preimage_catalog/stops.rs` | 4,452 | | | |
+| `tests/steps/l01_25_preimage_catalog/tonicity.rs` | 6,655 | | | |
+| `tests/steps/l01_26_type_resolution/adoption.rs` | 2,963 | | | |
+| `tests/steps/l01_26_type_resolution/calls.rs` | 1,711 | | | |
+| `tests/steps/l01_26_type_resolution/fits.rs` | 2,412 | | | |
+| `tests/steps/l01_26_type_resolution/mod.rs` | 1,634 | | | |
+| `tests/steps/l01_26_type_resolution/narrowing.rs` | 2,113 | | | |
+| `tests/steps/l01_26_type_resolution/random.rs` | 4,051 | | | |
+| `tests/steps/l01_26_type_resolution/scaling.rs` | 3,444 | | | |
+| `tests/steps/l01_26_type_resolution/signatures.rs` | 4,237 | | | |
+| `tests/steps/l01_27_absences/families.rs` | 3,030 | | | |
+| `tests/steps/l01_27_absences/loose.rs` | 2,981 | | | |
+| `tests/steps/l01_27_absences/mod.rs` | 565 | | | |
+| `tests/steps/l01_28_staging/mix.rs` | 7,525 | | | |
+| `tests/steps/l01_28_staging/mod.rs` | 1,692 | | | |
+| `tests/steps/l01_28_staging/scaling.rs` | 1,987 | | | |
+| `tests/steps/l01_28_staging/trick.rs` | 5,160 | | | |
+| `tests/steps/l01_29_diagnostics/derivations.rs` | 7,910 | | | |
+| `tests/steps/l01_29_diagnostics/layout.rs` | 1,974 | | | |
+| `tests/steps/l01_29_diagnostics/mod.rs` | 975 | | | |
+| `tests/steps/l01_29_diagnostics/repairs.rs` | 1,845 | | | |
+| `tests/steps/l01_29_diagnostics/scaling.rs` | 1,691 | | | |
+| `tests/steps/l01_29_diagnostics/variants.rs` | 3,220 | | | |
+| `tests/steps/l01_30_queries/keys.rs` | 690 | | | |
+| `tests/steps/l01_30_queries/mod.rs` | 1,120 | | | |
+| `tests/steps/l01_30_queries/reuse.rs` | 4,327 | | | |
+| `tests/steps/l01_31_zir/graphs.rs` | 6,502 | | | |
+| `tests/steps/l01_31_zir/items.rs` | 3,698 | | | |
+| `tests/steps/l01_31_zir/mod.rs` | 1,199 | | | |
+| `tests/steps/l01_31_zir/rejections.rs` | 9,252 | | | |
+| `tests/steps/l01_32_canonical_zir/fuzz.rs` | 7,874 | | | |
+| `tests/steps/l01_32_canonical_zir/mod.rs` | 557 | | | |
+| `tests/steps/l01_32_canonical_zir/stability.rs` | 6,674 | | | |
+| `tests/steps/l01_33_lowering/corpus.rs` | 1,687 | | | |
+| `tests/steps/l01_33_lowering/cse.rs` | 2,578 | | | |
+| `tests/steps/l01_33_lowering/errors.rs` | 2,795 | | | |
+| `tests/steps/l01_33_lowering/forms.rs` | 8,027 | | | |
+| `tests/steps/l01_33_lowering/mod.rs` | 2,007 | | | |
+| `tests/steps/l01_33_lowering/ports.rs` | 4,565 | | | |
+| `tests/steps/l01_33_lowering/scaling.rs` | 4,443 | | | |
+| `tests/steps/l01_34_memory/borrow.rs` | 4,405 | | | |
+| `tests/steps/l01_34_memory/cells.rs` | 4,070 | | | |
+| `tests/steps/l01_34_memory/checks.rs` | 2,185 | | | |
+| `tests/steps/l01_34_memory/corpus.rs` | 3,156 | | | |
+| `tests/steps/l01_34_memory/fusion.rs` | 2,960 | | | |
+| `tests/steps/l01_34_memory/mod.rs` | 1,432 | | | |
+| `tests/steps/l01_35_mlir_study/mod.rs` | 4,008 | | | |
+| `tests/steps/l01_36_cranelift/aot.rs` | 1,041 | | | |
+| `tests/steps/l01_36_cranelift/checks.rs` | 3,759 | | | |
+| `tests/steps/l01_36_cranelift/corpus.rs` | 2,456 | | | |
+| `tests/steps/l01_36_cranelift/mod.rs` | 1,225 | | | |
+| `tests/steps/l01_36_cranelift/ports.rs` | 1,802 | | | |
+| `tests/steps/l01_36_cranelift/scalars.rs` | 5,467 | | | |
+| `tests/steps/l01_36_cranelift/strings.rs` | 2,004 | | | |
+| `tests/steps/l01_37_oracle/controls.rs` | 2,243 | | | |
+| `tests/steps/l01_37_oracle/mod.rs` | 461 | | | |
+| `tests/steps/l01_37_oracle/oracle.rs` | 2,818 | | | |
+| `tests/steps/l01_38_presburger/controls.rs` | 4,924 | | | |
+| `tests/steps/l01_38_presburger/entailment.rs` | 4,804 | | | |
+| `tests/steps/l01_38_presburger/mod.rs` | 3,246 | | | |
+| `tests/steps/l01_38_presburger/preimage.rs` | 3,156 | | | |
+| `tests/steps/l01_38_presburger/random.rs` | 9,176 | | | |
+| `tests/steps/l01_38_presburger/scaling.rs` | 3,967 | | | |
+| `tests/steps/l01_39_reduced_product/controls.rs` | 9,351 | | | |
+| `tests/steps/l01_39_reduced_product/exact.rs` | 5,167 | | | |
+| `tests/steps/l01_39_reduced_product/mod.rs` | 2,191 | | | |
+| `tests/steps/l01_39_reduced_product/random.rs` | 5,421 | | | |
+| `tests/steps/l01_39_reduced_product/scaling.rs` | 4,279 | | | |
+| `tests/steps/l01_39_reduced_product/spec.rs` | 3,919 | | | |
+| `tests/steps/m0_01_scaffolding/mod.rs` | 1,529 | `test/steps/m0_01_scaffolding/scaffolding_test.dart` | 1,174 | 0.77 |
+| `tests/steps/m0_05_widening_and_iteration/iteration.rs` | 11,596 | | | |
+| `tests/steps/m0_05_widening_and_iteration/mod.rs` | 6,193 | | | |
+| `tests/steps/m0_05_widening_and_iteration/revision.rs` | 8,571 | | | |
+| `tests/steps/m0_05_widening_and_iteration/scaling.rs` | 7,201 | | | |
+| `tests/steps/m0_05_widening_and_iteration/widening.rs` | 10,766 | | | |
+| `tests/steps/m0_05_widening_and_iteration/wto.rs` | 7,970 | | | |
+| `tests/steps/m0_06_cost_scalarization/mod.rs` | 9,704 | | | |
+| `tests/steps/m0_07_canonicalization/alpha.rs` | 14,310 | | | |
+| `tests/steps/m0_07_canonicalization/domains.rs` | 4,497 | | | |
+| `tests/steps/m0_07_canonicalization/mod.rs` | 1,083 | | | |
+| `tests/steps/m0_07_canonicalization/rules.rs` | 6,095 | | | |
+| `tests/steps/m0_07_canonicalization/scaling.rs` | 1,973 | | | |
+| `tests/steps/m0_08_zed0_checklist/mod.rs` | 2,069 | | | |
+| `tests/steps/m0_09_kernel_evaluator/mod.rs` | 26,083 | | | |
+| `tests/steps/m0_09_kernel_evaluator/scaling.rs` | 11,009 | | | |
+| `tests/steps/m0_10_finite_model_harness/derived.rs` | 3,184 | | | |
+| `tests/steps/m0_10_finite_model_harness/laws_01_10.rs` | 24,999 | | | |
+| `tests/steps/m0_10_finite_model_harness/laws_11_20.rs` | 29,305 | | | |
+| `tests/steps/m0_10_finite_model_harness/laws_21_28.rs` | 26,308 | | | |
+| `tests/steps/m0_10_finite_model_harness/mod.rs` | 2,211 | | | |
+| `tests/steps/m0_10_finite_model_harness/recursion.rs` | 12,275 | | | |
+| `tests/steps/m0_10_finite_model_harness/scaling.rs` | 9,925 | | | |
+| `tests/steps/m0_10_finite_model_harness/smoke.rs` | 7,212 | | | |
+| `tests/steps/m0_10_finite_model_harness/witnesses.rs` | 11,966 | | | |
+| `tests/steps/m0_11_prelude_axioms_and_limits/axioms.rs` | 11,459 | | | |
+| `tests/steps/m0_11_prelude_axioms_and_limits/limits.rs` | 3,277 | | | |
+| `tests/steps/m0_11_prelude_axioms_and_limits/mod.rs` | 453 | | | |
+| `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | | | |
+| `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | | | |
+| `tests/steps/main.rs` | 1,298 | | | |
+| **all 292 Rust files** | **2,228,697** | | | |
+| **the Rust files ported so far** | **7,496** | | **6,871** | **0.92** |
+<!-- /sizes -->
 
 ## Ease of each step in each language
 

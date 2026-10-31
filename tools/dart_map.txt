@@ -1,0 +1,5 @@
+# One line per Dart file: <dart path> <rust path it ports>, relative to zed-impl.
+dart/test/steps/m0_01_scaffolding/scaffolding_test.dart tests/steps/m0_01_scaffolding/mod.rs
+dart/test/support/support.dart tests/src/lib.rs
+dart/test/support/support_test.dart tests/src/lib.rs
+dart/test/support/scaling.dart tests/src/scaling.rs
