@@ -115,7 +115,7 @@ The Dart columns are filled as the port reaches each step.
 | M0.9 | 0:15 | 0:01 | 1 (1) | 2 (1) | 0:28 | 0:00 | 0 (0) |
 | M0.10 | 0:49 | 0:10 | 4 (3) | 20 (9) | 0:09 | 0:01 | 3 (2) |
 | M0.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | | | |
-| M0.5 | 0:54 | 0:59 | 0 (0) | 7 (3) | | | |
+| M0.5 | 0:54 | 0:59 | 0 (0) | 7 (3) | 0:14 | 0:21 | 6 (3) |
 | M0.6 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
 | other (Corpus 24) | 0:05 | 0:00 | 0 (0) | 0 (0) | | | |
 | M0.7 | 0:04 | 0:12 | 1 (1) | 5 (2) | | | |
@@ -729,15 +729,15 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/store/affine.rs` | 19,512 | | | |
 | `crates/zedc/src/store/cell.rs` | 13,091 | | | |
 | `crates/zedc/src/store/float.rs` | 5,956 | | | |
-| `crates/zedc/src/store/interval.rs` | 21,092 | | | |
-| `crates/zedc/src/store/iterate.rs` | 9,869 | | | |
-| `crates/zedc/src/store/lattice.rs` | 16,014 | | | |
-| `crates/zedc/src/store/mod.rs` | 690 | | | |
+| `crates/zedc/src/store/interval.rs` | 21,092 | `lib/src/store/interval.dart`<br>`test/store/interval_test.dart` | 21,857 | 1.04 |
+| `crates/zedc/src/store/iterate.rs` | 9,869 | `lib/src/store/iterate.dart` | 8,271 | 0.84 |
+| `crates/zedc/src/store/lattice.rs` | 16,014 | `lib/src/store/lattice.dart`<br>`test/store/lattice_test.dart` | 12,885 | 0.80 |
+| `crates/zedc/src/store/mod.rs` | 690 | `lib/store.dart` | 350 | 0.51 |
 | `crates/zedc/src/store/preimage.rs` | 100,503 | | | |
 | `crates/zedc/src/store/presburger.rs` | 56,642 | | | |
 | `crates/zedc/src/store/product.rs` | 51,610 | | | |
-| `crates/zedc/src/store/revision.rs` | 25,960 | | | |
-| `crates/zedc/src/store/wto.rs` | 10,717 | | | |
+| `crates/zedc/src/store/revision.rs` | 25,960 | `lib/src/store/revision.dart`<br>`test/store/revision_test.dart` | 23,082 | 0.89 |
+| `crates/zedc/src/store/wto.rs` | 10,717 | `lib/src/store/wto.dart`<br>`test/store/wto_test.dart` | 8,951 | 0.84 |
 | `crates/zedc/src/testing.rs` | 10,643 | | | |
 | `crates/zedc/src/zir/binary.rs` | 16,518 | | | |
 | `crates/zedc/src/zir/canon.rs` | 10,571 | | | |
@@ -932,12 +932,12 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_39_reduced_product/scaling.rs` | 4,279 | | | |
 | `tests/steps/l01_39_reduced_product/spec.rs` | 3,919 | | | |
 | `tests/steps/m0_01_scaffolding/mod.rs` | 1,529 | `test/steps/m0_01_scaffolding/scaffolding_test.dart` | 1,174 | 0.77 |
-| `tests/steps/m0_05_widening_and_iteration/iteration.rs` | 11,596 | | | |
-| `tests/steps/m0_05_widening_and_iteration/mod.rs` | 6,193 | | | |
-| `tests/steps/m0_05_widening_and_iteration/revision.rs` | 8,571 | | | |
-| `tests/steps/m0_05_widening_and_iteration/scaling.rs` | 7,201 | | | |
-| `tests/steps/m0_05_widening_and_iteration/widening.rs` | 10,766 | | | |
-| `tests/steps/m0_05_widening_and_iteration/wto.rs` | 7,970 | | | |
+| `tests/steps/m0_05_widening_and_iteration/iteration.rs` | 11,596 | `test/steps/m0_05_widening_and_iteration/iteration_test.dart` | 9,671 | 0.83 |
+| `tests/steps/m0_05_widening_and_iteration/mod.rs` | 6,193 | `test/steps/m0_05_widening_and_iteration/harness.dart` | 5,175 | 0.84 |
+| `tests/steps/m0_05_widening_and_iteration/revision.rs` | 8,571 | `test/steps/m0_05_widening_and_iteration/revision_test.dart` | 7,157 | 0.84 |
+| `tests/steps/m0_05_widening_and_iteration/scaling.rs` | 7,201 | `test/steps/m0_05_widening_and_iteration/scaling_test.dart` | 5,931 | 0.82 |
+| `tests/steps/m0_05_widening_and_iteration/widening.rs` | 10,766 | `test/steps/m0_05_widening_and_iteration/widening_test.dart` | 9,570 | 0.89 |
+| `tests/steps/m0_05_widening_and_iteration/wto.rs` | 7,970 | `test/steps/m0_05_widening_and_iteration/wto_test.dart` | 6,409 | 0.80 |
 | `tests/steps/m0_06_cost_scalarization/mod.rs` | 9,704 | | | |
 | `tests/steps/m0_07_canonicalization/alpha.rs` | 14,310 | | | |
 | `tests/steps/m0_07_canonicalization/domains.rs` | 4,497 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | | | |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **329,982** | | **255,194** | **0.77** |
+| **the Rust files ported so far** | **466,621** | | **374,503** | **0.80** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1009,10 +1009,23 @@ Dart:
   demanded entry with those of rounds; the Dart test compares values only until provenance is
   ported with step L1.20, so its size ratio of 0.67 is low for that reason. No test needed a
   thread with a large stack.
+- **M0.5, widening and iteration.** 34 step tests and 18 unit tests for the store's
+  interval, lattice, order and revision modules, all passing. Six compile errors in three
+  runs: three from using a `case` pattern as a boolean expression, which Dart allows only in
+  `if` and `switch`; a type bound (`Comparable`) that `FiniteSet` could not meet; an
+  `Equations<Object?>` that broke the bound of `Equations`; and a nullable `fold`. The code
+  was written in the shape the Rust version reached after its performance pass (S3, S9,
+  S13): phase 1 skips a component none of whose inputs changed, the weak topological order
+  comes from one traversal, and each cell takes the landmarks of its loop. Two Rust flaws
+  were fixed rather than copied: a congruence join whose modulus passes 63 bits now gives
+  every integer instead of overflowing, and `pow` rounds its roots in the right direction.
+  One mistake was mine and not the language's: the test helper that measures the nesting
+  depth recursed twice per level, 2^48 calls at depth 48, and the test hung until it was
+  rewritten as a loop. The tool time includes the two hung runs.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1055,5 +1068,21 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/m0_10_finite_model_harness/laws_11_20_test.dart` | 1 | 0 |
 | `test/steps/m0_10_finite_model_harness/laws_21_28_test.dart` | 1 | 0 |
 | `test/steps/m0_10_finite_model_harness/scaling_test.dart` | 1 | 0 |
+| `lib/store.dart` | 1 | 0 |
+| `lib/src/store/interval.dart` | 2 | 0 |
+| `lib/src/store/lattice.dart` | 2 | 0 |
+| `lib/src/store/wto.dart` | 1 | 0 |
+| `lib/src/store/iterate.dart` | 3 | 0 |
+| `lib/src/store/revision.dart` | 2 | 0 |
+| `test/store/interval_test.dart` | 1 | 0 |
+| `test/store/lattice_test.dart` | 1 | 0 |
+| `test/store/wto_test.dart` | 1 | 0 |
+| `test/store/revision_test.dart` | 2 | 0 |
+| `test/steps/m0_05_widening_and_iteration/harness.dart` | 1 | 0 |
+| `test/steps/m0_05_widening_and_iteration/widening_test.dart` | 1 | 0 |
+| `test/steps/m0_05_widening_and_iteration/wto_test.dart` | 1 | 0 |
+| `test/steps/m0_05_widening_and_iteration/iteration_test.dart` | 1 | 0 |
+| `test/steps/m0_05_widening_and_iteration/revision_test.dart` | 2 | 0 |
+| `test/steps/m0_05_widening_and_iteration/scaling_test.dart` | 2 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
