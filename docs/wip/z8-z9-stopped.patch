@@ -1,0 +1,205 @@
+diff --git a/crates/zed-native/src/codegen.rs b/crates/zed-native/src/codegen.rs
+index 9941dc4..3e4e936 100644
+--- a/crates/zed-native/src/codegen.rs
++++ b/crates/zed-native/src/codegen.rs
+@@ -314,9 +314,17 @@ impl<M: Module> Gen<'_, M> {
+             for &j in &np.dups {
+                 self.inc(fx, ins[j]);
+             }
+-            let o = self.node(fx, &at, &ins)?;
++            // An `if` reads its condition only to choose an arm, so an owned condition the
++            // arms do not take is released then, and is not live across the arms.
++            let early = matches!(node.op, Op::If)
++                && !node.inputs[1..].contains(&node.inputs[0])
++                && np.drops.contains(&node.inputs[0]);
++            let o = self.node(fx, &at, &ins, early)?;
+             outs.push(o);
+             for s in &np.drops {
++                if early && *s == node.inputs[0] {
++                    continue;
++                }
+                 let w = self.src(fx, s, &args, &outs);
+                 self.dec(fx, w);
+             }
+@@ -342,7 +350,14 @@ impl<M: Module> Gen<'_, M> {
+         out
+     }
+ 
+-    fn node(&mut self, fx: &mut Fx<'_>, at: &str, ins: &[W]) -> Result<Vec<W>, String> {
++    /// Node `at` on `ins`; `early`, for an `if`, releases its condition once an arm is chosen.
++    fn node(
++        &mut self,
++        fx: &mut Fx<'_>,
++        at: &str,
++        ins: &[W],
++        early: bool,
++    ) -> Result<Vec<W>, String> {
+         let t = self.t;
+         let id = t.ids[at];
+         let node = &t.nodes[id].node;
+@@ -364,7 +379,7 @@ impl<M: Module> Gen<'_, M> {
+                 self.states(fx, w, n)
+             }
+             Op::Apply => self.apply(fx, id, ins)?,
+-            Op::If => self.branch(fx, id, at, ins)?,
++            Op::If => self.branch(fx, id, at, ins, early)?,
+             Op::Match(ps) => self.matched(fx, id, at, ps.iter().map(binds).collect(), ins)?,
+             _ => {
+                 let w = self.slow(fx, id, ins);
+@@ -632,6 +647,7 @@ impl<M: Module> Gen<'_, M> {
+         id: usize,
+         at: &str,
+         ins: &[W],
++        early: bool,
+     ) -> Result<Vec<W>, String> {
+         let n = self.t.nodes[id].node.outputs.len();
+         let merge = self.merge(fx, n);
+@@ -648,6 +664,10 @@ impl<M: Module> Gen<'_, M> {
+         }
+         let k = fx.b.ins().iconst(I64, id as i64);
+         let r = self.call(fx, "rt_branch", &[k])[0];
++        // On the fast path the condition is a bool, which holds no cell to release.
++        if early {
++            self.dec(fx, c);
++        }
+         self.dispatch(fx, r, &[arms[0], arms[1], fail]);
+         for (i, b) in arms.into_iter().enumerate() {
+             fx.b.switch_to_block(b);
+diff --git a/crates/zed-native/src/tables.rs b/crates/zed-native/src/tables.rs
+index cc1da1d..25a5e26 100644
+--- a/crates/zed-native/src/tables.rs
++++ b/crates/zed-native/src/tables.rs
+@@ -2,7 +2,7 @@
+ //! counting machine runs, numbered, with its plan; each lambda; the constants; the
+ //! primitives used as values; the lookup ports.
+ 
+-use std::collections::HashMap;
++use std::collections::{BTreeMap, HashMap};
+ 
+ use zed_kernel::{Prim, Value};
+ use zedc::zir::memory::{Mode, Plan};
+@@ -52,6 +52,10 @@ pub(crate) struct Tables {
+     pub lambdas: Vec<LambdaInfo>,
+     /// The constants that are not scalars, which the heap holds uncounted.
+     pub consts: Vec<Value>,
++    /// The index of each constant in `consts`.
++    const_at: BTreeMap<Value, usize>,
++    /// The index of each lambda by its body's path.
++    lambda_at: HashMap<String, usize>,
+     /// The primitives used as values.
+     pub prims: Vec<Prim>,
+     /// The lookup ports.
+@@ -68,6 +72,8 @@ impl Tables {
+             ids: HashMap::new(),
+             lambdas: Vec::new(),
+             consts: Vec::new(),
++            const_at: BTreeMap::new(),
++            lambda_at: HashMap::new(),
+             prims: Vec::new(),
+             ports: Vec::new(),
+             fuse: plan.fuse,
+@@ -132,6 +138,7 @@ impl Tables {
+                         .args[..params]
+                         .to_vec();
+                     self.nodes[id].lambda = Some(self.lambdas.len());
++                    self.lambda_at.insert(body.clone(), self.lambdas.len());
+                     self.lambdas.push(LambdaInfo {
+                         node: id,
+                         path: body.clone(),
+@@ -171,10 +178,9 @@ impl Tables {
+         let Some(want) = &np.callee else {
+             return Ok(());
+         };
+-        let li = self
+-            .lambdas
+-            .iter()
+-            .position(|l| l.path == *want)
++        let li = *self
++            .lambda_at
++            .get(want)
+             .ok_or_else(|| format!("native: {}: the plan calls `{want}`, no lambda", ni.path))?;
+         let l = &self.lambdas[li];
+         let mut error = None;
+@@ -197,17 +203,18 @@ impl Tables {
+     fn constant(&mut self, s: &Src) {
+         if let Src::Const(v) = s
+             && Word::scalar(v).is_none()
+-            && !self.consts.contains(v)
++            && !self.const_at.contains_key(v)
+         {
++            self.const_at.insert(v.clone(), self.consts.len());
+             self.consts.push(v.clone());
+         }
+     }
+ 
+     /// The index of non-scalar constant `v`.
+     pub fn const_index(&self, v: &Value) -> usize {
+-        self.consts
+-            .iter()
+-            .position(|c| c == v)
++        *self
++            .const_at
++            .get(v)
+             .unwrap_or_else(|| panic!("constant {v:?} is not in the table {:?}", self.consts))
+     }
+ }
+diff --git a/tests/steps/l01_36_cranelift/mod.rs b/tests/steps/l01_36_cranelift/mod.rs
+index e39d7c8..e44b5ed 100644
+--- a/tests/steps/l01_36_cranelift/mod.rs
++++ b/tests/steps/l01_36_cranelift/mod.rs
+@@ -8,6 +8,7 @@ mod checks;
+ mod corpus;
+ mod ports;
+ mod scalars;
++mod scaling;
+ mod strings;
+ 
+ use zed_kernel::{Evaluator, F64, Term, Value, World};
+diff --git a/tests/steps/l01_36_cranelift/scaling.rs b/tests/steps/l01_36_cranelift/scaling.rs
+new file mode 100644
+index 0000000..e2c224b
+--- /dev/null
++++ b/tests/steps/l01_36_cranelift/scaling.rs
+@@ -0,0 +1,42 @@
++use zed_kernel::Term;
++use zed_kernel::term::build::{let_, lit, var};
++
++/// `if i < d then (let y{i} = (if ...) + 1 in y{i}) else i`, `d` deep.
++pub(crate) fn nest(d: usize) -> Term {
++    use zed_kernel::Prim;
++    use zed_kernel::term::build::{if_, prim};
++    let mut t = lit(0);
++    for i in 0..d {
++        let y = format!("y{i}");
++        let inner = let_(&y, prim(Prim::Add, vec![t, lit(1)]), var(&y));
++        t = if_(
++            prim(Prim::Lt, vec![lit(i as i64), lit(d as i64)]),
++            inner,
++            lit(i as i64),
++        );
++    }
++    t
++}
++
++#[test]
++fn probe_z9() {
++    std::thread::Builder::new()
++        .stack_size(1 << 30)
++        .spawn(|| {
++            for d in [100, 200, 400, 800] {
++                let t = nest(d);
++                let s = std::time::Instant::now();
++                let g = zedc::zir::lower::lower(&t).unwrap();
++                let a = s.elapsed();
++                let s = std::time::Instant::now();
++                let p = zedc::zir::memory::plan(&g, true);
++                let b = s.elapsed();
++                let s = std::time::Instant::now();
++                zed_native::object(&g, &p).unwrap();
++                eprintln!("PROBE z9 d={d} lower {a:?} plan {b:?} object {:?}", s.elapsed());
++            }
++        })
++        .unwrap()
++        .join()
++        .unwrap();
++}
