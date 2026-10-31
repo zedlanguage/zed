@@ -15,6 +15,7 @@
 mod stmts;
 mod types;
 
+use std::collections::HashMap;
 use std::fmt;
 
 pub use stmts::{Function, Port, Stmt, StmtKind, Target};
@@ -483,7 +484,7 @@ impl Builder<'_> {
         let node = &self.tree.nodes[n];
         let curry = self.word(node.end - 1) == "...";
         let (mut positional, mut named) = (Vec::new(), Vec::new());
-        let mut seen: Vec<(String, Span)> = Vec::new();
+        let mut seen: HashMap<String, Span> = HashMap::new();
         for &k in &node.kids {
             let kids = self.kids(k);
             if self.tree.name(k) == "PosArg" {
@@ -497,7 +498,7 @@ impl Builder<'_> {
             let ExprKind::Name(word) = &name.kind else {
                 unreachable!("NamedArg = Name ':' Expr?")
             };
-            if let Some((_, first)) = seen.iter().find(|(w, _)| w == word) {
+            if let Some(first) = seen.get(word) {
                 return Err(Error {
                     span: name.span,
                     message: format!("the argument `{word}` is named twice"),
@@ -507,7 +508,7 @@ impl Builder<'_> {
                     }],
                 });
             }
-            seen.push((word.clone(), name.span));
+            seen.insert(word.clone(), name.span);
             let value = match kids {
                 [_, v] => self.node(*v)?,
                 _ => name.clone(),

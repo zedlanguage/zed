@@ -7,7 +7,7 @@
 //! combination of its arguments' pieces, so `int | f64` plus `int` is checked as `int + int`
 //! and `f64 + int`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -283,16 +283,16 @@ impl Ty {
         let mut out = self.clone();
         out.set = &out.set | &other.set;
         out.family = &out.family | &other.family;
-        for t in &other.tuples {
-            if !out.tuples.contains(t) {
-                out.tuples.push(t.clone());
-            }
-        }
-        for f in &other.fns {
-            if !out.fns.contains(f) {
-                out.fns.push(f.clone());
-            }
-        }
+        let have: HashSet<&Vec<Ty>> = self.tuples.iter().collect();
+        let new: Vec<&Vec<Ty>> = other.tuples.iter().filter(|t| !have.contains(t)).collect();
+        let mut added = HashSet::new();
+        out.tuples
+            .extend(new.into_iter().filter(|t| added.insert(*t)).cloned());
+        let have: HashSet<&Arc<Sig>> = self.fns.iter().collect();
+        let new: Vec<&Arc<Sig>> = other.fns.iter().filter(|f| !have.contains(f)).collect();
+        let mut added = HashSet::new();
+        out.fns
+            .extend(new.into_iter().filter(|f| added.insert(*f)).cloned());
         out.vars.extend(other.vars.iter().cloned());
         out.dynamic |= other.dynamic;
         out
@@ -419,11 +419,12 @@ impl Ty {
         }
         let mut out = Ty::set(&self.set & &t.set);
         out.family = &self.family & &out.set;
+        let mut have = HashSet::new();
         for a in &self.tuples {
             for b in &t.tuples {
                 if a.len() == b.len() {
                     let cs: Vec<Ty> = a.iter().zip(b).map(|(x, y)| x.meet(y)).collect();
-                    if cs.iter().all(|c| !c.is_empty()) && !out.tuples.contains(&cs) {
+                    if cs.iter().all(|c| !c.is_empty()) && have.insert(cs.clone()) {
                         out.tuples.push(cs);
                     }
                 }
