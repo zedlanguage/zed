@@ -255,10 +255,10 @@ impl Program {
         &self.unit
     }
 
-    /// This program with its demanded build-stage terms evaluated under `fuel` each (step
-    /// L1.28), and what the build did.
-    pub fn stage(&self, fuel: u64) -> (Program, stage::Report) {
-        let (unit, report) = stage::mix(&self.unit, &["main"], fuel);
+    /// This program with its demanded build-stage terms evaluated where their form shows they
+    /// end (step L1.28), and what the build did.
+    pub fn stage(&self) -> (Program, stage::Report) {
+        let (unit, report) = stage::mix(&self.unit, &["main"]);
         let program = Program {
             unit,
             main: std::sync::OnceLock::new(),

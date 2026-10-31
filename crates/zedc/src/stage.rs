@@ -5,9 +5,10 @@
 //! prelude word and it reads no port; a port input and a function parameter are run-stage.
 //! `mix` evaluates the demanded build-stage terms to literals and leaves the rest to run.
 //! A term is demanded when the residual program or a test reads it, so a definition nothing
-//! reads is never evaluated, and a diverging one cannot stop the build. A build-stage term
-//! whose evaluation fails or runs out of fuel is left to run whole, where the failure is
-//! reported in the ordinary way.
+//! reads is never evaluated. A demanded build-stage term is evaluated only when its form
+//! shows that it ends ([`ends`], docs/thresholds.md, replacement 6), with no fuel; otherwise,
+//! or when its evaluation fails, it is left to run whole, where a failure is reported in the
+//! ordinary way.
 //!
 //! The Trick: `split` specializes a function on a run-stage parameter only when the
 //! parameter's domain is finite, `int[0..=256]` but not `int`, and only on the values of the
@@ -24,9 +25,6 @@ use zed_kernel::{Evaluator, Pattern, Term, Value, World};
 
 use crate::elab::Unit;
 use crate::interp;
-
-/// The fuel of each build-stage evaluation.
-pub const BUILD_FUEL: u64 = 1_000_000;
 
 /// When a term is evaluated.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -145,6 +143,94 @@ fn children(t: &Term) -> Vec<&Term> {
     }
 }
 
+/// Whether `t` is shown to end by its form (docs/thresholds.md, replacement 6): it has no
+/// `fix` or `gen`, and every function it calls, or hands to a family operation, is a
+/// primitive, a lambda whose body ends, or a name a `let` binds to one. A `let` binds a name
+/// only in its body, so such calls nest no deeper than the term; a call through a parameter
+/// or a pattern variable, as in `w(w)`, is not shown to end. Free names are prelude words,
+/// which are primitives. Each subterm is read once.
+pub fn ends(t: &Term) -> bool {
+    ends_in(t, &mut Vec::new())
+}
+
+/// [`ends`] under `scope`: each name bound around `t`, innermost last, with whether it is
+/// bound to a function that ends.
+fn ends_in(t: &Term, scope: &mut Vec<(Arc<str>, bool)>) -> bool {
+    match t {
+        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => true,
+        Term::Fix { .. } | Term::Gen { .. } => false,
+        Term::Lam(ps, b) => under(scope, ps, |scope| ends_in(b, scope)),
+        Term::App(f, args) => callable(f, scope) && args.iter().all(|a| ends_in(a, scope)),
+        Term::Let(x, e, b) => {
+            // A lambda bound and never called need not end; any other binding is evaluated.
+            let c = match &**e {
+                Term::Lam(..) => ends_in(e, scope),
+                _ if ends_in(e, scope) => callable(e, scope),
+                _ => return false,
+            };
+            scope.push((x.clone(), c));
+            let out = ends_in(b, scope);
+            scope.pop();
+            out
+        }
+        Term::Match(s, arms) => {
+            ends_in(s, scope)
+                && arms
+                    .iter()
+                    .all(|(p, a)| under(scope, &binds(p), |scope| ends_in(a, scope)))
+        }
+        Term::Fam { domain, var, body } => {
+            ends_in(domain, scope)
+                && under(scope, std::slice::from_ref(var), |scope| {
+                    ends_in(body, scope)
+                })
+        }
+        Term::Reindex { family, kf, vf, .. } => {
+            ends_in(family, scope) && callable(kf, scope) && callable(vf, scope)
+        }
+        Term::Discard { family, sel } => ends_in(family, scope) && callable(sel, scope),
+        Term::Fold {
+            family,
+            op,
+            identity,
+            ..
+        } => {
+            ends_in(family, scope)
+                && callable(op, scope)
+                && identity.iter().all(|i| ends_in(i, scope))
+        }
+        _ => children(t).into_iter().all(|c| ends_in(c, scope)),
+    }
+}
+
+/// Whether `f`, in the position of a function called, is one that ends: a primitive, a
+/// lambda whose body ends, or a name bound to one; a free name is a prelude word.
+fn callable(f: &Term, scope: &mut Vec<(Arc<str>, bool)>) -> bool {
+    match f {
+        Term::PrimFn(_) => true,
+        Term::Lam(..) => ends_in(f, scope),
+        Term::Var(x) => scope
+            .iter()
+            .rev()
+            .find(|(n, _)| n == x)
+            .is_none_or(|(_, c)| *c),
+        _ => false,
+    }
+}
+
+/// `f` with `names` bound around it to values not known to be functions that end.
+fn under<T>(
+    scope: &mut Vec<(Arc<str>, bool)>,
+    names: &[Arc<str>],
+    f: impl FnOnce(&mut Vec<(Arc<str>, bool)>) -> T,
+) -> T {
+    let n = scope.len();
+    scope.extend(names.iter().map(|x| (x.clone(), false)));
+    let out = f(scope);
+    scope.truncate(n);
+    out
+}
+
 /// The names `p` binds.
 fn binds(p: &Pattern) -> Vec<Arc<str>> {
     match p {
@@ -171,7 +257,7 @@ fn effects(t: &Term) -> bool {
 
 /// The stage of each definition of `unit`, by source name, in order.
 pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
-    let mut m = Mixer::new(BUILD_FUEL);
+    let mut m = Mixer::default();
     unit.defs
         .iter()
         .map(|d| {
@@ -184,7 +270,7 @@ pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
 
 /// `unit` with its demanded build-stage terms evaluated, keeping the definitions `roots`
 /// and the tests read.
-pub fn mix(unit: &Unit, roots: &[&str], fuel: u64) -> (Unit, Report) {
+pub fn mix(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
     let mut demanded: BTreeSet<Arc<str>> = unit
         .defs
         .iter()
@@ -201,7 +287,7 @@ pub fn mix(unit: &Unit, roots: &[&str], fuel: u64) -> (Unit, Report) {
             demanded.extend(free(&d.term));
         }
     }
-    let mut m = Mixer::new(fuel);
+    let mut m = Mixer::default();
     let mut out = Unit {
         defs: Vec::new(),
         tests: unit.tests.clone(),
@@ -268,13 +354,13 @@ pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
 /// The values the static calls of `name` in `unit` pass its parameter `param`: each call by
 /// its kernel name, in a definition once mixed, whose argument there is a literal, and each
 /// case of a test of `name` whose argument there is a literal.
-pub fn passed(unit: &Unit, name: &str, param: usize, fuel: u64) -> BTreeSet<Value> {
+pub fn passed(unit: &Unit, name: &str, param: usize) -> BTreeSet<Value> {
     let mut out = BTreeSet::new();
     let Some(f) = unit.defs.iter().find(|d| d.name == name) else {
         return out;
     };
     let roots: Vec<&str> = unit.defs.iter().map(|d| d.name.as_str()).collect();
-    let (mixed, _) = mix(unit, &roots, fuel);
+    let (mixed, _) = mix(unit, &roots);
     for d in &mixed.defs {
         calls(&d.term, &f.kernel, param, &mut out);
     }
@@ -325,13 +411,7 @@ fn calls(t: &Term, f: &Arc<str>, param: usize, out: &mut BTreeSet<Value>) {
 /// The function `name` of `unit` split on its parameter `param` over the values of `d` its
 /// static calls pass ([`passed`]), each arm its body mixed with the parameter known, and the
 /// general body last; or why the Trick keeps it.
-pub fn split(
-    unit: &Unit,
-    name: &str,
-    param: usize,
-    d: &Domain,
-    fuel: u64,
-) -> Result<(Term, Report), String> {
+pub fn split(unit: &Unit, name: &str, param: usize, d: &Domain) -> Result<(Term, Report), String> {
     let at = unit
         .defs
         .iter()
@@ -344,11 +424,11 @@ pub fn split(
         .get(param)
         .ok_or_else(|| format!("`{name}` has no parameter {param}"))?
         .clone();
-    let values = match trick(d, &passed(unit, name, param, fuel)) {
+    let values = match trick(d, &passed(unit, name, param)) {
         Choice::Split(vs) => vs,
         Choice::Keep(why) => return Err(why),
     };
-    let mut m = Mixer::new(fuel);
+    let mut m = Mixer::default();
     for d in &unit.defs[..at] {
         let stage = m.stage(&d.term);
         m.bind(d.kernel.clone(), stage, &d.term);
@@ -630,23 +710,14 @@ impl Index {
     }
 }
 
+#[derive(Default)]
 struct Mixer {
     scope: Scope,
-    fuel: u64,
     report: Report,
     index: Index,
 }
 
 impl Mixer {
-    fn new(fuel: u64) -> Self {
-        Mixer {
-            scope: Scope::default(),
-            fuel,
-            report: Report::default(),
-            index: Index::default(),
-        }
-    }
-
     fn bind(&mut self, name: Arc<str>, stage: Stage, t: &Term) {
         let known = (stage == Stage::Build).then(|| t.clone());
         self.scope.push(name, known);
@@ -702,8 +773,11 @@ impl Mixer {
         let closed = lets.into_iter().fold(t.clone(), |body, (x, e)| {
             Term::Let(x, Arc::new(e), Arc::new(body))
         });
+        if !ends(&closed) {
+            return Err("its form does not show that it ends".into());
+        }
         Evaluator::new(World::new())
-            .with_fuel(self.fuel)
+            .with_fuel(u64::MAX)
             .run(&interp::prelude(closed))
             .map_err(|e| e.to_string())
     }

@@ -3,7 +3,6 @@
 //! nested definitions was read `O(n)` times, each reading through a scope of `O(n)` names.
 
 use zed_tests::scaling;
-use zedc::stage::BUILD_FUEL;
 
 use super::{out, staged};
 
@@ -36,7 +35,7 @@ fn deep(f: impl FnOnce() + Send + 'static) {
 fn mixing_a_chain_of_local_definitions_scales() {
     deep(|| {
         scaling::check("mixing a chain of n run-stage definitions", 400, |n| {
-            let (_, s, report) = staged(&chain(n, false), BUILD_FUEL);
+            let (_, s, report) = staged(&chain(n, false));
             assert!(report.left.is_empty());
             assert_eq!(out(&s, "1\n"), format!("{}\n", 1 + n * (n + 1) / 2));
         })
@@ -50,7 +49,7 @@ fn mixing_a_term_that_reads_every_definition_scales() {
             "mixing a chain of n definitions all read at the end",
             200,
             |n| {
-                let (_, s, _) = staged(&chain(n, true), BUILD_FUEL);
+                let (_, s, _) = staged(&chain(n, true));
                 let want: usize = (0..=n).map(|i| 1 + i * (i + 1) / 2).sum();
                 assert_eq!(out(&s, "1\n"), format!("{want}\n"));
             },

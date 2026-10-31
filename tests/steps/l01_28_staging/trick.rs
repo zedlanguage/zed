@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Term, Value, World};
-use zedc::stage::{BUILD_FUEL, Choice, Domain, passed, split, trick};
+use zedc::stage::{Choice, Domain, passed, split, trick};
 
 use crate::l01_16_elaboration::{elab, with_prelude};
 
@@ -75,7 +75,7 @@ const PRICE: &str = "rate = 8;\n\
 fn a_split_function_computes_what_the_function_does() {
     let u = elab(PRICE).unwrap();
     let tiers = Domain::Type(&Type::atom("gold") | &Type::atom("basic"));
-    let (lam, report) = split(&u, "price", 0, &tiers, BUILD_FUEL).unwrap();
+    let (lam, report) = split(&u, "price", 0, &tiers).unwrap();
     assert!(report.left.is_empty(), "{:?}", report.left);
     // Each tier's arm has its branch cut and its rate computed; the general body is last.
     assert_eq!(
@@ -109,22 +109,15 @@ fn a_split_function_computes_what_the_function_does() {
 fn the_values_passed_are_read_from_the_calls_once_mixed() {
     let u = elab(PRICE).unwrap();
     let tiers: BTreeSet<Value> = [Value::atom("basic"), Value::atom("gold")].into();
-    assert_eq!(passed(&u, "price", 0, BUILD_FUEL), tiers);
+    assert_eq!(passed(&u, "price", 0), tiers);
     // `price(tier: #gold, n: 5)` is all build-stage, so the build computes it and leaves no
     // call; `n` is passed no other literal.
-    assert_eq!(passed(&u, "price", 1, BUILD_FUEL), ints(&[]));
+    assert_eq!(passed(&u, "price", 1), ints(&[]));
     // A call in a definition after mixing: `k` is a build-stage name.
     let u = elab("k = 2 + 2;\nf(x: int, y: int) = x + y;\nz(a: int) = f(x: k, y: a) + f(x: 4, y: a + 1) + f(x: a, y: a);\n").unwrap();
-    assert_eq!(passed(&u, "f", 0, BUILD_FUEL), ints(&[4]));
+    assert_eq!(passed(&u, "f", 0), ints(&[4]));
     // One arm per value passed, however many calls pass it, and the general body last.
-    let (lam, _) = split(
-        &u,
-        "f",
-        0,
-        &Domain::Ints(Some(0), Some(1 << 40)),
-        BUILD_FUEL,
-    )
-    .unwrap();
+    let (lam, _) = split(&u, "f", 0, &Domain::Ints(Some(0), Some(1 << 40))).unwrap();
     let Term::Lam(_, body) = lam else { panic!() };
     let Term::Match(_, arms) = &*body else {
         panic!()
@@ -135,6 +128,6 @@ fn the_values_passed_are_read_from_the_calls_once_mixed() {
 #[test]
 fn the_trick_keeps_a_function_on_an_infinite_domain() {
     let u = elab(PRICE).unwrap();
-    let err = split(&u, "price", 1, &Domain::Ints(None, None), BUILD_FUEL).unwrap_err();
+    let err = split(&u, "price", 1, &Domain::Ints(None, None)).unwrap_err();
     assert_eq!(err, "an unbounded integer domain is infinite");
 }

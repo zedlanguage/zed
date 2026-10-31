@@ -32,7 +32,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `REDUCTION_ROUNDS` 16 | store/product.rs | removed (3) |
 | `VARIABLES` 16, `ATOMS` 64, `INTERMEDIATE` 4096, `KEPT_CONJUNCTIONS` 64 | store/presburger.rs | removed (4): a relation was dropped and its written constraint kept |
 | `CALL_DEPTH` 64, `TRANSFER_FUEL` 100000 | store/preimage.rs | removed (5): the transfer through calls stopped |
-| `BUILD_FUEL` 10^6 | stage.rs | a build-stage term is left to run whole |
+| `BUILD_FUEL` 10^6 | stage.rs | removed (6) |
 | `SPLIT_CAP` 1024 | stage.rs | removed (7): the Trick did not split a parameter |
 | `ENUMERATION_BUDGET` 4096, `ENUMERATION_FUEL` 10^4 | zed-kernel budgets.rs | an obligation is not enumerated; a binding removes nothing |
 | `BMC_SEQ_LEN` 4, `BMC_GENERATIONS` 16, `BMC_BUDGET` 65536, the integer cut | zed-kernel budgets.rs | rung 6 checks a prefix |
@@ -328,11 +328,31 @@ higher-order calls are shared only where those scopes are.
 | Summary per strongly connected component, iterated | not built | 2 | the kernel terms have no `fix`, so there is no call graph to order |
 | Keep `CALL_DEPTH` and `TRANSFER_FUEL` | the old behavior | 0 | constants whose crossing changes the answer |
 
-### 6. Build-stage evaluation (replaces BUILD_FUEL)
+### 6. Build-stage evaluation (replaces BUILD_FUEL) — done
 
-A demanded term is evaluated at the build stage when its termination is shown (structural
-or measured recursion, the evidence `total` mode already uses); otherwise it runs at run
-time. The rule is about the term's form, not how far an evaluation got.
+A demanded build-stage term is evaluated, with no fuel, only when its closed form (the
+term with the build-stage bindings it reads put around it) shows that it ends
+(`stage::ends`): it has no `fix` and no `gen`, and every function it calls or hands to
+`reindex`, `discard` or `fold` is a primitive, a lambda whose body ends, or a name a `let`
+binds to one of these. Otherwise it is left to run whole, with the reason "its form does
+not show that it ends" in the report. The rule is about the term's form, not how far an
+evaluation got. At L1 no measure is available: elaboration leaves `fix` as written until
+L6, and the evidence records hold no termination fact, so `fix` and `gen` count as not
+shown to end; a later layer that proves a measure can admit them.
+
+Termination: a `let` binds its name only in its body, so a name refers to an earlier
+binding, never to itself. Under the rule every call goes to a lambda written in the term or
+to a primitive, never to a value passed in, so the calls nest no deeper than the term's
+lambdas, and each primitive, including the family operations over a finite family, ends.
+Self-application such as `w(w)` with `w(f) = f(f)` calls through a parameter and is left to
+run; so is any higher-order call through a parameter (`h(f) = f(2)`), which is the price
+of the rule. `ends` reads each subterm once, so it is linear in the term.
+
+| Candidate | Measured | Score | Reasoning |
+|---|---|---|---|
+| Evaluate only terms whose form shows they end, with no fuel | `l01_28_staging::mix` (a nested chain built; `w(w)` left to run with the reason; the rule on calls through parameters, `let` names and shadowing) | 9 | no constant; a term whose ending is not shown runs at run time with the same result |
+| Also admit calls through parameters when the checker gives the term a simple (non-recursive) type | not built | 6 | admits higher-order code, but the L1 checker does not reject self-application, so it is not yet sound |
+| Keep `BUILD_FUEL` | the old behavior | 0 | a constant whose crossing changes the code |
 
 ### 7. The Trick (replaces SPLIT_CAP) — done
 

@@ -1,7 +1,7 @@
 //! Step L1.28: staging. A term is build-stage when it reads only build-stage definitions and
 //! prelude words and no port; the build evaluates the demanded ones to literals, leaves the
 //! rest to run, never evaluates a definition nothing reads, and leaves a build-stage term
-//! whose evaluation fails or runs out of fuel to run whole. The Trick specializes a function
+//! whose form does not show that it ends, or whose evaluation fails, to run whole. The Trick specializes a function
 //! on a parameter only when the parameter's domain is finite and small.
 
 mod mix;
@@ -15,10 +15,10 @@ use zed_kernel::Lookup;
 use zedc::run::{Program, load};
 use zedc::stage::Report;
 
-/// The program `src`, and it staged under `fuel`, with the report.
-pub(crate) fn staged(src: &str, fuel: u64) -> (Program, Program, Report) {
+/// The program `src`, and it staged, with the report.
+pub(crate) fn staged(src: &str) -> (Program, Program, Report) {
     let p = load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}: {e}"));
-    let (s, report) = p.stage(fuel);
+    let (s, report) = p.stage();
     (p, s, report)
 }
 
