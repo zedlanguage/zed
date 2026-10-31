@@ -101,8 +101,21 @@ fn domain(rng: &mut Rng) -> IntervalSet {
     }
 }
 
+/// Random domains of `x` and `y`; one case in two is a listed box: `x` listed, its values
+/// apart from one another, and `y` one value.
 fn domains(rng: &mut Rng) -> Domains {
-    [("x", domain(rng)), ("y", domain(rng))]
+    let point = |v: i64| IntervalSet::from_pieces(vec![(End::Fin(v), End::Fin(v))]);
+    let (x, y) = if rng.below(2) == 0 {
+        let lo = rng.int(-15, 10);
+        let xs = (0..rng.int(1, 8)).map(|k| (End::Fin(lo + 2 * k), End::Fin(lo + 2 * k)));
+        (
+            IntervalSet::from_pieces(xs.collect()),
+            point(rng.int(-15, 15)),
+        )
+    } else {
+        (domain(rng), domain(rng))
+    };
+    [("x", x), ("y", y)]
         .into_iter()
         .map(|(k, v)| (Arc::<str>::from(k), v))
         .collect()
@@ -175,8 +188,9 @@ fn integer_preimages_are_sound_and_exact_where_claimed() {
 #[test]
 fn test_preimages_are_sound_and_exact_where_claimed() {
     let t = run(2025, 250, true);
+    // The catalog makes most tests exact before a listed box is enumerated.
     assert!(
-        t.exact_unenumerated >= 40 && t.enumerated >= 5 && t.nonempty >= 100,
+        t.exact_unenumerated >= 40 && t.enumerated >= 2 && t.nonempty >= 100,
         "{t:?}"
     );
 }

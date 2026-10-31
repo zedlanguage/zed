@@ -1,9 +1,32 @@
 //! Instances for the finite-model harness (step M0.10) and the steps that reuse it: exhaustive
-//! enumerations in shortlex order, cut to the rung 6 bounds of [`zed_kernel::budgets`], and
-//! seeded random instances beyond them.
+//! enumerations in shortlex order, cut to the bounds below, and seeded random instances beyond
+//! them. The bounds are the harness's sample sizes, not a rule of Zed: the compiler has no
+//! enumeration budget or bounded-model instance (docs/thresholds.md, replacement 8).
 
-use zed_kernel::budgets::{BMC_FLOATS, BMC_INT};
+use std::ops::RangeInclusive;
+
 use zed_kernel::{Family, Value};
+
+/// The integers each integer binder ranges over.
+pub const BMC_INT: RangeInclusive<i64> = -8..=8;
+
+/// The floats each float binder ranges over: both zeros, which compare equal under IEEE `==`
+/// but are different values, the three decimals whose sum shows double rounding, both
+/// infinities, and a NaN.
+pub const BMC_FLOATS: [f64; 9] = [
+    0.0,
+    -0.0,
+    1.0,
+    0.1,
+    0.2,
+    0.3,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NAN,
+];
+
+/// The most exhaustive instances one law runs.
+pub const ENUMERATION_BUDGET: u64 = 4_096;
 
 /// How many seeded random instances each law runs beyond its exhaustive ones.
 pub const RANDOM_INSTANCES: usize = 512;
@@ -48,12 +71,12 @@ impl Rng {
     }
 }
 
-/// The integers of the rung 6 instance, `-8..=8`.
+/// The integers of the instance, `-8..=8`.
 pub fn bmc_ints() -> Vec<i64> {
     BMC_INT.collect()
 }
 
-/// The floats of the rung 6 instance, as values.
+/// The floats of the instance, as values.
 pub fn bmc_floats() -> Vec<Value> {
     BMC_FLOATS.iter().map(|&x| Value::float(x)).collect()
 }
@@ -145,5 +168,14 @@ mod tests {
         assert_eq!(xs, ys);
         assert!(xs.iter().all(|x| (-8..=8).contains(x)));
         assert!(xs.contains(&-8) && xs.contains(&8));
+    }
+
+    #[test]
+    fn the_float_instance_has_nine_distinct_values() {
+        let mut bits: Vec<u64> = BMC_FLOATS.iter().map(|x| x.to_bits()).collect();
+        bits.sort();
+        bits.dedup();
+        assert_eq!(bits.len(), 9);
+        assert!(BMC_FLOATS.iter().any(|x| x.is_nan()));
     }
 }

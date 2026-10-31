@@ -1,9 +1,8 @@
-//! Each reduction on its own, the budgets of step M0.5, and controls: the check of `random`
+//! Each reduction on its own, the enumeration of listed sets, and controls: the check of `random`
 //! rejects a scope that leaves out a value reaching its arm.
 
 use std::sync::Arc;
 
-use zed_kernel::budgets::ENUMERATION_BUDGET;
 use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
 use zed_kernel::types::Type;
 use zed_kernel::{Prim, Term, Value};
@@ -64,7 +63,7 @@ fn a_congruence_narrows_the_interval_ends() {
 
 #[test]
 fn enumeration_keeps_the_members_a_written_constraint_holds_at() {
-    // `n * n mod 5 == 1` within `0..=10`: 1, 4, 6, 9.
+    // `n * n mod 5 == 1` among `0..=10`, listed: 1, 4, 6, 9.
     let t = prim(
         Prim::Eq,
         vec![
@@ -75,7 +74,7 @@ fn enumeration_keeps_the_members_a_written_constraint_holds_at() {
             lit(1),
         ],
     );
-    let s = written(within(0, 10), t);
+    let s = written(among(&(0..=10).collect::<Vec<_>>()), t);
     assert_eq!(
         s.get("n").ints().to_string(),
         "[1..=1, 4..=4, 6..=6, 9..=9]"
@@ -84,8 +83,8 @@ fn enumeration_keeps_the_members_a_written_constraint_holds_at() {
 
 #[test]
 fn enumeration_reads_the_other_names_when_they_are_static() {
-    // `m` is 3, so `n mod m == 1` within `0..=10` keeps 1, 4, 7, 10.
-    let mut s = within(0, 10);
+    // `m` is 3, so `n mod m == 1` among `0..=10`, listed, keeps 1, 4, 7, 10.
+    let mut s = among(&(0..=10).collect::<Vec<_>>());
     s.names.insert("m".into(), Product::literal(&Value::Int(3)));
     let t = prim(
         Prim::Eq,
@@ -112,8 +111,15 @@ fn a_written_constraint_on_static_names_that_fails_makes_the_scope_bottom() {
     assert!(s.bottom);
 }
 
+/// The scope of `n` of the type listing `vs`.
+fn among(vs: &[i64]) -> Scope {
+    let t = Type::union_all(vs.iter().map(|&v| Type::lit(&Value::Int(v)).unwrap()));
+    Scope::new([("n".into(), Product::of_type(t))])
+}
+
 #[test]
-fn enumeration_past_the_budget_removes_nothing() {
+fn a_listed_set_is_enumerated_and_a_range_is_not() {
+    // `n * n mod 7` is 1, 4, 2, 2, 4, 1 at 1..=6.
     let t = prim(
         Prim::Ne,
         vec![
@@ -124,15 +130,11 @@ fn enumeration_past_the_budget_removes_nothing() {
             lit(2),
         ],
     );
-    let budget = ENUMERATION_BUDGET as i64;
-    // Within the budget the constraint removes members; one past it, none.
-    let s = written(within(1, budget), t.clone());
-    assert_ne!(s.get("n").ints().to_string(), format!("[1..={budget}]"));
-    let s = written(within(1, budget + 1), t);
-    assert_eq!(
-        s.get("n").ints().to_string(),
-        format!("[1..={}]", budget + 1)
-    );
+    let s = written(among(&[1, 2, 3, 4, 5, 6]), t.clone());
+    assert_eq!(s.get("n").ints().to_string(), "[1..=2, 5..=6]");
+    // The same members as a range are left to interval reasoning, however few they are.
+    let s = written(within(1, 6), t);
+    assert_eq!(s.get("n").ints().to_string(), "[1..=6]");
 }
 
 /// `count(k) > 1 || n == 0` for a `count` that takes about `2k` steps.
@@ -158,18 +160,24 @@ fn slow_unless_zero(k: Term) -> Term {
 }
 
 #[test]
-fn a_constraint_whose_evaluation_runs_out_of_fuel_removes_nothing() {
-    // With `k = n`, `count` is cheap: the constraint removes 1, where `count(1) = 1`.
-    let s = written(within(0, 3), slow_unless_zero(var("n")));
-    assert_eq!(s.get("n").ints().to_string(), "[0..=0, 2..=3]");
-    // With `k = n * 100000 - 99999`, `count(1)` is still 1, but `n = 2` runs out of fuel, so
-    // the constraint removes nothing.
-    let k = prim(
-        Prim::Sub,
-        vec![prim(Prim::Mul, vec![var("n"), lit(100_000)]), lit(99_999)],
-    );
-    let s = written(within(0, 3), slow_unless_zero(k));
+fn a_constraint_whose_form_does_not_show_it_ends_removes_nothing() {
+    // `count` calls itself through its parameter `me`, so however cheap it is at each member
+    // (`count(1) = 1`, so the constraint is false at 1), the constraint is not evaluated.
+    let s = written(among(&[0, 1, 2, 3]), slow_unless_zero(var("n")));
     assert_eq!(s.get("n").ints().to_string(), "[0..=3]");
+    // A constraint whose form shows it ends, over the same members, removes 1 and 3.
+    let even = prim(
+        Prim::Or,
+        vec![
+            prim(
+                Prim::Eq,
+                vec![prim(Prim::Mod, vec![var("n"), lit(2)]), lit(0)],
+            ),
+            prim(Prim::Eq, vec![var("n"), lit(-1)]),
+        ],
+    );
+    let s = written(among(&[0, 1, 2, 3]), even);
+    assert_eq!(s.get("n").ints().to_string(), "[0..=0, 2..=2]");
 }
 
 #[test]

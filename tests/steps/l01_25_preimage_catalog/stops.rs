@@ -6,7 +6,7 @@ use std::sync::Arc;
 use zed_kernel::{Prim, Term, Value};
 use zedc::store::preimage::{Demand, StopKind, preimage};
 
-use super::{check, doms, function, pre, shown};
+use super::{check, doms, function, listed, pre, shown};
 
 /// The preimage of `true` under `src` over `ds`, printed, after checking it on the window
 /// `-150..=150`.
@@ -23,15 +23,16 @@ fn a_string_operation_stops_the_transfer() {
         holds("ok(x) = String(x) == \"12\";\n", &[("x", None, None)]),
         "x [..]; necessary; stop: string operation Show stops the transfer at String(x)"
     );
-    // Below `len` the string stops it; the finite domain is then enumerated, and the stop is
+    // Below `len` the string stops it; a listed domain is then enumerated, and the stop is
     // still reported.
+    let src = "ok(x) = len(String(x)) <= 2;\n";
+    let ds = listed(&[("x", &[-100, -10, -9, 0, 9, 10, 99, 100])]);
+    let p = preimage(&function(src).1, &ds, &Demand::Bool(true));
+    check(&function(src).1, &ds, &Demand::Bool(true), &p, (-100, 100));
     assert_eq!(
-        holds(
-            "ok(x) = len(String(x)) <= 2;\n",
-            &[("x", Some(-200), Some(200))]
-        ),
-        "x [-9..=99]; exact; enumerated; stop: string operation Show stops the transfer at \
-         String(x)"
+        shown(&p),
+        "x [-9..=-9, 0..=0, 9..=10, 99..=99]; exact; enumerated; stop: string operation Show \
+         stops the transfer at String(x)"
     );
     assert_eq!(
         holds("ok(x) = len(trim(String(x))) <= 2;\n", &[("x", None, None)]),
@@ -78,13 +79,13 @@ fn a_term_outside_the_scalar_catalog_is_reported() {
         "x [..]; necessary; stop: no scalar catalog entry for sum((x, 1))"
     );
     assert_eq!(wide.stops[0].kind, StopKind::Outside);
-    // On a finite domain the enumeration decides it, and the stop is still reported.
-    let ds = doms(&[("x", Some(-10), Some(10))]);
+    // On a listed domain the enumeration decides it, and the stop is still reported.
+    let ds = listed(&[("x", &[-10, 2, 3, 5, 10])]);
     let p = preimage(&t, &ds, &Demand::Bool(true));
     check(&t, &ds, &Demand::Bool(true), &p, (-10, 10));
     assert_eq!(
         shown(&p),
-        "x [-10..=3]; exact; enumerated; stop: no scalar catalog entry for sum((x, 1))"
+        "x [-10..=-10, 2..=3]; exact; enumerated; stop: no scalar catalog entry for sum((x, 1))"
     );
 }
 

@@ -58,6 +58,16 @@ pub(crate) fn doms(ds: &[(&str, Option<i64>, Option<i64>)]) -> Domains {
         .collect()
 }
 
+/// Each name's set of the listed integers `vs`, as the source would list them.
+pub(crate) fn listed(ds: &[(&str, &[i64])]) -> Domains {
+    ds.iter()
+        .map(|&(n, vs)| {
+            let pieces = vs.iter().map(|&v| (End::Fin(v), End::Fin(v))).collect();
+            (n.into(), IntervalSet::from_pieces(pieces))
+        })
+        .collect()
+}
+
 /// The preimage of `demand` under the function `src`, over `ds`.
 fn pre(src: &str, ds: &[(&str, Option<i64>, Option<i64>)], demand: &Demand) -> Preimage {
     let (_, body) = function(src);

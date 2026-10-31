@@ -777,7 +777,6 @@ impl Mixer {
             return Err("its form does not show that it ends".into());
         }
         Evaluator::new(World::new())
-            .with_fuel(u64::MAX)
             .run(&interp::prelude(closed))
             .map_err(|e| e.to_string())
     }

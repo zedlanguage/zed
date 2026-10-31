@@ -34,10 +34,10 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `CALL_DEPTH` 64, `TRANSFER_FUEL` 100000 | store/preimage.rs | removed (5): the transfer through calls stopped |
 | `BUILD_FUEL` 10^6 | stage.rs | removed (6) |
 | `SPLIT_CAP` 1024 | stage.rs | removed (7): the Trick did not split a parameter |
-| `ENUMERATION_BUDGET` 4096, `ENUMERATION_FUEL` 10^4 | zed-kernel budgets.rs | an obligation is not enumerated; a binding removes nothing |
-| `BMC_SEQ_LEN` 4, `BMC_GENERATIONS` 16, `BMC_BUDGET` 65536, the integer cut | zed-kernel budgets.rs | rung 6 checks a prefix |
-| `SATURATION_ITERATIONS` 8, `SATURATION_NODES` 10^4 | zed-kernel budgets.rs | rung 3 stops saturating |
-| `DEFAULT_FUEL` 10^8 | zed-kernel eval.rs | a compile-time evaluation stops |
+| `ENUMERATION_BUDGET` 4096, `ENUMERATION_FUEL` 10^4 | zed-kernel budgets.rs | removed (8): a set or box with more members was not enumerated; an evaluation that ran out removed nothing |
+| `BMC_SEQ_LEN` 4, `BMC_GENERATIONS` 16, `BMC_BUDGET` 65536, the integer cut | zed-kernel budgets.rs | removed (8): never read by the compiler; the M0.10 harness keeps its own instance sizes in `tests/src/instances.rs` |
+| `SATURATION_ITERATIONS` 8, `SATURATION_NODES` 10^4 | zed-kernel budgets.rs | removed (8): never read; rung 3 is not built |
+| `DEFAULT_FUEL` 10^8 | zed-kernel eval.rs | removed (8): a compile-time evaluation stopped |
 
 Not thresholds: `TOP` 29 (the number of grammar layers), `POWER_FACTORS` 64 (the width of
 `i64`), `MAX_BITS`, `MAX_DEPTH`, `MIN_STEPS`, `MIN_MEMORY`, `STACK_BYTES` (resources).
@@ -376,13 +376,49 @@ the old rule made an arm for each, and the general arm computes the same results
 | Every value of a finite domain, no cap | not built | 2 | a domain like `int[0..=2^40]` is finite and would be split into 2^40 arms |
 | Keep `SPLIT_CAP` | the old behavior | 0 | a constant whose crossing changes the code |
 
-### 8. Verification ladder (replaces the enumeration, BMC and saturation budgets, DEFAULT_FUEL)
+### 8. Enumeration and evaluation fuel (replaces the enumeration, BMC and saturation budgets, DEFAULT_FUEL) — done
 
-- Rung 1 enumerates a domain whose members are listed in the source (bool, atom sets,
-  literal sets, and tuples of these); a range is decided by interval reasoning instead.
-- Rung 6 runs only to bounds the program writes; without them it does not run.
-- Rung 3 saturates only with rewrites that do not grow terms (congruence closure and
-  canonical forms), which terminate without a bound.
+Enumerate only a set whose members are listed, so the work is linear in what is written,
+not in the size of the numbers. Two places enumerate:
+
+- The reduced product (`store/product.rs`) enumerates a name whose finite set lists its
+  integers. The finite set holds the literals the source writes, and an interval's members
+  only where they are no more than its endpoints, so the list is no longer than its source.
+  A range such as `int[0..=100]` is left to the interval, congruence and relation domains,
+  however few members it has.
+- The preimage catalog (`store/preimage.rs`) enumerates a box in which every piece of every
+  input's set holds no more members than its two endpoints, and at most one input has more
+  than one member, so the points number no more than the endpoints written. A product of
+  two listed sets is not enumerated: its points grow as the product of the lists.
+
+Each evaluation runs with no fuel and only when the term's form shows that it ends
+(`stage::ends`, replacement 6); otherwise the constraint removes nothing. The evaluator's
+default fuel is now unlimited (`Evaluator::new`); `Evaluator::with_fuel` remains for a
+caller that wants a measured limit, and none in the compiler does. The BMC and saturation
+constants were never read by the compiler, so they are deleted with the module; the M0.10
+harness keeps its instance sizes as test fixtures (`zed_tests::instances`), which are not
+a rule of Zed.
+
+Termination: each enumeration visits each listed member once (or each point of a box with
+one listed axis), and each visit evaluates a term that `ends` admits, which ends by the
+argument of replacement 6.
+
+What is lost: a range is no longer decided member by member. `x * 7 mod 10 == 3` over
+`int[0..=30]` was `{9, 19, 29}`, exact; it is now `[9..=29]`, necessary. In the arm of
+`n >= 0 && n <= 10 && n mod 4 == 1`, `n` was listed as `{1, 5, 9}`; it is now `int[1..=9]`
+with the congruence `1 mod 4`, which still represents the set exactly, and the other arm
+keeps 5. DESIGN L1.39's `isPrime(p)` example, which gave `{2}` over `int[0..=100]`, now
+gives the interval only; a domain that represents primality, or a listed domain, is needed
+to recover it. Integer sets merge adjacent members, so a source list of three or more
+consecutive values reaches the preimage catalog as a range and is not enumerated; the
+reduced product reads the finite set, which does not merge them.
+
+| Candidate | Measured | Score | Reasoning |
+|---|---|---|---|
+| Listed sets only, each evaluation admitted by `ends`, no fuel | `l01_39_reduced_product::controls` (a listed set enumerated and the same range not; a self-applying constraint removes nothing); `l01_25_preimage_catalog::entries`, `random` (listed boxes enumerated, checked against the interpreter) | 9 | no constant; cost linear in the source |
+| Every finite interval, no cap | not built | 3 | ends, but `int32` ranges cost 2^32 evaluations each; the checker's cost would follow the numbers |
+| A cap scaled to the source size | not built | 2 | still a threshold: adding a comment changes the precision |
+| Keep the budgets | the old behavior | 0 | constants whose crossing changes the result |
 
 ### 9. Type diagrams (replaces the 4096 and 65536 budgets)
 

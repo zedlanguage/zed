@@ -19,15 +19,12 @@ fn an_arm_that_fixes_n_mod_4_within_0_to_10_holds_1_to_9() {
     let (_, _, a) = arms_of(src);
     let then = arm(&a, "((n mod 4) == 1)", true);
     let n = then.scope.get("n");
-    // The hull is `int[1..=9]`; enumeration keeps the members themselves.
+    // The hull is `int[1..=9]`, and the congruence keeps the members exactly: 1, 5 and 9.
     assert_eq!(n.ints().hull().to_string(), "[1..=9]");
-    assert_eq!(
-        n.to_string(),
-        "ints [1..=1, 5..=5, 9..=9]\ncongruence 1 mod 4\nfinite {1, 5, 9}\ntype (| 1 5 9)\n"
-    );
-    // The other arm holds every integer but the three.
+    assert_eq!(n.cell.congruence.element.to_string(), "1 mod 4");
+    // The other arm loses the two ends; 5 is not listed, so it is kept.
     let other = arm(&a, "((n mod 4) == 1)", false).scope.get("n");
-    assert_eq!(other.ints().to_string(), "[..=0, 2..=4, 6..=8, 10..]");
+    assert_eq!(other.ints().to_string(), "[..=0, 2..=8, 10..]");
 }
 
 #[test]

@@ -30,29 +30,29 @@ fn the_z3_fixture_reproduces_exactly() {
         ),
         "x [0..=47]; exact"
     );
-    // A congruence the projection does not split waits for step L1.39; within the
-    // enumeration budget, the enumeration finishes it.
+    // A congruence the projection does not split is kept as a relation; the set is
+    // necessary only.
     assert_eq!(
         pre(
             "ok(x) = (x * 2 + 1) < 100 && x mod 7 != 3;",
             &[("x", Some(0), Some(1_000_000))]
         ),
-        "x [0..=2, 4..=9, 11..=16, 18..=23, 25..=30, 32..=37, 39..=44, 46..=49]; exact; enumerated"
+        "x [0..=2, 4..=49]; necessary; relation 2 * x <= 98 && !(q1 == 3) where q0 = x div 7, \
+         q1 = x mod 7"
     );
 }
 
 #[test]
 fn a_relation_among_two_inputs_is_kept_with_its_projection() {
-    // The design's example: `(a + b).refine(v -> v < 50)` needs `a + b <= 49`. The box is
-    // within the enumeration budget, which finds it is not exact either.
+    // The design's example: `(a + b).refine(v -> v < 50)` needs `a + b <= 49`.
     assert_eq!(
         pre(
             "ok(a, b) = a + b < 50;",
             &[("a", Some(0), Some(1000)), ("b", Some(0), Some(1000))]
         ),
-        "a [0..=49]; b [0..=49]; necessary; enumerated; relation a + b <= 49"
+        "a [0..=49]; b [0..=49]; necessary; relation a + b <= 49"
     );
-    // Past the enumeration budget, the relation alone says what the box misses.
+    // Over three inputs, the relation alone says what the box misses.
     assert_eq!(
         pre(
             "ok(a, b, c) = a + b + c < 50;",

@@ -46,7 +46,8 @@
 //! Euclidean `div` and `mod` by a constant, `min`, `max`, `abs`, branches and the tests over
 //! them) is narrowed to the relation's projection on each input, within the box, and is exact
 //! when the box entails the relation; when it is not, the relation is kept with the box. And a
-//! result that is still not exact, finite and within the enumeration budget of step M0.10 is
+//! result that is still not exact over a listed box (every piece of every input's set holding
+//! no more members than its endpoints, at most one input with more than one member), of a term whose form shows that it ends, is
 //! enumerated: the term is run at each point, and the result is the projection of the points
 //! that meet the demand, exact when they form a box. An enumeration that meets a term the
 //! evaluator cannot run removes nothing.
@@ -58,13 +59,13 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::budgets::{ENUMERATION_BUDGET, ENUMERATION_FUEL};
 use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, eval, on_stack};
 
 use super::interval::{End, IntervalSet};
 use super::lattice::Landmarks;
 use super::presburger::{self, Con, Formula, Lin, Over, Relation};
 use super::revision::{self, Op, Tonicity};
+use crate::stage;
 use End::{Fin, NegInf, PosInf};
 
 /// An interval per input name.
@@ -2079,28 +2080,29 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
     if z.contains(c) { own.join(&at_c) } else { own }
 }
 
-/// The projection of the points of a finite box, within the enumeration budget, at which the
-/// term meets the demand.
+/// The projection of the points of a listed box at which the term meets the demand: every
+/// input's set is listed, each piece holding no more members than its two endpoints (the rule
+/// by which a type lists an interval), and at most one input has more than one member, so the
+/// points number no more than the endpoints written (docs/thresholds.md, replacement 8). The
+/// term's form must show that it ends ([`stage::ends`]). A range is left to the catalog and the
+/// linear relation.
 fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Res> {
+    if !stage::ends(term) {
+        return None;
+    }
     let mut axes: Vec<(Arc<str>, Vec<i64>)> = Vec::new();
-    let mut size: u64 = 1;
     for (k, s) in dom {
-        let mut n: u128 = 0;
+        let mut vs = Vec::new();
         for &(lo, hi) in s.pieces() {
-            let (Fin(lo), Fin(hi)) = (lo, hi) else {
-                return None;
-            };
-            n += (hi as i128 - lo as i128 + 1) as u128;
+            match (lo, hi) {
+                (Fin(lo), Fin(hi)) if hi as i128 - lo as i128 <= 1 => vs.extend(lo..=hi),
+                _ => return None,
+            }
         }
-        size = (size as u128 * n)
-            .try_into()
-            .ok()
-            .filter(|&n| n <= ENUMERATION_BUDGET)?;
-        let vs = s.pieces().iter().flat_map(|&(lo, hi)| match (lo, hi) {
-            (Fin(lo), Fin(hi)) => lo..=hi,
-            _ => unreachable!("every piece is finite"),
-        });
-        axes.push((k.clone(), vs.collect()));
+        axes.push((k.clone(), vs));
+    }
+    if axes.iter().filter(|(_, vs)| vs.len() > 1).count() > 1 {
+        return None;
     }
     if axes.iter().any(|(_, vs)| vs.is_empty()) {
         return Some(Res {
@@ -2111,8 +2113,7 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Res> {
     on_stack(|stack| enumerate_on(stack, term, &axes, demand))
 }
 
-/// The enumeration of [`enumerate`] over `axes`, each point evaluated on `stack` within
-/// [`ENUMERATION_FUEL`].
+/// The enumeration of [`enumerate`] over `axes`, each point evaluated on `stack`.
 fn enumerate_on(
     stack: &Stack,
     term: &Term,
@@ -2131,10 +2132,7 @@ fn enumerate_on(
                 Arc::new(t),
             );
         }
-        let v = Evaluator::new(World::new())
-            .with_fuel(ENUMERATION_FUEL)
-            .run_on(stack, &t)
-            .ok()?;
+        let v = Evaluator::new(World::new()).run_on(stack, &t).ok()?;
         if demand.holds(&v) {
             count += 1;
             for (j, &i) in point.iter().enumerate() {

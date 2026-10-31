@@ -7,8 +7,8 @@
 //! condition is dropped. Beside the laws: witness bijectivity (`witnesses`), the recursion
 //! checks (`recursion`), and the metatheory smoke cases (`smoke`).
 //!
-//! The instances are exhaustive enumerations in shortlex order up to the rung 6 bounds of
-//! `zed_kernel::budgets`, with at most `ENUMERATION_BUDGET` per law, plus
+//! The instances are exhaustive enumerations in shortlex order up to the bounds of
+//! `zed_tests::instances`, with at most `ENUMERATION_BUDGET` per law, plus
 //! `RANDOM_INSTANCES` seeded random ones beyond those bounds.
 
 mod derived;
@@ -21,10 +21,11 @@ mod smoke;
 mod witnesses;
 
 use zed_kernel::Value;
-use zed_kernel::budgets::ENUMERATION_BUDGET;
 use zed_kernel::term::build::lit;
 use zed_kernel::{Family, Term};
-use zed_tests::instances::{RANDOM_INSTANCES, Rng, map_value, partial_maps, seq_value};
+use zed_tests::instances::{
+    ENUMERATION_BUDGET, RANDOM_INSTANCES, Rng, map_value, partial_maps, seq_value,
+};
 
 /// A one-level family of integers, as its entries in key order.
 type IntMap = Vec<(i64, i64)>;

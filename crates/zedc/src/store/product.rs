@@ -11,10 +11,10 @@
 //! - the type loses `int` when the interval or the congruence is empty, keeps only the literals
 //!   of a finite interval or a finite set, and gives its literals back to the finite set and
 //!   the interval;
-//! - enumeration: a name of type within `int` whose interval holds at most
-//!   [`ENUMERATION_BUDGET`] members keeps only the members at which each written constraint on
-//!   it holds, the constraint's other names static and each evaluation within
-//!   [`ENUMERATION_FUEL`]. A constraint whose evaluation runs out of fuel removes nothing.
+//! - enumeration: a name of type within `int` whose finite set lists its integers keeps only the members at which each written constraint on it holds, the
+//!   constraint's other names static and its form shown to end ([`stage::ends`]); a
+//!   constraint whose form does not show it ends removes nothing. A range is left to the
+//!   interval, congruence and relation reasoning (docs/thresholds.md, replacement 8).
 //!
 //! A product is empty when its type is, and a scope with an empty product is bottom: the arm
 //! it describes is unreachable. [`Scope::assume`] narrows a scope by a test and its outcome:
@@ -32,10 +32,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use zed_kernel::budgets::{ENUMERATION_BUDGET, ENUMERATION_FUEL};
 use zed_kernel::provenance::{FactAddress, NodeAddress, Vector};
 use zed_kernel::types::{Type, Universe};
-use zed_kernel::{Evaluator, KernelError, Prim, Stack, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, on_stack};
 
 use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
@@ -387,15 +386,19 @@ impl fmt::Display for Product {
     }
 }
 
-/// Each member of `x` when it is finite with at most `cap` of them.
-fn members(x: &IntervalSet, cap: u64) -> Option<Vec<i64>> {
-    let (End::Fin(lo), End::Fin(hi)) = x.bounds()? else {
+/// The integers of `p` when its finite set lists them: every member an integer. The finite
+/// set holds the literals the source lists, and an interval's members only where they are no
+/// more than its endpoints, so the list is no longer than what it is read from.
+fn listed(p: &Product) -> Option<Vec<i64>> {
+    let FiniteSet::Set(vs) = &p.cell.finite.element else {
         return None;
     };
-    if (hi as i128 - lo as i128) >= cap as i128 {
-        return None;
-    }
-    Some((lo..=hi).filter(|&v| x.contains(v)).collect())
+    vs.iter()
+        .map(|v| match v {
+            Value::Int(n) => Some(*n),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The names in scope with their products, the linear relation among them, and the written
@@ -922,8 +925,9 @@ impl Scope {
                     .cloned()
                     .collect();
                 let key = (text.clone(), statics.clone().into_iter().collect());
-                (open.len() <= 1 && !self.enumerated.contains(&key))
-                    .then(|| (substitute(c, &statics), open, key))
+                let c = substitute(c, &statics);
+                (open.len() <= 1 && !self.enumerated.contains(&key) && stage::ends(&c))
+                    .then_some((c, open, key))
             })
             .collect();
         if pending.is_empty() {
@@ -944,9 +948,7 @@ impl Scope {
                     ),
                     None => c.clone(),
                 };
-                Evaluator::new(World::new())
-                    .with_fuel(ENUMERATION_FUEL)
-                    .run_on(stack, &t)
+                Evaluator::new(World::new()).run_on(stack, &t)
             };
             match &open[..] {
                 [] => {
@@ -964,22 +966,15 @@ impl Scope {
                     if !p.ty.element.subtype(&int) {
                         continue;
                     }
-                    let Some(vs) = members(p.ints(), ENUMERATION_BUDGET) else {
+                    let Some(vs) = listed(p) else {
                         continue;
                     };
-                    let mut kept = Vec::new();
-                    let mut out_of_fuel = false;
-                    for v in &vs {
-                        match at(Some((n, *v))) {
-                            Ok(Value::Bool(true)) => kept.push(*v),
-                            Err(KernelError::OutOfFuel) => {
-                                out_of_fuel = true;
-                                break;
-                            }
-                            _ => {}
-                        }
-                    }
-                    if !out_of_fuel && kept.len() < vs.len() {
+                    let kept: Vec<i64> = vs
+                        .iter()
+                        .copied()
+                        .filter(|v| matches!(at(Some((n, *v))), Ok(Value::Bool(true))))
+                        .collect();
+                    if kept.len() < vs.len() {
                         let x = IntervalSet::from_pieces(
                             kept.iter().map(|&v| (End::Fin(v), End::Fin(v))).collect(),
                         );
@@ -1131,10 +1126,13 @@ fn forward_in(e: &Term, scope: &mut Scope) -> Product {
     p
 }
 
-/// The element of a value computed at build time, if `t` evaluates to data within
-/// [`ENUMERATION_FUEL`].
+/// The element of a value computed at build time, if `t`'s form shows it ends
+/// ([`stage::ends`]) and it evaluates to data.
 fn run_static(t: &Term) -> Option<Product> {
-    let mut ev = Evaluator::new(World::new()).with_fuel(ENUMERATION_FUEL);
+    if !stage::ends(t) {
+        return None;
+    }
+    let mut ev = Evaluator::new(World::new());
     match ev.run(t) {
         Ok(v) if !matches!(v, Value::Family(_)) => Some(Product::literal(&v)),
         _ => None,

@@ -7,7 +7,6 @@
 //! adds the executable big-step reference evaluator here; the inventory is fixed by M0 and
 //! built whole at L1 (steps L1.15 and L1.31), so later layers add no term and no node kind.
 
-pub mod budgets;
 pub mod error;
 pub mod eval;
 pub mod exact;

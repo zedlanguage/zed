@@ -28,17 +28,13 @@ use crate::value::Value;
 /// "Budgets"; fixed by step M0.11). A conforming compiler never rejects an evaluation within
 /// them; past them, running out is a build failure, the machine's and not the program's.
 ///
-/// Steps of the definitional interpreter, counted as [`DEFAULT_FUEL`] counts them.
+/// Steps of the definitional interpreter, counted as [`Evaluator::with_fuel`] counts them.
 pub const MIN_STEPS: u64 = 10_000_000;
 /// Bytes of memory. The reference evaluator sets no memory limit of its own, so it is bounded
 /// only by the machine.
 pub const MIN_MEMORY: u64 = 1 << 30;
 /// Nested calls.
 pub const MIN_NESTED_CALLS: usize = 20_000;
-
-/// The default fuel: the number of function calls, `fix` rounds and `gen` steps one
-/// evaluation may take, ten times [`MIN_STEPS`].
-pub const DEFAULT_FUEL: u64 = 100_000_000;
 
 /// The deepest nesting of calls the evaluator follows before it stops with
 /// [`KernelError::TooDeep`]. A program that needs more is one the reference evaluator cannot
@@ -50,7 +46,7 @@ pub const MAX_DEPTH: usize = 20_000;
 /// nested calls and not 200), so [`MAX_DEPTH`] calls need at most 400 MB.
 const STACK_BYTES: usize = 1 << 30;
 
-const _: () = assert!(DEFAULT_FUEL >= MIN_STEPS && MAX_DEPTH >= MIN_NESTED_CALLS);
+const _: () = assert!(MAX_DEPTH >= MIN_NESTED_CALLS);
 
 /// A run-time value: a data value, or a function, which families never hold.
 #[derive(Clone, Debug)]
@@ -309,17 +305,18 @@ pub fn on_stack<R: Send>(f: impl FnOnce(&Stack) -> R + Send) -> R {
     })
 }
 
-/// Evaluates a closed term with no ports and the default fuel, expecting data.
+/// Evaluates a closed term with no ports and no fuel limit, expecting data.
 pub fn eval(term: &Term) -> Result<Value, KernelError> {
     Evaluator::new(World::new()).run(term)
 }
 
 impl Evaluator {
-    /// An evaluator over `world` with the default fuel.
+    /// An evaluator over `world` with no fuel limit: a run takes as many steps as the term
+    /// does (docs/thresholds.md, replacement 8). [`Evaluator::with_fuel`] sets one.
     pub fn new(world: World) -> Self {
         Evaluator {
             world,
-            fuel: DEFAULT_FUEL,
+            fuel: u64::MAX,
             depth: 0,
             pure: 0,
             schedule: Schedule::default(),

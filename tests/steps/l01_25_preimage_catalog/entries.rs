@@ -1,8 +1,8 @@
 //! The catalog's entries on ordinary preconditions and guards. Each preimage is printed and
 //! checked against the interpreter over a window of each domain.
 
-use super::{check, doms, function, pre, shown};
-use zedc::store::preimage::Demand;
+use super::{check, doms, function, listed, pre, shown};
+use zedc::store::preimage::{Demand, preimage};
 
 /// The preimage of `true` under `src` over `ds`, printed, after checking it on the window
 /// `-60..=60`.
@@ -69,10 +69,10 @@ fn euclidean_division_and_remainder_by_a_constant_invert_exactly() {
         "i [3..=3, 13..=13]; exact"
     );
     // Over more periods, the first and last are listed and those between are one piece, so
-    // the set is necessary only; a small domain is then enumerated.
+    // the set is necessary only, however small the domain.
     assert_eq!(
         holds("ok(i) = i mod 10 == 3;\n", &[("i", Some(0), Some(40))]),
-        "i [3..=3, 13..=13, 23..=23, 33..=33]; exact; enumerated"
+        "i [3..=3, 13..=33]; necessary"
     );
     assert_eq!(
         holds(
@@ -138,22 +138,31 @@ fn a_branch_is_the_union_of_its_arms() {
 
 #[test]
 fn a_comparison_of_two_terms_constrains_their_difference() {
-    // `x < y` on boxes is a relation, which L1.38 keeps; the box is its projection, and the
-    // enumeration of the finite box finds every value of each input in some point.
+    // `x < y` on boxes is a relation, which L1.38 keeps; the box is its projection.
     assert_eq!(
         holds(
             "ok(x, y) = x < y;\n",
             &[("x", Some(5), None), ("y", None, Some(8))]
         ),
-        "x [5..=7]; y [6..=8]; necessary; enumerated"
+        "x [5..=7]; y [6..=8]; necessary"
     );
 }
 
 #[test]
-fn a_finite_box_within_the_budget_is_enumerated() {
+fn a_listed_box_is_enumerated_and_a_range_is_not() {
+    // Each piece holds no more members than its endpoints, so the box is listed.
+    let src = "ok(x) = x * x mod 10 == 9;\n";
+    let ds = listed(&[("x", &[0, 1, 3, 4, 7, 13, 14, 17, 18])]);
+    let p = preimage(&function(src).1, &ds, &Demand::Bool(true));
+    check(&function(src).1, &ds, &Demand::Bool(true), &p, (0, 20));
     assert_eq!(
-        holds("ok(x) = x * 7 mod 10 == 3;\n", &[("x", Some(0), Some(30))]),
-        "x [9..=9, 19..=19, 29..=29]; exact; enumerated"
+        shown(&p),
+        "x [3..=3, 7..=7, 13..=13, 17..=17]; exact; enumerated"
+    );
+    // The same members within a range are left to the catalog, however few they are.
+    assert_eq!(
+        holds(src, &[("x", Some(0), Some(18))]),
+        "x [3..=3, 5..=17]; necessary"
     );
     // Not a box: the projection, necessary only.
     assert_eq!(
@@ -161,17 +170,18 @@ fn a_finite_box_within_the_budget_is_enumerated() {
             "ok(x, y) = x + y == 3;\n",
             &[("x", Some(0), Some(3)), ("y", Some(0), Some(3))]
         ),
-        "x [0..=3]; y [0..=3]; necessary; enumerated"
+        "x [0..=3]; y [0..=3]; necessary"
     );
 }
 
 #[test]
 fn a_division_that_can_fail_keeps_only_the_points_that_do_not() {
     // `100 div d` fails at `d == 0`, which no preimage of a demand holds.
-    assert_eq!(
-        holds("ok(d) = 100 div d >= 20;\n", &[("d", Some(-10), Some(10))]),
-        "d [1..=5]; exact; enumerated"
-    );
+    let src = "ok(d) = 100 div d >= 20;\n";
+    let ds = listed(&[("d", &[-10, -1, 0, 2, 5, 6, 10])]);
+    let p = preimage(&function(src).1, &ds, &Demand::Bool(true));
+    check(&function(src).1, &ds, &Demand::Bool(true), &p, (-10, 10));
+    assert_eq!(shown(&p), "d [2..=2, 5..=5]; exact; enumerated");
 }
 
 #[test]
@@ -230,8 +240,13 @@ fn a_test_that_can_fail_is_not_combined_as_a_boolean() {
             "ok(x) = (10 div x < 100) == (10 div x < 50);\n",
             &[("x", Some(-3), Some(3))]
         ),
-        "x [-3..=3]; exact; enumerated"
+        "x [-3..=3]; necessary"
     );
+    let src = "ok(x) = (10 div x < 100) == (10 div x < 50);\n";
+    let ds = listed(&[("x", &[-3, 0, 3])]);
+    let p = preimage(&function(src).1, &ds, &Demand::Bool(true));
+    check(&function(src).1, &ds, &Demand::Bool(true), &p, (-3, 3));
+    assert_eq!(shown(&p), "x [-3..=-3, 0..=0, 3..=3]; exact; enumerated");
 }
 
 #[test]
