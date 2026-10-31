@@ -1,0 +1,10 @@
+1e     [0..2] malformed number: an exponent needs digits: `1e3`, `1e-3`
+1e+    [0..2] malformed number: an exponent needs digits: `1e3`, `1e-3`
+1.5e   [0..4] malformed number: an exponent needs digits: `1e3`, `1e-3`
+1.5f   [0..4] malformed number: a number must not run into a name: `f`
+3R     [0..2] malformed number: a number must not run into a name: `R`
+0x10r  [0..5] malformed number: a rational is written in decimal: `16r`, not `0x10r`
+1.5_   [0..4] malformed number: `_` goes only between two digits
+2.5ms  [0..5] malformed number: a number must not run into a name: `ms`
+1e3x   [0..4] malformed number: a number must not run into a name: `x`
+1rr    [0..3] malformed number: a number must not run into a name: `r`
