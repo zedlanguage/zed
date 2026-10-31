@@ -37,6 +37,36 @@ fn doubling(k: usize) -> Term {
     body
 }
 
+/// `f0 = (v) -> v; f1 = (v) -> max(f0(v), f0(v + d)); …; fk(i) >= 0`: each function calls
+/// the one before it twice, with arguments that differ when `d` is 1 and agree when it is 0.
+fn calls(k: usize, d: i64) -> Term {
+    let call = |j: usize, a: Term| Term::App(Arc::new(var(&format!("f{j}"))), vec![a]);
+    let mut body = prim(Prim::Ge, call(k, var("i")), int(0));
+    for j in (0..=k).rev() {
+        let e = if j == 0 {
+            var("v")
+        } else {
+            let second = if d == 0 {
+                var("v")
+            } else {
+                prim(Prim::Add, var("v"), int(d))
+            };
+            prim(Prim::Max, call(j - 1, var("v")), call(j - 1, second))
+        };
+        let f = Term::Lam(vec!["v".into()], Arc::new(e));
+        body = Term::Let(format!("f{j}").into(), Arc::new(f), Arc::new(body));
+    }
+    body
+}
+
+fn calls_apart(k: usize) -> Term {
+    calls(k, 1)
+}
+
+fn calls_alike(k: usize) -> Term {
+    calls(k, 0)
+}
+
 /// `if (if (… i >= 3 …) { i >= 1 } else { i <= -1 }) { i >= 0 } else { i <= 0 }`: each
 /// branch's guard is the branch before it.
 fn guards(k: usize) -> Term {
@@ -83,11 +113,43 @@ fn the_transfer_scales() {
     scaling::check("a chain of `let`s, each name read twice", 6, run(doubling));
     scaling::check("branches nested in guard position", 6, run(guards));
     scaling::check("a conjunction of tests", 8, run(conjunction));
+    scaling::check(
+        "functions each calling the one before twice, alike",
+        6,
+        run(calls_alike),
+    );
+    scaling::check(
+        "functions each calling the one before twice, apart",
+        6,
+        run(calls_apart),
+    );
 }
 
-/// The call depth counts calls, not the nesting of terms: a chain of `let`s of any length up
-/// to 64 is followed to the end and memoized, never cut. The old count cut every chain of 22
-/// or more, ran out of the transfer's budget and fell back on enumeration.
+/// A function is summarized once for each abstraction of its arguments, so a chain of
+/// functions each calling the one before twice is read in time linear in its length, not
+/// exponential; and the preimage is still exact.
+#[test]
+fn nested_calls_are_summarized() {
+    let ds = doms(&[("i", Some(-50), Some(50))]);
+    for k in [1, 2, 5, 20, 48] {
+        let p = preimage(&calls_alike(k), &ds, &Demand::Bool(true));
+        assert_eq!(
+            shown(&p),
+            "i [0..=50]; exact",
+            "{k} functions, arguments alike"
+        );
+        let p = preimage(&calls_apart(k), &ds, &Demand::Bool(true));
+        let lo = -(k as i64).min(50);
+        assert_eq!(
+            shown(&p),
+            format!("i [{lo}..=50]; exact"),
+            "{k} functions, apart"
+        );
+    }
+}
+
+/// A chain of `let`s is followed to the end and memoized, never cut. An old count of nested
+/// terms cut every chain of 22 or more and fell back on enumeration.
 #[test]
 fn a_long_chain_of_lets_is_not_cut() {
     let ds = doms(&[("i", Some(-50), Some(50))]);

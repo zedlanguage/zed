@@ -295,6 +295,29 @@ impl IntervalSet {
         IntervalSet::from_pieces(out)
     }
 
+    /// The least set holding `self` whose finite ends are landmarks: each end of each piece
+    /// moves out to the nearest landmark on its side, or to infinity when there is none. Its
+    /// ends lie in a finite set, so there are finitely many results for one set of landmarks.
+    pub fn snap(&self, marks: &Landmarks) -> Self {
+        let t = marks.ints();
+        let out = self
+            .pieces
+            .iter()
+            .map(|&(lo, hi)| {
+                let lo = match lo {
+                    Fin(v) => t.range(..=v).next_back().map_or(NegInf, |&m| Fin(m)),
+                    e => e,
+                };
+                let hi = match hi {
+                    Fin(v) => t.range(v..).next().map_or(PosInf, |&m| Fin(m)),
+                    e => e,
+                };
+                (lo, hi)
+            })
+            .collect();
+        IntervalSet::from_pieces(out)
+    }
+
     /// The narrowing `self Δ next` (step M0.5), for `next ⊑ self`, the meet of `self` with
     /// its projection.
     ///

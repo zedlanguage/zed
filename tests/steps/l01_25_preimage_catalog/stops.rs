@@ -97,9 +97,9 @@ fn a_length_under_arithmetic_is_read_through_to_its_stop() {
 }
 
 #[test]
-fn a_call_that_never_returns_stops_at_the_call_depth() {
-    // `w(w) >= x` with `w = \g. g(g)`: each call makes another, so only the call depth ends
-    // the transfer.
+fn a_call_that_never_returns_stops_where_it_calls_itself() {
+    // `w(w) >= x` with `w = \g. g(g)`: each call makes another, so the transfer stops at the
+    // first call of `w` made while `w` is being read.
     let g = || Term::Var("g".into());
     let w = Term::Lam(
         vec!["g".into()],
@@ -115,7 +115,7 @@ fn a_call_that_never_returns_stops_at_the_call_depth() {
     let p = preimage(&t, &doms(&[("x", None, None)]), &Demand::Bool(true));
     assert!(!p.exact, "{}", shown(&p));
     assert!(
-        p.stops.iter().any(|s| s.kind == StopKind::Outside),
+        p.stops.iter().any(|s| s.kind == StopKind::Recursion),
         "{}",
         shown(&p)
     );

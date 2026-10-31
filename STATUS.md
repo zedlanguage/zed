@@ -502,8 +502,12 @@ about 48 s in a debug build, with `zed-kernel` built at opt-level 2.
   false static constraint gives bottom; a test's linear relation is kept only when it needs no
   auxiliary variable; the walk to the arms skips tests, function bodies and patterns;
   `zed_kernel::on_stack` and `Evaluator::run_on` let many evaluations share one thread. The
-  `isPrime` example waits for L3. The preimage transfer remembers each (term, scope) result
-  and stops after `preimage::TRANSFER_FUEL` (100,000) terms with `StopKind::Budget`.
+  `isPrime` example waits for L3. The preimage transfer remembers each (term, scope) result.
+  Replacement 5 removed `CALL_DEPTH` and `TRANSFER_FUEL`: a call of a lambda whose call is
+  being read stops (`StopKind::Recursion`), so calls nest no deeper than the number of
+  lambdas; a call whose input-reading arguments are integers is summarized once per lambda,
+  scope, landmark-snapped argument intervals and snapped demand, and its preimage is the
+  summary's box met with each argument's preimage (docs/thresholds.md §5).
 - Checker performance (L1.38): the elaboration retried each carrier combination with full
   derivations, so a sum of five inputs took 23.7 s; the trial runs are now quiet and only a
   shown failure is re-run with its derivation (3.7 s; the step tests 55 s → 45 s; snapshots

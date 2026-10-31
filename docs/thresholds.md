@@ -31,7 +31,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `NARROWING_ROUNDS` 64 | store/iterate.rs | removed (3): phase 2 stopped with the values it had |
 | `REDUCTION_ROUNDS` 16 | store/product.rs | removed (3) |
 | `VARIABLES` 16, `ATOMS` 64, `INTERMEDIATE` 4096, `KEPT_CONJUNCTIONS` 64 | store/presburger.rs | a relation is dropped and its written constraint kept |
-| `CALL_DEPTH` 64, `TRANSFER_FUEL` 100000 | store/preimage.rs | the transfer through calls stops |
+| `CALL_DEPTH` 64, `TRANSFER_FUEL` 100000 | store/preimage.rs | removed (5): the transfer through calls stopped |
 | `BUILD_FUEL` 10^6 | stage.rs | a build-stage term is left to run whole |
 | `SPLIT_CAP` 1024 | stage.rs | the Trick does not split a parameter |
 | `ENUMERATION_BUDGET` 4096, `ENUMERATION_FUEL` 10^4 | zed-kernel budgets.rs | an obligation is not enumerated; a binding removes nothing |
@@ -243,11 +243,52 @@ one side or two on each). The system never grows, so elimination is polynomial w
 a relation where no variable can be eliminated this way is kept as its written constraint,
 a property of its shape the program can see.
 
-### 5. Preimage through calls (replaces CALL_DEPTH, TRANSFER_FUEL)
+### 5. Preimage through calls (replaces CALL_DEPTH, TRANSFER_FUEL) — done
 
-A summary per function, computed once per strongly connected component of the call graph
-in topological order, iterated to its fixpoint on the landmark lattice of 3. Each function
-is summarized once.
+The plan above named a summary per strongly connected component of the call graph, iterated
+to a fixpoint. The kernel terms the transfer reads have no `fix`: recursion reaches it only
+as self-application (`w(w)`), so there is no call graph to order, and a call graph cycle is
+the same lambda read inside its own call. What was built instead:
+
+- **The recursion rule** (replaces `CALL_DEPTH`). The transfer keeps the stack of lambdas
+  whose calls it is reading, by body. A call of a lambda already on the stack would make
+  the same call again; it stops, with `StopKind::Recursion`, and the result is necessary,
+  not exact. The stack holds distinct lambdas, so it is no higher than the number of
+  lambdas in the term: a bound fixed by the program. A result is remembered for its term
+  and scope only when no call it reads stopped at a lambda that was on the stack before it
+  began, since only then it does not depend on where it was reached.
+- **Summaries** (replaces `TRANSFER_FUEL`). A call is read once for each abstraction of its
+  arguments. An argument that reads an input and is certainly an integer becomes a fresh
+  input over its forward interval with its ends moved out to the landmarks: the term's
+  literals and the ends of the input domains and the demand, each with its neighbors
+  (`IntervalSet::snap`). A constant integer or boolean argument is bound as a literal, and
+  any other argument that reads no input by the term and scope it resolves to. The summary
+  is keyed by the lambda's body and scope, these arguments, and the demand, its ends moved
+  out to the landmarks too. The call's preimage is the summary's box over the inputs met with
+  each argument's preimage of the summary's interval for its parameter; it is exact when the
+  summary is, the demand's ends were landmarks already, and each argument's preimage is
+  exact. Landmarks are finite, so each lambda has finitely many summaries, each computed
+  once: a chain of k functions each calling the one before twice takes time linear in k,
+  where reading each call in place took 2^k.
+
+Termination: no loop here runs until nothing changes. Every recursion of the transfer either
+reads a strict subterm in a scope built before it, or enters a call, which pushes a lambda
+not on the stack; the stack is bounded by the number of lambdas.
+
+What is still read in place, and can still take time exponential in the nesting of calls:
+a call with an argument that reads an input and may be a failure, a boolean or another
+kind of value (a failure passed to a parameter the body does not read still meets the
+demand, which a summary over integers does not see); and the translation into the
+linear-relation domain, which reads every call in place, bounded for now by the caps of 4.
+A lambda passed as an argument is keyed by the scope it was made in, so summaries of
+higher-order calls are shared only where those scopes are.
+
+| Candidate | Measured | Score | Reasoning |
+|---|---|---|---|
+| Recursion stack plus summaries over landmark-snapped arguments | nested calls alike and apart, k = 6 and 48: linear (`scaling.rs`); exact for k = 1 … 48 | 9 | no constant; exact where the old transfer was; a structural bound on depth; leaves the cases named above |
+| Recursion stack, calls read in place | the mutant with summaries off: see COMPLEXITY.md S15 | 4 | removes both constants but is exponential in the nesting of calls with different arguments |
+| Summary per strongly connected component, iterated | not built | 2 | the kernel terms have no `fix`, so there is no call graph to order |
+| Keep `CALL_DEPTH` and `TRANSFER_FUEL` | the old behavior | 0 | constants whose crossing changes the answer |
 
 ### 6. Build-stage evaluation (replaces BUILD_FUEL)
 
