@@ -174,3 +174,12 @@ dart/test/steps/l01_20_provenance/provenance.dart tests/steps/l01_20_provenance/
 dart/test/steps/l01_20_provenance/kernel_test.dart tests/steps/l01_20_provenance/kernel.rs
 dart/test/steps/l01_20_provenance/programs_test.dart tests/steps/l01_20_provenance/programs.rs
 dart/test/steps/l01_20_provenance/scaling_test.dart tests/steps/l01_20_provenance/scaling.rs
+dart/lib/testing.dart crates/zedc/src/testing.rs
+dart/test/steps/l01_21_test_runner/runner.dart tests/steps/l01_21_test_runner/mod.rs
+dart/test/steps/l01_21_test_runner/command_test.dart tests/steps/l01_21_test_runner/command.rs
+dart/test/steps/l01_21_test_runner/cones_test.dart tests/steps/l01_21_test_runner/cones.rs
+dart/test/steps/l01_21_test_runner/fences_test.dart tests/steps/l01_21_test_runner/fences.rs
+dart/test/steps/l01_21_test_runner/marks_test.dart tests/steps/l01_21_test_runner/marks.rs
+dart/test/steps/l01_21_test_runner/scaling_test.dart tests/steps/l01_21_test_runner/scaling.rs
+dart/test/steps/l01_21_test_runner/tables_test.dart tests/steps/l01_21_test_runner/tables.rs
+dart/test/steps/l01_21_test_runner/zed_test.dart tests/steps/l01_21_test_runner/zed.rs

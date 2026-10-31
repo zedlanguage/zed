@@ -58,6 +58,9 @@ final class Program {
 
   Program._(this._unit, this.inputs, this.outputs);
 
+  /// `main` closed over the definitions it reaches, made at the first wave.
+  late final Term _main = _unit.get('main')!;
+
   /// Runs one wave: `lines` gives the bytes of each `Lines` input, and `files` the lookup
   /// behind each `Files` input. An error stops the wave before anything is written; throws a
   /// [RunError].
@@ -91,10 +94,9 @@ final class Program {
     for (final name in outputs) {
       world.output(name);
     }
-    final main = _unit.get('main')!;
     final ev = Evaluator(world, provenanceRoot: root);
     try {
-      ev.run(prelude(App(main, [for (final (name, _) in inputs) Read(name)])));
+      ev.run(prelude(App(_main, [for (final (name, _) in inputs) Read(name)])));
     } on KernelError catch (e) {
       throw RunError('$e');
     }
@@ -141,30 +143,65 @@ Program load(List<int> bytes) {
   } on source.Reject catch (e) {
     throw RunError(e.render(bytes));
   }
+  try {
+    final (stmts, elaborated) = compile(text);
+    return program(stmts, elaborated);
+  } on Diagnostics catch (e) {
+    throw RunError(e.all.join('\n'));
+  }
+}
+
+/// A message of the compiler, at a line and column of the source, both counted from 1.
+final class Diagnostic {
+  final int line, col;
+  final String message;
+
+  Diagnostic(this.line, this.col, this.message);
+
+  @override
+  String toString() => '$line:$col: $message';
+}
+
+/// The diagnostics of the first phase that rejects a unit.
+final class Diagnostics implements Exception {
+  final List<Diagnostic> all;
+
+  Diagnostics(this.all);
+
+  @override
+  String toString() => all.join('\n');
+}
+
+/// The statements and elaboration of the unit `text`; throws its [Diagnostics].
+(List<Stmt>, Unit) compile(String text) {
   final b = utf8.encode(text);
-  String at(source.Span span, String why) {
-    final (line, col) = source.lineCol(b, span.start);
-    return '$line:$col: $why';
+  final lines = source.Lines(b);
+  Diagnostic at(source.Span span, String why) {
+    final (line, col) = lines.lineCol(b, span.start);
+    return Diagnostic(line, col, why);
   }
 
-  String all(List<BuildError> errors) => [for (final e in errors) at(e.span, e.message)].join('\n');
-  final List<Stmt> stmts;
-  final Unit elaborated;
+  Diagnostics all(List<BuildError> errors) =>
+      Diagnostics([for (final e in errors) at(e.span, e.message)]);
   try {
     final tokens = lex(text);
-    stmts = unit(text, tokens, parse(text, tokens, 'Unit', top));
-    elaborated = elaborate(stmts, resolve(stmts));
+    final stmts = unit(text, tokens, parse(text, tokens, 'Unit', top));
+    return (stmts, elaborate(stmts, resolve(stmts)));
   } on LexError catch (e) {
-    throw RunError(at(e.span, '$e'));
+    throw Diagnostics([at(e.span, '$e')]);
   } on ParseError catch (e) {
-    throw RunError(at(e.span, '$e'));
+    throw Diagnostics([at(e.span, '$e')]);
   } on BuildError catch (e) {
-    throw RunError(at(e.span, e.message));
+    throw all([e]);
   } on ResolveErrors catch (e) {
-    throw RunError(all(e.errors));
+    throw all(e.errors);
   } on ElabErrors catch (e) {
-    throw RunError(all(e.errors));
+    throw all(e.errors);
   }
+}
+
+/// The program `elaborated` is, with the ports its one `main` declares; throws a [RunError].
+Program program(List<Stmt> stmts, Unit elaborated) {
   final mains = [
     for (final s in stmts)
       if (s case FunctionDef(name: 'main')) s,

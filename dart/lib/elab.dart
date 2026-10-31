@@ -45,10 +45,16 @@ final class Test {
   /// The bool term that checks the case, over the unit's definitions.
   final k.Term check;
 
+  /// The arguments the key gives, in declaration order.
+  final List<k.Term> args;
+
+  /// The expected value.
+  final k.Term want;
+
   /// The case's text.
   final Span span;
 
-  Test(this.function, this.check, this.span);
+  Test(this.function, this.check, this.args, this.want, this.span);
 }
 
 /// An elaborated unit.
@@ -61,13 +67,9 @@ final class Unit {
 
   Unit(this.defs, this.tests);
 
-  /// `body` under every definition, each a let.
-  k.Term close(k.Term body) {
-    for (final d in defs.reversed) {
-      body = k.Let(d.kernel, d.term, body);
-    }
-    return body;
-  }
+  /// `body` under the definitions it reaches, each a let, in the unit's order. For many terms
+  /// of one unit, make its [Cones] once.
+  k.Term close(k.Term body) => Cones(this).close(body);
 
   /// The definition of source name `name`, closed over the others.
   k.Term? get(String name) {
@@ -77,6 +79,124 @@ final class Unit {
     return null;
   }
 }
+
+/// The definitions each term of a unit reaches, from an index of the unit made once: each
+/// kernel name's definition, and the names each definition reads, found when first needed. A
+/// term's cone then costs the definitions in it, not a pass over the unit.
+final class Cones {
+  final Unit _unit;
+  final Map<String, int> _byKernel;
+  final List<Set<String>?> _free;
+
+  /// The index of `unit`.
+  Cones(this._unit)
+    : _byKernel = {for (final (i, d) in _unit.defs.indexed) d.kernel: i},
+      _free = List.filled(_unit.defs.length, null);
+
+  /// The definitions `roots` read, and those they read in turn: their positions in the unit,
+  /// in its order.
+  List<int> reach(List<k.Term> roots) {
+    final seen = SplayTreeSet<int>();
+    final todo = [for (final t in roots) ...free(t)];
+    while (todo.isNotEmpty) {
+      if (_byKernel[todo.removeLast()] case final i? when seen.add(i)) {
+        todo.addAll(_free[i] ??= free(_unit.defs[i].term));
+      }
+    }
+    return seen.toList();
+  }
+
+  /// `body` under the definitions it reaches, each a let, in the unit's order: each after
+  /// those it uses, as in the unit.
+  k.Term close(k.Term body) {
+    for (final i in reach([body]).reversed) {
+      final d = _unit.defs[i];
+      body = k.Let(d.kernel, d.term, body);
+    }
+    return body;
+  }
+}
+
+/// The names `t` reads and does not bind. The walk keeps its own stack, since a term may nest
+/// deeper than the call stack.
+Set<String> free(k.Term t) {
+  final out = SplayTreeSet<String>();
+  // How many binders around the current subterm bind each name.
+  final bound = <String, int>{};
+  // Terms to walk, and the names to bind (true) or release (false) between them.
+  final stack = <Object>[t];
+  // Walks `ts` with `names` bound.
+  void under(List<String> names, List<k.Term> ts) {
+    stack
+      ..add((false, names))
+      ..addAll(ts)
+      ..add((true, names));
+  }
+
+  while (stack.isNotEmpty) {
+    switch (stack.removeLast()) {
+      case (true, final List<String> names):
+        for (final x in names) {
+          bound[x] = (bound[x] ?? 0) + 1;
+        }
+      case (false, final List<String> names):
+        for (final x in names) {
+          if (bound[x] == 1) {
+            bound.remove(x);
+          } else {
+            bound[x] = bound[x]! - 1;
+          }
+        }
+      case k.Lit() || k.PrimFn() || k.Read():
+        break;
+      case k.Var(:final name):
+        if (!bound.containsKey(name)) out.add(name);
+      case k.Lam(:final params, :final body):
+        under(params, [body]);
+      case k.Let(:final name, :final value, :final body):
+        under([name], [body]);
+        stack.add(value);
+      case k.Match(:final scrutinee, :final arms):
+        for (final (p, a) in arms) {
+          under(_binds(p).toList(), [a]);
+        }
+        stack.add(scrutinee);
+      case k.Fam(:final domain, :final variable, :final body):
+        under([variable], [body]);
+        stack.add(domain);
+      case k.Fix(:final init, :final step, :final self, :final key, :final kind):
+        under([self, key], [step, if (kind case k.Lattice(:final join)) join]);
+        stack.add(init);
+      case k.App(:final f, :final args):
+        stack
+          ..add(f)
+          ..addAll(args);
+      case k.PrimApp(:final args):
+        stack.addAll(args);
+      case k.If(:final cond, :final then, :final orElse):
+        stack.addAll([cond, then, orElse]);
+      case k.Reindex(:final family, :final kf, :final vf):
+        stack.addAll([family, kf, vf]);
+      case k.Discard(:final family, :final sel):
+        stack.addAll([family, sel]);
+      case k.Fold(:final family, :final op, :final identity):
+        stack.addAll([family, op, ?identity]);
+      case k.Gen(:final init, :final step, :final guard):
+        stack.addAll([init, step, guard]);
+      case k.Push(:final value):
+        stack.add(value);
+    }
+  }
+  return out;
+}
+
+/// The names a pattern binds.
+Iterable<String> _binds(k.Pattern p) => switch (p) {
+  k.BindP(:final name) => [name],
+  k.AtomP(args: final ps) || k.TupleP(items: final ps) => ps.expand(_binds),
+  k.FieldsP(:final fields) => fields.expand((f) => _binds(f.$2)),
+  _ => const [],
+};
 
 /// The errors of a unit that does not elaborate, in text order.
 final class ElabErrors implements Exception {
@@ -364,7 +484,7 @@ final class _Elab {
       }
       final call = k.App(k.Var(kname(f.span, f.name)), as);
       tests.add(
-        Test(f.name, k.PrimApp(k.Prim.eq, [call, want]), (
+        Test(f.name, k.PrimApp(k.Prim.eq, [call, want]), as, want, (
           start: input.span.start,
           end: expected.span.end,
         )),

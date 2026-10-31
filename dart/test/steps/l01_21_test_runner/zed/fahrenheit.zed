@@ -1,0 +1,14 @@
+// Converts a temperature in whole degrees Celsius to Fahrenheit, rounding toward minus
+// infinity; a line that is not a whole number is reported instead.
+fahrenheit(positional c) = c * 9 div 5 + 32
+test { 0 -> 32, 100 -> 212, -40 -> -40, 37 -> 98, -1 -> 30 }
+
+main(stdin: Lines) -> (stdout: Lines) {
+  line = trim(stdin[1]);
+  stdout <- "${fahrenheit(int(line))}F" else "not a whole number: ${line}";
+}
+test {
+  "21\n" -> "69F\n",
+  " -40 \n" -> "-40F\n",
+  "twenty\n" -> "not a whole number: twenty\n",
+}

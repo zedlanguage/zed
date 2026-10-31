@@ -1,0 +1,14 @@
+// Normalizes the username on the first line to lower case, and notes on standard error
+// whether it had to change.
+normal(positional name) = lower(trim(name))
+test { "Ada" -> "ada", " bo " -> "bo", "eve" -> "eve" }
+
+main(stdin: Lines) -> (stdout: Lines, stderr: Lines) {
+  name = normal(stdin[1]);
+  stdout <- name;
+  stderr <- if name == stdin[1] { "unchanged" } else { "normalized \"${stdin[1]}\"" };
+}
+test {
+  "eve\n" -> ("eve\n", "unchanged\n"),
+  "Ada\n" -> ("ada\n", "normalized \"Ada\"\n"),
+}

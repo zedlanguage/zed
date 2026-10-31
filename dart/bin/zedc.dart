@@ -1,6 +1,7 @@
 /// The `zedc` command: `zedc fmt <file>` writes the file in the formatter's layout to standard
 /// output; `zedc run` and `zedc replay` run a program (`command` of `package:zed/run.dart`);
-/// with no arguments it prints its version.
+/// `zedc test` runs the tests of units (`command` of `package:zed/testing.dart`); with no
+/// arguments it prints its version.
 library;
 
 import 'dart:io';
@@ -8,6 +9,7 @@ import 'dart:typed_data';
 
 import 'package:zed/format.dart';
 import 'package:zed/run.dart';
+import 'package:zed/testing.dart' as testing;
 
 Future<void> main(List<String> args) async {
   switch (args) {
@@ -27,8 +29,12 @@ Future<void> main(List<String> args) async {
         stdout.add,
         stderr.add,
       );
+    case ['test', ...final files]:
+      exitCode = testing.command(files, stdout, stderr);
     default:
-      stderr.writeln('usage: zedc [fmt <file> | run <file> … | replay <file> <record> …]');
+      stderr.writeln(
+        'usage: zedc [fmt <file> | run <file> … | replay <file> <record> … | test <file> …]',
+      );
       exitCode = 2;
   }
 }
