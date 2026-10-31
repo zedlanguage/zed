@@ -433,14 +433,58 @@ Replacement 8 gives up the member-by-member answer on ranges. A few cases need i
 - a `match` whose coverage depends on which members remain.
 
 Listing the type is one way to ask for the exact set (replacement 8). `@exact`, a declaration
-annotation like `@exhaustive`, is the other. In its scopes (`Scope::exact`), each written
-constraint whose free names are in scope, whose open names are integers, and whose form
-`ends`, narrows each open name to the projection of the points that meet it, over the
-bounded box of their intervals within their congruence classes (`preimage::exact_preimage`).
-Nothing is enabled by default.
+annotation like `@exhaustive`, is the other. Nothing is enabled by default.
+
+The exact set is never listed. An exact set can have as many members as its range: `x * x
+mod 10 == 9` over `int32` has about 860 million, and listing them, or the intervals that
+hold them, would cost memory in proportion. So the scope keeps what the algebra gives (the
+interval, the congruence class, the linear relations) together with the written constraint,
+and the two describe the exact set without listing it. What `@exact` changes is the test
+for emptiness: an `@exact` scope (`Scope::exact`) is bottom exactly when no point of its
+names' intervals, within their classes, meets its written constraints. Every one of the
+four cases is a test assumed in the scope and then a check for bottom: the division by
+`p - 4` assumes `p == 4`, which narrows the box to one point, and so on. The check searches
+for one point (`preimage::witness`) and stops at the first:
+
+- the constraints are grouped by shared names, and each group is searched separately, so
+  the costs of independent groups add rather than multiply;
+- the point found is kept for its group (`Scope::exactly`), and a later check first tests
+  whether each name's interval and class still holds it; if so there is no search
+  (residual supports again);
+- a constraint over a name with no bound is not searched, and the scope keeps the plain
+  answer.
+
+The search holds only the boxes on its stack, two for each halving of an axis, so its
+memory is the number of axes times the logarithm of the range. Its time is at most the
+number of points of the box after the assumed test narrows it: one evaluation for `p == 4`.
+
+No size limit applies, by default or otherwise. A default such as 1,024 would be a
+threshold of the kind this document removes: an exact answer at 1,023 and a silently
+weaker one at 1,025, for no reason in the program. The search does not need one, because it
+never holds the set; what remains is time, and the time is visible and cached by the
+content address of the scope. The one case still slow is proving a large box empty when no
+domain decides any part of it; the arithmetic of the classes (below) decides the common
+form of that case at the root.
+
+| Candidate for bounding `@exact` | Score | Reasoning |
+|---|---|---|
+| The set kept as the constraint and its bounds; emptiness by a search for one point; the point kept and checked again; groups searched apart | 9 | memory the size of the term; time one point where a test narrows to one point; no constant |
+| A bound the author writes, `@exact(n)`, whose crossing is an error naming the check and the size of the box | 6 | an explicit limit, never silent; worth adding only if a program needs it |
+| A bound the author writes, falling back to the plain answer when crossed | 4 | the answer changes with a number unrelated to the program |
+| A default bound of 1,024 | 2 | a threshold; silent loss of precision past it |
+| The projection listed, as first built | 1 | `x * x mod 10 == 9` over `int32` would hold about 860 million intervals |
+
+The projection itself (`preimage::exact_preimage`) is still there for a caller that asks
+for it, and it is the same search, run to the end.
 
 The search is branch and prune. The exact domains run first (catalog, forward check,
 linear relation); if their preimage is exact, the classes narrow it and the search stops.
+Then the classes alone are tried. Granger's arithmetic of congruences (Granger, 1989)
+carries each input's class through `+`, `-`, `*`, unary minus and `mod` by a literal:
+`(r mod m) * (s mod n)` is `rs mod gcd(mn, rn, sm)`, and `x mod k` is one value when `k`
+divides `x`'s modulus. When the result decides the demand at every point (`x * x mod 10` is
+5 at every `x` in `5 mod 10`), the whole box is empty or exact at once, whatever its size.
+The classes do not change during the search, so this is read once, at the root.
 Otherwise a stack of boxes starts from the narrowed box. For each box:
 
 1. skip it if every axis is already within the projection found so far: each axis of the
@@ -459,9 +503,9 @@ point. An input with no bound is not searched.
 
 Termination: each box is strictly smaller than its parent and a box of one point is not
 split, so the boxes form a binary tree whose leaves are disjoint parts of the root, with
-fewer than twice as many nodes as points. In a scope, a constraint is projected again only
-when the interval or class of one of its open names changed since its last projection
-(`Scope::exactly`); those only shrink, so the rounds end.
+fewer than twice as many nodes as points. A search for one point stops earlier. In a scope,
+a group is searched again only when its kept point leaves one of its names' intervals or
+classes; those only shrink, so the rounds end.
 
 Cost: at most twice as many boxes as points, each visit costing the size of the term. Where
 the plain preimage is exact on sub-boxes, only the boxes that the boundary of the solution
@@ -477,9 +521,15 @@ set crosses are split. Measured in a release build:
 checks the three at doubling sizes. `l01_25_preimage_catalog::exact` and `random`
 (`run_exact`, against every point of the box run on the interpreter, with and without a
 class) check the result; a mutant that always claims exact and one that keeps the failing
-points each fail both random tests. `l01_39_reduced_product::exact` checks the scope,
-including a narrowing of one name that projects a constraint on another again
-(`m * n mod 10 == 1` with `n * n mod 10 == 9` gives `m` in {3, 7, 13, 17}).
+points each fail both random tests. `exact::a_witness_is_the_first_point_found_or_none`
+finds a point in `0..=10^15`, and `the_classes_alone_decide_a_box_of_any_size` decides
+`x * x mod 10 == 9` over `0..=10^15` with `x` in `5 mod 10` in under a second (10^6 points
+took 13 s before the class arithmetic). `l01_39_reduced_product::exact` checks the scope:
+the bounds stay `[0..=30]` while assuming `n == v` is bottom exactly for `v` outside {3, 7,
+13, 17, 23, 27}; `m * n mod 10 == 1` with `n * n mod 10 == 9` allows `m` in {3, 7, 13, 17};
+`n == 4` is excluded over `0..=10^12`; three names with no shared constraint are kept as
+three groups; and a kept point survives a narrowing that holds it and is replaced after one
+that drops it.
 
 | Candidate | Measured | Score | Reasoning |
 |---|---|---|---|

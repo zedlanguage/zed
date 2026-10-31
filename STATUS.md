@@ -231,9 +231,13 @@ about 64 s in a debug build, with `zed-kernel` built at opt-level 2.
   When the spec is unclear, I choose, record the choice in DESIGN.md and here, and continue.
 
 - `@exact` (docs/thresholds.md, replacement 8a): an opt-in for the member-by-member answer
-  on ranges. `Scope::exact` projects each written integer constraint whose form `ends` onto
-  its open names by branch and prune (`preimage::exact_preimage`), again only when an open
-  name's interval or class changed. Off by default; the annotation's syntax lands with L15.
+  on ranges, never listed. An exact scope keeps the algebraic bounds and the written
+  constraints, and is bottom exactly when no point of the bounded integer names meets them:
+  each group of constraints sharing names is searched for one point (`preimage::witness`,
+  branch and prune after Granger's class arithmetic), and the point is kept and checked
+  again before any new search. A question about the exact set is a test assumed in the scope.
+  No size limit, by default or otherwise (a default would be a threshold). Off by default;
+  the annotation's syntax lands with L15.
 - Enumeration (docs/thresholds.md, replacement 8): only sets the source lists are
   enumerated, each evaluation admitted by `stage::ends` and run with no fuel; ranges are left
   to the interval, congruence and relation domains. The M0.10 harness's instances (integers

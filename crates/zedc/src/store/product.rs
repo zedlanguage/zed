@@ -15,10 +15,13 @@
 //!   constraint's other names static and its form shown to end ([`stage::ends`]); a
 //!   constraint whose form does not show it ends removes nothing. A range is left to the
 //!   interval, congruence and relation reasoning (docs/thresholds.md, replacement 8). In a
-//!   scope under `@exact` ([`Scope::exact`]) each written constraint over integer names
-//!   instead narrows its names to the projection of the points of their intervals and classes
-//!   at which it holds ([`exact_preimage`]), and is projected again only when one of those
-//!   intervals or classes has changed since.
+//!   scope under `@exact` ([`Scope::exact`]) the scope is bottom exactly when no point of its
+//!   bounded integer names' intervals and classes meets their written constraints. The
+//!   constraints are taken in groups that share names, each group searched for one point
+//!   ([`witness`]); the point is kept, and the group is searched again only when a name's
+//!   interval or class no longer holds it. Nothing lists the points, so the scope stays the
+//!   size of the source, and a question about the exact set is a test assumed in the scope:
+//!   whether `p == 4` can hold is whether the scope assuming it is bottom.
 //!
 //! A product is empty when its type is, and a scope with an empty product is bottom: the arm
 //! it describes is unreachable. [`Scope::assume`] narrows a scope by a test and its outcome:
@@ -44,7 +47,7 @@ use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
 use super::interval::{End, IntervalSet};
 use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
-use super::preimage::{Classes, Demand, Domains, exact_preimage, preimage, relations};
+use super::preimage::{Classes, Demand, Domains, Point, preimage, relations, witness};
 use super::presburger::{self, Atom, Con, Formula, Lin};
 use super::revision::{self, Op, reduce_congruence};
 use crate::stage;
@@ -430,9 +433,9 @@ pub struct Scope {
     pub projected: std::collections::HashMap<Formula, Projected>,
     /// Whether the scope is under `@exact`.
     pub exact: bool,
-    /// Under `@exact`, the written constraints already projected exactly, each with the
-    /// intervals and classes of its open names at that projection.
-    pub exactly: BTreeMap<Enumerated, Projected>,
+    /// Under `@exact`, each group of written constraints that share names, by their texts with
+    /// the static values substituted, with a point that meets them all.
+    pub exactly: BTreeMap<Vec<String>, Point>,
 }
 
 /// The intervals and classes of a part's names when it was last projected.
@@ -626,11 +629,11 @@ impl Scope {
                 })
                 .collect(),
             exact: self.exact,
-            // The open names' intervals differ after a join unless they agree on both sides.
-            exactly: self
+            // A point of either side is a point of the join; it is checked again when read.
+            exactly: other
                 .exactly
                 .iter()
-                .filter(|(k, v)| other.exactly.get(*k) == Some(*v))
+                .chain(&self.exactly)
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             names,
@@ -958,13 +961,7 @@ impl Scope {
                     .collect();
                 let key = (text.clone(), statics.clone().into_iter().collect());
                 let c = substitute(c, &statics);
-                // Under `@exact` a constraint with open names is projected exactly instead.
-                let open_ok = if self.exact {
-                    open.is_empty()
-                } else {
-                    open.len() <= 1
-                };
-                (open_ok && !self.enumerated.contains(&key) && stage::ends(&c))
+                (open.len() <= 1 && !self.enumerated.contains(&key) && stage::ends(&c))
                     .then_some((c, open, key))
             })
             .collect();
@@ -1037,55 +1034,73 @@ impl Scope {
     /// interval and class change only finitely often, so the rounds of [`Scope::reduce`] end.
     fn enumerate_exactly(&mut self) {
         let int = Type::int();
-        let written: Vec<(String, Term, Vec<Arc<str>>)> = self
-            .written
-            .iter()
-            .map(|(t, (c, f))| (t.clone(), c.clone(), f.clone()))
-            .collect();
-        for (text, c, free) in written {
-            if self.bottom || self.names.values().any(Product::is_empty) {
-                return;
-            }
+        let bounded = |p: &Product| matches!(p.ints().bounds(), Some((End::Fin(_), End::Fin(_))));
+        // Each written constraint over open integer names, all bounded, with its statics
+        // substituted; then the groups of those that share an open name.
+        let mut groups: Vec<(Vec<Term>, BTreeSet<Arc<str>>)> = Vec::new();
+        for (c, free) in self.written.values() {
             if !free.iter().all(|n| self.names.contains_key(n)) {
                 continue;
             }
-            let statics = self.statics_of(&free);
-            let open: Vec<Arc<str>> = free
+            let statics = self.statics_of(free);
+            let open: BTreeSet<Arc<str>> = free
                 .iter()
                 .filter(|n| !statics.contains_key(*n))
                 .cloned()
                 .collect();
-            if open.is_empty() || !open.iter().all(|n| self.get(n).ty.element.subtype(&int)) {
+            if open.is_empty()
+                || !open.iter().all(|n| {
+                    let p = self.get(n);
+                    p.ty.element.subtype(&int) && bounded(&p)
+                })
+            {
                 continue;
             }
-            let c = substitute(&c, &statics);
-            let key = (text, statics.into_iter().collect());
-            let at: Projected = open
-                .iter()
-                .map(|n| {
-                    let p = self.get(n);
-                    (n.clone(), p.ints().clone(), p.cell.congruence.element)
+            let mut group = (vec![substitute(c, &statics)], open);
+            groups.retain(|(cs, ns)| {
+                if ns.is_disjoint(&group.1) {
+                    return true;
+                }
+                group.0.extend(cs.iter().cloned());
+                group.1.extend(ns.iter().cloned());
+                false
+            });
+            groups.push(group);
+        }
+        for (cs, open) in groups {
+            let mut key: Vec<String> = cs.iter().map(|c| c.to_string()).collect();
+            key.sort();
+            let holds = |w: &Point| {
+                open.iter().all(|n| {
+                    w.get(n)
+                        .is_some_and(|&v| self.get(n).contains(&Value::Int(v)))
                 })
-                .collect();
-            if self.exactly.get(&key) == Some(&at) || !stage::ends(&c) {
+            };
+            if self.exactly.get(&key).is_some_and(holds) {
                 continue;
             }
-            let dom: Domains = at.iter().map(|(n, x, _)| (n.clone(), x.clone())).collect();
-            let classes: Classes = at.iter().map(|(n, _, k)| (n.clone(), *k)).collect();
-            let r = exact_preimage(&c, &dom, &classes, &Demand::Bool(true));
-            for (n, x) in &r.domains {
-                let p = self.names.get_mut(n).expect("a name in scope");
-                let prem = p.premises();
-                p.meet_ints(x, &prem);
-            }
-            let after: Projected = open
+            let all = cs
+                .into_iter()
+                .reduce(|a, b| Term::Prim(Prim::And, vec![a, b]))
+                .expect("a group has a constraint");
+            let dom: Domains = open
                 .iter()
-                .map(|n| {
-                    let p = self.get(n);
-                    (n.clone(), p.ints().clone(), p.cell.congruence.element)
-                })
+                .map(|n| (n.clone(), self.get(n).ints().clone()))
                 .collect();
-            self.exactly.insert(key, after);
+            let classes: Classes = open
+                .iter()
+                .map(|n| (n.clone(), self.get(n).cell.congruence.element))
+                .collect();
+            match witness(&all, &dom, &classes, &Demand::Bool(true)) {
+                Some(Some(w)) => {
+                    self.exactly.insert(key, w);
+                }
+                Some(None) => {
+                    self.bottom = true;
+                    return;
+                }
+                None => {}
+            }
         }
     }
 }

@@ -57,7 +57,9 @@
 //! above, and dropped when nothing in it meets the demand, kept whole when every point does,
 //! and otherwise halved on its widest input; a single point is evaluated. A sub-box whose
 //! values on every input are already known to meet the demand at some point is skipped, since
-//! only each input's projection is sought.
+//! only each input's projection is sought. A scope under `@exact` does not list the projection,
+//! which can have as many pieces as the box has points; it asks [`witness`] for one point
+//! that meets the demand, and the same search stops at the first.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -69,7 +71,7 @@ use std::sync::Arc;
 use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, eval, on_stack};
 
 use super::interval::{End, IntervalSet};
-use super::lattice::{Congruence, Landmarks};
+use super::lattice::{Congruence, Landmarks, Lattice};
 use super::presburger::{self, Con, Formula, Lin, Over, Relation};
 use super::revision::{self, Op, Tonicity, reduce_congruence};
 use crate::stage;
@@ -2163,6 +2165,68 @@ pub fn exact_preimage(
     })
 }
 
+/// A point of the inputs, each input within its class, at which the term meets the demand.
+pub type Point = BTreeMap<Arc<str>, i64>;
+
+/// A point of `inputs`, each input within its class, at which `term` meets `demand`:
+/// `Some(Some(point))`, or `Some(None)` when there is none. The search of [`exact_preimage`]
+/// stops at the first point found, and a box on which the preimage is exact gives its lowest
+/// point, so it holds only the boxes on its stack, two for each halving. `None` when an input
+/// is unbounded, a point cannot be run, or the term's form does not show that it ends and the
+/// preimage alone does not decide.
+pub fn witness(
+    term: &Term,
+    inputs: &Domains,
+    classes: &Classes,
+    demand: &Demand,
+) -> Option<Option<Point>> {
+    let lowest = |b: &Domains| -> Point {
+        b.iter()
+            .map(|(k, s)| match s.bounds() {
+                Some((Fin(lo), _)) => (k.clone(), lo),
+                _ => unreachable!("a searched box is bounded"),
+            })
+            .collect()
+    };
+    if inputs
+        .values()
+        .any(|s| !s.is_empty() && !matches!(s.bounds(), Some((Fin(_), Fin(_)))))
+    {
+        return None;
+    }
+    let Some(dom) = within_classes(inputs, classes) else {
+        return Some(None);
+    };
+    if !stage::ends(term) {
+        let r = preimage_in(term, &dom, demand);
+        let narrowed: Domains = dom
+            .iter()
+            .map(|(k, s)| (k.clone(), s.meet(&r.domains[k])))
+            .collect();
+        return match within_classes(&narrowed, classes) {
+            None => Some(None),
+            Some(n) if r.exact => Some(Some(lowest(&n))),
+            Some(_) => None,
+        };
+    }
+    on_stack(|stack| {
+        let mut found = None;
+        branch(
+            stack,
+            term,
+            dom,
+            classes,
+            demand,
+            &|_: &Domains| false,
+            &mut |b: &Domains| {
+                found = Some(lowest(b));
+                true
+            },
+        )?;
+        Some(found)
+    })
+}
+
 /// The projection of the points of `dom` in `classes` meeting `demand`, and whether their box
 /// holds no point that fails it; `None` when an input is unbounded or a point cannot be run.
 fn exact_search(
@@ -2241,6 +2305,13 @@ fn branch(
     skip: &dyn Fn(&Domains) -> bool,
     all: &mut dyn FnMut(&Domains) -> bool,
 ) -> Option<bool> {
+    // The classes hold for the whole search, so their arithmetic is read once: it can decide
+    // the term on every point of the box, as `x * x mod 10 == 9` with `x` in `5 mod 10`.
+    match classes_decide(term, classes, demand) {
+        Some(false) => return Some(false),
+        Some(true) => return Some(all(&root)),
+        None => {}
+    }
     let mut boxes = vec![root];
     while let Some(b) = boxes.pop() {
         if skip(&b) {
@@ -2300,6 +2371,128 @@ fn branch(
         }
     }
     Some(false)
+}
+
+/// Whether every integer point with each input in its class meets `demand` under `term`
+/// (`Some(true)`), none does (`Some(false)`), or the classes do not decide.
+fn classes_decide(term: &Term, classes: &Classes, demand: &Demand) -> Option<bool> {
+    match demand {
+        Demand::Bool(d) => class_test(term, classes).map(|b| b == *d),
+        Demand::Ints(z) => match class_of(term, classes)? {
+            Congruence::Bottom => Some(false),
+            Congruence::Class {
+                modulus: 0,
+                residue,
+            } => Some(z.contains(residue)),
+            _ => None,
+        },
+    }
+}
+
+/// The value of the test `term` at every point with each input in its class, if one value.
+fn class_test(term: &Term, classes: &Classes) -> Option<bool> {
+    let Term::Prim(p, xs) = term else {
+        return match term {
+            Term::Lit(Value::Bool(b)) => Some(*b),
+            Term::Let(x, _, body) => class_test(body, &unbound(classes, x)),
+            _ => None,
+        };
+    };
+    match (p, xs.as_slice()) {
+        (Prim::Not, [a]) => class_test(a, classes).map(|b| !b),
+        (Prim::And, [a, b]) => match (class_test(a, classes), class_test(b, classes)) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        },
+        (Prim::Or, [a, b]) => match (class_test(a, classes), class_test(b, classes)) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        },
+        (Prim::Eq | Prim::Ne, [a, b]) => {
+            let (x, y) = (class_of(a, classes)?, class_of(b, classes)?);
+            let eq = match (x, y) {
+                (
+                    Congruence::Class {
+                        modulus: 0,
+                        residue: u,
+                    },
+                    Congruence::Class {
+                        modulus: 0,
+                        residue: v,
+                    },
+                ) => u == v,
+                _ if x.meet(&y) == Congruence::Bottom => false,
+                _ => return None,
+            };
+            Some(eq == (*p == Prim::Eq))
+        }
+        _ => None,
+    }
+}
+
+/// The class of the integer `term` at every point with each input in its class, by Granger's
+/// arithmetic of congruences; `None` for a form it does not cover or a class too fine to hold.
+fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
+    // A class as (modulus, residue) in i128, and back, `None` when it leaves u64 and i64.
+    let parts = |c: Congruence| match c {
+        Congruence::Bottom => None,
+        Congruence::Class { modulus, residue } => Some((modulus as i128, residue as i128)),
+    };
+    let class = |m: i128, r: i128| -> Option<Congruence> {
+        let r = if m == 0 { r } else { r.rem_euclid(m) };
+        Some(Congruence::new(
+            u64::try_from(m).ok()?,
+            i64::try_from(r).ok()?,
+        ))
+    };
+    fn gcd(a: i128, b: i128) -> i128 {
+        if b == 0 { a.abs() } else { gcd(b, a % b) }
+    }
+    match term {
+        Term::Lit(Value::Int(v)) => Some(Congruence::single(*v)),
+        Term::Var(x) => Some(classes.get(x).copied().unwrap_or(Congruence::new(1, 0))),
+        Term::Let(x, _, body) => class_of(body, &unbound(classes, x)),
+        Term::Prim(p, xs) => match (p, xs.as_slice()) {
+            (Prim::Neg, [a]) => {
+                let (m, r) = parts(class_of(a, classes)?)?;
+                class(m, -r)
+            }
+            (Prim::Add | Prim::Sub, [a, b]) => {
+                let ((m, r), (n, s)) =
+                    (parts(class_of(a, classes)?)?, parts(class_of(b, classes)?)?);
+                class(gcd(m, n), if *p == Prim::Add { r + s } else { r - s })
+            }
+            (Prim::Mul, [a, b]) => {
+                // (r mod m)(s mod n) is rs mod gcd(mn, rn, sm).
+                let ((m, r), (n, s)) =
+                    (parts(class_of(a, classes)?)?, parts(class_of(b, classes)?)?);
+                let g = gcd(gcd(m.checked_mul(n)?, r.checked_mul(n)?), s.checked_mul(m)?);
+                class(g, r.checked_mul(s)?)
+            }
+            (Prim::Mod, [a, Term::Lit(Value::Int(k))]) if *k > 0 => {
+                // `x mod k` is Euclidean, so in 0..k; when k divides the modulus it is one value,
+                // and otherwise it is x's residue modulo gcd(m, k).
+                let (m, r) = parts(class_of(a, classes)?)?;
+                let k = *k as i128;
+                if m % k == 0 {
+                    class(0, r.rem_euclid(k))
+                } else {
+                    class(gcd(m, k), r)
+                }
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `classes` without `x`, which a `let` has bound to a value the classes do not hold.
+fn unbound(classes: &Classes, x: &str) -> Classes {
+    let mut c = classes.clone();
+    c.remove(x);
+    c
 }
 
 /// `dom` with each input's set tightened to its class, or `None` when one is then empty.
