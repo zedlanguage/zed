@@ -69,13 +69,13 @@ The step is the two-digit step number within its stage, and the description is a
 lowercase words. Where a layer's work runs in vertical slices (Part G), a slice's tests go into
 the folder of each step it takes from. The structure check in `m0_01_scaffolding` rejects a
 folder whose name is malformed and a folder not declared in `main.rs`, and the same file holds
-the index of all steps as a golden snapshot.
+the index of all steps as an expected-output snapshot.
 
 A step folder holds:
 
 - `mod.rs`, plus further `.rs` files for its topics;
 - `*.zed` fixture files where the source is longer than a few lines;
-- `snapshots/`, the golden outputs, kept by [insta](https://insta.rs). A changed output fails
+- `snapshots/`, the expected outputs, kept by [insta](https://insta.rs). A changed output fails
   the test; review it with `cargo insta review` and accept it there.
 
 All step folders compile into one test binary, `steps`, so adding a step adds a module, not a

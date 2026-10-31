@@ -1,7 +1,7 @@
 /// Shared helpers for the step tests in `test/steps/`.
 ///
 /// Each step of DESIGN.md Part G has one folder, `test/steps/<step>/`, holding that step's
-/// tests and, in `golden/`, the expected outputs those tests compare against.
+/// tests and, in `expected/`, the expected outputs those tests compare against.
 library;
 
 import 'dart:io';
@@ -38,13 +38,13 @@ bool isStepName(String name) {
       _desc.hasMatch(desc);
 }
 
-/// The expected output `test/steps/<step>/golden/<name>.txt`, without its final newline.
-String golden(String step, String name) =>
-    File('${stepsDir.path}/$step/golden/$name.txt')
+/// The expected output `test/steps/<step>/expected/<name>.txt`, without its final newline.
+String expectedOutput(String step, String name) =>
+    File('${stepsDir.path}/$step/expected/$name.txt')
         .readAsStringSync()
         .replaceFirst(RegExp(r'\n$'), '');
 
 /// Checks `actual` against the expected output `name` of `step`.
-void expectGolden(String step, String name, String actual) {
-  expect(actual, golden(step, name), reason: 'golden $step/$name');
+void expectOutput(String step, String name, String actual) {
+  expect(actual, expectedOutput(step, name), reason: 'expected output $step/$name');
 }

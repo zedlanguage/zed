@@ -1,7 +1,7 @@
 /// Step M0.1: repository scaffolding.
 ///
 /// The step folders are the index the user documentation is built from, so their names are
-/// checked here, and the folders are checked against the step index in `golden/`: every
+/// checked here, and the folders are checked against the step index in `expected/`: every
 /// folder is a step of the index, and once every step is built the two are the same.
 library;
 
@@ -20,7 +20,7 @@ List<String> folders(String path) =>
       ..sort());
 
 void main() {
-  final index = golden('m0_01_scaffolding', 'step_index').split('\n');
+  final index = expectedOutput('m0_01_scaffolding', 'step_index').split('\n');
 
   test('every step folder is well named', () {
     for (final name in folders(stepsDir.path)) {

@@ -650,5 +650,5 @@ Dart: to be written as each step is ported.
 ## Dart
 
 *In progress.* The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
-`dart test`). It carries its own golden files under `dart/test/steps/<step>/golden/` and does
+`dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
