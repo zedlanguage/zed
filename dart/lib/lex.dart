@@ -371,54 +371,97 @@ List<Span> comments(String text, List<Token> tokens) {
 
 /// The tokens of `text` from byte `pos` to its end, with spans in `text`, and its doc comments
 /// added to `docs`; with `elisions`, `…` is a name. `holes` holds what is known of the holes of
-/// the whole text this is part of.
+/// the whole text this is part of. The tokens of a string's holes are lexed with the hole's text
+/// on a stack, not by recursion, so that the depth of holes in strings in holes is bounded by
+/// memory alone.
 List<Token> lexFrom(Text text, int pos, List<Doc> docs, bool elisions, Holes holes) {
-  final out = <Token>[];
-  for (var c = text.charAt(pos); c >= 0; c = text.charAt(pos)) {
-    final start = pos;
-    Tok? tok;
-    if (c == 0x20 || c == 0x09 || c == 0x0d || c == 0x0a) {
-      pos += 1;
-    } else if (comment(text, pos) case final end?) {
-      pos = end;
-      if (text.startsWith('///', start) && !text.startsWith('////', start)) {
-        final body = start + (text.startsWith('/// ', start) ? 4 : 3);
-        docs.add((text: text.slice(body, pos), span: (start: start, end: pos)));
-      }
-    } else if (number(text, pos) case (final end, final t)?) {
-      pos = end;
-      tok = t;
-    } else if (string(text, pos, holes) case (final end, final t)?) {
-      pos = end;
-      tok = t;
-    } else if ((c == 0x23 || c == 0x40) && name(text, pos + 1) != null) {
-      pos = name(text, pos + 1)!;
-      final word = _checked(text, start + 1, pos);
-      tok = c == 0x23 ? Atom(word) : Annot(word);
-    } else if (name(text, pos) case final end?) {
-      final word = text.slice(start, end);
-      if (keyword(word.endsWith("'") ? word.substring(0, word.length - 1) : word) case final k?) {
-        pos = start + k.length;
-        tok = Keyword(k);
-      } else {
-        pos = end;
-        tok = Name(_checked(text, start, end));
-      }
-    } else if (wildcard(text, pos) case final end?) {
-      pos = end;
-      tok = const Wildcard();
-    } else if (elisions && c == 0x2026) {
-      pos += text.charLength(pos);
-      tok = const Name('…');
-    } else if (operator(text, pos) case final op?) {
-      pos += op.length;
-      tok = Op(op);
+  final stack = [_Lexing(text, pos, null)];
+  while (true) {
+    final f = stack.last;
+    final (text, start) = (f.text, f.pos);
+    final c = text.charAt(start);
+    if (c < 0) {
+      stack.removeLast();
+      final scan = f.string;
+      if (scan == null) return f.out;
+      scan.fill(f.out);
+      _scanOn(stack, scan);
+    } else if (c == 0x22) {
+      _scanOn(stack, StringScan(text, start, holes));
     } else {
-      throw LexError(Unexpected(c), (start: start, end: start + text.charLength(start)));
+      f.pos = _token(f, f.string == null ? docs : [], elisions && f.string == null);
     }
-    if (tok != null) out.add((tok: tok, span: (start: start, end: pos)));
   }
-  return out;
+}
+
+/// A text being lexed, or the text of a hole of `string`: the position reached and the tokens
+/// so far.
+final class _Lexing {
+  final Text text;
+  int pos;
+  final StringScan? string;
+  final out = <Token>[];
+  _Lexing(this.text, this.pos, this.string);
+}
+
+/// Scans `scan` on: to its next hole, whose text goes on the stack to be lexed, or to its end,
+/// when its token is added to the text it is in.
+void _scanOn(List<_Lexing> stack, StringScan scan) {
+  if (scan.next() case (final from, final to)?) {
+    stack.add(_Lexing(scan.text.prefix(to), from, scan));
+  } else {
+    stack.last
+      ..out.add((tok: scan.tok, span: (start: scan.pos, end: scan.end)))
+      ..pos = scan.end;
+  }
+}
+
+/// Lexes the token, space or comment at `f.pos`, not a string, adding a token to `f.out`;
+/// returns the position after it.
+int _token(_Lexing f, List<Doc> docs, bool elisions) {
+  final text = f.text;
+  final start = f.pos;
+  final c = text.charAt(start);
+  var pos = start;
+  Tok? tok;
+  if (c == 0x20 || c == 0x09 || c == 0x0d || c == 0x0a) {
+    pos += 1;
+  } else if (comment(text, pos) case final end?) {
+    pos = end;
+    if (text.startsWith('///', start) && !text.startsWith('////', start)) {
+      final body = start + (text.startsWith('/// ', start) ? 4 : 3);
+      docs.add((text: text.slice(body, pos), span: (start: start, end: pos)));
+    }
+  } else if (number(text, pos) case (final end, final t)?) {
+    pos = end;
+    tok = t;
+  } else if ((c == 0x23 || c == 0x40) && name(text, pos + 1) != null) {
+    pos = name(text, pos + 1)!;
+    final word = _checked(text, start + 1, pos);
+    tok = c == 0x23 ? Atom(word) : Annot(word);
+  } else if (name(text, pos) case final end?) {
+    final word = text.slice(start, end);
+    if (keyword(word.endsWith("'") ? word.substring(0, word.length - 1) : word) case final k?) {
+      pos = start + k.length;
+      tok = Keyword(k);
+    } else {
+      pos = end;
+      tok = Name(_checked(text, start, end));
+    }
+  } else if (wildcard(text, pos) case final end?) {
+    pos = end;
+    tok = const Wildcard();
+  } else if (elisions && c == 0x2026) {
+    pos += text.charLength(pos);
+    tok = const Name('…');
+  } else if (operator(text, pos) case final op?) {
+    pos += op.length;
+    tok = Op(op);
+  } else {
+    throw LexError(Unexpected(c), (start: start, end: start + text.charLength(start)));
+  }
+  if (tok != null) f.out.add((tok: tok, span: (start: start, end: pos)));
+  return pos;
 }
 
 /// The name from `start` to `end` of `text`, if its characters are of one script.

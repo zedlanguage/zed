@@ -88,3 +88,7 @@ dart/test/steps/l01_02_lexer_names/names_test.dart tests/steps/l01_02_lexer_name
 dart/test/steps/l01_02_lexer_names/scripts_test.dart tests/steps/l01_02_lexer_names/scripts.rs
 dart/test/steps/l01_03_lexer_integers/integers_test.dart tests/steps/l01_03_lexer_integers/mod.rs
 dart/test/steps/l01_04_lexer_floats_and_rationals/floats_test.dart tests/steps/l01_04_lexer_floats_and_rationals/mod.rs
+dart/test/steps/l01_05_lexer_strings/parts.dart tests/steps/l01_05_lexer_strings/mod.rs
+dart/test/steps/l01_05_lexer_strings/strings_test.dart tests/steps/l01_05_lexer_strings/strings.rs
+dart/test/steps/l01_05_lexer_strings/holes_test.dart tests/steps/l01_05_lexer_strings/holes.rs
+dart/test/steps/l01_05_lexer_strings/scaling_test.dart tests/steps/l01_05_lexer_strings/scaling.rs

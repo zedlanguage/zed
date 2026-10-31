@@ -125,7 +125,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.2 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:06 | 0:01 | 4 (1) |
 | L1.3 | 0:01 | 0:01 | 0 (0) | 0 (0) | 0:00 | 0:00 | 0 (0) |
 | L1.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | 0:00 | 0:00 | 0 (0) |
-| L1.5 | 0:05 | 0:01 | 0 (0) | 0 (0) | | | |
+| L1.5 | 0:05 | 0:01 | 0 (0) | 0 (0) | 0:06 | 0:06 | 3 (1) |
 | L1.6 | 0:02 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.7 | 0:06 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.8 | 0:06 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -712,11 +712,11 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/format.rs` | 23,772 | | | |
 | `crates/zedc/src/interp.rs` | 1,137 | | | |
 | `crates/zedc/src/lex/comment.rs` | 1,304 | `lib/src/lex/comment.dart` | 1,138 | 0.87 |
-| `crates/zedc/src/lex/mod.rs` | 8,813 | `lib/lex.dart` | 11,614 | 1.32 |
+| `crates/zedc/src/lex/mod.rs` | 8,813 | `lib/lex.dart` | 12,990 | 1.47 |
 | `crates/zedc/src/lex/name.rs` | 3,147 | `lib/src/lex/name.dart` | 2,777 | 0.88 |
 | `crates/zedc/src/lex/number.rs` | 4,413 | `lib/src/lex/number.dart` | 4,074 | 0.92 |
 | `crates/zedc/src/lex/punct.rs` | 1,719 | `lib/src/lex/punct.dart` | 1,544 | 0.90 |
-| `crates/zedc/src/lex/string.rs` | 11,031 | `lib/src/lex/string.dart` | 9,935 | 0.90 |
+| `crates/zedc/src/lex/string.rs` | 11,031 | `lib/src/lex/string.dart` | 12,231 | 1.11 |
 | `crates/zedc/src/lib.rs` | 835 | | | |
 | `crates/zedc/src/main.rs` | 1,770 | | | |
 | `crates/zedc/src/parse/grammar.rs` | 10,399 | | | |
@@ -763,10 +763,10 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_02_lexer_names/scripts.rs` | 2,205 | `test/steps/l01_02_lexer_names/scripts_test.dart` | 2,478 | 1.12 |
 | `tests/steps/l01_03_lexer_integers/mod.rs` | 2,418 | `test/steps/l01_03_lexer_integers/integers_test.dart` | 2,159 | 0.89 |
 | `tests/steps/l01_04_lexer_floats_and_rationals/mod.rs` | 2,411 | `test/steps/l01_04_lexer_floats_and_rationals/floats_test.dart` | 2,241 | 0.93 |
-| `tests/steps/l01_05_lexer_strings/holes.rs` | 2,265 | | | |
-| `tests/steps/l01_05_lexer_strings/mod.rs` | 1,138 | | | |
-| `tests/steps/l01_05_lexer_strings/scaling.rs` | 1,663 | | | |
-| `tests/steps/l01_05_lexer_strings/strings.rs` | 3,036 | | | |
+| `tests/steps/l01_05_lexer_strings/holes.rs` | 2,265 | `test/steps/l01_05_lexer_strings/holes_test.dart` | 2,332 | 1.03 |
+| `tests/steps/l01_05_lexer_strings/mod.rs` | 1,138 | `test/steps/l01_05_lexer_strings/parts.dart` | 1,449 | 1.27 |
+| `tests/steps/l01_05_lexer_strings/scaling.rs` | 1,663 | `test/steps/l01_05_lexer_strings/scaling_test.dart` | 1,567 | 0.94 |
+| `tests/steps/l01_05_lexer_strings/strings.rs` | 3,036 | `test/steps/l01_05_lexer_strings/strings_test.dart` | 2,798 | 0.92 |
 | `tests/steps/l01_06_lexer_tokens/mod.rs` | 198 | | | |
 | `tests/steps/l01_06_lexer_tokens/program.rs` | 2,380 | | | |
 | `tests/steps/l01_06_lexer_tokens/words.rs` | 3,054 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,774** | | | |
-| **the Rust files ported so far** | **643,276** | | **541,595** | **0.84** |
+| **the Rust files ported so far** | **651,378** | | **553,413** | **0.85** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1089,10 +1089,17 @@ Dart:
   No compile errors; one wrong token count in the new scaling test (`1..10` is three tokens).
   Two negative controls (reading `.` without a following digit; accepting `r` after any base)
   each fail tests.
+- **L1.5, strings.** The string lexer of step L1.2 read holes by recursion: the scan for a
+  hole's end called the string scan, and lexing a hole's tokens called the lexer, so a string
+  nested in holes 2048 deep overflowed the Dart stack, which no flag can enlarge. The Rust test
+  ran at 4000 on a 1 GiB thread. Both scans now keep the strings and holes they are in on a
+  stack: 128,000 levels lex in 0.2 s. Three compile errors in one run, from a destructuring
+  declaration in a test, rewritten as an `if case`. Two negative controls (stripping no
+  indentation; never recording a hole's end) each fail tests.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1182,13 +1189,13 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_01_source_loading/places_test.dart` | 1 | 0 |
 | `test/steps/l01_01_source_loading/rejected_test.dart` | 1 | 0 |
 | `test/steps/l01_01_source_loading/scaling_test.dart` | 1 | 0 |
-| `lib/lex.dart` | 1 | 0 |
+| `lib/lex.dart` | 4 | 0 |
 | `lib/src/lex/text.dart` | 1 | 0 |
 | `lib/src/lex/comment.dart` | 1 | 0 |
 | `lib/src/lex/name.dart` | 1 | 0 |
 | `lib/src/lex/number.dart` | 1 | 0 |
 | `lib/src/lex/punct.dart` | 1 | 0 |
-| `lib/src/lex/string.dart` | 1 | 0 |
+| `lib/src/lex/string.dart` | 5 | 0 |
 | `test/steps/l01_02_lexer_names/names_test.dart` | 1 | 0 |
 | `test/steps/l01_02_lexer_names/scripts_test.dart` | 1 | 0 |
 | `test/steps/l01_02_lexer_names/scaling_test.dart` | 1 | 0 |
@@ -1196,5 +1203,9 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_03_lexer_integers/scaling_test.dart` | 1 | 0 |
 | `test/steps/l01_04_lexer_floats_and_rationals/floats_test.dart` | 1 | 0 |
 | `test/steps/l01_04_lexer_floats_and_rationals/scaling_test.dart` | 2 | 0 |
+| `test/steps/l01_05_lexer_strings/parts.dart` | 1 | 0 |
+| `test/steps/l01_05_lexer_strings/strings_test.dart` | 1 | 0 |
+| `test/steps/l01_05_lexer_strings/holes_test.dart` | 2 | 0 |
+| `test/steps/l01_05_lexer_strings/scaling_test.dart` | 2 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

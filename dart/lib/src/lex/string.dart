@@ -58,63 +58,84 @@ int _firstAtLeast(List<int> sorted, int v) {
   return lo;
 }
 
-/// The end and token of the string starting at byte `pos` of `text`, if one starts there;
-/// throws a [LexError] for a malformed string.
-(int, Tok)? string(Text text, int pos, Holes holes) {
-  if (!text.startsWith('"', pos)) return null;
-  final (end, parts) = _scan(text, pos, true, holes);
-  return (end, Str(parts));
-}
-
 /// A range of literal source text, before decoding.
 typedef _Lit = (int, int);
 
-/// Scans the string at `pos`, returning its end and, when `lexHoles`, its parts.
-(int, List<Part>) _scan(Text text, int pos, bool lexHoles, Holes holes) {
-  final close = text.startsWith('"""', pos) ? '"""' : '"';
-  final triple = close.length == 3;
-  final content = pos + close.length;
-  // The literal ranges, and the holes in their places.
-  final raw = <Object>[];
-  var (i, lit) = (content, content);
-  while (true) {
-    if (text.startsWith(close, i)) {
-      raw.add((lit, i));
-      break;
-    }
-    switch (text.charAt(i)) {
-      case -1:
-        throw _bad(pos, i, 'the string is not closed');
-      case 0x0a when !triple:
-        throw _bad(
-          pos,
-          i,
-          'a `"` string ends on its line; a string over several lines is written `"""`',
-        );
-      case 0x5c:
-        i = _escape(text, i);
-      case 0x24 when text.startsWith(r'${', i):
-        raw.add((lit, i));
-        final end = _holeEnd(text, i, !triple, holes);
-        final tokens = lexHoles ? lexFrom(text.prefix(end), i + 2, [], false, holes) : <Token>[];
-        raw.add(Hole(tokens, (start: i, end: end + 1)));
-        i = end + 1;
-        lit = i;
-      default:
-        i += text.charLength(i);
-    }
+/// The string starting at byte `pos` of a text, scanned up to each of its holes in turn, so
+/// that whoever lexes the hole's tokens hands them back with [fill] and the scan goes on. The
+/// lexer keeps the strings and holes it is inside on a stack, so that their depth is bounded by
+/// memory alone. Throws a [LexError] for a malformed string.
+final class StringScan {
+  final Text text;
+  final int pos;
+  final Holes _holes;
+  final String _close;
+
+  /// The literal ranges, and the holes in their places.
+  final _raw = <Object>[];
+  int _i, _lit;
+
+  /// The `${` and `}` of the hole whose tokens [fill] gives.
+  (int, int)? _hole;
+
+  /// The end and token of the string, once [next] has returned null.
+  late final int end;
+  late final Tok tok;
+
+  StringScan(this.text, this.pos, this._holes)
+    : _close = text.startsWith('"""', pos) ? '"""' : '"',
+      _i = 0,
+      _lit = 0 {
+    _i = _lit = pos + _close.length;
   }
-  if (!lexHoles) return (i + close.length, const []);
-  final cuts = triple ? _strip(text, content, [...raw.whereType<_Lit>()]) : <_Lit>[];
-  final parts = <Part>[
-    for (final r in raw)
-      if (r is Hole)
-        r
-      else if (_decode(text, r as _Lit, cuts) case final s when s.isNotEmpty)
-        TextPart(s),
-  ];
-  return (i + close.length, parts);
+
+  /// Scans to the next hole, returning the range of its text, whose tokens go to [fill]; or to
+  /// the end of the string, returning null and setting [end] and [tok].
+  (int, int)? next() {
+    final triple = _close.length == 3;
+    while (!text.startsWith(_close, _i)) {
+      if (text.startsWith(r'${', _i)) {
+        _raw.add((_lit, _i));
+        final close = _holeEnd(text, _i, !triple, _holes);
+        _hole = (_i, close);
+        return (_i + 2, close);
+      }
+      _i = _stringStep(text, pos, _i, triple);
+    }
+    _raw.add((_lit, _i));
+    final content = pos + _close.length;
+    final cuts = triple ? _strip(text, content, [..._raw.whereType<_Lit>()]) : <_Lit>[];
+    end = _i + _close.length;
+    tok = Str([
+      for (final r in _raw)
+        if (r is Hole)
+          r
+        else if (_decode(text, r as _Lit, cuts) case final s when s.isNotEmpty)
+          TextPart(s),
+    ]);
+    return null;
+  }
+
+  /// Gives the tokens of the hole [next] returned.
+  void fill(List<Token> tokens) {
+    final (open, close) = _hole!;
+    _raw.add(Hole(tokens, (start: open, end: close + 1)));
+    _i = _lit = close + 1;
+  }
 }
+
+/// The position after the character at `i` of the string starting at `pos`, a character that
+/// neither closes the string nor opens a hole.
+int _stringStep(Text text, int pos, int i, bool triple) => switch (text.charAt(i)) {
+  -1 => throw _bad(pos, i, 'the string is not closed'),
+  0x0a when !triple => throw _bad(
+    pos,
+    i,
+    'a `"` string ends on its line; a string over several lines is written `"""`',
+  ),
+  0x5c => _escape(text, i),
+  _ => i + text.charLength(i),
+};
 
 /// The end of the escape at `i`, a `\`.
 int _escape(Text text, int i) {
@@ -150,43 +171,83 @@ int _escape(Text text, int i) {
 
 bool _hex(int b) => b >= 0x30 && b <= 0x39 || b >= 0x61 && b <= 0x66 || b >= 0x41 && b <= 0x46;
 
-/// The position of the `}` closing the hole whose `${` is at `open`.
+/// A hole the scan for a hole's end is inside: its `${`, whether its string is a `"` string,
+/// and how many `{` in it are open.
+final class _InHole {
+  final int open;
+  final bool oneLine;
+  var depth = 0;
+  _InHole(this.open, this.oneLine);
+}
+
+/// The position of the `}` closing the hole whose `${` is at `open`. The holes and strings
+/// inside it are kept on a stack, so that their depth is bounded by memory alone, and the end of
+/// each inner hole is kept in `holes`.
 int _holeEnd(Text text, int open, bool oneLine, Holes holes) {
   if (holes._ends[open] case final end?) return end;
-  var depth = 0;
+  // Each an [_InHole], or a string as its start and closing delimiter.
+  final stack = <Object>[_InHole(open, oneLine)];
   for (var i = open + 2; ;) {
-    final int next;
-    switch (text.charAt(i)) {
-      case -1:
-        throw _bad(open, i, r'the `${` hole is not closed');
-      case 0x7d when depth == 0:
-        holes._ends[open] = i;
-        return i;
-      case 0x7d:
-        depth--;
-        next = i + 1;
-      case 0x7b:
-        depth++;
-        next = i + 1;
-      case 0x22:
-        next = _scan(text, i, false, holes).$1;
-      case 0x2f when oneLine && text.startsWith('//', i):
-        final k = text.indexOf('\n', i);
-        throw _bad(
-          i,
-          k < 0 ? text.length : k,
-          'a `//` comment in a hole of a `"` string runs to the end of the line, past the `}`; '
-          'write `/* … */`',
-        );
-      case 0x2f when comment(text, i) != null:
-        next = comment(text, i)!;
-      default:
-        next = i + text.charLength(i);
+    switch (stack.last) {
+      case final _InHole h:
+        final int next;
+        switch (text.charAt(i)) {
+          case -1:
+            throw _bad(h.open, i, r'the `${` hole is not closed');
+          case 0x7d when h.depth == 0:
+            holes._ends[h.open] = i;
+            stack.removeLast();
+            if (stack.isEmpty) return i;
+            next = i + 1;
+          case 0x7d:
+            h.depth--;
+            next = i + 1;
+          case 0x7b:
+            h.depth++;
+            next = i + 1;
+          case 0x22:
+            final close = text.startsWith('"""', i) ? '"""' : '"';
+            stack.add((i, close));
+            i += close.length;
+            continue;
+          case 0x2f when h.oneLine && text.startsWith('//', i):
+            final k = text.indexOf('\n', i);
+            throw _bad(
+              i,
+              k < 0 ? text.length : k,
+              'a `//` comment in a hole of a `"` string runs to the end of the line, past the '
+              '`}`; write `/* … */`',
+            );
+          case 0x2f when comment(text, i) != null:
+            next = comment(text, i)!;
+          default:
+            next = i + text.charLength(i);
+        }
+        if (h.oneLine && holes._breaksIn(i, next)) {
+          throw _bad(h.open, i, 'a hole in a `"` string closes on its line');
+        }
+        i = next;
+      case (final int pos, final String close):
+        if (text.startsWith(close, i)) {
+          // The string is one step of the hole around it.
+          stack.removeLast();
+          final h = stack.last as _InHole;
+          final next = i + close.length;
+          if (h.oneLine && holes._breaksIn(pos, next)) {
+            throw _bad(h.open, pos, 'a hole in a `"` string closes on its line');
+          }
+          i = next;
+        } else if (text.startsWith(r'${', i)) {
+          if (holes._ends[i] case final end?) {
+            i = end + 1;
+          } else {
+            stack.add(_InHole(i, close.length == 1));
+            i += 2;
+          }
+        } else {
+          i = _stringStep(text, pos, i, close.length == 3);
+        }
     }
-    if (oneLine && holes._breaksIn(i, next)) {
-      throw _bad(open, i, 'a hole in a `"` string closes on its line');
-    }
-    i = next;
   }
 }
 
