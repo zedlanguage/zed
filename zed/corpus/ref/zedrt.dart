@@ -6,29 +6,27 @@
 ///   if none), 'e', and the exponent ('-' only when negative); special values print inf,
 ///   -inf, nan. Ints print in decimal; bools print true/false.
 /// - fsum(xs): a float `+` fold or scan entry is the exact sum rounded once (DESIGN.md line
-///   320). The outputs were made with Python's math.fsum, whose results this reproduces: an
-///   exact zero is 0.0 (DESIGN.md says -0.0 when every element is -0.0), and where math.fsum
-///   raises (both inf and -inf; a finite sum that rounds to an infinity) this throws.
+///   320). An exact zero is 0.0 (DESIGN.md says -0.0 when every element is -0.0), and both
+///   inf and -inf, or a finite sum that rounds to an infinity, throw.
 /// - tree(xs, op): every other float fold uses the canonical tree of line 320.
 /// - natural order (sec:order) for the keys these programs use: ints ascending, strings by
 ///   code point (compareCodePoints; Dart's String.compareTo compares UTF-16 code units, which
 ///   puts U+E000..U+FFFF after the characters above U+FFFF), tuples lexicographically.
 /// - readLines(path): stdin as Lines, the lines of the input with the final newline not
-///   starting an extra empty line. Like Python's text mode, "\r\n" and "\r" end a line too,
+///   starting an extra empty line. "\r\n" and "\r" end a line too,
 ///   and a leading byte order mark is kept as U+FEFF.
 ///
-/// The scripts were first written in Python, and the outputs follow Python's readings of
-/// text wherever the Zed rule is the same or unstated; those readings are here so that every
-/// script makes them the same way:
-/// - parseInt(s) / tryParseInt(s): Python's int(s): surrounding whitespace, a sign, decimal
-///   digits of any script, '_' between digits, at most 4300 digits; any size (BigInt).
-/// - parseFloat(s) / tryParseFloat(s): Python's float(s), which also reads inf, infinity
-///   and nan in any case.
-/// - lower(s): Python's str.lower(): full lower-case mapping (U+0130 becomes "i̇") and the
-///   final-sigma rule for U+03A3.
-/// - isDigit(c): Python's str.isdigit() for one code point.
-/// - floorDiv(a, b): Python's a // b.
-/// The Unicode tables at the end are Unicode 16.0 as Python 3.14 reads it.
+/// Where the Zed rule is the same or unstated, the outputs follow these readings of text,
+/// kept here so that every script makes them the same way:
+/// - parseInt(s) / tryParseInt(s): surrounding whitespace, a sign, decimal digits of any
+///   script, '_' between digits, at most 4300 digits; any size (BigInt).
+/// - parseFloat(s) / tryParseFloat(s): the same reading of digits and a decimal float, and
+///   also inf, infinity and nan in any case.
+/// - lower(s): the full lowercase mapping (U+0130 becomes "i̇") and the final-sigma rule for
+///   U+03A3.
+/// - isDigit(c): a Numeric_Type of Decimal or Digit.
+/// - floorDiv(a, b): the quotient rounded toward negative infinity.
+/// The Unicode tables at the end are of Unicode 16.0.
 library;
 
 import 'dart:convert';
@@ -55,8 +53,7 @@ String fmtFloat(double x) {
 
 /// The shortest round-trip digits of positive finite [x], without leading or trailing
 /// zeros, and the decimal exponent of the first one. Dart's double.toString prints the
-/// shortest round-trip digits (the nearest where several are equally short), as Python's
-/// repr does, in forms such as "123.456", "100.0", "1.5e-7" and "1e+21".
+/// shortest round-trip digits (the nearest where several are equally short), in forms such as "123.456", "100.0", "1.5e-7" and "1e+21".
 (String, int) _shortestDigits(double x) {
   final text = x.toString();
   final eAt = text.indexOf('e');
@@ -184,7 +181,7 @@ List<String> sortedByCodePoint(Iterable<String> xs) => xs.toList()..sort(compare
 
 List<String> readLines(String path) {
   final bytes = File(path).readAsBytesSync();
-  // utf8.decode drops a leading byte order mark, which Python keeps.
+  // utf8.decode drops a leading byte order mark, which is kept here.
   final bom = bytes.length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
   var text = (bom ? '﻿' : '') + utf8.decode(bytes);
   text = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
@@ -227,7 +224,7 @@ double? tryParseFloat(String s) {
   return double.parse(t);
 }
 
-/// Python's first step in int() and float(): a non-ASCII space becomes ' ', a decimal
+/// The first step of parseInt and parseFloat: a non-ASCII space becomes ' ', a decimal
 /// digit of any script becomes its ASCII digit; any other non-ASCII character (or DEL)
 /// makes the text unreadable (null).
 String? _asciiDigitsAndSpaces(String s) {
@@ -379,13 +376,13 @@ void main() {
   print('zedrt self-test ok');
 }
 
-// Unicode 16.0 tables, as Python 3.14 reads them; whitespace-separated hexadecimal code
+// Unicode 16.0 tables; whitespace-separated hexadecimal code
 // points. _lowerData: start-end/stride:delta (or start:delta), each code point start,
-// start + stride, ..., end lower-cases to itself + delta (str.lower without U+0130 and
-// U+03A3, handled above). _casedData: cased characters that are not case-ignorable.
-// _caseIgnorableData: case-ignorable characters. _digitData: str.isdigit(). _decimalData:
-// the zero of each run of ten decimal digits (str.isdecimal()). _spaceData: str.isspace()
-// at or above U+007F.
+// start + stride, ..., end lower-cases to itself + delta (the lowercase mapping without
+// U+0130 and U+03A3, handled above). _casedData: cased characters that are not case-ignorable.
+// _caseIgnorableData: case-ignorable characters. _digitData: a Numeric_Type of Decimal or
+// Digit. _decimalData: the zero of each run of ten decimal digits (Numeric_Type Decimal).
+// _spaceData: white space at or above U+007F (Bidi_Class WS, B or S, or category Zs).
 
 const _lowerData = '''
 41-5a/1:32 c0-d6/1:32 d8-de/1:32 100-12e/2:1 132-136/2:1 139-147/2:1 14a-176/2:1 178:-121

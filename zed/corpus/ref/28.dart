@@ -1,5 +1,5 @@
 /// 28 precedence climbing (shunting-yard with the same pop rule) modulo 65536. Zed rule used:
-/// mod is Euclidean, which for a positive modulus is Dart's % (as it is Python's).
+/// mod is Euclidean, which for a positive modulus is Dart's %.
 library;
 
 import 'zedrt.dart';

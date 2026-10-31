@@ -10,8 +10,8 @@
 ///   whitespace;
 /// - the #syntaxError position is the farthest code-point offset at which the parse failed,
 ///   after skipping whitespace (an assumption; see LEDGER.md).
-/// A JsonNum digit is any character Python's str.isdigit() accepts (zedrt.isDigit), as in
-/// the Python original of this script; a JsonStr character is an ASCII letter or digit, or a
+/// A JsonNum digit is any character with a Numeric_Type of Decimal or Digit (zedrt.isDigit);
+/// a JsonStr character is an ASCII letter or digit, or a
 /// space.
 library;
 

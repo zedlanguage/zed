@@ -1,6 +1,7 @@
 /// 24 weighted pick: least i with cumul[i] > q, by bisect_right on the prefix sums (the
-/// program's binary search must agree), or none when q >= total. bisectRight is Python's
-/// bisect.bisect_right, step for step, so a negative weight gives the same answer too.
+/// program's binary search must agree), or none when q >= total. bisectRight halves the
+/// range [lo, hi) while lo < hi, going right when q >= the middle prefix sum, so a negative
+/// weight gives a defined answer too.
 library;
 
 import 'zedrt.dart';

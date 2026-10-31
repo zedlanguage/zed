@@ -3,7 +3,7 @@
 /// A byte sequence cut short by a #char or by the end of the line is dropped; a stray
 /// continuation byte is dropped; a byte expected as a continuation is taken as one whatever
 /// its high bits are. Characters are code points. A decoded value above U+10FFFF, or a
-/// surrogate, is not a character: the line fails (the Python original raised there).
+/// surrogate, is not a character: the line fails.
 library;
 
 import 'dart:math' as math;

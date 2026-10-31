@@ -1,7 +1,7 @@
 /// 13 connectivity by a classic union-find (path halving, union by size): the reference the
 /// library's certified path must agree with. Node count is max node id on an edge + 1; a
-/// queried node outside that range is alone. A negative node id counts from the end, as a
-/// Python list index does (-1 is node count - 1); below -node count it is an error.
+/// queried node outside that range is alone. A negative node id counts from the end (-1 is
+/// node count - 1); below -node count it is an error.
 library;
 
 import 'zedrt.dart';

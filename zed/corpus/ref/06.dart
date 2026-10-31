@@ -1,7 +1,8 @@
 /// 06 matrix multiply. Zed rules used: each product x * y is one IEEE multiplication; the `+`
 /// reduction over a float family is the exact sum rounded once (fsum); floats print by
 /// zedrt.fmt. Every line, the header "n m p" included, must read as floats; the row ranges
-/// are taken as Python slices (clamped, negative bounds counted from the end).
+/// are slices: a negative bound counts from the end, and a bound outside the rows is moved
+/// to the nearer end.
 library;
 
 import 'zedrt.dart';
