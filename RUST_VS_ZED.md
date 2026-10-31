@@ -129,7 +129,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.6 | 0:02 | 0:01 | 0 (0) | 0 (0) | 0:01 | 0:00 | 0 (0) |
 | L1.7 | 0:06 | 0:01 | 0 (0) | 0 (0) | 0:01 | 0:00 | 0 (0) |
 | L1.8 | 0:06 | 0:01 | 0 (0) | 0 (0) | 0:04 | 0:05 | 3 (1) |
-| L1.9 | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
+| L1.9 | 0:04 | 0:01 | 0 (0) | 0 (0) | 0:03 | 0:01 | 2 (2) |
 | L1.10 | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.11 | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.12 | 0:03 | 0:01 | 0 (0) | 2 (1) | | | |
@@ -696,7 +696,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-rt/src/ports.rs` | 2,581 | | | |
 | `crates/zed-rt/src/rope.rs` | 4,631 | | | |
 | `crates/zedc/src/address.rs` | 2,176 | `lib/address.dart`<br>`test/address_test.dart` | 2,125 | 0.98 |
-| `crates/zedc/src/ast/mod.rs` | 21,974 | | | |
+| `crates/zedc/src/ast/mod.rs` | 21,974 | `lib/ast.dart` | 11,248 | 0.51 |
 | `crates/zedc/src/ast/stmts.rs` | 9,682 | | | |
 | `crates/zedc/src/ast/types.rs` | 11,772 | | | |
 | `crates/zedc/src/axioms.rs` | 7,016 | `lib/axioms.dart` | 7,266 | 1.04 |
@@ -777,10 +777,10 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_08_parser/errors.rs` | 969 | `test/steps/l01_08_parser/errors_test.dart` | 1,242 | 1.28 |
 | `tests/steps/l01_08_parser/mod.rs` | 214 | | | |
 | `tests/steps/l01_08_parser/rings.rs` | 1,713 | `test/steps/l01_08_parser/rings_test.dart` | 1,785 | 1.04 |
-| `tests/steps/l01_09_postfix_chains/calls.rs` | 2,767 | | | |
-| `tests/steps/l01_09_postfix_chains/chains.rs` | 2,422 | | | |
-| `tests/steps/l01_09_postfix_chains/fences.rs` | 1,560 | | | |
-| `tests/steps/l01_09_postfix_chains/mod.rs` | 609 | | | |
+| `tests/steps/l01_09_postfix_chains/calls.rs` | 2,767 | `test/steps/l01_09_postfix_chains/calls_test.dart` | 2,796 | 1.01 |
+| `tests/steps/l01_09_postfix_chains/chains.rs` | 2,422 | `test/steps/l01_09_postfix_chains/chains_test.dart` | 2,325 | 0.96 |
+| `tests/steps/l01_09_postfix_chains/fences.rs` | 1,560 | `test/steps/l01_09_postfix_chains/fences_test.dart` | 1,380 | 0.88 |
+| `tests/steps/l01_09_postfix_chains/mod.rs` | 609 | `test/steps/l01_09_postfix_chains/ast.dart` | 548 | 0.90 |
 | `tests/steps/l01_10_lambdas_types_else_tuples/elses.rs` | 1,137 | | | |
 | `tests/steps/l01_10_lambdas_types_else_tuples/fences.rs` | 1,170 | | | |
 | `tests/steps/l01_10_lambdas_types_else_tuples/lambdas.rs` | 1,491 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,774** | | | |
-| **the Rust files ported so far** | **699,664** | | **597,740** | **0.85** |
+| **the Rust files ported so far** | **728,996** | | **616,037** | **0.85** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1114,10 +1114,19 @@ Dart:
   an explicit stack of frames; 100,000 nested parentheses then parse in about 2 s. The memo is
   kept per token. Three negative controls (no memo, which ran past 240 s; no restore of the
   expected set after `!`; ignoring the ring) each fail tests.
+- **L1.9, postfix chains.** The syntax tree of expressions, and the tests. Each node is built
+  by a generator that yields the child nodes it needs, which an explicit stack runs, so the
+  builder has the shape of the recursive one without its depth limit; 4,000 nested calls
+  build. A string hole is built from its own tokens and tree by the same stack. A grouping
+  widens its expression's span in place rather than copying it. The fences give 512 chains
+  built and 170 of later forms, as in Rust. Two compile errors in two runs (a local `span`
+  hiding the method; a `while` with a `case` pattern, which Dart allows only in `if`). Three
+  negative controls (a duplicate name not caught; `?.` read as `.`; a grouping's span not
+  widened) each fail tests.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1212,6 +1221,7 @@ performance pass yet, so the second number is 0 throughout.
 | `lib/parse.dart` | 6 | 3 |
 | `lib/src/parse/grammar.dart` | 1 | 0 |
 | `lib/src/parse/peg.dart` | 1 | 0 |
+| `lib/ast.dart` | 2 | 0 |
 | `lib/src/lex/text.dart` | 1 | 0 |
 | `lib/src/lex/comment.dart` | 1 | 0 |
 | `lib/src/lex/name.dart` | 1 | 0 |
@@ -1242,5 +1252,10 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_08_parser/errors_test.dart` | 1 | 0 |
 | `test/steps/l01_08_parser/rings_test.dart` | 1 | 0 |
 | `test/steps/l01_08_parser/scaling_test.dart` | 2 | 0 |
+| `test/steps/l01_09_postfix_chains/ast.dart` | 1 | 0 |
+| `test/steps/l01_09_postfix_chains/calls_test.dart` | 1 | 0 |
+| `test/steps/l01_09_postfix_chains/chains_test.dart` | 1 | 0 |
+| `test/steps/l01_09_postfix_chains/fences_test.dart` | 1 | 0 |
+| `test/steps/l01_09_postfix_chains/scaling_test.dart` | 3 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

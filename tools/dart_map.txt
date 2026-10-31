@@ -105,3 +105,8 @@ dart/test/support/trees.dart tests/src/trees.rs
 dart/test/steps/l01_08_parser/cases_test.dart tests/steps/l01_08_parser/cases.rs
 dart/test/steps/l01_08_parser/errors_test.dart tests/steps/l01_08_parser/errors.rs
 dart/test/steps/l01_08_parser/rings_test.dart tests/steps/l01_08_parser/rings.rs
+dart/lib/ast.dart crates/zedc/src/ast/mod.rs
+dart/test/steps/l01_09_postfix_chains/ast.dart tests/steps/l01_09_postfix_chains/mod.rs
+dart/test/steps/l01_09_postfix_chains/calls_test.dart tests/steps/l01_09_postfix_chains/calls.rs
+dart/test/steps/l01_09_postfix_chains/chains_test.dart tests/steps/l01_09_postfix_chains/chains.rs
+dart/test/steps/l01_09_postfix_chains/fences_test.dart tests/steps/l01_09_postfix_chains/fences.rs
