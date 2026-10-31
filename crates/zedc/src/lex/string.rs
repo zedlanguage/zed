@@ -19,6 +19,8 @@
 //! begins inside a hole is not a line of the string. Escapes are decoded after stripping, so
 //! `\n` and `\t` are never stripped. Any other `"""` string is kept as written.
 
+use std::collections::HashMap;
+
 use super::{Error, ErrorKind, Part, Span, Tok, comment, lex_from};
 
 /// A part before decoding: a range of literal source text, or a hole.
@@ -27,16 +29,48 @@ enum Raw {
     Hole(Vec<super::Token>, Span),
 }
 
+/// What is known of the holes of one text, so that a hole nested in others is scanned once,
+/// not once for each hole around it: the end of each hole found, by the position of its `${`,
+/// and the positions of the text's line breaks.
+pub(super) struct Holes {
+    ends: HashMap<usize, usize>,
+    breaks: Vec<usize>,
+}
+
+impl Holes {
+    pub(super) fn new(text: &str) -> Holes {
+        Holes {
+            ends: HashMap::new(),
+            breaks: text.match_indices('\n').map(|(k, _)| k).collect(),
+        }
+    }
+
+    /// Whether the text from `from` to `to` holds a line break.
+    fn breaks_in(&self, from: usize, to: usize) -> bool {
+        let k = self.breaks.partition_point(|&b| b < from);
+        self.breaks.get(k).is_some_and(|&b| b < to)
+    }
+}
+
 /// The end and token of the string starting at byte `pos` of `text`, if one starts there.
-pub(super) fn string(text: &str, pos: usize) -> Option<Result<(usize, Tok), Error>> {
+pub(super) fn string(
+    text: &str,
+    pos: usize,
+    holes: &mut Holes,
+) -> Option<Result<(usize, Tok), Error>> {
     text[pos..].starts_with('"').then(|| {
-        let (end, parts) = scan(text, pos, true)?;
+        let (end, parts) = scan(text, pos, true, holes)?;
         Ok((end, Tok::Str(parts)))
     })
 }
 
 /// Scans the string at `pos`, returning its end and, when `lex_holes`, its parts.
-fn scan(text: &str, pos: usize, lex_holes: bool) -> Result<(usize, Vec<Part>), Error> {
+fn scan(
+    text: &str,
+    pos: usize,
+    lex_holes: bool,
+    holes: &mut Holes,
+) -> Result<(usize, Vec<Part>), Error> {
     let triple = text[pos..].starts_with("\"\"\"");
     let close = if triple { "\"\"\"" } else { "\"" };
     let content = pos + close.len();
@@ -60,9 +94,9 @@ fn scan(text: &str, pos: usize, lex_holes: bool) -> Result<(usize, Vec<Part>), E
             Some('\\') => i = escape(text, i)?,
             Some('$') if rest.starts_with("${") => {
                 raw.push(Raw::Lit(lit, i));
-                let end = hole_end(text, i, !triple)?;
+                let end = hole_end(text, i, !triple, holes)?;
                 let tokens = if lex_holes {
-                    lex_from(&text[..end], i + 2, &mut Vec::new(), false)?
+                    lex_from(&text[..end], i + 2, &mut Vec::new(), false, holes)?
                 } else {
                     Vec::new()
                 };
@@ -133,14 +167,20 @@ fn escape(text: &str, i: usize) -> Result<usize, Error> {
 }
 
 /// The position of the `}` closing the hole whose `${` is at `open`.
-fn hole_end(text: &str, open: usize, one_line: bool) -> Result<usize, Error> {
+fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Result<usize, Error> {
+    if let Some(&end) = holes.ends.get(&open) {
+        return Ok(end);
+    }
     let mut depth = 0;
     let mut i = open + 2;
     loop {
         let rest = &text[i..];
         let next = match rest.chars().next() {
             None => return Err(bad(open, i, "the `${` hole is not closed")),
-            Some('}') if depth == 0 => return Ok(i),
+            Some('}') if depth == 0 => {
+                holes.ends.insert(open, i);
+                return Ok(i);
+            }
             Some('}') => {
                 depth -= 1;
                 i + 1
@@ -149,7 +189,7 @@ fn hole_end(text: &str, open: usize, one_line: bool) -> Result<usize, Error> {
                 depth += 1;
                 i + 1
             }
-            Some('"') => scan(text, i, false)?.0,
+            Some('"') => scan(text, i, false, holes)?.0,
             Some('/') if one_line && rest.starts_with("//") => {
                 return Err(bad(
                     i,
@@ -162,7 +202,7 @@ fn hole_end(text: &str, open: usize, one_line: bool) -> Result<usize, Error> {
             }
             Some(c) => i + c.len_utf8(),
         };
-        if one_line && text[i..next].contains('\n') {
+        if one_line && holes.breaks_in(i, next) {
             return Err(bad(open, i, "a hole in a `\"` string closes on its line"));
         }
         i = next;

@@ -14,6 +14,7 @@ use std::fmt;
 
 pub use name::is_single_script;
 pub use punct::{KEYWORDS, OPERATORS};
+use string::Holes;
 
 /// A byte range of the loaded text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -132,21 +133,21 @@ impl fmt::Display for Error {
 
 /// The tokens of `text`, a loaded source text.
 pub fn lex(text: &str) -> Result<Vec<Token>, Error> {
-    lex_from(text, 0, &mut Vec::new(), false)
+    lex_from(text, 0, &mut Vec::new(), false, &mut Holes::new(text))
 }
 
 /// The tokens of `text`, a fence of the documentation, where `…` outside strings and comments
 /// marks elided code and is read as the name `…` (DESIGN.md sec:grammar, "Documentation
 /// notation"). No program can write that name.
 pub fn lex_fence(text: &str) -> Result<Vec<Token>, Error> {
-    lex_from(text, 0, &mut Vec::new(), true)
+    lex_from(text, 0, &mut Vec::new(), true, &mut Holes::new(text))
 }
 
 /// The tokens of `text` and its doc comments: a comment that starts with exactly three `/`
 /// (`////` is an ordinary comment). Doc comments inside a string's hole are not collected.
 pub fn lex_with_docs(text: &str) -> Result<(Vec<Token>, Vec<Doc>), Error> {
     let mut docs = Vec::new();
-    let tokens = lex_from(text, 0, &mut docs, false)?;
+    let tokens = lex_from(text, 0, &mut docs, false, &mut Holes::new(text))?;
     Ok((tokens, docs))
 }
 
@@ -175,12 +176,14 @@ pub fn comments(text: &str, tokens: &[Token]) -> Vec<Span> {
 }
 
 /// The tokens of `text` from byte `pos` to its end, with spans in `text`, and its doc
-/// comments pushed onto `docs`; with `elisions`, `…` is a name.
+/// comments pushed onto `docs`; with `elisions`, `…` is a name. `holes` holds what is known of
+/// the holes of the whole text this is part of.
 fn lex_from(
     text: &str,
     mut pos: usize,
     docs: &mut Vec<Doc>,
     elisions: bool,
+    holes: &mut Holes,
 ) -> Result<Vec<Token>, Error> {
     let mut out = Vec::new();
     while let Some(c) = text[pos..].chars().next() {
@@ -202,7 +205,7 @@ fn lex_from(
             let (end, tok) = number?;
             pos = end;
             Some(tok)
-        } else if let Some(string) = string::string(text, pos) {
+        } else if let Some(string) = string::string(text, pos, holes) {
             let (end, tok) = string?;
             pos = end;
             Some(tok)

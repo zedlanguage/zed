@@ -23,3 +23,34 @@ fn a_long_indented_string_scales() {
         "{p:?}"
     );
 }
+
+/// A string whose holes nest `d` deep: `"${"${…"${0}"…}"}"`.
+fn nested(d: usize) -> String {
+    let mut s = "0".to_string();
+    for _ in 0..d {
+        s = format!("\"${{{s}}}\"");
+    }
+    s
+}
+
+#[test]
+fn nested_holes_scale() {
+    // Each hole was scanned for its `}` once for each hole around it, and its text searched
+    // for a line break as many times.
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(|| {
+            scaling::check("a string with holes nested d deep", 500, |d| {
+                assert_eq!(parts(&nested(d)).len(), 1);
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(
+        parts(&nested(2)),
+        [
+            "${Str([Hole { tokens: [Token { tok: Int { radix: 10, digits: \"0\" }, span: Span { start: 6, end: 7 } }], span: Span { start: 4, end: 8 } }])}"
+        ]
+    );
+}
