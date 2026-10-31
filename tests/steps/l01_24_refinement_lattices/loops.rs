@@ -80,12 +80,11 @@ impl Equations<Bounds> for System {
             acc.join(&cells[t.from].meet(&t.guard).offset(t.step))
         })
     }
-    /// The integer ends of the initial values and the guards.
-    fn landmarks(&self) -> Landmarks {
-        let bounds = self
-            .init
-            .iter()
-            .chain(self.terms.iter().flatten().map(|t| &t.guard));
+    /// The integer ends of cell `v`'s initial value and guards.
+    fn landmarks(&self, v: usize) -> Landmarks {
+        let bounds = [&self.init[v]]
+            .into_iter()
+            .chain(self.terms[v].iter().map(|t| &t.guard));
         let ends = bounds.flat_map(|b| b.concrete().pieces().iter().flat_map(|&(lo, hi)| [lo, hi]));
         Landmarks::of(
             ends.filter_map(|e| match e {

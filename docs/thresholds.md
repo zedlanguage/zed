@@ -149,7 +149,10 @@ per constraint), so the loop ends with no bound on its rounds. Test:
 
 **Widening and narrowing: done.** The landmarks are the program's integer literals k, each
 as k − 1, k and k + 1, and its literal values for finite sets (`store::lattice::Landmarks`;
-the equations give them, `Equations::landmarks`). The plan above changes in three places.
+the equations give them, `Equations::landmarks`, per cell). A cell in a loop takes the
+landmarks of every equation of its innermost component, nested components included, and a
+cell in no loop those of its own equation (`iterate::Scopes`, COMPLEXITY.md S13), so a head
+stops only at values written in its loop. The plan above changes in three places.
 
 - *Interval widening.* Each finite endpoint of the new value that is not already one of the
   old value's endpoints moves outward to the nearest target: an endpoint of the old value,

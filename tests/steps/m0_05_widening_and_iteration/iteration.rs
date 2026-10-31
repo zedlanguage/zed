@@ -3,8 +3,8 @@
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::store::interval::IntervalSet;
-use zedc::store::iterate::{Equations, dependency_graph, narrow, phase1, solve};
-use zedc::store::lattice::Lattice;
+use zedc::store::iterate::{Equations, Scopes, dependency_graph, narrow, phase1, solve};
+use zedc::store::lattice::{Landmarks, Lattice};
 use zedc::store::wto::{Element, weak_topological_order};
 
 use super::{System, Term, is_post_fixpoint, iv};
@@ -43,11 +43,9 @@ fn flatten(order: &[Element], out: &mut Vec<Instr>) {
 /// holding its iteration count. A head widens at every change.
 fn machine(eq: &System) -> Vec<IntervalSet> {
     let mut program = Vec::new();
-    flatten(
-        &weak_topological_order(&dependency_graph(&eq.reads)),
-        &mut program,
-    );
-    let marks = eq.landmarks();
+    let order = weak_topological_order(&dependency_graph(&eq.reads));
+    flatten(&order, &mut program);
+    let marks = Scopes::new(eq, &order);
     let mut cells = vec![IntervalSet::empty(); eq.init.len()];
     // Frames: (instruction of the head, iteration).
     let mut frames: Vec<(usize, u32)> = Vec::new();
@@ -69,7 +67,7 @@ fn machine(eq: &System) -> Vec<IntervalSet> {
                     pc = end + 1;
                 } else {
                     if next != cells[head] {
-                        cells[head] = cells[head].widen(&next, &marks);
+                        cells[head] = cells[head].widen(&next, marks.of(head));
                     }
                     *frames.last_mut().unwrap() = (pc, i + 1);
                     pc += 1;
@@ -108,7 +106,7 @@ fn both_phases_end_at_a_sound_post_fixpoint() {
         let mut cells = phase1(&eq, &order);
         assert!(is_post_fixpoint(&eq, &cells), "phase 1: {eq:?}");
         let before = cells.clone();
-        if narrow(&eq, &mut cells) > 0 {
+        if narrow(&eq, &order, &mut cells) > 0 {
             narrowed += 1;
         }
         assert!(is_post_fixpoint(&eq, &cells), "phase 2: {eq:?}");
@@ -234,7 +232,7 @@ fn phase_two_runs_until_a_round_changes_nothing() {
     let order = weak_topological_order(&dependency_graph(&eq.reads));
     let mut cells = phase1(&eq, &order);
     assert!(cells.iter().all(|c| *c == iv(Some(0), None)));
-    assert_eq!(narrow(&eq, &mut cells), 6);
+    assert_eq!(narrow(&eq, &order, &mut cells), 6);
     assert!(cells.iter().all(|c| *c == iv(Some(0), Some(99))));
     assert!(is_post_fixpoint(&eq, &cells));
 }
@@ -256,7 +254,8 @@ fn phase_two_ends_where_meets_alone_would_descend_forever() {
     assert!(is_post_fixpoint(&eq, &start));
     assert_eq!(start[0].meet(&eq.eval(0, &start)), iv(Some(1), None));
     let mut cells = start.clone();
-    assert_eq!(narrow(&eq, &mut cells), 0);
+    let order = weak_topological_order(&dependency_graph(&eq.reads));
+    assert_eq!(narrow(&eq, &order, &mut cells), 0);
     assert_eq!(cells, start);
 }
 
@@ -281,4 +280,43 @@ fn equations_read_through_the_trait() {
     assert!(eq.reads()[0].is_empty());
     assert_eq!(solve(&eq), vec![IntervalSet::of(3, 4)]);
     assert_eq!(IntervalSet::bottom(), IntervalSet::empty());
+}
+
+/// `depth` nested loops, cell `k` reading the loop around it, itself and the loop inside it,
+/// and writing the literal `100·k`.
+struct Levels(Vec<Vec<usize>>);
+
+impl Equations<IntervalSet> for Levels {
+    fn reads(&self) -> &[Vec<usize>] {
+        &self.0
+    }
+    fn eval(&self, _: usize, _: &[IntervalSet]) -> IntervalSet {
+        IntervalSet::empty()
+    }
+    fn landmarks(&self, v: usize) -> Landmarks {
+        Landmarks::of([100 * v as i64], [])
+    }
+}
+
+#[test]
+fn a_loop_takes_the_landmarks_of_the_loops_inside_it_only() {
+    // A guard of an inner loop bounds what flows out to the heads around it, so each head
+    // takes the literals of its loop and of every loop inside it, and none from outside.
+    let depth = 5;
+    let eq = Levels(
+        (0..depth)
+            .map(|k: usize| (k.saturating_sub(1)..(k + 2).min(depth)).collect())
+            .collect(),
+    );
+    let scopes = Scopes::new(&eq, &weak_topological_order(&dependency_graph(&eq.0)));
+    for k in 0..depth {
+        let want: Vec<i64> = (k..depth)
+            .flat_map(|j| {
+                let m = 100 * j as i64;
+                [m - 1, m, m + 1]
+            })
+            .collect();
+        let got: Vec<i64> = scopes.of(k).ints().iter().copied().collect();
+        assert_eq!(got, want, "cell {k}");
+    }
 }

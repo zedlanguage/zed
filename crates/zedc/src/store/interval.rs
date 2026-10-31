@@ -7,7 +7,6 @@
 //! Meet and join are exact.
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::Neg;
 
@@ -276,17 +275,17 @@ impl IntervalSet {
         if self.is_empty() || next == self {
             return next.clone();
         }
-        let targets = self.targets(marks);
+        let ends = self.finite_ends();
         let out = next
             .pieces
             .iter()
             .map(|&(lo, hi)| {
                 let lo = match lo {
-                    Fin(v) => targets.range(..=v).next_back().map_or(NegInf, |&t| Fin(t)),
+                    Fin(v) => below(&ends, marks, v).map_or(NegInf, Fin),
                     e => e,
                 };
                 let hi = match hi {
-                    Fin(v) => targets.range(v..).next().map_or(PosInf, |&t| Fin(t)),
+                    Fin(v) => above(&ends, marks, v).map_or(PosInf, Fin),
                     e => e,
                 };
                 (lo, hi)
@@ -330,17 +329,17 @@ impl IntervalSet {
     /// descending chain of narrowings lie in a finite set, and the chain is finite by the
     /// argument of [`IntervalSet::widen`].
     pub fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
-        let targets = self.targets(marks);
+        let ends = self.finite_ends();
         let out = next
             .pieces
             .iter()
             .map(|&(lo, hi)| {
                 let lo = match lo {
-                    Fin(v) => Fin(targets.range(..=v).next_back().map_or(v, |&t| t)),
+                    Fin(v) => Fin(below(&ends, marks, v).unwrap_or(v)),
                     e => e,
                 };
                 let hi = match hi {
-                    Fin(v) => Fin(targets.range(v..).next().map_or(v, |&t| t)),
+                    Fin(v) => Fin(above(&ends, marks, v).unwrap_or(v)),
                     e => e,
                 };
                 (lo, hi)
@@ -349,16 +348,17 @@ impl IntervalSet {
         IntervalSet::from_pieces(out)
     }
 
-    /// The finite endpoints of `self`, of either role, and the landmarks.
-    fn targets(&self, marks: &Landmarks) -> BTreeSet<i64> {
-        let mut t = marks.ints().clone();
-        for &(lo, hi) in &self.pieces {
-            t.extend([lo, hi].into_iter().filter_map(|e| match e {
+    /// The finite endpoints of `self`, of either role, in order (the pieces are disjoint and
+    /// sorted).
+    fn finite_ends(&self) -> Vec<i64> {
+        self.pieces
+            .iter()
+            .flat_map(|&(lo, hi)| [lo, hi])
+            .filter_map(|e| match e {
                 Fin(v) => Some(v),
                 _ => None,
-            }));
-        }
-        t
+            })
+            .collect()
     }
 
     /// The set of `-x` for each member `x`.
@@ -421,6 +421,24 @@ impl fmt::Display for IntervalSet {
             }
         }
         write!(f, "]")
+    }
+}
+
+/// The greatest of `ends` and the landmarks at or below `v`: where a lower end moves. Two
+/// searches, so a widening costs time logarithmic in the landmarks, not linear.
+fn below(ends: &[i64], marks: &Landmarks, v: i64) -> Option<i64> {
+    let e = ends[..ends.partition_point(|&t| t <= v)].last().copied();
+    let m = marks.ints().range(..=v).next_back().copied();
+    e.max(m)
+}
+
+/// The least of `ends` and the landmarks at or above `v`: where an upper end moves.
+fn above(ends: &[i64], marks: &Landmarks, v: i64) -> Option<i64> {
+    let e = ends.get(ends.partition_point(|&t| t < v)).copied();
+    let m = marks.ints().range(v..).next().copied();
+    match (e, m) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
     }
 }
 

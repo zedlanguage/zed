@@ -8,9 +8,10 @@
 // The dependency graph has an edge from u to every cell that reads u, the
 // successors in source order.
 
-// A system also has its landmarks (lattice.zed), which bound every chain of
-// widenings and narrowings; so the iteration has no delay, no cap on head
-// changes and no budget of rounds (docs/thresholds.md, replacement 3).
+// A system also has its landmarks (lattice.zed): marks(v) gives those written
+// in cell v's equation. They bound every chain of widenings and narrowings, so
+// the iteration has no delay, no cap on head changes and no budget of rounds
+// (docs/thresholds.md, replacement 3).
 
 put(positional xs, positional i, positional x) = xs.take(i) ++ [x] ++ xs.drop(i + 1);
 
@@ -99,8 +100,36 @@ componentBody(positional succ, positional v, positional i, positional s) =
 // stabilized, since its cells are then a post-fixpoint of its own equations;
 // the checker does, which makes the work of nested loops linear in their number.
 
-struct Sys { reads: Any, eval: Any, lattice: Lattice, marks: Landmarks }
+struct Sys { reads: Any, eval: Any, lattice: Lattice, marks: Any }
 struct State { cells: Any }
+
+// The landmarks each cell takes (COMPLEXITY.md S13): a cell in a loop takes
+// those of every equation of its innermost component, nested components
+// included, since a guard of an inner loop bounds what flows out to the heads
+// around it; a cell in no loop takes those of its own equation. So a head
+// stops only at values written in its loop, not at every literal of the
+// program.
+
+unite(positional a, positional b) =
+  Landmarks(ints: (a.ints ++ b.ints).distinct, values: (a.values ++ b.values).distinct);
+
+// The union of the landmarks of every cell of the elements.
+within(positional sys, positional es) =
+  es.fold(Landmarks(ints: [], values: []), (m, e) -> unite(m, match e {
+    #vertex(v) -> sys.marks(v),
+    #component(head: h, body: b) -> unite(sys.marks(h), within(sys, b)),
+  }));
+
+// out with each cell of the elements set to its landmarks; m is the set of the
+// component that holds them directly, or none.
+scopes(positional sys, positional es, positional m, positional out) =
+  es.fold(out, (o, e) -> match e {
+    #vertex(v) -> put(o, v, if m == none { sys.marks(v) } else { m }),
+    #component(head: h, body: b) -> {
+      c = unite(sys.marks(h), within(sys, b));
+      scopes(sys, b, c, put(o, h, c))
+    },
+  });
 
 phase1(positional sys, positional order) =
   stabilize(sys, order, 0, State(cells: sys.reads.map(x -> sys.lattice.bottom))).cells;
@@ -111,17 +140,17 @@ stabilize(positional sys, positional order, positional i, positional st) =
 
 element(positional sys, positional e, positional st) = match e {
   #vertex(v) -> State(cells: put(st.cells, v, sys.lattice.join(st.cells[v], sys.eval(v, st.cells)))),
-  #component(head: h, body: b) -> headLoop(sys, h, b, 0, st),
+  #component(head: h, body: b) -> headLoop(sys, h, b, unite(sys.marks(h), within(sys, b)), 0, st),
 };
 
-headLoop(positional sys, positional h, positional b, positional i, positional st) = {
+headLoop(positional sys, positional h, positional b, positional m, positional i, positional st) = {
   cells = st.cells;
   next = sys.lattice.join(cells[h], sys.eval(h, cells));
   changed = next != cells[h];
   if i > 0 && !changed { st }
   else {
-    value = if changed { sys.lattice.widen(cells[h], next, sys.marks) } else { cells[h] };
-    headLoop(sys, h, b, i + 1, stabilize(sys, b, 0, State(cells: put(cells, h, value))))
+    value = if changed { sys.lattice.widen(cells[h], next, m) } else { cells[h] };
+    headLoop(sys, h, b, m, i + 1, stabilize(sys, b, 0, State(cells: put(cells, h, value))))
   }
 };
 
@@ -131,9 +160,12 @@ headLoop(positional sys, positional h, positional b, positional i, positional st
 // nothing. The narrowing makes every chain finite, so phase 2 needs no budget;
 // every value on the way is sound.
 
-phase2(positional sys, positional cells) = {
-  next = for v -> c in cells { sys.lattice.narrow(c, sys.lattice.meet(c, sys.eval(v, cells)), sys.marks) };
-  if next == cells { cells } else { phase2(sys, next) }
+phase2(positional sys, positional marks, positional cells) = {
+  next = for v -> c in cells { sys.lattice.narrow(c, sys.lattice.meet(c, sys.eval(v, cells)), marks[v]) };
+  if next == cells { cells } else { phase2(sys, marks, next) }
 };
 
-solve(positional sys) = phase2(sys, phase1(sys, wto(dependencyGraph(sys.reads))));
+solve(positional sys) = {
+  order = wto(dependencyGraph(sys.reads));
+  phase2(sys, scopes(sys, order, none, sys.reads.map(x -> none)), phase1(sys, order))
+};

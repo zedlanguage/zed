@@ -146,15 +146,14 @@ impl Equations<IntervalSet> for System {
             acc.join(&moved)
         })
     }
-    /// The finite ends of the initial values and of the filters.
-    fn landmarks(&self) -> Landmarks {
+    /// The finite ends of cell `v`'s initial value and filters.
+    fn landmarks(&self, v: usize) -> Landmarks {
         if self.bare {
             return Landmarks::none();
         }
-        let sets = self
-            .init
-            .iter()
-            .chain(self.terms.iter().flatten().map(|t| &t.filter));
+        let sets = [&self.init[v]]
+            .into_iter()
+            .chain(self.terms[v].iter().map(|t| &t.filter));
         let ends = sets.flat_map(|s| s.pieces().iter().flat_map(|&(lo, hi)| [lo, hi]));
         Landmarks::of(
             ends.filter_map(|e| match e {

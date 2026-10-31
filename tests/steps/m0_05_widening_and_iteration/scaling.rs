@@ -53,7 +53,7 @@ impl Equations<IntervalSet> for Nest {
             .lift1(|(lo, hi)| vec![(lo.succ(), hi.succ())]);
         IntervalSet::single(0).join(&step)
     }
-    fn landmarks(&self) -> Landmarks {
+    fn landmarks(&self, _: usize) -> Landmarks {
         Landmarks::of([0, 3], [])
     }
 }
@@ -133,7 +133,7 @@ impl Equations<IntervalSet> for Counter {
             .lift1(|(lo, hi)| vec![(lo.succ(), hi.succ())]);
         IntervalSet::single(0).join(&step)
     }
-    fn landmarks(&self) -> Landmarks {
+    fn landmarks(&self, _: usize) -> Landmarks {
         Landmarks::of((1..=self.marks).map(|k| 10 * k), [])
     }
 }
@@ -155,5 +155,57 @@ fn a_head_stops_at_most_once_per_landmark() {
             n <= 3 * marks as u64 + 1,
             "{marks} landmarks: {n} evaluations"
         );
+    }
+}
+
+/// A counter, `i = 0 ⊔ (i < bound) + 1`, at cell 0, beside cells 1 to `marks`, where cell `k`
+/// is the literal `10·k`, below the bound.
+struct Beside {
+    reads: Vec<Vec<usize>>,
+    bound: i64,
+    evals: Cell<u64>,
+}
+
+impl Equations<IntervalSet> for Beside {
+    fn reads(&self) -> &[Vec<usize>] {
+        &self.reads
+    }
+    fn eval(&self, v: usize, cells: &[IntervalSet]) -> IntervalSet {
+        if v > 0 {
+            return IntervalSet::single(10 * v as i64);
+        }
+        self.evals.set(self.evals.get() + 1);
+        let step = cells[0]
+            .meet(&IntervalSet::range(End::NegInf, End::Fin(self.bound - 1)))
+            .lift1(|(lo, hi)| vec![(lo.succ(), hi.succ())]);
+        IntervalSet::single(0).join(&step)
+    }
+    fn landmarks(&self, v: usize) -> Landmarks {
+        if v == 0 {
+            Landmarks::of([0, self.bound], [])
+        } else {
+            Landmarks::of([10 * v as i64], [])
+        }
+    }
+}
+
+#[test]
+fn a_head_takes_only_the_landmarks_of_its_loop() {
+    // The literals outside the counter's loop are not places for its head to stop, so its
+    // evaluations do not grow with them (COMPLEXITY.md S13). With every literal of the program
+    // as a landmark, they grew as 3·marks + 1.
+    for marks in [1, 2, 4, 8, 16, 32, 64, 128] {
+        let bound = 10 * marks as i64 + 5;
+        let mut reads = vec![vec![0]];
+        reads.extend((0..marks).map(|_| Vec::new()));
+        let eq = Beside {
+            reads,
+            bound,
+            evals: Cell::new(0),
+        };
+        let cells = phase1(&eq, &weak_topological_order(&dependency_graph(eq.reads())));
+        assert_eq!(cells[0], IntervalSet::of(0, bound));
+        let n = eq.evals.get();
+        assert!(n <= 5, "{marks} literals beside the loop: {n} evaluations");
     }
 }

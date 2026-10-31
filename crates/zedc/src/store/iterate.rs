@@ -5,9 +5,10 @@
 //! and widening at the heads of components. Phase 2 then narrows that post-fixpoint in rounds:
 //! in each round every cell is narrowed by its meet with its projection computed from the
 //! state at the start of the round, until a round changes nothing. Both phases end because
-//! the widening and the narrowing move bounds only to the program's landmarks and to values
-//! already present (module `lattice`), so no delay, no bound on a head's changes and no
-//! budget of rounds enters.
+//! the widening and the narrowing move bounds only to landmarks and to values already present
+//! (module `lattice`), so no delay, no bound on a head's changes and no budget of rounds
+//! enters. A cell's landmarks are those of its loop ([`Scopes`]), so a head stops only at
+//! values written in its loop.
 //!
 //! The specification of these rules is prelude source, `zed/prelude/iteration.zed`; this
 //! module is the Rust-hosted checker's copy.
@@ -21,8 +22,9 @@ pub trait Equations<L: Lattice> {
     fn reads(&self) -> &[Vec<usize>];
     /// The forward projection into cell `v` from the current cells.
     fn eval(&self, v: usize, cells: &[L]) -> L;
-    /// The values written in the equations, where a widening or a narrowing stops a bound.
-    fn landmarks(&self) -> Landmarks;
+    /// The values written in the equation of cell `v`, where a widening or a narrowing may
+    /// stop a bound.
+    fn landmarks(&self, v: usize) -> Landmarks;
 }
 
 /// The dependency graph: an edge from `u` to every cell that reads `u`, the successors in
@@ -45,8 +47,78 @@ pub fn dependency_graph(reads: &[Vec<usize>]) -> Vec<Vec<usize>> {
 pub fn solve<L: Lattice>(eq: &impl Equations<L>) -> Vec<L> {
     let order = weak_topological_order(&dependency_graph(eq.reads()));
     let mut cells = phase1(eq, &order);
-    narrow(eq, &mut cells);
+    narrow(eq, &order, &mut cells);
     cells
+}
+
+/// The landmarks each cell's widening and narrowing take (COMPLEXITY.md S13). A cell in a
+/// loop takes those of every equation of its innermost component, nested components included,
+/// since a guard of an inner loop bounds what flows out to the heads around it; a cell in no
+/// loop takes those of its own equation. So a head stops only at values written in its loop,
+/// not at every literal of the program. Building them takes time and space linear in the sum,
+/// over the components, of the landmarks each holds, which is at most the landmarks times the
+/// depth of nesting.
+pub struct Scopes {
+    sets: Vec<Landmarks>,
+    /// The set of each cell.
+    of: Vec<usize>,
+}
+
+impl Scopes {
+    /// The sets of the cells, for the order of the system's dependency graph.
+    pub fn new<L: Lattice>(eq: &impl Equations<L>, order: &[Element]) -> Self {
+        let mut s = Scopes {
+            sets: Vec::new(),
+            of: vec![0; eq.reads().len()],
+        };
+        for element in order {
+            match element {
+                Element::Vertex(v) => {
+                    s.of[*v] = s.sets.len();
+                    s.sets.push(eq.landmarks(*v));
+                }
+                Element::Component { head, body } => {
+                    s.component(eq, *head, body);
+                }
+            }
+        }
+        s
+    }
+
+    /// Gives the component headed by `head`, and each one inside it, its set, and returns the
+    /// index of its own.
+    fn component<L: Lattice>(
+        &mut self,
+        eq: &impl Equations<L>,
+        head: usize,
+        body: &[Element],
+    ) -> usize {
+        let mut marks = eq.landmarks(head);
+        let mut direct = vec![head];
+        for element in body {
+            match element {
+                Element::Vertex(v) => {
+                    marks.extend(&eq.landmarks(*v));
+                    direct.push(*v);
+                }
+                Element::Component { head, body } => {
+                    let inner = self.component(eq, *head, body);
+                    marks.extend(&self.sets[inner]);
+                }
+            }
+        }
+        let i = self.sets.len();
+        for v in direct {
+            self.of[v] = i;
+        }
+        self.sets.push(marks);
+        i
+    }
+
+    /// The landmarks of cell `v`.
+    pub fn of(&self, v: usize) -> &Landmarks {
+        &self.sets[self.of[v]]
+    }
 }
 
 /// Phase 1 over the given order, from every cell at the bottom.
@@ -54,7 +126,7 @@ pub fn phase1<L: Lattice>(eq: &impl Equations<L>, order: &[Element]) -> Vec<L> {
     let n = eq.reads().len();
     let mut w = Walk {
         cells: vec![L::bottom(); n],
-        marks: eq.landmarks(),
+        marks: Scopes::new(eq, order),
         dirty: vec![true; n],
         succ: dependency_graph(eq.reads()),
         pos: vec![0; n],
@@ -79,7 +151,7 @@ const NONE: usize = usize::MAX;
 /// the depth.
 struct Walk<L> {
     cells: Vec<L>,
-    marks: Landmarks,
+    marks: Scopes,
     dirty: Vec<bool>,
     succ: Vec<Vec<usize>>,
     /// Each vertex's place in the flattened order; a component's vertices are the places from
@@ -152,7 +224,7 @@ impl<L: Lattice> Walk<L> {
                             break;
                         }
                         if next != self.cells[h] {
-                            let value = self.cells[h].widen(&next, &self.marks);
+                            let value = self.cells[h].widen(&next, self.marks.of(h));
                             self.set(h, value);
                         }
                         self.stabilize(eq, body);
@@ -167,12 +239,13 @@ impl<L: Lattice> Walk<L> {
 /// Phase 2: rounds of narrowing every cell by its meet with its projection from the state
 /// at the start of the round, until a round changes nothing. Each cell's values form a chain
 /// of narrowings, which is finite, so the rounds end. Returns the number of rounds that
-/// changed a cell.
-pub fn narrow<L: Lattice>(eq: &impl Equations<L>, cells: &mut Vec<L>) -> u32 {
-    let marks = eq.landmarks();
+/// changed a cell. `order` is the order of the system's dependency graph, which places the
+/// landmarks.
+pub fn narrow<L: Lattice>(eq: &impl Equations<L>, order: &[Element], cells: &mut Vec<L>) -> u32 {
+    let marks = Scopes::new(eq, order);
     for round in 0.. {
         let next: Vec<L> = (0..cells.len())
-            .map(|v| cells[v].narrow(&cells[v].meet(&eq.eval(v, cells)), &marks))
+            .map(|v| cells[v].narrow(&cells[v].meet(&eq.eval(v, cells)), marks.of(v)))
             .collect();
         debug_assert!(
             next.iter().zip(cells.iter()).all(|(n, c)| n.leq(c)),

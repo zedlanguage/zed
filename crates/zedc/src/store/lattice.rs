@@ -15,7 +15,8 @@ use super::interval::{End, IntervalSet};
 /// The values written in a program, at which a widening stops a bound and a narrowing stops a
 /// descent (step M0.5): each integer literal and each declared bound `k`, as `k - 1`, `k` and
 /// `k + 1`, and the other literal values. A program has finitely many, so a chain that moves
-/// only to landmarks and old endpoints is finite, with no count of its steps.
+/// only to landmarks and old endpoints is finite, with no count of its steps. A cell takes the
+/// landmarks of its loop only (`iterate::Scopes`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Landmarks {
     ints: BTreeSet<i64>,
@@ -45,6 +46,12 @@ impl Landmarks {
             );
         }
         out
+    }
+
+    /// Adds the landmarks of `other`.
+    pub fn extend(&mut self, other: &Landmarks) {
+        self.ints.extend(&other.ints);
+        self.values.extend(other.values.iter().cloned());
     }
 
     /// The integer landmarks, in order.
