@@ -169,3 +169,8 @@ dart/test/steps/l01_19_whole_file_ports/files_test.dart tests/steps/l01_19_whole
 dart/test/steps/l01_19_whole_file_ports/replay_test.dart tests/steps/l01_19_whole_file_ports/replay.rs
 dart/test/steps/l01_19_whole_file_ports/writes_test.dart tests/steps/l01_19_whole_file_ports/writes.rs
 dart/test/steps/l01_19_whole_file_ports/scaling_test.dart tests/steps/l01_19_whole_file_ports/mod.rs
+dart/lib/src/kernel/provenance.dart crates/zed-kernel/src/provenance.rs
+dart/test/steps/l01_20_provenance/provenance.dart tests/steps/l01_20_provenance/mod.rs
+dart/test/steps/l01_20_provenance/kernel_test.dart tests/steps/l01_20_provenance/kernel.rs
+dart/test/steps/l01_20_provenance/programs_test.dart tests/steps/l01_20_provenance/programs.rs
+dart/test/steps/l01_20_provenance/scaling_test.dart tests/steps/l01_20_provenance/scaling.rs

@@ -61,7 +61,21 @@ final class Program {
   /// Runs one wave: `lines` gives the bytes of each `Lines` input, and `files` the lookup
   /// behind each `Files` input. An error stops the wave before anything is written; throws a
   /// [RunError].
-  Wave run(Map<String, List<int>> lines, Lookup Function(String port) files) {
+  Wave run(Map<String, List<int>> lines, Lookup Function(String port) files) =>
+      _wave(lines, files, null).$1;
+
+  /// Runs one wave as [run] does, and records its provenance (step L1.20), every keypath
+  /// beginning with the wave stamp, 0 for the one wave a program runs.
+  (Wave, Provenance) provenance(Map<String, List<int>> lines, Lookup Function(String port) files) {
+    final (wave, provenance) = _wave(lines, files, const [Int(0)]);
+    return (wave, provenance!);
+  }
+
+  (Wave, Provenance?) _wave(
+    Map<String, List<int>> lines,
+    Lookup Function(String port) files,
+    List<Value>? root,
+  ) {
     final world = World();
     final record = Record();
     for (final (name, kind) in inputs) {
@@ -78,7 +92,7 @@ final class Program {
       world.output(name);
     }
     final main = _unit.get('main')!;
-    final ev = Evaluator(world);
+    final ev = Evaluator(world, provenanceRoot: root);
     try {
       ev.run(prelude(App(main, [for (final (name, _) in inputs) Read(name)])));
     } on KernelError catch (e) {
@@ -99,7 +113,7 @@ final class Program {
       }
     }
     record.files.addAll(world.reads);
-    return Wave(writes, record);
+    return (Wave(writes, record), ev.provenance);
   }
 
   /// Runs the wave `record` holds, reading nothing from the world.

@@ -18,6 +18,8 @@ import 'text.dart';
 import 'value.dart';
 import 'words.dart';
 
+part 'provenance.dart';
+
 /// The fewest steps a run must be able to take before it may report [OutOfFuelError].
 const minSteps = 10000000;
 
@@ -107,6 +109,17 @@ Value eval(Term term) => Evaluator(World()).run(term);
 
 typedef _Env = PMap<String, Object>;
 
+/// A binding of a recorded run whose value came from a fact: the value, and the fact.
+final class _Traced {
+  final Object value;
+  final int fact;
+
+  _Traced(this.value, this.fact);
+}
+
+/// `v` as bound in an environment, with the fact it came from when there is one.
+Object _bound(Object v, int? fact) => fact == null ? v : _Traced(v, fact);
+
 int _byName(String a, String b) => a.compareTo(b);
 
 /// A function value.
@@ -145,12 +158,20 @@ final class _Fix {
   final String self, key;
   final _Env env;
 
+  /// The call sites and keypath the `fix` is inside, at which a demanded entry runs.
+  final _Link<int>? calls;
+  final _Link<Value>? keys;
+
   /// Each defined entry with the round that defined it.
   final defined = SplayTreeMap<Value, (Value, int)>();
   final busy = SplayTreeSet<Value>();
   final stalled = SplayTreeSet<Value>();
 
-  _Fix(this.id, this.domain, this.body, this.self, this.key, this.env);
+  /// The entries defined on demand, in order, so that an attempt that stops drops those it
+  /// demanded along with their facts.
+  final nested = <Value>[];
+
+  _Fix(this.id, this.domain, this.body, this.self, this.key, this.env, this.calls, this.keys);
 }
 
 /// A read of an entry of definedness `fix` number [fix] that is not yet defined. The entry
@@ -201,6 +222,27 @@ final class _SplitMix {
   }
 }
 
+/// What a run records for its provenance (step L1.20).
+final class _Trace {
+  /// The preorder position of each node of the evaluated term, by identity.
+  final positions = Map<Term, int>.identity();
+  final facts = <Fact>[];
+
+  /// The positions of the call sites the run is inside.
+  _Link<int>? calls;
+
+  /// The keypath of the region instance the run is inside.
+  _Link<Value>? keys;
+
+  /// The facts read so far by the node being evaluated, one per subterm evaluated, null for
+  /// a value that came from no fact, such as a family key.
+  List<int?> reads = [];
+
+  /// The call site and the facts of the arguments of the next closure call.
+  int? site;
+  List<int?> args = const [];
+}
+
 /// Runs kernel terms against a [World].
 final class Evaluator {
   final World world;
@@ -209,19 +251,44 @@ final class Evaluator {
   /// The steps left; null for no limit.
   int? fuel;
 
+  /// When set, each run records its provenance, every keypath beginning with these keys:
+  /// the wave stamp of a port region's wave, or nothing.
+  final List<Value>? provenanceRoot;
+
+  _Trace? _trace;
+
+  /// The provenance the last run recorded, if [provenanceRoot] asked for it and the run gave
+  /// a value.
+  Provenance? provenance;
+
   int _depth = 0, _pure = 0, _fixes = 0;
   final _stack = <_Frame>[];
   Term? _next;
   _Env _env = const PMap.empty(_byName);
   Object? _value;
 
-  Evaluator(this.world, {this.schedule = const Rounds(), this.fuel});
+  Evaluator(this.world, {this.schedule = const Rounds(), this.fuel, this.provenanceRoot});
 
   /// The value of `term`. Throws a [KernelError] when the evaluation stops without one.
   Value run(Term term) {
     _depth = 0;
     _pure = 0;
     _stack.clear();
+    provenance = null;
+    _trace = null;
+    if (provenanceRoot case final root?) {
+      term = _unshare(term);
+      final t = _trace = _Trace();
+      final stack = [term];
+      while (stack.isNotEmpty) {
+        final node = stack.removeLast();
+        t.positions[node] = t.positions.length;
+        stack.addAll(_children(node).reversed);
+      }
+      for (final k in root) {
+        t.keys = _Link(k, t.keys);
+      }
+    }
     _go(term, const PMap.empty(_byName));
     Object? stop;
     while (true) {
@@ -244,6 +311,7 @@ final class Evaluator {
         } else if (_stack.isEmpty) {
           final v = _value;
           if (v is! Value) throw const KernelTypeError("the program's result is a function");
+          if (_trace case final t?) provenance = Provenance._(term, t.facts);
           return v;
         } else {
           _stack.removeLast().resume(_value!);
@@ -313,22 +381,81 @@ final class Evaluator {
     fuel = f - 1;
   }
 
+  /// The fact of the value the last subterm evaluated gave.
+  int? get _lastFact {
+    final t = _trace;
+    return t == null || t.reads.isEmpty ? null : t.reads.last;
+  }
+
+  /// The position of `term`, when provenance is recorded.
+  int? _pos(Term term) => _trace?.positions[term];
+
+  /// Names the call site and the argument facts of the next closure call.
+  void _aim(int? site, List<int?> args) {
+    if (_trace case final t?) {
+      t.site = site;
+      t.args = args;
+    }
+  }
+
+  /// Enters the region instance at `keys`, below the current one.
+  void _enter(List<Value> keys) {
+    if (_trace case final t?) {
+      for (final k in keys) {
+        t.keys = _Link(k, t.keys);
+      }
+    }
+  }
+
+  /// Returns to the region instance `keys`, one [_enter] left.
+  void _leave(_Link<Value>? keys) => _trace?.keys = keys;
+
+  /// Evaluates `term`, and when provenance is recorded, records its fact, whose inputs are the
+  /// facts its subterms read. A variable is an edge, not a node: it passes on the fact of the
+  /// value it names.
   void _step(Term term, _Env env) {
+    final t = _trace;
+    if (t != null && term is! Var) {
+      final outer = t.reads;
+      t.reads = [];
+      _stack.add(
+        _Frame((v) {
+          final node = NodeAddress._(_Link(t.positions[term]!, t.calls));
+          t.facts.add(
+            Fact._(FactAddress._(node, t.keys), v is Value ? v : null, [
+              for (final f in t.reads) ?f,
+            ]),
+          );
+          t.reads = outer..add(t.facts.length - 1);
+          _ret(v);
+        }),
+      );
+    }
     switch (term) {
       case Lit(:final value):
         _ret(value);
       case Var(:final name):
-        _ret(env[name] ?? (throw KernelTypeError('unbound variable `$name`')));
+        switch (env[name] ?? (throw KernelTypeError('unbound variable `$name`'))) {
+          case _Traced(:final value, :final fact):
+            _ret(value);
+            t?.reads.add(fact);
+          case final v:
+            _ret(v);
+            t?.reads.add(null);
+        }
       case Lam(:final params, :final body):
         _ret(_Closure(params, body, env));
       case PrimFn(:final prim):
         _ret(prim);
       case App(:final f, :final args):
-        _all([f, ...args], env, (vs) => _apply(vs[0], vs.sublist(1)));
+        _all([f, ...args], env, (vs) {
+          if (t != null) _aim(_pos(term), t.reads.sublist(t.reads.length - args.length));
+          _apply(vs[0], vs.sublist(1));
+        });
       case PrimApp(:final prim, :final args):
         _all(args, env, (vs) => _prim(prim, vs));
       case Let(:final name, :final value, :final body):
-        _ev(value, env, (v) => _go(body, env.put(name, v)));
+        _ev(value, env, (v) => _go(body, env.put(name, _bound(v, _lastFact))));
       case If(:final cond, :final then, :final orElse):
         _data(cond, env, (c) {
           switch (c) {
@@ -344,12 +471,13 @@ final class Evaluator {
         });
       case Match(:final scrutinee, :final arms):
         _ev(scrutinee, env, (v) {
+          final fact = _lastFact;
           for (final (pat, body) in arms) {
             final hit = v is Value
-                ? _match(pat, v, env)
+                ? _match(pat, v, env, fact)
                 : switch (pat) {
                     WildP() => env,
-                    BindP(:final name) => env.put(name, v),
+                    BindP(:final name) => env.put(name, _bound(v, fact)),
                     _ => null,
                   };
             if (hit != null) return _go(body, hit);
@@ -360,12 +488,15 @@ final class Evaluator {
         _family(domain, env, (d) {
           _pure++;
           final keys = d.keys.toList(), out = <(Keypath, Value)>[];
+          final region = _trace?.keys;
           void next(int i) {
             if (i == keys.length) {
               _pure--;
               return _ret(Family.fromLeaves(out));
             }
+            _enter([keys[i]]);
             _data(body, env.put(variable, keys[i]), (v) {
+              _leave(region);
               out.add(([keys[i]], v));
               next(i + 1);
             });
@@ -375,10 +506,11 @@ final class Evaluator {
         });
       case Reindex(:final family, :final kf, :final vf):
         _family(family, env, (f) {
+          final from = _lastFact, kfSite = _pos(kf), vfSite = _pos(vf);
           _ev(kf, env, (kf) {
             _ev(vf, env, (vf) {
               _pure++;
-              _reindex(f, kf, vf, (out) {
+              _reindex(f, (kf, kfSite), (vf, vfSite), from, (out) {
                 _pure--;
                 _ret(out);
               });
@@ -387,9 +519,10 @@ final class Evaluator {
         });
       case Discard(:final family, :final sel):
         _family(family, env, (f) {
+          final from = _lastFact, site = _pos(sel);
           _ev(sel, env, (sel) {
             _pure++;
-            _discard(f, sel, [], (out) {
+            _discard(f, (sel, site), from, [], (out) {
               _pure--;
               _ret(out);
             });
@@ -397,10 +530,11 @@ final class Evaluator {
         });
       case Fold(:final family, :final op, :final identity, :final depth):
         _family(family, env, (f) {
+          final from = _lastFact, site = _pos(op);
           _ev(op, env, (op) {
             void fold(Value? identity) {
               _pure++;
-              _fold(f, op, identity, depth, (out) {
+              _fold(f, (op, site), from, identity, depth, (out) {
                 _pure--;
                 _ret(out);
               });
@@ -425,8 +559,11 @@ final class Evaluator {
         }
       case Gen(:final init, :final step, :final guard, :final pos):
         _data(init, env, (init) {
+          final from = _lastFact, stepSite = _pos(step), guardSite = _pos(guard);
           _ev(step, env, (step) {
-            _ev(guard, env, (guard) => _generations(init, step, guard, pos));
+            _ev(guard, env, (guard) {
+              _generations(init, from, (step, stepSite), (guard, guardSite), pos);
+            });
           });
         });
       case Read(:final port):
@@ -453,6 +590,12 @@ final class Evaluator {
 
   void _apply(Object f, List<Object> args) {
     _burn();
+    final t = _trace;
+    final site = t?.site, facts = t?.args ?? const [];
+    if (t != null) {
+      t.site = null;
+      t.args = const [];
+    }
     switch (f) {
       case _Closure c:
         if (c.params.length != args.length) {
@@ -463,11 +606,14 @@ final class Evaluator {
         if (_depth >= maxDepth) throw const TooDeepError();
         var env = c.env;
         for (var i = 0; i < args.length; i++) {
-          env = env.put(c.params[i], args[i]);
+          env = env.put(c.params[i], _bound(args[i], i < facts.length ? facts[i] : null));
         }
+        final calls = t?.calls;
+        if (t != null && site != null) t.calls = _Link(site, calls);
         _depth++;
         _then((v) {
           _depth--;
+          t?.calls = calls;
           _ret(v);
         });
         _go(c.body, env);
@@ -553,14 +699,29 @@ final class Evaluator {
     _ret(primData(p, vals));
   }
 
-  void _reindex(Family family, Object kf, Object vf, void Function(Family out) k) {
+  // Each region call below reads its argument from the fact `from`, the region's input, and
+  // runs at the call site of the operand it calls, inside the region instance of its leaf,
+  // entry, step or iterate.
+
+  void _reindex(
+    Family family,
+    (Object, int?) kf,
+    (Object, int?) vf,
+    int? from,
+    void Function(Family out) k,
+  ) {
     final leaves = family.leaves(), out = <(Keypath, Value)>[];
+    final region = _trace?.keys;
     void next(int i) {
       if (i == leaves.length) return k(Family.fromLeaves(out));
       final (path, v) = leaves[i];
       final p = Path(path);
-      _call2(kf, p, v, (key) {
-        _call2(vf, p, v, (value) {
+      _enter(path);
+      _aim(kf.$2, [from, from]);
+      _call2(kf.$1, p, v, (key) {
+        _aim(vf.$2, [from, from]);
+        _call2(vf.$1, p, v, (value) {
+          _leave(region);
           out.add((key is Path ? key.keys : [key], value));
           next(i + 1);
         });
@@ -570,17 +731,27 @@ final class Evaluator {
     next(0);
   }
 
-  void _discard(Family family, Object sel, Keypath prefix, void Function(Family out) k) {
+  void _discard(
+    Family family,
+    (Object, int?) sel,
+    int? from,
+    Keypath prefix,
+    void Function(Family out) k,
+  ) {
     final entries = family.entries.toList(), out = <(Keypath, Value)>[];
+    final region = _trace?.keys;
     void next(int i) {
       if (i == entries.length) return k(Family.fromLeaves(out));
       final (key, v) = entries[i];
       final path = [...prefix, key];
-      _call2(sel, Path(path), v, (verdict) {
+      _enter([key]);
+      _aim(sel.$2, [from, from]);
+      _call2(sel.$1, Path(path), v, (verdict) {
         switch (verdict) {
           case Bool(value: true):
             if (v is Family) {
-              return _discard(v, sel, path, (sub) {
+              return _discard(v, sel, from, path, (sub) {
+                _leave(region);
                 out.add(([key], sub));
                 next(i + 1);
               });
@@ -593,6 +764,7 @@ final class Evaluator {
           default:
             throw KernelTypeError('a discard selector returned $verdict');
         }
+        _leave(region);
         next(i + 1);
       });
     }
@@ -600,10 +772,17 @@ final class Evaluator {
     next(0);
   }
 
-  void _fold(Family family, Object op, Value? identity, int depth, void Function(Value) k) {
+  void _fold(
+    Family family,
+    (Object, int?) op,
+    int? from,
+    Value? identity,
+    int depth,
+    void Function(Value) k,
+  ) {
     final leaves = family.leaves();
     if (leaves.any((l) => l.$1.length != depth)) throw const MixedDepthError();
-    if (depth == 1) return _reduce([for (final (_, v) in leaves) v], op, identity, k);
+    if (depth == 1) return _reduce([for (final (_, v) in leaves) v], op, from, identity, k);
     // The leaves are in keypath order, so each group of one parent is a run of them.
     final groups = <(Keypath, List<Value>)>[];
     for (final (path, v) in leaves) {
@@ -612,9 +791,12 @@ final class Evaluator {
       groups.last.$2.add(v);
     }
     final out = <(Keypath, Value)>[];
+    final region = _trace?.keys;
     void next(int i) {
       if (i == groups.length) return k(Family.fromLeaves(out));
-      _reduce(groups[i].$2, op, identity, (v) {
+      _enter(groups[i].$1);
+      _reduce(groups[i].$2, op, from, identity, (v) {
+        _leave(region);
         out.add((groups[i].$1, v));
         next(i + 1);
       });
@@ -623,9 +805,17 @@ final class Evaluator {
     next(0);
   }
 
-  void _reduce(List<Value> values, Object op, Value? identity, void Function(Value) k) {
+  /// Reduces one level in key order. The `i`th application of `op` runs at step `i` of the
+  /// level.
+  void _reduce(
+    List<Value> values,
+    (Object, int?) op,
+    int? from,
+    Value? identity,
+    void Function(Value) k,
+  ) {
     if (values.isEmpty) return k(identity ?? const Atom('empty'));
-    if (op == Prim.add) {
+    if (op.$1 == Prim.add) {
       for (final v in values) {
         if (v is Atom) return k(v);
       }
@@ -634,13 +824,18 @@ final class Evaluator {
       }
     }
     final plan = canonicalPlan(values.length), stack = <Value>[];
+    final region = _trace?.keys;
+    var step = 0;
     void next(int i) {
       while (i < plan.length && plan[i] >= 0) {
         stack.add(values[plan[i++]]);
       }
       if (i == plan.length) return k(stack.single);
       final b = stack.removeLast(), a = stack.removeLast();
-      _call2(op, a, b, (v) {
+      _enter([Int(step++)]);
+      _aim(op.$2, [from, from]);
+      _call2(op.$1, a, b, (v) {
+        _leave(region);
         stack.add(v);
         next(i + 1);
       });
@@ -649,19 +844,31 @@ final class Evaluator {
     next(0);
   }
 
+  /// Iterate `i`'s step and join run at coordinate `i`, the step reading the fact of the
+  /// iterate before.
   void _fixLattice(Term init, Term step, Term join, _Env env, void Function(Value) k) {
     _data(init, env, (x0) {
+      var from = _lastFact;
+      final stepSite = _pos(step), joinSite = _pos(join);
       _ev(step, env, (step) {
         _ev(join, env, (join) {
-          void iterate(Value x) {
+          final region = _trace?.keys;
+          void iterate(int i, Value x) {
             _burn();
+            _enter([Int(i)]);
+            _aim(stepSite, [from]);
             _applyThen(step, [x], (next) {
+              _aim(joinSite, [from, _lastFact]);
               if (next is! Value) throw const KernelTypeError('a fix step returned a function');
-              _call2(join, x, next, (joined) => joined == x ? k(x) : iterate(joined));
+              _call2(join, x, next, (joined) {
+                _leave(region);
+                from = _lastFact;
+                joined == x ? k(x) : iterate(i + 1, joined);
+              });
             });
           }
 
-          iterate(x0);
+          iterate(0, x0);
         });
       });
     });
@@ -676,7 +883,8 @@ final class Evaluator {
     void Function(Value) k,
   ) {
     _family(init, env, (d) {
-      final fix = _Fix(++_fixes, SplayTreeSet.of(d.keys), body, self, key, env);
+      final t = _trace;
+      final fix = _Fix(++_fixes, SplayTreeSet.of(d.keys), body, self, key, env, t?.calls, t?.keys);
       void done(List<Value> stalled) {
         if (stalled.isNotEmpty) throw StalledError(stalled);
         k(
@@ -710,9 +918,15 @@ final class Evaluator {
   ]) {
     final env = fix.env.put(fix.self, _Partial(fix, round)).put(fix.key, k);
     final pure = _pure, depth = _depth;
+    // An attempt that reads an undefined entry is not a fact: what it recorded is dropped, and
+    // the entry's fact is the attempt that defines it. So are the entries it demanded, whose
+    // facts are among those dropped.
+    final nested = fix.nested.length, t = _trace;
+    final facts = t?.facts.length, calls = t?.calls, region = t?.keys, reads = t?.reads;
     _stack.add(
       _Frame(
         (v) {
+          _leave(region);
           if (v is! Value) throw const KernelTypeError('a fix entry is a function');
           ok(v);
         },
@@ -721,11 +935,21 @@ final class Evaluator {
           if (stop is! _Undefined || stop.fix != fix.id) return false;
           _pure = pure;
           _depth = depth;
+          final undone = fix.nested.sublist(nested);
+          fix.nested.length = nested;
+          if (t != null) {
+            t.facts.length = facts!;
+            t.calls = calls;
+            t.keys = region;
+            t.reads = reads!;
+            undone.forEach(fix.defined.remove);
+          }
           blocked(stop.key);
           return true;
         },
       ),
     );
+    _enter([k]);
     _go(fix.body, env);
   }
 
@@ -829,9 +1053,29 @@ final class Evaluator {
     outer(0);
   }
 
-  /// Defines entry `k` of `fix` for a read of it, under [Pull].
+  /// Defines entry `k` of `fix` for a read of it, under [Pull], with the call sites and
+  /// keypath of the `fix` itself, so that its facts are those it would have had demanded from
+  /// the schedule.
   void _demand(_Fix fix, Value k) {
     _burn();
+    final t = _trace;
+    final calls = t?.calls, keys = t?.keys, reads = t?.reads, site = t?.site, args = t?.args;
+    if (t != null) {
+      t.calls = fix.calls;
+      t.keys = fix.keys;
+      t.reads = [];
+      t.site = null;
+      t.args = const [];
+    }
+    void restore() {
+      if (t == null) return;
+      t.calls = calls;
+      t.keys = keys;
+      t.reads = reads!;
+      t.site = site;
+      t.args = args!;
+    }
+
     fix.busy.add(k);
     _depth++;
     _entry(
@@ -839,12 +1083,15 @@ final class Evaluator {
       _always,
       k,
       (v) {
+        restore();
         _depth--;
         fix.busy.remove(k);
         fix.defined[k] = (v, 0);
+        fix.nested.add(k);
         _ret(v);
       },
       (read) {
+        restore();
         _depth--;
         fix.busy.remove(k);
         throw _Undefined(fix.id, read);
@@ -853,15 +1100,27 @@ final class Evaluator {
     );
   }
 
-  void _generations(Value init, Object step, Object guard, GuardPos pos) {
+  /// The step making generation `t` and the guard testing it run at coordinate `t`, each
+  /// reading the fact of the frame before.
+  void _generations(
+    Value init,
+    int? from,
+    (Object, int?) step,
+    (Object, int?) guard,
+    GuardPos pos,
+  ) {
     final frames = [init];
+    final region = _trace?.keys;
     void finish() => _ret(
       Family.fromLeaves([
         for (var t = 0; t < frames.length; t++) ([Int(t)], frames[t]),
       ]),
     );
     void goOn(void Function(bool) k) {
-      _applyThen(guard, [frames.last], (verdict) {
+      _enter([Int(frames.length - 1)]);
+      _aim(guard.$2, [from]);
+      _applyThen(guard.$1, [frames.last], (verdict) {
+        _leave(region);
         switch (verdict) {
           case Bool(:final value):
             k(value);
@@ -879,9 +1138,13 @@ final class Evaluator {
     late void Function() loop;
     void stepOnce() {
       _burn();
-      _applyThen(step, [frames.last], (next) {
+      _enter([Int(frames.length)]);
+      _aim(step.$2, [from]);
+      _applyThen(step.$1, [frames.last], (next) {
+        _leave(region);
         if (next is! Value) throw const KernelTypeError('a gen step returned a function');
         frames.add(next);
+        from = _lastFact;
         if (pos == GuardPos.after) {
           goOn((more) => more ? loop() : finish());
         } else {
@@ -914,13 +1177,14 @@ bool _samePath(Keypath a, Keypath b) {
   return true;
 }
 
-/// `env` with the bindings `pat` makes when it matches `v`; null when it does not match.
-_Env? _match(Pattern pat, Value v, _Env env) {
+/// `env` with the bindings `pat` makes when it matches `v`, each from `fact`; null when it
+/// does not match.
+_Env? _match(Pattern pat, Value v, _Env env, int? fact) {
   _Env? all(List<Pattern> ps, List<Value> xs, _Env env) {
     if (ps.length != xs.length) return null;
     _Env? e = env;
     for (var i = 0; i < ps.length && e != null; i++) {
-      e = _match(ps[i], xs[i], e);
+      e = _match(ps[i], xs[i], e, fact);
     }
     return e;
   }
@@ -929,7 +1193,7 @@ _Env? _match(Pattern pat, Value v, _Env env) {
     case (WildP(), _):
       return env;
     case (BindP(:final name), _):
-      return env.put(name, v);
+      return env.put(name, _bound(v, fact));
     case (LitP(:final value), _):
       return value == v ? env : null;
     case (AnyAtomP(), Atom()):
@@ -942,7 +1206,7 @@ _Env? _match(Pattern pat, Value v, _Env env) {
       for (final (f, p) in fields) {
         final v = a.field(f);
         if (v == null) return null;
-        e = _match(p, v, e!);
+        e = _match(p, v, e!, fact);
         if (e == null) return null;
       }
       return e;

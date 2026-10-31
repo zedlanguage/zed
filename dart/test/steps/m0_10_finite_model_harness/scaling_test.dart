@@ -24,6 +24,13 @@ Term counts(int d, bool chain) => fixDefined(keys(0, d), (self, k) {
 
 Value run(Term t, Schedule schedule) => Evaluator(World(), schedule: schedule).run(t);
 
+/// The address and value of every fact of a run of `t` under `schedule`, sorted.
+(Value, List<String>) facts(Term t, Schedule schedule) {
+  final ev = Evaluator(World(), schedule: schedule, provenanceRoot: const []);
+  final v = ev.run(t);
+  return (v, [for (final f in ev.provenance!.facts) '${f.address} ${f.value}']..sort());
+}
+
 /// The family over `0..d` whose entry 0 sums the entries `1..d`, each `k` itself.
 Term fanIn(int d) => fixDefined(keys(0, d), (self, k) {
   final sum = fold(famWith(keys(1, d), (j) => get(self, j)), const PrimFn(Prim.add), lit(0));
@@ -116,17 +123,22 @@ void main() {
     });
   });
 
-  test('a demanded entry has the value it has in rounds', () {
-    // A chain longer than the depth of nested demands falls back to the stack of demands.
-    // (Its facts are compared with those of rounds once provenance is ported, step L1.20.)
+  test('a demanded entry has the facts it has in rounds', () {
+    // An entry demanded where it is read records its facts at its own keypath, not inside the
+    // entry reading it. A chain longer than the depth of nested demands falls back to the
+    // stack of demands, and an attempt stopped there drops the entries it demanded with its
+    // facts, so each entry is still one set of facts.
     for (final d in [5, 40, maxDepth + 500]) {
       final t = reverseChain(d);
-      final v = run(t, const Pull());
-      expect(run(t, const Rounds()), v, reason: 'd = $d');
+      final (v, pull) = facts(t, const Pull());
+      final (w, rounds) = facts(t, const Rounds());
+      expect(w, v, reason: 'd = $d');
       final f = v.asFamily!;
       for (final k in [0, d ~/ 2, d - 1]) {
         expect(f[Int(k)], Int(tailSum(d, k)), reason: 'd = $d, k = $k');
       }
+      expect(pull, rounds, reason: 'd = $d: the facts differ');
+      expect(run(t, const Pull()), v, reason: 'd = $d, untraced');
     }
   });
 
