@@ -120,7 +120,7 @@ The Dart columns are filled as the port reaches each step.
 | other (Corpus 24) | 0:05 | 0:00 | 0 (0) | 0 (0) | | | |
 | M0.7 | 0:04 | 0:12 | 1 (1) | 5 (2) | 0:07 | 0:00 | 1 (1) |
 | M0.8 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:00 | 0:00 | 0 (0) |
-| M0.11 | 0:07 | 0:02 | 0 (0) | 1 (1) | | | |
+| M0.11 | 0:07 | 0:02 | 0 (0) | 1 (1) | 0:02 | 0:00 | 0 (0) |
 | L1.1 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.2 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.3 | 0:01 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -672,7 +672,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 |---|---:|---|---:|---:|
 | `crates/zed-cert/src/lib.rs` | 371 | | | |
 | `crates/zed-kernel/src/error.rs` | 4,895 | `lib/src/kernel/error.dart`<br>`test/kernel/error_test.dart` | 4,993 | 1.02 |
-| `crates/zed-kernel/src/eval.rs` | 60,185 | `lib/src/kernel/eval.dart` | 33,816 | 0.56 |
+| `crates/zed-kernel/src/eval.rs` | 60,185 | `lib/src/kernel/eval.dart` | 34,001 | 0.56 |
 | `crates/zed-kernel/src/exact.rs` | 9,165 | `lib/src/kernel/exact.dart`<br>`test/kernel/exact_test.dart` | 6,847 | 0.75 |
 | `crates/zed-kernel/src/family.rs` | 13,904 | `lib/src/kernel/family.dart`<br>`lib/src/kernel/pmap.dart`<br>`test/kernel/family_test.dart` | 16,256 | 1.17 |
 | `crates/zed-kernel/src/lib.rs` | 1,148 | `lib/kernel.dart` | 299 | 0.26 |
@@ -699,7 +699,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/ast/mod.rs` | 21,974 | | | |
 | `crates/zedc/src/ast/stmts.rs` | 9,682 | | | |
 | `crates/zedc/src/ast/types.rs` | 11,772 | | | |
-| `crates/zedc/src/axioms.rs` | 7,016 | | | |
+| `crates/zedc/src/axioms.rs` | 7,016 | `lib/axioms.dart` | 7,266 | 1.04 |
 | `crates/zedc/src/canon/binders.rs` | 20,447 | `lib/src/canon/binders.dart` | 14,511 | 0.71 |
 | `crates/zedc/src/canon/domain.rs` | 4,086 | `lib/src/canon/domain.dart` | 3,436 | 0.84 |
 | `crates/zedc/src/canon/mod.rs` | 8,601 | `lib/src/canon/canon.dart`<br>`lib/canon.dart`<br>`lib/src/canon/blake3.dart`<br>`test/canon/blake3_test.dart` | 18,445 | 2.14 |
@@ -956,14 +956,14 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_10_finite_model_harness/scaling.rs` | 9,925 | `test/steps/m0_10_finite_model_harness/scaling_test.dart` | 6,608 | 0.67 |
 | `tests/steps/m0_10_finite_model_harness/smoke.rs` | 7,212 | `test/steps/m0_10_finite_model_harness/smoke_test.dart` | 5,993 | 0.83 |
 | `tests/steps/m0_10_finite_model_harness/witnesses.rs` | 11,966 | `test/steps/m0_10_finite_model_harness/witnesses_test.dart` | 10,392 | 0.87 |
-| `tests/steps/m0_11_prelude_axioms_and_limits/axioms.rs` | 11,459 | | | |
-| `tests/steps/m0_11_prelude_axioms_and_limits/limits.rs` | 3,277 | | | |
+| `tests/steps/m0_11_prelude_axioms_and_limits/axioms.rs` | 11,459 | `test/steps/m0_11_prelude_axioms_and_limits/axioms_test.dart` | 8,469 | 0.74 |
+| `tests/steps/m0_11_prelude_axioms_and_limits/limits.rs` | 3,277 | `test/steps/m0_11_prelude_axioms_and_limits/limits_test.dart` | 2,947 | 0.90 |
 | `tests/steps/m0_11_prelude_axioms_and_limits/mod.rs` | 453 | | | |
-| `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | | | |
-| `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | | | |
+| `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 892 | 0.55 |
+| `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **561,106** | | **463,788** | **0.83** |
+| **the Rust files ported so far** | **588,046** | | **486,350** | **0.83** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1046,10 +1046,19 @@ Dart:
 - **M0.8, the Zed₀ checklist.** One test, which reads the checklist and corpus program 31
   from the spec copy in `zed/` and passed on its first run, in under a minute against the
   Rust's four. Dart's `split` and a regular expression stand in for Rust's iterator chain.
+- **M0.11, prelude axioms and limits.** 11 tests, all passing on the first run, with no
+  compile error; the pinned unit address matched. A law is a sealed class whose ten laws
+  without an argument are one enum implementing it, so a switch over laws is checked
+  exhaustive, and an axiom is a record. The constants of a law are kernel values, where the
+  Rust needed a separate `Const` type because its values cannot be built in a constant; the
+  table is a `final` list, since a `Float` cannot be `const`. Dart's `++` keeps a join of two
+  strings unwritten, so the memory test also reads the text, which writes all 2^29
+  characters out. Two of the three signed-zero tests read a program's values through the
+  elaboration of step L1.16, and are ported with that step.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1062,7 +1071,7 @@ performance pass yet, so the second number is 0 throughout.
 |---|---:|---:|
 | `lib/kernel.dart` | 2 | 0 |
 | `lib/src/kernel/error.dart` | 1 | 0 |
-| `lib/src/kernel/eval.dart` | 1 | 0 |
+| `lib/src/kernel/eval.dart` | 2 | 0 |
 | `lib/src/kernel/exact.dart` | 1 | 0 |
 | `lib/src/kernel/family.dart` | 1 | 0 |
 | `lib/src/kernel/num.dart` | 1 | 0 |
@@ -1126,5 +1135,10 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/m0_07_canonicalization/rules_test.dart` | 1 | 0 |
 | `test/steps/m0_07_canonicalization/scaling_test.dart` | 1 | 0 |
 | `test/steps/m0_08_zed0_checklist/checklist_test.dart` | 1 | 0 |
+| `lib/axioms.dart` | 1 | 0 |
+| `test/steps/m0_11_prelude_axioms_and_limits/axioms_test.dart` | 1 | 0 |
+| `test/steps/m0_11_prelude_axioms_and_limits/limits_test.dart` | 1 | 0 |
+| `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 1 | 0 |
+| `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

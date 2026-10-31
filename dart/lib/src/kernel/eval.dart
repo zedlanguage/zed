@@ -21,6 +21,10 @@ import 'words.dart';
 /// The fewest steps a run must be able to take before it may report [OutOfFuelError].
 const minSteps = 10000000;
 
+/// The fewest bytes of memory a run must be able to use. The reference evaluator sets no
+/// memory limit of its own, so it is bounded only by the machine.
+const minMemory = 1 << 30;
+
 /// The fewest nested calls a run must follow before it may report [TooDeepError].
 const minNestedCalls = 20000;
 

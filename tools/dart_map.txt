@@ -69,3 +69,8 @@ dart/test/steps/m0_07_canonicalization/domains_test.dart tests/steps/m0_07_canon
 dart/test/steps/m0_07_canonicalization/rules_test.dart tests/steps/m0_07_canonicalization/rules.rs
 dart/test/steps/m0_07_canonicalization/scaling_test.dart tests/steps/m0_07_canonicalization/scaling.rs
 dart/test/steps/m0_08_zed0_checklist/checklist_test.dart tests/steps/m0_08_zed0_checklist/mod.rs
+dart/lib/axioms.dart crates/zedc/src/axioms.rs
+dart/test/steps/m0_11_prelude_axioms_and_limits/axioms_test.dart tests/steps/m0_11_prelude_axioms_and_limits/axioms.rs
+dart/test/steps/m0_11_prelude_axioms_and_limits/limits_test.dart tests/steps/m0_11_prelude_axioms_and_limits/limits.rs
+dart/test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs
+dart/test/steps/m0_11_prelude_axioms_and_limits/units_test.dart tests/steps/m0_11_prelude_axioms_and_limits/units.rs
