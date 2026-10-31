@@ -99,3 +99,9 @@ dart/lib/fence.dart crates/zedc/src/fence.rs
 dart/test/support/fences.dart tests/src/fences.rs
 dart/test/steps/l01_07_fences/extractor_test.dart tests/steps/l01_07_fences/extractor.rs
 dart/test/steps/l01_07_fences/copies_test.dart tests/steps/l01_07_fences/copies.rs
+dart/lib/parse.dart crates/zedc/src/parse/mod.rs
+dart/lib/src/parse/grammar.dart crates/zedc/src/parse/grammar.rs
+dart/test/support/trees.dart tests/src/trees.rs
+dart/test/steps/l01_08_parser/cases_test.dart tests/steps/l01_08_parser/cases.rs
+dart/test/steps/l01_08_parser/errors_test.dart tests/steps/l01_08_parser/errors.rs
+dart/test/steps/l01_08_parser/rings_test.dart tests/steps/l01_08_parser/rings.rs

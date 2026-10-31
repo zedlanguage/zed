@@ -128,7 +128,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.5 | 0:05 | 0:01 | 0 (0) | 0 (0) | 0:06 | 0:06 | 3 (1) |
 | L1.6 | 0:02 | 0:01 | 0 (0) | 0 (0) | 0:01 | 0:00 | 0 (0) |
 | L1.7 | 0:06 | 0:01 | 0 (0) | 0 (0) | 0:01 | 0:00 | 0 (0) |
-| L1.8 | 0:06 | 0:01 | 0 (0) | 0 (0) | | | |
+| L1.8 | 0:06 | 0:01 | 0 (0) | 0 (0) | 0:04 | 0:05 | 3 (1) |
 | L1.9 | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.10 | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.11 | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -719,8 +719,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/lex/string.rs` | 11,031 | `lib/src/lex/string.dart` | 12,231 | 1.11 |
 | `crates/zedc/src/lib.rs` | 835 | | | |
 | `crates/zedc/src/main.rs` | 1,770 | | | |
-| `crates/zedc/src/parse/grammar.rs` | 10,399 | | | |
-| `crates/zedc/src/parse/mod.rs` | 10,467 | | | |
+| `crates/zedc/src/parse/grammar.rs` | 10,399 | `lib/src/parse/grammar.dart` | 8,017 | 0.77 |
+| `crates/zedc/src/parse/mod.rs` | 10,467 | `lib/parse.dart` | 11,116 | 1.06 |
 | `crates/zedc/src/query.rs` | 4,746 | | | |
 | `crates/zedc/src/resolve.rs` | 15,634 | | | |
 | `crates/zedc/src/run.rs` | 24,727 | | | |
@@ -753,7 +753,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/src/oracle.rs` | 7,128 | | | |
 | `tests/src/scaling.rs` | 3,377 | `test/support/scaling.dart` | 2,230 | 0.66 |
 | `tests/src/tokens.rs` | 1,819 | `test/support/tokens.dart` | 1,557 | 0.86 |
-| `tests/src/trees.rs` | 1,371 | | | |
+| `tests/src/trees.rs` | 1,371 | `test/support/trees.dart` | 1,121 | 0.82 |
 | `tests/steps/l01_01_source_loading/accepted.rs` | 1,455 | `test/steps/l01_01_source_loading/accepted_test.dart` | 1,467 | 1.01 |
 | `tests/steps/l01_01_source_loading/mod.rs` | 163 | | | |
 | `tests/steps/l01_01_source_loading/places.rs` | 1,478 | `test/steps/l01_01_source_loading/places_test.dart` | 1,560 | 1.06 |
@@ -773,10 +773,10 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_07_fences/copies.rs` | 4,090 | `test/steps/l01_07_fences/copies_test.dart` | 3,458 | 0.85 |
 | `tests/steps/l01_07_fences/extractor.rs` | 1,624 | `test/steps/l01_07_fences/extractor_test.dart` | 1,776 | 1.09 |
 | `tests/steps/l01_07_fences/mod.rs` | 287 | | | |
-| `tests/steps/l01_08_parser/cases.rs` | 4,060 | | | |
-| `tests/steps/l01_08_parser/errors.rs` | 969 | | | |
+| `tests/steps/l01_08_parser/cases.rs` | 4,060 | `test/steps/l01_08_parser/cases_test.dart` | 4,101 | 1.01 |
+| `tests/steps/l01_08_parser/errors.rs` | 969 | `test/steps/l01_08_parser/errors_test.dart` | 1,242 | 1.28 |
 | `tests/steps/l01_08_parser/mod.rs` | 214 | | | |
-| `tests/steps/l01_08_parser/rings.rs` | 1,713 | | | |
+| `tests/steps/l01_08_parser/rings.rs` | 1,713 | `test/steps/l01_08_parser/rings_test.dart` | 1,785 | 1.04 |
 | `tests/steps/l01_09_postfix_chains/calls.rs` | 2,767 | | | |
 | `tests/steps/l01_09_postfix_chains/chains.rs` | 2,422 | | | |
 | `tests/steps/l01_09_postfix_chains/fences.rs` | 1,560 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,774** | | | |
-| **the Rust files ported so far** | **670,685** | | **570,358** | **0.85** |
+| **the Rust files ported so far** | **699,664** | | **597,740** | **0.85** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1105,10 +1105,19 @@ Dart:
   mark lists themselves (a failed test, not a compile error). A label is read by one regular
   expression with a look-ahead. No compile errors. Two negative controls (missing an indented
   fence; reading `// layer L1x` as a label) each fail tests.
+- **L1.8, parser.** The grammar reader, the packrat parser that runs the grammar, the tree
+  printer, and the tests. The grammar is a Dart constant that `tools/bin/sync.dart` writes, as
+  the Rust parser includes the copied file at compile time. Rules refer to each other as
+  objects, and nodes hold their children, so there are no rule or node indices. Three compile
+  errors in one run (a record typedef that names itself; two pattern assignments to fields).
+  The recursive matcher overflowed the stack at 200 nested parentheses, so the matcher became
+  an explicit stack of frames; 100,000 nested parentheses then parse in about 2 s. The memo is
+  kept per token. Three negative controls (no memo, which ran past 240 s; no restore of the
+  expected set after `!`; ignoring the ring) each fail tests.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1200,6 +1209,9 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_01_source_loading/scaling_test.dart` | 1 | 0 |
 | `lib/lex.dart` | 4 | 0 |
 | `lib/fence.dart` | 1 | 0 |
+| `lib/parse.dart` | 6 | 3 |
+| `lib/src/parse/grammar.dart` | 1 | 0 |
+| `lib/src/parse/peg.dart` | 1 | 0 |
 | `lib/src/lex/text.dart` | 1 | 0 |
 | `lib/src/lex/comment.dart` | 1 | 0 |
 | `lib/src/lex/name.dart` | 1 | 0 |
@@ -1225,5 +1237,10 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_07_fences/extractor_test.dart` | 3 | 0 |
 | `test/steps/l01_07_fences/copies_test.dart` | 1 | 0 |
 | `test/steps/l01_07_fences/scaling_test.dart` | 1 | 0 |
+| `test/support/trees.dart` | 1 | 0 |
+| `test/steps/l01_08_parser/cases_test.dart` | 2 | 0 |
+| `test/steps/l01_08_parser/errors_test.dart` | 1 | 0 |
+| `test/steps/l01_08_parser/rings_test.dart` | 1 | 0 |
+| `test/steps/l01_08_parser/scaling_test.dart` | 2 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

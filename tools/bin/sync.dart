@@ -82,7 +82,7 @@ String render(String path, Spec spec, WordTable table) {
 
 /// (destination, text) of every copy: the fences in zed/fences, and in zed/grammar the
 /// syntactic grammar and the documentation notation of sec:grammar and the bracketing cases
-/// (step L1.8).
+/// (step L1.8), and the two grammars again as the Dart constants the parser reads.
 List<(String, String)> copies(String here, Spec spec, WordTable table) {
   final grammar = '$here/../grammar';
   return [
@@ -91,8 +91,27 @@ List<(String, String)> copies(String here, Spec spec, WordTable table) {
     ('$grammar/syntax.peg', '${spec.synText}\n'),
     ('$grammar/notation.peg', '${spec.docText}\n'),
     ('$grammar/cases.txt', readText('${spec.root}/tools/grammar/cases.txt')),
+    ('$here/../../dart/lib/src/parse/peg.dart', pegDart(spec.synText, spec.docText)),
   ];
 }
+
+/// The Dart library holding the syntactic grammar and the documentation notation.
+String pegDart(String syntax, String notation) =>
+    '''
+/// The syntactic grammar and the documentation notation of DESIGN.md sec:grammar, as copied into
+/// `zed/grammar/`; written by `tools/bin/sync.dart`: do not edit.
+library;
+
+/// `zed/grammar/syntax.peg`.
+const syntaxPeg = r\'\'\'
+$syntax
+\'\'\';
+
+/// `zed/grammar/notation.peg`.
+const notationPeg = r\'\'\'
+$notation
+\'\'\';
+''';
 
 void main(List<String> argv) => runTool(() {
   final check = argv.contains('--check');
