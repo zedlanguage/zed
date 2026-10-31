@@ -134,7 +134,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.11 | 0:04 | 0:01 | 0 (0) | 0 (0) | 0:01 | 0:00 | 2 (2) |
 | L1.12 | 0:03 | 0:01 | 0 (0) | 2 (1) | 0:01 | 0:08 | 2 (1) |
 | L1.13 | 0:09 | 0:03 | 0 (0) | 0 (0) | 0:06 | 0:01 | 1 (1) |
-| L1.14 | 0:07 | 0:02 | 0 (0) | 0 (0) | | | |
+| L1.14 | 0:07 | 0:02 | 0 (0) | 0 (0) | 0:04 | 0:01 | 0 (0) |
 | L1.15 | 0:08 | 0:03 | 1 (1) | 16 (3) | | | |
 | L1.16 | 0:15 | 0:01 | 0 (0) | 1 (1) | | | |
 | L1.17 | 0:13 | 0:04 | 0 (0) | 5 (2) | | | |
@@ -722,7 +722,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/parse/grammar.rs` | 10,399 | `lib/src/parse/grammar.dart` | 8,017 | 0.77 |
 | `crates/zedc/src/parse/mod.rs` | 10,467 | `lib/parse.dart` | 11,116 | 1.06 |
 | `crates/zedc/src/query.rs` | 4,746 | | | |
-| `crates/zedc/src/resolve.rs` | 15,634 | | | |
+| `crates/zedc/src/resolve.rs` | 15,634 | `lib/resolve.dart` | 13,267 | 0.85 |
 | `crates/zedc/src/run.rs` | 24,727 | | | |
 | `crates/zedc/src/source.rs` | 7,459 | `lib/source.dart` | 7,286 | 0.98 |
 | `crates/zedc/src/stage.rs` | 31,611 | | | |
@@ -800,11 +800,11 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_13_formatter/layout.rs` | 3,440 | `test/steps/l01_13_formatter/layout_test.dart` | 3,688 | 1.07 |
 | `tests/steps/l01_13_formatter/mod.rs` | 1,943 | `test/steps/l01_13_formatter/fmt.dart` | 1,389 | 0.71 |
 | `tests/steps/l01_13_formatter/scaling.rs` | 1,811 | `test/steps/l01_13_formatter/scaling_test.dart` | 2,022 | 1.12 |
-| `tests/steps/l01_14_name_resolution/fences.rs` | 1,432 | | | |
-| `tests/steps/l01_14_name_resolution/mod.rs` | 2,673 | | | |
-| `tests/steps/l01_14_name_resolution/order.rs` | 2,255 | | | |
-| `tests/steps/l01_14_name_resolution/scaling.rs` | 2,201 | | | |
-| `tests/steps/l01_14_name_resolution/scopes.rs` | 3,843 | | | |
+| `tests/steps/l01_14_name_resolution/fences.rs` | 1,432 | `test/steps/l01_14_name_resolution/fences_test.dart` | 1,777 | 1.24 |
+| `tests/steps/l01_14_name_resolution/mod.rs` | 2,673 | `test/steps/l01_14_name_resolution/res.dart` | 2,222 | 0.83 |
+| `tests/steps/l01_14_name_resolution/order.rs` | 2,255 | `test/steps/l01_14_name_resolution/order_test.dart` | 2,203 | 0.98 |
+| `tests/steps/l01_14_name_resolution/scaling.rs` | 2,201 | `test/steps/l01_14_name_resolution/scaling_test.dart` | 2,271 | 1.03 |
+| `tests/steps/l01_14_name_resolution/scopes.rs` | 3,843 | `test/steps/l01_14_name_resolution/scopes_test.dart` | 3,515 | 0.91 |
 | `tests/steps/l01_15_kernel_terms/evidence.rs` | 3,397 | | | |
 | `tests/steps/l01_15_kernel_terms/layout.rs` | 4,320 | | | |
 | `tests/steps/l01_15_kernel_terms/mod.rs` | 288 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,774** | | | |
-| **the Rust files ported so far** | **804,742** | | **684,167** | **0.85** |
+| **the Rust files ported so far** | **832,780** | | **709,422** | **0.85** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1182,10 +1182,25 @@ Dart:
   newline counted as a blank line; equality made left-associative) fail tests, but the
   fourth only after adding the case `(a == b) == c`, which neither port tested. The step's
   time includes checking M0.2 to M0.4, about a minute.
+- **L1.14** (name resolution): easy. Ported from the Rust at its final shape, in which a name
+  is found in `O(1)` however deep the scopes nest and an overload's parameter types sit in a
+  set. A use holds the binders themselves, not their indices into the unit's list, and an
+  `else` pattern's binders are a list, not a range of indices; the binder list a use holds
+  is shared, since a scope binds all its names before any is read. The prelude's words are a
+  map, where the Rust searches a list. The walk runs on one explicit stack of generators, so
+  the scaling test needs no large thread stack (the Rust raises it to 4 GiB). Errors are
+  thrown as one exception holding the list. No compile errors; all the Rust cases pass on
+  the first run. Five negative controls (every function of a name taken as an overload; a
+  closed scope's names left visible; a `test` case read in its function's scope; a later
+  layer's word accepted; the overload signatures kept in a list) fail tests, but the last,
+  which makes declaring k overloads cost k², passed at first: the scaling test timed the
+  lexer and parser too, which hid the resolver's growth. Both scaling tests now build each
+  size's statements once and time the resolver alone, and the list version then runs 39 to
+  49 times as long at eight times the size, over the limit of 24.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1285,6 +1300,7 @@ performance pass yet, so the second number is 0 throughout.
 | `lib/src/ast/stmts.dart` | 3 | 0 |
 | `lib/format.dart` | 2 | 0 |
 | `bin/zedc.dart` | 1 | 0 |
+| `lib/resolve.dart` | 3 | 0 |
 | `lib/src/lex/text.dart` | 1 | 0 |
 | `lib/src/lex/comment.dart` | 1 | 0 |
 | `lib/src/lex/name.dart` | 1 | 0 |
@@ -1342,5 +1358,10 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_13_formatter/layout_test.dart` | 2 | 0 |
 | `test/steps/l01_13_formatter/fences_test.dart` | 1 | 0 |
 | `test/steps/l01_13_formatter/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_14_name_resolution/res.dart` | 2 | 0 |
+| `test/steps/l01_14_name_resolution/order_test.dart` | 1 | 0 |
+| `test/steps/l01_14_name_resolution/scopes_test.dart` | 1 | 0 |
+| `test/steps/l01_14_name_resolution/fences_test.dart` | 2 | 0 |
+| `test/steps/l01_14_name_resolution/scaling_test.dart` | 4 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

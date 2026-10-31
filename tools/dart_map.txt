@@ -133,3 +133,9 @@ dart/test/steps/l01_13_formatter/fmt.dart tests/steps/l01_13_formatter/mod.rs
 dart/test/steps/l01_13_formatter/layout_test.dart tests/steps/l01_13_formatter/layout.rs
 dart/test/steps/l01_13_formatter/fences_test.dart tests/steps/l01_13_formatter/fences.rs
 dart/test/steps/l01_13_formatter/scaling_test.dart tests/steps/l01_13_formatter/scaling.rs
+dart/lib/resolve.dart crates/zedc/src/resolve.rs
+dart/test/steps/l01_14_name_resolution/res.dart tests/steps/l01_14_name_resolution/mod.rs
+dart/test/steps/l01_14_name_resolution/order_test.dart tests/steps/l01_14_name_resolution/order.rs
+dart/test/steps/l01_14_name_resolution/scopes_test.dart tests/steps/l01_14_name_resolution/scopes.rs
+dart/test/steps/l01_14_name_resolution/fences_test.dart tests/steps/l01_14_name_resolution/fences.rs
+dart/test/steps/l01_14_name_resolution/scaling_test.dart tests/steps/l01_14_name_resolution/scaling.rs
