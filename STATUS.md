@@ -75,7 +75,8 @@ in docs/layout.md.
   selects no arrow is rejected.
 - Done: **L1.28**, staging (`zedc::stage`): the build evaluates the demanded build-stage
   terms to literals and leaves the rest to run; the Trick splits a function on a parameter
-  whose domain lists at most 1024 values (`Type::values` in the kernel).
+  whose domain is finite, on the values of it that the residual program's calls and the
+  tests pass (`stage::passed`), one arm per value; replacement 7 removed `SPLIT_CAP`.
 - Done: **L1.29**, diagnostics: each checker rejection carries its derivation (`Error.notes`,
   `run::Diagnostic.steps`), rendered as numbered steps with the source underlined; an error
   at a use of a class lists the uses that narrowed it; repairs that the checker discharges

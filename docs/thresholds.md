@@ -33,7 +33,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `VARIABLES` 16, `ATOMS` 64, `INTERMEDIATE` 4096, `KEPT_CONJUNCTIONS` 64 | store/presburger.rs | removed (4): a relation was dropped and its written constraint kept |
 | `CALL_DEPTH` 64, `TRANSFER_FUEL` 100000 | store/preimage.rs | removed (5): the transfer through calls stopped |
 | `BUILD_FUEL` 10^6 | stage.rs | a build-stage term is left to run whole |
-| `SPLIT_CAP` 1024 | stage.rs | the Trick does not split a parameter |
+| `SPLIT_CAP` 1024 | stage.rs | removed (7): the Trick did not split a parameter |
 | `ENUMERATION_BUDGET` 4096, `ENUMERATION_FUEL` 10^4 | zed-kernel budgets.rs | an obligation is not enumerated; a binding removes nothing |
 | `BMC_SEQ_LEN` 4, `BMC_GENERATIONS` 16, `BMC_BUDGET` 65536, the integer cut | zed-kernel budgets.rs | rung 6 checks a prefix |
 | `SATURATION_ITERATIONS` 8, `SATURATION_NODES` 10^4 | zed-kernel budgets.rs | rung 3 stops saturating |
@@ -334,10 +334,27 @@ A demanded term is evaluated at the build stage when its termination is shown (s
 or measured recursion, the evidence `total` mode already uses); otherwise it runs at run
 time. The rule is about the term's form, not how far an evaluation got.
 
-### 7. The Trick (replaces SPLIT_CAP)
+### 7. The Trick (replaces SPLIT_CAP) — done
 
 Split a parameter on the values the program's static calls pass it, not on its whole
-domain: at most one specialization per call site, so the code grows at most linearly.
+domain. `stage::passed` mixes the unit and reads, in the residual definitions, each call of
+the function by its kernel name whose argument there is a literal, and each test case of
+the function whose argument there is a literal. `trick` keeps those values that lie in the
+parameter's domain, and requires the domain to be finite: a bounded integer interval, or a
+type that lists its values no longer than it is written (`Type::listed`, which has no cap).
+The split has one arm per distinct value, so at most one per call site and test case, and
+the general body stays last. A call whose arguments are all build-stage is computed by the
+build and leaves no call, so it adds no arm.
+
+Termination: `split` does not recurse into the arms it builds, and `passed` walks each term
+once. What is no longer split: the values of a finite domain that no static call passes;
+the old rule made an arm for each, and the general arm computes the same results.
+
+| Candidate | Measured | Score | Reasoning |
+|---|---|---|---|
+| Values passed by residual calls and tests, within a finite domain | `l01_28_staging::trick` (a domain of 2^40 values split on the one value passed; one arm per value however many calls pass it) | 9 | no constant; code grows linearly in the call sites |
+| Every value of a finite domain, no cap | not built | 2 | a domain like `int[0..=2^40]` is finite and would be split into 2^40 arms |
+| Keep `SPLIT_CAP` | the old behavior | 0 | a constant whose crossing changes the code |
 
 ### 8. Verification ladder (replaces the enumeration, BMC and saturation budgets, DEFAULT_FUEL)
 

@@ -10,9 +10,11 @@
 //! reported in the ordinary way.
 //!
 //! The Trick: `split` specializes a function on a run-stage parameter only when the
-//! parameter's domain is finite and at most `SPLIT_CAP` values, `int[0..=256]` but not
-//! `int`. Each value gets a copy of the body mixed with the parameter known, and the
-//! general body stays as the last arm.
+//! parameter's domain is finite, `int[0..=256]` but not `int`, and only on the values of the
+//! domain that the program's static calls pass it (docs/thresholds.md, replacement 7): at
+//! most one per call site, so the code grows at most linearly in the program. Each value gets
+//! a copy of the body mixed with the parameter known, and the general body stays as the last
+//! arm.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -25,9 +27,6 @@ use crate::interp;
 
 /// The fuel of each build-stage evaluation.
 pub const BUILD_FUEL: u64 = 1_000_000;
-
-/// The most values the Trick splits a parameter into.
-pub const SPLIT_CAP: usize = 1024;
 
 /// When a term is evaluated.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -241,29 +240,91 @@ pub enum Choice {
     Keep(String),
 }
 
-/// The Trick: split on `d` only when it is finite and at most `cap` values.
-pub fn trick(d: &Domain, cap: usize) -> Choice {
-    match d {
-        Domain::Type(t) => match t.values(cap) {
-            Some(vs) => Choice::Split(vs),
-            None => Choice::Keep(format!("the domain `{t}` is not at most {cap} values")),
-        },
-        Domain::Ints(Some(lo), Some(hi)) => {
-            let n = (i128::from(*hi) - i128::from(*lo) + 1).max(0);
-            if n <= cap as i128 {
-                Choice::Split((*lo..=*hi).map(Value::Int).collect())
-            } else {
-                Choice::Keep(format!(
-                    "the domain [{lo}..={hi}] is {n} values, over {cap}"
-                ))
+/// The Trick: split on the members of `d` among `passed` only when `d` is finite. A type is
+/// finite here when it lists its values no longer than it is written ([`Type::listed`]).
+pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
+    let within: Vec<Value> = match d {
+        Domain::Type(t) => {
+            if t.listed().is_none() {
+                return Choice::Keep(format!("the domain `{t}` is not a finite list"));
+            }
+            passed.iter().filter(|v| t.contains(v)).cloned().collect()
+        }
+        Domain::Ints(Some(lo), Some(hi)) => passed
+            .iter()
+            .filter(|v| matches!(v, Value::Int(i) if lo <= i && i <= hi))
+            .cloned()
+            .collect(),
+        Domain::Ints(..) => {
+            return Choice::Keep("an unbounded integer domain is infinite".into());
+        }
+    };
+    if within.is_empty() {
+        return Choice::Keep("no static call passes a value of the domain".into());
+    }
+    Choice::Split(within)
+}
+
+/// The values the static calls of `name` in `unit` pass its parameter `param`: each call by
+/// its kernel name, in a definition once mixed, whose argument there is a literal, and each
+/// case of a test of `name` whose argument there is a literal.
+pub fn passed(unit: &Unit, name: &str, param: usize, fuel: u64) -> BTreeSet<Value> {
+    let mut out = BTreeSet::new();
+    let Some(f) = unit.defs.iter().find(|d| d.name == name) else {
+        return out;
+    };
+    let roots: Vec<&str> = unit.defs.iter().map(|d| d.name.as_str()).collect();
+    let (mixed, _) = mix(unit, &roots, fuel);
+    for d in &mixed.defs {
+        calls(&d.term, &f.kernel, param, &mut out);
+    }
+    for t in unit.tests.iter().filter(|t| t.function == name) {
+        if let Some(Term::Lit(v)) = t.args.get(param) {
+            out.insert(v.clone());
+        }
+    }
+    out
+}
+
+/// Adds to `out` the literal argument `param` of each call of `f` in `t`.
+fn calls(t: &Term, f: &Arc<str>, param: usize, out: &mut BTreeSet<Value>) {
+    if let Term::App(g, args) = t
+        && matches!(&**g, Term::Var(n) if n == f)
+        && let Some(Term::Lit(v)) = args.get(param)
+    {
+        out.insert(v.clone());
+    }
+    match t {
+        Term::Lam(_, b) => calls(b, f, param, out),
+        Term::Let(_, e, b) => {
+            calls(e, f, param, out);
+            calls(b, f, param, out);
+        }
+        Term::Match(e, arms) => {
+            calls(e, f, param, out);
+            for (_, a) in arms {
+                calls(a, f, param, out);
             }
         }
-        Domain::Ints(..) => Choice::Keep("an unbounded integer domain is infinite".into()),
+        Term::Fam { domain, body, .. } => {
+            calls(domain, f, param, out);
+            calls(body, f, param, out);
+        }
+        Term::Fix { init, step, .. } => {
+            calls(init, f, param, out);
+            calls(step, f, param, out);
+        }
+        _ => {
+            for c in children(t) {
+                calls(c, f, param, out);
+            }
+        }
     }
 }
 
-/// The function `name` of `unit` split on its parameter `param` over `d`, each arm its body
-/// mixed with the parameter known, and the general body last; or why the Trick keeps it.
+/// The function `name` of `unit` split on its parameter `param` over the values of `d` its
+/// static calls pass ([`passed`]), each arm its body mixed with the parameter known, and the
+/// general body last; or why the Trick keeps it.
 pub fn split(
     unit: &Unit,
     name: &str,
@@ -283,7 +344,7 @@ pub fn split(
         .get(param)
         .ok_or_else(|| format!("`{name}` has no parameter {param}"))?
         .clone();
-    let values = match trick(d, SPLIT_CAP) {
+    let values = match trick(d, &passed(unit, name, param, fuel)) {
         Choice::Split(vs) => vs,
         Choice::Keep(why) => return Err(why),
     };
