@@ -398,13 +398,15 @@ impl Lower {
 
     /// The node `op` with inputs `fixed` and regions `built`, their captures merged.
     fn node(&mut self, op: Op, fixed: Vec<Src>, built: Vec<Built>) -> Val {
-        // The union of the regions' captures, in order.
+        // The union of the regions' captures, in order, with the position of each.
         let mut caps: Vec<Src> = Vec::new();
+        let mut at: HashMap<(usize, usize), usize> = HashMap::new();
         for b in &built {
             for c in &b.captures {
-                if !caps.contains(c) {
+                at.entry(captured(c)).or_insert_with(|| {
                     caps.push(c.clone());
-                }
+                    caps.len() - 1
+                });
             }
         }
         let edges: Vec<Edge> = {
@@ -424,11 +426,7 @@ impl Lower {
         let mut keys = Vec::new();
         for b in built {
             let map: Vec<usize> = (0..b.fixed)
-                .chain(
-                    b.captures
-                        .iter()
-                        .map(|c| b.fixed + caps.iter().position(|d| d == c).expect("merged")),
-                )
+                .chain(b.captures.iter().map(|c| b.fixed + at[&captured(c)]))
                 .collect();
             let mut r = b.region;
             renumber(&mut r, &map);
@@ -773,6 +771,15 @@ impl Lower {
         let out = self.term(body);
         self.unbind(mark);
         out
+    }
+}
+
+/// The key of a captured edge: a constant is never captured.
+fn captured(s: &Src) -> (usize, usize) {
+    match s {
+        Src::Arg(i) => (usize::MAX, *i),
+        Src::Out(n, p) => (*n, *p),
+        Src::Const(_) => unreachable!("a constant is never captured"),
     }
 }
 
