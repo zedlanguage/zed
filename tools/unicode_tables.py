@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Writes dart/lib/src/unicode_tables.dart, the tables of Unicode normalization the Dart source
-loader reads (step L1.1), from a copy of the Unicode Character Database: each code point's
-canonical combining class, its full canonical decomposition, and the pairs that canonical
-composition joins.
+"""Writes dart/lib/src/unicode_tables.dart, the Unicode tables the Dart source loader and lexer
+read (steps L1.1 and L1.2), from a copy of the Unicode Character Database: each code point's
+canonical combining class, its full canonical decomposition, the pairs that canonical
+composition joins, the XID_Start and XID_Continue properties, each code point's script and
+script extensions, and the code points a quoted character shows as an escape.
 
 Usage: python3 -B tools/unicode_tables.py [UCD directory, default /usr/share/unicode/ucd]
 """
@@ -41,6 +42,53 @@ decomp = [n for cp in sorted(mapping) for n in (cp, len(full(cp)), *full(cp))]
 pairs = [n for cp in sorted(mapping) if cp not in excluded and len(mapping[cp]) == 2
          for n in (*mapping[cp], cp)]
 
+def runs(values):
+    """Runs of consecutive code points with one value, as first, last, value."""
+    out = []
+    for cp in sorted(values):
+        if out and out[-1][1] == cp - 1 and out[-1][2] == values[cp]:
+            out[-1][1] = cp
+        else:
+            out.append([cp, cp, values[cp]])
+    return out
+
+def ranged(file, keep=lambda v: True):
+    """The code points of each value of a file of `first..last ; value` lines."""
+    out = {}
+    for line in (ucd / file).read_text().splitlines():
+        body = line.split("#")[0].split(";")
+        if len(body) < 2:
+            continue
+        lo, _, hi = body[0].strip().partition("..")
+        v = body[1].strip()
+        if keep(v):
+            for cp in range(int(lo, 16), int(hi or lo, 16) + 1):
+                out[cp] = v
+    return out
+
+# A code point has many properties, so each property is read on its own.
+xid_start = {cp: 1 for cp in ranged("DerivedCoreProperties.txt", lambda v: v == "XID_Start")}
+xid_continue = {cp: 1 for cp in ranged("DerivedCoreProperties.txt", lambda v: v == "XID_Continue")}
+# The characters a quoted character shows as `\\u{…}`: a control, private use, format or
+# unassigned character, white space, a grapheme extender, or a default-ignorable character.
+escaped = {cp: 1 for cp, v in ranged("extracted/DerivedGeneralCategory.txt").items()
+           if v in ("Cc", "Co", "Cf", "Cn")}
+for cp, v in ranged("PropList.txt", lambda v: v == "White_Space").items():
+    escaped[cp] = 1
+for p in ("Grapheme_Extend", "Default_Ignorable_Code_Point"):
+    for cp in ranged("DerivedCoreProperties.txt", lambda v: v == p):
+        escaped[cp] = 1
+long = {}
+for line in (ucd / "PropertyValueAliases.txt").read_text().splitlines():
+    f = [x.strip() for x in line.split("#")[0].split(";")]
+    if len(f) >= 3 and f[0] == "sc":
+        long[f[1]] = f[2]
+script_names = sorted(set(long.values()))
+index = {n: i for i, n in enumerate(script_names)}
+script = {cp: index[v] for cp, v in ranged("Scripts.txt").items()}
+ext_sets = sorted({v for v in ranged("ScriptExtensions.txt").values()})
+ext = {cp: ext_sets.index(v) for cp, v in ranged("ScriptExtensions.txt").items()}
+
 def literal(name, doc, numbers):
     words = [format(n, "x") for n in numbers]
     lines, cur = [], ""
@@ -67,8 +115,28 @@ const unicodeVersion = '{version}';
             "its full decomposition, and that decomposition, in hexadecimal.", decomp),
     literal("compositions", "The pairs canonical composition joins, and what each pair "
             "becomes, in hexadecimal.", pairs),
+    literal("xidStart", "Runs of code points with the XID_Start property, in hexadecimal: "
+            "first, last, 1.", [n for r in runs(xid_start) for n in r]),
+    literal("xidContinue", "Runs of code points with the XID_Continue property, in "
+            "hexadecimal: first, last, 1.", [n for r in runs(xid_continue) for n in r]),
+    literal("scripts", "Runs of code points of one script, in hexadecimal: first, last, and "
+            "the index of the script in `scriptNames`; a code point in no run is of the script "
+            "Unknown.", [n for r in runs(script) for n in r]),
+    literal("scriptExtensions", "Runs of code points with one Script_Extensions value, in "
+            "hexadecimal: first, last, and the index of the value in `scriptExtensionSets`; a "
+            "code point in no run has its script as its only extension.",
+            [n for r in runs(ext) for n in r]),
+    literal("escapedInQuotes", "Runs of code points a quoted character shows as an escape, in "
+            "hexadecimal: first, last, 1.", [n for r in runs(escaped) for n in r]),
+    "/// The names of the scripts.\nconst scriptNames = [\n"
+    + "".join(f"  '{n}',\n" for n in script_names) + "];\n",
+    "/// The values of the Script_Extensions property, each a list of indexes in `scriptNames`."
+    "\nconst scriptExtensionSets = [\n"
+    + "".join(f"  [{', '.join(str(index[long[a]]) for a in v.split())}],\n" for v in ext_sets)
+    + "];\n",
 ])
 path = pathlib.Path(__file__).resolve().parent.parent / "dart/lib/src/unicode_tables.dart"
 path.write_text(out)
 print(f"Unicode {version}: {len(ranges)} class runs, {len(mapping)} decompositions, "
-      f"{len(pairs) // 3} compositions")
+      f"{len(pairs) // 3} compositions, {len(script_names)} scripts, "
+      f"{len(ext_sets)} extension sets")

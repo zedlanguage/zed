@@ -1,5 +1,6 @@
-/// Unicode Normalization Form C (Unicode Standard Annex #15) and the canonical combining class,
-/// over code points, from the tables of `unicode_tables.dart`.
+/// Unicode Normalization Form C (Unicode Standard Annex #15), the canonical combining class,
+/// the identifier properties of Unicode Standard Annex #31, and the scripts of Unicode Standard
+/// Annex #24, over code points, from the tables of `unicode_tables.dart`.
 library;
 
 import 'unicode_tables.dart';
@@ -10,6 +11,26 @@ List<int> _numbers(String hex) => [
 ];
 
 final _classRuns = _numbers(combiningClasses);
+final _xidStart = _numbers(xidStart);
+final _xidContinue = _numbers(xidContinue);
+final _scripts = _numbers(scripts);
+final _extensions = _numbers(scriptExtensions);
+final _escaped = _numbers(escapedInQuotes);
+
+/// The value of the run of `runs` (first, last, value) holding `c`, or `none`.
+int _lookup(List<int> runs, int c, int none) {
+  // The last run starting at or before `c`.
+  var (lo, hi) = (0, runs.length ~/ 3);
+  while (lo < hi) {
+    final mid = (lo + hi) >> 1;
+    if (runs[3 * mid] <= c) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo > 0 && c <= runs[3 * lo - 2] ? runs[3 * lo - 1] : none;
+}
 
 final Map<int, List<int>> _decompositions = () {
   final ns = _numbers(decompositions);
@@ -33,18 +54,40 @@ const _lCount = 19, _vCount = 21, _tCount = 28, _nCount = _vCount * _tCount;
 const _sCount = _lCount * _nCount;
 
 /// The canonical combining class of code point `c`.
-int combiningClass(int c) {
-  // The last run starting at or before `c`.
-  var (lo, hi) = (0, _classRuns.length ~/ 3);
-  while (lo < hi) {
-    final mid = (lo + hi) >> 1;
-    if (_classRuns[3 * mid] <= c) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo > 0 && c <= _classRuns[3 * lo - 2] ? _classRuns[3 * lo - 1] : 0;
+int combiningClass(int c) => _lookup(_classRuns, c, 0);
+
+/// Whether code point `c` has the XID_Start property.
+bool isXidStart(int c) => _lookup(_xidStart, c, 0) == 1;
+
+/// Whether code point `c` has the XID_Continue property.
+bool isXidContinue(int c) => _lookup(_xidContinue, c, 0) == 1;
+
+/// Whether a quoted character shows code point `c` as an escape: a control, private use,
+/// format or unassigned character, white space, a grapheme extender, or a default-ignorable
+/// character.
+bool isEscapedInQuotes(int c) => _lookup(_escaped, c, 0) == 1;
+
+/// The script Unknown.
+final unknownScript = scriptNames.indexOf('Unknown');
+
+/// The script Common.
+final commonScript = scriptNames.indexOf('Common');
+
+/// The script Inherited.
+final inheritedScript = scriptNames.indexOf('Inherited');
+
+/// The script of code point `c`, as its index in `scriptNames`.
+int script(int c) => _lookup(_scripts, c, unknownScript);
+
+/// The script extensions of code point `c`, as indexes in `scriptNames`, or null for every
+/// script: the extension of a character of the Common or Inherited script, which shares every
+/// script. A character of the script Unknown has none.
+Set<int>? scriptExtension(int c) {
+  final k = _lookup(_extensions, c, -1);
+  if (k >= 0) return scriptExtensionSets[k].toSet();
+  final s = script(c);
+  if (s == commonScript || s == inheritedScript) return null;
+  return s == unknownScript ? {} : {s};
 }
 
 /// The NFC form of the code points `cs`.
@@ -127,4 +170,25 @@ int? _join(int a, int b) {
   final (s, t) = (a - _sBase, b - _tBase);
   if (s >= 0 && s < _sCount && s % _tCount == 0 && t > 0 && t < _tCount) return a + t;
   return _compositions[_pair(a, b)];
+}
+
+/// `text` between two `quote` characters, written so that every character can be read: `\`,
+/// the quote, `\n`, `\t`, `\r` and `\0` escaped with a `\`, and each character
+/// `isEscapedInQuotes` holds as `\u{…}` in lowercase hexadecimal.
+String quoted(String text, String quote) {
+  final out = StringBuffer(quote);
+  for (final c in text.runes) {
+    out.write(switch (c) {
+      0x5c => r'\\',
+      0x0a => r'\n',
+      0x09 => r'\t',
+      0x0d => r'\r',
+      0x00 => r'\0',
+      _ when String.fromCharCode(c) == quote => '\\$quote',
+      >= 0x20 && <= 0x7e || 0xff9e || 0xff9f => String.fromCharCode(c),
+      _ when isEscapedInQuotes(c) => '\\u{${c.toRadixString(16)}}',
+      _ => String.fromCharCode(c),
+    });
+  }
+  return (out..write(quote)).toString();
 }

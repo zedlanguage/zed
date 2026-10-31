@@ -122,7 +122,7 @@ The Dart columns are filled as the port reaches each step.
 | M0.8 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:00 | 0:00 | 0 (0) |
 | M0.11 | 0:07 | 0:02 | 0 (0) | 1 (1) | 0:02 | 0:00 | 0 (0) |
 | L1.1 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:04 | 0:00 | 1 (1) |
-| L1.2 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
+| L1.2 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:06 | 0:01 | 4 (1) |
 | L1.3 | 0:01 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | | | |
 | L1.5 | 0:05 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -711,12 +711,12 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/fence.rs` | 2,991 | | | |
 | `crates/zedc/src/format.rs` | 23,772 | | | |
 | `crates/zedc/src/interp.rs` | 1,137 | | | |
-| `crates/zedc/src/lex/comment.rs` | 1,304 | | | |
-| `crates/zedc/src/lex/mod.rs` | 8,813 | | | |
-| `crates/zedc/src/lex/name.rs` | 3,147 | | | |
-| `crates/zedc/src/lex/number.rs` | 4,413 | | | |
-| `crates/zedc/src/lex/punct.rs` | 1,719 | | | |
-| `crates/zedc/src/lex/string.rs` | 11,031 | | | |
+| `crates/zedc/src/lex/comment.rs` | 1,304 | `lib/src/lex/comment.dart` | 1,138 | 0.87 |
+| `crates/zedc/src/lex/mod.rs` | 8,813 | `lib/lex.dart` | 11,614 | 1.32 |
+| `crates/zedc/src/lex/name.rs` | 3,147 | `lib/src/lex/name.dart` | 2,777 | 0.88 |
+| `crates/zedc/src/lex/number.rs` | 4,413 | `lib/src/lex/number.dart` | 4,074 | 0.92 |
+| `crates/zedc/src/lex/punct.rs` | 1,719 | `lib/src/lex/punct.dart` | 1,544 | 0.90 |
+| `crates/zedc/src/lex/string.rs` | 11,031 | `lib/src/lex/string.dart` | 9,935 | 0.90 |
 | `crates/zedc/src/lib.rs` | 835 | | | |
 | `crates/zedc/src/main.rs` | 1,770 | | | |
 | `crates/zedc/src/parse/grammar.rs` | 10,399 | | | |
@@ -759,8 +759,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_01_source_loading/places.rs` | 1,478 | `test/steps/l01_01_source_loading/places_test.dart` | 1,560 | 1.06 |
 | `tests/steps/l01_01_source_loading/rejected.rs` | 5,272 | `test/steps/l01_01_source_loading/rejected_test.dart` | 5,100 | 0.97 |
 | `tests/steps/l01_02_lexer_names/mod.rs` | 126 | | | |
-| `tests/steps/l01_02_lexer_names/names.rs` | 2,106 | | | |
-| `tests/steps/l01_02_lexer_names/scripts.rs` | 2,205 | | | |
+| `tests/steps/l01_02_lexer_names/names.rs` | 2,106 | `test/steps/l01_02_lexer_names/names_test.dart` | 1,857 | 0.88 |
+| `tests/steps/l01_02_lexer_names/scripts.rs` | 2,205 | `test/steps/l01_02_lexer_names/scripts_test.dart` | 2,478 | 1.12 |
 | `tests/steps/l01_03_lexer_integers/mod.rs` | 2,418 | | | |
 | `tests/steps/l01_04_lexer_floats_and_rationals/mod.rs` | 2,411 | | | |
 | `tests/steps/l01_05_lexer_strings/holes.rs` | 2,265 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **603,710** | | **501,763** | **0.83** |
+| **the Rust files ported so far** | **638,448** | | **537,180** | **0.84** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1066,10 +1066,25 @@ Dart:
   invalid prefix that Rust's `Utf8Error` follows. One compile error, a misnamed helper. The
   four tests, with a scaling test added, pass, and two negative controls (composing across
   a blocking mark; accepting an encoded surrogate) each fail one test.
+- **L1.2, names.** The whole lexer is ported at once, since the name tests already need
+  numbers, keywords and operators. The Rust lexer reads a `&str` by byte offset; Dart strings
+  are UTF-16, so the Dart lexer reads the UTF-8 bytes (`lib/src/lex/text.dart`, which has no
+  Rust file beside it) and every span stays a byte offset. Dart has no XID or script data, so
+  `tools/unicode_tables.py` now also writes XID_Start, XID_Continue, Script and
+  Script_Extensions, and the characters a quoted character shows as an escape, which Rust's
+  `{:?}` takes from its standard library. The first tables were wrong: one map per file kept
+  only the last property of a code point, so most letters lost XID_Start, and the script
+  tests failed until each property was read on its own. Checked once against the Rust crates
+  on all 1,112,064 code points: XID_Start and XID_Continue agree everywhere, and Script,
+  Script_Extensions and the escapes differ only on the 13,007 code points new in Unicode 18.0
+  and three Script_Extensions values 18.0 revised, since `unicode-script` 0.5.8 and Rust's
+  standard library are at Unicode 17.0. Four compile errors in one run, all from one
+  misescaped record field in a test. The two tests, with a scaling test added, pass; two
+  negative controls (not reading the trailing `'`; refusing Latin with Han) each fail tests.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1152,12 +1167,22 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 1 | 0 |
 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 1 | 0 |
 | `lib/source.dart` | 1 | 0 |
-| `lib/src/unicode.dart` | 1 | 0 |
-| `lib/src/unicode_tables.dart` | 1 | 0 |
+| `lib/src/unicode.dart` | 2 | 0 |
+| `lib/src/unicode_tables.dart` | 2 | 0 |
 | `test/unicode/unicode_test.dart` | 1 | 0 |
 | `test/steps/l01_01_source_loading/accepted_test.dart` | 1 | 0 |
 | `test/steps/l01_01_source_loading/places_test.dart` | 1 | 0 |
 | `test/steps/l01_01_source_loading/rejected_test.dart` | 1 | 0 |
 | `test/steps/l01_01_source_loading/scaling_test.dart` | 1 | 0 |
+| `lib/lex.dart` | 1 | 0 |
+| `lib/src/lex/text.dart` | 1 | 0 |
+| `lib/src/lex/comment.dart` | 1 | 0 |
+| `lib/src/lex/name.dart` | 1 | 0 |
+| `lib/src/lex/number.dart` | 1 | 0 |
+| `lib/src/lex/punct.dart` | 1 | 0 |
+| `lib/src/lex/string.dart` | 1 | 0 |
+| `test/steps/l01_02_lexer_names/names_test.dart` | 1 | 0 |
+| `test/steps/l01_02_lexer_names/scripts_test.dart` | 1 | 0 |
+| `test/steps/l01_02_lexer_names/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

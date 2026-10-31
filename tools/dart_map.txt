@@ -78,3 +78,11 @@ dart/lib/source.dart crates/zedc/src/source.rs
 dart/test/steps/l01_01_source_loading/accepted_test.dart tests/steps/l01_01_source_loading/accepted.rs
 dart/test/steps/l01_01_source_loading/places_test.dart tests/steps/l01_01_source_loading/places.rs
 dart/test/steps/l01_01_source_loading/rejected_test.dart tests/steps/l01_01_source_loading/rejected.rs
+dart/lib/lex.dart crates/zedc/src/lex/mod.rs
+dart/lib/src/lex/comment.dart crates/zedc/src/lex/comment.rs
+dart/lib/src/lex/name.dart crates/zedc/src/lex/name.rs
+dart/lib/src/lex/number.dart crates/zedc/src/lex/number.rs
+dart/lib/src/lex/punct.dart crates/zedc/src/lex/punct.rs
+dart/lib/src/lex/string.dart crates/zedc/src/lex/string.rs
+dart/test/steps/l01_02_lexer_names/names_test.dart tests/steps/l01_02_lexer_names/names.rs
+dart/test/steps/l01_02_lexer_names/scripts_test.dart tests/steps/l01_02_lexer_names/scripts.rs
