@@ -1044,8 +1044,8 @@ Dart:
   child first. Breaking the shadowing lookup of the one-pass normal form makes 5 of the 18
   tests fail.
 - **M0.8, the Zed₀ checklist.** One test, which reads the checklist and corpus program 31
-  from the spec copy in `zed/` and passed on its first run. It took under a minute in both
-  languages; Dart's `split` and a regular expression stand in for Rust's iterator chain.
+  from the spec copy in `zed/` and passed on its first run, in under a minute against the
+  Rust's four. Dart's `split` and a regular expression stand in for Rust's iterator chain.
 
 ## Dart
 
