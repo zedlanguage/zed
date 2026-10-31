@@ -127,3 +127,9 @@ dart/test/steps/l01_12_declarations/functions_test.dart tests/steps/l01_12_decla
 dart/test/steps/l01_12_declarations/ifs_test.dart tests/steps/l01_12_declarations/ifs.rs
 dart/test/steps/l01_12_declarations/pushes_test.dart tests/steps/l01_12_declarations/pushes.rs
 dart/test/steps/l01_12_declarations/fences_test.dart tests/steps/l01_12_declarations/fences.rs
+dart/lib/format.dart crates/zedc/src/format.rs
+dart/bin/zedc.dart crates/zedc/src/main.rs
+dart/test/steps/l01_13_formatter/fmt.dart tests/steps/l01_13_formatter/mod.rs
+dart/test/steps/l01_13_formatter/layout_test.dart tests/steps/l01_13_formatter/layout.rs
+dart/test/steps/l01_13_formatter/fences_test.dart tests/steps/l01_13_formatter/fences.rs
+dart/test/steps/l01_13_formatter/scaling_test.dart tests/steps/l01_13_formatter/scaling.rs

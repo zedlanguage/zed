@@ -2,8 +2,8 @@
 // declarations (step L1.12): functions with their `test` tables, and the push `p <- e`.
 part of '../../ast.dart';
 
-/// A block `{ … }`: its statements in written order, one of them its `return` (none in a
-/// function's body block that only pushes).
+/// A block `{ … }`: its statements in written order, except that its `return` is last (none in
+/// a function's body block that only pushes).
 final class Block extends Expr {
   final List<Stmt> stmts;
 
@@ -104,7 +104,8 @@ mixin _Stmts {
   _Steps params(Node n, List<Param> out);
 
   /// The block of node `n`, a `Block`: its statements, of which at most one is a `return`, and
-  /// exactly one when `exportNeeded`, as for a block that is an expression.
+  /// exactly one when `exportNeeded`, as for a block that is an expression. The export is stored
+  /// last, where the formatter writes it (step L1.13); the order of the others is kept.
   _Steps block(Node n, bool exportNeeded) sync* {
     final stmts = <Stmt>[];
     Span? export;
@@ -126,6 +127,8 @@ mixin _Stmts {
       }
       stmts.add(s);
     }
+    final i = stmts.indexWhere((s) => s is Return);
+    if (i >= 0) stmts.add(stmts.removeAt(i));
     if (exportNeeded && export == null) {
       throw BuildError(
         span(n),
