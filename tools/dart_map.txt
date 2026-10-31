@@ -161,4 +161,11 @@ dart/test/steps/l01_18_scalar_interpreter/words_test.dart tests/steps/l01_18_sca
 dart/test/steps/l01_18_scalar_interpreter/casts_test.dart tests/steps/l01_18_scalar_interpreter/casts.rs
 dart/test/steps/l01_18_scalar_interpreter/failures_test.dart tests/steps/l01_18_scalar_interpreter/failures.rs
 dart/test/steps/l01_18_scalar_interpreter/floats_test.dart tests/steps/l01_18_scalar_interpreter/floats.rs
-dart/test/steps/l01_18_scalar_interpreter/scaling_test.dart tests/steps/l01_18_scalar_interpreter/mod.rs
+dart/test/steps/l01_18_scalar_interpreter/scaling_test.dart tests/steps/l01_18_scalar_interpreter/scaling.rs
+dart/lib/run.dart crates/zedc/src/run.rs
+dart/test/steps/l01_19_whole_file_ports/ports.dart tests/steps/l01_19_whole_file_ports/mod.rs
+dart/test/steps/l01_19_whole_file_ports/lines_test.dart tests/steps/l01_19_whole_file_ports/lines.rs
+dart/test/steps/l01_19_whole_file_ports/files_test.dart tests/steps/l01_19_whole_file_ports/files.rs
+dart/test/steps/l01_19_whole_file_ports/replay_test.dart tests/steps/l01_19_whole_file_ports/replay.rs
+dart/test/steps/l01_19_whole_file_ports/writes_test.dart tests/steps/l01_19_whole_file_ports/writes.rs
+dart/test/steps/l01_19_whole_file_ports/scaling_test.dart tests/steps/l01_19_whole_file_ports/mod.rs

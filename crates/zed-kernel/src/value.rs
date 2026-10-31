@@ -152,20 +152,24 @@ impl Value {
     /// distinct ones as `#errs({…})`, an `#errs` among them giving its members, and a single
     /// failure as itself.
     pub fn merge_failures<'a>(atoms: impl IntoIterator<Item = &'a Value>) -> Value {
-        let mut set = std::collections::BTreeSet::new();
-        for a in atoms {
+        // The largest set is extended, not copied, so a chain of n merges costs O(n log n).
+        let atoms: Vec<&Value> = atoms.into_iter().collect();
+        let base = atoms
+            .iter()
+            .filter_map(|a| a.errs())
+            .max_by_key(|f| f.len());
+        let mut set = base.cloned().unwrap_or_default();
+        for a in &atoms {
             match a.errs() {
-                Some(members) => set.extend(members.iter().map(|(k, _)| k.clone())),
-                None => {
-                    set.insert(a.clone());
-                }
+                Some(m) if base.is_some_and(|b| std::ptr::eq(m, b)) => {}
+                Some(m) => m.iter().for_each(|(k, v)| set.insert(k.clone(), v.clone())),
+                None => set.insert(a.key(), (*a).clone()),
             }
         }
         if set.len() == 1 {
-            return set.pop_first().expect("one member");
+            return set.iter().next().expect("one member").1.clone();
         }
-        let members = Family::of(set.into_iter().map(|a| (a.clone(), a)));
-        Value::atom_with("errs", vec![Value::Family(members)])
+        Value::atom_with("errs", vec![Value::Family(set)])
     }
 
     /// The set of an `#errs({…})`.

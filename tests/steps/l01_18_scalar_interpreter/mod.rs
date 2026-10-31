@@ -5,6 +5,7 @@
 mod casts;
 mod failures;
 mod floats;
+mod scaling;
 mod words;
 
 use crate::l01_16_elaboration::value;

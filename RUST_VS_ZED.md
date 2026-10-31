@@ -23,6 +23,28 @@ builds the tables, so it copied each node to release the borrow. An attempt to r
 borrow of an `if` condition early did not make the compile linear, and the scaling test in the
 patch still failed. The last full Rust test run before the stop passed 930 tests.
 
+### Rust changes after the stop
+
+The Dart port found two faults of order n² that the Rust shared, and the Rust was fixed to
+match, each with the Dart's scaling test (COMPLEXITY.md K18, F20). With the old code put back,
+each test ran past 500 s and was stopped. The port also found a third fault, in the Rust type
+checker only (F21), which is left open until the port reaches L1.27. The full Rust test run
+now passes 932 tests (930 plus the two new ones), and clippy is clean.
+
+| file | edit calls | lines added | lines removed |
+|---|---:|---:|---:|
+| `crates/zed-kernel/src/family.rs` | 1 | 6 | 0 |
+| `crates/zed-kernel/src/value.rs` | 2 | 13 | 9 |
+| `crates/zedc/src/cost.rs` | 2 | 15 | 6 |
+| `tests/steps/m0_06_cost_scalarization/mod.rs` | 4 | 29 | 0 |
+| `tests/steps/l01_18_scalar_interpreter/mod.rs` | 5 | 1 | 0 |
+| `tests/steps/l01_18_scalar_interpreter/scaling.rs` (new) | 7 | 32 | 0 |
+| `COMPLEXITY.md` | 1 | 3 | 1 |
+
+The edit calls include the round trips for the negative controls and a probe test that was
+added and then removed. Time: 0:05 model, 0:24 tool, most of the tool time spent on the
+negative controls and the full test run. No compile errors.
+
 ## Build and test baseline (Rust)
 
 Measured on 2026-10-31 at `55f537a`, in a scope capped at 64 GB, with a separate target
@@ -65,7 +87,7 @@ time per step, summed over its tests, for every step above one second:
 | L1.21 | 22 | 2.3 s |
 | types unit tests | 1 | 2.0 s |
 | L1.36 | 18 | 2.0 s |
-| L1.18 | 22 | 1.4 s |
+| L1.18 | 23 | 1.7 s |
 | L1.15 | 20 | 1.2 s |
 
 Every other step takes under one second in all. The slowest single tests are M0.11's ten
@@ -139,7 +161,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.16 | 0:15 | 0:01 | 0 (0) | 1 (1) | 0:12 | 0:10 | 0 (0) |
 | L1.17 | 0:13 | 0:04 | 0 (0) | 5 (2) | 0:04 | 0:01 | 0 (0) |
 | L1.18 | 0:08 | 0:04 | 0 (0) | 2 (1) | 0:03 | 0:14 | 0 (0) |
-| L1.19 | 0:12 | 0:03 | 0 (0) | 1 (1) | | | |
+| L1.19 | 0:12 | 0:03 | 0 (0) | 1 (1) | 0:06 | 0:08 | 8 (1) |
 | L1.20 | 0:13 | 0:04 | 0 (0) | 3 (2) | | | |
 | L1.21 | 0:09 | 0:02 | 0 (0) | 0 (0) | | | |
 | L1.22 | 0:14 | 0:04 | 0 (0) | 1 (1) | | | |
@@ -674,7 +696,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-kernel/src/error.rs` | 4,895 | `lib/src/kernel/error.dart`<br>`test/kernel/error_test.dart` | 4,993 | 1.02 |
 | `crates/zed-kernel/src/eval.rs` | 60,185 | `lib/src/kernel/eval.dart` | 33,988 | 0.56 |
 | `crates/zed-kernel/src/exact.rs` | 9,165 | `lib/src/kernel/exact.dart`<br>`test/kernel/exact_test.dart` | 6,847 | 0.75 |
-| `crates/zed-kernel/src/family.rs` | 13,904 | `lib/src/kernel/family.dart`<br>`lib/src/kernel/pmap.dart`<br>`test/kernel/family_test.dart` | 16,256 | 1.17 |
+| `crates/zed-kernel/src/family.rs` | 14,132 | `lib/src/kernel/family.dart`<br>`lib/src/kernel/pmap.dart`<br>`test/kernel/family_test.dart` | 16,256 | 1.15 |
 | `crates/zed-kernel/src/lib.rs` | 1,148 | `lib/kernel.dart` | 299 | 0.26 |
 | `crates/zed-kernel/src/num.rs` | 7,397 | `lib/src/kernel/num.dart` | 5,993 | 0.81 |
 | `crates/zed-kernel/src/print.rs` | 16,237 | `lib/src/kernel/print.dart` | 12,433 | 0.77 |
@@ -685,7 +707,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-kernel/src/types/bdd.rs` | 27,452 | | | |
 | `crates/zed-kernel/src/types/empty.rs` | 7,024 | | | |
 | `crates/zed-kernel/src/types/rec.rs` | 18,327 | | | |
-| `crates/zed-kernel/src/value.rs` | 16,674 | `lib/src/kernel/value.dart`<br>`test/kernel/value_test.dart` | 15,465 | 0.93 |
+| `crates/zed-kernel/src/value.rs` | 16,934 | `lib/src/kernel/value.dart`<br>`test/kernel/value_test.dart` | 15,465 | 0.91 |
 | `crates/zed-kernel/src/words.rs` | 5,277 | `lib/src/kernel/words.dart` | 4,040 | 0.77 |
 | `crates/zed-native/src/codegen.rs` | 27,147 | | | |
 | `crates/zed-native/src/hooks.rs` | 18,557 | | | |
@@ -706,7 +728,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/canon/serial.rs` | 10,637 | `lib/src/canon/serial.dart` | 7,211 | 0.68 |
 | `crates/zedc/src/check/mod.rs` | 109,155 | | | |
 | `crates/zedc/src/check/ty.rs` | 26,843 | | | |
-| `crates/zedc/src/cost.rs` | 8,807 | `lib/cost.dart`<br>`test/cost_test.dart` | 10,032 | 1.14 |
+| `crates/zedc/src/cost.rs` | 9,373 | `lib/cost.dart`<br>`test/cost_test.dart` | 10,032 | 1.07 |
 | `crates/zedc/src/elab.rs` | 56,580 | `lib/elab.dart` | 29,065 | 0.51 |
 | `crates/zedc/src/fence.rs` | 2,991 | `lib/fence.dart` | 2,352 | 0.79 |
 | `crates/zedc/src/format.rs` | 23,772 | `lib/format.dart` | 20,819 | 0.88 |
@@ -718,12 +740,12 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/lex/punct.rs` | 1,719 | `lib/src/lex/punct.dart` | 1,544 | 0.90 |
 | `crates/zedc/src/lex/string.rs` | 11,031 | `lib/src/lex/string.dart` | 12,231 | 1.11 |
 | `crates/zedc/src/lib.rs` | 835 | | | |
-| `crates/zedc/src/main.rs` | 1,770 | `bin/zedc.dart` | 639 | 0.36 |
+| `crates/zedc/src/main.rs` | 1,770 | `bin/zedc.dart` | 1,073 | 0.61 |
 | `crates/zedc/src/parse/grammar.rs` | 10,399 | `lib/src/parse/grammar.dart` | 8,017 | 0.77 |
 | `crates/zedc/src/parse/mod.rs` | 10,467 | `lib/parse.dart` | 11,116 | 1.06 |
 | `crates/zedc/src/query.rs` | 4,746 | | | |
 | `crates/zedc/src/resolve.rs` | 15,634 | `lib/resolve.dart` | 13,267 | 0.85 |
-| `crates/zedc/src/run.rs` | 24,727 | | | |
+| `crates/zedc/src/run.rs` | 24,727 | `lib/run.dart` | 16,553 | 0.67 |
 | `crates/zedc/src/source.rs` | 7,459 | `lib/source.dart` | 7,286 | 0.98 |
 | `crates/zedc/src/stage.rs` | 31,611 | | | |
 | `crates/zedc/src/store/affine.rs` | 19,512 | | | |
@@ -823,13 +845,14 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_18_scalar_interpreter/casts.rs` | 3,013 | `test/steps/l01_18_scalar_interpreter/casts_test.dart` | 2,750 | 0.91 |
 | `tests/steps/l01_18_scalar_interpreter/failures.rs` | 2,066 | `test/steps/l01_18_scalar_interpreter/failures_test.dart` | 1,834 | 0.89 |
 | `tests/steps/l01_18_scalar_interpreter/floats.rs` | 2,591 | `test/steps/l01_18_scalar_interpreter/floats_test.dart` | 2,647 | 1.02 |
-| `tests/steps/l01_18_scalar_interpreter/mod.rs` | 472 | `test/steps/l01_18_scalar_interpreter/scalar.dart`<br>`test/steps/l01_18_scalar_interpreter/scaling_test.dart` | 2,012 | 4.26 |
+| `tests/steps/l01_18_scalar_interpreter/mod.rs` | 485 | `test/steps/l01_18_scalar_interpreter/scalar.dart` | 416 | 0.86 |
+| `tests/steps/l01_18_scalar_interpreter/scaling.rs` | 1,076 | `test/steps/l01_18_scalar_interpreter/scaling_test.dart` | 1,596 | 1.48 |
 | `tests/steps/l01_18_scalar_interpreter/words.rs` | 1,770 | `test/steps/l01_18_scalar_interpreter/words_test.dart` | 1,666 | 0.94 |
-| `tests/steps/l01_19_whole_file_ports/files.rs` | 3,361 | | | |
-| `tests/steps/l01_19_whole_file_ports/lines.rs` | 2,653 | | | |
-| `tests/steps/l01_19_whole_file_ports/mod.rs` | 1,734 | | | |
-| `tests/steps/l01_19_whole_file_ports/replay.rs` | 2,909 | | | |
-| `tests/steps/l01_19_whole_file_ports/writes.rs` | 5,039 | | | |
+| `tests/steps/l01_19_whole_file_ports/files.rs` | 3,361 | `test/steps/l01_19_whole_file_ports/files_test.dart` | 2,887 | 0.86 |
+| `tests/steps/l01_19_whole_file_ports/lines.rs` | 2,653 | `test/steps/l01_19_whole_file_ports/lines_test.dart` | 2,678 | 1.01 |
+| `tests/steps/l01_19_whole_file_ports/mod.rs` | 1,734 | `test/steps/l01_19_whole_file_ports/ports.dart`<br>`test/steps/l01_19_whole_file_ports/scaling_test.dart` | 3,425 | 1.98 |
+| `tests/steps/l01_19_whole_file_ports/replay.rs` | 2,909 | `test/steps/l01_19_whole_file_ports/replay_test.dart` | 2,894 | 0.99 |
+| `tests/steps/l01_19_whole_file_ports/writes.rs` | 5,039 | `test/steps/l01_19_whole_file_ports/writes_test.dart` | 4,401 | 0.87 |
 | `tests/steps/l01_20_provenance/kernel.rs` | 11,110 | | | |
 | `tests/steps/l01_20_provenance/mod.rs` | 1,709 | | | |
 | `tests/steps/l01_20_provenance/programs.rs` | 2,221 | | | |
@@ -938,7 +961,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_05_widening_and_iteration/scaling.rs` | 7,201 | `test/steps/m0_05_widening_and_iteration/scaling_test.dart` | 5,931 | 0.82 |
 | `tests/steps/m0_05_widening_and_iteration/widening.rs` | 10,766 | `test/steps/m0_05_widening_and_iteration/widening_test.dart` | 9,570 | 0.89 |
 | `tests/steps/m0_05_widening_and_iteration/wto.rs` | 7,970 | `test/steps/m0_05_widening_and_iteration/wto_test.dart` | 6,409 | 0.80 |
-| `tests/steps/m0_06_cost_scalarization/mod.rs` | 9,704 | `test/steps/m0_06_cost_scalarization/cost_scalarization_test.dart` | 9,422 | 0.97 |
+| `tests/steps/m0_06_cost_scalarization/mod.rs` | 10,778 | `test/steps/m0_06_cost_scalarization/cost_scalarization_test.dart` | 9,422 | 0.87 |
 | `tests/steps/m0_07_canonicalization/alpha.rs` | 14,310 | `test/steps/m0_07_canonicalization/alpha_test.dart` | 10,487 | 0.73 |
 | `tests/steps/m0_07_canonicalization/domains.rs` | 4,497 | `test/steps/m0_07_canonicalization/domains_test.dart` | 3,799 | 0.84 |
 | `tests/steps/m0_07_canonicalization/mod.rs` | 1,083 | `test/steps/m0_07_canonicalization/harness.dart` | 793 | 0.73 |
@@ -962,8 +985,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 892 | 0.55 |
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
-| **all 292 Rust files** | **2,228,774** | | | |
-| **the Rust files ported so far** | **969,153** | | **806,644** | **0.83** |
+| **all 293 Rust files** | **2,231,991** | | | |
+| **the Rust files ported so far** | **1,012,793** | | **839,916** | **0.83** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1039,7 +1062,8 @@ Dart:
   O(P log P + P·F) for F plans on the frontier. It is still quadratic when every plan is on
   the frontier; no known algorithm finds a Pareto frontier of more than three quantities in
   O(P log P), and the vector has 3·devices + 2. A new scaling test checks the case of a small
-  frontier, and fails on the Rust algorithm (checked by putting it back).
+  frontier, and fails on the Rust algorithm (checked by putting it back). The Rust now uses
+  the same algorithm, with the same test (COMPLEXITY.md F20).
 - **M0.7, canonicalization.** 18 step tests and a BLAKE3 test, all passing, and the pinned
   address of `balance` matched on the first run. One compile error: `Float` has no const
   constructor. The Rust took BLAKE3 from a crate; the Dart package has no dependencies, so
@@ -1248,14 +1272,26 @@ Dart:
   `String`. All 25 new tests passed on their first run. The scaling test found one fault:
   merging failures built a new set from every member at each `+`, so a chain of n failing
   operands took time of order n² (79 times as long at eight times the size). The Rust
-  `merge_failures` makes the same copy, and has no test that reaches it. The merge now
-  extends the largest `#errs` set among its operands, a persistent map that shares all but
-  O(log n) nodes per insert. One analyzer warning (an unused import), no compile errors. The
-  negative control is the earlier merge, caught at 79 times as long.
+  merge now extends the largest `#errs` set among its operands, a persistent map that shares
+  all but O(log n) nodes per insert. One analyzer warning (an unused import), no compile
+  errors. The negative control is the earlier merge, caught at 79 times as long. The Rust
+  `merge_failures` made the same copy and had no test that reached it; it now extends the
+  largest set too, with a scaling test (COMPLEXITY.md K18). In the Rust the same chain
+  written as source is still of order n², in the type checker, which the Dart has not yet
+  reached (F21).
+- **L1.19** (whole-file ports). Easy. `zedc run` and `zedc replay`, the line and file ports,
+  the write commit and the record format went into one 500-line `run.dart`; all 19 tests
+  passed on their first run. The 8 compile errors, in one run, were name clashes: the
+  lexer's `Atom` and `Str` against the kernel's, and a local `load` that hid the library
+  function. `show` clauses and a prefixed import fixed them. Reading stdin is asynchronous
+  in Dart, so `command` returns a `Future<int>`; the Rust reads it with one blocking call.
+  A new scaling test covers `cat` of n lines, a record of n reads, and a wave reading n
+  paths. The negative control, a line splitter that copies the rest of the input at each
+  line, did not finish within 400 s.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1287,6 +1323,9 @@ which the case was shorter, clearer or cheaper to run.
 | Extending a set that other values still hold | Dart | The Dart family is a persistent map, so adding one failure to an `#errs` set makes a new set that shares the old one's nodes, and the old value is unchanged. The Rust `BTreeSet` is mutable and owned, so the merge clones it whole; sharing would need a persistent-collection crate or `Rc` nodes. |
 | Reading float bits | Rust | `f64::to_bits` and `from_bits` are methods on the type. Dart writes the float into a `ByteData` and reads it back as an integer. |
 | Unicode case mapping | Rust | `str::to_uppercase` and `to_lowercase` are in the standard library, with the full Unicode mappings (`straße` to `STRASSE`) and the final-sigma rule. The Dart port maps case through its own tables in `lib/src/unicode.dart`, so that `upper` and `lower` give the same result on every platform. |
+| Reading all of stdin | Rust | `io::stdin().read_to_end` blocks and returns the bytes. Dart's `stdin` is a stream, so the command that reads it is `async` and returns a `Future`, and every caller awaits it (L1.19). |
+| Telling apart the ways a file read fails | Rust | `io::Error::kind()` gives an enum, matched as `ErrorKind::NotFound`. Dart throws `PathNotFoundException` for a missing file and the general `FileSystemException` for the rest, so the cases are told apart by exception class and a `catch` order (L1.19). |
+| Name clashes between imports | Rust | Rust names nothing it is not asked for (`use lex::Atom` is explicit). A Dart import brings in every public name of the library, so two libraries that both define `Atom` clash until one is narrowed with `show` or prefixed (L1.19). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
 
 ### Changes per Dart file
@@ -1385,7 +1424,8 @@ performance pass yet, so the second number is 0 throughout.
 | `lib/src/ast/types.dart` | 2 | 0 |
 | `lib/src/ast/stmts.dart` | 3 | 0 |
 | `lib/format.dart` | 2 | 0 |
-| `bin/zedc.dart` | 1 | 0 |
+| `bin/zedc.dart` | 3 | 0 |
+| `lib/run.dart` | 3 | 0 |
 | `lib/resolve.dart` | 3 | 0 |
 | `lib/elab.dart` | 6 | 0 |
 | `lib/interp.dart` | 1 | 0 |
@@ -1471,5 +1511,11 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_18_scalar_interpreter/failures_test.dart` | 1 | 0 |
 | `test/steps/l01_18_scalar_interpreter/floats_test.dart` | 2 | 0 |
 | `test/steps/l01_18_scalar_interpreter/scaling_test.dart` | 2 | 0 |
+| `test/steps/l01_19_whole_file_ports/ports.dart` | 1 | 0 |
+| `test/steps/l01_19_whole_file_ports/lines_test.dart` | 1 | 0 |
+| `test/steps/l01_19_whole_file_ports/files_test.dart` | 1 | 0 |
+| `test/steps/l01_19_whole_file_ports/replay_test.dart` | 1 | 0 |
+| `test/steps/l01_19_whole_file_ports/writes_test.dart` | 1 | 0 |
+| `test/steps/l01_19_whole_file_ports/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

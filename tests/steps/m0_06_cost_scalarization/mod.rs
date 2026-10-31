@@ -291,3 +291,32 @@ fn the_pick_is_the_same_in_every_arrival_order_and_minimal_over_every_feasible_p
     );
     assert_eq!(brent(0, 0, 8), 0);
 }
+
+#[test]
+fn the_frontier_takes_time_linear_in_the_plans_when_it_stays_small() {
+    // Each plan is a fused or a split variant scaled by its distance from the end of the list,
+    // so the frontier holds the last two, and every other plan is compared with those only.
+    // The input lists them last, where a scan of the plans in arrival order meets them last.
+    let plans = |n: usize| -> Vec<Plan> {
+        (0..n)
+            .map(|i| {
+                let k = (n - i) as u64;
+                let (work, depth) = if k.is_multiple_of(2) {
+                    (100 + k, 50 + k)
+                } else {
+                    (120 + k, 10 + k)
+                };
+                let region = Region {
+                    device: 0,
+                    work,
+                    depth,
+                    footprint: 10 + k,
+                };
+                plan((i % 256) as u8, vec![region], vec![])
+            })
+            .collect()
+    };
+    zed_tests::scaling::check("the Pareto frontier of plans", 2000, |n| {
+        pick(&plans(n), &workstation());
+    });
+}

@@ -162,18 +162,27 @@ pub fn dominates(a: &[u64], b: &[u64]) -> bool {
 /// The Pareto frontier of the feasible `plans` on `target`: the feasible plans no other
 /// feasible plan dominates, in content-address order. Plans with equal cost vectors are all
 /// kept.
+///
+/// A plan's dominators all precede it in the lexicographic order of the vectors, and a
+/// dominated dominator is itself dominated by a plan of the frontier, so each plan is compared
+/// only with the frontier found before it: `O(P log P + P·F·devices)` for `F` plans on the
+/// frontier. No known algorithm finds a Pareto frontier of more than three quantities in
+/// `O(P log P)`, and this vector has `3·devices + 2`.
 pub fn frontier(plans: &[Plan], target: &Target) -> Vec<Plan> {
     let n = target.devices.len();
-    let live: Vec<(&Plan, Vec<u64>)> = plans
+    let mut live: Vec<(&Plan, Vec<u64>)> = plans
         .iter()
         .filter(|p| feasible(p, target))
         .map(|p| (p, vector(p, n)))
         .collect();
-    let mut kept: Vec<Plan> = live
-        .iter()
-        .filter(|(_, v)| !live.iter().any(|(_, w)| dominates(w, v)))
-        .map(|(p, _)| (*p).clone())
-        .collect();
+    live.sort_by(|a, b| a.1.cmp(&b.1));
+    let mut front: Vec<(&Plan, Vec<u64>)> = Vec::new();
+    for (p, v) in live {
+        if !front.iter().any(|(_, w)| dominates(w, &v)) {
+            front.push((p, v));
+        }
+    }
+    let mut kept: Vec<Plan> = front.into_iter().map(|(p, _)| p.clone()).collect();
     kept.sort_by_key(|p| p.address);
     kept
 }

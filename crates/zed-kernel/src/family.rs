@@ -207,6 +207,12 @@ impl Family {
         union_at(self, other, &mut Vec::new())
     }
 
+    /// Adds `v` at key `k` of the top level, sharing all but O(log n) of the map's nodes with
+    /// the family it was cloned from.
+    pub(crate) fn insert(&mut self, k: Value, v: Value) {
+        self.0.insert(k, v);
+    }
+
     /// The number of top-level entries.
     pub fn len(&self) -> usize {
         self.0.len()
