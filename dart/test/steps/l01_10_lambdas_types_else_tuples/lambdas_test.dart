@@ -29,8 +29,7 @@ void main() {
 
   test('a brace after the arrow is a block', () {
     check([
-      // Blocks are built from step L1.11.
-      ('x -> { x }', 'error: this form (Block) is built from layer L1'),
+      ('x -> { x }', '(fn (x) (block (return x)))'),
       // A record display after the arrow is parenthesized; displays arrive at L2.
       ('p -> ({ x: p.x })', 'error: this form (Primary) is built from layer L2'),
       ('p -> { x: p.x }', 'syntax'),

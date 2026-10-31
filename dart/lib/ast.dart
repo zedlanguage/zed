@@ -1,4 +1,4 @@
-/// The syntax tree of expressions (steps L1.9 and L1.10), built from a parse tree
+/// The syntax tree of expressions (steps L1.9 to L1.11), built from a parse tree
 /// (`parse.dart`).
 ///
 /// A node of the parse tree records only its rule and tokens; here an expression is one node
@@ -7,8 +7,9 @@
 /// positional arguments, then its named ones, and whether it ends in `...`; an index `e[k]`; a
 /// member `e.n` or `e?.n`. A uniform call `x.f(a)` stays a call of the member `x.f`, since
 /// whether `f` is a field or a function is known only after name resolution (step L1.14). A
-/// lambda keeps its parameters as written; an `else` chain is built left to right. A form not
-/// built yet is an error naming its layer.
+/// lambda keeps its parameters as written; an `else` chain is built left to right. A block is
+/// its statements, exactly one of them its export. A form not built yet is an error naming its
+/// layer.
 library;
 
 import 'dart:convert';
@@ -17,6 +18,7 @@ import 'lex.dart';
 import 'parse.dart';
 import 'src/unicode.dart';
 
+part 'src/ast/stmts.dart';
 part 'src/ast/types.dart';
 
 /// An expression and its span.
@@ -288,7 +290,7 @@ Object? _got;
 
 Expr get _expr => _got as Expr;
 
-final class _Builder with _Types {
+final class _Builder with _Types, _Stmts {
   final List<int> bytes;
   @override
   final List<Token> tokens;
@@ -327,7 +329,7 @@ final class _Builder with _Types {
   _Steps node(Node n) sync* {
     final kids = n.kids;
     switch ((n.name, n.alt)) {
-      case ('Expr', 2) || ('Prefix', 1) || ('Primary', 0 || 2):
+      case ('Expr', 2) || ('Prefix', 1) || ('Primary', 0 || 2 || 13):
         yield node(kids[0]);
       case ('Expr', 0):
         yield* lambda(n);
@@ -384,6 +386,8 @@ final class _Builder with _Types {
       case ('Primary', 5):
         yield node(kids[0]);
         _expr.span = span(n);
+      case ('Block', _):
+        yield* block(n);
       case ('Primary', 6):
         final items = <Expr>[];
         for (final k in kids) {

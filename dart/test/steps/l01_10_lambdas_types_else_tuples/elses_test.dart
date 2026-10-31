@@ -21,8 +21,7 @@ void main() {
       ('e else #a -> d1 else #b -> d2', '(else (else e #a d1) #b d2)'),
       ('a || b else c', '(else (|| a b) c)'),
       ('e else (x -> d)', '(else e (fn (x) d))'),
-      // Blocks are built from step L1.11.
-      ('e else { d }', 'error: this form (Block) is built from layer L1'),
+      ('e else { d }', '(else e (block (return d)))'),
     ]);
   });
 }
