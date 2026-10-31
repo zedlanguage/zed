@@ -14,6 +14,8 @@
 //! moves to the end of the statement. One blank line is kept where the source had one or more
 //! between two statements, or before the comments that end a block.
 
+use std::collections::BTreeMap;
+
 use crate::ast::{Expr, ExprKind, Param, Stmt, StmtKind, Target, Type, TypeKind, TypeParam};
 use crate::lex::{self, Span, Token};
 use crate::parse::{TOP, parse};
@@ -25,14 +27,13 @@ pub fn format(text: &str, tokens: &[Token], unit: &[Stmt]) -> String {
     let comments = lex::comments(text, tokens);
     let mut f = Formatter {
         text,
-        used: vec![false; comments.len()],
-        comments,
+        comments: comments.into_iter().map(|c| (c.start, c)).collect(),
     };
     let whole = Span {
         start: 0,
         end: text.len(),
     };
-    f.stmts(unit, whole, 0, true)
+    f.stmts(unit, whole, 0, true).into_string()
 }
 
 /// The source file `bytes` in the formatter's layout, or why it could not be read, at its
@@ -129,8 +130,8 @@ enum Place {
 
 struct Formatter<'a> {
     text: &'a str,
-    comments: Vec<Span>,
-    used: Vec<bool>,
+    /// The comments not yet written, by their first byte.
+    comments: BTreeMap<usize, Span>,
 }
 
 /// A statement with the comments it keeps, and whether a blank line precedes it.
@@ -148,12 +149,12 @@ fn indent(n: usize) -> String {
 impl Formatter<'_> {
     /// The comments not yet written that start in `from..to`, now marked written.
     fn take(&mut self, from: usize, to: usize) -> Vec<Span> {
-        let mut out = Vec::new();
-        for (c, used) in self.comments.iter().zip(&mut self.used) {
-            if !*used && (from..to).contains(&c.start) {
-                *used = true;
-                out.push(*c);
-            }
+        if from >= to {
+            return Vec::new();
+        }
+        let out: Vec<Span> = self.comments.range(from..to).map(|(_, c)| *c).collect();
+        for c in &out {
+            self.comments.remove(&c.start);
         }
         out
     }
@@ -162,29 +163,24 @@ impl Formatter<'_> {
     fn take_same_line(&mut self, from: usize, to: usize) -> Vec<Span> {
         let mut out = Vec::new();
         let mut pos = from;
-        for (c, used) in self.comments.iter().zip(&mut self.used) {
-            if *used || c.start < pos || c.start >= to {
-                continue;
-            }
+        while let Some((_, &c)) = self.comments.range(pos..to.max(pos)).next() {
             if self.text[pos..c.start].contains('\n') {
                 break;
             }
-            *used = true;
-            out.push(*c);
+            self.comments.remove(&c.start);
+            out.push(c);
             pos = c.end;
         }
         out
     }
 
     fn has_comment(&self, span: Span) -> bool {
-        let inside =
-            |(c, used): (&Span, &bool)| !*used && (span.start..span.end).contains(&c.start);
-        self.comments.iter().zip(&self.used).any(inside)
+        span.start < span.end && self.comments.range(span.start..span.end).next().is_some()
     }
 
     /// The lines of `stmts`, which stand in `region` of the text, at indentation `ind`, each
     /// line ending in a newline. With `bare`, an export of one value is a trailing expression.
-    fn stmts(&mut self, stmts: &[Stmt], region: Span, ind: usize, bare: bool) -> String {
+    fn stmts(&mut self, stmts: &[Stmt], region: Span, ind: usize, bare: bool) -> Doc {
         // The comments and blank lines are found in source order, where the export may not be
         // last.
         let mut in_order: Vec<&Stmt> = stmts.iter().collect();
@@ -210,45 +206,45 @@ impl Formatter<'_> {
             .partition(|e| matches!(e.stmt.kind, StmtKind::Return(_)));
         entries.extend(exports);
         let pad = indent(ind);
-        let mut out = String::new();
+        let mut out: Vec<Doc> = Vec::new();
         for (i, e) in entries.into_iter().enumerate() {
             if e.blank && i > 0 {
-                out.push('\n');
+                out.push("\n".into());
             }
             for c in e.leading {
-                out += &format!("{pad}{}\n", &self.text[c.start..c.end]);
+                out.push(format!("{pad}{}\n", &self.text[c.start..c.end]).into());
             }
-            out += &pad;
-            out += &self.stmt(e.stmt, ind, bare);
+            out.push(pad.as_str().into());
+            out.push(self.stmt(e.stmt, ind, bare));
             let mut tail = self.take(e.stmt.span.start, e.stmt.span.end);
             tail.extend(e.trailing);
             let mut after_line_comment = false;
             for c in tail {
                 let body = &self.text[c.start..c.end];
-                out += &if after_line_comment {
-                    format!("\n{pad}{body}")
+                out.push(if after_line_comment {
+                    format!("\n{pad}{body}").into()
                 } else {
-                    format!(" {body}")
-                };
+                    format!(" {body}").into()
+                });
                 after_line_comment = body.starts_with("//");
             }
-            out.push('\n');
+            out.push("\n".into());
         }
         let rest = self.take(prev, region.end);
         if let Some(c) = rest.first()
             && !out.is_empty()
             && self.text[prev..c.start].matches('\n').count() > 1
         {
-            out.push('\n');
+            out.push("\n".into());
         }
         for c in rest {
-            out += &format!("{pad}{}\n", &self.text[c.start..c.end]);
+            out.push(format!("{pad}{}\n", &self.text[c.start..c.end]).into());
         }
-        out
+        Doc::cat(out)
     }
 
     /// The text of `s`, which starts at indentation `ind`.
-    fn stmt(&mut self, s: &Stmt, ind: usize, bare: bool) -> String {
+    fn stmt(&mut self, s: &Stmt, ind: usize, bare: bool) -> Doc {
         match &s.kind {
             StmtKind::Bind { targets, value } => {
                 let ts: Vec<&str> = targets
@@ -258,79 +254,87 @@ impl Formatter<'_> {
                         Target::Wild => "_",
                     })
                     .collect();
-                format!("{} = {};", ts.join(", "), self.expr(value, LAMBDA, ind))
+                cat![ts.join(", "), " = ", self.expr(value, LAMBDA, ind), ";"]
             }
             StmtKind::Return(es) if bare && es.len() == 1 => self.expr(&es[0], LAMBDA, ind),
             StmtKind::Return(es) => {
-                let es: Vec<String> = es.iter().map(|e| self.expr(e, LAMBDA, ind)).collect();
-                format!("return {};", es.join(", "))
+                let es: Vec<Doc> = es.iter().map(|e| self.expr(e, LAMBDA, ind)).collect();
+                cat!["return ", Doc::join(es, ", "), ";"]
             }
             StmtKind::Push { port, value } => {
-                format!("{port} <- {};", self.expr(value, LAMBDA, ind))
+                cat![format!("{port} <- "), self.expr(value, LAMBDA, ind), ";"]
             }
             StmtKind::Function(f) => {
-                let mut out = format!("{}({})", f.name, self.params(&f.params, ind));
+                let mut out = vec![cat![
+                    format!("{}(", f.name),
+                    self.params(&f.params, ind),
+                    ")"
+                ]];
                 if let Some(ports) = &f.ports {
-                    let ps: Vec<String> = ports
+                    let ps: Vec<Doc> = ports
                         .iter()
-                        .map(|p| format!("{}: {}", p.name, ty(&p.ty, 0)))
+                        .map(|p| cat![format!("{}: ", p.name), ty(&p.ty, 0)])
                         .collect();
-                    out += &format!(" -> ({})", ps.join(", "));
+                    out.push(cat![" -> (", Doc::join(ps, ", "), ")"]);
                 }
                 if f.equation {
-                    out += &format!(" = {}", self.expr(&f.body, LAMBDA, ind));
+                    out.push(cat![" = ", self.expr(&f.body, LAMBDA, ind)]);
                     if f.tests.is_empty() {
-                        out.push(';');
+                        out.push(";".into());
                     }
                 } else {
-                    out += &format!(" {}", self.block(&f.body, ind, Place::Body));
+                    out.push(cat![" ", self.block(&f.body, ind, Place::Body)]);
                 }
                 if !f.tests.is_empty() {
-                    let cases: Vec<String> = f
+                    let cases: Vec<Doc> = f
                         .tests
                         .iter()
                         .map(|(a, b)| {
-                            format!("{} -> {}", self.expr(a, ELSE, ind), self.expr(b, ELSE, ind))
+                            cat![self.expr(a, ELSE, ind), " -> ", self.expr(b, ELSE, ind)]
                         })
                         .collect();
-                    out += &format!("\n{}test {{ {} }}", indent(ind + 1), cases.join(", "));
+                    out.push(cat![
+                        format!("\n{}test {{ ", indent(ind + 1)),
+                        Doc::join(cases, ", "),
+                        " }"
+                    ]);
                 }
-                out
+                Doc::cat(out)
             }
         }
     }
 
-    fn params(&mut self, params: &[Param], ind: usize) -> String {
-        let ps: Vec<String> = params.iter().map(|p| self.param(p, ind)).collect();
-        ps.join(", ")
+    fn params(&mut self, params: &[Param], ind: usize) -> Doc {
+        let ps: Vec<Doc> = params.iter().map(|p| self.param(p, ind)).collect();
+        Doc::join(ps, ", ")
     }
 
-    fn param(&mut self, p: &Param, ind: usize) -> String {
-        let mut out = String::new();
+    fn param(&mut self, p: &Param, ind: usize) -> Doc {
+        let mut out: Vec<Doc> = Vec::new();
         if p.positional {
-            out += "positional ";
+            out.push("positional ".into());
         }
-        out += &p.name;
+        out.push(p.name.as_str().into());
         if let Some(t) = &p.ty {
-            out += &format!(": {}", ty(t, 0));
+            out.push(cat![": ", ty(t, 0)]);
         }
         if let Some(d) = &p.default {
-            out += &format!(" = {}", self.expr(d, LAMBDA, ind));
+            out.push(cat![" = ", self.expr(d, LAMBDA, ind)]);
         }
-        out
+        Doc::cat(out)
     }
 
     /// The text of `e` in a position that takes forms of level `min` and above.
-    fn expr(&mut self, e: &Expr, min: u8, ind: usize) -> String {
+    fn expr(&mut self, e: &Expr, min: u8, ind: usize) -> Doc {
         let text = self.raw(e, ind);
         if level(e) < min {
-            format!("({text})")
+            cat!["(", text, ")"]
         } else {
             text
         }
     }
 
-    fn raw(&mut self, e: &Expr, ind: usize) -> String {
+    fn raw(&mut self, e: &Expr, ind: usize) -> Doc {
         match &e.kind {
             ExprKind::Int { .. } | ExprKind::Float(_) | ExprKind::Rat(_) | ExprKind::Str(_) => {
                 // A grouped literal's span holds its parentheses; a literal never starts with `(`.
@@ -340,12 +344,12 @@ impl Formatter<'_> {
                 }
                 t.into()
             }
-            ExprKind::Bool(b) => b.to_string(),
-            ExprKind::Atom(a) => format!("#{a}"),
-            ExprKind::Name(n) => n.clone(),
+            ExprKind::Bool(b) => b.to_string().into(),
+            ExprKind::Atom(a) => format!("#{a}").into(),
+            ExprKind::Name(n) => n.as_str().into(),
             ExprKind::Unary(op, x) => match x.kind {
-                ExprKind::Unary(..) => format!("{op}({})", self.raw(x, ind)),
-                _ => format!("{op}{}", self.expr(x, PREFIX, ind)),
+                ExprKind::Unary(..) => cat![format!("{op}("), self.raw(x, ind), ")"],
+                _ => cat![op.to_string(), self.expr(x, PREFIX, ind)],
             },
             ExprKind::Binary(op, a, b) => {
                 let l = binary_level(op);
@@ -355,7 +359,7 @@ impl Formatter<'_> {
                     _ => (l, l + 1),
                 };
                 let a = self.expr(a, lmin, ind);
-                format!("{a} {op} {}", self.expr(b, rmin, ind))
+                cat![a, format!(" {op} "), self.expr(b, rmin, ind)]
             }
             ExprKind::Call {
                 callee,
@@ -363,43 +367,50 @@ impl Formatter<'_> {
                 named,
                 curry,
             } => {
-                let mut args: Vec<String> = positional
+                let mut args: Vec<Doc> = positional
                     .iter()
                     .map(|a| self.expr(a, LAMBDA, ind))
                     .collect();
                 for (n, v) in named {
                     args.push(match &v.kind {
-                        ExprKind::Name(m) if m == n => format!("{n}:"),
-                        _ => format!("{n}: {}", self.expr(v, LAMBDA, ind)),
+                        ExprKind::Name(m) if m == n => format!("{n}:").into(),
+                        _ => cat![format!("{n}: "), self.expr(v, LAMBDA, ind)],
                     });
                 }
                 if *curry {
                     args.push("...".into());
                 }
-                format!("{}({})", self.postfix_of(callee, ind), args.join(", "))
+                cat![
+                    self.postfix_of(callee, ind),
+                    "(",
+                    Doc::join(args, ", "),
+                    ")"
+                ]
             }
             ExprKind::Index(of, k) => {
                 let of = self.postfix_of(of, ind);
-                format!("{of}[{}]", self.expr(k, LAMBDA, ind))
+                cat![of, "[", self.expr(k, LAMBDA, ind), "]"]
             }
             ExprKind::Member { of, name, safe } => {
                 let dot = if *safe { "?." } else { "." };
-                format!("{}{dot}{name}", self.postfix_of(of, ind))
+                cat![self.postfix_of(of, ind), format!("{dot}{name}")]
             }
             ExprKind::Tuple(items) => {
-                let items: Vec<String> = items.iter().map(|i| self.expr(i, LAMBDA, ind)).collect();
-                format!("({})", items.join(", "))
+                let items: Vec<Doc> = items.iter().map(|i| self.expr(i, LAMBDA, ind)).collect();
+                cat!["(", Doc::join(items, ", "), ")"]
             }
             ExprKind::Lambda { params, body } => {
                 let head = match &params[..] {
-                    [p] if !p.positional && p.ty.is_none() && p.default.is_none() => p.name.clone(),
-                    _ => format!("({})", self.params(params, ind)),
+                    [p] if !p.positional && p.ty.is_none() && p.default.is_none() => {
+                        p.name.as_str().into()
+                    }
+                    _ => cat!["(", self.params(params, ind), ")"],
                 };
-                format!("{head} -> {}", self.tail(body, LAMBDA, ind))
+                cat![head, " -> ", self.tail(body, LAMBDA, ind)]
             }
             ExprKind::Is { of, ty: t, negated } => {
                 let not = if *negated { "not " } else { "" };
-                format!("{} is {not}{}", self.expr(of, ADDITIVE, ind), ty(t, 1))
+                cat![self.expr(of, ADDITIVE, ind), format!(" is {not}"), ty(t, 1)]
             }
             ExprKind::Else {
                 of,
@@ -410,7 +421,7 @@ impl Formatter<'_> {
                 let pat = pattern
                     .as_ref()
                     .map_or(String::new(), |p| format!("{p} -> "));
-                format!("{of} else {pat}{}", self.tail(default, OR, ind))
+                cat![of, format!(" else {pat}"), self.tail(default, OR, ind)]
             }
             ExprKind::Block(_) => self.block(e, ind, Place::Operand),
             ExprKind::If {
@@ -420,7 +431,7 @@ impl Formatter<'_> {
             } => {
                 let c = self.expr(cond, ELSE, ind);
                 let c = if head_unsafe(cond) {
-                    format!("({c})")
+                    cat!["(", c, ")"]
                 } else {
                     c
                 };
@@ -429,17 +440,17 @@ impl Formatter<'_> {
                     ExprKind::If { .. } => self.raw(otherwise, ind),
                     _ => self.block(otherwise, ind, Place::Branch),
                 };
-                format!("if {c} {then} else {otherwise}")
+                cat!["if ", c, " ", then, " else ", otherwise]
             }
         }
     }
 
     /// The operand of a call, index or member: a number literal is parenthesized, so that its
     /// `.` is not read as a decimal point.
-    fn postfix_of(&mut self, of: &Expr, ind: usize) -> String {
+    fn postfix_of(&mut self, of: &Expr, ind: usize) -> Doc {
         match of.kind {
             ExprKind::Int { .. } | ExprKind::Float(_) | ExprKind::Rat(_) => {
-                format!("({})", self.raw(of, ind))
+                cat!["(", self.raw(of, ind), ")"]
             }
             _ => self.expr(of, POSTFIX, ind),
         }
@@ -447,16 +458,16 @@ impl Formatter<'_> {
 
     /// A lambda's body or an `else` default: a block, or an expression of level `min` that
     /// does not start with a block.
-    fn tail(&mut self, e: &Expr, min: u8, ind: usize) -> String {
+    fn tail(&mut self, e: &Expr, min: u8, ind: usize) -> Doc {
         match e.kind {
             ExprKind::Block(_) => self.block(e, ind, Place::Branch),
-            _ if starts_with_block(e) && level(e) >= min => format!("({})", self.raw(e, ind)),
+            _ if starts_with_block(e) && level(e) >= min => cat!["(", self.raw(e, ind), ")"],
             _ => self.expr(e, min, ind),
         }
     }
 
     /// The block `e`, standing at `place`, its first line at indentation `ind`.
-    fn block(&mut self, e: &Expr, ind: usize, place: Place) -> String {
+    fn block(&mut self, e: &Expr, ind: usize, place: Place) -> Doc {
         let ExprKind::Block(stmts) = &e.kind else {
             unreachable!("a block")
         };
@@ -470,10 +481,14 @@ impl Formatter<'_> {
             // its text has no line break, which no indentation then enters, and on a line of
             // its own otherwise. Rendering it once keeps nested blocks linear in their depth.
             let line = self.stmt(s, ind + 1, bare);
-            return if line.contains('\n') {
-                format!("{{\n{}{line}\n{}}}", indent(ind + 1), indent(ind))
+            return if line.has_newline() {
+                cat![
+                    format!("{{\n{}", indent(ind + 1)),
+                    line,
+                    format!("\n{}}}", indent(ind))
+                ]
             } else {
-                format!("{{ {line} }}")
+                cat!["{ ", line, " }"]
             };
         }
         if stmts.is_empty() && !self.has_comment(e.span) {
@@ -484,7 +499,75 @@ impl Formatter<'_> {
             end: e.span.end - 1,
         };
         let lines = self.stmts(stmts, inside, ind + 1, bare);
-        format!("{{\n{lines}{}}}", indent(ind))
+        cat!["{\n", lines, format!("{}}}", indent(ind))]
+    }
+}
+
+/// Text built by concatenation without copying: a string, or parts in order with whether any
+/// holds a line break. Each level of the tree adds only its own text, so rendering a nest of
+/// depth `d` is linear in the output, where joining strings copied each level's text into its
+/// parent, `O(n·d)`.
+enum Doc {
+    Leaf(String),
+    Cat(Vec<Doc>, bool),
+}
+
+/// The concatenation of the parts, each converted with `Doc::from`.
+macro_rules! cat {
+    ($($p:expr),* $(,)?) => { Doc::cat(vec![$(Doc::from($p)),*]) };
+}
+use cat;
+
+impl Doc {
+    fn cat(parts: Vec<Doc>) -> Doc {
+        let newline = parts.iter().any(Doc::has_newline);
+        Doc::Cat(parts, newline)
+    }
+
+    fn join(parts: Vec<Doc>, sep: &str) -> Doc {
+        let mut out = Vec::with_capacity(2 * parts.len());
+        for (i, p) in parts.into_iter().enumerate() {
+            if i > 0 {
+                out.push(sep.into());
+            }
+            out.push(p);
+        }
+        Doc::cat(out)
+    }
+
+    fn has_newline(&self) -> bool {
+        match self {
+            Doc::Leaf(s) => s.contains('\n'),
+            Doc::Cat(_, newline) => *newline,
+        }
+    }
+
+    /// The text, written without recursion, so the depth of the tree needs no stack.
+    fn into_string(self) -> String {
+        let mut out = String::new();
+        let mut stack = vec![vec![self].into_iter()];
+        while let Some(top) = stack.last_mut() {
+            match top.next() {
+                Some(Doc::Leaf(s)) => out += &s,
+                Some(Doc::Cat(parts, _)) => stack.push(parts.into_iter()),
+                None => {
+                    stack.pop();
+                }
+            }
+        }
+        out
+    }
+}
+
+impl From<String> for Doc {
+    fn from(s: String) -> Doc {
+        Doc::Leaf(s)
+    }
+}
+
+impl From<&str> for Doc {
+    fn from(s: &str) -> Doc {
+        Doc::Leaf(s.to_string())
     }
 }
 
@@ -499,15 +582,15 @@ fn type_level(t: &Type) -> u8 {
 }
 
 /// The text of the type `t` in a position that takes levels `min` and above.
-fn ty(t: &Type, min: u8) -> String {
+fn ty(t: &Type, min: u8) -> Doc {
     let join = |ts: &[Type], min: u8, sep: &str| {
-        let ts: Vec<String> = ts.iter().map(|t| ty(t, min)).collect();
-        ts.join(sep)
+        let ts: Vec<Doc> = ts.iter().map(|t| ty(t, min)).collect();
+        Doc::join(ts, sep)
     };
     let text = match &t.kind {
-        TypeKind::Name(n) => n.clone(),
-        TypeKind::Atom(a) => format!("#{a}"),
-        TypeKind::Tuple(ts) => format!("({})", join(ts, 0, ", ")),
+        TypeKind::Name(n) => n.as_str().into(),
+        TypeKind::Atom(a) => format!("#{a}").into(),
+        TypeKind::Tuple(ts) => cat!["(", join(ts, 0, ", "), ")"],
         TypeKind::Union(ts) => join(ts, 2, " | "),
         TypeKind::And(ts) => join(ts, 3, " & "),
         TypeKind::Diff(a, b) => {
@@ -515,7 +598,7 @@ fn ty(t: &Type, min: u8) -> String {
                 TypeKind::Diff(..) => ty(a, 1),
                 _ => ty(a, 3),
             };
-            format!("{a} \\ {}", ty(b, 3))
+            cat![a, " \\ ", ty(b, 3)]
         }
         TypeKind::Arrow {
             params,
@@ -528,29 +611,29 @@ fn ty(t: &Type, min: u8) -> String {
                         name: None, ty: p, ..
                     },
                 ] => match p.kind {
-                    TypeKind::Tuple(_) => format!("({})", ty(p, 0)),
+                    TypeKind::Tuple(_) => cat!["(", ty(p, 0), ")"],
                     _ => ty(p, 1),
                 },
                 ps => {
-                    let ps: Vec<String> = ps.iter().map(type_param).collect();
-                    format!("({})", ps.join(", "))
+                    let ps: Vec<Doc> = ps.iter().map(type_param).collect();
+                    cat!["(", Doc::join(ps, ", "), ")"]
                 }
             };
-            let arrow = if *partial { "->?" } else { "->" };
-            format!("{params} {arrow} {}", ty(result, 0))
+            let arrow = if *partial { " ->? " } else { " -> " };
+            cat![params, arrow, ty(result, 0)]
         }
     };
     if type_level(t) < min {
-        format!("({text})")
+        cat!["(", text, ")"]
     } else {
         text
     }
 }
 
-fn type_param(p: &TypeParam) -> String {
+fn type_param(p: &TypeParam) -> Doc {
     match &p.name {
-        Some(n) if p.positional => format!("positional {n}: {}", ty(&p.ty, 0)),
-        Some(n) => format!("{n}: {}", ty(&p.ty, 0)),
+        Some(n) if p.positional => cat![format!("positional {n}: "), ty(&p.ty, 0)],
+        Some(n) => cat![format!("{n}: "), ty(&p.ty, 0)],
         None => ty(&p.ty, 0),
     }
 }

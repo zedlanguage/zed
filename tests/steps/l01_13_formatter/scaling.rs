@@ -31,3 +31,20 @@ fn nested_one_statement_blocks_scale() {
         .join()
         .unwrap();
 }
+
+/// `n` statements, each with four comments on their own lines before it and one after it.
+fn commented(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("// a\n// b\n// c\n// d\na{i} = {i}; // a{i}\n"))
+        .collect()
+}
+
+#[test]
+fn many_comments_scale() {
+    // Each statement's comments were found by a scan over every comment of the unit.
+    scaling::check("statements with comments, by count", 500, |n| {
+        zedc::format::format_source(commented(n).as_bytes()).unwrap();
+    });
+    let out = zedc::format::format_source(commented(2).as_bytes()).unwrap();
+    assert_eq!(out, commented(2));
+}
