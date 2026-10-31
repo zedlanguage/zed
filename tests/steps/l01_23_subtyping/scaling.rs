@@ -1,9 +1,10 @@
 //! The tuple and morphism parts at the rule of low complexity (DESIGN.md Part G). The union of
 //! `C` differences `m(i) - m(i + 1000)` has a decision diagram of `2^C` nodes, since every
-//! `m(i)` is ordered before every `m(i + 1000)`. A connective whose diagram would pass the
-//! budget keeps its operands instead, so building the union, its complement and a subtype query
-//! on it stay linear in `C`; the query is then not shown to hold, the cost of the budget. A
-//! product of tuple types covered by many negated ones is split into disjoint pieces, and
+//! `m(i)` is ordered before every `m(i + 1000)`. A connective whose diagram would have more
+//! nodes than its operands keeps its operands instead, so building the union and its
+//! complement stay linear in `C`, and the queries on them are decided exactly: `b <: b | a` by
+//! expanding on `b`, which both sides share, and `!b & a` by passing over paths whose taken
+//! types are disjoint. A product of tuple types covered by many negated ones is split into disjoint pieces, and
 //! a negated type disjoint from a piece is passed over.
 
 use zed_kernel::Value;
@@ -30,8 +31,8 @@ fn union(c: usize, atom: fn(usize) -> Type) -> Type {
 fn run(c: usize, atom: fn(usize) -> Type) {
     let b = union(c, atom);
     let n = !&b;
-    let _ = (&n & &atom(5000)).is_empty();
-    let _ = b.subtype(&(&b | &atom(5000)));
+    assert!(!(&n & &atom(5000)).is_empty());
+    assert!(b.subtype(&(&b | &atom(5000))));
 }
 
 #[test]
@@ -49,8 +50,8 @@ fn the_parts_scale() {
 
 #[test]
 fn small_unions_are_still_decided() {
-    // Within the budget the diagram is exact, so the query that the budget leaves undecided
-    // at large counts holds at small ones.
+    // The answers `the_parts_scale` times, at a count small enough that unions of diagrams
+    // stay diagrams.
     for atom in [morphism as fn(usize) -> Type, pair] {
         let b = union(6, atom);
         assert!(b.subtype(&(&b | &atom(5000))), "{b}");
@@ -104,31 +105,73 @@ fn a_cell_left_out_is_found() {
 }
 
 #[test]
-fn an_answer_past_the_budget_is_not_kept() {
-    let (p, cells) = grid(6, 0);
-    let d = &p - &cells;
-    assert!(
-        !Type::with_budget(2, || d.is_empty()),
-        "two splits do not cover 36 cells"
-    );
-    assert!(d.is_empty(), "the full budget does, after the cut answer");
-}
-
-#[test]
 fn negated_types_disjoint_from_the_product_are_passed_over() {
     // The decoy `(bits(i), 1000 + i)`, with `bits(i)` the numbers below 8192 with bit `i` set,
     // misses `(0..8192, 0)` in the second component, and splitting on it would cut every piece
-    // in two in the first: `2^13` pieces for the 13 decoys, past a budget of 256 splits,
-    // unless a disjoint one is passed over. The pieces are all met only when the answer is
-    // `true`, here once the two halves of the product are reached.
+    // in two in the first: `2^13` pieces for the 13 decoys, unless a disjoint one is passed
+    // over. The pieces are all met only when the answer is `true`, here once the two halves
+    // of the product are reached.
     let set = |r: std::ops::Range<usize>| Type::union_all(r.map(lit));
     let bits = |i: usize| Type::union_all((0..8192).filter(|x| x >> i & 1 == 1).map(lit));
     let p = Type::tuple(vec![set(0..8192), lit(0)]);
     let halves =
         &Type::tuple(vec![set(0..4096), lit(0)]) | &Type::tuple(vec![set(4096..8192), lit(0)]);
     let decoys = Type::union_all((0..13).map(|i| Type::tuple(vec![bits(i), lit(1000 + i)])));
-    assert!(!Type::with_budget(256, || (&p - &decoys).is_empty()));
-    assert!(Type::with_budget(256, || (&p - &(&decoys | &halves)).is_empty()));
+    assert!(!(&p - &decoys).is_empty());
+    assert!((&p - &(&decoys | &halves)).is_empty());
+}
+
+#[test]
+fn passing_over_disjoint_negated_types_scales() {
+    // As above with `k` decoys, the first component a tuple of `k` bits so that a meet costs
+    // `O(k)`: the decoy `(bits(i), b + 1 + i)` has bit `i` set, and misses `(U, b)` in the
+    // second component. The pieces are all met only when the answer is `true`, here once the
+    // two halves on bit 0 are reached. Passed over, `k` decoys cost `O(k²)`; split on, `2^k`
+    // pieces. Each
+    // run takes a new `b`, so no run reads another's results.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            let bit = &lit(0) | &lit(1);
+            let bits = |k: usize, i: usize| {
+                Type::tuple(
+                    (0..k)
+                        .map(|j| if j == i { lit(1) } else { bit.clone() })
+                        .collect(),
+                )
+            };
+            let made: std::collections::BTreeMap<usize, (Type, Vec<Type>)> = [2, 16]
+                .into_iter()
+                .map(|k| {
+                    let u = Type::tuple(vec![bit.clone(); k]);
+                    (k, (u, (0..k).map(|i| bits(k, i)).collect()))
+                })
+                .collect();
+            let next = std::cell::Cell::new(0);
+            scaling::check_order("decoys passed over, by count", 2, 2, |k| {
+                next.set(next.get() + 100);
+                let b = 1_000_000 + next.get();
+                let (u, bs) = &made[&k];
+                let p = Type::tuple(vec![u.clone(), lit(b)]);
+                let decoys = Type::union_all(
+                    bs.iter()
+                        .enumerate()
+                        .map(|(i, s)| Type::tuple(vec![s.clone(), lit(b + 1 + i)])),
+                );
+                // The two halves on bit 0 cover `(U, b)`, so every piece must be met.
+                let half = |v: usize| {
+                    let mut c = vec![bit.clone(); k];
+                    c[0] = lit(v);
+                    Type::tuple(vec![Type::tuple(c), lit(b)])
+                };
+                let cover = &(&decoys | &half(0)) | &half(1);
+                assert!(!(&p - &decoys).is_empty());
+                assert!((&p - &cover).is_empty());
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]

@@ -16,18 +16,21 @@
 //!
 //! A diagram is canonical, so some functions have only diagrams exponential in the number of
 //! their atoms: `(m1 & !n1) | … | (mC & !nC)`, with every `m` ordered before every `n`, has
-//! `2^C` nodes. A union or intersection therefore stops after [`budget`] pairs of nodes, and its
-//! part is then kept as the expression (`Part::Expr`), built in constant time. An expression is
-//! decided through two diagrams within the budget that bound it from below and above
-//! (`Part::bounds`): a lower bound with a value shows it inhabited, and an empty upper bound
-//! shows it empty.
+//! `2^C` nodes. A union or intersection therefore keeps its diagram only when it has no more
+//! nodes than its two operands together, and otherwise keeps the expression (`Part::Expr`),
+//! built in constant time; so a diagram has no more nodes than the atoms written to build it.
+//! An expression is decided by its paths (`Part::paths`): its Shannon expansion on the
+//! smallest atom at its top, each step taking the cofactors of its operands, each operand
+//! once. Emptiness of these Boolean combinations is coNP-hard, so the number of paths can be
+//! exponential in the atoms; the walk holds one path at a time, and no count of nodes or
+//! paths stops it.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as Atomic};
-use std::sync::{Arc, OnceLock};
 
 use super::{Morphism, Op, Type, mix};
 
@@ -35,27 +38,6 @@ use super::{Morphism, Op, Type, mix};
 pub(super) enum Bdd<A> {
     Leaf(bool),
     Node(Arc<Branch<A>>),
-}
-
-thread_local! {
-    static BUDGET: Cell<usize> = const { Cell::new(4096) };
-}
-
-/// The most nodes a walk over the paths of a diagram visits.
-pub(super) const WALK: usize = 1 << 16;
-
-/// The most pairs of nodes a union or intersection of two diagrams visits.
-pub(super) fn budget() -> usize {
-    BUDGET.with(Cell::get)
-}
-
-/// Runs `f` with the budget of a union or intersection set to `n` on this thread. Results decided meanwhile stay in the
-/// thread's tables.
-pub(super) fn with_budget<R>(n: usize, f: impl FnOnce() -> R) -> R {
-    let old = BUDGET.with(|b| b.replace(n));
-    let r = f();
-    BUDGET.with(|b| b.set(old));
-    r
 }
 
 pub(super) struct Branch<A> {
@@ -138,9 +120,27 @@ impl<A: Literal> Bdd<A> {
         Bdd::Node(n)
     }
 
-    /// The union or intersection, or `None` past [`budget`] pairs of nodes.
+    /// The union or intersection, or `None` when it would have more nodes than the two
+    /// operands together.
     pub(super) fn zip(&self, other: &Bdd<A>, op: Op) -> Option<Bdd<A>> {
-        self.apply(other, op, &mut HashMap::new())
+        let mut made = HashSet::new();
+        self.apply(
+            other,
+            op,
+            &mut HashMap::new(),
+            &mut made,
+            self.size() + other.size(),
+        )
+    }
+
+    /// The number of nodes.
+    fn size(&self) -> usize {
+        let mut n = 0;
+        self.atoms(&mut |_| {
+            n += 1;
+            true
+        });
+        n
     }
 
     fn apply(
@@ -148,6 +148,8 @@ impl<A: Literal> Bdd<A> {
         other: &Bdd<A>,
         op: Op,
         memo: &mut HashMap<(u64, u64), Bdd<A>>,
+        made: &mut HashSet<u64>,
+        most: usize,
     ) -> Option<Bdd<A>> {
         match (op, self, other) {
             (Op::And, Bdd::Leaf(false), _) | (Op::And, _, Bdd::Leaf(false)) => {
@@ -164,29 +166,33 @@ impl<A: Literal> Bdd<A> {
         if let Some(r) = memo.get(&key) {
             return Some(r.clone());
         }
-        if memo.len() >= budget() {
-            return None;
-        }
         let (Bdd::Node(a), Bdd::Node(b)) = (self, other) else {
             unreachable!("both leaves were handled")
         };
         let r = match a.atom.cmp(&b.atom) {
             Ordering::Equal => Bdd::node(
                 a.atom.clone(),
-                a.hi.apply(&b.hi, op, memo)?,
-                a.lo.apply(&b.lo, op, memo)?,
+                a.hi.apply(&b.hi, op, memo, made, most)?,
+                a.lo.apply(&b.lo, op, memo, made, most)?,
             ),
             Ordering::Less => Bdd::node(
                 a.atom.clone(),
-                a.hi.apply(other, op, memo)?,
-                a.lo.apply(other, op, memo)?,
+                a.hi.apply(other, op, memo, made, most)?,
+                a.lo.apply(other, op, memo, made, most)?,
             ),
             Ordering::Greater => Bdd::node(
                 b.atom.clone(),
-                self.apply(&b.hi, op, memo)?,
-                self.apply(&b.lo, op, memo)?,
+                self.apply(&b.hi, op, memo, made, most)?,
+                self.apply(&b.lo, op, memo, made, most)?,
             ),
         };
+        // The result's nodes are among those made by this union or intersection.
+        if let Bdd::Node(n) = &r
+            && made.insert(n.id)
+            && made.len() > most
+        {
+            return None;
+        }
         memo.insert(key, r.clone());
         Some(r)
     }
@@ -221,44 +227,51 @@ impl<A> Bdd<A> {
     }
 
     /// Whether `f` holds of every path to the `true` leaf, given as the atoms it takes and those
-    /// it refuses, in order; `None` once `budget` nodes have been visited. Below a node whose
+    /// it refuses, in order, stopping at the first path where it does not. Below a node whose
     /// `hi` is `true` the `lo` path does not refuse the node's atom, since `a | (!a & L)` is
     /// `a | L`, so a union of atoms is a path per atom.
-    pub(super) fn paths<'a>(
+    pub(super) fn paths<'a>(&'a self, f: &mut impl FnMut(&[&'a A], &[&'a A]) -> bool) -> bool {
+        self.walk(false, f)
+    }
+
+    /// [`Bdd::paths`]; with `prune`, `f` is also asked of each path's atoms taken so far with
+    /// none refused, and the paths below are passed over when it holds: refusing more atoms
+    /// only removes values, so if `f` holds of `pos` alone it holds of every path below.
+    pub(super) fn walk<'a>(
         &'a self,
-        budget: &mut usize,
+        prune: bool,
         f: &mut impl FnMut(&[&'a A], &[&'a A]) -> bool,
-    ) -> Option<bool> {
+    ) -> bool {
         fn go<'a, A>(
             b: &'a Bdd<A>,
+            prune: bool,
             pos: &mut Vec<&'a A>,
             neg: &mut Vec<&'a A>,
-            budget: &mut usize,
             f: &mut impl FnMut(&[&'a A], &[&'a A]) -> bool,
-        ) -> Option<bool> {
-            *budget = budget.checked_sub(1)?;
+        ) -> bool {
             let n = match b {
-                Bdd::Leaf(false) => return Some(true),
-                Bdd::Leaf(true) => return Some(f(pos, neg)),
+                Bdd::Leaf(false) => return true,
+                Bdd::Leaf(true) => return f(pos, neg),
                 Bdd::Node(n) => n,
             };
             pos.push(&n.atom);
-            let hi = go(&n.hi, pos, neg, budget, f);
+            let hi = (prune && !matches!(n.hi, Bdd::Leaf(false)) && f(pos, &[]))
+                || go(&n.hi, prune, pos, neg, f);
             pos.pop();
-            if hi != Some(true) {
-                return hi;
+            if !hi {
+                return false;
             }
             let refuse = !matches!(n.hi, Bdd::Leaf(true));
             if refuse {
                 neg.push(&n.atom);
             }
-            let lo = go(&n.lo, pos, neg, budget, f);
+            let lo = go(&n.lo, prune, pos, neg, f);
             if refuse {
                 neg.pop();
             }
             lo
         }
-        go(self, &mut Vec::new(), &mut Vec::new(), budget, f)
+        go(self, prune, &mut Vec::new(), &mut Vec::new(), f)
     }
 
     /// Whether the path that `holds` chooses at each atom ends at `true`.
@@ -274,7 +287,7 @@ impl<A> Bdd<A> {
 }
 
 /// A tuple part of one length, or the morphism part: a diagram, or, when a connective's diagram
-/// would pass the budget, the connective applied to its operands.
+/// would have more nodes than its operands together, the connective applied to its operands.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) enum Part<A: Ord> {
     Bdd(Bdd<A>),
@@ -284,7 +297,6 @@ pub(super) enum Part<A: Ord> {
 pub(super) struct Expr<A: Ord> {
     digest: u64,
     form: Form<A>,
-    bounds: OnceLock<(Bdd<A>, Bdd<A>)>,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -325,11 +337,7 @@ impl<A: Literal> Part<A> {
             Form::Or(a, b) => mix(mix(9, a.digest()), b.digest()),
             Form::And(a, b) => mix(mix(10, a.digest()), b.digest()),
         };
-        Part::Expr(Arc::new(Expr {
-            digest,
-            form,
-            bounds: OnceLock::new(),
-        }))
+        Part::Expr(Arc::new(Expr { digest, form }))
     }
 
     pub(super) fn not(&self) -> Part<A> {
@@ -363,36 +371,191 @@ impl<A: Literal> Part<A> {
         })
     }
 
-    /// Two diagrams within the budget, the first within the part and the part within the
-    /// second. Where a connective's bound would pass the budget, it is an operand's bound, or
-    /// the empty or the whole universe.
-    pub(super) fn bounds(&self) -> (Bdd<A>, Bdd<A>) {
+    /// Whether `f` holds of every path of the part to `true`, as [`Bdd::walk`] gives them with
+    /// `prune`, stopping at the first path where it does not; `f` must hold of a path whenever
+    /// it holds of one that takes a subset of its atoms and refuses a subset of its atoms. An
+    /// expression is first expanded on a subexpression it shares between two operands: it is
+    /// `x & e[x := true] | !x & e[x := false]`, and the two cofactors are built again from
+    /// their operands, so a part like `b & !(b | a)` is `false` at once. Each expansion leaves
+    /// one fewer shared subexpression. An expression that shares none is expanded on the
+    /// smallest atom at the top of any of its diagrams, its cofactors being its operands'
+    /// cofactors combined again.
+    pub(super) fn paths(&self, f: &mut impl FnMut(&[&A], &[&A]) -> bool) -> bool {
+        fn go<A: Literal>(
+            p: &Part<A>,
+            pos: &mut Vec<A>,
+            neg: &mut Vec<A>,
+            f: &mut impl FnMut(&[&A], &[&A]) -> bool,
+        ) -> bool {
+            let e = match p {
+                // The diagram's own walk, after the atoms taken and refused so far.
+                Part::Bdd(b) => {
+                    return b.walk(true, &mut |bp, bn| {
+                        let ps: Vec<&A> = pos.iter().chain(bp.iter().copied()).collect();
+                        let ns: Vec<&A> = neg.iter().chain(bn.iter().copied()).collect();
+                        f(&ps, &ns)
+                    });
+                }
+                Part::Expr(e) => e,
+            };
+            if let Some(x) = p.shared() {
+                let ex = Part::Expr(x.clone());
+                return [true, false].into_iter().all(|v| {
+                    let rest = p.substitute(&x, v, &mut HashMap::new());
+                    let side = if v { ex.clone() } else { ex.not() };
+                    go(&side.zip(&rest, Op::And), pos, neg, f)
+                });
+            }
+            let Some(a) = p.top() else {
+                // An expression of leaves alone is a constant.
+                let ps: Vec<&A> = pos.iter().collect();
+                let ns: Vec<&A> = neg.iter().collect();
+                return !Part::Expr(e.clone()).eval(&|_| false) || f(&ps, &ns);
+            };
+            let hi = p.cofactor(&a, true, &mut HashMap::new());
+            pos.push(a.clone());
+            let r = hi.is_leaf() == Some(false)
+                || {
+                    let ps: Vec<&A> = pos.iter().collect();
+                    f(&ps, &[])
+                }
+                || go(&hi, pos, neg, f);
+            pos.pop();
+            if !r {
+                return false;
+            }
+            let lo = p.cofactor(&a, false, &mut HashMap::new());
+            let refuse = hi.is_leaf() != Some(true);
+            if refuse {
+                neg.push(a);
+            }
+            let r = go(&lo, pos, neg, f);
+            if refuse {
+                neg.pop();
+            }
+            r
+        }
+        go(self, &mut Vec::new(), &mut Vec::new(), f)
+    }
+
+    /// An expression that is an operand of two connectives in the part, if any: the first met
+    /// from the root, so the largest.
+    fn shared(&self) -> Option<Arc<Expr<A>>> {
+        fn count<A: Literal>(p: &Part<A>, seen: &mut HashMap<*const Expr<A>, usize>) {
+            let Part::Expr(e) = p else { return };
+            let n = seen.entry(Arc::as_ptr(e)).or_insert(0);
+            *n += 1;
+            if *n == 1 {
+                match &e.form {
+                    Form::Not(a) => count(a, seen),
+                    Form::Or(a, b) | Form::And(a, b) => {
+                        count(a, seen);
+                        count(b, seen);
+                    }
+                }
+            }
+        }
+        fn find<A: Literal>(
+            p: &Part<A>,
+            seen: &HashMap<*const Expr<A>, usize>,
+            done: &mut HashSet<*const Expr<A>>,
+        ) -> Option<Arc<Expr<A>>> {
+            let Part::Expr(e) = p else { return None };
+            if seen[&Arc::as_ptr(e)] > 1 {
+                return Some(e.clone());
+            }
+            if !done.insert(Arc::as_ptr(e)) {
+                return None;
+            }
+            match &e.form {
+                Form::Not(a) => find(a, seen, done),
+                Form::Or(a, b) | Form::And(a, b) => {
+                    find(a, seen, done).or_else(|| find(b, seen, done))
+                }
+            }
+        }
+        let mut seen = HashMap::new();
+        count(self, &mut seen);
+        find(self, &seen, &mut HashSet::new())
+    }
+
+    /// The part with the expression `x` replaced by the leaf `v`, each expression rebuilt once.
+    fn substitute(
+        &self,
+        x: &Arc<Expr<A>>,
+        v: bool,
+        memo: &mut HashMap<*const Expr<A>, Part<A>>,
+    ) -> Part<A> {
+        let Part::Expr(e) = self else {
+            return self.clone();
+        };
+        if Arc::ptr_eq(e, x) {
+            return Part::leaf(v);
+        }
+        if let Some(r) = memo.get(&Arc::as_ptr(e)) {
+            return r.clone();
+        }
+        let r = match &e.form {
+            Form::Not(a) => a.substitute(x, v, memo).not(),
+            Form::Or(a, b) => a
+                .substitute(x, v, memo)
+                .zip(&b.substitute(x, v, memo), Op::Or),
+            Form::And(a, b) => a
+                .substitute(x, v, memo)
+                .zip(&b.substitute(x, v, memo), Op::And),
+        };
+        memo.insert(Arc::as_ptr(e), r.clone());
+        r
+    }
+
+    /// The smallest atom at the top of a diagram in the part, each expression visited once.
+    fn top(&self) -> Option<A> {
+        fn go<A: Literal>(p: &Part<A>, seen: &mut HashSet<*const Expr<A>>, best: &mut Option<A>) {
+            match p {
+                Part::Bdd(Bdd::Leaf(_)) => {}
+                Part::Bdd(Bdd::Node(n)) => {
+                    if best.as_ref().is_none_or(|b| n.atom < *b) {
+                        *best = Some(n.atom.clone());
+                    }
+                }
+                Part::Expr(e) => {
+                    if seen.insert(Arc::as_ptr(e)) {
+                        match &e.form {
+                            Form::Not(a) => go(a, seen, best),
+                            Form::Or(a, b) | Form::And(a, b) => {
+                                go(a, seen, best);
+                                go(b, seen, best);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut best = None;
+        go(self, &mut HashSet::new(), &mut best);
+        best
+    }
+
+    /// The part with `a` taken (`v`) or refused, for `a` no larger than any atom in it, each
+    /// expression rebuilt once.
+    fn cofactor(&self, a: &A, v: bool, memo: &mut HashMap<*const Expr<A>, Part<A>>) -> Part<A> {
         let e = match self {
-            Part::Bdd(b) => return (b.clone(), b.clone()),
+            Part::Bdd(Bdd::Node(n)) if n.atom == *a => {
+                return Part::Bdd(if v { n.hi.clone() } else { n.lo.clone() });
+            }
+            Part::Bdd(_) => return self.clone(),
             Part::Expr(e) => e,
         };
-        e.bounds
-            .get_or_init(|| {
-                // Past the budget, one operand's lower bound is still below a union, and one
-                // operand's upper bound still above an intersection.
-                let zip = |a: &Part<A>, b: &Part<A>, op: Op| {
-                    let ((al, au), (bl, bu)) = (a.bounds(), b.bounds());
-                    let (lo, up) = (al.zip(&bl, op), au.zip(&bu, op));
-                    match op {
-                        Op::Or => (lo.unwrap_or(al), up.unwrap_or(Bdd::Leaf(true))),
-                        Op::And => (lo.unwrap_or(Bdd::Leaf(false)), up.unwrap_or(au)),
-                    }
-                };
-                match &e.form {
-                    Form::Not(p) => {
-                        let (l, u) = p.bounds();
-                        (u.not(), l.not())
-                    }
-                    Form::Or(a, b) => zip(a, b, Op::Or),
-                    Form::And(a, b) => zip(a, b, Op::And),
-                }
-            })
-            .clone()
+        if let Some(r) = memo.get(&Arc::as_ptr(e)) {
+            return r.clone();
+        }
+        let r = match &e.form {
+            Form::Not(x) => x.cofactor(a, v, memo).not(),
+            Form::Or(x, y) => x.cofactor(a, v, memo).zip(&y.cofactor(a, v, memo), Op::Or),
+            Form::And(x, y) => x.cofactor(a, v, memo).zip(&y.cofactor(a, v, memo), Op::And),
+        };
+        memo.insert(Arc::as_ptr(e), r.clone());
+        r
     }
 
     /// Whether the value whose membership in each atom `holds` decides is in the part.
@@ -553,30 +716,58 @@ mod tests {
         }
     }
 
-    #[test]
-    fn bounds_enclose_the_part() {
-        // With a budget of one pair of nodes most connectives are kept as expressions. Each
-        // set of atoms that holds is one assignment; the lower bound implies the part, which
-        // implies the upper bound.
-        with_budget(1, || {
-            let (mut seed, mut exprs, mut loose) = (7, 0, 0);
-            for _ in 0..3000 {
-                let p = random(&mut seed, 6);
-                let (lo, up) = p.bounds();
-                exprs += usize::from(matches!(p, Part::Expr(_)));
-                for set in 0..64u32 {
-                    let holds =
-                        |t: &Vec<Type>| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
-                    let (l, v, u) = (lo.eval(holds), p.eval(&holds), up.eval(holds));
-                    assert!(
-                        !l || v,
-                        "{p:?}: lower bound {lo:?} not within it at {set:b}"
-                    );
-                    assert!(!v || u, "{p:?}: upper bound {up:?} not above it at {set:b}");
-                    loose += usize::from(l != u);
-                }
-            }
-            assert!(exprs > 500 && loose > 1000, "{exprs} {loose}");
+    /// The part built from `random`'s connectives as expressions, so that every form is met;
+    /// an operand is at times one built before, kept in `pool`, so that expressions are shared.
+    fn random_expr(seed: &mut u64, depth: u32, pool: &mut Vec<Part<Vec<Type>>>) -> Part<Vec<Type>> {
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let pick = *seed >> 33;
+        if !pool.is_empty() && pick % 7 == 3 {
+            return pool[(pick / 7) as usize % pool.len()].clone();
+        }
+        if depth == 0 || pick.is_multiple_of(5) {
+            return random(seed, 2);
+        }
+        let (a, b) = (
+            random_expr(seed, depth - 1, pool),
+            random_expr(seed, depth - 1, pool),
+        );
+        let p = Part::expr(match pick % 3 {
+            0 => Form::Or(a, b),
+            1 => Form::And(a, b),
+            _ => Form::Not(a),
         });
+        pool.push(p.clone());
+        p
+    }
+
+    #[test]
+    fn the_paths_of_a_part_are_its_assignments() {
+        // Each set of the six atoms is one assignment. It is outside the part exactly when
+        // every path excludes it: takes an atom not in the set, or refuses one in it. That
+        // test holds of a path whenever it holds of a path with fewer atoms, as `paths` asks.
+        let (mut seed, mut exprs, mut shared, mut found) = (7, 0, 0, 0);
+        for _ in 0..3000 {
+            let p = if seed % 2 == 0 {
+                random(&mut seed, 6)
+            } else {
+                random_expr(&mut seed, 5, &mut Vec::new())
+            };
+            exprs += usize::from(matches!(p, Part::Expr(_)));
+            shared += usize::from(p.shared().is_some());
+            for set in 0..64u32 {
+                let holds = |t: &Vec<Type>| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
+                let out = p.paths(&mut |pos, neg| {
+                    pos.iter().any(|a| !holds(a)) || neg.iter().any(|a| holds(a))
+                });
+                assert_eq!(!out, p.eval(&holds), "{p:?} at {set:b}");
+                found += usize::from(!out);
+            }
+        }
+        assert!(
+            exprs > 500 && shared > 200 && found > 10_000,
+            "{exprs} {shared} {found}"
+        );
     }
 }

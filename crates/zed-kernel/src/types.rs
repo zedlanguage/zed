@@ -559,7 +559,7 @@ impl Type {
                 return None;
             };
             let mut rows = None;
-            let listed = b.paths(&mut { bdd::WALK }, &mut |pos, neg| {
+            let listed = b.paths(&mut |pos, neg| {
                 let meet = pos.iter().fold(vec![Type::top(); *len], |m, p| {
                     m.iter().zip(p.iter()).map(|(a, b)| a & b).collect()
                 });
@@ -596,7 +596,7 @@ impl Type {
                 rows.extend(found);
                 rows.len() <= cap
             });
-            if listed != Some(true) {
+            if !listed {
                 return None;
             }
             for r in rows.into_iter().flatten() {
@@ -1098,8 +1098,8 @@ fn tuples(items: &mut Vec<String>, t: &Tuples) {
 
 /// One item per path of a diagram: the intersection of the atoms it takes, or `all` when it
 /// takes none, and the complements of those it refuses. The items, and the atoms within each,
-/// are sorted as text, since the diagram's order of atoms is that of their digests. Past the budget of nodes visited
-/// (`bdd::WALK`) the rest is `…`. A part kept as an expression is its connective applied to the items of its operands.
+/// are sorted as text, since the diagram's order of atoms is that of their digests. A part
+/// kept as an expression is its connective applied to the items of its operands.
 fn clauses<A: bdd::Literal>(
     items: &mut Vec<String>,
     all: &str,
@@ -1129,9 +1129,8 @@ fn clauses<A: bdd::Literal>(
             return;
         }
     };
-    let mut budget = bdd::WALK;
     let mut found = Vec::new();
-    let done = b.paths(&mut budget, &mut |pos, neg| {
+    b.paths(&mut |pos, neg| {
         let mut lits: Vec<String> = pos.iter().map(|a| show(a)).collect();
         lits.sort();
         if lits.is_empty() {
@@ -1151,7 +1150,4 @@ fn clauses<A: bdd::Literal>(
     });
     found.sort();
     items.extend(found);
-    if done.is_none() {
-        items.push("…".into());
-    }
 }

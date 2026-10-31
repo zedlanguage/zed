@@ -110,7 +110,7 @@ in docs/layout.md.
   until none changes (no cap; the projection reads the congruences, docs/thresholds.md 3),
   the enumeration of listed sets with no fuel (docs/thresholds.md 8), narrowing by tests, and
   the arms of a body.
-- Complexity audit (2026-10-30, DESIGN.md Part G, "Every algorithm is of low complexity") (the caps and budgets named here were removed later by docs/thresholds.md, replacements 3, 4 and 8, except the diagram budgets of replacement 9, which is open):
+- Complexity audit (2026-10-30, DESIGN.md Part G, "Every algorithm is of low complexity") (the caps and budgets named here were removed later by docs/thresholds.md, replacements 3, 4, 8 and 9):
   every finding is listed in COMPLEXITY.md with its state. Fixed so far: the preimage transfer
   (exponential in `let` depth and guard nesting, now one computation per term and scope) and
   the projection (one split into conjunctions for all names, galloping bounds), the scope

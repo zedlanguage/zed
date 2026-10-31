@@ -23,7 +23,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `COMBOS` 256 | check/mod.rs `apply` | removed (1): a call over unions with more combinations gave `_` |
 | `SHOWN` 12 | check/mod.rs | removed (1): the failed combinations after 12 were counted, not shown |
 | `DEPTH` 16 | check/mod.rs | removed (2): a derivation was cut after 16 steps |
-| diagram budget 4096, walk 65536 | zed-kernel types/bdd.rs, empty.rs | a union or intersection keeps its operands; a part is not shown empty |
+| diagram budget 4096, walk 65536 | zed-kernel types/bdd.rs, empty.rs | removed (9): a union or intersection kept its operands; a part was not shown empty; a tuple clause past 4096 splits was not shown covered; a type's display was cut with `…` |
 | `PIECE_LIMIT` 8 | store/interval.rs | removed (3, 3c): an image or preimage with more pieces was merged and marked necessary |
 | `FINITE_SET_LIMIT` 64 | store/lattice.rs | removed (3c): an interval or type with more members was not listed |
 | `WIDENING_DELAY` 3 | store/iterate.rs | removed (3): which changes of a loop head were joins and which widenings |
@@ -541,12 +541,44 @@ that drops it.
 The surface syntax reaches the store with the annotations (L15, beside `@exhaustive`); the
 store mechanism and its tests are in place now.
 
-### 9. Type diagrams (replaces the 4096 and 65536 budgets)
+### 9. Type diagrams (replaces the 4096 and 65536 budgets) — done
 
-Open. Emptiness of Boolean combinations of tuple types is coNP-hard, so an exact answer
-cannot be polynomial in general. Candidates: decide exactly where the combination's tuple
-parts share no component (a property of the types); keep operands otherwise. To be measured
-on the corpus before choosing.
+The budgets were the pairs of nodes a union or intersection of two diagrams visits (4096),
+the nodes a walk over a diagram's paths visits (65536), and the splits of products in one
+emptiness query (4096). Past each, `is_empty` answered `false`, "may have a value": sound,
+but a subtype query on a union of 13 differences of tuple types was not shown to hold.
+
+Now no count stops anything, and `is_empty` is exact apart from the union of negated
+morphism types (`empty.rs`, unchanged):
+
+- A union or intersection keeps its diagram when the diagram has no more nodes than its
+  two operands together, and otherwise keeps the expression (`Part::Expr`), built in
+  constant time. This bounds the nodes of every diagram by the atoms written to build it,
+  the rule replacement 4 uses for rows.
+- An expression is decided by its paths (`Part::paths`), with no limit. First, a
+  subexpression shared by two of its operands is expanded on: `e` is
+  `x & e[x := true] | !x & e[x := false]`, each cofactor built again from its operands, so
+  `b & !(b | a)` is `false` at once. Each such step leaves one fewer shared subexpression.
+  Otherwise the expression is expanded on the smallest atom at the top of its diagrams.
+- A walk asks the per-path test of the atoms taken so far, with none refused, and passes
+  over the paths below when it holds (`Bdd::walk` with `prune`): refusing more atoms only
+  removes values. So two disjoint tuple types taken on one path end it.
+- The products of a tuple clause are split with no cap.
+- A type's display lists every clause.
+
+Emptiness of Boolean combinations of tuple types is coNP-hard, so the time of an exact
+answer can still be exponential in the tuple types written. The memory is one path and one
+split at a time. Running out of time or memory is a failed build, never a different
+answer. A diagram of `O(C)` nodes, such as the parity of `C` tuple types, has `2^(C-1)`
+paths, so its display can be exponential in what was written; showing the diagram's nodes
+with shared subdiagrams named would bound it by the nodes, and is not built.
+
+| Candidate | Measured | Score | Reasoning |
+|---|---|---|---|
+| Diagrams no larger than their operands, exact paths with shared-subexpression expansion and pruning by the positive atoms | `the_parts_scale`: `b <: b \| a` 4 µs at every `C` from 4 to 14 (was 87 ms at 14, ×4 per +2 without the shared expansion); `!b & a` on tuples 1.7 ms at 14 (was 181 ms without pruning); 3000 random parts with shared operands against evaluation of all 64 assignments (`the_paths_of_a_part_are_its_assignments`, which fails if the shared expansion pairs a cofactor with the wrong side); `deep_combinations_are_decided_exactly`; `passing_over_disjoint_negated_types_scales` (no split cap; fails at ratio 1,540 against 192 when disjoint negated types are split on) | 9 | no constant; exact; exponential only where the problem is |
+| The same without the shared expansion and pruning | measured above | 5 | exact, but `b <: b \| a` is `2^C` |
+| Decide exactly where tuple parts share no component, keep operands otherwise | not built | 4 | a structural rule, but answers "may have a value" for the rest, as the budget did |
+| Keep the budgets | the old behavior | 0 | constants whose crossing changes the answer |
 
 ## Order
 
