@@ -11,7 +11,7 @@
 
 use std::fmt;
 
-use super::lattice::Lattice;
+use super::lattice::{Landmarks, Lattice};
 
 /// An IEEE binary format, narrowest first.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -175,8 +175,11 @@ impl Lattice for FloatClass {
             },
         }
     }
-    fn widen(&self, next: &Self) -> Self {
+    fn widen(&self, next: &Self, _: &Landmarks) -> Self {
         self.join(next)
+    }
+    fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
+        *next
     }
 }
 

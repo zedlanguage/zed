@@ -4,14 +4,17 @@
 //! An element is a sorted list of disjoint pieces, each `lo..=hi`, with at least one integer
 //! missing between two pieces, so that every set has exactly one representation and equality
 //! of elements is equality of sets. The empty list is the empty set, the bottom of the lattice.
-//! Meet and join are exact. The number of pieces is limited only at a widening point, by
-//! [`IntervalSet::widen`].
+//! Meet and join are exact.
 
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::Neg;
 
-/// The most pieces an element keeps at a widening point (step M0.5).
+use super::lattice::Landmarks;
+
+/// The most pieces an arithmetic image and a preimage keep (docs/thresholds.md, replacement 3c
+/// removes it).
 pub const PIECE_LIMIT: usize = 8;
 
 /// An endpoint: an integer or one of the two infinities.
@@ -263,36 +266,80 @@ impl IntervalSet {
     /// The widening `self ∇ next` (step M0.5), for `next` the value that the join would give,
     /// which contains `self`.
     ///
-    /// `next` is first cut to [`PIECE_LIMIT`] pieces. Then every endpoint of `next` that is not
-    /// an endpoint of `self` with the same role (lower or upper) is removed: a new lower
-    /// endpoint joins its piece to the piece below, or goes to `-inf` when there is none, and a
-    /// new upper endpoint joins its piece to the piece above, or goes to `inf`. The result
-    /// contains `next`, and its finite endpoints are endpoints of `self` with the same role, so
-    /// when it differs from `self` it has fewer of them: an ascending chain of widenings has at
-    /// most `2 * PIECE_LIMIT + 1` distinct elements. The bottom widens to `next` unchanged.
-    pub fn widen(&self, next: &Self) -> Self {
-        let next = next.cap(PIECE_LIMIT);
-        if self.is_empty() || next == *self {
-            return next;
+    /// Each finite endpoint of `next` moves outward to the nearest target: an endpoint of
+    /// `self`, of either role, or a landmark; with none on that side, to the infinity there.
+    /// A lower endpoint moves down and an upper one up, so the result contains `next`, and
+    /// pieces that then touch merge. An endpoint of `self` or a landmark stays where it is.
+    ///
+    /// So the finite endpoints of every element of an ascending chain of widenings lie in
+    /// `K`, the first element's endpoints and the landmarks. An element whose endpoints lie in
+    /// `K` is a union of some of the `2|K| + 1` parts into which `K` cuts the line (its points
+    /// and the gaps between them), so the chain has at most `2|K| + 2` elements. No count of
+    /// pieces or of steps enters. The bottom widens to `next` unchanged.
+    pub fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
+        if self.is_empty() || next == self {
+            return next.clone();
         }
-        // The pieces are sorted and disjoint, so both endpoint lists are sorted.
-        let old_lo = |e: End| self.pieces.binary_search_by(|p| p.0.cmp(&e)).is_ok();
-        let old_hi = |e: End| self.pieces.binary_search_by(|p| p.1.cmp(&e)).is_ok();
-        let mut out: Vec<(End, End)> = Vec::new();
-        // Whether the last piece of `out` lost its upper endpoint and so runs into the next.
-        let mut open = false;
-        for &(lo, hi) in &next.pieces {
-            match out.last_mut() {
-                Some(last) if open || !old_lo(lo) => last.1 = hi,
-                None if !old_lo(lo) => out.push((NegInf, hi)),
-                _ => out.push((lo, hi)),
-            }
-            open = !old_hi(hi);
+        let targets = self.targets(marks);
+        let out = next
+            .pieces
+            .iter()
+            .map(|&(lo, hi)| {
+                let lo = match lo {
+                    Fin(v) => targets.range(..=v).next_back().map_or(NegInf, |&t| Fin(t)),
+                    e => e,
+                };
+                let hi = match hi {
+                    Fin(v) => targets.range(v..).next().map_or(PosInf, |&t| Fin(t)),
+                    e => e,
+                };
+                (lo, hi)
+            })
+            .collect();
+        IntervalSet::from_pieces(out)
+    }
+
+    /// The narrowing `self Δ next` (step M0.5), for `next ⊑ self`, the meet of `self` with
+    /// its projection.
+    ///
+    /// Each finite endpoint of `next` moves outward to the nearest endpoint of `self` or
+    /// landmark, and stays where it is when there is none on that side, which is when the
+    /// piece of `self` that holds it runs to infinity there. The target is inside that piece
+    /// of `self`, so the result lies between `next` and `self`. Its finite endpoints are
+    /// endpoints of `self`, landmarks, or a bound that replaced an infinite one of `self`;
+    /// the last happens at most once on each side. So the endpoints of every element of a
+    /// descending chain of narrowings lie in a finite set, and the chain is finite by the
+    /// argument of [`IntervalSet::widen`].
+    pub fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
+        let targets = self.targets(marks);
+        let out = next
+            .pieces
+            .iter()
+            .map(|&(lo, hi)| {
+                let lo = match lo {
+                    Fin(v) => Fin(targets.range(..=v).next_back().map_or(v, |&t| t)),
+                    e => e,
+                };
+                let hi = match hi {
+                    Fin(v) => Fin(targets.range(v..).next().map_or(v, |&t| t)),
+                    e => e,
+                };
+                (lo, hi)
+            })
+            .collect();
+        IntervalSet::from_pieces(out)
+    }
+
+    /// The finite endpoints of `self`, of either role, and the landmarks.
+    fn targets(&self, marks: &Landmarks) -> BTreeSet<i64> {
+        let mut t = marks.ints().clone();
+        for &(lo, hi) in &self.pieces {
+            t.extend([lo, hi].into_iter().filter_map(|e| match e {
+                Fin(v) => Some(v),
+                _ => None,
+            }));
         }
-        if open {
-            out.last_mut().expect("next is not empty").1 = PosInf;
-        }
-        IntervalSet { pieces: out }
+        t
     }
 
     /// The set of `-x` for each member `x`.
@@ -438,24 +485,32 @@ mod tests {
 
     #[test]
     fn widening_sends_moved_outer_endpoints_to_infinity() {
+        let none = Landmarks::none();
         let a = set(&[(0, 2)]);
-        assert_eq!(a.widen(&set(&[(0, 3)])), IntervalSet::range(Fin(0), PosInf));
         assert_eq!(
-            a.widen(&set(&[(-1, 2)])),
+            a.widen(&set(&[(0, 3)]), &none),
+            IntervalSet::range(Fin(0), PosInf)
+        );
+        assert_eq!(
+            a.widen(&set(&[(-1, 2)]), &none),
             IntervalSet::range(NegInf, Fin(2))
         );
-        assert_eq!(a.widen(&a), a);
-        assert_eq!(IntervalSet::empty().widen(&a), a);
+        assert_eq!(a.widen(&a, &none), a);
+        assert_eq!(IntervalSet::empty().widen(&a, &none), a);
     }
 
     #[test]
     fn widening_fills_a_gap_that_a_new_inner_endpoint_opens() {
+        let none = Landmarks::none();
         // A new piece between two old ones: both of its endpoints are new, so the gaps on both
         // sides are filled.
         let a = set(&[(0, 0), (10, 10)]);
-        assert_eq!(a.widen(&set(&[(0, 0), (5, 5), (10, 10)])), set(&[(0, 10)]));
+        assert_eq!(
+            a.widen(&set(&[(0, 0), (5, 5), (10, 10)]), &none),
+            set(&[(0, 10)])
+        );
         // An inner endpoint that moves down joins its piece to the one below.
         let a = set(&[(0, 0), (10, 20)]);
-        assert_eq!(a.widen(&set(&[(0, 0), (9, 20)])), set(&[(0, 20)]));
+        assert_eq!(a.widen(&set(&[(0, 0), (9, 20)]), &none), set(&[(0, 20)]));
     }
 }

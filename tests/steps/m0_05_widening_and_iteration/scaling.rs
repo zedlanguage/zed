@@ -10,7 +10,8 @@ use std::cell::Cell;
 
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet};
-use zedc::store::iterate::{Equations, Strategy, dependency_graph, phase1};
+use zedc::store::iterate::{Equations, dependency_graph, phase1};
+use zedc::store::lattice::Landmarks;
 use zedc::store::wto::{Element, weak_topological_order};
 
 /// `depth` nested counters; cell `k` reads itself, the loop around it and the loop inside it.
@@ -52,6 +53,9 @@ impl Equations<IntervalSet> for Nest {
             .lift1(|(lo, hi)| vec![(lo.succ(), hi.succ())]);
         IntervalSet::single(0).join(&step)
     }
+    fn landmarks(&self) -> Landmarks {
+        Landmarks::of([0, 3], [])
+    }
 }
 
 fn depth_of(order: &[Element]) -> usize {
@@ -69,16 +73,17 @@ fn evals(depth: usize) -> u64 {
     let eq = Nest::new(depth);
     let order = weak_topological_order(&dependency_graph(eq.reads()));
     assert_eq!(depth_of(&order), depth, "the loops nest: {order:?}");
-    phase1(&eq, &order, Strategy::SPEC);
+    phase1(&eq, &order);
     eq.evals.get()
 }
 
 #[test]
 fn nested_loops_cost_linear_work_in_the_depth() {
-    // The evaluations per loop stay under a constant at every depth: about 10 each.
+    // The evaluations per loop stay under a constant at every depth: 15 each past the first
+    // (the head stops at each landmark 1 to 4 before it widens to infinity).
     for depth in 1..=48 {
         let n = evals(depth);
-        assert!(n <= 12 * depth as u64, "depth {depth}: {n} evaluations");
+        assert!(n <= 16 * depth as u64, "depth {depth}: {n} evaluations");
     }
 }
 
@@ -104,4 +109,51 @@ fn the_order_of_nested_loops_takes_time_linear_in_the_depth() {
         .expect("a thread")
         .join()
         .expect("the check passes");
+}
+
+/// One counter, `i = 0 ⊔ (i < 10·marks) + 1`, in a program that writes the literals 10, 20, …,
+/// 10·marks.
+struct Counter {
+    reads: Vec<Vec<usize>>,
+    marks: i64,
+    evals: Cell<u64>,
+}
+
+impl Equations<IntervalSet> for Counter {
+    fn reads(&self) -> &[Vec<usize>] {
+        &self.reads
+    }
+    fn eval(&self, _: usize, cells: &[IntervalSet]) -> IntervalSet {
+        self.evals.set(self.evals.get() + 1);
+        let step = cells[0]
+            .meet(&IntervalSet::range(
+                End::NegInf,
+                End::Fin(10 * self.marks - 1),
+            ))
+            .lift1(|(lo, hi)| vec![(lo.succ(), hi.succ())]);
+        IntervalSet::single(0).join(&step)
+    }
+    fn landmarks(&self) -> Landmarks {
+        Landmarks::of((1..=self.marks).map(|k| 10 * k), [])
+    }
+}
+
+#[test]
+fn a_head_stops_at_most_once_per_landmark() {
+    // The head may stop at each landmark below its fixpoint, so its evaluations grow linearly
+    // in the landmarks under it, and not in the gaps between them (COMPLEXITY.md S13).
+    for marks in [1, 2, 4, 8, 16, 32, 64, 128] {
+        let eq = Counter {
+            reads: vec![vec![0]],
+            marks,
+            evals: Cell::new(0),
+        };
+        let cells = phase1(&eq, &weak_topological_order(&dependency_graph(eq.reads())));
+        assert_eq!(cells, vec![IntervalSet::of(0, 10 * marks)]);
+        let n = eq.evals.get();
+        assert!(
+            n <= 3 * marks as u64 + 1,
+            "{marks} landmarks: {n} evaluations"
+        );
+    }
 }

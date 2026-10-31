@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use super::interval::{End, IntervalSet};
-use super::lattice::Lattice;
+use super::lattice::{Landmarks, Lattice};
 
 /// A symbol an affine bound names: a name in scope or its length, `n` or `a::len`. The store
 /// names each symbol by its source text, unique within one store.
@@ -471,14 +471,26 @@ impl Lattice for Bounds {
     /// The union widens as in module `interval`, and a symbolic bound of `next` is kept only
     /// when `self` has it. So the bounds of a chain of widenings only shrink, and the chain is
     /// finite.
-    fn widen(&self, next: &Self) -> Self {
+    fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
         if *self == Bounds::bottom() {
             return next.clone();
         }
         Bounds::from_bounds(
-            self.ints.widen(&next.ints),
+            self.ints.widen(&next.ints, marks),
             next.lower.intersection(&self.lower).cloned(),
             next.upper.intersection(&self.upper).cloned(),
+        )
+    }
+    /// The union narrows as in module `interval`, and a side takes the symbolic bounds of
+    /// `next` only while it has none: each side gains bounds at most once, so every chain of
+    /// narrowings is finite.
+    fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
+        let side =
+            |s: &BTreeSet<_>, n: &BTreeSet<_>| if s.is_empty() { n.clone() } else { s.clone() };
+        Bounds::from_bounds(
+            self.ints.narrow(&next.ints, marks),
+            side(&self.lower, &next.lower),
+            side(&self.upper, &next.upper),
         )
     }
     /// Sound and not complete: each bound of `other` must be implied by a bound of `self` with

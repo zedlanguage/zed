@@ -31,7 +31,7 @@ use zed_kernel::provenance::FactAddress;
 use super::affine::{Affine, Bounds};
 use super::float::FloatClass;
 use super::interval::IntervalSet;
-use super::lattice::{Congruence, FiniteSet, Lattice};
+use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
 
 /// What an element rests on.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -220,9 +220,9 @@ impl<L: Lattice> Entry<L> {
     /// Widens the entry by `other` at the component head `head`: the widening of the join,
     /// with both sides' premises and, when the widening gives more than the join, the
     /// widening itself. Returns whether the element changed.
-    pub fn widen(&mut self, other: &Entry<L>, head: &FactAddress) -> bool {
+    pub fn widen(&mut self, other: &Entry<L>, head: &FactAddress, marks: &Landmarks) -> bool {
         let joined = self.element.join(&other.element);
-        let w = self.element.widen(&joined);
+        let w = self.element.widen(&joined, marks);
         self.premises.extend(&other.premises);
         if w != joined {
             self.premises.insert(Premise::Widened(head.clone()));
@@ -305,13 +305,13 @@ impl Cell {
 
     /// Widens the cell by `other` at the component head `head`, entry by entry. Returns
     /// whether an element changed.
-    pub fn widen(&mut self, other: &Cell, head: &FactAddress) -> bool {
+    pub fn widen(&mut self, other: &Cell, head: &FactAddress, marks: &Landmarks) -> bool {
         let changed = [
-            self.ints.widen(&other.ints, head),
-            self.congruence.widen(&other.congruence, head),
-            self.finite.widen(&other.finite, head),
-            self.float.widen(&other.float, head),
-            self.length.widen(&other.length, head),
+            self.ints.widen(&other.ints, head, marks),
+            self.congruence.widen(&other.congruence, head, marks),
+            self.finite.widen(&other.finite, head, marks),
+            self.float.widen(&other.float, head, marks),
+            self.length.widen(&other.length, head, marks),
         ]
         .contains(&true);
         // A widening can send a length's lower end to minus infinity; a meet or a join keeps it

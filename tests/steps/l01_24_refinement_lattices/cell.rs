@@ -8,7 +8,7 @@ use zedc::store::affine::{Affine, Bounds};
 use zedc::store::cell::{Cell, Entry, Premise, Premises, Store};
 use zedc::store::float::{FloatClass, Kind, Width};
 use zedc::store::interval::IntervalSet;
-use zedc::store::lattice::{FiniteSet, Lattice};
+use zedc::store::lattice::{FiniteSet, Landmarks, Lattice};
 
 /// The fact at node `n` with no keypath.
 fn addr(n: u32) -> FactAddress {
@@ -65,18 +65,26 @@ fn a_widening_past_the_join_is_a_premise_and_not_proof_grade() {
     // A counter at a loop head: 0, then 0 or 1, then widened.
     let mut e = Entry::new(Bounds::ints(IntervalSet::single(0)));
     let step = Entry::new(Bounds::ints(IntervalSet::of(0, 1)));
-    assert!(e.widen(&step, &head));
+    assert!(e.widen(&step, &head, &Landmarks::none()));
     assert_eq!(e.element.to_string(), "[0..]");
     assert_eq!(e.premises, BTreeSet::from([Premise::Widened(head.clone())]));
     assert!(!e.proof_grade());
     // A widening that gives only the join, as in a lattice of finite height, adds nothing.
     let mut f = Entry::new(FloatClass::new(&[Kind::Finite], Width::F32));
     let g = Entry::new(FloatClass::new(&[Kind::NaN], Width::F64));
-    assert!(f.widen(&g, &head));
+    assert!(f.widen(&g, &head, &Landmarks::none()));
     assert!(f.proof_grade());
+    // A finite set keeps a new member that the program writes, and gives the top for one it
+    // does not.
+    let b = Entry::new(FiniteSet::of([Value::str("b")]));
     let mut s = Entry::new(FiniteSet::of([Value::str("a")]));
-    assert!(s.widen(&Entry::new(FiniteSet::of([Value::str("b")])), &head));
+    assert!(s.widen(&b, &head, &Landmarks::of([], [Value::str("b")])));
+    assert_eq!(s.element, FiniteSet::of([Value::str("a"), Value::str("b")]));
     assert!(s.proof_grade());
+    let mut t = Entry::new(FiniteSet::of([Value::str("a")]));
+    assert!(t.widen(&b, &head, &Landmarks::none()));
+    assert_eq!(t.element, FiniteSet::Top);
+    assert!(!t.proof_grade());
 }
 
 #[test]
@@ -107,7 +115,11 @@ fn a_length_is_never_negative() {
     // A widening whose lower end moves goes to minus infinity, and the cell keeps the length
     // at zero or more.
     let mut e = Cell::literal(&Value::str("abc"));
-    assert!(e.widen(&Cell::literal(&Value::str("ab")), &addr(8)));
+    assert!(e.widen(
+        &Cell::literal(&Value::str("ab")),
+        &addr(8),
+        &Landmarks::none()
+    ));
     assert_eq!(e.length.element.to_string(), "[0..=3]");
 }
 
@@ -122,11 +134,19 @@ fn a_cell_joins_and_widens_entry_by_entry() {
     assert!(store.cell_mut(&a).join(&one));
     assert_eq!(store.cell(&a).to_string(), "ints [0..=1]\nfinite {0, 1}\n");
     let two = Cell::literal(&Value::Int(2));
-    assert!(store.cell_mut(&a).widen(&two, &head));
+    // The program writes 1 (so 0, 1 and 2 are landmarks) and 3: the interval stops at 2, and
+    // the finite set keeps 2.
+    let marks = Landmarks::of([1], []);
+    let mut b = store.cell(&a);
+    assert!(b.widen(&two, &head, &marks));
+    assert_eq!(b.to_string(), "ints [0..=2]\nfinite {0, 1, 2}\n");
+    assert!(b.ints.proof_grade() && b.finite.proof_grade());
+    // With no landmarks, the interval goes to infinity and the finite set to the top.
+    assert!(store.cell_mut(&a).widen(&two, &head, &Landmarks::none()));
     let c = store.cell(&a);
-    assert_eq!(c.to_string(), "ints [0..]\nfinite {0, 1, 2}\n");
+    assert_eq!(c.to_string(), "ints [0..]\n");
     assert!(!c.ints.proof_grade());
-    assert!(c.finite.proof_grade());
+    assert!(!c.finite.proof_grade());
     assert_eq!(c.premises(), BTreeSet::from([Premise::Widened(head)]));
     assert_eq!(store.cells().count(), 1);
 }

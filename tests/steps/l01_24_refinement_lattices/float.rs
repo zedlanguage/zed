@@ -1,7 +1,7 @@
 //! Float classes, against the floats they hold.
 
 use zedc::store::float::{FloatClass, Kind, Width};
-use zedc::store::lattice::Lattice;
+use zedc::store::lattice::{Landmarks, Lattice};
 
 /// Floats of every kind and of each narrowest width.
 const SAMPLES: [f64; 14] = [
@@ -78,7 +78,8 @@ fn meet_is_exact_and_join_holds_both_sides() {
         for b in &all {
             let (m, j) = (a.meet(b), a.join(b));
             assert_eq!(j, b.join(a));
-            assert_eq!(a.widen(&j), j);
+            assert_eq!(a.widen(&j, &Landmarks::none()), j);
+            assert_eq!(j.narrow(a, &Landmarks::none()), *a);
             assert_eq!(
                 a.leq(b),
                 all_in(a, b) || *a == FloatClass::bottom(),

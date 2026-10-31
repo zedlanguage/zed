@@ -9,7 +9,7 @@ use zed_kernel::types::Type;
 use zed_kernel::{Prim, Term, Value};
 use zedc::store::affine::Bounds;
 use zedc::store::interval::IntervalSet;
-use zedc::store::lattice::Lattice;
+use zedc::store::lattice::{Landmarks, Lattice};
 use zedc::store::product::{Product, Scope};
 
 use super::ints;
@@ -176,10 +176,16 @@ fn a_constraint_whose_evaluation_runs_out_of_fuel_removes_nothing() {
 fn a_type_widens_to_its_whole_base_type() {
     let one = Type::lit(&Value::Int(1)).unwrap();
     let two = Type::lit(&Value::Int(2)).unwrap();
-    assert_eq!(one.widen(&(&one | &two)), &one | &Type::int());
-    assert!(one.widen(&(&one | &two)).subtype(&Type::int()));
+    let none = Landmarks::none();
+    assert_eq!(one.widen(&(&one | &two), &none), &one | &Type::int());
+    assert!(one.widen(&(&one | &two), &none).subtype(&Type::int()));
     // A part that does not grow is kept.
-    assert_eq!(one.widen(&one), one);
+    assert_eq!(one.widen(&one, &none), one);
+    // A narrowing takes a part only while it is whole: `int` narrows to `1`, and `1 | 2`
+    // stays, so a chain of narrowings is finite.
+    assert_eq!(Type::int().narrow(&one, &none), one);
+    assert_eq!((&one | &two).narrow(&one, &none), &one | &two);
+    assert_eq!((&Type::int() | &Type::bool()).narrow(&one, &none), one);
     assert!(Type::bottom().leq(&one) && one.leq(&Type::top()));
 }
 

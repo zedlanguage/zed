@@ -1,5 +1,5 @@
 // prelude unit lattice (DESIGN.md sec:checking_in_zed, written by step M0.5)
-// The store's lattices and their widenings. The Rust-hosted checker's copy is
+// The store's lattices, their widenings and their narrowings. The Rust-hosted checker's copy is
 // crates/zedc/src/store/{interval,lattice}.rs; until this unit first runs (its
 // last layer is L6), the tests of tests/steps/m0_05_widening_and_iteration/
 // check that copy.
@@ -13,8 +13,21 @@ struct Lattice {
   leq: Any,      // (a, b) -> bool
   join: Any,     // (a, b) -> element
   meet: Any,     // (a, b) -> element
-  widen: Any,    // (old, new) -> element, for new above old; the join for finite height
+  widen: Any,    // (old, new, marks) -> element, for new above old; every chain finite
+  narrow: Any,   // (old, new, marks) -> element, for new below old; every chain finite
 }
+
+// The landmarks: the program's integer literals k, each as k - 1, k and k + 1,
+// and its other literal values. A widening moves a bound only to an old bound,
+// a landmark or infinity, and a finite set keeps only landmarks it did not hold,
+// so every chain is finite with no delay and no cap (docs/thresholds.md,
+// replacement 3).
+struct Landmarks { ints: [int], values: [Any] }
+
+landmarks(positional ints, positional values) =
+  Landmarks(ints: ints.flatMap(k -> [k - 1, k, k + 1]).distinct, values: values.distinct);
+
+marked(positional marks, positional v) = marks.ints.contains(v) || marks.values.contains(v);
 
 struct Facet {
   kind: #semantic | #evidence | #hint,
@@ -31,13 +44,16 @@ flat(positional elems, top) = Lattice(
   leq: (a, b) -> a == #empty || a == b || b == top,
   join: (a, b) -> if a == #empty { b } else if b == #empty || a == b { a } else { top },
   meet: (a, b) -> if a == top { b } else if b == top || a == b { a } else { #empty },
-  widen: (a, b) -> if a == #empty { b } else if b == #empty || a == b { a } else { top },
+  widen: (a, b, marks) -> if a == #empty { b } else if b == #empty || a == b { a } else { top },
+  narrow: (a, b, marks) -> b,
 );
 
 // ---- Interval unions --------------------------------------------------------
 // An element is a list of pieces [lo, hi], sorted, disjoint, and with at least
 // one integer missing between neighbors. An end is an int, #ninf or #pinf.
 
+// The piece limit of an arithmetic image or preimage (sec:constraints, interval
+// revision); the widening does not use it, and replacement 3c removes it.
 pieceLimit = 8;
 
 endLe(positional a, positional b) = match a {
@@ -66,36 +82,50 @@ smallestGap(positional xs, positional best, positional i) =
   else if gap(xs[i], xs[i + 1]) < gap(xs[best], xs[best + 1]) { smallestGap(xs, i, i + 1) }
   else { smallestGap(xs, best, i + 1) };
 
-// old ∇ new, for new the join, which contains old. New is first capped to the
-// piece limit. Then every endpoint of new that is not an endpoint of old in the
-// same role is removed: a new lower endpoint joins its piece to the piece below,
-// or goes to #ninf when there is none, and a new upper endpoint joins its piece
-// to the piece above, or goes to #pinf. A strict step removes a finite endpoint,
-// so a chain above the bottom has at most 2 * pieceLimit + 1 elements. The
-// bottom widens to new, capped.
-intervalWiden(positional old, positional new) = {
-  xs = cap(new, pieceLimit);
-  if old::len == 0 || xs == old { xs }
-  else {
-    oldLo = old.map(p -> p[0]);
-    oldHi = old.map(p -> p[1]);
-    run = loop i {
-      out' = if out::len > 0 && (open || !oldLo.contains(xs[i][0])) {
-        out.take(out::len - 1) ++ [[(out.last else xs[i])[0], xs[i][1]]]
-      } else if !oldLo.contains(xs[i][0]) { [[#ninf, xs[i][1]]] }
-      else { out ++ [xs[i]] } with out = [];
-      open' = !oldHi.contains(xs[i][1]) with open = false;   // the last piece runs into the next
-      while i < xs::len;
-    };
-    if run.open { run.out.take(run.out::len - 1) ++ [[(run.out.last else xs[0])[0], #pinf]] }
-    else { run.out }
-  }
-};
+// The finite endpoints of old and the integer landmarks: where a moved end stops.
+targets(positional old, positional marks) =
+  old.flatMap(p -> [p[0], p[1]]).filter(e -> e != #ninf && e != #pinf) ++ marks.ints;
+
+// The greatest target at or below v, else none; the least at or above v, else none.
+floorIn(positional ts, positional v, positional none) =
+  ts.filter(t -> t <= v).fold(none, (a, t) -> if a == none || t > a { t } else { a });
+ceilIn(positional ts, positional v, positional none) =
+  ts.filter(t -> t >= v).fold(none, (a, t) -> if a == none || t < a { t } else { a });
+
+// Sorted pieces whose ends moved outward: neighbors that now meet or touch merge.
+touches(positional p, positional q) = p[1] == #pinf || q[0] == #ninf || q[0] <= p[1] + 1;
+mergeTouching(positional xs) = xs.fold([], (out, p) ->
+  if out::len > 0 && touches(out.last else p, p) {
+    out.take(out::len - 1) ++ [[(out.last else p)[0], endMax((out.last else p)[1], p[1])]]
+  } else { out ++ [p] });
+
+// Moves each finite end of xs outward to the nearest target: a lower end down,
+// an upper end up. With no target on that side, an end goes to infinity when
+// widening and stays where it is when narrowing.
+moveEnds(positional xs, positional ts, positional widen) = mergeTouching(xs.map(p -> [
+  if p[0] == #ninf { p[0] } else { floorIn(ts, p[0], if widen { #ninf } else { p[0] }) },
+  if p[1] == #pinf { p[1] } else { ceilIn(ts, p[1], if widen { #pinf } else { p[1] }) },
+]));
+
+// old ∇ new, for new the join, which contains old. Every finite end of a chain
+// lies in K, the first element's ends and the landmarks, so a chain has at most
+// 2|K| + 2 elements, at any number of pieces. The bottom widens to new.
+intervalWiden(positional old, positional new, positional marks) =
+  if old::len == 0 || new == old { new } else { moveEnds(new, targets(old, marks), true) };
+
+// old Δ new, for new the meet, which old contains. An end of new moves back to
+// an end of old or a landmark; an infinite end of old takes a finite bound once,
+// so each side changes at most once from infinite and then only to points of a
+// finite set.
+intervalNarrow(positional old, positional new, positional marks) =
+  moveEnds(new, targets(old, marks), false);
 
 // ---- Congruences ------------------------------------------------------------
 // #class(modulus:, residue:), with modulus 0 for one value and 1 for every
 // integer, or #bottom. Ascending chains are finite (each modulus divides the
-// one before), so the widening is the join.
+// one before), so the widening is the join. Descending chains are not (0 mod 2,
+// 0 mod 4, ...), so the narrowing takes new only from the top, or when new is
+// one value or none: it changes at most three times.
 
 gcd(positional a, positional b) = if b == 0 { a } else { gcd(b, a mod b) };
 
@@ -149,19 +179,36 @@ congruenceLattice = Lattice(
   leq: (a, b) -> congruenceJoin(a, b) == b,
   join: congruenceJoin,
   meet: congruenceMeet,
-  widen: congruenceJoin,
+  widen: (a, b, marks) -> congruenceJoin(a, b),
+  narrow: (a, b, marks) -> congruenceNarrow(a, b),
 );
+
+congruenceNarrow(positional old, positional new) =
+  if old == congruence(1, 0) { new }
+  else { match new { #bottom -> new, #class(modulus: m, residue: r) -> if m == 0 { new } else { old } } };
 
 // ---- Finite sets and cardinalities ------------------------------------------
 
+// The most integers a reduction lists from an interval; the widening does not
+// use it, and replacement 3c removes it.
 finiteSetLimit = 64;
 
-// The join while it has at most finiteSetLimit members, else #top.
-finiteSetWiden(positional old, positional new) =
-  if old == #top || new == #top { #top }
-  else { j = (old ++ new).distinct; if j::len > finiteSetLimit { #top } else { j } };
+// The join when every member it adds is a landmark, else #top: the members of
+// a chain are the first element's and landmarks. The bottom widens to new.
+finiteSetWiden(positional old, positional new, positional marks) =
+  if old == [] { new }
+  else if old == #top || new == #top { #top }
+  else {
+    j = (old ++ new).distinct;
+    if j.filter(v -> !old.contains(v) && !marked(marks, v))::len == 0 { j } else { #top }
+  };
 
-// A cardinality is one interval of [0, #pinf]: the interval widening, with a
-// lower end widened to #ninf read as 0.
-cardWiden(positional old, positional new) =
-  intervalWiden(old, new).map(p -> [endMax(p[0], 0), p[1]]);
+// A descending chain leaves #top at most once and then loses members.
+finiteSetNarrow(positional old, positional new, positional marks) = new;
+
+// A cardinality is one interval of [0, #pinf]: the interval widening or
+// narrowing, with a lower end at #ninf read as 0.
+cardWiden(positional old, positional new, positional marks) =
+  intervalWiden(old, new, marks).map(p -> [endMax(p[0], 0), p[1]]);
+cardNarrow(positional old, positional new, positional marks) =
+  intervalNarrow(old, new, marks).map(p -> [endMax(p[0], 0), p[1]]);

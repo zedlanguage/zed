@@ -1,8 +1,9 @@
 //! Step M0.5: widening and iteration.
 //!
 //! The store's iteration (DESIGN.md sec:constraints rule 1) is fixed down to the traversal:
-//! the weak topological order of the dependency graph, the widening points and delay, the
-//! two phases and their budgets, and the tonicity and interval-revision tables. Each piece
+//! the weak topological order of the dependency graph, the widening points, the two phases,
+//! the landmarks at which a widening or a narrowing stops a bound, and the tonicity and
+//! interval-revision tables. Each piece
 //! is checked against an independent implementation written here from the definition:
 //! `wto` against the declarative definition of the order, `iteration` against a flattened
 //! stack machine and against the concrete least fixpoint, `widening` for the termination
@@ -19,6 +20,7 @@ use std::collections::BTreeSet;
 use zed_tests::instances::Rng;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::iterate::Equations;
+use zedc::store::lattice::Landmarks;
 
 /// One term of a cell's transfer: `(cell[from] ⊓ filter) + offset`.
 #[derive(Clone, Debug)]
@@ -35,6 +37,8 @@ struct System {
     init: Vec<IntervalSet>,
     terms: Vec<Vec<Term>>,
     reads: Vec<Vec<usize>>,
+    /// Whether the equations give no landmarks, as if the program wrote no bound.
+    bare: bool,
 }
 
 impl System {
@@ -48,7 +52,17 @@ impl System {
                 r
             })
             .collect();
-        System { init, terms, reads }
+        System {
+            init,
+            terms,
+            reads,
+            bare: false,
+        }
+    }
+
+    /// The same equations with no landmarks.
+    fn bare(self) -> Self {
+        System { bare: true, ..self }
     }
 
     /// A random system of up to 8 cells, each reading up to 3 cells.
@@ -131,6 +145,24 @@ impl Equations<IntervalSet> for System {
                 .lift1(|(lo, hi)| vec![(shift(lo, t.offset), shift(hi, t.offset))]);
             acc.join(&moved)
         })
+    }
+    /// The finite ends of the initial values and of the filters.
+    fn landmarks(&self) -> Landmarks {
+        if self.bare {
+            return Landmarks::none();
+        }
+        let sets = self
+            .init
+            .iter()
+            .chain(self.terms.iter().flatten().map(|t| &t.filter));
+        let ends = sets.flat_map(|s| s.pieces().iter().flat_map(|&(lo, hi)| [lo, hi]));
+        Landmarks::of(
+            ends.filter_map(|e| match e {
+                End::Fin(v) => Some(v),
+                _ => None,
+            }),
+            [],
+        )
     }
 }
 

@@ -1,6 +1,6 @@
 // prelude unit iteration (DESIGN.md sec:domains and sec:constraints rule 1,
 // written by step M0.5): the weak topological order of the dependency graph,
-// the widening points, and the two-phase iteration strategy with its budgets.
+// the widening points, and the two-phase iteration strategy.
 // The Rust-hosted checker's copy is crates/zedc/src/store/{wto,iterate}.rs.
 //
 // A system of equations has one cell per vertex 0..n in source order; reads[v]
@@ -8,9 +8,9 @@
 // The dependency graph has an edge from u to every cell that reads u, the
 // successors in source order.
 
-wideningDelay = 3;      // a head's first 3 changes in phase 1 are joins
-headIterations = 64;    // head changes in phase 1 before the component goes to top
-narrowingRounds = 64;   // rounds of phase 2
+// A system also has its landmarks (lattice.zed), which bound every chain of
+// widenings and narrowings; so the iteration has no delay, no cap on head
+// changes and no budget of rounds (docs/thresholds.md, replacement 3).
 
 put(positional xs, positional i, positional x) = xs.take(i) ++ [x] ++ xs.drop(i + 1);
 
@@ -89,67 +89,51 @@ componentBody(positional succ, positional v, positional i, positional s) =
     componentBody(succ, v, i + 1, next)
   };
 
-vertices(positional e) = match e {
-  #vertex(v) -> [v],
-  #component(head: h, body: b) -> [h] ++ b.flatMap(vertices),
-};
-
 // ---- Phase 1: Bourdoncle's recursive strategy --------------------------------
 // Gauss-Seidel in the order, forward projections only, joining at every cell. A
 // component iterates "update the head, then stabilize the body" until the head
 // is unchanged in an iteration after the first; nested components stabilize in
-// full inside each iteration. Each head's changes are counted over the whole
-// phase, not per stabilization, so an enclosing loop entering a component again
-// does not restart its delay or its bound. Changes past the delay widen. A head that would change after
-// headIterations changes sets every cell of its component to the top, since a
-// value below the fixpoint is not sound. An implementation may skip a
-// component none of whose cells read from outside it has changed since it last
+// full inside each iteration. Every change of a head widens, with the landmarks,
+// so each head changes finitely often. An implementation may skip a component
+// none of whose cells read from outside it has changed since it last
 // stabilized, since its cells are then a post-fixpoint of its own equations;
 // the checker does, which makes the work of nested loops linear in their number.
 
-struct Sys { reads: Any, eval: Any, lattice: Lattice }
-struct State { cells: Any, changes: Any }
+struct Sys { reads: Any, eval: Any, lattice: Lattice, marks: Landmarks }
+struct State { cells: Any }
 
 phase1(positional sys, positional order) =
-  stabilize(sys, order, 0, State(cells: sys.reads.map(x -> sys.lattice.bottom), changes: sys.reads.map(x -> 0))).cells;
+  stabilize(sys, order, 0, State(cells: sys.reads.map(x -> sys.lattice.bottom))).cells;
 
 stabilize(positional sys, positional order, positional i, positional st) =
   if i >= order::len { st }
   else { stabilize(sys, order, i + 1, element(sys, order[i], st)) };
 
 element(positional sys, positional e, positional st) = match e {
-  #vertex(v) -> State(cells: put(st.cells, v, sys.lattice.join(st.cells[v], sys.eval(v, st.cells))), changes: st.changes),
-  #component(head: h, body: b) -> headLoop(sys, e, h, b, 0, st),
+  #vertex(v) -> State(cells: put(st.cells, v, sys.lattice.join(st.cells[v], sys.eval(v, st.cells)))),
+  #component(head: h, body: b) -> headLoop(sys, h, b, 0, st),
 };
 
-headLoop(positional sys, positional e, positional h, positional b, positional i, positional st) = {
+headLoop(positional sys, positional h, positional b, positional i, positional st) = {
   cells = st.cells;
   next = sys.lattice.join(cells[h], sys.eval(h, cells));
   changed = next != cells[h];
   if i > 0 && !changed { st }
-  else if changed && st.changes[h] == headIterations {
-    State(cells: vertices(e).fold(cells, (cs, v) -> put(cs, v, sys.lattice.top)), changes: st.changes)
-  }
   else {
-    c = if changed { st.changes[h] + 1 } else { st.changes[h] };
-    value = if !changed { cells[h] } else if c > wideningDelay { sys.lattice.widen(cells[h], next) } else { next };
-    headLoop(sys, e, h, b, i + 1, stabilize(sys, b, 0, State(cells: put(cells, h, value), changes: put(st.changes, h, c))))
+    value = if changed { sys.lattice.widen(cells[h], next, sys.marks) } else { cells[h] };
+    headLoop(sys, h, b, i + 1, stabilize(sys, b, 0, State(cells: put(cells, h, value))))
   }
 };
 
 // ---- Phase 2: narrowing in rounds --------------------------------------------
-// Each round meets every cell with its projection computed from the state at
-// the start of the round (Jacobi), until a round changes nothing or the round
-// budget is spent. Every value on the way is sound, so the budget may stop it
-// anywhere.
+// Each round narrows every cell toward its meet with its projection computed
+// from the state at the start of the round (Jacobi), until a round changes
+// nothing. The narrowing makes every chain finite, so phase 2 needs no budget;
+// every value on the way is sound.
 
-phase2(positional sys, positional cells) = rounds(sys, cells, 0);
-
-rounds(positional sys, positional cells, positional r) =
-  if r == narrowingRounds { cells }
-  else {
-    next = for v -> c in cells { sys.lattice.meet(c, sys.eval(v, cells)) };
-    if next == cells { cells } else { rounds(sys, next, r + 1) }
-  };
+phase2(positional sys, positional cells) = {
+  next = for v -> c in cells { sys.lattice.narrow(c, sys.lattice.meet(c, sys.eval(v, cells)), sys.marks) };
+  if next == cells { cells } else { phase2(sys, next) }
+};
 
 solve(positional sys) = phase2(sys, phase1(sys, wto(dependencyGraph(sys.reads))));

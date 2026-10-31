@@ -40,7 +40,7 @@ use zed_kernel::{Evaluator, KernelError, Prim, Stack, Term, Value, World, on_sta
 use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
 use super::interval::{End, IntervalSet, PIECE_LIMIT};
-use super::lattice::{Congruence, FINITE_SET_LIMIT, FiniteSet, Lattice};
+use super::lattice::{Congruence, FINITE_SET_LIMIT, FiniteSet, Landmarks, Lattice};
 use super::preimage::{Demand, Domains, preimage, relations};
 use super::presburger::{self, Atom, Con, Formula, Lin};
 use super::revision::{self, Op, reduce_congruence};
@@ -70,8 +70,11 @@ impl Lattice for Time {
     fn meet(&self, other: &Self) -> Self {
         *self.min(other)
     }
-    fn widen(&self, next: &Self) -> Self {
+    fn widen(&self, next: &Self, _: &Landmarks) -> Self {
         self.join(next)
+    }
+    fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
+        *next
     }
 }
 
@@ -96,6 +99,22 @@ fn bases() -> [Type; 5] {
     ]
 }
 
+/// The parts a widening takes whole and a narrowing leaves whole: each base type, and the rest
+/// of each universe. They cover every value.
+fn parts() -> Vec<Type> {
+    let all_bases = bases().iter().fold(Type::empty(), |a, b| &a | b);
+    let mut out = bases().to_vec();
+    for u in [
+        Universe::Scalar,
+        Universe::Tuple,
+        Universe::Struct,
+        Universe::Morphism,
+    ] {
+        out.push(Type::universe(u) - &all_bases);
+    }
+    out
+}
+
 impl Lattice for Type {
     fn bottom() -> Self {
         Type::empty()
@@ -112,27 +131,22 @@ impl Lattice for Type {
     /// The join, and the whole of each base type, and of the rest of each universe, in which
     /// `next` has a value `self` has not. Each such part is taken at most once, so every
     /// chain of widenings is finite.
-    fn widen(&self, next: &Self) -> Self {
+    fn widen(&self, next: &Self, _: &Landmarks) -> Self {
         let mut out = self | next;
-        let mut all_bases = Type::empty();
-        for b in bases() {
-            if !(next & &b).subtype(self) {
-                out = &out | &b;
-            }
-            all_bases = &all_bases | &b;
-        }
-        for u in [
-            Universe::Scalar,
-            Universe::Tuple,
-            Universe::Struct,
-            Universe::Morphism,
-        ] {
-            let rest = Type::universe(u) - &all_bases;
-            if !(next & &rest).subtype(self) {
-                out = &out | &rest;
+        for p in parts() {
+            if !(next & &p).subtype(self) {
+                out = &out | &p;
             }
         }
         out
+    }
+    /// `next` in each part that `self` holds whole, and `self` in the others: each part leaves
+    /// the whole at most once and is then fixed, so every chain of narrowings is finite.
+    fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
+        parts().iter().fold(Type::empty(), |out, p| {
+            let whole = p.subtype(self);
+            &out | &(if whole { next & p } else { self & p })
+        })
     }
     fn leq(&self, other: &Self) -> bool {
         self.subtype(other)
@@ -239,11 +253,11 @@ impl Product {
     }
 
     /// Widens `self` by `other` at the component head `head`; whether anything changed.
-    pub fn widen(&mut self, other: &Product, head: &FactAddress) -> bool {
+    pub fn widen(&mut self, other: &Product, head: &FactAddress, marks: &Landmarks) -> bool {
         [
-            self.cell.widen(&other.cell, head),
-            self.ty.widen(&other.ty, head),
-            self.time.widen(&other.time, head),
+            self.cell.widen(&other.cell, head, marks),
+            self.ty.widen(&other.ty, head, marks),
+            self.time.widen(&other.time, head, marks),
         ]
         .contains(&true)
     }

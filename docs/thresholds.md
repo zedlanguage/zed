@@ -24,11 +24,11 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `SHOWN` 12 | check/mod.rs | removed (1): the failed combinations after 12 were counted, not shown |
 | `DEPTH` 16 | check/mod.rs | removed (2): a derivation was cut after 16 steps |
 | diagram budget 4096, walk 65536 | zed-kernel types/bdd.rs, empty.rs | a union or intersection keeps its operands; a part is not shown empty |
-| `PIECE_LIMIT` 8 | store/interval.rs | a union of intervals loses pieces at a widening |
-| `FINITE_SET_LIMIT` 64 | store/lattice.rs | a finite set becomes the top at a widening |
-| `WIDENING_DELAY` 3 | store/iterate.rs | which changes of a loop head are joins and which widenings |
-| `HEAD_ITERATIONS` 64 | store/iterate.rs | a component is set to the top |
-| `NARROWING_ROUNDS` 64 | store/iterate.rs | phase 2 stops with the values it has |
+| `PIECE_LIMIT` 8 | store/interval.rs | removed from the widening (3); still caps an arithmetic image or preimage |
+| `FINITE_SET_LIMIT` 64 | store/lattice.rs | removed from the widening (3); still caps the integers a reduction lists |
+| `WIDENING_DELAY` 3 | store/iterate.rs | removed (3): which changes of a loop head were joins and which widenings |
+| `HEAD_ITERATIONS` 64 | store/iterate.rs | removed (3): a component was set to the top |
+| `NARROWING_ROUNDS` 64 | store/iterate.rs | removed (3): phase 2 stopped with the values it had |
 | `REDUCTION_ROUNDS` 16 | store/product.rs | removed (3) |
 | `VARIABLES` 16, `ATOMS` 64, `INTERMEDIATE` 4096, `KEPT_CONJUNCTIONS` 64 | store/presburger.rs | a relation is dropped and its written constraint kept |
 | `CALL_DEPTH` 64, `TRANSFER_FUEL` 100000 | store/preimage.rs | the transfer through calls stops |
@@ -146,6 +146,40 @@ value or none, a finite set and a type's literals only by losing members, enumer
 per constraint), so the loop ends with no bound on its rounds. Test:
 `l01_39_reduced_product::controls::an_equality_between_names_of_different_parity_is_unreachable`
 (fails without the congruences in the projection).
+
+**Widening and narrowing: done.** The landmarks are the program's integer literals k, each
+as k − 1, k and k + 1, and its literal values for finite sets (`store::lattice::Landmarks`;
+the equations give them, `Equations::landmarks`). The plan above changes in three places.
+
+- *Interval widening.* Each finite endpoint of the new value that is not already one of the
+  old value's endpoints moves outward to the nearest target: an endpoint of the old value,
+  of either role, or a landmark; with none on that side it goes to ±∞. Pieces that then
+  touch merge. Every finite endpoint of a chain lies in K, the first value's endpoints and
+  the landmarks, and the chain has at most 2|K| + 2 elements. No piece cap is needed: the
+  pieces are bounded by K. With no landmarks this is the old widening.
+- *Interval narrowing* is not limited to landmarks. Each finite endpoint of the meet moves
+  outward to the nearest of the old value's endpoints and the landmarks; with none on that
+  side, it stays where it is, so an infinite end takes a finite bound once, as in classic
+  narrowing. This recovers a bound the program computes (`0..99` from `i < 99` with no
+  literal written) and still ends: each side changes at most once from infinite and then
+  only to points of a finite set.
+- *Finite sets* widen to the join when every added member is a landmark, else to the top
+  (not to an interval hull: a finite set of values need not be integers). They narrow to
+  the meet, which only loses members. A congruence narrows only from the top, or to one
+  value or none; a cardinality as an interval, met with `0..`; a type as its parts.
+
+`solve` widens at every change of a head, with no delay, and runs phase 2 until a round
+changes nothing. The tests show the old constants were not needed: a counter stops at its
+guard's landmark at any bound (2, 99, 10^6) in phase 1; with no landmark it goes to `0..`
+and phase 2 brings it back to `0..=99`; a chain of six cells needs six narrowing rounds, run
+to the end; `x = x + 1` from `0..`, where meets alone would descend forever, ends after no
+change; and the stack-machine oracle agrees with and without landmarks. A head stops at
+most once per landmark under its fixpoint: 3L + 1 evaluations for L landmarks
+(`m0_05_widening_and_iteration::scaling::a_head_stops_at_most_once_per_landmark`, L = 1 to
+128). Mutants: narrowing that takes the meet runs forever (the endless-descent test),
+widening that ignores the landmarks fails 2 tests, and a congruence narrowing that takes the
+meet fails 1. `PIECE_LIMIT` and `FINITE_SET_LIMIT` remain in arithmetic images, preimages
+and the reduction's listing; 3c replaces them.
 
 ### 4. Presburger relations (replaces VARIABLES, ATOMS, INTERMEDIATE, KEPT_CONJUNCTIONS)
 

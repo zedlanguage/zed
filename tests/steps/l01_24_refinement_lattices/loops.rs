@@ -5,9 +5,10 @@ use std::collections::BTreeSet;
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::store::affine::{Affine, Bounds};
+use zedc::store::interval::End;
 use zedc::store::interval::IntervalSet;
-use zedc::store::iterate::{Equations, Strategy, solve};
-use zedc::store::lattice::Lattice;
+use zedc::store::iterate::{Equations, solve};
+use zedc::store::lattice::{Landmarks, Lattice};
 
 use super::{WINDOW, at, envs, random_bounds};
 
@@ -79,6 +80,21 @@ impl Equations<Bounds> for System {
             acc.join(&cells[t.from].meet(&t.guard).offset(t.step))
         })
     }
+    /// The integer ends of the initial values and the guards.
+    fn landmarks(&self) -> Landmarks {
+        let bounds = self
+            .init
+            .iter()
+            .chain(self.terms.iter().flatten().map(|t| &t.guard));
+        let ends = bounds.flat_map(|b| b.concrete().pieces().iter().flat_map(|&(lo, hi)| [lo, hi]));
+        Landmarks::of(
+            ends.filter_map(|e| match e {
+                End::Fin(v) => Some(v),
+                _ => None,
+            }),
+            [],
+        )
+    }
 }
 
 fn n() -> Affine {
@@ -113,7 +129,7 @@ fn counting_up() -> System {
 #[test]
 fn a_counting_loop_keeps_its_symbolic_bound() {
     let s = counting_up();
-    let cells = solve(&s, Strategy::SPEC);
+    let cells = solve(&s);
     // After the loop the counter is `n`, or 0 when `n` is not positive.
     assert_eq!(cells[0].to_string(), "[0..=max(0, n)]");
     // In the body it is `int[0..<n]`.
@@ -138,7 +154,7 @@ fn a_loop_counting_down_keeps_its_symbolic_bound() {
             }],
         ],
     );
-    let cells = solve(&s, Strategy::SPEC);
+    let cells = solve(&s);
     assert_eq!(cells[0].to_string(), "[min(0, n - 1)..=n - 1]");
     assert_eq!(cells[1].to_string(), "[1..=n - 1]");
 }
@@ -163,7 +179,7 @@ fn every_solution_holds_every_value_a_run_takes() {
             })
             .collect();
         let s = System::new(init, terms);
-        let solved = solve(&s, Strategy::SPEC);
+        let solved = solve(&s);
         symbolic += solved
             .iter()
             .filter(|c| c.to_string().contains('n'))

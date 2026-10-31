@@ -3,7 +3,7 @@
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::store::affine::{Affine, Bound, Bounds, Side};
 use zedc::store::interval::{End, IntervalSet};
-use zedc::store::lattice::Lattice;
+use zedc::store::lattice::{Landmarks, Lattice};
 
 use super::{WINDOW, affine, at, envs, members, random_bounds};
 
@@ -14,7 +14,7 @@ fn meet_is_exact_and_join_and_widening_hold_both_sides() {
     for _ in 0..RANDOM_INSTANCES {
         let (a, b) = (random_bounds(&mut rng), random_bounds(&mut rng));
         let (meet, join) = (a.meet(&b), a.join(&b));
-        let widened = a.widen(&join);
+        let widened = a.widen(&join, &Landmarks::none());
         assert_eq!(join, b.join(&a), "join of {a} and {b} is not symmetric");
         for &env in &envs {
             let at = at(env);
@@ -96,7 +96,7 @@ fn widening_chains_are_finite() {
         let mut steps = 0;
         for _ in 0..64 {
             let next = x.join(&random_bounds(&mut rng));
-            let w = x.widen(&next);
+            let w = x.widen(&next, &Landmarks::none());
             if w == x {
                 continue;
             }

@@ -8,13 +8,83 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use zed_kernel::Value;
+
 use super::interval::{End, IntervalSet};
 
-/// The most members a finite set keeps at a widening point; a widening that would exceed it
-/// gives the top (step M0.5).
+/// The most members a finite set keeps when the reduction lists an interval's integers
+/// (docs/thresholds.md, replacement 3c removes it).
 pub const FINITE_SET_LIMIT: usize = 64;
 
-/// A lattice of the store, with the widening that bounds its ascending chains.
+/// The values written in a program, at which a widening stops a bound and a narrowing stops a
+/// descent (step M0.5): each integer literal and each declared bound `k`, as `k - 1`, `k` and
+/// `k + 1`, and the other literal values. A program has finitely many, so a chain that moves
+/// only to landmarks and old endpoints is finite, with no count of its steps.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Landmarks {
+    ints: BTreeSet<i64>,
+    values: BTreeSet<Value>,
+}
+
+impl Landmarks {
+    /// No landmarks: a bound that moves goes to an old endpoint or to infinity.
+    pub fn none() -> Self {
+        Landmarks::default()
+    }
+
+    /// The landmarks of the given integer literals and other values.
+    pub fn of(
+        ints: impl IntoIterator<Item = i64>,
+        values: impl IntoIterator<Item = Value>,
+    ) -> Self {
+        let mut out = Landmarks {
+            values: values.into_iter().collect(),
+            ..Landmarks::default()
+        };
+        for k in ints {
+            out.ints.extend(
+                [k.checked_sub(1), Some(k), k.checked_add(1)]
+                    .into_iter()
+                    .flatten(),
+            );
+        }
+        out
+    }
+
+    /// The integer landmarks, in order.
+    pub fn ints(&self) -> &BTreeSet<i64> {
+        &self.ints
+    }
+
+    /// Whether `v` is a landmark.
+    pub fn has(&self, v: &impl Mark) -> bool {
+        v.marked(self)
+    }
+}
+
+/// A member of a finite set, which a widening keeps exact when it is a landmark.
+pub trait Mark {
+    /// Whether the value is one of `marks`.
+    fn marked(&self, marks: &Landmarks) -> bool;
+}
+
+impl Mark for i64 {
+    fn marked(&self, marks: &Landmarks) -> bool {
+        marks.ints.contains(self)
+    }
+}
+
+impl Mark for Value {
+    fn marked(&self, marks: &Landmarks) -> bool {
+        match self {
+            Value::Int(n) => marks.ints.contains(n),
+            v => marks.values.contains(v),
+        }
+    }
+}
+
+/// A lattice of the store, with the widening that bounds its ascending chains and the
+/// narrowing that bounds its descending ones.
 pub trait Lattice: Clone + PartialEq + fmt::Debug {
     /// The least element: no value.
     fn bottom() -> Self;
@@ -26,7 +96,10 @@ pub trait Lattice: Clone + PartialEq + fmt::Debug {
     fn meet(&self, other: &Self) -> Self;
     /// `self ∇ next` for `next ⊒ self`: an upper bound of both such that every chain of
     /// widenings is finite. For a lattice of finite height it is the join.
-    fn widen(&self, next: &Self) -> Self;
+    fn widen(&self, next: &Self, marks: &Landmarks) -> Self;
+    /// `self Δ next` for `next ⊑ self`: a value between the two such that every chain of
+    /// narrowings is finite. For a lattice with no infinite descending chain it is `next`.
+    fn narrow(&self, next: &Self, marks: &Landmarks) -> Self;
     /// The order: whether `self ⊑ other`. The default reads it off the meet, which is exact
     /// for a lattice whose elements have one representation each.
     fn leq(&self, other: &Self) -> bool {
@@ -47,8 +120,11 @@ impl Lattice for IntervalSet {
     fn meet(&self, other: &Self) -> Self {
         IntervalSet::meet(self, other)
     }
-    fn widen(&self, next: &Self) -> Self {
-        IntervalSet::widen(self, next)
+    fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
+        IntervalSet::widen(self, next, marks)
+    }
+    fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
+        IntervalSet::narrow(self, next, marks)
     }
 }
 
@@ -207,8 +283,18 @@ impl Lattice for Congruence {
     }
     /// Above any class other than the bottom, an ascending chain divides the modulus at each
     /// step, so it is finite: the widening is the join.
-    fn widen(&self, next: &Self) -> Self {
+    fn widen(&self, next: &Self, _: &Landmarks) -> Self {
         self.join(next)
+    }
+    /// A descending chain can multiply the modulus without end (`0 mod 2`, `0 mod 4`, ...), so
+    /// the narrowing takes `next` only from the top, or when `next` is one value or none: a
+    /// chain of narrowings changes at most three times.
+    fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
+        match next {
+            _ if *self == Congruence::top() => *next,
+            Congruence::Bottom | Congruence::Class { modulus: 0, .. } => *next,
+            _ => *self,
+        }
     }
 }
 
@@ -228,7 +314,7 @@ impl<T: Ord + Clone> FiniteSet<T> {
     }
 }
 
-impl<T: Ord + Clone + fmt::Debug> Lattice for FiniteSet<T> {
+impl<T: Ord + Clone + fmt::Debug + Mark> Lattice for FiniteSet<T> {
     fn bottom() -> Self {
         FiniteSet::Set(BTreeSet::new())
     }
@@ -249,13 +335,25 @@ impl<T: Ord + Clone + fmt::Debug> Lattice for FiniteSet<T> {
             (FiniteSet::Top, s) | (s, FiniteSet::Top) => s.clone(),
         }
     }
-    /// The join while it has at most [`FINITE_SET_LIMIT`] members, else the top: a chain
-    /// rises at most that many times before it reaches the top.
-    fn widen(&self, next: &Self) -> Self {
-        match self.join(next) {
-            FiniteSet::Set(s) if s.len() > FINITE_SET_LIMIT => FiniteSet::Top,
-            j => j,
+    /// The join when every member it adds is a landmark, else the top; the bottom widens to
+    /// `next`. The members of a chain are the first element's and landmarks, so it rises
+    /// finitely often.
+    fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
+        if *self == FiniteSet::bottom() {
+            return next.clone();
         }
+        match (self, self.join(next)) {
+            (FiniteSet::Set(old), FiniteSet::Set(j))
+                if j.iter().all(|v| old.contains(v) || v.marked(marks)) =>
+            {
+                FiniteSet::Set(j)
+            }
+            _ => FiniteSet::Top,
+        }
+    }
+    /// A descending chain leaves the top at most once and then loses members: it is `next`.
+    fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
+        next.clone()
     }
 }
 
@@ -290,8 +388,11 @@ impl Lattice for Card {
         Card(self.0.meet(&other.0))
     }
     /// The interval widening, whose `-inf` is then the least size, 0.
-    fn widen(&self, next: &Self) -> Self {
-        Card(self.0.widen(&next.0).meet(&Card::top().0))
+    fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
+        Card(self.0.widen(&next.0, marks).meet(&Card::top().0))
+    }
+    fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
+        Card(self.0.narrow(&next.0, marks).meet(&Card::top().0))
     }
 }
 
@@ -355,25 +456,26 @@ mod tests {
     }
 
     #[test]
-    fn finite_sets_widen_to_the_top_past_the_limit() {
-        let small = FiniteSet::of(0..FINITE_SET_LIMIT as i64);
-        assert_eq!(FiniteSet::bottom().widen(&small), small);
-        assert_eq!(
-            small.widen(&FiniteSet::of([FINITE_SET_LIMIT as i64])),
-            FiniteSet::Top
-        );
+    fn finite_sets_widen_to_the_top_unless_the_new_members_are_landmarks() {
+        let small = FiniteSet::of(0..100);
+        let none = Landmarks::none();
+        assert_eq!(FiniteSet::bottom().widen(&small, &none), small);
+        let more = small.join(&FiniteSet::of([200]));
+        assert_eq!(small.widen(&more, &none), FiniteSet::Top);
+        assert_eq!(small.widen(&more, &Landmarks::of([200], [])), more);
         assert_eq!(FiniteSet::of([1]).meet(&FiniteSet::Top), FiniteSet::of([1]));
     }
 
     #[test]
     fn a_cardinality_never_goes_below_zero() {
         let c = Card::range(Fin(2), Fin(3));
+        let none = Landmarks::none();
         assert_eq!(
-            c.widen(&Card::range(Fin(1), Fin(3))),
+            c.widen(&Card::range(Fin(1), Fin(3)), &none),
             Card::range(Fin(0), Fin(3))
         );
         assert_eq!(
-            c.widen(&Card::range(Fin(2), Fin(4))),
+            c.widen(&Card::range(Fin(2), Fin(4)), &none),
             Card::range(Fin(2), PosInf)
         );
         assert_eq!(Card::range(NegInf, Fin(1)), Card::range(Fin(0), Fin(1)));
