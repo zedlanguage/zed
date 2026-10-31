@@ -407,7 +407,7 @@ pub struct Scope {
     /// The relation the integer names meet, with no auxiliary variable.
     pub relation: Formula,
     /// The written constraints that hold, a test and its negations by printed text, each
-    /// with its free names; at most [`presburger::ATOMS`] of them.
+    /// with its free names.
     pub written: BTreeMap<String, (Term, Vec<Arc<str>>)>,
     /// Whether no state reaches this scope.
     pub bottom: bool,
@@ -415,7 +415,16 @@ pub struct Scope {
     /// static names. A second enumeration removes nothing more: the members a constraint holds
     /// at do not depend on the interval, which already lies within them.
     pub enumerated: BTreeSet<Enumerated>,
+    /// The top-level parts of the relation already projected: its constraints together, and
+    /// each other conjunct with them, each with the intervals and classes of the names it
+    /// mentions at that projection, which are all a projection reads of them. A part is
+    /// projected again only when one of these has changed since
+    /// (docs/thresholds.md, replacement 4).
+    pub projected: std::collections::HashMap<Formula, Projected>,
 }
+
+/// The intervals and classes of a part's names when it was last projected.
+pub type Projected = Vec<(Arc<str>, IntervalSet, Congruence)>;
 
 /// A written constraint's text with the values of its static names.
 pub type Enumerated = (String, Vec<(Arc<str>, Value)>);
@@ -438,6 +447,7 @@ impl Scope {
             written: BTreeMap::new(),
             bottom: false,
             enumerated: BTreeSet::new(),
+            projected: std::collections::HashMap::new(),
         };
         s.reduce();
         s
@@ -487,14 +497,10 @@ impl Scope {
         }
     }
 
-    /// Records `t` as a written constraint that holds, unless the scope already holds
-    /// [`presburger::ATOMS`] of them: dropping a constraint only weakens the scope.
+    /// Records `t` as a written constraint that holds.
     pub fn write(&mut self, t: Term) {
-        let key = t.to_string();
-        if self.written.len() < presburger::ATOMS || self.written.contains_key(&key) {
-            let free = stage::free(&t).into_iter().collect();
-            self.written.insert(key, (t, free));
-        }
+        let free = stage::free(&t).into_iter().collect();
+        self.written.insert(t.to_string(), (t, free));
     }
 
     /// The static names among `names`, and their values.
@@ -565,8 +571,7 @@ impl Scope {
             names.entry(n.clone()).or_insert_with(Product::top);
         }
         Scope {
-            names,
-            relation: Formula::either(&self.relation, &other.relation).bounded(),
+            relation: Formula::either(&self.relation, &other.relation),
             written: self
                 .written
                 .iter()
@@ -579,6 +584,24 @@ impl Scope {
                 .intersection(&other.enumerated)
                 .cloned()
                 .collect(),
+            // A part projected on both sides is projected within the join: each side's
+            // intervals lie within its projection, and the join's within their union.
+            projected: self
+                .projected
+                .iter()
+                .filter(|(k, _)| other.projected.contains_key(*k))
+                .map(|(k, v)| {
+                    let at = v
+                        .iter()
+                        .map(|(n, _, _)| {
+                            let p = names.get(n).cloned().unwrap_or_else(Product::top);
+                            (n.clone(), p.ints().clone(), p.cell.congruence.element)
+                        })
+                        .collect();
+                    (k.clone(), at)
+                })
+                .collect(),
+            names,
         }
     }
 
@@ -718,15 +741,19 @@ impl Scope {
             } else {
                 Formula::negate(r.body)
             };
-            self.relation = Formula::and(vec![self.relation.clone(), body]).bounded();
+            self.relation = Formula::and(vec![self.relation.clone(), body]);
         }
-        // The written constraint.
-        let kept = if outcome {
-            test.clone()
-        } else {
-            Term::Prim(Prim::Not, vec![test.clone()])
-        };
-        self.write(kept);
+        // The written constraint, unless it is a test of one integer name whose preimage is
+        // exact: the name's interval then holds exactly the values that meet it, and
+        // enumeration would remove none of them.
+        if !(exact && inputs.len() == 1 && free.len() == 1) {
+            let kept = if outcome {
+                test.clone()
+            } else {
+                Term::Prim(Prim::Not, vec![test.clone()])
+            };
+            self.write(kept);
+        }
     }
 
     /// Passes information between the domains of every product, the relation and the written
@@ -769,12 +796,63 @@ impl Scope {
         }
     }
 
-    /// The projection of the relation, within every interval, onto each name it mentions.
+    /// The projection of the relation, within every interval, onto each name it mentions:
+    /// of its top-level constraints together, and of each other top-level conjunct with them,
+    /// each part only when it is new or a product of a name it mentions has changed since its
+    /// last projection. The parts pass information through the products alone, so a change
+    /// spreads to the parts that mention the names it narrowed and to no others, and a test
+    /// that narrows nothing costs its own parts alone.
     fn project(&mut self) {
         if self.relation == Formula::top() {
+            self.projected.clear();
             return;
         }
-        let mentioned = self.relation.atoms();
+        let conjuncts: Vec<Formula> = match &self.relation {
+            Formula::And(gs) => gs.clone(),
+            g => vec![g.clone()],
+        };
+        let (cons, others): (Vec<Formula>, Vec<Formula>) = conjuncts
+            .into_iter()
+            .partition(|g| matches!(g, Formula::Con(_)));
+        let base = Formula::and(cons);
+        let mut parts = others;
+        if base != Formula::top() {
+            parts.push(base.clone());
+        }
+        let snapshot = |s: &Scope, f: &Formula| -> Projected {
+            f.atoms()
+                .iter()
+                .filter_map(|a| match a {
+                    Atom::Sym(n) => {
+                        let p = s.get(n);
+                        Some((n.clone(), p.ints().clone(), p.cell.congruence.element))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let due: Vec<Formula> = parts
+            .iter()
+            .filter(|g| {
+                let whole = Formula::and(vec![(*g).clone(), base.clone()]);
+                self.projected.get(*g) != Some(&snapshot(self, &whole))
+            })
+            .cloned()
+            .collect();
+        self.projected.retain(|g, _| parts.contains(g));
+        for g in &due {
+            self.project_part(&Formula::and(vec![g.clone(), base.clone()]));
+        }
+        for g in due {
+            let whole = Formula::and(vec![g.clone(), base.clone()]);
+            let at = snapshot(self, &whole);
+            self.projected.insert(g, at);
+        }
+    }
+
+    /// Meets each name `part` mentions with its projection, within every interval.
+    fn project_part(&mut self, part: &Formula) {
+        let mentioned = part.atoms();
         let within: Result<Vec<Formula>, presburger::Over> = mentioned
             .iter()
             .filter_map(|a| match a {
@@ -806,7 +884,7 @@ impl Scope {
                 parts.push(Formula::Con(c));
             }
         }
-        parts.push(self.relation.clone());
+        parts.push(part.clone());
         let whole = Formula::and(parts);
         let syms: Vec<Atom> = mentioned
             .into_iter()

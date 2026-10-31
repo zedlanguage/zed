@@ -30,7 +30,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `HEAD_ITERATIONS` 64 | store/iterate.rs | removed (3): a component was set to the top |
 | `NARROWING_ROUNDS` 64 | store/iterate.rs | removed (3): phase 2 stopped with the values it had |
 | `REDUCTION_ROUNDS` 16 | store/product.rs | removed (3) |
-| `VARIABLES` 16, `ATOMS` 64, `INTERMEDIATE` 4096, `KEPT_CONJUNCTIONS` 64 | store/presburger.rs | a relation is dropped and its written constraint kept |
+| `VARIABLES` 16, `ATOMS` 64, `INTERMEDIATE` 4096, `KEPT_CONJUNCTIONS` 64 | store/presburger.rs | removed (4): a relation was dropped and its written constraint kept |
 | `CALL_DEPTH` 64, `TRANSFER_FUEL` 100000 | store/preimage.rs | removed (5): the transfer through calls stopped |
 | `BUILD_FUEL` 10^6 | stage.rs | a build-stage term is left to run whole |
 | `SPLIT_CAP` 1024 | stage.rs | the Trick does not split a parameter |
@@ -235,13 +235,51 @@ Phase 1, phase 2 and the reduction now assert their direction in test builds
 (`debug_assert!` in `iterate.rs` and `product.rs`), so a future write that is not a join or
 a meet fails in every test that reaches it.
 
-### 4. Presburger relations (replaces VARIABLES, ATOMS, INTERMEDIATE, KEPT_CONJUNCTIONS)
+### 4. Presburger relations (replaces VARIABLES, ATOMS, INTERMEDIATE, KEPT_CONJUNCTIONS) — done
 
-Eliminate a variable only when elimination does not increase the number of constraints
-(lower bounds × upper bounds ≤ lower + upper, which holds when it has at most one bound on
-one side or two on each). The system never grows, so elimination is polynomial with no cap;
-a relation where no variable can be eliminated this way is kept as its written constraint,
-a property of its shape the program can see.
+The plan above was to eliminate a variable only where elimination does not add rows. That
+is what was built, with the input's row count as the bound, plus the dark shadow, and a
+formula with disjunctions is no longer split into all its conjunctions:
+
+- **Elimination** (replaces `INTERMEDIATE`, `VARIABLES`, the splinters). The Omega test
+  eliminates, at each step, the variable that leaves the fewest rows, exact eliminations
+  first, among those that leave no more rows than the problem was given. Each step removes
+  a variable and the rows never pass the input's count, so the work is polynomial in the
+  input. An inexact elimination decides the problem when the real shadow is empty (no
+  point) or the dark shadow has a point (that point); between the two shadows, and when no
+  variable qualifies, the question is undecided. The splinters, which solved one problem
+  per value in a gap, are gone.
+- **Disjunctions** (replaces `KEPT_CONJUNCTIONS`, `ATOMS`). The formula is put in negation
+  normal form; its top-level constraints are the base. A disjunct whose own top-level
+  constraints meet the base nowhere is removed, and a disjunction with one disjunct left
+  joins the base, until nothing changes. A point is sought greedily, one disjunct per
+  disjunction; where that fails, a disjunct is removed when the base with it is empty by
+  the rule above (one level of lookahead), and the search runs again. A projection meets,
+  over the disjunctions, the union of each disjunct's projection with the base, and with
+  two disjunctions or more left, moves each finite bound inward by halving the step only
+  where the value past it is shown empty.
+- **Scope relations.** A scope keeps every conjunct of its relation (no 64-constraint
+  limit). Its projection is computed per part (the base, and each other conjunct with the
+  base), and a part is projected again only when the intervals or congruences of the names
+  it mentions changed since it was last projected; a join keeps a part's record when both
+  sides hold it. Two top-level constraints with the same terms are merged when the formula
+  is built (the tighter bound; two different equalities give no point), and an exact test on
+  one name adds nothing to the relation, since the interval holds it.
+
+Termination: every loop removes a disjunct, a variable, or halves a step, and none of these
+is undone, so each ends; the reduction rounds of the scope are meets (replacement 3).
+
+An undecided question leaves the written constraint in place, which is sound; the error
+reports it as "undecided: outside the fragment the Omega test decides". What is still
+undecided: a problem between the shadows (Pugh's example, `l01_38_presburger::controls`),
+and a disjunction where greedy search and one level of lookahead both fail.
+
+| Candidate | Measured | Score | Reasoning |
+|---|---|---|---|
+| Elimination bounded by the input's rows, dark shadow, disjunctions pruned and searched greedily with one-level lookahead, scope parts projected again only when their names change | 40-symbol sum and 200 constraints decided (`controls.rs`); k nested tests 0.72 s at k = 64; k clauses of two disjunctions: solves 953 → 8917 for k = 8 → 64 (linear) | 8 | no constant; polynomial; undecided cases are named and keep the written constraint |
+| The same, every part projected in every round | k clauses: 64–74× time for 8× k (COMPLEXITY.md S16) | 4 | correct but quadratic in the clauses |
+| Split into all conjunctions, no cap | exponential in the disjunctions | 1 | exact on more problems but not polynomial |
+| Keep the budgets | the old behavior | 0 | constants whose crossing changes the answer |
 
 ### 5. Preimage through calls (replaces CALL_DEPTH, TRANSFER_FUEL) — done
 
@@ -279,7 +317,7 @@ What is still read in place, and can still take time exponential in the nesting 
 a call with an argument that reads an input and may be a failure, a boolean or another
 kind of value (a failure passed to a parameter the body does not read still meets the
 demand, which a summary over integers does not see); and the translation into the
-linear-relation domain, which reads every call in place, bounded for now by the caps of 4.
+linear-relation domain, which reads every call in place (the caps of 4 that bounded it are gone; the relation it builds grows with the calls it reads).
 A lambda passed as an argument is keyed by the scope it was made in, so summaries of
 higher-order calls are shared only where those scopes are.
 

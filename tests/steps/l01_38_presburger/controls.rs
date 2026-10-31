@@ -1,4 +1,4 @@
-//! The budgets of step M0.5, and controls: each check of `random` rejects a wrong answer.
+//! Relations of any size, the undecided fragment, and controls: each check of `random` rejects a wrong answer.
 
 use std::sync::Arc;
 
@@ -6,7 +6,7 @@ use zed_kernel::{Prim, Term, Value};
 use zedc::store::interval::IntervalSet;
 use zedc::store::preimage::{Demand, preimage, relations};
 use zedc::store::presburger::{
-    ATOMS, Atom, Con, Entailment, Formula, Lin, Model, Relation, VARIABLES, entails, satisfiable,
+    Atom, Con, Entailment, Formula, Lin, Model, Relation, entails, satisfiable,
 };
 
 use super::random::{check_entailment, check_model, check_points, check_projection};
@@ -29,33 +29,29 @@ fn below_three() -> Term {
 }
 
 #[test]
-fn a_relation_past_the_budget_is_dropped_and_the_written_constraint_kept() {
-    // One atom past the budget: the sum of 17 symbols.
+fn a_relation_of_any_size_is_decided() {
+    // The sum of 40 symbols: there is no limit on the atoms.
     let sum = Formula::Con(Con {
-        lin: (0..=VARIABLES).fold(Lin::constant(-50), |l, i| {
+        lin: (0..40).fold(Lin::constant(-50), |l, i| {
             l.plus(&Lin::atom(Atom::Sym(format!("a{i}").into())))
                 .unwrap()
         }),
         rel: zedc::store::presburger::Rel::Ge,
     });
-    assert!(satisfiable(&sum).is_err());
+    let m = satisfiable(&sum).unwrap().unwrap();
+    assert!(sum.holds(&m).unwrap());
     let r = Relation::of(sum.clone());
-    assert_eq!(entails(&r, &r), Entailment::Dropped);
-    assert_eq!(
-        entails(&r, &r).to_string(),
-        "dropped: past the budget of step M0.5"
-    );
-    // One constraint past the budget, over one symbol.
-    let many = Formula::and(
-        (0..=ATOMS as i128)
-            .map(|k| {
-                Formula::Con(Con::ge(&Lin::atom(Atom::Sym("x".into())), &Lin::constant(k)).unwrap())
-            })
-            .collect(),
-    );
-    assert!(satisfiable(&many).is_err());
-    // The preimage of a sum of 17 inputs keeps the catalog's box, sound, with no relation.
-    let inputs: Vec<Arc<str>> = (0..=VARIABLES).map(|i| format!("a{i}").into()).collect();
+    assert!(matches!(entails(&r, &r), Entailment::Proved(_)));
+    // 200 constraints over one symbol, and the last one false with them.
+    let x = || Lin::atom(Atom::Sym("x".into()));
+    let mut many: Vec<Formula> = (0..200)
+        .map(|k| Formula::Con(Con::ge(&x(), &Lin::constant(k)).unwrap()))
+        .collect();
+    assert!(satisfiable(&Formula::and(many.clone())).unwrap().is_some());
+    many.push(Formula::Con(Con::ge(&Lin::constant(198), &x()).unwrap()));
+    assert_eq!(satisfiable(&Formula::and(many)), Ok(None));
+    // The preimage of a sum of 40 inputs has its relation, and its box.
+    let inputs: Vec<Arc<str>> = (0..40).map(|i| format!("a{i}").into()).collect();
     let total = inputs
         .iter()
         .map(|n| Term::Var(n.clone()))
@@ -67,11 +63,41 @@ fn a_relation_past_the_budget_is_dropped_and_the_written_constraint_kept() {
         .map(|n| (n.clone(), IntervalSet::of(0, 1000)))
         .collect();
     let p = preimage(&t, &doms, &Demand::Bool(true));
-    assert!(p.relation.is_none() && !p.exact);
+    assert!(p.relation.is_some() && !p.exact);
     assert!(
         p.domains.values().all(|d| *d == IntervalSet::of(0, 49)),
         "{:?}",
         p.domains
+    );
+}
+
+#[test]
+fn a_question_between_the_shadows_is_undecided_and_the_written_constraint_kept() {
+    // Pugh's example: 27 <= 11x + 13y <= 45, -10 <= 7x - 9y <= 4 has no integer point, its
+    // dark shadow is empty and its real shadow is not.
+    let l = |a: i128, b: i128, k: i128| {
+        Lin::atom(Atom::Sym("x".into()))
+            .times(a)
+            .unwrap()
+            .plus(&Lin::atom(Atom::Sym("y".into())).times(b).unwrap())
+            .unwrap()
+            .plus(&Lin::constant(k))
+            .unwrap()
+    };
+    let ge0 = |l: Lin| Formula::Con(Con::ge(&l, &Lin::constant(0)).unwrap());
+    let pugh = Formula::and(vec![
+        ge0(l(11, 13, -27)),
+        ge0(l(-11, -13, 45)),
+        ge0(l(7, -9, 10)),
+        ge0(l(-7, 9, 4)),
+    ]);
+    assert!(satisfiable(&pugh).is_err());
+    let r = Relation::of(pugh);
+    let goal = Relation::of(Formula::bottom());
+    assert_eq!(entails(&r, &goal), Entailment::Undecided);
+    assert_eq!(
+        entails(&r, &goal).to_string(),
+        "undecided: outside the fragment the Omega test decides"
     );
 }
 

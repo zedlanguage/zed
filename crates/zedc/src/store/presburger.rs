@@ -8,13 +8,30 @@
 //! that defines an auxiliary variable is kept apart from the body, since it fixes the variable
 //! for each value of the symbols, so that negating the body never negates a definition.
 //!
-//! Satisfiability is decided by the Omega test [Omega]: equalities are solved, with Pugh's
-//! symmetric remainder where no coefficient is a unit; an inequality-only problem eliminates
-//! one variable at a time, exactly when every lower or every upper coefficient of the variable
-//! is a unit, and otherwise by the real shadow, the dark shadow and the splinters. A
-//! satisfiable problem yields a model: each eliminated variable takes the value nearest zero
-//! that its bounds allow under the values of the variables eliminated after it. Disjunctions
-//! are split into conjunctions, depth first, in the formula's order.
+//! Satisfiability is decided by the Omega test [Omega] on the fragment it settles in
+//! polynomial time, with no budget (docs/thresholds.md, replacement 4). Equalities are
+//! solved, with Pugh's symmetric remainder where no coefficient is a unit. An
+//! inequality-only problem eliminates one variable at a time, and only while the system
+//! holds no more rows than it was given: each step removes a variable and the rows never
+//! pass the input's count. An elimination is exact when every lower or every upper
+//! coefficient of the variable is a unit; otherwise a point of the dark shadow is a point of
+//! the problem and an empty real shadow, read over the rationals, shows the problem empty, and
+//! between the two the question is undecided. A satisfiable problem yields a model: each
+//! eliminated variable takes the value nearest zero that its bounds allow under the values of
+//! the variables eliminated after it.
+//!
+//! A formula with disjunctions is not split into all its conjunctions. Its top-level
+//! constraints are the base; a disjunct whose own top-level constraints meet the base nowhere
+//! is removed, and a disjunction with one disjunct left adds it to the base, until nothing is
+//! removed: each round removes a disjunct, so the rounds are at most the disjuncts. No
+//! disjunct left is no point. A point is then sought by taking, for each disjunction in turn,
+//! the first disjunct that meets the base with the disjuncts already taken. Where none does,
+//! each disjunct whose addition to the base empties it by the rule above is removed, until
+//! none is, and the search runs again; where it fails again, the question is undecided. A
+//! projection is the meet, over the disjunctions, of the union over each one's disjuncts of
+//! the projection of the base with that disjunct; with two disjunctions or more left, each
+//! finite bound is then moved inward by halving the step, only where the formula with the
+//! value past it is shown empty. Each loop removes a disjunct or halves a step, so each ends.
 //!
 //! Entailment from premises to a goal is the unsatisfiability of the premises with the negated
 //! goal. A product of two symbols is an atom of its own, so the test still decides linear
@@ -22,12 +39,8 @@
 //! multiplied in pairs, once: a premise on a symbol is a top-level linear inequality of the
 //! premises that mentions it, or a bound on the symbol that the linear premises imply.
 //!
-//! The budgets of step M0.5: a relation takes at most [`VARIABLES`] atoms and [`ATOMS`]
-//! constraints, and every intermediate problem at most [`INTERMEDIATE`] constraints; the same
-//! bound caps the conjunctions a formula splits into, and the splinters and the problems
-//! solved (each shadow and splinter one) in one test of satisfiability.
-//! A coefficient past `i128` is past the budget too. Past a budget the relation is dropped and
-//! the answer is unknown, which is sound: the written constraint is kept.
+//! An undecided question, or a coefficient past `i128`, leaves the relation unused, which is
+//! sound: the written constraint is kept.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -35,18 +48,8 @@ use std::sync::Arc;
 
 use super::interval::{End, IntervalSet};
 
-/// The most atoms a relation takes (step M0.5).
-pub const VARIABLES: usize = 16;
-
-/// The most constraints a relation takes (step M0.5).
-pub const ATOMS: usize = 64;
-
-/// The most constraints an intermediate problem of an elimination takes (step M0.5).
-pub const INTERMEDIATE: usize = 4_096;
-
-/// The most conjunctions a relation a scope keeps splits into (step L1.39): each projection
-/// of the relation tests each of them.
-pub const KEPT_CONJUNCTIONS: u64 = 64;
+/// The projection onto each symbol, in order; `Err(Over)` where it is undecided.
+type Projections = Vec<Result<IntervalSet, Over>>;
 
 /// A variable of a relation.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -327,12 +330,38 @@ impl Formula {
 
     /// The conjunction, flattened, `true` dropped and `false` absorbing.
     pub fn and(fs: Vec<Formula>) -> Formula {
-        let mut out = Vec::new();
+        let mut flat = Vec::new();
         for f in fs {
             match f {
-                Formula::And(gs) => out.extend(gs),
+                Formula::And(gs) => flat.extend(gs),
                 Formula::Or(ref gs) if gs.is_empty() => return Formula::bottom(),
-                g => out.push(g),
+                g => flat.push(g),
+            }
+        }
+        // Of two constraints on one term, the tighter alone, in the place of the first.
+        let mut out: Vec<Formula> = Vec::new();
+        let mut at: BTreeMap<(BTreeMap<Atom, i128>, Rel), usize> = BTreeMap::new();
+        for g in flat {
+            let Formula::Con(c) = &g else {
+                out.push(g);
+                continue;
+            };
+            let key = (c.lin.terms.clone(), c.rel);
+            match at.get(&key) {
+                Some(&i) => {
+                    let Formula::Con(old) = &out[i] else {
+                        unreachable!("a constraint")
+                    };
+                    if c.rel == Rel::Ge && c.lin.constant < old.lin.constant {
+                        out[i] = g;
+                    } else if c.rel == Rel::Eq && c.lin.constant != old.lin.constant {
+                        return Formula::bottom();
+                    }
+                }
+                None => {
+                    at.insert(key, out.len());
+                    out.push(g);
+                }
             }
         }
         if out.len() == 1 {
@@ -378,51 +407,6 @@ impl Formula {
         let mut out: Vec<Formula> = pa.iter().filter(|g| shared.contains(g)).cloned().collect();
         out.push(Formula::or(vec![rest(pa), rest(pb)]));
         Formula::and(out)
-    }
-
-    /// The conjuncts of `self`, in order, while they hold at most [`ATOMS`] constraints and
-    /// split into at most [`KEPT_CONJUNCTIONS`] conjunctions in all. Past the constraints a
-    /// relation is over the budget of step M0.5 for every use, and past the conjunctions each
-    /// projection of it costs a test of each; a conjunction implies each part of it.
-    pub fn bounded(self) -> Formula {
-        if self.cons().len() <= ATOMS && self.split_count(false) <= KEPT_CONJUNCTIONS {
-            return self;
-        }
-        let Formula::And(gs) = self else {
-            return Formula::top();
-        };
-        let (mut cons, mut split) = (0, 1u64);
-        let kept = gs
-            .into_iter()
-            .filter(|g| {
-                let (n, k) = (
-                    cons + g.cons().len(),
-                    split.saturating_mul(g.split_count(false)),
-                );
-                let fits = n <= ATOMS && k <= KEPT_CONJUNCTIONS;
-                if fits {
-                    (cons, split) = (n, k);
-                }
-                fits
-            })
-            .collect();
-        Formula::and(kept)
-    }
-
-    /// How many conjunctions the formula, negated when `neg`, splits into before any is
-    /// found unsatisfiable, saturating.
-    fn split_count(&self, neg: bool) -> u64 {
-        match (self, neg) {
-            (Formula::Con(c), true) if c.rel == Rel::Eq => 2,
-            (Formula::Con(_), _) => 1,
-            (Formula::Not(g), _) => g.split_count(!neg),
-            (Formula::And(gs), false) | (Formula::Or(gs), true) => gs
-                .iter()
-                .fold(1u64, |a, g| a.saturating_mul(g.split_count(neg))),
-            (Formula::And(gs), true) | (Formula::Or(gs), false) => gs
-                .iter()
-                .fold(0u64, |a, g| a.saturating_add(g.split_count(neg))),
-        }
     }
 
     /// The formula with every constraint that mentions `sym`, alone or in a product,
@@ -609,21 +593,203 @@ pub type Model = BTreeMap<Atom, i128>;
 
 /// Whether `f` holds somewhere, and where.
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Over> {
-    let atoms: Vec<Atom> = f.atoms().into_iter().collect();
-    if atoms.len() > VARIABLES || f.cons().len() > ATOMS {
-        return Err(Over);
-    }
-    let index: BTreeMap<&Atom, usize> = atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
-    let mut split = Split {
-        index: &index,
-        leaves: 0,
-        solver: Omega {
-            next: atoms.len(),
-            splinters: 0,
-            steps: 0,
-        },
+    let Some(p) = propagate(f)? else {
+        return Ok(None);
     };
-    let found = split.go(vec![(f.clone(), true)], Vec::new())?;
+    if let Ok(m) = pick(&p) {
+        return Ok(Some(m));
+    }
+    match probe(p)? {
+        None => Ok(None),
+        Some(p) => pick(&p).map(Some),
+    }
+}
+
+/// A point of `p`, taking for each disjunction in turn the first disjunct that meets the
+/// constraints taken so far, or `Over` when none does.
+fn pick(p: &Parts) -> Result<Model, Over> {
+    let mut model = solve(&p.cons)?.ok_or(Over)?;
+    let (mut acc, mut queue) = (p.cons.clone(), p.ors.clone());
+    while let Some(ds) = queue.pop() {
+        let mut taken = None;
+        for d in ds {
+            let mut cs = acc.clone();
+            cs.extend(lits(&d));
+            if let Ok(Some(m)) = solve(&cs) {
+                taken = Some((d, m));
+                break;
+            }
+        }
+        let Some((d, m)) = taken else {
+            return Err(Over);
+        };
+        model = m;
+        let mut q = Parts::default();
+        q.add(d);
+        acc.extend(q.cons);
+        queue.extend(q.ors);
+    }
+    Ok(model)
+}
+
+/// `p` with each disjunct removed whose addition, propagated, leaves no point, until none is
+/// removed, or `None` when `p` has no point. Each round but the last removes a disjunct, and
+/// each tests every disjunct by one propagation, so the work is polynomial in the disjuncts.
+fn probe(mut p: Parts) -> Result<Option<Parts>, Over> {
+    loop {
+        let mut changed = false;
+        for i in 0..p.ors.len() {
+            let ds = std::mem::take(&mut p.ors[i]);
+            let n = ds.len();
+            let live: Vec<Formula> = ds
+                .into_iter()
+                .filter(|d| {
+                    let mut q = Parts {
+                        cons: p.cons.clone(),
+                        ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
+                    };
+                    q.add(d.clone());
+                    !matches!(settle(q), Ok(None))
+                })
+                .collect();
+            changed |= live.len() < n;
+            if live.is_empty() {
+                return Ok(None);
+            }
+            p.ors[i] = live;
+        }
+        if !changed {
+            return Ok(Some(p));
+        }
+        match settle(p)? {
+            None => return Ok(None),
+            Some(q) => p = q,
+        }
+    }
+}
+
+/// A formula in negation normal form as its top-level constraints and its top-level
+/// disjunctions, each a list of disjuncts.
+#[derive(Clone, Default)]
+struct Parts {
+    cons: Vec<Con>,
+    ors: Vec<Vec<Formula>>,
+}
+
+impl Parts {
+    /// Adds a formula in negation normal form.
+    fn add(&mut self, f: Formula) {
+        match f {
+            Formula::Con(c) => self.cons.push(c),
+            Formula::And(gs) => gs.into_iter().for_each(|g| self.add(g)),
+            Formula::Or(gs) => self.ors.push(gs),
+            Formula::Not(_) => unreachable!("a formula in negation normal form"),
+        }
+    }
+}
+
+/// `f`, negated when `!sign`, with each negation pushed to the constraints: not `t >= 0` is
+/// `-t - 1 >= 0`, and not `t == 0` is `t >= 1 || -t >= 1`.
+fn nnf(f: &Formula, sign: bool) -> Result<Formula, Over> {
+    Ok(match (f, sign) {
+        (Formula::Not(g), s) => nnf(g, !s)?,
+        (Formula::And(gs), true) | (Formula::Or(gs), false) => {
+            Formula::and(gs.iter().map(|g| nnf(g, sign)).collect::<Result<_, _>>()?)
+        }
+        (Formula::And(gs), false) | (Formula::Or(gs), true) => {
+            Formula::or(gs.iter().map(|g| nnf(g, sign)).collect::<Result<_, _>>()?)
+        }
+        (Formula::Con(c), true) => Formula::Con(c.clone()),
+        (Formula::Con(c), false) => {
+            let one = Lin::constant(1);
+            let neg = Formula::Con(Con::ge(&Lin::default(), &c.lin.plus(&one)?)?);
+            if c.rel == Rel::Ge {
+                neg
+            } else {
+                Formula::or(vec![Formula::Con(Con::ge(&c.lin, &one)?), neg])
+            }
+        }
+    })
+}
+
+/// The top-level constraints of a formula in negation normal form.
+fn lits(f: &Formula) -> Vec<Con> {
+    match f {
+        Formula::Con(c) => vec![c.clone()],
+        Formula::And(gs) => gs.iter().flat_map(lits).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The formula's base and disjunctions once no disjunct can be removed, or `None` when it has
+/// no point. A disjunct is removed when its top-level constraints meet the base nowhere; a
+/// disjunction left with one disjunct adds it to the base. Each round but the last removes a
+/// disjunct, so there are at most as many rounds as disjuncts, each a test of every disjunct.
+fn propagate(f: &Formula) -> Result<Option<Parts>, Over> {
+    let mut p = Parts::default();
+    p.add(nnf(f, true)?);
+    settle(p)
+}
+
+/// [`propagate`] from parts.
+fn settle(mut p: Parts) -> Result<Option<Parts>, Over> {
+    loop {
+        if solve(&p.cons)?.is_none() {
+            return Ok(None);
+        }
+        let mut changed = false;
+        let mut kept = Vec::new();
+        for ds in std::mem::take(&mut p.ors) {
+            let n = ds.len();
+            let mut live: Vec<Formula> = ds
+                .into_iter()
+                .filter(|d| {
+                    let mut cs = p.cons.clone();
+                    cs.extend(lits(d));
+                    !matches!(solve(&cs), Ok(None))
+                })
+                .collect();
+            changed |= live.len() < n;
+            match live.len() {
+                0 => return Ok(None),
+                1 => {
+                    let mut q = Parts::default();
+                    q.add(live.pop().expect("one"));
+                    p.cons.extend(q.cons);
+                    kept.extend(q.ors);
+                }
+                _ => kept.push(live),
+            }
+        }
+        p.ors = kept;
+        if !changed {
+            return Ok(Some(p));
+        }
+    }
+}
+
+/// Whether a conjunction of constraints holds somewhere, and where.
+fn solve(cons: &[Con]) -> Result<Option<Model>, Over> {
+    let atoms: Vec<Atom> = cons
+        .iter()
+        .flat_map(|c| c.lin.terms.keys().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let index: BTreeMap<&Atom, usize> = atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
+    let (eqs, ges): (Vec<Row>, Vec<Row>) = cons
+        .iter()
+        .map(|c| Row {
+            a: c.lin.terms.iter().map(|(a, k)| (index[a], *k)).collect(),
+            k: c.lin.constant,
+            eq: c.rel == Rel::Eq,
+        })
+        .partition(|r| r.eq);
+    let mut omega = Omega {
+        next: atoms.len(),
+        room: cons.len(),
+    };
+    let found = omega.solve(eqs, ges)?;
     Ok(found.map(|m| {
         atoms
             .iter()
@@ -631,87 +797,6 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Over> {
             .filter_map(|(i, a)| m.get(&i).map(|v| (a.clone(), *v)))
             .collect()
     }))
-}
-
-/// The disjunctions of a formula split into conjunctions, depth first.
-struct Split<'a> {
-    index: &'a BTreeMap<&'a Atom, usize>,
-    leaves: usize,
-    solver: Omega,
-}
-
-impl Split<'_> {
-    /// Whether the pending formulas, each with the sign it is taken with, hold together with
-    /// the rows gathered so far.
-    fn go(
-        &mut self,
-        mut pending: Vec<(Formula, bool)>,
-        rows: Vec<Row>,
-    ) -> Result<Option<Vals>, Over> {
-        let Some((f, sign)) = pending.pop() else {
-            self.leaves += 1;
-            if self.leaves > INTERMEDIATE {
-                return Err(Over);
-            }
-            let (eqs, ges): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| r.eq);
-            return self.solver.solve(eqs, ges);
-        };
-        match (f, sign) {
-            (Formula::Not(g), s) => {
-                pending.push((*g, !s));
-                self.go(pending, rows)
-            }
-            (Formula::And(gs), true) | (Formula::Or(gs), false) => {
-                pending.extend(gs.into_iter().rev().map(|g| (g, sign)));
-                self.go(pending, rows)
-            }
-            (Formula::And(gs), false) | (Formula::Or(gs), true) => {
-                for g in gs {
-                    let mut p = pending.clone();
-                    p.push((g, sign));
-                    if let Some(m) = self.go(p, rows.clone())? {
-                        return Ok(Some(m));
-                    }
-                }
-                Ok(None)
-            }
-            (Formula::Con(c), true) => {
-                let mut rows = rows;
-                rows.push(self.row(&c.lin, c.rel == Rel::Eq));
-                self.go(pending, rows)
-            }
-            (Formula::Con(c), false) => {
-                // Not `t >= 0` is `-t - 1 >= 0`; not `t == 0` is `t >= 1` or `-t >= 1`.
-                let neg = self.row(&c.lin, false).neg_minus_one()?;
-                if c.rel == Rel::Ge {
-                    let mut rows = rows;
-                    rows.push(neg);
-                    return self.go(pending, rows);
-                }
-                let pos = {
-                    let mut r = self.row(&c.lin, false);
-                    r.k = add(r.k, -1)?;
-                    r
-                };
-                for r in [pos, neg] {
-                    let mut rs = rows.clone();
-                    rs.push(r);
-                    if let Some(m) = self.go(pending.clone(), rs)? {
-                        return Ok(Some(m));
-                    }
-                }
-                Ok(None)
-            }
-        }
-    }
-
-    fn row(&self, l: &Lin, eq: bool) -> Row {
-        Row {
-            a: l.terms.iter().map(|(a, c)| (self.index[a], *c)).collect(),
-            k: l.constant,
-            eq,
-        }
-    }
 }
 
 /// The values of the solver's variables, each absent one zero.
@@ -741,14 +826,6 @@ fn gcd(a: i128, b: i128) -> i128 {
 }
 
 impl Row {
-    fn neg_minus_one(&self) -> Result<Row, Over> {
-        Ok(Row {
-            a: self.a.iter().map(|(i, c)| (*i, -c)).collect(),
-            k: add(-self.k, -1)?,
-            eq: false,
-        })
-    }
-
     fn eval(&self, m: &Vals) -> Result<i128, Over> {
         let mut v = self.k;
         for (i, c) in &self.a {
@@ -814,19 +891,12 @@ fn mod_hat(a: i128, m: i128) -> i128 {
 struct Omega {
     /// The next fresh variable.
     next: usize,
-    /// The splinters tried so far.
-    splinters: usize,
-    /// The problems solved so far, each elimination's shadows and splinters counted.
-    steps: usize,
+    /// The most rows an elimination may leave: the rows of the problem as given.
+    room: usize,
 }
 
 impl Omega {
     fn solve(&mut self, eqs: Vec<Row>, ges: Vec<Row>) -> Result<Option<Vals>, Over> {
-        // Both shadows recurse, so without this budget the steps double with each variable.
-        self.steps += 1;
-        if eqs.len() + ges.len() > INTERMEDIATE || self.steps > INTERMEDIATE {
-            return Err(Over);
-        }
         let mut es = Vec::new();
         for r in eqs {
             match r.normal() {
@@ -955,8 +1025,8 @@ impl Omega {
                 return Ok(Some(m));
             }
         }
-        // Eliminate the variable that is exact with the fewest pairs, or else the one with
-        // the fewest pairs.
+        // Eliminate the variable that leaves the fewest rows, exact before inexact, among those
+        // that leave no more rows than the problem was given.
         let cost = |j: usize| {
             let lo: Vec<i128> = gs
                 .iter()
@@ -967,19 +1037,19 @@ impl Omega {
                 .filter_map(|r| r.a.get(&j).filter(|c| **c < 0).map(|c| -c))
                 .collect();
             let exact = lo.iter().all(|c| *c == 1) || hi.iter().all(|c| *c == 1);
-            (!exact, lo.len() * hi.len(), j)
+            let rows = gs.len() - lo.len() - hi.len() + lo.len() * hi.len();
+            (!exact, rows, j)
         };
-        let j = vars
+        let Some((inexact, _, j)) = vars
             .iter()
-            .copied()
-            .min_by_key(|j| cost(*j))
-            .expect("a variable");
-        let (inexact, pairs, _) = cost(j);
+            .map(|j| cost(*j))
+            .filter(|(_, rows, _)| *rows <= self.room)
+            .min()
+        else {
+            return Err(Over);
+        };
         let (with, others): (Vec<Row>, Vec<Row>) =
             gs.iter().cloned().partition(|r| r.a.contains_key(&j));
-        if others.len() + pairs > INTERMEDIATE {
-            return Err(Over);
-        }
         let lowers: Vec<&Row> = with.iter().filter(|r| r.a[&j] > 0).collect();
         let uppers: Vec<&Row> = with.iter().filter(|r| r.a[&j] < 0).collect();
         // Lower `a·x + l >= 0` and upper `-b·x + u >= 0` give `a·u + b·l >= 0`, and the dark
@@ -1023,52 +1093,27 @@ impl Omega {
             let r = self.solve(Vec::new(), shadow(false)?)?;
             return pick(r);
         }
-        // Both shadows recurse below, so an empty problem would cost twice per variable;
-        // the real shadows alone show most empty problems empty in one pass.
+        // An empty real shadow, over the rationals, shows the problem empty; a point of the dark
+        // shadow, which lies within the real one, is a point of it. Between them the question
+        // is undecided: the splinters that would settle it recurse once per value of a
+        // coefficient at each variable, which is exponential in the variables.
         if relaxed_empty(&gs) {
             return Ok(None);
         }
-        // The dark shadow lies within the real one, so a point of it settles the problem with
-        // one recursion; only when it has none is the real shadow solved.
-        if let Some(m) = self.solve(Vec::new(), shadow(true)?)? {
-            return pick(Some(m));
+        match self.solve(Vec::new(), shadow(true)?) {
+            Ok(Some(m)) => pick(Some(m)),
+            _ => Err(Over),
         }
-        if self.solve(Vec::new(), shadow(false)?)?.is_none() {
-            return Ok(None);
-        }
-        // The splinters: `a·x + l == i` for `0 <= i <= (m·a - m - a) / m`, `m` the largest
-        // upper coefficient.
-        let big = uppers
-            .iter()
-            .map(|r| -r.a[&j])
-            .max()
-            .expect("an upper bound");
-        for lo in &lowers {
-            let a = lo.a[&j];
-            let top = (mul(big, a)? - big - a).div_euclid(big);
-            for i in 0..=top {
-                self.splinters += 1;
-                if self.splinters > INTERMEDIATE {
-                    return Err(Over);
-                }
-                let mut e = (*lo).clone();
-                e.k = add(e.k, -i)?;
-                e.eq = true;
-                if let Some(m) = self.solve(vec![e], gs.clone())? {
-                    return Ok(Some(m));
-                }
-            }
-        }
-        Ok(None)
     }
 }
 
 /// Whether the inequalities have no rational point, by Fourier–Motzkin elimination with the
 /// real shadow alone, each row normalized (which keeps every integer point). A `false` is
-/// "not shown": elimination past [`INTERMEDIATE`] rows, or an overflow, stops it. One pass
-/// eliminates each variable once.
+/// "not shown": a variable whose elimination would leave more rows than `gs` holds, or an
+/// overflow, stops it. One pass eliminates each variable once.
 fn relaxed_empty(gs: &[Row]) -> bool {
     let mut rows: Vec<Row> = gs.to_vec();
+    let room = gs.len();
     loop {
         let mut tight: BTreeMap<BTreeMap<usize, i128>, i128> = BTreeMap::new();
         for r in rows {
@@ -1101,15 +1146,19 @@ fn relaxed_empty(gs: &[Row]) -> bool {
                 if *c > 0 { e.0 += 1 } else { e.1 += 1 }
             }
         }
-        let Some((&j, _)) = sides.iter().min_by_key(|(j, (lo, hi))| (lo * hi, **j)) else {
+        let n = gs.len();
+        let Some((_, j)) = sides
+            .iter()
+            .map(|(j, (lo, hi))| (n - lo - hi + lo * hi, *j))
+            .min()
+        else {
             return false;
         };
-        let (with, mut out): (Vec<Row>, Vec<Row>) =
-            gs.into_iter().partition(|r| r.a.contains_key(&j));
-        let (lo, hi) = sides[&j];
-        if out.len() + lo * hi > INTERMEDIATE {
+        if n - sides[&j].0 - sides[&j].1 + sides[&j].0 * sides[&j].1 > room {
             return false;
         }
+        let (with, mut out): (Vec<Row>, Vec<Row>) =
+            gs.into_iter().partition(|r| r.a.contains_key(&j));
         for l in with.iter().filter(|r| r.a[&j] > 0) {
             for u in with.iter().filter(|r| r.a[&j] < 0) {
                 let (a, b) = (l.a[&j], -u.a[&j]);
@@ -1166,104 +1215,107 @@ fn choose(rows: &[Row], j: usize, m: &Vals) -> Result<i128, Over> {
     })
 }
 
-/// The values of a symbol over the formula's points, as a union of intervals: the hull of
-/// the symbol's values over each conjunction the formula splits into. A bound past `i64` is
-/// read as no bound.
+/// The values of a symbol over the formula's points, as a union of intervals (see the module
+/// note): exact when one disjunction is left, a set holding them otherwise. A bound past `i64`
+/// is read as no bound.
 pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Over> {
     project_each(f, std::slice::from_ref(sym))?.remove(0)
 }
 
-/// [`project`] onto each of `syms`, splitting the formula into conjunctions once: one result
-/// for each symbol, so that a symbol past a budget leaves the others projected.
+/// [`project`] onto each of `syms`, removing disjuncts once: one result for each symbol, so
+/// that a symbol whose hull is undecided leaves the others projected.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Vec<Result<IntervalSet, Over>>, Over> {
-    let mut out: Vec<Result<IntervalSet, Over>> =
-        syms.iter().map(|_| Ok(IntervalSet::empty())).collect();
-    for (conj, model) in conjunctions(f)? {
-        let c = Formula::and(conj.into_iter().map(Formula::Con).collect());
-        for (o, sym) in out.iter_mut().zip(syms) {
-            if let Ok(acc) = o {
-                *o = hull_from(&c, sym, &model).map(|h| acc.join(&h));
-            }
-        }
+    let none = || syms.iter().map(|_| Ok(IntervalSet::empty())).collect();
+    let Some(mut p) = propagate(f)? else {
+        return Ok(none());
+    };
+    if p.ors.len() > 1 && pick(&p).is_err() {
+        let Some(q) = probe(p)? else {
+            return Ok(none());
+        };
+        p = q;
     }
-    Ok(out)
+    let Some(model) = solve(&p.cons)? else {
+        return Ok(none());
+    };
+    let base = Formula::and(p.cons.iter().cloned().map(Formula::Con).collect());
+    // Each disjunct's projections with the base, a level of disjunctions fewer than `f`; an
+    // undecided one is `None`.
+    let mut parts: Vec<Vec<Option<Projections>>> = Vec::new();
+    for ds in &p.ors {
+        let mut each = Vec::new();
+        for d in ds {
+            each.push(project_each(&Formula::and(vec![base.clone(), d.clone()]), syms).ok());
+        }
+        parts.push(each);
+    }
+    Ok(syms
+        .iter()
+        .enumerate()
+        .map(|(k, sym)| {
+            let mut out = hull_from(&base, sym, &model)?;
+            for ds in &parts {
+                let mut u = Some(IntervalSet::empty());
+                for d in ds {
+                    u = match (u, d) {
+                        (Some(u), Some(r)) => r[k].as_ref().ok().map(|h| u.join(h)),
+                        _ => None,
+                    };
+                }
+                if let Some(u) = u {
+                    out = out.meet(&u);
+                }
+            }
+            if p.ors.len() > 1 {
+                out = tighten(f, sym, out)?;
+            }
+            Ok(out)
+        })
+        .collect())
 }
 
-/// The conjunctions a formula splits into, each a list of constraints with a point that
-/// meets it, those found unsatisfiable dropped.
-fn conjunctions(f: &Formula) -> Result<Vec<(Vec<Con>, Model)>, Over> {
-    fn go(
-        pending: &mut Vec<(Formula, bool)>,
-        cons: Vec<Con>,
-        out: &mut Vec<Vec<Con>>,
-    ) -> Result<(), Over> {
-        let Some((f, sign)) = pending.pop() else {
-            if out.len() >= INTERMEDIATE {
-                return Err(Over);
-            }
-            out.push(cons);
-            return Ok(());
-        };
-        let both = |pending: &mut Vec<(Formula, bool)>,
-                    out: &mut Vec<Vec<Con>>,
-                    gs: Vec<(Formula, bool)>,
-                    cons: Vec<Con>|
-         -> Result<(), Over> {
-            for g in gs {
-                let mut p = pending.clone();
-                p.push(g);
-                go(&mut p, cons.clone(), out)?;
-            }
-            Ok(())
-        };
-        match (f, sign) {
-            (Formula::Not(g), s) => {
-                pending.push((*g, !s));
-                go(pending, cons, out)
-            }
-            (Formula::And(gs), true) | (Formula::Or(gs), false) => {
-                pending.extend(gs.into_iter().rev().map(|g| (g, sign)));
-                go(pending, cons, out)
-            }
-            (Formula::And(gs), false) | (Formula::Or(gs), true) => both(
-                pending,
-                out,
-                gs.into_iter().map(|g| (g, sign)).collect(),
-                cons,
-            ),
-            (Formula::Con(c), true) => {
-                let mut cons = cons;
-                cons.push(c);
-                go(pending, cons, out)
-            }
-            (Formula::Con(c), false) => {
-                let one = Lin::constant(1);
-                let neg = Con::ge(&Lin::default(), &c.lin.plus(&one)?)?;
-                if c.rel == Rel::Ge {
-                    let mut cons = cons;
-                    cons.push(neg);
-                    return go(pending, cons, out);
-                }
-                let pos = Con::ge(&c.lin, &one)?;
-                for d in [pos, neg] {
-                    let mut cs = cons.clone();
-                    cs.push(d);
-                    go(&mut pending.clone(), cs, out)?;
-                }
-                Ok(())
-            }
+/// `set`, holding every value of `sym` over `f`'s points, with each finite bound raised or
+/// lowered by bisection to the nearest value at which `f` with `sym` past it is shown to have
+/// no point. A bound moves only on such a proof, so an undecided question leaves it sound.
+fn tighten(f: &Formula, sym: &Atom, set: IntervalSet) -> Result<IntervalSet, Over> {
+    let Some((End::Fin(lo), End::Fin(hi))) = set.bounds() else {
+        return Ok(set);
+    };
+    let x = Lin::atom(sym.clone());
+    let none = |con: Con| {
+        matches!(
+            satisfiable(&Formula::and(vec![f.clone(), Formula::Con(con)])),
+            Ok(None)
+        )
+    };
+    // The least `v` in `lo..=hi` with no proof that `f` has no point where `sym <= v`, and the
+    // greatest with none where `sym >= v`.
+    let (mut a, mut b) = (i128::from(lo), i128::from(hi));
+    while a < b {
+        let mid = a + (b - a).div_euclid(2);
+        if none(Con::ge(&Lin::constant(mid), &x)?) {
+            a = mid + 1
+        } else {
+            b = mid
         }
     }
-    let mut out = Vec::new();
-    go(&mut vec![(f.clone(), true)], Vec::new(), &mut out)?;
-    let mut live = Vec::new();
-    for c in out {
-        let f = Formula::and(c.iter().cloned().map(Formula::Con).collect());
-        if let Some(m) = satisfiable(&f)? {
-            live.push((c, m));
+    let new_lo = a;
+    if none(Con::ge(&Lin::constant(new_lo), &x)?) {
+        return Ok(IntervalSet::empty());
+    }
+    let (mut a, mut b) = (new_lo, i128::from(hi));
+    while a < b {
+        let mid = b - (b - a).div_euclid(2);
+        if none(Con::ge(&x, &Lin::constant(mid))?) {
+            b = mid - 1
+        } else {
+            a = mid
         }
     }
-    Ok(live)
+    Ok(set.meet(&IntervalSet::range(
+        End::from_i128(new_lo),
+        End::from_i128(a),
+    )))
 }
 
 /// The least and greatest values of a symbol over a conjunction.
@@ -1358,8 +1410,8 @@ pub enum Entailment {
     /// The premises with the products, read linearly, hold at these values with the goal
     /// failing, but the values of the product atoms are not the products of the symbols'.
     NotProved(Model),
-    /// A budget was passed, and the relation dropped.
-    Dropped,
+    /// The question lies outside the fragment the test decides (see the module note).
+    Undecided,
 }
 
 impl fmt::Display for Entailment {
@@ -1381,14 +1433,16 @@ impl fmt::Display for Entailment {
                 write!(f, "not proved: the linear reading fails at ")?;
                 model(m, f)
             }
-            Entailment::Dropped => write!(f, "dropped: past the budget of step M0.5"),
+            Entailment::Undecided => {
+                write!(f, "undecided: outside the fragment the Omega test decides")
+            }
         }
     }
 }
 
 /// Whether `premises` entail `goal` (rung 2).
 pub fn entails(premises: &Relation, goal: &Relation) -> Entailment {
-    entails_inner(premises, goal).unwrap_or(Entailment::Dropped)
+    entails_inner(premises, goal).unwrap_or(Entailment::Undecided)
 }
 
 fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Over> {
@@ -1538,15 +1592,16 @@ mod tests {
     }
 
     #[test]
-    fn the_dark_shadow_and_the_splinters_decide_integer_points() {
+    fn the_dark_shadow_decides_integer_points_and_the_gap_is_undecided() {
         // 2x = 2y + 1 has real points and no integer point.
         let f = Formula::Con(Con {
             lin: lin(&[("x", 2), ("y", -2)], -1),
             rel: Rel::Eq,
         });
         assert_eq!(satisfiable(&f), Ok(None));
-        // 3 <= 2x <= 3 has none either; 27 <= 11x + 13y <= 45, -10 <= 7x - 9y <= 4 has none
-        // (Pugh's example).
+        // 3 <= 2x <= 3 has none either. 27 <= 11x + 13y <= 45, -10 <= 7x - 9y <= 4 has none
+        // (Pugh's example), but its dark shadow is empty and its real shadow is not: only the
+        // splinters, not taken, would settle it.
         assert_eq!(
             satisfiable(&Formula::and(vec![
                 ge(&[("x", 2)], -3),
@@ -1560,6 +1615,15 @@ mod tests {
             ge(&[("x", 7), ("y", -9)], 10),
             ge(&[("x", -7), ("y", 9)], 4),
         ]);
-        assert_eq!(satisfiable(&pugh), Ok(None));
+        assert_eq!(satisfiable(&pugh), Err(Over));
+        // Shifted to hold the point (2, 1), the dark shadow finds a point.
+        let shifted = Formula::and(vec![
+            ge(&[("x", 11), ("y", 13)], -27),
+            ge(&[("x", -11), ("y", -13)], 45),
+            ge(&[("x", 7), ("y", -9)], -5),
+            ge(&[("x", -7), ("y", 9)], 5),
+        ]);
+        let m = satisfiable(&shifted).unwrap().unwrap();
+        assert!(shifted.holds(&m).unwrap(), "{m:?}");
     }
 }

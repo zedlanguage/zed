@@ -194,7 +194,7 @@ pub(super) fn check_entailment(
                 Err(format!("{p} to {g}: the countermodel {q:?} is none"))
             }
         }
-        (Entailment::NotProved(_) | Entailment::Dropped, _) => Err(format!(
+        (Entailment::NotProved(_) | Entailment::Undecided, _) => Err(format!(
             "{p} to {g}: {e}, which a linear question never gives"
         )),
         (Entailment::Proved(_), None) => Ok(()),

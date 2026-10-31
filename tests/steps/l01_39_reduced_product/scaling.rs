@@ -6,7 +6,6 @@ use zedc::store::cell::Premises;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
-use zedc::store::presburger::ATOMS;
 
 use super::ints;
 
@@ -37,16 +36,12 @@ fn clauses(k: usize) -> Term {
 }
 
 #[test]
-fn a_scope_keeps_a_relation_within_the_budget() {
+fn a_scope_keeps_every_clause_of_a_relation() {
     let s = ints(&["x".into(), "y".into()]);
     for k in [1, 4, 40] {
         let r = s.assume(&clauses(k), true, &Premises::new());
         let n = r.relation.cons().len();
-        assert!(
-            n > 0 && n <= ATOMS,
-            "{k} clauses: {n} constraints in {}",
-            r.relation
-        );
+        assert!(n == 3 * k, "{k} clauses: {n} constraints in {}", r.relation);
         // Every point that meets the test is in the scope.
         for (x, y) in [(40, 0), (0, -40), (39, 0)] {
             let env = [("x".into(), Value::Int(x)), ("y".into(), Value::Int(y))].into();
@@ -107,8 +102,7 @@ fn a_chain_of_lets_and_a_nest_of_ifs_scale() {
     scaling::check("a chain of `let`s", 50, |k| {
         super::arms(&lets(k), &x0);
     });
-    // From 64 levels on, the relation is at its cap of 64 constraints, so each further level
-    // costs the same; below that, each level costs more than the one before.
+    // Each level's test implies the one before, so the relation keeps one constraint.
     scaling::check("`if`s nested on one name", 64, |k| {
         super::arms(&ifs(k), &x0);
     });

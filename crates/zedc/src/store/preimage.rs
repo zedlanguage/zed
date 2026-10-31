@@ -296,7 +296,7 @@ fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool,
             within(&out)?,
             Formula::negate(rel.body.clone()),
         ]);
-        let exact = presburger::satisfiable(&outside)?.is_none();
+        let exact = matches!(presburger::satisfiable(&outside), Ok(None));
         Ok((out, exact))
     };
     let (out, exact) = go().ok()?;
@@ -316,18 +316,6 @@ impl Tr {
         self.defs.push((n, what, def));
         presburger::Atom::Aux(n)
     }
-
-    /// Whether `k` more auxiliary variables stay within the atoms a relation takes; past
-    /// them every relation is over the budget of step M0.5.
-    fn room(&self, k: usize) -> bool {
-        self.defs.len() + k <= presburger::VARIABLES
-    }
-}
-
-/// A formula within the constraints a relation takes; past them it is over the budget of
-/// step M0.5.
-fn small(f: Formula) -> Option<Formula> {
-    (f.cons().len() <= presburger::ATOMS).then_some(f)
 }
 
 /// The tonicity of a scalar primitive in argument `arg`, the others fixed, with `false` below
@@ -1183,9 +1171,6 @@ impl Cx {
             Term::If(g, a, b) => {
                 let g = self.formula(tr, g, env)?;
                 let (la, lb) = (self.lin(tr, a, env)?, self.lin(tr, b, env)?);
-                if !tr.room(1) {
-                    return None;
-                }
                 let v = presburger::Atom::Aux(tr.defs.len() as u32);
                 let x = Lin::atom(v.clone());
                 let def = Formula::or(vec![
@@ -1223,9 +1208,6 @@ impl Cx {
                     IntDiv | Mod => {
                         let c = self.constant_int(&args[1], env).filter(|c| *c != 0)?;
                         let a = arg(tr, 0)?;
-                        if !tr.room(2) {
-                            return None;
-                        }
                         // `a == c·q + r` and `0 <= r < |c|`: Euclidean.
                         let n = tr.defs.len() as u32;
                         let (q, r) = (
@@ -1250,9 +1232,6 @@ impl Cx {
                         } else {
                             arg(tr, 1)?
                         };
-                        if !tr.room(1) {
-                            return None;
-                        }
                         let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
                         // `min` takes `a` where `a <= b`, `max` and `abs` where `a >= b`.
                         let (lo, hi) = if *p == Min { (&a, &b) } else { (&b, &a) };
@@ -1280,7 +1259,7 @@ impl Cx {
     /// The formula a test states over the inputs.
     fn formula(&self, tr: &mut Tr, t: &Term, env: &Env) -> Option<Formula> {
         self.translated(true, &self.memo.formula, key(t, env), || {
-            self.formula_at(tr, t, env).and_then(small)
+            self.formula_at(tr, t, env)
         })
     }
 
