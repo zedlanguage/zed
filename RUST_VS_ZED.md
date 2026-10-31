@@ -109,10 +109,10 @@ The Dart columns are filled as the port reaches each step.
 
 | Step | Rust model time | Rust tool time | Rust borrow-checker errors (runs) | Rust other compile errors (runs) | Dart model time | Dart tool time | Dart compile errors (runs) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| M0.1 | 1:52 | 0:37 | 0 (0) | 1 (1) | | | |
+| M0.1 | 1:52 | 0:37 | 0 (0) | 1 (1) | 0:11 | 0:01 | 0 (0) |
 | other (CI) | 0:01 | 0:02 | 0 (0) | 0 (0) | | | |
 | other (STATUS) | 0:08 | 0:06 | 0 (0) | 0 (0) | | | |
-| M0.9 | 0:15 | 0:01 | 1 (1) | 2 (1) | | | |
+| M0.9 | 0:15 | 0:01 | 1 (1) | 2 (1) | 0:28 | 0:00 | 0 (0) |
 | M0.10 | 0:49 | 0:10 | 4 (3) | 20 (9) | | | |
 | M0.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | | | |
 | M0.5 | 0:54 | 0:59 | 0 (0) | 7 (3) | | | |
@@ -671,22 +671,22 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | Rust file | bytes | Dart files | bytes | Dart / Rust |
 |---|---:|---|---:|---:|
 | `crates/zed-cert/src/lib.rs` | 371 | | | |
-| `crates/zed-kernel/src/error.rs` | 4,895 | | | |
-| `crates/zed-kernel/src/eval.rs` | 60,185 | | | |
-| `crates/zed-kernel/src/exact.rs` | 9,165 | | | |
-| `crates/zed-kernel/src/family.rs` | 13,904 | | | |
-| `crates/zed-kernel/src/lib.rs` | 1,148 | | | |
-| `crates/zed-kernel/src/num.rs` | 7,397 | | | |
+| `crates/zed-kernel/src/error.rs` | 4,895 | `lib/src/kernel/error.dart`<br>`test/kernel/error_test.dart` | 4,993 | 1.02 |
+| `crates/zed-kernel/src/eval.rs` | 60,185 | `lib/src/kernel/eval.dart` | 33,816 | 0.56 |
+| `crates/zed-kernel/src/exact.rs` | 9,165 | `lib/src/kernel/exact.dart`<br>`test/kernel/exact_test.dart` | 6,847 | 0.75 |
+| `crates/zed-kernel/src/family.rs` | 13,904 | `lib/src/kernel/family.dart`<br>`lib/src/kernel/pmap.dart`<br>`test/kernel/family_test.dart` | 16,256 | 1.17 |
+| `crates/zed-kernel/src/lib.rs` | 1,148 | `lib/kernel.dart` | 299 | 0.26 |
+| `crates/zed-kernel/src/num.rs` | 7,397 | `lib/src/kernel/num.dart` | 5,848 | 0.79 |
 | `crates/zed-kernel/src/print.rs` | 16,237 | | | |
 | `crates/zed-kernel/src/provenance.rs` | 10,812 | | | |
-| `crates/zed-kernel/src/term.rs` | 13,219 | | | |
-| `crates/zed-kernel/src/text.rs` | 5,582 | | | |
+| `crates/zed-kernel/src/term.rs` | 13,219 | `lib/src/kernel/term.dart` | 6,217 | 0.47 |
+| `crates/zed-kernel/src/text.rs` | 5,582 | `lib/src/kernel/text.dart`<br>`test/kernel/text_test.dart` | 4,320 | 0.77 |
 | `crates/zed-kernel/src/types.rs` | 37,473 | | | |
 | `crates/zed-kernel/src/types/bdd.rs` | 27,452 | | | |
 | `crates/zed-kernel/src/types/empty.rs` | 7,024 | | | |
 | `crates/zed-kernel/src/types/rec.rs` | 18,327 | | | |
-| `crates/zed-kernel/src/value.rs` | 16,674 | | | |
-| `crates/zed-kernel/src/words.rs` | 5,277 | | | |
+| `crates/zed-kernel/src/value.rs` | 16,674 | `lib/src/kernel/value.dart`<br>`test/kernel/value_test.dart` | 14,226 | 0.85 |
+| `crates/zed-kernel/src/words.rs` | 5,277 | `lib/src/kernel/words.dart` | 4,024 | 0.76 |
 | `crates/zed-native/src/codegen.rs` | 27,147 | | | |
 | `crates/zed-native/src/hooks.rs` | 18,557 | | | |
 | `crates/zed-native/src/lib.rs` | 3,845 | | | |
@@ -747,8 +747,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/zir/text.rs` | 36,164 | | | |
 | `tests/src/check.rs` | 5,056 | | | |
 | `tests/src/fences.rs` | 3,325 | | | |
-| `tests/src/instances.rs` | 5,466 | | | |
-| `tests/src/kernel.rs` | 10,041 | | | |
+| `tests/src/instances.rs` | 5,466 | `test/support/instances.dart` | 1,064 | 0.19 |
+| `tests/src/kernel.rs` | 10,041 | `test/support/kernel.dart` | 7,960 | 0.79 |
 | `tests/src/lib.rs` | 2,590 | `test/support/support.dart`<br>`test/support/support_test.dart` | 3,467 | 1.34 |
 | `tests/src/oracle.rs` | 7,128 | | | |
 | `tests/src/scaling.rs` | 3,377 | `test/support/scaling.dart` | 2,230 | 0.66 |
@@ -945,8 +945,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_07_canonicalization/rules.rs` | 6,095 | | | |
 | `tests/steps/m0_07_canonicalization/scaling.rs` | 1,973 | | | |
 | `tests/steps/m0_08_zed0_checklist/mod.rs` | 2,069 | | | |
-| `tests/steps/m0_09_kernel_evaluator/mod.rs` | 26,083 | | | |
-| `tests/steps/m0_09_kernel_evaluator/scaling.rs` | 11,009 | | | |
+| `tests/steps/m0_09_kernel_evaluator/mod.rs` | 26,083 | `test/steps/m0_09_kernel_evaluator/kernel_evaluator_test.dart` | 20,101 | 0.77 |
+| `tests/steps/m0_09_kernel_evaluator/scaling.rs` | 11,009 | `test/steps/m0_09_kernel_evaluator/scaling_test.dart` | 9,446 | 0.86 |
 | `tests/steps/m0_10_finite_model_harness/derived.rs` | 3,184 | | | |
 | `tests/steps/m0_10_finite_model_harness/laws_01_10.rs` | 24,999 | | | |
 | `tests/steps/m0_10_finite_model_harness/laws_11_20.rs` | 29,305 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | | | |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **7,496** | | **6,871** | **0.92** |
+| **the Rust files ported so far** | **197,541** | | **142,288** | **0.72** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -983,10 +983,53 @@ Rust, from the record above:
   could hold the tree. Unfinished at the stop.
 - Most other steps had no borrow errors; their compile errors were type and name errors.
 
-Dart: to be written as each step is ported.
+Dart:
+
+- **M0.1, scaffolding.** No compile errors. The test harness and the scaling helper were
+  small; Dart has no stack-size or thread setup to port.
+- **M0.9, kernel evaluator.** No compile errors and no failing test on the first run. The
+  evaluator was written in its final shape from the start, the one the Rust version reached
+  only after the performance pass: families on a persistent ordered map (`pmap.dart`, in place
+  of the `imbl` crate), names in a persistent scope, a family shared rather than copied when a
+  variable, literal or lookup yields it. The evaluator runs on an explicit stack, so deep
+  recursion needs no large thread stack; the Rust tests started threads with large stacks for
+  it. The Dart port leaves out the provenance trace (step L1.20) and the `is` pattern
+  (step L1.22), which the Rust `eval.rs` already holds, so its size ratio of 0.56 is low for
+  that reason. One mistake caught before the analyzer ran: `lib/kernel.dart` exported
+  `family.dart` and `num.dart`, which are `part` files of `value.dart`.
 
 ## Dart
 
-*In progress.* The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
+
+### Changes per Dart file
+
+Counted as for the Rust files: a file's creation is one change. No step has had a
+performance pass yet, so the second number is 0 throughout.
+
+| file | changes before the performance pass | changes during the performance pass |
+|---|---:|---:|
+| `lib/kernel.dart` | 2 | 0 |
+| `lib/src/kernel/error.dart` | 1 | 0 |
+| `lib/src/kernel/eval.dart` | 1 | 0 |
+| `lib/src/kernel/exact.dart` | 1 | 0 |
+| `lib/src/kernel/family.dart` | 1 | 0 |
+| `lib/src/kernel/num.dart` | 1 | 0 |
+| `lib/src/kernel/pmap.dart` | 1 | 0 |
+| `lib/src/kernel/term.dart` | 1 | 0 |
+| `lib/src/kernel/text.dart` | 1 | 0 |
+| `lib/src/kernel/value.dart` | 1 | 0 |
+| `lib/src/kernel/words.dart` | 1 | 0 |
+| `test/kernel/error_test.dart` | 1 | 0 |
+| `test/kernel/exact_test.dart` | 1 | 0 |
+| `test/kernel/family_test.dart` | 1 | 0 |
+| `test/kernel/text_test.dart` | 1 | 0 |
+| `test/kernel/value_test.dart` | 1 | 0 |
+| `test/support/kernel.dart` | 1 | 0 |
+| `test/support/instances.dart` | 1 | 0 |
+| `test/steps/m0_09_kernel_evaluator/kernel_evaluator_test.dart` | 1 | 0 |
+| `test/steps/m0_09_kernel_evaluator/scaling_test.dart` | 1 | 0 |
+
+`dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
