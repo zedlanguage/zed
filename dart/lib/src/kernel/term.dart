@@ -1,7 +1,10 @@
 /// Kernel terms: the calculus of DESIGN.md sec:kernel, which the reference evaluator runs.
 library;
 
+import 'text.dart';
 import 'value.dart';
+
+part 'print.dart';
 
 /// A primitive operation. Its label is how messages name it.
 enum Prim {
@@ -59,6 +62,9 @@ enum Prim {
 /// A `match` arm's pattern.
 sealed class Pattern {
   const Pattern();
+
+  @override
+  String toString() => _patternText(this);
 }
 
 /// `_`: matches anything.
@@ -160,6 +166,10 @@ final class Definedness extends FixKind {
 /// A kernel term.
 sealed class Term {
   const Term();
+
+  /// The term on one line; [pretty] breaks it into lines.
+  @override
+  String toString() => _flat(_layout(this));
 }
 
 final class Lit extends Term {

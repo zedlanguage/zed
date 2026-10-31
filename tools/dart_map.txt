@@ -11,6 +11,7 @@ dart/lib/src/kernel/family.dart crates/zed-kernel/src/family.rs
 dart/lib/src/kernel/pmap.dart crates/zed-kernel/src/family.rs
 dart/lib/src/kernel/num.dart crates/zed-kernel/src/num.rs
 dart/lib/src/kernel/term.dart crates/zed-kernel/src/term.rs
+dart/lib/src/kernel/print.dart crates/zed-kernel/src/print.rs
 dart/lib/src/kernel/text.dart crates/zed-kernel/src/text.rs
 dart/lib/src/kernel/value.dart crates/zed-kernel/src/value.rs
 dart/lib/src/kernel/words.dart crates/zed-kernel/src/words.rs
@@ -139,3 +140,7 @@ dart/test/steps/l01_14_name_resolution/order_test.dart tests/steps/l01_14_name_r
 dart/test/steps/l01_14_name_resolution/scopes_test.dart tests/steps/l01_14_name_resolution/scopes.rs
 dart/test/steps/l01_14_name_resolution/fences_test.dart tests/steps/l01_14_name_resolution/fences.rs
 dart/test/steps/l01_14_name_resolution/scaling_test.dart tests/steps/l01_14_name_resolution/scaling.rs
+dart/test/steps/l01_15_kernel_terms/notation_test.dart tests/steps/l01_15_kernel_terms/notation.rs
+dart/test/steps/l01_15_kernel_terms/layout_test.dart tests/steps/l01_15_kernel_terms/layout.rs
+dart/test/steps/l01_15_kernel_terms/evidence_test.dart tests/steps/l01_15_kernel_terms/evidence.rs
+dart/test/steps/l01_15_kernel_terms/scaling_test.dart tests/steps/l01_15_kernel_terms/scaling.rs
