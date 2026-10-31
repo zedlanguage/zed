@@ -56,3 +56,15 @@ dart/test/address_test.dart crates/zedc/src/address.rs
 dart/lib/cost.dart crates/zedc/src/cost.rs
 dart/test/cost_test.dart crates/zedc/src/cost.rs
 dart/test/steps/m0_06_cost_scalarization/cost_scalarization_test.dart tests/steps/m0_06_cost_scalarization/mod.rs
+dart/lib/src/canon/binders.dart crates/zedc/src/canon/binders.rs
+dart/lib/src/canon/domain.dart crates/zedc/src/canon/domain.rs
+dart/lib/src/canon/serial.dart crates/zedc/src/canon/serial.rs
+dart/lib/src/canon/canon.dart crates/zedc/src/canon/mod.rs
+dart/lib/canon.dart crates/zedc/src/canon/mod.rs
+dart/lib/src/canon/blake3.dart crates/zedc/src/canon/mod.rs
+dart/test/canon/blake3_test.dart crates/zedc/src/canon/mod.rs
+dart/test/steps/m0_07_canonicalization/harness.dart tests/steps/m0_07_canonicalization/mod.rs
+dart/test/steps/m0_07_canonicalization/alpha_test.dart tests/steps/m0_07_canonicalization/alpha.rs
+dart/test/steps/m0_07_canonicalization/domains_test.dart tests/steps/m0_07_canonicalization/domains.rs
+dart/test/steps/m0_07_canonicalization/rules_test.dart tests/steps/m0_07_canonicalization/rules.rs
+dart/test/steps/m0_07_canonicalization/scaling_test.dart tests/steps/m0_07_canonicalization/scaling.rs

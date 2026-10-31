@@ -118,7 +118,7 @@ The Dart columns are filled as the port reaches each step.
 | M0.5 | 0:54 | 0:59 | 0 (0) | 7 (3) | 0:14 | 0:21 | 6 (3) |
 | M0.6 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:02 | 0:00 | 1 (1) |
 | other (Corpus 24) | 0:05 | 0:00 | 0 (0) | 0 (0) | | | |
-| M0.7 | 0:04 | 0:12 | 1 (1) | 5 (2) | | | |
+| M0.7 | 0:04 | 0:12 | 1 (1) | 5 (2) | 0:07 | 0:00 | 1 (1) |
 | M0.8 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
 | M0.11 | 0:07 | 0:02 | 0 (0) | 1 (1) | | | |
 | L1.1 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -700,10 +700,10 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/ast/stmts.rs` | 9,682 | | | |
 | `crates/zedc/src/ast/types.rs` | 11,772 | | | |
 | `crates/zedc/src/axioms.rs` | 7,016 | | | |
-| `crates/zedc/src/canon/binders.rs` | 20,447 | | | |
-| `crates/zedc/src/canon/domain.rs` | 4,086 | | | |
-| `crates/zedc/src/canon/mod.rs` | 8,601 | | | |
-| `crates/zedc/src/canon/serial.rs` | 10,637 | | | |
+| `crates/zedc/src/canon/binders.rs` | 20,447 | `lib/src/canon/binders.dart` | 14,511 | 0.71 |
+| `crates/zedc/src/canon/domain.rs` | 4,086 | `lib/src/canon/domain.dart` | 3,436 | 0.84 |
+| `crates/zedc/src/canon/mod.rs` | 8,601 | `lib/src/canon/canon.dart`<br>`lib/canon.dart`<br>`lib/src/canon/blake3.dart`<br>`test/canon/blake3_test.dart` | 18,445 | 2.14 |
+| `crates/zedc/src/canon/serial.rs` | 10,637 | `lib/src/canon/serial.dart` | 7,211 | 0.68 |
 | `crates/zedc/src/check/mod.rs` | 109,155 | | | |
 | `crates/zedc/src/check/ty.rs` | 26,843 | | | |
 | `crates/zedc/src/cost.rs` | 8,807 | `lib/cost.dart`<br>`test/cost_test.dart` | 10,032 | 1.14 |
@@ -939,11 +939,11 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_05_widening_and_iteration/widening.rs` | 10,766 | `test/steps/m0_05_widening_and_iteration/widening_test.dart` | 9,570 | 0.89 |
 | `tests/steps/m0_05_widening_and_iteration/wto.rs` | 7,970 | `test/steps/m0_05_widening_and_iteration/wto_test.dart` | 6,409 | 0.80 |
 | `tests/steps/m0_06_cost_scalarization/mod.rs` | 9,704 | `test/steps/m0_06_cost_scalarization/cost_scalarization_test.dart` | 9,422 | 0.97 |
-| `tests/steps/m0_07_canonicalization/alpha.rs` | 14,310 | | | |
-| `tests/steps/m0_07_canonicalization/domains.rs` | 4,497 | | | |
-| `tests/steps/m0_07_canonicalization/mod.rs` | 1,083 | | | |
-| `tests/steps/m0_07_canonicalization/rules.rs` | 6,095 | | | |
-| `tests/steps/m0_07_canonicalization/scaling.rs` | 1,973 | | | |
+| `tests/steps/m0_07_canonicalization/alpha.rs` | 14,310 | `test/steps/m0_07_canonicalization/alpha_test.dart` | 10,487 | 0.73 |
+| `tests/steps/m0_07_canonicalization/domains.rs` | 4,497 | `test/steps/m0_07_canonicalization/domains_test.dart` | 3,799 | 0.84 |
+| `tests/steps/m0_07_canonicalization/mod.rs` | 1,083 | `test/steps/m0_07_canonicalization/harness.dart` | 793 | 0.73 |
+| `tests/steps/m0_07_canonicalization/rules.rs` | 6,095 | `test/steps/m0_07_canonicalization/rules_test.dart` | 5,713 | 0.94 |
+| `tests/steps/m0_07_canonicalization/scaling.rs` | 1,973 | `test/steps/m0_07_canonicalization/scaling_test.dart` | 1,525 | 0.77 |
 | `tests/steps/m0_08_zed0_checklist/mod.rs` | 2,069 | | | |
 | `tests/steps/m0_09_kernel_evaluator/mod.rs` | 26,083 | `test/steps/m0_09_kernel_evaluator/kernel_evaluator_test.dart` | 20,101 | 0.77 |
 | `tests/steps/m0_09_kernel_evaluator/scaling.rs` | 11,009 | `test/steps/m0_09_kernel_evaluator/scaling_test.dart` | 9,446 | 0.86 |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | | | |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **487,308** | | **396,082** | **0.81** |
+| **the Rust files ported so far** | **559,037** | | **462,002** | **0.83** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1033,10 +1033,20 @@ Dart:
   the frontier; no known algorithm finds a Pareto frontier of more than three quantities in
   O(P log P), and the vector has 3·devices + 2. A new scaling test checks the case of a small
   frontier, and fails on the Rust algorithm (checked by putting it back).
+- **M0.7, canonicalization.** 18 step tests and a BLAKE3 test, all passing, and the pinned
+  address of `balance` matched on the first run. One compile error: `Float` has no const
+  constructor. The Rust took BLAKE3 from a crate; the Dart package has no dependencies, so
+  BLAKE3 is written out (about 120 lines) and checked against 26 hashes from the crate, at
+  lengths that cross every block, chunk and subtree boundary. Dart's term classes have no
+  structural equality, which Rust derived, so the definition's `==` needed a hand-written
+  term comparison. The rename step's search was simpler in Dart: it renames in the first
+  child that holds a written binder, where the Rust counted the written binders of each
+  child first. Breaking the shadowing lookup of the one-pass normal form makes 5 of the 18
+  tests fail.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1100,5 +1110,17 @@ performance pass yet, so the second number is 0 throughout.
 | `test/address_test.dart` | 1 | 0 |
 | `test/cost_test.dart` | 1 | 0 |
 | `test/steps/m0_06_cost_scalarization/cost_scalarization_test.dart` | 3 | 0 |
+| `lib/src/canon/blake3.dart` | 1 | 0 |
+| `lib/src/canon/binders.dart` | 1 | 0 |
+| `lib/src/canon/domain.dart` | 1 | 0 |
+| `lib/src/canon/serial.dart` | 1 | 0 |
+| `lib/src/canon/canon.dart` | 1 | 0 |
+| `lib/canon.dart` | 1 | 0 |
+| `test/canon/blake3_test.dart` | 1 | 0 |
+| `test/steps/m0_07_canonicalization/harness.dart` | 1 | 0 |
+| `test/steps/m0_07_canonicalization/alpha_test.dart` | 2 | 0 |
+| `test/steps/m0_07_canonicalization/domains_test.dart` | 1 | 0 |
+| `test/steps/m0_07_canonicalization/rules_test.dart` | 1 | 0 |
+| `test/steps/m0_07_canonicalization/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
