@@ -51,3 +51,8 @@ dart/test/steps/m0_05_widening_and_iteration/wto_test.dart tests/steps/m0_05_wid
 dart/test/steps/m0_05_widening_and_iteration/iteration_test.dart tests/steps/m0_05_widening_and_iteration/iteration.rs
 dart/test/steps/m0_05_widening_and_iteration/revision_test.dart tests/steps/m0_05_widening_and_iteration/revision.rs
 dart/test/steps/m0_05_widening_and_iteration/scaling_test.dart tests/steps/m0_05_widening_and_iteration/scaling.rs
+dart/lib/address.dart crates/zedc/src/address.rs
+dart/test/address_test.dart crates/zedc/src/address.rs
+dart/lib/cost.dart crates/zedc/src/cost.rs
+dart/test/cost_test.dart crates/zedc/src/cost.rs
+dart/test/steps/m0_06_cost_scalarization/cost_scalarization_test.dart tests/steps/m0_06_cost_scalarization/mod.rs

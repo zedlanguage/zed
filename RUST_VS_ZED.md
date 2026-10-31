@@ -116,7 +116,7 @@ The Dart columns are filled as the port reaches each step.
 | M0.10 | 0:49 | 0:10 | 4 (3) | 20 (9) | 0:09 | 0:01 | 3 (2) |
 | M0.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | | | |
 | M0.5 | 0:54 | 0:59 | 0 (0) | 7 (3) | 0:14 | 0:21 | 6 (3) |
-| M0.6 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
+| M0.6 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:02 | 0:00 | 1 (1) |
 | other (Corpus 24) | 0:05 | 0:00 | 0 (0) | 0 (0) | | | |
 | M0.7 | 0:04 | 0:12 | 1 (1) | 5 (2) | | | |
 | M0.8 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
@@ -695,7 +695,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-rt/src/lib.rs` | 764 | | | |
 | `crates/zed-rt/src/ports.rs` | 2,581 | | | |
 | `crates/zed-rt/src/rope.rs` | 4,631 | | | |
-| `crates/zedc/src/address.rs` | 2,176 | | | |
+| `crates/zedc/src/address.rs` | 2,176 | `lib/address.dart`<br>`test/address_test.dart` | 2,125 | 0.98 |
 | `crates/zedc/src/ast/mod.rs` | 21,974 | | | |
 | `crates/zedc/src/ast/stmts.rs` | 9,682 | | | |
 | `crates/zedc/src/ast/types.rs` | 11,772 | | | |
@@ -706,7 +706,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/canon/serial.rs` | 10,637 | | | |
 | `crates/zedc/src/check/mod.rs` | 109,155 | | | |
 | `crates/zedc/src/check/ty.rs` | 26,843 | | | |
-| `crates/zedc/src/cost.rs` | 8,807 | | | |
+| `crates/zedc/src/cost.rs` | 8,807 | `lib/cost.dart`<br>`test/cost_test.dart` | 10,032 | 1.14 |
 | `crates/zedc/src/elab.rs` | 56,580 | | | |
 | `crates/zedc/src/fence.rs` | 2,991 | | | |
 | `crates/zedc/src/format.rs` | 23,772 | | | |
@@ -938,7 +938,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_05_widening_and_iteration/scaling.rs` | 7,201 | `test/steps/m0_05_widening_and_iteration/scaling_test.dart` | 5,931 | 0.82 |
 | `tests/steps/m0_05_widening_and_iteration/widening.rs` | 10,766 | `test/steps/m0_05_widening_and_iteration/widening_test.dart` | 9,570 | 0.89 |
 | `tests/steps/m0_05_widening_and_iteration/wto.rs` | 7,970 | `test/steps/m0_05_widening_and_iteration/wto_test.dart` | 6,409 | 0.80 |
-| `tests/steps/m0_06_cost_scalarization/mod.rs` | 9,704 | | | |
+| `tests/steps/m0_06_cost_scalarization/mod.rs` | 9,704 | `test/steps/m0_06_cost_scalarization/cost_scalarization_test.dart` | 9,422 | 0.97 |
 | `tests/steps/m0_07_canonicalization/alpha.rs` | 14,310 | | | |
 | `tests/steps/m0_07_canonicalization/domains.rs` | 4,497 | | | |
 | `tests/steps/m0_07_canonicalization/mod.rs` | 1,083 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | | | |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **466,621** | | **374,503** | **0.80** |
+| **the Rust files ported so far** | **487,308** | | **396,082** | **0.81** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1022,10 +1022,21 @@ Dart:
   One mistake was mine and not the language's: the test helper that measures the nesting
   depth recursed twice per level, 2^48 calls at depth 48, and the test hung until it was
   rewritten as a loop. The tool time includes the two hung runs.
+- **M0.6, cost scalarization.** 8 step tests and 4 unit tests, all passing. One compile
+  error: the same list swap through a record pattern as in M0.10. Dart's `int` is signed, so
+  the costs saturate at 2^63 - 1 where Rust's `u64` saturated at 2^64 - 1; no test reaches
+  either. A region is a record, which gives its equality with no code. The Rust frontier
+  compared every pair of plans, O(P²), which COMPLEXITY.md kept "for a handful of plans".
+  The Dart frontier sorts the vectors lexicographically, where every dominator comes before
+  what it dominates, and compares each plan only with the frontier found so far:
+  O(P log P + P·F) for F plans on the frontier. It is still quadratic when every plan is on
+  the frontier; no known algorithm finds a Pareto frontier of more than three quantities in
+  O(P log P), and the vector has 3·devices + 2. A new scaling test checks the case of a small
+  frontier, and fails on the Rust algorithm (checked by putting it back).
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1084,5 +1095,10 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/m0_05_widening_and_iteration/iteration_test.dart` | 1 | 0 |
 | `test/steps/m0_05_widening_and_iteration/revision_test.dart` | 2 | 0 |
 | `test/steps/m0_05_widening_and_iteration/scaling_test.dart` | 2 | 0 |
+| `lib/address.dart` | 1 | 0 |
+| `lib/cost.dart` | 1 | 0 |
+| `test/address_test.dart` | 1 | 0 |
+| `test/cost_test.dart` | 1 | 0 |
+| `test/steps/m0_06_cost_scalarization/cost_scalarization_test.dart` | 3 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
