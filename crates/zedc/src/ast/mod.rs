@@ -142,7 +142,7 @@ pub struct Error {
 }
 
 /// One step of a derivation: a place in the source and what holds there.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Note {
     /// Where.
     pub span: Span,

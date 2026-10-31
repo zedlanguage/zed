@@ -432,7 +432,9 @@ about 48 s in a debug build, with `zed-kernel` built at opt-level 2.
   a top-level value read in a searched body; it was removed, since every run re-records each
   subexpression before deriving any error in it. A step of a block derives no further than
   the block (its export is not followed yet), and a literal binding shows as "this
-  expression is 4" rather than as a literal.
+  expression is 4" rather than as a literal. A derivation is not cut: each expression in
+  it is derived once (docs/thresholds.md, replacement 2), so it is at most the size of the
+  program.
 - L1.30: keys are syntactic (the `Debug` print of kernel terms), so an alpha-renaming or a
   renumbered `name@k` binder reruns a row that a canonical key would reuse. Kernel names are
   numbered per source name in binder order, so adding a same-named binder before another

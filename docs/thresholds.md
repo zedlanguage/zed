@@ -22,7 +22,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `open.len() > 5` | check/mod.rs `infer` | removed (1): a function with more than 5 undeclared parameters gave `_` |
 | `COMBOS` 256 | check/mod.rs `apply` | removed (1): a call over unions with more combinations gave `_` |
 | `SHOWN` 12 | check/mod.rs | removed (1): the failed combinations after 12 were counted, not shown |
-| `DEPTH` 16 | check/mod.rs | a derivation is cut after 16 steps |
+| `DEPTH` 16 | check/mod.rs | removed (2): a derivation was cut after 16 steps |
 | diagram budget 4096, walk 65536 | zed-kernel types/bdd.rs, empty.rs | a union or intersection keeps its operands; a part is not shown empty |
 | `PIECE_LIMIT` 8 | store/interval.rs | a union of intervals loses pieces at a widening |
 | `FINITE_SET_LIMIT` 64 | store/lattice.rs | a finite set becomes the top at a widening |
@@ -110,6 +110,15 @@ rejected `x < (1, 2)`, though `x` may be a tuple; `x` now gives `_`.
 A derivation is a walk of a graph (a binder's origin, the expressions that continue it).
 With a visited set each node is shown once and later uses refer to its number, so the
 derivation is at most the size of that graph and needs no cut.
+
+**Done.** `Ck::derive_into` keeps a set of the expressions it has derived and a set of the
+steps it has shown, and walks with its own stack, since a chain of definitions is as long as
+the program (a recursive walk overflowed the stack at 400 bindings). A later use of a node is
+not shown again rather than referring to its number; the renderer already shows a place once.
+Before, a value read twice at each of k bindings was derived 2^k times up to the cut, and the
+duplicate check scanned every step shown, O(n²); now 400, 800, 1,600 and 3,200 bindings take
+0.15, 0.32, 0.63 and 1.20 s (debug build, whole `zedc run`). With the visited set disabled
+the L1.29 tests do not finish in 300 s.
 
 ### 3. Widening and iteration (replaces PIECE_LIMIT, FINITE_SET_LIMIT, WIDENING_DELAY,
 HEAD_ITERATIONS, NARROWING_ROUNDS, REDUCTION_ROUNDS)

@@ -27,7 +27,7 @@
 
 pub mod ty;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::types::Type as KType;
@@ -167,9 +167,6 @@ struct Origin {
     then: Option<Box<Origin>>,
 }
 
-/// The most steps one derivation follows through definitions.
-const DEPTH: usize = 16;
-
 /// A class of values that must share one carrier: a node of the union-find forest of
 /// docs/thresholds.md, replacement 1. Only a root's fields other than `parent` and `rank`
 /// are read.
@@ -245,97 +242,114 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// call, where the binder's type comes from, followed through each definition.
     fn derive(&self, spans: &[Span]) -> Vec<Note> {
         let mut out = Vec::new();
-        for &s in spans {
-            self.derive_into(s, &mut out, 0);
-        }
+        self.derive_into(spans, &mut out);
         out
     }
 
-    fn derive_into(&self, span: Span, out: &mut Vec<Note>, depth: usize) {
-        let Some((ty, src)) = self.seen.get(&span) else {
-            return;
-        };
-        let ty = self.show(ty);
-        let push = |out: &mut Vec<Note>, span: Span, text: String| {
-            let n = Note { span, text };
-            if !out.contains(&n) {
-                out.push(n);
-            }
-        };
-        if depth > DEPTH {
-            let text = format!("this is {ty}; its derivation goes back further than {DEPTH} steps");
-            push(out, span, text);
-            return;
+    /// Each expression is derived once, however many others it continues, so a derivation
+    /// is at most the size of the graph of origins it walks. The walk keeps its own stack,
+    /// since a chain of definitions can be as long as the program.
+    fn derive_into(&self, spans: &[Span], out: &mut Vec<Note>) {
+        enum Work {
+            Derive(Span),
+            Show(Note),
         }
-        let id = match src {
-            Src::Name(id) => {
-                let name = &self.t.res.binders[*id].name;
-                push(out, span, format!("`{name}` is {ty} here"));
-                *id
-            }
-            Src::Call(id) => {
-                let name = &self.t.res.binders[*id].name;
-                push(out, span, format!("this call of `{name}` gives {ty}"));
-                *id
-            }
-            Src::Other(e) => {
-                let parts: Vec<&Expr> = match &e.kind {
-                    ExprKind::Unary(_, a) => vec![a],
-                    ExprKind::Binary(_, a, b) => vec![a, b],
-                    ExprKind::Else { of, default, .. } => vec![of, default],
-                    ExprKind::If {
-                        cond,
-                        then,
-                        otherwise,
-                    } => vec![cond, then, otherwise],
-                    ExprKind::Call {
-                        positional, named, ..
-                    } => positional
-                        .iter()
-                        .chain(named.iter().map(|(_, a)| a))
-                        .collect(),
-                    ExprKind::Tuple(items) => items.iter().collect(),
-                    ExprKind::Index(of, _) => vec![of],
-                    _ => Vec::new(),
-                };
-                let what = match &e.kind {
-                    ExprKind::Unary(op, _) | ExprKind::Binary(op, _, _) => format!("this `{op}`"),
-                    ExprKind::Else { .. } => "this `else`".into(),
-                    ExprKind::If { .. } => "this `if`".into(),
-                    ExprKind::Call { callee, .. } => match &callee.kind {
-                        ExprKind::Name(n) => format!("this call of `{n}`"),
-                        _ => "this call".into(),
-                    },
-                    _ => "this expression".into(),
-                };
-                let verb = if parts.is_empty() { "is" } else { "gives" };
-                push(out, span, format!("{what} {verb} {ty}"));
-                for p in parts {
-                    match literal(p) {
-                        Some(l) => push(
-                            out,
-                            p.span,
-                            format!("this literal, {}, is {}", l.text, {
-                                lit_ty(&l.value, l.neg)
-                            }),
-                        ),
-                        None => self.derive_into(p.span, out, depth + 1),
+        let mut shown: HashSet<Note> = out.iter().cloned().collect();
+        let mut visited = HashSet::new();
+        let mut stack: Vec<Work> = spans.iter().rev().map(|&s| Work::Derive(s)).collect();
+        let note = |span: Span, text: String| Work::Show(Note { span, text });
+        while let Some(w) = stack.pop() {
+            let span = match w {
+                Work::Show(n) => {
+                    if shown.insert(n.clone()) {
+                        out.push(n);
                     }
+                    continue;
                 }
-                return;
+                Work::Derive(span) => span,
+            };
+            if !visited.insert(span) {
+                continue;
             }
-        };
-        let mut o = self.whence.get(&id);
-        if o.is_none() {
-            let b = &self.t.res.binders[id];
-            push(out, b.span, format!("`{}` is bound here", b.name));
-        }
-        while let Some(origin) = o {
-            push(out, origin.span, origin.text.clone());
-            if let Some(f) = origin.from {
-                self.derive_into(f, out, depth + 1);
+            let Some((ty, src)) = self.seen.get(&span) else {
+                continue;
+            };
+            let ty = self.show(ty);
+            // What this expression shows, in order; pushed reversed so it pops in order.
+            let mut next = Vec::new();
+            let id = match src {
+                Src::Name(id) => {
+                    let name = &self.t.res.binders[*id].name;
+                    next.push(note(span, format!("`{name}` is {ty} here")));
+                    *id
+                }
+                Src::Call(id) => {
+                    let name = &self.t.res.binders[*id].name;
+                    next.push(note(span, format!("this call of `{name}` gives {ty}")));
+                    *id
+                }
+                Src::Other(e) => {
+                    let parts: Vec<&Expr> = match &e.kind {
+                        ExprKind::Unary(_, a) => vec![a],
+                        ExprKind::Binary(_, a, b) => vec![a, b],
+                        ExprKind::Else { of, default, .. } => vec![of, default],
+                        ExprKind::If {
+                            cond,
+                            then,
+                            otherwise,
+                        } => vec![cond, then, otherwise],
+                        ExprKind::Call {
+                            positional, named, ..
+                        } => positional
+                            .iter()
+                            .chain(named.iter().map(|(_, a)| a))
+                            .collect(),
+                        ExprKind::Tuple(items) => items.iter().collect(),
+                        ExprKind::Index(of, _) => vec![of],
+                        _ => Vec::new(),
+                    };
+                    let what = match &e.kind {
+                        ExprKind::Unary(op, _) | ExprKind::Binary(op, _, _) => {
+                            format!("this `{op}`")
+                        }
+                        ExprKind::Else { .. } => "this `else`".into(),
+                        ExprKind::If { .. } => "this `if`".into(),
+                        ExprKind::Call { callee, .. } => match &callee.kind {
+                            ExprKind::Name(n) => format!("this call of `{n}`"),
+                            _ => "this call".into(),
+                        },
+                        _ => "this expression".into(),
+                    };
+                    let verb = if parts.is_empty() { "is" } else { "gives" };
+                    next.push(note(span, format!("{what} {verb} {ty}")));
+                    for p in parts {
+                        next.push(match literal(p) {
+                            Some(l) => note(
+                                p.span,
+                                format!("this literal, {}, is {}", l.text, {
+                                    lit_ty(&l.value, l.neg)
+                                }),
+                            ),
+                            None => Work::Derive(p.span),
+                        });
+                    }
+                    stack.extend(next.into_iter().rev());
+                    continue;
+                }
+            };
+            let mut o = self.whence.get(&id);
+            if o.is_none() {
+                let b = &self.t.res.binders[id];
+                next.push(note(b.span, format!("`{}` is bound here", b.name)));
             }
-            o = origin.then.as_deref();
+            while let Some(origin) = o {
+                next.push(note(origin.span, origin.text.clone()));
+                if let Some(f) = origin.from {
+                    next.push(Work::Derive(f));
+                }
+                o = origin.then.as_deref();
+            }
+            stack.extend(next.into_iter().rev());
         }
     }
 
@@ -2013,7 +2027,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     span: at,
                     text: format!("this literal, {}, is {}", l.text, a.ty),
                 }),
-                (None, Some(at)) => self.derive_into(at, &mut out, 0),
+                (None, Some(at)) => self.derive_into(&[at], &mut out),
                 _ => {}
             }
         }

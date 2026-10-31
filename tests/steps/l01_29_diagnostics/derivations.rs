@@ -191,7 +191,7 @@ main(stdin: Lines) -> (stdout: Lines) {
 }
 
 #[test]
-fn a_long_chain_is_cut_after_sixteen_steps_back_and_says_so() {
+fn a_long_chain_is_shown_whole_back_to_its_first_binding() {
     let mut src = String::from("main(stdin: Lines) -> (stdout: Lines) {\n  a0 = 1;\n");
     for i in 1..25 {
         src += &format!("  a{i} = a{} + 1;\n", i - 1);
@@ -199,17 +199,37 @@ fn a_long_chain_is_cut_after_sixteen_steps_back_and_says_so() {
     src += "  stdout <- \"x\" ++ a24;\n}\n";
     let out = rejected(&src);
     let s = steps(&out);
-    assert_eq!(
-        s.iter().filter(|t| t.contains("goes back further")).count(),
-        1,
-        "{out}"
-    );
+    assert!(!out.contains("goes back further"), "{out}");
+    for i in 1..25 {
+        let t = format!("`a{i}` is int here");
+        assert_eq!(s.iter().filter(|x| **x == t).count(), 1, "{t}: {out}");
+    }
+    assert!(s.contains(&"`a0` is 1 here"), "{out}");
     assert!(
-        out.contains("18:9: this is int; its derivation goes back further than 16 steps"),
+        s.contains(&"`a0` is defined as this expression, 1"),
         "{out}"
     );
-    assert!(!s.iter().any(|t| t.starts_with("`a0`")), "{out}");
-    assert!(s.contains(&"`a24` is int here"));
+}
+
+#[test]
+fn a_value_read_twice_is_derived_once() {
+    // Each `a{i}` reads `a{i-1}` twice; without a visited set the derivation doubles at each
+    // binding.
+    let mut src = String::from("main(stdin: Lines) -> (stdout: Lines) {\n  a0 = 1;\n");
+    for i in 1..40 {
+        src += &format!("  a{i} = a{p} + a{p};\n", p = i - 1);
+    }
+    src += "  stdout <- \"x\" ++ a39;\n}\n";
+    let out = rejected(&src);
+    let s = steps(&out);
+    assert!(
+        s.contains(&"`a0` is defined as this expression, 1"),
+        "{out}"
+    );
+    for i in 1..40 {
+        let t = format!("`a{i}` is defined as this expression, int");
+        assert_eq!(s.iter().filter(|x| **x == t).count(), 1, "{t}: {out}");
+    }
 }
 
 #[test]
