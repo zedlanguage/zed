@@ -2,6 +2,7 @@
 library;
 
 import 'text.dart';
+import 'types.dart';
 import 'value.dart';
 
 part 'print.dart';
@@ -112,6 +113,13 @@ final class TupleP extends Pattern {
 /// Any atom.
 final class AnyAtomP extends Pattern {
   const AnyAtomP();
+}
+
+/// `(is T)`: a value of the type `T`, whose membership is decidable (step L1.22).
+final class IsP extends Pattern {
+  final Type type;
+
+  const IsP(this.type);
 }
 
 /// Where a `gen` reads its guard: before each step or after it.

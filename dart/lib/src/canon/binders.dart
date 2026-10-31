@@ -90,7 +90,7 @@ List<String> patternBinds(Pattern p) {
         for (final (_, p) in fields) {
           go(p);
         }
-      case WildP() || LitP() || AnyAtomP():
+      case WildP() || LitP() || AnyAtomP() || IsP():
         break;
     }
   }
@@ -273,7 +273,7 @@ Pattern _renamePatternBind(Pattern p, bool Function() hit, String level) {
     AtomP(:final name, :final args) => AtomP(name, [for (final q in args) go(q)]),
     TupleP(:final items) => TupleP([for (final q in items) go(q)]),
     FieldsP(:final name, :final fields) => FieldsP(name, [for (final (f, q) in fields) (f, go(q))]),
-    WildP() || LitP() || AnyAtomP() => p,
+    WildP() || LitP() || AnyAtomP() || IsP() => p,
   };
   return go(p);
 }
@@ -380,5 +380,5 @@ Pattern _setBinds(Pattern p, Iterator<String> names) => switch (p) {
   FieldsP(:final name, :final fields) => FieldsP(name, [
     for (final (f, q) in fields) (f, _setBinds(q, names)),
   ]),
-  WildP() || LitP() || AnyAtomP() => p,
+  WildP() || LitP() || AnyAtomP() || IsP() => p,
 };

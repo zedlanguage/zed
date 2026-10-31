@@ -240,6 +240,7 @@ bool _samePattern(Pattern a, Pattern b) => switch ((a, b)) {
   (WildP(), WildP()) || (AnyAtomP(), AnyAtomP()) => true,
   (BindP(name: final x), BindP(name: final y)) => x == y,
   (LitP(value: final x), LitP(value: final y)) => x == y,
+  (IsP(type: final x), IsP(type: final y)) => x == y,
   (AtomP(name: final m, args: final p), AtomP(name: final n, args: final q)) =>
     m == n && _sameList(p, q, _samePattern),
   (TupleP(items: final p), TupleP(items: final q)) => _sameList(p, q, _samePattern),

@@ -7,4 +7,5 @@ export 'src/kernel/eval.dart';
 export 'src/kernel/exact.dart';
 export 'src/kernel/term.dart';
 export 'src/kernel/text.dart';
+export 'src/kernel/types.dart' show Emptiness, Type, Universe;
 export 'src/kernel/value.dart';

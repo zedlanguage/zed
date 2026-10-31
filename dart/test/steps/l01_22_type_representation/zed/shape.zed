@@ -1,0 +1,26 @@
+// Describes a parsed config value: a number, a word, a pair of coordinates, or a marker
+// for a missing entry.
+describe(v) = if v is int | f64 {
+  "number"
+} else if v is String {
+  "word"
+} else if v is (int, int) {
+  "point"
+} else if v is #missing | #blank {
+  "unset"
+} else {
+  "unknown"
+}
+test {
+  42 -> "number",
+  2.5 -> "number",
+  "on" -> "word",
+  (3, 4) -> "point",
+  (3, "x") -> "unknown",
+  (3, 4, 5) -> "unknown",
+  #missing -> "unset",
+  #blank -> "unset",
+  #other -> "unknown",
+  true -> "unknown",
+  (x -> x) -> "unknown",
+}

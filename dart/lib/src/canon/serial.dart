@@ -140,6 +140,9 @@ final class _Out {
         patterns(items);
       case AnyAtomP():
         tag(5);
+      case IsP(:final type):
+        tag(7);
+        str('$type');
       case FieldsP(:final name, :final fields):
         tag(6);
         str(name);

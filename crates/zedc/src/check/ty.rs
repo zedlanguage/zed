@@ -298,9 +298,24 @@ impl Ty {
         out
     }
 
-    /// The union of `ts`.
+    /// The union of `ts`, built once: joining them one at a time copied the union so far each
+    /// time, `O(n²)` in the tuple shapes.
     pub fn union_all<'t>(ts: impl IntoIterator<Item = &'t Ty>) -> Ty {
-        ts.into_iter().fold(Ty::empty(), |a, b| a.union(b))
+        let ts: Vec<&Ty> = ts.into_iter().collect();
+        let mut out = Ty::empty();
+        out.set = KType::union_all(ts.iter().map(|t| t.set.clone()));
+        out.family = KType::union_all(ts.iter().map(|t| t.family.clone()));
+        let mut tuples = HashSet::new();
+        let mut fns = HashSet::new();
+        for t in ts {
+            out.tuples
+                .extend(t.tuples.iter().filter(|c| tuples.insert(*c)).cloned());
+            out.fns
+                .extend(t.fns.iter().filter(|f| fns.insert(*f)).cloned());
+            out.vars.extend(t.vars.iter().cloned());
+            out.dynamic |= t.dynamic;
+        }
+        out
     }
 
     /// Its atoms.

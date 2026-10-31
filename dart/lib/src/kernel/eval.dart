@@ -478,6 +478,7 @@ final class Evaluator {
                 : switch (pat) {
                     WildP() => env,
                     BindP(:final name) => env.put(name, _bound(v, fact)),
+                    IsP(:final type) when type.functions => env,
                     _ => null,
                   };
             if (hit != null) return _go(body, hit);
@@ -1198,6 +1199,8 @@ _Env? _match(Pattern pat, Value v, _Env env, int? fact) {
       return value == v ? env : null;
     case (AnyAtomP(), Atom()):
       return env;
+    case (IsP(:final type), _):
+      return type.contains(v) ? env : null;
     case (AtomP(:final name, :final args), Atom a):
       return a.name == name && a.fields.isEmpty ? all(args, a.args, env) : null;
     case (FieldsP(:final name, :final fields), Atom a):

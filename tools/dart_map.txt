@@ -183,3 +183,11 @@ dart/test/steps/l01_21_test_runner/marks_test.dart tests/steps/l01_21_test_runne
 dart/test/steps/l01_21_test_runner/scaling_test.dart tests/steps/l01_21_test_runner/scaling.rs
 dart/test/steps/l01_21_test_runner/tables_test.dart tests/steps/l01_21_test_runner/tables.rs
 dart/test/steps/l01_21_test_runner/zed_test.dart tests/steps/l01_21_test_runner/zed.rs
+dart/lib/src/kernel/types.dart crates/zed-kernel/src/types.rs
+dart/lib/src/kernel/bdd.dart crates/zed-kernel/src/types/bdd.rs
+dart/lib/src/kernel/empty.dart crates/zed-kernel/src/types/empty.rs
+dart/test/steps/l01_22_type_representation/forms_test.dart tests/steps/l01_22_type_representation/forms.rs
+dart/test/steps/l01_22_type_representation/laws_test.dart tests/steps/l01_22_type_representation/laws.rs
+dart/test/steps/l01_22_type_representation/is_test.dart tests/steps/l01_22_type_representation/is.rs
+dart/test/steps/l01_22_type_representation/scaling_test.dart tests/steps/l01_22_type_representation/scaling.rs
+dart/test/steps/l01_22_type_representation/bdd_test.dart crates/zed-kernel/src/types/bdd.rs

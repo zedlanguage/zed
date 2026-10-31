@@ -1337,10 +1337,8 @@ impl<'a> Elab<'a> {
             },
             TypeKind::Atom(a) => KType::atom(a),
             TypeKind::Tuple(ts) => KType::tuple(all(self, ts)?),
-            TypeKind::Union(ts) => all(self, ts)?
-                .into_iter()
-                .fold(KType::empty(), |a, b| a | b),
-            TypeKind::And(ts) => all(self, ts)?.into_iter().fold(KType::top(), |a, b| a & b),
+            TypeKind::Union(ts) => KType::union_all(all(self, ts)?),
+            TypeKind::And(ts) => KType::meet_all(all(self, ts)?),
             TypeKind::Diff(a, b) => {
                 let (a, b) = (self.ty(a), self.ty(b));
                 a? - &b?

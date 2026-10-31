@@ -65,6 +65,35 @@ final class PMap<K, V> {
     return _balance(n.key, n.value, n.left, _put(n.right, key, value));
   }
 
+  /// The map without `key`; itself when it has no `key`.
+  PMap<K, V> remove(K key) {
+    final r = _remove(_root, key);
+    return identical(r, _root) ? this : PMap._(r, compare);
+  }
+
+  _Node<K, V>? _remove(_Node<K, V>? n, K key) {
+    if (n == null) return null;
+    final c = compare(key, n.key);
+    if (c < 0) {
+      final l = _remove(n.left, key);
+      return identical(l, n.left) ? n : _balance(n.key, n.value, l, n.right);
+    }
+    if (c > 0) {
+      final r = _remove(n.right, key);
+      return identical(r, n.right) ? n : _balance(n.key, n.value, n.left, r);
+    }
+    final (l, r) = (n.left, n.right);
+    if (l == null) return r;
+    if (r == null) return l;
+    // The nearest key of the larger side takes the node's place.
+    if (l.size > r.size) {
+      final (k, v, rest) = _removeLast(l);
+      return _balance(k, v, rest, r);
+    }
+    final (k, v, rest) = _removeFirst(r);
+    return _balance(k, v, l, rest);
+  }
+
   /// The entry with the least key; the map must not be empty.
   (K, V) get first {
     var n = _root!;
@@ -125,6 +154,18 @@ _Node<K, V> _balance<K, V>(K k, V v, _Node<K, V>? l, _Node<K, V>? r) {
     return _Node(lr!.key, lr.value, _Node(l.key, l.value, ll, lr.left), _Node(k, v, lr.right, r));
   }
   return _Node(k, v, l, r);
+}
+
+(K, V, _Node<K, V>?) _removeFirst<K, V>(_Node<K, V> n) {
+  if (n.left == null) return (n.key, n.value, n.right);
+  final (k, v, l) = _removeFirst(n.left!);
+  return (k, v, _balance(n.key, n.value, l, n.right));
+}
+
+(K, V, _Node<K, V>?) _removeLast<K, V>(_Node<K, V> n) {
+  if (n.right == null) return (n.key, n.value, n.left);
+  final (k, v, r) = _removeLast(n.right!);
+  return (k, v, _balance(n.key, n.value, n.left, r));
 }
 
 final class _Entries<K, V> extends Iterable<(K, V)> {

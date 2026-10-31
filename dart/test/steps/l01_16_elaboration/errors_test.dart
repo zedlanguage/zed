@@ -46,9 +46,9 @@ void main() {
 
   test('errors are listed in text order, those of one span in the order met', () {
     // `b` is elaborated before `a`, which reads it.
-    expect(errors('a = b + (1 is int);\nb = (2 is int);\n'), [
-      '`is` tests a type, and types arrive at step L1.22 [(1 is int)]',
-      '`is` tests a type, and types arrive at step L1.22 [(2 is int)]',
+    expect(errors('a = b + (1 is Lines);\nb = (2 is Files);\n'), [
+      '`Lines` is the type of a port, and no value has it [Lines]',
+      '`Files` is the type of a port, and no value has it [Files]',
     ]);
     expect(errors('f(a, b) = a;\ny = f();\n'), [
       'missing argument `a` of `f` [f()]',
@@ -79,7 +79,6 @@ void main() {
 
   test('forms of later steps and layers', () {
     const cases = [
-      ('x = 1 is int;', '`is` tests a type, and types arrive at step L1.22 [1 is int]'),
       (
         'p = 1;\nx = p.size;',
         '`size` is not a function in scope, and fields arrive at L2 [p.size]',

@@ -26,6 +26,7 @@ String _patternText(Pattern p) => switch (p) {
   TupleP(items: [final p]) => '($p,)',
   TupleP(:final items) => '(${items.join(', ')})',
   AnyAtomP() => '#_',
+  IsP(:final type) => '(is $type)',
 };
 
 /// How a binary primitive is written between its operands, with its spaces.

@@ -327,6 +327,58 @@ final class _Elab {
     _got = [for (final t in ts) t ?? (throw const _Stop())];
   }
 
+  /// The type `t` denotes, or null after recording its errors; every part is elaborated even
+  /// when one before it fails.
+  k.Type? ty(TypeExpr t) {
+    List<k.Type>? all(List<TypeExpr> ts) {
+      final out = [for (final t in ts) ty(t)];
+      return out.contains(null) ? null : [for (final t in out) t!];
+    }
+
+    switch (t) {
+      case TypeName(:final name):
+        final base = switch (name) {
+          'int' => k.Type.integer,
+          'rat' => k.Type.rational,
+          'f64' => k.Type.f64,
+          'bool' => k.Type.boolean,
+          'String' => k.Type.string,
+          _ => null,
+        };
+        if (base == null) note(t.span, '`$name` is the type of a port, and no value has it');
+        return base;
+      case AtomType(:final name):
+        return k.Type.atom(name);
+      case TupleType(:final items):
+        return switch (all(items)) {
+          final ts? => k.Type.tuple(ts),
+          null => null,
+        };
+      case UnionType(:final items):
+        return switch (all(items)) {
+          final ts? => k.Type.unionAll(ts),
+          null => null,
+        };
+      case AndType(:final items):
+        return switch (all(items)) {
+          final ts? => k.Type.meetAll(ts),
+          null => null,
+        };
+      case DiffType(:final a, :final b):
+        final (x, y) = (ty(a), ty(b));
+        return x == null || y == null ? null : x - y;
+      case ArrowType(:final params, :final partial, :final result):
+        final keys = all([for (final p in params) p.type]);
+        final value = ty(result);
+        if (keys == null || value == null) return null;
+        final level = partial ? k.Type.partial : k.Type.exact;
+        return (keys.isEmpty ? [k.Type.tuple([])] : keys).reversed.fold<k.Type>(
+          value,
+          (v, key) => level(key, v),
+        );
+    }
+  }
+
   String temp() => '\$${++fresh}';
 
   String kname(Span span, String name) => names[ids[(span, name)]!]!;
@@ -533,8 +585,17 @@ final class _Elab {
         _got = k.PrimApp(k.Prim.tuple, result<List<k.Term>>());
       case Lambda(:final params, :final body):
         yield* lambda(params, body);
-      case Is():
-        error(e.span, '`is` tests a type, and types arrive at step L1.22');
+      case Is(:final of, :final type, :final negated):
+        yield expr(of);
+        final (v, t) = (termOrNull, ty(type));
+        if (v == null || t == null) throw const _Stop();
+        if (!t.decidable) {
+          error(type.span, '`is` cannot test a value against a function type at run time');
+        }
+        _got = k.Match(v, [
+          (k.IsP(t), k.Lit(k.Bool(!negated))),
+          (const k.WildP(), k.Lit(k.Bool(negated))),
+        ]);
       case Else(:final of, :final pattern, :final fallback):
         yield expr(of);
         final v = termOrNull;
