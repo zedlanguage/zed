@@ -121,7 +121,7 @@ The Dart columns are filled as the port reaches each step.
 | M0.7 | 0:04 | 0:12 | 1 (1) | 5 (2) | 0:07 | 0:00 | 1 (1) |
 | M0.8 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:00 | 0:00 | 0 (0) |
 | M0.11 | 0:07 | 0:02 | 0 (0) | 1 (1) | 0:02 | 0:00 | 0 (0) |
-| L1.1 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
+| L1.1 | 0:03 | 0:01 | 0 (0) | 0 (0) | 0:04 | 0:00 | 1 (1) |
 | L1.2 | 0:03 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.3 | 0:01 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.4 | 0:01 | 0:00 | 0 (0) | 0 (0) | | | |
@@ -724,7 +724,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/query.rs` | 4,746 | | | |
 | `crates/zedc/src/resolve.rs` | 15,634 | | | |
 | `crates/zedc/src/run.rs` | 24,727 | | | |
-| `crates/zedc/src/source.rs` | 7,459 | | | |
+| `crates/zedc/src/source.rs` | 7,459 | `lib/source.dart` | 7,286 | 0.98 |
 | `crates/zedc/src/stage.rs` | 31,611 | | | |
 | `crates/zedc/src/store/affine.rs` | 19,512 | | | |
 | `crates/zedc/src/store/cell.rs` | 13,091 | | | |
@@ -754,10 +754,10 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/src/scaling.rs` | 3,377 | `test/support/scaling.dart` | 2,230 | 0.66 |
 | `tests/src/tokens.rs` | 1,819 | | | |
 | `tests/src/trees.rs` | 1,371 | | | |
-| `tests/steps/l01_01_source_loading/accepted.rs` | 1,455 | | | |
+| `tests/steps/l01_01_source_loading/accepted.rs` | 1,455 | `test/steps/l01_01_source_loading/accepted_test.dart` | 1,467 | 1.01 |
 | `tests/steps/l01_01_source_loading/mod.rs` | 163 | | | |
-| `tests/steps/l01_01_source_loading/places.rs` | 1,478 | | | |
-| `tests/steps/l01_01_source_loading/rejected.rs` | 5,272 | | | |
+| `tests/steps/l01_01_source_loading/places.rs` | 1,478 | `test/steps/l01_01_source_loading/places_test.dart` | 1,560 | 1.06 |
+| `tests/steps/l01_01_source_loading/rejected.rs` | 5,272 | `test/steps/l01_01_source_loading/rejected_test.dart` | 5,100 | 0.97 |
 | `tests/steps/l01_02_lexer_names/mod.rs` | 126 | | | |
 | `tests/steps/l01_02_lexer_names/names.rs` | 2,106 | | | |
 | `tests/steps/l01_02_lexer_names/scripts.rs` | 2,205 | | | |
@@ -963,7 +963,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **588,046** | | **486,350** | **0.83** |
+| **the Rust files ported so far** | **603,710** | | **501,763** | **0.83** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1055,10 +1055,21 @@ Dart:
   strings unwritten, so the memory test also reads the text, which writes all 2^29
   characters out. Two of the three signed-zero tests read a program's values through the
   elaboration of step L1.16, and are ported with that step.
+- **L1.1, source loading.** Dart has no Unicode normalization in its SDK, and the port adds
+  no package, so the Dart code implements NFC itself (`lib/src/unicode.dart`, 150 lines) from
+  tables that `tools/unicode_tables.py` writes from the Unicode 18.0.0 character database,
+  the version of the Rust crate. It is checked against the whole of that version's
+  `NormalizationTest.txt`, kept compressed with the tests, and on every code point. These
+  three files have no Rust file to set beside them in the size table, since the Rust takes
+  normalization from a crate. Dart's UTF-8 decoder reports no length for an invalid
+  sequence, so `load` decodes the bytes itself, following the Unicode rule for the longest
+  invalid prefix that Rust's `Utf8Error` follows. One compile error, a misnamed helper. The
+  four tests, with a scaling test added, pass, and two negative controls (composing across
+  a blocking mark; accepting an encoded surrogate) each fail one test.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1140,5 +1151,13 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/m0_11_prelude_axioms_and_limits/limits_test.dart` | 1 | 0 |
 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 1 | 0 |
 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 1 | 0 |
+| `lib/source.dart` | 1 | 0 |
+| `lib/src/unicode.dart` | 1 | 0 |
+| `lib/src/unicode_tables.dart` | 1 | 0 |
+| `test/unicode/unicode_test.dart` | 1 | 0 |
+| `test/steps/l01_01_source_loading/accepted_test.dart` | 1 | 0 |
+| `test/steps/l01_01_source_loading/places_test.dart` | 1 | 0 |
+| `test/steps/l01_01_source_loading/rejected_test.dart` | 1 | 0 |
+| `test/steps/l01_01_source_loading/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

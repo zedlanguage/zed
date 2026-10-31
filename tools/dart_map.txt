@@ -74,3 +74,7 @@ dart/test/steps/m0_11_prelude_axioms_and_limits/axioms_test.dart tests/steps/m0_
 dart/test/steps/m0_11_prelude_axioms_and_limits/limits_test.dart tests/steps/m0_11_prelude_axioms_and_limits/limits.rs
 dart/test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs
 dart/test/steps/m0_11_prelude_axioms_and_limits/units_test.dart tests/steps/m0_11_prelude_axioms_and_limits/units.rs
+dart/lib/source.dart crates/zedc/src/source.rs
+dart/test/steps/l01_01_source_loading/accepted_test.dart tests/steps/l01_01_source_loading/accepted.rs
+dart/test/steps/l01_01_source_loading/places_test.dart tests/steps/l01_01_source_loading/places.rs
+dart/test/steps/l01_01_source_loading/rejected_test.dart tests/steps/l01_01_source_loading/rejected.rs
