@@ -180,3 +180,61 @@ fn test_preimages_are_sound_and_exact_where_claimed() {
         "{t:?}"
     );
 }
+
+#[test]
+fn a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between() {
+    // Against every point of the domain: the preimage holds each point whose remainder is
+    // demanded, is exact when the domain meets at most two periods, and otherwise, unless a
+    // later stage made it exact, has at most `2p + 1` pieces for `p` pieces of remainders.
+    let mut rng = Rng::new(1585);
+    let (mut exact, mut necessary) = (0, 0);
+    for _ in 0..1500 {
+        let c = loop {
+            let c = rng.int(-9, 9);
+            if c != 0 {
+                break c;
+            }
+        };
+        let m = c.abs();
+        let z = IntervalSet::from_pieces(
+            (0..rng.int(1, 3))
+                .map(|_| {
+                    let lo = rng.int(-2, m + 1);
+                    (End::Fin(lo), End::Fin(lo + rng.int(0, 2)))
+                })
+                .collect(),
+        );
+        let lo = rng.int(-200, 200);
+        let span = if rng.below(2) == 0 { 400 } else { m };
+        let hi = lo + rng.int(0, span);
+        let body = prim(Prim::Mod, vec![Term::Var("i".into()), lit(c)]);
+        let ds: Domains = [(
+            Arc::<str>::from("i"),
+            IntervalSet::range(End::Fin(lo), End::Fin(hi)),
+        )]
+        .into_iter()
+        .collect();
+        let demand = Demand::Ints(z.clone());
+        let p = preimage(&body, &ds, &demand);
+        check(&body, &ds, &demand, &p, (lo - 5, hi + 5));
+        if p.enumerated {
+            continue;
+        }
+        let rem = z.meet(&IntervalSet::range(End::Fin(0), End::Fin(m - 1)));
+        let pieces = p.domains["i"].pieces().len();
+        assert!(
+            p.exact || pieces <= 2 * rem.pieces().len() + 1,
+            "{c} {z} over {lo}..={hi}: {pieces}"
+        );
+        if hi.div_euclid(m) <= lo.div_euclid(m) + 1 {
+            assert!(p.exact, "{c} {z} over {lo}..={hi}");
+            exact += 1;
+        } else {
+            necessary += 1;
+        }
+    }
+    assert!(
+        exact > 300 && necessary > 150,
+        "{exact} exact, {necessary} necessary"
+    );
+}

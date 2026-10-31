@@ -39,8 +39,8 @@ use zed_kernel::{Evaluator, KernelError, Prim, Stack, Term, Value, World, on_sta
 
 use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
-use super::interval::{End, IntervalSet, PIECE_LIMIT};
-use super::lattice::{Congruence, FINITE_SET_LIMIT, FiniteSet, Landmarks, Lattice};
+use super::interval::{End, IntervalSet};
+use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
 use super::preimage::{Demand, Domains, preimage, relations};
 use super::presburger::{self, Atom, Con, Formula, Lin};
 use super::revision::{self, Op, reduce_congruence};
@@ -165,6 +165,19 @@ pub struct Product {
 }
 
 impl Product {
+    /// Whether every domain of `self` is below the same domain of `other`: the order in which
+    /// the reduction only descends.
+    pub fn leq(&self, other: &Product) -> bool {
+        let (a, b) = (&self.cell, &other.cell);
+        a.ints.element.leq(&b.ints.element)
+            && a.congruence.element.leq(&b.congruence.element)
+            && a.finite.element.leq(&b.finite.element)
+            && a.float.element.leq(&b.float.element)
+            && a.length.element.leq(&b.length.element)
+            && self.ty.element.leq(&other.ty.element)
+            && self.time.element.leq(&other.time.element)
+    }
+
     /// No information: any value, known when the program runs.
     pub fn top() -> Product {
         Product {
@@ -298,10 +311,39 @@ impl Product {
         // The type from the other domains.
         if self.ints().is_empty() || self.cell.congruence.element == Congruence::Bottom {
             self.ty.meet(&!&int, &prem);
-        } else if let Some(vs) = members(self.ints(), FINITE_SET_LIMIT as u64) {
-            let lits = vs.iter().filter_map(|&n| Type::lit(&Value::Int(n)));
-            let lits = Type::union_all(lits);
-            self.ty.meet(&(&!&int | &lits), &prem);
+        } else {
+            // The type's integers narrowed to the interval, listed only when the list is no
+            // longer than what is listed from: the type's own integer literals, or an interval
+            // with no more members than its two endpoints a piece.
+            let x = self.ints().clone();
+            let vs: Option<Vec<Value>> = match (&self.ty.element & &int).listed() {
+                Some(vs) => Some(
+                    vs.into_iter()
+                        .filter(|v| !matches!(v, Value::Int(n) if !x.contains(*n)))
+                        .collect(),
+                ),
+                None => {
+                    let most = 2 * x.pieces().len() as i128;
+                    let size = x.pieces().iter().try_fold(0i128, |n, p| match p {
+                        (End::Fin(a), End::Fin(b)) => Some(n + (*b as i128 - *a as i128) + 1),
+                        _ => None,
+                    });
+                    size.filter(|&n| n <= most).map(|_| {
+                        x.pieces()
+                            .iter()
+                            .flat_map(|p| match *p {
+                                (End::Fin(a), End::Fin(b)) => a..=b,
+                                _ => unreachable!("every piece is finite"),
+                            })
+                            .map(Value::Int)
+                            .collect()
+                    })
+                }
+            };
+            if let Some(vs) = vs {
+                let lits = Type::union_all(vs.iter().filter_map(Type::lit));
+                self.ty.meet(&(&!&int | &lits), &prem);
+            }
         }
         if let FiniteSet::Set(vs) = &self.cell.finite.element {
             let lits: Option<Vec<Type>> = vs.iter().map(Type::lit).collect();
@@ -311,10 +353,10 @@ impl Product {
             }
         }
         // The other domains from the type.
-        if let Some(vs) = self.ty.element.values(FINITE_SET_LIMIT) {
+        if let Some(vs) = self.ty.element.listed() {
             self.cell.finite.meet(&FiniteSet::of(vs), &prem);
         }
-        if let Some(vs) = (&self.ty.element & &int).values(FINITE_SET_LIMIT)
+        if let Some(vs) = (&self.ty.element & &int).listed()
             && !vs.is_empty()
             && self.ty.element.subtype(&int)
         {
@@ -410,6 +452,7 @@ impl Scope {
         loop {
             let before = p.clone();
             p.reduce_domains();
+            debug_assert!(p.leq(&before), "a reduction rose: {before:?} to {p:?}");
             if p == before {
                 break;
             }
@@ -710,6 +753,10 @@ impl Scope {
                 p.reduce_domains();
             }
             self.enumerate();
+            debug_assert!(
+                self.names.iter().all(|(n, p)| p.leq(&before[n])),
+                "a reduction rose"
+            );
             if self.names == before {
                 break;
             }
@@ -857,8 +904,7 @@ impl Scope {
                     if !out_of_fuel && kept.len() < vs.len() {
                         let x = IntervalSet::from_pieces(
                             kept.iter().map(|&v| (End::Fin(v), End::Fin(v))).collect(),
-                        )
-                        .cap(PIECE_LIMIT);
+                        );
                         let p = self.names.get_mut(n).expect("a name in scope");
                         let prem = p.premises();
                         p.meet_ints(&x, &prem);

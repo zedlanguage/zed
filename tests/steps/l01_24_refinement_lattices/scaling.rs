@@ -1,11 +1,12 @@
 //! The interval-union operations at the rule of low complexity (DESIGN.md Part G): `cap`
 //! merges neighbors by a heap rather than by a scan per merge, `join` merges two sorted lists,
-//! `contains` searches, and the forward transfer caps its operands and its image, so piece
-//! counts do not multiply along a chain of operators.
+//! `contains` searches, and the forward transfer does work linear in its operands and gives
+//! no sign region more pieces than an operand has in one, so piece counts do not multiply
+//! along a chain of operators. No constant bounds the pieces.
 
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
-use zedc::store::interval::{End, IntervalSet, PIECE_LIMIT};
+use zedc::store::interval::{End, IntervalSet};
 use zedc::store::revision::{self, Op};
 
 use End::{Fin, NegInf, PosInf};
@@ -83,11 +84,11 @@ fn join_and_contains_agree_with_membership() {
     }
 }
 
-/// Eight single integers far apart, so that a sum of two has up to 64 pieces.
+/// Eight single integers far apart, so that a sum of two has up to 64 distinct members.
 fn sparse(rng: &mut Rng) -> IntervalSet {
     let mut at = 0i64;
     IntervalSet::from_pieces(
-        (0..PIECE_LIMIT)
+        (0..8)
             .map(|_| {
                 at += rng.int(1_000, 1_000_000);
                 (Fin(at), Fin(at))
@@ -97,20 +98,20 @@ fn sparse(rng: &mut Rng) -> IntervalSet {
 }
 
 /// A sum of `k` operands of eight sparse pieces each, the way a chain of `+` builds one: each
-/// image keeps to the piece limit, so the chain's cost is linear in `k`.
+/// image keeps to its operands' eight pieces, so the chain's cost is linear in `k`.
 fn sum_chain(k: usize) -> IntervalSet {
     let mut rng = Rng::new(k as u64);
     let mut acc = sparse(&mut rng);
     for _ in 0..k {
         let next = sparse(&mut rng);
         acc = revision::forward(Op::Add, &acc, &next);
-        assert!(acc.pieces().len() <= PIECE_LIMIT, "{acc}");
+        assert!(acc.pieces().len() <= 8, "{acc}");
     }
     acc
 }
 
 #[test]
-fn a_chain_of_operators_keeps_to_the_piece_limit() {
+fn a_chain_of_operators_keeps_to_its_operands_pieces() {
     // Each step's image contains every sum of members, so the members are kept.
     let a = IntervalSet::from_pieces(vec![(Fin(0), Fin(0)), (Fin(10), Fin(10))]);
     let mut acc = a.clone();
@@ -120,10 +121,120 @@ fn a_chain_of_operators_keeps_to_the_piece_limit() {
     for v in (0..=70).step_by(10) {
         assert!(acc.contains(v), "{acc} has {v}");
     }
-    assert!(acc.pieces().len() <= PIECE_LIMIT);
+    assert!(acc.pieces().len() <= 2, "{acc}");
     scaling::check("a chain of `+` over eight-piece operands", 200, |k| {
         sum_chain(k);
     });
+}
+
+/// The pieces of `s` in each sign region: negative, zero, positive.
+fn per_region(s: &IntervalSet) -> [usize; 3] {
+    let mut n = [0; 3];
+    for p in s.sign_parts() {
+        n[if p.1 < Fin(0) {
+            0
+        } else if p.0 > Fin(0) {
+            2
+        } else {
+            1
+        }] += 1;
+    }
+    n
+}
+
+/// Up to six pieces within `-40..=40`.
+fn small(rng: &mut Rng) -> IntervalSet {
+    let n = rng.int(1, 6) as usize;
+    IntervalSet::from_pieces(
+        (0..n)
+            .map(|_| {
+                let lo = rng.int(-40, 40);
+                (Fin(lo), Fin(lo + rng.int(0, 4)))
+            })
+            .collect(),
+    )
+}
+
+const OPS: [Op; 6] = [Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Min, Op::Max];
+
+fn apply(op: Op, a: i64, b: i64) -> Option<i64> {
+    Some(match op {
+        Op::Add => a + b,
+        Op::Sub => a - b,
+        Op::Mul => a * b,
+        Op::Div if b == 0 => return None,
+        Op::Div => a.div_euclid(b),
+        Op::Min => a.min(b),
+        _ => a.max(b),
+    })
+}
+
+#[test]
+fn an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region() {
+    let mut rng = Rng::new(325);
+    let mut checked = 0;
+    for _ in 0..600 {
+        let (a, b) = (small(&mut rng), small(&mut rng));
+        for op in OPS {
+            let z = revision::forward(op, &a, &b);
+            for x in -44..=44 {
+                for y in -44..=44 {
+                    if a.contains(x)
+                        && b.contains(y)
+                        && let Some(r) = apply(op, x, y)
+                    {
+                        assert!(
+                            z.contains(r),
+                            "{op:?} {a} {b}: {x}, {y} gives {r}, not in {z}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+            let most = per_region(&a)
+                .into_iter()
+                .chain(per_region(&b))
+                .max()
+                .unwrap();
+            assert!(
+                per_region(&z).into_iter().all(|n| n <= most),
+                "{op:?} {a} {b} gives {z}"
+            );
+        }
+    }
+    assert!(checked > 100_000, "{checked}");
+}
+
+#[test]
+fn an_image_with_a_one_piece_operand_is_the_join_of_the_pieces_images() {
+    // With one operand of one piece nothing is merged before the image is taken, so when the
+    // join of each piece's image keeps to the region bound, the image is that join.
+    let mut rng = Rng::new(326);
+    let mut equal = 0;
+    for _ in 0..2000 {
+        let a = small(&mut rng);
+        let lo = rng.int(-40, 40);
+        let b = IntervalSet::range(Fin(lo), Fin(lo + rng.int(0, 9)));
+        for op in OPS {
+            let join = a.pieces().iter().fold(IntervalSet::empty(), |j, &p| {
+                j.join(&revision::forward(
+                    op,
+                    &IntervalSet::from_pieces(vec![p]),
+                    &b,
+                ))
+            });
+            let most = per_region(&a)
+                .into_iter()
+                .chain(per_region(&b))
+                .max()
+                .unwrap();
+            if per_region(&join).into_iter().all(|n| n <= most) {
+                assert_eq!(revision::forward(op, &a, &b), join, "{op:?} {a} {b}");
+                equal += 1;
+            }
+        }
+    }
+    assert!(equal > 6000, "{equal}");
 }
 
 #[test]
@@ -132,9 +243,14 @@ fn the_interval_operations_scale() {
         let mut rng = Rng::new(n as u64);
         (pieces(&mut rng, n, true), pieces(&mut rng, n, false))
     };
-    scaling::check("capping n pieces to the piece limit", 4000, |n| {
+    scaling::check("capping n pieces to 8", 4000, |n| {
         let (a, _) = sets(n);
-        assert_eq!(a.cap(PIECE_LIMIT).pieces().len(), PIECE_LIMIT);
+        assert_eq!(a.cap(8).pieces().len(), 8.min(n));
+    });
+    scaling::check("the forward `*` of two sets of n pieces", 4000, |n| {
+        let (a, b) = sets(n);
+        let z = revision::forward(Op::Mul, &a, &b.neg());
+        assert!(!z.is_empty());
     });
     scaling::check("joining two sets of n pieces", 4000, |n| {
         let (a, b) = sets(n);

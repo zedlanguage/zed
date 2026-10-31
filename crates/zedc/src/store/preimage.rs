@@ -14,8 +14,8 @@
 //! - an input meets the demand exactly where its value lies in it;
 //! - a term with no input is evaluated, and keeps the whole box or none of it;
 //! - `+`, `-` and `*` with one constant operand, and Euclidean `div` and `mod` by a constant,
-//!   invert exactly, `mod` as up to [`PIECE_LIMIT`] pieces within the operand's forward
-//!   interval;
+//!   invert exactly, `mod` within the operand's forward interval, its first and last periods
+//!   exactly and the periods between them as one piece;
 //! - `-x`, `abs` and `**` by a constant invert exactly at their endpoints, by the tonicity of
 //!   each sign part (the M0.5 revision table); a product of one value `k` times is read as its
 //!   `k`th power first (sec:constraints);
@@ -54,7 +54,7 @@ use std::sync::Arc;
 use zed_kernel::budgets::{ENUMERATION_BUDGET, ENUMERATION_FUEL};
 use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, eval, on_stack};
 
-use super::interval::{End, IntervalSet, PIECE_LIMIT};
+use super::interval::{End, IntervalSet};
 use super::presburger::{self, Con, Formula, Lin, Over, Relation};
 use super::revision::{self, Op, Tonicity};
 use End::{Fin, NegInf, PosInf};
@@ -169,13 +169,6 @@ fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
     let mut r = cx.back(term, &root, demand);
     let mut stops = cx.stops.take();
     let mut enumerated = false;
-    // The piece limit of step M0.5 holds for every element.
-    for d in r.dom.values_mut() {
-        if d.pieces().len() > PIECE_LIMIT {
-            *d = d.cap(PIECE_LIMIT);
-            r.exact = false;
-        }
-    }
     if !r.exact && !is_empty(&r.dom) {
         let over = Cx::new(&r.dom);
         if over.fwd(term, &root, 0).meets(demand) {
@@ -300,19 +293,12 @@ fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool,
                 .collect();
             return Ok((none, true));
         }
-        let mut capped = false;
-        for v in out.values_mut() {
-            if v.pieces().len() > PIECE_LIMIT {
-                *v = v.cap(PIECE_LIMIT);
-                capped = true;
-            }
-        }
         let outside = Formula::and(vec![
             rel.defined(),
             within(&out)?,
             Formula::negate(rel.body.clone()),
         ]);
-        let exact = !capped && presburger::satisfiable(&outside)?.is_none();
+        let exact = presburger::satisfiable(&outside)?.is_none();
         Ok((out, exact))
     };
     let (out, exact) = go().ok()?;
@@ -849,7 +835,9 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// The function a call reaches, with the scope its body is read in.
+    /// The function a call reaches, with the scope its body is read in. Each name is looked
+    /// up in the scope its binding was made in, which was built before that binding, so the
+    /// walk ends.
     fn callee<'e>(&self, f: &'e Term, env: &'e Env) -> Result<Callee<'e>, Option<Arc<str>>> {
         let (mut f, mut env) = (f, env);
         loop {
@@ -1582,14 +1570,10 @@ impl<'a> Cx<'a> {
             (IntDiv, _, Some(c)) => self.back_at(a, env, &ints(div_pre(z, c)), depth),
             (Mod, _, Some(c)) => {
                 let fa = self.fwd(a, env, depth).ints;
-                match mod_pre(z, c, &fa) {
-                    Some(s) => self.back_at(a, env, &ints(s), depth),
-                    None => {
-                        let mut r = self.back_at(a, env, &ints(fa), depth);
-                        r.exact = false;
-                        r
-                    }
-                }
+                let (s, exact) = mod_pre(z, c, &fa);
+                let mut r = self.back_at(a, env, &ints(s), depth);
+                r.exact &= exact;
+                r
             }
             (Min | Max, Some(c), _) => self.back_at(b, env, &ints(minmax_pre(p, z, c)), depth),
             (Min | Max, _, Some(c)) => self.back_at(a, env, &ints(minmax_pre(p, z, c)), depth),
@@ -1823,41 +1807,54 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     )
 }
 
-/// The members of `within` with `x mod c` in `z`, Euclidean, or `None` when that set has more
-/// than [`PIECE_LIMIT`] pieces or `within` is unbounded and the remainders demanded are not
-/// all of them.
-fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> Option<IntervalSet> {
+/// The members of `within` with `x mod c` in `z`, Euclidean, and whether that is all of them
+/// and no more. The first and last periods `within` meets are listed exactly and the periods
+/// between them are one piece, so the set has at most `2 * p + 1` pieces for `p` pieces of
+/// remainders, and it is exact when there is no period between them. An unbounded `within`
+/// is kept whole unless every remainder is demanded.
+fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> (IntervalSet, bool) {
     if c == 0 {
-        return Some(IntervalSet::empty());
+        return (IntervalSet::empty(), true);
     }
     let m = c.unsigned_abs() as i128;
     let rem = z.meet(&IntervalSet::range(Fin(0), End::from_i128(m - 1)));
     if rem.is_empty() {
-        return Some(IntervalSet::empty());
+        return (IntervalSet::empty(), true);
     }
     if rem == IntervalSet::range(Fin(0), End::from_i128(m - 1)) {
-        return Some(within.clone());
+        return (within.clone(), true);
     }
-    let (Fin(lo), Fin(hi)) = within.bounds()? else {
-        return None;
+    let Some((Fin(lo), Fin(hi))) = within.bounds() else {
+        return (within.clone(), false);
     };
     let (k0, k1) = ((lo as i128).div_euclid(m), (hi as i128).div_euclid(m));
-    if (k1 - k0 + 1) * rem.pieces().len() as i128 > 2 * PIECE_LIMIT as i128 + 2 {
-        return None;
-    }
-    let mut pieces = Vec::new();
-    for k in k0..=k1 {
-        for &(a, b) in rem.pieces() {
-            if let (Fin(a), Fin(b)) = (a, b) {
-                pieces.push((
+    let period = |k: i128| {
+        rem.pieces()
+            .iter()
+            .filter_map(|&(a, b)| match (a, b) {
+                (Fin(a), Fin(b)) => Some((
                     End::from_i128(k * m + a as i128),
                     End::from_i128(k * m + b as i128),
-                ));
-            }
-        }
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut pieces = period(k0);
+    if k1 > k0 + 1 {
+        let Some((Fin(a), Fin(b))) = rem.bounds() else {
+            unreachable!("the remainders lie in 0..m")
+        };
+        pieces.push((
+            End::from_i128((k0 + 1) * m + a as i128),
+            End::from_i128((k1 - 1) * m + b as i128),
+        ));
+    }
+    if k1 > k0 {
+        pieces.extend(period(k1));
     }
     let s = IntervalSet::from_pieces(pieces).meet(within);
-    (s.pieces().len() <= PIECE_LIMIT).then_some(s)
+    (s, k1 <= k0 + 1)
 }
 
 /// The integers `x` with `min(x, c)` (or `max`) in `z`.

@@ -13,10 +13,6 @@ use std::ops::Neg;
 
 use super::lattice::Landmarks;
 
-/// The most pieces an arithmetic image and a preimage keep (docs/thresholds.md, replacement 3c
-/// removes it).
-pub const PIECE_LIMIT: usize = 8;
-
 /// An endpoint: an integer or one of the two infinities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum End {
@@ -219,8 +215,8 @@ impl IntervalSet {
 
     /// The set with at most `limit` pieces: while it has more, the two neighboring pieces with
     /// the fewest integers between them merge into their hull, the lower pair on a tie
-    /// (sec:constraints). This is not a join and need not be monotone; it is applied only at a
-    /// widening point.
+    /// (sec:constraints). This is not a join and need not be monotone; forward revision applies
+    /// it to bound an image by its operands' pieces.
     pub fn cap(&self, limit: usize) -> Self {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
@@ -350,24 +346,6 @@ impl IntervalSet {
                 .map(|&(lo, hi)| (hi.neg(), lo.neg()))
                 .collect(),
         )
-    }
-
-    /// The image of each pair of pieces under `f`, joined. `f` maps two single intervals to a
-    /// list of intervals that contains their image. Both operands and the image are capped to
-    /// [`PIECE_LIMIT`] pieces, so the pairs are at most `PIECE_LIMIT²`.
-    pub fn lift2(
-        &self,
-        other: &Self,
-        f: impl Fn((End, End), (End, End)) -> Vec<(End, End)>,
-    ) -> Self {
-        let (a, b) = (self.cap(PIECE_LIMIT), other.cap(PIECE_LIMIT));
-        let mut out = Vec::new();
-        for &a in &a.pieces {
-            for &b in &b.pieces {
-                out.extend(f(a, b));
-            }
-        }
-        IntervalSet::from_pieces(out).cap(PIECE_LIMIT)
     }
 
     /// The image of each piece under `f`, joined.

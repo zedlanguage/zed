@@ -234,8 +234,11 @@ about 48 s in a debug build, with `zed-kernel` built at opt-level 2.
   k as k − 1, k, k + 1) or to ±∞, at every head change, with no delay and no cap; narrowing
   moves a bound back to an old endpoint or a landmark and lets an infinite end take a bound
   once; phase 2 runs until a round changes nothing; a finite set widens to ⊤ at a member
-  that is not a landmark (docs/thresholds.md, replacement 3); the piece limit 8 and the
-  64-member listing remain for arithmetic and reductions (3c); Presburger relations of at most 16 variables and 64 atoms, eliminations of at
+  that is not a landmark (docs/thresholds.md, replacement 3); no constant bounds pieces or
+  listings (3c): forward revision caps the smaller operand to ⌈(k + m)/k⌉ pieces and each
+  sign region of the image to the operands' largest region, `x mod c` lists its first and
+  last periods and one piece between, and the reduction lists an interval only at two
+  members a piece; phase 1 rises, phase 2 and the reduction fall, asserted in test builds; Presburger relations of at most 16 variables and 64 atoms, eliminations of at
   most 4,096 atoms. Rule 1 of sec:constraints now says phase 1 is Bourdoncle's recursive
   strategy and only phase 2 runs in rounds; the sec:domains example is the tested three-cell
   loop. `flat(elems, top:)` is defined there (bottom `#empty`).

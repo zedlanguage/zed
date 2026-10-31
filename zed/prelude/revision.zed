@@ -8,7 +8,11 @@
 // that straddles 0 is split at 0 into its sign parts, each part's image is
 // computed from its corners (the operator is monotone on a part of one sign),
 // and the images are joined. Endpoint arithmetic rounds outward, and 0 times an
-// infinite end is 0.
+// infinite end is 0. For operands of k >= m parts, the one with fewer is first
+// capped to ceil((k + m) / k) pieces, so at most k + m pairs are taken, and each
+// sign region of the image is capped to the most pieces either operand has in
+// one region: a chain of operators never grows piece counts, and no constant
+// bounds them.
 
 // How z = op(x, y) moves with argument `arg` (0 for x, 1 for y) when the other
 // argument is held fixed.

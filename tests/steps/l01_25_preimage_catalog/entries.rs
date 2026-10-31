@@ -63,10 +63,23 @@ fn euclidean_division_and_remainder_by_a_constant_invert_exactly() {
         holds("ok(i) = i div -4 == 2;\n", &[any("i")]),
         "i [-8..=-5]; exact"
     );
-    // Within `[0..=40]`, the remainder pieces.
+    // Within two periods, the remainder pieces of each, exactly.
+    assert_eq!(
+        holds("ok(i) = i mod 10 == 3;\n", &[("i", Some(0), Some(19))]),
+        "i [3..=3, 13..=13]; exact"
+    );
+    // Over more periods, the first and last are listed and those between are one piece, so
+    // the set is necessary only; a small domain is then enumerated.
     assert_eq!(
         holds("ok(i) = i mod 10 == 3;\n", &[("i", Some(0), Some(40))]),
-        "i [3..=3, 13..=13, 23..=23, 33..=33]; exact"
+        "i [3..=3, 13..=13, 23..=23, 33..=33]; exact; enumerated"
+    );
+    assert_eq!(
+        holds(
+            "ok(i) = i mod 10 == 3;\n",
+            &[("i", Some(0), Some(1_000_000_000))]
+        ),
+        "i [3..=3, 13..=999999993]; necessary"
     );
     // With no bound on `i`, the remainders are not a finite union: necessary only.
     assert_eq!(
@@ -193,12 +206,13 @@ fn the_forward_pass_confirms_a_box_the_backward_pass_cannot() {
 }
 
 #[test]
-fn a_set_past_the_piece_limit_is_capped_and_necessary() {
+fn a_set_of_many_pieces_is_kept_exact() {
+    // No limit merges the pieces a program writes: nine exclusions give ten pieces.
     let src = "ok(x) = x != 1 && x != 3 && x != 5 && x != 7 && x != 9 && x != 11 && x != 13 \
                && x != 15 && x != 17;\n";
     let p = pre(src, &[any("x")], &Demand::Bool(true));
-    assert!(!p.exact, "{}", shown(&p));
-    assert!(p.domains["x"].pieces().len() <= 8, "{}", shown(&p));
+    assert!(p.exact, "{}", shown(&p));
+    assert_eq!(p.domains["x"].pieces().len(), 10, "{}", shown(&p));
     check(
         &function(src).1,
         &doms(&[any("x")]),

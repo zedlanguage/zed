@@ -52,10 +52,6 @@ flat(positional elems, top) = Lattice(
 // An element is a list of pieces [lo, hi], sorted, disjoint, and with at least
 // one integer missing between neighbors. An end is an int, #ninf or #pinf.
 
-// The piece limit of an arithmetic image or preimage (sec:constraints, interval
-// revision); the widening does not use it, and replacement 3c removes it.
-pieceLimit = 8;
-
 endLe(positional a, positional b) = match a {
   #ninf -> true,
   #pinf -> b == #pinf,
@@ -188,10 +184,6 @@ congruenceNarrow(positional old, positional new) =
   else { match new { #bottom -> new, #class(modulus: m, residue: r) -> if m == 0 { new } else { old } } };
 
 // ---- Finite sets and cardinalities ------------------------------------------
-
-// The most integers a reduction lists from an interval; the widening does not
-// use it, and replacement 3c removes it.
-finiteSetLimit = 64;
 
 // The join when every member it adds is a landmark, else #top: the members of
 // a chain are the first element's and landmarks. The bottom widens to new.

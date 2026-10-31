@@ -12,10 +12,6 @@ use zed_kernel::Value;
 
 use super::interval::{End, IntervalSet};
 
-/// The most members a finite set keeps when the reduction lists an interval's integers
-/// (docs/thresholds.md, replacement 3c removes it).
-pub const FINITE_SET_LIMIT: usize = 64;
-
 /// The values written in a program, at which a widening stops a bound and a narrowing stops a
 /// descent (step M0.5): each integer literal and each declared bound `k`, as `k - 1`, `k` and
 /// `k + 1`, and the other literal values. A program has finitely many, so a chain that moves

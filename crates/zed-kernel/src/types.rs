@@ -507,6 +507,18 @@ impl Type {
     /// tuple type one of whose paths has more than `cap` rows before its negated tuples are
     /// taken out.
     pub fn values(&self, cap: usize) -> Option<Vec<Value>> {
+        self.list(cap, true)
+    }
+
+    /// Every value of `self` when the list is no longer than the type: as [`Type::values`],
+    /// except that a tuple path is listed only when its rows are no more than the values its
+    /// components list, so listing never multiplies what the type writes.
+    pub fn listed(&self) -> Option<Vec<Value>> {
+        self.list(usize::MAX, false)
+    }
+
+    /// [`Type::values`], with `spread` false for [`Type::listed`].
+    fn list(&self, cap: usize, spread: bool) -> Option<Vec<Value>> {
         if !matches!(&*self.0, Node::Parts(_)) {
             return None;
         }
@@ -552,10 +564,15 @@ impl Type {
                     m.iter().zip(p.iter()).map(|(a, b)| a & b).collect()
                 });
                 let mut found = vec![Vec::new()];
+                let mut written = 0usize;
                 for item in &meet {
-                    let Some(vs) = item.values(cap) else {
+                    let Some(vs) = item.list(cap, spread) else {
                         return false;
                     };
+                    written = written.saturating_add(vs.len());
+                    if !spread && found.len().saturating_mul(vs.len()) > written {
+                        return false;
+                    }
                     // Compared with the cap before the product is built, which can be `cap²`.
                     if found.len().saturating_mul(vs.len()) > cap {
                         return false;

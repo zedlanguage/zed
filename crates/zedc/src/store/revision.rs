@@ -14,7 +14,7 @@
 use std::cmp::Ordering;
 use std::ops::Neg;
 
-use super::interval::{End, IntervalSet, PIECE_LIMIT};
+use super::interval::{End, IntervalSet};
 use super::lattice::{Congruence, FiniteSet, Lattice};
 use End::{Fin, NegInf, PosInf};
 
@@ -233,31 +233,63 @@ impl IntervalSet {
     }
 }
 
-/// The image of each pair of parts under `f`, joined. An operand past twice the piece limit
-/// is capped first and the image is capped after, so the pairs are bounded by a constant and
-/// no transfer multiplies piece counts along a chain of operators (the rule of low
-/// complexity, Part G).
+/// The sign region of a part: negative, zero or positive.
+fn region(p: (End, End)) -> usize {
+    if p.1 < Fin(0) {
+        0
+    } else if p.0 > Fin(0) {
+        2
+    } else {
+        1
+    }
+}
+
+/// The parts split at zero, grouped by sign region.
+fn regions(parts: &[(End, End)]) -> [Vec<(End, End)>; 3] {
+    let mut out: [Vec<(End, End)>; 3] = Default::default();
+    for p in IntervalSet::from_pieces(parts.to_vec()).sign_parts() {
+        out[region(p)].push(p);
+    }
+    out
+}
+
+/// The image of each pair of parts under `f`, joined, with work linear in the operands and no
+/// constant bound. The operand with fewer parts is first capped to `ceil((k + m) / k)` pieces
+/// for `k >= m` parts, so the pairs are at most `k + m`; and each sign region of the image is
+/// capped to the most pieces either operand has in one region, so no chain of operators
+/// multiplies piece counts (the rule of low complexity, Part G). With one operand of one
+/// piece, nothing is merged before the image is taken.
 fn map2(
     a: &[(End, End)],
     b: &[(End, End)],
     f: impl Fn((End, End), (End, End)) -> Vec<(End, End)>,
 ) -> IntervalSet {
-    let bounded = |parts: &[(End, End)]| {
-        if parts.len() > 2 * PIECE_LIMIT {
-            IntervalSet::from_pieces(parts.to_vec())
-                .cap(PIECE_LIMIT)
-                .sign_parts()
-        } else {
-            parts.to_vec()
-        }
+    let (ra, rb) = (regions(a), regions(b));
+    let most = ra.iter().chain(&rb).map(Vec::len).max().unwrap_or(0);
+    let shrink = |r: &[Vec<(End, End)>; 3], big: usize, small: usize| {
+        let c = (big + small).div_ceil(big.max(1));
+        IntervalSet::from_pieces(r.concat()).cap(c).sign_parts()
     };
-    let (a, b) = (bounded(a), bounded(b));
+    let (na, nb) = (a.len(), b.len());
+    let (pa, pb) = if na >= nb {
+        (ra.concat(), shrink(&rb, na, nb))
+    } else {
+        (shrink(&ra, nb, na), rb.concat())
+    };
+    let image = IntervalSet::from_pieces(
+        pa.iter()
+            .flat_map(|&p| pb.iter().flat_map(|&q| f(p, q)).collect::<Vec<_>>())
+            .collect(),
+    );
     IntervalSet::from_pieces(
-        a.iter()
-            .flat_map(|&p| b.iter().flat_map(|&q| f(p, q)).collect::<Vec<_>>())
+        regions(image.pieces())
+            .iter()
+            .flat_map(|ps| {
+                let capped = IntervalSet::from_pieces(ps.clone()).cap(most.max(1));
+                capped.pieces().to_vec()
+            })
             .collect(),
     )
-    .cap(PIECE_LIMIT)
 }
 
 /// The real quotient `z / y` at two endpoints, rounded outward in `dir`.

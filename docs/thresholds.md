@@ -24,8 +24,8 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `SHOWN` 12 | check/mod.rs | removed (1): the failed combinations after 12 were counted, not shown |
 | `DEPTH` 16 | check/mod.rs | removed (2): a derivation was cut after 16 steps |
 | diagram budget 4096, walk 65536 | zed-kernel types/bdd.rs, empty.rs | a union or intersection keeps its operands; a part is not shown empty |
-| `PIECE_LIMIT` 8 | store/interval.rs | removed from the widening (3); still caps an arithmetic image or preimage |
-| `FINITE_SET_LIMIT` 64 | store/lattice.rs | removed from the widening (3); still caps the integers a reduction lists |
+| `PIECE_LIMIT` 8 | store/interval.rs | removed (3, 3c): an image or preimage with more pieces was merged and marked necessary |
+| `FINITE_SET_LIMIT` 64 | store/lattice.rs | removed (3c): an interval or type with more members was not listed |
 | `WIDENING_DELAY` 3 | store/iterate.rs | removed (3): which changes of a loop head were joins and which widenings |
 | `HEAD_ITERATIONS` 64 | store/iterate.rs | removed (3): a component was set to the top |
 | `NARROWING_ROUNDS` 64 | store/iterate.rs | removed (3): phase 2 stopped with the values it had |
@@ -178,8 +178,62 @@ most once per landmark under its fixpoint: 3L + 1 evaluations for L landmarks
 (`m0_05_widening_and_iteration::scaling::a_head_stops_at_most_once_per_landmark`, L = 1 to
 128). Mutants: narrowing that takes the meet runs forever (the endless-descent test),
 widening that ignores the landmarks fails 2 tests, and a congruence narrowing that takes the
-meet fails 1. `PIECE_LIMIT` and `FINITE_SET_LIMIT` remain in arithmetic images, preimages
-and the reduction's listing; 3c replaces them.
+meet fails 1. `PIECE_LIMIT` and `FINITE_SET_LIMIT` remained in arithmetic images, preimages
+and the reduction's listing; 3c removed them.
+
+**3c, pieces and listings: done.** No constant bounds the pieces of a set or the members a
+reduction lists. Each former use is bounded by its own inputs instead.
+
+- *Forward revision* (`revision::map2`). For operands of k ≥ m sign parts, the one with
+  fewer is capped to ⌈(k + m)/k⌉ pieces, so at most k + m pairs are taken, and each sign
+  region of the image (below 0, holding 0, above 0) is capped to the most pieces either
+  operand has in one region. A chain of operators therefore never grows piece counts, and
+  the work is linear in the operands. Candidates, measured on 2000 random pairs of 1 to 6
+  pieces (mean members of the image; exact is the join of every pair's image) and on cost
+  at k = 64 to 1024 pieces:
+
+  | Rule | members of `+` | members of `*` | cost, 64 → 1024 pieces | score | reason |
+  |---|---|---|---|---|---|
+  | linear (chosen) | 52.0 | 782.9 | 52 µs → 856 µs, linear | 9 | no constant; chain never grows; within 4% / 8% of exact |
+  | hull of each region | 53.4 | 826.9 | 20 µs → 386 µs | 7 | simpler, but loses holes the linear rule keeps |
+  | every pair, region cap | 50.6 | 730.8 | 0.6 ms → 155 ms, quadratic | 3 | best precision, quadratic cost |
+  | landmark holes | not run | | | 3 | needs landmarks in the arithmetic; loses holes a test observes (`{0, 10} · 2` against `== 14`) |
+  | cap of 8 (old) | | | | 1 | a constant |
+  | exact | 50.3 | 725.9 | grows as 8^k along a chain | 0 | a chain of k operators has up to 8^k pieces |
+
+- *Preimages.* The cap on every input's box is gone; the forward check that a box meets the
+  demand stays. `x mod c` lists the first and last periods its operand's interval meets
+  exactly and the periods between as one piece: at most 2p + 1 pieces for p pieces of
+  remainders, exact when there are at most two periods. A small domain is then enumerated
+  as before.
+- *Reduction listings* (`product.rs`). The type is narrowed to an interval's members only
+  when they number at most two a piece, so the list is no longer than the interval; a type's
+  own integer literals are filtered by the interval at any count, since the type already
+  writes them; and `Type::listed` lists a type's values only where a tuple's rows are no
+  more than its components' values (`Type::values` without a cap would multiply them).
+  The enumeration's kept values are no longer capped, since they were already listed.
+
+Tests: `l01_24_refinement_lattices::scaling` (every result of six operators is in the image,
+each region keeps to the operands' largest region, a one-piece operand gives the join of
+the pieces' images whenever that fits, a chain of `+` is linear in its length);
+`l01_25_preimage_catalog::random::a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between`
+(against every point, with 2p + 1 checked where the result stays necessary). Mutant: without
+the region cap the chain test fails.
+
+**Every rule that runs until nothing changes moves one way.** A loop with no bound on its
+rounds ends only if each round moves the state in one direction of an order and that order
+has no infinite chain in the states the loop can reach. Each such loop in the store:
+
+| Loop | Direction | Why it cannot go the other way | Why its chains are finite |
+|---|---|---|---|
+| phase 1 (`iterate::Walk::stabilize`) | up | each cell is joined with its projection, then widened | widening moves endpoints only into K, the first value's endpoints and the landmarks |
+| phase 2 (`iterate::narrow`) | down | each cell is narrowed by its meet with its projection, so a projection that is not monotone (the caps of forward revision) still cannot raise it | narrowing moves endpoints only to old endpoints or landmarks, and an infinite end takes a bound once |
+| reduction (`Scope::reduce`, `Scope::bind`) | down | every write is `Entry::meet` | the class, finite set, literals and enumeration change finitely often; the projection runs again only after one of them changed, and its hulls end at members of every class |
+| `callee` (`preimage.rs`) | to older scopes | each binding is looked up in the scope it was made in, built before it | scopes are finite `Rc` chains |
+
+Phase 1, phase 2 and the reduction now assert their direction in test builds
+(`debug_assert!` in `iterate.rs` and `product.rs`), so a future write that is not a join or
+a meet fails in every test that reaches it.
 
 ### 4. Presburger relations (replaces VARIABLES, ATOMS, INTERMEDIATE, KEPT_CONJUNCTIONS)
 

@@ -123,6 +123,7 @@ impl<L: Lattice> Walk<L> {
         if value == self.cells[v] {
             return;
         }
+        debug_assert!(self.cells[v].leq(&value), "phase 1 fell at cell {v}");
         self.cells[v] = value;
         for i in 0..self.succ[v].len() {
             let mut c = self.inner[self.succ[v][i]];
@@ -173,6 +174,10 @@ pub fn narrow<L: Lattice>(eq: &impl Equations<L>, cells: &mut Vec<L>) -> u32 {
         let next: Vec<L> = (0..cells.len())
             .map(|v| cells[v].narrow(&cells[v].meet(&eq.eval(v, cells)), &marks))
             .collect();
+        debug_assert!(
+            next.iter().zip(cells.iter()).all(|(n, c)| n.leq(c)),
+            "phase 2 rose"
+        );
         if next == *cells {
             return round;
         }
