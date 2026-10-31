@@ -1,11 +1,11 @@
-//! The documentation's fences, copied from the spec into `zed/fences/` by `sync.py` (step
-//! L1.7), and the hand-written fixtures of their commented ✗ variants.
+//! The documentation's fences, copied from the spec into `zed/fences/` by
+//! `tools/bin/sync.dart` (step L1.7), and the hand-written fixtures of their commented ✗ variants.
 
 use std::path::PathBuf;
 
 use zedc::fence;
 
-/// A fence of DESIGN.md or EXAMPLES.md, with what `sync.py` recorded about it.
+/// A fence of DESIGN.md or EXAMPLES.md, with what `tools/bin/sync.dart` recorded about it.
 #[derive(Clone, Debug)]
 pub struct DocFence {
     /// The document and line of its ```` ```zed ````: `DESIGN.md:196`.

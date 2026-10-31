@@ -213,10 +213,16 @@ about 85 s in a debug build, with `zed-kernel` built at opt-level 2.
 - Language tests: `tests/steps/<step>/`, all in one test binary. Unit tests of internal
   functions: `#[cfg(test)]` beside the code.
 - Fences: CI must not read the spec repository (the author's instruction, 2026-10-29).
-  `zed/fences/sync.py`, run by hand, copies the fences into `zed/fences/design.md` and
-  `examples.md`, each under a header with its source line and layer; `sync.py --check` exits 1
-  when a copy is stale, and the step test `the_copies_match_the_spec_where_it_is_present`
+  `tools/bin/sync.dart`, run by hand, copies the fences into `zed/fences/design.md` and
+  `examples.md`, each under a header with its source line and layer; `sync.dart --check` exits
+  1 when a copy is stale, and the step test `the_copies_match_the_spec_where_it_is_present`
   compares the texts where `../zed` exists (it passes without checking in CI).
+- No Python (the author's instruction, 2026-10-31). The helper commands are the Dart package
+  `tools/` (`tools/bin/{sync,audit,progress,sizes,unicode_tables}.dart`), the spec's grammar
+  tools are the Dart package `zed/tools/grammar` of the spec repository, and the corpus
+  reference scripts are `zed/corpus/ref/NN.dart`; CI installs Dart for `refcheck.sh`. Each
+  printed the same output as the Python it replaced on every committed input. Step rows and
+  notes above that name a `.py` file record what was built at the time.
 - The reference evaluator computes integers in `i64` and widens to a big integer instead of
   overflowing; a number past 2^20 bits is its `Overflow` error (L1.17). It has no fuel unless
   a caller sets one (docs/thresholds.md 8), at most 20 000 nested calls, and runs on its own thread with a 1 GiB stack.

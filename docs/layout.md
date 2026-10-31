@@ -17,17 +17,19 @@ zed/                  Zed source code
   prelude/            the normative prelude (from step M0.5)
   corpus/             the 31 corpus programs (step M0.4): NN-name.zed with its .in and .out,
                       a folder NN-name/ for the other units of a multi-unit program,
-                      ref/NN.py computing each .out, variants/, controls/, LEDGER.md
+                      ref/NN.dart computing each .out, variants/, controls/, LEDGER.md
   compiler/           the compiler written in Zed (row S); empty until then
   grammar/            the syntactic grammar of sec:grammar and its bracketing cases (step
-                      L1.8), written by fences/sync.py
+                      L1.8), written by tools/bin/sync.dart
   fences/             the spec's `zed` fences (step L1.7): design.md and examples.md, written
-                      by sync.py, and variants/, one fixture per commented ✗ variant
+                      by tools/bin/sync.dart, and variants/, one fixture per commented ✗ variant
 tests/                the step tests (the `zed-tests` crate)
   src/                helpers shared by every step
   steps/main.rs       declares one module per step, in plan order
   steps/<step>/       one folder per step of Part G
 docs/                 documentation of the implementation
+tools/                helper commands, a Dart package: tools/bin/sync.dart, audit.dart,
+                      progress.dart, sizes.dart and unicode_tables.dart
 build/                every generated file; ignored by git
 STATUS.md             progress and handoff notes
 ```

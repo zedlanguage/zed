@@ -664,7 +664,7 @@ The Dart port records the same two numbers for its own files in the Dart section
 ## Code size per file
 
 The bytes of each Rust source and test file, and of the Dart files that port it once they pass.
-`tools/sizes.py` writes this table from `tools/dart_map.txt`, which pairs each Dart file with
+`tools/bin/sizes.dart` writes this table from `tools/dart_map.txt`, which pairs each Dart file with
 the Rust file it ports; a Rust file only partly ported so far shows the Dart written so far.
 
 <!-- sizes -->
@@ -720,7 +720,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/lib.rs` | 835 | | | |
 | `crates/zedc/src/main.rs` | 1,770 | | | |
 | `crates/zedc/src/parse/grammar.rs` | 10,399 | | | |
-| `crates/zedc/src/parse/mod.rs` | 10,459 | | | |
+| `crates/zedc/src/parse/mod.rs` | 10,467 | | | |
 | `crates/zedc/src/query.rs` | 4,746 | | | |
 | `crates/zedc/src/resolve.rs` | 15,634 | | | |
 | `crates/zedc/src/run.rs` | 24,727 | | | |
@@ -746,7 +746,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/zir/mod.rs` | 24,971 | | | |
 | `crates/zedc/src/zir/text.rs` | 36,164 | | | |
 | `tests/src/check.rs` | 5,056 | `test/support/check.dart`<br>`test/support/check_test.dart` | 4,359 | 0.86 |
-| `tests/src/fences.rs` | 3,325 | | | |
+| `tests/src/fences.rs` | 3,349 | | | |
 | `tests/src/instances.rs` | 5,466 | `test/support/instances.dart`<br>`test/support/instances_test.dart` | 4,397 | 0.80 |
 | `tests/src/kernel.rs` | 10,041 | `test/support/kernel.dart` | 7,960 | 0.79 |
 | `tests/src/lib.rs` | 2,590 | `test/support/support.dart`<br>`test/support/support_test.dart` | 3,467 | 1.34 |
@@ -770,13 +770,13 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_06_lexer_tokens/mod.rs` | 198 | | | |
 | `tests/steps/l01_06_lexer_tokens/program.rs` | 2,380 | | | |
 | `tests/steps/l01_06_lexer_tokens/words.rs` | 3,054 | | | |
-| `tests/steps/l01_07_fences/copies.rs` | 4,073 | | | |
+| `tests/steps/l01_07_fences/copies.rs` | 4,090 | | | |
 | `tests/steps/l01_07_fences/extractor.rs` | 1,624 | | | |
-| `tests/steps/l01_07_fences/mod.rs` | 275 | | | |
-| `tests/steps/l01_08_parser/cases.rs` | 4,059 | | | |
+| `tests/steps/l01_07_fences/mod.rs` | 287 | | | |
+| `tests/steps/l01_08_parser/cases.rs` | 4,060 | | | |
 | `tests/steps/l01_08_parser/errors.rs` | 969 | | | |
 | `tests/steps/l01_08_parser/mod.rs` | 214 | | | |
-| `tests/steps/l01_08_parser/rings.rs` | 1,697 | | | |
+| `tests/steps/l01_08_parser/rings.rs` | 1,713 | | | |
 | `tests/steps/l01_09_postfix_chains/calls.rs` | 2,767 | | | |
 | `tests/steps/l01_09_postfix_chains/chains.rs` | 2,422 | | | |
 | `tests/steps/l01_09_postfix_chains/fences.rs` | 1,560 | | | |
@@ -944,7 +944,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_07_canonicalization/mod.rs` | 1,083 | `test/steps/m0_07_canonicalization/harness.dart` | 793 | 0.73 |
 | `tests/steps/m0_07_canonicalization/rules.rs` | 6,095 | `test/steps/m0_07_canonicalization/rules_test.dart` | 5,713 | 0.94 |
 | `tests/steps/m0_07_canonicalization/scaling.rs` | 1,973 | `test/steps/m0_07_canonicalization/scaling_test.dart` | 1,525 | 0.77 |
-| `tests/steps/m0_08_zed0_checklist/mod.rs` | 2,069 | `test/steps/m0_08_zed0_checklist/checklist_test.dart` | 1,786 | 0.86 |
+| `tests/steps/m0_08_zed0_checklist/mod.rs` | 2,068 | `test/steps/m0_08_zed0_checklist/checklist_test.dart` | 1,785 | 0.86 |
 | `tests/steps/m0_09_kernel_evaluator/mod.rs` | 26,083 | `test/steps/m0_09_kernel_evaluator/kernel_evaluator_test.dart` | 20,101 | 0.77 |
 | `tests/steps/m0_09_kernel_evaluator/scaling.rs` | 11,009 | `test/steps/m0_09_kernel_evaluator/scaling_test.dart` | 9,446 | 0.86 |
 | `tests/steps/m0_10_finite_model_harness/derived.rs` | 3,184 | `test/steps/m0_10_finite_model_harness/derived_test.dart` | 2,836 | 0.89 |
@@ -962,8 +962,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 892 | 0.55 |
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
-| **all 292 Rust files** | **2,228,697** | | | |
-| **the Rust files ported so far** | **640,866** | | **539,339** | **0.84** |
+| **all 292 Rust files** | **2,228,774** | | | |
+| **the Rust files ported so far** | **640,865** | | **539,338** | **0.84** |
 <!-- /sizes -->
 
 ## Ease of each step in each language

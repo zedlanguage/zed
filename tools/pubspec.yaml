@@ -1,0 +1,14 @@
+name: zed_tools
+description: Hand-run tools of the Zed implementation, which CI does not run.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  zed_grammar:
+    path: ../../zed/tools/grammar
+
+dev_dependencies:
+  lints: ^6.0.0

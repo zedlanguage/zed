@@ -11,13 +11,14 @@ freezes this list against the compiler's design and inserts a step for each gap 
 
 ## The audit
 
-`python3 -B audit.py <spec>/tools/grammar ../corpus/31-typechecker.zed --checklist ZED0.md`
-(run by hand, since CI does not read the spec repository; last run at spec commit 17bd42f,
-exit status 0, 91 grammar alternatives and 13 words needed, none missing). An alternative
-is needed when program 31's units stop parsing, or parse to a different tree, without it, so
-the list is exact for the grammar of DESIGN.md sec:grammar. `Rule#i` is alternative `i`
-(from 0) of the rule, in the grammar's order. The words are those `layer.py -v` reports.
-The indices follow the grammar: after a grammar change, rerun the audit and update the list.
+`dart ../../tools/bin/audit.dart ../corpus/31-typechecker.zed --checklist ZED0.md`
+(run by hand, since CI does not read the spec repository, which must be beside this one;
+last run at spec commit 17bd42f, exit status 0, 91 grammar alternatives and 13 words needed,
+none missing). An alternative is needed when program 31's units stop parsing, or parse to a
+different tree, without it, so the list is exact for the grammar of DESIGN.md sec:grammar.
+`Rule#i` is alternative `i` (from 0) of the rule, in the grammar's order. The words are
+those `layer.dart -v` reports. The indices follow the grammar: after a grammar change, rerun
+the audit and update the list.
 
 Negative controls: with the entry for alternative 0 of Loop deleted from this file, the audit
 exits 1 and names it; corpus program 17 (a stream program, label L7) audits to a word at L7,

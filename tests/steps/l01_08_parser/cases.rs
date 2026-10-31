@@ -105,7 +105,7 @@ fn the_copies_match_the_spec_where_it_is_present() {
         }
     }
     let read = |f: &str| std::fs::read_to_string(grammar_dir().join(f)).unwrap();
-    let stale = "zed/grammar is out of date: run zed/fences/sync.py";
+    let stale = "zed/grammar is out of date: run tools/bin/sync.dart";
     assert_eq!(read("syntax.peg"), pegs[1], "{stale}");
     assert_eq!(read("notation.peg"), pegs[2], "{stale}");
     let cases = std::fs::read_to_string(spec.join("tools/grammar/cases.txt")).unwrap();

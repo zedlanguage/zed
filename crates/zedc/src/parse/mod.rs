@@ -3,7 +3,7 @@
 //! The parser runs that grammar itself, copied into `zed/grammar/`, as a packrat parser: each
 //! rule tries its alternatives in order and memoizes its result at each token. So the
 //! precedence ladder is the grammar's, rung for rung, and its trees are the trees
-//! `tools/grammar/check.py` builds. A parse is at a ring: only the alternatives of that layer
+//! `tools/grammar/lib/check.dart` builds. A parse is at a ring: only the alternatives of that layer
 //! and below are tried. Each node records its alternative, so a node of a later layer than the
 //! program's is found later, by the elaborator, not here.
 //!
@@ -207,7 +207,7 @@ impl Parser<'_> {
             kids.push(node);
             return Some(end);
         }
-        // A left-recursive call fails, as in check.py; the grammar has none.
+        // A left-recursive call fails, as in check.dart; the grammar has none.
         self.memo.insert(key, None);
         let g = self.g;
         let mut res = None;

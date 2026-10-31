@@ -2,19 +2,19 @@
 
 The 31 programs of DESIGN.md line 1559, one file each (`NN-name.zed`), with
 inputs (`NN-name.in`), expected outputs (`NN-name.out`) computed by
-`ref/NN.py`, extra units in `NN-name/`, other spellings in `variants/`, and
+`ref/NN.dart`, extra units in `NN-name/`, other spellings in `variants/`, and
 checker controls in `controls/`. Each program's first line is its label,
 `// layer Lk`; its header comment says which mechanism it tests and how a
 wrong mechanism changes its output.
 
-Checks, all run from this directory:
+Checks, all run from this directory, with `<spec>` the spec repository:
 
-- `python3 -B ring.py FILE...`: the lowest ring at which a file parses, with
+- `dart <spec>/tools/grammar/bin/ring.dart FILE...`: the lowest ring at which a file parses, with
   the grammar fences read live from DESIGN.md of the spec repository.
-- `python3 -B layer.py [-v] PROGRAM...`: ring, table layer (the highest word of
+- `dart <spec>/tools/grammar/bin/layer.dart [-v] PROGRAM...`: ring, table layer (the highest word of
   the table "Defined words by layer" the program uses), label, and agreement;
   exit status 1 on any disagreement or parse failure.
-- `./refcheck.sh`: runs every `ref/NN.py` on its `.in` and compares with the
+- `./refcheck.sh`: runs every `ref/NN.dart` on its `.in` and compares with the
   `.out` (`--write` regenerates the `.out` files).
 
 Import resolution: for a program with units, the package root is the directory
@@ -23,10 +23,10 @@ Import resolution: for a program with units, the package root is the directory
 
 ## Table
 
-"layer.py" gives ring / table layer (word) / enabled. "1561" is the layer
+"layer" gives ring / table layer (word) / enabled. "1561" is the layer
 DESIGN.md line 1561 assigns. Every label equals the line 1561 layer.
 
-| # | file | mechanism (line 1559) | label | layer.py | 1561 |
+| # | file | mechanism (line 1559) | label | layer | 1561 |
 |---|---|---|---|---|---|
 | 1 | 01-word-count.zed | word count | L4 | L3 / L4 (group) / L4 | L4 |
 | 2 | 02-histogram.zed | scatter and filter histograms converge | L4 | L3 / L4 (group) / L4 | L4 |
@@ -76,7 +76,7 @@ core", reading the core as L1 to L7 (line 1501: "L1–L7 build the core").
 - **14 and 15** are labeled L7, while ring and table give L6. Both need only
   L6 syntax and words to run; what puts them at L7 is the mechanism they test,
   incremental reuse (step L7.6), which is a property of the plan and has no
-  word in the source. layer.py flags both ("label above ring and table"). The
+  word in the source. layer.dart flags both ("label above ring and table"). The
   label follows line 1561; the mechanical rule alone would say L6.
 - **6 (method)**: line 1559 says program 6 carries "the remap and the stdlib
   method", and line 1561 enables the extra spellings at L8. The remap is L8, but
@@ -187,7 +187,7 @@ so a different decision changes the named `.out` files.
     how its imports resolve; single-unit programs import nothing, since the
     prelude needs no import.
 
-## Known limits of layer.py
+## Known limits of layer.dart
 
 - `.fold` on a recursive union (L6) is not told apart from `fold` (L3), and
   `abs` on the number algebras (L14) from `abs` on scalars. No program uses
@@ -195,14 +195,14 @@ so a different decision changes the named `.out` files.
 - Prelude functions that the table does not list (`count`, `sum`, `union`,
   `all`, `lower`, `sqrt`, ...) are not counted.
 - The table layer of 14 and 15 is below their label by design (see above);
-  layer.py cannot see incrementality.
+  layer.dart cannot see incrementality.
 
 ## Controls
 
 `controls/` holds files that must fail and files that must pass:
 
 - `neg-take-at-L4.zed` parses at L1 but uses `take` (L5) under an L4 label:
-  layer.py must say NO. This is the main negative control: the parse ring
+  layer.dart must say NO. This is the main negative control: the parse ring
   alone would accept it.
 - `neg-sort-at-L4.zed`: `sort` (L5) under an L4 label, NO.
 - `neg-gpu-target.zed`: `#gpu` as the argument of `target(...)` counts as the
@@ -214,7 +214,7 @@ so a different decision changes the named `.out` files.
 
 ## Output of the checks
 
-`python3 -B layer.py [0-9][0-9]-*.zed variants/*.zed` (exit status 0):
+`dart <spec>/tools/grammar/bin/layer.dart [0-9][0-9]-*.zed variants/*.zed` (exit status 0):
 
 ```
 program                            units  ring table (word)     label enabled agree
@@ -256,7 +256,7 @@ program                            units  ring table (word)     label enabled ag
 23-join-zoo-remap.zed                  1    L8 L5 (rank)           L8      L8 yes
 ```
 
-`python3 -B layer.py controls/*.zed` (exit status 1, as intended):
+`dart <spec>/tools/grammar/bin/layer.dart controls/*.zed` (exit status 1, as intended):
 
 ```
 program                            units  ring table (word)     label enabled agree
@@ -268,7 +268,7 @@ pos-gpu-atom.zed                       1    L2 L3 (map)            L3      L3 ye
 pos-shadow-scan.zed                    1    L1 L3 (map)            L3      L3 yes
 ```
 
-`python3 -B ring.py [0-9][0-9]-*.zed [0-9][0-9]-*/*.zed variants/*.zed controls/*.zed` (exit status 1, from the parse-error control only):
+`dart <spec>/tools/grammar/bin/ring.dart [0-9][0-9]-*.zed [0-9][0-9]-*/*.zed variants/*.zed controls/*.zed` (exit status 1, from the parse-error control only):
 
 ```
 01-word-count.zed L3

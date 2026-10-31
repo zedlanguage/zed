@@ -102,7 +102,8 @@ fn ellipsis_is_an_elision_only_in_a_fence() {
 }
 
 /// The copies equal the spec's fences, where the spec repository is beside this one (it is not
-/// in CI). Layers are not compared: `sync.py --check` recomputes them with the spec's tools.
+/// in CI). Layers are not compared: `tools/bin/sync.dart --check` recomputes them with the
+/// spec's tools.
 #[test]
 fn the_copies_match_the_spec_where_it_is_present() {
     let spec = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../zed");
@@ -125,7 +126,7 @@ fn the_copies_match_the_spec_where_it_is_present() {
             .collect();
         assert!(
             ours == theirs,
-            "{copy} is out of date: run zed/fences/sync.py"
+            "{copy} is out of date: run tools/bin/sync.dart"
         );
     }
 }

@@ -1,4 +1,4 @@
-<!-- The `zed` fences of the spec's EXAMPLES.md, copied by sync.py: do not edit. -->
+<!-- The `zed` fences of the spec's EXAMPLES.md, copied by tools/bin/sync.dart: do not edit. -->
 
 <!-- EXAMPLES.md:24 layer L3: ring L3, word none, label none -->
 ```zed

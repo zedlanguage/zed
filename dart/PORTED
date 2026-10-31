@@ -1,4 +1,4 @@
-# Steps ported from Rust to Dart, one per line, in the order ported (tools/progress.py).
+# Steps ported from Rust to Dart, one per line, in the order ported (tools/bin/progress.dart).
 M0.1
 M0.9
 M0.10

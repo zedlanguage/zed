@@ -1,5 +1,5 @@
-// Written by tools/unicode_tables.py from the Unicode 18.0.0 character database. Do not
-// edit; run the tool again for a new version of Unicode.
+// Written by tools/bin/unicode_tables.dart from the Unicode 18.0.0 character database. Do
+// not edit; run the tool again for a new version of Unicode.
 
 /// The version of Unicode the tables are of.
 const unicodeVersion = '18.0.0';

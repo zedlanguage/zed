@@ -1,5 +1,5 @@
 /// Step M0.8: the Zed₀ checklist (`zed/compiler/ZED0.md`). The audit against corpus program 31
-/// needs the spec's grammar tools and runs by hand (`zed/compiler/audit.py`); this test keeps
+/// needs the spec's grammar tools and runs by hand (`tools/bin/audit.dart`); this test keeps
 /// the recorded result consistent: the layer the checklist names as completing Zed₀ is the
 /// highest layer of any item in it, and program 31 is labeled at that layer.
 library;

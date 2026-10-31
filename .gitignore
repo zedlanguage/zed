@@ -18,10 +18,6 @@ perf.data
 perf.data.old
 flamegraph.svg
 
-# Python helper scripts.
-__pycache__/
-*.pyc
-
 # Editors and operating systems.
 .idea/
 .vscode/
@@ -33,3 +29,4 @@ __pycache__/
 # Dart.
 /dart/.dart_tool/
 /dart/build/
+/tools/.dart_tool/
