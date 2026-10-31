@@ -87,7 +87,7 @@ Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason)
 | Z3 | `zir/canon.rs` restarts from the top after every rewrite | O(k²) | fixed: every rule acts on one edge or one pattern alone and the binder rule's hint is removed by the hints rule, so `canonicalize` normalizes each edge and each pattern in one pass; `step` stays for the termination tests; `l01_32_canonical_zir::fuzz::the_one_pass_normal_form_is_the_one_the_steps_reach` (300 random graphs). The cost within one edge is F5's facet sort |
 | Z4 | `memory.rs` planner: `consumes` and `Uses::of` recomputed down nested branches | O(k²·d²) | open |
 | Z5 | planner finds an edge's node by `rposition` | O(n²) per region | open |
-| Z6 | `lower.rs` `lookup` scans the whole scope | O(N·S) | open |
+| Z6 | `lower.rs` `lookup` scans the whole scope | O(N·S) | fixed: `Lower` keeps the positions of each name in a map beside the scope, updated as names are bound and unbound, so `lookup` takes one map read. A chain of n `let`s, each reading the outermost name, debug build: 96 ms, 0.24, 0.79 and 2.75 s at n = 2000 to 16000 before, 75, 121, 201 and 434 ms after. Test `l01_33_lowering::scaling::reading_a_name_bound_far_out_scales`, ratio 38 before, passes after. Swapping in a closure's scope for an inline call rebuilds the map, at the cost of the copy of that scope already made |
 | Z7 | captures not deduplicated; merged by `contains`/`position` | O(raw·unique) | open |
 | Z8 | `tables.rs` constants and call targets by linear search | O(C²), O(applies·lambdas) | open |
 | Z9 | `tables.rs` `visit` clones each node with its regions | O(N·depth) | open |

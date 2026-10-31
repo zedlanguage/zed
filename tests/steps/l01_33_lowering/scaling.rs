@@ -108,3 +108,34 @@ fn lowering_a_deep_nest_scales() {
         .join()
         .unwrap();
 }
+
+/// `let x0 = 1 in let x1 = x0 + 1 in … in x{n-1}`: each binding reads the name bound
+/// farthest out.
+pub(crate) fn far(n: usize) -> Term {
+    use zed_kernel::Prim;
+    use zed_kernel::term::build::prim;
+    let mut t = var(&format!("x{}", n - 1));
+    for i in (1..n).rev() {
+        t = let_(
+            &format!("x{i}"),
+            prim(Prim::Add, vec![var("x0"), lit(i as i64)]),
+            t,
+        );
+    }
+    let_("x0", lit(1), t)
+}
+
+/// A name is found by a map, not by searching the scope (COMPLEXITY.md Z6).
+#[test]
+fn reading_a_name_bound_far_out_scales() {
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(|| {
+            scaling::check("lowering lets that read the outermost name", 2000, |n| {
+                lower(&far(n)).unwrap();
+            })
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

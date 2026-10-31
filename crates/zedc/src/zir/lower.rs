@@ -125,6 +125,8 @@ struct Built {
 struct Lower {
     frames: Vec<Frame>,
     scope: Vec<(Arc<str>, Val)>,
+    /// The positions in `scope` of each name, innermost last.
+    names: HashMap<Arc<str>, Vec<usize>>,
     fresh: usize,
     /// How often each name occurs in the term, binders of the same name counted together.
     uses: HashMap<Arc<str>, usize>,
@@ -142,6 +144,7 @@ pub fn lower(t: &Term) -> Result<Region, String> {
     let mut l = Lower {
         frames: vec![Frame::new(RegionKind::Function, Vec::new())],
         scope: Vec::new(),
+        names: HashMap::new(),
         fresh: 0,
         uses,
     };
@@ -181,9 +184,38 @@ impl Lower {
         format!("\0lower{}", self.fresh).into()
     }
 
+    fn bind(&mut self, x: Arc<str>, v: Val) {
+        self.names
+            .entry(x.clone())
+            .or_default()
+            .push(self.scope.len());
+        self.scope.push((x, v));
+    }
+
+    /// Removes the bindings after the first `mark`.
+    fn unbind(&mut self, mark: usize) {
+        while self.scope.len() > mark {
+            let (x, _) = self.scope.pop().expect("a binding");
+            let at = self.names.get_mut(&x).expect("a bound name");
+            at.pop();
+            if at.is_empty() {
+                self.names.remove(&x);
+            }
+        }
+    }
+
+    /// Replaces the scope by `env`, returning the old one.
+    fn swap_scope(&mut self, env: Vec<(Arc<str>, Val)>) -> Vec<(Arc<str>, Val)> {
+        self.names.clear();
+        for (i, (x, _)) in env.iter().enumerate() {
+            self.names.entry(x.clone()).or_default().push(i);
+        }
+        std::mem::replace(&mut self.scope, env)
+    }
+
     fn lookup(&self, x: &str) -> Result<Val, String> {
-        match self.scope.iter().rev().find(|(n, _)| &**n == x) {
-            Some((_, v)) => Ok(v.clone()),
+        match self.names.get(x).and_then(|at| at.last()) {
+            Some(&i) => Ok(self.scope[i].1.clone()),
             None => Err(format!(
                 "`{x}` is not bound, and a term lowers only when every name it reads is bound \
                  in it or is a prelude word"
@@ -344,10 +376,10 @@ impl Lower {
         let depth = self.top();
         let mark = self.scope.len();
         for (i, p) in params.iter().enumerate() {
-            self.scope.push((p.clone(), Val::Src(Src::Arg(i), depth)));
+            self.bind(p.clone(), Val::Src(Src::Arg(i), depth));
         }
         let out = self.value(body);
-        self.scope.truncate(mark);
+        self.unbind(mark);
         let mut f = self.frames.pop().expect("the region's frame");
         f.region.results.push(out?);
         for p in ports {
@@ -516,9 +548,10 @@ impl Lower {
                         });
                     }
                 }
-                self.scope.push((x.clone(), v));
+                let mark = self.scope.len();
+                self.bind(x.clone(), v);
                 let out = self.term(body);
-                self.scope.pop();
+                self.unbind(mark);
                 out?
             }
             Term::Lam(ps, body) => {
@@ -554,9 +587,9 @@ impl Lower {
                                     .iter()
                                     .map(|a| self.term(a))
                                     .collect::<Result<Vec<_>, _>>()?;
-                                let saved = std::mem::replace(&mut self.scope, env.clone());
+                                let saved = self.swap_scope(env.clone());
                                 let out = self.bound(&c.params, vs, body);
-                                self.scope = saved;
+                                self.swap_scope(saved);
                                 return out;
                             }
                             Call::Node { fun, at } => (fun.clone(), *at),
@@ -734,9 +767,11 @@ impl Lower {
     /// `body` with `params` bound to `vals`, lowered in the current region.
     fn bound(&mut self, params: &[Arc<str>], vals: Vec<Val>, body: &Term) -> Result<Val, String> {
         let mark = self.scope.len();
-        self.scope.extend(params.iter().cloned().zip(vals));
+        for (p, v) in params.iter().cloned().zip(vals) {
+            self.bind(p, v);
+        }
         let out = self.term(body);
-        self.scope.truncate(mark);
+        self.unbind(mark);
         out
     }
 }
