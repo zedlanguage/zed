@@ -95,3 +95,7 @@ dart/test/steps/l01_05_lexer_strings/scaling_test.dart tests/steps/l01_05_lexer_
 dart/test/support/tokens.dart tests/src/tokens.rs
 dart/test/steps/l01_06_lexer_tokens/program_test.dart tests/steps/l01_06_lexer_tokens/program.rs
 dart/test/steps/l01_06_lexer_tokens/words_test.dart tests/steps/l01_06_lexer_tokens/words.rs
+dart/lib/fence.dart crates/zedc/src/fence.rs
+dart/test/support/fences.dart tests/src/fences.rs
+dart/test/steps/l01_07_fences/extractor_test.dart tests/steps/l01_07_fences/extractor.rs
+dart/test/steps/l01_07_fences/copies_test.dart tests/steps/l01_07_fences/copies.rs
