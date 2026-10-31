@@ -144,14 +144,14 @@ in docs/layout.md.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 887 passed and 0 failed (25 unit tests of
-`zed-kernel`, 12 of `zed-tests`, 24 of `zedc`, 6 of `zed-rt`, 820 step tests: 7 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 13 in `l01_13_formatter`, 22 in `l01_14_name_resolution`, 20 in `l01_15_kernel_terms`, 35 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 20 in `l01_20_provenance`, 22 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 29 in `l01_23_subtyping`, 24 in `l01_24_refinement_lattices`, 29 in `l01_25_preimage_catalog`, 37 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 15 in `l01_28_staging`, 17 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 12 in `l01_32_canonical_zir`, 28 in `l01_33_lowering`, 20 in `l01_34_memory`, 4 in `l01_35_mlir_study`, 18 in `l01_36_cranelift`, 7 in `l01_37_oracle`, 15 in `l01_38_presburger`, 21 in `l01_39_reduced_product`, 3 in `m0_01_scaffolding`, 27 in
+Last full run: `cargo test --workspace` gave 914 passed and 0 failed (23 unit tests of
+`zed-kernel`, 13 of `zed-tests`, 24 of `zedc`, 6 of `zed-rt`, 848 step tests: 7 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 10 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 13 in `l01_13_formatter`, 22 in `l01_14_name_resolution`, 20 in `l01_15_kernel_terms`, 35 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 20 in `l01_20_provenance`, 22 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 29 in `l01_23_subtyping`, 26 in `l01_24_refinement_lattices`, 36 in `l01_25_preimage_catalog`, 41 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 18 in `l01_28_staging`, 19 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 12 in `l01_32_canonical_zir`, 28 in `l01_33_lowering`, 20 in `l01_34_memory`, 4 in `l01_35_mlir_study`, 18 in `l01_36_cranelift`, 7 in `l01_37_oracle`, 16 in `l01_38_presburger`, 25 in `l01_39_reduced_product`, 3 in `m0_01_scaffolding`, 32 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 18 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 41 in
 `m0_09_kernel_evaluator`, 90 in `m0_10_finite_model_harness`, 13 in
 `m0_11_prelude_axioms_and_limits`). `cargo fmt --all --check` and
 `cargo clippy --workspace --all-targets -- -D warnings` are clean. The steps binary takes
-about 48 s in a debug build, with `zed-kernel` built at opt-level 2.
+about 64 s in a debug build, with `zed-kernel` built at opt-level 2.
 
 ## Steps
 
@@ -230,6 +230,10 @@ about 48 s in a debug build, with `zed-kernel` built at opt-level 2.
   nothing, and the corpus programs are corrected to fit the language rather than the reverse.
   When the spec is unclear, I choose, record the choice in DESIGN.md and here, and continue.
 
+- `@exact` (docs/thresholds.md, replacement 8a): an opt-in for the member-by-member answer
+  on ranges. `Scope::exact` projects each written integer constraint whose form `ends` onto
+  its open names by branch and prune (`preimage::exact_preimage`), again only when an open
+  name's interval or class changed. Off by default; the annotation's syntax lands with L15.
 - Enumeration (docs/thresholds.md, replacement 8): only sets the source lists are
   enumerated, each evaluation admitted by `stage::ends` and run with no fuel; ranges are left
   to the interval, congruence and relation domains. The M0.10 harness's instances (integers

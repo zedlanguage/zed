@@ -409,7 +409,8 @@ What is lost: a range is no longer decided member by member. `x * 7 mod 10 == 3`
 with the congruence `1 mod 4`, which still represents the set exactly, and the other arm
 keeps 5. DESIGN L1.39's `isPrime(p)` example, which gave `{2}` over `int[0..=100]`, now
 gives the interval only; a domain that represents primality, or a listed domain, is needed
-to recover it. Integer sets merge adjacent members, so a source list of three or more
+to recover it; `@exact` (replacement 8a) gives the member-by-member answer on request.
+Integer sets merge adjacent members, so a source list of three or more
 consecutive values reaches the preimage catalog as a range and is not enumerated; the
 reduced product reads the finite set, which does not merge them.
 
@@ -419,6 +420,76 @@ reduced product reads the finite set, which does not merge them.
 | Every finite interval, no cap | not built | 3 | ends, but `int32` ranges cost 2^32 evaluations each; the checker's cost would follow the numbers |
 | A cap scaled to the source size | not built | 2 | still a threshold: adding a comment changes the precision |
 | Keep the budgets | the old behavior | 0 | constants whose crossing changes the result |
+
+### 8a. `@exact`: the precise preimage on request — done
+
+Replacement 8 gives up the member-by-member answer on ranges. A few cases need it:
+
+- a later obligation that excludes an interior point of the hull: after
+  `isPrime(p) && p <= 10`, a division by `p - 4` is safe only if 4 is excluded; the hull
+  `int[2..=10]` does not exclude it, and the exact set `{2, 3, 5, 7}` does;
+- an index into a table with holes, where the hull reaches an index with no entry;
+- an arm shown unreachable only by the exact set: `x * x mod 10 == 9 && x mod 10 == 5`;
+- a `match` whose coverage depends on which members remain.
+
+Listing the type is one way to ask for the exact set (replacement 8). `@exact`, a declaration
+annotation like `@exhaustive`, is the other. In its scopes (`Scope::exact`), each written
+constraint whose free names are in scope, whose open names are integers, and whose form
+`ends`, narrows each open name to the projection of the points that meet it, over the
+bounded box of their intervals within their congruence classes (`preimage::exact_preimage`).
+Nothing is enabled by default.
+
+The search is branch and prune. The exact domains run first (catalog, forward check,
+linear relation); if their preimage is exact, the classes narrow it and the search stops.
+Otherwise a stack of boxes starts from the narrowed box. For each box:
+
+1. skip it if every axis is already within the projection found so far: each axis of the
+   projection only grows, so the box can add nothing (residual supports, Bessière and
+   Régin, IJCAI 2001);
+2. at a box of several points, compute its preimage and meet; drop the box if empty; if the
+   preimage is exact, every point meets the demand, so join the box into the projection;
+3. at a single point, evaluate the term with no fuel and join the point if it meets the
+   demand; a point whose evaluation fails stops the search, and the plain preimage is kept;
+4. otherwise split the axis with the widest hull at its midpoint, narrow each half to its
+   class, and push both.
+
+When more than one axis keeps several values, the result is exact only if no point of the
+box fails the demand: a second search, for the complement demand, stops at the first such
+point. An input with no bound is not searched.
+
+Termination: each box is strictly smaller than its parent and a box of one point is not
+split, so the boxes form a binary tree whose leaves are disjoint parts of the root, with
+fewer than twice as many nodes as points. In a scope, a constraint is projected again only
+when the interval or class of one of its open names changed since its last projection
+(`Scope::exactly`); those only shrink, so the rounds end.
+
+Cost: at most twice as many boxes as points, each visit costing the size of the term. Where
+the plain preimage is exact on sub-boxes, only the boxes that the boundary of the solution
+set crosses are split. Measured in a release build:
+
+| Term, domain | n | `@exact` | Every point evaluated |
+|---|---|---|---|
+| `x * x mod 10 == 9`, `0..=n` | 1,024 → 8,192 | 8.0 → 79 ms (linear in n) | — |
+| `x * y mod 7 == 3`, `1..=n` squared | 64 → 256 | 49 → 731 ms (linear in n², the points) | — |
+| `x * y <= n`, `1..=n` squared | 64 → 1,024 | 2.7 → 44 ms (linear in n) | 0.29 → 74.8 s (n²) |
+
+`l01_25_preimage_catalog::scaling::the_exact_search_scales_with_the_number_of_points`
+checks the three at doubling sizes. `l01_25_preimage_catalog::exact` and `random`
+(`run_exact`, against every point of the box run on the interpreter, with and without a
+class) check the result; a mutant that always claims exact and one that keeps the failing
+points each fail both random tests. `l01_39_reduced_product::exact` checks the scope,
+including a narrowing of one name that projects a constraint on another again
+(`m * n mod 10 == 1` with `n * n mod 10 == 9` gives `m` in {3, 7, 13, 17}).
+
+| Candidate | Measured | Score | Reasoning |
+|---|---|---|---|
+| Branch and prune: exact sub-boxes accepted whole, boxes within the projection skipped, classes applied, exactness by a search that stops at the first failing point | the table above | 9 | linear in the points at worst, far less where the domains are exact on parts; no constant |
+| Branch and prune without skipping | not built | 6 | visits again boxes whose values are already known to have a supporting point |
+| Listed types only (replacement 8) | in place | 5 | the author must write the list; ranges stay imprecise |
+| Evaluate every point of the box | the last column above | 4 | always the worst case: 75 s against 44 ms at n = 1,024 |
+
+The surface syntax reaches the store with the annotations (L15, beside `@exhaustive`); the
+store mechanism and its tests are in place now.
 
 ### 9. Type diagrams (replaces the 4096 and 65536 budgets)
 

@@ -14,7 +14,11 @@
 //! - enumeration: a name of type within `int` whose finite set lists its integers keeps only the members at which each written constraint on it holds, the
 //!   constraint's other names static and its form shown to end ([`stage::ends`]); a
 //!   constraint whose form does not show it ends removes nothing. A range is left to the
-//!   interval, congruence and relation reasoning (docs/thresholds.md, replacement 8).
+//!   interval, congruence and relation reasoning (docs/thresholds.md, replacement 8). In a
+//!   scope under `@exact` ([`Scope::exact`]) each written constraint over integer names
+//!   instead narrows its names to the projection of the points of their intervals and classes
+//!   at which it holds ([`exact_preimage`]), and is projected again only when one of those
+//!   intervals or classes has changed since.
 //!
 //! A product is empty when its type is, and a scope with an empty product is bottom: the arm
 //! it describes is unreachable. [`Scope::assume`] narrows a scope by a test and its outcome:
@@ -40,7 +44,7 @@ use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
 use super::interval::{End, IntervalSet};
 use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
-use super::preimage::{Demand, Domains, preimage, relations};
+use super::preimage::{Classes, Demand, Domains, exact_preimage, preimage, relations};
 use super::presburger::{self, Atom, Con, Formula, Lin};
 use super::revision::{self, Op, reduce_congruence};
 use crate::stage;
@@ -424,6 +428,11 @@ pub struct Scope {
     /// projected again only when one of these has changed since
     /// (docs/thresholds.md, replacement 4).
     pub projected: std::collections::HashMap<Formula, Projected>,
+    /// Whether the scope is under `@exact`.
+    pub exact: bool,
+    /// Under `@exact`, the written constraints already projected exactly, each with the
+    /// intervals and classes of its open names at that projection.
+    pub exactly: BTreeMap<Enumerated, Projected>,
 }
 
 /// The intervals and classes of a part's names when it was last projected.
@@ -444,6 +453,16 @@ pub enum Unbind {
 impl Scope {
     /// The scope of `names`, reduced.
     pub fn new(names: impl IntoIterator<Item = (Arc<str>, Product)>) -> Scope {
+        Scope::of(names, false)
+    }
+
+    /// The scope of `names` in a declaration annotated `@exact`, reduced: its written
+    /// constraints narrow their names exactly (DESIGN.md sec:constraints).
+    pub fn exact(names: impl IntoIterator<Item = (Arc<str>, Product)>) -> Scope {
+        Scope::of(names, true)
+    }
+
+    fn of(names: impl IntoIterator<Item = (Arc<str>, Product)>, exact: bool) -> Scope {
         let mut s = Scope {
             names: names.into_iter().collect(),
             relation: Formula::top(),
@@ -451,6 +470,8 @@ impl Scope {
             bottom: false,
             enumerated: BTreeSet::new(),
             projected: std::collections::HashMap::new(),
+            exact,
+            exactly: BTreeMap::new(),
         };
         s.reduce();
         s
@@ -603,6 +624,14 @@ impl Scope {
                         .collect();
                     (k.clone(), at)
                 })
+                .collect(),
+            exact: self.exact,
+            // The open names' intervals differ after a join unless they agree on both sides.
+            exactly: self
+                .exactly
+                .iter()
+                .filter(|(k, v)| other.exactly.get(*k) == Some(*v))
+                .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             names,
         }
@@ -911,6 +940,9 @@ impl Scope {
     /// names only. Each constraint is enumerated once for its static names, and every
     /// evaluation of one call shares one thread.
     fn enumerate(&mut self) {
+        if self.exact {
+            self.enumerate_exactly();
+        }
         let pending: Vec<(Term, Vec<Arc<str>>, Enumerated)> = self
             .written
             .iter()
@@ -926,7 +958,13 @@ impl Scope {
                     .collect();
                 let key = (text.clone(), statics.clone().into_iter().collect());
                 let c = substitute(c, &statics);
-                (open.len() <= 1 && !self.enumerated.contains(&key) && stage::ends(&c))
+                // Under `@exact` a constraint with open names is projected exactly instead.
+                let open_ok = if self.exact {
+                    open.is_empty()
+                } else {
+                    open.len() <= 1
+                };
+                (open_ok && !self.enumerated.contains(&key) && stage::ends(&c))
                     .then_some((c, open, key))
             })
             .collect();
@@ -986,6 +1024,68 @@ impl Scope {
                 _ => continue,
             }
             self.enumerated.insert(key);
+        }
+    }
+}
+
+impl Scope {
+    /// Under `@exact`: each written constraint whose free names are all in scope, with its
+    /// static names substituted and its other names all integers, meets each of those with the
+    /// projection of the points at which it holds; one with no such name is evaluated. A
+    /// constraint is projected again only when an interval or class of its open names has
+    /// changed since its last projection. Each projection only narrows, and each name's
+    /// interval and class change only finitely often, so the rounds of [`Scope::reduce`] end.
+    fn enumerate_exactly(&mut self) {
+        let int = Type::int();
+        let written: Vec<(String, Term, Vec<Arc<str>>)> = self
+            .written
+            .iter()
+            .map(|(t, (c, f))| (t.clone(), c.clone(), f.clone()))
+            .collect();
+        for (text, c, free) in written {
+            if self.bottom || self.names.values().any(Product::is_empty) {
+                return;
+            }
+            if !free.iter().all(|n| self.names.contains_key(n)) {
+                continue;
+            }
+            let statics = self.statics_of(&free);
+            let open: Vec<Arc<str>> = free
+                .iter()
+                .filter(|n| !statics.contains_key(*n))
+                .cloned()
+                .collect();
+            if open.is_empty() || !open.iter().all(|n| self.get(n).ty.element.subtype(&int)) {
+                continue;
+            }
+            let c = substitute(&c, &statics);
+            let key = (text, statics.into_iter().collect());
+            let at: Projected = open
+                .iter()
+                .map(|n| {
+                    let p = self.get(n);
+                    (n.clone(), p.ints().clone(), p.cell.congruence.element)
+                })
+                .collect();
+            if self.exactly.get(&key) == Some(&at) || !stage::ends(&c) {
+                continue;
+            }
+            let dom: Domains = at.iter().map(|(n, x, _)| (n.clone(), x.clone())).collect();
+            let classes: Classes = at.iter().map(|(n, _, k)| (n.clone(), *k)).collect();
+            let r = exact_preimage(&c, &dom, &classes, &Demand::Bool(true));
+            for (n, x) in &r.domains {
+                let p = self.names.get_mut(n).expect("a name in scope");
+                let prem = p.premises();
+                p.meet_ints(x, &prem);
+            }
+            let after: Projected = open
+                .iter()
+                .map(|n| {
+                    let p = self.get(n);
+                    (n.clone(), p.ints().clone(), p.cell.congruence.element)
+                })
+                .collect();
+            self.exactly.insert(key, after);
         }
     }
 }

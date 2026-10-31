@@ -51,6 +51,13 @@
 //! enumerated: the term is run at each point, and the result is the projection of the points
 //! that meet the demand, exact when they form a box. An enumeration that meets a term the
 //! evaluator cannot run removes nothing.
+//!
+//! Under `@exact` ([`exact_preimage`]) a result still not exact over a bounded box is found by
+//! branch and prune (docs/thresholds.md, "`@exact`"): each sub-box is narrowed by the steps
+//! above, and dropped when nothing in it meets the demand, kept whole when every point does,
+//! and otherwise halved on its widest input; a single point is evaluated. A sub-box whose
+//! values on every input are already known to meet the demand at some point is skipped, since
+//! only each input's projection is sought.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -62,9 +69,9 @@ use std::sync::Arc;
 use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, eval, on_stack};
 
 use super::interval::{End, IntervalSet};
-use super::lattice::Landmarks;
+use super::lattice::{Congruence, Landmarks};
 use super::presburger::{self, Con, Formula, Lin, Over, Relation};
-use super::revision::{self, Op, Tonicity};
+use super::revision::{self, Op, Tonicity, reduce_congruence};
 use crate::stage;
 use End::{Fin, NegInf, PosInf};
 
@@ -2111,6 +2118,205 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Res> {
         });
     }
     on_stack(|stack| enumerate_on(stack, term, &axes, demand))
+}
+
+/// The congruence class of each input that has one, under `@exact`; an input not listed may be
+/// any integer.
+pub type Classes = BTreeMap<Arc<str>, Congruence>;
+
+/// The preimage of `demand` under `term` when its declaration is annotated `@exact`
+/// (DESIGN.md sec:constraints): [`preimage`], and where that is not exact, every input is
+/// bounded and the term's form shows that it ends, the projection of the points of the box, in
+/// their inputs' `classes`, that meet the demand. Its cost is that of the points the analysis
+/// cannot decide in bulk, which the annotation accepts; there is no limit on them. The result
+/// is exact when the projections' product holds no point that fails the demand, which a second
+/// search, for such a point, decides. A point the evaluator cannot run leaves the result of
+/// [`preimage`].
+pub fn exact_preimage(
+    term: &Term,
+    inputs: &Domains,
+    classes: &Classes,
+    demand: &Demand,
+) -> Preimage {
+    on_stack(|stack| {
+        let mut p = preimage_in(term, inputs, demand);
+        if p.exact {
+            // Every point of the box meets the demand, so the classes alone narrow it.
+            p.domains = within_classes(&p.domains, classes).unwrap_or_else(|| {
+                (p.domains.keys().map(|k| (k.clone(), IntervalSet::empty()))).collect()
+            });
+            return p;
+        }
+        if !stage::ends(term) {
+            return p;
+        }
+        let Some((domains, exact)) = exact_search(stack, term, &p.domains, classes, demand) else {
+            return p;
+        };
+        Preimage {
+            domains,
+            exact,
+            enumerated: true,
+            stops: p.stops,
+            relation: if exact { None } else { p.relation },
+        }
+    })
+}
+
+/// The projection of the points of `dom` in `classes` meeting `demand`, and whether their box
+/// holds no point that fails it; `None` when an input is unbounded or a point cannot be run.
+fn exact_search(
+    stack: &Stack,
+    term: &Term,
+    dom: &Domains,
+    classes: &Classes,
+    demand: &Demand,
+) -> Option<(Domains, bool)> {
+    let Some(dom) = within_classes(dom, classes) else {
+        let empty = dom
+            .keys()
+            .map(|k| (k.clone(), IntervalSet::empty()))
+            .collect();
+        return Some((empty, true));
+    };
+    if dom
+        .values()
+        .any(|s| !matches!(s.bounds(), Some((Fin(_), Fin(_)))))
+    {
+        return None;
+    }
+    let met = RefCell::new(
+        dom.keys()
+            .map(|k| (k.clone(), IntervalSet::empty()))
+            .collect::<Domains>(),
+    );
+    branch(
+        stack,
+        term,
+        dom,
+        classes,
+        demand,
+        &|b| b.iter().all(|(k, s)| s.is_subset(&met.borrow()[k])),
+        &mut |b| {
+            for (k, s) in b {
+                let mut m = met.borrow_mut();
+                let joined = m[k].join(s);
+                m.insert(k.clone(), joined);
+            }
+            false
+        },
+    )?;
+    let met = met.into_inner();
+    let several = met.values().filter(|s| !is_point(s)).count();
+    if met.values().any(IntervalSet::is_empty) || several <= 1 {
+        return Some((met, true));
+    }
+    let fails = match demand {
+        Demand::Bool(b) => Demand::Bool(!b),
+        Demand::Ints(z) => Demand::Ints(z.complement_in(&IntervalSet::top())),
+    };
+    let found = branch(
+        stack,
+        term,
+        met.clone(),
+        classes,
+        &fails,
+        &|_: &Domains| false,
+        &mut |_: &Domains| true,
+    )?;
+    Some((met, !found))
+}
+
+/// Branch and prune over `root`: each box not `skip`ped is narrowed by [`preimage_in`] and
+/// its inputs' classes, and dropped when empty, given to `all` when every point meets
+/// `demand`, and otherwise halved on its widest input; a single point is evaluated. Every box
+/// is smaller than the one it was split from, so the search ends. `Some(true)` when `all`
+/// stopped it, `None` when a point cannot be run.
+fn branch(
+    stack: &Stack,
+    term: &Term,
+    root: Domains,
+    classes: &Classes,
+    demand: &Demand,
+    skip: &dyn Fn(&Domains) -> bool,
+    all: &mut dyn FnMut(&Domains) -> bool,
+) -> Option<bool> {
+    let mut boxes = vec![root];
+    while let Some(b) = boxes.pop() {
+        if skip(&b) {
+            continue;
+        }
+        let b = if b.values().all(is_point) {
+            b
+        } else {
+            let r = preimage_in(term, &b, demand);
+            let narrowed: Domains = b
+                .iter()
+                .map(|(k, s)| (k.clone(), s.meet(&r.domains[k])))
+                .collect();
+            let Some(n) = within_classes(&narrowed, classes) else {
+                continue;
+            };
+            if r.exact {
+                if all(&n) {
+                    return Some(true);
+                }
+                continue;
+            }
+            n
+        };
+        if b.values().all(is_point) {
+            let mut t = term.clone();
+            for (k, s) in b.iter().rev() {
+                let Some((Fin(v), _)) = s.bounds() else {
+                    unreachable!("a point is finite")
+                };
+                t = Term::Let(k.clone(), Arc::new(Term::Lit(Value::Int(v))), Arc::new(t));
+            }
+            let v = Evaluator::new(World::new()).run_on(stack, &t).ok()?;
+            if demand.holds(&v) && all(&b) {
+                return Some(true);
+            }
+            continue;
+        }
+        let (k, lo, hi) = b
+            .iter()
+            .filter_map(|(k, s)| match s.bounds() {
+                Some((Fin(lo), Fin(hi))) if lo < hi => Some((k, lo, hi)),
+                _ => None,
+            })
+            .max_by_key(|(_, lo, hi)| *hi as i128 - *lo as i128)
+            .expect("a box of more than one point has an input of more than one value");
+        let mid = (lo as i128 + (hi as i128 - lo as i128) / 2) as i64;
+        for half in [
+            IntervalSet::range(Fin(mid + 1), PosInf),
+            IntervalSet::range(NegInf, Fin(mid)),
+        ] {
+            let mut h = b.clone();
+            h.insert(k.clone(), b[k].meet(&half));
+            if let Some(h) = within_classes(&h, classes) {
+                boxes.push(h);
+            }
+        }
+    }
+    Some(false)
+}
+
+/// `dom` with each input's set tightened to its class, or `None` when one is then empty.
+fn within_classes(dom: &Domains, classes: &Classes) -> Option<Domains> {
+    let d: Domains = dom
+        .iter()
+        .map(|(k, s)| match classes.get(k) {
+            Some(c) => (k.clone(), reduce_congruence(s, c).0),
+            None => (k.clone(), s.clone()),
+        })
+        .collect();
+    (!is_empty(&d)).then_some(d)
+}
+
+/// Whether `s` is one value.
+fn is_point(s: &IntervalSet) -> bool {
+    matches!(s.bounds(), Some((Fin(a), Fin(b))) if a == b)
 }
 
 /// The enumeration of [`enumerate`] over `axes`, each point evaluated on `stack`.

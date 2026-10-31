@@ -10,6 +10,7 @@
 //! transfer's time grows no faster than the rule of low complexity allows.
 
 mod entries;
+mod exact;
 mod random;
 mod scaling;
 mod stops;

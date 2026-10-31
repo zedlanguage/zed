@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
-use zedc::store::preimage::{Demand, preimage};
+use zedc::store::preimage::{Classes, Demand, exact_preimage, preimage};
 
 use super::{doms, shown};
 
@@ -157,4 +157,56 @@ fn a_long_chain_of_lets_is_not_cut() {
         let p = preimage(&doubling(k), &ds, &Demand::Bool(true));
         assert_eq!(shown(&p), "i [0..=50]; exact", "a chain of {k} `let`s");
     }
+}
+
+/// `x * x mod 10 == 9` with `x` in `0..=n`, and `x * y mod 7 == 3` with each in `1..=n`.
+fn squares(n: usize) -> (Term, zedc::store::preimage::Domains) {
+    let sq = prim(Prim::Mul, var("x"), var("x"));
+    let t = prim(Prim::Eq, prim(Prim::Mod, sq, int(10)), int(9));
+    (t, doms(&[("x", Some(0), Some(n as i64))]))
+}
+
+fn products(n: usize) -> (Term, zedc::store::preimage::Domains) {
+    let xy = prim(Prim::Mul, var("x"), var("y"));
+    let t = prim(Prim::Eq, prim(Prim::Mod, xy, int(7)), int(3));
+    let n = Some(n as i64);
+    (t, doms(&[("x", Some(1), n), ("y", Some(1), n)]))
+}
+
+/// `x * y <= n` with each in `1..=n`: the plain preimage is exact on every sub-box under or
+/// over the curve, so only the boxes the curve crosses are split.
+fn hyperbola(n: usize) -> (Term, zedc::store::preimage::Domains) {
+    let t = prim(Prim::Le, prim(Prim::Mul, var("x"), var("y")), int(n as i64));
+    let n = Some(n as i64);
+    (t, doms(&[("x", Some(1), n), ("y", Some(1), n)]))
+}
+
+/// Under `@exact` the search visits fewer than twice as many boxes as there are points in
+/// the domain, each in time of the size of the term, so its time is of the order of the
+/// number of points: `n` for one input in `0..=n`, `n^2` for two; and where the plain
+/// preimage is exact on sub-boxes, of the boxes the boundary crosses: `n` for `x * y <= n`.
+#[test]
+fn the_exact_search_scales_with_the_number_of_points() {
+    let run = |make: fn(usize) -> (Term, zedc::store::preimage::Domains)| {
+        move |n: usize| {
+            let (t, ds) = make(n);
+            exact_preimage(&t, &ds, &Classes::new(), &Demand::Bool(true));
+        }
+    };
+    scaling::check(
+        "`x * x mod 10 == 9` over `0..=n` under `@exact`",
+        256,
+        run(squares),
+    );
+    scaling::check_order(
+        "`x * y mod 7 == 3` over `1..=n` squared under `@exact`",
+        16,
+        2,
+        run(products),
+    );
+    scaling::check(
+        "`x * y <= n` over `1..=n` squared under `@exact`",
+        64,
+        run(hyperbola),
+    );
 }

@@ -9,9 +9,10 @@ use std::sync::Arc;
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
 use zedc::store::interval::{End, IntervalSet};
-use zedc::store::preimage::{Demand, Domains, preimage};
+use zedc::store::lattice::Congruence;
+use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage};
 
-use super::check;
+use super::{check, meets, points};
 
 /// The window each domain is checked over.
 const WINDOW: (i64, i64) = (-15, 15);
@@ -250,5 +251,112 @@ fn a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between() {
     assert!(
         exact > 300 && necessary > 150,
         "{exact} exact, {necessary} necessary"
+    );
+}
+
+/// Counts, over the cases run under `@exact`, of results the search found and of results with
+/// a point meeting the demand.
+#[derive(Default, Debug)]
+struct ExactTally {
+    searched: usize,
+    nonempty: usize,
+    several: usize,
+}
+
+/// Under `@exact`, over random bounded boxes within the window, `x` in a random class one case
+/// in three: where the result is enumerated or exact, each input's set, over the members of its
+/// class, is the projection of the points that meet the demand, found by running every point;
+/// and the result is exact just when every point of its box in the classes meets the demand.
+fn run_exact(seed: u64, cases: usize, test: bool) -> ExactTally {
+    let mut rng = Rng::new(seed);
+    let mut tally = ExactTally::default();
+    let names: Vec<Arc<str>> = vec!["x".into(), "y".into()];
+    for _ in 0..cases {
+        let (term, demand) = if test {
+            (bool_term(&mut rng, 3), Demand::Bool(rng.below(2) == 0))
+        } else {
+            (int_term(&mut rng, 3), int_demand(&mut rng))
+        };
+        let mut bounded = || {
+            let lo = rng.int(-15, 10);
+            IntervalSet::of(lo, (lo + rng.int(0, 20)).min(15))
+        };
+        let ds: Domains = [(names[0].clone(), bounded()), (names[1].clone(), bounded())].into();
+        let mut classes = Classes::new();
+        if rng.below(3) == 0 {
+            let m = rng.int(2, 4);
+            classes.insert("x".into(), Congruence::new(m as u64, rng.int(0, m - 1)));
+        }
+        let member = |k: &Arc<str>, v: i64| classes.get(k).is_none_or(|c| c.contains(v));
+        let p = exact_preimage(&term, &ds, &classes, &demand);
+        for (k, v) in &p.domains {
+            assert!(v.is_subset(&ds[k]), "{term}: {k} {v} is outside its domain");
+        }
+        let all = points(&ds, &names, WINDOW);
+        let inside = |pt: &[i64]| names.iter().zip(pt).all(|(n, &v)| member(n, v));
+        let met: Vec<&Vec<i64>> = all
+            .iter()
+            .filter(|pt| inside(pt) && meets(&term, &names, pt, &demand))
+            .collect();
+        for pt in &met {
+            for (n, &v) in names.iter().zip(pt.iter()) {
+                assert!(
+                    p.domains[n].contains(v),
+                    "{term}: {pt:?} meets {demand:?}, outside {p:?}"
+                );
+            }
+        }
+        if !(p.exact || p.enumerated) {
+            continue;
+        }
+        tally.searched += 1;
+        tally.nonempty += !met.is_empty() as usize;
+        for (j, n) in names.iter().enumerate() {
+            for v in WINDOW.0..=WINDOW.1 {
+                let shown = p.domains[n].contains(v) && member(n, v);
+                let projected = met.iter().any(|pt| pt[j] == v);
+                assert_eq!(
+                    shown, projected,
+                    "{term} {demand:?} over {ds:?} {classes:?}: {n} = {v}, {p:?}"
+                );
+            }
+        }
+        let in_box: Vec<&Vec<i64>> = all
+            .iter()
+            .filter(|pt| {
+                inside(pt)
+                    && names
+                        .iter()
+                        .zip(pt.iter())
+                        .all(|(n, &v)| p.domains[n].contains(v))
+            })
+            .collect();
+        tally.several += (p
+            .domains
+            .values()
+            .filter(|s| s.bounds().is_some_and(|(a, b)| a != b))
+            .count()
+            > 1) as usize;
+        let every = in_box.iter().all(|pt| meets(&term, &names, pt, &demand));
+        assert_eq!(p.exact, every, "{term} {demand:?} over {ds:?}: exact {p:?}");
+    }
+    tally
+}
+
+#[test]
+fn exact_integer_preimages_are_the_projection_of_the_points_that_meet_the_demand() {
+    let t = run_exact(7, 250, false);
+    assert!(
+        t.searched >= 200 && t.nonempty >= 100 && t.several >= 20,
+        "{t:?}"
+    );
+}
+
+#[test]
+fn exact_test_preimages_are_the_projection_of_the_points_that_meet_the_demand() {
+    let t = run_exact(77, 250, true);
+    assert!(
+        t.searched >= 200 && t.nonempty >= 100 && t.several >= 20,
+        "{t:?}"
     );
 }

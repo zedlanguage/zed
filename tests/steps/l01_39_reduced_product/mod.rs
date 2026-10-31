@@ -10,6 +10,7 @@
 //! answer.
 
 mod controls;
+mod exact;
 mod random;
 mod scaling;
 mod spec;
