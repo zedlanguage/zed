@@ -33,13 +33,16 @@ pub struct Ty {
 }
 
 /// A function's signature: its parameters' names and kinds, shared by its arrows, which
-/// together are an intersection.
+/// together are an intersection, and the carriers each bounded type variable ranges over.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Sig {
     /// The parameters.
     pub params: Vec<SParam>,
     /// The arrows.
     pub arrows: Vec<Arrow>,
+    /// Each bounded type variable, with the mask of the carriers it ranges over: one carrier,
+    /// the same at each place the variable stands.
+    pub bounds: BTreeMap<Arc<str>, u8>,
 }
 
 /// A parameter of a signature.
@@ -80,7 +83,7 @@ pub enum Carrier {
 }
 
 impl Carrier {
-    /// The five, in the order the signature search tries them.
+    /// The five, in the order a class of values holding a literal tries them.
     pub const ALL: [Carrier; 5] = [
         Carrier::Int,
         Carrier::F64,
@@ -114,6 +117,38 @@ impl Carrier {
     /// Whether it is a number.
     pub fn numeric(self) -> bool {
         matches!(self, Carrier::Int | Carrier::Rat | Carrier::F64)
+    }
+
+    /// Its bit in a mask: its place in [`Carrier::ALL`].
+    pub fn bit(self) -> u8 {
+        1 << Carrier::ALL
+            .iter()
+            .position(|&c| c == self)
+            .expect("a carrier")
+    }
+
+    /// The carriers of the mask `m`, in the order of [`Carrier::ALL`].
+    pub fn of_mask(m: u8) -> impl Iterator<Item = Carrier> {
+        Carrier::ALL.into_iter().filter(move |c| m & c.bit() != 0)
+    }
+}
+
+/// The bit of a mask that stands for every value that is not of a carrier: a tuple, a
+/// function, an atom.
+pub const OTHER: u8 = 1 << 5;
+
+/// The mask of every value.
+pub const EVERY: u8 = (1 << 6) - 1;
+
+/// The mask `m` as a type: its carriers joined by `|`, and "other values" for [`OTHER`].
+pub fn mask_text(m: u8) -> String {
+    let mut out: Vec<&str> = Carrier::of_mask(m).map(Carrier::name).collect();
+    if m & OTHER != 0 {
+        out.push("other values");
+    }
+    match out.len() {
+        0 => "no type".into(),
+        _ => out.join(" | "),
     }
 }
 
@@ -446,30 +481,19 @@ impl Ty {
         out
     }
 
-    /// `self` with its variables renamed by `names`.
-    pub fn rename(&self, names: &BTreeMap<Arc<str>, Arc<str>>) -> Ty {
-        let binds: Binds = names
+    /// `self` with its variables replaced by `binds` at every depth, inside the functions it
+    /// holds too.
+    pub fn replace(&self, binds: &Binds) -> Ty {
+        if binds.is_empty() {
+            return self.clone();
+        }
+        let mut out = self.subst(binds);
+        out.tuples = out
+            .tuples
             .iter()
-            .map(|(k, v)| (k.clone(), Ty::var(v.clone())))
+            .map(|cs| cs.iter().map(|c| c.replace(binds)).collect())
             .collect();
-        let mut out = self.subst(&binds);
-        out.fns = out
-            .fns
-            .iter()
-            .map(|s| {
-                Arc::new(Sig {
-                    params: s.params.clone(),
-                    arrows: s
-                        .arrows
-                        .iter()
-                        .map(|a| Arrow {
-                            params: a.params.iter().map(|p| p.rename(names)).collect(),
-                            result: a.result.rename(names),
-                        })
-                        .collect(),
-                })
-            })
-            .collect();
+        out.fns = out.fns.iter().map(|s| Arc::new(s.replace(binds))).collect();
         out
     }
 
@@ -572,12 +596,82 @@ pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
                     .iter()
                     .zip(&sa.params)
                     .all(|(x, y)| x.sub(y, &mut b))
+                    && s.bounds.iter().all(|(v, m)| {
+                        b.get(v).is_none_or(|t| {
+                            t.pieces()
+                                .iter()
+                                .all(|p| p.carrier().is_some_and(|c| m & c.bit() != 0))
+                        })
+                    })
                     && sa.result.subst(&b).subtype(&qa.result)
             })
         })
 }
 
 impl Sig {
+    /// One arrow over `params` and `result`, with no bounded variable.
+    pub fn one(params: Vec<SParam>, tys: Vec<Ty>, result: Ty) -> Sig {
+        Sig {
+            params,
+            arrows: vec![Arrow {
+                params: tys,
+                result,
+            }],
+            bounds: BTreeMap::new(),
+        }
+    }
+
+    /// It with its variables replaced by `binds` at every depth; a bounded variable replaced
+    /// by another variable keeps its bound under the new name.
+    pub fn replace(&self, binds: &Binds) -> Sig {
+        let mut bounds = BTreeMap::new();
+        for (v, m) in &self.bounds {
+            match binds.get(v) {
+                None => {
+                    bounds.insert(v.clone(), *m);
+                }
+                Some(t) => {
+                    for w in &t.vars {
+                        bounds.insert(w.clone(), *m);
+                    }
+                }
+            }
+        }
+        Sig {
+            params: self.params.clone(),
+            arrows: self
+                .arrows
+                .iter()
+                .map(|a| Arrow {
+                    params: a.params.iter().map(|p| p.replace(binds)).collect(),
+                    result: a.result.replace(binds),
+                })
+                .collect(),
+            bounds,
+        }
+    }
+
+    /// Its arrows with each bounded variable fixed to each carrier of its bound: the product
+    /// of the bounds, as long as that product is.
+    pub fn expand(&self) -> Vec<Arrow> {
+        let mut out = self.arrows.clone();
+        for (v, m) in &self.bounds {
+            out = out
+                .iter()
+                .flat_map(|a| {
+                    Carrier::of_mask(*m).map(move |c| {
+                        let b: Binds = [(v.clone(), Ty::carrier(c))].into();
+                        Arrow {
+                            params: a.params.iter().map(|p| p.replace(&b)).collect(),
+                            result: a.result.replace(&b),
+                        }
+                    })
+                })
+                .collect();
+        }
+        out
+    }
+
     /// Whether it has the same parameter names and kinds as `other`.
     pub fn same_kinds(&self, other: &Sig) -> bool {
         self.params.len() == other.params.len()
@@ -635,11 +729,20 @@ impl fmt::Display for Sig {
             })
             .collect();
         match arrows.len() {
-            1 => f.write_str(&arrows[0]),
+            1 => f.write_str(&arrows[0])?,
             _ => {
                 let arrows: Vec<String> = arrows.iter().map(|a| format!("({a})")).collect();
-                f.write_str(&arrows.join(" & "))
+                f.write_str(&arrows.join(" & "))?
             }
+        }
+        let bounds: Vec<String> = self
+            .bounds
+            .iter()
+            .map(|(v, m)| format!("{v} in {}", mask_text(*m)))
+            .collect();
+        match bounds.is_empty() {
+            true => Ok(()),
+            false => write!(f, " for {}", bounds.join(", ")),
         }
     }
 }

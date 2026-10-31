@@ -60,7 +60,8 @@ fn each_computed_value_is_in_its_arrows_result() {
         // One call for each arrow with carrier parameters and each pair of arguments.
         let mut p = f.clone();
         let mut calls = Vec::new();
-        for a in &s.arrows {
+        let arrows = s.expand();
+        for a in &arrows {
             let cs: Option<Vec<Carrier>> = a
                 .params
                 .iter()
@@ -102,7 +103,7 @@ fn each_computed_value_is_in_its_arrows_result() {
 fn a_wrong_claim_is_caught() {
     // The check above would reject a result type that missed the value.
     let (i, _) = info("f(positional x, positional y) = x + y;\n");
-    let a = &i.sigs.values().next().unwrap().arrows[0];
+    let a = &i.sigs.values().next().unwrap().expand()[0];
     assert!(a.result.contains(&Value::Int(3)));
     assert!(!a.result.contains(&Value::Float(F64::new(3.0))));
     assert!(!a.result.contains(&Value::Str("3".into())));

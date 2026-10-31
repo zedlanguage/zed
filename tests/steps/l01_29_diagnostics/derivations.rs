@@ -97,7 +97,7 @@ main(stdin: Lines) -> (stdout: Lines) {
         .unwrap_or_else(|| panic!("{out}"));
     assert_eq!(s[narrowed - 1], "`v` is int here");
     assert!(
-        s[narrowed + 1].starts_with("`v` has no declared type; the signature search checks"),
+        s[narrowed + 1] == "`v` has no declared type; its uses give it T",
         "{out}"
     );
 }
@@ -122,7 +122,7 @@ fn a_rebinding_points_at_the_first_binding() {
 }
 
 #[test]
-fn a_failed_signature_search_lists_each_combination_with_its_own_derivation() {
+fn an_error_in_a_function_is_at_the_use_that_leaves_its_parameter_no_carrier() {
     let out = rejected(
         "badge(positional x) = \"#\" ++ x * 2;
 main(stdin: Lines) -> (stdout: Lines) {
@@ -131,31 +131,21 @@ main(stdin: Lines) -> (stdout: Lines) {
 ",
     );
     let first = out.lines().next().unwrap();
-    assert_eq!(
-        first,
-        "1:1: `badge` checks at no type of `x`: with `x`: int, `++` does not take (\"#\", int)"
-    );
+    assert_eq!(first, "1:23: `++` does not take (\"#\", int | f64 | rat)");
     let s = steps(&out);
-    let with: Vec<&&str> = s.iter().filter(|t| t.starts_with("with ")).collect();
-    assert_eq!(
-        with,
-        [
-            &"with `x`: int, `++` does not take (\"#\", int)",
-            &"with `x`: f64, `++` does not take (\"#\", f64)",
-            &"with `x`: rat, `++` does not take (\"#\", rat)",
-            &"with `x`: String, `*` does not take (String, 2)",
-            &"with `x`: bool, `*` does not take (bool, 2)",
-        ]
-    );
-    for c in ["int", "f64", "rat", "String", "bool"] {
-        let taken = format!("`x` has no declared type; the signature search takes it as {c}");
-        assert!(s.contains(&taken.as_str()), "{taken}\n{out}");
+    for step in [
+        "this `*` gives int | f64 | rat",
+        "`x` is int | f64 | rat here",
+        "the literal 2 takes int | f64 | rat",
+        "`++` takes (String, String) -> String",
+    ] {
+        assert!(s.contains(&step), "{step}\n{out}");
     }
-    assert!(s.contains(&"`*` takes (int, int) -> int"), "{out}");
 }
 
 #[test]
-fn a_search_over_many_combinations_shows_twelve_and_counts_the_rest() {
+fn an_error_over_several_parameters_is_one_error_with_the_use_that_joined_them() {
+    // The search this replaces tried 25 combinations of carriers and showed 12.
     let out = rejected(
         "area(positional w, positional h) = \"#\" ++ w * h;
 main(stdin: Lines) -> (stdout: Lines) {
@@ -163,12 +153,20 @@ main(stdin: Lines) -> (stdout: Lines) {
 }
 ",
     );
-    let s = steps(&out);
-    assert_eq!(s.iter().filter(|t| t.starts_with("with ")).count(), 12);
     assert_eq!(
-        s.last(),
-        Some(&"13 more combinations fail; the first 12 are shown")
+        out.lines().next().unwrap(),
+        "1:36: `++` does not take (\"#\", int | f64 | rat)"
     );
+    let s = steps(&out);
+    for step in [
+        "`w` is int | f64 | rat here",
+        "`h` is int | f64 | rat here",
+        "`*` gives these values one carrier",
+        "`*` takes int | f64 | rat",
+    ] {
+        assert!(s.contains(&step), "{step}\n{out}");
+    }
+    assert!(!s.iter().any(|t| t.starts_with("with ")), "{out}");
 }
 
 #[test]

@@ -225,24 +225,21 @@ fn open(n: usize) -> String {
 
 #[test]
 fn searches_through_nested_functions_scale() {
-    // Each run of a search checks the functions declared in its body again, in a context
-    // that is new whenever they read the parameter it searches: the innermost function's
-    // signature depends on the type of every parameter around it. Each search runs its body
-    // at least twice, with `_` and with type variables, so the contexts, all distinct, grew
-    // about 1.6 times with each level, until the budget stopped them (167 s at 32 deep). A
-    // function is now searched in at most `CONTEXTS` contexts, and gives `_` in the rest.
+    // A signature search checked the functions declared in its body again for each type it
+    // tried, so the contexts grew about 1.6 times with each level (167 s at 32 deep), until a
+    // cap of 64 contexts gave `_` past it. Each body is now checked once: the parameters
+    // added together share one class, of the outermost function, so the innermost one's
+    // signature is in terms of `f0`'s variable at every depth.
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {
-            zed_tests::scaling::check("searches through n nested functions", 8, |n| {
+            zed_tests::scaling::check("searches through n nested functions", 128, |n| {
                 elab(&open(n)).unwrap();
             });
             assert_eq!(value(&open(4), "main"), "4");
-            let int = (Some("int".to_string()), Some("(int) -> int".to_string()));
-            assert_eq!(found(&open(6), 5), int);
-            // At 8 deep, the context that types `x7` as int is past the first 64.
-            let unknown = (Some("_".to_string()), Some("(_) -> _".to_string()));
-            assert_eq!(found(&open(8), 7), unknown);
+            let t = (Some("int".to_string()), Some("(T) -> T".to_string()));
+            assert_eq!(found(&open(6), 5), t);
+            assert_eq!(found(&open(64), 63), t);
         })
         .unwrap()
         .join()

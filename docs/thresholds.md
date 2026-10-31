@@ -17,11 +17,11 @@ the list: running out of them is a build failure, never a different answer (DESI
 
 | Constant | Where | What crossing it changes |
 |---|---|---|
-| `RUNS` 20000 | check/mod.rs | a signature search gives `_` for its parameters and result |
-| `CONTEXTS` 64 | check/mod.rs | a nested function gives `_` in further contexts |
-| `open.len() > 5` | check/mod.rs `infer` | a function with more than 5 undeclared parameters gives `_` |
-| `COMBOS` 256 | check/mod.rs `apply` | a call over unions with more combinations gives `_` |
-| `SHOWN` 12 | check/mod.rs | the failed combinations after 12 are counted, not shown |
+| `RUNS` 20000 | check/mod.rs | removed (1): a signature search gave `_` for its parameters and result |
+| `CONTEXTS` 64 | check/mod.rs | removed (1): a nested function gave `_` in further contexts |
+| `open.len() > 5` | check/mod.rs `infer` | removed (1): a function with more than 5 undeclared parameters gave `_` |
+| `COMBOS` 256 | check/mod.rs `apply` | removed (1): a call over unions with more combinations gave `_` |
+| `SHOWN` 12 | check/mod.rs | removed (1): the failed combinations after 12 were counted, not shown |
 | `DEPTH` 16 | check/mod.rs | a derivation is cut after 16 steps |
 | diagram budget 4096, walk 65536 | zed-kernel types/bdd.rs, empty.rs | a union or intersection keeps its operands; a part is not shown empty |
 | `PIECE_LIMIT` 8 | store/interval.rs | a union of intervals loses pieces at a widening |
@@ -76,6 +76,34 @@ describes, and it stops by the height of that lattice, not by a constant.
 
 Cost: O(N α(N)) for a unit of size N, against exponential in the nesting depth and in the
 number of undeclared parameters before.
+
+**Done.** RUNS, CONTEXTS, `open > 5`, COMBOS and SHOWN are removed (`check::Class`,
+`Ck::infer`, `Ck::apply_one`, `Ck::apply_many`). Where it differs from the plan above:
+
+- A class holds the carriers and one more bit for other values (tuples, functions, atoms
+  that are not carriers); a class left with that bit gives `_`.
+- Union by rank without path compression, so a find is O(log N) and the whole O(N log N);
+  path compression would need its writes logged for the repairs that are tried and undone.
+- The explanation is the class's list of the uses that narrowed or merged it, shown in full,
+  not a proof forest. The error is at the use that would empty the set, which is where the
+  carriers ran out, not where the function is declared.
+- There are no derived variables: an operator applied to a class gives the class when every
+  arrow still possible returns its own carrier, with the atoms of all of them (so the
+  result may hold an atom that only some of those arrows give), and otherwise the union of
+  their results.
+- A call of an operator over unions keeps one state per set of arrows still alive, not per
+  combination of parts. Each state is a subset of the operator's arrows, so there are at
+  most 2^(A+1) of them for an operator of A arrows (with the flag for an unknown part), a
+  constant of the prelude, and the cost is
+  linear in the parts.
+- A function's own recursive call (not yet reachable, L6) flows its arguments into its
+  classes.
+
+Mutants of `check/mod.rs`, each caught by a step test: a class emptied without an error,
+merged classes taking the union of their carriers, a literal not fixing its class's carrier,
+a literal compared by `==` restricting its class, an `if` condition taking any carrier, and
+a class dropping the arrows over non-carriers. The last was the code as first written: it
+rejected `x < (1, 2)`, though `x` may be a tuple; `x` now gives `_`.
 
 ### 2. Derivations (replaces DEPTH)
 

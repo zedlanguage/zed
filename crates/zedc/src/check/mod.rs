@@ -5,12 +5,16 @@
 //! in a slot of function type takes its parameter types and kinds from that type, and a
 //! declared function passed there must have its parameter kinds.
 //!
-//! A function's parameter with neither a type nor a closed default is inferred. The body is
-//! first checked with the parameter unknown, `_`: an error there does not depend on the
-//! parameter and is reported. Then with a type variable: when the body checks, the function
-//! is generic. Else each carrier is tried, every combination for several parameters, and
-//! the function gets one arrow per combination that checks, the arrows with the fewest
-//! literal adoptions (a literal has one value, so the arrows kept must adopt alike).
+//! A function's parameter with neither a type nor a closed default is inferred, with the body
+//! checked once (docs/thresholds.md, replacement 1). The parameter's values form a class, a
+//! node of a union-find forest, holding the carriers it may still take. A use that needs two
+//! values to share a carrier, as the operands of `+` do, merges their classes; a use that
+//! accepts some carriers removes the rest; a literal joins the class it meets. Each step only
+//! merges classes or removes carriers, so the solution is reached by propagation with no
+//! search. When the function ends, each class of its parameters takes its type: the first of
+//! int, f64 and rat if it holds a literal, which then adopts it; a type variable if it may
+//! take any value; its one carrier; a type variable bounded by its carriers if several; and an
+//! error if none, listing every use that removed one.
 //!
 //! Where DESIGN.md does not say: a type variable used as a tuple or a function gives the
 //! unknown, so `first(p) = p[0]` is generic, and a non-tuple argument fails at run time; an
@@ -37,7 +41,7 @@ use crate::elab::Tables;
 use crate::lex::Span;
 use crate::resolve::{Kind, Ref, Resolution};
 
-use ty::{Arrow, Binds, Carrier, Piece, SParam, Sig, Ty, errs};
+use ty::{Arrow, Binds, Carrier, EVERY, OTHER, Piece, SParam, Sig, Ty, atoms, errs, mask_text};
 
 /// How a function argument fits the function type its slot expects.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +88,7 @@ pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
 pub(crate) fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     let mut ck = Ck::new(t);
     ck.scope(unit, true);
+    ck.finish();
     ck.info
         .errors
         .sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
@@ -107,22 +112,6 @@ pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
     );
     (out, ck.info.errors.into_iter().map(|e| e.message).collect())
 }
-
-/// How many checks of a function's whole body a signature search that is not inside another
-/// may make. A check costs the function's size less the functions declared in it, the
-/// searches of those counted at their own sizes, so the searches inside one function cost at
-/// most `RUNS` times its size, however they nest.
-const RUNS: usize = 20_000;
-
-/// How many contexts, the types of the binders it reads from outside, one function declared
-/// inside another is searched in, inside a search not inside another; in any further context
-/// its signature gives `_` for its undeclared parameters and its result. A search in a new
-/// context checks the functions declared inside it in new contexts, so without this the
-/// contexts, and the searches, multiply with the depth of the nesting.
-const CONTEXTS: usize = 64;
-
-/// The most piece combinations one application checks before it gives the unknown.
-const COMBOS: usize = 256;
 
 /// A numeric literal: its span, its value, whether a `-` is applied to it, and its text.
 #[derive(Clone)]
@@ -165,9 +154,7 @@ enum Src<'a> {
     Other(&'a Expr),
 }
 
-/// An expression's type as the checker last found it, and where it comes from. A signature
-/// search runs the body once per combination, and each run records every subexpression
-/// before any error in it is derived, so a derivation reads only its own run's records.
+/// An expression's type as the checker last found it, and where it comes from.
 type Seen<'a> = (Ty, Src<'a>);
 
 /// Where a binder's type comes from: the text, what it says, the expression whose derivation
@@ -183,46 +170,45 @@ struct Origin {
 /// The most steps one derivation follows through definitions.
 const DEPTH: usize = 16;
 
-/// The most failed combinations a signature search lists.
-const SHOWN: usize = 12;
+/// A class of values that must share one carrier: a node of the union-find forest of
+/// docs/thresholds.md, replacement 1. Only a root's fields other than `parent` and `rank`
+/// are read.
+#[derive(Clone)]
+struct Class {
+    parent: usize,
+    rank: u8,
+    /// The carriers it may still take, and [`OTHER`] if it may take other values.
+    mask: u8,
+    /// The depth of the function whose parameter made it; of a merged class, the least.
+    level: usize,
+    /// The literals that joined it, each with whether it follows: a follower adopts the
+    /// class's carrier but does not restrict it.
+    lits: Vec<(Lit, bool)>,
+    /// The uses that removed carriers from it.
+    reasons: Vec<Note>,
+    /// Its type, once the function of its level ends.
+    resolved: Option<Ty>,
+}
 
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
     info: Info,
-    /// Each write to `info`'s maps, with the value it replaced, so that a run of a search
-    /// is undone by what it wrote rather than by a copy of all of `info`.
+    /// Each write to `info`'s maps, and to a class while a repair is tried, with the value
+    /// it replaced, so that a repair is undone by what it wrote.
     log: Vec<Undo>,
-    fresh: usize,
-    /// What the outermost search under way has spent, in bytes of bodies checked.
-    runs: usize,
-    /// What it may spend: `RUNS` times the size of its function.
-    budget: usize,
     /// Each expression's type, by its span, as last found.
     seen: HashMap<Span, Seen<'a>>,
     /// Where each binder's type comes from.
     whence: HashMap<usize, Origin>,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
-    /// Whether a signature search is checking a combination whose errors it discards, so
-    /// that they carry no notes.
-    quiet: bool,
-    /// How many signature searches are under way, one inside another.
-    searching: usize,
-    /// The signatures found inside the outermost search, by the function's statement and
-    /// what its search reads from outside it.
-    memo: HashMap<Span, HashMap<Key, Arc<Searched>>>,
-    /// The context of each search under way, the outermost first.
-    contexts: Vec<usize>,
-    /// The number of each context: by the function's statement, the context of the search
-    /// around it and the types of the binders it reads from the function around it.
-    numbers: HashMap<Span, HashMap<Context, (usize, usize)>>,
-    /// How many contexts are numbered.
-    numbered: usize,
-    /// The adoptions of the nested searches found inside the outermost search, each with
-    /// its number: those differing from before the search, and the numbers of the nested
-    /// searches inside it with any.
-    summaries: BTreeMap<Adoptions, usize>,
+    /// The classes; class `k` is the type variable `$k`.
+    classes: Vec<Class>,
+    /// How many declared functions are being checked, one inside another.
+    level: usize,
+    /// The classes each of those functions resolves when it ends, by its level.
+    pending: Vec<Vec<usize>>,
 }
 
 impl<'t, 'a> Ck<'t, 'a> {
@@ -232,19 +218,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             env: HashMap::new(),
             info: Info::default(),
             log: Vec::new(),
-            fresh: 0,
-            runs: 0,
-            budget: 0,
             seen: HashMap::new(),
             whence: HashMap::new(),
             trying: false,
-            quiet: false,
-            searching: 0,
-            memo: HashMap::new(),
-            contexts: Vec::new(),
-            numbers: HashMap::new(),
-            numbered: 0,
-            summaries: BTreeMap::new(),
+            classes: Vec::new(),
+            level: 0,
+            pending: vec![Vec::new()],
         }
     }
 
@@ -266,9 +245,6 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// call, where the binder's type comes from, followed through each definition.
     fn derive(&self, spans: &[Span]) -> Vec<Note> {
         let mut out = Vec::new();
-        if self.quiet {
-            return out;
-        }
         for &s in spans {
             self.derive_into(s, &mut out, 0);
         }
@@ -279,6 +255,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Some((ty, src)) = self.seen.get(&span) else {
             return;
         };
+        let ty = self.show(ty);
         let push = |out: &mut Vec<Note>, span: Span, text: String| {
             let n = Note { span, text };
             if !out.contains(&n) {
@@ -444,7 +421,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             StmtKind::Function(f) => {
                 let id = self.id(s.span, &f.name);
-                let sig = self.signature(f, s.span);
+                let sig = self.infer(f, s.span);
                 let text = format!("`{}` is declared here, `{sig}`", f.name);
                 self.origin(id, s.span, text, None);
                 self.env.insert(id, Ty::func(sig.clone()));
@@ -480,133 +457,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
-    /// The signature of a declared function. Each run of a search checks the functions
-    /// declared in its body again, so inside the outermost search a function's signature is
-    /// found once for each set of types of the binders it reads from outside: the searches
-    /// of nested functions cost the sum of their runs, not the product. Those types are
-    /// numbered as a context, from the context of the search around it and the types of the
-    /// binders it reads from the function around it, so the key costs no more than those. A search inside
-    /// another leaves its writes in the log as one entry, which the maps do not hold, so
-    /// that finding it again costs `O(1)`, not the size of the function; the outermost
-    /// search makes them once, when it ends.
-    fn signature(&mut self, f: &'a Function, span: Span) -> Arc<Sig> {
-        let key = Key {
-            around: self.contexts.last().copied(),
-            quiet: self.quiet,
-            trying: self.trying,
-            outer: self
-                .t
-                .outer(span)
-                .iter()
-                .map(|b| self.env.get(b).cloned())
-                .collect(),
-        };
-        let found = self.memo.get(&span).and_then(|m| m.get(&key)).cloned();
-        if let Some(s) = found {
-            self.info.errors.extend(s.errors.iter().cloned());
-            let sig = s.sig.clone();
-            self.log.push(Undo::Nested(s));
-            return sig;
-        }
-        let start = self.mark();
-        if self.searching == 0 {
-            self.runs = 0;
-            self.budget = RUNS * (span.end - span.start).max(1);
-        }
-        self.searching += 1;
-        let context = (key.around, key.outer.clone());
-        let numbers = self.numbers.entry(span).or_default();
-        let count = numbers.len();
-        let (number, nth) = *numbers.entry(context).or_insert((self.numbered, count));
-        if number == self.numbered {
-            self.numbered += 1;
-        }
-        self.contexts.push(number);
-        let sig = self.infer(f, span, nth >= CONTEXTS);
-        self.contexts.pop();
-        self.searching -= 1;
-        if self.searching == 0 {
-            self.memo.clear();
-            self.summaries.clear();
-            self.numbers.clear();
-            self.numbered = 0;
-            let mut todo: Vec<Arc<Searched>> = self.log[start.log..]
-                .iter()
-                .filter_map(|w| match w {
-                    Undo::Nested(s) => Some(s.clone()),
-                    _ => None,
-                })
-                .collect();
-            while let Some(s) = todo.pop() {
-                for w in &s.wrote {
-                    match w {
-                        Undo::Nested(c) => todo.push(c.clone()),
-                        w => self.put(w.clone()),
-                    }
-                }
-            }
-            return sig;
-        }
-        let wrote = self.wrote(&start);
-        let errors = self.info.errors[start.errors..].to_vec();
-        while self.log.len() > start.log {
-            let w = self.log.pop().expect("longer than the mark");
-            self.set(w);
-        }
-        let adopted = self.adopted(&wrote, span);
-        let summary = match adopted.count {
-            0 => None,
-            count => {
-                let n = self.summaries.len();
-                let id = *self.summaries.entry(adopted.of).or_insert(n);
-                Some((id, count))
-            }
-        };
-        let s = Arc::new(Searched {
-            span,
-            sig: sig.clone(),
-            wrote,
-            errors,
-            summary,
-        });
-        self.memo
-            .entry(span)
-            .or_default()
-            .entry(key)
-            .or_insert(s.clone());
-        self.log.push(Undo::Nested(s));
-        sig
-    }
-
-    /// The adoptions of the writes `wrote` inside `span` that differ from those the maps
-    /// hold, and of the nested searches among them.
-    fn adopted(&self, wrote: &[Undo], span: Span) -> Adopted {
-        let own: Vec<(Span, Value)> = adoptions_in(wrote, span)
-            .into_iter()
-            .filter(|(s, v)| self.info.adopt.get(s) != Some(v))
-            .collect();
-        let mut nested = BTreeMap::new();
-        for w in wrote {
-            if let Undo::Nested(c) = w {
-                match c.summary {
-                    Some(n) => nested.insert(c.span, n),
-                    None => nested.remove(&c.span),
-                };
-            }
-        }
-        let count = own.len() + nested.values().map(|&(_, n)| n).sum::<usize>();
-        Adopted {
-            of: (
-                own,
-                nested.into_iter().map(|(s, (id, _))| (s, id)).collect(),
-            ),
-            count,
-        }
-    }
-
-    /// The signature of a declared function, inferred where a parameter has no type, or with
-    /// `_` for those parameters and the result if `unknown`.
-    fn infer(&mut self, f: &'a Function, span: Span, unknown: bool) -> Arc<Sig> {
+    /// The signature of a declared function. A parameter with neither a type nor a closed
+    /// default gets a class, which its uses narrow, the body checked once. When the function
+    /// ends, each class of its level takes its type; a class merged with one of a function
+    /// around it waits for that function.
+    fn infer(&mut self, f: &'a Function, span: Span) -> Arc<Sig> {
         let params: Vec<SParam> = f
             .params
             .iter()
@@ -634,270 +489,462 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.env.insert(id, Ty::dynamic());
             }
         }
-        let open: Vec<usize> = (0..f.params.len())
-            .filter(|&i| given[i].is_none())
-            .collect();
-        let own = self.t.own(span).max(1);
-        let run = |ck: &mut Self, tys: &[Ty]| -> Ty {
-            ck.runs += own;
-            for ((id, t), (p, g)) in ids.iter().zip(tys).zip(f.params.iter().zip(&given)) {
-                let text = match (&p.ty, g) {
-                    (Some(a), _) if *t == Ty::dynamic() => format!(
+        self.level += 1;
+        let level = self.level;
+        if self.pending.len() <= level {
+            self.pending.push(Vec::new());
+        }
+        let mut tys = Vec::new();
+        for ((id, p), g) in ids.iter().zip(&f.params).zip(given) {
+            let (t, text) = match (&p.ty, g) {
+                (Some(a), Some(t)) if t == Ty::dynamic() => {
+                    let text = format!(
                         "`{}` is declared `{a}`, whose values the checker does not track: \
                          it takes `{}` as unknown, _",
                         p.name, p.name
-                    ),
-                    (Some(a), _) => format!("`{}` is declared `{a}`", p.name),
-                    (None, Some(_)) => {
-                        format!("`{}` is {t}, the carrier of its default", p.name)
-                    }
-                    (None, None) if *t == Ty::dynamic() => format!(
-                        "`{}` has no declared type; the signature search checks the body \
-                         first with `{}` unknown, _, so what fails there fails at every type",
-                        p.name, p.name
-                    ),
-                    (None, None) => format!(
-                        "`{}` has no declared type; the signature search takes it as {t}",
-                        p.name
-                    ),
-                };
-                ck.origin(*id, p.span, text, None);
-                ck.env.insert(*id, t.clone());
+                    );
+                    (t, text)
+                }
+                (Some(a), Some(t)) => (t, format!("`{}` is declared `{a}`", p.name)),
+                (None, Some(t)) => {
+                    let text = format!("`{}` is {t}, the carrier of its default", p.name);
+                    (t, text)
+                }
+                (_, None) => {
+                    let k = self.class();
+                    let text = format!("`{}` has no declared type; its uses give it ${k}", p.name);
+                    (Ty::var(format!("${k}").into()), text)
+                }
+            };
+            self.origin(*id, p.span, text, None);
+            self.env.insert(*id, t.clone());
+            tys.push(t);
+        }
+        // A default that reads the other parameters, at its parameter's type.
+        for (p, t) in f.params.iter().zip(&tys) {
+            let Some(d) = &p.default else {
+                continue;
+            };
+            if self.t.uses_in(d.span, &[]).is_empty() {
+                continue;
             }
-            // A default that reads the other parameters, at its parameter's type.
-            for (p, t) in f.params.iter().zip(tys) {
-                if let Some(d) = &p.default
-                    && !ck.t.uses_in(d.span, &[]).is_empty()
-                {
-                    let dt = ck.expr_at(d, Some(t));
+            let what = format!("the default of `{}`", p.name);
+            match self.class_of_ty(t) {
+                Some(k) => {
+                    let dt = self.expr(d);
+                    if !self.flow(k, &dt, &what, d.span) {
+                        let shown = self.show(t);
+                        let mut notes = self.derive(&[d.span]);
+                        notes.extend(self.reasons(t));
+                        self.error_with(d.span, format!("{what} is {dt}, not {shown}"), notes);
+                    }
+                }
+                None => {
+                    let dt = self.expr_at(d, Some(t));
                     if !dt.subtype(t) {
-                        ck.error(
-                            d.span,
-                            format!("the default of `{}` is {dt}, not {t}", p.name),
-                        );
+                        self.error(d.span, format!("{what} is {dt}, not {t}"));
                     }
                 }
             }
-            match &f.body.kind {
-                ExprKind::Block(stmts) if !f.equation => ck.scope(stmts, false),
-                _ => ck.expr(&f.body),
+        }
+        let result = match &f.body.kind {
+            ExprKind::Block(stmts) if !f.equation => self.scope(stmts, false),
+            _ => self.expr(&f.body),
+        };
+        let mut own = Vec::new();
+        for k in std::mem::take(&mut self.pending[level]) {
+            let r = self.find(k);
+            if self.classes[r].resolved.is_some() {
+                continue;
             }
-        };
-        let with = |fill: &dyn Fn(usize) -> Ty| -> Vec<Ty> {
-            (0..given.len())
-                .map(|i| given[i].clone().unwrap_or_else(|| fill(i)))
-                .collect()
-        };
-        let sig = |arrows: Vec<Arrow>| {
-            Arc::new(Sig {
-                params: params.clone(),
-                arrows,
-            })
-        };
-        if unknown && !open.is_empty() {
-            return sig(vec![Arrow {
-                params: with(&|_| Ty::dynamic()),
-                result: Ty::dynamic(),
-            }]);
+            let at = self.classes[r].level;
+            if at < level {
+                self.pending[at].push(r);
+                continue;
+            }
+            self.resolve(r);
+            own.push(r);
         }
-        if open.is_empty() {
-            let tys = with(&|_| unreachable!());
-            let result = run(self, &tys);
-            return sig(vec![Arrow {
-                params: tys,
-                result,
-            }]);
+        // The classes of this level that are type variables, named in order of appearance.
+        let sig = self.solved_sig(&Sig::one(params, tys, result));
+        let mut seen = Vec::new();
+        for a in &sig.arrows {
+            a.params.iter().for_each(|p| p.vars_in(&mut seen));
+            a.result.vars_in(&mut seen);
         }
-        let start = self.mark();
-        // With the open parameters unknown: an error here does not depend on them.
-        let tys = with(&|_| Ty::dynamic());
-        let result = run(self, &tys);
-        if self.info.errors.len() > start.errors || self.runs > self.budget || open.len() > 5 {
-            return sig(vec![Arrow {
-                params: tys,
-                result,
-            }]);
-        }
-        self.undo(&start);
-        // With a type variable for each.
-        let vars: Vec<Arc<str>> = open
+        let taken: Vec<Arc<str>> = seen
             .iter()
-            .map(|_| {
-                self.fresh += 1;
-                format!("${}", self.fresh).into()
-            })
+            .filter(|v| class_id(v).is_none())
+            .cloned()
             .collect();
-        let tys = with(&|i| Ty::var(vars[open.iter().position(|&j| j == i).unwrap()].clone()));
-        let quiet = std::mem::replace(&mut self.quiet, true);
-        let result = run(self, &tys);
-        self.quiet = quiet;
-        if self.info.errors.len() == start.errors {
-            return Arc::new(rename(
-                &sig(vec![Arrow {
-                    params: tys,
-                    result,
-                }]),
-                &vars,
-            ));
+        let mut names = Binds::new();
+        let mut bounds = BTreeMap::new();
+        let mut n = 0;
+        for v in &seen {
+            let Some(r) = class_id(v).filter(|r| own.contains(r)) else {
+                continue;
+            };
+            let name = loop {
+                let name = var_name(n);
+                n += 1;
+                if !taken.contains(&name) {
+                    break name;
+                }
+            };
+            if self.classes[r].mask != EVERY {
+                bounds.insert(name.clone(), self.classes[r].mask);
+            }
+            self.classes[r].resolved = Some(Ty::var(name.clone()));
+            names.insert(v.clone(), Ty::var(name));
         }
-        // With carriers for one parameter, then for two, …, type variables for the rest: the
-        // first count at which some combination checks gives the arrows.
-        let n = open.len();
-        let width = Carrier::ALL.len();
-        let mut found: Vec<Found> = Vec::new();
-        let mut first_error = None;
-        let mut failures: Vec<Note> = Vec::new();
-        let mut unshown = 0;
-        for level in 1..=n {
-            for mask in (0..1usize << n).filter(|m| m.count_ones() as usize == level) {
-                for k in 0..width.pow(level as u32) {
-                    if self.runs > self.budget {
-                        self.undo(&start);
-                        return sig(vec![Arrow {
-                            params: with(&|_| Ty::dynamic()),
-                            result: Ty::dynamic(),
-                        }]);
-                    }
-                    self.undo(&start);
-                    // The carrier of open parameter `j`, if the mask fixes it.
-                    let pick = |j: usize| {
-                        (mask >> j & 1 == 1).then(|| {
-                            let rank = (mask & ((1 << j) - 1)).count_ones();
-                            Carrier::ALL[(k / width.pow(rank)) % width]
-                        })
-                    };
-                    let tys = with(&|i| {
-                        let j = open.iter().position(|&o| o == i).unwrap();
-                        match pick(j) {
-                            Some(c) => Ty::carrier(c),
-                            None => Ty::var(vars[j].clone()),
-                        }
-                    });
-                    let quiet = std::mem::replace(&mut self.quiet, true);
-                    let before = (self.runs, self.fresh);
-                    let result = run(self, &tys);
-                    self.quiet = quiet;
-                    if self.info.errors.len() > start.errors {
-                        let shown = failures
-                            .iter()
-                            .filter(|n| n.text.starts_with("with "))
-                            .count()
-                            < SHOWN;
-                        let quiet_error =
-                            (level == n).then(|| self.info.errors[start.errors].clone());
-                        if level == n && shown {
-                            // Again with notes, from the counters the run without them
-                            // started at, so that it checks as that run did; then with the
-                            // counters that run left, so that the combinations after it run
-                            // as they would have.
-                            let (runs, fresh) = (self.runs, self.fresh);
-                            self.undo(&start);
-                            (self.runs, self.fresh) = before;
-                            run(self, &tys);
-                            (self.runs, self.fresh) = (runs, fresh);
-                        }
-                        if level == n {
-                            let names: Vec<String> = (0..n)
-                                .map(|j| {
-                                    let c = pick(j).expect("every parameter fixed");
-                                    format!("`{}`: {}", f.params[open[j]].name, c.name())
-                                })
-                                .collect();
-                            // The run with notes can find a nested search's signature anew
-                            // where the run without them found it again, and so reach the
-                            // budget where that run did not.
-                            let e = match self.info.errors.get(start.errors) {
-                                Some(e) => e,
-                                None => quiet_error.as_ref().expect("a failed run"),
-                            };
-                            let with = format!("with {}, {}", names.join(", "), e.message);
-                            first_error.get_or_insert(with.clone());
-                            if failures
-                                .iter()
-                                .filter(|n| n.text.starts_with("with "))
-                                .count()
-                                < SHOWN
-                            {
-                                failures.push(Note {
-                                    span: e.span,
-                                    text: with,
-                                });
-                                for note in &e.notes {
-                                    if !failures.contains(note) {
-                                        failures.push(note.clone());
-                                    }
-                                }
-                            } else {
-                                unshown += 1;
-                            }
-                        }
-                        continue;
-                    }
-                    let wrote = self.wrote(&start);
-                    self.undo(&start);
-                    let mine = adoptions_in(&wrote, span);
-                    let adopted = self.adopted(&wrote, span);
-                    let nested = adopted.of.1;
-                    found.push((tys, result, wrote, (mine, nested), adopted.count));
+        // A type variable that does not reach the signature means nothing outside it.
+        for &r in &own {
+            if let Some(t) = &self.classes[r].resolved
+                && t.vars.iter().any(|v| class_id(v).is_some())
+            {
+                self.classes[r].resolved = Some(Ty::dynamic());
+            }
+        }
+        let mut sig = sig.replace(&names);
+        sig.bounds.extend(bounds);
+        self.level -= 1;
+        Arc::new(sig)
+    }
+
+    /// A new class, of every value, at the current level.
+    fn class(&mut self) -> usize {
+        let id = self.classes.len();
+        self.classes.push(Class {
+            parent: id,
+            rank: 0,
+            mask: EVERY,
+            level: self.level,
+            lits: Vec::new(),
+            reasons: Vec::new(),
+            resolved: None,
+        });
+        self.pending[self.level].push(id);
+        id
+    }
+
+    /// The root of class `k`'s tree.
+    fn find(&self, mut k: usize) -> usize {
+        while self.classes[k].parent != k {
+            k = self.classes[k].parent;
+        }
+        k
+    }
+
+    /// Logs class `r` before a change, while a repair is tried.
+    fn touch(&mut self, r: usize) {
+        if self.trying {
+            self.log
+                .push(Undo::Class(r, Box::new(self.classes[r].clone())));
+        }
+    }
+
+    /// Removes from class `k` the carriers `mask` lacks, as `what` at `span` requires;
+    /// false, changing nothing, if none would be left.
+    fn restrict(&mut self, k: usize, mask: u8, what: &str, span: Span) -> bool {
+        let r = self.find(k);
+        let m = self.classes[r].mask & mask;
+        if m == self.classes[r].mask {
+            return true;
+        }
+        if m == 0 {
+            return false;
+        }
+        self.touch(r);
+        let c = &mut self.classes[r];
+        c.mask = m;
+        c.reasons.push(Note {
+            span,
+            text: format!("{what} takes {}", mask_text(mask)),
+        });
+        true
+    }
+
+    /// Merges classes `a` and `b`, as `what` at `span` requires; false, changing nothing, if
+    /// they share no carrier. The shorter lists move into the longer, so that each item
+    /// moves `O(log n)` times.
+    fn merge(&mut self, a: usize, b: usize, what: &str, span: Span) -> bool {
+        let (a, b) = (self.find(a), self.find(b));
+        if a == b {
+            return true;
+        }
+        let m = self.classes[a].mask & self.classes[b].mask;
+        if m == 0 {
+            return false;
+        }
+        self.touch(a);
+        self.touch(b);
+        let (root, child) = match self.classes[a].rank < self.classes[b].rank {
+            true => (b, a),
+            false => (a, b),
+        };
+        if self.classes[a].rank == self.classes[b].rank {
+            self.classes[root].rank += 1;
+        }
+        let mut lits = std::mem::take(&mut self.classes[child].lits);
+        let mut reasons = std::mem::take(&mut self.classes[child].reasons);
+        let level = self.classes[child].level;
+        self.classes[child].parent = root;
+        let c = &mut self.classes[root];
+        if c.lits.len() < lits.len() {
+            std::mem::swap(&mut c.lits, &mut lits);
+        }
+        c.lits.extend(lits);
+        if c.reasons.len() < reasons.len() {
+            std::mem::swap(&mut c.reasons, &mut reasons);
+        }
+        c.reasons.extend(reasons);
+        c.reasons.push(Note {
+            span,
+            text: format!("{what} gives these values one carrier"),
+        });
+        c.mask = m;
+        c.level = c.level.min(level);
+        true
+    }
+
+    /// The literal `l` joins class `k`; unless it follows, the class keeps only the carriers
+    /// it may adopt, and false if none would be left.
+    fn join(&mut self, k: usize, l: &Lit, follower: bool) -> bool {
+        if !follower {
+            let m = Carrier::ALL
+                .into_iter()
+                .filter(|&c| adoptable(l, c))
+                .fold(0, |m, c| m | c.bit());
+            if !self.restrict(k, m, &format!("the literal {}", l.text), l.span) {
+                return false;
+            }
+        }
+        let r = self.find(k);
+        self.touch(r);
+        self.classes[r].lits.push((l.clone(), follower));
+        true
+    }
+
+    /// The values of `t` flow into class `k`: a class merges with it, a carrier restricts it
+    /// to that carrier, and a tuple or a function to other values; atoms and the unknown
+    /// change nothing.
+    fn flow(&mut self, k: usize, t: &Ty, what: &str, span: Span) -> bool {
+        for p in t.pieces() {
+            let ok = match (self.class_of(&p), p.carrier()) {
+                (Some(j), _) => self.merge(k, j, what, span),
+                _ if matches!(p, Piece::Dyn | Piece::Var(_)) || p.is_atoms() => true,
+                (None, Some(c)) => self.restrict(k, c.bit(), what, span),
+                (None, None) => self.restrict(k, OTHER, what, span),
+            };
+            if !ok {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Gives class `r` its type: the first of int, f64 and rat it may take if a literal that
+    /// does not follow joined it, every literal adopting it; a type variable if it may take
+    /// any value; its carrier if one; a type variable bounded by its carriers if several;
+    /// else the unknown.
+    fn resolve(&mut self, r: usize) {
+        let (mask, lits) = (self.classes[r].mask, self.classes[r].lits.clone());
+        let numeric = [Carrier::Int, Carrier::F64, Carrier::Rat]
+            .into_iter()
+            .find(|c| mask & c.bit() != 0)
+            .filter(|_| lits.iter().any(|(_, follows)| !follows));
+        let ty = match numeric {
+            Some(c) => Ty::carrier(c),
+            None if mask == EVERY => Ty::var(format!("${r}").into()),
+            None if mask & OTHER == 0 && mask.count_ones() == 1 => {
+                Ty::carrier(Carrier::of_mask(mask).next().expect("one carrier"))
+            }
+            None if mask & OTHER == 0 => Ty::var(format!("${r}").into()),
+            None => Ty::dynamic(),
+        };
+        if let Some(c) = ty.numeric_carrier() {
+            for (l, _) in &lits {
+                self.adopt_to(l, c);
+            }
+        }
+        self.classes[r].resolved = Some(ty);
+    }
+
+    /// The class `p` is, if it is a class not yet resolved: its root.
+    fn class_of(&self, p: &Piece) -> Option<usize> {
+        let Piece::Var(v) = p else {
+            return None;
+        };
+        let r = self.find(class_id(v)?);
+        self.classes[r].resolved.is_none().then_some(r)
+    }
+
+    /// The class `t` is, if it is one and nothing else.
+    fn class_of_ty(&self, t: &Ty) -> Option<usize> {
+        match t.pieces().as_slice() {
+            [p] => self.class_of(p),
+            _ => None,
+        }
+    }
+
+    /// `t` shown with each class narrowed to some carriers shown as their union.
+    fn show(&self, t: &Ty) -> String {
+        let mut rest = t.clone();
+        let mut parts = Vec::new();
+        for v in &t.vars {
+            if let Some(r) = self.class_of(&Piece::Var(v.clone())) {
+                let m = self.classes[r].mask;
+                if m != EVERY && m & OTHER == 0 {
+                    parts.push(mask_text(m));
+                    rest.vars.remove(v);
                 }
             }
-            if !found.is_empty() {
-                break;
+        }
+        if parts.is_empty() {
+            return t.to_string();
+        }
+        if !rest.is_empty() {
+            parts.push(rest.to_string());
+        }
+        parts.join(" | ")
+    }
+
+    /// The uses that narrowed the classes in `t`.
+    fn reasons(&self, t: &Ty) -> Vec<Note> {
+        let mut out: Vec<Note> = Vec::new();
+        for p in t.pieces() {
+            if let Some(k) = self.class_of(&p) {
+                for n in &self.classes[k].reasons {
+                    if !out.contains(n) {
+                        out.push(n.clone());
+                    }
+                }
             }
         }
-        self.undo(&start);
-        let Some(fewest) = found.iter().map(|f| f.4).min() else {
-            let names: Vec<String> = open
-                .iter()
-                .map(|&i| format!("`{}`", f.params[i].name))
-                .collect();
-            if unshown > 0 {
-                failures.push(Note {
-                    span,
-                    text: format!("{unshown} more combinations fail; the first {SHOWN} are shown"),
-                });
+        out
+    }
+
+    /// For each class variable in `vars`, its root's type: the one it was given, else the
+    /// root's variable.
+    fn solving(&self, vars: &[Arc<str>]) -> Binds {
+        let mut b = Binds::new();
+        for v in vars {
+            let Some(k) = class_id(v).filter(|&k| k < self.classes.len()) else {
+                continue;
+            };
+            let r = self.find(k);
+            let t = match &self.classes[r].resolved {
+                Some(t) => t.clone(),
+                None => Ty::var(format!("${r}").into()),
+            };
+            if t != Ty::var(v.clone()) {
+                b.insert(v.clone(), t);
             }
-            self.error_with(
-                span,
-                format!(
-                    "`{}` checks at no type of {}: {}",
-                    f.name,
-                    names.join(", "),
-                    first_error.expect("a failed combination")
-                ),
-                failures,
-            );
-            let tys = with(&|_| Ty::dynamic());
-            return sig(vec![Arrow {
-                params: tys,
-                result: Ty::dynamic(),
-            }]);
-        };
-        let keep: Vec<_> = found.into_iter().filter(|f| f.4 == fewest).collect();
-        // A combination whose adoptions inside the body are the first's: each adoption as
-        // written, or as before the search where the run did not write it.
-        let (first, first_nested) = &keep[0].3;
-        let before = |s: &Span| self.info.adopt.get(s);
-        let same = |(mine, nested): &(BTreeMap<Span, Value>, Vec<(Span, usize)>)| {
-            nested == first_nested
-                && mine
-                    .keys()
-                    .chain(first.keys())
-                    .all(|s| mine.get(s).or(before(s)) == first.get(s).or(before(s)))
-        };
-        let arrows = keep
+        }
+        b
+    }
+
+    /// `t` with each class variable replaced by its root's type.
+    fn solved(&self, t: &Ty) -> Ty {
+        let mut vars = Vec::new();
+        t.vars_in(&mut vars);
+        t.replace(&self.solving(&vars))
+    }
+
+    /// `s` with each class variable replaced by its root's type.
+    fn solved_sig(&self, s: &Sig) -> Sig {
+        s.replace(&self.solving(&sig_vars(s)))
+    }
+
+    /// `s` with each class variable replaced by its type, as [`Self::finish`] puts it: a
+    /// type variable of the function around named as one of `s`'s own takes the next name
+    /// `s` does not use.
+    fn finished(&self, s: &Sig) -> Sig {
+        let vars = sig_vars(s);
+        let mut b = self.solving(&vars);
+        let own: Vec<Arc<str>> = vars
             .iter()
-            .filter(|f| same(&f.3))
-            .map(|(tys, result, ..)| Arrow {
-                params: tys.clone(),
-                result: result.clone(),
-            })
+            .filter(|v| class_id(v).is_none())
+            .cloned()
             .collect();
-        let wrote = keep.into_iter().next().expect("a kept combination").2;
-        for w in wrote {
-            self.put(w);
+        let mut used = own.clone();
+        for t in b.values() {
+            used.extend(t.vars.iter().cloned());
         }
-        Arc::new(rename(&sig(arrows), &vars))
+        let mut renamed: BTreeMap<Arc<str>, Arc<str>> = BTreeMap::new();
+        let mut n = 0;
+        for t in b.values_mut() {
+            let Some(v) = t.vars.iter().find(|v| own.contains(v)).cloned() else {
+                continue;
+            };
+            let to = renamed
+                .entry(v.clone())
+                .or_insert_with(|| {
+                    loop {
+                        let name = var_name(n);
+                        n += 1;
+                        if !used.contains(&name) {
+                            used.push(name.clone());
+                            break name;
+                        }
+                    }
+                })
+                .clone();
+            *t = t.subst(&[(v, Ty::var(to))].into());
+        }
+        s.replace(&b)
+    }
+
+    /// Puts each class's type in place of its variable in what the checker found.
+    fn finish(&mut self) {
+        let sigs = std::mem::take(&mut self.info.sigs);
+        self.info.sigs = sigs
+            .into_iter()
+            .map(|(k, s)| (k, Arc::new(self.finished(&s))))
+            .collect();
+        let calls = std::mem::take(&mut self.info.calls);
+        self.info.calls = calls
+            .into_iter()
+            .map(|(k, s)| (k, Arc::new(self.finished(&s))))
+            .collect();
+        let tops = std::mem::take(&mut self.info.tops);
+        self.info.tops = tops
+            .into_iter()
+            .map(|(k, t)| (k, self.solved(&t)))
+            .collect();
+        let mut errors = std::mem::take(&mut self.info.errors);
+        for e in &mut errors {
+            e.message = self.named(&e.message);
+            for n in &mut e.notes {
+                n.text = self.named(&n.text);
+            }
+        }
+        self.info.errors = errors;
+    }
+
+    /// `text` with each class variable `$k` replaced by its type.
+    fn named(&self, text: &str) -> String {
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(i) = rest.find('$') {
+            out.push_str(&rest[..i]);
+            let tail = &rest[i + 1..];
+            let n = tail.bytes().take_while(u8::is_ascii_digit).count();
+            match tail[..n]
+                .parse::<usize>()
+                .ok()
+                .filter(|&k| k < self.classes.len())
+            {
+                Some(k) => out.push_str(&self.solved(&Ty::var(format!("${k}").into())).to_string()),
+                None => {
+                    out.push('$');
+                    out.push_str(&tail[..n]);
+                }
+            }
+            rest = &tail[n..];
+        }
+        out.push_str(rest);
+        out
     }
 
     /// A parameter's declared type: its annotation, or its closed default's type with each
@@ -1101,12 +1148,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             } => {
                 let (c, yes, no) = self.cond(cond);
                 let mut out = self.passing(&c, "the condition of `if`", cond.span);
+                let what = "the condition of `if`";
                 for p in c.pieces() {
-                    let ok = matches!(p, Piece::Dyn)
-                        || p.is_atoms()
-                        || p.carrier() == Some(Carrier::Bool);
+                    let ok = match self.class_of(&p) {
+                        Some(k) => self.restrict(k, Carrier::Bool.bit(), what, cond.span),
+                        None => {
+                            matches!(p, Piece::Dyn)
+                                || p.is_atoms()
+                                || p.carrier() == Some(Carrier::Bool)
+                        }
+                    };
                     if !ok {
-                        self.error(cond.span, format!("the condition of `if` is {c}, not bool"));
+                        let shown = self.show(&c);
+                        let mut notes = self.derive(&[cond.span]);
+                        notes.extend(self.reasons(&c));
+                        self.error_with(cond.span, format!("{what} is {shown}, not bool"), notes);
                         break;
                     }
                 }
@@ -1281,17 +1337,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.adopt_to(m, lc);
                 }
             }
-            (Some(l), None) => {
-                if let Some(c) = y.ty.numeric_carrier() {
-                    self.adopt_to(l, c);
-                }
-            }
-            (None, Some(m)) => {
-                if let Some(c) = x.ty.numeric_carrier() {
-                    self.adopt_to(m, c);
-                }
-            }
+            (Some(l), None) => self.follow(l, &y.ty),
+            (None, Some(m)) => self.follow(m, &x.ty),
             (None, None) => {}
+        }
+    }
+
+    /// The literal `l` compared with a value of `t`: it adopts `t`'s one numeric carrier, or
+    /// follows its class.
+    fn follow(&mut self, l: &Lit, t: &Ty) {
+        if let Some(k) = self.class_of_ty(t) {
+            self.join(k, l, true);
+        } else if let Some(c) = t.numeric_carrier() {
+            self.adopt_to(l, c);
         }
     }
 
@@ -1583,7 +1641,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 result: sig.arrows[k].result.clone(),
             })
             .collect();
-        Ty::func(Arc::new(Sig { params, arrows }))
+        Ty::func(Arc::new(Sig {
+            params,
+            arrows,
+            bounds: sig.bounds.clone(),
+        }))
     }
 
     /// `x.f(args)` and `x?.f(args)`: the call `f(x, args)`; `?.` passes `x`'s atoms around it.
@@ -1697,20 +1759,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             tys.push(t);
         }
         let result = self.body(body, None);
-        Ty::func(Arc::new(Sig {
-            params: params
-                .iter()
-                .map(|p| SParam {
-                    name: p.name.as_str().into(),
-                    positional: true,
-                    default: None,
-                })
-                .collect(),
-            arrows: vec![Arrow {
-                params: tys,
-                result,
-            }],
-        }))
+        let names = params
+            .iter()
+            .map(|p| SParam {
+                name: p.name.as_str().into(),
+                positional: true,
+                default: None,
+            })
+            .collect();
+        Ty::func(Arc::new(Sig::one(names, tys, result)))
     }
 
     fn body(&mut self, body: &'a Expr, want: Option<&Ty>) -> Ty {
@@ -1879,6 +1936,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             inv[j] = i;
         }
         let permuted = Sig {
+            bounds: s.bounds.clone(),
             params: e.params.clone(),
             arrows: s
                 .arrows
@@ -1932,20 +1990,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             TypeKind::Arrow { params, result, .. } => {
                 let tys = params.iter().map(|p| self.ty_of(&p.ty)).collect();
                 let result = self.ty_of(result);
-                Ty::func(Arc::new(Sig {
-                    params: params
-                        .iter()
-                        .map(|p| SParam {
-                            name: p.name.clone().unwrap_or_default().into(),
-                            positional: p.positional || p.name.is_none(),
-                            default: None,
-                        })
-                        .collect(),
-                    arrows: vec![Arrow {
-                        params: tys,
-                        result,
-                    }],
-                }))
+                let names = params
+                    .iter()
+                    .map(|p| SParam {
+                        name: p.name.clone().unwrap_or_default().into(),
+                        positional: p.positional || p.name.is_none(),
+                        default: None,
+                    })
+                    .collect();
+                Ty::func(Arc::new(Sig::one(names, tys, result)))
             }
         }
     }
@@ -1954,9 +2007,6 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// arrow of `sig`, the constraints it failed.
     fn applied(&self, what: &str, sig: &Sig, args: &[Option<Arg>], span: Span) -> Vec<Note> {
         let mut out = Vec::new();
-        if self.quiet {
-            return out;
-        }
         for a in args.iter().flatten() {
             match (&a.lit, a.at) {
                 (Some(l), Some(at)) => out.push(Note {
@@ -1971,6 +2021,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let one = Sig {
                 params: sig.params.clone(),
                 arrows: vec![arrow.clone()],
+                bounds: sig.bounds.clone(),
             };
             out.push(Note {
                 span,
@@ -1992,7 +2043,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
     ) -> Vec<Note> {
         let mut out = Vec::new();
-        if self.trying || self.quiet {
+        if self.trying {
             return out;
         }
         for (i, a) in args.iter().enumerate() {
@@ -2036,11 +2087,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// Applies `sig` to `args`, a missing one filled by its default. Each literal argument
-    /// adopts the carrier of its parameter on the arrows that adopt fewest; then each
-    /// combination of the arguments' pieces takes the first of those arrows that holds it.
-    /// When `pass` holds, as for an operator or a prelude word, an argument's atoms pass
-    /// through, two arguments' merged into `#errs`. Gives the result and the arrows kept.
+    /// Applies `sig` to `args`, a missing one filled by its default. When `pass` holds, as
+    /// for an operator or a prelude word, an argument's atoms pass through, two arguments'
+    /// merged into `#errs`. Gives the result and the arrows kept.
     fn apply(
         &mut self,
         what: &str,
@@ -2062,7 +2111,388 @@ impl<'t, 'a> Ck<'t, 'a> {
                 a.ty = a.ty.without_loose();
             }
         }
-        // The adoptions each arrow needs.
+        let r = match sig.arrows.len() {
+            1 => self.apply_one(what, sig, &args, span),
+            _ => self.apply_many(what, sig, &mut args, span),
+        };
+        match r {
+            Ok((t, kept)) => (out.union(&t), kept),
+            Err(message) => {
+                let mut notes = self.applied(what, sig, &args, span);
+                for a in args.iter().flatten() {
+                    for n in self.reasons(&a.ty) {
+                        if !notes.contains(&n) {
+                            notes.push(n);
+                        }
+                    }
+                }
+                notes.extend(self.repairs(what, sig, &args, pass, span));
+                self.error_with(span, message, notes);
+                (out.union(&Ty::dynamic()), Vec::new())
+            }
+        }
+    }
+
+    /// The message of an application that does not check: the arguments, each class shown
+    /// as the carriers left to it.
+    fn rejected(&self, what: &str, args: &[Option<Arg>]) -> String {
+        self.rejected_at(what, args, None)
+    }
+
+    /// [`Self::rejected`], with argument `i` shown as the piece `p` of it that failed.
+    fn rejected_at(&self, what: &str, args: &[Option<Arg>], at: Option<(usize, &Piece)>) -> String {
+        let shown: Vec<String> = args
+            .iter()
+            .enumerate()
+            .map(|(i, a)| match (a, at) {
+                (_, Some((j, p))) if i == j => self.show(&p.ty()),
+                (Some(a), _) => self.show(&a.ty),
+                (None, _) => "_".into(),
+            })
+            .collect();
+        format!("{what} does not take ({})", shown.join(", "))
+    }
+
+    /// [`Self::apply`] of a signature of one arrow. The arguments at the parameters that are
+    /// one bounded variable share a carrier: their classes merge, and their literals adopt
+    /// it. Every other argument is checked piece by piece, a class taking the carriers its
+    /// parameter allows.
+    fn apply_one(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &[Option<Arg>],
+        span: Span,
+    ) -> Result<(Ty, Vec<usize>), String> {
+        let arrow = &sig.arrows[0];
+        let fail = |ck: &Self| Err(ck.rejected(what, args));
+        let mut binds = Binds::new();
+        let mut grouped = vec![false; args.len()];
+        for (v, &m) in &sig.bounds {
+            let at: Vec<usize> = (0..args.len())
+                .filter(|&i| args[i].is_some() && arrow.params[i] == Ty::var(v.clone()))
+                .collect();
+            let lit_at = at
+                .iter()
+                .any(|&i| args[i].as_ref().is_some_and(|a| a.lit.is_some()));
+            if at.len() < 2 && !lit_at {
+                continue;
+            }
+            let (mut carriers, mut classes, mut lits) = (0u8, Vec::new(), Vec::new());
+            for &i in &at {
+                grouped[i] = true;
+                let a = args[i].as_ref().expect("an argument");
+                if let Some(l) = &a.lit {
+                    lits.push(l.clone());
+                    continue;
+                }
+                for p in a.ty.pieces() {
+                    match (self.class_of(&p), p.carrier()) {
+                        (Some(k), _) => classes.push(k),
+                        _ if matches!(p, Piece::Dyn | Piece::Var(_)) => {}
+                        (None, Some(c)) => carriers |= c.bit(),
+                        (None, None) => return fail(self),
+                    }
+                }
+            }
+            let bound = match (carriers.count_ones(), classes.first()) {
+                (n, _) if n > 1 => return fail(self),
+                (1, _) => {
+                    let c = Carrier::of_mask(carriers).next().expect("one carrier");
+                    if m & carriers == 0 {
+                        return fail(self);
+                    }
+                    for &k in &classes {
+                        if !self.restrict(k, c.bit(), what, span) {
+                            return fail(self);
+                        }
+                    }
+                    for l in &lits {
+                        self.adopt_to(l, c);
+                    }
+                    Ty::carrier(c)
+                }
+                (_, Some(&k)) => {
+                    for &j in &classes[1..] {
+                        if !self.merge(k, j, what, span) {
+                            return fail(self);
+                        }
+                    }
+                    if !self.restrict(k, m, what, span) {
+                        return fail(self);
+                    }
+                    for l in &lits {
+                        if !self.join(k, l, false) {
+                            return fail(self);
+                        }
+                    }
+                    Ty::var(format!("${}", self.find(k)).into())
+                }
+                _ if !lits.is_empty() => {
+                    // The carrier of the bound its literals adopt fewest times to.
+                    let adoptions = |c: Carrier| {
+                        lits.iter()
+                            .all(|l| adoptable(l, c))
+                            .then(|| lits.iter().filter(|l| lit_carrier(&l.value) != c).count())
+                    };
+                    let Some(c) = Carrier::of_mask(m)
+                        .filter_map(|c| adoptions(c).map(|n| (n, c)))
+                        .min_by_key(|&(n, _)| n)
+                        .map(|(_, c)| c)
+                    else {
+                        return fail(self);
+                    };
+                    for l in &lits {
+                        self.adopt_to(l, c);
+                    }
+                    Ty::carrier(c)
+                }
+                _ => Ty::dynamic(),
+            };
+            binds.insert(v.clone(), bound);
+        }
+        for (i, a) in args.iter().enumerate() {
+            let Some(a) = a else {
+                continue;
+            };
+            if grouped[i] {
+                continue;
+            }
+            let p = &arrow.params[i];
+            // A parameter that is a class of the function around: the argument flows into it.
+            if let Some(k) = self.class_of_ty(p) {
+                let ok = match &a.lit {
+                    Some(l) => self.join(k, l, false),
+                    None => self.flow(k, &a.ty, what, span),
+                };
+                if !ok {
+                    return fail(self);
+                }
+                continue;
+            }
+            if let Some(l) = &a.lit {
+                let t = match p.numeric_carrier() {
+                    // A literal that cannot adopt is its own error, and the application's none.
+                    Some(c) if adopt(l, c).is_err() => {
+                        self.adopt_to(l, c);
+                        continue;
+                    }
+                    Some(c) => self.adopt_to(l, c),
+                    None => a.ty.clone(),
+                };
+                if !t.sub(p, &mut binds) {
+                    return fail(self);
+                }
+                continue;
+            }
+            for piece in a.ty.pieces() {
+                let ok = match self.class_of(&piece) {
+                    _ if piece == Piece::Dyn => true,
+                    Some(_) if p.dynamic => true,
+                    Some(_) if !p.vars.is_empty() => piece.ty().sub(p, &mut binds),
+                    Some(k) => self.restrict(k, mask_of(p), what, span),
+                    None => piece.ty().sub(p, &mut binds),
+                };
+                if !ok {
+                    return Err(self.rejected_at(what, args, Some((i, &piece))));
+                }
+            }
+        }
+        // Each bounded variable's binding is within its bound.
+        for (v, &m) in &sig.bounds {
+            let Some(t) = binds.get(v).cloned() else {
+                continue;
+            };
+            for piece in t.pieces() {
+                let ok = match (self.class_of(&piece), piece.carrier()) {
+                    (Some(k), _) => self.restrict(k, m, what, span),
+                    _ if matches!(piece, Piece::Dyn | Piece::Var(_)) => true,
+                    (None, Some(c)) => m & c.bit() != 0,
+                    (None, None) => false,
+                };
+                if !ok {
+                    return fail(self);
+                }
+            }
+        }
+        binds.retain(|v, _| class_id(v).is_none());
+        let mut out = Ty::empty();
+        let given: Vec<&Arg> = args.iter().flatten().collect();
+        if given.iter().any(|a| a.ty.dynamic) {
+            out = out.union(&Ty::dynamic());
+        }
+        if given
+            .iter()
+            .all(|a| a.lit.is_some() || a.ty.pieces().iter().any(|p| *p != Piece::Dyn))
+        {
+            out = out.union(&close(&arrow.result.replace(&binds), sig));
+        }
+        Ok((out, vec![0]))
+    }
+
+    /// [`Self::apply`] of a signature of several arrows, each over one carrier or a tuple:
+    /// an operator, a prelude word, or a section of one. The classes of the arguments merge,
+    /// since every arrow takes one carrier for all its parameters, and its literals join
+    /// them; without a class, each literal adopts the carrier of its parameter on the
+    /// arrows that adopt fewest. Then the arguments' pieces are taken in turn, each state
+    /// the arrows still alive: a state per set of arrows, not per combination of pieces.
+    fn apply_many(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &mut [Option<Arg>],
+        span: Span,
+    ) -> Result<(Ty, Vec<usize>), String> {
+        let mut class = None;
+        for a in args.iter().flatten() {
+            for p in a.ty.pieces() {
+                if let Some(k) = self.class_of(&p) {
+                    match class {
+                        None => class = Some(k),
+                        Some(c) => {
+                            if !self.merge(c, k, what, span) {
+                                return Err(self.rejected(what, args));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let kept: Vec<usize> = match class {
+            Some(k) => {
+                for a in args.iter().flatten() {
+                    if let Some(l) = &a.lit
+                        && !self.join(k, l, false)
+                    {
+                        return Err(self.rejected(what, args));
+                    }
+                }
+                (0..sig.arrows.len()).collect()
+            }
+            None => match self.fewest(what, sig, args)? {
+                Some(kept) => kept,
+                None => return Ok((Ty::dynamic(), Vec::new())),
+            },
+        };
+        // The states: the arrows alive, whether a piece was unknown, and the first pieces
+        // that reached it, by argument.
+        let n = args.len();
+        let mut states: Vec<(Vec<usize>, bool, Vec<Option<Piece>>)> =
+            vec![(kept.clone(), false, Vec::new())];
+        for (i, a) in args.iter().enumerate() {
+            let pieces: Vec<Option<Piece>> = match a {
+                None => vec![None],
+                Some(a) if a.lit.is_some() && class.is_some() => {
+                    vec![Some(Piece::Var(format!("${}", class.unwrap()).into()))]
+                }
+                Some(a) => a.ty.pieces().into_iter().map(Some).collect(),
+            };
+            let mut next: Vec<(Vec<usize>, bool, Vec<Option<Piece>>)> = Vec::new();
+            for (alive, dyn_, path) in &states {
+                for p in &pieces {
+                    let (alive, dyn_) = match p {
+                        None => (alive.clone(), *dyn_),
+                        // A class may still take any value its mask allows, so it keeps
+                        // every arrow; the restriction after the arguments narrows it.
+                        Some(p) if self.class_of(p).is_some() => (alive.clone(), *dyn_),
+                        Some(Piece::Dyn | Piece::Var(_)) => (alive.clone(), true),
+                        Some(p) => {
+                            let alive = alive
+                                .iter()
+                                .copied()
+                                .filter(|&k| {
+                                    p.ty().sub(&sig.arrows[k].params[i], &mut Binds::new())
+                                })
+                                .collect();
+                            (alive, *dyn_)
+                        }
+                    };
+                    if !next.iter().any(|s| s.0 == alive && s.1 == dyn_) {
+                        let mut path = path.clone();
+                        path.push(p.clone());
+                        next.push((alive, dyn_, path));
+                    }
+                }
+            }
+            states = next;
+        }
+        let mut out = Ty::empty();
+        for (alive, dyn_, path) in &states {
+            let shown = |ck: &Self| {
+                let shown: Vec<String> = path
+                    .iter()
+                    .map(|p| p.as_ref().map(|p| ck.show(&p.ty())).unwrap_or("_".into()))
+                    .collect();
+                format!("{what} does not take ({})", shown.join(", "))
+            };
+            let at: Vec<usize> = (0..n)
+                .filter(|&i| path[i].as_ref().is_some_and(|p| self.class_of(p).is_some()))
+                .collect();
+            match class {
+                Some(k) if !at.is_empty() => {
+                    let mask_at =
+                        |a: &Arrow| at.iter().fold(EVERY, |m, &i| m & mask_of(&a.params[i]));
+                    let m = alive.iter().fold(0, |m, &j| m | mask_at(&sig.arrows[j]));
+                    if alive.is_empty() || !self.restrict(k, m, what, span) {
+                        return Err(shown(self));
+                    }
+                    if *dyn_ {
+                        out = out.union(&Ty::dynamic());
+                        continue;
+                    }
+                    let r = self.find(k);
+                    let km = self.classes[r].mask;
+                    let rel: Vec<&Arrow> = alive
+                        .iter()
+                        .map(|&j| &sig.arrows[j])
+                        .filter(|a| mask_at(a) & km != 0)
+                        .collect();
+                    let follows = rel.iter().all(|a| {
+                        let m = mask_at(a);
+                        m.count_ones() == 1
+                            && Carrier::of_mask(m)
+                                .next()
+                                .is_some_and(|c| Ty::carrier(c).subtype(&a.result))
+                    });
+                    if follows {
+                        out = out.union(&Ty::var(format!("${r}").into()));
+                        for a in &rel {
+                            out = out.union(&Ty::set(a.result.atoms()));
+                        }
+                    } else {
+                        for a in &rel {
+                            out = out.union(&close(&a.result, sig));
+                        }
+                    }
+                }
+                _ if *dyn_ => out = out.union(&Ty::dynamic()),
+                _ => {
+                    let Some(&j) = alive.first() else {
+                        return Err(shown(self));
+                    };
+                    let a = &sig.arrows[j];
+                    let mut binds = Binds::new();
+                    for (p, t) in path.iter().zip(&a.params) {
+                        if let Some(p) = p {
+                            p.ty().sub(t, &mut binds);
+                        }
+                    }
+                    out = out.union(&close(&a.result.subst(&binds), sig));
+                }
+            }
+        }
+        Ok((out, kept))
+    }
+
+    /// The arrows of `sig` whose adoptions of the literal arguments are fewest, all the
+    /// same, with those adoptions made and the arguments retyped.
+    /// `None` when a literal adopts no arrow's carrier exactly, which is reported.
+    fn fewest(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &mut [Option<Arg>],
+    ) -> Result<Option<Vec<usize>>, String> {
         let mut best: Option<(usize, Vec<(Span, Value)>)> = None;
         let mut kept = Vec::new();
         let mut adopt_error = None;
@@ -2109,20 +2539,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Some((_, need)) = best else {
             if let Some((s, m)) = adopt_error {
                 self.error(s, m);
-            } else {
-                let shown: Vec<String> = args
-                    .iter()
-                    .map(|a| a.as_ref().map(|a| a.ty.to_string()).unwrap_or("_".into()))
-                    .collect();
-                let mut notes = self.applied(what, sig, &args, span);
-                notes.extend(self.repairs(what, sig, &args, pass, span));
-                self.error_with(
-                    span,
-                    format!("{what} does not take ({})", shown.join(", ")),
-                    notes,
-                );
+                return Ok(None);
             }
-            return (out.union(&Ty::dynamic()), Vec::new());
+            return Err(self.rejected(what, args));
         };
         for (s, v) in need {
             let neg = args
@@ -2136,64 +2555,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             self.put(Undo::Adopt(s, Some(v)));
         }
-        // Each combination of pieces.
-        let pieces: Vec<Vec<Option<Piece>>> = args
-            .iter()
-            .map(|a| match a {
-                Some(a) => a.ty.pieces().into_iter().map(Some).collect(),
-                None => vec![None],
-            })
-            .collect();
-        let total = pieces.iter().map(|p| p.len()).product::<usize>();
-        if total > COMBOS {
-            return (out.union(&Ty::dynamic()), kept);
-        }
-        for c in 0..total {
-            let mut rest = c;
-            let combo: Vec<&Option<Piece>> = pieces
-                .iter()
-                .map(|ps| {
-                    let p = &ps[rest % ps.len()];
-                    rest /= ps.len();
-                    p
-                })
-                .collect();
-            if combo.iter().any(|p| matches!(p, Some(Piece::Dyn))) {
-                out = out.union(&Ty::dynamic());
-                continue;
-            }
-            let mut hit = None;
-            for &k in &kept {
-                let arrow = &sig.arrows[k];
-                let mut binds = Binds::new();
-                let fits = combo.iter().zip(&arrow.params).all(|(p, t)| match p {
-                    Some(p) => p.ty().sub(t, &mut binds),
-                    None => true,
-                });
-                if fits {
-                    hit = Some(close(&arrow.result.subst(&binds), sig));
-                    break;
-                }
-            }
-            match hit {
-                Some(r) => out = out.union(&r),
-                None => {
-                    let shown: Vec<String> = combo
-                        .iter()
-                        .map(|p| p.as_ref().map(|p| p.ty().to_string()).unwrap_or("_".into()))
-                        .collect();
-                    let mut notes = self.applied(what, sig, &args, span);
-                    notes.extend(self.repairs(what, sig, &args, pass, span));
-                    self.error_with(
-                        span,
-                        format!("{what} does not take ({})", shown.join(", ")),
-                        notes,
-                    );
-                    return (out.union(&Ty::dynamic()), kept);
-                }
-            }
-        }
-        (out, kept)
+        Ok(Some(kept))
     }
 }
 
@@ -2241,39 +2603,6 @@ fn close(t: &Ty, sig: &Sig) -> Ty {
     t.subst(&binds)
 }
 
-/// `sig` with the variables `vars` renamed `T`, `U`, `V`, `W`, `T5`, … in order of first
-/// appearance.
-fn rename(sig: &Sig, vars: &[Arc<str>]) -> Sig {
-    let mut seen = Vec::new();
-    for a in &sig.arrows {
-        a.params.iter().for_each(|p| p.vars_in(&mut seen));
-        a.result.vars_in(&mut seen);
-    }
-    let names: BTreeMap<Arc<str>, Arc<str>> = seen
-        .into_iter()
-        .filter(|v| vars.contains(v))
-        .enumerate()
-        .map(|(i, v)| {
-            let n: Arc<str> = match i {
-                0..4 => ["T", "U", "V", "W"][i].into(),
-                _ => format!("T{}", i + 1).into(),
-            };
-            (v, n)
-        })
-        .collect();
-    Sig {
-        params: sig.params.clone(),
-        arrows: sig
-            .arrows
-            .iter()
-            .map(|a| Arrow {
-                params: a.params.iter().map(|p| p.rename(&names)).collect(),
-                result: a.result.rename(&names),
-            })
-            .collect(),
-    }
-}
-
 /// The one function `t` is, when it is nothing else.
 fn only_fn(t: &Ty) -> Option<Arc<Sig>> {
     match (
@@ -2285,19 +2614,6 @@ fn only_fn(t: &Ty) -> Option<Arc<Sig>> {
     }
 }
 
-/// The adoptions among the writes `wrote` inside `span`, each as last written.
-fn adoptions_in(wrote: &[Undo], span: Span) -> BTreeMap<Span, Value> {
-    wrote
-        .iter()
-        .filter_map(|w| match w {
-            Undo::Adopt(s, Some(v)) if span.start <= s.start && s.end <= span.end => {
-                Some((*s, v.clone()))
-            }
-            _ => None,
-        })
-        .collect()
-}
-
 /// A write to one of [`Info`]'s maps: the key and the value, `None` for no entry. In the log,
 /// the value is the one the write replaced.
 #[derive(Clone)]
@@ -2307,59 +2623,11 @@ enum Undo {
     Fit(Span, Option<Fit>),
     Sig(usize, Option<Arc<Sig>>),
     Top(String, Option<Ty>),
-    /// A nested search's writes, which the maps do not hold until the outermost search ends.
-    Nested(Arc<Searched>),
+    /// A class, while a repair is tried.
+    Class(usize, Box<Class>),
 }
 
-/// A combination of a signature's search that checks: its types, its result, what its run
-/// wrote, its adoptions inside the body and the numbers of the nested searches' adoptions,
-/// and how many differ from those before the search.
-type Found = (
-    Vec<Ty>,
-    Ty,
-    Vec<Undo>,
-    (BTreeMap<Span, Value>, Vec<(Span, usize)>),
-    usize,
-);
-
-/// Adoptions differing from before a search: those of its own writes, and the number of
-/// each nested search's, by the nested function's statement.
-type Adoptions = (Vec<(Span, Value)>, Vec<(Span, usize)>);
-
-/// The adoptions of a search's writes that differ from before it, and how many there are,
-/// the nested searches' counted.
-struct Adopted {
-    of: Adoptions,
-    count: usize,
-}
-
-/// The context of a search: the number of the context of the search around it and the type
-/// of each binder it reads from the function around it.
-type Context = (Option<usize>, Vec<Option<Ty>>);
-
-/// What a function's signature search reads from outside the function: the context of the
-/// search around it, whether its errors carry notes or offer repairs, and the type of each binder it reads
-/// from the function around it, in the order of [`Tables::outer`].
-#[derive(PartialEq, Eq, Hash)]
-struct Key {
-    around: Option<usize>,
-    quiet: bool,
-    trying: bool,
-    outer: Vec<Option<Ty>>,
-}
-
-/// A function's signature search: the function's statement, the signature, the writes it
-/// left, each with the value it wrote, its errors, and the number and count of its
-/// adoptions differing from before the search, if any differ.
-struct Searched {
-    span: Span,
-    sig: Arc<Sig>,
-    wrote: Vec<Undo>,
-    errors: Vec<Error>,
-    summary: Option<(usize, usize)>,
-}
-
-/// How long the log and the errors were at a point of a search.
+/// How long the log and the errors were at a point.
 struct Mark {
     log: usize,
     errors: usize,
@@ -2384,6 +2652,9 @@ impl Ck<'_, '_> {
 
     /// Makes the write `w` and gives the write that undoes it.
     fn set(&mut self, w: Undo) -> Undo {
+        if let Undo::Class(k, c) = w {
+            return Undo::Class(k, Box::new(std::mem::replace(&mut self.classes[k], *c)));
+        }
         let i = &mut self.info;
         match w {
             Undo::Adopt(k, v) => Undo::Adopt(k, set!(i.adopt, k, v)),
@@ -2394,11 +2665,11 @@ impl Ck<'_, '_> {
                 let old = set!(i.tops, k, v);
                 Undo::Top(k, old)
             }
-            Undo::Nested(s) => Undo::Nested(s),
+            Undo::Class(..) => unreachable!("a class is set above"),
         }
     }
 
-    /// The point the search is at.
+    /// The point the checker is at.
     fn mark(&self) -> Mark {
         Mark {
             log: self.log.len(),
@@ -2413,22 +2684,6 @@ impl Ck<'_, '_> {
             self.set(w);
         }
         self.info.errors.truncate(m.errors);
-    }
-
-    /// The writes since `m`, each with the value its key now has, in the order made.
-    fn wrote(&self, m: &Mark) -> Vec<Undo> {
-        let i = &self.info;
-        self.log[m.log..]
-            .iter()
-            .map(|w| match w {
-                Undo::Adopt(k, _) => Undo::Adopt(*k, i.adopt.get(k).cloned()),
-                Undo::Call(k, _) => Undo::Call(*k, i.calls.get(k).cloned()),
-                Undo::Fit(k, _) => Undo::Fit(*k, i.fits.get(k).cloned()),
-                Undo::Sig(k, _) => Undo::Sig(*k, i.sigs.get(k).cloned()),
-                Undo::Top(k, _) => Undo::Top(k.clone(), i.tops.get(k).cloned()),
-                Undo::Nested(s) => Undo::Nested(s.clone()),
-            })
-            .collect()
     }
 }
 
@@ -2564,6 +2819,7 @@ fn op_sig(op: &str) -> Sig {
     Sig {
         params: positional(n),
         arrows,
+        bounds: BTreeMap::new(),
     }
 }
 
@@ -2609,5 +2865,48 @@ fn word_sig(w: &str) -> Arc<Sig> {
     Arc::new(Sig {
         params: positional(1),
         arrows,
+        bounds: BTreeMap::new(),
     })
+}
+
+/// The class a type variable names: `$k` is class `k`.
+fn class_id(v: &str) -> Option<usize> {
+    v.strip_prefix('$')?.parse().ok()
+}
+
+/// The `n`th name of a signature's own type variables: `T`, `U`, `V`, `W`, `T5`, ….
+fn var_name(n: usize) -> Arc<str> {
+    match n {
+        0..4 => ["T", "U", "V", "W"][n].into(),
+        _ => format!("T{}", n + 1).into(),
+    }
+}
+
+/// The variables of `s`, in order of first appearance.
+fn sig_vars(s: &Sig) -> Vec<Arc<str>> {
+    let mut out = Vec::new();
+    for a in &s.arrows {
+        a.params.iter().for_each(|p| p.vars_in(&mut out));
+        a.result.vars_in(&mut out);
+    }
+    out
+}
+
+/// The carriers a value of `t` may be of, and [`OTHER`] if it may be a tuple, a function or
+/// another value that is no atom: every value if `t` is unknown or has a variable.
+fn mask_of(t: &Ty) -> u8 {
+    if t.dynamic || !t.vars.is_empty() {
+        return EVERY;
+    }
+    let mut m = 0;
+    for c in Carrier::ALL {
+        if !(&t.set & &c.ty()).is_empty() {
+            m |= c.bit();
+        }
+    }
+    let carriers = Carrier::ALL.into_iter().fold(atoms(), |s, c| &s | &c.ty());
+    if !t.tuples.is_empty() || !t.fns.is_empty() || !(&t.set - &carriers).is_empty() {
+        m |= OTHER;
+    }
+    m
 }

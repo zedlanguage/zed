@@ -1,18 +1,18 @@
-//! A declared function's signature comes from its body: one arrow for each carrier its
-//! untyped parameters check at, a type variable where any value does, and the error the body
-//! gives when it checks at none.
+//! A declared function's signature comes from its body: an untyped parameter is a type
+//! variable, bounded by the carriers its uses take, and the error is at the use that leaves
+//! it none.
 
 use super::{sig, type_errors};
 
 #[test]
-fn arithmetic_gives_one_arrow_per_numeric_carrier() {
+fn arithmetic_gives_a_variable_bounded_by_the_numeric_carriers() {
     assert_eq!(
         sig("area(w, h) = w * h;\n", "area"),
-        "((w: int, h: int) -> int) & ((w: f64, h: f64) -> f64) & ((w: rat, h: rat) -> rat)"
+        "(w: T, h: T) -> T for T in int | f64 | rat"
     );
     assert_eq!(
         sig("neg(x) = -x;\n", "neg"),
-        "((x: int) -> int) & ((x: f64) -> f64) & ((x: rat) -> rat)"
+        "(x: T) -> T for T in int | f64 | rat"
     );
 }
 
@@ -38,8 +38,7 @@ fn an_operator_with_one_carrier_fixes_it() {
 fn comparison_checks_at_every_ordered_carrier() {
     assert_eq!(
         sig("lt(a, b) = a < b;\n", "lt"),
-        "((a: int, b: int) -> bool) & ((a: f64, b: f64) -> bool) & ((a: rat, b: rat) -> bool) \
-         & ((a: String, b: String) -> bool) & ((a: bool, b: bool) -> bool)"
+        "(a: T, b: T) -> bool for T in int | f64 | rat | String | bool"
     );
 }
 
@@ -111,12 +110,28 @@ fn a_body_that_checks_at_no_type_is_reported() {
         type_errors("bad(x) = x + \"a\" * 2;\n"),
         ["`*` does not take (\"a\", 2) [\"a\" * 2]"]
     );
-    // Wrong at each carrier, for a reason that depends on it: the first carrier's error.
+    // Wrong at each carrier, for a reason that depends on it: `++` makes `x` a String, and
+    // the error is at the use that then finds it none.
     assert_eq!(
         type_errors("neither(x) = x ++ \"a\" + 1;\n"),
-        [
-            "`neither` checks at no type of `x`: with `x`: int, `++` does not take (int, \"a\") \
-          [neither(x) = x ++ \"a\" + 1;]"
-        ]
+        ["`+` does not take (String, 1) [x ++ \"a\" + 1]"]
     );
+}
+
+#[test]
+fn a_parameter_compared_with_a_tuple_may_be_a_tuple() {
+    // `<` orders tuples of one length as well as carriers, so `x` may be `(3, 4)`: its
+    // class keeps the tuple arrow, which allows only other values, and it gives `_`.
+    let src = "lt(positional x) = x < (1, 2);\nmain() = lt((3, 4));\n";
+    assert_eq!(sig(src, "lt"), "(_) -> bool");
+    assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));
+}
+
+#[test]
+fn a_literal_compared_for_equality_does_not_bound_a_parameter() {
+    // `==` takes any two values, so the literal follows the class and leaves it every
+    // carrier: `eq1("a")` is false, not an error.
+    let src = "eq1(positional x) = x == 1;\nmain() = eq1(\"a\");\n";
+    assert_eq!(sig(src, "eq1"), "(T) -> bool");
+    assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));
 }

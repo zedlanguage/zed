@@ -17,7 +17,6 @@
 //! word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
 //! belongs to a function at the unit's top level.
 
-use std::cell::OnceCell;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
@@ -187,13 +186,6 @@ pub(crate) struct Tables<'a> {
     pub(crate) funcs: HashMap<usize, &'a Function>,
     /// The uses of each binder, in the order of the text.
     uses_of: Vec<Vec<Span>>,
-    /// Each function's size in bytes less those of the functions declared directly in it, by
-    /// its statement: what one check of its body reads, a nested function's signature found
-    /// again costing `O(1)`.
-    own: HashMap<Span, usize>,
-    /// The binders each function's statement reads that are bound in the nearest function
-    /// around it, by the statement; built when first asked for.
-    outer: OnceCell<HashMap<Span, Vec<usize>>>,
 }
 
 struct Elab<'a> {
@@ -231,32 +223,9 @@ impl<'a> Tables<'a> {
             ids,
             funcs: HashMap::new(),
             uses_of,
-            own: HashMap::new(),
-            outer: OnceCell::new(),
         };
         t.collect_functions(unit);
-        let mut funcs: Vec<Span> = t.funcs.keys().map(|&id| res.binders[id].span).collect();
-        funcs.sort_unstable_by_key(|s| (s.start, Reverse(s.end)));
-        let mut open: Vec<Span> = Vec::new();
-        for s in funcs {
-            while open.last().is_some_and(|o| o.end < s.end) {
-                open.pop();
-            }
-            t.own.insert(s, s.end - s.start);
-            if let Some(o) = open.last() {
-                *t.own.get_mut(o).expect("an open function") -= s.end - s.start;
-            }
-            open.push(s);
-        }
         t
-    }
-
-    /// The size of the function declared at `span` less the functions declared in it.
-    pub(crate) fn own(&self, span: Span) -> usize {
-        self.own
-            .get(&span)
-            .copied()
-            .unwrap_or(span.end - span.start)
     }
 
     /// Records every function declaration of `stmts` and of the blocks inside them.
@@ -392,61 +361,6 @@ impl<'a> Tables<'a> {
             d.dedup();
         }
         topo(&deps)
-    }
-
-    /// The binders the function declared at `span` reads, in it or in the functions inside
-    /// it, that are bound in the nearest function around it, outside it, its own name among
-    /// them: those its signature search reads from outside, beyond what the search around
-    /// it reads. A use adds its binder to one function only, so the lists hold `O(uses)`.
-    pub(crate) fn outer(&self, span: Span) -> &[usize] {
-        let outer = self.outer.get_or_init(|| {
-            // The functions' statements, and the uses, in the order of the text, a statement
-            // before the uses it starts with; the open statements form a chain.
-            let mut funcs: Vec<(Span, usize)> = self
-                .funcs
-                .keys()
-                .map(|&id| (self.res.binders[id].span, id))
-                .collect();
-            funcs.sort_unstable_by_key(|&(s, _)| (s.start, Reverse(s.end)));
-            let inside = |s: Span, t: Span| s.start <= t.start && t.end <= s.end;
-            let mut out: HashMap<Span, Vec<usize>> =
-                funcs.iter().map(|&(s, _)| (s, Vec::new())).collect();
-            let mut open: Vec<(Span, usize)> = Vec::new();
-            let mut next = 0;
-            for (u, r) in &self.res.uses {
-                let Ref::Bound(ids) = r else { continue };
-                while next < funcs.len() && funcs[next].0.start <= u.start {
-                    while open.last().is_some_and(|&(s, _)| !inside(s, funcs[next].0)) {
-                        open.pop();
-                    }
-                    open.push(funcs[next]);
-                    next += 1;
-                }
-                while open.last().is_some_and(|&(s, _)| !inside(s, *u)) {
-                    open.pop();
-                }
-                for &b in ids {
-                    // The functions around the binder's text are the first of the chain;
-                    // the one after them reads it from outside, as does the function the
-                    // binder names.
-                    let at = self.res.binders[b].span;
-                    let around = open.partition_point(|&(s, _)| inside(s, at));
-                    let reader = match around.checked_sub(1) {
-                        Some(j) if open[j].1 == b => j,
-                        _ => around,
-                    };
-                    if let Some(&(s, _)) = open.get(reader) {
-                        out.get_mut(&s).expect("a function").push(b);
-                    }
-                }
-            }
-            for v in out.values_mut() {
-                v.sort_unstable();
-                v.dedup();
-            }
-            out
-        });
-        outer.get(&span).map_or(&[], |v| v)
     }
 }
 
