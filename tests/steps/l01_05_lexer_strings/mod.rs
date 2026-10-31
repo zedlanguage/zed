@@ -2,6 +2,7 @@
 //! split into parts, each hole lexed into its tokens.
 
 mod holes;
+mod scaling;
 mod strings;
 
 use zedc::lex::{Part, Tok, lex};

@@ -216,14 +216,25 @@ fn strip(text: &str, content: usize, raw: &[Raw]) -> Result<Vec<(usize, usize)>,
             ));
         }
     }
+    // The cuts do not overlap; in order, `decode` passes each once.
+    cuts.sort_unstable();
     Ok(cuts)
 }
 
-/// The literal text from `start` to `end`, less the `cuts`, with its escapes decoded.
+/// The literal text from `start` to `end`, less the `cuts`, which are sorted and do not
+/// overlap, with its escapes decoded.
 fn decode(text: &str, start: usize, end: usize, cuts: &[(usize, usize)]) -> String {
+    // The first cut not ending before each character, found by search and then advanced.
+    let mut next = cuts.partition_point(|&(_, b)| b <= start);
     let mut chars = text[start..end]
         .char_indices()
-        .filter(|&(k, _)| !cuts.iter().any(|&(a, b)| a <= start + k && start + k < b))
+        .filter(|&(k, _)| {
+            let p = start + k;
+            while next < cuts.len() && cuts[next].1 <= p {
+                next += 1;
+            }
+            !(next < cuts.len() && cuts[next].0 <= p)
+        })
         .map(|(_, c)| c);
     let mut out = String::new();
     while let Some(c) = chars.next() {
