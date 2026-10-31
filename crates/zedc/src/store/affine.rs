@@ -376,20 +376,24 @@ impl Bounds {
     /// The element shifted by `c`: `x + c` for each member `x`. A bound past the 64-bit range is
     /// dropped, which only widens the element.
     pub fn offset(&self, c: i64) -> Bounds {
-        let shift = |s: &BTreeSet<Bound>| {
+        let shift = |s: &BTreeSet<Bound>, end: fn(i128) -> End| {
             s.iter()
                 .filter_map(|b| {
                     Some(Bound {
                         affine: b.affine.plus(c)?,
-                        floor: shift_end(b.floor, c),
+                        floor: shift_end(b.floor, c, end),
                     })
                 })
                 .collect::<Vec<_>>()
         };
         let ints = self
             .ints
-            .lift1(|(lo, hi)| vec![(shift_end(lo, c), shift_end(hi, c))]);
-        Bounds::from_bounds(ints, shift(&self.lower), shift(&self.upper))
+            .lift1(|(lo, hi)| vec![(shift_end(lo, c, End::lower), shift_end(hi, c, End::upper))]);
+        Bounds::from_bounds(
+            ints,
+            shift(&self.lower, End::lower),
+            shift(&self.upper, End::upper),
+        )
     }
 
     /// The bounds on one side that every member of `a` or of `b` is within: for each pair with
@@ -430,9 +434,10 @@ fn same_terms<'a>(
     set.range(at(i64::MIN, End::NegInf)..=at(i64::MAX, End::PosInf))
 }
 
-fn shift_end(e: End, c: i64) -> End {
+/// `e + c`, rounded by `end` as a lower or an upper end.
+fn shift_end(e: End, c: i64, end: fn(i128) -> End) -> End {
     match e {
-        End::Fin(v) => End::from_i128(v as i128 + c as i128),
+        End::Fin(v) => end(v as i128 + c as i128),
         e => e,
     }
 }

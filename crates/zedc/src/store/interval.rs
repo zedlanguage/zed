@@ -6,11 +6,24 @@
 //! of elements is equality of sets. The empty list is the empty set, the bottom of the lattice.
 //! Meet and join are exact.
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::Neg;
 
 use super::lattice::Landmarks;
+
+thread_local! {
+    static ROUNDED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether an end past `i64` was rounded outward on this thread since the last call. A set
+/// built from a rounded end holds every integer it should, but may hold more: an end of
+/// `i64::MAX` stands for every integer from there up, so `i64::MAX` and `i64::MAX + 1` are not
+/// told apart. A transfer that claims its result is exact checks this first.
+pub fn rounded() -> bool {
+    ROUNDED.replace(false)
+}
 
 /// An endpoint: an integer or one of the two infinities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -27,12 +40,46 @@ use End::{Fin, NegInf, PosInf};
 
 impl End {
     /// The endpoint for an exact result `x`, which may lie outside `i64`. A value that does not
-    /// fit is replaced by the infinity on its side, which only widens the interval it bounds.
+    /// fit is replaced by the infinity on its side: this widens an interval it bounds above
+    /// past `i64::MAX`, or below past `i64::MIN`; for the other two cases see [`End::lower`]
+    /// and [`End::upper`].
     pub fn from_i128(x: i128) -> End {
         match i64::try_from(x) {
             Ok(v) => Fin(v),
-            Err(_) if x < 0 => NegInf,
-            Err(_) => PosInf,
+            Err(_) => {
+                ROUNDED.set(true);
+                if x < 0 { NegInf } else { PosInf }
+            }
+        }
+    }
+
+    /// `x` as the lower end of an interval, rounded down. A set holds an integer past `i64`
+    /// when it is unbounded on that side, so a lower end past `i64::MAX` is `i64::MAX`, whose
+    /// interval holds every integer beyond it; the infinity would empty the interval.
+    pub fn lower(x: i128) -> End {
+        if x > i64::MAX as i128 {
+            ROUNDED.set(true);
+            Fin(i64::MAX)
+        } else {
+            End::from_i128(x)
+        }
+    }
+
+    /// `x` as the upper end of an interval, rounded up: [`End::lower`] mirrored.
+    pub fn upper(x: i128) -> End {
+        if x < i64::MIN as i128 {
+            ROUNDED.set(true);
+            Fin(i64::MIN)
+        } else {
+            End::from_i128(x)
+        }
+    }
+
+    /// `-self` as the lower end of an interval. [`End::neg`] gives the upper end.
+    pub fn neg_lower(self) -> End {
+        match self {
+            Fin(v) => End::lower(-(v as i128)),
+            e => e.neg(),
         }
     }
 
@@ -366,7 +413,7 @@ impl IntervalSet {
         IntervalSet::from_pieces(
             self.pieces
                 .iter()
-                .map(|&(lo, hi)| (hi.neg(), lo.neg()))
+                .map(|&(lo, hi)| (hi.neg_lower(), lo.neg()))
                 .collect(),
         )
     }

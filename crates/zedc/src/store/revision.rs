@@ -100,23 +100,32 @@ enum Dir {
 /// defined by a limit, such as `inf - inf`.
 fn at(op: Op, a: End, b: End, dir: Dir) -> End {
     let outward = if dir == Dir::Down { NegInf } else { PosInf };
+    let end = |x: i128| {
+        if dir == Dir::Down {
+            End::lower(x)
+        } else {
+            End::upper(x)
+        }
+    };
     let inf = |sign: i8| match sign.cmp(&0) {
         Ordering::Less => NegInf,
         Ordering::Greater => PosInf,
         Ordering::Equal => Fin(0),
     };
     match (op, a, b) {
-        (Op::Add, Fin(x), Fin(y)) => End::from_i128(x as i128 + y as i128),
+        (Op::Add, Fin(x), Fin(y)) => end(x as i128 + y as i128),
         (Op::Add, NegInf, PosInf) | (Op::Add, PosInf, NegInf) => outward,
         (Op::Add, Fin(_), e) | (Op::Add, e, _) => e,
+        (Op::Sub, Fin(x), Fin(y)) => end(x as i128 - y as i128),
         (Op::Sub, _, _) => at(Op::Add, a, b.neg(), dir),
+        (Op::Neg, Fin(x), _) => end(-(x as i128)),
         (Op::Neg, _, _) => a.neg(),
-        (Op::Mul, Fin(x), Fin(y)) => End::from_i128(x as i128 * y as i128),
+        (Op::Mul, Fin(x), Fin(y)) => end(x as i128 * y as i128),
         // 0 times an unbounded operand: every product with a finite member is 0.
         (Op::Mul, _, _) => inf(a.signum() * b.signum()),
         (Op::Pow(k), Fin(x), _) => (x as i128)
             .checked_pow(k)
-            .map(End::from_i128)
+            .map(end)
             .unwrap_or(inf(if k % 2 == 0 { 1 } else { x.signum() as i8 })),
         (Op::Pow(0), _, _) => Fin(1),
         (Op::Pow(k), e, _) => {
@@ -126,6 +135,7 @@ fn at(op: Op, a: End, b: End, dir: Dir) -> End {
                 e
             }
         }
+        (Op::Abs, Fin(x), _) => end((x as i128).abs()),
         (Op::Abs, _, _) => {
             if a.signum() < 0 {
                 a.neg()
@@ -368,7 +378,7 @@ pub fn backward(
         (Op::Pow(k), _) => z.lift1(|(lo, hi)| roots(k, lo, hi)),
         (Op::Abs, _) => z.lift1(|(lo, hi)| {
             let lo = lo.max(Fin(0));
-            vec![(hi.neg(), lo.neg()), (lo, hi)]
+            vec![(hi.neg_lower(), lo.neg()), (lo, hi)]
         }),
         (Op::Min, _) => match (z.bounds(), other.bounds()) {
             (Some((_, zhi)), Some((olo, _))) if olo > zhi => z.clone(),
@@ -390,7 +400,7 @@ pub fn backward(
         (Op::Mod, 1) => match z.bounds() {
             Some((Fin(r), _)) if r >= 0 => IntervalSet::from_pieces(vec![
                 (NegInf, End::from_i128(-(r as i128) - 1)),
-                (End::from_i128(r as i128 + 1), PosInf),
+                (End::lower(r as i128 + 1), PosInf),
             ]),
             Some(_) => IntervalSet::top(),
             None => IntervalSet::empty(),
@@ -453,7 +463,7 @@ fn roots(k: u32, lo: End, hi: End) -> Vec<(End, End)> {
         return Vec::new();
     }
     let (r_lo, r_hi) = (ceil_root(lo.max(Fin(0))), floor_root(hi));
-    vec![(r_hi.neg(), r_lo.neg()), (r_lo, r_hi)]
+    vec![(r_hi.neg_lower(), r_lo.neg()), (r_lo, r_hi)]
 }
 
 /// The reduction between an interval and a congruence (sec:constraints): each piece's
@@ -469,11 +479,11 @@ pub fn reduce_congruence(x: &IntervalSet, c: &Congruence) -> (IntervalSet, Congr
         m => x.lift1(|(lo, hi)| {
             let m = m as i128;
             let up = |e: End| match e {
-                Fin(v) => End::from_i128(v as i128 + (residue as i128 - v as i128).rem_euclid(m)),
+                Fin(v) => End::lower(v as i128 + (residue as i128 - v as i128).rem_euclid(m)),
                 e => e,
             };
             let down = |e: End| match e {
-                Fin(v) => End::from_i128(v as i128 - (v as i128 - residue as i128).rem_euclid(m)),
+                Fin(v) => End::upper(v as i128 - (v as i128 - residue as i128).rem_euclid(m)),
                 e => e,
             };
             vec![(up(lo), down(hi))]

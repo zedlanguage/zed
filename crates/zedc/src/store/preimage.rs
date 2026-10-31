@@ -70,7 +70,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, eval, on_stack};
 
-use super::interval::{End, IntervalSet};
+use super::interval::{self, End, IntervalSet};
 use super::lattice::{Congruence, Landmarks, Lattice};
 use super::presburger::{self, Con, Formula, Lin, Over, Relation};
 use super::revision::{self, Op, Tonicity, reduce_congruence};
@@ -174,7 +174,10 @@ fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
     let root = Rc::new(Scope::Empty);
     let marks = landmarks(term, inputs, demand);
     let cx = Cx::new(inputs, marks.clone());
+    interval::rounded();
     let mut r = cx.back(term, &root, demand);
+    // An exact backward transfer through a rounded end may keep points that fail.
+    r.exact &= !interval::rounded();
     let mut stops = cx.shared.stops.take();
     let mut enumerated = false;
     if !r.exact && !is_empty(&r.dom) {
@@ -184,10 +187,12 @@ fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
         }
     }
     let mut relation = None;
+    interval::rounded();
     if !r.exact
         && !is_empty(&r.dom)
         && let Some((dom, exact, rel)) = linear(term, &r.dom, demand)
     {
+        let exact = exact && !interval::rounded();
         r = Res { dom, exact };
         relation = (!exact).then_some(rel);
     }
@@ -229,6 +234,8 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         // An auxiliary variable belongs to the relation of the term that made it.
         cx.memo.lin.borrow_mut().clear();
         cx.memo.formula.borrow_mut().clear();
+        cx.memo.lin_calls.borrow_mut().clear();
+        cx.memo.formula_calls.borrow_mut().clear();
         cx.memo.log.borrow_mut().clear();
         let first = tr.defs.len();
         let body = cx.formula(&mut tr, t, &root)?;
@@ -584,9 +591,25 @@ struct Memo {
     scan: RefCell<HashSet<Key>>,
     lin: RefCell<HashMap<Key, Option<Lin>>>,
     formula: RefCell<HashMap<Key, Option<Formula>>>,
-    /// The `lin` (false) and `formula` (true) entries in the order they were made, which a
-    /// translation that is undone removes.
-    log: RefCell<Vec<(bool, Key)>>,
+    /// The translations of calls, by the lambda and the translations of the arguments: a
+    /// body's value depends on its parameters only through their values, so calls whose
+    /// arguments translate alike translate alike, however they are reached.
+    lin_calls: RefCell<HashMap<CallKey, Option<Lin>>>,
+    formula_calls: RefCell<HashMap<CallKey, Option<Formula>>>,
+    /// The translation entries in the order they were made, which a translation that is
+    /// undone removes.
+    log: RefCell<Vec<Logged>>,
+}
+
+/// A call to translate: the lambda, by its body and scope, and its arguments' linear terms.
+type CallKey = (Key, Vec<Lin>);
+
+/// An entry of a translation memo.
+enum Logged {
+    Lin(Key),
+    Formula(Key),
+    LinCall(CallKey),
+    FormulaCall(CallKey),
 }
 
 struct Cx {
@@ -743,6 +766,13 @@ impl Cx {
     /// The preimage of a summarized call: the summary's box over the inputs, met with each
     /// argument's preimage of the summary's interval for its parameter. Exact when the summary
     /// is, the demand's ends are landmarks, and each argument's preimage is exact.
+    ///
+    /// A summary keeps only the inputs it narrows. Its context holds every input of the
+    /// context that first reached it, the parameters of enclosing summaries among them, and
+    /// another context reaching the same summary may give those other intervals. An input
+    /// the body reads has the same interval wherever the summary is reached: an input of the
+    /// transfer is the same in every context, and an enclosing parameter is read through the
+    /// lambda's scope, which the summary's key holds.
     #[allow(clippy::too_many_arguments)]
     fn call_back(
         &self,
@@ -768,7 +798,8 @@ impl Cx {
             Some(r) => r,
             None => {
                 let (sub, e) = self.open(&call, lam);
-                let r = sub.back_at(body, &e, &d);
+                let mut r = sub.back_at(body, &e, &d);
+                r.dom.retain(|k, z| *z != sub.inputs[k]);
                 if self.closes(&sub, place) {
                     self.shared.backs.borrow_mut().insert(k, r.clone());
                 }
@@ -781,14 +812,15 @@ impl Cx {
         let mut out = Res {
             dom: self
                 .inputs
-                .keys()
-                .map(|k| (k.clone(), r.dom[k].clone()))
+                .iter()
+                .map(|(k, z)| (k.clone(), r.dom.get(k).unwrap_or(z).clone()))
                 .collect(),
             exact: r.exact && same,
         };
         for (i, n, dom) in &call.params {
-            let z = &r.dom[n];
-            if !dom.is_subset(z) {
+            if let Some(z) = r.dom.get(n)
+                && !dom.is_subset(z)
+            {
                 let ra = self.back_at(&args[*i], env, &Demand::Ints(z.clone()));
                 out = self.meet(out, ra);
             }
@@ -819,32 +851,52 @@ impl Cx {
     }
 
     /// [`Cx::cached`] for the translation into the linear-relation domain, whose entries a
-    /// translation that is undone removes.
-    fn translated<V: Clone>(
+    /// translation that is undone removes; `logged` names an entry for the log.
+    fn translated<K: Hash + Eq + Clone, V: Clone>(
         &self,
-        formula: bool,
-        map: &RefCell<HashMap<Key, V>>,
-        k: Key,
+        map: &RefCell<HashMap<K, V>>,
+        k: K,
+        logged: impl FnOnce(K) -> Logged,
         f: impl FnOnce() -> V,
     ) -> V {
         let known = map.borrow().contains_key(&k);
-        let v = self.cached(map, k, f);
+        let v = self.cached(map, k.clone(), f);
         if !known && map.borrow().contains_key(&k) {
-            self.memo.log.borrow_mut().push((formula, k));
+            self.memo.log.borrow_mut().push(logged(k));
         }
         v
     }
 
     /// Removes the translation's entries made after the first `mark`.
     fn forget(&self, mark: usize) {
-        let undone: Vec<(bool, Key)> = self.memo.log.borrow_mut().drain(mark..).collect();
-        for (formula, k) in undone {
-            if formula {
-                self.memo.formula.borrow_mut().remove(&k);
-            } else {
-                self.memo.lin.borrow_mut().remove(&k);
+        let undone: Vec<Logged> = self.memo.log.borrow_mut().drain(mark..).collect();
+        for e in undone {
+            match e {
+                Logged::Lin(k) => _ = self.memo.lin.borrow_mut().remove(&k),
+                Logged::Formula(k) => _ = self.memo.formula.borrow_mut().remove(&k),
+                Logged::LinCall(k) => _ = self.memo.lin_calls.borrow_mut().remove(&k),
+                Logged::FormulaCall(k) => _ = self.memo.formula_calls.borrow_mut().remove(&k),
             }
         }
+    }
+
+    /// The key a call of the lambda `body` in scope `lam` is translated under: `None`, with
+    /// what the attempt made undone, when an argument has no linear term.
+    fn call_key(
+        &self,
+        tr: &mut Tr,
+        body: &Term,
+        lam: &Env,
+        args: &[Term],
+        env: &Env,
+    ) -> Option<CallKey> {
+        let (mark, logged) = (tr.defs.len(), self.memo.log.borrow().len());
+        let lins: Option<Vec<Lin>> = args.iter().map(|a| self.lin(tr, a, env)).collect();
+        if lins.is_none() {
+            tr.defs.truncate(mark);
+            self.forget(logged);
+        }
+        Some((key(body, lam), lins?))
     }
 
     /// The scope of a `let` body, made once for each `let` and scope.
@@ -1146,7 +1198,7 @@ impl Cx {
 
     /// The linear term an integer term states over the inputs.
     fn lin(&self, tr: &mut Tr, t: &Term, env: &Env) -> Option<Lin> {
-        self.translated(false, &self.memo.lin, key(t, env), || {
+        self.translated(&self.memo.lin, key(t, env), Logged::Lin, || {
             self.lin_at(tr, t, env)
         })
     }
@@ -1170,10 +1222,18 @@ impl Cx {
             Term::Let(n, e, b) => self.lin(tr, b, &self.let_env(t, n, e, env)),
             Term::App(f, args) => match self.callee(f, env).ok()? {
                 Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
-                    self.through(t, body, None, |_| {
-                        let inner = self.call_env(t, ps, args, lam, env);
-                        self.lin(tr, body, &inner)
-                    })
+                    let read = |tr: &mut Tr| {
+                        self.through(t, body, None, |_| {
+                            let inner = self.call_env(t, ps, args, lam, env);
+                            self.lin(tr, body, &inner)
+                        })
+                    };
+                    match self.call_key(tr, body, lam, args, env) {
+                        Some(k) => {
+                            self.translated(&self.memo.lin_calls, k, Logged::LinCall, || read(tr))
+                        }
+                        None => read(tr),
+                    }
                 }
                 Callee::Prim(p) => self.lin(tr, &self.call_prim(t, env, p, args), env),
                 Callee::Lam(..) => None,
@@ -1268,7 +1328,7 @@ impl Cx {
 
     /// The formula a test states over the inputs.
     fn formula(&self, tr: &mut Tr, t: &Term, env: &Env) -> Option<Formula> {
-        self.translated(true, &self.memo.formula, key(t, env), || {
+        self.translated(&self.memo.formula, key(t, env), Logged::Formula, || {
             self.formula_at(tr, t, env)
         })
     }
@@ -1290,10 +1350,21 @@ impl Cx {
             Term::Let(n, e, b) => self.formula(tr, b, &self.let_env(t, n, e, env)),
             Term::App(f, args) => match self.callee(f, env).ok()? {
                 Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
-                    self.through(t, body, None, |_| {
-                        let inner = self.call_env(t, ps, args, lam, env);
-                        self.formula(tr, body, &inner)
-                    })
+                    let read = |tr: &mut Tr| {
+                        self.through(t, body, None, |_| {
+                            let inner = self.call_env(t, ps, args, lam, env);
+                            self.formula(tr, body, &inner)
+                        })
+                    };
+                    match self.call_key(tr, body, lam, args, env) {
+                        Some(k) => self.translated(
+                            &self.memo.formula_calls,
+                            k,
+                            Logged::FormulaCall,
+                            || read(tr),
+                        ),
+                        None => read(tr),
+                    }
                 }
                 Callee::Prim(p) => self.formula(tr, &self.call_prim(t, env, p, args), env),
                 Callee::Lam(..) => None,
@@ -1939,24 +2010,29 @@ fn mirror(p: Prim) -> Prim {
 /// The integers `x` with `x p c`.
 fn ray(p: Prim, c: i64) -> IntervalSet {
     let c = c as i128;
-    let e = End::from_i128;
+    let (lower, upper) = (End::lower, End::upper);
     match p {
-        Prim::Lt => IntervalSet::range(NegInf, e(c - 1)),
-        Prim::Le => IntervalSet::range(NegInf, e(c)),
-        Prim::Gt => IntervalSet::range(e(c + 1), PosInf),
-        Prim::Ge => IntervalSet::range(e(c), PosInf),
-        Prim::Eq => IntervalSet::range(e(c), e(c)),
+        Prim::Lt => IntervalSet::range(NegInf, upper(c - 1)),
+        Prim::Le => IntervalSet::range(NegInf, upper(c)),
+        Prim::Gt => IntervalSet::range(lower(c + 1), PosInf),
+        Prim::Ge => IntervalSet::range(lower(c), PosInf),
+        Prim::Eq => IntervalSet::range(lower(c), upper(c)),
         _ => IntervalSet::single(c as i64).complement_in(&IntervalSet::top()),
     }
 }
 
 /// Each piece of `z` moved up by `c`.
 fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
-    let m = |e: End| match e {
-        Fin(v) => End::from_i128(v as i128 + c),
+    let m = |e: End, end: fn(i128) -> End| match e {
+        Fin(v) => end(v as i128 + c),
         e => e,
     };
-    IntervalSet::from_pieces(z.pieces().iter().map(|&(lo, hi)| (m(lo), m(hi))).collect())
+    IntervalSet::from_pieces(
+        z.pieces()
+            .iter()
+            .map(|&(lo, hi)| (m(lo, End::lower), m(hi, End::upper)))
+            .collect(),
+    )
 }
 
 /// The integers `x` with `x * c` in `z`.
@@ -1978,7 +2054,8 @@ fn times_pre(z: &IntervalSet, c: i64) -> IntervalSet {
                 (v as i128, c)
             };
             let f = v.div_euclid(d);
-            End::from_i128(if up && f * d != v { f + 1 } else { f })
+            let f = if up && f * d != v { f + 1 } else { f };
+            if up { End::lower(f) } else { End::upper(f) }
         }
         e if c < 0 => -e,
         e => e,
@@ -2004,8 +2081,13 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
         return IntervalSet::empty();
     }
     let (c, m) = (c as i128, (c as i128).abs());
-    let at = |e: End, add: i128| match e {
-        Fin(q) => End::from_i128(q as i128 * c + add),
+    let lower = |e: End| match e {
+        Fin(q) => End::lower(q as i128 * c),
+        e if c < 0 => -e,
+        e => e,
+    };
+    let upper = |e: End| match e {
+        Fin(q) => End::upper(q as i128 * c + m - 1),
         e if c < 0 => -e,
         e => e,
     };
@@ -2014,9 +2096,9 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
             .iter()
             .map(|&(lo, hi)| {
                 if c > 0 {
-                    (at(lo, 0), at(hi, m - 1))
+                    (lower(lo), upper(hi))
                 } else {
-                    (at(hi, 0), at(lo, m - 1))
+                    (lower(hi), upper(lo))
                 }
             })
             .collect(),

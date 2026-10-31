@@ -90,6 +90,57 @@ fn bool_term(rng: &mut Rng, d: u32) -> Term {
     }
 }
 
+/// `t` with each variable leaf, one time in two, read through a call of one of the functions
+/// `g0` to `g{fs - 1}` on itself plus a constant.
+fn with_calls(rng: &mut Rng, t: &Term, fs: usize) -> Term {
+    match t {
+        Term::Var(_) if fs > 0 && rng.below(2) == 0 => {
+            let g = Term::Var(format!("g{}", rng.below(fs)).into());
+            let arg = prim(Prim::Add, vec![t.clone(), lit(rng.int(-2, 2))]);
+            Term::App(Arc::new(g), vec![arg])
+        }
+        Term::Prim(p, args) => prim(*p, args.iter().map(|a| with_calls(rng, a, fs)).collect()),
+        Term::If(g, a, b) => Term::If(
+            Arc::new(with_calls(rng, g, fs)),
+            Arc::new(with_calls(rng, a, fs)),
+            Arc::new(with_calls(rng, b, fs)),
+        ),
+        _ => t.clone(),
+    }
+}
+
+/// `t` with `x` renamed `v`.
+fn over_v(t: &Term) -> Term {
+    match t {
+        Term::Var(x) if &**x == "x" => Term::Var("v".into()),
+        Term::Prim(p, args) => prim(*p, args.iter().map(over_v).collect()),
+        Term::If(g, a, b) => Term::If(
+            Arc::new(over_v(g)),
+            Arc::new(over_v(a)),
+            Arc::new(over_v(b)),
+        ),
+        _ => t.clone(),
+    }
+}
+
+/// A random term over `x` and `y` that calls the functions `g0` to `g{FUNCTIONS - 1}`, each a
+/// random term over its parameter `v` and `y` that may call the ones before it.
+fn with_functions(rng: &mut Rng, t: &Term) -> Term {
+    const FUNCTIONS: usize = 3;
+    let mut out = with_calls(rng, t, FUNCTIONS);
+    let bodies: Vec<Term> = (0..FUNCTIONS)
+        .map(|k| {
+            let b = over_v(&int_term(rng, 2));
+            with_calls(rng, &b, k)
+        })
+        .collect();
+    for (k, b) in bodies.into_iter().enumerate().rev() {
+        let g = Term::Lam(vec!["v".into()], Arc::new(b));
+        out = Term::Let(format!("g{k}").into(), Arc::new(g), Arc::new(out));
+    }
+    out
+}
+
 /// A random domain: small and finite, wide, or unbounded on one or both sides.
 fn domain(rng: &mut Rng) -> IntervalSet {
     let lo = rng.int(-15, 10);
@@ -153,6 +204,11 @@ struct Tally {
 }
 
 fn run(seed: u64, cases: usize, test: bool) -> Tally {
+    run_with(seed, cases, test, false)
+}
+
+/// [`run`], with each term reading through calls when `calls` holds.
+fn run_with(seed: u64, cases: usize, test: bool, calls: bool) -> Tally {
     let mut rng = Rng::new(seed);
     let mut tally = Tally::default();
     for _ in 0..cases {
@@ -160,6 +216,11 @@ fn run(seed: u64, cases: usize, test: bool) -> Tally {
             (bool_term(&mut rng, 3), Demand::Bool(rng.below(2) == 0))
         } else {
             (int_term(&mut rng, 3), int_demand(&mut rng))
+        };
+        let term = if calls {
+            with_functions(&mut rng, &term)
+        } else {
+            term
         };
         let ds = domains(&mut rng);
         let p = preimage(&term, &ds, &demand);
@@ -194,6 +255,16 @@ fn test_preimages_are_sound_and_exact_where_claimed() {
         t.exact_unenumerated >= 40 && t.enumerated >= 2 && t.nonempty >= 100,
         "{t:?}"
     );
+}
+
+/// The same through calls of functions that call one another, so that summaries are reached
+/// from more than one call.
+#[test]
+fn preimages_through_calls_are_sound_and_exact_where_claimed() {
+    for (seed, test) in [(7, false), (77, true)] {
+        let t = run_with(seed, 400, test, true);
+        assert!(t.nonempty >= 100, "{t:?}");
+    }
 }
 
 #[test]

@@ -195,6 +195,53 @@ fn a_call_is_read_through() {
     );
 }
 
+/// A summary reached again from another call keeps only the inputs it narrows: each call of
+/// `f1` reads `f0` over the other's interval, and once kept the interval of the first call's
+/// parameter with it, which cut `x = 50` from the second.
+#[test]
+fn a_summary_reached_from_another_call_keeps_only_what_it_narrows() {
+    let src = "ok(x) = f2(x) >= 204;\nf2(positional v) = f1(v) + f1(v + 1);\n\
+               f1(positional v) = f0(v) + f0(v + 1);\nf0(positional v) = v;\n";
+    assert_eq!(
+        holds(src, &[("x", Some(0), Some(50))]),
+        "x [50..=50]; exact"
+    );
+}
+
+/// Kernel integers are unbounded, so a sum past `i64` is an integer like any other. A lower
+/// end past `i64::MAX` was rounded to `+inf`, which emptied the interval it began, and the
+/// backward pass then cut every input.
+#[test]
+fn bounds_past_i64_keep_the_box() {
+    let b = 1i64 << 62;
+    let xy = [("x", Some(0), Some(1)), ("y", Some(-2), Some(2))];
+    for src in [
+        format!("ok(x, y) = x + {b} + {b} + {b} - y >= 0;\n"),
+        format!("ok(x, y) = (x + {b}) + (x + {b}) + (x + {b}) - y >= 0;\n"),
+        format!("ok(x, y) = x * {b} * 4 + {b} * 4 - y >= 0;\n"),
+        format!("ok(x, y) = -x - {b} - {b} - {b} + y <= 0;\n"),
+        format!("ok(x, y) = -(x + {b} + {b}) - y < 0;\n"),
+        format!("ok(x, y) = (x + {b} + {b} + {b}) div 3 - y >= 0;\n"),
+        format!("ok(x, y) = (x + {b} + {b}) * 2 - y > 0;\n"),
+    ] {
+        assert_eq!(holds(&src, &xy), "x [0..=1]; y [-2..=2]; exact", "{src}");
+    }
+    let m = i64::MAX;
+    assert_eq!(
+        holds(
+            &format!("ok(x) = x + {m} > {m};\n"),
+            &[("x", Some(0), Some(1))]
+        ),
+        "x [1..=1]; exact"
+    );
+    // Not exact: whether a point is cut is not decided, but none is.
+    let src = format!("ok(x, y) = x * {b} * 4 - y >= 0;\n");
+    assert!(
+        holds(&src, &xy).starts_with("x [0..=1]; y [-2..=2]"),
+        "{src}"
+    );
+}
+
 #[test]
 fn the_forward_pass_confirms_a_box_the_backward_pass_cannot() {
     // The difference `x - y <= 0` is not inverted exactly over two inputs, but every point of

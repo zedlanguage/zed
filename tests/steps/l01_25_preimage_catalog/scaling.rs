@@ -210,3 +210,44 @@ fn the_exact_search_scales_with_the_number_of_points() {
         run(hyperbola),
     );
 }
+
+/// `f0 = (v) -> v; f1 = (v) -> f0(v) + f0(v + d); …; fk(i) - j >= 0`: a sum, which the catalog
+/// does not invert exactly with two inputs, so the linear-relation translation reads it.
+fn sums(k: usize, d: i64) -> Term {
+    let call = |n: usize, a: Term| Term::App(Arc::new(var(&format!("f{n}"))), vec![a]);
+    let mut body = prim(
+        Prim::Ge,
+        prim(Prim::Sub, call(k, var("i")), var("j")),
+        int(0),
+    );
+    for n in (0..=k).rev() {
+        let e = if n == 0 {
+            var("v")
+        } else {
+            let second = if d == 0 {
+                var("v")
+            } else {
+                prim(Prim::Add, var("v"), int(d))
+            };
+            prim(Prim::Add, call(n - 1, var("v")), call(n - 1, second))
+        };
+        let f = Term::Lam(vec!["v".into()], Arc::new(e));
+        body = Term::Let(format!("f{n}").into(), Arc::new(f), Arc::new(body));
+    }
+    body
+}
+
+#[test]
+fn the_linear_translation_of_calls_scales() {
+    let ds = doms(&[("i", Some(0), Some(50)), ("j", Some(-50), Some(50))]);
+    let ds = &ds;
+    for d in [0, 1] {
+        scaling::check(
+            "sums of calls, each calling the one before twice",
+            6,
+            move |k| {
+                preimage(&sums(k, d), ds, &Demand::Bool(true));
+            },
+        );
+    }
+}

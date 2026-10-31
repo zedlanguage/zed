@@ -319,8 +319,20 @@ not on the stack; the stack is bounded by the number of lambdas.
 What is still read in place, and can still take time exponential in the nesting of calls:
 a call with an argument that reads an input and may be a failure, a boolean or another
 kind of value (a failure passed to a parameter the body does not read still meets the
-demand, which a summary over integers does not see); and the translation into the
-linear-relation domain, which reads every call in place (the caps of 4 that bounded it are gone; the relation it builds grows with the calls it reads).
+demand, which a summary over integers does not see).
+
+The translation into the linear-relation domain, which the caps of 4 bounded, read every
+call in place. It now remembers a call's translation by the lambda's body and scope and the
+linear forms of the arguments, so a call reached again with the same forms reuses one
+auxiliary variable: the sums of `l01_25_preimage_catalog::scaling::the_linear_translation_of_calls_scales`
+take 12 ms at k = 16 and 55 ms at k = 64, where k = 16 took 3.0 s (COMPLEXITY.md S15). A
+call whose arguments have no linear form is still read in place.
+
+A summary keeps only the intervals its inputs were narrowed to. Without that, a summary
+first computed inside one call carried the box of that call's parameter, and a later call
+reaching the same summary met its own parameter with it: `f2(x) >= 204` over `0..=50`
+lost `x = 50` and claimed the empty set exact
+(`entries::a_summary_reached_from_another_call_keeps_only_what_it_narrows`).
 A lambda passed as an argument is keyed by the scope it was made in, so summaries of
 higher-order calls are shared only where those scopes are.
 
