@@ -3,8 +3,10 @@ library;
 
 import 'package:test/test.dart';
 import 'package:zed/ast.dart';
+import 'package:zed/check.dart';
 import 'package:zed/elab.dart';
 import 'package:zed/resolve.dart';
+import 'package:zed/src/tables.dart';
 
 import '../../support/scaling.dart' as scaling;
 import 'elab.dart';
@@ -55,15 +57,21 @@ Unit timed(Map<int, (List<Stmt>, Resolution)> built, int n, String Function(int)
 }
 
 void main() {
-  final chains = <int, (List<Stmt>, Resolution)>{};
   final nests = <int, (List<Stmt>, Resolution)>{};
   final calls = <int, (List<Stmt>, Resolution)>{};
 
   test('many statements in reverse dependency order scale', () {
-    // The next statement to elaborate was looked for among all of them, each time.
-    scaling.check('n bindings written in reverse order', 4000, (n) {
-      expect(timed(chains, n, chain).defs.first.name, 'v${n - 1}');
+    // The next statement to elaborate was looked for among all of them, each time. The order
+    // is timed alone: checking each `+` costs far more than the order, and hid that search.
+    final tables = <int, (List<Stmt>, Tables)>{};
+    scaling.check('the order of n bindings written in reverse', 4000, (n) {
+      final (stmts, t) = tables[n] ??= () {
+        final s = stmtsOf(chain(n));
+        return (s, Tables(s, resolve(s)));
+      }();
+      expect(t.order(stmts).$1.first, n - 1);
     });
+    expect(elab(chain(1000)).defs.first.name, 'v999');
     expect([for (final d in elab(chain(3)).defs) d.name], ['v2', 'v1', 'v0']);
   });
 
@@ -81,10 +89,16 @@ void main() {
   });
 
   test('a call naming many arguments scales', () {
-    // Each named argument was looked for among all the parameters.
-    final built = <int, (List<Stmt>, Resolution)>{};
-    scaling.check('a call naming n arguments', 8000, (n) {
-      expect(timed(built, n, named).defs.last.name, 'y');
+    // Each named argument was looked for among all the parameters. Elaboration is timed alone:
+    // checking the call costs far more, and hid that search.
+    final built = <int, (List<Stmt>, Tables, Info)>{};
+    scaling.check('a call naming n arguments', 2000, (n) {
+      final (stmts, t, info) = built[n] ??= () {
+        final s = stmtsOf(named(n));
+        final t = Tables(s, resolve(s));
+        return (s, t, checkWith(t, s));
+      }();
+      expect(elaborateWith(t, info, stmts).defs.last.name, 'y');
     });
     expect(value(named(3), 'y'), '0');
   });

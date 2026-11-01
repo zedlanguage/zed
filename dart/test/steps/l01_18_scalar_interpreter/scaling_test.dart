@@ -21,12 +21,21 @@ String tuple(int n) => '(${[for (var i = 0; i < n; i++) '$i'].join(', ')})';
 
 void main() {
   test('`sum` and `String` of a long tuple scale', () {
-    final sum = run((n) => 'sum(${tuple(n)})');
-    scaling.check('`sum` of n numbers', 20000, sum);
+    // Kernel terms, so that only the evaluator is timed: checking the tuple costs far more.
+    final tuples = <int, Term>{};
+    Term numbers(int n) =>
+        tuples[n] ??= PrimApp(Prim.tuple, [for (var i = 0; i < n; i++) Lit(Int(i))]);
+    String sum(int n) => '${eval(PrimApp(Prim.sum, [numbers(n)]))}';
+    scaling.check('`sum` of n numbers', 2500, sum);
     expect(sum(4), '6');
-    final shown = run((n) => 'len(String(${tuple(n)}))');
-    scaling.check('`String` of n numbers', 20000, shown);
+    expect(run((n) => 'sum(${tuple(n)})')(4), '6');
+    String shown(int n) =>
+        '${eval(PrimApp(Prim.len, [
+          PrimApp(Prim.show, [numbers(n)]),
+        ]))}';
+    scaling.check('`String` of n numbers', 2500, shown);
     expect(shown(3), '9');
+    expect(run((n) => 'len(String(${tuple(n)}))')(3), '9');
   });
 
   test('the string words on a long string scale', () {

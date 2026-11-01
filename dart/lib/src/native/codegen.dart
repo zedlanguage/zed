@@ -286,27 +286,21 @@ final class _Gen {
     Const(:final value) => _Const(t.constant(value)),
   };
 
+  /// The code of region [r] on [args], and its results. Arms nest as deep as the term, so the
+  /// regions and nodes with arms in progress are frames on a stack, not calls.
   List<_Loc> _region(Region r, RegionPlan rp, List<_Loc> args) {
-    final ids = t.ids[rp]!;
-    for (final i in rp.entryDrops) {
-      _dec(args[i]);
-    }
-    final outs = <List<_Loc>>[];
-    for (var k = 0; k < r.nodes.length; k++) {
-      final np = rp.nodes[k];
-      final ins = [for (final s in r.nodes[k].inputs) _src(s, args, outs)];
-      for (final j in np.dups) {
-        _inc(ins[j]);
-      }
-      outs.add(_node(ids[k], ins));
-      for (final s in np.drops) {
-        _dec(_src(s, args, outs));
+    final stack = <_Frame>[_RegionFrame(this, r, rp, args)];
+    List<_Loc>? ret;
+    while (stack.isNotEmpty) {
+      final next = stack.last.step(ret);
+      if (next != null) {
+        stack.add(next);
+        ret = null;
+      } else {
+        ret = stack.removeLast().result;
       }
     }
-    for (final i in rp.resultDups) {
-      _inc(_src(r.results[i], args, outs));
-    }
-    return [for (final s in r.results) _src(s, args, outs)];
+    return ret!;
   }
 
   /// [first] and the outputs after it, which are states.
@@ -322,8 +316,6 @@ final class _Gen {
       ),
       PrimOp(:final prim) when _inline(prim, ins.length) => _states(_inlined(prim, id, ins), n),
       ApplyOp() => _states(_apply(id, ins), n),
-      IfOp() => _branch(id, ins),
-      MatchOp(:final patterns) => _matched(id, [for (final p in patterns) binds(p)], ins),
       _ => _states(_slow(id, ins), n),
     };
   }
@@ -541,17 +533,6 @@ final class _Gen {
     return _Slot(out);
   }
 
-  /// Emits arm [i] of node [id] inline on [args], its results stored in the slots from
-  /// [outs] on, then jumps to [done].
-  void _arm(int id, int i, List<_Loc> args, int outs, Label done) {
-    final ni = t.nodes[id];
-    final res = _region(ni.node.regions[i], ni.plan.regions[i], args);
-    for (var j = 0; j < res.length; j++) {
-      _move(res[j], outs + 16 * j);
-    }
-    a.jmp(done);
-  }
-
   /// The runtime's failure word as the node's result, the other outputs states.
   void _fail(int n, int outs, Label done) {
     a.callHook(Hook.pending.index);
@@ -575,7 +556,8 @@ final class _Gen {
 
   List<_Loc> _outs(int outs, int n) => [for (var j = 0; j < n; j++) _Slot(outs + 16 * j)];
 
-  List<_Loc> _branch(int id, List<_Loc> ins) {
+  /// Emits the dispatch of the `if` node [id] on [ins]; its arms follow.
+  _Arms _branch(int id, List<_Loc> ins) {
     final n = t.nodes[id].node.outputs.length;
     final outs = _block(n);
     final arms = [Label(), Label()];
@@ -596,17 +578,11 @@ final class _Gen {
       ..movImm(Reg.rdi, id)
       ..callHook(Hook.branch.index);
     _dispatch([...arms, fail]);
-    for (var i = 0; i < 2; i++) {
-      a.bind(arms[i]);
-      _arm(id, i, ins.sublist(1), outs, done);
-    }
-    a.bind(fail);
-    _fail(n, outs, done);
-    a.bind(done);
-    return _outs(outs, n);
+    return _Arms(this, id, outs, arms, fail, done, (_) => ins.sublist(1));
   }
 
-  List<_Loc> _matched(int id, List<int> binders, List<_Loc> ins) {
+  /// Emits the dispatch of the `match` node [id] on [ins]; its arms follow.
+  _Arms _matched(int id, List<int> binders, List<_Loc> ins) {
     final n = t.nodes[id].node.outputs.length;
     final outs = _block(n);
     final done = Label(), fail = Label();
@@ -616,8 +592,7 @@ final class _Gen {
       ..movImm(Reg.rdi, id)
       ..callHook(Hook.match.index);
     _dispatch([...arms, fail]);
-    for (var i = 0; i < binders.length; i++) {
-      a.bind(arms[i]);
+    return _Arms(this, id, outs, arms, fail, done, (i) {
       final args = <_Loc>[];
       for (var b = 0; b < binders[i]; b++) {
         a
@@ -625,12 +600,103 @@ final class _Gen {
           ..callHook(Hook.out.index);
         args.add(_put());
       }
-      _arm(id, i, [...args, ...ins.skip(1)], outs, done);
+      return [...args, ...ins.skip(1)];
+    });
+  }
+}
+
+/// A region, or a node with arms, whose code is being emitted.
+sealed class _Frame {
+  /// The results, once [step] returns null.
+  late final List<_Loc> result;
+
+  /// Emits code until a nested frame is needed, and returns it; null when done. [ret] holds
+  /// the results of the frame returned last, once it is done.
+  _Frame? step(List<_Loc>? ret);
+}
+
+/// Region [r] on [args]: the nodes emitted so far and their outputs.
+final class _RegionFrame extends _Frame {
+  final _Gen g;
+  final Region r;
+  final RegionPlan rp;
+  final List<_Loc> args;
+  final List<int> ids;
+  final outs = <List<_Loc>>[];
+
+  _RegionFrame(this.g, this.r, this.rp, this.args) : ids = g.t.ids[rp]! {
+    for (final i in rp.entryDrops) {
+      g._dec(args[i]);
     }
-    a.bind(fail);
-    _fail(n, outs, done);
-    a.bind(done);
-    return _outs(outs, n);
+  }
+
+  @override
+  _Frame? step(List<_Loc>? ret) {
+    if (ret != null) _emitted(ret);
+    while (outs.length < r.nodes.length) {
+      final k = outs.length;
+      final ins = [for (final s in r.nodes[k].inputs) g._src(s, args, outs)];
+      for (final j in rp.nodes[k].dups) {
+        g._inc(ins[j]);
+      }
+      final id = ids[k];
+      final op = g.t.nodes[id].node.op;
+      if (op is IfOp) return g._branch(id, ins);
+      if (op is MatchOp) return g._matched(id, [for (final p in op.patterns) binds(p)], ins);
+      _emitted(g._node(id, ins));
+    }
+    for (final i in rp.resultDups) {
+      g._inc(g._src(r.results[i], args, outs));
+    }
+    result = [for (final s in r.results) g._src(s, args, outs)];
+    return null;
+  }
+
+  /// The next node's outputs are [o]: its drops follow.
+  void _emitted(List<_Loc> o) {
+    final k = outs.length;
+    outs.add(o);
+    for (final s in rp.nodes[k].drops) {
+      g._dec(g._src(s, args, outs));
+    }
+  }
+}
+
+/// The arms of node [id], after its dispatch: each arm's results are stored in the slots from
+/// [outs] on, then it jumps to [done].
+final class _Arms extends _Frame {
+  final _Gen g;
+  final int id;
+  final int outs;
+  final List<Label> arms;
+  final Label fail, done;
+
+  /// Emits the code at the start of arm `i`, and gives its arguments.
+  final List<_Loc> Function(int i) enter;
+  var i = 0;
+
+  _Arms(this.g, this.id, this.outs, this.arms, this.fail, this.done, this.enter);
+
+  @override
+  _Frame? step(List<_Loc>? ret) {
+    final ni = g.t.nodes[id];
+    if (ret != null) {
+      for (var j = 0; j < ret.length; j++) {
+        g._move(ret[j], outs + 16 * j);
+      }
+      g.a.jmp(done);
+      i++;
+    }
+    if (i < arms.length) {
+      g.a.bind(arms[i]);
+      return _RegionFrame(g, ni.node.regions[i], ni.plan.regions[i], enter(i));
+    }
+    final n = ni.node.outputs.length;
+    g.a.bind(fail);
+    g._fail(n, outs, done);
+    g.a.bind(done);
+    result = g._outs(outs, n);
+    return null;
   }
 }
 

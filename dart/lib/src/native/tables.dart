@@ -112,16 +112,28 @@ final class Tables {
     }
   }
 
-  void _visit(Region r, RegionPlan rp) {
-    for (final s in r.results) {
-      _constant(s);
-    }
-    final ids = this.ids[rp] = [];
-    for (var k = 0; k < r.nodes.length; k++) {
+  /// Numbers the nodes of [g] and its regions in preorder. Regions nest as deep as the term, so
+  /// the regions in progress are on a stack, each with its next node.
+  void _visit(Region g, RegionPlan root) {
+    final stack = [_Visit(g, root)];
+    while (stack.isNotEmpty) {
+      final v = stack.last;
+      final (r, rp) = (v.r, v.rp);
+      if (v.k == 0) {
+        for (final s in r.results) {
+          _constant(s);
+        }
+        ids[rp] = [];
+      }
+      if (v.k == r.nodes.length) {
+        stack.removeLast();
+        continue;
+      }
+      final k = v.k++;
       final node = r.nodes[k];
       final np = rp.nodes[k];
       final id = nodes.length;
-      ids.add(id);
+      ids[rp]!.add(id);
       for (final s in node.inputs) {
         _constant(s);
       }
@@ -144,11 +156,14 @@ final class Tables {
           _lambdaAt[body] = lambdas.length;
           ni.lambda = lambdas.length;
           lambdas.add(LambdaInfo(id, body, params));
-          _visit(node.regions[0], body);
+          stack.add(_Visit(node.regions[0], body));
         case IfOp() || MatchOp():
-          for (var i = 0; i < node.regions.length; i++) {
-            if (i >= np.regions.length) throw ZirError('native: arm `${ni.path}/$i` has no plan');
-            _visit(node.regions[i], np.regions[i]);
+          if (np.regions.length < node.regions.length) {
+            throw ZirError('native: arm `${ni.path}/${np.regions.length}` has no plan');
+          }
+          // The first arm is numbered first.
+          for (var i = node.regions.length - 1; i >= 0; i--) {
+            stack.add(_Visit(node.regions[i], np.regions[i]));
           }
         default:
       }
@@ -191,4 +206,13 @@ final class Tables {
 
   /// The word of constant [v]: its own when it is a scalar, else its index in the table.
   Word constant(Value v) => Word.scalar(v) ?? Word(4, _constAt[v]!);
+}
+
+/// A region being numbered, and the index of its next node.
+final class _Visit {
+  final Region r;
+  final RegionPlan rp;
+  var k = 0;
+
+  _Visit(this.r, this.rp);
 }

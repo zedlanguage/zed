@@ -296,8 +296,11 @@ final class Ty {
   Ty get withoutLoose => _with(set: (set - atoms) | (set & family));
 
   /// Its pieces: the scalars split by carrier, then the atoms and the other scalars, the
-  /// tuples, the functions, the variables and the unknown.
-  List<Piece> get pieces {
+  /// tuples, the functions, the variables and the unknown. Computed once: each costs a meet,
+  /// an emptiness test and a difference per carrier.
+  late final List<Piece> pieces = _pieces();
+
+  List<Piece> _pieces() {
     final out = <Piece>[];
     var rest = set;
     for (final c in Carrier.values) {

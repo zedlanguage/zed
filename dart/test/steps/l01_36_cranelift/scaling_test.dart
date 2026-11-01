@@ -1,7 +1,8 @@
 /// The counting machine and the native code against the size of the program (the rule of low
 /// complexity, DESIGN.md Part G): an atom of many named fields, many lookup ports, many
-/// constants, many lambdas and one value used many times each run in time near linear in
-/// their number (COMPLEXITY.md Z14). Each term is built before it is timed.
+/// constants, many lambdas, one value used many times and `if`s nested many deep each run in
+/// time near linear in their number (COMPLEXITY.md Z14, Z9). Each term is built before it is
+/// timed.
 library;
 
 import 'package:test/test.dart';
@@ -76,6 +77,20 @@ Term lambdas(int n) {
 Term dups(int n) =>
     let_('x', cat('a', 'b'), prim(Prim.tuple, [for (var i = 0; i < n; i++) var_('x')]));
 
+/// `if 0 < n then (y0 = (if 1 < n then … else 1) + 1; y0) else 0`: `n` `if`s, each nested in
+/// the arm of the one before.
+Term nest(int n) {
+  Term t = lit(0);
+  for (var i = n - 1; i >= 0; i--) {
+    t = If(
+      prim(Prim.lt, [lit(i), lit(n)]),
+      let_('y$i', prim(Prim.add, [t, lit(1)]), var_('y$i')),
+      lit(i),
+    );
+  }
+  return t;
+}
+
 /// Times [both] on the terms of [make] at `n` and `8n`, built first. Both sizes are run three
 /// times before timing: with fewer, the first timing at `n` is up to twice the later ones, and
 /// a quadratic runtime can pass on it.
@@ -96,6 +111,7 @@ void main() {
     expect(both(lambdas(3), w), '("a0", "a1", "a2")');
     expect(both(dups(3), w), '("ab", "ab", "ab")');
     expect(both(ports(3), w), '(0, 1, 2)');
+    expect(both(nest(3), w), '3');
   });
 
   test('an atom of many named fields scales', () {
@@ -116,5 +132,16 @@ void main() {
 
   test('one value used many times scales', () {
     scales('one cell used n times by one node', 1000, World.new, dups);
+  });
+  test('ifs nested many deep scale', () {
+    // Lowered and planned first: the object file alone is timed, so that a cost of order
+    // n * depth in the backend is not hidden by the linear passes before it.
+    const n = 500;
+    final graphs = {n: planned(nest(n)), scaling.factor * n: planned(nest(scaling.factor * n))};
+    expect(both(nest(scaling.factor * n), World.new), '${scaling.factor * n}');
+    scaling.check('the object file of n nested ifs', n, (m) {
+      final (g, p) = graphs[m]!;
+      native.object(g, p);
+    });
   });
 }

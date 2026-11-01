@@ -220,7 +220,11 @@ final class ElabErrors implements Exception {
 /// The elaboration of `unit` under its resolution; throws [ElabErrors] with every error in it.
 Unit elaborate(List<Stmt> unit, Resolution res) {
   final t = Tables(unit, res);
-  final info = checkWith(t, unit);
+  return elaborateWith(t, checkWith(t, unit), unit);
+}
+
+/// The elaboration of `unit` under its tables and what checking it found, which it only reads.
+Unit elaborateWith(Tables t, Info info, List<Stmt> unit) {
   final e = _Elab(t, info)..run(unit);
   final errors = [...e.errors, ...info.errors];
   if (errors.isEmpty) {

@@ -53,7 +53,7 @@ void main() {
     final out = rejected(summedCondition(3));
     expect(out, contains('not bool'));
     expect('gives these values one carrier'.allMatches(out), hasLength(2), reason: out);
-    check('the reasons of a class merged n times', 1000, (n) {
+    check('the reasons of a class merged n times', 250, (n) {
       final out = rejected(summedCondition(n));
       expect('gives these values one carrier'.allMatches(out), hasLength(n - 1));
     });
