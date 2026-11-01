@@ -41,7 +41,9 @@ use crate::elab::Tables;
 use crate::lex::Span;
 use crate::resolve::{Ref, Resolution};
 
-use ty::{Arrow, Binds, Carrier, EVERY, OTHER, Piece, SParam, Sig, Ty, atoms, errs, mask_text};
+use ty::{
+    Arrow, Binds, Carrier, EVERY, OTHER, Piece, SParam, Sig, Ty, Vars, atoms, errs, mask_text,
+};
 
 /// How a function argument fits the function type its slot expects.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -581,21 +583,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         // The classes of this level that are type variables, named in order of appearance.
         let sig = self.solved_sig(&Sig::one(params, tys, result));
-        let mut seen = Vec::new();
-        for a in &sig.arrows {
-            a.params.iter().for_each(|p| p.vars_in(&mut seen));
-            a.result.vars_in(&mut seen);
-        }
-        let taken: Vec<Arc<str>> = seen
+        let seen = sig_vars(&sig);
+        let taken: HashSet<Arc<str>> = seen
             .iter()
             .filter(|v| class_id(v).is_none())
             .cloned()
             .collect();
+        let mine: HashSet<usize> = own.iter().copied().collect();
         let mut names = Binds::new();
         let mut bounds = BTreeMap::new();
         let mut n = 0;
         for v in &seen {
-            let Some(r) = class_id(v).filter(|r| own.contains(r)) else {
+            let Some(r) = class_id(v).filter(|r| mine.contains(r)) else {
                 continue;
             };
             let name = loop {
@@ -826,10 +825,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The uses that narrowed the classes in `t`.
     fn reasons(&self, t: &Ty) -> Vec<Note> {
         let mut out: Vec<Note> = Vec::new();
+        let mut seen: HashSet<&Note> = HashSet::new();
         for p in t.pieces() {
             if let Some(k) = self.class_of(&p) {
                 for n in &self.classes[k].reasons {
-                    if !out.contains(n) {
+                    if seen.insert(n) {
                         out.push(n.clone());
                     }
                 }
@@ -860,9 +860,9 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `t` with each class variable replaced by its root's type.
     fn solved(&self, t: &Ty) -> Ty {
-        let mut vars = Vec::new();
+        let mut vars = Vars::default();
         t.vars_in(&mut vars);
-        t.replace(&self.solving(&vars))
+        t.replace(&self.solving(&vars.order))
     }
 
     /// `s` with each class variable replaced by its root's type.
@@ -876,7 +876,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn finished(&self, s: &Sig) -> Sig {
         let vars = sig_vars(s);
         let mut b = self.solving(&vars);
-        let own: Vec<Arc<str>> = vars
+        let own: HashSet<Arc<str>> = vars
             .iter()
             .filter(|v| class_id(v).is_none())
             .cloned()
@@ -888,7 +888,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut renamed: BTreeMap<Arc<str>, Arc<str>> = BTreeMap::new();
         let mut n = 0;
         for t in b.values_mut() {
-            let Some(v) = t.vars.iter().find(|v| own.contains(v)).cloned() else {
+            let Some(v) = t.vars.iter().find(|v| own.contains(*v)).cloned() else {
                 continue;
             };
             let to = renamed
@@ -897,8 +897,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     loop {
                         let name = var_name(n);
                         n += 1;
-                        if !used.contains(&name) {
-                            used.push(name.clone());
+                        if used.insert(name.clone()) {
                             break name;
                         }
                     }
@@ -2139,9 +2138,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             Ok((t, kept)) => (out.union(&t), kept),
             Err(message) => {
                 let mut notes = self.applied(what, sig, &args, span);
+                let mut seen: HashSet<Note> = notes.iter().cloned().collect();
                 for a in args.iter().flatten() {
                     for n in self.reasons(&a.ty) {
-                        if !notes.contains(&n) {
+                        if seen.insert(n.clone()) {
                             notes.push(n);
                         }
                     }
@@ -2611,11 +2611,12 @@ fn passed<'t>(out: &mut Ty, ts: impl Iterator<Item = &'t Ty>) {
 
 /// `t` with the type variables of `sig`'s parameters that no argument bound made unknown.
 fn close(t: &Ty, sig: &Sig) -> Ty {
-    let mut own = Vec::new();
+    let mut own = Vars::default();
     for a in &sig.arrows {
         a.params.iter().for_each(|p| p.vars_in(&mut own));
     }
     let binds: Binds = own
+        .order
         .into_iter()
         .filter(|v| !v.starts_with('$'))
         .map(|v| (v, Ty::dynamic()))
@@ -2904,12 +2905,12 @@ fn var_name(n: usize) -> Arc<str> {
 
 /// The variables of `s`, in order of first appearance.
 fn sig_vars(s: &Sig) -> Vec<Arc<str>> {
-    let mut out = Vec::new();
+    let mut out = Vars::default();
     for a in &s.arrows {
         a.params.iter().for_each(|p| p.vars_in(&mut out));
         a.result.vars_in(&mut out);
     }
-    out
+    out.order
 }
 
 /// The carriers a value of `t` may be of, and [`OTHER`] if it may be a tuple, a function or

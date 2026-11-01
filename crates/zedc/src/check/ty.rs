@@ -207,6 +207,14 @@ impl Piece {
 /// The binding of type variables made while applying an arrow.
 pub type Binds = BTreeMap<Arc<str>, Ty>;
 
+/// Type variables, each once, in order of first appearance.
+#[derive(Default)]
+pub struct Vars {
+    seen: HashSet<Arc<str>>,
+    /// The variables, in order.
+    pub order: Vec<Arc<str>>,
+}
+
 impl Ty {
     /// No value.
     pub fn empty() -> Ty {
@@ -514,10 +522,10 @@ impl Ty {
     }
 
     /// Every variable in it, in order of first appearance.
-    pub fn vars_in(&self, out: &mut Vec<Arc<str>>) {
+    pub fn vars_in(&self, out: &mut Vars) {
         for v in &self.vars {
-            if !out.contains(v) {
-                out.push(v.clone());
+            if out.seen.insert(v.clone()) {
+                out.order.push(v.clone());
             }
         }
         for c in self.tuples.iter().flatten() {

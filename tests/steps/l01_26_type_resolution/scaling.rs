@@ -86,3 +86,21 @@ fn many_else_patterns_scale() {
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
+
+/// A function of `n` untyped parameters that returns them all, so that its signature has `n`
+/// type variables.
+fn tuple(n: usize) -> String {
+    let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    let ps: Vec<String> = xs.iter().map(|x| format!("positional {x}")).collect();
+    format!("f({}) = ({});\n", ps.join(", "), xs.join(", "))
+}
+
+#[test]
+fn a_signature_of_many_type_variables_scales() {
+    // Naming the variables looked for each among those named before (COMPLEXITY.md F28).
+    assert_eq!(sig(&tuple(2), "f"), "(T, U) -> (T, U)");
+    scaling::check("a signature of n type variables", 1000, |n| {
+        let (info, _) = info(&tuple(n));
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}

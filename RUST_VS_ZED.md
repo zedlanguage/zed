@@ -144,6 +144,16 @@ passes in 3.7 s and, with the old code put back, fails at 42 to 44 times as long
 the size. The Rust change is 11 lines added and 19 removed in `crates/zedc/src/zir/lower.rs`,
 with 23 lines of test in `tests/steps/l01_33_lowering/scaling.rs`. On one thread L1.33's tests now take 25.7 s.
 
+The checker collected a signature's type variables by searching those found before, and named
+them by searching lists (COMPLEXITY.md F28): a new set beside the ordered list fixes it, and a
+test of a signature of many type variables, which passes in 4.2 s, fails with the old code at 29
+times as long for 8 times the size. The reasons shown with a type error were found the same way
+(F29); the fix is a set, but the old code also passes its test (18 s against 19 s), since its
+cost is small beside the rest of the check. A first version of that test put every note on one
+line, and took more than 15 min with either code: each step of a diagnostic prints its whole
+line, so the output was `O(n²)` characters (F30, not a fault). The Rust changes are 31 lines
+added and 22 removed in `crates/zedc/src/check/mod.rs` and `ty.rs`, with 54 lines of test.
+
 ## Build and test baseline (Rust)
 
 Measured on 2026-10-31 at `55f537a`, in a scope capped at 64 GB, with a separate target

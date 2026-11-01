@@ -47,3 +47,39 @@ fn deriving_through_values_read_twice_scales() {
         },
     );
 }
+
+/// A function adding `n` untyped parameters and testing the sum as a condition: one class
+/// with `n` reasons, shown in one diagnostic. Each parameter and each addition has a line of
+/// its own, since each step of a diagnostic shows the whole line it is on.
+fn summed_condition(n: usize) -> String {
+    let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    let ps: Vec<String> = xs.iter().map(|x| format!("positional {x}")).collect();
+    format!(
+        "f({}) = if {} {{ 1 }} else {{ 2 }};\n",
+        ps.join(",\n"),
+        xs.join("\n+ ")
+    )
+}
+
+#[test]
+fn the_reasons_of_a_class_narrowed_many_times_scale() {
+    // Each reason was looked for among those shown before it (COMPLEXITY.md F29).
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            let out = rejected(&summed_condition(3));
+            assert!(out.contains("not bool"), "{out}");
+            assert_eq!(
+                out.matches("gives these values one carrier").count(),
+                2,
+                "{out}"
+            );
+            scaling::check("the reasons of a class merged n times", 1000, |n| {
+                let out = rejected(&summed_condition(n));
+                assert_eq!(out.matches("gives these values one carrier").count(), n - 1);
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

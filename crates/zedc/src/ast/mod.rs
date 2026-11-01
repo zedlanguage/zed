@@ -81,7 +81,10 @@ pub enum ExprKind {
         /// The body.
         body: Box<Expr>,
     },
-    /// A type test `e is T`, or `e is not T` when `negated`.
+    /// A type test `e is T`, or `e is not T` when `negated`: whether the value of `e` is in the
+    /// set of `T`, decided when the program runs. It is not the subtype relation `S <: T`
+    /// between two types, which the checker decides and Zed has no syntax for
+    /// (DESIGN.md sec:type_language).
     Is {
         /// The value tested.
         of: Box<Expr>,
