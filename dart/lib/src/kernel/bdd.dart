@@ -70,46 +70,69 @@ sealed class Part<A extends Literal<A>> implements Comparable<Part<A>> {
     return Expr(or ? ExprOp.or : ExprOp.and, this, o);
   }
 
-  /// Whether `f` holds of every path of the part to `true`, as [Bdd.walk] gives them with
-  /// `prune`, stopping at the first path where it does not; `f` must hold of a path whenever it
-  /// holds of one that takes a subset of its atoms and refuses a subset of its atoms. An
+  /// The paths of the part to `true`, as [Bdd.walk] gives them with `prune`, to be asked of a
+  /// test that must hold of a path whenever it holds of one that takes a subset of its atoms and
+  /// refuses a subset of its atoms. An
   /// expression is first expanded on a subexpression it shares between two operands: it is
   /// `x & e[x := true] | !x & e[x := false]`, and the two cofactors are built again from their
   /// operands, so a part like `b & !(b | a)` is `false` at once. Each expansion leaves one fewer
   /// shared subexpression. An expression that shares none is expanded on the smallest atom at
   /// the top of any of its diagrams, its cofactors being its operands' cofactors combined
   /// again.
-  bool paths(bool Function(List<A> pos, List<A> neg) f) {
+  Paths<A> paths() {
+    final q = Paths<A>._();
     final pos = <A>[], neg = <A>[];
-    bool go(Part<A> p) {
+    // Each expansion is a generator, and `yield*` keeps the suspended ones on the heap, so the
+    // depth of the expansion is not bounded by the call stack. A path where the test fails
+    // clears `q.result` and ends every generator above.
+    Iterable<(List<A>, List<A>)> go(Part<A> p) sync* {
       if (p is Bdd<A>) {
         // The diagram's own walk, after the atoms taken and refused so far.
-        return p.walk(true, (bp, bn) => f([...pos, ...bp], [...neg, ...bn]));
+        final w = p._walk(true);
+        for (final (bp, bn) in w.asked) {
+          yield ([...pos, ...bp], [...neg, ...bn]);
+          w.held = q.held;
+        }
+        q.result = w.result;
+        return;
       }
       if (p._shared() case final x?) {
-        return [true, false].every((v) {
+        for (final v in [true, false]) {
           final rest = p._substitute(x, v, Map.identity());
           final side = v ? x : ~x;
-          return go(side.zip(rest, false));
-        });
+          yield* go(side.zip(rest, false));
+          if (!q.result) return;
+        }
+        return;
       }
       final a = p._top();
-      // An expression of leaves alone is a constant.
-      if (a == null) return !p.eval((_) => false) || f(pos, neg);
+      if (a == null) {
+        // An expression of leaves alone is a constant.
+        if (p.eval((_) => false)) {
+          yield (pos, neg);
+          q.result = q.held;
+        }
+        return;
+      }
       final hi = p._cofactor(a, true, Map.identity());
       pos.add(a);
-      final r = hi.leaf == false || f(pos, const []) || go(hi);
+      var skip = hi.leaf == false;
+      if (!skip) {
+        yield (pos, const []);
+        skip = q.held;
+      }
+      if (!skip) yield* go(hi);
       pos.removeLast();
-      if (!r) return false;
+      if (!q.result) return;
       final lo = p._cofactor(a, false, Map.identity());
       final refuse = hi.leaf != true;
       if (refuse) neg.add(a);
-      final l = go(lo);
+      yield* go(lo);
       if (refuse) neg.removeLast();
-      return l;
     }
 
-    return go(this);
+    q.asked = go(this);
+    return q;
   }
 
   /// An expression that is an operand of two connectives in the part, if any: the first met
@@ -193,13 +216,43 @@ sealed class Part<A extends Literal<A>> implements Comparable<Part<A>> {
   bool atoms(bool Function(A) f) {
     final nodes = <int>{};
     final exprs = Set<Expr<A>>.identity();
-    bool go(Part<A> p) => switch (p) {
-      Leaf() => true,
-      Node(:final id, :final atom, :final hi, :final lo) =>
-        !nodes.add(id) || (f(atom) && go(hi) && go(lo)),
-      Expr(:final a, :final b) => !exprs.add(p) || (go(a) && (b == null || go(b))),
-    };
-    return go(this);
+    // In preorder, `hi` before `lo`: the second branch is pushed first.
+    final stack = <Part<A>>[this];
+    while (stack.isNotEmpty) {
+      switch (stack.removeLast()) {
+        case Leaf():
+          break;
+        case Node(:final id, :final atom, :final hi, :final lo):
+          if (!nodes.add(id)) break;
+          if (!f(atom)) return false;
+          stack
+            ..add(lo)
+            ..add(hi);
+        case final Expr<A> e:
+          if (!exprs.add(e)) break;
+          stack.addAll([?e.b, e.a]);
+      }
+    }
+    return true;
+  }
+}
+
+/// The paths a test is asked of, one at a time: after each path is read from [asked], [held] is
+/// set to whether the test holds of it, and once [asked] ends, [result] is whether it held of
+/// every path. The lists of a path are valid until the next is read.
+final class Paths<A extends Literal<A>> {
+  Paths._();
+
+  late final Iterable<(List<A>, List<A>)> asked;
+  bool held = true;
+  bool result = true;
+
+  /// Whether `f` holds of every path, asked in turn.
+  bool all(bool Function(List<A> pos, List<A> neg) f) {
+    for (final (pos, neg) in asked) {
+      held = f(pos, neg);
+    }
+    return result;
   }
 }
 
@@ -226,41 +279,41 @@ sealed class Bdd<A extends Literal<A>> extends Part<A> {
     final memo = <(int, int), Bdd<A>>{};
     final made = <int>{};
     final most = a._size + b._size;
-    Bdd<A>? apply(Bdd<A> x, Bdd<A> y) {
+    Bdd<A>? known(Bdd<A> x, Bdd<A> y) {
       // A leaf that absorbs is the result; a leaf that does not leaves the other operand.
       if (x.leaf case final v?) return v == or ? x : y;
       if (y.leaf case final v?) return v == or ? y : x;
       if (x._id == y._id) return x;
-      final key = (x._id, y._id);
-      if (memo[key] case final r?) return r;
-      final (m, n) = (x as Node<A>, y as Node<A>);
-      final c = m.atom.compareTo(n.atom);
-      final Bdd<A> r;
-      if (c == 0) {
-        final hi = apply(m.hi, n.hi);
-        if (hi == null) return null;
-        final lo = apply(m.lo, n.lo);
-        if (lo == null) return null;
-        r = _node(m.atom, hi, lo);
-      } else if (c < 0) {
-        final hi = apply(m.hi, y);
-        if (hi == null) return null;
-        final lo = apply(m.lo, y);
-        if (lo == null) return null;
-        r = _node(m.atom, hi, lo);
-      } else {
-        final hi = apply(x, n.hi);
-        if (hi == null) return null;
-        final lo = apply(x, n.lo);
-        if (lo == null) return null;
-        r = _node(n.atom, hi, lo);
-      }
-      // The result's nodes are among those made by this union or intersection.
-      if (r is Node<A> && made.add(r.id) && made.length > most) return null;
-      return memo[key] = r;
+      return memo[(x._id, y._id)];
     }
 
-    return apply(a, b);
+    // The pairs to combine, each popped once both its cofactor pairs are combined. The `lo`
+    // pair is pushed first, so the `hi` pair is combined first. A loop with its own stack, as
+    // a diagram can be deeper than the call stack.
+    final stack = [(a, b)];
+    while (stack.isNotEmpty) {
+      final (x, y) = stack.last;
+      if (known(x, y) != null) {
+        stack.removeLast();
+        continue;
+      }
+      final (m, n) = (x as Node<A>, y as Node<A>);
+      final c = m.atom.compareTo(n.atom);
+      final (xh, xl) = c <= 0 ? (m.hi, m.lo) : (x, x);
+      final (yh, yl) = c >= 0 ? (n.hi, n.lo) : (y, y);
+      final hi = known(xh, yh), lo = known(xl, yl);
+      if (hi == null || lo == null) {
+        if (lo == null) stack.add((xl, yl));
+        if (hi == null) stack.add((xh, yh));
+        continue;
+      }
+      stack.removeLast();
+      final r = _node(c <= 0 ? m.atom : n.atom, hi, lo);
+      // The result's nodes are among those made by this union or intersection.
+      if (r is Node<A> && made.add(r.id) && made.length > most) return null;
+      memo[(x._id, y._id)] = r;
+    }
+    return known(a, b);
   }
 
   /// The number of nodes.
@@ -276,15 +329,28 @@ sealed class Bdd<A extends Literal<A>> extends Part<A> {
   @override
   Bdd<A> operator ~() {
     final memo = <int, Bdd<A>>{};
-    Bdd<A> flip(Bdd<A> b) => switch (b) {
+    Bdd<A>? known(Bdd<A> b) => switch (b) {
       Leaf(:final value) => Leaf(!value),
-      Node(:final id, :final atom, :final hi, :final lo) => memo[id] ??= _node(
-        atom,
-        flip(hi),
-        flip(lo),
-      ),
+      Node(:final id) => memo[id],
     };
-    return flip(this);
+    // The nodes to flip, each popped once both its branches are flipped, `hi` first.
+    final stack = <Bdd<A>>[if (this is Node<A>) this];
+    while (stack.isNotEmpty) {
+      final n = stack.last as Node<A>;
+      if (memo.containsKey(n.id)) {
+        stack.removeLast();
+        continue;
+      }
+      final hi = known(n.hi), lo = known(n.lo);
+      if (hi == null || lo == null) {
+        if (lo == null) stack.add(n.lo);
+        if (hi == null) stack.add(n.hi);
+        continue;
+      }
+      stack.removeLast();
+      memo[n.id] = _node(n.atom, hi, lo);
+    }
+    return known(this)!;
   }
 
   /// Whether `f` holds of every path to the `true` leaf, given as the atoms it takes and those
@@ -294,30 +360,61 @@ sealed class Bdd<A extends Literal<A>> extends Part<A> {
   /// path's atoms taken so far with none refused, and the paths below are passed over when it
   /// holds: refusing more atoms only removes values, so if `f` holds of `pos` alone it holds of
   /// every path below.
-  bool walk(bool prune, bool Function(List<A> pos, List<A> neg) f) {
+  bool walk(bool prune, bool Function(List<A> pos, List<A> neg) f) => _walk(prune).all(f);
+
+  /// The questions [walk] asks of `f`.
+  Paths<A> _walk(bool prune) {
+    final q = Paths<A>._();
+    q.asked = _ask(q, prune);
+    return q;
+  }
+
+  Iterable<(List<A>, List<A>)> _ask(Paths<A> q, bool prune) sync* {
     final pos = <A>[], neg = <A>[];
-    bool go(Bdd<A> b) {
-      final Node<A> n;
-      switch (b) {
-        case Leaf(value: false):
-          return true;
-        case Leaf(value: true):
-          return f(pos, neg);
-        case final Node<A> node:
-          n = node;
-      }
-      pos.add(n.atom);
-      final hi = (prune && n.hi.leaf != false && f(pos, const [])) || go(n.hi);
+    // The nodes above the current one, each with whether its `lo` branch is being walked: a
+    // loop with its own stack, as a diagram can be deeper than the call stack.
+    final path = <(Node<A>, bool)>[];
+    Bdd<A> lo(Node<A> n) {
       pos.removeLast();
-      if (!hi) return false;
-      final refuse = n.hi.leaf != true;
-      if (refuse) neg.add(n.atom);
-      final lo = go(n.lo);
-      if (refuse) neg.removeLast();
-      return lo;
+      if (n.hi.leaf != true) neg.add(n.atom);
+      path.add((n, true));
+      return n.lo;
     }
 
-    return go(this);
+    var b = this;
+    while (true) {
+      while (b is Node<A>) {
+        final n = b;
+        pos.add(n.atom);
+        var held = false;
+        if (prune && n.hi.leaf != false) {
+          yield (pos, const []);
+          held = q.held;
+        }
+        if (held) {
+          b = lo(n);
+        } else {
+          path.add((n, false));
+          b = n.hi;
+        }
+      }
+      if (b.leaf!) {
+        yield (pos, neg);
+        if (!q.held) {
+          q.result = false;
+          return;
+        }
+      }
+      while (true) {
+        if (path.isEmpty) return;
+        final (n, onLo) = path.removeLast();
+        if (!onLo) {
+          b = lo(n);
+          break;
+        }
+        if (n.hi.leaf != true) neg.removeLast();
+      }
+    }
   }
 
   /// Whether the path that `holds` chooses at each atom ends at `true`.

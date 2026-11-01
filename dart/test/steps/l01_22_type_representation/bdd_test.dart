@@ -75,7 +75,7 @@ void main() {
       for (var set = 0; set < 64; set++) {
         bool holds(Components t) =>
             [for (var i = 0; i < 6; i++) i].any((i) => set & (1 << i) != 0 && t == atoms[i]);
-        final out = p.paths((pos, neg) => pos.any((a) => !holds(a)) || neg.any(holds));
+        final out = p.paths().all((pos, neg) => pos.any((a) => !holds(a)) || neg.any(holds));
         if (out == p.eval(holds)) fail('${set.toRadixString(2)}: paths and eval disagree');
         if (!out) found++;
       }

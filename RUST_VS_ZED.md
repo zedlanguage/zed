@@ -68,6 +68,21 @@ The edit calls include two probe tests, added and then removed, and two timing p
 elaborator, put back from a saved copy. No compile errors. The time is counted in the Dart
 port's L1.22 row.
 
+At L1.23 a negative control in the Dart port showed a gap in the shared scaling test for
+recursive definitions: running the search for cycles once per definition, which makes the
+definition-time checks O(d²), was not caught, because unfolding the chain dominates its time.
+Both test sets now also time the definition-time checks alone, on a chain of 1,000 to 8,000
+definitions; with the search run once per definition the check fails in Rust and in Dart, and
+without it it passes. No Rust library code changed. The full Rust test run passes (868 step
+tests), clippy is clean, and L1.23's tests still take 9.8 s on one thread.
+
+| file | edit calls | lines added | lines removed |
+|---|---:|---:|---:|
+| `tests/steps/l01_23_subtyping/rec.rs` | 1 | 18 | 12 |
+
+The negative control was one edit to `crates/zed-kernel/src/types/rec.rs`, put back from a
+saved copy. No compile errors. The time is counted in the Dart port's L1.23 row.
+
 ## Build and test baseline (Rust)
 
 Measured on 2026-10-31 at `55f537a`, in a scope capped at 64 GB, with a separate target
@@ -189,7 +204,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.20 | 0:13 | 0:04 | 0 (0) | 3 (2) | 0:12 | 0:01 | 3 (2) |
 | L1.21 | 0:09 | 0:02 | 0 (0) | 0 (0) | 0:05 | 0:02 | 5 (1) |
 | L1.22 | 0:14 | 0:04 | 0 (0) | 1 (1) | 0:16 | 0:04 | 19 (5) |
-| L1.23 | 0:15 | 0:08 | 0 (0) | 3 (2) | | | |
+| L1.23 | 0:15 | 0:08 | 0 (0) | 3 (2) | 0:18 | 0:07 | 6 (3) |
 | L1.24 | 0:12 | 0:05 | 0 (0) | 1 (1) | | | |
 | L1.25 | 0:36 | 0:16 | 1 (1) | 7 (2) | | | |
 | L1.26 | 1:01 | 0:12 | 0 (0) | 6 (2) | | | |
@@ -727,10 +742,10 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-kernel/src/provenance.rs` | 10,812 | `lib/src/kernel/provenance.dart` | 9,589 | 0.89 |
 | `crates/zed-kernel/src/term.rs` | 13,219 | `lib/src/kernel/term.dart` | 6,615 | 0.50 |
 | `crates/zed-kernel/src/text.rs` | 5,582 | `lib/src/kernel/text.dart`<br>`test/kernel/text_test.dart` | 4,320 | 0.77 |
-| `crates/zed-kernel/src/types.rs` | 37,473 | `lib/src/kernel/types.dart` | 24,745 | 0.66 |
-| `crates/zed-kernel/src/types/bdd.rs` | 27,452 | `lib/src/kernel/bdd.dart`<br>`test/steps/l01_22_type_representation/bdd_test.dart` | 17,862 | 0.65 |
-| `crates/zed-kernel/src/types/empty.rs` | 7,024 | `lib/src/kernel/empty.dart` | 5,304 | 0.76 |
-| `crates/zed-kernel/src/types/rec.rs` | 18,327 | | | |
+| `crates/zed-kernel/src/types.rs` | 37,473 | `lib/src/kernel/types.dart` | 27,726 | 0.74 |
+| `crates/zed-kernel/src/types/bdd.rs` | 27,452 | `lib/src/kernel/bdd.dart`<br>`test/steps/l01_22_type_representation/bdd_test.dart` | 20,688 | 0.75 |
+| `crates/zed-kernel/src/types/empty.rs` | 7,024 | `lib/src/kernel/empty.dart` | 6,801 | 0.97 |
+| `crates/zed-kernel/src/types/rec.rs` | 18,327 | `lib/src/kernel/rec.dart` | 13,763 | 0.75 |
 | `crates/zed-kernel/src/value.rs` | 16,934 | `lib/src/kernel/value.dart`<br>`test/kernel/value_test.dart` | 15,465 | 0.91 |
 | `crates/zed-kernel/src/words.rs` | 5,277 | `lib/src/kernel/words.dart` | 4,040 | 0.77 |
 | `crates/zed-native/src/codegen.rs` | 27,147 | | | |
@@ -894,11 +909,11 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_22_type_representation/laws.rs` | 7,730 | `test/steps/l01_22_type_representation/laws_test.dart` | 6,677 | 0.86 |
 | `tests/steps/l01_22_type_representation/mod.rs` | 400 | | | |
 | `tests/steps/l01_22_type_representation/scaling.rs` | 2,345 | `test/steps/l01_22_type_representation/scaling_test.dart` | 1,732 | 0.74 |
-| `tests/steps/l01_23_subtyping/cases.rs` | 6,177 | | | |
+| `tests/steps/l01_23_subtyping/cases.rs` | 6,177 | `test/steps/l01_23_subtyping/cases_test.dart` | 6,341 | 1.03 |
 | `tests/steps/l01_23_subtyping/mod.rs` | 549 | | | |
-| `tests/steps/l01_23_subtyping/oracle.rs` | 8,422 | | | |
-| `tests/steps/l01_23_subtyping/rec.rs` | 12,986 | | | |
-| `tests/steps/l01_23_subtyping/scaling.rs` | 14,517 | | | |
+| `tests/steps/l01_23_subtyping/oracle.rs` | 8,422 | `test/steps/l01_23_subtyping/oracle_test.dart` | 7,814 | 0.93 |
+| `tests/steps/l01_23_subtyping/rec.rs` | 13,224 | `test/steps/l01_23_subtyping/rec_test.dart` | 11,891 | 0.90 |
+| `tests/steps/l01_23_subtyping/scaling.rs` | 14,517 | `test/steps/l01_23_subtyping/scaling_test.dart` | 10,834 | 0.75 |
 | `tests/steps/l01_24_refinement_lattices/bounds.rs` | 6,164 | | | |
 | `tests/steps/l01_24_refinement_lattices/cell.rs` | 6,341 | | | |
 | `tests/steps/l01_24_refinement_lattices/float.rs` | 3,442 | | | |
@@ -1010,8 +1025,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 892 | 0.55 |
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
-| **all 294 Rust files** | **2,234,957** | | | |
-| **the Rust files ported so far** | **1,157,260** | | **966,690** | **0.84** |
+| **all 294 Rust files** | **2,235,195** | | | |
+| **the Rust files ported so far** | **1,217,927** | | **1,024,637** | **0.84** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1350,10 +1365,26 @@ Dart:
   a quadratic union in its type checker; all three are fixed (COMPLEXITY.md F22). Two negative
   controls fail as they should: the one-at-a-time union, and the elaborator with its old fold
   put back (29 to 48 times as long for 8 times the size, against 24).
+- **L1.23** (subtyping and recursive types). Medium. A recursive type is a `Type` whose parts
+  are a `late final` field, filled from a closure the first time they are read, so a group of
+  definitions ties its knot with no table of indices. The three definition-time checks
+  (regular, contractive, monotone) give the Rust's rejection messages exactly. The step's
+  scaling tests overflowed the Dart stack, which is fixed at about 45,500 frames: no VM flag
+  changes it, `ulimit -s` does not, and `Isolate.run` has the same limit, where the Rust runs
+  its deep cases on threads with 256 to 512 MB of stack. The diagram union, complement, atom
+  visit and path walk are now loops over their own stacks, and the emptiness search is a set of
+  `sync*` generators calling each other with `yield*`, which the VM keeps on the heap (measured:
+  depth 1,000,000 in 245 ms, and the cost per value yielded does not grow with depth); the
+  tests then pass at the Rust's sizes. The scaling test that lists the values of a type past a
+  cap waits for L1.28, which the listing belongs to. The 6 compile errors, in 3 runs, were 2 in
+  `rec.dart` as it was written, 2 from a null-aware element in a cascade, and 2 from a test
+  still calling the old `paths`. Four negative controls fail as they should: a type named when
+  made (ratios 32 to 77), the cycle search run once per definition (61 to 65), a deep walk of
+  each tuple made (the nested-tuple test fails), and the search for cycles in Rust.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 
@@ -1399,6 +1430,10 @@ which the case was shorter, clearer or cheaper to run.
 | A closed hierarchy of node kinds | Dart | `sealed class Part`, with `Bdd` (`Leaf`, `Node`) and `Expr` under it, matched exhaustively. The Rust nests enums, `Part::Bdd(Bdd::Leaf(…))`, and each level is matched apart (L1.22). |
 | A memo keyed by object identity | Dart | `Map.identity()`. The Rust keys its maps by `*const` raw pointers, which are valid keys only while the terms they point to are held elsewhere (L1.22). |
 | Stopping at the first missing result | Rust | `?` on an `Option` returns early from the diagram's apply. Dart tests for null and returns at each call (L1.22). |
+| A value defined in terms of itself | Dart | A `late final` field set from a closure on first read ties a recursive type's knot. The Rust holds the body in a cell filled after the node is shared (L1.23). |
+| Deep recursion | Rust | A thread with a chosen stack size runs any recursion as written. A Dart isolate's stack is fixed at about 45,500 frames, so each recursion that a test drives deep is rewritten as a loop over its own stack (L1.23). |
+| A recursive search that can be suspended | Dart | `sync*` generators calling each other with `yield*` keep the suspended calls on the heap, at a cost per step that does not grow with depth, so a mutual recursion keeps its shape. Stable Rust has no generators (L1.23). |
+| A walk that asks its caller at each step | Dart | The walk is a generator of questions, and the caller answers in a field before reading the next; the same walk serves a plain callback and a suspended search. In Rust this is a hand-written iterator with its state in a struct (L1.23). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
 
 ### Changes per Dart file
@@ -1418,9 +1453,10 @@ performance pass yet, so the second number is 0 throughout.
 | `lib/src/kernel/provenance.dart` | 1 | 0 |
 | `lib/src/kernel/term.dart` | 3 | 0 |
 | `lib/src/kernel/print.dart` | 4 | 0 |
-| `lib/src/kernel/types.dart` | 3 | 0 |
-| `lib/src/kernel/bdd.dart` | 3 | 0 |
-| `lib/src/kernel/empty.dart` | 2 | 0 |
+| `lib/src/kernel/types.dart` | 4 | 0 |
+| `lib/src/kernel/bdd.dart` | 4 | 0 |
+| `lib/src/kernel/empty.dart` | 3 | 0 |
+| `lib/src/kernel/rec.dart` | 1 | 0 |
 | `lib/src/kernel/text.dart` | 1 | 0 |
 | `lib/src/kernel/value.dart` | 3 | 0 |
 | `lib/src/kernel/words.dart` | 1 | 0 |
@@ -1609,8 +1645,12 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_21_test_runner/zed_test.dart` | 2 | 0 |
 | `test/steps/l01_22_type_representation/forms_test.dart` | 1 | 0 |
 | `test/steps/l01_22_type_representation/laws_test.dart` | 2 | 0 |
-| `test/steps/l01_22_type_representation/bdd_test.dart` | 1 | 0 |
+| `test/steps/l01_22_type_representation/bdd_test.dart` | 2 | 0 |
 | `test/steps/l01_22_type_representation/is_test.dart` | 1 | 0 |
 | `test/steps/l01_22_type_representation/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_23_subtyping/cases_test.dart` | 1 | 0 |
+| `test/steps/l01_23_subtyping/oracle_test.dart` | 1 | 0 |
+| `test/steps/l01_23_subtyping/rec_test.dart` | 1 | 0 |
+| `test/steps/l01_23_subtyping/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

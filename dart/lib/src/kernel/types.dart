@@ -14,6 +14,12 @@
 /// A morphism type bounds its domain from both sides: the keys it guarantees and the keys it
 /// permits, with every present key's value in the value type. `K -> V` is exact and
 /// `K ->? V` guarantees no key.
+///
+/// A recursive type (rec.dart) is a node that stands for its definition's body and unfolds to
+/// it when a connective needs its parts. A node unfolds one level at a time: a tuple component,
+/// atom payload or morphism bound that mentions a recursive type is kept as written rather
+/// than met with another, so no connective unfolds a type without end. Whether a type is
+/// empty, and so subtyping, is decided in empty.dart.
 library;
 
 import 'dart:collection';
@@ -94,54 +100,29 @@ enum Universe {
   };
 }
 
-/// A type: the set of values it denotes. Types are ordered by their digests first, so two
-/// types are ordered without reading their contents unless their digests are equal.
-final class Type implements Comparable<Type> {
-  /// The hash of the other fields, computed when the type is made.
-  final int digest;
+/// A type: the set of values it denotes, given by its parts or, for a recursive type, by a
+/// node that unfolds to them. Types are ordered by their digests first, so two types are
+/// ordered without reading their contents unless their digests are equal.
+sealed class Type implements Comparable<Type> {
+  /// The hash of the contents, computed when the type is made; a recursive node's is its
+  /// identity's, since two such nodes are one type only when they are one node.
+  int get digest;
 
   /// Bit 0 for `false`, bit 1 for `true`.
-  final int bools;
-  final Lits ints, rats, floats, strings;
-  final Atoms atoms;
-  final Tuples tuples;
-  final bool structs;
-  final Part<Morphism> morphisms;
+  int get bools;
+  Lits get ints;
+  Lits get rats;
+  Lits get floats;
+  Lits get strings;
+  Atoms get atoms;
+  Tuples get tuples;
+  bool get structs;
+  Part<Morphism> get morphisms;
 
-  String? _text;
-
-  Type._(
-    this.bools,
-    this.ints,
-    this.rats,
-    this.floats,
-    this.strings,
-    this.atoms,
-    this.tuples,
-    this.structs,
-    this.morphisms,
-  ) : digest = _hash(bools, [ints, rats, floats, strings], atoms, tuples, structs, morphisms);
-
-  static int _hash(
-    int bools,
-    List<Lits> lits,
-    Atoms atoms,
-    Tuples tuples,
-    bool structs,
-    Part<Morphism> morphisms,
-  ) {
-    int bit(bool b) => b ? 1 : 0;
-    var h = mix(0, bools);
-    for (final l in lits) {
-      h = mix(mix(h, bit(l.cofinite)), l.sum);
-    }
-    h = mix(mix(h, bit(atoms.cofinite)), atoms.sum);
-    h = mix(h, bit(tuples.rest));
-    for (final MapEntry(key: len, value: part) in tuples.lens.entries) {
-      h = mix(mix(h, len), part.digest);
-    }
-    return mix(mix(h, bit(structs)), morphisms.digest);
-  }
+  /// The node named `naming()` whose parts are `make()`'s, each computed when first needed
+  /// (rec.dart). `make` must not need this node's parts, which a contractive definition
+  /// ensures.
+  static Type recursive(String Function() naming, Type Function() make) => _Rec(naming, make);
 
   /// The type with the given parts, each not given empty.
   static Type _with({
@@ -154,7 +135,7 @@ final class Type implements Comparable<Type> {
     Tuples? tuples,
     bool structs = false,
     Part<Morphism>? morphisms,
-  }) => Type._(
+  }) => _Parts(
     bools,
     ints,
     rats,
@@ -307,7 +288,7 @@ final class Type implements Comparable<Type> {
     return true;
   });
 
-  Type _zip(Type o, bool or) => Type._(
+  Type _zip(Type o, bool or) => _Parts(
     or ? bools | o.bools : bools & o.bools,
     ints.zip(o.ints, or),
     rats.zip(o.rats, or),
@@ -329,7 +310,7 @@ final class Type implements Comparable<Type> {
   Type operator -(Type o) => this & ~o;
 
   /// The complement, within each universe.
-  Type operator ~() => Type._(
+  Type operator ~() => _Parts(
     ~bools & 3,
     ints.not(),
     rats.not(),
@@ -341,20 +322,18 @@ final class Type implements Comparable<Type> {
     ~morphisms,
   );
 
+  /// Types given by their parts order before recursive nodes, which order by identity.
   @override
   int compareTo(Type o) {
     if (identical(this, o)) return 0;
-    var c = _cmpDigest(digest, o.digest);
-    if (c == 0) c = bools - o.bools;
-    if (c == 0) c = ints.compareTo(o.ints);
-    if (c == 0) c = rats.compareTo(o.rats);
-    if (c == 0) c = floats.compareTo(o.floats);
-    if (c == 0) c = strings.compareTo(o.strings);
-    if (c == 0) c = atoms.compareTo(o.atoms);
-    if (c == 0) c = tuples.compareTo(o.tuples);
-    if (c == 0) c = _cmpBool(structs, o.structs);
-    if (c == 0) c = morphisms.compareTo(o.morphisms);
-    return c;
+    final c = _cmpDigest(digest, o.digest);
+    if (c != 0) return c;
+    return switch ((this, o)) {
+      (final _Parts a, final _Parts b) => a._compare(b),
+      (final _Rec a, final _Rec b) => a.id.compareTo(b.id),
+      (_Parts(), _Rec()) => -1,
+      (_Rec(), _Parts()) => 1,
+    };
   }
 
   @override
@@ -367,9 +346,13 @@ final class Type implements Comparable<Type> {
   /// and `(|)` none; `int` every integer, `(\ int 3)` every one but 3; `#_` every atom; `(#a _)`
   /// the atoms `#a` with any payload; `(tuple A B)`, `(! X)`, `(& X Y)`, and `tuple`, `struct`
   /// and `morphism` every value of those universes; `(-> K V)` exact, `(->? K V)` with no
-  /// guarantee, `(-> L U V)` otherwise. Made once, when first asked for.
+  /// guarantee, `(-> L U V)` otherwise. Made once, when first asked for. A recursive node is
+  /// its name.
   @override
-  String toString() => _text ??= _show();
+  String toString() => switch (this) {
+    final _Parts p => p._text ??= _show(),
+    final _Rec r => r.name,
+  };
 
   String _show() {
     if (this == top) return '_';
@@ -418,6 +401,116 @@ final class Type implements Comparable<Type> {
     });
     return _union(items);
   }
+}
+
+/// A type given by its parts.
+final class _Parts extends Type {
+  @override
+  final int digest;
+  @override
+  final int bools;
+  @override
+  final Lits ints, rats, floats, strings;
+  @override
+  final Atoms atoms;
+  @override
+  final Tuples tuples;
+  @override
+  final bool structs;
+  @override
+  final Part<Morphism> morphisms;
+
+  String? _text;
+
+  _Parts(
+    this.bools,
+    this.ints,
+    this.rats,
+    this.floats,
+    this.strings,
+    this.atoms,
+    this.tuples,
+    this.structs,
+    this.morphisms,
+  ) : digest = _hash(bools, [ints, rats, floats, strings], atoms, tuples, structs, morphisms);
+
+  static int _hash(
+    int bools,
+    List<Lits> lits,
+    Atoms atoms,
+    Tuples tuples,
+    bool structs,
+    Part<Morphism> morphisms,
+  ) {
+    int bit(bool b) => b ? 1 : 0;
+    var h = mix(0, bools);
+    for (final l in lits) {
+      h = mix(mix(h, bit(l.cofinite)), l.sum);
+    }
+    h = mix(mix(h, bit(atoms.cofinite)), atoms.sum);
+    h = mix(h, bit(tuples.rest));
+    for (final MapEntry(key: len, value: part) in tuples.lens.entries) {
+      h = mix(mix(h, len), part.digest);
+    }
+    return mix(mix(h, bit(structs)), morphisms.digest);
+  }
+
+  int _compare(_Parts o) {
+    var c = bools - o.bools;
+    if (c == 0) c = ints.compareTo(o.ints);
+    if (c == 0) c = rats.compareTo(o.rats);
+    if (c == 0) c = floats.compareTo(o.floats);
+    if (c == 0) c = strings.compareTo(o.strings);
+    if (c == 0) c = atoms.compareTo(o.atoms);
+    if (c == 0) c = tuples.compareTo(o.tuples);
+    if (c == 0) c = _cmpBool(structs, o.structs);
+    if (c == 0) c = morphisms.compareTo(o.morphisms);
+    return c;
+  }
+}
+
+/// A recursive type, or a part of a recursive definition's body kept unevaluated: its parts
+/// are `make()`'s, computed on first use. Two nodes are one type only when they are one node.
+final class _Rec extends Type {
+  static var _next = 0;
+
+  final int id;
+  @override
+  final int digest;
+  final String Function() _naming;
+  final Type Function() _make;
+
+  /// The name, made when first printed: a name spells out its part of the definition, so
+  /// making every part's name at once would cost the product of the definition's size and
+  /// depth.
+  late final String name = _naming();
+
+  /// The parts, made when first needed.
+  late final _Parts _body = switch (_make()) {
+    final _Parts p => p,
+    final _Rec r => r._body,
+  };
+
+  _Rec(this._naming, this._make) : id = _next, digest = mix(4, _next++);
+
+  @override
+  int get bools => _body.bools;
+  @override
+  Lits get ints => _body.ints;
+  @override
+  Lits get rats => _body.rats;
+  @override
+  Lits get floats => _body.floats;
+  @override
+  Lits get strings => _body.strings;
+  @override
+  Atoms get atoms => _body.atoms;
+  @override
+  Tuples get tuples => _body.tuples;
+  @override
+  bool get structs => _body.structs;
+  @override
+  Part<Morphism> get morphisms => _body.morphisms;
 }
 
 /// `(| a b …)`, or the one item alone.

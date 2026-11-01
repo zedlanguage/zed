@@ -273,24 +273,30 @@ fn recursive_definitions_scale() {
     // recursive occurrences and named in full, and an atom's payload was copied to test a
     // value, each once per level: `O(d²)` (ratio 68). The body is now a shared tree whose
     // nodes know whether they mention the group, a part's name is made when it is printed,
-    // and a payload is tested in place.
+    // and a payload is tested in place. Unfolding the chain dominates its time, so the checks
+    // made when the definitions are given are also timed alone, on a longer chain.
     use zed_tests::scaling;
+    fn chain(d: usize) -> Vec<Def> {
+        (0..d)
+            .map(|i| {
+                let body = if i + 1 < d {
+                    or(vec![r(i + 1, vec![]), bare(&format!("a{i}"))])
+                } else {
+                    bare("end")
+                };
+                def(&format!("T{i}"), &[], body)
+            })
+            .collect()
+    }
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {
             scaling::check("chain of definitions", 100, |d| {
-                let defs = (0..d)
-                    .map(|i| {
-                        let body = if i + 1 < d {
-                            or(vec![r(i + 1, vec![]), bare(&format!("a{i}"))])
-                        } else {
-                            bare("end")
-                        };
-                        def(&format!("T{i}"), &[], body)
-                    })
-                    .collect();
-                let t = one(defs);
+                let t = one(chain(d));
                 assert!(t.contains(&Value::atom("end")));
+            });
+            scaling::check("checking a chain of definitions", 1000, |d| {
+                assert!(Group::new(chain(d)).is_ok());
             });
             scaling::check("nested body", 100, |d| {
                 let mut body = Expr::Tuple(vec![r(0, vec![]), ty(Type::int())]);

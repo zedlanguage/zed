@@ -191,3 +191,8 @@ dart/test/steps/l01_22_type_representation/laws_test.dart tests/steps/l01_22_typ
 dart/test/steps/l01_22_type_representation/is_test.dart tests/steps/l01_22_type_representation/is.rs
 dart/test/steps/l01_22_type_representation/scaling_test.dart tests/steps/l01_22_type_representation/scaling.rs
 dart/test/steps/l01_22_type_representation/bdd_test.dart crates/zed-kernel/src/types/bdd.rs
+dart/lib/src/kernel/rec.dart crates/zed-kernel/src/types/rec.rs
+dart/test/steps/l01_23_subtyping/cases_test.dart tests/steps/l01_23_subtyping/cases.rs
+dart/test/steps/l01_23_subtyping/oracle_test.dart tests/steps/l01_23_subtyping/oracle.rs
+dart/test/steps/l01_23_subtyping/rec_test.dart tests/steps/l01_23_subtyping/rec.rs
+dart/test/steps/l01_23_subtyping/scaling_test.dart tests/steps/l01_23_subtyping/scaling.rs
