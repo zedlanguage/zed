@@ -72,12 +72,13 @@ int compareUtf8(String a, String b) {
   final n = a.length < b.length ? a.length : b.length;
   for (var i = 0; i < n; i++) {
     final x = a.codeUnitAt(i), y = b.codeUnitAt(i);
-    if (x != y) return _rank(x) - _rank(y);
+    if (x != y) return utf8Rank(x) - utf8Rank(y);
   }
   return a.length - b.length;
 }
 
-int _rank(int u) => u >= 0xE000 ? u - 0x800 : (u >= 0xD800 ? u + 0x2000 : u);
+/// The UTF-16 code unit `u` ranked so that code units compare as their UTF-8 bytes do.
+int utf8Rank(int u) => u >= 0xE000 ? u - 0x800 : (u >= 0xD800 ? u + 0x2000 : u);
 
 /// `s` in double quotes, with `"`, `\`, the common control characters escaped by letter and
 /// the other control characters as `\u{…}`.

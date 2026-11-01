@@ -1,5 +1,5 @@
-/// Building units is of order n log n in the length of the text, and the depth of nested
-/// functions and `else if` chains is bounded by memory alone.
+/// Building units and writing their text are of order n log n in the length of the text, and
+/// the depth of nested functions and `else if` chains is bounded by memory alone.
 library;
 
 import 'package:test/test.dart';
@@ -35,6 +35,25 @@ void main() {
       }
       expect((depth, '$s'), (n, '(return x)'));
     });
+  });
+
+  test('the text of nested functions and of a long sum', () {
+    final built = <int, (Stmt, Stmt)>{};
+    check('write', 125, (n) {
+      final (def, sum) = built[n] ??= (
+        _unit('${'f(x) { ' * n}x${' }' * n}').single,
+        _unit('y = ${[for (var i = 0; i < 4 * n; i++) 'a$i'].join(' + ')};').single,
+      );
+      expect('$def'.length, 20 * n + 10);
+      expect('$sum', startsWith('(= (y) ${'(+ ' * (4 * n - 1)}a0 a1)'));
+    });
+  });
+
+  test('the text of functions nested deeper than the call stack', () {
+    const n = 100000;
+    final text = '${_unit('${'f(x) { ' * n}x${' }' * n}').single}';
+    expect(text, startsWith('(def f (x) (block ' * 1000));
+    expect(text, endsWith('(block (return x)))${'))' * (n - 1)}'));
   });
 
   test('a long else if chain', () {

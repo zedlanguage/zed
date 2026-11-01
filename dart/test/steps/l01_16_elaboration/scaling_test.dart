@@ -38,6 +38,12 @@ String calling(int k) => [
   'main = f$k();\n',
 ].join();
 
+/// A function with `n` named parameters, and a call naming each of them, last first.
+String named(int n) => [
+  'f(${[for (var i = 0; i < n; i++) 'd$i = 0'].join(', ')}) = d0;\n',
+  'y = f(${[for (var i = n - 1; i >= 0; i--) 'd$i: $i'].join(', ')});\n',
+].join();
+
 /// The elaboration of `text`, timed alone: the statements and resolution of each size are
 /// built once, by the run that warms the code.
 Unit timed(Map<int, (List<Stmt>, Resolution)> built, int n, String Function(int) text) {
@@ -72,6 +78,15 @@ void main() {
       expect(timed(calls, n, defaults).defs.last.name, 'y');
     });
     expect(term(defaults(2), 'y'), '{ x = 1; d1 = x; d0 = d1; f(x, d0, d1) }');
+  });
+
+  test('a call naming many arguments scales', () {
+    // Each named argument was looked for among all the parameters.
+    final built = <int, (List<Stmt>, Resolution)>{};
+    scaling.check('a call naming n arguments', 8000, (n) {
+      expect(timed(built, n, named).defs.last.name, 'y');
+    });
+    expect(value(named(3), 'y'), '0');
   });
 
   test('defaults calling functions with defaults scale', () {

@@ -1,5 +1,14 @@
 //! Elaboration at the rule of low complexity (DESIGN.md Part G).
 
+use std::collections::BTreeMap;
+
+use zed_tests::scaling::FACTOR;
+use zedc::ast::{Stmt, unit};
+use zedc::elab::elaborate;
+use zedc::lex::lex_fence;
+use zedc::parse::{TOP, parse};
+use zedc::resolve::{Resolution, resolve};
+
 use super::{elab, term, value};
 
 /// `f0(x = 1) = x;` and `f{i}(x = f{i-1}() + f{i-1}()) = x;` up to `k`, and `main = f{k}();`.
@@ -192,6 +201,71 @@ fn checking_nested_functions_beside_many_others_scales() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+/// A function with `n` named parameters, and a call naming each of them, last first.
+fn named(n: usize) -> String {
+    let params: Vec<String> = (0..n).map(|i| format!("d{i} = 0")).collect();
+    let args: Vec<String> = (0..n).rev().map(|i| format!("d{i}: {i}")).collect();
+    format!(
+        "f({}) = d0;\ny = f({});\n",
+        params.join(", "),
+        args.join(", ")
+    )
+}
+
+/// A function whose parameter `g` has a type with `n` named parameters, and a call of `g`
+/// naming each of them, last first.
+fn named_through_a_value(n: usize) -> String {
+    let params: Vec<String> = (0..n).map(|i| format!("d{i}: int")).collect();
+    let args: Vec<String> = (0..n).rev().map(|i| format!("d{i}: {i}")).collect();
+    format!(
+        "h(g: ({}) -> int) = g({});\n",
+        params.join(", "),
+        args.join(", ")
+    )
+}
+
+/// Checks that elaborating the unit `text(m)` is of order m, building the front end of each
+/// size first, so that elaboration is timed alone, and that its last definition is `last`.
+fn elaboration_scales(what: &str, n: usize, text: fn(usize) -> String, last: &str) {
+    let built: BTreeMap<usize, (Vec<Stmt>, Resolution)> = [n, FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let text = text(m);
+            let tokens = lex_fence(&text).unwrap();
+            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
+            let stmts = unit(&text, &tokens, &tree).unwrap();
+            let res = resolve(&stmts).unwrap();
+            (m, (stmts, res))
+        })
+        .collect();
+    zed_tests::scaling::check(what, n, |m| {
+        let (stmts, res) = &built[&m];
+        let u = elaborate(stmts, res).unwrap();
+        assert_eq!(u.defs.last().unwrap().name, last);
+    });
+}
+
+#[test]
+fn a_call_naming_many_arguments_scales() {
+    // Each named argument was looked for among all the parameters, and the parameters each
+    // default reads among all of them.
+    elaboration_scales("a call naming n arguments", 8000, named, "y");
+    assert_eq!(value(&named(3), "y"), "0");
+}
+
+#[test]
+fn a_call_through_a_value_naming_many_arguments_scales() {
+    // The same, where the parameter names come from the type of the value called.
+    elaboration_scales(
+        "a call of a value naming n arguments",
+        8000,
+        named_through_a_value,
+        "h",
+    );
+    let e = elab(&named_through_a_value(2).replace("g(d1", "g(d2")).unwrap_err();
+    assert_eq!(e, ["`(d0: int, d1: int) -> int` has no parameter `d2` [1]"]);
 }
 
 #[test]

@@ -83,6 +83,34 @@ tests), clippy is clean, and L1.23's tests still take 9.8 s on one thread.
 The negative control was one edit to `crates/zed-kernel/src/types/rec.rs`, put back from a
 saved copy. No compile errors. The time is counted in the Dart port's L1.23 row.
 
+An audit of both implementations for work of order n² (2026-10-31) found three faults shared
+by the Rust and the Dart, now fixed in both (COMPLEXITY.md K19, F23, F24): the text of a type,
+and of a lambda nested in a parameter's default, copied the texts of the parts inside it; and
+each named argument, and each parameter a default reads, was looked for among all the
+parameters. Rust elaboration of a call naming n arguments, debug build: 567 ms at n = 4,000
+and 23.7 s at 32,000 before, 115 ms and 978 ms after. Every new test fails with the old code
+put back, in both languages, except the Rust test of F24: the Rust builder recurses once per
+level of nesting and overflows before the copying can be measured, which is left open. The
+F23 tests run at n = 8,000, so that each of the four searches fails alone; they take about 33 s
+each, and L1.16's tests now take 71.3 s on one thread (20.8 s before). L1.22's take 13.6 s
+(12.0 s before), L1.10's 0.6 s and L1.12's 0.2 s. The full Rust test run passes (873 step
+tests), and clippy is clean.
+
+| file | lines added | lines removed |
+|---|---:|---:|
+| `crates/zed-kernel/src/types.rs` | 183 | 71 |
+| `crates/zedc/src/ast/mod.rs` | 13 | 2 |
+| `crates/zedc/src/ast/stmts.rs` | 8 | 7 |
+| `crates/zedc/src/ast/types.rs` | 14 | 9 |
+| `crates/zedc/src/check/mod.rs` | 9 | 1 |
+| `crates/zedc/src/elab.rs` | 28 | 11 |
+| `tests/steps/l01_10_lambdas_types_else_tuples/scaling.rs` (new) | 54 | 0 |
+| `tests/steps/l01_16_elaboration/scaling.rs` | 74 | 0 |
+| `tests/steps/l01_22_type_representation/scaling.rs` | 40 | 1 |
+
+The negative controls put the old code back from saved copies, in a separate target directory
+where a test binary was running. Edit calls and compile errors for this work were not counted.
+
 ## Build and test baseline (Rust)
 
 Measured on 2026-10-31 at `55f537a`, in a scope capped at 64 GB, with a separate target

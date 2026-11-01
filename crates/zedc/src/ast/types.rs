@@ -335,14 +335,19 @@ impl fmt::Display for Pattern {
         if fields.is_empty() && items.is_empty() {
             return Ok(());
         }
-        let mut parts: Vec<String> = fields
-            .iter()
-            .map(|(n, p)| match p {
-                Some(p) => format!("{n}: {p}"),
-                None => format!("{n}:"),
-            })
-            .collect();
-        parts.extend(items.iter().map(|p| p.to_string()));
-        write!(f, "({})", parts.join(", "))
+        f.write_str("(")?;
+        let mut sep = "";
+        for (n, p) in fields {
+            match p {
+                Some(p) => write!(f, "{sep}{n}: {p}")?,
+                None => write!(f, "{sep}{n}:")?,
+            }
+            sep = ", ";
+        }
+        for p in items {
+            write!(f, "{sep}{p}")?;
+            sep = ", ";
+        }
+        f.write_str(")")
     }
 }

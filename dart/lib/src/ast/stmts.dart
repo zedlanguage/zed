@@ -10,11 +10,15 @@ final class Block extends Expr {
   Block(this.stmts, super.span);
 
   @override
-  String toString() => '(block${[for (final s in stmts) ' $s'].join()})';
+  List<Object> get _pieces => [
+    '(block',
+    for (final s in stmts) ...[' ', s],
+    ')',
+  ];
 }
 
 /// A statement and its text, its `;` included.
-sealed class Stmt {
+sealed class Stmt with _Text {
   final Span span;
 
   Stmt(this.span);
@@ -29,7 +33,13 @@ final class Bind extends Stmt {
   Bind(this.targets, this.value, super.span);
 
   @override
-  String toString() => '(= (${[for (final t in targets) t ?? '_'].join(' ')}) $value)';
+  List<Object> get _pieces => [
+    '(= (',
+    ..._spaced([for (final t in targets) t ?? '_']),
+    ') ',
+    value,
+    ')',
+  ];
 }
 
 /// `return e;` or `return a, b;`, the block's export; a trailing expression is `return e;`.
@@ -39,7 +49,11 @@ final class Return extends Stmt {
   Return(this.values, super.span);
 
   @override
-  String toString() => '(return${[for (final e in values) ' $e'].join()})';
+  List<Object> get _pieces => [
+    '(return',
+    for (final e in values) ...[' ', e],
+    ')',
+  ];
 }
 
 /// `p <- e;`, the whole value `e` pushed to the port `p`.
@@ -50,7 +64,7 @@ final class Push extends Stmt {
   Push(this.port, this.value, super.span);
 
   @override
-  String toString() => '(<- $port $value)';
+  List<Object> get _pieces => ['(<- ', port, ' ', value, ')'];
 }
 
 /// A function: `f(params) = e;` or `f(params) { … }`, either followed by `test` tables.
@@ -71,17 +85,34 @@ final class FunctionDef extends Stmt {
 
   FunctionDef(this.name, this.params, this.ports, this.equation, this.body, this.tests, super.span);
 
+  /// The index of each parameter by name, the first where a name repeats.
+  late final Map<String, int> paramAt = {
+    for (var i = params.length - 1; i >= 0; i--) params[i].name: i,
+  };
+
   /// `(def f (x (y: int)) (-> (stdout: Lines)) = e (test (a b) …))`, the `=` for an equation.
   @override
-  String toString() =>
-      '(def $name (${params.join(' ')})'
-      '${ports == null ? '' : ' (-> ${ports!.join(' ')})'}'
-      ' ${equation ? '= ' : ''}$body'
-      '${tests.isEmpty ? '' : ' (test${[for (final (a, b) in tests) ' ($a $b)'].join()})'})';
+  List<Object> get _pieces => [
+    '(def ',
+    name,
+    ' (',
+    ..._spaced(params),
+    ')',
+    if (ports case final ps?) ...[' (-> ', ..._spaced(ps), ')'],
+    ' ',
+    if (equation) '= ',
+    body,
+    if (tests.isNotEmpty) ...[
+      ' (test',
+      for (final (a, b) in tests) ...[' (', a, ' ', b, ')'],
+      ')',
+    ],
+    ')',
+  ];
 }
 
 /// An output port of a function's header: `stdout: Lines`.
-final class Port {
+final class Port with _Text {
   final String name;
   final TypeExpr type;
   final Span span;
@@ -89,7 +120,7 @@ final class Port {
   Port(this.name, this.type, this.span);
 
   @override
-  String toString() => '($name: $type)';
+  List<Object> get _pieces => ['(', name, ': ', type, ')'];
 }
 
 Stmt get _stmt => _got as Stmt;

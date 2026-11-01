@@ -522,16 +522,18 @@ impl<'a> Elab<'a> {
                 // than holding a copy of it, and defaults that call functions with defaults stay
                 // linear in size. A literal or a name is copied: no copy is captured, the kernel
                 // names being unique in the unit.
-                let ids: Vec<usize> = f.params.iter().map(|p| self.id(p.span, &p.name)).collect();
+                let at: HashMap<usize, usize> = (f.params.iter().enumerate())
+                    .map(|(i, p)| (self.id(p.span, &p.name), i))
+                    .collect();
                 let mut thunks = Vec::new();
                 let mut ok = true;
                 for (j, p) in f.params.iter().enumerate() {
                     let Some(d) = &p.default else { continue };
-                    let read: HashSet<usize> = self.t.uses_in(d.span, &[]).into_iter().collect();
-                    let reads: Vec<Arc<str>> = (0..ids.len())
-                        .filter(|i| read.contains(&ids[*i]))
-                        .map(|i| params[i].clone())
+                    let read: BTreeSet<usize> = (self.t.uses_in(d.span, &[]).into_iter())
+                        .filter_map(|b| at.get(&b).copied())
                         .collect();
+                    let reads: Vec<Arc<str>> =
+                        read.into_iter().map(|i| params[i].clone()).collect();
                     let Some(t) = self.expr(d) else {
                         ok = false;
                         continue;
@@ -907,8 +909,16 @@ impl<'a> Elab<'a> {
                 }
             }
         }
+        // Each parameter's index by name, the first where a name repeats.
+        let at: HashMap<&str, usize> = sig
+            .params
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(j, p)| (&*p.name, j))
+            .collect();
         for (name, a) in named {
-            match sig.params.iter().position(|p| *p.name == **name) {
+            match at.get(name.as_str()).copied() {
                 None => return self.error(a.span, format!("`{sig}` has no parameter `{name}`")),
                 Some(j) if sig.params[j].positional => {
                     return self.error(
@@ -1075,8 +1085,16 @@ impl<'a> Elab<'a> {
                 }
             }
         }
+        // Each parameter's index by name, the first where a name repeats.
+        let at: HashMap<&str, usize> = f
+            .params
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(j, p)| (p.name.as_str(), j))
+            .collect();
         for (name, a) in named {
-            match f.params.iter().position(|p| p.name == *name) {
+            match at.get(name.as_str()).copied() {
                 None => {
                     return self.error(a.span, format!("`{fname}` has no parameter `{name}`"));
                 }
@@ -1147,9 +1165,8 @@ impl<'a> Elab<'a> {
             return None;
         }
         // The defaults, each after the defaulted parameters it reads.
-        let ids: Vec<usize> = missing
-            .iter()
-            .map(|&j| self.id(f.params[j].span, &f.params[j].name))
+        let at: HashMap<usize, usize> = (missing.iter().enumerate())
+            .map(|(i, &j)| (self.id(f.params[j].span, &f.params[j].name), i))
             .collect();
         let deps: Vec<Vec<usize>> = missing
             .iter()
@@ -1159,7 +1176,7 @@ impl<'a> Elab<'a> {
                     .t
                     .uses_in(d.span, &[])
                     .into_iter()
-                    .filter_map(|b| ids.iter().position(|&i| i == b))
+                    .filter_map(|b| at.get(&b).copied())
                     .collect();
                 deps.sort_unstable();
                 deps.dedup();

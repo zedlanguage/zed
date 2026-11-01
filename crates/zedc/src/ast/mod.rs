@@ -552,6 +552,16 @@ impl Builder<'_> {
     }
 }
 
+/// Writes `xs` with a space between each two, each straight into `f`.
+fn spaced<T: fmt::Display>(f: &mut fmt::Formatter<'_>, xs: &[T]) -> fmt::Result {
+    let mut sep = "";
+    for x in xs {
+        write!(f, "{sep}{x}")?;
+        sep = " ";
+    }
+    Ok(())
+}
+
 /// An s-expression: `(call f 1 (x: 2) ...)`, `(index m k)`, `(. p x)`, `(?. p x)`, `(+ a b)`,
 /// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`.
 impl fmt::Display for Expr {
@@ -622,8 +632,9 @@ impl fmt::Display for Expr {
                 f.write_str(")")
             }
             ExprKind::Lambda { params, body } => {
-                let ps: Vec<String> = params.iter().map(|p| p.to_string()).collect();
-                write!(f, "(fn ({}) {body})", ps.join(" "))
+                f.write_str("(fn (")?;
+                spaced(f, params)?;
+                write!(f, ") {body})")
             }
             ExprKind::Is { of, ty, negated } => {
                 write!(f, "(is {}{of} {ty})", if *negated { "not " } else { "" })

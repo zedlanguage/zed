@@ -17,7 +17,45 @@ List<Type> pairs(int n) => [
 /// A test of `x` against the union of `n` such pairs.
 String union(int n) => 'f(x) = x is ${[for (var i = 0; i < n; i++) '(#a$i, int)'].join(' | ')};\n';
 
+/// A string of 1000 characters ending in `i`, as a type.
+Type long(int i) => Type.lit(Str('${'s' * 1000}$i'))!;
+
+/// The tuple `(… ((long(b), long(b)), long(b + 1)) …, long(b + d - 1))`, nested `d` deep.
+Type chain(int d, int b) {
+  var t = long(b);
+  for (var i = 0; i < d; i++) {
+    t = Type.tuple([t, long(b + i)]);
+  }
+  return t;
+}
+
 void main() {
+  test('the text of a deeply nested type scales', () {
+    // Each type's text was made from copies of the texts of the types inside it. Each run
+    // makes new types, whose texts are not yet made.
+    var b = 0;
+    scaling.check('the text of a tuple nested n deep', 75, (d) {
+      expect('${chain(d, b += 1000000)}'.length, greaterThan(1000 * d));
+    });
+    expect('${chain(2, 0)}', startsWith('(tuple (tuple "sss'));
+  });
+
+  test('the text of a type holding the complement of an atom payload is made', () {
+    // The complement is a type made when the text is, and must be the same one each time.
+    expect(
+      '${Type.top - Type.atomWith('a', Type.tuple([Type.integer]))}',
+      r'(| bool int rat f64 String (\ #_ (#a (tuple int))) tuple struct morphism)',
+    );
+  });
+
+  test('the text of a type nested deeper than the call stack is made', () {
+    var t = Type.lit(Int(0))!;
+    for (var i = 1; i < 100000; i++) {
+      t = Type.tuple([t, Type.lit(Int(i))!]);
+    }
+    expect('$t', allOf(startsWith('(tuple ' * 1000), endsWith(' 99998) 99999)')));
+  });
+
   test('a union of many tuple types scales', () {
     final texts = <int, String>{};
     scaling.check('is against a union of n pairs', 250, (n) {

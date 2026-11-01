@@ -3,7 +3,7 @@
 part of '../../ast.dart';
 
 /// A type expression and its span.
-sealed class TypeExpr {
+sealed class TypeExpr with _Text {
   /// Its text; a grouping's parentheses widen it.
   Span span;
 
@@ -17,7 +17,7 @@ final class TypeName extends TypeExpr {
   TypeName(this.name, super.span);
 
   @override
-  String toString() => name;
+  List<Object> get _pieces => [name];
 }
 
 /// An atom, without its `#`.
@@ -27,7 +27,7 @@ final class AtomType extends TypeExpr {
   AtomType(this.name, super.span);
 
   @override
-  String toString() => '#$name';
+  List<Object> get _pieces => ['#', name];
 }
 
 /// A tuple type `(A, B)`.
@@ -37,7 +37,7 @@ final class TupleType extends TypeExpr {
   TupleType(this.items, super.span);
 
   @override
-  String toString() => '(tuple ${items.join(' ')})';
+  List<Object> get _pieces => ['(tuple ', ..._spaced(items), ')'];
 }
 
 /// A union `A | B | …`.
@@ -47,7 +47,7 @@ final class UnionType extends TypeExpr {
   UnionType(this.items, super.span);
 
   @override
-  String toString() => '(| ${items.join(' ')})';
+  List<Object> get _pieces => ['(| ', ..._spaced(items), ')'];
 }
 
 /// An intersection `A & B & …`.
@@ -57,7 +57,7 @@ final class AndType extends TypeExpr {
   AndType(this.items, super.span);
 
   @override
-  String toString() => '(& ${items.join(' ')})';
+  List<Object> get _pieces => ['(& ', ..._spaced(items), ')'];
 }
 
 /// A difference `A \ B`.
@@ -68,7 +68,7 @@ final class DiffType extends TypeExpr {
   DiffType(this.a, this.b, super.span);
 
   @override
-  String toString() => '(\\ $a $b)';
+  List<Object> get _pieces => [r'(\ ', a, ' ', b, ')'];
 }
 
 /// A function type, `->`, or `->?` when `partial`, a partial map.
@@ -80,12 +80,12 @@ final class ArrowType extends TypeExpr {
   ArrowType(this.params, this.partial, this.result, super.span);
 
   @override
-  String toString() => '(${partial ? '->?' : '->'} (${params.join(' ')}) $result)';
+  List<Object> get _pieces => [partial ? '(->? (' : '(-> (', ..._spaced(params), ') ', result, ')'];
 }
 
 /// A parameter of a function type: `int`, `x: int` or `positional x: int`. Its name, if
 /// written, documents it.
-final class TypeParam {
+final class TypeParam with _Text {
   final String? name;
   final bool positional;
   final TypeExpr type;
@@ -93,14 +93,14 @@ final class TypeParam {
   TypeParam(this.name, this.positional, this.type);
 
   @override
-  String toString() => switch (name) {
-    null => '$type',
-    final n => '(${positional ? 'positional ' : ''}$n: $type)',
+  List<Object> get _pieces => switch (name) {
+    null => [type],
+    final n => ['(', if (positional) 'positional ', n, ': ', type, ')'],
   };
 }
 
 /// A parameter of a lambda or a declaration, with its type and default if written.
-final class Param {
+final class Param with _Text {
   final String name;
   final bool positional;
   final TypeExpr? type;
@@ -111,15 +111,20 @@ final class Param {
 
   /// `x`, or `(positional x: int = 0)` with what is written.
   @override
-  String toString() {
-    if (!positional && type == null && fallback == null) return name;
-    return '(${positional ? 'positional ' : ''}$name'
-        '${type == null ? '' : ': $type'}${fallback == null ? '' : ' = $fallback'})';
-  }
+  List<Object> get _pieces => !positional && type == null && fallback == null
+      ? [name]
+      : [
+          '(',
+          if (positional) 'positional ',
+          name,
+          if (type case final t?) ...[': ', t],
+          if (fallback case final f?) ...[' = ', f],
+          ')',
+        ];
 }
 
 /// A pattern. At L1 the only patterns are atom patterns, which `else` takes.
-sealed class Pattern {
+sealed class Pattern with _Text {
   final Span span;
 
   Pattern(this.span);
@@ -135,10 +140,19 @@ final class AtomPattern extends Pattern {
   AtomPattern(this.name, this.fields, this.items, super.span);
 
   @override
-  String toString() {
-    if (fields.isEmpty && items.isEmpty) return '#$name';
-    final parts = [for (final (f, p) in fields) p == null ? '$f:' : '$f: $p', ...items];
-    return '#$name(${parts.join(', ')})';
+  List<Object> get _pieces {
+    if (fields.isEmpty && items.isEmpty) return ['#', name];
+    final parts = [
+      for (final (f, p) in fields) p == null ? ['$f:'] : ['$f: ', p],
+      for (final p in items) [p],
+    ];
+    return [
+      '#',
+      name,
+      '(',
+      for (final (i, p) in parts.indexed) ...[if (i > 0) ', ', ...p],
+      ')',
+    ];
   }
 }
 

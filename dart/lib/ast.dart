@@ -21,8 +21,44 @@ import 'src/unicode.dart';
 part 'src/ast/stmts.dart';
 part 'src/ast/types.dart';
 
+/// A node whose text, its s-expression, is its pieces in order: strings, and the nodes inside
+/// it.
+mixin _Text {
+  /// The pieces of the text, each a node inside or an object written as its string.
+  List<Object> get _pieces;
+
+  /// The text, written with a stack of its own, since a tree may be nested deeper than the call
+  /// stack allows.
+  @override
+  String toString() {
+    final out = StringBuffer();
+    final stack = [_pieces.iterator];
+    while (stack.isNotEmpty) {
+      final it = stack.last;
+      if (!it.moveNext()) {
+        stack.removeLast();
+      } else if (it.current case final _Text t) {
+        stack.add(t._pieces.iterator);
+      } else {
+        out.write(it.current);
+      }
+    }
+    return out.toString();
+  }
+}
+
+/// `xs` with a space between each two.
+Iterable<Object> _spaced(Iterable<Object> xs) sync* {
+  var first = true;
+  for (final x in xs) {
+    if (!first) yield ' ';
+    yield x;
+    first = false;
+  }
+}
+
 /// An expression and its span.
-sealed class Expr {
+sealed class Expr with _Text {
   /// Its text; a grouping's parentheses widen it.
   Span span;
 
@@ -37,15 +73,15 @@ final class IntLit extends Expr {
   IntLit(this.radix, this.digits, super.span);
 
   @override
-  String toString() {
-    final prefix = switch (radix) {
+  List<Object> get _pieces => [
+    switch (radix) {
       2 => '0b',
       8 => '0o',
       16 => '0x',
       _ => '',
-    };
-    return '$prefix$digits';
-  }
+    },
+    digits,
+  ];
 }
 
 /// A float, as its decimal text.
@@ -55,7 +91,7 @@ final class FloatLit extends Expr {
   FloatLit(this.text, super.span);
 
   @override
-  String toString() => text;
+  List<Object> get _pieces => [text];
 }
 
 /// An exact rational, as its decimal text.
@@ -65,7 +101,7 @@ final class RatLit extends Expr {
   RatLit(this.text, super.span);
 
   @override
-  String toString() => '${text}r';
+  List<Object> get _pieces => [text, 'r'];
 }
 
 /// A string: its text and its holes.
@@ -75,16 +111,17 @@ final class StrLit extends Expr {
   StrLit(this.parts, super.span);
 
   @override
-  String toString() {
-    final ps = [
-      for (final p in parts)
-        switch (p) {
-          StrText(:final text) => ' ${quoted(text, '"')}',
-          StrHole(:final e) => ' $e',
-        },
-    ];
-    return '(str${ps.join()})';
-  }
+  List<Object> get _pieces => [
+    '(str',
+    for (final p in parts) ...[
+      ' ',
+      switch (p) {
+        StrText(:final text) => quoted(text, '"'),
+        StrHole(:final e) => e,
+      },
+    ],
+    ')',
+  ];
 }
 
 /// A part of a string expression.
@@ -110,7 +147,7 @@ final class BoolLit extends Expr {
   BoolLit(this.value, super.span);
 
   @override
-  String toString() => '$value';
+  List<Object> get _pieces => [value];
 }
 
 /// An atom, without its `#`.
@@ -120,7 +157,7 @@ final class AtomLit extends Expr {
   AtomLit(this.name, super.span);
 
   @override
-  String toString() => '#$name';
+  List<Object> get _pieces => ['#', name];
 }
 
 /// A name.
@@ -130,7 +167,7 @@ final class NameRef extends Expr {
   NameRef(this.name, super.span);
 
   @override
-  String toString() => name;
+  List<Object> get _pieces => [name];
 }
 
 /// A prefix operator, `-` or `!`, and its operand.
@@ -141,7 +178,7 @@ final class Unary extends Expr {
   Unary(this.op, this.e, super.span);
 
   @override
-  String toString() => '($op $e)';
+  List<Object> get _pieces => ['(', op, ' ', e, ')'];
 }
 
 /// A binary operator and its operands.
@@ -153,7 +190,7 @@ final class Binary extends Expr {
   Binary(this.op, this.a, this.b, super.span);
 
   @override
-  String toString() => '($op $a $b)';
+  List<Object> get _pieces => ['(', op, ' ', a, ' ', b, ')'];
 }
 
 /// A call `f(…)`: its positional arguments, then its named ones in written order (`x:` is
@@ -167,10 +204,14 @@ final class Call extends Expr {
   Call(this.callee, this.positional, this.named, this.curry, super.span);
 
   @override
-  String toString() {
-    final args = [for (final a in positional) ' $a', for (final (n, a) in named) ' ($n: $a)'];
-    return '(call $callee${args.join()}${curry ? ' ...' : ''})';
-  }
+  List<Object> get _pieces => [
+    '(call ',
+    callee,
+    for (final a in positional) ...[' ', a],
+    for (final (n, a) in named) ...[' (', n, ': ', a, ')'],
+    if (curry) ' ...',
+    ')',
+  ];
 }
 
 /// An index `e[k]`.
@@ -181,7 +222,7 @@ final class Index extends Expr {
   Index(this.e, this.key, super.span);
 
   @override
-  String toString() => '(index $e $key)';
+  List<Object> get _pieces => ['(index ', e, ' ', key, ')'];
 }
 
 /// A tuple `(a, b, …)`.
@@ -191,7 +232,7 @@ final class Tuple extends Expr {
   Tuple(this.items, super.span);
 
   @override
-  String toString() => '(tuple ${items.join(' ')})';
+  List<Object> get _pieces => ['(tuple ', ..._spaced(items), ')'];
 }
 
 /// A lambda `x -> e` or `(params) -> e`.
@@ -202,7 +243,7 @@ final class Lambda extends Expr {
   Lambda(this.params, this.body, super.span);
 
   @override
-  String toString() => '(fn (${params.join(' ')}) $body)';
+  List<Object> get _pieces => ['(fn (', ..._spaced(params), ') ', body, ')'];
 }
 
 /// A type test `e is T`, or `e is not T` when `negated`.
@@ -214,7 +255,7 @@ final class Is extends Expr {
   Is(this.of, this.type, this.negated, super.span);
 
   @override
-  String toString() => '(is ${negated ? 'not ' : ''}$of $type)';
+  List<Object> get _pieces => ['(is ', if (negated) 'not ', of, ' ', type, ')'];
 }
 
 /// `e else d`, or `e else #a -> d` with its atom pattern; with no pattern, every loose atom
@@ -227,7 +268,15 @@ final class Else extends Expr {
   Else(this.of, this.pattern, this.fallback, super.span);
 
   @override
-  String toString() => '(else $of ${pattern == null ? '' : '$pattern '}$fallback)';
+  List<Object> get _pieces => [
+    '(else ',
+    of,
+    ' ',
+    ?pattern,
+    if (pattern != null) ' ',
+    fallback,
+    ')',
+  ];
 }
 
 /// `if c { a } else { b }`; `else if` is an `If` in the `else` branch.
@@ -239,7 +288,7 @@ final class If extends Expr {
   If(this.cond, this.then, this.otherwise, super.span);
 
   @override
-  String toString() => '(if $cond $then $otherwise)';
+  List<Object> get _pieces => ['(if ', cond, ' ', then, ' ', otherwise, ')'];
 }
 
 /// A member `e.n`, or `e?.n` when `safe`, which passes an atom member of the value's type
@@ -252,7 +301,7 @@ final class Member extends Expr {
   Member(this.of, this.name, this.safe, super.span);
 
   @override
-  String toString() => '(${safe ? '?.' : '.'} $of $name)';
+  List<Object> get _pieces => ['(', safe ? '?.' : '.', ' ', of, ' ', name, ')'];
 }
 
 /// One step of a derivation: a place in the source and what holds there.

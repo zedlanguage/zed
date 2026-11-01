@@ -1601,8 +1601,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => return Ty::dynamic(),
             }
         }
+        // Each parameter's index by name, the first where a name repeats.
+        let at: HashMap<&str, usize> = sig
+            .params
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(j, p)| (&*p.name, j))
+            .collect();
         for (name, a) in named {
-            match sig.params.iter().position(|p| *p.name == **name) {
+            match at.get(&**name).copied() {
                 Some(j)
                     if !sig.params[j].positional
                         && slots[j].is_none()

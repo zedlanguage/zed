@@ -746,7 +746,7 @@ final class _Elab {
       ok &= slots[next++] != null;
     }
     for (final (name, a) in named) {
-      final j = params.indexWhere((p) => p.name == name);
+      final j = f.paramAt[name] ?? -1;
       if (j < 0) error(a.span, '`$fname` has no parameter `$name`');
       if (params[j].positional) {
         error(a.span, '`$name` of `$fname` is positional: pass it by position');

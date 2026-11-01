@@ -98,10 +98,43 @@ fn scalar(v: &Value) -> u64 {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Node {
-    Parts(Parts),
+    Parts(Parts, Shown),
     Rec(Rec),
+}
+
+impl fmt::Debug for Node {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Node::Parts(p, _) => f.debug_tuple("Parts").field(p).finish(),
+            Node::Rec(r) => f.debug_tuple("Rec").field(r).finish(),
+        }
+    }
+}
+
+/// A type's text as a rope, made when first printed. It takes no part in comparing types.
+#[derive(Default)]
+struct Shown(OnceLock<Rope>);
+
+impl PartialEq for Shown {
+    fn eq(&self, _: &Shown) -> bool {
+        true
+    }
+}
+
+impl Eq for Shown {}
+
+impl PartialOrd for Shown {
+    fn partial_cmp(&self, other: &Shown) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Shown {
+    fn cmp(&self, _: &Shown) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+    }
 }
 
 /// A recursive type, or a part of a recursive definition's body kept unevaluated: its parts are
@@ -257,14 +290,14 @@ impl Parts {
 impl Type {
     fn new(mut p: Parts) -> Type {
         p.digest = p.hash();
-        Type(Arc::new(Node::Parts(p)))
+        Type(Arc::new(Node::Parts(p, Shown::default())))
     }
 
     /// The hash of the contents, computed when the type was made; a recursive node's is its
     /// identity's, since two such nodes are one type only when they are one node.
     pub(crate) fn digest(&self) -> u64 {
         match &*self.0 {
-            Node::Parts(p) => p.digest,
+            Node::Parts(p, _) => p.digest,
             Node::Rec(r) => mix(4, r.id),
         }
     }
@@ -288,7 +321,7 @@ impl Type {
     /// The parts, unfolding a recursive node.
     fn p(&self) -> &Parts {
         match &*self.0 {
-            Node::Parts(p) => p,
+            Node::Parts(p, _) => p,
             Node::Rec(r) => r.body.get_or_init(|| (r.make)()).p(),
         }
     }
@@ -519,7 +552,7 @@ impl Type {
 
     /// [`Type::values`], with `spread` false for [`Type::listed`].
     fn list(&self, cap: usize, spread: bool) -> Option<Vec<Value>> {
-        if !matches!(&*self.0, Node::Parts(_)) {
+        if !matches!(&*self.0, Node::Parts(..)) {
             return None;
         }
         let p = self.p();
@@ -985,18 +1018,112 @@ impl Sub<&Type> for Type {
 /// guarantee, `(-> L U V)` otherwise.
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if *self == Type::top() {
-            return f.write_str("_");
+        self.rope().strs().try_for_each(|s| f.write_str(s))
+    }
+}
+
+/// Text made of pieces, each a string or a rope, so that a type's text holds the texts of the
+/// types inside it without copying them. Ropes compare as their texts do.
+#[derive(Clone)]
+struct Rope(Arc<[Piece]>);
+
+enum Piece {
+    Str(String),
+    Rope(Rope),
+}
+
+impl From<&str> for Piece {
+    fn from(s: &str) -> Piece {
+        Piece::Str(s.into())
+    }
+}
+
+impl From<String> for Piece {
+    fn from(s: String) -> Piece {
+        Piece::Str(s)
+    }
+}
+
+impl From<Rope> for Piece {
+    fn from(r: Rope) -> Piece {
+        Piece::Rope(r)
+    }
+}
+
+/// The rope of the pieces given.
+macro_rules! rope {
+    ($($p:expr),* $(,)?) => {
+        Rope(Arc::from(vec![$(Piece::from($p)),*]))
+    };
+}
+
+impl Rope {
+    /// `head`, then each item after a space, then `)`.
+    fn listed(head: &str, items: impl IntoIterator<Item = Rope>) -> Rope {
+        let mut pieces = vec![Piece::from(head)];
+        for i in items {
+            pieces.extend([Piece::from(" "), Piece::from(i)]);
         }
-        let p = match &*self.0 {
-            Node::Parts(p) => p,
-            Node::Rec(r) => return f.write_str(r.name()),
-        };
-        let mut items: Vec<String> = Vec::new();
+        pieces.push(Piece::from(")"));
+        Rope(Arc::from(pieces))
+    }
+
+    /// The strings in order, read with a stack of their own, since a rope is as deep as its
+    /// type.
+    fn strs(&self) -> impl Iterator<Item = &str> + '_ {
+        let mut stack = vec![self.0.iter()];
+        std::iter::from_fn(move || {
+            loop {
+                match stack.last_mut()?.next() {
+                    None => _ = stack.pop(),
+                    Some(Piece::Str(s)) => return Some(s.as_str()),
+                    Some(Piece::Rope(r)) => stack.push(r.0.iter()),
+                }
+            }
+        })
+    }
+}
+
+impl PartialEq for Rope {
+    fn eq(&self, other: &Rope) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Rope {}
+
+impl PartialOrd for Rope {
+    fn partial_cmp(&self, other: &Rope) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// As the texts' bytes compare, reading them only up to where they differ.
+impl Ord for Rope {
+    fn cmp(&self, other: &Rope) -> std::cmp::Ordering {
+        (self.strs().flat_map(str::bytes)).cmp(other.strs().flat_map(str::bytes))
+    }
+}
+
+impl Type {
+    /// The text as a rope, made once, which holds the ropes of the types inside without copying
+    /// them, so that a type nested deep takes time linear in its text.
+    fn rope(&self) -> Rope {
+        match &*self.0 {
+            Node::Parts(p, shown) => shown.0.get_or_init(|| self.show(p)).clone(),
+            Node::Rec(r) => rope![r.name()],
+        }
+    }
+
+    fn show(&self, p: &Parts) -> Rope {
+        if *self == Type::top() {
+            return rope!["_"];
+        }
+        let mut items: Vec<Rope> = Vec::new();
         match p.bools {
-            1 => items.push("false".into()),
-            2 => items.push("true".into()),
-            3 => items.push("bool".into()),
+            1 => items.push(rope!["false"]),
+            2 => items.push(rope!["true"]),
+            3 => items.push(rope!["bool"]),
             _ => {}
         }
         for (name, l) in [
@@ -1006,59 +1133,61 @@ impl fmt::Display for Type {
             ("String", &p.strings),
         ] {
             match (l.cofinite, l.values.is_empty()) {
-                (true, true) => items.push(name.into()),
-                (true, false) => items.push(format!("(\\ {name} {})", spaced(&l.values))),
-                (false, _) => items.extend(l.values.iter().map(Value::to_string)),
+                (true, true) => items.push(rope![name]),
+                (true, false) => items.push(rope![format!("(\\ {name} {})", spaced(&l.values))]),
+                (false, _) => items.extend(l.values.iter().map(|v| rope![v.to_string()])),
             }
         }
         let atom = |name: &str, part: &AtomPart| {
             let mut out = Vec::new();
             if part.bare {
-                out.push(format!("#{name}"));
+                out.push(rope![format!("#{name}")]);
             }
             if part.payload == Type::payloads() {
-                out.push(format!("(#{name} _)"));
+                out.push(rope![format!("(#{name} _)")]);
             } else if part.payload != Type::empty() {
-                out.push(format!("(#{name} {})", part.payload));
+                out.push(rope![format!("(#{name} "), part.payload.rope(), ")"]);
             }
             out
         };
         if p.atoms.cofinite {
-            let except: Vec<String> = p
+            let except: Vec<Rope> = p
                 .atoms
                 .names
                 .iter()
                 .flat_map(|(n, part)| atom(n, &part.not()))
                 .collect();
             match except.is_empty() {
-                true => items.push("#_".into()),
-                false => items.push(format!("(\\ #_ {})", except.join(" "))),
+                true => items.push(rope!["#_"]),
+                false => items.push(Rope::listed("(\\ #_", except)),
             }
         } else {
             items.extend(p.atoms.names.iter().flat_map(|(n, part)| atom(n, part)));
         }
         tuples(&mut items, &p.tuples);
         if p.structs {
-            items.push("struct".into());
+            items.push(rope!["struct"]);
         }
         let morphism = |m: &Morphism| {
+            let (p, v) = (m.permission.rope(), m.value.rope());
             if m.guarantee == m.permission {
-                format!("(-> {} {})", m.permission, m.value)
+                rope!["(-> ", p, " ", v, ")"]
             } else if m.guarantee == Type::empty() {
-                format!("(->? {} {})", m.permission, m.value)
+                rope!["(->? ", p, " ", v, ")"]
             } else {
-                format!("(-> {} {} {})", m.guarantee, m.permission, m.value)
+                rope!["(-> ", m.guarantee.rope(), " ", p, " ", v, ")"]
             }
         };
-        clauses(&mut items, "morphism", &p.morphisms, &morphism);
-        match items.len() {
-            1 => f.write_str(&items[0]),
-            _ => write!(
-                f,
-                "(|{})",
-                items.iter().map(|i| format!(" {i}")).collect::<String>()
-            ),
-        }
+        clauses(&mut items, &rope!["morphism"], &p.morphisms, &morphism);
+        union(items)
+    }
+}
+
+/// `(| a b …)`, or the one item alone.
+fn union(mut items: Vec<Rope>) -> Rope {
+    match items.len() {
+        1 => items.remove(0),
+        _ => Rope::listed("(|", items),
     }
 }
 
@@ -1070,27 +1199,17 @@ fn spaced(vs: &OrdSet<Value>) -> String {
 }
 
 /// The items of a tuple part. With `rest`, it is every tuple outside its complement's items.
-fn tuples(items: &mut Vec<String>, t: &Tuples) {
+fn tuples(items: &mut Vec<Rope>, t: &Tuples) {
     if t.rest {
         let mut except = Vec::new();
         tuples(&mut except, &t.not());
         items.push(match except.len() {
-            0 => "tuple".into(),
-            1 => format!("(& tuple (! {}))", except[0]),
-            _ => format!(
-                "(& tuple (! (|{})))",
-                except.iter().map(|i| format!(" {i}")).collect::<String>()
-            ),
+            0 => rope!["tuple"],
+            _ => rope!["(& tuple (! ", union(except), "))"],
         });
         return;
     }
-    let tuple = |t: &Vec<Type>| {
-        let mut s = String::from("(tuple");
-        for c in t {
-            s += &format!(" {c}");
-        }
-        s + ")"
-    };
+    let tuple = |t: &Vec<Type>| Rope::listed("(tuple", t.iter().map(Type::rope));
     for (len, b) in &t.lens {
         clauses(items, &tuple(&vec![Type::top(); *len]), b, &tuple);
     }
@@ -1101,10 +1220,10 @@ fn tuples(items: &mut Vec<String>, t: &Tuples) {
 /// are sorted as text, since the diagram's order of atoms is that of their digests. A part
 /// kept as an expression is its connective applied to the items of its operands.
 fn clauses<A: bdd::Literal>(
-    items: &mut Vec<String>,
-    all: &str,
+    items: &mut Vec<Rope>,
+    all: &Rope,
     part: &Part<A>,
-    show: &impl Fn(&A) -> String,
+    show: &impl Fn(&A) -> Rope,
 ) {
     let b = match part.view() {
         Ok(b) => b,
@@ -1112,39 +1231,32 @@ fn clauses<A: bdd::Literal>(
             let item = |p: &Part<A>| {
                 let mut sub = Vec::new();
                 clauses(&mut sub, all, p, show);
-                match sub.len() {
-                    0 => "(|)".to_string(),
-                    1 => sub.remove(0),
-                    _ => format!(
-                        "(|{})",
-                        sub.iter().map(|i| format!(" {i}")).collect::<String>()
-                    ),
+                match sub.is_empty() {
+                    true => rope!["(|)"],
+                    false => union(sub),
                 }
             };
             items.push(match form {
-                Form::Not(a) => format!("(& {all} (! {}))", item(a)),
-                Form::Or(a, b) => format!("(| {} {})", item(a), item(b)),
-                Form::And(a, b) => format!("(& {} {})", item(a), item(b)),
+                Form::Not(a) => rope!["(& ", all.clone(), " (! ", item(a), "))"],
+                Form::Or(a, b) => rope!["(| ", item(a), " ", item(b), ")"],
+                Form::And(a, b) => rope!["(& ", item(a), " ", item(b), ")"],
             });
             return;
         }
     };
     let mut found = Vec::new();
     b.paths(&mut |pos, neg| {
-        let mut lits: Vec<String> = pos.iter().map(|a| show(a)).collect();
+        let mut lits: Vec<Rope> = pos.iter().map(|a| show(a)).collect();
         lits.sort();
         if lits.is_empty() {
-            lits.push(all.into());
+            lits.push(all.clone());
         }
-        let mut refused: Vec<String> = neg.iter().map(|n| format!("(! {})", show(n))).collect();
+        let mut refused: Vec<Rope> = neg.iter().map(|n| rope!["(! ", show(n), ")"]).collect();
         refused.sort();
         lits.extend(refused);
         match lits.len() {
             1 => found.push(lits.remove(0)),
-            _ => found.push(format!(
-                "(&{})",
-                lits.iter().map(|l| format!(" {l}")).collect::<String>()
-            )),
+            _ => found.push(Rope::listed("(&", lits)),
         }
         true
     });

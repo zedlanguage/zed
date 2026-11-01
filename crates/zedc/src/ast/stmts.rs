@@ -254,14 +254,15 @@ impl fmt::Display for Stmt {
             }
             StmtKind::Push { port, value } => write!(f, "(<- {port} {value})"),
             StmtKind::Function(func) => {
-                let ps: Vec<String> = func.params.iter().map(|p| p.to_string()).collect();
-                write!(f, "(def {} ({})", func.name, ps.join(" "))?;
+                write!(f, "(def {} (", func.name)?;
+                super::spaced(f, &func.params)?;
+                f.write_str(")")?;
                 if let Some(ports) = &func.ports {
-                    let ps: Vec<String> = ports
-                        .iter()
-                        .map(|p| format!("({}: {})", p.name, p.ty))
-                        .collect();
-                    write!(f, " (-> {})", ps.join(" "))?;
+                    f.write_str(" (->")?;
+                    for p in ports {
+                        write!(f, " ({}: {})", p.name, p.ty)?;
+                    }
+                    f.write_str(")")?;
                 }
                 write!(f, " {}{}", if func.equation { "= " } else { "" }, func.body)?;
                 if !func.tests.is_empty() {

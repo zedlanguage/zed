@@ -350,54 +350,105 @@ sealed class Type implements Comparable<Type> {
   /// its name.
   @override
   String toString() => switch (this) {
-    final _Parts p => p._text ??= _show(),
+    final _Parts p => p._text ??= '${p._rope}',
     final _Rec r => r.name,
   };
 
-  String _show() {
-    if (this == top) return '_';
-    final items = <String>[];
+  /// The text as a rope, which holds the ropes of the types inside without copying them, so
+  /// that a type nested deep takes time linear in its text.
+  ///
+  /// Each type's rope is made after the ropes of the types inside it, with a stack of its own,
+  /// since a type may be nested deeper than the call stack allows. Making a rope reports the
+  /// types inside whose ropes are not yet made, which are made first, and it is then made again.
+  /// So the types inside must be the same objects each time it is made.
+  _Rope get _rope {
+    final p = this;
+    if (p is _Rec) return _Rope([p.name]);
+    p as _Parts;
+    if (p._parts case final r?) return r;
+    if (_missing case final m?) {
+      m.add(p);
+      return _Rope(const []);
+    }
+    final stack = [p];
+    while (stack.isNotEmpty) {
+      final t = stack.last;
+      if (t._parts != null) {
+        stack.removeLast();
+        continue;
+      }
+      final m = _missing = [];
+      final _Rope r;
+      try {
+        r = t._show();
+      } finally {
+        _missing = null;
+      }
+      if (m.isEmpty) {
+        t._parts = r;
+        stack.removeLast();
+      } else {
+        stack.addAll(m);
+      }
+    }
+    return p._parts!;
+  }
+
+  _Rope _show() {
+    if (this == top) return _Rope(['_']);
+    final items = <_Rope>[];
     switch (bools) {
       case 1:
-        items.add('false');
+        items.add(_Rope(['false']));
       case 2:
-        items.add('true');
+        items.add(_Rope(['true']));
       case 3:
-        items.add('bool');
+        items.add(_Rope(['bool']));
     }
     for (final (name, l) in [('int', ints), ('rat', rats), ('f64', floats), ('String', strings)]) {
       switch ((l.cofinite, l.values.isEmpty)) {
         case (true, true):
-          items.add(name);
+          items.add(_Rope([name]));
         case (true, false):
-          items.add('(\\ $name ${l.values.keys.join(' ')})');
+          items.add(_Rope(['(\\ $name ${l.values.keys.join(' ')})']));
         case (false, _):
-          items.addAll(l.values.keys.map((v) => '$v'));
+          items.addAll(l.values.keys.map((v) => _Rope(['$v'])));
       }
     }
-    Iterable<String> atom(String name, AtomPart part) sync* {
-      if (part.bare) yield '#$name';
+    Iterable<_Rope> atom(String name, AtomPart part) sync* {
+      if (part.bare) yield _Rope(['#$name']);
       if (part.payload == _payloads) {
-        yield '(#$name _)';
+        yield _Rope(['(#$name _)']);
       } else if (part.payload != empty) {
-        yield '(#$name ${part.payload})';
+        yield _Rope(['(#$name ', part.payload._rope, ')']);
       }
     }
 
     if (atoms.cofinite) {
       final except = [for (final (n, part) in atoms.names.entries) ...atom(n, part.not())];
-      items.add(except.isEmpty ? '#_' : '(\\ #_ ${except.join(' ')})');
+      items.add(
+        _Rope(
+          except.isEmpty
+              ? ['#_']
+              : [
+                  '(\\ #_',
+                  for (final e in except) ...[' ', e],
+                  ')',
+                ],
+        ),
+      );
     } else {
       for (final (n, part) in atoms.names.entries) {
         items.addAll(atom(n, part));
       }
     }
     _showTuples(items, tuples);
-    if (structs) items.add('struct');
-    _clauses(items, 'morphism', morphisms, (m) {
-      if (m.guarantee == m.permission) return '(-> ${m.permission} ${m.value})';
-      if (m.guarantee == empty) return '(->? ${m.permission} ${m.value})';
-      return '(-> ${m.guarantee} ${m.permission} ${m.value})';
+    if (structs) items.add(_Rope(['struct']));
+    _clauses(items, _Rope(['morphism']), morphisms, (m) {
+      final (p, v) = (m.permission._rope, m.value._rope);
+      if (m.guarantee == m.permission) return _Rope(['(-> ', p, ' ', v, ')']);
+      if (m.guarantee == empty) return _Rope(['(->? ', p, ' ', v, ')']);
+      return _Rope(['(-> ', m.guarantee._rope, ' ', p, ' ', v, ')']);
     });
     return _union(items);
   }
@@ -421,6 +472,7 @@ final class _Parts extends Type {
   final Part<Morphism> morphisms;
 
   String? _text;
+  _Rope? _parts;
 
   _Parts(
     this.bools,
@@ -513,23 +565,83 @@ final class _Rec extends Type {
   Part<Morphism> get morphisms => _body.morphisms;
 }
 
+/// While a type's rope is made, the types inside it whose ropes are not yet made.
+List<_Parts>? _missing;
+
+/// Text made of pieces, each a string or a rope, so that a type's text holds the texts of the
+/// types inside it without copying them. Ropes compare as their texts do.
+final class _Rope implements Comparable<_Rope> {
+  final List<Object> pieces;
+
+  _Rope(this.pieces);
+
+  /// The strings in order, read with a stack of their own, since a rope is as deep as its
+  /// type.
+  Iterable<String> get _strings sync* {
+    final stack = [(pieces, 0)];
+    while (stack.isNotEmpty) {
+      final (ps, i) = stack.removeLast();
+      if (i == ps.length) continue;
+      stack.add((ps, i + 1));
+      switch (ps[i]) {
+        case final String s:
+          yield s;
+        case final _Rope r:
+          stack.add((r.pieces, 0));
+      }
+    }
+  }
+
+  /// As [compareUtf8] on the texts, reading them only up to where they differ.
+  @override
+  int compareTo(_Rope other) {
+    final a = _strings.iterator, b = other._strings.iterator;
+    var (s, t) = ('', '');
+    var (i, j) = (0, 0);
+    while (true) {
+      while (i == s.length && a.moveNext()) {
+        (s, i) = (a.current, 0);
+      }
+      while (j == t.length && b.moveNext()) {
+        (t, j) = (b.current, 0);
+      }
+      final (atEnd, otherAtEnd) = (i == s.length, j == t.length);
+      if (atEnd || otherAtEnd) return atEnd ? (otherAtEnd ? 0 : -1) : 1;
+      final (x, y) = (s.codeUnitAt(i++), t.codeUnitAt(j++));
+      if (x != y) return utf8Rank(x) - utf8Rank(y);
+    }
+  }
+
+  @override
+  String toString() => (StringBuffer()..writeAll(_strings)).toString();
+}
+
 /// `(| a b …)`, or the one item alone.
-String _union(List<String> items) =>
-    items.length == 1 ? items[0] : '(|${items.map((i) => ' $i').join()})';
+_Rope _union(List<_Rope> items) => items.length == 1
+    ? items[0]
+    : _Rope([
+        '(|',
+        for (final i in items) ...[' ', i],
+        ')',
+      ]);
 
 /// The items of a tuple part. With `rest`, it is every tuple outside its complement's items.
-void _showTuples(List<String> items, Tuples t) {
+void _showTuples(List<_Rope> items, Tuples t) {
   if (t.rest) {
-    final except = <String>[];
+    final except = <_Rope>[];
     _showTuples(except, t.not());
     items.add(switch (except.length) {
-      0 => 'tuple',
-      1 => '(& tuple (! ${except[0]}))',
-      _ => '(& tuple (! ${_union(except)}))',
+      0 => _Rope(['tuple']),
+      1 => _Rope(['(& tuple (! ', except[0], '))']),
+      _ => _Rope(['(& tuple (! ', _union(except), '))']),
     });
     return;
   }
-  String tuple(Components c) => '(tuple${c.items.map((t) => ' $t').join()})';
+  _Rope tuple(Components c) => _Rope([
+    '(tuple',
+    for (final t in c.items) ...[' ', t._rope],
+    ')',
+  ]);
   for (final MapEntry(key: len, value: b) in t.lens.entries) {
     _clauses(items, tuple(Components(List.filled(len, Type.top))), b, tuple);
   }
@@ -540,34 +652,46 @@ void _showTuples(List<String> items, Tuples t) {
 /// are sorted as text, since the diagram's order of atoms is that of their digests. A part
 /// kept as an expression is its connective applied to the items of its operands.
 void _clauses<A extends Literal<A>>(
-  List<String> items,
-  String all,
+  List<_Rope> items,
+  _Rope all,
   Part<A> part,
-  String Function(A) show,
+  _Rope Function(A) show,
 ) {
   if (part case Expr(:final op, :final a, :final b)) {
-    String item(Part<A> p) {
-      final sub = <String>[];
+    _Rope item(Part<A> p) {
+      final sub = <_Rope>[];
       _clauses(sub, all, p, show);
-      return sub.isEmpty ? '(|)' : _union(sub);
+      return sub.isEmpty ? _Rope(['(|)']) : _union(sub);
     }
 
     items.add(switch (op) {
-      ExprOp.not => '(& $all (! ${item(a)}))',
-      ExprOp.or => '(| ${item(a)} ${item(b!)})',
-      ExprOp.and => '(& ${item(a)} ${item(b!)})',
+      ExprOp.not => _Rope(['(& ', all, ' (! ', item(a), '))']),
+      ExprOp.or => _Rope(['(| ', item(a), ' ', item(b!), ')']),
+      ExprOp.and => _Rope(['(& ', item(a), ' ', item(b!), ')']),
     });
     return;
   }
-  final found = <String>[];
+  final found = <_Rope>[];
   (part as Bdd<A>).walk(false, (pos, neg) {
-    final lits = [for (final a in pos) show(a)]..sort(compareUtf8);
+    final lits = [for (final a in pos) show(a)]..sort();
     if (lits.isEmpty) lits.add(all);
-    lits.addAll([for (final n in neg) '(! ${show(n)})']..sort(compareUtf8));
-    found.add(lits.length == 1 ? lits[0] : '(&${lits.map((l) => ' $l').join()})');
+    lits.addAll(
+      [
+        for (final n in neg) _Rope(['(! ', show(n), ')']),
+      ]..sort(),
+    );
+    found.add(
+      lits.length == 1
+          ? lits[0]
+          : _Rope([
+              '(&',
+              for (final l in lits) ...[' ', l],
+              ')',
+            ]),
+    );
     return true;
   });
-  items.addAll(found..sort(compareUtf8));
+  items.addAll(found..sort());
 }
 
 /// A morphism type: `(guarantee ⊆ dom ⊆ permission) -> value`.
@@ -695,7 +819,7 @@ final class AtomPart implements Comparable<AtomPart> {
   final bool bare;
   final Type payload;
 
-  const AtomPart(this.bare, this.payload);
+  AtomPart(this.bare, this.payload);
 
   static final all = AtomPart(true, Type._payloads);
   static final none = AtomPart(false, Type.empty);
@@ -703,7 +827,10 @@ final class AtomPart implements Comparable<AtomPart> {
   AtomPart zip(AtomPart o, bool or) =>
       AtomPart(or ? bare || o.bare : bare && o.bare, payload._zip(o.payload, or));
 
-  AtomPart not() => AtomPart(!bare, Type._payloads - payload);
+  /// The complement, made once, so that its payload is one object each time it is asked for.
+  AtomPart not() => _not;
+
+  late final AtomPart _not = AtomPart(!bare, Type._payloads - payload);
 
   @override
   int compareTo(AtomPart o) {
