@@ -214,3 +214,14 @@ dart/test/steps/l01_25_preimage_catalog/random_test.dart tests/steps/l01_25_prei
 dart/test/steps/l01_25_preimage_catalog/scaling_test.dart tests/steps/l01_25_preimage_catalog/scaling.rs
 dart/test/steps/l01_25_preimage_catalog/stops_test.dart tests/steps/l01_25_preimage_catalog/stops.rs
 dart/test/steps/l01_25_preimage_catalog/tonicity_test.dart tests/steps/l01_25_preimage_catalog/tonicity.rs
+dart/lib/src/tables.dart crates/zedc/src/elab.rs
+dart/lib/check.dart crates/zedc/src/check/mod.rs
+dart/lib/src/check/ty.dart crates/zedc/src/check/ty.rs
+dart/test/steps/l01_26_type_resolution/support.dart tests/steps/l01_26_type_resolution/mod.rs
+dart/test/steps/l01_26_type_resolution/adoption_test.dart tests/steps/l01_26_type_resolution/adoption.rs
+dart/test/steps/l01_26_type_resolution/calls_test.dart tests/steps/l01_26_type_resolution/calls.rs
+dart/test/steps/l01_26_type_resolution/fits_test.dart tests/steps/l01_26_type_resolution/fits.rs
+dart/test/steps/l01_26_type_resolution/narrowing_test.dart tests/steps/l01_26_type_resolution/narrowing.rs
+dart/test/steps/l01_26_type_resolution/random_test.dart tests/steps/l01_26_type_resolution/random.rs
+dart/test/steps/l01_26_type_resolution/scaling_test.dart tests/steps/l01_26_type_resolution/scaling.rs
+dart/test/steps/l01_26_type_resolution/signatures_test.dart tests/steps/l01_26_type_resolution/signatures.rs

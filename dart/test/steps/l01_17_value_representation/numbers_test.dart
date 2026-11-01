@@ -78,9 +78,12 @@ void main() {
   });
 
   test('numbers of different kinds do not mix', () {
-    expect(value('a = 1r + 1;\n', 'a'), 'error: type error: Add applied to 1r, 1');
-    expect(value('b = 1r < 2.0;\n', 'b'), 'error: type error: Lt applied to 1r, 2.0');
-    // `==` across kinds is false: the values differ, though their order ties them by value.
-    expect(value('c = 1 == 1.0;\n', 'c'), 'false');
+    // Values of two kinds do not mix; the checker finds it before anything runs.
+    expect(errors('x = 1r;\na = x + f64(1);\n'), ['`+` does not take (1r, f64) [x + f64(1)]']);
+    // A bare literal adopts the kind the other side expects, exactly (step L1.26); `1r` is
+    // decorated and keeps its kind.
+    expect(value('a = 1r + 1;\n', 'a'), '2r');
+    expect(value('b = 1r < 2.0;\n', 'b'), 'true');
+    expect(value('c = 1 == 1.0;\n', 'c'), 'true');
   });
 }

@@ -12,8 +12,8 @@
 ///
 /// Where DESIGN.md does not say: `++` is its own primitive `Concat`, never `Add`; `e else d`
 /// matches any atom (`#_`), which is exact while every atom is loose (before L2's named atom
-/// families); a call through a value other than a declared function passes its arguments by
-/// position only, until types give a function value its parameter kinds (L1.26); a prelude
+/// families); a call through a value other than a declared function takes named arguments,
+/// closed defaults and `...` from the signature the checker gives the value (L1.26); a prelude
 /// word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
 /// belongs to a function at the unit's top level.
 library;
@@ -21,9 +21,11 @@ library;
 import 'dart:collection';
 
 import 'ast.dart';
+import 'check.dart' show Fit, FitAdapter, FitLambda, Info, checkWith;
 import 'kernel.dart' as k;
 import 'resolve.dart';
 import 'source.dart';
+import 'src/tables.dart';
 
 /// A top-level definition.
 final class Def {
@@ -34,7 +36,11 @@ final class Def {
   final String kernel;
   final k.Term term;
 
-  Def(this.name, this.kernel, this.term);
+  /// Whether it is bound by `=` to a value whose type, as the checker gives it, has no
+  /// function component (step L1.37).
+  final bool firstOrder;
+
+  Def(this.name, this.kernel, this.term, [this.firstOrder = false]);
 }
 
 /// A case of a `test` table: `f(input) == expected`.
@@ -210,17 +216,37 @@ final class ElabErrors implements Exception {
 
 /// The elaboration of `unit` under its resolution; throws [ElabErrors] with every error in it.
 Unit elaborate(List<Stmt> unit, Resolution res) {
-  final e = _Elab(res)..run(unit);
-  if (e.errors.isEmpty) return Unit(e.result<(List<Def>, k.Term?)>().$1, e.tests);
-  // The sort keeps errors of one span in the order they were met.
-  final order = [for (var i = 0; i < e.errors.length; i++) i]
-    ..sort((a, b) {
-      final (x, y) = (e.errors[a].span, e.errors[b].span);
-      if (x.start != y.start) return x.start - y.start;
-      if (x.end != y.end) return x.end - y.end;
-      return a - b;
-    });
-  throw ElabErrors([for (final i in order) e.errors[i]]);
+  final t = Tables(unit, res);
+  final info = checkWith(t, unit);
+  final e = _Elab(t, info)..run(unit);
+  final errors = [...e.errors, ...info.errors];
+  if (errors.isEmpty) {
+    final (defs, _) = e.result<(List<Def>, k.Term?)>();
+    return Unit([
+      for (final d in defs) Def(d.name, d.kernel, d.term, info.tops[d.name]?.firstOrder ?? false),
+    ], e.tests);
+  }
+  errors.sort((a, b) {
+    final (x, y) = (a.span, b.span);
+    if (x.start != y.start) return x.start - y.start;
+    if (x.end != y.end) return x.end - y.end;
+    return a.message.compareTo(b.message);
+  });
+  final out = <BuildError>[];
+  for (final e in errors) {
+    if (out.isEmpty || !_same(out.last, e)) out.add(e);
+  }
+  throw ElabErrors(out);
+}
+
+bool _same(BuildError a, BuildError b) {
+  if (a.span != b.span || a.message != b.message || a.notes.length != b.notes.length) {
+    return false;
+  }
+  for (var i = 0; i < a.notes.length; i++) {
+    if (a.notes[i] != b.notes[i]) return false;
+  }
+  return true;
 }
 
 /// Thrown where an error has been recorded and the term it would have built is missing; left
@@ -235,25 +261,17 @@ final class _Stop {
 typedef _Steps = Iterable<Iterable<Object?>>;
 
 final class _Elab {
-  final Resolution res;
+  final Tables t;
 
-  /// Each binder, by its span and name.
-  final ids = <(Span, String), Binder>{};
+  /// The checker's findings.
+  final Info info;
 
   /// Each binder's kernel name.
   final names = <Binder, String>{};
 
-  /// The spans of each binder's uses, in text order.
-  final usesOf = <Binder, List<Span>>{};
-
-  /// Each function binder's declaration, recorded when its scope is entered, before any use
-  /// of it is elaborated.
-  final funcs = <Binder, FunctionDef>{};
-
-  /// The term of each default, or the [_Stop] it ended in, made at the first call that leaves
-  /// its parameter out: it does not depend on the call, so the others share it, and a chain
-  /// of defaults that each call a function with a default is elaborated once per default.
-  final defaultOf = <Param, Object?>{};
+  /// The term a call leaving a parameter out binds it to, by the function's binder and the
+  /// parameter's index.
+  final defaults = <(Binder, int), k.Term>{};
   var fresh = 0;
   final tests = <Test>[];
   final errors = <BuildError>[];
@@ -261,7 +279,7 @@ final class _Elab {
   /// What the last step to finish built, or a [_Stop] when it stopped on an error.
   Object? _got;
 
-  _Elab(this.res) {
+  _Elab(this.t, this.info) {
     final count = <String, int>{}, seen = <String, int>{};
     for (final b in res.binders) {
       count.update(b.name, (c) => c + 1, ifAbsent: () => 1);
@@ -269,16 +287,13 @@ final class _Elab {
     for (final b in res.binders) {
       final i = seen.update(b.name, (c) => c + 1, ifAbsent: () => 1);
       names[b] = count[b.name] == 1 && preludeLayer(b.name) == null ? b.name : '${b.name}@$i';
-      ids[(b.span, b.name)] = b;
-    }
-    for (final (span, value) in res.uses.entries) {
-      if (value case Bound(:final binders)) {
-        for (final b in binders) {
-          (usesOf[b] ??= []).add(span);
-        }
-      }
     }
   }
+
+  Resolution get res => t.res;
+
+  /// Each function binder's declaration.
+  Map<Binder, FunctionDef> get funcs => t.funcs;
 
   /// Elaborates the unit's top level, leaving its scope in [_got].
   void run(List<Stmt> unit) {
@@ -381,7 +396,7 @@ final class _Elab {
 
   String temp() => '\$${++fresh}';
 
-  String kname(Span span, String name) => names[ids[(span, name)]!]!;
+  String kname(Span span, String name) => names[t.id(span, name)]!;
 
   /// The statements of one scope: its bindings in dependency order, and its export. `top` is
   /// the unit's top level, where a function's `test` table is elaborated.
@@ -395,27 +410,7 @@ final class _Elab {
         items.add(s);
       }
     }
-    // The binders each statement makes; a function's uses are elaborated from here on.
-    final owner = <Binder, int>{};
-    for (final (i, s) in items.indexed) {
-      for (final b in bindersOf(s)) {
-        owner[b] = i;
-        if (s is FunctionDef) funcs[b] = s;
-      }
-    }
-    // The statements each one uses: each use of a binder of this scope falls in one statement
-    // or the export, found by its start among the statements' (in text order), except the
-    // uses in a function's `test` table.
-    final deps = [for (final _ in items) SplayTreeSet<int>()];
-    for (final MapEntry(key: b, value: j) in owner.entries) {
-      for (final u in usesOf[b] ?? const <Span>[]) {
-        final i = _last(items.length, (i) => items[i].span.start <= u.start);
-        if (i < 0 || u.end > items[i].span.end) continue;
-        if (items[i] case FunctionDef(:final tests) when _inTests(tests, u)) continue;
-        deps[i].add(j);
-      }
-    }
-    final (order, cycle) = _topo([for (final d in deps) d.toList()]);
+    final (order, cycle) = t.order(items);
     if (cycle != null) {
       final named = [for (final i in cycle) _what(items[i])];
       final message = named.length == 1
@@ -450,15 +445,6 @@ final class _Elab {
     _got = body;
   }
 
-  List<Binder> bindersOf(Stmt s) => switch (s) {
-    Bind(:final targets) => [
-      for (final t in targets)
-        if (t != null) ids[(s.span, t)]!,
-    ],
-    FunctionDef(:final name) => [ids[(s.span, name)]!],
-    Push() || Return() => [],
-  };
-
   /// Adds the bindings of `s` to `out`.
   _Steps stmt(Stmt s, bool top, List<Def> out) sync* {
     switch (s) {
@@ -481,12 +467,40 @@ final class _Elab {
             }
         }
       case FunctionDef(:final name, :final params, :final body, :final equation):
+        final f = t.id(s.span, name);
         final ps = [for (final p in params) kname(p.span, p.name)];
+        // A default other than a literal or a name is a definition of its own, `f$x`, a
+        // function of the parameters it reads, so a call leaving it out calls it rather than
+        // holding a copy of it, and defaults that call functions with defaults stay linear in
+        // size. A literal or a name is copied: no copy is captured, the kernel names being
+        // unique in the unit.
+        final at = {for (final (i, p) in params.indexed) t.id(p.span, p.name): i};
+        final thunks = <Def>[];
+        var ok = true;
+        for (final (j, p) in params.indexed) {
+          final d = p.fallback;
+          if (d == null) continue;
+          final read = SplayTreeSet<int>.of([for (final u in t.usesIn(d.span)) ?at[u]]);
+          final reads = [for (final i in read) ps[i]];
+          yield expr(d);
+          final v = termOrNull;
+          if (v == null) {
+            ok = false;
+          } else if (v is k.Lit || v is k.Var) {
+            defaults[(f, j)] = v;
+          } else {
+            final kn = '${names[f]}\$${ps[j]}';
+            thunks.add(Def(kn, kn, k.Lam(reads, v)));
+            defaults[(f, j)] = k.App(k.Var(kn), [for (final r in reads) k.Var(r)]);
+          }
+        }
         yield body is Block && !equation ? block(body.stmts) : expr(body);
         final b = termOrNull;
         yield testsOf(s, top);
-        if (b == null || failed) throw const _Stop();
-        out.add(Def(name, kname(s.span, name), k.Lam(ps, b)));
+        if (b == null || failed || !ok) throw const _Stop();
+        out
+          ..add(Def(name, names[f]!, k.Lam(ps, b)))
+          ..addAll(thunks);
       case Push(:final port, :final value):
         yield expr(value);
         final v = term;
@@ -547,6 +561,14 @@ final class _Elab {
   }
 
   _Steps expr(Expr e) sync* {
+    if (info.fits[e.span] case final f?) {
+      yield* fit(e, f);
+      return;
+    }
+    if (info.adopt[e.span] case final v?) {
+      _got = k.Lit(v);
+      return;
+    }
     switch (e) {
       case IntLit(:final radix, :final digits):
         _got = k.Lit(k.Value.integer(BigInt.parse(digits.replaceAll('_', ''), radix: radix)));
@@ -695,7 +717,9 @@ final class _Elab {
     _got = k.PrimApp(k.Prim.atom, [k.Lit(k.Str(name)), k.Lit(fields), ...result<List<k.Term>>()]);
   }
 
-  /// A call through a value other than a declared function: by position only.
+  /// A call through a value other than a declared function. With the signature the checker
+  /// gives the value, named arguments, closed defaults and `...` work as for a declared
+  /// function; without one, the arguments are positional.
   _Steps callValue(
     k.Term f,
     k.Term? receiver,
@@ -704,15 +728,116 @@ final class _Elab {
     bool curry,
     Span span,
   ) sync* {
-    if (named.isNotEmpty || curry) {
-      error(
-        span,
-        'named arguments and `...` need the declaration of the function called; '
-        'through a value they arrive with types at step L1.26',
-      );
+    final sig = info.calls[span];
+    if (sig == null) {
+      if (named.isNotEmpty || curry) {
+        error(
+          span,
+          'named arguments and `...` need the parameter names of the function called, '
+          'which a prelude word and a value of unknown type do not give',
+        );
+      }
+      yield each(positional);
+      _got = k.App(f, [?receiver, ...result<List<k.Term>>()]);
+      return;
     }
-    yield each(positional);
-    _got = k.App(f, [?receiver, ...result<List<k.Term>>()]);
+    final params = sig.params, n = params.length;
+    final slots = List<k.Term?>.filled(n, null);
+    var next = 0;
+    if (receiver != null) {
+      if (n == 0) error(span, '`$sig` has no parameter for a receiver');
+      slots[0] = receiver;
+      next = 1;
+    }
+    var ok = true;
+    for (final a in positional) {
+      if (next == n) error(a.span, 'too many arguments: `$sig` takes $n');
+      final p = params[next];
+      if (!p.positional) {
+        error(a.span, '`${p.name}` of `$sig` is named: pass it as `${p.name}: …`');
+      }
+      yield expr(a);
+      slots[next] = termOrNull;
+      ok &= slots[next++] != null;
+    }
+    // Each parameter's index by name, the first where a name repeats.
+    final at = {for (var j = n - 1; j >= 0; j--) params[j].name: j};
+    for (final (name, a) in named) {
+      final j = at[name] ?? error(a.span, '`$sig` has no parameter `$name`');
+      if (params[j].positional) {
+        error(a.span, '`$name` of `$sig` is positional: pass it by position');
+      }
+      if (slots[j] != null) error(a.span, '`$name` is already supplied');
+      yield expr(a);
+      slots[j] = termOrNull;
+      ok &= slots[j] != null;
+    }
+    if (!ok) throw const _Stop();
+    final missing = [
+      for (var j = 0; j < n; j++)
+        if (slots[j] == null) j,
+    ];
+    if (curry) {
+      for (final j in missing) {
+        if (params[j].positional) {
+          error(
+            span,
+            '`...` curries named parameters only; the positional `${params[j].name}` is left out',
+          );
+        }
+      }
+      if (missing.isEmpty) error(span, '`...` leaves no named parameter out');
+      // The function value is bound once, outside the lambda.
+      final fv = temp();
+      final temps = [for (final _ in missing) temp()];
+      var i = 0;
+      final args = [for (final s in slots) s ?? k.Var(temps[i++])];
+      _got = k.Let(fv, f, k.Lam(temps, k.App(k.Var(fv), args)));
+      return;
+    }
+    for (final j in missing) {
+      final p = params[j];
+      switch (p.fallback) {
+        case (:final fn, :final index, closed: true):
+          yield expr(funcs[fn]!.params[index].fallback!);
+          slots[j] = term;
+        case _?:
+          error(
+            span,
+            "the default of `${p.name}` reads the function's other parameters, so only a call "
+            'of the declared function fills it: pass `${p.name}`',
+          );
+        case null:
+          error(span, 'missing argument `${p.name}` of `$sig`');
+      }
+    }
+    _got = k.App(f, [for (final s in slots) s!]);
+  }
+
+  /// A function argument fitted to the function type its slot expects: a lambda whose
+  /// parameters are in another order or carry defaults, or a declared function whose named
+  /// parameters are in another order.
+  _Steps fit(Expr e, Fit how) sync* {
+    switch ((how, e)) {
+      case (FitLambda(:final order, :final extra), Lambda(:final params, :final body)):
+        final ps = [
+          for (final o in order) o == null ? temp() : kname(params[o].span, params[o].name),
+        ];
+        yield body is Block ? block(body.stmts) : expr(body);
+        var out = term;
+        for (final i in extra.reversed) {
+          final p = params[i];
+          yield expr(p.fallback!);
+          out = k.Let(kname(p.span, p.name), term, out);
+        }
+        _got = k.Lam(ps, out);
+      case (FitAdapter(:final from), NameRef(:final name)):
+        final f = this.name(name, e.span);
+        final temps = [for (final _ in from) temp()];
+        _got = k.Lam(temps, k.App(f, [for (final j in from) k.Var(temps[j])]));
+      default:
+        throw StateError('a lambda fit is recorded on a lambda, an adapter on a name');
+    }
   }
 
   /// A saturated or curried call of the declared function `b`; `receiver` fills its first
@@ -798,13 +923,13 @@ final class _Elab {
     }
     if (!filled) throw const _Stop();
     // The defaults, each after the defaulted parameters it reads.
-    final at = {for (final (i, j) in missing.indexed) ids[(params[j].span, params[j].name)]!: i};
+    final at = {for (final (i, j) in missing.indexed) t.id(params[j].span, params[j].name): i};
     final deps = [
       for (final j in missing)
-        (SplayTreeSet<int>()..addAll([for (final u in usesIn(params[j].fallback!.span)) ?at[u]]))
+        (SplayTreeSet<int>()..addAll([for (final u in t.usesIn(params[j].fallback!.span)) ?at[u]]))
             .toList(),
     ];
-    final (order, cycle) = _topo(deps);
+    final (order, cycle) = topo(deps);
     if (cycle != null) {
       final named = [for (final i in cycle) '`${params[missing[i]].name}`'];
       error(span, 'the defaults of ${named.join(', ')} read each other');
@@ -813,27 +938,18 @@ final class _Elab {
     final defaults = <(String, k.Term)>[];
     for (final i in order) {
       final p = params[missing[i]];
-      if (defaultOf[p] case final d?) {
-        _got = d;
+      if (this.defaults[(b, missing[i])] case final d?) {
+        defaults.add((pname(p), d));
       } else {
+        // A call inside the function's own declaration, before its defaults are bound.
         yield expr(p.fallback!);
-        defaultOf[p] = _got;
+        defaults.add((pname(p), term));
       }
-      defaults.add((pname(p), term));
     }
     for (final (name, d) in defaults.reversed) {
       body = k.Let(name, d, body);
     }
     _got = supplied(body);
-  }
-
-  /// The binders used in `span`, in text order.
-  Iterable<Binder> usesIn(Span span) sync* {
-    for (final (u, ref) in res.uses.from((start: span.start, end: -1))) {
-      if (u.start >= span.end) break;
-      if (u.end > span.end) continue;
-      if (ref case Bound(:final binders)) yield* binders;
-    }
   }
 
   /// `x.f(args)` and `x?.f(args)`: the uniform call `f(x, args)`, `?.` passing an atom `x`
@@ -912,7 +1028,11 @@ final class _Elab {
   _Steps lambda(List<Param> params, Expr body) sync* {
     for (final p in params) {
       if (p.fallback case final d?) {
-        error(d.span, "a lambda's default arrives with its expected type at step L1.26");
+        error(
+          d.span,
+          "a lambda's parameter has a default only where an expected function type leaves it "
+          'out',
+        );
       }
     }
     final ps = [for (final p in params) kname(p.span, p.name)];
@@ -969,26 +1089,6 @@ const _binary = {
   '++': k.Prim.concat,
 };
 
-/// Whether `u` lies in one of the `test` cases, which are in text order.
-bool _inTests(List<(Expr, Expr)> tests, Span u) {
-  final i = _last(tests.length, (i) => tests[i].$1.span.start <= u.start);
-  return i >= 0 && u.end <= tests[i].$2.span.end;
-}
-
-/// The last `i` below `n` for which `ok(i)` holds, `ok` holding on a prefix; -1 for none.
-int _last(int n, bool Function(int) ok) {
-  var (lo, hi) = (0, n);
-  while (lo < hi) {
-    final mid = (lo + hi) >> 1;
-    if (ok(mid)) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo - 1;
-}
-
 /// How a statement is named in a cycle's error.
 String _what(Stmt s) => switch (s) {
   Bind(:final targets) => [
@@ -999,43 +1099,3 @@ String _what(Stmt s) => switch (s) {
   Push(:final port) => 'the push to `$port`',
   Return() => 'the export',
 };
-
-/// An order of `0..deps.length` with each item after its dependencies (each list ascending),
-/// the least ready item first; else the items of one cycle, in order along it.
-(List<int>, List<int>?) _topo(List<List<int>> deps) {
-  final n = deps.length;
-  final waiting = [for (final d in deps) d.length];
-  final users = [for (final _ in deps) <int>[]];
-  for (final (i, d) in deps.indexed) {
-    for (final j in d) {
-      users[j].add(i);
-    }
-  }
-  final ready = SplayTreeSet<int>()
-    ..addAll([
-      for (var i = 0; i < n; i++)
-        if (waiting[i] == 0) i,
-    ]);
-  final order = <int>[];
-  final done = List.filled(n, false);
-  while (ready.isNotEmpty) {
-    final i = ready.first;
-    ready.remove(i);
-    done[i] = true;
-    order.add(i);
-    for (final u in users[i]) {
-      if (--waiting[u] == 0) ready.add(u);
-    }
-  }
-  if (order.length == n) return (order, null);
-  // Every item left waits on another left; walk from the least until one repeats.
-  final at = <int, int>{};
-  final path = <int>[];
-  var i = done.indexOf(false);
-  while (!at.containsKey(i)) {
-    at[i] = path.length;
-    path.add(i);
-    i = deps[i].firstWhere((d) => !done[d]);
-  }
-  return (order, path.sublist(at[i]!));
-}

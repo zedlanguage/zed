@@ -36,8 +36,12 @@ void main() {
   });
 
   test('a chain of n failures merging scales', () {
-    // Each `+` merges the failures so far with one more into a new set.
-    final merged = run((n) => [for (var i = 0; i < n; i++) '#e$i'].join(' + '));
+    // Each `+` merged the failures so far with one more by copying them into a new set. The
+    // chain is a kernel term, so that only the evaluator is timed.
+    Term chain(int n) =>
+        [for (var i = 1; i < n; i++) i]
+            .fold(const Lit(Atom('e0')), (t, i) => PrimApp(Prim.add, [t, Lit(Atom('e$i'))]));
+    String merged(int n) => '${eval(chain(n))}';
     scaling.check('n failures merged by a chain of `+`', 1000, merged);
     expect(merged(3), '#errs({#e0, #e1, #e2})');
   });

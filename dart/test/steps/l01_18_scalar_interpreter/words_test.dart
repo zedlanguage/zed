@@ -45,6 +45,6 @@ void main() {
     expect(x('sum((1.5, 2.25))'), '3.75');
     expect(x('sum((1r/2r, 1r/3r))'), '5r/6r');
     expect(x('sum((9, int("x")))'), '#invalid');
-    expect(x('sum((1, 2.0))'), startsWith('error: type error'));
+    expect(errors('x = sum((1, 2.0));\n'), ['`sum` does not take (1, 2.0) [sum((1, 2.0))]']);
   });
 }

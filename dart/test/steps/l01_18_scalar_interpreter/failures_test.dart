@@ -51,8 +51,10 @@ void main() {
   });
 
   test('mixed kinds select no arrow', () {
-    expect(x('1 + 1.0'), startsWith('error: type error'));
-    expect(x('"a" ++ 1'), startsWith('error: type error'));
-    expect(x('1r/2r * 2'), startsWith('error: type error'));
+    expect(errors('x = "a" ++ 1;\n'), ['`++` does not take ("a", 1) ["a" ++ 1]']);
+    expect(errors('n = 1;\nx = n + 1.5;\n'), ['`+` does not take (1, 1.5) [n + 1.5]']);
+    // A bare literal adopts the other operand's kind (step L1.26).
+    expect(x('1 + 1.0'), '2.0');
+    expect(x('1r/2r * 2'), '1r');
   });
 }

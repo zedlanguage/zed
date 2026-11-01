@@ -34,7 +34,7 @@ void main() {
   test('curry is a lambda over the named parameters left out', () {
     const src =
         'greet(positional name, punct = "!", lead = "hi") = "\${lead}, \${name}\${punct}";\n'
-        'h = greet("Al", lead: "yo", ...);\nq = h("?");\n';
+        'h = greet("Al", lead: "yo", ...);\nq = h(punct: "?");\n';
     expect(term(src, 'h'), 'punct -> { name = "Al"; lead = "yo"; greet(name, punct, lead) }');
     expect(value(src, 'q'), '"yo, Al?"');
   });

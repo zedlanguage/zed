@@ -4,6 +4,7 @@ library;
 
 import 'package:test/test.dart';
 
+import '../l01_16_elaboration/elab.dart' show errors;
 import 'scalar.dart';
 
 void main() {
@@ -70,7 +71,7 @@ void main() {
   });
 
   test('a cast of a kind it does not take is a type error', () {
-    expect(x('int(true)'), startsWith('error: type error'));
-    expect(x('len(3)'), startsWith('error: type error'));
+    expect(errors('x = int(true);\n'), ['`int` does not take (true) [int(true)]']);
+    expect(errors('x = len(3);\n'), ['`len` does not take (3) [len(3)]']);
   });
 }

@@ -27,13 +27,13 @@ void main() {
   test('an error stops the wave before anything is written', () async {
     final path = '${dir('abort').path}/out.txt';
     File(path).writeAsStringSync('previous\n');
-    // `out` is pushed first in the text, then `1 + "x"` is a type error.
+    // `out` is pushed first in the text, then `3 ** 10000000` is past the size limit.
     const src =
         'main() -> (out: Lines, stdout: Lines) {\n  '
-        'out <- "half done";\n  stdout <- String(1 + "x");\n}\n';
+        'out <- "half done";\n  stdout <- String(3 ** 10000000);\n}\n';
     final out = await run('abort', src, '', ['out=$path']);
     expect(out.status, 1, reason: out.stderr);
-    expect(out.stderr, startsWith('type error'));
+    expect(out.stderr, contains('size limit'));
     expect(out.stdout, '');
     expect(File(path).readAsStringSync(), 'previous\n');
   });

@@ -44,9 +44,11 @@ void main() {
     }
   });
 
-  test('errors are listed in text order, those of one span in the order met', () {
-    // `b` is elaborated before `a`, which reads it.
+  test('errors are listed in text order, those of one span by message', () {
+    // `b` is elaborated before `a`, which reads it; the checker's error comes first, at the
+    // span that holds the others.
     expect(errors('a = b + (1 is Lines);\nb = (2 is Files);\n'), [
+      '`+` does not take (bool, bool) [b + (1 is Lines)]',
       '`Lines` is the type of a port, and no value has it [Lines]',
       '`Files` is the type of a port, and no value has it [Files]',
     ]);
@@ -70,11 +72,18 @@ void main() {
     );
   });
 
-  test('named arguments through a value need types', () {
+  test('named arguments through a value need its parameter names', () {
+    // A lambda with no expected type takes its arguments by position.
     expect(
       one('inc = x -> x + 1;\ny = inc(x: 1);\n'),
-      startsWith('named arguments and `...` need the declaration'),
+      '`x` of `(_) -> _` is positional: pass it by position [1]',
     );
+    // A prelude word, and a value of unknown type, give no parameter names.
+    const want =
+        'named arguments and `...` need the parameter names of the function called, '
+        'which a prelude word and a value of unknown type do not give';
+    expect(one('y = len(s: "ab");\n'), '$want [len(s: "ab")]');
+    expect(one('g(f) = f(x: 1);\n'), '$want [f(x: 1)]');
   });
 
   test('forms of later steps and layers', () {
@@ -84,7 +93,11 @@ void main() {
         '`size` is not a function in scope, and fields arrive at L2 [p.size]',
       ),
       ('p = 1;\nx = p.map(1);', '`map` is a prelude word of layer L3 [p.map]'),
-      ('f = (x = 1) -> x;', "a lambda's default arrives with its expected type at step L1.26 [1]"),
+      (
+        'f = (x = 1) -> x;',
+        "a lambda's parameter has a default only where an expected function type leaves it "
+            'out [1]',
+      ),
       (
         'f(x: int) = 1;\nf(x: String) = 2;\ny = f(x: 1);',
         '`f` names 2 overloads; choosing among them arrives at L2 [f]',
