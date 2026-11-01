@@ -64,8 +64,8 @@ fn a_parameter_any_value_fits_gets_a_type_variable() {
 }
 
 #[test]
-fn a_type_variable_used_as_a_tuple_gives_the_unknown() {
-    assert_eq!(sig("first(p) = p[0];\n", "first"), "(p: T) -> _");
+fn a_type_variable_used_as_a_tuple_gives_a_variable_each_call_binds() {
+    assert_eq!(sig("first(p) = p[0];\n", "first"), "(p: T) -> U");
 }
 
 #[test]
@@ -121,9 +121,9 @@ fn a_body_that_checks_at_no_type_is_reported() {
 #[test]
 fn a_parameter_compared_with_a_tuple_may_be_a_tuple() {
     // `<` orders tuples of one length as well as carriers, so `x` may be `(3, 4)`: its
-    // class keeps the tuple arrow, which allows only other values, and it gives `_`.
+    // class keeps the tuple arrow, which allows only other values, and bounds its variable.
     let src = "lt(positional x) = x < (1, 2);\nmain() = lt((3, 4));\n";
-    assert_eq!(sig(src, "lt"), "(_) -> bool");
+    assert_eq!(sig(src, "lt"), "(T) -> bool for T in other values");
     assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));
 }
 

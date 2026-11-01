@@ -83,7 +83,7 @@ fn named_arguments_through_a_value_need_its_parameter_names() {
     let e = one("inc = x -> x + 1;\ny = inc(x: 1);\n");
     assert_eq!(
         e,
-        "`x` of `(_) -> _` is positional: pass it by position [1]"
+        "`x` of `(int) -> int` is positional: pass it by position [1]"
     );
     // A prelude word, and a value of unknown type, give no parameter names.
     let want = "named arguments and `...` need the parameter names of the function called, \

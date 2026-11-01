@@ -10,6 +10,7 @@ mod narrowing;
 mod random;
 mod scaling;
 mod signatures;
+mod soundness;
 
 use zedc::ast::unit;
 use zedc::check::{Info, check};

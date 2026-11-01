@@ -65,9 +65,11 @@ fn a_decorated_literal_keeps_its_carrier() {
 fn equality_compares_across_carriers() {
     // A divisor that cannot be zero adds no `#divByZero`, so the quotient passes as a rat.
     assert!(type_errors("f(positional x: rat) = x;\ny = f(3r/2r);\n").is_empty());
+    // A divisor that may be zero adds `#divByZero`, a loose atom, which passes through `f`.
+    assert!(type_errors("f(positional x: int) = x;\ny = f(7 div 0);\n").is_empty());
     assert_eq!(
-        type_errors("f(positional x: int) = x;\ny = f(7 div 0);\n"),
-        ["`f` does not take (#divByZero) [f(7 div 0)]"]
+        value("f(positional x: int) = x;\ny = f(7 div 0);\n", "y"),
+        "#divByZero"
     );
     assert_eq!(value("y = 1 == 1r;\n", "y"), "true");
     assert_eq!(value("y = 1.5 == 3r/2r;\n", "y"), "true");

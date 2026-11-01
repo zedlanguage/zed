@@ -7,8 +7,7 @@ use zed_tests::oracle::{Engine, program, unit};
 const LAMBDAS: &str =
     "inc = x -> x + 1;\ntwice(positional f) = x -> f(f(x));\nfive = twice(inc)(3);\n";
 
-const GREETING: &str =
-    "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"Hello, \" ++ stdin[1] ++ \"!\";\n}\n";
+const GREETING: &str = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"Hello, \" ++ (stdin[1] else \"\") ++ \"!\";\n}\n";
 
 fn off_by_one(t: &Term, ev: &mut Evaluator) -> Result<Value, String> {
     match zed_native::through(true)(t, ev)? {

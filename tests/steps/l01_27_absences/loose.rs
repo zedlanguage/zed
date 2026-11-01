@@ -64,12 +64,13 @@ fn a_loose_atom_flows_through_safe_navigation() {
 }
 
 #[test]
-fn a_declared_function_does_not_take_an_atom_its_type_omits() {
-    assert_eq!(
-        type_errors(
-            "g(positional n: int) = n + 1;\n\
-             f(positional x: int | #notFound) = g(x);\n"
-        ),
-        ["`g` does not take (#notFound) [g(x)]"]
-    );
+fn a_loose_atom_passes_through_a_declared_function_whose_type_omits_it() {
+    // Rule 6: the atom selects no arrow of `g` and is the call's value; `g`'s body never sees it.
+    let t = "g(positional n: int) = n + 1;\n\
+             f(positional x: int | #notFound) = g(x);\n";
+    assert!(type_errors(t).is_empty());
+    assert_eq!(sig(t, "f"), "(int | #notFound) -> int | #notFound");
+    let run = format!("{t}a = f(#notFound);\nb = f(2);\n");
+    assert_eq!(value(&run, "a"), "#notFound");
+    assert_eq!(value(&run, "b"), "3");
 }

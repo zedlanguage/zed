@@ -14,6 +14,8 @@ use std::sync::Arc;
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Universe, Value};
 
+use crate::lex::Span;
+
 /// A type.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty {
@@ -30,6 +32,76 @@ pub struct Ty {
     /// The atoms of `set` that are members of a named atom family: data, which `else` keeps
     /// and an operator rejects (sec:failure). The other atoms are loose.
     pub family: KType,
+    /// What the payloads of its atoms hold, by atom name: the shapes the atoms were built
+    /// with, or `None` where that is not known. The payload of an atom whose name is not
+    /// listed is not known.
+    pub payloads: BTreeMap<Arc<str>, Option<Vec<Shape>>>,
+}
+
+/// The payload an atom was built with: its components by position, and its fields by name.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Shape {
+    /// Its components, by position.
+    pub items: Vec<Ty>,
+    /// Its fields, by name.
+    pub fields: BTreeMap<Arc<str>, Ty>,
+}
+
+impl Shape {
+    /// What it holds at `slot`, if it has that place.
+    pub fn at(&self, slot: &Slot) -> Option<&Ty> {
+        match slot {
+            Slot::Field(n) => self.fields.get(n),
+            Slot::Item(i) => self.items.get(*i),
+        }
+    }
+
+    /// It with `f` applied to each component and field.
+    fn map(&self, f: impl Fn(&Ty) -> Ty) -> Shape {
+        Shape {
+            items: self.items.iter().map(&f).collect(),
+            fields: self.fields.iter().map(|(n, t)| (n.clone(), f(t))).collect(),
+        }
+    }
+}
+
+/// The payloads of the union of the types `ts`: each name's shapes, once each, and a name some
+/// type may hold an unknown payload of is not known. That is found in one union of what of
+/// each type's scalars and atoms its payloads do not describe, so the join costs one pass over
+/// the types and their shapes.
+fn join_payloads(ts: &[&Ty]) -> BTreeMap<Arc<str>, Option<Vec<Shape>>> {
+    let mut out: BTreeMap<Arc<str>, Option<Vec<Shape>>> = BTreeMap::new();
+    let mut seen: HashSet<(&str, &Shape)> = HashSet::new();
+    let mut rest = Vec::new();
+    for t in ts {
+        let listed = t
+            .payloads
+            .keys()
+            .map(|n| KType::atom_with(n, &KType::top()));
+        rest.push(&t.set - &KType::union_all(listed));
+        for (n, ss) in &t.payloads {
+            let entry = out.entry(n.clone()).or_insert_with(|| Some(Vec::new()));
+            match (entry, ss) {
+                (entry, None) => *entry = None,
+                (Some(have), Some(ss)) => {
+                    have.extend(ss.iter().filter(|s| seen.insert((n, s))).cloned());
+                }
+                (None, Some(_)) => {}
+            }
+        }
+    }
+    let rest = KType::union_all(rest);
+    for (n, ss) in out.iter_mut() {
+        if holds_payload(&rest, n) {
+            *ss = None;
+        }
+    }
+    out
+}
+
+/// Whether `set` may hold an atom named `n` with a payload.
+fn holds_payload(set: &KType, n: &str) -> bool {
+    !(set & &KType::atom_with(n, &KType::top())).is_empty()
 }
 
 /// A function's signature: its parameters' names and kinds, shared by its arrows, which
@@ -43,6 +115,143 @@ pub struct Sig {
     /// Each bounded type variable, with the mask of the carriers it ranges over: one carrier,
     /// the same at each place the variable stands.
     pub bounds: BTreeMap<Arc<str>, u8>,
+    /// Whether it is a family: a morphism held as data (sec:values_morphisms), shown, compared
+    /// and put in a tuple as a value, and looked up through its arrows.
+    pub data: bool,
+    /// What the body needs of the values of its type variables, in the order the body met
+    /// the uses: each call checks them again with the variables bound (DESIGN.md rule 4).
+    pub needs: Vec<Need>,
+    /// Its own type variables, which it binds: a call binds them anew, and a substitution
+    /// of the variables of a type that holds it leaves them alone. The others are those of
+    /// the functions around it.
+    pub own: BTreeSet<Arc<str>>,
+}
+
+/// A use the body of a generic function makes of a value whose type is a variable: checked
+/// again at each call, on the type the call binds the variable to.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Need {
+    /// The type of the value used, a variable of the signature.
+    pub on: Ty,
+    /// The use.
+    pub kind: NeedKind,
+    /// What the use gives, a variable of the signature, if it gives a value.
+    pub result: Option<Ty>,
+    /// The use in the body.
+    pub span: Span,
+}
+
+/// The uses a [`Need`] records.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum NeedKind {
+    /// `v[i]` with a literal: a tuple's component, or a family's entry.
+    Component {
+        /// The component, if the literal is a component number.
+        i: Option<usize>,
+        /// The literal's type, a family's key.
+        key: Ty,
+    },
+    /// `v[k]` with a key of this type: an application.
+    Index(Ty),
+    /// A call of `v`, named `what`, with arguments of these types.
+    Call {
+        /// The value's name in the call.
+        what: Arc<str>,
+        /// The types of the positional arguments.
+        positional: Vec<Ty>,
+        /// The names and types of the named arguments.
+        named: Vec<(Arc<str>, Ty)>,
+        /// Whether the call ends in `...`.
+        curry: bool,
+    },
+    /// A use, `what`, that takes data: the value holds no function.
+    Data(Arc<str>),
+    /// An argument, of `what`, at a parameter of the closed type `ty`.
+    Into {
+        /// The function called.
+        what: Arc<str>,
+        /// The parameter's type.
+        ty: Ty,
+    },
+    /// A name a pattern binds: what the payload of an atom named `atom` holds at `slot`.
+    Payload {
+        /// The atom's name.
+        atom: Arc<str>,
+        /// The place in its payload.
+        slot: Slot,
+    },
+}
+
+/// A place in an atom's payload.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Slot {
+    /// The field of this name.
+    Field(Arc<str>),
+    /// The component at this position.
+    Item(usize),
+}
+
+impl Need {
+    /// It with its variables replaced by `binds` at every depth.
+    pub fn replace(&self, binds: &Binds) -> Need {
+        let all = |ts: &[Ty]| ts.iter().map(|t| t.replace(binds)).collect();
+        Need {
+            on: self.on.replace(binds),
+            kind: match &self.kind {
+                NeedKind::Component { i, key } => NeedKind::Component {
+                    i: *i,
+                    key: key.clone(),
+                },
+                NeedKind::Index(k) => NeedKind::Index(k.replace(binds)),
+                NeedKind::Call {
+                    what,
+                    positional,
+                    named,
+                    curry,
+                } => NeedKind::Call {
+                    what: what.clone(),
+                    positional: all(positional),
+                    named: named
+                        .iter()
+                        .map(|(n, t)| (n.clone(), t.replace(binds)))
+                        .collect(),
+                    curry: *curry,
+                },
+                NeedKind::Data(what) => NeedKind::Data(what.clone()),
+                NeedKind::Into { what, ty } => NeedKind::Into {
+                    what: what.clone(),
+                    ty: ty.clone(),
+                },
+                NeedKind::Payload { atom, slot } => NeedKind::Payload {
+                    atom: atom.clone(),
+                    slot: slot.clone(),
+                },
+            },
+            result: self.result.as_ref().map(|t| t.replace(binds)),
+            span: self.span,
+        }
+    }
+
+    /// Every variable in it, in order of first appearance.
+    pub fn vars_in(&self, out: &mut Vars) {
+        self.on.vars_in(out);
+        match &self.kind {
+            NeedKind::Component { .. }
+            | NeedKind::Data(_)
+            | NeedKind::Into { .. }
+            | NeedKind::Payload { .. } => {}
+            NeedKind::Index(k) => k.vars_in(out),
+            NeedKind::Call {
+                positional, named, ..
+            } => {
+                positional.iter().for_each(|t| t.vars_in(out));
+                named.iter().for_each(|(_, t)| t.vars_in(out));
+            }
+        }
+        if let Some(r) = &self.result {
+            r.vars_in(out);
+        }
+    }
 }
 
 /// A parameter of a signature.
@@ -225,6 +434,7 @@ impl Ty {
             vars: BTreeSet::new(),
             dynamic: false,
             family: KType::empty(),
+            payloads: BTreeMap::new(),
         }
     }
 
@@ -291,6 +501,9 @@ impl Ty {
         let mut out = self.clone();
         out.set = &out.set | &other.set;
         out.family = &out.family | &other.family;
+        if !self.payloads.is_empty() || !other.payloads.is_empty() {
+            out.payloads = join_payloads(&[self, other]);
+        }
         let have: HashSet<&Vec<Ty>> = self.tuples.iter().collect();
         let new: Vec<&Vec<Ty>> = other.tuples.iter().filter(|t| !have.contains(t)).collect();
         let mut added = HashSet::new();
@@ -315,6 +528,9 @@ impl Ty {
         out.family = KType::union_all(ts.iter().map(|t| t.family.clone()));
         let mut tuples = HashSet::new();
         let mut fns = HashSet::new();
+        if ts.iter().any(|t| !t.payloads.is_empty()) {
+            out.payloads = join_payloads(&ts);
+        }
         for t in ts {
             out.tuples
                 .extend(t.tuples.iter().filter(|c| tuples.insert(*c)).cloned());
@@ -424,12 +640,20 @@ impl Ty {
     /// Whether it holds no function at any depth (a variable or the unknown may still stand
     /// for one): a type whose values the differential oracle compares (step L1.37).
     pub fn first_order(&self) -> bool {
-        self.fns.is_empty() && self.tuples.iter().flatten().all(Ty::first_order)
+        self.held_function().is_none()
+    }
+
+    /// A function it may hold, at any depth; a family is data, not a function.
+    pub fn held_function(&self) -> Option<&Arc<Sig>> {
+        self.fns
+            .iter()
+            .find(|s| !s.data)
+            .or_else(|| self.tuples.iter().flatten().find_map(Ty::held_function))
     }
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
     pub fn sub(&self, other: &Ty, binds: &mut Binds) -> bool {
-        self.pieces().iter().all(|p| accepts(other, p, binds))
+        self.pieces().iter().all(|p| accepts(other, p, self, binds))
     }
 
     /// Whether every value of `self` is in `other`, with no variable bound.
@@ -445,6 +669,7 @@ impl Ty {
         }
         let mut out = Ty::set(&self.set & &t.set);
         out.family = &self.family & &out.set;
+        out.payloads = self.payloads.clone();
         let mut have = HashSet::new();
         for a in &self.tuples {
             for b in &t.tuples {
@@ -496,6 +721,7 @@ impl Ty {
             vars: BTreeSet::new(),
             dynamic: self.dynamic,
             family: self.family.clone(),
+            payloads: self.map_payloads(|t| t.subst(binds)),
         };
         for v in &self.vars {
             match binds.get(v) {
@@ -509,19 +735,86 @@ impl Ty {
     }
 
     /// `self` with its variables replaced by `binds` at every depth, inside the functions it
-    /// holds too.
+    /// holds too; not inside the types it puts in their place, which may hold the variables
+    /// themselves.
     pub fn replace(&self, binds: &Binds) -> Ty {
         if binds.is_empty() {
             return self.clone();
         }
-        let mut out = self.subst(binds);
-        out.tuples = out
-            .tuples
-            .iter()
-            .map(|cs| cs.iter().map(|c| c.replace(binds)).collect())
-            .collect();
-        out.fns = out.fns.iter().map(|s| Arc::new(s.replace(binds))).collect();
+        let mut out = Ty {
+            set: self.set.clone(),
+            tuples: self
+                .tuples
+                .iter()
+                .map(|cs| cs.iter().map(|c| c.replace(binds)).collect())
+                .collect(),
+            fns: self
+                .fns
+                .iter()
+                .map(|s| match s.own.iter().any(|v| binds.contains_key(v)) {
+                    true => {
+                        let free = binds
+                            .iter()
+                            .filter(|(v, _)| !s.own.contains(*v))
+                            .map(|(v, t)| (v.clone(), t.clone()))
+                            .collect();
+                        Arc::new(s.replace(&free))
+                    }
+                    false => Arc::new(s.replace(binds)),
+                })
+                .collect(),
+            vars: BTreeSet::new(),
+            dynamic: self.dynamic,
+            family: self.family.clone(),
+            payloads: self.map_payloads(|t| t.replace(binds)),
+        };
+        for v in &self.vars {
+            match binds.get(v) {
+                Some(t) => out = out.union(t),
+                None => {
+                    out.vars.insert(v.clone());
+                }
+            }
+        }
         out
+    }
+
+    /// The type of its piece `p` alone, with the payloads of the atoms `p` holds.
+    pub fn of_piece(&self, p: &Piece) -> Ty {
+        let mut out = p.ty();
+        if let Piece::Set(s) = p {
+            out.payloads = self
+                .payloads
+                .iter()
+                .filter(|(n, _)| holds_payload(s, n))
+                .map(|(n, ss)| (n.clone(), ss.clone()))
+                .collect();
+        }
+        out
+    }
+
+    /// Its payloads with `f` applied to each component and field.
+    fn map_payloads(&self, f: impl Fn(&Ty) -> Ty) -> BTreeMap<Arc<str>, Option<Vec<Shape>>> {
+        self.payloads
+            .iter()
+            .map(|(n, ss)| {
+                let ss = ss.as_ref().map(|ss| ss.iter().map(|s| s.map(&f)).collect());
+                (n.clone(), ss)
+            })
+            .collect()
+    }
+
+    /// What the payloads of its atoms named `n` hold: their shapes, or `None` where that is not
+    /// known.
+    pub fn shapes(&self, n: &str) -> Option<Vec<Shape>> {
+        if self.dynamic || !self.vars.is_empty() {
+            return None;
+        }
+        match self.payloads.get(n) {
+            Some(s) => s.clone(),
+            None if holds_payload(&self.set, n) => None,
+            None => Some(Vec::new()),
+        }
     }
 
     /// Every variable in it, in order of first appearance.
@@ -534,11 +827,16 @@ impl Ty {
         for c in self.tuples.iter().flatten() {
             c.vars_in(out);
         }
+        for s in self.payloads.values().flatten().flatten() {
+            s.items.iter().for_each(|t| t.vars_in(out));
+            s.fields.values().for_each(|t| t.vars_in(out));
+        }
         for s in &self.fns {
             for a in &s.arrows {
                 a.params.iter().for_each(|p| p.vars_in(out));
                 a.result.vars_in(out);
             }
+            s.needs.iter().for_each(|n| n.vars_in(out));
         }
     }
 
@@ -551,7 +849,8 @@ impl Ty {
             Value::Tuple(items) => self.tuples.iter().any(|cs| {
                 cs.len() == items.len() && cs.iter().zip(items).all(|(c, x)| c.contains(x))
             }),
-            Value::Family(_) | Value::Path(_) => !self.fns.is_empty(),
+            Value::Family(_) => self.fns.iter().any(|s| s.data),
+            Value::Path(_) => !self.fns.is_empty(),
             _ => self.set.contains(v),
         }
     }
@@ -572,14 +871,14 @@ impl Ty {
     }
 }
 
-/// Whether the piece `p` is in `t`, binding a variable of `t` to it when nothing else of
-/// `t` holds it.
-fn accepts(t: &Ty, p: &Piece, binds: &mut Binds) -> bool {
+/// Whether the piece `p` of `of` is in `t`, binding a variable of `t` to it when nothing else
+/// of `t` holds it.
+fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds) -> bool {
     if t.dynamic {
         return true;
     }
     let ok = match p {
-        Piece::Dyn => true,
+        Piece::Dyn => false,
         Piece::Set(s) => s.subtype(&t.set),
         Piece::Tuple(cs) => t.tuples.iter().any(|ds| {
             ds.len() == cs.len() && {
@@ -600,7 +899,7 @@ fn accepts(t: &Ty, p: &Piece, binds: &mut Binds) -> bool {
     match t.vars.iter().next() {
         Some(v) => {
             let b = binds.entry(v.clone()).or_insert_with(Ty::empty);
-            *b = b.union(&p.ty());
+            *b = b.union(&of.of_piece(p));
             true
         }
         None => false,
@@ -611,6 +910,9 @@ fn accepts(t: &Ty, p: &Piece, binds: &mut Binds) -> bool {
 /// names and kinds, and on each arrow of `q`, an arrow of `s` that takes its parameters and
 /// returns within its result.
 pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
+    if !s.needs.is_empty() {
+        return s == q;
+    }
     s.params.len() == q.params.len()
         && s.params
             .iter()
@@ -625,9 +927,10 @@ pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
                     .all(|(x, y)| x.sub(y, &mut b))
                     && s.bounds.iter().all(|(v, m)| {
                         b.get(v).is_none_or(|t| {
-                            t.pieces()
-                                .iter()
-                                .all(|p| p.carrier().is_some_and(|c| m & c.bit() != 0))
+                            t.pieces().iter().all(|p| match p.carrier() {
+                                Some(c) => m & c.bit() != 0,
+                                None => m & OTHER != 0 && !matches!(p, Piece::Dyn),
+                            })
                         })
                     })
                     && sa.result.subst(&b).subtype(&qa.result)
@@ -645,6 +948,9 @@ impl Sig {
                 result,
             }],
             bounds: BTreeMap::new(),
+            data: false,
+            needs: Vec::new(),
+            own: BTreeSet::new(),
         }
     }
 
@@ -675,6 +981,14 @@ impl Sig {
                 })
                 .collect(),
             bounds,
+            data: self.data,
+            needs: self.needs.iter().map(|n| n.replace(binds)).collect(),
+            own: self
+                .own
+                .iter()
+                .filter(|v| !binds.contains_key(*v))
+                .cloned()
+                .collect(),
         }
     }
 

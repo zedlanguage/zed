@@ -3,7 +3,7 @@ greeting(positional name) = if trim(name) == "" { "Hello, world!" } else { "Hell
 test { "Ada" -> "Hello, Ada!", "  Bo " -> "Hello, Bo!", "" -> "Hello, world!" }
 
 main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- greeting(stdin[1]);
+  stdout <- greeting(stdin[1] else "");
 }
 test {
   "Ada\n" -> "Hello, Ada!\n",

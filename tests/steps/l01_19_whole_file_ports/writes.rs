@@ -2,7 +2,7 @@
 //! an acknowledgment; a failed write aborts the wave.
 
 use zed_kernel::Value;
-use zedc::run::commit;
+use zedc::run::{commit, join_lines};
 
 use super::{dir, run};
 
@@ -12,7 +12,8 @@ fn a_report_goes_to_a_file_bound_on_the_command_line() {
     let path = d.join("report.txt");
     std::fs::write(&path, "stale\n").unwrap();
     let src = "main(stdin: Lines) -> (report: Lines, stdout: Lines) {\n  \
-               report <- stdin;\n  stdout <- \"wrote the report\";\n}\n";
+               report <- \"${stdin[1] else \"\"}\\n${stdin[2] else \"\"}\";\n  \
+               stdout <- \"wrote the report\";\n}\n";
     let bind = format!("report={}", path.display());
     let out = run("report", src, "total: 42\nitems: 3\n", &[&bind]);
     assert_eq!((out.status, out.stdout.as_str()), (0, "wrote the report\n"));
@@ -68,9 +69,17 @@ fn a_port_pushed_twice_in_one_wave_is_an_error() {
 fn only_strings_are_written_as_lines() {
     let src = "main() -> (stdout: Lines) {\n  stdout <- 42;\n}\n";
     let out = run("number", src, "", &[]);
+    assert_eq!(out.status, 1);
+    assert!(
+        out.stderr
+            .contains("2:13: a `Lines` port takes a `String` or a family of strings, not 42"),
+        "{}",
+        out.stderr
+    );
+    // The writer checks again what it is given.
     assert_eq!(
-        (out.status, out.stderr.as_str()),
-        (1, "port `stdout` takes strings; 42 was pushed\n")
+        join_lines("stdout", &Value::Int(42)),
+        Err("port `stdout` takes strings; 42 was pushed".to_string())
     );
 }
 
@@ -118,7 +127,7 @@ fn the_first_failed_write_aborts_the_rest() {
 
 #[test]
 fn usage_errors_exit_2() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n";
+    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin[1] else \"\";\n}\n";
     let out = run("usage", src, "", &["nosuch=x"]);
     assert_eq!(
         (out.status, out.stderr.as_str()),

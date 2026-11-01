@@ -18,7 +18,7 @@ fn a_config_file_is_read_and_a_missing_one_falls_back() {
     let src = format!(
         "main(fs: Files) -> (stdout: Lines) {{\n  \
          mode = trim(fs[\"{}\"]) else \"quiet\";\n  \
-         extra = fs[\"{}\"] else #notFound -> \"(no overrides)\";\n  \
+         extra = (fs[\"{}\"] else #notFound -> \"(no overrides)\") else \"(unreadable)\";\n  \
          stdout <- \"mode=${{mode}} ${{extra}}\";\n}}\n",
         cfg.display(),
         d.join("absent.conf").display()
@@ -37,7 +37,7 @@ fn a_file_that_is_not_utf8_is_an_io_error() {
     std::fs::write(&bin, [0xffu8, 0x00, 0xfe]).unwrap();
     let src = format!(
         "main(fs: Files) -> (stdout: Lines) {{\n  \
-         stdout <- fs[\"{}\"] else #ioError -> \"unreadable\";\n}}\n",
+         stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
         bin.display()
     );
     assert_eq!(run("binary", &src, "", &[]).stdout, "unreadable\n");
@@ -66,7 +66,7 @@ impl Lookup for Counting {
 fn each_path_is_read_once_so_the_wave_sees_one_value() {
     let src = "main(fs: Files) -> (stdout: Lines) {\n  \
                a = fs[\"notes.txt\"];\n  b = fs[\"notes.txt\"];\n  c = fs[\"todo.txt\"];\n  \
-               stdout <- \"${a == b} ${c}\";\n}\n";
+               stdout <- \"${a == b} ${c else \"none\"}\";\n}\n";
     let p = load(src.as_bytes()).unwrap();
     let port = Arc::new(Counting::default());
     let wave = p.run(&BTreeMap::new(), |_| port.clone()).unwrap();

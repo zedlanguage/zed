@@ -104,3 +104,92 @@ fn a_signature_of_many_type_variables_scales() {
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
+
+/// `n` functions, each calling the one before twice with its untyped parameter, the first
+/// taking a component of it; with `all`, each calls every one before it instead.
+fn fan(n: usize, all: bool) -> String {
+    let mut src = "g0(positional t) = t[0];\n".to_string();
+    for i in 1..n {
+        let calls: Vec<String> = if all {
+            (0..i).map(|j| format!("g{j}(t)")).collect()
+        } else {
+            vec![format!("g{}(t)", i - 1); 2]
+        };
+        src += &format!("g{i}(positional t) = {};\n", calls.join(" + "));
+    }
+    src
+}
+
+/// The texts of [`fan`] at `n` and `FACTOR * n`, built before the timing.
+fn fans(n: usize, all: bool) -> std::collections::BTreeMap<usize, String> {
+    [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, fan(m, all)))
+        .collect()
+}
+
+#[test]
+fn needs_replayed_through_a_fan_of_calls_scale() {
+    // Each of the two calls met the needs of the one before anew, so they doubled at each
+    // function; a use met twice now gives what it gave the first time.
+    assert_eq!(
+        sig(&fan(3, false), "g2"),
+        "(T) -> U for U in int | f64 | rat"
+    );
+    let texts = fans(250, false);
+    scaling::check(
+        "needs replayed through n functions, each calling the one before twice",
+        250,
+        |n| {
+            let (info, _) = info(&texts[&n]);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
+}
+
+#[test]
+fn control_the_scaling_check_catches_calls_that_grow_with_the_depth() {
+    // Each function calls every one before it: n² calls in n functions.
+    let texts = fans(10, true);
+    let caught = std::panic::catch_unwind(|| {
+        scaling::check("n functions, each calling every one before", 10, |n| {
+            let (info, _) = info(&texts[&n]);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        });
+    });
+    assert!(caught.is_err(), "the check passed n² calls");
+}
+
+/// `n` atoms, each with a payload of one field: of `n` names, or of one name with `n` shapes.
+fn payloads(n: usize, one_name: bool) -> Vec<zedc::check::ty::Ty> {
+    use zed_kernel::types::Type;
+    use zedc::check::ty::{Shape, Ty};
+    (0..n)
+        .map(|i| {
+            let name = if one_name { "e".to_string() } else { format!("e{i}") };
+            let mut t = Ty::set(Type::atom_with(&name, &Type::top()));
+            let shape = Shape {
+                items: Vec::new(),
+                fields: [(format!("f{i}").into(), Ty::empty())].into_iter().collect(),
+            };
+            t.payloads.insert(name.into(), Some(vec![shape]));
+            t
+        })
+        .collect()
+}
+
+#[test]
+fn the_union_of_many_atoms_with_payloads_scales() {
+    let sides: std::collections::BTreeMap<usize, (Vec<_>, Vec<_>)> = [256, scaling::FACTOR * 256]
+        .into_iter()
+        .map(|n| (n, (payloads(n, false), payloads(n, true))))
+        .collect();
+    scaling::check("the union of n atoms with payloads", 256, |n| {
+        let (names, shapes) = &sides[&n];
+        let u = zedc::check::ty::Ty::union_all(names);
+        assert_eq!(u.payloads.len(), n);
+        assert!(u.payloads.values().all(Option::is_some));
+        let u = zedc::check::ty::Ty::union_all(shapes);
+        assert_eq!(u.payloads["e"].as_ref().map(Vec::len), Some(n));
+    });
+}

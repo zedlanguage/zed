@@ -2,27 +2,36 @@
 //! string or family written as lines.
 
 use zed_kernel::Value;
-use zedc::run::split_lines;
+use zedc::run::{join_lines, split_lines};
 
 use super::run;
 
 #[test]
-fn cat_echoes_standard_input_line_by_line() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n";
-    let out = run("cat", src, "first\nsecond\n", &[]);
-    assert_eq!((out.status, out.stdout.as_str()), (0, "first\nsecond\n"));
+fn a_family_of_lines_is_written_one_line_per_entry() {
+    let cat = |input: &[u8]| {
+        String::from_utf8(join_lines("stdout", &split_lines(input)).unwrap()).unwrap()
+    };
+    assert_eq!(cat(b"first\nsecond\n"), "first\nsecond\n");
     // A last line without `\n` is still a line, and is written with one.
-    let out = run("cat", src, "only", &[]);
-    assert_eq!(out.stdout, "only\n");
+    assert_eq!(cat(b"only"), "only\n");
     // An empty input has no lines, so nothing is written.
-    let out = run("cat", src, "", &[]);
-    assert_eq!((out.status, out.stdout.as_str()), (0, ""));
+    assert_eq!(cat(b""), "");
+    // A line that is not UTF-8 is `#ioError`, so a program cannot push the family of its
+    // input's lines as they are: the push would fail the wave (sec:failure).
+    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n";
+    let out = run("cat", src, "first\n", &[]);
+    assert_eq!(out.status, 1);
+    assert!(
+        out.stderr.contains("a `Lines` port takes a `String` or a family of strings, not ((int) -> String | #ioError | #notFound)"),
+        "{}",
+        out.stderr
+    );
 }
 
 #[test]
 fn lines_are_numbered_from_one_and_crlf_is_one_line_end() {
     let src = "main(stdin: Lines) -> (stdout: Lines) {\n  \
-               stdout <- \"${stdin[1]}|${stdin[2]}|${stdin[3] else \"none\"}\";\n}\n";
+               stdout <- \"${stdin[1] else \"\"}|${stdin[2] else \"\"}|${stdin[3] else \"none\"}\";\n}\n";
     let out = run("numbers", src, "name: Ada\r\nrole: admin\r\n", &[]);
     assert_eq!(out.stdout, "name: Ada|role: admin|none\n");
     assert_eq!(

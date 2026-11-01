@@ -87,7 +87,7 @@ fn a_rejected_unit_is_kept_with_its_diagnostics() {
 fn a_wave_row_is_reused_until_main_or_what_it_reads_changes() {
     let src = "shout(positional s: String) = upper(s) ++ \"!\";\n\
                whisper(positional s: String) = lower(s);\n\
-               main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- shout(stdin[1]);\n}\n\
+               main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- shout(stdin[1] else \"\");\n}\n\
                test { \"hi\" -> \"HI!\\n\" }\n";
     let mut db = Db::new();
     assert_eq!(checks(&mut db, src), ["6:8: ok"]);

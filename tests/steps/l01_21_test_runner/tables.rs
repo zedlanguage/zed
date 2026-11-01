@@ -28,19 +28,18 @@ fn a_row_of_several_arguments_and_a_failure_value() {
 
 #[test]
 fn a_row_that_stops_the_evaluator_fails() {
-    let src = "first(positional s) = s[1] test { \"ab\" -> \"a\" }\n";
+    // The checker passes every row a program it accepts can run; a number beyond the
+    // evaluator's size limit still stops it.
+    let src = "big(positional n: int) = 2 ** 100000000 * n test { 1 -> 1 }\n";
     let got = checks(src);
     assert_eq!(got.len(), 1);
-    assert!(
-        got[0].starts_with("1:35: `\"ab\" -> \"a\"` of `first`: "),
-        "{got:?}"
-    );
+    assert!(got[0].starts_with("1:52: `1 -> 1` of `big`: "), "{got:?}");
     assert!(!got[0].ends_with(": ok"), "{got:?}");
 }
 
 #[test]
 fn a_main_row_compares_the_bytes_each_port_writes() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- upper(stdin[1]);\n}\n\
+    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- upper(stdin[1] else \"\");\n}\n\
                test { \"abc\\n\" -> \"ABC\\n\", \"abc\" -> \"ABC\" }\n";
     assert_eq!(
         checks(src),
@@ -54,7 +53,7 @@ fn a_main_row_compares_the_bytes_each_port_writes() {
 #[test]
 fn a_port_not_pushed_writes_nothing() {
     let src = "main(stdin: Lines) -> (stdout: Lines, stderr: Lines) {\n  \
-               stdout <- stdin[1];\n}\n\
+               stdout <- stdin[1] else \"\";\n}\n\
                test { \"a\" -> (\"a\\n\", \"\"), \"a\" -> (\"a\\n\", \"warning\\n\") }\n";
     assert_eq!(
         checks(src),
@@ -68,7 +67,7 @@ fn a_port_not_pushed_writes_nothing() {
 #[test]
 fn a_files_port_is_given_as_a_function_of_the_path() {
     let src = "main(fs: Files) -> (stdout: Lines) {\n  \
-               stdout <- fs[\"a.txt\"] ++ fs[\"b.txt\"];\n}\n\
+               stdout <- (fs[\"a.txt\"] else \"\") ++ (fs[\"b.txt\"] else \"\");\n}\n\
                test { (p -> if p == \"a.txt\" { \"1\" } else { \"2\" }) -> \"12\\n\" }\n";
     assert_eq!(checks(src), ["4:8: ok"]);
 }
@@ -93,12 +92,16 @@ fn a_row_of_the_wrong_shape_says_what_a_port_takes() {
 
 #[test]
 fn a_wave_that_aborts_fails_its_row() {
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- int(stdin[1]);\n}\n\
+    // `3 ** 10000000` is past the evaluator's size limit.
+    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- String(3 ** 10000000);\n}\n\
                test { \"7\" -> \"7\\n\" }\n";
-    assert_eq!(
-        checks(src),
-        ["4:8: `\"7\" -> \"7\\n\"` of `main`: port `stdout` takes strings; 7 was pushed"]
+    let got = checks(src);
+    assert_eq!(got.len(), 1);
+    assert!(
+        got[0].starts_with("4:8: `\"7\" -> \"7\\n\"` of `main`: "),
+        "{got:?}"
     );
+    assert!(got[0].contains("size limit"), "{got:?}");
 }
 
 #[test]

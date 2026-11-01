@@ -1,9 +1,10 @@
 //! The language's `==`: IEEE 754 at floats, at any depth, and structural elsewhere; and on
 //! functions, an error until types give the domain to compare them on.
 
-use zed_kernel::{F64, Value};
+use zed_kernel::term::build::{lam, prim, var};
+use zed_kernel::{Evaluator, F64, Prim, Value, World};
 
-use crate::l01_16_elaboration::value;
+use crate::l01_16_elaboration::{errors, value};
 
 #[test]
 fn float_equality_and_comparison_follow_ieee() {
@@ -39,8 +40,18 @@ fn keys_still_tell_signed_zeros_apart_and_read_one_nan() {
 
 #[test]
 fn functions_compare_only_over_an_enumerable_domain() {
+    // Until types give the domain to compare on, the checker rejects `==` on a value that may
+    // hold a function, and the kernel stops on one.
     let src = "inc = x -> x + 1;\nalso = x -> 1 + x;\nsame = inc == also;\n";
-    let got = value(src, "same");
+    assert_eq!(
+        errors(src),
+        ["`==` takes data, and this value may hold a function, `(int) -> int` [inc == also]"]
+    );
+    let id = || lam(&["x"], var("x"));
+    let got = Evaluator::new(World::new())
+        .run(&prim(Prim::Eq, vec![id(), id()]))
+        .expect_err("`==` on functions")
+        .to_string();
     assert!(
         got.contains("`==` on functions compares them at every point of an enumerable domain"),
         "{got}"

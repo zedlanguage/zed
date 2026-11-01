@@ -194,6 +194,11 @@ struct Elab<'a> {
     names: Vec<Arc<str>>,
     /// The checker's findings.
     info: Info,
+    /// The temporary each argument of a call that passes atoms is bound to, while the call is
+    /// elaborated.
+    passing: HashMap<Span, Arc<str>>,
+    /// The calls being guarded.
+    guarding: HashSet<Span>,
     fresh: usize,
     tests: Vec<Test>,
     errors: Vec<Error>,
@@ -399,6 +404,8 @@ impl<'a> Elab<'a> {
             t,
             names,
             info,
+            passing: HashMap::new(),
+            guarding: HashSet::new(),
             fresh: 0,
             tests: Vec::new(),
             errors: Vec::new(),
@@ -413,6 +420,74 @@ impl<'a> Elab<'a> {
             notes: Vec::new(),
         });
         None
+    }
+
+    /// The call `e`, some of whose arguments, at `at`, hold loose atoms their parameter does not
+    /// take (rule 6 of sec:type_resolution): the arguments are bound first, and an atom in any
+    /// of them is the call's value, those of several merged as a primitive merges them.
+    fn passes(&mut self, e: &'a Expr, at: &[Span]) -> Option<Term> {
+        let mut args: Vec<&'a Expr> = Vec::new();
+        if let ExprKind::Call {
+            callee,
+            positional,
+            named,
+            ..
+        } = &e.kind
+        {
+            if let ExprKind::Member { of, .. } = &callee.kind {
+                args.push(of);
+            }
+            args.extend(positional);
+            args.extend(named.iter().map(|(_, a)| a));
+        }
+        args.retain(|a| at.contains(&a.span));
+        let mut lets = Vec::new();
+        for a in &args {
+            let t = self.temp();
+            lets.push((t.clone(), self.expr(a)));
+            self.passing.insert(a.span, t);
+        }
+        let call = self.expr(e);
+        for a in &args {
+            self.passing.remove(&a.span);
+        }
+        let mut call = call?;
+        let mut lets: Vec<(Arc<str>, Term)> = lets
+            .into_iter()
+            .map(|(t, x)| x.map(|x| (t, x)))
+            .collect::<Option<_>>()?;
+        let v = |n: &Arc<str>| Term::Var(n.clone());
+        let mut fail: Option<Arc<str>> = None;
+        for t in lets.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>() {
+            fail = Some(match fail {
+                None => t,
+                Some(f) => {
+                    let g = self.temp();
+                    let both = Term::Match(
+                        Arc::new(v(&f)),
+                        vec![
+                            (KPattern::AnyAtom, Term::Prim(Prim::Add, vec![v(&f), v(&t)])),
+                            (KPattern::Wild, v(&t)),
+                        ],
+                    );
+                    let merged = Term::Match(
+                        Arc::new(v(&t)),
+                        vec![(KPattern::AnyAtom, both), (KPattern::Wild, v(&f))],
+                    );
+                    lets.push((g.clone(), merged));
+                    g
+                }
+            });
+        }
+        if let Some(f) = fail {
+            call = Term::Match(
+                Arc::new(v(&f)),
+                vec![(KPattern::AnyAtom, v(&f)), (KPattern::Wild, call)],
+            );
+        }
+        Some(lets.into_iter().rev().fold(call, |body, (t, x)| {
+            Term::Let(t, Arc::new(x), Arc::new(body))
+        }))
     }
 
     fn temp(&mut self) -> Arc<str> {
@@ -632,6 +707,16 @@ impl<'a> Elab<'a> {
     }
 
     fn expr(&mut self, e: &'a Expr) -> Option<Term> {
+        if let Some(t) = self.passing.get(&e.span) {
+            return Some(Term::Var(t.clone()));
+        }
+        if let Some(at) = self.info.passes.get(&e.span).cloned() {
+            if self.guarding.insert(e.span) {
+                let r = self.passes(e, &at);
+                self.guarding.remove(&e.span);
+                return r;
+            }
+        }
         if let Some(fit) = self.info.fits.get(&e.span).cloned() {
             return self.fit(e, fit);
         }
