@@ -324,7 +324,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.29 | 0:17 | 0:07 | 0 (0) | 4 (2) | 0:02 | 0:13 | 0 (0) |
 | L1.30 | 0:06 | 0:04 | 0 (0) | 3 (1) | 0:02 | 0:11 | 0 (0) |
 | L1.31 | 0:20 | 0:04 | 0 (0) | 1 (1) | 0:13 | 0:36 | 16 (3) |
-| L1.32 | 0:06 | 0:04 | 0 (0) | 0 (0) | | | |
+| L1.32 | 0:06 | 0:04 | 0 (0) | 0 (0) | 0:05 | 0:11 | 4 (3) |
 | other (Signed zeros) | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.33 | 0:13 | 0:06 | 2 (1) | 0 (0) | | | |
 | L1.34 | 0:22 | 0:05 | 0 (0) | 0 (0) | | | |
@@ -913,10 +913,10 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/store/wto.rs` | 10,717 | `lib/src/store/wto.dart`<br>`test/store/wto_test.dart` | 8,951 | 0.84 |
 | `crates/zedc/src/testing.rs` | 10,756 | `lib/testing.dart` | 8,123 | 0.76 |
 | `crates/zedc/src/zir/binary.rs` | 16,518 | `lib/src/zir/binary.dart` | 14,850 | 0.90 |
-| `crates/zedc/src/zir/canon.rs` | 10,571 | | | |
+| `crates/zedc/src/zir/canon.rs` | 10,571 | `lib/src/zir/canon.dart` | 12,352 | 1.17 |
 | `crates/zedc/src/zir/lower.rs` | 45,130 | | | |
 | `crates/zedc/src/zir/memory.rs` | 48,172 | | | |
-| `crates/zedc/src/zir/mod.rs` | 25,095 | `lib/zir.dart`<br>`lib/src/zir/graph.dart` | 24,728 | 0.99 |
+| `crates/zedc/src/zir/mod.rs` | 25,095 | `lib/zir.dart`<br>`lib/src/zir/graph.dart` | 24,757 | 0.99 |
 | `crates/zedc/src/zir/text.rs` | 36,164 | `lib/src/zir/text.dart` | 30,447 | 0.84 |
 | `tests/src/check.rs` | 5,056 | `test/support/check.dart`<br>`test/support/check_test.dart` | 4,359 | 0.86 |
 | `tests/src/fences.rs` | 3,349 | `test/support/fences.dart` | 2,468 | 0.74 |
@@ -1069,9 +1069,9 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_31_zir/items.rs` | 3,698 | `test/steps/l01_31_zir/items_test.dart` | 3,905 | 1.06 |
 | `tests/steps/l01_31_zir/mod.rs` | 1,199 | `test/steps/l01_31_zir/zir.dart`<br>`test/steps/l01_31_zir/scaling_test.dart` | 3,966 | 3.31 |
 | `tests/steps/l01_31_zir/rejections.rs` | 9,252 | `test/steps/l01_31_zir/rejections_test.dart` | 9,175 | 0.99 |
-| `tests/steps/l01_32_canonical_zir/fuzz.rs` | 7,874 | | | |
-| `tests/steps/l01_32_canonical_zir/mod.rs` | 557 | | | |
-| `tests/steps/l01_32_canonical_zir/stability.rs` | 6,674 | | | |
+| `tests/steps/l01_32_canonical_zir/fuzz.rs` | 7,874 | `test/steps/l01_32_canonical_zir/fuzz_test.dart` | 7,283 | 0.92 |
+| `tests/steps/l01_32_canonical_zir/mod.rs` | 557 | `test/steps/l01_32_canonical_zir/zir.dart`<br>`test/steps/l01_32_canonical_zir/scaling_test.dart` | 3,696 | 6.64 |
+| `tests/steps/l01_32_canonical_zir/stability.rs` | 6,674 | `test/steps/l01_32_canonical_zir/stability_test.dart` | 6,009 | 0.90 |
 | `tests/steps/l01_33_lowering/corpus.rs` | 1,687 | | | |
 | `tests/steps/l01_33_lowering/cse.rs` | 2,578 | | | |
 | `tests/steps/l01_33_lowering/errors.rs` | 3,655 | | | |
@@ -1141,7 +1141,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 297 Rust files** | **2,273,126** | | | |
-| **the Rust files ported so far** | **1,801,542** | | **1,534,803** | **0.85** |
+| **the Rust files ported so far** | **1,827,218** | | **1,564,172** | **0.86** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1619,10 +1619,28 @@ Dart:
   57×, limit 24), checked (63× to 66×) or printed (66× to 67×), a scan of the writer's
   pending work at each node and region (55× wide, 48× to 53× nested, the reader scanning its
   nodes too), and the eager path (52× to 68×).
+- **L1.32** (canonical ZIR). Easy. Rust recurses once per nested region in `canonicalize`,
+  `key`, `each_edge` and `written`; Dart folds a graph bottom up over its own stack of frames
+  and walks it in preorder over another, so a graph nested 32,000 deep is canonicalized,
+  keyed and addressed. Rust's `step` edits the graph in place; the Dart graph's fields are
+  final, so `step` returns a new graph, rebuilt in one bottom-up pass with the changed node or
+  region swapped in. Applying `step` until no rule applies is O(n²) in both, by its definition; one
+  step is linear. The pinned address of the stability test is the same bytes in both. A
+  fault of the Rust code that the port does not copy: `normal_edge` applies the M0.7 rules
+  one rewrite at a time, and the facets rule swaps one adjacent pair after scanning from the
+  start, so one edge with f facets takes O(f³) time, against the module's "linear in the
+  graph"; Dart normalizes an edge in one pass of the M0.7 canonicalizer, which sorts. Rust
+  has no scaling test for this step; Dart has ten, each caught by its control: a search of a
+  region's nodes at each node canonicalized (54× wide, 58× nested), a copy of the bytes so
+  far at each node keyed (87× wide; a search, 30× nested), a search of the pending nodes in
+  the preorder walk (56× to 59× for the ranks, 62× to 64× for one step), and, for the address
+  of the wide graph, a search of the encoder's pending work at each node (39× to 43×). That
+  address test does not catch the search in the canonicalizer (11×): at 4,000 nodes the
+  encoding and the BLAKE3 hash take six times as long as canonicalizing.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1698,6 +1716,8 @@ which the case was shorter, clearer or cheaper to run.
 | A cache that keeps a failure beside the successes | Rust | `Result<T, E>` is a value to store and clone; Dart keeps the thrown exception as an `Object` and throws it again on a hit (L1.30). |
 | Numbered tags of a binary format | Dart | An enum's `index` writes the tag and `values[t]` reads it back, with the range check from `values.length`, so no number is written. The Rust writer and reader each spell every number, and a `#[repr(u8)]` enum would need a hand-written `TryFrom<u8>` to read one back (L1.31). |
 | A walk deeper than the call stack, in its original order | Dart | Each pending check is a closure on a `List<void Function()>`, holding the values it reads and pushing the checks of the regions it opens. In Rust the same stack is a `Vec<Box<dyn FnOnce(&mut Vec<…>) -> Result<(), String> + '_>>`, with the stack passed in, since a closure may not borrow the stack it was popped from (L1.31). |
+| A change deep inside an immutable tree | Rust | `step` takes `&mut Region` and assigns the one edge or node it rewrites. With final fields, Dart rebuilds the graph bottom up and swaps in the changed node or region, found by identity, so the rewrite is a whole pass over the graph and a function that copies a node with new regions (L1.32). |
+| A bottom-up fold deeper than the call stack | Dart | A generic `_fold<R>` over a list of frames, each holding a region, the results of its inner regions so far and the node it is at, serves canonicalizing and keying alike. Rust writes each as its own recursive function, and a loop in Rust would need the same frames with the borrow of each region spelled out (L1.32). |
 | A field padded to a width in formatted text | Rust | `{n:<w$}` pads inside the format string; Dart calls `padRight(w)` on an interpolated string inside the interpolation (L1.29). |
 | A conditional chained to a pattern | Rust | `if let Some(Term::Lit(v)) = args.get(p) && cond` is one condition. Dart allows a `case` pattern only as the whole condition of an `if`, so the test splits into a `where` and an `if`-`case` (L1.28). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
@@ -1958,7 +1978,7 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_30_queries/keys_test.dart` | 1 | 0 |
 | `test/steps/l01_30_queries/reuse_test.dart` | 1 | 0 |
 | `test/steps/l01_30_queries/scaling_test.dart` | 1 | 0 |
-| `lib/zir.dart` | 1 | 0 |
+| `lib/zir.dart` | 2 | 0 |
 | `lib/src/zir/graph.dart` | 3 | 0 |
 | `lib/src/zir/text.dart` | 2 | 0 |
 | `lib/src/zir/binary.dart` | 2 | 0 |
@@ -1967,5 +1987,10 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_31_zir/items_test.dart` | 1 | 0 |
 | `test/steps/l01_31_zir/rejections_test.dart` | 1 | 0 |
 | `test/steps/l01_31_zir/scaling_test.dart` | 1 | 0 |
+| `lib/src/zir/canon.dart` | 1 | 0 |
+| `test/steps/l01_32_canonical_zir/zir.dart` | 1 | 0 |
+| `test/steps/l01_32_canonical_zir/stability_test.dart` | 1 | 0 |
+| `test/steps/l01_32_canonical_zir/fuzz_test.dart` | 1 | 0 |
+| `test/steps/l01_32_canonical_zir/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

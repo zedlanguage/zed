@@ -3,6 +3,7 @@
 library;
 
 export 'src/zir/binary.dart' show decode, encode, nanBits;
+export 'src/zir/canon.dart';
 export 'src/zir/graph.dart';
 export 'src/zir/text.dart'
     show
