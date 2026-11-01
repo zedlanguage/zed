@@ -218,7 +218,7 @@ about 85 s in a debug build, with `zed-kernel` built at opt-level 2.
   1 when a copy is stale, and the step test `the_copies_match_the_spec_where_it_is_present`
   compares the texts where `../zed` exists (it passes without checking in CI).
 - No Python (the author's instruction, 2026-10-31). The helper commands are the Dart package
-  `tools/` (`tools/bin/{sync,audit,progress,sizes,unicode_tables}.dart`), the spec's grammar
+  `tools/` (`tools/bin/{sync,audit,progress,sizes}.dart`), the spec's grammar
   tools are the Dart package `zed/tools/grammar` of the spec repository, and the corpus
   reference scripts are `zed/corpus/ref/NN.dart`; CI installs Dart for `refcheck.sh`. Each
   printed the same output as the Python it replaced on every committed input. Step rows and

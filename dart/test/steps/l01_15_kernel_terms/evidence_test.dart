@@ -59,7 +59,7 @@ void main() {
   });
 
   test('a fix carries its evidence into the address too', () {
-    Term reach(Evidence ev) =>
+    Term reach(Map<String, Grade> ev) =>
         Fix(var_('start'), var_('next'), 'this', 'k', const Lattice(PrimFn(Prim.union)), ev);
     expect(addr(reach({'monotone': Grade.proved})), isNot(addr(reach({}))));
   });

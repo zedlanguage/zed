@@ -1,6 +1,8 @@
 /// Kernel terms: the calculus of DESIGN.md sec:kernel, which the reference evaluator runs.
 library;
 
+import 'dart:collection';
+
 import 'text.dart';
 import 'types.dart';
 import 'value.dart';
@@ -152,8 +154,8 @@ enum Grade {
   bool get isProofGrade => index <= proved.index;
 }
 
-/// The laws a construct relies on, each with its grade.
-typedef Evidence = Map<String, Grade>;
+/// The laws a construct relies on, each with its grade, kept in property-name order.
+typedef Evidence = SplayTreeMap<String, Grade>;
 
 /// What a `fix` iterates to: the least fixpoint of a lattice under `join`, or the entries a
 /// definedness recursion defines.
@@ -268,7 +270,8 @@ final class Fold extends Term {
   final int depth;
   final Evidence ev;
 
-  const Fold(this.family, this.op, this.identity, this.depth, this.ev);
+  Fold(this.family, this.op, this.identity, this.depth, Map<String, Grade> ev)
+    : ev = Evidence.of(ev, compareUtf8);
 }
 
 final class Fix extends Term {
@@ -277,7 +280,8 @@ final class Fix extends Term {
   final FixKind kind;
   final Evidence ev;
 
-  const Fix(this.init, this.step, this.self, this.key, this.kind, this.ev);
+  Fix(this.init, this.step, this.self, this.key, this.kind, Map<String, Grade> ev)
+    : ev = Evidence.of(ev, compareUtf8);
 }
 
 final class Gen extends Term {

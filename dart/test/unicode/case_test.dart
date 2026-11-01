@@ -39,6 +39,12 @@ void main() {
     }
   });
 
+  test('a leading U+FEFF is kept', () {
+    expect(toUpper('﻿﻿a﻿b'), '﻿﻿A﻿B');
+    expect(toLower('﻿ΑΣ'), '﻿ας');
+    expect(toUpper('﻿'), '﻿');
+  });
+
   test('uppercasing leaves every sigma capital', () {
     expect(toUpper('ας σ'), 'ΑΣ Σ');
   });

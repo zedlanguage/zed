@@ -110,6 +110,10 @@ final class PMap<K, V> {
 
   Iterable<V> get values => entries.map((e) => e.$2);
 
+  /// The entries whose keys are at least `key`, in key order: O(log n) to the first, then O(1)
+  /// a step on average.
+  Iterable<(K, V)> from(K key) => _Entries(_root, (n) => compare(key, n.key) <= 0);
+
   /// Whether `other` has the same entries, values compared by `==`; O(1) for the same tree.
   bool sameAs(PMap<K, V> other) {
     if (identical(_root, other._root)) return true;
@@ -171,21 +175,37 @@ _Node<K, V> _balance<K, V>(K k, V v, _Node<K, V>? l, _Node<K, V>? r) {
 final class _Entries<K, V> extends Iterable<(K, V)> {
   final _Node<K, V>? root;
 
-  _Entries(this.root);
+  /// Whether a node's key is in the range, when the range has a lower bound.
+  final bool Function(_Node<K, V>)? inRange;
+
+  _Entries(this.root, [this.inRange]);
 
   @override
-  Iterator<(K, V)> get iterator => _InOrder(root);
+  Iterator<(K, V)> get iterator => _InOrder(root, inRange);
 
   @override
-  int get length => _size(root);
+  int get length => inRange == null ? _size(root) : super.length;
 }
 
 final class _InOrder<K, V> implements Iterator<(K, V)> {
   final _path = <_Node<K, V>>[];
   late (K, V) _current;
 
-  _InOrder(_Node<K, V>? root) {
-    _descend(root);
+  _InOrder(_Node<K, V>? root, bool Function(_Node<K, V>)? inRange) {
+    if (inRange == null) {
+      _descend(root);
+      return;
+    }
+    // The path to the first key in the range holds each node in it whose left subtree may be.
+    var n = root;
+    while (n != null) {
+      if (inRange(n)) {
+        _path.add(n);
+        n = n.left;
+      } else {
+        n = n.right;
+      }
+    }
   }
 
   void _descend(_Node<K, V>? n) {

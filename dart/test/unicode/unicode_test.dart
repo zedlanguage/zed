@@ -7,7 +7,6 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 import 'package:zed/src/unicode.dart';
-import 'package:zed/src/unicode_tables.dart';
 
 import '../support/support.dart';
 

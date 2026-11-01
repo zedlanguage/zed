@@ -36,7 +36,7 @@ List<String> at(String text, String name, int n) {
   ];
   if (n >= starts.length) throw StateError('no occurrence $n of `$name`');
   final used = [
-    for (final MapEntry(:key, :value) in r.uses.entries)
+    for (final (key, value) in r.uses.entries)
       if (key.start == starts[n]) value,
   ];
   if (used.isEmpty) throw StateError('occurrence $n of `$name` is not a recorded use');

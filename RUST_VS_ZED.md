@@ -1458,6 +1458,17 @@ Dart:
 *In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
+The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
+character database (`lib/src/unicode_tables.dart`, 156 KB, and its generator), now comes from
+ICU4X 2.4.0 (package `icu4x`, which links a prebuilt ICU4X library through a build hook and is
+also at Unicode 18). Before the change, a script compared the two on every one of the
+1,114,112 code points, for the combining class, XID_Start, XID_Continue, Script,
+Script_Extensions, the escapes of a quoted character, the NFC of each code point, and the NFC
+and the NFC test of 200,000 random strings of letters, marks and Hangul jamo: they agree
+everywhere. The case mappings agree except that the binding drops a leading U+FEFF, which
+`lib/src/unicode.dart` restores (a new test; with the restoring loop removed it fails).
+`unicode.dart` falls from 253 lines to 118, and the 662 Dart tests pass, the conformance test
+of `NormalizationTest.txt` among them.
 
 ### What each language expresses more naturally
 
@@ -1468,7 +1479,7 @@ which the case was shorter, clearer or cheaper to run.
 |---|---|---|
 | Shared subterms and graphs with back references | Dart | The garbage collector lets any number of owners hold the same object. The Rust needs `Arc` or `Rc` for sharing, clones to satisfy the borrow checker, and graphs stored as vectors addressed by index. |
 | Deep recursion (16,000-deep terms, deeply nested blocks) | Rust | A Rust thread can be given a larger stack (`stack_size(1 << 29)` for the L1.15 printer, 4 GiB for the L1.14 resolver), so plain recursion works. A Dart isolate's stack cannot be raised, so each deep walk is rewritten on an explicit stack; `sync*` generators keep that rewrite short (L1.14, L1.15, L1.16). |
-| A map whose keys must be read in order | Rust | `BTreeMap` keeps the evidence record sorted. A Dart `Map` keeps insertion order, so the printer and the serializer each sort the keys (L1.15). |
+| A map whose keys must be read in order | equal | `BTreeMap` keeps the evidence record sorted. The first port used a Dart `Map`, which keeps insertion order, so the printer and the serializer each sorted the keys (L1.15); the evidence is now a `SplayTreeMap` of `dart:collection`, read in key order like the `BTreeMap`. |
 | Looping while a value matches a pattern | Rust | `while let Term::Let(x, e, body) = t` walks a chain of `let`s. Dart has `if`-`case` but no `while`-`case`, so the loop becomes `for (; t is Let; t = t.body)` (L1.15). |
 | Adding a behavior to a type from another file | Rust | `impl fmt::Display for Term` can live in the printer's module. In Dart `toString` must be declared in the class, so the printer is a `part` of the term library and the base class's `toString` calls it (L1.15). |
 | Early exit from a fold | Rust | `try_fold` with `Option` and `?` stops as soon as the room runs out. Dart has no `?` for null; the printer reads its text as a lazy stream and returns from a `for` loop instead, which is as short but less direct (L1.15). |
@@ -1476,17 +1487,17 @@ which the case was shorter, clearer or cheaper to run.
 | Lists built with conditions and loops | Dart | Collection `for` and `if` elements (`[a, if (c) b, for (x in xs) f(x)]`) replace Rust's `iter().map().collect()` chains and `push` sequences (L1.15 `fold` and `fix` arguments). |
 | Matching on a closed set of variants | equal | Dart's sealed classes with object patterns in `switch` expressions are as short as Rust's `match` and are also checked for exhaustiveness. |
 | Stopping a computation that met an error | Rust | `?` on an `Option` returns `None` from the function at once, and the caller's `?` passes it on. Dart's `?` exists only for null-aware access, so the elaborator stops by throwing, and each generator step that may stop is caught by the stack driver (L1.16). |
-| Reading the keys of a sorted map in a range | Rust | `BTreeMap::range(a..b)` reads the keys between two bounds. A Dart `SplayTreeMap` has only `firstKeyAfter`, so a range is a loop calling it once per key, each call a new search from the root (L1.16). |
+| Reading the keys of a sorted map in a range | Rust | `BTreeMap::range(a..)` reads the keys from a bound. A Dart `SplayTreeMap` has only `firstKeyAfter`, so a range is a loop calling it once per key, each call a new search from the root (L1.16). The port's own balanced tree, `PMap` in `lib/src/kernel/pmap.dart`, now has `from(key)`, which finds the first key in O(log n) and steps in order from there, and the uses of names are kept in it; that took 25 lines the Rust did not need. |
 | Maps keyed by object identity | Dart | Any object is a map key, compared by identity unless it defines `==`, so the elaborator's tables are keyed by the binder or the parameter itself. The Rust keys them by index or by span, because its objects are borrowed or cloned and have no identity of their own (L1.16). |
 | Sharing one computed value among many users | Dart | A default's term is made once and the same object placed in every call that leaves its parameter out. The Rust would need `Rc<Term>` throughout the term type to do the same; the L1.16 Rust copied the term instead (L1.16). |
 | A list with an optional first element | Dart | `[?receiver, ...args]` adds the receiver only when it is not null. The Rust writes `receiver.into_iter().chain(args).collect()` (L1.16). |
 | Keeping equality and hashing consistent | Rust | A Rust type used as a `HashMap` key must implement `Hash`, and `#[derive(PartialEq, Eq, Hash)]` writes both from one list of fields. A Dart class that overrides `==` and not `hashCode` compiles, and equal values land in different buckets of a hash set; the ported `Rat` did this until a test put two equal rationals in a set (L1.17). |
 | Printing a value of a new type | Rust | `{}` on a type without `Display` is a compile error. Dart's `toString` falls back to `Instance of 'Rat'` without a warning, and the fault shows only when a test prints the value (L1.17). |
-| Binary search of a sorted list | Rust | `slice::binary_search` is in the standard library. Dart's core `List` has none (it is in `package:collection`), so `Atom.field` writes the loop out; the earlier port used `indexOf` instead, a linear scan (L1.17). |
+| Binary search of a sorted list | Rust | `slice::binary_search` is in the standard library. Dart's core `List` has none (`package:collection`, a package of the Dart team, has `binarySearch` and `lowerBound`), so `Atom.field` writes the loop out; the earlier port used `indexOf` instead, a linear scan (L1.17). |
 | Unbounded integers | Dart | `BigInt` is in the core library, with `parse(radix:)`, `pow` and `isValidInt`. The Rust adds the `num-bigint` and `num-rational` crates and their dependencies (L1.17). |
 | Extending a set that other values still hold | Dart | The Dart family is a persistent map, so adding one failure to an `#errs` set makes a new set that shares the old one's nodes, and the old value is unchanged. The Rust `BTreeSet` is mutable and owned, so the merge clones it whole; sharing would need a persistent-collection crate or `Rc` nodes. |
 | Reading float bits | Rust | `f64::to_bits` and `from_bits` are methods on the type. Dart writes the float into a `ByteData` and reads it back as an integer. |
-| Unicode case mapping | Rust | `str::to_uppercase` and `to_lowercase` are in the standard library, with the full Unicode mappings (`straße` to `STRASSE`) and the final-sigma rule. The Dart port maps case through its own tables in `lib/src/unicode.dart`, so that `upper` and `lower` give the same result on every platform. |
+| Unicode case mapping | Rust | `str::to_uppercase` and `to_lowercase` are in the standard library, with the full Unicode mappings (`straße` to `STRASSE`) and the final-sigma rule. Dart's `toUpperCase` and `toLowerCase` use simple one-character mappings (`straße` gives `STRAßE`, and a final capital sigma becomes `σ`), and differ from the Unicode 18 mappings on 597 code points uppercase and 486 lowercase, so the Dart port takes case mapping, like normalization, identifiers and scripts, from ICU4X (package `icu4x`). Its Dart binding decodes the mapped text with `utf8.decode`, which drops a leading U+FEFF, so `lib/src/unicode.dart` maps the text after any leading U+FEFF characters and puts them back. |
 | Reading all of stdin | Rust | `io::stdin().read_to_end` blocks and returns the bytes. Dart's `stdin` is a stream, so the command that reads it is `async` and returns a `Future`, and every caller awaits it (L1.19). |
 | Telling apart the ways a file read fails | Rust | `io::Error::kind()` gives an enum, matched as `ErrorKind::NotFound`. Dart throws `PathNotFoundException` for a missing file and the general `FileSystemException` for the rest, so the cases are told apart by exception class and a `catch` order (L1.19). |
 | Name clashes between imports | Rust | Rust names nothing it is not asked for (`use lex::Atom` is explicit). A Dart import brings in every public name of the library, so two libraries that both define `Atom` clash until one is narrowed with `show` or prefixed (L1.19). |

@@ -14,8 +14,9 @@
 /// are names, and `pаypal` with a Cyrillic `а` is rejected.
 library;
 
+import 'package:icu4x/icu4x.dart' show Script;
+
 import '../unicode.dart';
-import '../unicode_tables.dart';
 import 'text.dart';
 
 /// The end of the name starting at byte `pos` of `text`, if one starts there.
@@ -41,19 +42,16 @@ int? wildcard(Text text, int pos) =>
     : null;
 
 /// The writing systems a name may combine with Latin.
-final _combined = [
-  for (final set in [
-    ['Latin', 'Han', 'Hiragana', 'Katakana'],
-    ['Latin', 'Han', 'Bopomofo'],
-    ['Latin', 'Han', 'Hangul'],
-  ])
-    set.map(scriptNames.indexOf).toSet(),
+const _combined = [
+  {Script.latin, Script.han, Script.hiragana, Script.katakana},
+  {Script.latin, Script.han, Script.bopomofo},
+  {Script.latin, Script.han, Script.hangul},
 ];
 
 /// Whether the characters of `name` are of one script, in the sense of the library comment.
 bool isSingleScript(String name) {
   // The scripts every character shares so far, null for every script.
-  Set<int>? shared;
+  Set<Script>? shared;
   for (final c in name.runes) {
     if (scriptExtension(c) case final ext?) {
       shared = shared == null ? ext : shared.intersection(ext);
@@ -69,5 +67,5 @@ bool isSingleScript(String name) {
 /// use, as `Latin, Cyrillic`.
 String scriptsOf(String name) => {
   for (final c in name.runes)
-    if (script(c) case final s when s != commonScript && s != inheritedScript) scriptNames[s],
+    if (script(c) case final s when s != Script.common && s != Script.inherited) s.longName(),
 }.join(', ');

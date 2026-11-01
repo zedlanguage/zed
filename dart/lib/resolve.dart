@@ -16,9 +16,8 @@
 /// resolution is recorded, and elaboration (step L1.16) tells a field from a function.
 library;
 
-import 'dart:collection';
-
 import 'ast.dart';
+import 'src/kernel/pmap.dart';
 import 'source.dart';
 
 /// What binds a name.
@@ -76,7 +75,7 @@ final class Resolution {
 
   /// Each use, by its text, in text order: a name, a type name, a push's statement (whose port
   /// it names), or a member whose name is in scope.
-  final SplayTreeMap<Span, Ref> uses = SplayTreeMap(_compare);
+  PMap<Span, Ref> uses = const PMap.empty(_compare);
 
   /// The binders of each `else` pattern, by the `else`'s text.
   final Map<Span, List<Binder>> patterns = {};
@@ -262,7 +261,7 @@ final class _Resolver {
   /// Records the use of `name` at `span`, or the error that it names nothing at L1.
   void name(String name, Span span) {
     if (found(name) case final binders?) {
-      out.uses[span] = Bound(binders);
+      out.uses = out.uses.put(span, Bound(binders));
       return;
     }
     final message = switch (preludeLayer(name)) {
@@ -271,7 +270,7 @@ final class _Resolver {
       final layer => '`$name` is a prelude word of layer L$layer',
     };
     if (message == null) {
-      out.uses[span] = Prelude(name);
+      out.uses = out.uses.put(span, Prelude(name));
     } else {
       errors.add(BuildError(span, message));
     }
@@ -385,7 +384,7 @@ final class _Resolver {
         yield expr(otherwise);
       case Member(:final of, :final name):
         yield expr(of);
-        if (found(name) case final binders?) out.uses[e.span] = Bound(binders);
+        if (found(name) case final binders?) out.uses = out.uses.put(e.span, Bound(binders));
     }
   }
 
@@ -409,7 +408,7 @@ final class _Resolver {
   _Steps type(TypeExpr t) sync* {
     switch (t) {
       case TypeName(:final name) when _types.contains(name):
-        out.uses[t.span] = Prelude(name);
+        out.uses = out.uses.put(t.span, Prelude(name));
       case TypeName(:final name):
         errors.add(BuildError(t.span, 'the type `$name` is not defined'));
       case AtomType():

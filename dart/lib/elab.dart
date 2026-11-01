@@ -271,7 +271,7 @@ final class _Elab {
       names[b] = count[b.name] == 1 && preludeLayer(b.name) == null ? b.name : '${b.name}@$i';
       ids[(b.span, b.name)] = b;
     }
-    for (final MapEntry(key: span, :value) in res.uses.entries) {
+    for (final (span, value) in res.uses.entries) {
       if (value case Bound(:final binders)) {
         for (final b in binders) {
           (usesOf[b] ??= []).add(span);
@@ -829,14 +829,10 @@ final class _Elab {
 
   /// The binders used in `span`, in text order.
   Iterable<Binder> usesIn(Span span) sync* {
-    final uses = res.uses;
-    for (
-      var u = uses.firstKeyAfter((start: span.start, end: -1));
-      u != null && u.start < span.end;
-      u = uses.firstKeyAfter(u)
-    ) {
+    for (final (u, ref) in res.uses.from((start: span.start, end: -1))) {
+      if (u.start >= span.end) break;
       if (u.end > span.end) continue;
-      if (uses[u] case Bound(:final binders)) yield* binders;
+      if (ref case Bound(:final binders)) yield* binders;
     }
   }
 

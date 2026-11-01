@@ -12,7 +12,6 @@ import 'dart:typed_data';
 
 import '../../address.dart';
 import '../kernel/term.dart';
-import '../kernel/text.dart';
 import '../kernel/value.dart';
 import '../store/interval.dart';
 import 'binders.dart';
@@ -162,9 +161,9 @@ final class _Out {
   /// An evidence record, its properties in name order, each with its grade.
   void evidence(Evidence ev) {
     word(ev.length);
-    for (final property in ev.keys.toList()..sort(compareUtf8)) {
+    for (final MapEntry(key: property, value: grade) in ev.entries) {
       str(property);
-      tag(ev[property]!.index);
+      tag(grade.index);
     }
   }
 

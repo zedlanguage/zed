@@ -138,12 +138,11 @@ _Doc _named(String name, _Doc value) => _Cat([_Text('$name: '), value]);
 
 List<_Doc> _lazies(List<Term> ts) => [for (final t in ts) _Lazy(t)];
 
-/// The record in property-name order, whatever order it was built in.
 _Doc _evidence(Evidence ev) => _named(
   'ev',
   _List(
     '{',
-    [for (final p in ev.keys.toList()..sort(compareUtf8)) _Text('$p: ${ev[p]!.name}')],
+    [for (final MapEntry(key: p, value: g) in ev.entries) _Text('$p: ${g.name}')],
     ', ',
     '}',
   ),
