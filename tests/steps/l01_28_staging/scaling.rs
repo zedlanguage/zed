@@ -2,9 +2,14 @@
 //! read its free names, and `mix` decided it at every node it entered, so a body of `n`
 //! nested definitions was read `O(n)` times, each reading through a scope of `O(n)` names.
 
-use zed_tests::scaling;
+use std::collections::BTreeMap;
+
+use zed_tests::scaling::{self, FACTOR};
+use zedc::elab::Unit;
+use zedc::stage::passed;
 
 use super::{out, staged};
+use crate::l01_16_elaboration::elab;
 
 /// `main` with `n` local definitions in a chain from a port, each read by the next; `all`
 /// writes their sum, so the last term reads every one.
@@ -54,5 +59,56 @@ fn mixing_a_term_that_reads_every_definition_scales() {
                 assert_eq!(out(&s, "1\n"), format!("{want}\n"));
             },
         )
+    });
+}
+
+/// `f` and `n` definitions, each calling it with its own literal.
+fn callers(n: usize) -> String {
+    let mut s = String::from("f(x: int, y: int) = x + y;\n");
+    for i in 0..n {
+        s += &format!("z{i}(a: int) = f(x: {i}, y: a);\n");
+    }
+    s
+}
+
+#[test]
+fn the_values_passed_by_many_definitions_are_read_in_time_that_scales() {
+    // Each definition was looked for among the names of all of them.
+    let units: BTreeMap<usize, Unit> = [2000, FACTOR * 2000]
+        .into_iter()
+        .map(|n| (n, elab(&callers(n)).unwrap()))
+        .collect();
+    scaling::check("the values passed by n definitions", 2000, |n| {
+        assert_eq!(passed(&units[&n], "f", 0).len(), n);
+    });
+}
+
+#[test]
+fn the_form_rule_on_many_nested_lets_calling_a_prelude_word_scales() {
+    // Each call through a name looked for it among every name bound around the call, and a
+    // prelude word is bound by none of them.
+    use std::sync::Arc;
+    use zed_kernel::Term;
+    use zed_kernel::term::build::var;
+    use zedc::stage::ends;
+    let lets = |n: usize| {
+        (1..=n).rev().fold(var(&format!("x{n}")), |b, i| {
+            let e = Term::App(Arc::new(var("len")), vec![var(&format!("x{}", i - 1))]);
+            Term::Let(format!("x{i}").into(), Arc::new(e), Arc::new(b))
+        })
+    };
+    deep(move || {
+        let terms: BTreeMap<usize, Term> = [1000, FACTOR * 1000]
+            .into_iter()
+            .map(|n| (n, lets(n)))
+            .collect();
+        scaling::check("the form rule on n nested lets", 1000, |n| {
+            assert!(ends(&terms[&n]));
+        });
+        let call_f = |b| Term::App(Arc::new(var("f")), vec![b]);
+        let bound_to_param = Term::Lam(vec!["f".into()], Arc::new(lets(3)));
+        assert!(ends(&bound_to_param), "`len` is not `f`");
+        let calls_param = Term::Lam(vec!["f".into()], Arc::new(call_f(lets(3))));
+        assert!(!ends(&calls_param));
     });
 }

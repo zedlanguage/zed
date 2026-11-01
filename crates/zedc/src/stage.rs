@@ -17,7 +17,7 @@
 //! a copy of the body mixed with the parameter known, and the general body stays as the last
 //! arm.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::types::Type;
@@ -150,12 +150,46 @@ fn children(t: &Term) -> Vec<&Term> {
 /// or a pattern variable, as in `w(w)`, is not shown to end. Free names are prelude words,
 /// which are primitives. Each subterm is read once.
 pub fn ends(t: &Term) -> bool {
-    ends_in(t, &mut Vec::new())
+    ends_in(t, &mut Around::default())
 }
 
-/// [`ends`] under `scope`: each name bound around `t`, innermost last, with whether it is
-/// bound to a function that ends.
-fn ends_in(t: &Term, scope: &mut Vec<(Arc<str>, bool)>) -> bool {
+/// The names bound around a term, each with whether it is bound to a function that ends,
+/// kept by name so that a name is looked up in `O(1)`.
+#[derive(Default)]
+struct Around {
+    /// For each name, its bindings, innermost last.
+    by_name: HashMap<Arc<str>, Vec<bool>>,
+    /// The names in the order bound, innermost last.
+    order: Vec<Arc<str>>,
+}
+
+impl Around {
+    fn push(&mut self, x: &Arc<str>, ends: bool) {
+        self.by_name.entry(x.clone()).or_default().push(ends);
+        self.order.push(x.clone());
+    }
+
+    /// Unbinds all but the first `n` names bound.
+    fn truncate(&mut self, n: usize) {
+        while self.order.len() > n {
+            let x = self.order.pop().expect("a name bound");
+            let stack = self.by_name.get_mut(&x).expect("a name bound");
+            stack.pop();
+            if stack.is_empty() {
+                self.by_name.remove(&x);
+            }
+        }
+    }
+
+    /// Whether the innermost binding of `x` is to a function that ends; `None` when no
+    /// binding is.
+    fn get(&self, x: &str) -> Option<bool> {
+        self.by_name.get(x).and_then(|s| s.last().copied())
+    }
+}
+
+/// [`ends`] under the names bound around `t`.
+fn ends_in(t: &Term, scope: &mut Around) -> bool {
     match t {
         Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => true,
         Term::Fix { .. } | Term::Gen { .. } => false,
@@ -168,9 +202,10 @@ fn ends_in(t: &Term, scope: &mut Vec<(Arc<str>, bool)>) -> bool {
                 _ if ends_in(e, scope) => callable(e, scope),
                 _ => return false,
             };
-            scope.push((x.clone(), c));
+            let n = scope.order.len();
+            scope.push(x, c);
             let out = ends_in(b, scope);
-            scope.pop();
+            scope.truncate(n);
             out
         }
         Term::Match(s, arms) => {
@@ -205,27 +240,21 @@ fn ends_in(t: &Term, scope: &mut Vec<(Arc<str>, bool)>) -> bool {
 
 /// Whether `f`, in the position of a function called, is one that ends: a primitive, a
 /// lambda whose body ends, or a name bound to one; a free name is a prelude word.
-fn callable(f: &Term, scope: &mut Vec<(Arc<str>, bool)>) -> bool {
+fn callable(f: &Term, scope: &mut Around) -> bool {
     match f {
         Term::PrimFn(_) => true,
         Term::Lam(..) => ends_in(f, scope),
-        Term::Var(x) => scope
-            .iter()
-            .rev()
-            .find(|(n, _)| n == x)
-            .is_none_or(|(_, c)| *c),
+        Term::Var(x) => scope.get(x).unwrap_or(true),
         _ => false,
     }
 }
 
 /// `f` with `names` bound around it to values not known to be functions that end.
-fn under<T>(
-    scope: &mut Vec<(Arc<str>, bool)>,
-    names: &[Arc<str>],
-    f: impl FnOnce(&mut Vec<(Arc<str>, bool)>) -> T,
-) -> T {
-    let n = scope.len();
-    scope.extend(names.iter().map(|x| (x.clone(), false)));
+fn under<T>(scope: &mut Around, names: &[Arc<str>], f: impl FnOnce(&mut Around) -> T) -> T {
+    let n = scope.order.len();
+    for x in names {
+        scope.push(x, false);
+    }
     let out = f(scope);
     scope.truncate(n);
     out
@@ -271,6 +300,7 @@ pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
 /// `unit` with its demanded build-stage terms evaluated, keeping the definitions `roots`
 /// and the tests read.
 pub fn mix(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
+    let roots: HashSet<&str> = roots.iter().copied().collect();
     let mut demanded: BTreeSet<Arc<str>> = unit
         .defs
         .iter()

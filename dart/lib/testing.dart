@@ -140,9 +140,14 @@ void _wave(Cones cones, Program program, Test t) {
       'the expected value is a String for each of the $n output ports, not $v',
     ),
   };
+  // The first write to each port.
+  final written = <String, List<int>>{};
+  for (final (name, bytes) in wave.writes) {
+    written.putIfAbsent(name, () => bytes);
+  }
   for (final (name, want) in _zip(outputs, wants)) {
     if (want is! Str) throw _Fail('the expected value of port `$name` is a String, not $want');
-    final got = wave.writes.where((w) => w.$1 == name).firstOrNull?.$2 ?? const <int>[];
+    final got = written[name] ?? const <int>[];
     if (!_same(got, utf8.encode(want.text.text))) {
       throw _Fail('port `$name` writes ${Str(utf8.decode(got, allowMalformed: true))}');
     }

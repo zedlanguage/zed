@@ -40,7 +40,7 @@
 //! region a lambda body or a match arm. Evaluating the raised term gives the original term's
 //! value, which is how the tests check the lowering against the interpreter.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::term::{FixKind, Pattern, Prim, Term};
@@ -49,6 +49,10 @@ use zed_kernel::types::Type;
 use super::{Edge, Node, Op, Region, RegionKind, Src, canon, kind_name, op_name, validate};
 use crate::address::ContentAddress;
 use crate::canon::Facet;
+
+/// The binding of each name in scope while lowering, kept persistently so that a closure keeps
+/// the scope it was defined in at no cost.
+type Scope = imbl::HashMap<Arc<str>, Val>;
 
 /// What a name is bound to while lowering.
 #[derive(Clone)]
@@ -71,10 +75,7 @@ struct Closure {
 /// How a call of a [`Closure`] lowers.
 enum Call {
     /// Its body in place, under the bindings it was defined under: the name occurs once.
-    Inline {
-        body: Arc<Term>,
-        env: Vec<(Arc<str>, Val)>,
-    },
+    Inline { body: Arc<Term>, env: Scope },
     /// An `apply` of its `lambda` node's output, in the region at depth `at`.
     Node { fun: Src, at: usize },
 }
@@ -124,13 +125,26 @@ struct Built {
 
 struct Lower {
     frames: Vec<Frame>,
-    scope: Vec<(Arc<str>, Val)>,
-    /// The positions in `scope` of each name, innermost last.
-    names: HashMap<Arc<str>, Vec<usize>>,
+    scope: Scope,
     fresh: usize,
     /// How often each name occurs in the term, binders of the same name counted together.
     uses: HashMap<Arc<str>, usize>,
+    /// The [`Uses`] of each lambda body met so far, by address.
+    bodies: Bodies,
 }
+
+/// What a lambda body uses from outside it: a port it reads or pushes, or a name free in it.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Use {
+    Port(Arc<str>),
+    Free(Arc<str>),
+}
+
+/// The distinct [`Use`]s of a lambda body, in the order of their first occurrence.
+type Uses = Arc<[Use]>;
+
+/// The [`Uses`] of each lambda body, by its address; the body is kept so the address stays its.
+type Bodies = HashMap<*const Term, (Arc<Term>, Uses)>;
 
 /// The graph of the closed term `t`, validated. A prelude word is read only where the term
 /// binds it, as [`crate::interp::prelude`] does.
@@ -143,10 +157,10 @@ pub fn lower(t: &Term) -> Result<Region, String> {
     });
     let mut l = Lower {
         frames: vec![Frame::new(RegionKind::Function, Vec::new())],
-        scope: Vec::new(),
-        names: HashMap::new(),
+        scope: Scope::new(),
         fresh: 0,
         uses,
+        bodies: HashMap::new(),
     };
     let v = l.term(t)?;
     let out = l.src(v)?;
@@ -185,37 +199,22 @@ impl Lower {
     }
 
     fn bind(&mut self, x: Arc<str>, v: Val) {
-        self.names
-            .entry(x.clone())
-            .or_default()
-            .push(self.scope.len());
-        self.scope.push((x, v));
+        self.scope.insert(x, v);
     }
 
-    /// Removes the bindings after the first `mark`.
-    fn unbind(&mut self, mark: usize) {
-        while self.scope.len() > mark {
-            let (x, _) = self.scope.pop().expect("a binding");
-            let at = self.names.get_mut(&x).expect("a bound name");
-            at.pop();
-            if at.is_empty() {
-                self.names.remove(&x);
-            }
-        }
+    /// Restores the scope `mark`, taken before the bindings since.
+    fn unbind(&mut self, mark: Scope) {
+        self.scope = mark;
     }
 
     /// Replaces the scope by `env`, returning the old one.
-    fn swap_scope(&mut self, env: Vec<(Arc<str>, Val)>) -> Vec<(Arc<str>, Val)> {
-        self.names.clear();
-        for (i, (x, _)) in env.iter().enumerate() {
-            self.names.entry(x.clone()).or_default().push(i);
-        }
+    fn swap_scope(&mut self, env: Scope) -> Scope {
         std::mem::replace(&mut self.scope, env)
     }
 
     fn lookup(&self, x: &str) -> Result<Val, String> {
-        match self.names.get(x).and_then(|at| at.last()) {
-            Some(&i) => Ok(self.scope[i].1.clone()),
+        match self.scope.get(x) {
+            Some(v) => Ok(v.clone()),
             None => Err(format!(
                 "`{x}` is not bound, and a term lowers only when every name it reads is bound \
                  in it or is a prelude word"
@@ -374,7 +373,7 @@ impl Lower {
         }
         self.frames.push(frame);
         let depth = self.top();
-        let mark = self.scope.len();
+        let mark = self.scope.clone();
         for (i, p) in params.iter().enumerate() {
             self.bind(p.clone(), Val::Src(Src::Arg(i), depth));
         }
@@ -477,24 +476,30 @@ impl Lower {
         Ok(s)
     }
 
-    /// The ports `t`, a lambda body, reads or pushes, itself or by calling a function that
-    /// does, in the order of their first use in the text.
-    fn ports(&self, t: &Term) -> Vec<Arc<str>> {
+    /// The ports `b`, a lambda body, reads or pushes, itself or by calling a function free in
+    /// it that does, in the order of their first use in the text.
+    fn ports(&mut self, b: &Arc<Term>) -> Vec<Arc<str>> {
+        let uses = body_uses(b, &mut self.bodies);
         let mut out: Vec<Arc<str>> = Vec::new();
-        let mut add = |p: &Arc<str>| {
-            if !out.contains(p) {
-                out.push(p.clone());
-            }
-        };
-        visit(t, &mut |s| match s {
-            Term::Read(p) | Term::Push(p, _) => add(p),
-            Term::Var(x) => {
-                if let Ok(Val::Closure(c)) = self.lookup(x) {
-                    c.ports.iter().for_each(&mut add);
+        let mut seen: HashSet<Arc<str>> = HashSet::new();
+        for u in uses.iter() {
+            match u {
+                Use::Port(p) => {
+                    if seen.insert(p.clone()) {
+                        out.push(p.clone());
+                    }
+                }
+                Use::Free(x) => {
+                    if let Ok(Val::Closure(c)) = self.lookup(x) {
+                        for p in &c.ports {
+                            if seen.insert(p.clone()) {
+                                out.push(p.clone());
+                            }
+                        }
+                    }
                 }
             }
-            _ => {}
-        });
+        }
         out
     }
 
@@ -546,7 +551,7 @@ impl Lower {
                         });
                     }
                 }
-                let mark = self.scope.len();
+                let mark = self.scope.clone();
                 self.bind(x.clone(), v);
                 let out = self.term(body);
                 self.unbind(mark);
@@ -764,7 +769,7 @@ impl Lower {
 
     /// `body` with `params` bound to `vals`, lowered in the current region.
     fn bound(&mut self, params: &[Arc<str>], vals: Vec<Val>, body: &Term) -> Result<Val, String> {
-        let mark = self.scope.len();
+        let mark = self.scope.clone();
         for (p, v) in params.iter().cloned().zip(vals) {
             self.bind(p, v);
         }
@@ -809,6 +814,145 @@ fn names(p: &Pattern) -> Vec<Arc<str>> {
     }
     go(p, &mut out);
     out
+}
+
+/// The [`Uses`] of the lambda body `b`, each body's found once: a lambda inside `b` adds the
+/// uses of its own body, less the names bound around it in `b`.
+fn body_uses(b: &Arc<Term>, bodies: &mut Bodies) -> Uses {
+    let key = Arc::as_ptr(b);
+    if let Some((_, u)) = bodies.get(&key) {
+        return u.clone();
+    }
+    let mut w = UseWalk {
+        bound: HashMap::new(),
+        seen: HashSet::new(),
+        out: Vec::new(),
+    };
+    w.term(b, bodies);
+    let u: Uses = w.out.into();
+    bodies.insert(key, (b.clone(), u.clone()));
+    u
+}
+
+/// The walk of one lambda body for [`body_uses`].
+struct UseWalk {
+    /// How many binders in the body are around the current subterm, for each name.
+    bound: HashMap<Arc<str>, usize>,
+    seen: HashSet<Use>,
+    out: Vec<Use>,
+}
+
+impl UseWalk {
+    fn add(&mut self, u: Use) {
+        if let Use::Free(x) = &u
+            && self.bound.contains_key(x)
+        {
+            return;
+        }
+        if self.seen.insert(u.clone()) {
+            self.out.push(u);
+        }
+    }
+
+    fn bind(&mut self, xs: &[Arc<str>]) {
+        for x in xs {
+            *self.bound.entry(x.clone()).or_default() += 1;
+        }
+    }
+
+    fn unbind(&mut self, xs: &[Arc<str>]) {
+        for x in xs {
+            let n = self.bound.get_mut(x).expect("a bound name");
+            *n -= 1;
+            if *n == 0 {
+                self.bound.remove(x);
+            }
+        }
+    }
+
+    /// `t` under `xs`.
+    fn under(&mut self, xs: &[Arc<str>], t: &Term, bodies: &mut Bodies) {
+        self.bind(xs);
+        self.term(t, bodies);
+        self.unbind(xs);
+    }
+
+    fn term(&mut self, t: &Term, bodies: &mut Bodies) {
+        match t {
+            Term::Lit(_) | Term::PrimFn(_) => {}
+            Term::Var(x) => self.add(Use::Free(x.clone())),
+            Term::Read(p) => self.add(Use::Port(p.clone())),
+            Term::Push(p, v) => {
+                self.add(Use::Port(p.clone()));
+                self.term(v, bodies);
+            }
+            Term::Lam(ps, b) => {
+                let inner = body_uses(b, bodies);
+                self.bind(ps);
+                inner.iter().for_each(|u| self.add(u.clone()));
+                self.unbind(ps);
+            }
+            Term::App(g, args) => {
+                self.term(g, bodies);
+                args.iter().for_each(|a| self.term(a, bodies));
+            }
+            Term::Prim(_, args) => args.iter().for_each(|a| self.term(a, bodies)),
+            Term::Let(x, e, b) => {
+                self.term(e, bodies);
+                self.under(std::slice::from_ref(x), b, bodies);
+            }
+            Term::If(c, a, b) => [c, a, b].iter().for_each(|t| self.term(t, bodies)),
+            Term::Match(s, arms) => {
+                self.term(s, bodies);
+                for (p, a) in arms {
+                    self.under(&names(p), a, bodies);
+                }
+            }
+            Term::Fam { domain, var, body } => {
+                self.term(domain, bodies);
+                self.under(std::slice::from_ref(var), body, bodies);
+            }
+            Term::Reindex { family, kf, vf, .. } => {
+                [family, kf, vf].iter().for_each(|t| self.term(t, bodies))
+            }
+            Term::Discard { family, sel } => {
+                [family, sel].iter().for_each(|t| self.term(t, bodies))
+            }
+            Term::Fold {
+                family,
+                op,
+                identity,
+                ..
+            } => {
+                [family, op].iter().for_each(|t| self.term(t, bodies));
+                identity.iter().for_each(|i| self.term(i, bodies));
+            }
+            Term::Fix {
+                init,
+                step,
+                this,
+                key,
+                kind,
+                ..
+            } => {
+                self.term(init, bodies);
+                match kind {
+                    FixKind::Lattice { join } => {
+                        self.term(step, bodies);
+                        self.term(join, bodies);
+                    }
+                    FixKind::Definedness => {
+                        self.under(&[this.clone(), key.clone()], step, bodies);
+                    }
+                }
+            }
+            Term::Gen {
+                init, step, guard, ..
+            } => [init, step, guard]
+                .iter()
+                .for_each(|t| self.term(t, bodies)),
+        }
+    }
 }
 
 /// Calls `f` on `t` and every subterm, in preorder.

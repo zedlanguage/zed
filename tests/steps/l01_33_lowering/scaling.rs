@@ -139,3 +139,101 @@ fn reading_a_name_bound_far_out_scales() {
         .join()
         .unwrap();
 }
+
+/// `g{d} = (x{d}) -> (… (g1 = (x1) -> 1; g1(1)) …); g{d}(d)`: `let`-bound lambdas nested `d`
+/// deep.
+fn lets_of_lambdas(d: usize) -> Term {
+    (1..=d).fold(lit(1i64), |b, i| {
+        let g = format!("g{i}");
+        let_(
+            &g,
+            lam(&[&format!("x{i}")], b),
+            app(var(&g), vec![lit(i as i64)]),
+        )
+    })
+}
+
+#[test]
+fn lowering_lambdas_bound_by_nested_lets_scales() {
+    // The ports of each `let`-bound lambda were found by reading its whole body, the lambdas
+    // nested in it included.
+    std::thread::Builder::new()
+        .stack_size(1 << 32)
+        .spawn(|| {
+            scaling::check("lowering let-bound lambdas nested n deep", 500, |d| {
+                lower(&lets_of_lambdas(d)).unwrap();
+            });
+            let t = lets_of_lambdas(3);
+            let back = raise(&lower(&t).unwrap()).unwrap();
+            let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
+            assert_eq!(run(&back), run(&t));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// `c{i} = (m) -> stdout <- m; r{i} = c{i}(i); …` for `i` from 1 to `n`, then `0`: functions that
+/// push, each called once, so each call lowers in place under the scope it was defined in.
+fn calls_in_place(n: usize) -> Term {
+    (1..=n).rev().fold(lit(0i64), |t, i| {
+        let c = format!("c{i}");
+        let_(
+            &c,
+            lam(&["m"], push("stdout", var("m"))),
+            let_(&format!("r{i}"), app(var(&c), vec![lit(i as i64)]), t),
+        )
+    })
+}
+
+#[test]
+fn lowering_many_functions_called_in_place_scales() {
+    // Each such function kept a copy of the whole scope it was defined in, and its call rebuilt
+    // the index of that scope.
+    std::thread::Builder::new()
+        .stack_size(1 << 32)
+        .spawn(|| {
+            scaling::check(
+                "lowering n functions each called once in place",
+                2000,
+                |n| {
+                    lower(&calls_in_place(n)).unwrap();
+                },
+            );
+            let t = calls_in_place(3);
+            let back = raise(&lower(&t).unwrap()).unwrap();
+            let run = |t: &Term| {
+                let mut ev = Evaluator::new(World::new().output("stdout"));
+                let v = ev.run(t).unwrap();
+                (v, ev.world.log("stdout").to_vec())
+            };
+            let (v, pushed) = run(&t);
+            assert_eq!(pushed.len(), 3);
+            assert_eq!(run(&back), (v, pushed));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// The graph of `n` pushes in a row is checked in time that scales: each state edge's uses
+/// are counted in a map, not by searching the edges counted before (COMPLEXITY.md Z10).
+#[test]
+fn checking_a_graph_of_many_pushes_scales() {
+    std::thread::Builder::new()
+        .stack_size(1 << 32)
+        .spawn(|| {
+            let graphs: std::collections::BTreeMap<usize, Region> = [N, N * scaling::FACTOR]
+                .into_iter()
+                .map(|n| (n, lower(&calls_in_place(n)).unwrap()))
+                .collect();
+            scaling::check("checking a graph of n pushes", N, |n| {
+                zedc::zir::validate(&graphs[&n]).unwrap();
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+const N: usize = 4000;

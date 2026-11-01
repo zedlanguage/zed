@@ -52,6 +52,7 @@ pub mod lower;
 pub mod memory;
 pub mod text;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use zed_kernel::term::{Evidence, GuardPos, Pattern, Prim, Witness};
@@ -421,14 +422,16 @@ fn region(r: &Region, path: &str, in_certificate: bool, of_lambda: bool) -> Resu
             ));
         }
     }
-    // How many times each state edge of the region is used.
-    let mut uses: Vec<(String, usize)> = Vec::new();
+    // How many times each state edge of the region is used, and the edges in order of first use.
+    let mut uses: HashMap<String, usize> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
     let mut count = |r: &Region, src: &Src, name: String| {
         if r.edge(src).is_state() {
-            match uses.iter_mut().find(|(n, _)| *n == name) {
-                Some(u) => u.1 += 1,
-                None => uses.push((name, 1)),
+            let n = uses.entry(name.clone()).or_default();
+            if *n == 0 {
+                order.push(name);
             }
+            *n += 1;
         }
     };
     for (k, n) in r.nodes.iter().enumerate() {
@@ -443,7 +446,7 @@ fn region(r: &Region, path: &str, in_certificate: bool, of_lambda: bool) -> Resu
         source(r, src, r.nodes.len(), path).map_err(|e| format!("{path}: result {i}: {e}"))?;
         count(r, src, src_name(src, path));
     }
-    if let Some((name, n)) = uses.iter().find(|(_, n)| *n > 1) {
+    if let Some((name, n)) = order.iter().map(|m| (m, uses[m])).find(|(_, n)| *n > 1) {
         return Err(format!(
             "{name}: a state edge is used {n} times, and each is used exactly once"
         ));
@@ -461,7 +464,7 @@ fn region(r: &Region, path: &str, in_certificate: bool, of_lambda: bool) -> Resu
             }
         }
     }
-    if let Some(name) = made.iter().find(|m| !uses.iter().any(|(n, _)| n == *m)) {
+    if let Some(name) = made.iter().find(|m| !uses.contains_key(*m)) {
         return Err(format!(
             "{name}: a state edge is never used, and each is used exactly once"
         ));

@@ -8,7 +8,7 @@
 //! every diagnostic is on a line marked ✗ and every marked line has one; its tables do not
 //! run. A wave that aborts fails its row: no form expects an abort at L1.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::sync::Arc;
 
@@ -201,17 +201,18 @@ fn wave(cones: &Cones<'_>, program: &Program, t: &Test, map: &Through<'_>) -> Re
             ));
         }
     };
+    // The first write to each port.
+    let mut written: HashMap<&str, &[u8]> = HashMap::new();
+    for (p, b) in &wave.writes {
+        written.entry(&**p).or_insert(&b[..]);
+    }
     for (name, want) in outputs.iter().zip(wants) {
         let Value::Str(want) = want else {
             return Err(format!(
                 "the expected value of port `{name}` is a String, not {want}"
             ));
         };
-        let got = wave
-            .writes
-            .iter()
-            .find(|(p, _)| p == name)
-            .map_or(&[][..], |(_, b)| b);
+        let got = written.get(&**name).copied().unwrap_or(&[]);
         if got != want.as_bytes() {
             let got = Value::str(&String::from_utf8_lossy(got));
             return Err(format!("port `{name}` writes {got}"));

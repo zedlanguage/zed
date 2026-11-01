@@ -45,6 +45,31 @@ fn a_function_that_pushes_is_only_called() {
 }
 
 #[test]
+fn a_name_bound_inside_a_function_is_not_the_function_of_that_name_outside() {
+    // `h` calls its own `say`, which pushes nothing, so `h` uses no port and is a value; with
+    // the outer `say` called instead, `h` uses `stdout` and is only called.
+    let h = |inner: bool| {
+        let call = Term::App(var("say").into(), vec![var("v")]);
+        let body = if inner {
+            let_("say", lam(&["u"], var("u")), call)
+        } else {
+            call
+        };
+        let_(
+            "say",
+            lam(&["m"], push("stdout", var("m"))),
+            let_("h", lam(&["v"], body), prim(Prim::Tuple, vec![var("h")])),
+        )
+    };
+    lower(&h(true)).unwrap();
+    assert!(
+        lower(&h(false)).unwrap_err().starts_with(
+            "a function of 1 parameter that uses the ports `stdout` is used as a value"
+        )
+    );
+}
+
+#[test]
 fn names_and_primitives_are_checked() {
     assert_eq!(
         lower(&var("ghost")).unwrap_err(),

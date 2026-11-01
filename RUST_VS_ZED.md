@@ -111,6 +111,33 @@ tests), and clippy is clean.
 The negative controls put the old code back from saved copies, in a separate target directory
 where a test binary was running. Edit calls and compile errors for this work were not counted.
 
+The rest of the audit's list, in the parts of the Rust not yet ported (COMPLEXITY.md F25 to F27,
+Z10 to Z12), is fixed in the Rust alone, so that the Dart port of L1.28 and L1.33 starts from
+code of low complexity. Staging looked for each name among the roots and among the names bound
+around it; lowering read the whole body of each `let`-bound lambda for its ports, the lambdas
+nested in it included, kept a copy of the scope for each function called in place, and its
+graph check counted each state edge's uses by search. One fault is shared with the Dart and
+fixed in both: the test runner looked for each output port among all the writes. Each new test
+fails with the old code put back, at 29 to 74 times as long for 8 times the size; the test of
+functions called in place, which passes in 9 s, does not finish in 30 min. The lowering's scope
+is now a persistent map (`imbl`, already used by the kernel).
+One change of meaning comes with Z11: a name bound
+inside a lambda's body is no longer taken for a function of the same name outside it, and a new
+test checks this. On one thread L1.28's tests take 30.6 s and L1.33's 22.3 s. The full Rust test
+run passes (879 step tests), clippy is clean, and the Dart tests pass (659).
+
+| file | lines added | lines removed |
+|---|---:|---:|
+| `crates/zedc/Cargo.toml` | 1 | 0 |
+| `crates/zedc/src/stage.rs` | 50 | 20 |
+| `crates/zedc/src/testing.rs` | 7 | 6 |
+| `crates/zedc/src/zir/lower.rs` | 194 | 50 |
+| `crates/zedc/src/zir/mod.rs` | 10 | 7 |
+| `dart/lib/testing.dart` | 6 | 1 |
+| `tests/steps/l01_28_staging/scaling.rs` | 57 | 1 |
+| `tests/steps/l01_33_lowering/errors.rs` | 25 | 0 |
+| `tests/steps/l01_33_lowering/scaling.rs` | 98 | 0 |
+
 ## Build and test baseline (Rust)
 
 Measured on 2026-10-31 at `55f537a`, in a scope capped at 64 GB, with a separate target
