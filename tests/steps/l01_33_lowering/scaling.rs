@@ -237,3 +237,26 @@ fn checking_a_graph_of_many_pushes_scales() {
 }
 
 const N: usize = 4000;
+
+/// `r{i} = p{i} <- i; …` for `i` from 1 to `n`, then `0`: pushes to `n` different ports.
+fn pushes_to_many_ports(n: usize) -> Term {
+    (1..=n).rev().fold(lit(0i64), |t, i| {
+        let_(&format!("r{i}"), push(&format!("p{i}"), lit(i as i64)), t)
+    })
+}
+
+/// The current state of each port is found by a map, not by searching the ports used before
+/// (COMPLEXITY.md Z13).
+#[test]
+fn lowering_pushes_to_many_ports_scales() {
+    std::thread::Builder::new()
+        .stack_size(1 << 32)
+        .spawn(|| {
+            scaling::check("lowering pushes to n ports", 2000, |n| {
+                lower(&pushes_to_many_ports(n)).unwrap();
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

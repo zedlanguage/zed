@@ -88,7 +88,7 @@ struct Frame {
     /// Where each capture comes from in the enclosing region, in argument order.
     captures: Vec<Src>,
     /// The current state edge of each port the region has touched.
-    states: Vec<(Arc<str>, Src)>,
+    states: HashMap<Arc<str>, Src>,
     /// The nodes entered by content address.
     seen: HashMap<ContentAddress, usize>,
     /// The keys of each node's regions, in node order.
@@ -106,7 +106,7 @@ impl Frame {
                 results: Vec::new(),
             },
             captures: Vec::new(),
-            states: Vec::new(),
+            states: HashMap::new(),
             seen: HashMap::new(),
             keys: Vec::new(),
         }
@@ -118,7 +118,7 @@ struct Built {
     region: Region,
     fixed: usize,
     captures: Vec<Src>,
-    states: Vec<(Arc<str>, Src)>,
+    states: HashMap<Arc<str>, Src>,
     values: usize,
     keys: Vec<Vec<ContentAddress>>,
 }
@@ -169,11 +169,7 @@ pub fn lower(t: &Term) -> Result<Region, String> {
     root.results.push(out);
     for a in &root.args {
         if let Edge::State(p) = a {
-            let (_, s) = f
-                .states
-                .iter()
-                .find(|(q, _)| q == p)
-                .expect("a port's state");
+            let s = f.states.get(p).expect("a port's state");
             root.results.push(s.clone());
         }
     }
@@ -265,7 +261,7 @@ impl Lower {
 
     /// The current state edge of port `p` in frame `k`, taken from the enclosing regions.
     fn state(&mut self, k: usize, p: &Arc<str>) -> Result<Src, String> {
-        if let Some((_, s)) = self.frames[k].states.iter().find(|(q, _)| q == p) {
+        if let Some(s) = self.frames[k].states.get(p) {
             return Ok(s.clone());
         }
         let s = if k == 0 {
@@ -289,16 +285,12 @@ impl Lower {
             f.region.args.push(Edge::State(p.clone()));
             Src::Arg(f.region.args.len() - 1)
         };
-        self.frames[k].states.push((p.clone(), s.clone()));
+        self.frames[k].states.insert(p.clone(), s.clone());
         Ok(s)
     }
 
     fn set_state(&mut self, p: &Arc<str>, s: Src) {
-        let f = self.frame();
-        match f.states.iter_mut().find(|(q, _)| q == p) {
-            Some(e) => e.1 = s,
-            None => f.states.push((p.clone(), s)),
-        }
+        self.frame().states.insert(p.clone(), s);
     }
 
     /// Adds `node` to the current region, or finds the node with its content address. A node
@@ -369,7 +361,7 @@ impl Lower {
         args.extend(ports.iter().map(|p| Edge::State(p.clone())));
         let mut frame = Frame::new(kind, args);
         for (j, p) in ports.iter().enumerate() {
-            frame.states.push((p.clone(), Src::Arg(params.len() + j)));
+            frame.states.insert(p.clone(), Src::Arg(params.len() + j));
         }
         self.frames.push(frame);
         let depth = self.top();
@@ -382,7 +374,7 @@ impl Lower {
         let mut f = self.frames.pop().expect("the region's frame");
         f.region.results.push(out?);
         for p in ports {
-            let (_, s) = f.states.iter().find(|(q, _)| q == p).expect("a port taken");
+            let s = f.states.get(p).expect("a port taken");
             f.region.results.push(s.clone());
         }
         Ok(Built {
@@ -432,9 +424,9 @@ impl Lower {
             r.args.truncate(b.fixed);
             r.args.extend(edges.iter().cloned());
             for (i, p) in &ports {
-                let fin = match b.states.iter().find(|(q, _)| q == p) {
+                let fin = match b.states.get(p) {
                     // The node that last used the port, never an argument.
-                    Some((_, s)) => s.clone(),
+                    Some(s) => s.clone(),
                     None => Src::Arg(b.fixed + i),
                 };
                 r.results.push(fin);

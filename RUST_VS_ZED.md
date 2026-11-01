@@ -138,6 +138,12 @@ run passes (879 step tests), clippy is clean, and the Dart tests pass (659).
 | `tests/steps/l01_33_lowering/errors.rs` | 25 | 0 |
 | `tests/steps/l01_33_lowering/scaling.rs` | 98 | 0 |
 
+Lowering also found the current state of each port by searching the ports its region had used
+(COMPLEXITY.md Z13). Each frame now keeps them in a map; the new test of pushes to many ports
+passes in 3.7 s and, with the old code put back, fails at 42 to 44 times as long for 8 times
+the size. The Rust change is 11 lines added and 19 removed in `crates/zedc/src/zir/lower.rs`,
+with 23 lines of test in `tests/steps/l01_33_lowering/scaling.rs`. On one thread L1.33's tests now take 25.7 s.
+
 ## Build and test baseline (Rust)
 
 Measured on 2026-10-31 at `55f537a`, in a scope capped at 64 GB, with a separate target
