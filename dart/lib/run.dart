@@ -48,6 +48,20 @@ final class RunError implements Exception {
   String toString() => message;
 }
 
+/// How a wave evaluates its term: [direct] runs it in the interpreter, and a test may instead
+/// map it through another form of the program and back (step L1.33). A failure throws a
+/// [RunError].
+typedef Through = Value Function(Term term, Evaluator ev);
+
+/// Runs `t` in `ev`.
+Value direct(Term t, Evaluator ev) {
+  try {
+    return ev.run(t);
+  } on KernelError catch (e) {
+    throw RunError('$e');
+  }
+}
+
 /// A program ready to run: its elaboration and `main`'s ports.
 final class Program {
   final Unit _unit;
@@ -77,12 +91,16 @@ final class Program {
   /// behind each `Files` input. An error stops the wave before anything is written; throws a
   /// [RunError].
   Wave run(Map<String, List<int>> lines, Lookup Function(String port) files) =>
-      _wave(lines, files, null).$1;
+      _wave(lines, files, null, direct).$1;
+
+  /// Runs one wave as [run] does, its term evaluated by `map`.
+  Wave runThrough(Map<String, List<int>> lines, Lookup Function(String port) files, Through map) =>
+      _wave(lines, files, null, map).$1;
 
   /// Runs one wave as [run] does, and records its provenance (step L1.20), every keypath
   /// beginning with the wave stamp, 0 for the one wave a program runs.
   (Wave, Provenance) provenance(Map<String, List<int>> lines, Lookup Function(String port) files) {
-    final (wave, provenance) = _wave(lines, files, const [Int(0)]);
+    final (wave, provenance) = _wave(lines, files, const [Int(0)], direct);
     return (wave, provenance!);
   }
 
@@ -90,6 +108,7 @@ final class Program {
     Map<String, List<int>> lines,
     Lookup Function(String port) files,
     List<Value>? root,
+    Through map,
   ) {
     final world = World();
     final record = Record();
@@ -107,11 +126,7 @@ final class Program {
       world.output(name);
     }
     final ev = Evaluator(world, provenanceRoot: root);
-    try {
-      ev.run(prelude(App(_main, [for (final (name, _) in inputs) Read(name)])));
-    } on KernelError catch (e) {
-      throw RunError('$e');
-    }
+    map(prelude(App(_main, [for (final (name, _) in inputs) Read(name)])), ev);
     final writes = <(String, List<int>)>[];
     for (final name in outputs) {
       switch (world.log(name)) {

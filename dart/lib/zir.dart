@@ -5,6 +5,7 @@ library;
 export 'src/zir/binary.dart' show decode, encode, nanBits;
 export 'src/zir/canon.dart';
 export 'src/zir/graph.dart';
+export 'src/zir/lower.dart' show lower, raise, raiseWith;
 export 'src/zir/text.dart'
     show
         edge,

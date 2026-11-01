@@ -36,7 +36,12 @@ final class Outcome {
 List<Outcome> testUnit(String text) => testIn(Db(), text);
 
 /// The checks of the unit `text`, in source order, reusing what `db` holds (step L1.30).
-List<Outcome> testIn(Db db, String text) {
+List<Outcome> testIn(Db db, String text) => _checks(db, text, direct);
+
+/// The checks of the unit `text`, in source order, each term evaluated by `map` (step L1.33).
+List<Outcome> testThrough(String text, Through map) => _checks(Db(), text, map);
+
+List<Outcome> _checks(Db db, String text, Through map) {
   final marked = fence.marks(text).lines;
   final out = <Outcome>[];
   try {
@@ -80,7 +85,7 @@ List<Outcome> testIn(Db db, String text) {
           key('row', [
             cone(cones, [t.check]),
           ]),
-          () => fails(() => _row(cones, t)),
+          () => fails(() => _row(cones, t, map)),
         );
       } else if (p case final p?) {
         final ports = utf8.encode('${p.inputs} ${p.outputs}');
@@ -88,7 +93,7 @@ List<Outcome> testIn(Db db, String text) {
           cone(cones, [main!, t.want, ...t.args]),
           ports,
         ]);
-        why = db.row(Query.wave, k, () => fails(() => _wave(cones, p, t)));
+        why = db.row(Query.wave, k, () => fails(() => _wave(cones, p, t, map)));
       } else {
         continue;
       }
@@ -129,30 +134,30 @@ final class _Fail implements Exception {
 }
 
 /// The value of `term` under the definitions it reaches and the prelude.
-Value _value(Cones cones, Term term) {
+Value _value(Cones cones, Term term, Through map) {
   try {
-    return Evaluator(World()).run(prelude(cones.close(term)));
-  } on KernelError catch (e) {
-    throw _Fail('$e');
+    return map(prelude(cones.close(term)), Evaluator(World()));
+  } on RunError catch (e) {
+    throw _Fail(e.message);
   }
 }
 
 /// Checks a row of a function's table.
-void _row(Cones cones, Test t) {
-  if (_value(cones, t.check) != const Bool(true)) {
+void _row(Cones cones, Test t, Through map) {
+  if (_value(cones, t.check, map) != const Bool(true)) {
     final PrimApp(args: [call, _]) = t.check as PrimApp;
-    throw _Fail('the result is ${_value(cones, call)}');
+    throw _Fail('the result is ${_value(cones, call, map)}');
   }
 }
 
 /// Checks a row of `main`'s table: runs the wave its key gives, and compares the writes.
-void _wave(Cones cones, Program program, Test t) {
+void _wave(Cones cones, Program program, Test t, Through map) {
   final lines = <String, List<int>>{};
   final files = <String, Lookup>{};
   for (final ((name, kind), arg) in _zip(program.inputs, t.args)) {
     switch (kind) {
       case PortKind.lines:
-        lines[name] = switch (_value(cones, arg)) {
+        lines[name] = switch (_value(cones, arg, map)) {
           Str(:final text) => utf8.encode(text.text),
           final v => throw _Fail('the `Lines` port `$name` is given as a String, not $v'),
         };
@@ -162,12 +167,12 @@ void _wave(Cones cones, Program program, Test t) {
   }
   final Wave wave;
   try {
-    wave = program.run(lines, (name) => files[name]!);
+    wave = program.runThrough(lines, (name) => files[name]!, map);
   } on RunError catch (e) {
     throw _Fail(e.message);
   }
   final outputs = program.outputs;
-  final wants = switch ((outputs.length, _value(cones, t.want))) {
+  final wants = switch ((outputs.length, _value(cones, t.want, map))) {
     (1, final v) => [v],
     (final n, Tuple(:final items)) when items.length == n => items,
     (final n, final v) => throw _Fail(

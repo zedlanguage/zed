@@ -256,3 +256,11 @@ dart/test/steps/l01_32_canonical_zir/zir.dart tests/steps/l01_32_canonical_zir/m
 dart/test/steps/l01_32_canonical_zir/stability_test.dart tests/steps/l01_32_canonical_zir/stability.rs
 dart/test/steps/l01_32_canonical_zir/fuzz_test.dart tests/steps/l01_32_canonical_zir/fuzz.rs
 dart/test/steps/l01_32_canonical_zir/scaling_test.dart tests/steps/l01_32_canonical_zir/mod.rs
+dart/lib/src/zir/lower.dart crates/zedc/src/zir/lower.rs
+dart/test/steps/l01_33_lowering/lowering.dart tests/steps/l01_33_lowering/mod.rs
+dart/test/steps/l01_33_lowering/corpus_test.dart tests/steps/l01_33_lowering/corpus.rs
+dart/test/steps/l01_33_lowering/cse_test.dart tests/steps/l01_33_lowering/cse.rs
+dart/test/steps/l01_33_lowering/errors_test.dart tests/steps/l01_33_lowering/errors.rs
+dart/test/steps/l01_33_lowering/forms_test.dart tests/steps/l01_33_lowering/forms.rs
+dart/test/steps/l01_33_lowering/ports_test.dart tests/steps/l01_33_lowering/ports.rs
+dart/test/steps/l01_33_lowering/scaling_test.dart tests/steps/l01_33_lowering/scaling.rs
