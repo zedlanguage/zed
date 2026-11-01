@@ -328,7 +328,7 @@ The Dart columns are filled as the port reaches each step.
 | other (Signed zeros) | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.33 | 0:13 | 0:06 | 2 (1) | 0 (0) | 0:10 | 0:40 | 22 (2) |
 | L1.34 | 0:22 | 0:05 | 0 (0) | 0 (0) | 0:12 | 0:15 | 0 (0) |
-| L1.35 | 0:03 | 0:03 | 0 (0) | 0 (0) | | | |
+| L1.35 | 0:03 | 0:03 | 0 (0) | 0 (0) | 0:01 | 0:03 | 0 (0) |
 | L1.36 | 0:26 | 0:04 | 0 (0) | 12 (2) | | | |
 | L1.37 | 0:07 | 0:04 | 0 (0) | 0 (0) | | | |
 | L1.38 | 0:17 | 0:09 | 0 (0) | 6 (2) | | | |
@@ -1085,7 +1085,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_34_memory/corpus.rs` | 3,156 | `test/steps/l01_34_memory/corpus_test.dart` | 2,570 | 0.81 |
 | `tests/steps/l01_34_memory/fusion.rs` | 2,960 | `test/steps/l01_34_memory/fusion_test.dart` | 2,589 | 0.87 |
 | `tests/steps/l01_34_memory/mod.rs` | 1,432 | `test/steps/l01_34_memory/machine.dart`<br>`test/steps/l01_34_memory/scaling_test.dart` | 6,330 | 4.42 |
-| `tests/steps/l01_35_mlir_study/mod.rs` | 4,008 | | | |
+| `tests/steps/l01_35_mlir_study/mod.rs` | 4,008 | `test/steps/l01_35_mlir_study/record_test.dart` | 3,073 | 0.77 |
 | `tests/steps/l01_36_cranelift/aot.rs` | 1,041 | | | |
 | `tests/steps/l01_36_cranelift/checks.rs` | 3,759 | | | |
 | `tests/steps/l01_36_cranelift/corpus.rs` | 2,456 | | | |
@@ -1141,7 +1141,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 297 Rust files** | **2,273,126** | | | |
-| **the Rust files ported so far** | **1,969,741** | | **1,689,992** | **0.86** |
+| **the Rust files ported so far** | **1,973,749** | | **1,693,065** | **0.86** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1669,10 +1669,17 @@ Dart:
   nest of 200 does not finish in 400 s. A control that builds each region's path eagerly is not
   caught at 200 or 800 deep: each path copies its parent's, which is quadratic in the depth but
   small beside the rest of the work there.
+- **L1.35** (the MLIR study). Easy. The step is a written record, `zed/compiler/MLIR.md`, and
+  one test file that holds its tables to ZIR's operations, region kinds and edge kinds. A
+  `switch` over the sealed `Op` with no default stops compiling when an operation is added,
+  as Rust's `match` with no wildcard does. Rust lists the region kinds by hand; Dart takes
+  `RegionKind.values`, so a new kind also fails the test. Like M0.8, the step has no scaling
+  test. Rust has 4 tests and Dart the same 4; a copy of the record with one operation's row
+  and one decision's bold removed fails two of them.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34, L1.35. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1757,6 +1764,7 @@ which the case was shorter, clearer or cheaper to run.
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
 | A recursion between two kinds of work, deeper than the call stack | Rust | The planner's `region` calls `consumes`, which calls `region`'s questions again, and the machine's `region` and `node` call each other; each is a plain recursive function. Dart answers each question on a stack that first pushes the questions it needs, and runs regions on a stack of activations, each holding the node it is at and what to do with its results (L1.34). |
 | A tree of results that each point to their parent | Dart | A region plan holds its parent and computes its path on first read with `late final`. Rust stores the plans flat in a `BTreeMap` keyed by path strings, since a child that points to its parent needs `Rc` and `Weak` (L1.34). |
+| Every value of an enum | Dart | `RegionKind.values` lists the kinds, so a test over them covers a kind added later. Rust has no list of an enum's variants without a derive from a crate such as `strum`, so the test names the five by hand (L1.35). |
 
 ### Changes per Dart file
 
@@ -2044,5 +2052,6 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_34_memory/corpus_test.dart` | 1 | 0 |
 | `test/steps/l01_34_memory/fusion_test.dart` | 1 | 0 |
 | `test/steps/l01_34_memory/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_35_mlir_study/record_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

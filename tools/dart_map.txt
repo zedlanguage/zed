@@ -272,3 +272,4 @@ dart/test/steps/l01_34_memory/checks_test.dart tests/steps/l01_34_memory/checks.
 dart/test/steps/l01_34_memory/corpus_test.dart tests/steps/l01_34_memory/corpus.rs
 dart/test/steps/l01_34_memory/fusion_test.dart tests/steps/l01_34_memory/fusion.rs
 dart/test/steps/l01_34_memory/scaling_test.dart tests/steps/l01_34_memory/mod.rs
+dart/test/steps/l01_35_mlir_study/record_test.dart tests/steps/l01_35_mlir_study/mod.rs
