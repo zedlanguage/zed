@@ -24,11 +24,16 @@ part of 'types.dart';
 // assumed empty. Values are finite, so a type whose every value would contain a smaller value
 // of the same type is empty, which is the answer the assumption gives; contractive, regular
 // and monotone definitions (rec.dart) make the set of types met finite. A result that rests on
-// an assumption later found false is dropped. Results are kept for the program's run.
+// an assumption later found false is dropped. Results are kept until [Emptiness.forget].
 
 final _memo = <Type, bool>{};
 
 extension Emptiness on Type {
+  /// Drops the kept results. A unit's checker calls it first: a type equal to a kept one but
+  /// built apart from it is compared with it in full, so a result kept from another unit
+  /// costs the size of the type at each lookup.
+  static void forget() => _memo.clear();
+
   /// Whether no value is in `this`.
   bool get isEmpty {
     if (_memo[this] case final b?) return b;

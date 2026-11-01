@@ -97,6 +97,7 @@ final class Info {
 Info check(List<Stmt> unit, Resolution res) => checkWith(Tables(unit, res), unit);
 
 Info checkWith(Tables t, List<Stmt> unit) {
+  k.Emptiness.forget();
   final ck = _Ck(t);
   ck
     ..run(ck.scope(unit, true))

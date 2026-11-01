@@ -22,7 +22,8 @@
 //! assumed empty. Values are finite, so a type whose every value would contain a smaller value
 //! of the same type is empty, which is the answer the assumption gives; contractive, regular
 //! and monotone definitions (module `rec`) make the set of types met finite. A result that
-//! rests on an assumption later found false is dropped. Results are kept for the thread.
+//! rests on an assumption later found false is dropped. Results are kept for the thread, until
+//! `Type::forget_emptiness`.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,6 +35,13 @@ thread_local! {
 }
 
 impl Type {
+    /// Drops the kept emptiness results. A unit's checker calls it first: a type equal to a
+    /// kept one but built apart from it is compared with it in full, so a result kept from
+    /// another unit costs the size of the type at each lookup.
+    pub fn forget_emptiness() {
+        MEMO.with(|m| m.borrow_mut().clear());
+    }
+
     /// Whether no value is in `self`.
     pub fn is_empty(&self) -> bool {
         if let Some(b) = MEMO.with(|m| m.borrow().get(self).copied()) {

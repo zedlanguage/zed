@@ -363,10 +363,13 @@ impl Ty {
         &self.atoms() - &self.family
     }
 
-    /// It without its loose atoms, as `e else d` narrows `e`.
+    /// It without its loose atoms, as `e else d` narrows `e`: what is not an atom, and the
+    /// family's atoms. Each step complements only a set that lists no atom names or the
+    /// family's, so it costs `O(f log n)` for `f` family atoms of `n`, where `set − loose`
+    /// would complement every loose atom.
     pub fn without_loose(&self) -> Ty {
         Ty {
-            set: &self.set - &self.loose(),
+            set: &(&self.set - &atoms()) | &(&self.set & &self.family),
             ..self.clone()
         }
     }

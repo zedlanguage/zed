@@ -38,7 +38,11 @@ pub struct Outcome {
 fn isa(pic: bool) -> Result<Arc<dyn cranelift_codegen::isa::TargetIsa>, String> {
     let mut flags = settings::builder();
     let set = |f: &mut settings::Builder, k, v| f.set(k, v).map_err(|e| format!("native: {e}"));
-    set(&mut flags, "opt_level", "speed")?;
+    // Cranelift's e-graph optimizer and its backtracking register allocator take time growing
+    // faster than the size of a function (n^1.6 and n^1.4 measured); with neither, each pass is
+    // linear (COMPLEXITY.md Z15).
+    set(&mut flags, "opt_level", "none")?;
+    set(&mut flags, "regalloc_algorithm", "single_pass")?;
     set(&mut flags, "is_pic", if pic { "true" } else { "false" })?;
     let host = cranelift_native::builder().map_err(|e| format!("native: {e}"))?;
     host.finish(settings::Flags::new(flags))

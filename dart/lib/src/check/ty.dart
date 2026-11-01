@@ -289,8 +289,11 @@ final class Ty {
   /// Its loose atoms: those of no named family.
   Type get loose => atomSet - family;
 
-  /// It without its loose atoms, as `e else d` narrows `e`.
-  Ty get withoutLoose => _with(set: set - loose);
+  /// It without its loose atoms, as `e else d` narrows `e`: what is not an atom, and the
+  /// family's atoms. Each step complements only a set that lists no atom names or the
+  /// family's, so it costs `O(f log n)` for `f` family atoms of `n`, where `set − loose`
+  /// would complement every loose atom.
+  Ty get withoutLoose => _with(set: (set - atoms) | (set & family));
 
   /// Its pieces: the scalars split by carrier, then the atoms and the other scalars, the
   /// tuples, the functions, the variables and the unknown.

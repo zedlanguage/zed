@@ -2,7 +2,7 @@
 //! counting machine runs, numbered, with its plan; each lambda; the constants; the
 //! primitives used as values; the lookup ports.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use zed_kernel::{Prim, Value};
 use zedc::zir::memory::{Mode, Plan};
@@ -56,6 +56,12 @@ pub(crate) struct Tables {
     pub prims: Vec<Prim>,
     /// The lookup ports.
     pub ports: Vec<std::sync::Arc<str>>,
+    /// Each lookup port's index among the ports.
+    pub port_at: HashMap<std::sync::Arc<str>, usize>,
+    /// Each constant's index among the constants.
+    const_at: BTreeMap<Value, usize>,
+    /// Each lambda's index by the path of its body.
+    lambda_at: HashMap<String, usize>,
     /// Whether a `match` fuses its release.
     pub fuse: bool,
 }
@@ -70,6 +76,9 @@ impl Tables {
             consts: Vec::new(),
             prims: Vec::new(),
             ports: Vec::new(),
+            port_at: HashMap::new(),
+            const_at: BTreeMap::new(),
+            lambda_at: HashMap::new(),
             fuse: plan.fuse,
         };
         t.visit(g, "r", plan)?;
@@ -118,7 +127,8 @@ impl Tables {
                     }
                 }
                 Op::Read(p) => {
-                    if !self.ports.contains(p) {
+                    if !self.port_at.contains_key(p) {
+                        self.port_at.insert(p.clone(), self.ports.len());
                         self.ports.push(p.clone());
                     }
                 }
@@ -131,6 +141,7 @@ impl Tables {
                         .ok_or_else(|| format!("native: lambda body `{body}` has no plan"))?
                         .args[..params]
                         .to_vec();
+                    self.lambda_at.insert(body.clone(), self.lambdas.len());
                     self.nodes[id].lambda = Some(self.lambdas.len());
                     self.lambdas.push(LambdaInfo {
                         node: id,
@@ -171,10 +182,9 @@ impl Tables {
         let Some(want) = &np.callee else {
             return Ok(());
         };
-        let li = self
-            .lambdas
-            .iter()
-            .position(|l| l.path == *want)
+        let li = *self
+            .lambda_at
+            .get(want)
             .ok_or_else(|| format!("native: {}: the plan calls `{want}`, no lambda", ni.path))?;
         let l = &self.lambdas[li];
         let mut error = None;
@@ -197,17 +207,18 @@ impl Tables {
     fn constant(&mut self, s: &Src) {
         if let Src::Const(v) = s
             && Word::scalar(v).is_none()
-            && !self.consts.contains(v)
+            && !self.const_at.contains_key(v)
         {
+            self.const_at.insert(v.clone(), self.consts.len());
             self.consts.push(v.clone());
         }
     }
 
     /// The index of non-scalar constant `v`.
     pub fn const_index(&self, v: &Value) -> usize {
-        self.consts
-            .iter()
-            .position(|c| c == v)
+        *self
+            .const_at
+            .get(v)
             .unwrap_or_else(|| panic!("constant {v:?} is not in the table {:?}", self.consts))
     }
 }

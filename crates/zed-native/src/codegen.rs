@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, FuncRef, InstBuilder, MemFlagsData};
-use cranelift_codegen::ir::{Signature, Value as V};
+use cranelift_codegen::ir::{Signature, StackSlotData, StackSlotKind, Value as V};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module};
 
@@ -32,6 +32,16 @@ use crate::tables::Tables;
 
 /// A word in generated code: its tag and its payload.
 type W = (V, V);
+
+/// Where a word is kept between the node that makes it and the nodes that use it: a stack
+/// slot, or a constant. Each word is loaded just before each use, so every value the register
+/// allocator sees lives only a few instructions; a value live across many calls costs it
+/// time in proportion to their number (COMPLEXITY.md Z14).
+#[derive(Clone, Copy)]
+enum Loc {
+    Slot(cranelift_codegen::ir::StackSlot),
+    Const(Word),
+}
 
 fn err(e: impl std::fmt::Display) -> String {
     format!("native: {e}")
@@ -170,7 +180,7 @@ impl<M: Module> Gen<'_, M> {
                 let l = fx.b.ins().iconst(I64, i as i64);
                 cg.call(fx, "rt_register", &[l, a]);
             }
-            let args: Vec<W> = g.args.iter().map(|_| cg.konst(fx, Word::state())).collect();
+            let args = g.args.iter().map(|_| Loc::Const(Word::state())).collect();
             let out = cg.region(fx, g, "r", args)?;
             Ok(vec![out[0]])
         })
@@ -203,11 +213,12 @@ impl<M: Module> Gen<'_, M> {
         let caps = node.inputs.len();
         self.function(self.bodies[i], 1 + l.params, 1, |cg, fx, ps| {
             let env = ps[0];
-            let mut args = ps[1..].to_vec();
+            let mut args: Vec<Loc> = ps[1..].iter().map(|w| cg.put(fx, *w)).collect();
             for c in 0..caps {
                 let k = fx.b.ins().iconst(I64, c as i64);
                 let w = cg.call(fx, "rt_cap", &[env.0, env.1, k]);
-                args.push(cg.checked(fx, (w[0], w[1])));
+                let w = cg.checked(fx, (w[0], w[1]));
+                args.push(cg.put(fx, w));
             }
             Ok(vec![cg.region(fx, region, &l.path, args)?[0]])
         })
@@ -217,12 +228,14 @@ impl<M: Module> Gen<'_, M> {
         let l = &self.t.lambdas[i];
         self.function(self.entries[i], 1 + l.params, 1, |cg, fx, ps| {
             let flat: Vec<V> = ps.iter().flat_map(|(t, b)| [*t, *b]).collect();
+            let kept: Vec<Loc> = ps[1..].iter().map(|w| cg.put(fx, *w)).collect();
             let r = cg.fref(fx, cg.bodies[i]);
             let inst = fx.b.ins().call(r, &flat);
             let out = fx.b.inst_results(inst).to_vec();
             for (j, m) in l.modes.iter().enumerate() {
                 if *m == Mode::Borrowed {
-                    cg.call(fx, "rt_dec", &[ps[1 + j].0, ps[1 + j].1]);
+                    let w = cg.get(fx, kept[j]);
+                    cg.dec(fx, w);
                 }
             }
             Ok(vec![(out[0], out[1])])
@@ -265,17 +278,34 @@ impl<M: Module> Gen<'_, M> {
         )
     }
 
-    fn src(&mut self, fx: &mut Fx<'_>, s: &Src, args: &[W], outs: &[Vec<W>]) -> W {
+    fn src(&self, s: &Src, args: &[Loc], outs: &[Vec<Loc>]) -> Loc {
         match s {
             Src::Arg(i) => args[*i],
             Src::Out(n, p) => outs[*n][*p],
-            Src::Const(v) => {
-                let w = Word::scalar(v).unwrap_or_else(|| Word {
-                    tag: Word::VAL,
-                    bits: self.t.const_index(v) as i64,
-                });
-                self.konst(fx, w)
-            }
+            Src::Const(v) => Loc::Const(Word::scalar(v).unwrap_or_else(|| Word {
+                tag: Word::VAL,
+                bits: self.t.const_index(v) as i64,
+            })),
+        }
+    }
+
+    /// `w` kept in a new stack slot.
+    fn put(&mut self, fx: &mut Fx<'_>, w: W) -> Loc {
+        let s =
+            fx.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
+        fx.b.ins().stack_store(I64, w.0, s, 0);
+        fx.b.ins().stack_store(I64, w.1, s, 8);
+        Loc::Slot(s)
+    }
+
+    /// The word at `l`.
+    fn get(&mut self, fx: &mut Fx<'_>, l: Loc) -> W {
+        match l {
+            Loc::Slot(s) => (
+                fx.b.ins().stack_load(I64, I64, s, 0),
+                fx.b.ins().stack_load(I64, I64, s, 8),
+            ),
+            Loc::Const(w) => self.konst(fx, w),
         }
     }
 
@@ -292,7 +322,7 @@ impl<M: Module> Gen<'_, M> {
         fx: &mut Fx<'_>,
         r: &Region,
         path: &str,
-        args: Vec<W>,
+        args: Vec<Loc>,
     ) -> Result<Vec<W>, String> {
         let plan = self.plan;
         let rp = plan
@@ -300,34 +330,40 @@ impl<M: Module> Gen<'_, M> {
             .get(path)
             .ok_or_else(|| format!("native: region `{path}` has no plan"))?;
         for &a in &rp.entry_drops {
-            self.dec(fx, args[a]);
+            let w = self.get(fx, args[a]);
+            self.dec(fx, w);
         }
-        let mut outs: Vec<Vec<W>> = Vec::new();
+        let mut outs: Vec<Vec<Loc>> = Vec::new();
         for (k, node) in r.nodes.iter().enumerate() {
             let at = format!("{path}.{k}");
             let np = &rp.nodes[k];
-            let ins: Vec<W> = node
+            let ins: Vec<Loc> = node
                 .inputs
                 .iter()
-                .map(|s| self.src(fx, s, &args, &outs))
+                .map(|s| self.src(s, &args, &outs))
                 .collect();
             for &j in &np.dups {
-                self.inc(fx, ins[j]);
+                let w = self.get(fx, ins[j]);
+                self.inc(fx, w);
             }
             let o = self.node(fx, &at, &ins)?;
+            let o = o.into_iter().map(|w| self.put(fx, w)).collect();
             outs.push(o);
             for s in &np.drops {
-                let w = self.src(fx, s, &args, &outs);
+                let l = self.src(s, &args, &outs);
+                let w = self.get(fx, l);
                 self.dec(fx, w);
             }
         }
+        for &i in &rp.result_dups {
+            let l = self.src(&r.results[i], &args, &outs);
+            let w = self.get(fx, l);
+            self.inc(fx, w);
+        }
         let mut out = Vec::new();
-        for (i, s) in r.results.iter().enumerate() {
-            let w = self.src(fx, s, &args, &outs);
-            if rp.result_dups.contains(&i) {
-                self.inc(fx, w);
-            }
-            out.push(w);
+        for s in &r.results {
+            let l = self.src(s, &args, &outs);
+            out.push(self.get(fx, l));
         }
         Ok(out)
     }
@@ -342,7 +378,7 @@ impl<M: Module> Gen<'_, M> {
         out
     }
 
-    fn node(&mut self, fx: &mut Fx<'_>, at: &str, ins: &[W]) -> Result<Vec<W>, String> {
+    fn node(&mut self, fx: &mut Fx<'_>, at: &str, ins: &[Loc]) -> Result<Vec<W>, String> {
         let t = self.t;
         let id = t.ids[at];
         let node = &t.nodes[id].node;
@@ -374,12 +410,23 @@ impl<M: Module> Gen<'_, M> {
     }
 
     /// Node `id` run by the runtime on `ins`.
-    fn slow(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[W]) -> W {
-        for w in ins {
+    fn slow(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[Loc]) -> W {
+        for l in ins {
+            let w = self.get(fx, *l);
             self.call(fx, "rt_arg", &[w.0, w.1]);
         }
         let k = fx.b.ins().iconst(I64, id as i64);
         self.call_word(fx, "rt_node", &[k])
+    }
+
+    /// The words at `ins`, flat, for a call.
+    fn flat(&mut self, fx: &mut Fx<'_>, ins: &[Loc]) -> Vec<V> {
+        ins.iter()
+            .flat_map(|l| {
+                let (t, b) = self.get(fx, *l);
+                [t, b]
+            })
+            .collect()
     }
 
     /// A block taking `n` words, for the end of a branch.
@@ -435,10 +482,10 @@ impl<M: Module> Gen<'_, M> {
     }
 
     /// Primitive `p` on scalar words inline, the runtime running every other case.
-    fn inline(&mut self, fx: &mut Fx<'_>, p: Prim, id: usize, ins: &[W]) -> W {
+    fn inline(&mut self, fx: &mut Fx<'_>, p: Prim, id: usize, ins: &[Loc]) -> W {
         let merge = self.merge(fx, 1);
         let slow = fx.b.create_block();
-        let a = ins[0];
+        let a = self.get(fx, ins[0]);
         if ins.len() == 1 {
             let next = fx.b.create_block();
             match p {
@@ -471,7 +518,7 @@ impl<M: Module> Gen<'_, M> {
                 _ => unreachable!("checked by `inline`"),
             }
         } else {
-            let b = ins[1];
+            let b = self.get(fx, ins[1]);
             let int = int_op(p).is_some() || int_cmp(p).is_some();
             let float = float_op(p) || float_cmp(p).is_some();
             if int {
@@ -536,13 +583,13 @@ impl<M: Module> Gen<'_, M> {
 
     /// A call: directly when the plan resolves the callee and the closure is it, through
     /// the closure's entry when its arity fits, else by the runtime.
-    fn apply(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[W]) -> Result<Vec<W>, String> {
+    fn apply(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[Loc]) -> Result<Vec<W>, String> {
         let t = self.t;
         let ni = &t.nodes[id];
         let n = ni.node.outputs.len();
         let merge = self.merge(fx, n);
         let generic = fx.b.create_block();
-        let f = ins[0];
+        let f = self.get(fx, ins[0]);
         let nargs = fx.b.ins().iconst(I64, ins.len() as i64 - 1);
         let lam = self.call(fx, "rt_callable", &[f.0, f.1, nargs])[0];
         if let Some(li) = ni.callee {
@@ -553,14 +600,15 @@ impl<M: Module> Gen<'_, M> {
                 self.call_word(fx, "rt_error", &[k]);
                 fx.b.ins().jump(fx.err, &[]);
             } else {
-                let flat: Vec<V> = ins.iter().flat_map(|(t, b)| [*t, *b]).collect();
+                let flat = self.flat(fx, ins);
                 let r = self.fref(fx, self.bodies[li]);
                 let inst = fx.b.ins().call(r, &flat);
                 let out = fx.b.inst_results(inst).to_vec();
                 let w = self.checked(fx, (out[0], out[1]));
                 for (i, m) in t.lambdas[li].modes.iter().enumerate() {
                     if ni.modes[1 + i] == Mode::Owned && *m == Mode::Borrowed {
-                        self.dec(fx, ins[1 + i]);
+                        let w = self.get(fx, ins[1 + i]);
+                        self.dec(fx, w);
                     }
                 }
                 let ws = self.states(fx, w, n);
@@ -577,7 +625,7 @@ impl<M: Module> Gen<'_, M> {
         let addr = self.call(fx, "rt_entry", &[li])[0];
         let s = sig(self.m, 2 * ins.len(), 2);
         let sr = fx.b.import_signature(s);
-        let flat: Vec<V> = ins.iter().flat_map(|(t, b)| [*t, *b]).collect();
+        let flat = self.flat(fx, ins);
         let inst = fx.b.ins().call_indirect(sr, addr, &flat);
         let out = fx.b.inst_results(inst).to_vec();
         let w = self.checked(fx, (out[0], out[1]));
@@ -598,7 +646,7 @@ impl<M: Module> Gen<'_, M> {
         id: usize,
         at: &str,
         i: usize,
-        args: Vec<W>,
+        args: Vec<Loc>,
         merge: Block,
     ) -> Result<(), String> {
         let t = self.t;
@@ -631,19 +679,20 @@ impl<M: Module> Gen<'_, M> {
         fx: &mut Fx<'_>,
         id: usize,
         at: &str,
-        ins: &[W],
+        ins: &[Loc],
     ) -> Result<Vec<W>, String> {
         let n = self.t.nodes[id].node.outputs.len();
         let merge = self.merge(fx, n);
         let arms = [fx.b.create_block(), fx.b.create_block()];
         let fail = fx.b.create_block();
         let slow = fx.b.create_block();
-        let c = ins[0];
+        let c = self.get(fx, ins[0]);
         let is = fx.b.ins().icmp_imm_s(IntCC::Equal, c.0, Word::BOOL);
         self.when(fx, is, slow);
         fx.b.ins().brif(c.1, arms[0], &[], arms[1], &[]);
         fx.b.switch_to_block(slow);
-        for w in ins {
+        for l in ins {
+            let w = self.get(fx, *l);
             self.call(fx, "rt_arg", &[w.0, w.1]);
         }
         let k = fx.b.ins().iconst(I64, id as i64);
@@ -665,11 +714,12 @@ impl<M: Module> Gen<'_, M> {
         id: usize,
         at: &str,
         binders: Vec<usize>,
-        ins: &[W],
+        ins: &[Loc],
     ) -> Result<Vec<W>, String> {
         let n = self.t.nodes[id].node.outputs.len();
         let merge = self.merge(fx, n);
-        for w in ins {
+        for l in ins {
+            let w = self.get(fx, *l);
             self.call(fx, "rt_arg", &[w.0, w.1]);
         }
         let k = fx.b.ins().iconst(I64, id as i64);
@@ -684,7 +734,7 @@ impl<M: Module> Gen<'_, M> {
             for b in 0..*nb {
                 let k = fx.b.ins().iconst(I64, b as i64);
                 let w = self.call(fx, "rt_out", &[k]);
-                args.push((w[0], w[1]));
+                args.push(self.put(fx, (w[0], w[1])));
             }
             args.extend_from_slice(&ins[1..]);
             self.arm(fx, id, at, i, args, merge)?;

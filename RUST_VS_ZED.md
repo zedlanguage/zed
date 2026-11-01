@@ -153,6 +153,46 @@ cost is small beside the rest of the check. A first version of that test put eve
 line, and took more than 15 min with either code: each step of a diagnostic prints its whole
 line, so the output was `O(n²)` characters (F30, not a fault). The Rust changes are 31 lines
 added and 22 removed in `crates/zedc/src/check/mod.rs` and `ty.rs`, with 54 lines of test.
+The rest of the audit's list in the native code and the counting machine is fixed in the Rust
+alone, since the port has not reached L1.34 (COMPLEXITY.md Z5, Z8, Z14, Z15, F33). Each word of
+the native code is kept in a stack slot and loaded just before each use, so that no value lives
+across many calls; field, port, constant and lambda indices are maps; the counting machine's
+memory check looks only at the cells touched since the last check; and Cranelift runs with its
+e-graph optimizer and backtracking register allocator off. With the old code put back, many
+named fields and many ports do not finish in 10 times the fixed time (671 s and 1411 s), and
+many lambdas take 0.53, 1.6, 5.0 and 17.8 s at n = 60 to 500, against 2.9 s for the fixed code
+at 500. Many constants and one value used many times are linear on the old code at the sizes
+the tests run, so those two tests show no old cost.
+
+| file | lines added | lines removed |
+|---|---:|---:|
+| `crates/zed-native/src/codegen.rs` | 94 | 44 |
+| `crates/zed-native/src/hooks.rs` | 21 | 14 |
+| `crates/zed-native/src/lib.rs` | 5 | 1 |
+| `crates/zed-native/src/tables.rs` | 21 | 10 |
+| `crates/zedc/src/store/product.rs` | 3 | 2 |
+| `crates/zedc/src/zir/memory.rs` | 112 | 29 |
+| `tests/steps/l01_36_cranelift/mod.rs` | 1 | 0 |
+| `tests/steps/l01_36_cranelift/scaling.rs` (new) | 169 | 0 |
+
+At L1.27 the port fixed F21 in both languages, and found and fixed a second shared fault
+(F32): the kernel kept its emptiness results from one unit to the next, and a unit checked
+after an equal one compared each of its types in full with the equal kept one. `dart test`
+runs a file's tests in one isolate, so the Dart showed it first; the Rust showed it in a
+probe on one thread (second check 0.55, 2.0 and 7.8 s at n = 2000 to 8000, against 0.26,
+0.43 and 0.85 s). The new test checks a chain of failure atoms twice at each size. With the
+old `without_loose` it does not finish in 10 times the fixed time in either language; with
+the old memo it fails in Dart and passes in Rust, where the fastest of five runs at the larger
+size is the first, made before an equal unit is kept. The test needs a 512 MB stack in Rust,
+since the Rust parser and checker recurse once per operator.
+
+| file | lines added | lines removed |
+|---|---:|---:|
+| `crates/zed-kernel/src/types/empty.rs` | 9 | 1 |
+| `crates/zedc/src/check/mod.rs` | 1 | 0 |
+| `crates/zedc/src/check/ty.rs` | 5 | 2 |
+| `tests/steps/l01_27_absences/mod.rs` | 1 | 0 |
+| `tests/steps/l01_27_absences/scaling.rs` (new) | 37 | 0 |
 
 ## Build and test baseline (Rust)
 
@@ -279,7 +319,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.24 | 0:12 | 0:05 | 0 (0) | 1 (1) | 0:05 | 0:04 | 0 (0) |
 | L1.25 | 0:36 | 0:16 | 1 (1) | 7 (2) | 0:19 | 0:05 | 9 (3) |
 | L1.26 | 1:01 | 0:12 | 0 (0) | 6 (2) | 0:27 | 0:28 | 119 (9) |
-| L1.27 | 0:07 | 0:03 | 0 (0) | 2 (2) | | | |
+| L1.27 | 0:07 | 0:03 | 0 (0) | 2 (2) | 0:42 | 0:35 | 1 (1) |
 | L1.28 | 0:15 | 0:07 | 0 (0) | 0 (0) | | | |
 | L1.29 | 0:17 | 0:07 | 0 (0) | 4 (2) | | | |
 | L1.30 | 0:06 | 0:04 | 0 (0) | 3 (1) | | | |
@@ -348,8 +388,8 @@ The Dart columns are filled as the port reaches each step.
 ## Changes per file
 
 How many times each file was written or edited: before the performance pass, and during it.
-A file's creation counts as one change. 437 files: 1,165 changes before the performance pass,
-986 during it. DESIGN.md lives in the spec repository but is counted, since steps edited it.
+A file's creation counts as one change. 438 files: 1,165 changes before the performance pass,
+1,000 during it. DESIGN.md lives in the spec repository but is counted, since steps edited it.
 The Dart port records the same two numbers for its own files in the Dart section below.
 
 | file | changes before the performance pass | changes during the performance pass |
@@ -357,14 +397,14 @@ The Dart port records the same two numbers for its own files in the Dart section
 | `STATUS.md` | 70 | 51 |
 | `crates/zed-kernel/src/eval.rs` | 39 | 17 |
 | `DESIGN.md` | 39 | 16 |
-| `crates/zedc/src/check/mod.rs` | 21 | 32 |
+| `crates/zedc/src/check/mod.rs` | 21 | 33 |
 | `tests/steps/l01_23_subtyping/scaling.rs` | 0 | 50 |
-| `COMPLEXITY.md` | 1 | 47 |
+| `COMPLEXITY.md` | 1 | 48 |
 | `tests/steps/main.rs` | 47 | 0 |
-| `crates/zedc/src/store/product.rs` | 12 | 31 |
+| `crates/zedc/src/store/product.rs` | 12 | 32 |
 | `tests/steps/l01_25_preimage_catalog/scaling.rs` | 2 | 34 |
 | `crates/zedc/src/store/preimage.rs` | 9 | 24 |
-| `crates/zed-kernel/src/types/empty.rs` | 1 | 29 |
+| `crates/zed-kernel/src/types/empty.rs` | 1 | 30 |
 | `crates/zedc/src/store/presburger.rs` | 5 | 25 |
 | `crates/zedc/src/elab.rs` | 14 | 15 |
 | `tests/src/scaling.rs` | 1 | 27 |
@@ -390,7 +430,8 @@ The Dart port records the same two numbers for its own files in the Dart section
 | `tests/steps/l01_28_staging/trick.rs` | 3 | 9 |
 | `crates/zed-kernel/src/lib.rs` | 10 | 1 |
 | `crates/zed-kernel/src/value.rs` | 8 | 3 |
-| `crates/zedc/src/check/ty.rs` | 6 | 5 |
+| `crates/zedc/src/check/ty.rs` | 6 | 6 |
+| `tests/steps/l01_27_absences/scaling.rs` | 0 | 1 |
 | `crates/zedc/src/lex/mod.rs` | 9 | 2 |
 | `crates/zedc/src/lex/string.rs` | 8 | 3 |
 | `crates/zedc/src/store/revision.rs` | 4 | 7 |
@@ -400,7 +441,7 @@ The Dart port records the same two numbers for its own files in the Dart section
 | `tests/steps/l01_38_presburger/mod.rs` | 8 | 2 |
 | `tests/steps/l01_39_reduced_product/controls.rs` | 2 | 8 |
 | `crates/zed-kernel/src/term.rs` | 9 | 0 |
-| `crates/zed-native/src/codegen.rs` | 4 | 5 |
+| `crates/zed-native/src/codegen.rs` | 4 | 6 |
 | `crates/zedc/src/ast/mod.rs` | 6 | 3 |
 | `crates/zedc/src/ast/stmts.rs` | 9 | 0 |
 | `crates/zedc/src/resolve.rs` | 6 | 3 |
@@ -419,7 +460,7 @@ The Dart port records the same two numbers for its own files in the Dart section
 | `tests/steps/l01_25_preimage_catalog/stops.rs` | 6 | 2 |
 | `tests/steps/l01_26_type_resolution/probe.rs` | 8 | 0 |
 | `tests/steps/l01_31_zir/rejections.rs` | 8 | 0 |
-| `tests/steps/l01_36_cranelift/scaling.rs` | 0 | 8 |
+| `tests/steps/l01_36_cranelift/scaling.rs` | 0 | 9 |
 | `tests/steps/l01_38_presburger/scaling.rs` | 0 | 8 |
 | `tests/steps/m0_05_widening_and_iteration/iteration.rs` | 1 | 7 |
 | `tests/steps/m0_10_finite_model_harness/laws_11_20.rs` | 8 | 0 |
@@ -447,11 +488,11 @@ The Dart port records the same two numbers for its own files in the Dart section
 | `$D/mod.rs` | 5 | 0 |
 | `.github/workflows/ci.yml` | 5 | 0 |
 | `crates/zed-kernel/src/error.rs` | 5 | 0 |
-| `crates/zed-native/src/lib.rs` | 1 | 4 |
+| `crates/zed-native/src/lib.rs` | 1 | 5 |
 | `crates/zedc/src/query.rs` | 2 | 3 |
 | `crates/zedc/src/store/mod.rs` | 5 | 0 |
 | `crates/zedc/src/zir/binary.rs` | 5 | 0 |
-| `crates/zedc/src/zir/memory.rs` | 4 | 1 |
+| `crates/zedc/src/zir/memory.rs` | 4 | 2 |
 | `docs/layout.md` | 5 | 0 |
 | `tests/steps/l01_15_kernel_terms/evidence.rs` | 5 | 0 |
 | `tests/steps/l01_20_provenance/mod.rs` | 3 | 2 |
@@ -489,7 +530,7 @@ The Dart port records the same two numbers for its own files in the Dart section
 | `tests/steps/l01_19_whole_file_ports/lines.rs` | 4 | 0 |
 | `tests/steps/l01_24_refinement_lattices/mod.rs` | 2 | 2 |
 | `tests/steps/l01_26_type_resolution/mod.rs` | 3 | 1 |
-| `tests/steps/l01_27_absences/mod.rs` | 4 | 0 |
+| `tests/steps/l01_27_absences/mod.rs` | 4 | 1 |
 | `tests/steps/l01_29_diagnostics/mod.rs` | 1 | 3 |
 | `tests/steps/l01_30_queries/reuse.rs` | 4 | 0 |
 | `tests/steps/l01_39_reduced_product/exact.rs` | 0 | 4 |
@@ -499,8 +540,8 @@ The Dart port records the same two numbers for its own files in the Dart section
 | `zed/prelude/revision.zed` | 3 | 1 |
 | `$d/units.rs` | 3 | 0 |
 | `crates/zed-kernel/src/exact.rs` | 3 | 0 |
-| `crates/zed-native/src/hooks.rs` | 2 | 1 |
-| `crates/zed-native/src/tables.rs` | 2 | 1 |
+| `crates/zed-native/src/hooks.rs` | 2 | 2 |
+| `crates/zed-native/src/tables.rs` | 2 | 2 |
 | `crates/zedc/src/axioms.rs` | 3 | 0 |
 | `crates/zedc/src/parse/mod.rs` | 3 | 0 |
 | `crates/zedc/src/store/affine.rs` | 1 | 2 |
@@ -610,7 +651,7 @@ The Dart port records the same two numbers for its own files in the Dart section
 | `tests/steps/l01_33_lowering/ports.rs` | 0 | 2 |
 | `tests/steps/l01_34_memory/cells.rs` | 2 | 0 |
 | `tests/steps/l01_36_cranelift/corpus.rs` | 2 | 0 |
-| `tests/steps/l01_36_cranelift/mod.rs` | 1 | 1 |
+| `tests/steps/l01_36_cranelift/mod.rs` | 1 | 2 |
 | `tests/steps/l01_37_oracle/mod.rs` | 2 | 0 |
 | `tests/steps/l01_38_presburger/controls.rs` | 1 | 1 |
 | `tests/steps/l01_38_presburger/preimage.rs` | 2 | 0 |
@@ -815,7 +856,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-kernel/src/text.rs` | 5,582 | `lib/src/kernel/text.dart`<br>`test/kernel/text_test.dart` | 4,417 | 0.79 |
 | `crates/zed-kernel/src/types.rs` | 40,294 | `lib/src/kernel/types.dart` | 31,339 | 0.78 |
 | `crates/zed-kernel/src/types/bdd.rs` | 27,452 | `lib/src/kernel/bdd.dart`<br>`test/steps/l01_22_type_representation/bdd_test.dart` | 20,688 | 0.75 |
-| `crates/zed-kernel/src/types/empty.rs` | 7,024 | `lib/src/kernel/empty.dart` | 6,801 | 0.97 |
+| `crates/zed-kernel/src/types/empty.rs` | 7,395 | `lib/src/kernel/empty.dart` | 7,079 | 0.96 |
 | `crates/zed-kernel/src/types/rec.rs` | 18,327 | `lib/src/kernel/rec.dart` | 13,763 | 0.75 |
 | `crates/zed-kernel/src/value.rs` | 16,934 | `lib/src/kernel/value.dart`<br>`test/kernel/value_test.dart` | 15,465 | 0.91 |
 | `crates/zed-kernel/src/words.rs` | 5,277 | `lib/src/kernel/words.dart` | 4,040 | 0.77 |
@@ -836,8 +877,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/canon/domain.rs` | 4,086 | `lib/src/canon/domain.dart` | 3,436 | 0.84 |
 | `crates/zedc/src/canon/mod.rs` | 8,601 | `lib/src/canon/canon.dart`<br>`lib/canon.dart`<br>`lib/src/canon/blake3.dart`<br>`test/canon/blake3_test.dart` | 18,499 | 2.15 |
 | `crates/zedc/src/canon/serial.rs` | 10,637 | `lib/src/canon/serial.dart` | 7,244 | 0.68 |
-| `crates/zedc/src/check/mod.rs` | 109,468 | `lib/check.dart` | 80,072 | 0.73 |
-| `crates/zedc/src/check/ty.rs` | 27,742 | `lib/src/check/ty.dart` | 23,443 | 0.85 |
+| `crates/zedc/src/check/mod.rs` | 109,499 | `lib/check.dart` | 80,096 | 0.73 |
+| `crates/zedc/src/check/ty.rs` | 28,025 | `lib/src/check/ty.dart` | 23,711 | 0.85 |
 | `crates/zedc/src/cost.rs` | 9,373 | `lib/cost.dart`<br>`test/cost_test.dart` | 10,032 | 1.07 |
 | `crates/zedc/src/elab.rs` | 57,082 | `lib/elab.dart`<br>`lib/src/tables.dart` | 43,882 | 0.77 |
 | `crates/zedc/src/fence.rs` | 2,991 | `lib/fence.dart` | 2,352 | 0.79 |
@@ -1007,9 +1048,9 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_26_type_resolution/random.rs` | 4,051 | `test/steps/l01_26_type_resolution/random_test.dart` | 3,388 | 0.84 |
 | `tests/steps/l01_26_type_resolution/scaling.rs` | 4,188 | `test/steps/l01_26_type_resolution/scaling_test.dart` | 3,632 | 0.87 |
 | `tests/steps/l01_26_type_resolution/signatures.rs` | 4,237 | `test/steps/l01_26_type_resolution/signatures_test.dart` | 3,895 | 0.92 |
-| `tests/steps/l01_27_absences/families.rs` | 3,030 | | | |
-| `tests/steps/l01_27_absences/loose.rs` | 2,981 | | | |
-| `tests/steps/l01_27_absences/mod.rs` | 565 | | | |
+| `tests/steps/l01_27_absences/families.rs` | 3,030 | `test/steps/l01_27_absences/families_test.dart` | 2,844 | 0.94 |
+| `tests/steps/l01_27_absences/loose.rs` | 2,981 | `test/steps/l01_27_absences/loose_test.dart` | 2,848 | 0.96 |
+| `tests/steps/l01_27_absences/mod.rs` | 578 | | | |
 | `tests/steps/l01_28_staging/mix.rs` | 7,525 | | | |
 | `tests/steps/l01_28_staging/mod.rs` | 1,692 | | | |
 | `tests/steps/l01_28_staging/scaling.rs` | 4,036 | | | |
@@ -1097,8 +1138,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 892 | 0.55 |
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
-| **all 295 Rust files** | **2,266,093** | | | |
-| **the Rust files ported so far** | **1,648,132** | | **1,350,546** | **0.82** |
+| **all 295 Rust files** | **2,266,791** | | | |
+| **the Rust files ported so far** | **1,654,828** | | **1,356,808** | **0.82** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1503,14 +1544,22 @@ Dart:
   parameter found it. The L1.18 test of a chain of `+` failures elaborated source text,
   where the Rust test builds the kernel term, and so timed the checker as well as the
   evaluator: 137 s of the Dart suite's 220 s. It now builds the term, and the suite takes
-  129 s. That test found an O(n²) in both checkers: on a chain `#e0 + … + #e(n-1)` each
-  `+` recomputes the atoms outside the error family over all atoms so far (3.3 s at
-  n = 1000 and 9.1 s at 2000 in Dart, 1.09 s and 4.30 s in the Rust release CLI); its fix
-  is pending, with scaling tests in both languages.
+  129 s. The checker on that chain is O(n²) in both languages, COMPLEXITY.md F21, which is
+  to be fixed at L1.27: 3.3 s at n = 1000 and 9.1 s at 2000 in Dart, 1.09 s and 4.30 s in
+  the Rust release CLI.
+- **L1.27** (absences). Easy: the checker ported at L1.26 already holds the step's logic, and
+  the 11 tests passed on their first run, after one compile error (`Carrier.int` for
+  `Carrier.integer`). With `withoutLoose` returning its operand unchanged, 8 of the 11 fail.
+  Most of the time went to the two shared faults F21 and F32 and their controls. The fix of
+  F21 is one line in each language, an identity of sets: `set − loose` is
+  `(set − atoms) ∪ (set ∩ family)`, and only the right side avoids complementing every atom.
+  A first fix of F32 keyed the Dart memo by identity, which broke the reuse of results
+  within one unit that L1.23's tuple-difference test needs; the memo is now cleared at the
+  start of each unit's check, in both languages.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1579,12 +1628,14 @@ which the case was shorter, clearer or cheaper to run.
 | An undo log | Dart | Each change to the checker's state pushes a closure that undoes it, and backtracking runs them in reverse. The Rust log is an enum with one variant per kind of change and a `match` that undoes each, which must be kept in step with every new kind of change (L1.26). |
 | Deep recursion over a program | Dart | The checker's passes are `sync*` generators stepped by one loop, so a deeply nested body uses heap, not stack. The Rust checker recurses on the native stack, which bounds the nesting it can take (L1.26). |
 | Mapping over an optional value | Rust | `iter.next().is_some_and(\|c\| …)` tests the first item, if any, in one expression. Dart has no `map` on a nullable value; `.first` throws on an empty iterable, and the port needs an `if (… case final c?)` statement (L1.26). |
+| State kept between tests | Rust | The Rust test harness runs each test on its own thread, so a thread-local memo starts empty in each test. `dart test` runs all the tests of a file in one isolate, so a top-level memo carries over from test to test; this exposed F32, which a long-running Rust process would also have (L1.27). |
+| Deep recursion in a test | Dart | A chain of 8,000 operators parses and checks with no setting. The Rust test runs on a thread with a 512 MB stack, since the parser and checker recurse once per operator (L1.27). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
 
 ### Changes per Dart file
 
-Counted as for the Rust files: a file's creation is one change. No step has had a
-performance pass yet, so the second number is 0 throughout.
+Counted as for the Rust files: a file's creation is one change. The second number counts the
+changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 
 | file | changes before the performance pass | changes during the performance pass |
 |---|---:|---:|
@@ -1600,7 +1651,7 @@ performance pass yet, so the second number is 0 throughout.
 | `lib/src/kernel/print.dart` | 4 | 0 |
 | `lib/src/kernel/types.dart` | 4 | 0 |
 | `lib/src/kernel/bdd.dart` | 4 | 0 |
-| `lib/src/kernel/empty.dart` | 3 | 0 |
+| `lib/src/kernel/empty.dart` | 3 | 1 |
 | `lib/src/kernel/rec.dart` | 1 | 0 |
 | `lib/src/kernel/text.dart` | 1 | 0 |
 | `lib/src/kernel/value.dart` | 3 | 0 |
@@ -1808,8 +1859,8 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_24_refinement_lattices/float_test.dart` | 1 | 0 |
 | `test/steps/l01_24_refinement_lattices/loops_test.dart` | 1 | 0 |
 | `test/steps/l01_24_refinement_lattices/scaling_test.dart` | 1 | 0 |
-| `lib/check.dart` | 2 | 0 |
-| `lib/src/check/ty.dart` | 1 | 0 |
+| `lib/check.dart` | 2 | 1 |
+| `lib/src/check/ty.dart` | 1 | 1 |
 | `lib/src/tables.dart` | 1 | 0 |
 | `test/steps/l01_26_type_resolution/support.dart` | 1 | 0 |
 | `test/steps/l01_26_type_resolution/adoption_test.dart` | 1 | 0 |
@@ -1819,5 +1870,8 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_26_type_resolution/random_test.dart` | 1 | 0 |
 | `test/steps/l01_26_type_resolution/scaling_test.dart` | 1 | 0 |
 | `test/steps/l01_26_type_resolution/signatures_test.dart` | 1 | 0 |
+| `test/steps/l01_27_absences/families_test.dart` | 1 | 0 |
+| `test/steps/l01_27_absences/loose_test.dart` | 1 | 0 |
+| `test/steps/l01_27_absences/scaling_test.dart` | 0 | 1 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

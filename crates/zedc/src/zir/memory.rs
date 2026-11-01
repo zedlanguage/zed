@@ -50,7 +50,7 @@
 //! end only the result is live.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -321,7 +321,8 @@ impl Planner {
             nodes: Vec::new(),
             result_dups: Vec::new(),
         };
-        let src = |e: usize| match u.base.iter().rposition(|b| *b <= e) {
+        // The node whose outputs hold edge `e`, found by binary search: `base` never decreases.
+        let src = |e: usize| match u.base.partition_point(|b| *b <= e).checked_sub(1) {
             Some(k) if e >= r.args.len() => Src::Out(k, e - u.base[k]),
             _ => Src::Arg(e),
         };
@@ -506,6 +507,12 @@ struct Machine<'g, 'e> {
     ev: &'e mut Evaluator,
     heap: Vec<Cell>,
     frames: Vec<Vec<Slot<'g>>>,
+    /// For each cell, its references from owned slots and from the kids of live cells, and
+    /// the slots that hold it, owned or not: kept as they change, so that a check need only
+    /// look at the cells touched since the last one.
+    refs: Vec<u32>,
+    holds: Vec<u32>,
+    touched: Vec<usize>,
     stats: Stats,
     live: u64,
     alone: HashMap<*const Node, Region>,
@@ -519,6 +526,9 @@ pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats)
         ev,
         heap: Vec::new(),
         frames: Vec::new(),
+        refs: Vec::new(),
+        holds: Vec::new(),
+        touched: Vec::new(),
         stats: Stats::default(),
         live: 0,
         alone: HashMap::new(),
@@ -526,9 +536,9 @@ pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats)
     let args = g.args.iter().map(|_| (Mv::State, false)).collect();
     let mut out = m.region(g, "r", args)?;
     let v = out.swap_remove(0);
-    m.frames.push(vec![Some((v.clone(), true))]);
+    m.push_frame(vec![Some((v.clone(), true))]);
     m.check("the end of the run")?;
-    m.frames.pop();
+    m.pop_frame();
     m.dec(v.cell())?;
     if m.live != 0 {
         return Err(format!(
@@ -566,7 +576,7 @@ impl<'g> Machine<'g, '_> {
         for (i, a) in args.into_iter().enumerate() {
             frame[i] = Some(a);
         }
-        self.frames.push(frame);
+        self.push_frame(frame);
         for &a in &rp.entry_drops {
             let (v, _) = self.take(&u, &Src::Arg(a), path, "an entry drop")?;
             self.dec(v.cell())?;
@@ -579,19 +589,20 @@ impl<'g> Machine<'g, '_> {
             for s in &node.inputs {
                 ins.push(self.read(&u, s, &at)?);
             }
+            let mut dup = vec![false; node.inputs.len()];
             for &j in &np.dups {
+                dup[j] = true;
                 self.inc(ins[j].cell());
             }
             for (j, s) in node.inputs.iter().enumerate() {
-                if np.modes[j] == Mode::Owned && !np.dups.contains(&j) && u.slot(s).is_some() {
+                if np.modes[j] == Mode::Owned && !dup[j] && u.slot(s).is_some() {
                     self.take(&u, s, &at, &format!("input {j}, taken owned"))?;
                 }
             }
             let outs = self.node(node, np, &at, ins)?;
-            let frame = self.frames.last_mut().expect("the region's frame");
             for (p, v) in outs.into_iter().enumerate() {
                 let owned = !node.outputs[p].is_state();
-                frame[u.base[k] + p] = Some((v, owned));
+                self.set(u.base[k] + p, Some((v, owned)));
             }
             for s in &np.drops {
                 let (v, _) = self.take(&u, s, &at, "a drop")?;
@@ -605,21 +616,22 @@ impl<'g> Machine<'g, '_> {
                         show_src(s)
                     ));
                 }
-                self.frames.last_mut().expect("frame")[e] = None;
+                self.set(e, None);
             }
             self.check(&format!("node {at}"))?;
         }
+        let dup: HashSet<usize> = rp.result_dups.iter().copied().collect();
         let mut out = Vec::new();
         for (i, s) in r.results.iter().enumerate() {
             let v = self.read(&u, s, &format!("{path} result {i}"))?;
-            if rp.result_dups.contains(&i) {
+            if dup.contains(&i) {
                 self.inc(v.cell());
             } else if u.slot(s).is_some() && !u.state[u.slot(s).expect("an edge")] {
                 self.take(&u, s, path, &format!("result {i}"))?;
             }
             out.push(v);
         }
-        let frame = self.frames.pop().expect("the region's frame");
+        let frame = self.pop_frame();
         if let Some(e) = frame.iter().position(|s| matches!(s, Some((_, true)))) {
             return Err(format!(
                 "memory: `{path}` ends still owning edge {e}, a leak"
@@ -652,14 +664,13 @@ impl<'g> Machine<'g, '_> {
                 };
                 match &v {
                     Value::Atom(a) if !a.args.is_empty() && a.args.len() + 2 == ins.len() => {
+                        let at: BTreeMap<&Value, usize> =
+                            names.iter().enumerate().map(|(i, n)| (n, i)).collect();
                         let kids = (0..a.args.len())
                             .map(|i| {
                                 let from = match names.is_empty() {
                                     true => i,
-                                    false => names
-                                        .iter()
-                                        .position(|n| *n == Value::Str(a.fields[i].clone().into()))
-                                        .expect("a field the atom was made with"),
+                                    false => at[&Value::Str(a.fields[i].clone().into())],
                                 };
                                 ins[2 + from].cell()
                             })
@@ -727,9 +738,9 @@ impl<'g> Machine<'g, '_> {
                         }
                     }
                     args.extend(c.caps.iter().map(|v| (v.clone(), false)));
-                    self.frames.push(held);
+                    self.push_frame(held);
                     let out = self.region(&c.node.regions[0], &c.path, args);
-                    let held = self.frames.pop().expect("the call's frame");
+                    let held = self.pop_frame();
                     let out = out?;
                     for (v, _) in held.into_iter().flatten() {
                         self.dec(v.cell())?;
@@ -749,7 +760,7 @@ impl<'g> Machine<'g, '_> {
                     Mv::Data(Value::Bool(b), _) => Ok(usize::from(!b)),
                     c => {
                         let t = Term::If(
-                            Arc::new(self.term(c, &mut Vec::new())?),
+                            Arc::new(self.term(c, &mut Lets::default())?),
                             Arc::new(Term::Lit(Value::Int(0))),
                             Arc::new(Term::Lit(Value::Int(1))),
                         );
@@ -807,7 +818,7 @@ impl<'g> Machine<'g, '_> {
         at: &str,
         ins: Vec<Mv<'g>>,
     ) -> Result<Vec<Mv<'g>>, String> {
-        let mut lets = Vec::new();
+        let mut lets = Lets::default();
         let s = self.term(&ins[0], &mut lets)?;
         let mut arms = Vec::new();
         for (i, p) in ps.iter().enumerate() {
@@ -861,7 +872,7 @@ impl<'g> Machine<'g, '_> {
                 self.dec(scrut)?;
             }
             for (b, v) in vals.into_iter().enumerate() {
-                let owned = kept.contains(&b);
+                let owned = arm.args[b] == Mode::Owned;
                 args.push((Mv::Data(v, if owned { cells[b] } else { None }), owned));
             }
         } else {
@@ -903,7 +914,12 @@ impl<'g> Machine<'g, '_> {
             self.heap[c].count = 0;
             self.stats.frees += 1;
             self.live -= 1;
+            self.touched.push(c);
             let kids = std::mem::take(&mut self.heap[c].kids);
+            for k in kids.iter().flatten() {
+                self.refs[*k] -= 1;
+                self.touched.push(*k);
+            }
             for (i, k) in kids.into_iter().enumerate() {
                 let sub: Vec<&[usize]> =
                     kept.iter().filter(|p| p[0] == i).map(|p| &p[1..]).collect();
@@ -942,7 +958,7 @@ impl<'g> Machine<'g, '_> {
 
     /// The value the kernel gives node `node` run alone on `ins`.
     fn kernel(&mut self, node: &'g Node, ins: &[Mv<'g>]) -> Result<Value, String> {
-        let mut lets = Vec::new();
+        let mut lets = Lets::default();
         let mut terms = Vec::new();
         for v in ins {
             terms.push(self.term(v, &mut lets)?);
@@ -966,14 +982,14 @@ impl<'g> Machine<'g, '_> {
     }
 
     /// The kernel term for `v`; a lookup port is read once, by a `let` in `lets`.
-    fn term(&mut self, v: &Mv<'g>, lets: &mut Vec<Arc<str>>) -> Result<Term, String> {
+    fn term(&mut self, v: &Mv<'g>, lets: &mut Lets) -> Result<Term, String> {
         Ok(match v {
             Mv::Data(v, _) => Term::Lit(v.clone()),
             Mv::Prim(p) => Term::PrimFn(*p),
             Mv::State => Term::Lit(Value::Tuple(Vec::new())),
             Mv::Source(p) => {
-                if !lets.contains(p) {
-                    lets.push(p.clone());
+                if lets.seen.insert(p.clone()) {
+                    lets.order.push(p.clone());
                 }
                 Term::Var(port_var(p))
             }
@@ -1017,7 +1033,7 @@ impl<'g> Machine<'g, '_> {
     /// Takes the frame's reference to edge `s`, which the frame must own.
     fn take(&mut self, u: &Uses, s: &Src, at: &str, why: &str) -> Result<(Mv<'g>, bool), String> {
         let e = u.slot(s).expect("an edge");
-        match self.frames.last_mut().expect("frame")[e].take() {
+        match self.set(e, None) {
             Some((v, true)) => Ok((v, true)),
             Some((_, false)) => Err(format!(
                 "memory: {at}: {why} consumes edge {}, which is borrowed and has no dup",
@@ -1031,6 +1047,13 @@ impl<'g> Machine<'g, '_> {
     }
 
     fn alloc(&mut self, kids: Vec<Option<usize>>) -> usize {
+        for k in kids.iter().flatten() {
+            self.refs[*k] += 1;
+            self.touched.push(*k);
+        }
+        self.refs.push(0);
+        self.holds.push(0);
+        self.touched.push(self.heap.len());
         self.heap.push(Cell {
             count: 1,
             kids,
@@ -1070,6 +1093,7 @@ impl<'g> Machine<'g, '_> {
     fn inc(&mut self, c: Option<usize>) {
         if let Some(c) = c {
             self.stats.increments += 1;
+            self.touched.push(c);
             self.heap[c].count += 1;
             if self.heap[c].count == 2 && !self.heap[c].shared {
                 self.heap[c].shared = true;
@@ -1084,20 +1108,72 @@ impl<'g> Machine<'g, '_> {
         if self.heap[c].count == 0 {
             return Err(format!("memory: cell {c} is dropped after it was freed"));
         }
+        self.touched.push(c);
         self.heap[c].count -= 1;
         if self.heap[c].count == 0 {
             self.stats.frees += 1;
             self.live -= 1;
-            for k in std::mem::take(&mut self.heap[c].kids) {
+            let kids = std::mem::take(&mut self.heap[c].kids);
+            for k in kids.iter().flatten() {
+                self.refs[*k] -= 1;
+            }
+            for k in kids {
                 self.dec(k)?;
             }
         }
         Ok(())
     }
 
+    /// Counts slot `s` into the references of its cell, or out of them.
+    fn note(&mut self, s: &Slot<'g>, into: bool) {
+        let Some((v, owned)) = s else { return };
+        let Some(c) = v.cell() else { return };
+        if into {
+            self.holds[c] += 1;
+            self.refs[c] += u32::from(*owned);
+        } else {
+            self.holds[c] -= 1;
+            self.refs[c] -= u32::from(*owned);
+        }
+        self.touched.push(c);
+    }
+
+    fn push_frame(&mut self, frame: Vec<Slot<'g>>) {
+        for s in &frame {
+            self.note(s, true);
+        }
+        self.frames.push(frame);
+    }
+
+    fn pop_frame(&mut self) -> Vec<Slot<'g>> {
+        let frame = self.frames.pop().expect("a frame");
+        for s in &frame {
+            self.note(s, false);
+        }
+        frame
+    }
+
+    /// Puts `s` in slot `e` of the current frame; returns what it held.
+    fn set(&mut self, e: usize, s: Slot<'g>) -> Slot<'g> {
+        self.note(&s, true);
+        let old = std::mem::replace(&mut self.frames.last_mut().expect("a frame")[e], s);
+        self.note(&old, false);
+        old
+    }
+
+    /// Checks the cells touched since the last check, which passed: no other cell's count or
+    /// references changed. When one is wrong, the full audit names every fault.
+    fn check(&mut self, when: &str) -> Result<(), String> {
+        let touched = std::mem::take(&mut self.touched);
+        let wrong = touched.iter().any(|&c| {
+            self.heap[c].count != self.refs[c] || (self.heap[c].count == 0 && self.holds[c] > 0)
+        });
+        if wrong { self.audit(when) } else { Ok(()) }
+    }
+
     /// Checks that each live cell's count is the number of references to it, from owned
     /// slots in every frame and from live cells, and that no slot holds a freed cell.
-    fn check(&self, when: &str) -> Result<(), String> {
+    fn audit(&self, when: &str) -> Result<(), String> {
         let mut refs = vec![0u32; self.heap.len()];
         for (f, frame) in self.frames.iter().enumerate() {
             for (e, slot) in frame.iter().enumerate() {
@@ -1151,10 +1227,17 @@ fn port_var(p: &str) -> Arc<str> {
 }
 
 /// `t` with each lookup port in `ports` read first.
-fn wrap(ports: Vec<Arc<str>>, t: Term) -> Term {
-    ports.into_iter().rev().fold(t, |b, p| {
+fn wrap(ports: Lets, t: Term) -> Term {
+    ports.order.into_iter().rev().fold(t, |b, p| {
         Term::Let(port_var(&p), Arc::new(Term::Read(p)), Arc::new(b))
     })
+}
+
+/// The lookup ports a kernel term reads, each once, in the order first met.
+#[derive(Default)]
+struct Lets {
+    seen: HashSet<Arc<str>>,
+    order: Vec<Arc<str>>,
 }
 
 /// The path of child indices to each binder of `p` inside `v`, which `p` matches, in

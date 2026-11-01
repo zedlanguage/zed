@@ -8,6 +8,7 @@ mod checks;
 mod corpus;
 mod ports;
 mod scalars;
+mod scaling;
 mod strings;
 
 use zed_kernel::{Evaluator, F64, Term, Value, World};

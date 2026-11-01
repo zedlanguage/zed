@@ -7,6 +7,7 @@
 //! into generated code, so the slot is never borrowed twice.
 
 use std::cell::RefCell;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::{Evaluator, KernelError, Pattern, Prim, Term, Value};
@@ -246,14 +247,13 @@ fn node(s: &mut State, id: usize, ins: Vec<Word>) -> Result<Word, String> {
             };
             match v {
                 Value::Atom(a) if !a.args.is_empty() && a.args.len() + 2 == ins.len() => {
+                    let at: BTreeMap<&Value, usize> =
+                        names.iter().enumerate().map(|(i, n)| (n, i)).collect();
                     let args = (0..a.args.len())
                         .map(|i| {
                             let from = match names.is_empty() {
                                 true => i,
-                                false => names
-                                    .iter()
-                                    .position(|n| *n == Value::Str(a.fields[i].clone().into()))
-                                    .expect("a field the atom was made with"),
+                                false => at[&Value::Str(a.fields[i].clone().into())],
                             };
                             ins[2 + from]
                         })
@@ -307,7 +307,7 @@ fn node(s: &mut State, id: usize, ins: Vec<Word>) -> Result<Word, String> {
             }
             None if s.ev.world.sources.contains_key(&**p) => Ok(Word {
                 tag: Word::SOURCE,
-                bits: t.ports.iter().position(|q| q == p).expect("a port") as i64,
+                bits: t.port_at[p] as i64,
             }),
             None => {
                 let v = s.ev.run(&Term::Read(p.clone()));
@@ -337,7 +337,7 @@ fn consume(s: &mut State, ni: &NodeInfo, ins: &[Word]) -> Result<(), String> {
 
 /// The value the kernel gives node `ni` run alone on `ins`.
 fn kernel(s: &mut State, ni: &NodeInfo, ins: &[Word]) -> Result<Value, String> {
-    let mut lets = Vec::new();
+    let mut lets = Lets::default();
     let mut terms = Vec::new();
     for w in ins {
         terms.push(term(s, *w, &mut lets)?);
@@ -352,14 +352,14 @@ fn run(s: &mut State, t: &Term) -> Result<Value, String> {
 }
 
 /// The kernel term for word `w`; a lookup port is read once, by a `let` in `lets`.
-fn term(s: &mut State, w: Word, lets: &mut Vec<Arc<str>>) -> Result<Term, String> {
+fn term(s: &mut State, w: Word, lets: &mut Lets) -> Result<Term, String> {
     Ok(match w.tag {
         Word::PRIM => Term::PrimFn(s.t.prims[w.bits as usize]),
         Word::STATE => Term::Lit(Value::Tuple(Vec::new())),
         Word::SOURCE => {
             let p = s.t.ports[w.bits as usize].clone();
-            if !lets.contains(&p) {
-                lets.push(p.clone());
+            if lets.seen.insert(p.clone()) {
+                lets.order.push(p.clone());
             }
             Term::Var(port_var(&p))
         }
@@ -383,10 +383,17 @@ fn port_var(p: &str) -> Arc<str> {
 }
 
 /// `t` with each lookup port in `ports` read first.
-fn wrap(ports: Vec<Arc<str>>, t: Term) -> Term {
-    ports.into_iter().rev().fold(t, |b, p| {
+fn wrap(ports: Lets, t: Term) -> Term {
+    ports.order.into_iter().rev().fold(t, |b, p| {
         Term::Let(port_var(&p), Arc::new(Term::Read(p)), Arc::new(b))
     })
+}
+
+/// The lookup ports a kernel term reads, each once, in the order first met.
+#[derive(Default)]
+struct Lets {
+    seen: HashSet<Arc<str>>,
+    order: Vec<Arc<str>>,
 }
 
 /// An `if` or `match` whose decision is failure value `v`: the owned inputs are dropped and
@@ -405,7 +412,7 @@ fn branch(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
     if ins[0].tag == Word::BOOL {
         return Ok(i64::from(ins[0].bits == 0));
     }
-    let c = term(s, ins[0], &mut Vec::new())?;
+    let c = term(s, ins[0], &mut Lets::default())?;
     let q = Term::If(
         Arc::new(c),
         Arc::new(Term::Lit(Value::Int(0))),
@@ -468,7 +475,7 @@ fn matched(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
         // A binder the arm borrows holds no reference once the scrutinee is released, so it
         // is detached first: the machine gives it no cell.
         for (b, (w, _)) in binders.iter().enumerate() {
-            if kept.contains(&b) || w.tag != Word::CELL {
+            if arm[b] == Mode::Owned || w.tag != Word::CELL {
                 words.push(*w);
             } else {
                 let v = s.heap.value(*w)?;
@@ -510,7 +517,7 @@ fn kernel_match(
     ps: &[Pattern],
     scrut: Word,
 ) -> Result<Result<(usize, Vec<Value>), Value>, String> {
-    let mut lets = Vec::new();
+    let mut lets = Lets::default();
     let st = term(s, scrut, &mut lets)?;
     let mut arms = Vec::new();
     for (i, p) in ps.iter().enumerate() {

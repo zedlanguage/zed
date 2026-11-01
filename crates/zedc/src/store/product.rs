@@ -35,7 +35,7 @@
 //! [`Time::Run`] for one known only when it runs; a meet takes the earlier and a join the
 //! later.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -874,7 +874,8 @@ impl Scope {
             })
             .cloned()
             .collect();
-        self.projected.retain(|g, _| parts.contains(g));
+        let kept: HashSet<&Formula> = parts.iter().collect();
+        self.projected.retain(|g, _| kept.contains(g));
         for g in &due {
             self.project_part(&Formula::and(vec![g.clone(), base.clone()]));
         }

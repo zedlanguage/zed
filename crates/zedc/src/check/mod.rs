@@ -88,6 +88,7 @@ pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
 }
 
 pub(crate) fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
+    KType::forget_emptiness();
     let mut ck = Ck::new(t);
     ck.scope(unit, true);
     ck.finish();
