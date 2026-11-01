@@ -276,7 +276,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.21 | 0:09 | 0:02 | 0 (0) | 0 (0) | 0:05 | 0:02 | 5 (1) |
 | L1.22 | 0:14 | 0:04 | 0 (0) | 1 (1) | 0:16 | 0:04 | 19 (5) |
 | L1.23 | 0:15 | 0:08 | 0 (0) | 3 (2) | 0:18 | 0:07 | 6 (3) |
-| L1.24 | 0:12 | 0:05 | 0 (0) | 1 (1) | | | |
+| L1.24 | 0:12 | 0:05 | 0 (0) | 1 (1) | 0:05 | 0:04 | 0 (0) |
 | L1.25 | 0:36 | 0:16 | 1 (1) | 7 (2) | | | |
 | L1.26 | 1:01 | 0:12 | 0 (0) | 6 (2) | | | |
 | L1.27 | 0:07 | 0:03 | 0 (0) | 2 (2) | | | |
@@ -806,46 +806,46 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-kernel/src/error.rs` | 4,895 | `lib/src/kernel/error.dart`<br>`test/kernel/error_test.dart` | 4,993 | 1.02 |
 | `crates/zed-kernel/src/eval.rs` | 60,185 | `lib/src/kernel/eval.dart` | 42,495 | 0.71 |
 | `crates/zed-kernel/src/exact.rs` | 9,165 | `lib/src/kernel/exact.dart`<br>`test/kernel/exact_test.dart` | 6,847 | 0.75 |
-| `crates/zed-kernel/src/family.rs` | 14,132 | `lib/src/kernel/family.dart`<br>`lib/src/kernel/pmap.dart`<br>`test/kernel/family_test.dart` | 17,622 | 1.25 |
+| `crates/zed-kernel/src/family.rs` | 14,132 | `lib/src/kernel/family.dart`<br>`lib/src/kernel/pmap.dart`<br>`test/kernel/family_test.dart` | 18,349 | 1.30 |
 | `crates/zed-kernel/src/lib.rs` | 1,148 | `lib/kernel.dart` | 362 | 0.32 |
 | `crates/zed-kernel/src/num.rs` | 7,397 | `lib/src/kernel/num.dart` | 5,993 | 0.81 |
-| `crates/zed-kernel/src/print.rs` | 16,237 | `lib/src/kernel/print.dart` | 12,469 | 0.77 |
-| `crates/zed-kernel/src/provenance.rs` | 10,812 | `lib/src/kernel/provenance.dart` | 9,589 | 0.89 |
-| `crates/zed-kernel/src/term.rs` | 13,219 | `lib/src/kernel/term.dart` | 6,615 | 0.50 |
-| `crates/zed-kernel/src/text.rs` | 5,582 | `lib/src/kernel/text.dart`<br>`test/kernel/text_test.dart` | 4,320 | 0.77 |
-| `crates/zed-kernel/src/types.rs` | 37,473 | `lib/src/kernel/types.dart` | 27,726 | 0.74 |
+| `crates/zed-kernel/src/print.rs` | 16,237 | `lib/src/kernel/print.dart` | 12,393 | 0.76 |
+| `crates/zed-kernel/src/provenance.rs` | 10,812 | `lib/src/kernel/provenance.dart` | 10,825 | 1.00 |
+| `crates/zed-kernel/src/term.rs` | 13,219 | `lib/src/kernel/term.dart` | 6,776 | 0.51 |
+| `crates/zed-kernel/src/text.rs` | 5,582 | `lib/src/kernel/text.dart`<br>`test/kernel/text_test.dart` | 4,417 | 0.79 |
+| `crates/zed-kernel/src/types.rs` | 40,294 | `lib/src/kernel/types.dart` | 31,339 | 0.78 |
 | `crates/zed-kernel/src/types/bdd.rs` | 27,452 | `lib/src/kernel/bdd.dart`<br>`test/steps/l01_22_type_representation/bdd_test.dart` | 20,688 | 0.75 |
 | `crates/zed-kernel/src/types/empty.rs` | 7,024 | `lib/src/kernel/empty.dart` | 6,801 | 0.97 |
 | `crates/zed-kernel/src/types/rec.rs` | 18,327 | `lib/src/kernel/rec.dart` | 13,763 | 0.75 |
 | `crates/zed-kernel/src/value.rs` | 16,934 | `lib/src/kernel/value.dart`<br>`test/kernel/value_test.dart` | 15,465 | 0.91 |
 | `crates/zed-kernel/src/words.rs` | 5,277 | `lib/src/kernel/words.dart` | 4,040 | 0.77 |
-| `crates/zed-native/src/codegen.rs` | 27,147 | | | |
-| `crates/zed-native/src/hooks.rs` | 18,557 | | | |
-| `crates/zed-native/src/lib.rs` | 3,845 | | | |
-| `crates/zed-native/src/tables.rs` | 7,653 | | | |
+| `crates/zed-native/src/codegen.rs` | 29,032 | | | |
+| `crates/zed-native/src/hooks.rs` | 18,705 | | | |
+| `crates/zed-native/src/lib.rs` | 4,130 | | | |
+| `crates/zed-native/src/tables.rs` | 8,237 | | | |
 | `crates/zed-rt/src/heap.rs` | 18,978 | | | |
 | `crates/zed-rt/src/lib.rs` | 764 | | | |
 | `crates/zed-rt/src/ports.rs` | 2,581 | | | |
 | `crates/zed-rt/src/rope.rs` | 4,631 | | | |
 | `crates/zedc/src/address.rs` | 2,176 | `lib/address.dart`<br>`test/address_test.dart` | 2,125 | 0.98 |
-| `crates/zedc/src/ast/mod.rs` | 21,974 | `lib/ast.dart` | 15,256 | 0.69 |
-| `crates/zedc/src/ast/stmts.rs` | 9,682 | `lib/src/ast/stmts.dart` | 6,424 | 0.66 |
-| `crates/zedc/src/ast/types.rs` | 11,772 | `lib/src/ast/types.dart` | 8,153 | 0.69 |
+| `crates/zedc/src/ast/mod.rs` | 22,450 | `lib/ast.dart` | 16,672 | 0.74 |
+| `crates/zedc/src/ast/stmts.rs` | 9,619 | `lib/src/ast/stmts.dart` | 6,861 | 0.71 |
+| `crates/zedc/src/ast/types.rs` | 11,820 | `lib/src/ast/types.dart` | 8,520 | 0.72 |
 | `crates/zedc/src/axioms.rs` | 7,016 | `lib/axioms.dart` | 7,266 | 1.04 |
 | `crates/zedc/src/canon/binders.rs` | 20,447 | `lib/src/canon/binders.dart` | 14,538 | 0.71 |
 | `crates/zedc/src/canon/domain.rs` | 4,086 | `lib/src/canon/domain.dart` | 3,436 | 0.84 |
 | `crates/zedc/src/canon/mod.rs` | 8,601 | `lib/src/canon/canon.dart`<br>`lib/canon.dart`<br>`lib/src/canon/blake3.dart`<br>`test/canon/blake3_test.dart` | 18,499 | 2.15 |
-| `crates/zedc/src/canon/serial.rs` | 10,637 | `lib/src/canon/serial.dart` | 7,278 | 0.68 |
-| `crates/zedc/src/check/mod.rs` | 109,155 | | | |
-| `crates/zedc/src/check/ty.rs` | 27,542 | | | |
+| `crates/zedc/src/canon/serial.rs` | 10,637 | `lib/src/canon/serial.dart` | 7,244 | 0.68 |
+| `crates/zedc/src/check/mod.rs` | 109,468 | | | |
+| `crates/zedc/src/check/ty.rs` | 27,742 | | | |
 | `crates/zedc/src/cost.rs` | 9,373 | `lib/cost.dart`<br>`test/cost_test.dart` | 10,032 | 1.07 |
-| `crates/zedc/src/elab.rs` | 56,489 | `lib/elab.dart` | 35,562 | 0.63 |
+| `crates/zedc/src/elab.rs` | 57,082 | `lib/elab.dart` | 35,457 | 0.62 |
 | `crates/zedc/src/fence.rs` | 2,991 | `lib/fence.dart` | 2,352 | 0.79 |
 | `crates/zedc/src/format.rs` | 23,772 | `lib/format.dart` | 20,819 | 0.88 |
 | `crates/zedc/src/interp.rs` | 1,137 | `lib/interp.dart` | 906 | 0.80 |
 | `crates/zedc/src/lex/comment.rs` | 1,304 | `lib/src/lex/comment.dart` | 1,138 | 0.87 |
 | `crates/zedc/src/lex/mod.rs` | 8,813 | `lib/lex.dart` | 12,990 | 1.47 |
-| `crates/zedc/src/lex/name.rs` | 3,147 | `lib/src/lex/name.dart` | 2,777 | 0.88 |
+| `crates/zedc/src/lex/name.rs` | 3,147 | `lib/src/lex/name.dart` | 2,770 | 0.88 |
 | `crates/zedc/src/lex/number.rs` | 4,413 | `lib/src/lex/number.dart` | 4,074 | 0.92 |
 | `crates/zedc/src/lex/punct.rs` | 1,719 | `lib/src/lex/punct.dart` | 1,544 | 0.90 |
 | `crates/zedc/src/lex/string.rs` | 11,031 | `lib/src/lex/string.dart` | 12,231 | 1.11 |
@@ -854,28 +854,28 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/parse/grammar.rs` | 10,399 | `lib/src/parse/grammar.dart` | 8,017 | 0.77 |
 | `crates/zedc/src/parse/mod.rs` | 10,467 | `lib/parse.dart` | 11,116 | 1.06 |
 | `crates/zedc/src/query.rs` | 4,746 | | | |
-| `crates/zedc/src/resolve.rs` | 15,634 | `lib/resolve.dart` | 13,267 | 0.85 |
+| `crates/zedc/src/resolve.rs` | 15,634 | `lib/resolve.dart` | 13,317 | 0.85 |
 | `crates/zedc/src/run.rs` | 24,727 | `lib/run.dart` | 18,133 | 0.73 |
 | `crates/zedc/src/source.rs` | 7,459 | `lib/source.dart` | 7,286 | 0.98 |
-| `crates/zedc/src/stage.rs` | 31,611 | | | |
-| `crates/zedc/src/store/affine.rs` | 19,512 | | | |
-| `crates/zedc/src/store/cell.rs` | 13,091 | | | |
-| `crates/zedc/src/store/float.rs` | 5,956 | | | |
+| `crates/zedc/src/stage.rs` | 32,641 | | | |
+| `crates/zedc/src/store/affine.rs` | 19,512 | `lib/src/store/affine.dart` | 18,616 | 0.95 |
+| `crates/zedc/src/store/cell.rs` | 13,091 | `lib/src/store/cell.dart` | 11,450 | 0.87 |
+| `crates/zedc/src/store/float.rs` | 5,956 | `lib/src/store/float.dart` | 4,576 | 0.77 |
 | `crates/zedc/src/store/interval.rs` | 21,092 | `lib/src/store/interval.dart`<br>`test/store/interval_test.dart` | 21,857 | 1.04 |
 | `crates/zedc/src/store/iterate.rs` | 9,869 | `lib/src/store/iterate.dart` | 8,271 | 0.84 |
 | `crates/zedc/src/store/lattice.rs` | 16,014 | `lib/src/store/lattice.dart`<br>`test/store/lattice_test.dart` | 12,885 | 0.80 |
-| `crates/zedc/src/store/mod.rs` | 690 | `lib/store.dart` | 350 | 0.51 |
+| `crates/zedc/src/store/mod.rs` | 690 | `lib/store.dart` | 443 | 0.64 |
 | `crates/zedc/src/store/preimage.rs` | 100,503 | | | |
 | `crates/zedc/src/store/presburger.rs` | 56,642 | | | |
-| `crates/zedc/src/store/product.rs` | 51,610 | | | |
+| `crates/zedc/src/store/product.rs` | 51,680 | | | |
 | `crates/zedc/src/store/revision.rs` | 25,960 | `lib/src/store/revision.dart`<br>`test/store/revision_test.dart` | 23,082 | 0.89 |
 | `crates/zedc/src/store/wto.rs` | 10,717 | `lib/src/store/wto.dart`<br>`test/store/wto_test.dart` | 8,951 | 0.84 |
-| `crates/zedc/src/testing.rs` | 10,643 | `lib/testing.dart` | 6,964 | 0.65 |
+| `crates/zedc/src/testing.rs` | 10,756 | `lib/testing.dart` | 7,092 | 0.66 |
 | `crates/zedc/src/zir/binary.rs` | 16,518 | | | |
 | `crates/zedc/src/zir/canon.rs` | 10,571 | | | |
-| `crates/zedc/src/zir/lower.rs` | 40,730 | | | |
-| `crates/zedc/src/zir/memory.rs` | 45,377 | | | |
-| `crates/zedc/src/zir/mod.rs` | 24,971 | | | |
+| `crates/zedc/src/zir/lower.rs` | 45,130 | | | |
+| `crates/zedc/src/zir/memory.rs` | 48,172 | | | |
+| `crates/zedc/src/zir/mod.rs` | 25,095 | | | |
 | `crates/zedc/src/zir/text.rs` | 36,164 | | | |
 | `tests/src/check.rs` | 5,056 | `test/support/check.dart`<br>`test/support/check_test.dart` | 4,359 | 0.86 |
 | `tests/src/fences.rs` | 3,349 | `test/support/fences.dart` | 2,468 | 0.74 |
@@ -916,7 +916,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_10_lambdas_types_else_tuples/elses.rs` | 1,137 | `test/steps/l01_10_lambdas_types_else_tuples/elses_test.dart` | 1,029 | 0.91 |
 | `tests/steps/l01_10_lambdas_types_else_tuples/fences.rs` | 1,170 | `test/steps/l01_10_lambdas_types_else_tuples/fences_test.dart` | 1,710 | 1.46 |
 | `tests/steps/l01_10_lambdas_types_else_tuples/lambdas.rs` | 1,491 | `test/steps/l01_10_lambdas_types_else_tuples/lambdas_test.dart` | 1,420 | 0.95 |
-| `tests/steps/l01_10_lambdas_types_else_tuples/mod.rs` | 1,042 | `test/steps/l01_10_lambdas_types_else_tuples/sx.dart` | 929 | 0.89 |
+| `tests/steps/l01_10_lambdas_types_else_tuples/mod.rs` | 1,055 | `test/steps/l01_10_lambdas_types_else_tuples/sx.dart` | 929 | 0.88 |
+| `tests/steps/l01_10_lambdas_types_else_tuples/scaling.rs` | 1,884 | | | |
 | `tests/steps/l01_10_lambdas_types_else_tuples/tests_of_types.rs` | 2,064 | `test/steps/l01_10_lambdas_types_else_tuples/types_test.dart` | 1,967 | 0.95 |
 | `tests/steps/l01_10_lambdas_types_else_tuples/tuples.rs` | 402 | `test/steps/l01_10_lambdas_types_else_tuples/tuples_test.dart` | 448 | 1.11 |
 | `tests/steps/l01_11_statements/blocks.rs` | 3,631 | `test/steps/l01_11_statements/blocks_test.dart` | 3,075 | 0.85 |
@@ -933,11 +934,11 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_13_formatter/mod.rs` | 1,943 | `test/steps/l01_13_formatter/fmt.dart` | 1,389 | 0.71 |
 | `tests/steps/l01_13_formatter/scaling.rs` | 1,811 | `test/steps/l01_13_formatter/scaling_test.dart` | 2,022 | 1.12 |
 | `tests/steps/l01_14_name_resolution/fences.rs` | 1,432 | `test/steps/l01_14_name_resolution/fences_test.dart` | 1,777 | 1.24 |
-| `tests/steps/l01_14_name_resolution/mod.rs` | 2,673 | `test/steps/l01_14_name_resolution/res.dart` | 2,222 | 0.83 |
+| `tests/steps/l01_14_name_resolution/mod.rs` | 2,673 | `test/steps/l01_14_name_resolution/res.dart` | 2,212 | 0.83 |
 | `tests/steps/l01_14_name_resolution/order.rs` | 2,255 | `test/steps/l01_14_name_resolution/order_test.dart` | 2,203 | 0.98 |
 | `tests/steps/l01_14_name_resolution/scaling.rs` | 2,201 | `test/steps/l01_14_name_resolution/scaling_test.dart` | 2,271 | 1.03 |
 | `tests/steps/l01_14_name_resolution/scopes.rs` | 3,843 | `test/steps/l01_14_name_resolution/scopes_test.dart` | 3,515 | 0.91 |
-| `tests/steps/l01_15_kernel_terms/evidence.rs` | 3,397 | `test/steps/l01_15_kernel_terms/evidence_test.dart` | 2,371 | 0.70 |
+| `tests/steps/l01_15_kernel_terms/evidence.rs` | 3,397 | `test/steps/l01_15_kernel_terms/evidence_test.dart` | 2,381 | 0.70 |
 | `tests/steps/l01_15_kernel_terms/layout.rs` | 4,320 | `test/steps/l01_15_kernel_terms/layout_test.dart` | 3,770 | 0.87 |
 | `tests/steps/l01_15_kernel_terms/mod.rs` | 288 | | | |
 | `tests/steps/l01_15_kernel_terms/notation.rs` | 5,524 | `test/steps/l01_15_kernel_terms/notation_test.dart` | 4,233 | 0.77 |
@@ -946,7 +947,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_16_elaboration/errors.rs` | 4,274 | `test/steps/l01_16_elaboration/errors_test.dart` | 3,704 | 0.87 |
 | `tests/steps/l01_16_elaboration/mod.rs` | 2,130 | `test/steps/l01_16_elaboration/elab.dart` | 1,967 | 0.92 |
 | `tests/steps/l01_16_elaboration/programs.rs` | 6,170 | `test/steps/l01_16_elaboration/programs_test.dart` | 5,480 | 0.89 |
-| `tests/steps/l01_16_elaboration/scaling.rs` | 8,985 | `test/steps/l01_16_elaboration/scaling_test.dart` | 3,469 | 0.39 |
+| `tests/steps/l01_16_elaboration/scaling.rs` | 11,696 | `test/steps/l01_16_elaboration/scaling_test.dart` | 4,078 | 0.35 |
 | `tests/steps/l01_17_value_representation/atoms.rs` | 3,143 | `test/steps/l01_17_value_representation/atoms_test.dart` | 3,072 | 0.98 |
 | `tests/steps/l01_17_value_representation/equality.rs` | 1,900 | `test/steps/l01_17_value_representation/equality_test.dart` | 1,983 | 1.04 |
 | `tests/steps/l01_17_value_representation/mod.rs` | 439 | `test/steps/l01_17_value_representation/scaling_test.dart` | 1,580 | 3.60 |
@@ -979,18 +980,18 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_22_type_representation/is.rs` | 1,718 | `test/steps/l01_22_type_representation/is_test.dart` | 1,487 | 0.87 |
 | `tests/steps/l01_22_type_representation/laws.rs` | 7,730 | `test/steps/l01_22_type_representation/laws_test.dart` | 6,677 | 0.86 |
 | `tests/steps/l01_22_type_representation/mod.rs` | 400 | | | |
-| `tests/steps/l01_22_type_representation/scaling.rs` | 2,345 | `test/steps/l01_22_type_representation/scaling_test.dart` | 1,732 | 0.74 |
+| `tests/steps/l01_22_type_representation/scaling.rs` | 3,721 | `test/steps/l01_22_type_representation/scaling_test.dart` | 3,151 | 0.85 |
 | `tests/steps/l01_23_subtyping/cases.rs` | 6,177 | `test/steps/l01_23_subtyping/cases_test.dart` | 6,341 | 1.03 |
 | `tests/steps/l01_23_subtyping/mod.rs` | 549 | | | |
 | `tests/steps/l01_23_subtyping/oracle.rs` | 8,422 | `test/steps/l01_23_subtyping/oracle_test.dart` | 7,814 | 0.93 |
 | `tests/steps/l01_23_subtyping/rec.rs` | 13,224 | `test/steps/l01_23_subtyping/rec_test.dart` | 11,891 | 0.90 |
 | `tests/steps/l01_23_subtyping/scaling.rs` | 14,517 | `test/steps/l01_23_subtyping/scaling_test.dart` | 10,834 | 0.75 |
-| `tests/steps/l01_24_refinement_lattices/bounds.rs` | 6,164 | | | |
-| `tests/steps/l01_24_refinement_lattices/cell.rs` | 6,341 | | | |
-| `tests/steps/l01_24_refinement_lattices/float.rs` | 3,442 | | | |
-| `tests/steps/l01_24_refinement_lattices/loops.rs` | 6,177 | | | |
-| `tests/steps/l01_24_refinement_lattices/mod.rs` | 3,301 | | | |
-| `tests/steps/l01_24_refinement_lattices/scaling.rs` | 9,294 | | | |
+| `tests/steps/l01_24_refinement_lattices/bounds.rs` | 6,164 | `test/steps/l01_24_refinement_lattices/bounds_test.dart` | 5,020 | 0.81 |
+| `tests/steps/l01_24_refinement_lattices/cell.rs` | 6,341 | `test/steps/l01_24_refinement_lattices/cell_test.dart` | 5,524 | 0.87 |
+| `tests/steps/l01_24_refinement_lattices/float.rs` | 3,442 | `test/steps/l01_24_refinement_lattices/float_test.dart` | 2,934 | 0.85 |
+| `tests/steps/l01_24_refinement_lattices/loops.rs` | 6,177 | `test/steps/l01_24_refinement_lattices/loops_test.dart` | 4,593 | 0.74 |
+| `tests/steps/l01_24_refinement_lattices/mod.rs` | 3,301 | `test/steps/l01_24_refinement_lattices/support.dart` | 2,732 | 0.83 |
+| `tests/steps/l01_24_refinement_lattices/scaling.rs` | 9,294 | `test/steps/l01_24_refinement_lattices/scaling_test.dart` | 8,219 | 0.88 |
 | `tests/steps/l01_25_preimage_catalog/entries.rs` | 10,757 | | | |
 | `tests/steps/l01_25_preimage_catalog/exact.rs` | 4,245 | | | |
 | `tests/steps/l01_25_preimage_catalog/mod.rs` | 5,544 | | | |
@@ -1004,20 +1005,20 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_26_type_resolution/mod.rs` | 1,634 | | | |
 | `tests/steps/l01_26_type_resolution/narrowing.rs` | 2,113 | | | |
 | `tests/steps/l01_26_type_resolution/random.rs` | 4,051 | | | |
-| `tests/steps/l01_26_type_resolution/scaling.rs` | 3,444 | | | |
+| `tests/steps/l01_26_type_resolution/scaling.rs` | 4,188 | | | |
 | `tests/steps/l01_26_type_resolution/signatures.rs` | 4,237 | | | |
 | `tests/steps/l01_27_absences/families.rs` | 3,030 | | | |
 | `tests/steps/l01_27_absences/loose.rs` | 2,981 | | | |
 | `tests/steps/l01_27_absences/mod.rs` | 565 | | | |
 | `tests/steps/l01_28_staging/mix.rs` | 7,525 | | | |
 | `tests/steps/l01_28_staging/mod.rs` | 1,692 | | | |
-| `tests/steps/l01_28_staging/scaling.rs` | 1,987 | | | |
+| `tests/steps/l01_28_staging/scaling.rs` | 4,036 | | | |
 | `tests/steps/l01_28_staging/trick.rs` | 5,160 | | | |
 | `tests/steps/l01_29_diagnostics/derivations.rs` | 7,910 | | | |
 | `tests/steps/l01_29_diagnostics/layout.rs` | 1,974 | | | |
 | `tests/steps/l01_29_diagnostics/mod.rs` | 975 | | | |
 | `tests/steps/l01_29_diagnostics/repairs.rs` | 1,845 | | | |
-| `tests/steps/l01_29_diagnostics/scaling.rs` | 1,691 | | | |
+| `tests/steps/l01_29_diagnostics/scaling.rs` | 3,066 | | | |
 | `tests/steps/l01_29_diagnostics/variants.rs` | 3,220 | | | |
 | `tests/steps/l01_30_queries/keys.rs` | 690 | | | |
 | `tests/steps/l01_30_queries/mod.rs` | 1,120 | | | |
@@ -1031,11 +1032,11 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_32_canonical_zir/stability.rs` | 6,674 | | | |
 | `tests/steps/l01_33_lowering/corpus.rs` | 1,687 | | | |
 | `tests/steps/l01_33_lowering/cse.rs` | 2,578 | | | |
-| `tests/steps/l01_33_lowering/errors.rs` | 2,795 | | | |
+| `tests/steps/l01_33_lowering/errors.rs` | 3,655 | | | |
 | `tests/steps/l01_33_lowering/forms.rs` | 8,027 | | | |
 | `tests/steps/l01_33_lowering/mod.rs` | 2,007 | | | |
 | `tests/steps/l01_33_lowering/ports.rs` | 4,565 | | | |
-| `tests/steps/l01_33_lowering/scaling.rs` | 4,443 | | | |
+| `tests/steps/l01_33_lowering/scaling.rs` | 8,494 | | | |
 | `tests/steps/l01_34_memory/borrow.rs` | 4,405 | | | |
 | `tests/steps/l01_34_memory/cells.rs` | 4,070 | | | |
 | `tests/steps/l01_34_memory/checks.rs` | 2,185 | | | |
@@ -1046,7 +1047,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_36_cranelift/aot.rs` | 1,041 | | | |
 | `tests/steps/l01_36_cranelift/checks.rs` | 3,759 | | | |
 | `tests/steps/l01_36_cranelift/corpus.rs` | 2,456 | | | |
-| `tests/steps/l01_36_cranelift/mod.rs` | 1,225 | | | |
+| `tests/steps/l01_36_cranelift/mod.rs` | 1,238 | | | |
 | `tests/steps/l01_36_cranelift/ports.rs` | 1,802 | | | |
 | `tests/steps/l01_36_cranelift/scalars.rs` | 5,467 | | | |
 | `tests/steps/l01_36_cranelift/strings.rs` | 2,004 | | | |
@@ -1096,8 +1097,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 892 | 0.55 |
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
-| **all 294 Rust files** | **2,235,195** | | | |
-| **the Rust files ported so far** | **1,217,927** | | **1,024,637** | **0.84** |
+| **all 295 Rust files** | **2,266,093** | | | |
+| **the Rust files ported so far** | **1,299,293** | | **1,098,432** | **0.85** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1452,10 +1453,19 @@ Dart:
   still calling the old `paths`. Four negative controls fail as they should: a type named when
   made (ratios 32 to 77), the cycle search run once per definition (61 to 65), a deep walk of
   each tuple made (the nested-tuple test fails), and the search for cycles in Rust.
+- **L1.24** (refinement lattices). Easy. Symbolic affine bounds, float classes and cells
+  with their premises; no compile errors, and the 26 tests passed on the first run. The
+  bounds of an element are grouped by their terms in a `SplayTreeMap`, so the bounds sharing
+  a bound's terms are one lookup, where the Rust reads a range of a `BTreeSet`. A premise set
+  is a sealed tree of unions shared by reference, which the Rust holds in `Arc` nodes compared
+  with `ptr_eq`. Fact addresses gained public constructors and an order, which the Rust
+  derives. An affine bound is evaluated exactly, in `BigInt` past 64 bits, where the Rust
+  gives up past `i128`. The step's interval tests (cap, join, the forward images and their
+  scaling) were not in the Dart M0.5 tests, and are ported here with the step.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1516,6 +1526,8 @@ which the case was shorter, clearer or cheaper to run.
 | Deep recursion | Rust | A thread with a chosen stack size runs any recursion as written. A Dart isolate's stack is fixed at about 45,500 frames, so each recursion that a test drives deep is rewritten as a loop over its own stack (L1.23). |
 | A recursive search that can be suspended | Dart | `sync*` generators calling each other with `yield*` keep the suspended calls on the heap, at a cost per step that does not grow with depth, so a mutual recursion keeps its shape. Stable Rust has no generators (L1.23). |
 | A walk that asks its caller at each step | Dart | The walk is a generator of questions, and the caller answers in a field before reading the next; the same walk serves a plain callback and a suspended search. In Rust this is a hand-written iterator with its state in a struct (L1.23). |
+| Deriving an order for a key | Rust | `#[derive(PartialOrd, Ord)]` orders a premise or a fact address by its fields. Dart writes `compareTo` by hand, with a helper comparing two lists in lexicographic order (L1.24). |
+| Arithmetic that must not overflow | Dart | An affine bound evaluated at large symbol values falls back from `int` to `BigInt` and stays exact. The Rust evaluates in `i128` with checked operations and gives no answer when they overflow (L1.24). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
 
 ### Changes per Dart file
@@ -1532,7 +1544,7 @@ performance pass yet, so the second number is 0 throughout.
 | `lib/src/kernel/family.dart` | 1 | 0 |
 | `lib/src/kernel/num.dart` | 2 | 0 |
 | `lib/src/kernel/pmap.dart` | 3 | 0 |
-| `lib/src/kernel/provenance.dart` | 1 | 0 |
+| `lib/src/kernel/provenance.dart` | 2 | 0 |
 | `lib/src/kernel/term.dart` | 3 | 0 |
 | `lib/src/kernel/print.dart` | 4 | 0 |
 | `lib/src/kernel/types.dart` | 4 | 0 |
@@ -1563,8 +1575,11 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/m0_10_finite_model_harness/laws_11_20_test.dart` | 1 | 0 |
 | `test/steps/m0_10_finite_model_harness/laws_21_28_test.dart` | 1 | 0 |
 | `test/steps/m0_10_finite_model_harness/scaling_test.dart` | 2 | 0 |
-| `lib/store.dart` | 1 | 0 |
+| `lib/store.dart` | 2 | 0 |
 | `lib/src/store/interval.dart` | 2 | 0 |
+| `lib/src/store/affine.dart` | 1 | 0 |
+| `lib/src/store/cell.dart` | 1 | 0 |
+| `lib/src/store/float.dart` | 1 | 0 |
 | `lib/src/store/lattice.dart` | 2 | 0 |
 | `lib/src/store/wto.dart` | 1 | 0 |
 | `lib/src/store/iterate.dart` | 3 | 0 |
@@ -1734,5 +1749,11 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/l01_23_subtyping/oracle_test.dart` | 1 | 0 |
 | `test/steps/l01_23_subtyping/rec_test.dart` | 1 | 0 |
 | `test/steps/l01_23_subtyping/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_24_refinement_lattices/support.dart` | 1 | 0 |
+| `test/steps/l01_24_refinement_lattices/bounds_test.dart` | 1 | 0 |
+| `test/steps/l01_24_refinement_lattices/cell_test.dart` | 1 | 0 |
+| `test/steps/l01_24_refinement_lattices/float_test.dart` | 1 | 0 |
+| `test/steps/l01_24_refinement_lattices/loops_test.dart` | 1 | 0 |
+| `test/steps/l01_24_refinement_lattices/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

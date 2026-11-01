@@ -38,6 +38,9 @@ dart/test/steps/m0_10_finite_model_harness/laws_21_28_test.dart tests/steps/m0_1
 dart/test/steps/m0_10_finite_model_harness/scaling_test.dart tests/steps/m0_10_finite_model_harness/scaling.rs
 dart/lib/store.dart crates/zedc/src/store/mod.rs
 dart/lib/src/store/interval.dart crates/zedc/src/store/interval.rs
+dart/lib/src/store/affine.dart crates/zedc/src/store/affine.rs
+dart/lib/src/store/cell.dart crates/zedc/src/store/cell.rs
+dart/lib/src/store/float.dart crates/zedc/src/store/float.rs
 dart/lib/src/store/lattice.dart crates/zedc/src/store/lattice.rs
 dart/lib/src/store/wto.dart crates/zedc/src/store/wto.rs
 dart/lib/src/store/iterate.dart crates/zedc/src/store/iterate.rs
@@ -196,3 +199,9 @@ dart/test/steps/l01_23_subtyping/cases_test.dart tests/steps/l01_23_subtyping/ca
 dart/test/steps/l01_23_subtyping/oracle_test.dart tests/steps/l01_23_subtyping/oracle.rs
 dart/test/steps/l01_23_subtyping/rec_test.dart tests/steps/l01_23_subtyping/rec.rs
 dart/test/steps/l01_23_subtyping/scaling_test.dart tests/steps/l01_23_subtyping/scaling.rs
+dart/test/steps/l01_24_refinement_lattices/support.dart tests/steps/l01_24_refinement_lattices/mod.rs
+dart/test/steps/l01_24_refinement_lattices/bounds_test.dart tests/steps/l01_24_refinement_lattices/bounds.rs
+dart/test/steps/l01_24_refinement_lattices/cell_test.dart tests/steps/l01_24_refinement_lattices/cell.rs
+dart/test/steps/l01_24_refinement_lattices/float_test.dart tests/steps/l01_24_refinement_lattices/float.rs
+dart/test/steps/l01_24_refinement_lattices/loops_test.dart tests/steps/l01_24_refinement_lattices/loops.rs
+dart/test/steps/l01_24_refinement_lattices/scaling_test.dart tests/steps/l01_24_refinement_lattices/scaling.rs

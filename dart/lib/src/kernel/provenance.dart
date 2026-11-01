@@ -36,14 +36,32 @@ bool _samePositions(_Link<int>? a, _Link<int>? b) {
   return true;
 }
 
+/// `a` and `b` in lexicographic order, a prefix first.
+int _compareLists<T>(List<T> a, List<T> b, int Function(T, T) cmp) {
+  for (var i = 0; i < a.length && i < b.length; i++) {
+    final c = cmp(a[i], b[i]);
+    if (c != 0) return c;
+  }
+  return a.length - b.length;
+}
+
 /// The static half of a fact address: the position of each call site through which the run
 /// entered the function holding the node, and then the node's own position. A position is
 /// the node's number in the preorder of the evaluated term. Only equality and order mean
 /// anything; the numbers change with the build (sec:keypaths, the opaque token).
-final class NodeAddress {
+final class NodeAddress implements Comparable<NodeAddress> {
   final _Link<int> _link;
 
   NodeAddress._(this._link);
+
+  /// The address with the given call sites and then the node's position.
+  factory NodeAddress.of(List<int> positions) {
+    _Link<int>? link;
+    for (final p in positions) {
+      link = _Link(p, link);
+    }
+    return NodeAddress._(link!);
+  }
 
   /// The node's own position, the last.
   int get position => _link.head;
@@ -61,6 +79,10 @@ final class NodeAddress {
   @override
   int get hashCode => Object.hashAll(positions);
 
+  /// The order of the positions, a prefix first.
+  @override
+  int compareTo(NodeAddress other) => _compareLists(positions, other.positions, (a, b) => a - b);
+
   @override
   String toString() => positions.join('/');
 }
@@ -68,12 +90,21 @@ final class NodeAddress {
 /// A fact address: (static node address, dynamic keypath). The keypath holds the wave stamp,
 /// then each enclosing region's coordinate: a family key, a generation number, an iterate of
 /// a lattice `fix`, the key of a definedness `fix` entry, the step of a `fold`.
-final class FactAddress {
+final class FactAddress implements Comparable<FactAddress> {
   /// The code identity.
   final NodeAddress node;
   final _Link<Value>? _keys;
 
   FactAddress._(this.node, this._keys);
+
+  /// The address of `node` with the given keypath.
+  factory FactAddress.of(NodeAddress node, [List<Value> keypath = const []]) {
+    _Link<Value>? keys;
+    for (final k in keypath) {
+      keys = _Link(k, keys);
+    }
+    return FactAddress._(node, keys);
+  }
 
   /// The data identity.
   late final List<Value> keypath = _items(_keys);
@@ -84,6 +115,13 @@ final class FactAddress {
 
   @override
   int get hashCode => Object.hash(node, Object.hashAll(keypath));
+
+  /// By node, then by keypath.
+  @override
+  int compareTo(FactAddress other) {
+    final c = node.compareTo(other.node);
+    return c != 0 ? c : _compareLists(keypath, other.keypath, (a, b) => a.compareTo(b));
+  }
 
   @override
   String toString() => '$node@(${keypath.join(', ')})';
