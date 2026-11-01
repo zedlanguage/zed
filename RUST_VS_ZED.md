@@ -323,7 +323,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.28 | 0:15 | 0:07 | 0 (0) | 0 (0) | 0:20 | 0:35 | 4 (1) |
 | L1.29 | 0:17 | 0:07 | 0 (0) | 4 (2) | 0:02 | 0:13 | 0 (0) |
 | L1.30 | 0:06 | 0:04 | 0 (0) | 3 (1) | 0:02 | 0:11 | 0 (0) |
-| L1.31 | 0:20 | 0:04 | 0 (0) | 1 (1) | | | |
+| L1.31 | 0:20 | 0:04 | 0 (0) | 1 (1) | 0:13 | 0:36 | 16 (3) |
 | L1.32 | 0:06 | 0:04 | 0 (0) | 0 (0) | | | |
 | other (Signed zeros) | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.33 | 0:13 | 0:06 | 2 (1) | 0 (0) | | | |
@@ -912,12 +912,12 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/store/revision.rs` | 25,960 | `lib/src/store/revision.dart`<br>`test/store/revision_test.dart` | 23,082 | 0.89 |
 | `crates/zedc/src/store/wto.rs` | 10,717 | `lib/src/store/wto.dart`<br>`test/store/wto_test.dart` | 8,951 | 0.84 |
 | `crates/zedc/src/testing.rs` | 10,756 | `lib/testing.dart` | 8,123 | 0.76 |
-| `crates/zedc/src/zir/binary.rs` | 16,518 | | | |
+| `crates/zedc/src/zir/binary.rs` | 16,518 | `lib/src/zir/binary.dart` | 14,850 | 0.90 |
 | `crates/zedc/src/zir/canon.rs` | 10,571 | | | |
 | `crates/zedc/src/zir/lower.rs` | 45,130 | | | |
 | `crates/zedc/src/zir/memory.rs` | 48,172 | | | |
-| `crates/zedc/src/zir/mod.rs` | 25,095 | | | |
-| `crates/zedc/src/zir/text.rs` | 36,164 | | | |
+| `crates/zedc/src/zir/mod.rs` | 25,095 | `lib/zir.dart`<br>`lib/src/zir/graph.dart` | 24,728 | 0.99 |
+| `crates/zedc/src/zir/text.rs` | 36,164 | `lib/src/zir/text.dart` | 30,447 | 0.84 |
 | `tests/src/check.rs` | 5,056 | `test/support/check.dart`<br>`test/support/check_test.dart` | 4,359 | 0.86 |
 | `tests/src/fences.rs` | 3,349 | `test/support/fences.dart` | 2,468 | 0.74 |
 | `tests/src/instances.rs` | 5,466 | `test/support/instances.dart`<br>`test/support/instances_test.dart` | 4,397 | 0.80 |
@@ -1065,10 +1065,10 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_30_queries/keys.rs` | 690 | `test/steps/l01_30_queries/keys_test.dart` | 863 | 1.25 |
 | `tests/steps/l01_30_queries/mod.rs` | 1,120 | `test/steps/l01_30_queries/queries.dart`<br>`test/steps/l01_30_queries/scaling_test.dart` | 2,884 | 2.58 |
 | `tests/steps/l01_30_queries/reuse.rs` | 4,327 | `test/steps/l01_30_queries/reuse_test.dart` | 3,823 | 0.88 |
-| `tests/steps/l01_31_zir/graphs.rs` | 6,502 | | | |
-| `tests/steps/l01_31_zir/items.rs` | 3,698 | | | |
-| `tests/steps/l01_31_zir/mod.rs` | 1,199 | | | |
-| `tests/steps/l01_31_zir/rejections.rs` | 9,252 | | | |
+| `tests/steps/l01_31_zir/graphs.rs` | 6,502 | `test/steps/l01_31_zir/graphs_test.dart` | 7,897 | 1.21 |
+| `tests/steps/l01_31_zir/items.rs` | 3,698 | `test/steps/l01_31_zir/items_test.dart` | 3,905 | 1.06 |
+| `tests/steps/l01_31_zir/mod.rs` | 1,199 | `test/steps/l01_31_zir/zir.dart`<br>`test/steps/l01_31_zir/scaling_test.dart` | 3,966 | 3.31 |
+| `tests/steps/l01_31_zir/rejections.rs` | 9,252 | `test/steps/l01_31_zir/rejections_test.dart` | 9,175 | 0.99 |
 | `tests/steps/l01_32_canonical_zir/fuzz.rs` | 7,874 | | | |
 | `tests/steps/l01_32_canonical_zir/mod.rs` | 557 | | | |
 | `tests/steps/l01_32_canonical_zir/stability.rs` | 6,674 | | | |
@@ -1141,7 +1141,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 297 Rust files** | **2,273,126** | | | |
-| **the Rust files ported so far** | **1,703,114** | | **1,439,835** | **0.85** |
+| **the Rust files ported so far** | **1,801,542** | | **1,534,803** | **0.85** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1600,10 +1600,29 @@ Dart:
   for the kept results passes it, since rerunning the front end on the whole unit costs
   more, so the second test keeps 5,000 or 40,000 results in the database alone, where the
   list search takes 70× to 74× as long.
+- **L1.31** (ZIR). Moderate. The Rust text reader, validator and binary reader and writer
+  recurse once per nested region. The Dart ones keep their own stacks, so a `lambda` nested
+  20,000 deep is checked and goes through the binary form and back; a plain recursive walk of
+  that graph overflows the Dart stack from 10,000 levels. The text form is tested at 2,000
+  levels only, since each of its lines holds its whole path, so a text graph nested d deep
+  has d² characters. The Rust validator also writes out each region's path at every level
+  (`format!("{at}/{j}")`), so checking a graph nested n deep takes O(n²) time; the Dart
+  validator did the same at first (81× from 4,000 to 32,000 levels) and now keeps a path as
+  its last step and the path before it, written out only in a message, and counts state
+  uses by (node, port) rather than by name. The binary tags are private enums, not numbers.
+  Faults of the Rust code that the port does not copy: `Family::of` panics on a repeated
+  key, in the text and the binary readers, where Dart rejects the graph ("the family has a
+  key twice"); the text reader ignores a third `/` part of a rational; a name may not hold a
+  combining mark (`is_alphanumeric`), where Dart takes XID_Continue; and a column counts
+  bytes in Rust and UTF-16 code units in Dart. Rust has no scaling test for this step; Dart
+  has six, each caught by its control: a scan of the nodes so far at each node read (51× to
+  57×, limit 24), checked (63× to 66×) or printed (66× to 67×), a scan of the writer's
+  pending work at each node and region (55× wide, 48× to 53× nested, the reader scanning its
+  nodes too), and the eager path (52× to 68×).
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1677,6 +1696,8 @@ which the case was shorter, clearer or cheaper to run.
 | A recursive rewrite of a term | Rust | `mix` is a recursion of 100 lines that reads as the rule it applies. In Dart, where the stack holds about 3,000 of its frames, it is a loop over a stack of closures and a stack of results, each node pushing its children's tasks and a task that joins their results; the order of the side effects must be kept by hand (L1.28). |
 | A structural form of a tree, to hash or compare | Rust | `#[derive(Debug)]` prints every variant and field; Dart's `toString` is what a class writes, so a structural encoding is written by hand, one case per class (L1.30). |
 | A cache that keeps a failure beside the successes | Rust | `Result<T, E>` is a value to store and clone; Dart keeps the thrown exception as an `Object` and throws it again on a hit (L1.30). |
+| Numbered tags of a binary format | Dart | An enum's `index` writes the tag and `values[t]` reads it back, with the range check from `values.length`, so no number is written. The Rust writer and reader each spell every number, and a `#[repr(u8)]` enum would need a hand-written `TryFrom<u8>` to read one back (L1.31). |
+| A walk deeper than the call stack, in its original order | Dart | Each pending check is a closure on a `List<void Function()>`, holding the values it reads and pushing the checks of the regions it opens. In Rust the same stack is a `Vec<Box<dyn FnOnce(&mut Vec<…>) -> Result<(), String> + '_>>`, with the stack passed in, since a closure may not borrow the stack it was popped from (L1.31). |
 | A field padded to a width in formatted text | Rust | `{n:<w$}` pads inside the format string; Dart calls `padRight(w)` on an interpolated string inside the interpolation (L1.29). |
 | A conditional chained to a pattern | Rust | `if let Some(Term::Lit(v)) = args.get(p) && cond` is one condition. Dart allows a `case` pattern only as the whole condition of an `if`, so the test splits into a `where` and an `if`-`case` (L1.28). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
@@ -1819,7 +1840,7 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_07_fences/copies_test.dart` | 1 | 0 |
 | `test/steps/l01_07_fences/scaling_test.dart` | 1 | 0 |
 | `test/support/trees.dart` | 1 | 0 |
-| `test/steps/l01_08_parser/cases_test.dart` | 2 | 0 |
+| `test/steps/l01_08_parser/cases_test.dart` | 3 | 0 |
 | `test/steps/l01_08_parser/errors_test.dart` | 1 | 0 |
 | `test/steps/l01_08_parser/rings_test.dart` | 1 | 0 |
 | `test/steps/l01_08_parser/scaling_test.dart` | 2 | 0 |
@@ -1937,5 +1958,14 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_30_queries/keys_test.dart` | 1 | 0 |
 | `test/steps/l01_30_queries/reuse_test.dart` | 1 | 0 |
 | `test/steps/l01_30_queries/scaling_test.dart` | 1 | 0 |
+| `lib/zir.dart` | 1 | 0 |
+| `lib/src/zir/graph.dart` | 3 | 0 |
+| `lib/src/zir/text.dart` | 2 | 0 |
+| `lib/src/zir/binary.dart` | 2 | 0 |
+| `test/steps/l01_31_zir/zir.dart` | 1 | 0 |
+| `test/steps/l01_31_zir/graphs_test.dart` | 2 | 0 |
+| `test/steps/l01_31_zir/items_test.dart` | 1 | 0 |
+| `test/steps/l01_31_zir/rejections_test.dart` | 1 | 0 |
+| `test/steps/l01_31_zir/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
