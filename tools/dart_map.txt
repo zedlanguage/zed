@@ -231,3 +231,9 @@ dart/test/steps/l01_28_staging/staging.dart tests/steps/l01_28_staging/mod.rs
 dart/test/steps/l01_28_staging/mix_test.dart tests/steps/l01_28_staging/mix.rs
 dart/test/steps/l01_28_staging/trick_test.dart tests/steps/l01_28_staging/trick.rs
 dart/test/steps/l01_28_staging/scaling_test.dart tests/steps/l01_28_staging/scaling.rs
+dart/test/steps/l01_29_diagnostics/diagnostics.dart tests/steps/l01_29_diagnostics/mod.rs
+dart/test/steps/l01_29_diagnostics/derivations_test.dart tests/steps/l01_29_diagnostics/derivations.rs
+dart/test/steps/l01_29_diagnostics/layout_test.dart tests/steps/l01_29_diagnostics/layout.rs
+dart/test/steps/l01_29_diagnostics/repairs_test.dart tests/steps/l01_29_diagnostics/repairs.rs
+dart/test/steps/l01_29_diagnostics/scaling_test.dart tests/steps/l01_29_diagnostics/scaling.rs
+dart/test/steps/l01_29_diagnostics/variants_test.dart tests/steps/l01_29_diagnostics/variants.rs

@@ -16,9 +16,10 @@ library;
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
-import 'ast.dart' show BuildError, FunctionDef, Port, Stmt, TypeExpr, TypeName, unit;
+import 'ast.dart' show BuildError, FunctionDef, Note, Port, Stmt, TypeExpr, TypeName, unit;
 import 'elab.dart' show ElabErrors, Unit, elaborate;
 import 'interp.dart';
 import 'kernel.dart';
@@ -162,15 +163,56 @@ Program load(List<int> bytes) {
   }
 }
 
-/// A message of the compiler, at a line and column of the source, both counted from 1.
+/// A message of the compiler, at a line and column of the source, both counted from 1, with
+/// its derivation (DESIGN.md "Diagnostics").
 final class Diagnostic {
   final int line, col;
   final String message;
 
-  Diagnostic(this.line, this.col, this.message);
+  /// Each constraint and step that led to it, in the order the compiler met them.
+  final List<Step> steps;
 
+  Diagnostic(this.line, this.col, this.message, [this.steps = const []]);
+
+  /// The message on one line; then each step numbered, with its source line and the text it
+  /// covers underlined, a source line shown once for consecutive steps on one place.
   @override
-  String toString() => '$line:$col: $message';
+  String toString() {
+    final s = StringBuffer('$line:$col: $message');
+    var gutter = 0;
+    for (final step in steps) {
+      gutter = max(gutter, '${step.line}'.length);
+    }
+    final number = '${steps.length}'.length;
+    final pad = ' ' * (number + 4);
+    (int, int, int)? last;
+    for (final (i, step) in steps.indexed) {
+      s.write('\n  ${'[${i + 1}]'.padRight(number + 2)} ${step.line}:${step.col}: ${step.text}');
+      final at = (step.line, step.col, step.width);
+      if (at == last) continue;
+      last = at;
+      s
+        ..write('\n$pad ${'${step.line}'.padLeft(gutter)} | ${step.source}')
+        ..write('\n$pad ${''.padLeft(gutter)} | ${' ' * (step.col - 1)}${'^' * step.width}');
+    }
+    return '$s';
+  }
+}
+
+/// One step of a derivation, placed in the source.
+final class Step {
+  final int line, col;
+
+  /// What holds there.
+  final String text;
+
+  /// The source line.
+  final String source;
+
+  /// How many characters of the source line the step covers, at least 1.
+  final int width;
+
+  Step(this.line, this.col, this.text, this.source, this.width);
 }
 
 /// The diagnostics of the first phase that rejects a unit.
@@ -187,13 +229,30 @@ final class Diagnostics implements Exception {
 (List<Stmt>, Unit) compile(String text) {
   final b = utf8.encode(text);
   final lines = source.Lines(b);
-  Diagnostic at(source.Span span, String why) {
+  Diagnostic at(source.Span span, String why, [List<Step> steps = const []]) {
     final (line, col) = lines.lineCol(b, span.start);
-    return Diagnostic(line, col, why);
+    return Diagnostic(line, col, why, steps);
   }
 
-  Diagnostics all(List<BuildError> errors) =>
-      Diagnostics([for (final e in errors) at(e.span, e.message)]);
+  // The step a note is: its place, the source line, and the characters of the note's span on
+  // that line.
+  Step step(Note n) {
+    final (line, col) = lines.lineCol(b, n.span.start);
+    final (begin, _) = lines.lineStart(n.span.start);
+    var end = n.span.start;
+    while (end < b.length && b[end] != 0x0a && b[end] != 0x0d) {
+      end++;
+    }
+    var width = 0;
+    for (var i = n.span.start; i < n.span.end.clamp(n.span.start, end); i++) {
+      if (b[i] & 0xc0 != 0x80) width++;
+    }
+    return Step(line, col, n.text, utf8.decode(b.sublist(begin, end)), max(width, 1));
+  }
+
+  Diagnostics all(List<BuildError> errors) => Diagnostics([
+    for (final e in errors) at(e.span, e.message, [for (final n in e.notes) step(n)]),
+  ]);
   try {
     final tokens = lex(text);
     final stmts = unit(text, tokens, parse(text, tokens, 'Unit', top));

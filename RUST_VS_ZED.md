@@ -321,7 +321,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.26 | 1:01 | 0:12 | 0 (0) | 6 (2) | 0:27 | 0:28 | 119 (9) |
 | L1.27 | 0:07 | 0:03 | 0 (0) | 2 (2) | 0:42 | 0:35 | 1 (1) |
 | L1.28 | 0:15 | 0:07 | 0 (0) | 0 (0) | 0:20 | 0:35 | 4 (1) |
-| L1.29 | 0:17 | 0:07 | 0 (0) | 4 (2) | | | |
+| L1.29 | 0:17 | 0:07 | 0 (0) | 4 (2) | 0:02 | 0:13 | 0 (0) |
 | L1.30 | 0:06 | 0:04 | 0 (0) | 3 (1) | | | |
 | L1.31 | 0:20 | 0:04 | 0 (0) | 1 (1) | | | |
 | L1.32 | 0:06 | 0:04 | 0 (0) | 0 (0) | | | |
@@ -896,7 +896,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/parse/mod.rs` | 10,467 | `lib/parse.dart` | 11,116 | 1.06 |
 | `crates/zedc/src/query.rs` | 4,746 | | | |
 | `crates/zedc/src/resolve.rs` | 15,634 | `lib/resolve.dart` | 13,317 | 0.85 |
-| `crates/zedc/src/run.rs` | 24,727 | `lib/run.dart` | 18,517 | 0.75 |
+| `crates/zedc/src/run.rs` | 24,727 | `lib/run.dart` | 20,619 | 0.83 |
 | `crates/zedc/src/source.rs` | 7,459 | `lib/source.dart` | 7,286 | 0.98 |
 | `crates/zedc/src/stage.rs` | 32,641 | `lib/stage.dart` | 28,970 | 0.89 |
 | `crates/zedc/src/store/affine.rs` | 19,512 | `lib/src/store/affine.dart` | 18,616 | 0.95 |
@@ -1056,12 +1056,12 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_28_staging/mod.rs` | 1,692 | `test/steps/l01_28_staging/staging.dart` | 1,345 | 0.79 |
 | `tests/steps/l01_28_staging/scaling.rs` | 4,036 | `test/steps/l01_28_staging/scaling_test.dart` | 3,555 | 0.88 |
 | `tests/steps/l01_28_staging/trick.rs` | 5,160 | `test/steps/l01_28_staging/trick_test.dart` | 4,405 | 0.85 |
-| `tests/steps/l01_29_diagnostics/derivations.rs` | 7,910 | | | |
-| `tests/steps/l01_29_diagnostics/layout.rs` | 1,974 | | | |
-| `tests/steps/l01_29_diagnostics/mod.rs` | 975 | | | |
-| `tests/steps/l01_29_diagnostics/repairs.rs` | 1,845 | | | |
-| `tests/steps/l01_29_diagnostics/scaling.rs` | 3,066 | | | |
-| `tests/steps/l01_29_diagnostics/variants.rs` | 3,220 | | | |
+| `tests/steps/l01_29_diagnostics/derivations.rs` | 7,910 | `test/steps/l01_29_diagnostics/derivations_test.dart` | 7,872 | 1.00 |
+| `tests/steps/l01_29_diagnostics/layout.rs` | 1,974 | `test/steps/l01_29_diagnostics/layout_test.dart` | 1,668 | 0.84 |
+| `tests/steps/l01_29_diagnostics/mod.rs` | 975 | `test/steps/l01_29_diagnostics/diagnostics.dart` | 860 | 0.88 |
+| `tests/steps/l01_29_diagnostics/repairs.rs` | 1,845 | `test/steps/l01_29_diagnostics/repairs_test.dart` | 1,976 | 1.07 |
+| `tests/steps/l01_29_diagnostics/scaling.rs` | 3,066 | `test/steps/l01_29_diagnostics/scaling_test.dart` | 2,589 | 0.84 |
+| `tests/steps/l01_29_diagnostics/variants.rs` | 3,220 | `test/steps/l01_29_diagnostics/variants_test.dart` | 2,717 | 0.84 |
 | `tests/steps/l01_30_queries/keys.rs` | 690 | | | |
 | `tests/steps/l01_30_queries/mod.rs` | 1,120 | | | |
 | `tests/steps/l01_30_queries/reuse.rs` | 4,327 | | | |
@@ -1141,7 +1141,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 297 Rust files** | **2,273,126** | | | |
-| **the Rust files ported so far** | **1,673,241** | | **1,402,671** | **0.84** |
+| **the Rust files ported so far** | **1,692,231** | | **1,422,455** | **0.84** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1578,10 +1578,20 @@ Dart:
   test runs sharing the machine, which slows the 2 ms small runs). Reading the stage index by
   a scan of the range, in place of the segment tree, is not caught by these sizes: 10 million
   integer reads at 3,200 definitions are within the noise of the rest of `stage()`.
+- **L1.29** (diagnostics). Easy. The checker's derivations, class reasons and repairs came
+  with the checker in L1.26; this step adds the steps of `Diagnostic`, their placing in the
+  source and the numbered layout to `run.dart`. Every test passed on the first run, with no
+  compile errors. The scaling test of placing a diagnostic on every line starts at 2,000 lines
+  in Dart, not 500: placing each diagnostic and step by decoding the file from its start
+  (the control) grows 23× from 500 to 4,000 lines, under the limit of 24, since the rest of
+  loading takes most of the time at 500, and 44× to 50× from 2,000 to 16,000; the code as
+  written grows 8× from 4,000 to 32,000. Deriving without the visited set does not end in
+  400 s at 3,200 bindings. Finding each reason by a search of those shown (F29) passes, as
+  in Rust.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1653,6 +1663,7 @@ which the case was shorter, clearer or cheaper to run.
 | State kept between tests | Rust | The Rust test harness runs each test on its own thread, so a thread-local memo starts empty in each test. `dart test` runs all the tests of a file in one isolate, so a top-level memo carries over from test to test; this exposed F32, which a long-running Rust process would also have (L1.27). |
 | Deep recursion in a test | Dart | A chain of 8,000 operators parses and checks with no setting. The Rust test runs on a thread with a 512 MB stack, since the parser and checker recurse once per operator (L1.27). |
 | A recursive rewrite of a term | Rust | `mix` is a recursion of 100 lines that reads as the rule it applies. In Dart, where the stack holds about 3,000 of its frames, it is a loop over a stack of closures and a stack of results, each node pushing its children's tasks and a task that joins their results; the order of the side effects must be kept by hand (L1.28). |
+| A field padded to a width in formatted text | Rust | `{n:<w$}` pads inside the format string; Dart calls `padRight(w)` on an interpolated string inside the interpolation (L1.29). |
 | A conditional chained to a pattern | Rust | `if let Some(Term::Lit(v)) = args.get(p) && cond` is one condition. Dart allows a `case` pattern only as the whole condition of an `if`, so the test splits into a `where` and an `if`-`case` (L1.28). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
 
@@ -1763,7 +1774,7 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `lib/src/ast/stmts.dart` | 3 | 0 |
 | `lib/format.dart` | 2 | 0 |
 | `bin/zedc.dart` | 4 | 0 |
-| `lib/run.dart` | 6 | 0 |
+| `lib/run.dart` | 7 | 0 |
 | `lib/resolve.dart` | 3 | 0 |
 | `lib/elab.dart` | 13 | 0 |
 | `lib/interp.dart` | 2 | 0 |
@@ -1901,5 +1912,11 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_28_staging/mix_test.dart` | 1 | 0 |
 | `test/steps/l01_28_staging/trick_test.dart` | 1 | 0 |
 | `test/steps/l01_28_staging/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_29_diagnostics/diagnostics.dart` | 1 | 0 |
+| `test/steps/l01_29_diagnostics/derivations_test.dart` | 1 | 0 |
+| `test/steps/l01_29_diagnostics/layout_test.dart` | 1 | 0 |
+| `test/steps/l01_29_diagnostics/repairs_test.dart` | 1 | 0 |
+| `test/steps/l01_29_diagnostics/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_29_diagnostics/variants_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
