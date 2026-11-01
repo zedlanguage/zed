@@ -21,6 +21,9 @@ const _words = [
   ('sum', Prim.sum),
 ];
 
+/// Whether `name` is a prelude word.
+bool word(String name) => _words.any((w) => w.$1 == name);
+
 /// `body` under the prelude: each word it may read bound to its primitive.
 Term prelude(Term body) {
   for (final (name, p) in _words.reversed) {

@@ -227,3 +227,7 @@ dart/test/steps/l01_26_type_resolution/scaling_test.dart tests/steps/l01_26_type
 dart/test/steps/l01_26_type_resolution/signatures_test.dart tests/steps/l01_26_type_resolution/signatures.rs
 dart/test/steps/l01_27_absences/families_test.dart tests/steps/l01_27_absences/families.rs
 dart/test/steps/l01_27_absences/loose_test.dart tests/steps/l01_27_absences/loose.rs
+dart/test/steps/l01_28_staging/staging.dart tests/steps/l01_28_staging/mod.rs
+dart/test/steps/l01_28_staging/mix_test.dart tests/steps/l01_28_staging/mix.rs
+dart/test/steps/l01_28_staging/trick_test.dart tests/steps/l01_28_staging/trick.rs
+dart/test/steps/l01_28_staging/scaling_test.dart tests/steps/l01_28_staging/scaling.rs

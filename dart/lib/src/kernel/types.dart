@@ -288,6 +288,82 @@ sealed class Type implements Comparable<Type> {
     return true;
   });
 
+  /// Every value of `this`, when there are at most `cap` of them and each can be listed:
+  /// bools, finite literal sets, bare atoms, and tuples of such components. Null for a type
+  /// with more values, an infinite part, a payload, a struct or a function, and for a tuple
+  /// type one of whose paths has more than `cap` rows before its negated tuples are taken out.
+  List<Value>? values(int cap) => _list(cap, true);
+
+  /// Every value of `this` when the list is no longer than the type: as [values], except
+  /// that a tuple path is listed only when its rows are no more than the values its
+  /// components list, so listing never multiplies what the type writes.
+  List<Value>? get listed => _list(null, false);
+
+  /// [values], with no cap when `cap` is null, and `spread` false for [listed].
+  List<Value>? _list(int? cap, bool spread) {
+    if (this is! _Parts || structs || morphisms.leaf != false || atoms.cofinite || tuples.rest) {
+      return null;
+    }
+    bool within(int n) => cap == null || n <= cap;
+    final out = SplayTreeSet<Value>();
+    bool add(Value v) => within((out..add(v)).length);
+    for (final b in [false, true]) {
+      if (bools & (b ? 2 : 1) != 0 && !add(Bool(b))) return null;
+    }
+    for (final lits in [ints, rats, floats, strings]) {
+      if (lits.cofinite) return null;
+      for (final v in lits.values.keys) {
+        if (!add(v)) return null;
+      }
+    }
+    for (final (name, part) in atoms.names.entries) {
+      if (part.payload != Type.empty) return null;
+      if (part.bare && !add(Atom(name))) return null;
+    }
+    for (final MapEntry(key: len, value: part) in tuples.lens.entries) {
+      if (part is! Bdd<Components>) return null;
+      final rows = <List<Value>>[];
+      final listed = part.walk(false, (pos, neg) {
+        final meet = List.filled(len, Type.top);
+        for (final c in pos) {
+          for (var i = 0; i < len; i++) {
+            meet[i] = meet[i] & c.items[i];
+          }
+        }
+        var found = [<Value>[]];
+        var written = 0;
+        for (final item in meet) {
+          final vs = item._list(cap, spread);
+          if (vs == null) return false;
+          written += vs.length;
+          if (!spread && found.length * vs.length > written) return false;
+          // Compared with the cap before the product is built, which can be `cap²`.
+          if (!within(found.length * vs.length)) return false;
+          found = [
+            for (final r in found)
+              for (final v in vs) [...r, v],
+          ];
+        }
+        bool fits(Components n, List<Value> r) {
+          for (var i = 0; i < len; i++) {
+            if (!n.items[i].contains(r[i])) return false;
+          }
+          return true;
+        }
+
+        found.removeWhere((r) => neg.any((n) => fits(n, r)));
+        // The paths are disjoint, so their rows are distinct values.
+        rows.addAll(found);
+        return within(rows.length);
+      });
+      if (!listed) return null;
+      for (final r in rows) {
+        if (!add(Tuple(r))) return null;
+      }
+    }
+    return out.toList();
+  }
+
   Type _zip(Type o, bool or) => _Parts(
     or ? bools | o.bools : bools & o.bools,
     ints.zip(o.ints, or),

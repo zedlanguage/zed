@@ -248,4 +248,24 @@ void main() {
     expect(a & b, both);
     expect((a - b) | both, a);
   });
+
+  test('listing values past the cap stops early', () {
+    // `(S, S)` for a set `S` of `n` literals has `n²` values, past a cap of `n`; the product
+    // of the components' values is compared with the cap before it is built, not after.
+    check('the values of a square past the cap, by n', 200, (n) {
+      final s = range(0, n);
+      final square = Type.tuple([s, s]);
+      expect(square.values(n), isNull, reason: 'n = $n');
+      expect(s.values(n)?.length, n);
+    });
+    final s = range(0, 3);
+    final square = Type.tuple([s, s]);
+    expect(square.values(9)?.length, 9);
+    expect(square.values(8), isNull);
+    // A path is listed when the product of its positive parts is within the cap, before the
+    // negated tuples are taken out, so 8 values from a product of 9 need a cap of 9.
+    final rest = square - Type.tuple([lit(0), lit(0)]);
+    expect(rest.values(8), isNull);
+    expect(rest.values(9)?.length, 8);
+  });
 }

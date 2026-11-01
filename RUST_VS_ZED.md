@@ -320,7 +320,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.25 | 0:36 | 0:16 | 1 (1) | 7 (2) | 0:19 | 0:05 | 9 (3) |
 | L1.26 | 1:01 | 0:12 | 0 (0) | 6 (2) | 0:27 | 0:28 | 119 (9) |
 | L1.27 | 0:07 | 0:03 | 0 (0) | 2 (2) | 0:42 | 0:35 | 1 (1) |
-| L1.28 | 0:15 | 0:07 | 0 (0) | 0 (0) | | | |
+| L1.28 | 0:15 | 0:07 | 0 (0) | 0 (0) | 0:20 | 0:35 | 4 (1) |
 | L1.29 | 0:17 | 0:07 | 0 (0) | 4 (2) | | | |
 | L1.30 | 0:06 | 0:04 | 0 (0) | 3 (1) | | | |
 | L1.31 | 0:20 | 0:04 | 0 (0) | 1 (1) | | | |
@@ -854,7 +854,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-kernel/src/provenance.rs` | 10,812 | `lib/src/kernel/provenance.dart` | 10,825 | 1.00 |
 | `crates/zed-kernel/src/term.rs` | 13,219 | `lib/src/kernel/term.dart` | 6,776 | 0.51 |
 | `crates/zed-kernel/src/text.rs` | 5,582 | `lib/src/kernel/text.dart`<br>`test/kernel/text_test.dart` | 4,417 | 0.79 |
-| `crates/zed-kernel/src/types.rs` | 40,294 | `lib/src/kernel/types.dart` | 31,339 | 0.78 |
+| `crates/zed-kernel/src/types.rs` | 40,294 | `lib/src/kernel/types.dart` | 34,418 | 0.85 |
 | `crates/zed-kernel/src/types/bdd.rs` | 27,452 | `lib/src/kernel/bdd.dart`<br>`test/steps/l01_22_type_representation/bdd_test.dart` | 20,688 | 0.75 |
 | `crates/zed-kernel/src/types/empty.rs` | 7,395 | `lib/src/kernel/empty.dart` | 7,079 | 0.96 |
 | `crates/zed-kernel/src/types/rec.rs` | 18,327 | `lib/src/kernel/rec.dart` | 13,763 | 0.75 |
@@ -883,7 +883,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/elab.rs` | 57,082 | `lib/elab.dart`<br>`lib/src/tables.dart` | 43,882 | 0.77 |
 | `crates/zedc/src/fence.rs` | 2,991 | `lib/fence.dart` | 2,352 | 0.79 |
 | `crates/zedc/src/format.rs` | 23,772 | `lib/format.dart` | 20,819 | 0.88 |
-| `crates/zedc/src/interp.rs` | 1,137 | `lib/interp.dart` | 906 | 0.80 |
+| `crates/zedc/src/interp.rs` | 1,137 | `lib/interp.dart` | 1,004 | 0.88 |
 | `crates/zedc/src/lex/comment.rs` | 1,304 | `lib/src/lex/comment.dart` | 1,138 | 0.87 |
 | `crates/zedc/src/lex/mod.rs` | 8,813 | `lib/lex.dart` | 12,990 | 1.47 |
 | `crates/zedc/src/lex/name.rs` | 3,147 | `lib/src/lex/name.dart` | 2,770 | 0.88 |
@@ -896,9 +896,9 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/parse/mod.rs` | 10,467 | `lib/parse.dart` | 11,116 | 1.06 |
 | `crates/zedc/src/query.rs` | 4,746 | | | |
 | `crates/zedc/src/resolve.rs` | 15,634 | `lib/resolve.dart` | 13,317 | 0.85 |
-| `crates/zedc/src/run.rs` | 24,727 | `lib/run.dart` | 18,133 | 0.73 |
+| `crates/zedc/src/run.rs` | 24,727 | `lib/run.dart` | 18,517 | 0.75 |
 | `crates/zedc/src/source.rs` | 7,459 | `lib/source.dart` | 7,286 | 0.98 |
-| `crates/zedc/src/stage.rs` | 32,641 | `lib/stage.dart` | 3,781 | 0.12 |
+| `crates/zedc/src/stage.rs` | 32,641 | `lib/stage.dart` | 28,970 | 0.89 |
 | `crates/zedc/src/store/affine.rs` | 19,512 | `lib/src/store/affine.dart` | 18,616 | 0.95 |
 | `crates/zedc/src/store/cell.rs` | 13,091 | `lib/src/store/cell.dart` | 11,450 | 0.87 |
 | `crates/zedc/src/store/float.rs` | 5,956 | `lib/src/store/float.dart` | 4,576 | 0.77 |
@@ -1026,7 +1026,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_23_subtyping/mod.rs` | 549 | | | |
 | `tests/steps/l01_23_subtyping/oracle.rs` | 8,422 | `test/steps/l01_23_subtyping/oracle_test.dart` | 7,814 | 0.93 |
 | `tests/steps/l01_23_subtyping/rec.rs` | 13,224 | `test/steps/l01_23_subtyping/rec_test.dart` | 11,891 | 0.90 |
-| `tests/steps/l01_23_subtyping/scaling.rs` | 14,517 | `test/steps/l01_23_subtyping/scaling_test.dart` | 10,834 | 0.75 |
+| `tests/steps/l01_23_subtyping/scaling.rs` | 14,517 | `test/steps/l01_23_subtyping/scaling_test.dart` | 11,775 | 0.81 |
 | `tests/steps/l01_24_refinement_lattices/bounds.rs` | 6,164 | `test/steps/l01_24_refinement_lattices/bounds_test.dart` | 5,020 | 0.81 |
 | `tests/steps/l01_24_refinement_lattices/cell.rs` | 6,341 | `test/steps/l01_24_refinement_lattices/cell_test.dart` | 5,524 | 0.87 |
 | `tests/steps/l01_24_refinement_lattices/float.rs` | 3,442 | `test/steps/l01_24_refinement_lattices/float_test.dart` | 2,934 | 0.85 |
@@ -1051,10 +1051,11 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_27_absences/families.rs` | 3,030 | `test/steps/l01_27_absences/families_test.dart` | 2,844 | 0.94 |
 | `tests/steps/l01_27_absences/loose.rs` | 2,981 | `test/steps/l01_27_absences/loose_test.dart` | 2,848 | 0.96 |
 | `tests/steps/l01_27_absences/mod.rs` | 578 | | | |
-| `tests/steps/l01_28_staging/mix.rs` | 7,525 | | | |
-| `tests/steps/l01_28_staging/mod.rs` | 1,692 | | | |
-| `tests/steps/l01_28_staging/scaling.rs` | 4,036 | | | |
-| `tests/steps/l01_28_staging/trick.rs` | 5,160 | | | |
+| `tests/steps/l01_27_absences/scaling.rs` | 1,463 | | | |
+| `tests/steps/l01_28_staging/mix.rs` | 7,525 | `test/steps/l01_28_staging/mix_test.dart` | 6,867 | 0.91 |
+| `tests/steps/l01_28_staging/mod.rs` | 1,692 | `test/steps/l01_28_staging/staging.dart` | 1,345 | 0.79 |
+| `tests/steps/l01_28_staging/scaling.rs` | 4,036 | `test/steps/l01_28_staging/scaling_test.dart` | 3,555 | 0.88 |
+| `tests/steps/l01_28_staging/trick.rs` | 5,160 | `test/steps/l01_28_staging/trick_test.dart` | 4,405 | 0.85 |
 | `tests/steps/l01_29_diagnostics/derivations.rs` | 7,910 | | | |
 | `tests/steps/l01_29_diagnostics/layout.rs` | 1,974 | | | |
 | `tests/steps/l01_29_diagnostics/mod.rs` | 975 | | | |
@@ -1091,6 +1092,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_36_cranelift/mod.rs` | 1,238 | | | |
 | `tests/steps/l01_36_cranelift/ports.rs` | 1,802 | | | |
 | `tests/steps/l01_36_cranelift/scalars.rs` | 5,467 | | | |
+| `tests/steps/l01_36_cranelift/scaling.rs` | 4,872 | | | |
 | `tests/steps/l01_36_cranelift/strings.rs` | 2,004 | | | |
 | `tests/steps/l01_37_oracle/controls.rs` | 2,243 | | | |
 | `tests/steps/l01_37_oracle/mod.rs` | 461 | | | |
@@ -1138,8 +1140,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 892 | 0.55 |
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
-| **all 295 Rust files** | **2,266,791** | | | |
-| **the Rust files ported so far** | **1,654,828** | | **1,356,808** | **0.82** |
+| **all 297 Rust files** | **2,273,126** | | | |
+| **the Rust files ported so far** | **1,673,241** | | **1,402,671** | **0.84** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1489,7 +1491,7 @@ Dart:
   `sync*` generators calling each other with `yield*`, which the VM keeps on the heap (measured:
   depth 1,000,000 in 245 ms, and the cost per value yielded does not grow with depth); the
   tests then pass at the Rust's sizes. The scaling test that lists the values of a type past a
-  cap waits for L1.28, which the listing belongs to. The 6 compile errors, in 3 runs, were 2 in
+  cap was ported with L1.28, which the listing belongs to. The 6 compile errors, in 3 runs, were 2 in
   `rec.dart` as it was written, 2 from a null-aware element in a cascade, and 2 from a test
   still calling the old `paths`. Four negative controls fail as they should: a type named when
   made (ratios 32 to 77), the cycle search run once per definition (61 to 65), a deep walk of
@@ -1556,10 +1558,30 @@ Dart:
   A first fix of F32 keyed the Dart memo by identity, which broke the reuse of results
   within one unit that L1.23's tuple-difference test needs; the memo is now cleared at the
   start of each unit's check, in both languages.
+- **L1.28** (staging). Medium. `stage.rs` is ported whole: `mix`, the stage index over a
+  segment tree, the form rule of whether a term ends, `passed`, `split` and the Trick, and
+  from `types.rs` the listing of a finite type's values with a cap, whose L1.23 scaling test
+  is ported here. The 4 compile errors, in one run, were an import prefix `stage` hidden by
+  the method `Program.stage`, a pattern `case` joined to a condition by `&&`, a `for` with two
+  increments, and a `Fold` constructor that does not exist. The first test run failed 13 of 20
+  tests on a fixed-length list grown with `addAll`. The form rule, `mix` and the index walk
+  each recursed once per nested `let` and overflowed the Dart stack at 3,200 and 8,000 lets;
+  each is now a loop over a stack of tasks, whose results go on a second stack, so the order
+  of the scope changes and the report entries is as before. The two chain scaling tests first
+  timed loading the program as well as staging it; loading took about 1 s of the 1.03 s at
+  3,200 definitions, so the control below passed. They now load first and time `stage()`
+  alone, as the step's other two scaling tests already did. The Rust tests time both and
+  still catch it (40× and 34×), since the Rust loads faster in proportion. Controls, each
+  failing as it should: reading the free names of each term `mix` enters (45× to 64× for 8×
+  the size, limit 24), the roots kept in a list (26× to 38×), and a call's name looked for
+  among all names bound in the form rule (41× to 53× run alone; it passed once with four other
+  test runs sharing the machine, which slows the 2 ms small runs). Reading the stage index by
+  a scan of the range, in place of the segment tree, is not caught by these sizes: 10 million
+  integer reads at 3,200 definitions are within the noise of the rest of `stage()`.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1630,6 +1652,8 @@ which the case was shorter, clearer or cheaper to run.
 | Mapping over an optional value | Rust | `iter.next().is_some_and(\|c\| …)` tests the first item, if any, in one expression. Dart has no `map` on a nullable value; `.first` throws on an empty iterable, and the port needs an `if (… case final c?)` statement (L1.26). |
 | State kept between tests | Rust | The Rust test harness runs each test on its own thread, so a thread-local memo starts empty in each test. `dart test` runs all the tests of a file in one isolate, so a top-level memo carries over from test to test; this exposed F32, which a long-running Rust process would also have (L1.27). |
 | Deep recursion in a test | Dart | A chain of 8,000 operators parses and checks with no setting. The Rust test runs on a thread with a 512 MB stack, since the parser and checker recurse once per operator (L1.27). |
+| A recursive rewrite of a term | Rust | `mix` is a recursion of 100 lines that reads as the rule it applies. In Dart, where the stack holds about 3,000 of its frames, it is a loop over a stack of closures and a stack of results, each node pushing its children's tasks and a task that joins their results; the order of the side effects must be kept by hand (L1.28). |
+| A conditional chained to a pattern | Rust | `if let Some(Term::Lit(v)) = args.get(p) && cond` is one condition. Dart allows a `case` pattern only as the whole condition of an `if`, so the test splits into a `where` and an `if`-`case` (L1.28). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
 
 ### Changes per Dart file
@@ -1649,7 +1673,7 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `lib/src/kernel/provenance.dart` | 2 | 0 |
 | `lib/src/kernel/term.dart` | 3 | 0 |
 | `lib/src/kernel/print.dart` | 4 | 0 |
-| `lib/src/kernel/types.dart` | 4 | 0 |
+| `lib/src/kernel/types.dart` | 5 | 0 |
 | `lib/src/kernel/bdd.dart` | 4 | 0 |
 | `lib/src/kernel/empty.dart` | 3 | 1 |
 | `lib/src/kernel/rec.dart` | 1 | 0 |
@@ -1687,7 +1711,7 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `lib/src/store/iterate.dart` | 3 | 0 |
 | `lib/src/store/revision.dart` | 2 | 0 |
 | `lib/src/store/preimage.dart` | 1 | 0 |
-| `lib/stage.dart` | 1 | 0 |
+| `lib/stage.dart` | 2 | 0 |
 | `test/store/interval_test.dart` | 1 | 0 |
 | `test/store/lattice_test.dart` | 1 | 0 |
 | `test/store/wto_test.dart` | 1 | 0 |
@@ -1739,10 +1763,10 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `lib/src/ast/stmts.dart` | 3 | 0 |
 | `lib/format.dart` | 2 | 0 |
 | `bin/zedc.dart` | 4 | 0 |
-| `lib/run.dart` | 5 | 0 |
+| `lib/run.dart` | 6 | 0 |
 | `lib/resolve.dart` | 3 | 0 |
 | `lib/elab.dart` | 13 | 0 |
-| `lib/interp.dart` | 1 | 0 |
+| `lib/interp.dart` | 2 | 0 |
 | `lib/testing.dart` | 3 | 0 |
 | `lib/src/lex/text.dart` | 1 | 0 |
 | `lib/src/lex/comment.dart` | 1 | 0 |
@@ -1852,7 +1876,7 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_23_subtyping/cases_test.dart` | 1 | 0 |
 | `test/steps/l01_23_subtyping/oracle_test.dart` | 1 | 0 |
 | `test/steps/l01_23_subtyping/rec_test.dart` | 1 | 0 |
-| `test/steps/l01_23_subtyping/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_23_subtyping/scaling_test.dart` | 2 | 0 |
 | `test/steps/l01_24_refinement_lattices/support.dart` | 1 | 0 |
 | `test/steps/l01_24_refinement_lattices/bounds_test.dart` | 1 | 0 |
 | `test/steps/l01_24_refinement_lattices/cell_test.dart` | 1 | 0 |
@@ -1873,5 +1897,9 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_27_absences/families_test.dart` | 1 | 0 |
 | `test/steps/l01_27_absences/loose_test.dart` | 1 | 0 |
 | `test/steps/l01_27_absences/scaling_test.dart` | 0 | 1 |
+| `test/steps/l01_28_staging/staging.dart` | 1 | 0 |
+| `test/steps/l01_28_staging/mix_test.dart` | 1 | 0 |
+| `test/steps/l01_28_staging/trick_test.dart` | 1 | 0 |
+| `test/steps/l01_28_staging/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

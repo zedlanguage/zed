@@ -26,6 +26,7 @@ import 'lex.dart' show LexError, lex;
 import 'parse.dart' show ParseError, parse, top;
 import 'resolve.dart' show ResolveErrors, resolve;
 import 'source.dart' as source;
+import 'stage.dart' as staging;
 
 /// The kinds of input port `main` declares at L1.
 enum PortKind {
@@ -57,6 +58,16 @@ final class Program {
   final List<String> outputs;
 
   Program._(this._unit, this.inputs, this.outputs);
+
+  /// The elaboration.
+  Unit get unit => _unit;
+
+  /// This program with its demanded build-stage terms evaluated where their form shows they
+  /// end (step L1.28), and what the build did.
+  (Program, staging.Report) stage() {
+    final (unit, report) = staging.mix(_unit, const ['main']);
+    return (Program._(unit, inputs, outputs), report);
+  }
 
   /// `main` closed over the definitions it reaches, made at the first wave.
   late final Term _main = _unit.get('main')!;
