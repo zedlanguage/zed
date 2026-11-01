@@ -331,7 +331,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.35 | 0:03 | 0:03 | 0 (0) | 0 (0) | 0:01 | 0:03 | 0 (0) |
 | L1.36 | 0:26 | 0:04 | 0 (0) | 12 (2) | 0:16 | 0:17 | 10 (3) |
 | L1.37 | 0:07 | 0:04 | 0 (0) | 0 (0) | 0:03 | 0:11 | 15 (1) |
-| L1.38 | 0:17 | 0:09 | 0 (0) | 6 (2) | | | |
+| L1.38 | 0:17 | 0:09 | 0 (0) | 6 (2) | 0:15 | 0:36 | 13 (4) |
 | L1.39 | 0:36 | 0:20 | 0 (0) | 6 (3) | | | |
 | pass S2,S4 | 0:07 | 0:17 | 1 (1) | 0 (0) | | | |
 | pass S5 | 0:04 | 0:04 | 0 (0) | 0 (0) | | | |
@@ -906,8 +906,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/store/iterate.rs` | 9,869 | `lib/src/store/iterate.dart` | 8,271 | 0.84 |
 | `crates/zedc/src/store/lattice.rs` | 16,014 | `lib/src/store/lattice.dart`<br>`test/store/lattice_test.dart` | 12,885 | 0.80 |
 | `crates/zedc/src/store/mod.rs` | 690 | `lib/store.dart` | 477 | 0.69 |
-| `crates/zedc/src/store/preimage.rs` | 100,503 | `lib/src/store/preimage.dart` | 67,858 | 0.68 |
-| `crates/zedc/src/store/presburger.rs` | 56,642 | | | |
+| `crates/zedc/src/store/preimage.rs` | 100,503 | `lib/src/store/preimage.dart` | 82,419 | 0.82 |
+| `crates/zedc/src/store/presburger.rs` | 56,642 | `lib/presburger.dart`<br>`lib/src/store/presburger.dart` | 47,929 | 0.85 |
 | `crates/zedc/src/store/product.rs` | 51,680 | | | |
 | `crates/zedc/src/store/revision.rs` | 25,960 | `lib/src/store/revision.dart`<br>`test/store/revision_test.dart` | 23,082 | 0.89 |
 | `crates/zedc/src/store/wto.rs` | 10,717 | `lib/src/store/wto.dart`<br>`test/store/wto_test.dart` | 8,951 | 0.84 |
@@ -1033,11 +1033,11 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_24_refinement_lattices/loops.rs` | 6,177 | `test/steps/l01_24_refinement_lattices/loops_test.dart` | 4,593 | 0.74 |
 | `tests/steps/l01_24_refinement_lattices/mod.rs` | 3,301 | `test/steps/l01_24_refinement_lattices/support.dart` | 2,732 | 0.83 |
 | `tests/steps/l01_24_refinement_lattices/scaling.rs` | 9,294 | `test/steps/l01_24_refinement_lattices/scaling_test.dart` | 8,219 | 0.88 |
-| `tests/steps/l01_25_preimage_catalog/entries.rs` | 10,757 | `test/steps/l01_25_preimage_catalog/entries_test.dart` | 9,633 | 0.90 |
-| `tests/steps/l01_25_preimage_catalog/exact.rs` | 4,245 | `test/steps/l01_25_preimage_catalog/exact_test.dart` | 3,649 | 0.86 |
+| `tests/steps/l01_25_preimage_catalog/entries.rs` | 10,757 | `test/steps/l01_25_preimage_catalog/entries_test.dart` | 9,299 | 0.86 |
+| `tests/steps/l01_25_preimage_catalog/exact.rs` | 4,245 | `test/steps/l01_25_preimage_catalog/exact_test.dart` | 3,479 | 0.82 |
 | `tests/steps/l01_25_preimage_catalog/mod.rs` | 5,544 | `test/steps/l01_25_preimage_catalog/support.dart` | 4,485 | 0.81 |
 | `tests/steps/l01_25_preimage_catalog/random.rs` | 15,145 | `test/steps/l01_25_preimage_catalog/random_test.dart` | 13,296 | 0.88 |
-| `tests/steps/l01_25_preimage_catalog/scaling.rs` | 8,378 | `test/steps/l01_25_preimage_catalog/scaling_test.dart` | 5,792 | 0.69 |
+| `tests/steps/l01_25_preimage_catalog/scaling.rs` | 8,378 | `test/steps/l01_25_preimage_catalog/scaling_test.dart` | 6,530 | 0.78 |
 | `tests/steps/l01_25_preimage_catalog/stops.rs` | 4,452 | `test/steps/l01_25_preimage_catalog/stops_test.dart` | 3,946 | 0.89 |
 | `tests/steps/l01_25_preimage_catalog/tonicity.rs` | 6,655 | `test/steps/l01_25_preimage_catalog/tonicity_test.dart` | 5,580 | 0.84 |
 | `tests/steps/l01_26_type_resolution/adoption.rs` | 2,963 | `test/steps/l01_26_type_resolution/adoption_test.dart` | 2,828 | 0.95 |
@@ -1097,12 +1097,12 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_37_oracle/controls.rs` | 2,243 | `test/steps/l01_37_oracle/controls_test.dart` | 2,007 | 0.89 |
 | `tests/steps/l01_37_oracle/mod.rs` | 461 | `test/steps/l01_37_oracle/scaling_test.dart` | 3,335 | 7.23 |
 | `tests/steps/l01_37_oracle/oracle.rs` | 2,818 | `test/steps/l01_37_oracle/oracle_test.dart` | 2,681 | 0.95 |
-| `tests/steps/l01_38_presburger/controls.rs` | 4,924 | | | |
-| `tests/steps/l01_38_presburger/entailment.rs` | 4,804 | | | |
-| `tests/steps/l01_38_presburger/mod.rs` | 3,246 | | | |
-| `tests/steps/l01_38_presburger/preimage.rs` | 3,156 | | | |
-| `tests/steps/l01_38_presburger/random.rs` | 9,176 | | | |
-| `tests/steps/l01_38_presburger/scaling.rs` | 3,967 | | | |
+| `tests/steps/l01_38_presburger/controls.rs` | 4,924 | `test/steps/l01_38_presburger/controls_test.dart` | 4,002 | 0.81 |
+| `tests/steps/l01_38_presburger/entailment.rs` | 4,804 | `test/steps/l01_38_presburger/entailment_test.dart` | 4,389 | 0.91 |
+| `tests/steps/l01_38_presburger/mod.rs` | 3,246 | `test/steps/l01_38_presburger/support.dart` | 2,476 | 0.76 |
+| `tests/steps/l01_38_presburger/preimage.rs` | 3,156 | `test/steps/l01_38_presburger/preimage_test.dart` | 2,563 | 0.81 |
+| `tests/steps/l01_38_presburger/random.rs` | 9,176 | `test/steps/l01_38_presburger/checks.dart`<br>`test/steps/l01_38_presburger/random_test.dart` | 7,398 | 0.81 |
+| `tests/steps/l01_38_presburger/scaling.rs` | 3,967 | `test/steps/l01_38_presburger/scaling_test.dart` | 2,823 | 0.71 |
 | `tests/steps/l01_39_reduced_product/controls.rs` | 9,351 | | | |
 | `tests/steps/l01_39_reduced_product/exact.rs` | 5,167 | | | |
 | `tests/steps/l01_39_reduced_product/mod.rs` | 2,191 | | | |
@@ -1141,7 +1141,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 297 Rust files** | **2,273,126** | | | |
-| **the Rust files ported so far** | **2,095,332** | | **1,802,856** | **0.86** |
+| **the Rust files ported so far** | **2,181,247** | | **1,889,231** | **0.87** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1703,10 +1703,30 @@ Dart:
   `Unit.get` per binding (26× and 58×), a string built a character at a time (65×), and a
   `contains` check per mismatch added (67×). The front end, timed with the oracle at first,
   hid the first of these at 20×.
+- **L1.38** (the linear-relation domain): hard. The translation into formulas, projection,
+  entailment and the preimage's relation stage port directly, and the four L1.25 results that
+  waited for this step now match the Rust. The Omega test does not. The Rust solver recurses
+  once per eliminated variable and builds each step's rows anew, and its scaling test compares
+  chains of 7 and 15 variables only, citing "the budget of 16", which the module's own header
+  says it no longer has (a stale comment in the Rust test). Ported the same way and timed at n
+  and 8n, the solver was cubic in the length of the chain. The Dart solver is a loop over one system of rows kept in a `SplayTreeMap` by coefficients,
+  with each variable's rows, its counts of lower and upper bounds, and the variables ordered
+  by the rows an elimination adds, so that each step reads the next variable and its rows by
+  lookup. The real shadow is tested once, at the first inexact step, and the dark shadow
+  answers after it. The chain with a point (32 variables), the empty chain (256) and the rising
+  chain (128) are timed at n and 8n: 8.0×, 9.2× and 9.0×. Each is caught by a control, each
+  run under 60 s: every variable tested on the real shadow (59×, the chain with a point), and
+  the row opposite a new row found by a scan of all rows (54× and 53×, the other two). The L1.25 test of the linear translation of calls, which
+  waited for this step, is ported too; with the memo of a call's translation removed it was
+  killed at 60 s, its time growing 4× for each 2 more calls. With arguments apart (d = 1), the
+  interval pass is already exact from k = 6, so that half of the test never reaches the
+  translation. The 13 compile errors, in 4 runs, were import clashes (`Sym` and `Atom` in two
+  libraries, `lit` defined twice), `relations` missing from a `show` list, and `firstAfter`,
+  which `SplayTreeSet` does not have.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34, L1.35, L1.36, L1.37. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34, L1.35, L1.36, L1.37, L1.38. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1796,6 +1816,7 @@ which the case was shorter, clearer or cheaper to run.
 | Calling generated code, and being called back | Rust | Cranelift's JIT returns a function pointer to call, and each hook is an `extern "C"` function. Dart maps the code with `mmap` and `mprotect` through `dart:ffi`, makes each hook a `NativeCallable.isolateLocal` once for all runs, and gives the hooks the current run through a top-level variable (L1.36). |
 | The bits of NaN | Rust | `f64::NAN` is 0x7ff8000000000000. Dart's `double.nan` is 0xfff8000000000000 on x86-64, its sign bit set, so a test of the canonical NaN writes `f64Bits(double.nan)`, and words and the ZIR binary form keep the constant `nanBits` (L1.36). |
 | The outcome of a run | Rust | `Result<Value, String>` is the outcome, and a test engine returns `Err` like any other. A Dart run throws, a `RunError` or a `KernelError`, so the oracle catches both to print an outcome, and an engine that fails throws (L1.37). |
+| Integers past 64 bits | Dart | `BigInt` is one type for every coefficient and constant. The Rust uses `i128` and checks each operation for overflow, giving up when one does (L1.38). |
 
 ### Changes per Dart file
 
@@ -1851,7 +1872,9 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `lib/src/store/wto.dart` | 1 | 0 |
 | `lib/src/store/iterate.dart` | 3 | 0 |
 | `lib/src/store/revision.dart` | 2 | 0 |
-| `lib/src/store/preimage.dart` | 1 | 0 |
+| `lib/src/store/preimage.dart` | 2 | 0 |
+| `lib/presburger.dart` | 1 | 0 |
+| `lib/src/store/presburger.dart` | 1 | 0 |
 | `lib/stage.dart` | 2 | 0 |
 | `test/store/interval_test.dart` | 1 | 0 |
 | `test/store/lattice_test.dart` | 1 | 0 |
@@ -2024,6 +2047,13 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_24_refinement_lattices/float_test.dart` | 1 | 0 |
 | `test/steps/l01_24_refinement_lattices/loops_test.dart` | 1 | 0 |
 | `test/steps/l01_24_refinement_lattices/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_25_preimage_catalog/support.dart` | 1 | 0 |
+| `test/steps/l01_25_preimage_catalog/entries_test.dart` | 2 | 0 |
+| `test/steps/l01_25_preimage_catalog/exact_test.dart` | 2 | 0 |
+| `test/steps/l01_25_preimage_catalog/random_test.dart` | 1 | 0 |
+| `test/steps/l01_25_preimage_catalog/scaling_test.dart` | 2 | 0 |
+| `test/steps/l01_25_preimage_catalog/stops_test.dart` | 1 | 0 |
+| `test/steps/l01_25_preimage_catalog/tonicity_test.dart` | 1 | 0 |
 | `lib/check.dart` | 2 | 1 |
 | `lib/src/check/ty.dart` | 1 | 1 |
 | `lib/src/tables.dart` | 1 | 0 |
@@ -2109,5 +2139,12 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_37_oracle/oracle_test.dart` | 1 | 0 |
 | `test/steps/l01_37_oracle/controls_test.dart` | 1 | 0 |
 | `test/steps/l01_37_oracle/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_38_presburger/support.dart` | 1 | 0 |
+| `test/steps/l01_38_presburger/checks.dart` | 1 | 0 |
+| `test/steps/l01_38_presburger/entailment_test.dart` | 1 | 0 |
+| `test/steps/l01_38_presburger/preimage_test.dart` | 1 | 0 |
+| `test/steps/l01_38_presburger/random_test.dart` | 1 | 0 |
+| `test/steps/l01_38_presburger/controls_test.dart` | 1 | 0 |
+| `test/steps/l01_38_presburger/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

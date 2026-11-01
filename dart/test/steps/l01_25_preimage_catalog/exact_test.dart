@@ -26,11 +26,9 @@ void main() {
         'x [3..=3, 7..=7, 13..=13, 17..=17, 23..=23, 27..=27]; exact; enumerated',
       ),
       (
-        // `x * 7` in `[3..=3, 13..=203]`, so `x` in `[2..=29]`; the linear relations of step
-        // L1.38 narrow it to the hull of `7 * x = 10 * q + 3`, `[9..=29]`.
         'ok(x) = x * 7 mod 10 == 3;\n',
         [('x', 0, 30)],
-        'x [2..=29]; necessary',
+        'x [9..=29]; necessary',
         'x [9..=9, 19..=19, 29..=29]; exact; enumerated',
       ),
       (

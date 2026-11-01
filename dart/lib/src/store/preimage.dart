@@ -69,6 +69,7 @@ import '../kernel/term.dart';
 import '../kernel/value.dart';
 import 'interval.dart';
 import 'lattice.dart';
+import 'presburger.dart' as pb;
 import 'revision.dart';
 
 /// An interval per input name, in name order.
@@ -218,7 +219,12 @@ final class Preimage {
   /// Where the transfer stopped.
   final List<Stop> stops;
 
-  const Preimage(this.domains, this.exact, this.enumerated, this.stops);
+  /// The relation the inputs must meet, when the box is not exact and the linear-relation
+  /// domain states the demand: every point meeting the demand meets it, and every point of the
+  /// box meeting it meets the demand.
+  final pb.Relation? relation;
+
+  const Preimage(this.domains, this.exact, this.enumerated, this.stops, [this.relation]);
 }
 
 /// The most factors read as one power: an integer power past 64 of anything but -1, 0 and 1
@@ -244,10 +250,19 @@ Preimage _preimageIn(Term term, Domains inputs, Demand demand) {
     final over = _Cx(r.dom, _Shared(marks));
     if (over._fwd(term, root).meets(demand)) r = _Res(r.dom, true);
   }
+  pb.Relation? relation;
+  rounded();
+  if (!r.exact && !_isEmpty(r.dom)) {
+    if (_linear(term, r.dom, demand) case (final dom, final exact, final rel)) {
+      r = _Res(dom, exact && !rounded());
+      relation = r.exact ? null : rel;
+    }
+  }
   if (!r.exact) {
     if (_enumerate(term, r.dom, demand) case final e?) {
       r = e;
       enumerated = true;
+      if (r.exact) relation = null;
     }
   }
   // Adjacent repeats are dropped.
@@ -255,7 +270,123 @@ Preimage _preimageIn(Term term, Domains inputs, Demand demand) {
     for (var i = 0; i < stops.length; i++)
       if (i == 0 || stops[i] != stops[i - 1]) stops[i],
   ];
-  return Preimage(r.dom, r.exact, enumerated, kept);
+  return Preimage(r.dom, r.exact, enumerated, kept, relation);
+}
+
+/// The relations the linear-relation domain states for `terms`, tests over the free names
+/// `inputs`, with one numbering of auxiliary variables; products of two symbols are atoms when
+/// `products` holds. Null when a term is outside the domain.
+List<pb.Relation>? relations(List<Term> terms, List<String> inputs, bool products) {
+  final doms = Domains()..addAll({for (final n in inputs) n: IntervalSet.top()});
+  final cx = _Cx(doms, _Shared(Landmarks.none()));
+  final tr = _Tr(products);
+  final root = _Scope.empty();
+  final out = <pb.Relation>[];
+  for (final t in terms) {
+    // An auxiliary variable belongs to the relation of the term that made it.
+    cx.memo
+      ..lin.clear()
+      ..formula.clear()
+      ..linCalls.clear()
+      ..formulaCalls.clear()
+      ..log.clear();
+    final first = tr.defs.length;
+    final body = cx._formula(tr, t, root);
+    if (body == null) return null;
+    out.add(pb.Relation(body, tr.defs.sublist(first)));
+  }
+  return out;
+}
+
+/// The linear stage: the relation of the demand over the box `dom`, the box narrowed to its
+/// projections, whether the box entails the relation, and the relation. Null when the term is
+/// outside the domain or a question is undecided.
+(Domains, bool, pb.Relation)? _linear(Term term, Domains dom, Demand demand) {
+  final cx = _Cx(dom, _Shared(Landmarks.none()));
+  final tr = _Tr(false);
+  final root = _Scope.empty();
+  final pb.Formula body;
+  switch (demand) {
+    case BoolDemand(:final w):
+      final f = cx._formula(tr, term, root);
+      if (f == null) return null;
+      body = w ? f : pb.Formula.negate(f);
+    case IntsDemand(:final z):
+      final l = cx._lin(tr, term, root);
+      if (l == null) return null;
+      body = pb.within(l, z);
+  }
+  final rel = pb.Relation(body, tr.defs);
+  pb.Formula within(Domains d) => pb.Formula.and([
+    for (final MapEntry(:key, :value) in d.entries) pb.member(pb.Sym(key), value),
+  ]);
+  try {
+    final whole = pb.Formula.and([rel.defined, within(dom), body]);
+    final mentioned = body.atoms;
+    for (final (_, _, f) in rel.defs) {
+      mentioned.addAll(f.atoms);
+    }
+    final syms = [
+      for (final k in dom.keys)
+        if (mentioned.contains(pb.Sym(k))) pb.Sym(k),
+    ];
+    final each = pb.projectEach(whole, syms).iterator;
+    final out = Domains();
+    dom.forEach((k, v) {
+      if (mentioned.contains(pb.Sym(k))) {
+        each.moveNext();
+        out[k] = (each.current ?? (throw const pb.Over())).meet(v);
+      } else {
+        out[k] = v;
+      }
+    });
+    if (_isEmpty(out)) return (_empty(out), true, rel);
+    final outside = pb.Formula.and([rel.defined, within(out), pb.Formula.negate(body)]);
+    final bool exact;
+    try {
+      exact = pb.satisfiable(outside) == null;
+    } on pb.Over {
+      return (out, false, rel);
+    }
+    return (out, exact, rel);
+  } on pb.Over {
+    return null;
+  }
+}
+
+/// The translation of terms into the linear-relation domain: the definitions of the auxiliary
+/// variables made so far.
+final class _Tr {
+  final defs = <(int, String, pb.Formula)>[];
+  final bool products;
+
+  _Tr(this.products);
+
+  pb.Atom aux(String what, pb.Formula def) {
+    final n = defs.length;
+    defs.add((n, what, def));
+    return pb.Aux(n);
+  }
+}
+
+/// A call to translate: the lambda, by its body and scope, and its arguments' linear terms.
+final class _CallKey {
+  final _Key key;
+  final List<pb.Lin> args;
+
+  _CallKey(this.key, this.args);
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! _CallKey || other.key != key || other.args.length != args.length) return false;
+    for (var i = 0; i < args.length; i++) {
+      if (other.args[i] != args[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(key, Object.hashAll(args));
 }
 
 /// The tonicity of a scalar primitive in argument `arg`, the others fixed, with `false` below
@@ -499,6 +630,18 @@ final class _Memo {
   final fwd = <_Key, _Fwd>{};
   final back = <(Term, _Scope, Demand), _Res>{};
   final scan = <_Key>{};
+  final lin = <_Key, pb.Lin?>{};
+  final formula = <_Key, pb.Formula?>{};
+
+  /// The translations of calls, by the lambda and the translations of the arguments: a body's
+  /// value depends on its parameters only through their values, so calls whose arguments
+  /// translate alike translate alike, however they are reached.
+  final linCalls = <_CallKey, pb.Lin?>{};
+  final formulaCalls = <_CallKey, pb.Formula?>{};
+
+  /// The translation entries in the order they were made, each with its table, which a
+  /// translation that is undone removes.
+  final log = <(Map<Object, Object?>, Object)>[];
 }
 
 /// No place on the stack of lambdas being read.
@@ -671,6 +814,40 @@ final class _Cx {
     if (c >= base) map[k] = v;
     cut = math.min(outer, c);
     return v;
+  }
+
+  /// [_cached] for the translation into the linear-relation domain, whose entries a translation
+  /// that is undone removes.
+  V _translated<K extends Object, V>(Map<K, V> map, K k, V Function() f) {
+    final known = map.containsKey(k);
+    final v = _cached(map, k, f);
+    if (!known && map.containsKey(k)) memo.log.add((map, k));
+    return v;
+  }
+
+  /// Removes the translation's entries made after the first `mark`.
+  void _forget(int mark) {
+    for (final (map, k) in memo.log.sublist(mark)) {
+      map.remove(k);
+    }
+    memo.log.length = mark;
+  }
+
+  /// The key a call of the lambda `body` in scope `lam` is translated under: null, with what
+  /// the attempt made undone, when an argument has no linear term.
+  _CallKey? _callKey(_Tr tr, Term body, _Scope lam, List<Term> args, _Scope env) {
+    final (mark, logged) = (tr.defs.length, memo.log.length);
+    final lins = <pb.Lin>[];
+    for (final a in args) {
+      final l = _lin(tr, a, env);
+      if (l == null) {
+        tr.defs.length = mark;
+        _forget(logged);
+        return null;
+      }
+      lins.add(l);
+    }
+    return _CallKey((body, lam), lins);
   }
 
   /// The scope of a `let` body, made once for each `let` and scope.
@@ -904,7 +1081,211 @@ final class _Cx {
         : null;
   }
 
-  // ---- Forward transfer ---------------------------------------------------------------
+  // ---- Into the linear-relation domain ----------------------------------------------------
+
+  /// The linear term an integer term states over the inputs.
+  pb.Lin? _lin(_Tr tr, Term t, _Scope env) =>
+      _translated(memo.lin, (t, env), () => _linAt(tr, t, env));
+
+  pb.Lin? _linAt(_Tr tr, Term t, _Scope env) {
+    if (_constant(t, env) case final v?) {
+      return v is Int ? pb.Lin.constant(BigInt.from(v.value)) : null;
+    }
+    switch (t) {
+      case Var(:final name):
+        if (env.lookup(name) case (final bt, final benv)) return _lin(tr, bt, benv);
+        return inputs.containsKey(name) ? pb.Lin.atom(pb.Sym(name)) : null;
+      case Let(:final body):
+        return _lin(tr, body, _letEnv(t, env));
+      case App(:final f, :final args):
+        switch (_callee(f, env)) {
+          case _LamCallee(:final params, :final body, :final lam) when params.length == args.length:
+            pb.Lin? read() => _through(t, body, null, (_) {
+              return _lin(tr, body, _callEnv(t, params, args, lam, env));
+            });
+            final k = _callKey(tr, body, lam, args, env);
+            return k == null ? read() : _translated(memo.linCalls, k, read);
+          case _PrimCallee(:final prim):
+            return _lin(tr, _callPrim(t, env, prim, args), env);
+          default:
+            return null;
+        }
+      case If(:final cond, :final then, :final orElse):
+        final g = _formula(tr, cond, env);
+        if (g == null) return null;
+        final la = _lin(tr, then, env);
+        if (la == null) return null;
+        final lb = _lin(tr, orElse, env);
+        if (lb == null) return null;
+        final x = pb.Lin.atom(pb.Aux(tr.defs.length));
+        tr.aux(
+          t.toString(),
+          pb.Formula.or([
+            pb.Formula.and([g, pb.Con.eq(x, la)]),
+            pb.Formula.and([pb.Formula.negate(g), pb.Con.eq(x, lb)]),
+          ]),
+        );
+        return x;
+      case PrimApp(:final prim, :final args) when prim.arity == null || prim.arity == args.length:
+        pb.Lin? arg(int i) => _lin(tr, args[i], env);
+        switch (prim) {
+          case Prim.add:
+            if (arg(0) case final a?) if (arg(1) case final b?) return a.plus(b);
+            return null;
+          case Prim.sub:
+            if (arg(0) case final a?) if (arg(1) case final b?) return a.minus(b);
+            return null;
+          case Prim.neg:
+            return arg(0)?.times(BigInt.from(-1));
+          case Prim.mul:
+            final a = arg(0);
+            if (a == null) return null;
+            final b = arg(1);
+            if (b == null) return null;
+            if (!tr.products && a.terms.isNotEmpty && b.terms.isNotEmpty) return null;
+            return a.product(b);
+          case Prim.pow:
+            switch (_constantInt(args[1], env)) {
+              case 0:
+                return pb.Lin.constant(BigInt.one);
+              case 1:
+                return arg(0);
+              case 2 when tr.products:
+                final a = arg(0);
+                return a?.product(a);
+              default:
+                return null;
+            }
+          case Prim.intDiv || Prim.mod:
+            final c = _constantInt(args[1], env);
+            if (c == null || c == 0) return null;
+            final a = arg(0);
+            if (a == null) return null;
+            // `a == c·q + r` and `0 <= r < |c|`: Euclidean.
+            final n = tr.defs.length;
+            final (q, r) = (pb.Lin.atom(pb.Aux(n)), pb.Lin.atom(pb.Aux(n + 1)));
+            final def = pb.Formula.and([
+              pb.Con.eq(a, q.times(BigInt.from(c)).plus(r)),
+              pb.Con.ge(r, pb.Lin.zero),
+              pb.Con.ge(pb.Lin.constant(BigInt.from(c.abs() - 1)), r),
+            ]);
+            String shown(String op) => '${args[0]} $op $c';
+            tr.defs
+              ..add((n, shown('div'), def))
+              ..add((n + 1, shown('mod'), pb.Formula.top));
+            return prim == Prim.intDiv ? q : r;
+          case Prim.min || Prim.max || Prim.abs:
+            final a = arg(0);
+            if (a == null) return null;
+            final b = prim == Prim.abs ? a.times(BigInt.from(-1)) : arg(1);
+            if (b == null) return null;
+            final x = pb.Lin.atom(pb.Aux(tr.defs.length));
+            // `min` takes `a` where `a <= b`, `max` and `abs` where `a >= b`.
+            final first = prim == Prim.min ? pb.Con.ge(b, a) : pb.Con.ge(a, b);
+            tr.aux(
+              t.toString(),
+              pb.Formula.or([
+                pb.Formula.and([first, pb.Con.eq(x, a)]),
+                pb.Formula.and([pb.Formula.negate(first), pb.Con.eq(x, b)]),
+              ]),
+            );
+            return x;
+          default:
+            return null;
+        }
+      default:
+        return null;
+    }
+  }
+
+  /// The formula a test states over the inputs.
+  pb.Formula? _formula(_Tr tr, Term t, _Scope env) =>
+      _translated(memo.formula, (t, env), () => _formulaAt(tr, t, env));
+
+  pb.Formula? _formulaAt(_Tr tr, Term t, _Scope env) {
+    if (_constant(t, env) case final v?) {
+      return switch (v) {
+        Bool(value: true) => pb.Formula.top,
+        Bool(value: false) => pb.Formula.bottom,
+        _ => null,
+      };
+    }
+    switch (t) {
+      case Var(:final name):
+        if (env.lookup(name) case (final bt, final benv)) return _formula(tr, bt, benv);
+        return null;
+      case Let(:final body):
+        return _formula(tr, body, _letEnv(t, env));
+      case App(:final f, :final args):
+        switch (_callee(f, env)) {
+          case _LamCallee(:final params, :final body, :final lam) when params.length == args.length:
+            pb.Formula? read() => _through(t, body, null, (_) {
+              return _formula(tr, body, _callEnv(t, params, args, lam, env));
+            });
+            final k = _callKey(tr, body, lam, args, env);
+            return k == null ? read() : _translated(memo.formulaCalls, k, read);
+          case _PrimCallee(:final prim):
+            return _formula(tr, _callPrim(t, env, prim, args), env);
+          default:
+            return null;
+        }
+      case If(:final cond, :final then, :final orElse):
+        final g = _formula(tr, cond, env);
+        if (g == null) return null;
+        final fa = _formula(tr, then, env);
+        if (fa == null) return null;
+        final fb = _formula(tr, orElse, env);
+        if (fb == null) return null;
+        return pb.Formula.or([
+          pb.Formula.and([g, fa]),
+          pb.Formula.and([pb.Formula.negate(g), fb]),
+        ]);
+      case PrimApp(:final prim, :final args) when prim.arity == null || prim.arity == args.length:
+        switch (prim) {
+          case Prim.not:
+            final a = _formula(tr, args[0], env);
+            return a == null ? null : pb.Formula.negate(a);
+          case Prim.and || Prim.or:
+            final a = _formula(tr, args[0], env);
+            if (a == null) return null;
+            final b = _formula(tr, args[1], env);
+            if (b == null) return null;
+            return prim == Prim.and ? pb.Formula.and([a, b]) : pb.Formula.or([a, b]);
+          case Prim.lt || Prim.le || Prim.gt || Prim.ge || Prim.eq || Prim.ne:
+            final (mark, logged) = (tr.defs.length, memo.log.length);
+            if (_lin(tr, args[0], env) case final a?) {
+              if (_lin(tr, args[1], env) case final b?) {
+                final one = pb.Lin.constant(BigInt.one);
+                final c = switch (prim) {
+                  Prim.lt => pb.Con.ge(b, a.plus(one)),
+                  Prim.le => pb.Con.ge(b, a),
+                  Prim.gt => pb.Con.ge(a, b.plus(one)),
+                  Prim.ge => pb.Con.ge(a, b),
+                  _ => pb.Con.eq(a, b),
+                };
+                return prim == Prim.ne ? pb.Formula.negate(c) : c;
+              }
+            }
+            tr.defs.length = mark;
+            _forget(logged);
+            if (prim != Prim.eq && prim != Prim.ne) return null;
+            // Two tests are equal where both hold or neither does.
+            final a = _formula(tr, args[0], env);
+            if (a == null) return null;
+            final b = _formula(tr, args[1], env);
+            if (b == null) return null;
+            final same = pb.Formula.or([
+              pb.Formula.and([a, b]),
+              pb.Formula.and([pb.Formula.negate(a), pb.Formula.negate(b)]),
+            ]);
+            return prim == Prim.ne ? pb.Formula.negate(same) : same;
+          default:
+            return null;
+        }
+      default:
+        return null;
+    }
+  }
 
   _Fwd _fwd(Term t, _Scope env) => _cached(memo.fwd, (t, env), () => _fwdAt(t, env));
 
@@ -1560,7 +1941,7 @@ Preimage exactPreimage(Term term, Map<String, IntervalSet> inputs, Classes class
   if (!ends(term)) return p;
   final found = _exactSearch(term, p.domains, classes, demand);
   if (found == null) return p;
-  return Preimage(found.$1, found.$2, true, p.stops);
+  return Preimage(found.$1, found.$2, true, p.stops, found.$2 ? null : p.relation);
 }
 
 /// Every input of `d` with the empty set.

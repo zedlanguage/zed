@@ -85,13 +85,26 @@ Term conjunction(int k) {
   return (t, doms([('x', 1, n), ('y', 1, n)]));
 }
 
+/// `f0 = (v) -> v; f1 = (v) -> f0(v) + f0(v + d); …; fk(i) - j >= 0`: a sum, which the catalog
+/// does not invert exactly with two inputs, so the linear-relation translation reads it.
+Term sumsOfCalls(int k, int d) {
+  Term call(int n, Term a) => App(Var('f$n'), [a]);
+  Term body = prim(Prim.ge, prim(Prim.sub, call(k, const Var('i')), const Var('j')), lit(0));
+  for (var n = k; n >= 0; n--) {
+    const v = Var('v');
+    final e = n == 0
+        ? v
+        : prim(Prim.add, call(n - 1, v), call(n - 1, d == 0 ? v : prim(Prim.add, v, lit(d))));
+    body = Let('f$n', Lam(const ['v'], e), body);
+  }
+  return body;
+}
+
 void main() {
   final ds = doms([('i', -50, 50)]);
   const yes = BoolDemand(true);
 
-  // The catalog has no entry for a sum of two terms that are not constants, so `x6 >= 0` keeps
-  // the box, necessary only; the linear relations of step L1.38 make it `i [0..=50]; exact`.
-  const sums = 'i [-50..=50]; necessary';
+  const sums = 'i [0..=50]; exact';
 
   test('preimages within the depth are exact', () {
     for (final (t, want) in [
@@ -149,5 +162,16 @@ void main() {
       run(products),
     );
     scaling.check('`x * y <= n` over `1..=n` squared under `@exact`', 64, run(hyperbola));
+  });
+
+  test('the linear translation of calls scales', () {
+    final ds = doms([('i', 0, 50), ('j', -50, 50)]);
+    for (final d in const [0, 1]) {
+      scaling.check(
+        'sums of calls, each calling the one before twice',
+        6,
+        (k) => preimage(sumsOfCalls(k, d), ds, yes),
+      );
+    }
   });
 }

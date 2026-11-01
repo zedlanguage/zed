@@ -298,3 +298,12 @@ dart/test/support/oracle.dart tests/src/oracle.rs
 dart/test/steps/l01_37_oracle/oracle_test.dart tests/steps/l01_37_oracle/oracle.rs
 dart/test/steps/l01_37_oracle/controls_test.dart tests/steps/l01_37_oracle/controls.rs
 dart/test/steps/l01_37_oracle/scaling_test.dart tests/steps/l01_37_oracle/mod.rs
+dart/lib/presburger.dart crates/zedc/src/store/presburger.rs
+dart/lib/src/store/presburger.dart crates/zedc/src/store/presburger.rs
+dart/test/steps/l01_38_presburger/support.dart tests/steps/l01_38_presburger/mod.rs
+dart/test/steps/l01_38_presburger/checks.dart tests/steps/l01_38_presburger/random.rs
+dart/test/steps/l01_38_presburger/entailment_test.dart tests/steps/l01_38_presburger/entailment.rs
+dart/test/steps/l01_38_presburger/preimage_test.dart tests/steps/l01_38_presburger/preimage.rs
+dart/test/steps/l01_38_presburger/random_test.dart tests/steps/l01_38_presburger/random.rs
+dart/test/steps/l01_38_presburger/controls_test.dart tests/steps/l01_38_presburger/controls.rs
+dart/test/steps/l01_38_presburger/scaling_test.dart tests/steps/l01_38_presburger/scaling.rs

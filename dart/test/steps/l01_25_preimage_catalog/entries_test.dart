@@ -122,14 +122,12 @@ void main() {
 
   // A summary reached again from another call keeps only the inputs it narrows: each call of
   // `f1` reads `f0` over the other's interval, and once kept the interval of the first call's
-  // parameter with it, which cut `x = 50` from the second. The body is `4 * x + 4`, whose sum
-  // of calls the catalog projects, necessary only; the linear relations of step L1.38 make it
-  // exact.
+  // parameter with it, which cut `x = 50` from the second.
   test('a summary reached from another call keeps only what it narrows', () {
     const src =
         'ok(x) = f2(x) >= 204;\nf2(positional v) = f1(v) + f1(v + 1);\n'
         'f1(positional v) = f0(v) + f0(v + 1);\nf0(positional v) = v;\n';
-    expect(holds(src, [('x', 0, 50)]), 'x [0..=50]; necessary');
+    expect(holds(src, [('x', 0, 50)]), 'x [50..=50]; exact');
   });
 
   // Kernel integers are unbounded, so a sum past the 64-bit range is an integer like any
@@ -150,9 +148,7 @@ void main() {
       expect(holds(src, xy), 'x [0..=1]; y [-2..=2]; exact', reason: src);
     }
     const m = maxInt;
-    // The demand's end `m + 1` is rounded to `m`, so the backward pass is not exact, and the
-    // listed box is enumerated; the linear relations of step L1.38 find it first.
-    expect(holds('ok(x) = x + $m > $m;\n', [('x', 0, 1)]), 'x [1..=1]; exact; enumerated');
+    expect(holds('ok(x) = x + $m > $m;\n', [('x', 0, 1)]), 'x [1..=1]; exact');
     // Not exact: whether a point is cut is not decided, but none is.
     const src = 'ok(x, y) = x * $b * 4 - y >= 0;\n';
     expect(holds(src, xy), startsWith('x [0..=1]; y [-2..=2]'), reason: src);
