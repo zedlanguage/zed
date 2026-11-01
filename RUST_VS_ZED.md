@@ -327,7 +327,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.32 | 0:06 | 0:04 | 0 (0) | 0 (0) | 0:05 | 0:11 | 4 (3) |
 | other (Signed zeros) | 0:04 | 0:01 | 0 (0) | 0 (0) | | | |
 | L1.33 | 0:13 | 0:06 | 2 (1) | 0 (0) | 0:10 | 0:40 | 22 (2) |
-| L1.34 | 0:22 | 0:05 | 0 (0) | 0 (0) | | | |
+| L1.34 | 0:22 | 0:05 | 0 (0) | 0 (0) | 0:12 | 0:15 | 0 (0) |
 | L1.35 | 0:03 | 0:03 | 0 (0) | 0 (0) | | | |
 | L1.36 | 0:26 | 0:04 | 0 (0) | 12 (2) | | | |
 | L1.37 | 0:07 | 0:04 | 0 (0) | 0 (0) | | | |
@@ -915,8 +915,8 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/zir/binary.rs` | 16,518 | `lib/src/zir/binary.dart` | 14,850 | 0.90 |
 | `crates/zedc/src/zir/canon.rs` | 10,571 | `lib/src/zir/canon.dart` | 12,352 | 1.17 |
 | `crates/zedc/src/zir/lower.rs` | 45,130 | `lib/src/zir/lower.dart` | 34,608 | 0.77 |
-| `crates/zedc/src/zir/memory.rs` | 48,172 | | | |
-| `crates/zedc/src/zir/mod.rs` | 25,095 | `lib/zir.dart`<br>`lib/src/zir/graph.dart` | 24,815 | 0.99 |
+| `crates/zedc/src/zir/memory.rs` | 48,172 | `lib/src/zir/memory.dart` | 43,849 | 0.91 |
+| `crates/zedc/src/zir/mod.rs` | 25,095 | `lib/zir.dart`<br>`lib/src/zir/graph.dart` | 24,893 | 0.99 |
 | `crates/zedc/src/zir/text.rs` | 36,164 | `lib/src/zir/text.dart` | 30,447 | 0.84 |
 | `tests/src/check.rs` | 5,056 | `test/support/check.dart`<br>`test/support/check_test.dart` | 4,359 | 0.86 |
 | `tests/src/fences.rs` | 3,349 | `test/support/fences.dart` | 2,468 | 0.74 |
@@ -1079,12 +1079,12 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_33_lowering/mod.rs` | 2,007 | `test/steps/l01_33_lowering/lowering.dart` | 1,607 | 0.80 |
 | `tests/steps/l01_33_lowering/ports.rs` | 4,565 | `test/steps/l01_33_lowering/ports_test.dart` | 4,058 | 0.89 |
 | `tests/steps/l01_33_lowering/scaling.rs` | 8,494 | `test/steps/l01_33_lowering/scaling_test.dart` | 6,066 | 0.71 |
-| `tests/steps/l01_34_memory/borrow.rs` | 4,405 | | | |
-| `tests/steps/l01_34_memory/cells.rs` | 4,070 | | | |
-| `tests/steps/l01_34_memory/checks.rs` | 2,185 | | | |
-| `tests/steps/l01_34_memory/corpus.rs` | 3,156 | | | |
-| `tests/steps/l01_34_memory/fusion.rs` | 2,960 | | | |
-| `tests/steps/l01_34_memory/mod.rs` | 1,432 | | | |
+| `tests/steps/l01_34_memory/borrow.rs` | 4,405 | `test/steps/l01_34_memory/borrow_test.dart` | 3,951 | 0.90 |
+| `tests/steps/l01_34_memory/cells.rs` | 4,070 | `test/steps/l01_34_memory/cells_test.dart` | 3,637 | 0.89 |
+| `tests/steps/l01_34_memory/checks.rs` | 2,185 | `test/steps/l01_34_memory/checks_test.dart` | 2,036 | 0.93 |
+| `tests/steps/l01_34_memory/corpus.rs` | 3,156 | `test/steps/l01_34_memory/corpus_test.dart` | 2,570 | 0.81 |
+| `tests/steps/l01_34_memory/fusion.rs` | 2,960 | `test/steps/l01_34_memory/fusion_test.dart` | 2,589 | 0.87 |
+| `tests/steps/l01_34_memory/mod.rs` | 1,432 | `test/steps/l01_34_memory/machine.dart`<br>`test/steps/l01_34_memory/scaling_test.dart` | 6,330 | 4.42 |
 | `tests/steps/l01_35_mlir_study/mod.rs` | 4,008 | | | |
 | `tests/steps/l01_36_cranelift/aot.rs` | 1,041 | | | |
 | `tests/steps/l01_36_cranelift/checks.rs` | 3,759 | | | |
@@ -1141,7 +1141,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 297 Rust files** | **2,273,126** | | | |
-| **the Rust files ported so far** | **1,903,361** | | **1,624,952** | **0.85** |
+| **the Rust files ported so far** | **1,969,741** | | **1,689,992** | **0.86** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1652,10 +1652,27 @@ Dart:
   raised `let`s (64×), and a search in `validate` (66×). A search of a region's port states
   at each push shows only from 8,000 ports (39× to 42×), since at 2,000 ports the rest of a
   push's work hides it; the test now runs at 8,000.
+- **L1.34** (the memory plan). Hard. Rust plans and runs by recursion: the planner from a
+  region into its nodes' regions and from a question of whether an argument is consumed into
+  the questions it depends on, the machine from a region into a node and back. Dart overflowed
+  on a nest of 1,600 `if`s in the machine and of 12,800 in the planner, so the planner works on
+  a list of regions to plan and a stack of questions, each pushed after the questions it needs,
+  and the machine on a stack of activations; a test plans and runs a nest of 12,800. Rust keys
+  the plan's regions by path in a `BTreeMap<String, RegionPlan>`; Dart keeps the plan as a tree
+  of region plans, each with its parent, and builds a path only when asked. Rust has 20 tests
+  and no scaling test; Dart has the same 20 and seven more: one of small inputs and six scaling
+  tests. Lowering shares equal subterms, so the scaling inputs use distinct strings. Each
+  scaling test is caught by its control: a linear search for an edge's source (42×), a scan of
+  an edge's uses to find its last (41× to 48×), a full audit of the cells at each check (54× to
+  60×), a scan of the kept binders per child in place of a map (44× to 62×), counting an arm's
+  binders at each question (27× to 48×), and dropping the memo of answered questions, whose
+  nest of 200 does not finish in 400 s. A control that builds each region's path eagerly is not
+  caught at 200 or 800 deep: each path copies its parent's, which is quadratic in the depth but
+  small beside the rest of the work there.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1738,6 +1755,8 @@ which the case was shorter, clearer or cheaper to run.
 | A field padded to a width in formatted text | Rust | `{n:<w$}` pads inside the format string; Dart calls `padRight(w)` on an interpolated string inside the interpolation (L1.29). |
 | A conditional chained to a pattern | Rust | `if let Some(Term::Lit(v)) = args.get(p) && cond` is one condition. Dart allows a `case` pattern only as the whole condition of an `if`, so the test splits into a `where` and an `if`-`case` (L1.28). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
+| A recursion between two kinds of work, deeper than the call stack | Rust | The planner's `region` calls `consumes`, which calls `region`'s questions again, and the machine's `region` and `node` call each other; each is a plain recursive function. Dart answers each question on a stack that first pushes the questions it needs, and runs regions on a stack of activations, each holding the node it is at and what to do with its results (L1.34). |
+| A tree of results that each point to their parent | Dart | A region plan holds its parent and computes its path on first read with `late final`. Rust stores the plans flat in a `BTreeMap` keyed by path strings, since a child that points to its parent needs `Rc` and `Weak` (L1.34). |
 
 ### Changes per Dart file
 
@@ -1995,7 +2014,7 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_30_queries/keys_test.dart` | 1 | 0 |
 | `test/steps/l01_30_queries/reuse_test.dart` | 1 | 0 |
 | `test/steps/l01_30_queries/scaling_test.dart` | 1 | 0 |
-| `lib/zir.dart` | 3 | 0 |
+| `lib/zir.dart` | 4 | 0 |
 | `lib/src/zir/graph.dart` | 3 | 0 |
 | `lib/src/zir/text.dart` | 2 | 0 |
 | `lib/src/zir/binary.dart` | 2 | 0 |
@@ -2017,5 +2036,13 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_33_lowering/forms_test.dart` | 1 | 0 |
 | `test/steps/l01_33_lowering/ports_test.dart` | 1 | 0 |
 | `test/steps/l01_33_lowering/scaling_test.dart` | 1 | 0 |
+| `lib/src/zir/memory.dart` | 1 | 0 |
+| `test/steps/l01_34_memory/machine.dart` | 1 | 0 |
+| `test/steps/l01_34_memory/borrow_test.dart` | 1 | 0 |
+| `test/steps/l01_34_memory/cells_test.dart` | 1 | 0 |
+| `test/steps/l01_34_memory/checks_test.dart` | 1 | 0 |
+| `test/steps/l01_34_memory/corpus_test.dart` | 1 | 0 |
+| `test/steps/l01_34_memory/fusion_test.dart` | 1 | 0 |
+| `test/steps/l01_34_memory/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

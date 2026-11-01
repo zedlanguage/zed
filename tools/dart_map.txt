@@ -264,3 +264,11 @@ dart/test/steps/l01_33_lowering/errors_test.dart tests/steps/l01_33_lowering/err
 dart/test/steps/l01_33_lowering/forms_test.dart tests/steps/l01_33_lowering/forms.rs
 dart/test/steps/l01_33_lowering/ports_test.dart tests/steps/l01_33_lowering/ports.rs
 dart/test/steps/l01_33_lowering/scaling_test.dart tests/steps/l01_33_lowering/scaling.rs
+dart/lib/src/zir/memory.dart crates/zedc/src/zir/memory.rs
+dart/test/steps/l01_34_memory/machine.dart tests/steps/l01_34_memory/mod.rs
+dart/test/steps/l01_34_memory/borrow_test.dart tests/steps/l01_34_memory/borrow.rs
+dart/test/steps/l01_34_memory/cells_test.dart tests/steps/l01_34_memory/cells.rs
+dart/test/steps/l01_34_memory/checks_test.dart tests/steps/l01_34_memory/checks.rs
+dart/test/steps/l01_34_memory/corpus_test.dart tests/steps/l01_34_memory/corpus.rs
+dart/test/steps/l01_34_memory/fusion_test.dart tests/steps/l01_34_memory/fusion.rs
+dart/test/steps/l01_34_memory/scaling_test.dart tests/steps/l01_34_memory/mod.rs

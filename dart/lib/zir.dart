@@ -1,11 +1,12 @@
 /// ZIR, the intermediate representation (step L1.31; DESIGN.md sec:ir): the graph, its
-/// validator, and its text and binary forms.
+/// validator, its text and binary forms, its lowering from kernel terms and its memory plan.
 library;
 
 export 'src/zir/binary.dart' show decode, encode, nanBits;
 export 'src/zir/canon.dart';
 export 'src/zir/graph.dart';
 export 'src/zir/lower.dart' show lower, raise, raiseWith;
+export 'src/zir/memory.dart';
 export 'src/zir/text.dart'
     show
         edge,
