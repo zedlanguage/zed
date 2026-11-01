@@ -330,7 +330,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.34 | 0:22 | 0:05 | 0 (0) | 0 (0) | 0:12 | 0:15 | 0 (0) |
 | L1.35 | 0:03 | 0:03 | 0 (0) | 0 (0) | 0:01 | 0:03 | 0 (0) |
 | L1.36 | 0:26 | 0:04 | 0 (0) | 12 (2) | 0:16 | 0:17 | 10 (3) |
-| L1.37 | 0:07 | 0:04 | 0 (0) | 0 (0) | | | |
+| L1.37 | 0:07 | 0:04 | 0 (0) | 0 (0) | 0:03 | 0:11 | 15 (1) |
 | L1.38 | 0:17 | 0:09 | 0 (0) | 6 (2) | | | |
 | L1.39 | 0:36 | 0:20 | 0 (0) | 6 (3) | | | |
 | pass S2,S4 | 0:07 | 0:17 | 1 (1) | 0 (0) | | | |
@@ -923,7 +923,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/src/instances.rs` | 5,466 | `test/support/instances.dart`<br>`test/support/instances_test.dart` | 4,397 | 0.80 |
 | `tests/src/kernel.rs` | 10,041 | `test/support/kernel.dart` | 7,960 | 0.79 |
 | `tests/src/lib.rs` | 2,590 | `test/support/support.dart`<br>`test/support/support_test.dart` | 3,467 | 1.34 |
-| `tests/src/oracle.rs` | 7,128 | | | |
+| `tests/src/oracle.rs` | 7,128 | `test/support/oracle.dart` | 6,559 | 0.92 |
 | `tests/src/scaling.rs` | 3,377 | `test/support/scaling.dart` | 2,230 | 0.66 |
 | `tests/src/tokens.rs` | 1,819 | `test/support/tokens.dart` | 1,557 | 0.86 |
 | `tests/src/trees.rs` | 1,371 | `test/support/trees.dart` | 1,121 | 0.82 |
@@ -1094,9 +1094,9 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_36_cranelift/scalars.rs` | 5,467 | `test/steps/l01_36_cranelift/scalars_test.dart` | 4,629 | 0.85 |
 | `tests/steps/l01_36_cranelift/scaling.rs` | 4,872 | `test/steps/l01_36_cranelift/scaling_test.dart` | 4,230 | 0.87 |
 | `tests/steps/l01_36_cranelift/strings.rs` | 2,004 | `test/steps/l01_36_cranelift/strings_test.dart` | 1,745 | 0.87 |
-| `tests/steps/l01_37_oracle/controls.rs` | 2,243 | | | |
-| `tests/steps/l01_37_oracle/mod.rs` | 461 | | | |
-| `tests/steps/l01_37_oracle/oracle.rs` | 2,818 | | | |
+| `tests/steps/l01_37_oracle/controls.rs` | 2,243 | `test/steps/l01_37_oracle/controls_test.dart` | 2,007 | 0.89 |
+| `tests/steps/l01_37_oracle/mod.rs` | 461 | `test/steps/l01_37_oracle/scaling_test.dart` | 3,335 | 7.23 |
+| `tests/steps/l01_37_oracle/oracle.rs` | 2,818 | `test/steps/l01_37_oracle/oracle_test.dart` | 2,681 | 0.95 |
 | `tests/steps/l01_38_presburger/controls.rs` | 4,924 | | | |
 | `tests/steps/l01_38_presburger/entailment.rs` | 4,804 | | | |
 | `tests/steps/l01_38_presburger/mod.rs` | 3,246 | | | |
@@ -1141,7 +1141,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 297 Rust files** | **2,273,126** | | | |
-| **the Rust files ported so far** | **2,082,682** | | **1,788,274** | **0.86** |
+| **the Rust files ported so far** | **2,095,332** | | **1,802,856** | **0.86** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1692,10 +1692,21 @@ Dart:
   call (35× to 38×), and a scan of the pushed inputs per input (36×). The last was first
   missed: one warm-up run at `n` left the first timing at `n` twice the later ones, and one
   try under the limit passes. The test now runs both sizes three times before timing.
+- **L1.37** (the differential oracle): easy. The checker's type of each top-level binding and
+  the `firstOrder` mark on a definition were already in the Dart port, so the step is test
+  code only. Where the Rust oracle closes each binding with `Unit::get`, which scans the
+  definitions and builds the index anew, the Dart one makes one `Cones` for the unit, and its
+  binding comparison is split from the table checks so that a scaling test can time it on a
+  unit compiled beforehand. The four tests give the Rust counts (6, 12, 0 corpus programs,
+  124 runs and 248 comparisons). The new scaling tests (n bindings natively and in the
+  interpreter, a wave of n lines, a report of n mismatches) are each caught by a control:
+  `Unit.get` per binding (26× and 58×), a string built a character at a time (65×), and a
+  `contains` check per mismatch added (67×). The front end, timed with the oracle at first,
+  hid the first of these at 20×.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34, L1.35, L1.36. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34, L1.35, L1.36, L1.37. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1784,6 +1795,7 @@ which the case was shorter, clearer or cheaper to run.
 | Generating machine code | Rust | Cranelift compiles a graph for several targets, by JIT or to an object file, through one `Module` interface. Dart has no such library: the port writes an x86-64 assembler, a template generator and an ELF writer, and runs on x86-64 Linux only (L1.36). |
 | Calling generated code, and being called back | Rust | Cranelift's JIT returns a function pointer to call, and each hook is an `extern "C"` function. Dart maps the code with `mmap` and `mprotect` through `dart:ffi`, makes each hook a `NativeCallable.isolateLocal` once for all runs, and gives the hooks the current run through a top-level variable (L1.36). |
 | The bits of NaN | Rust | `f64::NAN` is 0x7ff8000000000000. Dart's `double.nan` is 0xfff8000000000000 on x86-64, its sign bit set, so a test of the canonical NaN writes `f64Bits(double.nan)`, and words and the ZIR binary form keep the constant `nanBits` (L1.36). |
+| The outcome of a run | Rust | `Result<Value, String>` is the outcome, and a test engine returns `Err` like any other. A Dart run throws, a `RunError` or a `KernelError`, so the oracle catches both to print an outcome, and an engine that fails throws (L1.37). |
 
 ### Changes per Dart file
 
@@ -2093,5 +2105,9 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_36_cranelift/scalars_test.dart` | 1 | 0 |
 | `test/steps/l01_36_cranelift/scaling_test.dart` | 1 | 0 |
 | `test/steps/l01_36_cranelift/strings_test.dart` | 1 | 0 |
+| `test/support/oracle.dart` | 1 | 0 |
+| `test/steps/l01_37_oracle/oracle_test.dart` | 1 | 0 |
+| `test/steps/l01_37_oracle/controls_test.dart` | 1 | 0 |
+| `test/steps/l01_37_oracle/scaling_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.

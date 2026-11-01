@@ -294,3 +294,7 @@ dart/test/steps/l01_36_cranelift/ports_test.dart tests/steps/l01_36_cranelift/po
 dart/test/steps/l01_36_cranelift/scalars_test.dart tests/steps/l01_36_cranelift/scalars.rs
 dart/test/steps/l01_36_cranelift/scaling_test.dart tests/steps/l01_36_cranelift/scaling.rs
 dart/test/steps/l01_36_cranelift/strings_test.dart tests/steps/l01_36_cranelift/strings.rs
+dart/test/support/oracle.dart tests/src/oracle.rs
+dart/test/steps/l01_37_oracle/oracle_test.dart tests/steps/l01_37_oracle/oracle.rs
+dart/test/steps/l01_37_oracle/controls_test.dart tests/steps/l01_37_oracle/controls.rs
+dart/test/steps/l01_37_oracle/scaling_test.dart tests/steps/l01_37_oracle/mod.rs
