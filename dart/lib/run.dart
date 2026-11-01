@@ -133,7 +133,7 @@ final class Program {
         case []:
           break;
         case [final v]:
-          writes.add((name, _joinLines(name, v)));
+          writes.add((name, joinLines(name, v)));
         case final pushes:
           throw RunError(
             'port `$name` is pushed ${pushes.length} times in one wave; several pushes to '
@@ -357,7 +357,7 @@ Value? _text(List<int> bytes) {
 }
 
 /// The bytes a push of `v` writes to `Lines` port `port`: each string, then `\n`.
-List<int> _joinLines(String port, Value v) {
+List<int> joinLines(String port, Value v) {
   final out = BytesBuilder(copy: false);
   for (final line in v is Family ? [for (final (_, leaf) in v.leaves()) leaf] : [v]) {
     if (line is! Str) throw RunError('port `$port` takes strings; $line was pushed');

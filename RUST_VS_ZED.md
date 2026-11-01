@@ -329,7 +329,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.33 | 0:13 | 0:06 | 2 (1) | 0 (0) | 0:10 | 0:40 | 22 (2) |
 | L1.34 | 0:22 | 0:05 | 0 (0) | 0 (0) | 0:12 | 0:15 | 0 (0) |
 | L1.35 | 0:03 | 0:03 | 0 (0) | 0 (0) | 0:01 | 0:03 | 0 (0) |
-| L1.36 | 0:26 | 0:04 | 0 (0) | 12 (2) | | | |
+| L1.36 | 0:26 | 0:04 | 0 (0) | 12 (2) | 0:16 | 0:17 | 10 (3) |
 | L1.37 | 0:07 | 0:04 | 0 (0) | 0 (0) | | | |
 | L1.38 | 0:17 | 0:09 | 0 (0) | 6 (2) | | | |
 | L1.39 | 0:36 | 0:20 | 0 (0) | 6 (3) | | | |
@@ -860,14 +860,14 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-kernel/src/types/rec.rs` | 18,327 | `lib/src/kernel/rec.dart` | 13,763 | 0.75 |
 | `crates/zed-kernel/src/value.rs` | 16,934 | `lib/src/kernel/value.dart`<br>`test/kernel/value_test.dart` | 15,465 | 0.91 |
 | `crates/zed-kernel/src/words.rs` | 5,277 | `lib/src/kernel/words.dart` | 4,040 | 0.77 |
-| `crates/zed-native/src/codegen.rs` | 29,032 | | | |
-| `crates/zed-native/src/hooks.rs` | 18,705 | | | |
-| `crates/zed-native/src/lib.rs` | 4,130 | | | |
-| `crates/zed-native/src/tables.rs` | 8,237 | | | |
-| `crates/zed-rt/src/heap.rs` | 18,978 | | | |
+| `crates/zed-native/src/codegen.rs` | 29,032 | `lib/src/native/codegen.dart`<br>`lib/src/native/x64.dart` | 26,583 | 0.92 |
+| `crates/zed-native/src/hooks.rs` | 18,705 | `lib/src/native/hooks.dart` | 11,669 | 0.62 |
+| `crates/zed-native/src/lib.rs` | 4,130 | `lib/native.dart`<br>`lib/src/native/jit.dart`<br>`lib/src/native/elf.dart` | 10,737 | 2.60 |
+| `crates/zed-native/src/tables.rs` | 8,237 | `lib/src/native/tables.dart` | 5,713 | 0.69 |
+| `crates/zed-rt/src/heap.rs` | 18,978 | `lib/src/native/heap.dart`<br>`test/native/heap_test.dart` | 14,943 | 0.79 |
 | `crates/zed-rt/src/lib.rs` | 764 | | | |
-| `crates/zed-rt/src/ports.rs` | 2,581 | | | |
-| `crates/zed-rt/src/rope.rs` | 4,631 | | | |
+| `crates/zed-rt/src/ports.rs` | 2,581 | `lib/src/native/ports.dart`<br>`test/native/ports_test.dart` | 2,327 | 0.90 |
+| `crates/zed-rt/src/rope.rs` | 4,631 | `lib/src/native/rope.dart`<br>`test/native/rope_test.dart` | 3,199 | 0.69 |
 | `crates/zedc/src/address.rs` | 2,176 | `lib/address.dart`<br>`test/address_test.dart` | 2,125 | 0.98 |
 | `crates/zedc/src/ast/mod.rs` | 22,450 | `lib/ast.dart` | 16,672 | 0.74 |
 | `crates/zedc/src/ast/stmts.rs` | 9,619 | `lib/src/ast/stmts.dart` | 6,861 | 0.71 |
@@ -896,7 +896,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/parse/mod.rs` | 10,467 | `lib/parse.dart` | 11,116 | 1.06 |
 | `crates/zedc/src/query.rs` | 4,746 | `lib/query.dart` | 8,629 | 1.82 |
 | `crates/zedc/src/resolve.rs` | 15,634 | `lib/resolve.dart` | 13,317 | 0.85 |
-| `crates/zedc/src/run.rs` | 24,727 | `lib/run.dart` | 21,193 | 0.86 |
+| `crates/zedc/src/run.rs` | 24,727 | `lib/run.dart` | 21,191 | 0.86 |
 | `crates/zedc/src/source.rs` | 7,459 | `lib/source.dart` | 7,286 | 0.98 |
 | `crates/zedc/src/stage.rs` | 32,641 | `lib/stage.dart` | 28,970 | 0.89 |
 | `crates/zedc/src/store/affine.rs` | 19,512 | `lib/src/store/affine.dart` | 18,616 | 0.95 |
@@ -1086,14 +1086,14 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_34_memory/fusion.rs` | 2,960 | `test/steps/l01_34_memory/fusion_test.dart` | 2,589 | 0.87 |
 | `tests/steps/l01_34_memory/mod.rs` | 1,432 | `test/steps/l01_34_memory/machine.dart`<br>`test/steps/l01_34_memory/scaling_test.dart` | 6,330 | 4.42 |
 | `tests/steps/l01_35_mlir_study/mod.rs` | 4,008 | `test/steps/l01_35_mlir_study/record_test.dart` | 3,073 | 0.77 |
-| `tests/steps/l01_36_cranelift/aot.rs` | 1,041 | | | |
-| `tests/steps/l01_36_cranelift/checks.rs` | 3,759 | | | |
-| `tests/steps/l01_36_cranelift/corpus.rs` | 2,456 | | | |
-| `tests/steps/l01_36_cranelift/mod.rs` | 1,238 | | | |
-| `tests/steps/l01_36_cranelift/ports.rs` | 1,802 | | | |
-| `tests/steps/l01_36_cranelift/scalars.rs` | 5,467 | | | |
-| `tests/steps/l01_36_cranelift/scaling.rs` | 4,872 | | | |
-| `tests/steps/l01_36_cranelift/strings.rs` | 2,004 | | | |
+| `tests/steps/l01_36_cranelift/aot.rs` | 1,041 | `test/steps/l01_36_cranelift/aot_test.dart` | 1,040 | 1.00 |
+| `tests/steps/l01_36_cranelift/checks.rs` | 3,759 | `test/steps/l01_36_cranelift/checks_test.dart` | 3,263 | 0.87 |
+| `tests/steps/l01_36_cranelift/corpus.rs` | 2,456 | `test/steps/l01_36_cranelift/corpus_test.dart` | 2,592 | 1.06 |
+| `tests/steps/l01_36_cranelift/mod.rs` | 1,238 | `test/steps/l01_36_cranelift/native.dart` | 829 | 0.67 |
+| `tests/steps/l01_36_cranelift/ports.rs` | 1,802 | `test/steps/l01_36_cranelift/ports_test.dart` | 1,712 | 0.95 |
+| `tests/steps/l01_36_cranelift/scalars.rs` | 5,467 | `test/steps/l01_36_cranelift/scalars_test.dart` | 4,629 | 0.85 |
+| `tests/steps/l01_36_cranelift/scaling.rs` | 4,872 | `test/steps/l01_36_cranelift/scaling_test.dart` | 4,230 | 0.87 |
+| `tests/steps/l01_36_cranelift/strings.rs` | 2,004 | `test/steps/l01_36_cranelift/strings_test.dart` | 1,745 | 0.87 |
 | `tests/steps/l01_37_oracle/controls.rs` | 2,243 | | | |
 | `tests/steps/l01_37_oracle/mod.rs` | 461 | | | |
 | `tests/steps/l01_37_oracle/oracle.rs` | 2,818 | | | |
@@ -1141,7 +1141,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 297 Rust files** | **2,273,126** | | | |
-| **the Rust files ported so far** | **1,973,749** | | **1,693,065** | **0.86** |
+| **the Rust files ported so far** | **2,082,682** | | **1,788,274** | **0.86** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1676,10 +1676,26 @@ Dart:
   `RegionKind.values`, so a new kind also fails the test. Like M0.8, the step has no scaling
   test. Rust has 4 tests and Dart the same 4; a copy of the record with one operation's row
   and one decision's bold removed fails two of them.
+- **L1.36** (the native backend). Hard. Rust compiles each graph with Cranelift, which has no
+  Dart counterpart, so the port has its own code generator for x86-64: an assembler of the
+  few instructions it needs (`x64.dart`); a generator that keeps each word in a 16-byte stack
+  slot and calls the runtime through 64-bit addresses (`codegen.dart`); a JIT that maps the
+  code executable and calls it through `dart:ffi`, each hook a `NativeCallable`
+  (`jit.dart`); and a writer of ELF relocatable files (`elf.dart`). The backend therefore runs
+  on x86-64 Linux only. The object file of the AOT test, checked by hand, passes `readelf`
+  and `ld -r`, and links with stub hooks under `gcc`, each of its 12 hook addresses resolved
+  to the right stub; the test does not do this, since it would need a linker. Dart's
+  `double.nan` has the sign bit set (0xfff8000000000000), so the NaN test expects
+  `f64Bits(double.nan)`, not Rust's 0x7ff8000000000000. Rust has 24 step tests and 6 unit tests, and Dart the same. Each
+  scaling test is caught by its control: a field found by a map rebuilt per lookup (43×), a
+  port likewise (34×), a constant by `indexOf` (47×), a lambda by an identity map rebuilt per
+  call (35× to 38×), and a scan of the pushed inputs per input (36×). The last was first
+  missed: one warm-up run at `n` left the first timing at `n` twice the later ones, and one
+  try under the limit passes. The test now runs both sizes three times before timing.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34, L1.35. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34, L1.35, L1.36. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1765,6 +1781,9 @@ which the case was shorter, clearer or cheaper to run.
 | A recursion between two kinds of work, deeper than the call stack | Rust | The planner's `region` calls `consumes`, which calls `region`'s questions again, and the machine's `region` and `node` call each other; each is a plain recursive function. Dart answers each question on a stack that first pushes the questions it needs, and runs regions on a stack of activations, each holding the node it is at and what to do with its results (L1.34). |
 | A tree of results that each point to their parent | Dart | A region plan holds its parent and computes its path on first read with `late final`. Rust stores the plans flat in a `BTreeMap` keyed by path strings, since a child that points to its parent needs `Rc` and `Weak` (L1.34). |
 | Every value of an enum | Dart | `RegionKind.values` lists the kinds, so a test over them covers a kind added later. Rust has no list of an enum's variants without a derive from a crate such as `strum`, so the test names the five by hand (L1.35). |
+| Generating machine code | Rust | Cranelift compiles a graph for several targets, by JIT or to an object file, through one `Module` interface. Dart has no such library: the port writes an x86-64 assembler, a template generator and an ELF writer, and runs on x86-64 Linux only (L1.36). |
+| Calling generated code, and being called back | Rust | Cranelift's JIT returns a function pointer to call, and each hook is an `extern "C"` function. Dart maps the code with `mmap` and `mprotect` through `dart:ffi`, makes each hook a `NativeCallable.isolateLocal` once for all runs, and gives the hooks the current run through a top-level variable (L1.36). |
+| The bits of NaN | Rust | `f64::NAN` is 0x7ff8000000000000. Dart's `double.nan` is 0xfff8000000000000 on x86-64, its sign bit set, so a test of the canonical NaN writes `f64Bits(double.nan)`, and words and the ZIR binary form keep the constant `nanBits` (L1.36). |
 
 ### Changes per Dart file
 
@@ -1873,7 +1892,7 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `lib/src/ast/stmts.dart` | 3 | 0 |
 | `lib/format.dart` | 2 | 0 |
 | `bin/zedc.dart` | 4 | 0 |
-| `lib/run.dart` | 8 | 0 |
+| `lib/run.dart` | 9 | 0 |
 | `lib/resolve.dart` | 3 | 0 |
 | `lib/elab.dart` | 14 | 0 |
 | `lib/interp.dart` | 2 | 0 |
@@ -2053,5 +2072,26 @@ changes that fix a fault of COMPLEXITY.md; the first were at L1.27 (F21, F32).
 | `test/steps/l01_34_memory/fusion_test.dart` | 1 | 0 |
 | `test/steps/l01_34_memory/scaling_test.dart` | 1 | 0 |
 | `test/steps/l01_35_mlir_study/record_test.dart` | 1 | 0 |
+| `lib/native.dart` | 1 | 0 |
+| `lib/src/native/codegen.dart` | 1 | 0 |
+| `lib/src/native/elf.dart` | 1 | 0 |
+| `lib/src/native/heap.dart` | 1 | 0 |
+| `lib/src/native/hooks.dart` | 1 | 0 |
+| `lib/src/native/jit.dart` | 1 | 0 |
+| `lib/src/native/ports.dart` | 1 | 0 |
+| `lib/src/native/rope.dart` | 1 | 0 |
+| `lib/src/native/tables.dart` | 1 | 0 |
+| `lib/src/native/x64.dart` | 1 | 0 |
+| `test/native/heap_test.dart` | 1 | 0 |
+| `test/native/ports_test.dart` | 1 | 0 |
+| `test/native/rope_test.dart` | 1 | 0 |
+| `test/steps/l01_36_cranelift/native.dart` | 1 | 0 |
+| `test/steps/l01_36_cranelift/aot_test.dart` | 1 | 0 |
+| `test/steps/l01_36_cranelift/checks_test.dart` | 1 | 0 |
+| `test/steps/l01_36_cranelift/corpus_test.dart` | 1 | 0 |
+| `test/steps/l01_36_cranelift/ports_test.dart` | 1 | 0 |
+| `test/steps/l01_36_cranelift/scalars_test.dart` | 1 | 0 |
+| `test/steps/l01_36_cranelift/scaling_test.dart` | 1 | 0 |
+| `test/steps/l01_36_cranelift/strings_test.dart` | 1 | 0 |
 
 `dart format` rewrote 8 files at the end of M0.9; reformatting is not counted as a change.
