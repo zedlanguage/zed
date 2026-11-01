@@ -5,6 +5,7 @@ library;
 import 'dart:io';
 
 import 'package:test/test.dart';
+import 'package:zed/kernel.dart' show Int;
 import 'package:zed/run.dart';
 
 import 'ports.dart';
@@ -15,7 +16,8 @@ void main() {
     File(path).writeAsStringSync('stale\n');
     const src =
         'main(stdin: Lines) -> (report: Lines, stdout: Lines) {\n  '
-        'report <- stdin;\n  stdout <- "wrote the report";\n}\n';
+        'report <- "\${stdin[1] else ""}\\n\${stdin[2] else ""}";\n  '
+        'stdout <- "wrote the report";\n}\n';
     var out = await run('report', src, 'total: 42\nitems: 3\n', ['report=$path']);
     expect((out.status, out.stdout), (0, 'wrote the report\n'));
     expect(File(path).readAsStringSync(), 'total: 42\nitems: 3\n');
@@ -62,7 +64,16 @@ void main() {
   test('only strings are written as lines', () async {
     const src = 'main() -> (stdout: Lines) {\n  stdout <- 42;\n}\n';
     final out = await run('number', src, '');
-    expect((out.status, out.stderr), (1, 'port `stdout` takes strings; 42 was pushed\n'));
+    expect(out.status, 1);
+    expect(
+      out.stderr,
+      contains('2:13: a `Lines` port takes a `String` or a family of strings, not 42'),
+    );
+    // The writer checks again what it is given.
+    expect(
+      () => joinLines('stdout', const Int(42)),
+      throwsA(predicate((e) => '$e'.contains('port `stdout` takes strings; 42 was pushed'))),
+    );
   });
 
   test('the first failed write aborts the rest', () async {
@@ -92,7 +103,7 @@ void main() {
   });
 
   test('usage errors exit 2', () async {
-    const src = 'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n';
+    const src = 'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin[1] else "";\n}\n';
     var out = await run('usage', src, '', ['nosuch=x']);
     expect((out.status, out.stderr), (2, '`main` has no port `nosuch`\n'));
     out = await run('usage', src, '', ['--bogus']);

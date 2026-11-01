@@ -16,7 +16,7 @@ import '../../support/scaling.dart' as scaling;
 /// `x0 = 0; x1 = 1; …`: `n` first-order bindings, compiled.
 Unit numbers(int n) => Db().front([for (var i = 0; i < n; i++) 'x$i = $i;\n'].join()).$2;
 
-const echo = 'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n';
+const echo = 'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin[1] else "";\n}\n';
 
 /// `n` lines of input.
 List<int> lines(int n) => [for (var i = 0; i < n; i++) ...'line $i\n'.codeUnits];
@@ -52,7 +52,7 @@ void main() {
     ]);
     final (r, want) = program(echo, lines(2), natives);
     expect(r.mismatches, isEmpty);
-    expect(want, r'port `stdout` writes "line 0\nline 1\n"');
+    expect(want, r'port `stdout` writes "line 0\n"');
     expect((Report()..add('at', mismatched(2))).mismatches, ['at: m0', 'at: m1']);
   });
 

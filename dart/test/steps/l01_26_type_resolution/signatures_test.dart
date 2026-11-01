@@ -39,8 +39,8 @@ void main() {
     );
   });
 
-  test('a type variable used as a tuple gives the unknown', () {
-    expect(sig('first(p) = p[0];\n', 'first'), '(p: T) -> _');
+  test('a type variable used as a tuple gives a variable each call binds', () {
+    expect(sig('first(p) = p[0];\n', 'first'), '(p: T) -> U');
   });
 
   test('a declared type is kept', () {
@@ -83,9 +83,9 @@ void main() {
 
   test('a parameter compared with a tuple may be a tuple', () {
     // `<` orders tuples of one length as well as carriers, so `x` may be `(3, 4)`: its
-    // class keeps the tuple arrow, which allows only other values, and it gives `_`.
+    // class keeps the tuple arrow, which allows only other values, and bounds its variable.
     const src = 'lt(positional x) = x < (1, 2);\nmain() = lt((3, 4));\n';
-    expect(sig(src, 'lt'), '(_) -> bool');
+    expect(sig(src, 'lt'), '(T) -> bool for T in other values');
     expect(typeErrors(src), isEmpty);
   });
 

@@ -16,9 +16,12 @@
 /// any value; its one carrier; a type variable bounded by its carriers if several; and an error
 /// if none, listing every use that removed one.
 ///
-/// Where DESIGN.md does not say: a type variable used as a tuple or a function gives the
-/// unknown, so `first(p) = p[0]` is generic, and a non-tuple argument fails at run time; an
-/// atom passes through the operators and the prelude words, as the kernel's primitives pass it,
+/// A use of a value whose type is a type variable is a need of the signature, checked again at
+/// each call on the type the call binds the variable to, so `first(p) = p[0]` is generic and a
+/// non-tuple argument is rejected at the call. `_` is the type of every value: it passes only
+/// where any value is accepted (DESIGN.md "Soundness").
+///
+/// Where DESIGN.md does not say: an atom passes through the operators and the prelude words, as the kernel's primitives pass it,
 /// but not through a declared function, which binds it; a call matching several arrows takes
 /// the first one's result.
 ///
@@ -33,6 +36,8 @@ import 'kernel.dart' as k;
 import 'resolve.dart';
 import 'source.dart';
 import 'src/check/ty.dart';
+import 'src/store/interval.dart' hide Piece;
+import 'src/store/revision.dart';
 import 'src/tables.dart';
 
 export 'src/check/ty.dart';
@@ -88,6 +93,11 @@ final class Info {
 
   /// The type of each top-level name bound by `=` (step L1.37).
   Map<String, Ty> tops = {};
+
+  /// For each call of a function, the arguments whose loose atoms its parameter does not
+  /// take: an atom there selects no arrow and is the call's value (rule 6 of
+  /// sec:type_resolution), by the call's span and the arguments' spans.
+  Map<Span, List<Span>> passes = {};
 
   /// The type errors.
   List<BuildError> errors = [];
@@ -156,6 +166,30 @@ final class _Arg {
   _Arg copy() => _Arg(ty, lit, at);
 }
 
+/// An argument of a call: an expression, or an argument already found, as when a use the
+/// body of a generic function makes is checked again at a call of the function.
+sealed class _Src {
+  const _Src();
+}
+
+final class _SrcExpr extends _Src {
+  final Expr e;
+
+  const _SrcExpr(this.e);
+}
+
+final class _SrcGot extends _Src {
+  final _Arg a;
+
+  const _SrcGot(this.a);
+}
+
+/// The positional and named arguments of a call, as expressions.
+(List<_Src>, List<(String, _Src)>) _srcs(List<Expr> positional, List<(String, Expr)> named) => (
+  [for (final e in positional) _SrcExpr(e)],
+  [for (final (n, e) in named) (n, _SrcExpr(e))],
+);
+
 /// Facts an `is` test makes: binders narrowed to a type, and the test.
 typedef _Facts = List<(Binder, Ty, Span)>;
 
@@ -210,6 +244,13 @@ final class _Class {
   /// Its type, once the function of its level ends.
   Ty? resolved;
 
+  /// What uses of its values need of them, each numbered in the order of all needs.
+  List<(int, Need)> uses = [];
+
+  /// The tuples and functions that flowed into it, each with where: every use is checked on
+  /// each.
+  List<(Ty, Span)> flowed = [];
+
   _Class(this.parent, this.level);
 
   _Class copy() => _Class(parent, level)
@@ -217,7 +258,27 @@ final class _Class {
     ..mask = mask
     ..lits = [...lits]
     ..reasons = [...reasons]
-    ..resolved = resolved;
+    ..resolved = resolved
+    ..uses = [...uses]
+    ..flowed = [...flowed];
+}
+
+/// A need being checked at a call.
+final class _Open {
+  /// The need's use in the body.
+  final Span span;
+
+  /// The type of the value it is checked on, its variables read as the unknown.
+  final Ty shape;
+
+  /// What a use met again inside the check gives: nothing at first, then what the check
+  /// gave.
+  Ty result = Ty.empty;
+
+  /// Whether the check met the use again and took [result].
+  var used = false;
+
+  _Open(this.span, this.shape);
 }
 
 final class _Ck {
@@ -238,6 +299,9 @@ final class _Ck {
   /// Whether a repair is being tried, so its errors offer none.
   var trying = false;
 
+  /// The output ports declared `Lines`.
+  final linesOut = <String>{};
+
   /// The classes; class `k` is the type variable `$k`.
   final classes = <_Class>[];
 
@@ -246,6 +310,23 @@ final class _Ck {
 
   /// The classes each of those functions resolves when it ends, by its level.
   final pending = [<int>[]];
+
+  /// The needs recorded so far.
+  var needs = 0;
+
+  /// How many checks of a generic function's needs are under way; they write nothing for
+  /// elaboration.
+  var replaying = 0;
+
+  /// The needs being checked at calls, one inside another.
+  final open = <_Open>[];
+
+  /// The variables of the parameters a partial call leaves out: the next application leaves
+  /// the needs on them to the function the call gives.
+  var defer = SplayTreeSet<String>();
+
+  /// What the last application of one arrow bound, and the needs it left.
+  (Binds, List<Need>)? lastApplied;
 
   /// What the last step to finish found.
   Object? _got;
@@ -439,8 +520,9 @@ final class _Ck {
         origin(b, s.span, '`${f.name}` is declared here, `$sig`');
         env[b] = Ty.func(sig);
         _put(info.sigs, b, sig);
-      case Push(:final value):
+      case Push(:final port, :final value):
         yield expr(value);
+        if (linesOut.contains(port)) pushed(got, value.span);
       case Return():
         throw StateError('an export is not a binding');
     }
@@ -454,13 +536,14 @@ final class _Ck {
       switch (p) {
         case PTuple(:final cs) when cs.length == n:
           out = out.union(cs[i]);
-        case PDyn() || PVar():
+        case PDyn():
+          if (i == 0) any('destructuring', span);
+        case PVar():
           out = out.union(Ty.dynamic);
         case _ when p.isAtoms:
           break;
         default:
           if (i == 0) error(span, 'this value is ${p.ty}, not a tuple of $n');
-          out = out.union(Ty.dynamic);
       }
     }
     return out;
@@ -490,6 +573,7 @@ final class _Ck {
     for (final p in f.ports ?? const <Port>[]) {
       final b = id(p.span, p.name);
       origin(b, p.span, '`${p.name}` is an output port');
+      if (p.type case TypeName(name: 'Lines')) linesOut.add(p.name);
       env[b] = Ty.dynamic;
     }
     final level = ++this.level;
@@ -542,7 +626,14 @@ final class _Ck {
     } else {
       yield expr(f.body);
     }
-    final result = got;
+    _got = generalize(level, Sig.one(params, tys, got));
+  }
+
+  /// The signature `sig` of the function of `level`, which ends: each class of the level
+  /// takes its type, a type variable of the signature named in order of appearance. The uses
+  /// of a class that is a type variable join the signature as its needs; those of a class of
+  /// one type are checked on it now.
+  Sig generalize(int level, Sig sig) {
     final own = <int>[];
     final mine = pending[level];
     pending[level] = [];
@@ -557,8 +648,24 @@ final class _Ck {
       resolveClass(r);
       own.add(r);
     }
+    final needs = <(int, Need)>[];
+    final now = <(Need, Ty)>[];
+    for (final r in own) {
+      final uses = classes[r].uses;
+      classes[r].uses = [];
+      final t = classes[r].resolved!;
+      if (t == Ty.variable('\$$r')) {
+        needs.addAll(uses);
+      } else {
+        now.addAll([for (final (_, n) in uses) (n, t)]);
+      }
+    }
+    for (final (n, t) in now) {
+      checkOn(n, t, n.span);
+    }
+    needs.sort((a, b) => a.$1 - b.$1);
     // The classes of this level that are type variables, named in order of appearance.
-    final sig = solvedSig(Sig.one(params, tys, result));
+    sig = solvedSig(sig.copy(needs: [for (final (_, n) in needs) n]));
     final vars = sigVars(sig);
     final taken = {
       for (final v in vars)
@@ -588,7 +695,7 @@ final class _Ck {
     final out = sig.replace(names);
     out.bounds.addAll(bounds);
     this.level--;
-    _got = out;
+    return out.copy(own: SplayTreeSet.of(names.values.expand((t) => t.vars)));
   }
 
   /// A new class, of every value, at the current level.
@@ -640,13 +747,34 @@ final class _Ck {
     touch(b);
     final (root, child) = classes[a].rank < classes[b].rank ? (b, a) : (a, b);
     if (classes[a].rank == classes[b].rank) classes[root].rank++;
+    // Each use of one class is checked on what flowed into the other.
+    final cross = [
+      for (final (x, y) in [(a, b), (b, a)])
+        for (final (_, n) in classes[x].uses)
+          for (final (t, at) in classes[y].flowed) (n, t, at),
+    ];
+    final lowered = classes[a].level != classes[b].level;
     final ch = classes[child];
-    var (lits, reasons) = (ch.lits, ch.reasons);
+    var (lits, reasons, uses, flowed) = (ch.lits, ch.reasons, ch.uses, ch.flowed);
     ch
       ..lits = []
       ..reasons = []
+      ..uses = []
+      ..flowed = []
       ..parent = root;
     final c = classes[root];
+    if (c.uses.length < uses.length) {
+      final u = c.uses;
+      c.uses = uses;
+      uses = u;
+    }
+    c.uses.addAll(uses);
+    if (c.flowed.length < flowed.length) {
+      final f = c.flowed;
+      c.flowed = flowed;
+      flowed = f;
+    }
+    c.flowed.addAll(flowed);
     if (c.lits.length < lits.length) {
       final l = c.lits;
       c.lits = lits;
@@ -664,7 +792,324 @@ final class _Ck {
     c
       ..mask = m
       ..level = c.level < ch.level ? c.level : ch.level;
+    if (lowered) {
+      final vars = Vars();
+      for (final (_, n) in c.uses) {
+        n.varsIn(vars);
+      }
+      lower(vars.order, c.level);
+    }
+    for (final (n, t, at) in cross) {
+      checkOn(n, t, at);
+    }
     return true;
+  }
+
+  /// Lowers to `level` the classes of `vars` above it, and those of their uses' variables.
+  void lower(List<String> vars, int level) {
+    final stack = [...vars];
+    while (stack.isNotEmpty) {
+      final k = classId(stack.removeLast());
+      if (k == null || k >= classes.length) continue;
+      final r = find(k);
+      if (classes[r].level <= level || classes[r].resolved != null) continue;
+      touch(r);
+      classes[r].level = level;
+      final more = Vars();
+      for (final (_, n) in classes[r].uses) {
+        n.varsIn(more);
+      }
+      stack.addAll(more.order);
+    }
+  }
+
+  /// A use of a value of class `k`: recorded on the class, checked on each tuple and function
+  /// that flowed into it, and, when it `gives` a value, a new class for that value.
+  Ty need(int k, NeedKind kind, bool gives, Span span) {
+    final r = find(k);
+    if (kind is NData && classes[r].uses.any((u) => u.$2.kind is NData)) return Ty.empty;
+    for (final (_, n) in classes[r].uses) {
+      if (n.kind == kind && (n.result != null) == gives) return n.result ?? Ty.empty;
+    }
+    final level = classes[r].level;
+    Ty? result;
+    if (gives) {
+      final j = newClass();
+      classes[j].level = level;
+      result = Ty.variable('\$$j');
+    }
+    final need = Need(Ty.variable('\$$r'), kind, result, span);
+    final vars = Vars();
+    need.varsIn(vars);
+    lower(vars.order, level);
+    final flowed = [...classes[r].flowed];
+    touch(r);
+    needs++;
+    classes[r].uses.add((needs, need));
+    for (final (t, at) in flowed) {
+      checkOn(need, t, at);
+    }
+    return result ?? Ty.empty;
+  }
+
+  /// The use `n` checked on a value of type `t`.
+  void checkOn(Need n, Ty t, Span span) {
+    final from = info.errors.length;
+    final got = meet(n, t, Binds(), span);
+    if (n.result case final r? when classOfTy(r) != null) {
+      if (!flow(classOfTy(r)!, got, 'this use', n.span)) {
+        error(n.span, 'this use gives $got, not ${show(r)}');
+      }
+    }
+    also(from, (span: n.span, text: 'this use needs it here'));
+  }
+
+  /// What the use `n` gives on a value of type `on`, its variables bound by `binds`.
+  Ty meet(Need n, Ty on, Binds binds, Span span) {
+    Ty b(Ty t) => bound(t, binds);
+    on = b(on);
+    replaying++;
+    final Ty out;
+    switch (n.kind) {
+      case NComponent(:final i, :final key):
+        out = atIndex(on, i, _Arg(key), span);
+      case NIndex(:final key):
+        out = atKey(on, _Arg(b(key)), span);
+      case NCall(:final what, :final positional, :final named, :final curry):
+        run(
+          callValue(
+            on,
+            what,
+            null,
+            [for (final t in positional) _SrcGot(_Arg(b(t)))],
+            [for (final (m, t) in named) (m, _SrcGot(_Arg(b(t))))],
+            curry,
+            span,
+          ),
+        );
+        out = got;
+      case NData(:final what):
+        data(on, what, span);
+        out = Ty.empty;
+      case NInto(:final what, :final ty):
+        into(on, ty, what, span);
+        out = Ty.empty;
+      case NPayload(:final atom, :final slot):
+        out = payload(on, atom, slot, span);
+    }
+    replaying--;
+    return out;
+  }
+
+  /// The needs of a signature, `what`, checked at a call with its variables bound by `binds`;
+  /// gives those on the variables of `defer`, and of the needs that share one with them,
+  /// which the function the call gives keeps.
+  List<Need> replay(String what, List<Need> needs, Binds binds, Set<String> defer, Span span) {
+    defer = {...defer};
+    final left = <Need>[];
+    for (final n in needs) {
+      if (defer.isNotEmpty) {
+        final vars = Vars();
+        n.varsIn(vars);
+        if (vars.order.any(defer.contains)) {
+          defer.addAll(vars.order);
+          left.add(n);
+          continue;
+        }
+      }
+      final from = info.errors.length;
+      final on = bound(n.on, binds);
+      final shape = bound(on, Binds());
+      final o = open.where((o) => o.span == n.span).firstOrNull;
+      Ty got;
+      if (on.isDynamic) {
+        any('$what, which needs this of its argument,', span);
+        got = Ty.empty;
+      } else if (o != null && o.shape == shape) {
+        o.used = true;
+        got = o.result;
+      } else if (o != null) {
+        error(
+          span,
+          '$what needs this of its argument again inside its own check, on $on where it was '
+          '${o.shape}: the checker does not follow a call at a type that may grow without end',
+        );
+        got = Ty.empty;
+      } else {
+        final before = Binds.of(binds);
+        final errors = info.errors.length;
+        final mine = _Open(n.span, shape);
+        open.add(mine);
+        got = meet(n, on, binds, span);
+        if (mine.used && !got.isEmpty) {
+          binds
+            ..clear()
+            ..addAll(before);
+          info.errors.length = errors;
+          mine.result = got;
+          final first = got;
+          got = meet(n, on, binds, span);
+          if (!got.subtype(first)) {
+            error(
+              span,
+              '$what needs this of its argument again inside its own check, and the result is '
+              'not settled: it gives $got where the use inside gave $first',
+            );
+          }
+        }
+        open.removeLast();
+      }
+      // What the use gives is within its result: a variable there joins it, as for an
+      // argument, and one it leaves unbound gives nothing.
+      if (n.result case final r?) {
+        if (!got.sub(r, binds)) error(span, '$what gives $got here, which is not $r');
+        for (final v in r.vars) {
+          binds.putIfAbsent(v, () => Ty.empty);
+        }
+      }
+      also(from, (span: n.span, text: '$what needs this of its argument here'));
+    }
+    return left;
+  }
+
+  /// Each value of `on` passed, as an argument of `what`, at a parameter of the closed type
+  /// `ty`.
+  void into(Ty on, Ty ty, String what, Span span) {
+    for (final piece in on.pieces) {
+      final c = classOf(piece);
+      final bool ok;
+      if (piece is PDyn) {
+        ok = ty.isDynamic;
+      } else if (piece is PVar && c == null) {
+        ok = true;
+      } else if (c != null) {
+        ok = restrict(c, maskOf(ty), what, span);
+        need(c, NInto(what, ty), false, span);
+      } else if (piece case PFn(:final s) when s.needs.isNotEmpty) {
+        ok = fitNeeds(s, ty, Binds(), what, span);
+      } else {
+        ok = piece.ty.sub(ty, Binds());
+      }
+      if (!ok) error(span, '$what does not take ${show(piece.ty)}, which is not $ty');
+    }
+  }
+
+  /// Whether the generic function `s` fits the one function type `p`: its signature without
+  /// its needs does, and its needs hold on `p`'s parameters. An error the needs make is
+  /// reported, and the fit then holds.
+  bool fitNeeds(Sig s, Ty p, Binds binds, String what, Span span) {
+    final bare = s.copy(needs: const []);
+    if (p.fns.length != 1) return false;
+    if (!Ty.func(bare).sub(p, binds)) return false;
+    final q = p.fns[0].replace(binds);
+    final from = info.errors.length;
+    var ok = true;
+    for (final a in q.arrows) {
+      final (r, _) = apply(what, s, [for (final t in a.params) _Arg(t)], false, span);
+      ok &= r.subtype(a.result);
+    }
+    return ok || info.errors.length > from;
+  }
+
+  /// A value of type `t` used by `what`, which takes data: it holds no function.
+  void data(Ty t, String what, Span span) {
+    if (t.heldFunction case final s?) {
+      error(span, '$what takes data, and this value may hold a function, `$s`');
+    }
+    // A class, at any depth, needs data of each of its values.
+    final stack = [t];
+    while (stack.isNotEmpty) {
+      for (final p in stack.removeLast().pieces) {
+        switch (p) {
+          case PDyn():
+            any(what, span);
+          case PTuple(:final cs):
+            stack.addAll(cs);
+          case PVar():
+            if (classOf(p) case final k?) need(k, NData(what), false, span);
+          default:
+            break;
+        }
+      }
+    }
+  }
+
+  /// `what` given a value of type `_`.
+  void any(String what, Span span) => error(
+    span,
+    '$what does not take every value, and this value is `_`, which may be any: test it with '
+    '`is` first',
+  );
+
+  /// A value of type `t` pushed to a `Lines` port: a string, or a family of strings.
+  void pushed(Ty t, Span span) {
+    bool strings(k.Type s) => s.subtype(k.Type.string);
+    bool plain(Ty t) => t.tuples.isEmpty && t.vars.isEmpty;
+    final notFound = k.Type.atom('notFound');
+    final ok =
+        strings(t.set) &&
+        plain(t) &&
+        t.fns.every(
+          (s) =>
+              s.data &&
+              s.arrows.every((a) => plain(a.result) && strings(a.result.set - notFound)),
+        );
+    if (!ok && !t.isDynamic && t.vars.isEmpty) {
+      error(span, 'a `Lines` port takes a `String` or a family of strings, not ${show(t)}');
+    }
+  }
+
+  /// `x ** n` on ints: the exponent, the expression `e`, is at least 0.
+  void exponent(_Arg x, _Arg n, Expr e, Span span) {
+    final ns = n.ty.set & k.Type.integer;
+    if ((x.ty.set & k.Type.integer).isEmpty || ns.isEmpty) return;
+    const zero = k.Int(0);
+    final listed = ns.listed;
+    final atLeastZero =
+        interval(e).isSubset(IntervalSet.range(const Fin(0), posInf)) ||
+        (listed != null && listed.every((v) => (v.surfaceCmp(zero) ?? -1) >= 0));
+    if (!atLeastZero) {
+      errorWith(
+        span,
+        '`**` on an int needs an exponent of at least 0, and this one is ${show(Ty.of(ns))}',
+        derive([n.at ?? span]),
+      );
+    }
+  }
+
+  /// The names the pattern `p` binds, from the `next`th of `ids`, each the payload of a
+  /// value of type `v` at its place; gives the index after the last.
+  int bindPattern(AtomPattern p, Ty v, List<Binder> ids, int next) {
+    final slots = <(Slot, Pattern?)>[
+      for (final (f, sub) in p.fields) (SField(f), sub),
+      for (final (i, sub) in p.items.indexed) (SItem(i), sub),
+    ];
+    for (final (slot, sub) in slots) {
+      final t = payload(v, p.name, slot, p.span);
+      if (sub is AtomPattern) {
+        next = bindPattern(sub, t, ids, next);
+      } else {
+        env[ids[next++]] = t;
+      }
+    }
+    return next;
+  }
+
+  /// What a value of type `v` holds at `slot` when it is an atom named `atom`.
+  Ty payload(Ty v, String atom, Slot slot, Span span) {
+    var out = switch (v.withoutVars.shapes(atom)) {
+      final ss? => Ty.unionAll(ss.map((s) => s.at(slot)).nonNulls),
+      null => Ty.dynamic,
+    };
+    if (v.isDynamic) out = out.union(Ty.dynamic);
+    for (final x in v.vars) {
+      final t = switch (classOf(PVar(x))) {
+        final k? => need(k, NPayload(atom, slot), true, span),
+        null => Ty.dynamic,
+      };
+      out = out.union(t);
+    }
+    return out;
   }
 
   /// The literal `l` joins class `c`; unless it follows, the class keeps only the carriers it
@@ -687,11 +1132,22 @@ final class _Ck {
     for (final p in ty.pieces) {
       final ok = switch ((classOf(p), p.carrier)) {
         (final j?, _) => merge(c, j, what, span),
-        _ when p is PDyn || p is PVar || p.isAtoms => true,
+        _ when p is PDyn => false,
+        _ when p is PVar || p.isAtoms => true,
         (null, final x?) => restrict(c, x.bit, what, span),
         (null, null) => restrict(c, other, what, span),
       };
       if (!ok) return false;
+      if (p is PTuple || p is PFn) {
+        final r = find(c);
+        final t = p.ty;
+        final uses = [for (final (_, n) in classes[r].uses) n];
+        touch(r);
+        classes[r].flowed.add((t, span));
+        for (final n in uses) {
+          checkOn(n, t, span);
+        }
+      }
     }
     return true;
   }
@@ -713,8 +1169,7 @@ final class _Ck {
       final c? => Ty.carrier(c),
       null when mask == every => Ty.variable('\$$r'),
       null when mask & other == 0 && _bits(mask) == 1 => Ty.carrier(Carrier.ofMask(mask).first),
-      null when mask & other == 0 => Ty.variable('\$$r'),
-      null => Ty.dynamic,
+      null => Ty.variable('\$$r'),
     };
     if (ty.numericCarrier case final c?) {
       for (final (l, _) in lits) {
@@ -885,7 +1340,7 @@ final class _Ck {
   /// the right side of `==` does.
   _Steps tests(FunctionDef f, Binder b) sync* {
     final sig = info.sigs[b];
-    if (sig == null) return;
+    if (sig == null || f.ports != null) return;
     for (final (input, expected) in f.tests) {
       final List<Expr> args;
       if (f.params.length == 1) {
@@ -976,10 +1431,10 @@ final class _Ck {
       case RatLit(:final text):
         _got = switch (k.Rat.decimal(text)) {
           final r? => Ty.lit(r),
-          null => Ty.dynamic,
+          null => Ty.empty,
         };
       case IntLit() || FloatLit():
-        _got = Ty.dynamic;
+        _got = Ty.empty;
       case BoolLit(:final value):
         _got = Ty.lit(k.Bool(value));
       case AtomLit(:final name):
@@ -993,6 +1448,7 @@ final class _Ck {
               text.write(s);
             case StrHole(:final e):
               yield expr(e);
+              data(got, 'interpolation', e.span);
               holes.add(got);
           }
         }
@@ -1014,6 +1470,7 @@ final class _Ck {
         final tys = <Ty>[];
         for (final i in items) {
           yield expr(i);
+          data(got, 'a tuple', i.span);
           tys.add(got);
         }
         _got = Ty.tuple(tys);
@@ -1026,8 +1483,8 @@ final class _Ck {
       case Else(:final of, :final pattern, :final fallback):
         yield expr(of);
         final v = got;
-        for (final b in t.res.patterns[e.span] ?? const <Binder>[]) {
-          env.putIfAbsent(b, () => Ty.dynamic);
+        if ((t.res.patterns[e.span], pattern) case (final ids?, final AtomPattern p)) {
+          bindPattern(p, v, ids, 0);
         }
         yield expr(fallback);
         final d = got;
@@ -1047,7 +1504,7 @@ final class _Ck {
         for (final p in c.pieces) {
           final ok = switch (classOf(p)) {
             final x? => restrict(x, Carrier.boolean.bit, what, cond.span),
-            null => p is PDyn || p.isAtoms || p.carrier == Carrier.boolean,
+            null => p.isAtoms || p.carrier == Carrier.boolean,
           };
           if (!ok) {
             errorWith(cond.span, '$what is ${show(c)}, not bool', [
@@ -1162,7 +1619,10 @@ final class _Ck {
         yield arg(a);
         final x = gotArg;
         yield arg(b);
-        equal(x, gotArg);
+        final y = gotArg;
+        data(x.ty, '`$op`', span);
+        data(y.ty, '`$op`', span);
+        equal(x, y);
         _got = Ty.carrier(Carrier.boolean);
       case '<' || '<=' || '>' || '>=':
         yield arg(a);
@@ -1180,6 +1640,7 @@ final class _Ck {
             !y.ty.contains(const k.Int(0)) &&
             !y.ty.contains(k.Rat.integer(BigInt.zero));
         final carried = [x.ty, y.ty].any((t) => t.atomSet.contains(divByZero));
+        if (op == '**') exponent(x, y, b, span);
         final r = apply('`$op`', opSig(op), [x, y], true, span).$1;
         _got = nonzero && !carried ? r.diff(Ty.of(k.Type.atom('divByZero'))) : r;
     }
@@ -1217,20 +1678,55 @@ final class _Ck {
 
   /// An ordering: two values of one carrier, or two tuples of one length; atoms pass.
   Ty compare(String op, _Arg x, _Arg y, Span span) {
-    final sig = opSig('<');
-    final lens = SplayTreeSet<int>()
-      ..addAll(x.ty.tuples.map((cs) => cs.length))
-      ..addAll(y.ty.tuples.map((cs) => cs.length));
-    for (final n in lens) {
-      final any = Ty.tuple(List.filled(n, Ty.dynamic));
-      sig.arrows.add(Arrow([any, any], Ty.carrier(Carrier.boolean)));
+    final what = '`$op`';
+    if (x.ty.tuples.isEmpty && y.ty.tuples.isEmpty) {
+      return apply(what, opSig('<'), [x, y], true, span).$1;
     }
-    return apply('`$op`', sig, [x, y], true, span).$1;
+    final out = passing(x.ty, what, span).union(passing(y.ty, what, span));
+    components(what, x.ty.withoutLoose, y.ty.withoutLoose, span);
+    return out.union(Ty.carrier(Carrier.boolean));
+  }
+
+  /// Checks that each value of `a` compares with each of `b` (sec:keys): two numbers of one
+  /// carrier or two values of one other kind, the atoms as data, and two tuples component by
+  /// component as far as the shorter goes, since a proper prefix comes first.
+  void components(String what, Ty a, Ty b, Span span) {
+    for (final (s, t) in [(a, b), (b, a)]) {
+      final atoms = !s.atomSet.isEmpty;
+      for (final p in t.pieces) {
+        final ok = switch (classOf(p)) {
+          final k? when s.tuples.isNotEmpty => restrict(k, other, what, span),
+          _? => true,
+          null => switch (p) {
+            PDyn() => false,
+            PVar() || PTuple() => true,
+            _ when s.tuples.isNotEmpty => false,
+            _ => !atoms || p.isAtoms || p.carrier == null,
+          },
+        };
+        if (!ok) {
+          final q = s.tuples.isEmpty ? 'an atom' : 'a tuple';
+          error(span, '$what does not compare ${p.ty} with $q');
+          return;
+        }
+      }
+    }
+    for (final s in a.tuples) {
+      for (final t in b.tuples) {
+        for (var i = 0; i < s.length && i < t.length; i++) {
+          components(what, s[i], t[i], span);
+        }
+      }
+    }
+    final (x, y) = (a.withoutAtoms.withoutTuples, b.withoutAtoms.withoutTuples);
+    if (!x.isEmpty && !y.isEmpty) apply(what, opSig('<'), [_Arg(x), _Arg(y)], true, span);
   }
 
   Ty name(Span span) => switch (t.res.uses[span]) {
     Bound(binders: [final b]) => env[b] ?? Ty.dynamic,
     Prelude(:final word) when word != 'sum' => Ty.func(wordSig(word)),
+    // Elaboration rejects a use of an overloaded name.
+    Bound() => Ty.empty,
     _ => Ty.dynamic,
   };
 
@@ -1252,10 +1748,19 @@ final class _Ck {
       return;
     }
     if (callee case AtomLit(:final name)) {
-      for (final a in [...positional, for (final (_, a) in named) a]) {
+      final items = <Ty>[];
+      for (final a in positional) {
         yield expr(a);
+        items.add(got);
       }
-      _got = Ty.of(k.Type.atomWith(name, k.Type.top));
+      final fields = SplayTreeMap<String, Ty>();
+      for (final (n, a) in named) {
+        yield expr(a);
+        fields[n] = got;
+      }
+      _got = Ty.of(k.Type.atomWith(name, k.Type.top)).withPayloads({
+        name: [Shape(items, fields)],
+      });
       return;
     }
     if (declared(callee) case final b?) {
@@ -1268,7 +1773,8 @@ final class _Ck {
       if (sig == null) {
         _got = Ty.dynamic;
       } else {
-        yield callSig(sig, true, null, positional, named, curry, span, fname);
+        final (p, n) = _srcs(positional, named);
+        yield callSig(sig, true, null, p, n, curry, span, fname);
       }
       if ((whence[b], sig) case (final o?, final sig?)) {
         also(from, (span: o.span, text: '`$fname` is declared here, `$sig`'));
@@ -1284,12 +1790,18 @@ final class _Ck {
     if ((callee, t.res.uses[callee.span]) case (NameRef(name: final w), Prelude())) {
       if (named.isEmpty && !curry && positional.length == 1) {
         yield word(w, positional, null, span);
-      } else {
-        _got = Ty.dynamic;
+        return;
       }
+      for (final a in [...positional, for (final (_, a) in named) a]) {
+        yield expr(a);
+      }
+      // Elaboration reports named arguments and `...`.
+      if (named.isEmpty && !curry) error(span, '`$w` takes one argument');
+      _got = Ty.empty;
       return;
     }
-    yield callValue(f, what, null, positional, named, curry, span);
+    final (p, n) = _srcs(positional, named);
+    yield callValue(f, what, null, p, n, curry, span);
   }
 
   /// A prelude word applied to one argument, the receiver or the only positional one.
@@ -1299,6 +1811,7 @@ final class _Ck {
       yield arg(positional[0]);
       x = gotArg;
     }
+    if (w == 'String') data(x.ty, '`String`', span);
     _got = w == 'sum' ? sum(x.ty, span) : apply('`$w`', wordSig(w), [x], true, span).$1;
   }
 
@@ -1319,12 +1832,14 @@ final class _Ck {
           }
           final bad = acc.pieces
               .where(
-                (p) => !(p is PDyn || p is PVar) && !p.isAtoms && !(p.carrier?.numeric ?? false),
+                (p) => p is! PVar && !p.isAtoms && !(p.carrier?.numeric ?? false),
               )
               .firstOrNull;
           if (bad != null) error(span, '`sum` does not take (${bad.ty})');
           out = out.union(acc);
-        case PDyn() || PVar():
+        case PDyn():
+          any('`sum`', span);
+        case PVar():
           out = out.union(Ty.dynamic);
         case _ when p.isAtoms:
           break;
@@ -1340,13 +1855,36 @@ final class _Ck {
     Ty f,
     String what,
     _Arg? receiver,
-    List<Expr> positional,
-    List<(String, Expr)> named,
+    List<_Src> positional,
+    List<(String, _Src)> named,
     bool curry,
     Span span,
   ) sync* {
     var out = passing(f, 'a call', span);
     var checked = false;
+    // A class's calls are recorded with the arguments' types, found once.
+    if (f.pieces.any((p) => classOf(p) != null)) {
+      final p = <_Src>[];
+      for (final a in positional) {
+        if (a case _SrcExpr(:final e)) {
+          yield arg(e);
+          p.add(_SrcGot(gotArg));
+        } else {
+          p.add(a);
+        }
+      }
+      final n = <(String, _Src)>[];
+      for (final (m, a) in named) {
+        if (a case _SrcExpr(:final e)) {
+          yield arg(e);
+          n.add((m, _SrcGot(gotArg)));
+        } else {
+          n.add((m, a));
+        }
+      }
+      (positional, named) = (p, n);
+    }
+    Ty tyOfSrc(_Src a) => (a as _SrcGot).a.ty;
     if (f.fns.firstOrNull case final s? when f.fns.every((g) => g.sameKinds(s))) {
       _put(info.calls, span, s);
     }
@@ -1356,18 +1894,28 @@ final class _Ck {
           checked = true;
           yield callSig(s, false, receiver?.copy(), positional, named, curry, span, what);
           out = out.union(got);
-        case PDyn() || PVar():
+        case PVar() when classOf(p) != null:
+          checked = true;
+          final kind = NCall(
+            what,
+            [if (receiver != null) receiver.ty, for (final a in positional) tyOfSrc(a)],
+            [for (final (m, a) in named) (m, tyOfSrc(a))],
+            curry,
+          );
+          out = out.union(need(classOf(p)!, kind, true, span));
+        case PDyn():
+          any('a call of `$what`', span);
+        case PVar():
           out = out.union(Ty.dynamic);
         case _ when p.isAtoms:
           break;
         default:
           error(span, '`$what` is ${p.ty}, not a function');
-          out = out.union(Ty.dynamic);
       }
     }
     if (!checked) {
       for (final a in [...positional, for (final (_, a) in named) a]) {
-        yield expr(a);
+        if (a case _SrcExpr(:final e)) yield expr(e);
       }
     }
     _got = out;
@@ -1375,30 +1923,38 @@ final class _Ck {
 
   /// A call of a function of signature `sig`; `isDeclared` when it is the declared function
   /// itself, whose defaults every call can fill, and not a value of its type, which fills
-  /// only closed ones. A call elaboration rejects gives the unknown, unchecked.
+  /// only closed ones. A call whose arguments do not fit gives the unknown; elaboration
+  /// reports it when the call is of the declared function or of one recorded signature, and
+  /// this check otherwise.
   _Steps callSig(
     Sig sig,
     bool isDeclared,
     _Arg? receiver,
-    List<Expr> positional,
-    List<(String, Expr)> named,
+    List<_Src> positional,
+    List<(String, _Src)> named,
     bool curry,
     Span span,
     String what,
   ) sync* {
-    _got = Ty.dynamic;
+    Iterable<Iterable<Object?>> unfitted() => unfit(sig, isDeclared, positional, named, span, what);
     final n = sig.params.length;
-    final slots = List<Expr?>.filled(n, null);
+    final slots = List<_Src?>.filled(n, null);
     var next = 0;
     final hasReceiver = receiver != null;
     if (hasReceiver) {
-      if (n == 0) return;
+      if (n == 0) {
+        yield unfitted();
+        return;
+      }
       next = 1;
     }
     for (final a in positional) {
-      if (next >= n) return;
-      final p = sig.params[next];
-      if (!(p.positional || !isDeclared && sig.params.every((p) => p.positional))) return;
+      if (next >= n ||
+          !(sig.params[next].positional ||
+              !isDeclared && sig.params.every((p) => p.positional))) {
+        yield unfitted();
+        return;
+      }
       slots[next++] = a;
     }
     // Each parameter's index by name, the first where a name repeats.
@@ -1409,6 +1965,7 @@ final class _Ck {
     for (final (name, a) in named) {
       final j = at[name];
       if (j == null || sig.params[j].positional || slots[j] != null || hasReceiver && j == 0) {
+        yield unfitted();
         return;
       }
       slots[j] = a;
@@ -1417,40 +1974,100 @@ final class _Ck {
       for (var j = 0; j < n; j++)
         if (slots[j] == null && !(hasReceiver && j == 0)) j,
     ];
-    if (curry) {
-      if (missing.isEmpty || missing.any((j) => sig.params[j].positional)) return;
-    } else if (missing.any((j) {
-      final d = sig.params[j].fallback;
-      return d == null || !(isDeclared || d.closed);
-    })) {
+    if (curry
+        ? missing.isEmpty || missing.any((j) => sig.params[j].positional)
+        : missing.any((j) {
+            final d = sig.params[j].fallback;
+            return d == null || !(isDeclared || d.closed);
+          })) {
+      yield unfitted();
       return;
     }
     final args = <_Arg?>[];
     for (final (j, s) in slots.indexed) {
-      if (hasReceiver && j == 0) {
-        args.add(receiver);
-      } else if (s != null) {
-        yield arg(s, Ty.unionAll([for (final ar in sig.arrows) ar.params[j]]));
-        args.add(gotArg);
-      } else {
-        args.add(null);
+      switch (s) {
+        case _ when hasReceiver && j == 0:
+          args.add(receiver);
+        case _SrcExpr(:final e):
+          yield arg(e, Ty.unionAll([for (final ar in sig.arrows) ar.params[j]]));
+          args.add(gotArg);
+        case _SrcGot(:final a):
+          args.add(a.copy());
+        case null:
+          args.add(null);
       }
     }
-    final (result, kept) = apply('`$what`', sig, args, false, span);
-    if (!curry) {
-      _got = result;
-      return;
+    _got = curry
+        ? partial(sig, args, missing, false, what, span)
+        : apply('`$what`', sig, args, false, span).$1;
+  }
+
+  /// [callSig] of a call whose arguments do not fit `sig`: the unknown. Elaboration reports a
+  /// call of the declared function or of one recorded signature; this check reports the rest.
+  _Steps unfit(
+    Sig sig,
+    bool isDeclared,
+    List<_Src> positional,
+    List<(String, _Src)> named,
+    Span span,
+    String what,
+  ) sync* {
+    final all = [...positional, for (final (_, a) in named) a];
+    if (!isDeclared && (all.any((a) => a is _SrcGot) || !info.calls.containsKey(span))) {
+      for (final a in all) {
+        if (a case _SrcExpr(:final e)) yield expr(e);
+      }
+      error(span, '`$what` does not take these arguments: it is `$sig`');
     }
-    _got = Ty.func(
-      Sig(
-        [for (final j in missing) sig.params[j]],
-        [
-          for (final c in kept)
-            Arrow([for (final j in missing) sig.arrows[c].params[j]], sig.arrows[c].result),
-        ],
-        SplayTreeMap.of(sig.bounds),
-      ),
+    _got = Ty.empty;
+  }
+
+  /// A partial application of `sig`: the arguments `args`, those at `missing` left out, gives
+  /// a function of the missing parameters, positional ones with no default for a `section`.
+  /// The needs on the variables only those parameters hold are the new function's.
+  Ty partial(
+    Sig sig,
+    List<_Arg?> args,
+    List<int> missing,
+    bool section,
+    String what,
+    Span span,
+  ) {
+    final out = List.filled(sig.params.length, false);
+    for (final j in missing) {
+      out[j] = true;
+    }
+    final (given, left) = (Vars(), Vars());
+    for (final a in sig.arrows) {
+      for (final (j, p) in a.params.indexed) {
+        p.varsIn(out[j] ? left : given);
+      }
+    }
+    final g = given.order.toSet();
+    defer = SplayTreeSet.of(left.order.where((v) => !g.contains(v)));
+    final (result, kept) = apply('`$what`', sig, args, false, span);
+    final applied = lastApplied;
+    lastApplied = null;
+    if (applied == null || missing.isEmpty) return result;
+    final (binds, needs) = applied;
+    final params = [
+      for (final j in missing)
+        section
+            ? SParam(sig.params[j].name, true)
+            : sig.params[j],
+    ];
+    final arrows = [
+      for (final c in kept)
+        Arrow([for (final j in missing) sig.arrows[c].params[j]], sig.arrows[c].result),
+    ];
+    final rest = Sig(
+      params,
+      arrows,
+      bounds: SplayTreeMap.of(sig.bounds),
+      needs: needs,
+      own: SplayTreeSet.of(sig.own),
     );
+    return Ty.func(rest.replace(binds));
   }
 
   /// `x.f(args)` and `x?.f(args)`: the call `f(x, args)`; `?.` passes `x`'s atoms around it.
@@ -1469,15 +2086,16 @@ final class _Ck {
     final atoms = x.ty.loose;
     if (safe) x = _Arg(x.ty.withoutLoose);
     _got = Ty.dynamic;
+    final (p, n) = _srcs(positional, named);
     switch (t.res.uses[member]) {
       case Bound(binders: [final b]) when t.funcs.containsKey(b):
         if (onlyFn(env[b] ?? Ty.dynamic) case final sig?) {
-          yield callSig(sig, true, x, positional, named, curry, span, name);
+          yield callSig(sig, true, x, p, n, curry, span, name);
         }
       case Bound(binders: [final b]):
-        yield callValue(env[b] ?? Ty.dynamic, name, x, positional, named, curry, span);
+        yield callValue(env[b] ?? Ty.dynamic, name, x, p, n, curry, span);
       case Bound():
-        break;
+        _got = Ty.empty;
       case _ when preludeLayer(name) == 1 && positional.isEmpty && named.isEmpty && !curry:
         yield word(name, const [], x, span);
       default:
@@ -1489,31 +2107,33 @@ final class _Ck {
   /// `f[k]` on a declared function is a section; `t[i]` with a literal `i` the tuple's
   /// component; else an application.
   _Steps index(Expr of, Expr key, Span span) sync* {
-    if (declared(of) != null) {
-      yield expr(key);
-      _got = Ty.dynamic;
+    if (declared(of) case final b?) {
+      final sig = switch (env[b]) {
+        final ty? => onlyFn(ty),
+        null => null,
+      };
+      if (sig == null) {
+        yield expr(key);
+        _got = Ty.dynamic;
+        return;
+      }
+      // Elaboration rejects a section of a function of no parameters.
+      final n = sig.params.length;
+      if (n == 0) {
+        yield expr(key);
+        _got = Ty.empty;
+        return;
+      }
+      yield arg(key, Ty.unionAll([for (final a in sig.arrows) a.params[0]]));
+      final args = List<_Arg?>.filled(n, null)..[0] = gotArg;
+      _got = partial(sig, args, [for (var j = 1; j < n; j++) j], true, t.funcs[b]!.name, span);
       return;
     }
     yield expr(of);
     final v = got;
     if (key is! IntLit) {
       yield arg(key);
-      final x = gotArg;
-      var out = passing(v, 'a call', span);
-      for (final p in v.pieces) {
-        switch (p) {
-          case PFn(:final s):
-            out = out.union(apply('this function', s, [x.copy()], false, span).$1);
-          case PDyn() || PVar():
-            out = out.union(Ty.dynamic);
-          case _ when p.isAtoms:
-            break;
-          default:
-            error(span, 'this value is ${p.ty}, not a function');
-            out = out.union(Ty.dynamic);
-        }
-      }
-      _got = out;
+      _got = atKey(v, gotArg, span);
       return;
     }
     final i = switch (literal(key)?.value) {
@@ -1524,36 +2144,77 @@ final class _Ck {
       _got = Ty.dynamic;
       return;
     }
-    var out = passing(v, 'an index', span);
+    yield arg(key);
+    _got = atIndex(v, i >= 0 ? i : null, gotArg, span);
+  }
+
+  /// `v[x]` with `x` no literal: an application of each function `v` may be.
+  Ty atKey(Ty v, _Arg x, Span span) {
+    var out = passing(v, 'a call', span);
     for (final p in v.pieces) {
       switch (p) {
-        case PTuple(:final cs):
-          if (i >= 0 && i < cs.length) {
-            out = out.union(cs[i]);
-          } else {
-            error(span, '${Ty.tuple(cs)} has no component $i');
-          }
-        case PDyn() || PVar():
+        case PFn(:final s):
+          out = out.union(apply('this function', s, [x.copy()], false, span).$1);
+        case PVar() when classOf(p) != null:
+          out = out.union(need(classOf(p)!, NIndex(x.ty), true, span));
+        case PDyn():
+          any('an application', span);
+        case PVar():
           out = out.union(Ty.dynamic);
         case _ when p.isAtoms:
           break;
         default:
-          error(span, '`[$i]` takes a tuple, not ${p.ty}');
+          error(span, 'this value is ${p.ty}, not a function');
       }
     }
-    _got = out;
+    return out;
   }
 
-  /// A lambda with no expected type: its parameters positional, typed by their annotations.
+  /// `v[i]` with the literal `x`, `i` if it is a component number: a tuple's component, or
+  /// a family's entry.
+  Ty atIndex(Ty v, int? i, _Arg x, Span span) {
+    var out = passing(v, 'an index', span);
+    final shown = '${x.ty}';
+    for (final p in v.pieces) {
+      switch (p) {
+        case PFn(:final s) when s.data:
+          out = out.union(apply('this family', s, [x.copy()], true, span).$1);
+        case PTuple(:final cs):
+          if (i != null && i < cs.length) {
+            out = out.union(cs[i]);
+          } else {
+            error(span, '${Ty.tuple(cs)} has no component $shown');
+          }
+        case PVar() when classOf(p) != null:
+          out = out.union(need(classOf(p)!, NComponent(i, x.ty), true, span));
+        case PDyn():
+          any('`[$shown]`', span);
+        case PVar():
+          out = out.union(Ty.dynamic);
+        case _ when p.isAtoms:
+          break;
+        default:
+          error(span, '`[$shown]` takes a tuple, not ${p.ty}');
+      }
+    }
+    return out;
+  }
+
+  /// A lambda with no expected type: its parameters positional, typed by their
+  /// annotations; one without is generic, as a declared function's.
   _Steps lambda(List<Param> params, Expr body) sync* {
+    final level = ++this.level;
+    if (pending.length <= level) pending.add([]);
     final tys = <Ty>[];
     for (final p in params) {
-      final ty = p.type == null ? Ty.dynamic : tyOf(p.type!);
+      final ty = p.type == null ? Ty.variable('\$${newClass()}') : tyOf(p.type!);
       env[id(p.span, p.name)] = ty;
       tys.add(ty);
     }
     yield this.body(body, null);
-    _got = Ty.func(Sig.one([for (final p in params) SParam(p.name, true)], tys, got));
+    _got = Ty.func(
+      generalize(level, Sig.one([for (final p in params) SParam(p.name, true)], tys, got)),
+    );
   }
 
   _Steps body(Expr body, Ty? want) => switch (body) {
@@ -1675,16 +2336,23 @@ final class _Ck {
     for (final (i, j) in from.indexed) {
       inv[j] = i;
     }
-    final permuted = Sig(e.params, [
-      for (final a in s.arrows) Arrow([for (final i in inv) a.params[i]], a.result),
-    ], SplayTreeMap.of(s.bounds));
-    if (!fitsSig(permuted, e)) error(span, '`${f.name}` is `$s`, not `$e`');
+    final permuted = Sig(
+      e.params,
+      [for (final a in s.arrows) Arrow([for (final i in inv) a.params[i]], a.result)],
+      bounds: SplayTreeMap.of(s.bounds),
+      data: s.data,
+      needs: s.needs,
+      own: s.own,
+    );
+    final fits = permuted.needs.isEmpty
+        ? fitsSig(permuted, e)
+        : fitNeeds(permuted, Ty.func(e), Binds(), '`${f.name}`', span);
+    if (!fits) error(span, '`${f.name}` is `$s`, not `$e`');
     if (from.indexed.any((x) => x.$1 != x.$2)) _put(info.fits, span, FitAdapter(from));
     return Ty.func(e);
   }
 
-  /// The type a type expression denotes; a port's type is unknown here, and elaboration
-  /// reports it.
+  /// The type a type expression denotes; a name it does not know is elaboration's error.
   Ty tyOf(TypeExpr ty) => switch (ty) {
     TypeName(:final name) => switch (name) {
       'int' => Ty.carrier(Carrier.integer),
@@ -1692,7 +2360,9 @@ final class _Ck {
       'f64' => Ty.carrier(Carrier.f64),
       'bool' => Ty.carrier(Carrier.boolean),
       'String' => Ty.carrier(Carrier.string),
-      _ => Ty.dynamic,
+      'Lines' => port(true),
+      'Files' => port(false),
+      _ => Ty.empty,
     },
     AtomType(:final name) => Ty.of(k.Type.atom(name)),
     TupleType(:final items) => Ty.tuple([for (final i in items) tyOf(i)]),
@@ -1729,7 +2399,7 @@ final class _Ck {
       }
     }
     for (final arrow in sig.arrows) {
-      final one = Sig(sig.params, [arrow], sig.bounds);
+      final one = Sig(sig.params, [arrow], bounds: sig.bounds, data: sig.data, own: sig.own);
       out.add((span: span, text: '$what takes $one'));
     }
     return out;
@@ -1785,11 +2455,28 @@ final class _Ck {
       for (final a in args.nonNulls) {
         a.ty = a.ty.withoutLoose;
       }
+    } else {
+      final atoms = <Ty>[];
+      for (final (i, a) in args.indexed) {
+        if (a == null) continue;
+        final loose = a.ty.loose;
+        final at = a.at;
+        if (at == null || loose.isEmpty || !refuses(sig, i, loose)) continue;
+        atoms.add(Ty.of(loose));
+        a.ty = a.ty.withoutLoose;
+        final v = info.passes[span] ?? const <Span>[];
+        if (!v.contains(at)) _put(info.passes, span, [...v, at]);
+      }
+      out = passed(out, atoms);
     }
+    final taken = defer;
+    defer = SplayTreeSet();
     final (ty, kept, message) = sig.arrows.length == 1
-        ? applyOne(what, sig, args, span)
+        ? applyOne(what, sig, args, taken, span)
         : applyMany(what, sig, args, span);
+    if (sig.arrows.length != 1) lastApplied = null;
     if (message == null) return (out.union(ty), kept);
+    lastApplied = null;
     final notes = applied(what, sig, args, span);
     final seen = {...notes};
     for (final a in args.nonNulls) {
@@ -1797,8 +2484,19 @@ final class _Ck {
     }
     notes.addAll(repairs(what, sig, args, pass, span));
     errorWith(span, message, notes);
-    return (out.union(Ty.dynamic), const []);
+    return (out, const []);
   }
+
+  /// Whether no arrow of `sig` takes any of the atoms `loose` at parameter `i`, so that an
+  /// argument's loose atoms pass through the call: the parameter is a variable bounded to
+  /// carriers, or a type that holds none of them.
+  bool refuses(Sig sig, int i, k.Type loose) => sig.arrows.every((arrow) {
+    final p = arrow.params[i];
+    for (final MapEntry(key: v, value: m) in sig.bounds.entries) {
+      if (p == Ty.variable(v)) return m & other == 0;
+    }
+    return !p.isDynamic && p.vars.isEmpty && classOfTy(p) == null && (p.set & loose).isEmpty;
+  });
 
   /// The message of an application that does not check: the arguments, each class shown as
   /// the carriers left to it.
@@ -1815,7 +2513,13 @@ final class _Ck {
   /// Every other argument is checked piece by piece, a class taking the carriers its
   /// parameter allows. Gives the result, the arrows kept and, when it does not check, the
   /// message.
-  (Ty, List<int>, String?) applyOne(String what, Sig sig, List<_Arg?> args, Span span) {
+  (Ty, List<int>, String?) applyOne(
+    String what,
+    Sig sig,
+    List<_Arg?> args,
+    Set<String> defer,
+    Span span,
+  ) {
     final arrow = sig.arrows[0];
     (Ty, List<int>, String?) fail() => (Ty.empty, const [], rejected(what, args));
     final binds = Binds();
@@ -1841,7 +2545,7 @@ final class _Ck {
           switch ((classOf(p), p.carrier)) {
             case (final c?, _):
               classes.add(c);
-            case _ when p is PDyn || p is PVar:
+            case _ when p is PVar:
               break;
             case (null, final c?):
               carriers |= c.bit;
@@ -1860,6 +2564,7 @@ final class _Ck {
           if (!restrict(x, c.bit, what, span)) return fail();
         }
         for (final l in lits) {
+          if (litCarrier(l.value) != c && !adoptable(l, c)) return fail();
           adoptTo(l, c);
         }
         bound = Ty.carrier(c);
@@ -1923,39 +2628,97 @@ final class _Ck {
       }
       for (final piece in a.ty.pieces) {
         final c = classOf(piece);
-        final ok = piece is PDyn
-            ? true
-            : c != null && p.isDynamic
-            ? true
-            : c != null && p.vars.isNotEmpty
-            ? piece.ty.sub(p, binds)
-            : c != null
-            ? restrict(c, maskOf(p), what, span)
-            : piece.ty.sub(p, binds);
+        final bool ok;
+        if (piece is PDyn) {
+          ok = p.isDynamic;
+        } else if (c != null && p.isDynamic) {
+          ok = true;
+        } else if (c != null && p.vars.isNotEmpty) {
+          ok = a.ty.ofPiece(piece).sub(p, binds);
+        } else if (c != null) {
+          if (p.tuples.isNotEmpty || p.fns.isNotEmpty) need(c, NInto(what, p), false, span);
+          ok = restrict(c, maskOf(p), what, span);
+        } else if (piece case PFn(:final s) when s.needs.isNotEmpty && p.fns.isNotEmpty) {
+          ok = fitNeeds(s, p, binds, what, span);
+        } else {
+          ok = a.ty.ofPiece(piece).sub(p, binds);
+        }
         if (!ok) return (Ty.empty, const [], rejected(what, args, (i, piece)));
       }
     }
-    // Each bounded variable's binding is within its bound.
+    // The variables of the parameters of a function the call gives, which only its calls
+    // bind: the needs on them are its own.
+    final partial = defer.isNotEmpty;
+    final deferred = {...defer};
+    final taken = Vars();
+    for (final p in arrow.params) {
+      p.varsIn(taken);
+    }
+    final inner = Vars();
+    for (final s in arrow.result.fns) {
+      for (final a in s.arrows) {
+        for (final p in a.params) {
+          p.varsIn(inner);
+        }
+      }
+    }
+    final takenSet = taken.order.toSet();
+    deferred.addAll(inner.order.where((v) => !takenSet.contains(v)));
+    var left = replay(what, sig.needs, binds, deferred, span);
+    // Each bounded variable's binding is within its bound, and of one carrier, or of other
+    // values only: the arrows of an operator each take one. So the classes in it merge, and
+    // what else it holds flows into them.
     for (final MapEntry(key: v, value: m) in sig.bounds.entries) {
       final ty = binds[v];
       if (ty == null) continue;
+      var kinds = 0;
+      int? cls;
+      var rest = Ty.empty;
       for (final piece in ty.pieces) {
-        final ok = switch ((classOf(piece), piece.carrier)) {
-          (final c?, _) => restrict(c, m, what, span),
-          _ when piece is PDyn || piece is PVar => true,
-          (null, final c?) => m & c.bit != 0,
-          (null, null) => false,
-        };
-        if (!ok) return fail();
+        var ok = false;
+        switch ((classOf(piece), piece.carrier)) {
+          case (final c?, _):
+            if (!restrict(c, m, what, span)) {
+              ok = false;
+            } else if (cls == null) {
+              cls = c;
+              ok = true;
+            } else {
+              ok = merge(cls, c, what, span);
+            }
+          case _ when piece is PDyn:
+            break;
+          case _ when piece is PVar:
+            ok = true;
+          case (null, final c?):
+            kinds |= c.bit;
+            rest = rest.union(piece.ty);
+            ok = m & c.bit != 0;
+          case (null, null):
+            kinds |= other;
+            rest = rest.union(piece.ty);
+            ok = m & other != 0;
+        }
+        if (!ok || _bits(kinds) > 1) return fail();
       }
+      if (cls != null && kinds != 0 && !flow(cls, rest, what, span)) return fail();
     }
     binds.removeWhere((v, _) => classId(v) != null);
     var out = Ty.empty;
     final given = args.nonNulls.toList();
     if (given.any((a) => a.ty.isDynamic)) out = out.union(Ty.dynamic);
     if (given.every((a) => a.lit != null || a.ty.pieces.any((p) => p is! PDyn))) {
-      out = out.union(close(arrow.result.replace(binds), sig));
+      final result = close(arrow.result.replace(binds), sig);
+      if (partial) {
+        out = out.union(result);
+      } else {
+        final (held, now) = hold(result, [for (final n in left) n.replace(binds)]);
+        replay(what, now, binds, const {}, span);
+        left = [];
+        out = out.union(held);
+      }
     }
+    lastApplied = (binds, left);
     return (out, const [0], null);
   }
 
@@ -2014,7 +2777,7 @@ final class _Ck {
             // A class may still take any value its mask allows, so it keeps every arrow;
             // the restriction after the arguments narrows it.
             _ when classOf(p) != null => (alive, dyn),
-            PDyn() || PVar() => (alive, true),
+            PVar() => (alive, true),
             _ => (
               [
                 for (final c in alive)
@@ -2145,6 +2908,7 @@ final class _Ck {
 
   /// Sets `m[key]` to `v`, removing it for null, and logs what undoes it.
   void _put<K, V>(Map<K, V> m, K key, V? v) {
+    if (replaying > 0) return;
     final had = m.containsKey(key);
     final old = m[key];
     if (v == null) {
@@ -2396,7 +3160,115 @@ List<String> sigVars(Sig s) {
     }
     a.result.varsIn(out);
   }
+  for (final n in s.needs) {
+    n.varsIn(out);
+  }
   return out.order;
+}
+
+/// `t` with each of `needs` joined to the functions in it whose types share a variable with
+/// it, as their own; gives it and the needs no function takes, which hold now.
+(Ty, List<Need>) hold(Ty t, List<Need> needs) {
+  final fns = [...t.fns];
+  final vars = [
+    for (final s in t.fns)
+      () {
+        final v = Vars();
+        Ty.func(s).varsIn(v);
+        return v.order.toSet();
+      }(),
+  ];
+  final own = [for (final _ in fns) <String>[]];
+  final held = [for (final _ in fns) <Need>[]];
+  final now = <Need>[];
+  for (final n in needs) {
+    final v = Vars();
+    n.varsIn(v);
+    final at = [
+      for (var i = 0; i < fns.length; i++)
+        if (v.order.any(vars[i].contains)) i,
+    ];
+    if (at.isEmpty) {
+      now.add(n);
+      continue;
+    }
+    for (final i in at) {
+      own[i].addAll(v.order.where((x) => classId(x) == null && !t.vars.contains(x)));
+      held[i].add(n);
+    }
+  }
+  final out = [
+    for (final (i, s) in fns.indexed)
+      held[i].isEmpty && own[i].isEmpty
+          ? s
+          : s.copy(
+              needs: [...s.needs, ...held[i]],
+              own: SplayTreeSet.of([...s.own, ...own[i]]),
+            ),
+  ];
+  return (t.withFns(out), now);
+}
+
+/// The values the integer expression `e` may take, from its literals and arithmetic; every
+/// int where it reads anything else.
+IntervalSet interval(Expr e) {
+  final nonnegative = IntervalSet.range(const Fin(0), posInf);
+  Op? op(String o) => switch (o) {
+    '+' => Op.add,
+    '-' => Op.sub,
+    '*' => Op.mul,
+    'div' => Op.div,
+    'mod' => Op.mod,
+    _ => null,
+  };
+  switch (e) {
+    case IntLit(:final radix, :final digits):
+      final v = int.tryParse(digits.replaceAll('_', ''), radix: radix);
+      return v == null ? IntervalSet.top() : IntervalSet.single(v);
+    case Unary(op: '-', e: final a):
+      return interval(a).neg();
+    case Binary(op: '**', :final a, :final b):
+      final (x, n) = (interval(a), interval(b));
+      if (n.bounds case (Fin(v: final lo), Fin(v: final hi))
+          when lo == hi && lo >= 0 && lo <= 0xffffffff) {
+        return forward(Op.pow(lo), x, x);
+      }
+      return x.isSubset(nonnegative) && n.isSubset(nonnegative) ? nonnegative : IntervalSet.top();
+    case Binary(op: final o, :final a, :final b):
+      final f = op(o);
+      return f == null ? IntervalSet.top() : forward(f, interval(a), interval(b));
+    default:
+      return IntervalSet.top();
+  }
+}
+
+/// The type of a port: a `Lines` port maps a line number to its line, a `Files` port a path
+/// to its file's text; each may fail with `#ioError` or `#notFound`.
+Ty port(bool lines) => Ty.func(
+  Sig(
+    [SParam('_0', true)],
+    [
+      Arrow(
+        [Ty.carrier(lines ? Carrier.integer : Carrier.string)],
+        Ty.carrier(Carrier.string)
+            .union(Ty.of(k.Type.atom('ioError')))
+            .union(Ty.of(k.Type.atom('notFound'))),
+      ),
+    ],
+    data: lines,
+  ),
+);
+
+/// `t` with the variables `binds` binds replaced, and each other one that is no class
+/// unknown.
+Ty bound(Ty t, Binds binds) {
+  final vars = Vars();
+  t.varsIn(vars);
+  final b = Binds.of(binds);
+  for (final v in vars.order) {
+    if (classId(v) == null) b.putIfAbsent(v, () => Ty.dynamic);
+  }
+  return t.replace(b);
 }
 
 /// The carriers a value of `ty` may be of, and [other] if it may be a tuple, a function or

@@ -45,10 +45,22 @@ void main() {
   });
 
   test('functions compare only over an enumerable domain', () {
+    // Until types give the domain to compare on, the checker rejects `==` on a value that may
+    // hold a function, and the kernel stops on one.
     const src = 'inc = x -> x + 1;\nalso = x -> 1 + x;\nsame = inc == also;\n';
+    expect(errors(src), [
+      '`==` takes data, and this value may hold a function, `(int) -> int` [inc == also]',
+    ]);
+    Term id() => const Lam(['x'], Var('x'));
     expect(
-      value(src, 'same'),
-      contains('`==` on functions compares them at every point of an enumerable domain'),
+      () => Evaluator(World()).run(PrimApp(Prim.eq, [id(), id()])),
+      throwsA(
+        predicate(
+          (e) => '$e'.contains(
+            '`==` on functions compares them at every point of an enumerable domain',
+          ),
+        ),
+      ),
     );
   });
 }

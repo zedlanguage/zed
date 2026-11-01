@@ -73,7 +73,7 @@ void main() {
     const src =
         'shout(positional s: String) = upper(s) ++ "!";\n'
         'whisper(positional s: String) = lower(s);\n'
-        'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- shout(stdin[1]);\n}\n'
+        'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- shout(stdin[1] else "");\n}\n'
         'test { "hi" -> "HI!\\n" }\n';
     final db = Db();
     expect(checks(db, src), ['6:8: ok']);

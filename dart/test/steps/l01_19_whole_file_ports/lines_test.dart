@@ -11,22 +11,31 @@ import 'package:zed/run.dart';
 import 'ports.dart';
 
 void main() {
-  test('`cat` echoes standard input line by line', () async {
-    const src = 'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n';
-    var out = await run('cat', src, 'first\nsecond\n');
-    expect((out.status, out.stdout), (0, 'first\nsecond\n'));
+  test('a family of lines is written one line per entry', () async {
+    String cat(String input) => utf8.decode(joinLines('stdout', splitLines(utf8.encode(input))));
+    expect(cat('first\nsecond\n'), 'first\nsecond\n');
     // A last line without `\n` is still a line, and is written with one.
-    out = await run('cat', src, 'only');
-    expect(out.stdout, 'only\n');
+    expect(cat('only'), 'only\n');
     // An empty input has no lines, so nothing is written.
-    out = await run('cat', src, '');
-    expect((out.status, out.stdout), (0, ''));
+    expect(cat(''), '');
+    // A line that is not UTF-8 is `#ioError`, so a program cannot push the family of its
+    // input's lines as they are: the push would fail the wave (sec:failure).
+    const src = 'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n';
+    final out = await run('cat', src, 'first\n');
+    expect(out.status, 1);
+    expect(
+      out.stderr,
+      contains(
+        'a `Lines` port takes a `String` or a family of strings, '
+        'not ((int) -> String | #ioError | #notFound)',
+      ),
+    );
   });
 
   test('lines are numbered from one and CRLF is one line end', () async {
     const src =
         'main(stdin: Lines) -> (stdout: Lines) {\n  '
-        'stdout <- "\${stdin[1]}|\${stdin[2]}|\${stdin[3] else "none"}";\n}\n';
+        'stdout <- "\${stdin[1] else ""}|\${stdin[2] else ""}|\${stdin[3] else "none"}";\n}\n';
     final out = await run('numbers', src, 'name: Ada\r\nrole: admin\r\n');
     expect(out.stdout, 'name: Ada|role: admin|none\n');
     expect(

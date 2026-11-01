@@ -11,6 +11,7 @@ library;
 import 'dart:collection';
 
 import '../../resolve.dart' show Binder;
+import '../../source.dart' show Span;
 import '../kernel/types.dart';
 import '../kernel/value.dart';
 
@@ -183,6 +184,125 @@ bool listEq<T>(List<T> a, List<T> b) {
 /// A set of lists of types, by value.
 HashSet<List<T>> listSet<T>() => HashSet(equals: listEq, hashCode: Object.hashAll);
 
+/// The payload an atom was built with: its components by position, and its fields by name.
+final class Shape {
+  /// Its components, by position.
+  final List<Ty> items;
+
+  /// Its fields, by name.
+  final SplayTreeMap<String, Ty> fields;
+
+  Shape(this.items, this.fields);
+
+  /// What it holds at `slot`, if it has that place.
+  Ty? at(Slot slot) => switch (slot) {
+    SField(:final name) => fields[name],
+    SItem(:final i) => i < items.length ? items[i] : null,
+  };
+
+  /// It with `f` applied to each component and field.
+  Shape map(Ty Function(Ty) f) => Shape([
+    for (final t in items) f(t),
+  ], SplayTreeMap.of({for (final MapEntry(:key, :value) in fields.entries) key: f(value)}));
+
+  @override
+  bool operator ==(Object other) =>
+      other is Shape && listEq(other.items, items) && mapEq(other.fields, fields);
+
+  @override
+  late final int hashCode = Object.hash(Object.hashAll(items), mapHash(fields));
+}
+
+/// A place in an atom's payload.
+sealed class Slot {
+  const Slot();
+}
+
+/// The field of this name.
+final class SField extends Slot {
+  final String name;
+
+  const SField(this.name);
+
+  @override
+  bool operator ==(Object other) => other is SField && other.name == name;
+
+  @override
+  int get hashCode => name.hashCode;
+}
+
+/// The component at this position.
+final class SItem extends Slot {
+  final int i;
+
+  const SItem(this.i);
+
+  @override
+  bool operator ==(Object other) => other is SItem && other.i == i;
+
+  @override
+  int get hashCode => Object.hash(SItem, i);
+}
+
+/// Whether two maps hold the same entries.
+bool mapEq<K, V>(Map<K, V> a, Map<K, V> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (final MapEntry(:key, :value) in a.entries) {
+    if (!b.containsKey(key) || b[key] != value) return false;
+  }
+  return true;
+}
+
+/// A hash of a map's entries, in its order.
+int mapHash<K, V>(Map<K, V> m) => Object.hashAll(m.entries.map((e) => Object.hash(e.key, e.value)));
+
+/// The payloads of a type: by atom name, the shapes its atoms were built with, or null where
+/// that is not known.
+typedef Payloads = Map<String, List<Shape>?>;
+
+/// Whether two payloads are equal.
+bool _payloadsEq(Payloads a, Payloads b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (final MapEntry(:key, :value) in a.entries) {
+    if (!b.containsKey(key)) return false;
+    final w = b[key];
+    if (value == null || w == null ? value != w : !listEq(value, w)) return false;
+  }
+  return true;
+}
+
+/// The payloads of the union of the types `ts`: each name's shapes, once each, and a name some
+/// type may hold an unknown payload of is not known. That is found in one union of what of
+/// each type's scalars and atoms its payloads do not describe, so the join costs one pass over
+/// the types and their shapes.
+Payloads _joinPayloads(List<Ty> ts) {
+  final out = SplayTreeMap<String, List<Shape>?>();
+  final seen = <(String, Shape)>{};
+  final rest = <Type>[];
+  for (final t in ts) {
+    final listed = t.payloads.keys.map((n) => Type.atomWith(n, Type.top));
+    rest.add(t.set - Type.unionAll(listed));
+    for (final MapEntry(key: n, value: ss) in t.payloads.entries) {
+      final have = out.putIfAbsent(n, () => <Shape>[]);
+      if (ss == null) {
+        out[n] = null;
+      } else if (have != null) {
+        have.addAll(ss.where((s) => seen.add((n, s))));
+      }
+    }
+  }
+  final all = Type.unionAll(rest);
+  for (final n in out.keys) {
+    if (_holdsPayload(all, n)) out[n] = null;
+  }
+  return out;
+}
+
+/// Whether `set` may hold an atom named `n` with a payload.
+bool _holdsPayload(Type set, String n) => !(set & Type.atomWith(n, Type.top)).isEmpty;
+
 /// A type.
 final class Ty {
   /// The scalars and atoms, never a tuple or a function.
@@ -204,16 +324,43 @@ final class Ty {
   /// and an operator rejects (sec:failure). The other atoms are loose.
   final Type family;
 
-  Ty._(this.set, this.tuples, this.fns, this.vars, this.isDynamic, this.family);
+  /// What the payloads of its atoms hold, by atom name: the shapes the atoms were built with,
+  /// or null where that is not known. The payload of an atom whose name is not listed is not
+  /// known.
+  final Payloads payloads;
 
-  Ty _with({Type? set, List<List<Ty>>? tuples, List<Sig>? fns, Type? family}) => Ty._(
-    set ?? this.set,
-    tuples ?? this.tuples,
-    fns ?? this.fns,
-    vars,
-    isDynamic,
-    family ?? this.family,
-  );
+  Ty._(
+    this.set,
+    this.tuples,
+    this.fns,
+    this.vars,
+    this.isDynamic,
+    this.family, [
+    this.payloads = const {},
+  ]);
+
+  Ty _with({Type? set, List<List<Ty>>? tuples, List<Sig>? fns, Type? family, Payloads? payloads}) =>
+      Ty._(
+        set ?? this.set,
+        tuples ?? this.tuples,
+        fns ?? this.fns,
+        vars,
+        isDynamic,
+        family ?? this.family,
+        payloads ?? this.payloads,
+      );
+
+  /// It with the payloads `p`.
+  Ty withPayloads(Payloads p) => _with(payloads: p);
+
+  /// It with the functions `fns`.
+  Ty withFns(List<Sig> fns) => _with(fns: fns);
+
+  /// It with no tuples.
+  Ty get withoutTuples => _with(tuples: const []);
+
+  /// It without its type variables and the unknown.
+  Ty get withoutVars => Ty._(set, tuples, fns, SplayTreeSet(), false, family, payloads);
 
   /// No value.
   static final Ty empty = Ty._(Type.empty, const [], const [], SplayTreeSet(), false, Type.empty);
@@ -269,6 +416,7 @@ final class Ty {
       vars,
       dyn,
       Type.unionAll(all.map((t) => t.family)),
+      all.any((t) => t.payloads.isNotEmpty) ? _joinPayloads(all) : const {},
     );
   }
 
@@ -341,10 +489,23 @@ final class Ty {
 
   /// Whether it holds no function at any depth (a variable or the unknown may still stand
   /// for one): a type whose values the differential oracle compares (step L1.37).
-  bool get firstOrder => fns.isEmpty && tuples.every((cs) => cs.every((c) => c.firstOrder));
+  bool get firstOrder => heldFunction == null;
+
+  /// A function it may hold, at any depth; a family is data, not a function.
+  Sig? get heldFunction {
+    for (final s in fns) {
+      if (!s.data) return s;
+    }
+    for (final cs in tuples) {
+      for (final c in cs) {
+        if (c.heldFunction case final s?) return s;
+      }
+    }
+    return null;
+  }
 
   /// Whether every value of `this` is in `other`, binding `other`'s variables as needed.
-  bool sub(Ty other, Binds binds) => pieces.every((p) => _accepts(other, p, binds));
+  bool sub(Ty other, Binds binds) => pieces.every((p) => _accepts(other, p, this, binds));
 
   /// Whether every value of `this` is in `other`, with no variable bound.
   bool subtype(Ty other) {
@@ -372,6 +533,7 @@ final class Ty {
       SplayTreeSet(),
       false,
       family & s,
+      payloads,
     );
     return isDynamic || vars.isNotEmpty ? out.union(t) : out;
   }
@@ -402,6 +564,7 @@ final class Ty {
       SplayTreeSet(),
       isDynamic,
       family,
+      _mapPayloads((t) => t.subst(binds)),
     );
     final kept = SplayTreeSet<String>();
     for (final v in vars) {
@@ -417,16 +580,70 @@ final class Ty {
   }
 
   /// `this` with its variables replaced by `binds` at every depth, inside the functions it
-  /// holds too.
+  /// holds too; not inside the types it puts in their place, which may hold the variables
+  /// themselves.
   Ty replace(Map<String, Ty> binds) {
     if (binds.isEmpty) return this;
-    final out = subst(binds);
-    return out._with(
-      tuples: [
-        for (final cs in out.tuples) [for (final c in cs) c.replace(binds)],
+    var out = Ty._(
+      set,
+      [
+        for (final cs in tuples) [for (final c in cs) c.replace(binds)],
       ],
-      fns: [for (final s in out.fns) s.replace(binds)],
+      [
+        for (final s in fns)
+          s.own.any(binds.containsKey)
+              ? s.replace({
+                  for (final MapEntry(:key, :value) in binds.entries)
+                    if (!s.own.contains(key)) key: value,
+                })
+              : s.replace(binds),
+      ],
+      SplayTreeSet(),
+      isDynamic,
+      family,
+      _mapPayloads((t) => t.replace(binds)),
     );
+    final kept = SplayTreeSet<String>();
+    for (final v in vars) {
+      if (binds[v] case final t?) {
+        out = out.union(t);
+      } else {
+        kept.add(v);
+      }
+    }
+    return kept.isEmpty
+        ? out
+        : out.union(Ty._(Type.empty, const [], const [], kept, false, Type.empty));
+  }
+
+  /// The type of its piece `p` alone, with the payloads of the atoms `p` holds.
+  Ty ofPiece(Piece p) {
+    final out = p.ty;
+    if (p case PSet(:final s) when payloads.isNotEmpty) {
+      return out._with(
+        payloads: SplayTreeMap.of({
+          for (final MapEntry(key: n, value: ss) in payloads.entries)
+            if (_holdsPayload(s, n)) n: ss,
+        }),
+      );
+    }
+    return out;
+  }
+
+  /// Its payloads with `f` applied to each component and field.
+  Payloads _mapPayloads(Ty Function(Ty) f) => payloads.isEmpty
+      ? const {}
+      : SplayTreeMap.of({
+          for (final MapEntry(key: n, value: ss) in payloads.entries)
+            n: ss == null ? null : [for (final s in ss) s.map(f)],
+        });
+
+  /// What the payloads of its atoms named `n` hold: their shapes, or null where that is not
+  /// known.
+  List<Shape>? shapes(String n) {
+    if (isDynamic || vars.isNotEmpty) return null;
+    if (payloads.containsKey(n)) return payloads[n];
+    return _holdsPayload(set, n) ? null : const [];
   }
 
   /// Every variable in it, in order of first appearance.
@@ -437,12 +654,25 @@ final class Ty {
         c.varsIn(out);
       }
     }
+    for (final ss in payloads.values) {
+      for (final s in ss ?? const <Shape>[]) {
+        for (final t in s.items) {
+          t.varsIn(out);
+        }
+        for (final t in s.fields.values) {
+          t.varsIn(out);
+        }
+      }
+    }
     for (final s in fns) {
       for (final a in s.arrows) {
         for (final p in a.params) {
           p.varsIn(out);
         }
         a.result.varsIn(out);
+      }
+      for (final n in s.needs) {
+        n.varsIn(out);
       }
     }
   }
@@ -456,7 +686,8 @@ final class Ty {
             cs.length == items.length &&
             [for (var i = 0; i < cs.length; i++) i].every((i) => cs[i].contains(items[i])),
       ),
-      Family() || Path() => fns.isNotEmpty,
+      Family() => fns.any((s) => s.data),
+      Path() => fns.isNotEmpty,
       _ => set.contains(v),
     };
   }
@@ -482,6 +713,7 @@ final class Ty {
     if (identical(this, other)) return true;
     if (other is! Ty || other.hashCode != hashCode) return false;
     if (other.set != set || other.isDynamic != isDynamic || other.family != family) return false;
+    if (!_payloadsEq(other.payloads, payloads)) return false;
     if (other.tuples.length != tuples.length || !listEq(other.fns, fns)) return false;
     for (var i = 0; i < tuples.length; i++) {
       if (!listEq(other.tuples[i], tuples[i])) return false;
@@ -497,6 +729,11 @@ final class Ty {
     Object.hashAll(vars),
     isDynamic,
     family,
+    Object.hashAll(
+      payloads.entries.map(
+        (e) => Object.hash(e.key, e.value == null ? null : Object.hashAll(e.value!)),
+      ),
+    ),
   );
 
   @override
@@ -512,12 +749,12 @@ final class Ty {
   }
 }
 
-/// Whether the piece `p` is in `t`, binding a variable of `t` to it when nothing else of
-/// `t` holds it.
-bool _accepts(Ty t, Piece p, Binds binds) {
+/// Whether the piece `p` of `of` is in `t`, binding a variable of `t` to it when nothing else
+/// of `t` holds it.
+bool _accepts(Ty t, Piece p, Ty of, Binds binds) {
   if (t.isDynamic) return true;
   final ok = switch (p) {
-    PDyn() => true,
+    PDyn() => false,
     PSet(:final s) => s.subtype(t.set),
     PTuple(:final cs) => t.tuples.any((ds) {
       if (ds.length != cs.length) return false;
@@ -536,7 +773,7 @@ bool _accepts(Ty t, Piece p, Binds binds) {
   if (ok) return true;
   if (t.vars.isEmpty) return false;
   final v = t.vars.first;
-  binds[v] = (binds[v] ?? Ty.empty).union(p.ty);
+  binds[v] = (binds[v] ?? Ty.empty).union(of.ofPiece(p));
   return true;
 }
 
@@ -544,6 +781,7 @@ bool _accepts(Ty t, Piece p, Binds binds) {
 /// names and kinds, and on each arrow of `q`, an arrow of `s` that takes its parameters and
 /// returns within its result.
 bool fitsSig(Sig s, Sig q) {
+  if (s.needs.isNotEmpty) return s == q;
   if (s.params.length != q.params.length) return false;
   for (var i = 0; i < s.params.length; i++) {
     final (a, b) = (s.params[i], q.params[i]);
@@ -557,7 +795,13 @@ bool fitsSig(Sig s, Sig q) {
       }
       for (final MapEntry(key: v, value: m) in s.bounds.entries) {
         final t = b[v];
-        if (t != null && !t.pieces.every((p) => m & (p.carrier?.bit ?? 0) != 0)) {
+        if (t != null &&
+            !t.pieces.every(
+              (p) => switch (p.carrier) {
+                final c? => m & c.bit != 0,
+                null => m & other != 0 && p is! PDyn,
+              },
+            )) {
           return false;
         }
       }
@@ -623,8 +867,45 @@ final class Sig {
   /// the same at each place the variable stands.
   final SplayTreeMap<String, int> bounds;
 
-  Sig(this.params, this.arrows, [SplayTreeMap<String, int>? bounds])
-    : bounds = bounds ?? SplayTreeMap();
+  /// Whether it is a family: a morphism held as data (sec:values_morphisms), shown, compared
+  /// and put in a tuple as a value, and looked up through its arrows.
+  final bool data;
+
+  /// What the body needs of the values of its type variables, in the order the body met the
+  /// uses: each call checks them again with the variables bound (DESIGN.md rule 4).
+  final List<Need> needs;
+
+  /// Its own type variables, which it binds: a call binds them anew, and a substitution of
+  /// the variables of a type that holds it leaves them alone. The others are those of the
+  /// functions around it.
+  final SplayTreeSet<String> own;
+
+  Sig(
+    this.params,
+    this.arrows, {
+    SplayTreeMap<String, int>? bounds,
+    this.data = false,
+    this.needs = const [],
+    SplayTreeSet<String>? own,
+  }) : bounds = bounds ?? SplayTreeMap(),
+       own = own ?? SplayTreeSet();
+
+  /// It with the fields given changed.
+  Sig copy({
+    List<SParam>? params,
+    List<Arrow>? arrows,
+    SplayTreeMap<String, int>? bounds,
+    bool? data,
+    List<Need>? needs,
+    SplayTreeSet<String>? own,
+  }) => Sig(
+    params ?? this.params,
+    arrows ?? this.arrows,
+    bounds: bounds ?? this.bounds,
+    data: data ?? this.data,
+    needs: needs ?? this.needs,
+    own: own ?? this.own,
+  );
 
   /// One arrow over `params` and `result`, with no bounded variable.
   factory Sig.one(List<SParam> params, List<Ty> tys, Ty result) =>
@@ -643,10 +924,17 @@ final class Sig {
         out[v] = m;
       }
     }
-    return Sig(params, [
-      for (final a in arrows)
-        Arrow([for (final p in a.params) p.replace(binds)], a.result.replace(binds)),
-    ], out);
+    return Sig(
+      params,
+      [
+        for (final a in arrows)
+          Arrow([for (final p in a.params) p.replace(binds)], a.result.replace(binds)),
+      ],
+      bounds: out,
+      data: data,
+      needs: [for (final n in needs) n.replace(binds)],
+      own: SplayTreeSet.of(own.where((v) => !binds.containsKey(v))),
+    );
   }
 
   /// Its arrows with each bounded variable fixed to each carrier of its bound: the product
@@ -685,7 +973,9 @@ final class Sig {
     for (final MapEntry(key: v, value: m) in bounds.entries) {
       if (other.bounds[v] != m) return false;
     }
-    return true;
+    return other.data == data &&
+        listEq(other.needs, needs) &&
+        listEq(other.own.toList(), own.toList());
   }
 
   @override
@@ -693,6 +983,9 @@ final class Sig {
     Object.hashAll(params),
     Object.hashAll(arrows),
     Object.hashAll(bounds.entries.map((e) => Object.hash(e.key, e.value))),
+    data,
+    Object.hashAll(needs),
+    Object.hashAll(own),
   );
 
   @override
@@ -711,6 +1004,166 @@ final class Sig {
     }
     return out.toString();
   }
+}
+
+/// A use the body of a generic function makes of a value whose type is a variable: checked
+/// again at each call, on the type the call binds the variable to.
+final class Need {
+  /// The type of the value used, a variable of the signature.
+  final Ty on;
+
+  /// The use.
+  final NeedKind kind;
+
+  /// What the use gives, a variable of the signature, if it gives a value.
+  final Ty? result;
+
+  /// The use in the body.
+  final Span span;
+
+  const Need(this.on, this.kind, this.result, this.span);
+
+  /// It with its variables replaced by `binds` at every depth.
+  Need replace(Map<String, Ty> binds) => Need(
+    on.replace(binds),
+    switch (kind) {
+      NIndex(:final key) => NIndex(key.replace(binds)),
+      NCall(:final what, :final positional, :final named, :final curry) => NCall(
+        what,
+        [for (final t in positional) t.replace(binds)],
+        [for (final (n, t) in named) (n, t.replace(binds))],
+        curry,
+      ),
+      NComponent() || NData() || NInto() || NPayload() => kind,
+    },
+    result?.replace(binds),
+    span,
+  );
+
+  /// Every variable in it, in order of first appearance.
+  void varsIn(Vars out) {
+    on.varsIn(out);
+    switch (kind) {
+      case NIndex(:final key):
+        key.varsIn(out);
+      case NCall(:final positional, :final named):
+        for (final t in positional) {
+          t.varsIn(out);
+        }
+        for (final (_, t) in named) {
+          t.varsIn(out);
+        }
+      case NComponent() || NData() || NInto() || NPayload():
+    }
+    result?.varsIn(out);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is Need &&
+      other.on == on &&
+      other.kind == kind &&
+      other.result == result &&
+      other.span == span;
+
+  @override
+  int get hashCode => Object.hash(on, kind, result, span);
+}
+
+/// The uses a [Need] records.
+sealed class NeedKind {
+  const NeedKind();
+}
+
+/// `v[i]` with a literal: a tuple's component `i`, if the literal is a component number, or a
+/// family's entry at the literal's type `key`.
+final class NComponent extends NeedKind {
+  final int? i;
+  final Ty key;
+
+  const NComponent(this.i, this.key);
+
+  @override
+  bool operator ==(Object other) => other is NComponent && other.i == i && other.key == key;
+
+  @override
+  int get hashCode => Object.hash(NComponent, i, key);
+}
+
+/// `v[k]` with a key of this type: an application.
+final class NIndex extends NeedKind {
+  final Ty key;
+
+  const NIndex(this.key);
+
+  @override
+  bool operator ==(Object other) => other is NIndex && other.key == key;
+
+  @override
+  int get hashCode => Object.hash(NIndex, key);
+}
+
+/// A call of `v`, named `what`, with arguments of these types; `curry` when it ends in `...`.
+final class NCall extends NeedKind {
+  final String what;
+  final List<Ty> positional;
+  final List<(String, Ty)> named;
+  final bool curry;
+
+  const NCall(this.what, this.positional, this.named, this.curry);
+
+  @override
+  bool operator ==(Object other) =>
+      other is NCall &&
+      other.what == what &&
+      other.curry == curry &&
+      listEq(other.positional, positional) &&
+      listEq(other.named, named);
+
+  @override
+  int get hashCode =>
+      Object.hash(NCall, what, Object.hashAll(positional), Object.hashAll(named), curry);
+}
+
+/// A use, `what`, that takes data: the value holds no function.
+final class NData extends NeedKind {
+  final String what;
+
+  const NData(this.what);
+
+  @override
+  bool operator ==(Object other) => other is NData && other.what == what;
+
+  @override
+  int get hashCode => Object.hash(NData, what);
+}
+
+/// An argument, of the function `what`, at a parameter of the closed type `ty`.
+final class NInto extends NeedKind {
+  final String what;
+  final Ty ty;
+
+  const NInto(this.what, this.ty);
+
+  @override
+  bool operator ==(Object other) => other is NInto && other.what == what && other.ty == ty;
+
+  @override
+  int get hashCode => Object.hash(NInto, what, ty);
+}
+
+/// A name a pattern binds: what the payload of an atom named `atom` holds at `slot`.
+final class NPayload extends NeedKind {
+  final String atom;
+  final Slot slot;
+
+  const NPayload(this.atom, this.slot);
+
+  @override
+  bool operator ==(Object other) => other is NPayload && other.atom == atom && other.slot == slot;
+
+  @override
+  int get hashCode => Object.hash(NPayload, atom, slot);
 }
 
 /// A kernel type's prefix form, in surface syntax: `(| a b)` is `a | b`, `(\ int 3)` is

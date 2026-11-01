@@ -76,7 +76,7 @@ void main() {
     // A lambda with no expected type takes its arguments by position.
     expect(
       one('inc = x -> x + 1;\ny = inc(x: 1);\n'),
-      '`x` of `(_) -> _` is positional: pass it by position [1]',
+      '`x` of `(int) -> int` is positional: pass it by position [1]',
     );
     // A prelude word, and a value of unknown type, give no parameter names.
     const want =

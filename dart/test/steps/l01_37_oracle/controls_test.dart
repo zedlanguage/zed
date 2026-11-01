@@ -12,7 +12,7 @@ import '../../support/oracle.dart';
 const lambdas = 'inc = x -> x + 1;\ntwice(positional f) = x -> f(f(x));\nfive = twice(inc)(3);\n';
 
 const greeting =
-    'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- "Hello, " ++ stdin[1] ++ "!";\n}\n';
+    'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- "Hello, " ++ (stdin[1] else "") ++ "!";\n}\n';
 
 final Through _fused = native.through(true);
 

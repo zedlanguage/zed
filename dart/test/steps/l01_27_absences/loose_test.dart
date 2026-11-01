@@ -58,13 +58,15 @@ void main() {
     expect(value(run, 'b'), '3');
   });
 
-  test('a declared function does not take an atom its type omits', () {
-    expect(
-      typeErrors(
+  test('a loose atom passes through a declared function whose type omits it', () {
+    // Rule 6: the atom selects no arrow of `g` and is the call's value; `g`'s body never sees it.
+    const t =
         'g(positional n: int) = n + 1;\n'
-        'f(positional x: int | #notFound) = g(x);\n',
-      ),
-      ['`g` does not take (#notFound) [g(x)]'],
-    );
+        'f(positional x: int | #notFound) = g(x);\n';
+    expect(typeErrors(t), isEmpty);
+    expect(sig(t, 'f'), '(int | #notFound) -> int | #notFound');
+    const run = '${t}a = f(#notFound);\nb = f(2);\n';
+    expect(value(run, 'a'), '#notFound');
+    expect(value(run, 'b'), '3');
   });
 }

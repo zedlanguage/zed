@@ -279,6 +279,13 @@ final class _Elab {
   /// The term a call leaving a parameter out binds it to, by the function's binder and the
   /// parameter's index.
   final defaults = <(Binder, int), k.Term>{};
+
+  /// The temporary each argument of a call that passes atoms is bound to, while the call is
+  /// elaborated.
+  final passing = <Span, String>{};
+
+  /// The calls being guarded.
+  final guarding = <Span>{};
   var fresh = 0;
   final tests = <Test>[];
   final errors = <BuildError>[];
@@ -402,6 +409,55 @@ final class _Elab {
   }
 
   String temp() => '\$${++fresh}';
+
+  /// The call `e`, some of whose arguments, at `at`, hold loose atoms their parameter does not
+  /// take (rule 6 of sec:type_resolution): the arguments are bound first, and an atom in any
+  /// of them is the call's value, those of several merged as a primitive merges them.
+  _Steps passes(Expr e, List<Span> at) sync* {
+    final args = [
+      if (e case Call(:final callee, :final positional, :final named)) ...[
+        if (callee case Member(:final of)) of,
+        ...positional,
+        for (final (_, a) in named) a,
+      ],
+    ].where((a) => at.contains(a.span)).toList();
+    final lets = <(String, k.Term?)>[];
+    for (final a in args) {
+      final t = temp();
+      yield expr(a);
+      lets.add((t, termOrNull));
+      passing[a.span] = t;
+    }
+    yield expr(e);
+    final call = termOrNull;
+    for (final a in args) {
+      passing.remove(a.span);
+    }
+    if (call == null || lets.any((l) => l.$2 == null)) throw const _Stop();
+    final bound = [for (final (t, x) in lets) (t, x!)];
+    String? fail;
+    for (final (t, _) in [...bound]) {
+      if (fail == null) {
+        fail = t;
+        continue;
+      }
+      final g = temp();
+      final (f, v) = (k.Var(fail), k.Var(t));
+      final both = k.Match(f, [
+        (const k.AnyAtomP(), k.PrimApp(k.Prim.add, [f, v])),
+        (const k.WildP(), v),
+      ]);
+      bound.add((g, k.Match(v, [(const k.AnyAtomP(), both), (const k.WildP(), f)])));
+      fail = g;
+    }
+    var out = fail == null
+        ? call
+        : k.Match(k.Var(fail), [(const k.AnyAtomP(), k.Var(fail)), (const k.WildP(), call)]);
+    for (final (t, x) in bound.reversed) {
+      out = k.Let(t, x, out);
+    }
+    _got = out;
+  }
 
   String kname(Span span, String name) => names[t.id(span, name)]!;
 
@@ -568,6 +624,15 @@ final class _Elab {
   }
 
   _Steps expr(Expr e) sync* {
+    if (passing[e.span] case final t?) {
+      _got = k.Var(t);
+      return;
+    }
+    if (info.passes[e.span] case final at? when guarding.add(e.span)) {
+      yield passes(e, at);
+      guarding.remove(e.span);
+      return;
+    }
     if (info.fits[e.span] case final f?) {
       yield* fit(e, f);
       return;

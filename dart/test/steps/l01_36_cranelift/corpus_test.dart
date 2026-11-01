@@ -66,7 +66,7 @@ void main() {
         rows += got.length;
       }
       expect(rows, 41);
-      expect((runs, cells, writes), (58, 109, fuse ? 113 : 123));
+      expect((runs, cells, writes), (58, 108, fuse ? 112 : 138));
     }
   });
 }

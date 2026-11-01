@@ -205,7 +205,9 @@ final class FiniteSet<T extends Object> with Lattice<FiniteSet<T>> {
   @override
   FiniteSet<T> join(FiniteSet<T> other) => switch ((_members, other._members)) {
     (final a?, final b?) => FiniteSet._(SplayTreeSet.of(a)..addAll(b)),
-    _ => const FiniteSet.top(),
+    // Not `const`: a constant cannot name `T`, so it would be a `FiniteSet<Never>`, whose
+    // `meet` and `join` reject any other set at run time.
+    _ => FiniteSet<T>.top(),
   };
 
   @override
@@ -226,7 +228,7 @@ final class FiniteSet<T extends Object> with Lattice<FiniteSet<T>> {
         when all.every((v) => old.contains(v) || marks.has(v))) {
       return j;
     }
-    return const FiniteSet.top();
+    return FiniteSet<T>.top();
   }
 
   /// A descending chain leaves the top at most once and then loses members: it is `next`.

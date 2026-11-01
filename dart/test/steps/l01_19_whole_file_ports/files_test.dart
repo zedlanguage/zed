@@ -28,7 +28,7 @@ void main() {
     final src =
         'main(fs: Files) -> (stdout: Lines) {\n  '
         'mode = trim(fs["$d/app.conf"]) else "quiet";\n  '
-        'extra = fs["$d/absent.conf"] else #notFound -> "(no overrides)";\n  '
+        'extra = (fs["$d/absent.conf"] else #notFound -> "(no overrides)") else "(unreadable)";\n  '
         'stdout <- "mode=\${mode} \${extra}";\n}\n';
     final out = await run('config', src, '');
     expect((out.status, out.stdout), (0, 'mode=verbose (no overrides)\n'));
@@ -39,7 +39,7 @@ void main() {
     File(bin).writeAsBytesSync([0xff, 0x00, 0xfe]);
     final src =
         'main(fs: Files) -> (stdout: Lines) {\n  '
-        'stdout <- fs["$bin"] else #ioError -> "unreadable";\n}\n';
+        'stdout <- (fs["$bin"] else #ioError -> "unreadable") else "missing";\n}\n';
     expect((await run('binary', src, '')).stdout, 'unreadable\n');
     expect(const Disk().get(Str(bin)), const Atom('ioError'));
     expect(
@@ -52,7 +52,7 @@ void main() {
     const src =
         'main(fs: Files) -> (stdout: Lines) {\n  '
         'a = fs["notes.txt"];\n  b = fs["notes.txt"];\n  c = fs["todo.txt"];\n  '
-        'stdout <- "\${a == b} \${c}";\n}\n';
+        'stdout <- "\${a == b} \${c else "none"}";\n}\n';
     final p = load(src.codeUnits);
     final port = Counting();
     final wave = p.run({}, (_) => port);

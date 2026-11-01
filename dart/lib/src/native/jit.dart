@@ -100,7 +100,8 @@ typedef _V2 = Void Function(Int64, Int64);
 typedef _I1 = Int64 Function(Int64);
 
 /// The callable hooks, made once and kept: each catches every error, records it on the run,
-/// and returns the error word or -1.
+/// and returns the error word or -1. They do not keep the isolate alive, so a program that
+/// has finished exits.
 final List<NativeCallable<Function>> _hooks = [
   NativeCallable<_V2>.isolateLocal((int tag, int bits) {
     _s.guard(null, () => _s.args.add(Word(tag, bits)));
@@ -135,7 +136,7 @@ final List<NativeCallable<Function>> _hooks = [
   NativeCallable<_W1>.isolateLocal((int k) => _pair(_s.outs[k])),
   NativeCallable<_Pair Function()>.isolateLocal(() => _pair(_s.pending)),
   NativeCallable<_W1>.isolateLocal((int id) => _pair(_s.guard(Word.err, () => _s.error(id)))),
-];
+]..forEach((h) => h.keepIsolateAlive = false);
 
 /// Each hook's address, in the order of [Hook].
 List<int> _addresses() => [for (final h in _hooks) h.nativeFunction.address];

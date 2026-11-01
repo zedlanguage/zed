@@ -38,9 +38,9 @@ void main() {
         rows += got.length;
       }
       expect(rows, 41);
-      // The seven corpus units evaluate 58 closed terms, which allocate 109 cells; fusion
-      // saves 10 count writes.
-      expect((runs, cells, writes), (58, 109, fuse ? 113 : 123));
+      // The seven corpus units evaluate 58 closed terms, which allocate 108 cells; fusion
+      // saves 26 count writes.
+      expect((runs, cells, writes), (58, 108, fuse ? 112 : 138));
     }
   });
 

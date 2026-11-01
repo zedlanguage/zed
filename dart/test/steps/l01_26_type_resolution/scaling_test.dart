@@ -24,13 +24,6 @@ String chain(int n) {
   return '$src';
 }
 
-/// A function of `n` untyped parameters that returns them all, so that its signature has `n`
-/// type variables.
-String tuple(int n) {
-  final xs = [for (var i = 0; i < n; i++) 'x$i'];
-  return 'f(${[for (final x in xs) 'positional $x'].join(', ')}) = (${xs.join(', ')});\n';
-}
-
 void main() {
   test('searching the signatures of many functions scales', () {
     // Twenty constants for each function, each adopting its literal with no search, so that
@@ -69,25 +62,6 @@ void main() {
       final found = info(chain(n));
       expect(found.errors, isEmpty);
       expect(found.sigs, hasLength(n));
-    });
-  });
-
-  test('many else patterns scale', () {
-    // Each `else` with a pattern read every binder of the unit to find its own.
-    scaling.check('n bindings each with an else pattern', 1000, (n) {
-      final text = StringBuffer();
-      for (var i = 0; i < n; i++) {
-        text.write('v$i = #e(code: $i) else #e(code:) -> code;\n');
-      }
-      expect(info('$text').errors, isEmpty);
-    });
-  });
-
-  test('a signature of many type variables scales', () {
-    // Naming the variables looked for each among those named before (COMPLEXITY.md F28).
-    expect(sig(tuple(2), 'f'), '(T, U) -> (T, U)');
-    scaling.check('a signature of n type variables', 1000, (n) {
-      expect(info(tuple(n)).errors, isEmpty);
     });
   });
 }

@@ -17,14 +17,30 @@ final class Echo implements Lookup {
 }
 
 void main() {
-  test('a long `Lines` input is split, passed through and joined in linear time', () {
-    final p = load('main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n'.codeUnits);
+  test('a long `Lines` input is split and joined in linear time', () {
     final inputs = <int, List<int>>{};
     List<int> input(int n) =>
         inputs[n] ??= utf8.encode([for (var i = 0; i < n; i++) 'line $i\r\n'].join());
-    scaling.check('`cat` of n lines', 20000, (n) {
-      final wave = p.run({'stdin': input(n)}, (_) => Echo());
-      expect(wave.writes.single.$2.length, input(n).length - n);
+    scaling.check('n lines split and joined', 20000, (n) {
+      expect(joinLines('stdout', splitLines(input(n))).length, input(n).length - n);
+    });
+  });
+
+  test('a wave reading the last of many lines scales', () {
+    final programs = <int, Program>{};
+    Program last(int n) => programs[n] ??= load(
+      'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin[$n] else "";\n}\n'.codeUnits,
+    );
+    final inputs = <int, List<int>>{};
+    List<int> input(int n) =>
+        inputs[n] ??= utf8.encode([for (var i = 0; i < n; i++) 'line $i\r\n'].join());
+    for (final n in [20000, scaling.factor * 20000]) {
+      last(n);
+      input(n);
+    }
+    scaling.check('a wave of n lines', 20000, (n) {
+      final wave = last(n).run({'stdin': input(n)}, (_) => Echo());
+      expect(utf8.decode(wave.writes.single.$2), 'line ${n - 1}\n');
     });
   });
 
@@ -44,7 +60,7 @@ void main() {
     String src(int n) => [
       'main(fs: Files) -> (stdout: Lines) {\n',
       for (var i = 0; i < n; i++) '  a$i = fs["p$i"];\n',
-      '  stdout <- a0;\n}\n',
+      '  stdout <- a0 else "";\n}\n',
     ].join();
     final programs = <int, Program>{};
     scaling.check('a wave reading n paths', 2000, (n) {

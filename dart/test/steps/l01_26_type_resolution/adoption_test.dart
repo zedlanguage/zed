@@ -55,9 +55,9 @@ void main() {
   test('equality compares across carriers', () {
     // A divisor that cannot be zero adds no `#divByZero`, so the quotient passes as a rat.
     expect(typeErrors('f(positional x: rat) = x;\ny = f(3r/2r);\n'), isEmpty);
-    expect(typeErrors('f(positional x: int) = x;\ny = f(7 div 0);\n'), [
-      '`f` does not take (#divByZero) [f(7 div 0)]',
-    ]);
+    // A divisor that may be zero adds `#divByZero`, a loose atom, which passes through `f`.
+    expect(typeErrors('f(positional x: int) = x;\ny = f(7 div 0);\n'), isEmpty);
+    expect(value('f(positional x: int) = x;\ny = f(7 div 0);\n', 'y'), '#divByZero');
     expect(value('y = 1 == 1r;\n', 'y'), 'true');
     expect(value('y = 1.5 == 3r/2r;\n', 'y'), 'true');
   });

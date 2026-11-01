@@ -26,15 +26,17 @@ void main() {
   });
 
   test('a row that stops the evaluator fails', () {
-    final got = checks('first(positional s) = s[1] test { "ab" -> "a" }\n');
+    // The checker passes every row a program it accepts can run; a number beyond the
+    // evaluator's size limit still stops it.
+    final got = checks('big(positional n: int) = 2 ** 100000000 * n test { 1 -> 1 }\n');
     expect(got, hasLength(1));
-    expect(got[0], startsWith('1:35: `"ab" -> "a"` of `first`: '));
+    expect(got[0], startsWith('1:52: `1 -> 1` of `big`: '));
     expect(got[0], isNot(endsWith(': ok')));
   });
 
   test('a main row compares the bytes each port writes', () {
     const src =
-        'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- upper(stdin[1]);\n}\n'
+        'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- upper(stdin[1] else "");\n}\n'
         r'test { "abc\n" -> "ABC\n", "abc" -> "ABC" }'
         '\n';
     expect(checks(src), [
@@ -45,7 +47,7 @@ void main() {
 
   test('a port not pushed writes nothing', () {
     const src =
-        'main(stdin: Lines) -> (stdout: Lines, stderr: Lines) {\n  stdout <- stdin[1];\n}\n'
+        'main(stdin: Lines) -> (stdout: Lines, stderr: Lines) {\n  stdout <- stdin[1] else "";\n}\n'
         r'test { "a" -> ("a\n", ""), "a" -> ("a\n", "warning\n") }'
         '\n';
     expect(checks(src), [
@@ -56,7 +58,7 @@ void main() {
 
   test('a Files port is given as a function of the path', () {
     const src =
-        'main(fs: Files) -> (stdout: Lines) {\n  stdout <- fs["a.txt"] ++ fs["b.txt"];\n}\n'
+        'main(fs: Files) -> (stdout: Lines) {\n  stdout <- (fs["a.txt"] else "") ++ (fs["b.txt"] else "");\n}\n'
         r'test { (p -> if p == "a.txt" { "1" } else { "2" }) -> "12\n" }'
         '\n';
     expect(checks(src), ['4:8: ok']);
@@ -79,13 +81,15 @@ void main() {
   });
 
   test('a wave that aborts fails its row', () {
+    // `3 ** 10000000` is past the evaluator's size limit.
     const src =
-        'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- int(stdin[1]);\n}\n'
+        'main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- String(3 ** 10000000);\n}\n'
         r'test { "7" -> "7\n" }'
         '\n';
-    expect(checks(src), [
-      r'4:8: `"7" -> "7\n"` of `main`: port `stdout` takes strings; 7 was pushed',
-    ]);
+    final got = checks(src);
+    expect(got, hasLength(1));
+    expect(got[0], startsWith(r'4:8: `"7" -> "7\n"` of `main`: '));
+    expect(got[0], contains('size limit'));
   });
 
   test('a main whose ports are not L1 reports once and runs no row', () {
