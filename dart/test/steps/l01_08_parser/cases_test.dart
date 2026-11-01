@@ -46,7 +46,7 @@ void main() {
         wrong.add('$rule@$ring | $text\n  got  $got\n  want $want');
       }
     }
-    expect(n, 319, reason: 'the number of cases');
+    expect(n, 323, reason: 'the number of cases');
     expect(wrong, isEmpty, reason: '${wrong.length} wrong:\n${wrong.join('\n')}');
   });
 

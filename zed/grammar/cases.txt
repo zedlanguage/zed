@@ -329,3 +329,7 @@ Item ::: @foreign struct F { a: int with bits(3, unit: 32), b: byte } ::: (@fore
 Item ::: @foreign struct G { a: i32 with bits(3), b: byte } ::: (@foreign (struct G { (a : (i32 (with (bits ( 3 ))))) , (b : byte) }))
 Item ::: f(x: int) -> int { log <- "seen"; return x; } ::: (f ( (x : int) ) (-> int) ({ (log <- "seen" ;) (return x ;) }))
 Expr ::: log <- x ::: ERROR
+Item ::: type Size = #small | #medium | #large with order(#declared); ::: (type Size = ((#small | #medium | #large) (with (order ( #declared )))) ;)
+Item ::: stock[s in Size::values] = 0; ::: (stock [ (s in (Size (:: values))) ] = 0 ;)
+Item ::: sizeOf = sizeCode.inverse; ::: (sizeOf = (sizeCode (. inverse)) ;)
+Expr ::: Size(t) else #small ::: ((Size (( t ))) (else #small))
