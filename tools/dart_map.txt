@@ -237,3 +237,8 @@ dart/test/steps/l01_29_diagnostics/layout_test.dart tests/steps/l01_29_diagnosti
 dart/test/steps/l01_29_diagnostics/repairs_test.dart tests/steps/l01_29_diagnostics/repairs.rs
 dart/test/steps/l01_29_diagnostics/scaling_test.dart tests/steps/l01_29_diagnostics/scaling.rs
 dart/test/steps/l01_29_diagnostics/variants_test.dart tests/steps/l01_29_diagnostics/variants.rs
+dart/lib/query.dart crates/zedc/src/query.rs
+dart/test/steps/l01_30_queries/queries.dart tests/steps/l01_30_queries/mod.rs
+dart/test/steps/l01_30_queries/keys_test.dart tests/steps/l01_30_queries/keys.rs
+dart/test/steps/l01_30_queries/reuse_test.dart tests/steps/l01_30_queries/reuse.rs
+dart/test/steps/l01_30_queries/scaling_test.dart tests/steps/l01_30_queries/mod.rs

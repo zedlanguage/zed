@@ -17,6 +17,7 @@ import 'elab.dart' show Cones, Test;
 import 'fence.dart' as fence;
 import 'interp.dart';
 import 'kernel.dart';
+import 'query.dart';
 import 'run.dart';
 import 'source.dart' as source;
 
@@ -32,11 +33,14 @@ final class Outcome {
 }
 
 /// The checks of the unit `text`, in source order.
-List<Outcome> testUnit(String text) {
+List<Outcome> testUnit(String text) => testIn(Db(), text);
+
+/// The checks of the unit `text`, in source order, reusing what `db` holds (step L1.30).
+List<Outcome> testIn(Db db, String text) {
   final marked = fence.marks(text).lines;
   final out = <Outcome>[];
   try {
-    final (stmts, unit) = compile(text);
+    final (stmts, unit) = db.front(text);
     final b = utf8.encode(text);
     final lines = source.Lines(b);
     final cones = Cones(unit);
@@ -55,16 +59,42 @@ List<Outcome> testUnit(String text) {
         break;
       }
     }
+    final main = [
+      for (final d in unit.defs)
+        if (d.name == 'main') Var(d.kernel),
+    ].firstOrNull;
     for (final t in unit.tests) {
-      if (t.function == 'main' && p == null) continue;
-      final (line, col) = lines.lineCol(b, t.span.start);
-      String? why;
-      try {
-        t.function == 'main' ? _wave(cones, p!, t) : _row(cones, t);
-      } on _Fail catch (e) {
-        why = '`${utf8.decode(b.sublist(t.span.start, t.span.end))}` of `${t.function}`: ${e.why}';
+      String? fails(void Function() check) {
+        try {
+          check();
+          return null;
+        } on _Fail catch (e) {
+          return e.why;
+        }
       }
-      out.add(Outcome(line, col, why));
+
+      final String? why;
+      if (t.function != 'main') {
+        why = db.row(
+          Query.row,
+          key('row', [
+            cone(cones, [t.check]),
+          ]),
+          () => fails(() => _row(cones, t)),
+        );
+      } else if (p case final p?) {
+        final ports = utf8.encode('${p.inputs} ${p.outputs}');
+        final k = key('wave', [
+          cone(cones, [main!, t.want, ...t.args]),
+          ports,
+        ]);
+        why = db.row(Query.wave, k, () => fails(() => _wave(cones, p, t)));
+      } else {
+        continue;
+      }
+      final (line, col) = lines.lineCol(b, t.span.start);
+      final case_ = utf8.decode(b.sublist(t.span.start, t.span.end));
+      out.add(Outcome(line, col, why == null ? null : '`$case_` of `${t.function}`: $why'));
     }
   } on Diagnostics catch (e) {
     // The first diagnostic on each line.
@@ -80,7 +110,11 @@ List<Outcome> testUnit(String text) {
     }
     final isMarked = marked.toSet();
     for (final d in e.all) {
-      if (!isMarked.contains(d.line)) out.add(Outcome(d.line, d.col, d.message));
+      // The message and its derivation (DESIGN.md "Diagnostics"), after the place the outcome
+      // already gives.
+      if (!isMarked.contains(d.line)) {
+        out.add(Outcome(d.line, d.col, '$d'.substring('${d.line}:${d.col}: '.length)));
+      }
     }
   }
   out.sort((a, b) => a.line != b.line ? a.line - b.line : a.col - b.col);

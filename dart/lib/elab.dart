@@ -112,6 +112,9 @@ final class Cones {
     return seen.toList();
   }
 
+  /// The definitions `roots` reach, in the unit's order.
+  Iterable<Def> defs(List<k.Term> roots) => [for (final i in reach(roots)) _unit.defs[i]];
+
   /// `body` under the definitions it reaches, each a let, in the unit's order: each after
   /// those it uses, as in the unit.
   k.Term close(k.Term body) {
