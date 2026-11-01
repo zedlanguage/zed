@@ -583,6 +583,12 @@ about 85 s in a debug build, with `zed-kernel` built at opt-level 2.
 
 - Apply the batch of resolutions from the six-part read of DESIGN.md (scan files in the
   session scratchpad), prose and grammar together, before the steps they affect.
+- After the Dart port, reimplement two steps under the hard rule against exponential
+  algorithms (DESIGN.md, sec:plan, zed commit 522e2c9): L1.23's emptiness check expands
+  paths and becomes one topological pass over the shared diagram; L1.38's Omega test
+  (128-bit, polynomial in rows only) becomes octagon closure, Hermite normal form,
+  congruences and an exact-rational LP refutation (sec:constraints). The port keeps both
+  unchanged so the Rust/Dart comparison stays valid.
 
 ## Postmortem amendments (spec commit after 678e2d1)
 
