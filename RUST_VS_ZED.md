@@ -277,7 +277,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.22 | 0:14 | 0:04 | 0 (0) | 1 (1) | 0:16 | 0:04 | 19 (5) |
 | L1.23 | 0:15 | 0:08 | 0 (0) | 3 (2) | 0:18 | 0:07 | 6 (3) |
 | L1.24 | 0:12 | 0:05 | 0 (0) | 1 (1) | 0:05 | 0:04 | 0 (0) |
-| L1.25 | 0:36 | 0:16 | 1 (1) | 7 (2) | | | |
+| L1.25 | 0:36 | 0:16 | 1 (1) | 7 (2) | 0:19 | 0:05 | 9 (3) |
 | L1.26 | 1:01 | 0:12 | 0 (0) | 6 (2) | | | |
 | L1.27 | 0:07 | 0:03 | 0 (0) | 2 (2) | | | |
 | L1.28 | 0:15 | 0:07 | 0 (0) | 0 (0) | | | |
@@ -857,15 +857,15 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/resolve.rs` | 15,634 | `lib/resolve.dart` | 13,317 | 0.85 |
 | `crates/zedc/src/run.rs` | 24,727 | `lib/run.dart` | 18,133 | 0.73 |
 | `crates/zedc/src/source.rs` | 7,459 | `lib/source.dart` | 7,286 | 0.98 |
-| `crates/zedc/src/stage.rs` | 32,641 | | | |
+| `crates/zedc/src/stage.rs` | 32,641 | `lib/stage.dart` | 3,781 | 0.12 |
 | `crates/zedc/src/store/affine.rs` | 19,512 | `lib/src/store/affine.dart` | 18,616 | 0.95 |
 | `crates/zedc/src/store/cell.rs` | 13,091 | `lib/src/store/cell.dart` | 11,450 | 0.87 |
 | `crates/zedc/src/store/float.rs` | 5,956 | `lib/src/store/float.dart` | 4,576 | 0.77 |
 | `crates/zedc/src/store/interval.rs` | 21,092 | `lib/src/store/interval.dart`<br>`test/store/interval_test.dart` | 21,857 | 1.04 |
 | `crates/zedc/src/store/iterate.rs` | 9,869 | `lib/src/store/iterate.dart` | 8,271 | 0.84 |
 | `crates/zedc/src/store/lattice.rs` | 16,014 | `lib/src/store/lattice.dart`<br>`test/store/lattice_test.dart` | 12,885 | 0.80 |
-| `crates/zedc/src/store/mod.rs` | 690 | `lib/store.dart` | 443 | 0.64 |
-| `crates/zedc/src/store/preimage.rs` | 100,503 | | | |
+| `crates/zedc/src/store/mod.rs` | 690 | `lib/store.dart` | 477 | 0.69 |
+| `crates/zedc/src/store/preimage.rs` | 100,503 | `lib/src/store/preimage.dart` | 67,858 | 0.68 |
 | `crates/zedc/src/store/presburger.rs` | 56,642 | | | |
 | `crates/zedc/src/store/product.rs` | 51,680 | | | |
 | `crates/zedc/src/store/revision.rs` | 25,960 | `lib/src/store/revision.dart`<br>`test/store/revision_test.dart` | 23,082 | 0.89 |
@@ -992,13 +992,13 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_24_refinement_lattices/loops.rs` | 6,177 | `test/steps/l01_24_refinement_lattices/loops_test.dart` | 4,593 | 0.74 |
 | `tests/steps/l01_24_refinement_lattices/mod.rs` | 3,301 | `test/steps/l01_24_refinement_lattices/support.dart` | 2,732 | 0.83 |
 | `tests/steps/l01_24_refinement_lattices/scaling.rs` | 9,294 | `test/steps/l01_24_refinement_lattices/scaling_test.dart` | 8,219 | 0.88 |
-| `tests/steps/l01_25_preimage_catalog/entries.rs` | 10,757 | | | |
-| `tests/steps/l01_25_preimage_catalog/exact.rs` | 4,245 | | | |
-| `tests/steps/l01_25_preimage_catalog/mod.rs` | 5,544 | | | |
-| `tests/steps/l01_25_preimage_catalog/random.rs` | 15,145 | | | |
-| `tests/steps/l01_25_preimage_catalog/scaling.rs` | 8,378 | | | |
-| `tests/steps/l01_25_preimage_catalog/stops.rs` | 4,452 | | | |
-| `tests/steps/l01_25_preimage_catalog/tonicity.rs` | 6,655 | | | |
+| `tests/steps/l01_25_preimage_catalog/entries.rs` | 10,757 | `test/steps/l01_25_preimage_catalog/entries_test.dart` | 9,633 | 0.90 |
+| `tests/steps/l01_25_preimage_catalog/exact.rs` | 4,245 | `test/steps/l01_25_preimage_catalog/exact_test.dart` | 3,649 | 0.86 |
+| `tests/steps/l01_25_preimage_catalog/mod.rs` | 5,544 | `test/steps/l01_25_preimage_catalog/support.dart` | 4,485 | 0.81 |
+| `tests/steps/l01_25_preimage_catalog/random.rs` | 15,145 | `test/steps/l01_25_preimage_catalog/random_test.dart` | 13,296 | 0.88 |
+| `tests/steps/l01_25_preimage_catalog/scaling.rs` | 8,378 | `test/steps/l01_25_preimage_catalog/scaling_test.dart` | 5,792 | 0.69 |
+| `tests/steps/l01_25_preimage_catalog/stops.rs` | 4,452 | `test/steps/l01_25_preimage_catalog/stops_test.dart` | 3,946 | 0.89 |
+| `tests/steps/l01_25_preimage_catalog/tonicity.rs` | 6,655 | `test/steps/l01_25_preimage_catalog/tonicity_test.dart` | 5,580 | 0.84 |
 | `tests/steps/l01_26_type_resolution/adoption.rs` | 2,963 | | | |
 | `tests/steps/l01_26_type_resolution/calls.rs` | 1,711 | | | |
 | `tests/steps/l01_26_type_resolution/fits.rs` | 2,412 | | | |
@@ -1098,7 +1098,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
 | **all 295 Rust files** | **2,266,093** | | | |
-| **the Rust files ported so far** | **1,299,293** | | **1,098,432** | **0.85** |
+| **the Rust files ported so far** | **1,487,613** | | **1,216,486** | **0.82** |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1462,10 +1462,28 @@ Dart:
   derives. An affine bound is evaluated exactly, in `BigInt` past 64 bits, where the Rust
   gives up past `i128`. The step's interval tests (cap, join, the forward images and their
   scaling) were not in the Dart M0.5 tests, and are ported here with the step.
+- **L1.25** (scalar preimage catalog). Medium. The catalog, the `@exact` search and the
+  witness search are ported whole; the linear-relation stage that the Rust `preimage.rs` also
+  holds waits for L1.38, so the size ratio of that file (0.68) compares the catalog with the
+  catalog and the stage together. Of `stage.rs` only the test of whether a term ends is
+  ported; the rest is L1.28. The 41 tests pass, with four expected results that differ from
+  the Rust's, each a case the Rust makes exact or narrower in its linear stage: a sum of two
+  calls (`x [0..=50]; necessary` for the Rust's `x [50..=50]; exact`), a sum past `2^63`
+  (exact only after enumeration), `x * 7 mod 10 == 3` (`[2..=29]` for the hull `[9..=29]`) and
+  the chain `x1 = i + i; …` (`i [-50..=50]; necessary` for `i [0..=50]; exact`). Each holds
+  every point that meets the demand, which the tests check against every point of a window,
+  and each changes back when L1.38 is ported. The Rust test of the linear translation's
+  scaling waits for L1.38 too. Terms are keyed by identity (`Map.identity()`) where the Rust
+  keys them by address; `i128` end arithmetic is `BigInt`, and a 64-bit congruence modulus
+  is checked against `int` overflow by hand. The 9 compile errors, in 3 runs, were 2 from a
+  `while (t case Var(...))` loop, which Dart does not have, 1 from a test-local name clashing
+  with an exported one, and 6 from a `case` pattern used as a lambda's body. The formatter
+  crashed with an internal error on a `switch` expression followed by `+` in an
+  expression-bodied `toString`; assigning the switch to a local first works around it.
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1528,6 +1546,9 @@ which the case was shorter, clearer or cheaper to run.
 | A walk that asks its caller at each step | Dart | The walk is a generator of questions, and the caller answers in a field before reading the next; the same walk serves a plain callback and a suspended search. In Rust this is a hand-written iterator with its state in a struct (L1.23). |
 | Deriving an order for a key | Rust | `#[derive(PartialOrd, Ord)]` orders a premise or a fact address by its fields. Dart writes `compareTo` by hand, with a helper comparing two lists in lexicographic order (L1.24). |
 | Arithmetic that must not overflow | Dart | An affine bound evaluated at large symbol values falls back from `int` to `BigInt` and stays exact. The Rust evaluates in `i128` with checked operations and gives no answer when they overflow (L1.24). |
+| Arithmetic just past 64 bits | Rust | `i128` holds every sum or product of two `i64` ends at machine speed. Dart has no 128-bit integer, so an interval end computed past `int` goes through `BigInt`, which allocates (L1.25). |
+| Looping while a pattern matches | Rust | `while let Term::Var(x) = t { … }` binds and loops in one line. Dart has `if (t case …)` but no `while (t case …)`, so the loop tests `t is Var` and reads the field after (L1.25). |
+| A boolean test written as a pattern | Rust | `matches!(s.bounds(), Some((a, b)) if a != b)` is one expression. In Dart `x case P when g` is allowed only in an `if`, so a lambda that returns it needs a `switch` expression with a second arm (L1.25). |
 | Quoting a string for display | Rust | `{name:?}` writes a quoted, escaped string at no cost. Dart needs a quoting function (the kernel's `quote`). |
 
 ### Changes per Dart file
@@ -1575,7 +1596,7 @@ performance pass yet, so the second number is 0 throughout.
 | `test/steps/m0_10_finite_model_harness/laws_11_20_test.dart` | 1 | 0 |
 | `test/steps/m0_10_finite_model_harness/laws_21_28_test.dart` | 1 | 0 |
 | `test/steps/m0_10_finite_model_harness/scaling_test.dart` | 2 | 0 |
-| `lib/store.dart` | 2 | 0 |
+| `lib/store.dart` | 3 | 0 |
 | `lib/src/store/interval.dart` | 2 | 0 |
 | `lib/src/store/affine.dart` | 1 | 0 |
 | `lib/src/store/cell.dart` | 1 | 0 |
@@ -1584,6 +1605,8 @@ performance pass yet, so the second number is 0 throughout.
 | `lib/src/store/wto.dart` | 1 | 0 |
 | `lib/src/store/iterate.dart` | 3 | 0 |
 | `lib/src/store/revision.dart` | 2 | 0 |
+| `lib/src/store/preimage.dart` | 1 | 0 |
+| `lib/stage.dart` | 1 | 0 |
 | `test/store/interval_test.dart` | 1 | 0 |
 | `test/store/lattice_test.dart` | 1 | 0 |
 | `test/store/wto_test.dart` | 1 | 0 |

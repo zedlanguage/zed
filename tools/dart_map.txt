@@ -205,3 +205,12 @@ dart/test/steps/l01_24_refinement_lattices/cell_test.dart tests/steps/l01_24_ref
 dart/test/steps/l01_24_refinement_lattices/float_test.dart tests/steps/l01_24_refinement_lattices/float.rs
 dart/test/steps/l01_24_refinement_lattices/loops_test.dart tests/steps/l01_24_refinement_lattices/loops.rs
 dart/test/steps/l01_24_refinement_lattices/scaling_test.dart tests/steps/l01_24_refinement_lattices/scaling.rs
+dart/lib/src/store/preimage.dart crates/zedc/src/store/preimage.rs
+dart/lib/stage.dart crates/zedc/src/stage.rs
+dart/test/steps/l01_25_preimage_catalog/support.dart tests/steps/l01_25_preimage_catalog/mod.rs
+dart/test/steps/l01_25_preimage_catalog/entries_test.dart tests/steps/l01_25_preimage_catalog/entries.rs
+dart/test/steps/l01_25_preimage_catalog/exact_test.dart tests/steps/l01_25_preimage_catalog/exact.rs
+dart/test/steps/l01_25_preimage_catalog/random_test.dart tests/steps/l01_25_preimage_catalog/random.rs
+dart/test/steps/l01_25_preimage_catalog/scaling_test.dart tests/steps/l01_25_preimage_catalog/scaling.rs
+dart/test/steps/l01_25_preimage_catalog/stops_test.dart tests/steps/l01_25_preimage_catalog/stops.rs
+dart/test/steps/l01_25_preimage_catalog/tonicity_test.dart tests/steps/l01_25_preimage_catalog/tonicity.rs
