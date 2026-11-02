@@ -407,3 +407,65 @@ fn a_row_left_out_of_a_decision_tree_is_found() {
         }
     }
 }
+
+/// A type the check does not prove empty may still be empty, so it promises no key: here
+/// four pigeons in three holes, a Boolean tuple type that no valuation of its 4096 is in.
+#[test]
+fn a_type_not_proved_empty_promises_no_key() {
+    let (pigeons, holes) = (4, 3);
+    let d = pigeons * holes;
+    let bit = Type::bool();
+    let mut forbidden = Vec::new();
+    let row = |hit: &dyn Fn(usize) -> bool, b: bool| {
+        let lit = Type::lit(&Value::Bool(b)).unwrap();
+        Type::tuple((0..d).map(|j| if hit(j) { lit.clone() } else { bit.clone() }).collect())
+    };
+    for p in 0..pigeons {
+        forbidden.push(row(&|j| j / holes == p, false));
+    }
+    for h in 0..holes {
+        for p in 0..pigeons {
+            for q in p + 1..pigeons {
+                forbidden.push(row(&|j| j == p * holes + h || j == q * holes + h, true));
+            }
+        }
+    }
+    let unknown = &Type::tuple(vec![bit; d]) - &Type::union_all(forbidden);
+    for mask in 0..1usize << d {
+        let v = Value::Tuple((0..d).map(|j| Value::Bool(mask >> j & 1 != 0)).collect());
+        assert!(!unknown.contains(&v), "a valuation is in the pigeonhole type");
+    }
+    assert!(!unknown.is_empty(), "the check proves the pigeonhole type empty");
+    let m = Type::morphism(unknown, Type::empty(), Type::int());
+    assert!(!m.is_empty(), "the empty morphism is in it");
+    // A key shown in the type is promised: a scalar, a tuple, an atom's payload.
+    let pair = Type::tuple(vec![Type::int(), Type::string()]);
+    let tagged = Type::atom_with("p", &pair);
+    for key in [Type::bool(), pair, tagged] {
+        assert!(Type::morphism(key.clone(), Type::empty(), Type::int()).is_empty());
+        assert!(Type::exact(key, Type::empty()).is_empty());
+    }
+}
+
+/// The one-tuples of `ints` but `0` to `c - 1`, each taken out as its own tuple type.
+fn past_excluded(c: usize, ints: Type) -> Type {
+    &Type::tuple(vec![ints]) - &Type::union_all((0..c).map(|i| Type::tuple(vec![lit(i)])))
+}
+
+#[test]
+fn a_key_past_many_excluded_tuples_is_found_and_scales() {
+    // Each tuple type tried as the key's representative was tested against every other.
+    let promised = |c: usize| Type::exact(past_excluded(c, Type::int()), Type::empty());
+    for c in [1, 2, 7] {
+        assert!(promised(c).is_empty(), "c = {c}");
+        // When every one-tuple is taken out, no key is promised, and the empty morphism is in it.
+        let all = Type::union_all((0..c).map(lit));
+        assert!(!Type::exact(past_excluded(c, all), Type::empty()).is_empty(), "c = {c}");
+    }
+    let built: std::collections::HashMap<usize, Type> =
+        [512, 4096].into_iter().map(|c| (c, promised(c))).collect();
+    scaling::check("a key's representative past excluded tuple types, by count", 512, |c| {
+        Type::forget_emptiness();
+        assert!(built[&c].is_empty());
+    });
+}

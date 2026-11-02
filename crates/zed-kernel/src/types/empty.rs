@@ -35,7 +35,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::bdd::Part;
-use super::{Morphism, Parts, Row, Type};
+use super::{Lits, Morphism, Parts, Row, Type};
+use crate::value::Value;
 
 thread_local! {
     static MEMO: RefCell<BTreeMap<Type, bool>> = const { RefCell::new(BTreeMap::new()) };
@@ -82,6 +83,18 @@ struct Search {
     pending: Vec<Type>,
     rests: BTreeMap<Type, BTreeSet<usize>>,
     reads: BTreeSet<usize>,
+    reps: BTreeMap<Type, Option<Rep>>,
+    members: BTreeMap<(Type, Type), bool>,
+}
+
+/// A value known to be in a type, held as the types of its parts, each with a representative
+/// of its own.
+#[derive(Clone)]
+enum Rep {
+    Value(Value),
+    Tuple(Row),
+    /// An atom of this name, whose payload is the representative tuple of this type.
+    Atom(std::sync::Arc<str>, Type),
 }
 
 impl Search {
@@ -305,11 +318,130 @@ impl Search {
         }
     }
 
-    /// Whether `m` admits no morphism: no domain lies between the bounds, or a key is promised
-    /// and no value can be its.
+    /// Whether `m` admits no morphism: a key is promised and not permitted, or promised and no
+    /// value can be its. A key is promised only when a value is shown in the type: a type not
+    /// proved empty may still be empty, and then the empty morphism is admitted.
     fn no_morphism(&mut self, m: &Morphism) -> bool {
-        !self.empty(&(&m.guarantee - &m.permission))
-            || (!self.empty(&m.guarantee) && self.empty(&m.value))
+        self.rep(&(&m.guarantee - &m.permission)).is_some()
+            || (self.rep(&m.guarantee).is_some() && self.empty(&m.value))
+    }
+
+    /// A value in `t`, if one is found: a scalar or bare atom of it, or a tuple or atom payload
+    /// whose components have representatives and which `t` holds. The tuples tried at each
+    /// length are two: the box the tuple types narrow the part to, and its meet with the first
+    /// tuple type left open; each is tested against every tuple type of `t`, so a poor choice
+    /// costs precision, never soundness. A type met again while its own is sought has none on
+    /// that path, since a value is finite; none found means only that, never that `t` is
+    /// empty. Each type is tried once and each test of a representative against a type is
+    /// made once, so a value nested in shared types is never copied out.
+    fn rep(&mut self, t: &Type) -> Option<Rep> {
+        if let Some(r) = self.reps.get(t) {
+            return r.clone();
+        }
+        self.reps.insert(t.clone(), None);
+        let r = self.find_rep(t);
+        self.reps.insert(t.clone(), r.clone());
+        r
+    }
+
+    fn find_rep(&mut self, t: &Type) -> Option<Rep> {
+        let p = t.p();
+        if p.bools != 0 {
+            return Some(Rep::Value(Value::Bool(p.bools & 1 == 0)));
+        }
+        let fresh: [(&Lits, Option<fn(i64) -> Value>); 4] = [
+            (&p.ints, Some(Value::Int)),
+            (&p.strings, Some(|i| Value::str(&i.to_string()))),
+            (&p.rats, None),
+            (&p.floats, None),
+        ];
+        for (l, make) in fresh {
+            let v = match (l.cofinite, make) {
+                (false, _) => l.values.iter().next().cloned(),
+                (true, Some(make)) => (0..).map(make).find(|v| !l.values.contains(v)),
+                (true, None) => None,
+            };
+            if let Some(v) = v {
+                return Some(Rep::Value(v));
+            }
+        }
+        if p.atoms.cofinite {
+            let name = (0..)
+                .map(|i| format!("a{i}"))
+                .find(|n| !p.atoms.names.contains_key(n.as_str()));
+            return Some(Rep::Value(Value::atom(&name.expect("a name is free"))));
+        }
+        for (name, a) in &p.atoms.names {
+            if a.bare {
+                return Some(Rep::Value(Value::atom(name)));
+            }
+            if let Some(Rep::Tuple(_)) = self.rep(&a.payload) {
+                return Some(Rep::Atom(name.clone(), a.payload.clone()));
+            }
+        }
+        if p.tuples.rest {
+            let len = (0..)
+                .find(|n| !p.tuples.lens.contains_key(n))
+                .expect("a length is free");
+            return Some(Rep::Tuple(Row::new(vec![Type::top(); len])));
+        }
+        for (len, f) in &p.tuples.lens {
+            let (mut r, mut g) = (vec![Type::top(); *len], f.clone());
+            if self.narrow_tuples(&mut r, &mut g) {
+                continue;
+            }
+            let mut first = None;
+            g.atoms(&mut |a| {
+                first = Some(a.clone());
+                false
+            });
+            let mut rows = vec![Row::new(r.clone())];
+            if let Some(a) = first {
+                rows.push(Row::new(
+                    r.iter().zip(a.iter()).map(|(x, y)| x & y).collect(),
+                ));
+            }
+            for row in rows {
+                if row.iter().all(|x| self.rep(x).is_some()) && self.holds(&row, f) {
+                    return Some(Rep::Tuple(row));
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether the tuple of the representatives of `row` is in `f`.
+    fn holds(&mut self, row: &Row, f: &Part<Row>) -> bool {
+        let mut atoms = Vec::new();
+        f.atoms(&mut |a| {
+            atoms.push(a.clone());
+            true
+        });
+        let mut fits = BTreeSet::new();
+        for a in atoms {
+            if row.iter().zip(a.iter()).all(|(x, y)| self.member(x, y)) {
+                fits.insert(a);
+            }
+        }
+        f.eval(&|a| fits.contains(a))
+    }
+
+    /// Whether the representative of `t`, which has one, is in `u`.
+    fn member(&mut self, t: &Type, u: &Type) -> bool {
+        let key = (t.clone(), u.clone());
+        if let Some(b) = self.members.get(&key) {
+            return *b;
+        }
+        let b = match self.rep(t).expect("a representative was found") {
+            Rep::Value(v) => u.contains(&v),
+            Rep::Tuple(row) => self.holds(&row, &u.p().tuples.get(row.len())),
+            Rep::Atom(name, payload) => match u.p().atoms.names.get(&name) {
+                None => u.p().atoms.cofinite,
+                Some(a) => self.member(&payload, &a.payload.clone()),
+            },
+        };
+        self.members.insert(key, b);
+        b
     }
 
     /// Whether every morphism `m` admits is in `n`, by the variance law. With no value, the
