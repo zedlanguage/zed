@@ -30,7 +30,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as Atomic};
@@ -778,13 +778,8 @@ impl<A: Literal> Part<A> {
         if let Part::Bdd(b) = self {
             return b.forced();
         }
-        let mut atoms = std::collections::BTreeSet::new();
-        self.atoms(&mut |a| {
-            atoms.insert(a.clone());
-            true
-        });
         let (mut taken, mut refused) = (Vec::new(), Vec::new());
-        for a in atoms {
+        for a in self.distinct_atoms() {
             if self.eval3(&|x| (*x == a).then_some(false)) == Some(false) {
                 taken.push(a);
             } else if self.eval3(&|x| (*x == a).then_some(true)) == Some(false) {
@@ -814,6 +809,19 @@ impl<A: Literal> Part<A> {
             }
         }
         go(self, &mut HashSet::new(), f)
+    }
+
+    /// Each distinct atom once, in the order first met. One atom can stand on several nodes,
+    /// and a caller that tests or splits on each atom must meet it once.
+    pub(super) fn distinct_atoms(&self) -> Vec<A> {
+        let (mut seen, mut atoms) = (BTreeSet::new(), Vec::new());
+        self.atoms(&mut |a| {
+            if seen.insert(a.clone()) {
+                atoms.push(a.clone());
+            }
+            true
+        });
+        atoms
     }
 
     /// The diagram, or the connective of an expression.

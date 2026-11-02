@@ -256,11 +256,7 @@ impl Search {
 
     /// The region of the part `f` on the box `r`, each tuple type tested on each component.
     fn region(&mut self, r: Vec<Type>, f: &Part<Row>) -> Region {
-        let mut atoms = Vec::new();
-        f.atoms(&mut |a| {
-            atoms.push(a.clone());
-            true
-        });
+        let atoms = f.distinct_atoms();
         let mut g = Region {
             open: vec![BTreeSet::new(); r.len()],
             changed: vec![false; r.len()],
@@ -301,12 +297,7 @@ impl Search {
             g.changed[j] = false;
             g.log.push(Change::Tested(j));
         }
-        let mut live = Vec::new();
-        f.atoms(&mut |a| {
-            live.push(g.index[a]);
-            true
-        });
-        'live: for k in live {
+        'live: for k in f.distinct_atoms().iter().map(|a| g.index[a]) {
             for &j in &changed {
                 if g.open[j].contains(&k) && self.empty(&(&g.r[j] & &g.atoms[k][j])) {
                     g.missed[k] += 1;
@@ -396,11 +387,7 @@ impl Search {
             if f.is_leaf().is_some() {
                 return false;
             }
-            let mut open = Vec::new();
-            f.atoms(&mut |a| {
-                open.push(g.index[a]);
-                true
-            });
+            let open: Vec<usize> = f.distinct_atoms().iter().map(|a| g.index[a]).collect();
             let fewest = *open
                 .iter()
                 .min_by_key(|&&k| g.loose[k].0)
@@ -579,13 +566,8 @@ impl Search {
 
     /// Whether the tuple of the representatives of `row` is in `f`.
     fn holds(&mut self, row: &Row, f: &Part<Row>) -> bool {
-        let mut atoms = Vec::new();
-        f.atoms(&mut |a| {
-            atoms.push(a.clone());
-            true
-        });
         let mut fits = BTreeSet::new();
-        for a in atoms {
+        for a in f.distinct_atoms() {
             if row.iter().zip(a.iter()).all(|(x, y)| self.member(x, y)) {
                 fits.insert(a);
             }
@@ -629,12 +611,8 @@ impl Search {
             if self.no_morphism(&r) {
                 return true;
             }
-            let mut atoms = Vec::new();
-            f.atoms(&mut |a| {
-                atoms.push(a.clone());
-                true
-            });
-            let st: BTreeMap<Morphism, Option<bool>> = atoms
+            let st: BTreeMap<Morphism, Option<bool>> = f
+                .distinct_atoms()
                 .into_iter()
                 .map(|a| {
                     let s = if self.no_morphism(&meet(&r, &a)) {
@@ -657,12 +635,8 @@ impl Search {
                 continue;
             }
             if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
-                let mut open = Vec::new();
-                f.atoms(&mut |a| {
-                    open.push(a.clone());
-                    true
-                });
-                return open
+                return f
+                    .distinct_atoms()
                     .iter()
                     .all(|a| self.morphisms(meet(&r, a), f.clone(), false));
             }
@@ -677,5 +651,29 @@ fn meet(a: &Morphism, b: &Morphism) -> Morphism {
         guarantee: &a.guarantee | &b.guarantee,
         permission: &a.permission & &b.permission,
         value: &a.value & &b.value,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// In `(a - b) | (b - a)` the diagram tests `b` on two nodes; the region gives each tuple
+    /// type one entry, so each is tested once and counted once among those open on a component.
+    #[test]
+    fn a_region_lists_each_tuple_type_once() {
+        let a = Type::tuple(vec![Type::int(), Type::top()]);
+        let b = Type::tuple(vec![Type::top(), Type::int()]);
+        let t = &(&a - &b) | &(&b - &a);
+        let f = &t.p().tuples.lens[&2];
+        let mut nodes = 0;
+        f.atoms(&mut |_| {
+            nodes += 1;
+            true
+        });
+        assert_eq!(nodes, 3);
+        let g = Search::default().region(vec![Type::top(); 2], f);
+        assert_eq!((g.atoms.len(), g.missed.len()), (2, 2));
+        assert_eq!(g.open.iter().map(BTreeSet::len).collect::<Vec<_>>(), [1, 1]);
     }
 }
