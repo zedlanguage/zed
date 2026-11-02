@@ -20,6 +20,9 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --features zed-tests/full -- -D warnings
+      # Scaling tests read a perf_event counter: instructions, or the task clock on a VM with no
+      # hardware counter. A test stops with an error if neither opens.
+      - run: sudo sysctl kernel.perf_event_paranoid=1
       - run: cargo test --workspace
       - uses: dart-lang/setup-dart@v1.8.1
         with:
@@ -42,4 +45,5 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
+      - run: sudo sysctl kernel.perf_event_paranoid=1
       - run: cargo llvm-cov --workspace --summary-only --show-missing-lines

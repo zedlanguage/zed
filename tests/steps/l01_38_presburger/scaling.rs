@@ -85,19 +85,13 @@ fn a_chain_of_inexact_eliminations_does_not_double() {
         ("the rising chain", rising),
     ];
     for (what, f) in cases {
-        // The second run of each is measured: the first warms caches.
-        let mut meter = scaling::Meter::new();
         let run = |v| drop(satisfiable(&f(v)));
-        run(7);
-        let small = meter.work(|| run(7));
-        run(15);
-        let large = meter.work(|| run(15));
-        let ratio = large as f64 / small as f64;
-        assert!(
-            ratio <= scaling::RATIO,
-            "{what}: 7 variables take {small} and 15 take {large} {}, {ratio:.1} times the work; \
-             doubling with each variable would be 256 times",
-            meter.unit()
+        scaling::compare(
+            &format!("{what}: 7 and 15 variables"),
+            "doubling with each variable would be 256 times",
+            scaling::RATIO,
+            || run(7),
+            || run(15),
         );
     }
 }

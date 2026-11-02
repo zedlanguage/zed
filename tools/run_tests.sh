@@ -6,7 +6,8 @@
 # --full adds tests/full/, the battery that needs emulators, containers, databases and other
 # outside tools. It stops before any test if a tool is missing; nothing is skipped.
 # A failed piece keeps its output in build/test-logs/<piece>.log. Every piece runs in the
-# systemd slice zedtests.slice, whose 112 GB limit holds across all checkouts together.
+# systemd slice zedtests.slice, whose 112 GB limit holds across all checkouts together. A load
+# above the number of cores raises the limit of the pieces that start under it in proportion.
 features=
 if [ "$1" = --full ]; then
   shift
@@ -80,7 +81,13 @@ full=$(echo "$bins" | grep '/full-')
 slots=8
 slot_dir=${XDG_RUNTIME_DIR:-/tmp}/zedtests-slots
 mkdir -p "$slot_dir"
-export root out slots slot_dir
+# glibc's memcpy and memset use rep movsb and rep stosb on a CPU with erms or fsrm, and the hardware
+# counter sees either as one instruction or few, so a quadratic copy would pass a scaling test. A
+# setting glibc does not know is ignored; this glibc leaves the stosb threshold alone without erms.
+never=0xffffffffffffffff
+export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=$never:glibc.cpu.x86_rep_stosb_threshold=$never
+cores=$(nproc)
+export root out slots slot_dir cores
 take_slot() {
   while :; do
     for i in $(seq "$slots"); do
@@ -95,18 +102,25 @@ piece() {
   shift 2
   log=$out/$name.log
   take_slot
+  read -r load _ </proc/loadavg
+  limit=$(awk -v l="$load" -v c="$cores" 'BEGIN { x = 60 * l / c; print (x > 60 ? int(x + 1) : 60) }')
   start=$(date +%s%N)
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
     systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
-    timeout -k 5 60 "$@" >"$log" 2>&1)
+    timeout -k 5 "$limit" "$@" >"$log" 2>&1)
   rc=$?
   ms=$((($(date +%s%N) - start) / 1000000))
-  echo "$name rc=$rc ${ms}ms $(grep -E '^test result' "$log" | tail -1)"
+  echo "$name rc=$rc ${ms}ms load=$load limit=${limit}s $(grep -E '^test result' "$log" | tail -1)"
   [ "$rc" = 0 ] && rm -f "$log"
   [ "$rc" = 0 ]
 }
 export -f take_slot piece
 xargs -P "$jobs" -L 1 bash -c 'piece "$@"' _ <"$out/pieces" | tee "$out/summary"
 bad=$(grep -vc 'rc=0 ' "$out/summary")
-echo "pieces: $(wc -l <"$out/summary"), failed: $bad"
+load=$(awk 'match($0, / load=[0-9.]+/) {
+  l = substr($0, RSTART + 6, RLENGTH - 6) + 0
+  if (NR == 1 || l < low) low = l
+  if (l > high) high = l
+} END { print low " to " high }' "$out/summary")
+echo "pieces: $(wc -l <"$out/summary"), failed: $bad, load: $load, cores: $cores"
 [ "$bad" = 0 ]
