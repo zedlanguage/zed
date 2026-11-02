@@ -291,11 +291,12 @@ sealed class Type implements Comparable<Type> {
   /// Every value of `this`, when there are at most `cap` of them and each can be listed:
   /// bools, finite literal sets, bare atoms, and tuples of such components. Null for a type
   /// with more values, an infinite part, a payload, a struct or a function, and for a tuple
-  /// type one of whose paths has more than `cap` rows before its negated tuples are taken out.
+  /// type one of whose tuple types, met with the tuple types taken on the paths to it, has more
+  /// than `cap` rows before the diagram's other tuple types are taken into account.
   List<Value>? values(int cap) => _list(cap, true);
 
   /// Every value of `this` when the list is no longer than the type: as [values], except
-  /// that a tuple path is listed only when its rows are no more than the values its
+  /// that a tuple type is listed only when its rows are no more than the values its
   /// components list, so listing never multiplies what the type writes.
   List<Value>? get listed => _list(null, false);
 
@@ -322,44 +323,53 @@ sealed class Type implements Comparable<Type> {
     }
     for (final MapEntry(key: len, value: part) in tuples.lens.entries) {
       if (part is! Bdd<Components>) return null;
-      final rows = <List<Value>>[];
-      final listed = part.walk(false, (pos, neg) {
-        final meet = List.filled(len, Type.top);
-        for (final c in pos) {
-          for (var i = 0; i < len; i++) {
-            meet[i] = meet[i] & c.items[i];
-          }
-        }
+      // A value of the part is in every tuple type its path takes, so in the last one, which the
+      // path takes from the node of that tuple type. The path that takes none would hold the
+      // values outside every tuple type of the part, which are not listed.
+      if (part.eval((_) => false)) return null;
+      List<List<Value>>? rows(List<Type> items) {
         var found = [<Value>[]];
         var written = 0;
-        for (final item in meet) {
+        for (final item in items) {
           final vs = item._list(cap, spread);
-          if (vs == null) return false;
+          if (vs == null) return null;
           written += vs.length;
-          if (!spread && found.length * vs.length > written) return false;
+          if (!spread && found.length * vs.length > written) return null;
           // Compared with the cap before the product is built, which can be `cap²`.
-          if (!within(found.length * vs.length)) return false;
+          if (!within(found.length * vs.length)) return null;
           found = [
             for (final r in found)
               for (final v in vs) [...r, v],
           ];
         }
-        bool fits(Components n, List<Value> r) {
-          for (var i = 0; i < len; i++) {
-            if (!n.items[i].contains(r[i])) return false;
+        return found;
+      }
+
+      // Each node's tuple type is listed alone, or else met with the union of the meets of the
+      // tuple types taken on the paths to the node, kept a component at a time, and each row
+      // is kept when the diagram holds it: one pass over the nodes, never over the paths,
+      // whose number can be exponential in the nodes.
+      final listed = part.reaching<List<Type>>(
+        List.filled(len, Type.top),
+        (r, c) => [for (var i = 0; i < len; i++) r[i] & c.items[i]],
+        (r, t) => [for (var i = 0; i < len; i++) r[i] | t[i]],
+        (c, r) {
+          final found = rows(c.items) ?? rows([for (var i = 0; i < len; i++) c.items[i] & r[i]]);
+          if (found == null) return false;
+          for (final row in found) {
+            bool fits(Components n) {
+              for (var i = 0; i < len; i++) {
+                if (!n.items[i].contains(row[i])) return false;
+              }
+              return true;
+            }
+
+            if (part.eval(fits) && !add(Tuple(row))) return false;
           }
           return true;
-        }
-
-        found.removeWhere((r) => neg.any((n) => fits(n, r)));
-        // The paths are disjoint, so their rows are distinct values.
-        rows.addAll(found);
-        return within(rows.length);
-      });
+        },
+      );
       if (!listed) return null;
-      for (final r in rows) {
-        if (!add(Tuple(r))) return null;
-      }
     }
     return out.toList();
   }

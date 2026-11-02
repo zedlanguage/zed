@@ -417,6 +417,48 @@ sealed class Bdd<A extends Literal<A>> extends Part<A> {
     }
   }
 
+  /// Whether `f` holds of each node's atom and state, for the nodes whose `hi` is not `false`.
+  /// The root has the state `start`; an edge to a node's `hi` passes on `take` of its state and
+  /// its atom, an edge to its `lo` its state; a node's state is `join` of the states of the
+  /// edges into it. Each node is visited once, after every node with an edge into it, so the
+  /// time is linear in the nodes however many paths there are.
+  bool reaching<S>(
+    S start,
+    S Function(S, A) take,
+    S Function(S, S) join,
+    bool Function(A, S) f,
+  ) {
+    final root = this;
+    if (root is! Node<A>) return true;
+    // Nodes in reverse postorder of a depth-first walk: each after those above it.
+    final order = <Node<A>>[];
+    final seen = Set<Node<A>>.identity();
+    final stack = [(root, false)];
+    while (stack.isNotEmpty) {
+      final (n, below) = stack.removeLast();
+      if (below) {
+        order.add(n);
+        continue;
+      }
+      if (!seen.add(n)) continue;
+      stack.add((n, true));
+      for (final c in [n.lo, n.hi]) {
+        if (c is Node<A> && !seen.contains(c)) stack.add((c, false));
+      }
+    }
+    final state = Map<Node<A>, S>.identity()..[root] = start;
+    for (final n in order.reversed) {
+      final here = state.remove(n) as S;
+      if (n.hi.leaf != false && !f(n.atom, here)) return false;
+      for (final (child, s) in [(n.hi, take(here, n.atom)), (n.lo, here)]) {
+        if (child is Node<A>) {
+          state[child] = state.containsKey(child) ? join(state[child] as S, s) : s;
+        }
+      }
+    }
+    return true;
+  }
+
   /// Whether the path that `holds` chooses at each atom ends at `true`.
   bool _eval(bool Function(A) holds) {
     var b = this;

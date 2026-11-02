@@ -26,6 +26,13 @@ Type pair(int i) => Type.tuple([lit(i), Type.top]);
 Type union(int c, Type Function(int) atom) =>
     [for (var i = 0; i < c; i++) i].fold(Type.empty, (u, i) => u | (atom(i) - atom(i + 1000)));
 
+/// The exclusive or of `c` tuple types `(i, i)`: a diagram of about `2c` nodes with
+/// `2^(c - 1)` paths to `true`, holding `c` values.
+Type oddTuples(int c) => [for (var i = 0; i < c; i++) i].fold(Type.empty, (x, i) {
+  final t = Type.tuple([lit(i), lit(i)]);
+  return (x - t) | (t - x);
+});
+
 void run(int c, Type Function(int) atom) {
   final b = union(c, atom);
   final n = ~b;
@@ -267,5 +274,18 @@ void main() {
     final rest = square - Type.tuple([lit(0), lit(0)]);
     expect(rest.values(8), isNull);
     expect(rest.values(9)?.length, 8);
+  });
+
+  test('listing a diagram with exponentially many paths scales', () {
+    // Listing walked every path of the diagram: `2^(c - 1)` at `c` tuple types.
+    for (final c in [1, 2, 7]) {
+      expect(oddTuples(c).listed?.length, c, reason: 'c = $c');
+    }
+    final built = {for (final c in [64, 512]) c: oddTuples(c)};
+    // One pass over the nodes lists the candidates, but each of the `c` rows is still checked
+    // along a path of up to `c` nodes: order `c²`, an open item (DESIGN.md L1.23).
+    checkOrder('listing an exclusive or of tuple types, by count', 64, 2, (c) {
+      expect(built[c]!.listed?.length, c);
+    });
   });
 }
