@@ -1,6 +1,6 @@
 # Plan DAG
 
-This file lists the remaining work on Zed and the order it must run in. It has 239 items, 1132 edges and 101 levels (0 to 100). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
+This file lists the remaining work on Zed and the order it must run in. It has 240 items, 1132 edges and 101 levels (0 to 100). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
 
 ## How to read it
 
@@ -28,6 +28,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | Level | Id | Title | Size | Hard | Needs | Paths |
 |---|---|---|---|---|---|---|
 | 0 | T2-eval | Reference evaluator as an explicit-stack machine; remove on_stack, the Stack proof type and the 1 GiB thread (eval.rs:296) | L | no | none | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/lib.rs`, `crates/zed-kernel/src/error.rs`, `crates/zedc/src/store/product.rs`, `crates/zedc/src/store/preimage.rs`, `tests/steps/m0_09_kernel_evaluator/`, `tests/steps/m0_10_finite_model_harness/scaling.rs`, `tests/steps/l01_18_scalar_interpreter/scaling.rs`, `tests/steps/l01_39_reduced_product/random.rs` |
+| 0 | TIMING | Done: tests no longer fail on time under load: scaling checks count instructions, large tests get their own process, checkouts share slots | M | no | none | `tests/src/scaling.rs`, `tools/run_tests.sh`, `tests/steps/l01_25_preimage_catalog/exact.rs`, `tests/steps/l01_39_reduced_product/exact.rs`, `tests/steps/l01_38_presburger/scaling.rs`, `tests/steps/m0_11_prelude_axioms_and_limits/limits.rs`, `tests/steps/m0_09_kernel_evaluator/binary.rs` |
 | 0 | T3 | Z9 (and the rest of Z8): Tables::visit shares nodes and regions with no clones; persistent maps only where they are the right tool; delete docs/wip/z8-z9-stopped.patch | M | no | none | `crates/zed-native/src/tables.rs`, `crates/zed-native/src/codegen.rs`, `crates/zed-native/src/hooks.rs`, `crates/zed-native/Cargo.toml`, `Cargo.lock`, `crates/zedc/src/zir/mod.rs`, `docs/wip/z8-z9-stopped.patch`, `tests/steps/l01_36_cranelift/scaling.rs`, `COMPLEXITY.md` |
 | 0 | T4 | S18: replace the Rust Omega test's cubic recursion by one loop over rows in an ordered map by coefficients with per-variable rows and bound counts; refuse what is not provably polynomial with its own error | L | yes | none | `crates/zedc/src/store/presburger.rs`, `crates/zedc/src/store/hull.rs`, `crates/zedc/src/store/product.rs`, `crates/zedc/src/store/preimage.rs`, `crates/zedc/src/check/mod.rs`, `tests/steps/l01_38_presburger/scaling.rs`, `tests/steps/l01_38_presburger/`, `COMPLEXITY.md`, `DESIGN.md` |
 | 0 | ST3 | Record the decision-tree Omega(c^2) lower bound (input is Theta(c^2)) in DESIGN L1.23 | S | no | none | `DESIGN.md`, `../zed/PROGRESS.md` |

@@ -605,3 +605,4 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Cow<'_, Value>`, a key borrowed unless it needs a copy | `as_key` in `eval.rs` | None | Zed shares values, so a function returns the key or its normalized copy with no borrow |
 | `RefCell` to collect from inside a `Fn` closure that `Expr::eval` calls | `Type::contains` | Mutation | The closure returns what it needs, as a value |
 | Raw pointers as map keys, `*const Node` and `*const Value` | `Type::contains` | Identity | Keyed by a hash-consed id of the type and the position in the value |
+| Hardware counter opened with `perf_event_open` through `perf-event2`, and the thread CPU clock through `rustix` | `zed_tests::scaling::Meter`, `cpu_time` | Foreign library | Test harness only, so a Zed port needs it only if the tests move to Zed: an `@ffi` signature over the two system calls (L7.4) |

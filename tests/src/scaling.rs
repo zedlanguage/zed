@@ -147,11 +147,11 @@ fn check_by(meter: &mut Meter, what: &str, n: usize, power: u32, run: impl Fn(us
         seen.push(format!("{small} and {large}, {ratio:.1} times the work"));
     }
     panic!(
-        "{what}: sizes {n} and {} took {} {}; for work of order n^{power} the rule of low \
+        "{what}: sizes {n} and {} took {} in {}; for work of order n^{power} the rule of low \
          complexity allows at most {limit} times (DESIGN.md Part G)",
         FACTOR * n,
-        meter.unit(),
-        seen.join("; then ")
+        seen.join("; then "),
+        meter.unit()
     );
 }
 
