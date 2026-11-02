@@ -25,19 +25,22 @@ the form it has may not meet the cost the compiler needs:
 | 5 | Bytes: spans, binary files, hashing input | 95 | missing | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
 | 6 | Command line, computed output paths, exit status | 9 | missing | S.5 | `Args` port, `Files` writes, an exit value |
 | 7 | Scalar to and from code point | 18 | missing | S.2 | Two L1 words |
-| 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | missing | S.2 | A word whose type is empty |
+| 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | missing | S.2 | A word whose type is empty (conflicts with G5 and line 711), or an atom in each codomain |
 | 9 | Key range queries on ordered maps | 9 | missing | S.3 | `before` and `after` |
-| 10 | File import cycles | 3 cycles, 4 pairs | Rust must change | S.2 | Move four definitions; no Zed change |
+| 10 | File import cycles | 3 cycles, 5 parent/child groups | Rust must change | S.2 | Move definitions in five, merge files in three; no Zed change |
 
 Two more are in the workaround class and matter because of their cost, not their syntax: gap 11
 (mutation, which depends on step L6.13 keeping updates in place) and gap 12 (early exit).
 
 **ZED0.md is out of date.** Its section "Gaps found" says there is one, the Cranelift ports.
 Gaps 1, 4 to 9 above are further gaps. In particular its Part B lists `bitAnd`, `bitOr`, `bitXor`
-and `shl` as provided at L1, but they appear only in one row of the glyph table (DESIGN.md line
-2408), in no words table, and in no Rust code. Part B also says nothing of bytes, arguments or
-code points. This item writes only this file, so ZED0.md stands unchanged until step S.1, which
-should take its list from here.
+and `shl` as provided at L1 (ZED0.md line 48). DESIGN.md does use them (lines 589, 695, 2408), but
+they are missing from the words table (line 3343) and from `Prim` (`zed-kernel/term.rs:18`), and
+only `shl` has stated semantics (gap 4). The same row writes `%` by `2^32`; the grammar has neither
+operator (lines 3087, 3090, 3123), so this is `mod 2 ** 32`. ZED0.md line 47 assigns lexing by code
+point to the `String` functions, which provide no word for it (gap 7). Part B says nothing of
+bytes or arguments. This item writes only this file, so ZED0.md stands unchanged until step S.1,
+which should take its list from here.
 
 **The claim most likely to be wrong** is gap 11's: that primed receivers and `*.` cost O(1) per
 update on a compiler state struct. That rests on step L6.13, which is not built, so the claim
@@ -58,6 +61,12 @@ each low-count construct was read at every site and each large one sampled.
   over-counted `>>` in nested generics and `||` as closures; both patterns were corrected and
   sampled before these numbers were taken.
 - Same-scope rebinding counts plain `let name` only, not names inside tuples.
+- `let_mut` is 871: 826 matches of `let mut`, plus 45 `let` tuple patterns holding a `mut`, each
+  counted once however many `mut` names it holds.
+- Gap 10 comes from a second scanner (also Dart, not committed), which resolves each `use` and
+  each qualified path to the file defining the item, following `pub use`. It finds 8 strongly
+  connected components among 76 files. Since neither scanner is in the repository, the counts
+  cannot be reproduced from it; committing them is the author's call.
 - `crates/zed-cert` has no code (a 5-line stub). `tests/` is not ported and was not audited.
 
 The classes: **missing**, Zed₀ has no form and DESIGN.md needs one. **Workaround**, a form exists
@@ -77,7 +86,8 @@ function `run` (`zed-native/src/lib.rs:70`, a `transmute` of JIT code) stays too
 72 calls, plus 8 Cranelift type paths: that is the size of the built-in port set, already
 planned at S.4.
 
-External crates: `num-bigint` goes, since `int` is unbounded. `imbl` goes: `OrdMap` and `Vector`
+External crates: `num-bigint` goes, since `int` is unbounded, and `num-integer` and `num-traits`
+(`gcd`, `num.rs:34`; `Euclid`, `eval.rs:20`; `ToPrimitive`, `value.rs:15`) go with it. `imbl` goes: `OrdMap` and `Vector`
 are a family and a `Seq`. `blake3` and the three `unicode-*` crates need Zed tables or built-ins;
 see gaps 4 and 7. `insta` is tests only.
 
@@ -150,18 +160,20 @@ first use (`Type::p`, line 392), and ties a cycle through closures. `Group::inst
 (`types/rec.rs:296`), `Cones::free` (`zedc/elab.rs:93`), `Program::main` (`zedc/run.rs:49`),
 `Shown` (types.rs:118) and `Text::flat` (`text.rs:24`) cache in place inside a shared value.
 
-Zed values are immutable with no cell, and a function field re-evaluates on each call. Zed
-has no cyclic values (inferred from "facts, not places", line 49; the spec has no statement).
-Fix: a recursive type is `#rec(id)` with its parts in an indexed definition `parts[id] = …`,
-evaluated on demand (L6.1, L6.4). `Text` needs no port: `String` ropes are L6.16. Cones become
+Zed values are immutable with no cell, and a function field re-evaluates on each call. Cyclic
+data lives in two sanctioned forms, arenas or regions and id-indexed graphs `Id ->? Node`
+(line 1399, confirmed), which L6.13 builds. Fix: the second form. A recursive type is `#rec(id)`
+with its parts in an indexed definition `parts[id] = …`, evaluated on demand (L6.1, L6.4). `Text` needs no port: `String` ropes are L6.16. Cones become
 an indexed definition. Cost: inferred O(1) per read if the definedness table is stored, to be
 measured at S.3.
 
 ### Gap 4. Bit operations (missing)
 
-Confirmed: DESIGN.md names `bitAnd`/`bitOr`/`bitXor`/`shl`… in one glyph-table row (line 2408)
-and one fence (`zed/fences/examples.md:78`); the words table (line 3343) lists none, no semantics
-are given, and `Prim` (`zed-kernel/term.rs:18`) has none.
+Confirmed: line 589 defines `shl(x, k)`: `k : int[0..]`, value `x · 2^k` on the unbounded `int`,
+with a width enforced where one is written. Line 695 uses `bitAnd`, `bitOr`, `bitXor` and `shl`,
+line 2408 lists them as named functions, and `zed/fences/examples.md:78` uses `shl`. The gap: the
+words table (line 3343) lists none of them, `Prim` (`zed-kernel/term.rs:18`) has none, and only
+`shl` has semantics.
 
 Rust uses: `<<`, `>>` 42; `&`, `|`, `^` on integers up to 115; `wrapping_*` and `overflowing_*` 14;
 `rotate_left` 1 (`mix`, types.rs:79); `count_ones`, `leading_zeros`, `trailing_zeros` 7 (`Ck::resolve`
@@ -169,18 +181,26 @@ Rust uses: `<<`, `>>` 42; `&`, `|`, `^` on integers up to 115; `wrapping_*` and 
 sets (`Carrier::of_mask`, `check/ty.rs:340`). `blake3::Hasher` is used at 6 sites (`address_at`,
 `canon/mod.rs:196`, and others).
 
-Fix: add to the L1 row of the words table, on ints of a nonnegative domain `int[0..<2^k]`:
-`bitAnd bitOr bitXor bitNot shl shr rotl rotr popCount leadingZeros trailingZeros`, with `k`
-from the domain, `shl` and `rotl` taken modulo `2^k`, and an error type for a negative operand.
-Wrapping arithmetic stays `(a * b) % 2^64`, and the domain pass must select one machine multiply
-for that shape: otherwise it goes through a 128-bit or big integer, which is a cost gap
-(inferred; test: scaling run of `mix` at S.3). Carrier masks become sets of atoms. BLAKE3 in Zed
+Fix: add to the L1 row of the words table `shl` as line 589 specifies it, and semantics for
+`bitAnd bitOr bitXor bitNot shr popCount leadingZeros trailingZeros` on `int[0..]`, so that a
+negative operand is a type error. `bitNot`, `leadingZeros` and `rotl` depend on a width, so each
+takes it as an argument. Shift counts stay domain-typed and are never masked (line 589), so a
+wrapping shift is written `shl(x, k) mod 2 ** w`. `rotl` and `rotr` are new words.
+
+Wrapping arithmetic is written `(a * b) mod 2 ** 64`. Line 589 already permits computing that in
+wrapping `w`-bit arithmetic when the result domain is known statically and spans at most `2^w`
+integers (see also line 3691), and step L3.13 builds it, with a test at `mod 2 ** 63`. What remains
+is to confirm it for `mix` (`types.rs:77`), where each product is its own expression, since
+`bitXor` and `rotl` are not in line 589's list of operators. Also, line 589 lists the
+representations as i8…i64, else big-integer, and `int[0..<2 ** 64]` does not fit `i64`, so a hash
+would be stored as a big integer. Fix: state that a domain spanning at most `2^w` integers is
+stored in one word. Both points are inferred; the test is a scaling run of `mix` at S.3. Carrier masks become sets of atoms. BLAKE3 in Zed
 is then ZED0.md's plan; if a stage build shows it too slow, a primitive is allowed by line 1040.
 
 Also float bits, no word: `to_bits`, `from_bits` 13 matches (`Out::value`, `canon/serial.rs:78`;
 `W::value`, `zir/binary.rs:122`; `Exact::float`, `num.rs:151`; `exact_sum`, `exact.rs:94`;
 `Width::holds`, `store/float.rs:39`). Content addresses hash float bits, so this cannot be avoided.
-Fix: L1 words `f64Bits : f64 -> int[0..<2^64]` and its inverse, NaN being canonical first.
+Fix: L1 words `f64Bits : f64 -> int[0..<2 ** 64]` and its inverse, NaN being canonical first.
 
 ### Gap 5. Bytes (missing)
 
@@ -198,7 +218,7 @@ Fix, three parts. (a) Spans become scalar offsets: mechanical, as ZED0.md says "
 point", but the columns of diagnostics must agree with Rust at S.2, so the differential test
 decides. (b) An L1 word `utf8 : String -> [byte]`, and `int` to little-endian bytes as a
 library function, which hashing needs. (c) For files, the binary ZIR and wave records
-(`zir/binary.rs`, `Wave::to_bytes` at `run.rs:476`) either get a `Bytes` file port, or use the text form that
+(`zir/binary.rs`, `Record::to_bytes` at `run.rs:476`) either get a `Bytes` file port, or use the text form that
 `zir/text.rs` already has. Recommended: the port, since content-addressed caches should not pay
 for text parsing; the choice can wait until S.4.
 
@@ -238,13 +258,25 @@ Confirmed: `.expect` 150, `unreachable!` 63, `panic!` 3, `assert!` 3, `debug_ass
 Also about 1,193 index expressions panic in Rust on a bad index, whereas `v[i]` in Zed has
 `#notFound` in its type unless the domain proves `i` in range.
 
-Cost of the plain answer: returning an atom from each site puts it in the result type of nearly
-every function, since propagation is declared in the codomain. Fix: an L1 word, say
-`bug(message) : !_`, of empty type (`!_`, the complement of the type of every value), which stops the program and reports the message and its
-provenance; the empty type keeps it out of unions. Indexing: `v[i] else bug("…")` by hand, or a
-domain proof where the checker has one. Reachability of such stops is a fact tests can
-report on. The rule "failure is data" holds for programs' input; this word is for faults in the
-program itself.
+Two options, and the choice is the author's:
+
+| Solution | Empirical result | Score | Reasoning |
+|---|---|--:|---|
+| An L1 word `bug(message)` of empty type, which stops the program and reports the message and its provenance | not run | 7 | Keeps result types small, and the empty type keeps it out of unions. Needs the spec changes listed below |
+| An atom `#bug(String)` in the codomain of each function that can reach a broken invariant; indexing is `v[i] else #bug("…")` | not run | 6 | Needs no spec change. Cost: the atom enters the result type of nearly every function, since propagation is declared in the codomain, so signatures and arrows grow and every caller carries it |
+
+With either, indexing that the domain proves in range needs neither. The word `bug` contradicts
+DESIGN.md at these places, which the author would have to change (each confirmed):
+
+- G5 (line 21): out-of-bounds indexing and unhandled failure "cannot be written". `bug` is a
+  written stop that the compiler does not rule out.
+- Line 711: the only run-time tests are those the program writes, and "each one's failure is a
+  member of the result type". The failure of `bug` is not.
+- Line 3710: "no program writes" the empty type. The type also has no spelling: `!_` appears
+  nowhere in DESIGN.md, and a message must print types as a user can write them.
+
+Reachability of such stops is a fact tests can report on. The rule "failure is data" holds for a
+program's input; this word would be for faults in the program itself.
 
 `catch_unwind` and `resume_unwind` (`Evaluator::run`, `eval.rs:362`, and `on_stack`) only restore a flag, and
 `on_stack` (`eval.rs:290`) exists only to run with a 1 GiB stack (the marker `Stack`). Both vanish.
@@ -268,26 +300,32 @@ Fix: L5 words `m.upTo(k)` and `m.from(k)`, each an ordered restriction in O(log 
 
 ### Gap 10. File import cycles (Rust must change)
 
-Zed forbids a cycle between files (line 733). Computed from the file-level import graph, these
-cycles exist, each edge confirmed by reading its `use`:
+Zed forbids a cycle between files, while recursive types and definitions stay unrestricted within
+a unit (line 733). The repairs are to move what both sides use into a unit both import, or to
+merge the units (line 1244). The import graph, with re-exports resolved to the defining file, has
+8 strongly connected components: 3 cycles between modules and 5 parent/child groups. Each edge
+below was read at its citation. Paths are relative to `crates/`, with `src/` dropped.
 
-| Cycle | Edges | Fix in Rust |
+| Component | Edges | Fix in Rust |
 |---|---|---|
-| `zed-kernel`: `error`, `family`, `value` | `error` imports `family::Keypath`; `family` imports `error` and `value`; `value` imports `family` | `Value` and `Family` are one recursive type, so they must share a unit; move `Keypath` beside them, and `KernelError` then depends on that unit |
-| `zedc`: `store::interval`, `store::lattice` | `interval` imports `Landmarks`; `lattice` imports `End`, `IntervalSet` | Move `Landmarks` to its own file |
-| `zedc`: `check`, `elab`, `stage` | `check` imports `elab::Tables`; `elab` imports `check`, calls `stage::free`; `stage` imports `elab::Unit` | Move `Tables`, `Unit` and `Def` to a file below all three |
+| `zed-kernel`: `error`, `family`, `value` | `error.rs:9` `Keypath`, `:44` `Value`; `family.rs:14` `KernelError`, `:15` `Value`; `value.rs:17` `Family` | Merge. `Value` and `Family` (`family.rs:24`) are one recursive type, so they share a unit. `Keypath` (`family.rs:18`) is `Vec<Value>`, `KernelError` holds `Value`, and `Family`'s fallible methods (`union`, `family.rs:206`) return `KernelError`, so moving `Keypath` alone leaves a cycle; all three go in one file |
+| `zedc`: `store/interval`, `store/lattice` | `interval.rs:14` `Landmarks`; `lattice.rs:13` `End`, `IntervalSet` | Move `Landmarks` (`lattice.rs:21`) to its own file: it holds only `i64` and `Value`, and its methods use neither `End` nor `IntervalSet` |
+| `zedc`: `check`, `elab`, `stage` | `check/mod.rs:44` `Tables`; `elab.rs:31` `check`, `Fit`, `Info`, `:119`, `:124` `stage::free`; `stage.rs:26` `Unit`, `:336` `Def` | Move `Def`, `Test`, `Unit`, `Tables` (`elab.rs:37`, `:51`, `:66`, `:181`) and what `Tables` calls (`topo`, `in_tests`) to a file below all three. None holds a `check` type. `Unit::close` (`elab.rs:76`) stays above `stage` as a function, since it needs `Cones` |
+| `zed-kernel`: `types`, `types/bdd` | `types.rs:36` `Form`, `Part`, `:1297` `bdd::Literal`; `types/bdd.rs:39` `Morphism`, `Op`, `Row`, `mix` | Move `Op` and `mix` to a leaf file, and the `Literal` impls of `Row` and `Morphism` with the tables `TUPLES` and `MORPHISMS` (`bdd.rs:65`–`:78`) into `types`. `Bdd<A>` and `Part<A>` are generic in `A`, so no recursive type crosses the two files |
+| `zedc`: `canon`, `canon/serial` | `canon/mod.rs:206` `serial::def`; `canon/serial.rs:13` `Def` | Move `Def` and `Facet` (`canon/mod.rs:58`, `:46`) to a leaf file |
+| `zedc`: `zir`, `zir/text` | `zir/mod.rs:342`, `:414` and 11 more, `text::spell`, `text::edge`, `text::pattern`; `zir/text.rs:36` the node types, `any_domain`, `kind_name`, `:189` `op_name` | Move the node types and the three naming functions to a leaf file that `validate` (`zir/mod.rs:386`) and `zir/text.rs` both import |
+| `zedc`: `lex`, `lex/comment`, `lex/number`, `lex/string` | `lex/mod.rs:17` `Holes`, `:165`, `:194` `comment::comment`, `:204` `number::number`, `:208` `string::string`; `comment.rs:2`, `number.rs:21`, `string.rs:24` `Error`, `ErrorKind`, `Span` and others; `string.rs:24` `lex_from`, `comment` | Move `Span`, `Tok`, `Part`, `Token`, `ErrorKind`, `Error` (`lex/mod.rs:21`–`:107`) to a leaf file, which frees `comment` and `number`. Merge `lex_from` and `string`: `lex_from` (`lex/mod.rs:181`) calls `string::string`, which calls `lex_from` for a hole (`string.rs:99`), and mutual recursion stays within a unit |
+| `zedc`: `ast`, `ast/stmts`, `ast/types` | `ast/mod.rs:21`, `:22` the re-exports; `ast/stmts.rs:6` `Builder`, `Expr`, `Param`, `Type` and others; `ast/types.rs:6` `Builder`, `Error`, `Expr` | Merge all three. `ExprKind` holds `Param`, `Type`, `Pattern` and `Stmt` (`ast/mod.rs:80`, `:92`, `:101`, `:107`), while `Param` (`ast/types.rs:65`) and `StmtKind` (`ast/stmts.rs:26`) hold `Expr`, so these are recursive types. `Builder::node` (`ast/mod.rs:347`) and `Builder::block` (`ast/stmts.rs:91`) are mutually recursive too |
 
-A parent also imports its children's items while a child reads its parent: `types` with `bdd`,
-`canon` with `serial`, `lex` with `comment`, `number`, `string`, and `zir` with `text`. These were
-found by a coarser test (a `child::` path in the parent, `super::` in the child), so treat them
-as hypotheses. Moving the shared items to a leaf file fixes each. Modules are a Rust unit of
-organization, and Zed units are files, so this is a Rust refactor, cheap and safe to do now.
+A ninth component in the scanner's first run, `lib` with `term`, came from `use super::*` inside
+the inline module `term::build` (`term.rs:317`), and is not a cycle. Zed units are files, so all of
+this is a Rust refactor, cheap and safe to do now.
 
 ## Workarounds that depend on cost
 
 ### Gap 11. Mutation (workaround)
 
-Confirmed counts: `&mut self` 431; other `&mut` 572; `let mut` 871; field assignment 144; index
+Confirmed counts: `&mut self` 431; other `&mut` 572; `let mut` and `let` tuples with `mut` 871; field assignment 144; index
 assignment 114; compound assignment 236; `push` 529, `pop` 73, `insert` 206, `remove` 61, `entry` 47;
 `iter_mut`, `get_mut`, `or_default` and similar 110; `mem::take`, `replace`, `swap` 50; `FnMut` 27.
 
@@ -325,9 +363,11 @@ which 196 inside a loop body; `?` 1015, of which 276 in a loop; `continue` 110; 
   `satisfiable`, `presburger.rs:611`) need distinct atoms, since unions flatten.
 - Guard `return`s outside loops (596) become `if`/`else` or `match`. `Elab::call_value` and
   `Ck::apply_one` hold 14 each, so depth grows: split into functions. Mechanical but large.
-- A `return` or `?` in a loop becomes `loop` with `break e`, or `where(…).first`. Short-circuit
-  words are not in the prelude: `.any`, `.all` 172, `.find`, `.position` 87. Add them to the
-  standard library. That they stop early relies on demand (inferred from line 141).
+- A `return` or `?` in a loop becomes `loop` with `break e`, or `where(…).first`. The Rust uses `.any`, `.all`
+  172 times and `.find`, `.position` 87 times. These words are undefined: the prelude already calls
+  `.all` and `.any` (`zed/prelude/cost.zed:47`, `:48`, `:59`, `:64`; `revision.zed:89`), as does
+  line 1007, but no words table lists them and no prelude file defines them. Add them to the words
+  table. That they stop early relies on demand (inferred from line 141).
 - `continue` becomes `for … where`; the two labels (`Search::retest`, `empty.rs:303`;
   `Search::narrow_tuples`, `:349`) become a helper with `.all`.
 
@@ -337,7 +377,7 @@ which 196 inside a loop body; `?` 1015, of which 276 in a loop; `continue` 110; 
   and `checked_*` (33) detect it. Zed's `int` is unbounded, so a direct port never refuses and could
   differ from the Rust oracle at S.3, or run far longer. The bound must be ported as an explicit
   test (`MAX_BITS` likewise, `num.rs:19`).
-- **`as` casts** (272): most go, but a truncating cast must become `% 2^k`.
+- **`as` casts** (272): most go, but a truncating cast must become `mod 2 ** k`.
 
 ## Mechanical rewrites
 
@@ -360,6 +400,9 @@ Confirmed against sec:grammar; counts in the appendix.
 | `x @ pat` | 10 | `x is T` covers type tests; a nested binding needs a second `match` |
 | Slice patterns | 43 | Test `.len`, then index |
 | Same-scope `let` rebinding | 44 | Rename: rebinding in one scope is an error (line 2385) |
+| Integer division: `rem_euclid`, `div_euclid`, and their `checked_` forms | 20, 12, 2 | `mod` and `div`, which are Euclidean (line 589) and give `#divByZero` |
+| Truncating `/` and `%` on integers | 16, 22 | `div` and `mod`, since `/` is on float and `rat` only, and truncating variants are library functions (line 589). The results agree when the division is exact (`hull.rs:89`, `num.rs:37`) or the dividend is nonnegative and the divisor positive. Sites where an operand may be negative must be read at S.3: midpoints (`revision.rs:420`, `presburger.rs:1379`), `gcd` (`presburger.rs:839`, `preimage.rs:2533`), parity `k % 2 == 1` (`revision.rs:74`, `:444`), which in Zed is true for an odd negative `k` |
+| `saturating_add`, `saturating_mul`, `saturating_sub` | 9, 6, 3 | `saturating_sub` becomes an `if`. The other two guard a machine word and vanish on an unbounded `int`, except for `eval.rs:1385` and `num.rs:61`, where the test against `MAX_BITS` stays as written. In `cost.rs`, costs then no longer stop at the maximum, so a comparison of very large costs can differ from the Rust at S.3 |
 | Machine integers (`usize` 760, `i128` 167, `u64` 188, `i64` 206) | | `int` with a domain |
 | `Vec`, `HashMap`, `BTreeMap`, sets, `imbl` | 1668, 207, 287, 36 | `[T]`, `K ->? V`, a set is a self-map; keys need a natural order, which excludes NaN-admitting floats |
 | `.sort`, `.dedup`, `.retain`, `.truncate`, `.windows`, `peekable` | 27, 12, 9, 17, 7, 13 | `sort`, `.sort(by: le)`, `group`, `where`, `take`, `zip` with `drop`, an index |
