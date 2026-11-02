@@ -3,12 +3,17 @@
 //! Each test builds the kernel term that a small real program elaborates to and checks what
 //! it computes: one or more tests per generator, the failure rules, ports, and the limits.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use zed_kernel::num::MAX_BITS;
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{
-    Evaluator, Evidence, Family, FixKind, GuardPos, KernelError, Pattern, Prim, Term, Value, World,
-    eval,
+    Evaluator, Evidence, Family, FixKind, GuardPos, KernelError, Lookup, Pattern, Prim, Schedule,
+    Term, Value, World, eval,
 };
 use zed_tests::kernel::*;
+use zed_tests::scaling::check_order;
 
 mod deep;
 mod scaling;
@@ -818,4 +823,172 @@ fn a_step_or_guard_of_the_wrong_kind_is_reported() {
     for (t, msg) in cases {
         assert_eq!(eval(&t).unwrap_err(), KernelError::Type(msg.into()));
     }
+}
+
+fn every_schedule() -> Vec<Schedule> {
+    vec![Schedule::Rounds, Schedule::Pull, Schedule::Chaotic(7)]
+}
+
+/// A family's key is the value with each `-0.0` made `0.0`, so a `fix` over floats reads an
+/// entry by either zero, whichever order the schedule takes the entries in.
+#[test]
+fn a_fix_reads_its_entries_by_key() {
+    // A price table where the entry at 1.0 reads the entry at a zero computed as -0.0.
+    let domain = || lit(Family::set([Value::float(0.0), Value::float(1.0)]));
+    let read_at = |key: Value| {
+        definedness(
+            domain(),
+            if_(
+                eq(var("i"), lit(Value::float(1.0))),
+                get(var("this"), lit(key)),
+                lit(5),
+            ),
+        )
+    };
+    let pair = |x: f64| Value::tuple(vec![Value::float(x), s("a")]);
+    let in_a_tuple = definedness(
+        lit(Family::set([pair(0.0), pair(1.0)])),
+        if_(
+            eq(var("i"), lit(pair(1.0))),
+            get(var("this"), lit(pair(-0.0))),
+            lit(5),
+        ),
+    );
+    let on_itself = definedness(domain(), get(var("this"), lit(Value::float(-0.0))));
+    for schedule in every_schedule() {
+        let run = |t: &Term| Evaluator::new(World::new()).with_schedule(schedule).run(t);
+        let by_negative = run(&read_at(Value::float(-0.0))).unwrap();
+        assert_eq!(by_negative, run(&read_at(Value::float(0.0))).unwrap());
+        assert_eq!(
+            by_negative.to_string(),
+            "{0.0 -> 5, 1.0 -> 5}",
+            "{schedule:?}"
+        );
+        assert_eq!(
+            run(&in_a_tuple).unwrap().to_string(),
+            r#"{(0.0, "a") -> 5, (1.0, "a") -> 5}"#,
+            "{schedule:?}"
+        );
+        // Outside the domain is still `#notFound`.
+        assert_eq!(
+            run(&read_at(Value::float(2.0))).unwrap().to_string(),
+            "{0.0 -> 5, 1.0 -> #notFound}",
+            "{schedule:?}"
+        );
+        // Both entries read the entry at zero, which reads itself: a cycle, not `#notFound`.
+        assert_eq!(
+            run(&on_itself).unwrap_err(),
+            KernelError::Stalled {
+                keys: vec![Value::float(0.0), Value::float(1.0)],
+            },
+            "{schedule:?}"
+        );
+    }
+}
+
+/// A chain of `n` entries, each reading the one before by a key that holds `-0.0`.
+#[test]
+fn reads_by_a_key_holding_negative_zero_scale() {
+    let chain = |n: usize| {
+        let key = |i: Term, x: f64| prim(Prim::Tuple, vec![lit(Value::float(x)), i]);
+        definedness(
+            lit(Family::set((0..n as i64).map(|i| {
+                Value::tuple(vec![Value::float(0.0), Value::Int(i)])
+            }))),
+            if_(
+                eq(nth(var("i"), 1), lit(0)),
+                lit(0),
+                add(
+                    get(var("this"), key(sub(nth(var("i"), 1), lit(1)), -0.0)),
+                    lit(1),
+                ),
+            ),
+        )
+    };
+    let (small, large) = (chain(1_000), chain(8_000));
+    for schedule in [Schedule::Rounds, Schedule::Pull] {
+        check_order("a chain read by -0.0 keys", 1_000, 1, |n| {
+            let t = if n == 1_000 { &small } else { &large };
+            let out = Evaluator::new(World::new()).with_schedule(schedule).run(t);
+            let Ok(Value::Family(f)) = out else {
+                panic!("a chain is defined")
+            };
+            assert_eq!(f.len(), n);
+        });
+    }
+}
+
+/// Answers with the text of the key it is asked for, and counts the times it is asked.
+#[derive(Debug, Default)]
+struct Rates(AtomicUsize);
+
+impl Lookup for Rates {
+    fn get(&self, key: &Value) -> Result<Value, String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(Value::str(&format!("rate at {key}")))
+    }
+}
+
+/// A wave sees one value at each key, and `0.0` and `-0.0` are one key.
+#[test]
+fn a_lookup_port_is_read_by_key() {
+    let read = |x: f64| {
+        let k = Value::tuple(vec![Value::float(x), s("usd")]);
+        get(Term::Read("rates".into()), lit(k))
+    };
+    let port = Arc::new(Rates::default());
+    let mut run = Evaluator::new(World::new().source("rates", port.clone()));
+    let out = run
+        .run(&prim(Prim::Tuple, vec![read(-0.0), read(0.0), read(-0.0)]))
+        .unwrap();
+    let rate = Value::str(r#"rate at (0.0, "usd")"#);
+    assert_eq!(out, Value::tuple(vec![rate.clone(); 3]));
+    assert_eq!(port.0.load(Ordering::SeqCst), 1);
+    let keys: Vec<&Value> = run.world.reads["rates"].keys().collect();
+    assert_eq!(keys, [&Value::tuple(vec![Value::float(0.0), s("usd")])]);
+}
+
+/// Whether a power is built does not depend on how it is written: `x ** e` gives what
+/// `x ** a * x ** b` gives for `a + b = e`, at every size around the limit.
+#[test]
+fn a_power_is_the_product_of_its_halves() {
+    let pow = |x: &Term, e: i64| bin(Prim::Pow, x.clone(), lit(e));
+    let max = MAX_BITS as i64;
+    let big = pow(&lit(2), 1000);
+    let cases = [
+        // 2^600000 has 600,001 bits, so it fits, and so does the largest power of two.
+        (lit(2), 600_000, true),
+        (lit(-2), 600_001, true),
+        (lit(2), max - 1, true),
+        (lit(2), max, false),
+        // 3^e has floor(e log2 3) + 1 bits.
+        (lit(3), 661_577, true),
+        (lit(3), 661_578, false),
+        // (2^1000)^e has 1000 e + 1 bits.
+        (big.clone(), 1048, true),
+        (big, 1049, false),
+    ];
+    for (x, e, fits) in cases {
+        let whole = eval(&pow(&x, e));
+        let halves = eval(&mul(pow(&x, e / 2), pow(&x, e - e / 2)));
+        assert!(whole == halves, "{x:?} ** {e} and its halves differ");
+        assert_eq!(whole.is_ok(), fits, "{x:?} ** {e}");
+        if !fits {
+            assert_eq!(whole.unwrap_err(), KernelError::Overflow);
+        }
+    }
+}
+
+/// An exponent past any machine word: `0`, `1` and `-1` stay small, and anything else overflows.
+#[test]
+fn a_power_by_a_huge_exponent() {
+    let huge = bin(Prim::Pow, lit(2), lit(100));
+    let to_huge = |x: i64| bin(Prim::Pow, lit(x), huge.clone());
+    let odd = add(huge.clone(), lit(1));
+    assert_eq!(eval(&to_huge(0)).unwrap(), Value::Int(0));
+    assert_eq!(eval(&to_huge(1)).unwrap(), Value::Int(1));
+    assert_eq!(eval(&to_huge(-1)).unwrap(), Value::Int(1));
+    assert_eq!(eval(&bin(Prim::Pow, lit(-1), odd)).unwrap(), Value::Int(-1));
+    assert_eq!(eval(&to_huge(2)).unwrap_err(), KernelError::Overflow);
+    assert_eq!(eval(&to_huge(-2)).unwrap_err(), KernelError::Overflow);
 }

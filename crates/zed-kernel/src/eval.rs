@@ -12,6 +12,7 @@
 //! recorded, so a loop written as tail recursion runs in constant space.
 
 use imbl::{OrdMap, Vector};
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -1273,24 +1274,25 @@ impl<'t> Machine<'_, 't> {
             if let Value::Atom(_) = k {
                 return give(k.clone());
             }
+            let k = as_key(k);
             let fix = &part.of;
-            let found = match fix.defined.borrow().get(k) {
+            let found = match fix.defined.borrow().get(&*k) {
                 Some((v, r)) if *r < part.round => Some(v.clone()),
                 _ => None,
             };
             return match found {
                 Some(v) => give(v),
-                None if !fix.domain.contains(k) => give(Value::atom("notFound")),
+                None if !fix.domain.contains(&*k) => give(Value::atom("notFound")),
                 None if self.ev.schedule == Schedule::Pull
-                    && !fix.busy.borrow().contains(k)
-                    && !fix.stalled.borrow().contains(k) =>
+                    && !fix.busy.borrow().contains(&*k)
+                    && !fix.stalled.borrow().contains(&*k) =>
                 {
-                    Ok(Step::Demand(fix.clone(), k.clone()))
+                    Ok(Step::Demand(fix.clone(), k.into_owned()))
                 }
                 // An entry defined in this Jacobi round is not yet visible to it.
                 None => Err(Stop::Undefined {
                     fix: fix.id,
-                    key: k.clone(),
+                    key: k.into_owned(),
                 }),
             };
         }
@@ -1305,15 +1307,16 @@ impl<'t> Machine<'_, 't> {
             if let Value::Atom(_) = k {
                 return give(k.clone());
             }
+            let k = as_key(k);
             let world = &mut self.ev.world;
-            if let Some(v) = world.reads.get(&**port).and_then(|r| r.get(k)) {
+            if let Some(v) = world.reads.get(&**port).and_then(|r| r.get(&*k)) {
                 return give(v.clone());
             }
             let v = world.sources[&**port]
-                .get(k)
+                .get(&k)
                 .map_err(|why| KernelError::Port(port.to_string(), why))?;
             let reads = world.reads.entry(port.to_string()).or_default();
-            reads.insert(k.clone(), v.clone());
+            reads.insert(k.into_owned(), v.clone());
             return give(v);
         }
         let mut vals = Vec::with_capacity(args.len());
@@ -1929,6 +1932,15 @@ fn sized(n: BigInt) -> Result<Value, KernelError> {
     Ok(Value::int(n))
 }
 
+/// The key `k` reads: `k` itself unless it holds a `-0.0`, which its key does not. Domains
+/// and maps of entries hold keys, and the order on values tells `-0.0` from `0.0`.
+fn as_key(k: &Value) -> Cow<'_, Value> {
+    match k.is_key() {
+        true => Cow::Borrowed(k),
+        false => Cow::Owned(k.key()),
+    }
+}
+
 /// An integer `+`, `-`, `*`, `div`, `mod` or `**` of two integers, either of either width:
 /// in a machine word when the result fits, else unbounded. `None` for a negative power.
 fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelError> {
@@ -1966,8 +1978,10 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
                 x
             }
         }
+        // `|x| >= 2^(bits - 1)`, so past this bound the power has more than `MAX_BITS` bits.
+        // Within it the power has at most twice that, and `sized` makes the exact check.
         _ => match u32::try_from(&y) {
-            Ok(e) if x.bits().saturating_mul(u64::from(e)) <= MAX_BITS + 64 => x.pow(e),
+            Ok(e) if (x.bits() - 1).saturating_mul(u64::from(e)) < MAX_BITS => x.pow(e),
             _ => return overflow(),
         },
     };
