@@ -22,8 +22,8 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module};
 
 use zed_kernel::Prim;
-use zedc::zir::memory::{Mode, Plan};
-use zedc::zir::{Op, Region, Src, binds};
+use zedc::zir::memory::{Mode, RegionPlan};
+use zedc::zir::{Op, Src, binds};
 
 use zed_rt::Word;
 
@@ -69,7 +69,8 @@ pub(crate) struct Funcs {
 struct Gen<'a, M: Module> {
     m: &'a mut M,
     t: &'a Tables,
-    plan: &'a Plan,
+    /// Each region's plan, by the region's number.
+    plans: &'a [&'a RegionPlan],
     hooks: HashMap<&'static str, FuncId>,
     bodies: Vec<FuncId>,
     entries: Vec<FuncId>,
@@ -82,12 +83,38 @@ struct Fx<'b> {
     err: Block,
 }
 
-/// Declares and defines every function of graph `g` under `plan` in `m`.
+/// A region being emitted. Regions nest as deep as the term and the arms of `if` and `match`
+/// are inline, so the regions in progress are on a stack.
+struct Frame {
+    /// The region's number.
+    at: usize,
+    args: Vec<Loc>,
+    /// The outputs of the nodes emitted so far; the next node is the one at this length.
+    outs: Vec<Vec<Loc>>,
+    /// The inputs of the node with `open` arms.
+    ins: Vec<Loc>,
+    /// The `if` or `match` whose arms are being emitted.
+    open: Option<Open>,
+}
+
+/// An `if` or a `match` whose test is emitted, with the arms that remain.
+struct Open {
+    merge: Block,
+    fail: Block,
+    arms: Vec<Block>,
+    /// The number of binders of each arm.
+    binders: Vec<usize>,
+    /// The next arm.
+    next: usize,
+    /// Whether the condition is already released, as [`Gen::finish`] needs to know.
+    early: bool,
+}
+
+/// Declares and defines every function of the graph in `t`, with `plans` by region, in `m`.
 pub(crate) fn define<M: Module>(
     m: &mut M,
     t: &Tables,
-    plan: &Plan,
-    g: &Region,
+    plans: &[&RegionPlan],
 ) -> Result<Funcs, String> {
     let mut hooks = HashMap::new();
     for (name, p, r) in HOOKS {
@@ -116,12 +143,12 @@ pub(crate) fn define<M: Module>(
     let mut cg = Gen {
         m,
         t,
-        plan,
+        plans,
         hooks,
         bodies,
         entries,
     };
-    cg.root(root, g)?;
+    cg.root(root)?;
     for i in 0..t.lambdas.len() {
         cg.body(i)?;
         cg.entry(i)?;
@@ -172,7 +199,7 @@ impl<M: Module> Gen<'_, M> {
         Ok(())
     }
 
-    fn root(&mut self, id: FuncId, g: &Region) -> Result<(), String> {
+    fn root(&mut self, id: FuncId) -> Result<(), String> {
         self.function(id, 0, 1, |cg, fx, _| {
             for i in 0..cg.t.lambdas.len() {
                 let r = cg.fref(fx, cg.entries[i]);
@@ -180,16 +207,16 @@ impl<M: Module> Gen<'_, M> {
                 let l = fx.b.ins().iconst(I64, i as i64);
                 cg.call(fx, "rt_register", &[l, a]);
             }
+            let g = &cg.t.regions[0].region;
             let args = g.args.iter().map(|_| Loc::Const(Word::state())).collect();
-            let out = cg.region(fx, g, "r", args)?;
-            Ok(vec![out[0]])
+            Ok(vec![cg.walk(fx, 0, args)?[0]])
         })
     }
 
     fn body(&mut self, i: usize) -> Result<(), String> {
         let l = &self.t.lambdas[i];
-        let node = &self.t.nodes[l.node].node;
-        let region = &node.regions[0];
+        let node = self.t.nodes[l.node].node();
+        let region = &self.t.regions[l.body].region;
         // A body that uses ports takes their states after its parameters, as state words
         // like any other, and returns them after its value; the states order nothing here,
         // since the code runs the effects in the order of the nodes.
@@ -201,7 +228,7 @@ impl<M: Module> Gen<'_, M> {
             return Err(format!(
                 "native: lambda body `{}` has {} results; a body returns one value and the \
                  states of the {} it takes",
-                l.path,
+                self.t.region_path(l.body),
                 region.results.len(),
                 if states == 1 {
                     "1 port".to_string()
@@ -220,7 +247,7 @@ impl<M: Module> Gen<'_, M> {
                 let w = cg.checked(fx, (w[0], w[1]));
                 args.push(cg.put(fx, w));
             }
-            Ok(vec![cg.region(fx, region, &l.path, args)?[0]])
+            Ok(vec![cg.walk(fx, l.body, args)?[0]])
         })
     }
 
@@ -317,55 +344,120 @@ impl<M: Module> Gen<'_, M> {
         self.call(fx, "rt_dec", &[w.0, w.1]);
     }
 
-    fn region(
-        &mut self,
-        fx: &mut Fx<'_>,
-        r: &Region,
-        path: &str,
-        args: Vec<Loc>,
-    ) -> Result<Vec<W>, String> {
-        let plan = self.plan;
-        let rp = plan
-            .regions
-            .get(path)
-            .ok_or_else(|| format!("native: region `{path}` has no plan"))?;
-        for &a in &rp.entry_drops {
+    /// Emits region `at`, its arms inline, on `args`; gives its results.
+    fn walk(&mut self, fx: &mut Fx<'_>, at: usize, args: Vec<Loc>) -> Result<Vec<W>, String> {
+        let t = self.t;
+        let mut stack = vec![self.enter(fx, at, args)];
+        while let Some(top) = stack.last_mut() {
+            let info = &t.regions[top.at];
+            let k = top.outs.len();
+            if let Some(open) = &mut top.open {
+                let id = info.ids[k];
+                let i = open.next;
+                if i < open.arms.len() {
+                    open.next += 1;
+                    fx.b.switch_to_block(open.arms[i]);
+                    let mut args = Vec::new();
+                    for b in 0..open.binders[i] {
+                        let k = fx.b.ins().iconst(I64, b as i64);
+                        let w = self.call(fx, "rt_out", &[k]);
+                        args.push(self.put(fx, (w[0], w[1])));
+                    }
+                    args.extend_from_slice(&top.ins[1..]);
+                    let f = self.enter(fx, t.nodes[id].subs[i], args);
+                    stack.push(f);
+                } else {
+                    let (merge, fail) = (open.merge, open.fail);
+                    fx.b.switch_to_block(fail);
+                    self.fail(fx, t.nodes[id].node().outputs.len(), merge);
+                    fx.b.switch_to_block(merge);
+                    let ws = self.params(fx, merge);
+                    self.finish(fx, top, ws);
+                }
+            } else if k < info.ids.len() {
+                let id = info.ids[k];
+                let node = t.nodes[id].node();
+                let np = &self.plans[top.at].nodes[k];
+                top.ins = node
+                    .inputs
+                    .iter()
+                    .map(|s| self.src(s, &top.args, &top.outs))
+                    .collect();
+                for &j in &np.dups {
+                    let w = self.get(fx, top.ins[j]);
+                    self.inc(fx, w);
+                }
+                match &node.op {
+                    Op::If => {
+                        // An `if` reads its condition only to choose an arm, so an owned
+                        // condition the arms do not take is released then.
+                        let c = &node.inputs[0];
+                        let early = !node.inputs[1..].contains(c) && np.drops.contains(c);
+                        top.open = Some(self.branch(fx, id, &top.ins, early));
+                    }
+                    Op::Match(ps) => {
+                        let binders = ps.iter().map(binds).collect();
+                        top.open = Some(self.matched(fx, id, binders, &top.ins));
+                    }
+                    _ => {
+                        let ws = self.node(fx, id, &top.ins)?;
+                        self.finish(fx, top, ws);
+                    }
+                }
+            } else {
+                let r = &info.region;
+                for &i in &self.plans[top.at].result_dups {
+                    let l = self.src(&r.results[i], &top.args, &top.outs);
+                    let w = self.get(fx, l);
+                    self.inc(fx, w);
+                }
+                let mut out = Vec::new();
+                for s in &r.results {
+                    let l = self.src(s, &top.args, &top.outs);
+                    out.push(self.get(fx, l));
+                }
+                stack.pop();
+                let Some(up) = stack.last() else {
+                    return Ok(out);
+                };
+                let open = up.open.as_ref().expect("an arm's node has its arms open");
+                self.jump(fx, open.merge, &out);
+            }
+        }
+        unreachable!("the last region returns its results")
+    }
+
+    /// The frame of region `at` on `args`, after the drops at its entry.
+    fn enter(&mut self, fx: &mut Fx<'_>, at: usize, args: Vec<Loc>) -> Frame {
+        for &a in &self.plans[at].entry_drops {
             let w = self.get(fx, args[a]);
             self.dec(fx, w);
         }
-        let mut outs: Vec<Vec<Loc>> = Vec::new();
-        for (k, node) in r.nodes.iter().enumerate() {
-            let at = format!("{path}.{k}");
-            let np = &rp.nodes[k];
-            let ins: Vec<Loc> = node
-                .inputs
-                .iter()
-                .map(|s| self.src(s, &args, &outs))
-                .collect();
-            for &j in &np.dups {
-                let w = self.get(fx, ins[j]);
-                self.inc(fx, w);
-            }
-            let o = self.node(fx, &at, &ins)?;
-            let o = o.into_iter().map(|w| self.put(fx, w)).collect();
-            outs.push(o);
-            for s in &np.drops {
-                let l = self.src(s, &args, &outs);
-                let w = self.get(fx, l);
-                self.dec(fx, w);
-            }
+        Frame {
+            at,
+            args,
+            outs: Vec::new(),
+            ins: Vec::new(),
+            open: None,
         }
-        for &i in &rp.result_dups {
-            let l = self.src(&r.results[i], &args, &outs);
+    }
+
+    /// Ends frame `f`'s next node with outputs `ws`: keeps them and runs the node's drops.
+    fn finish(&mut self, fx: &mut Fx<'_>, f: &mut Frame, ws: Vec<W>) {
+        let k = f.outs.len();
+        let early = f.open.take().is_some_and(|o| o.early);
+        let o = ws.into_iter().map(|w| self.put(fx, w)).collect();
+        f.outs.push(o);
+        let t = self.t;
+        let released = early.then(|| &t.nodes[t.regions[f.at].ids[k]].node().inputs[0]);
+        for s in &self.plans[f.at].nodes[k].drops {
+            if released == Some(s) {
+                continue;
+            }
+            let l = self.src(s, &f.args, &f.outs);
             let w = self.get(fx, l);
-            self.inc(fx, w);
+            self.dec(fx, w);
         }
-        let mut out = Vec::new();
-        for s in &r.results {
-            let l = self.src(s, &args, &outs);
-            out.push(self.get(fx, l));
-        }
-        Ok(out)
     }
 
     /// The outputs of a node after the first, which are states.
@@ -378,10 +470,9 @@ impl<M: Module> Gen<'_, M> {
         out
     }
 
-    fn node(&mut self, fx: &mut Fx<'_>, at: &str, ins: &[Loc]) -> Result<Vec<W>, String> {
+    fn node(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[Loc]) -> Result<Vec<W>, String> {
         let t = self.t;
-        let id = t.ids[at];
-        let node = &t.nodes[id].node;
+        let node = t.nodes[id].node();
         let n = node.outputs.len();
         Ok(match &node.op {
             Op::Prim(p) if ins.is_empty() && p.arity().is_some() => {
@@ -400,8 +491,6 @@ impl<M: Module> Gen<'_, M> {
                 self.states(fx, w, n)
             }
             Op::Apply => self.apply(fx, id, ins)?,
-            Op::If => self.branch(fx, id, at, ins)?,
-            Op::Match(ps) => self.matched(fx, id, at, ps.iter().map(binds).collect(), ins)?,
             _ => {
                 let w = self.slow(fx, id, ins);
                 self.states(fx, w, n)
@@ -586,7 +675,7 @@ impl<M: Module> Gen<'_, M> {
     fn apply(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[Loc]) -> Result<Vec<W>, String> {
         let t = self.t;
         let ni = &t.nodes[id];
-        let n = ni.node.outputs.len();
+        let n = ni.node().outputs.len();
         let merge = self.merge(fx, n);
         let generic = fx.b.create_block();
         let f = self.get(fx, ins[0]);
@@ -639,23 +728,6 @@ impl<M: Module> Gen<'_, M> {
         Ok(self.params(fx, merge))
     }
 
-    /// Emits arm `i` of node `id` inline on `args`, then jumps to `merge`.
-    fn arm(
-        &mut self,
-        fx: &mut Fx<'_>,
-        id: usize,
-        at: &str,
-        i: usize,
-        args: Vec<Loc>,
-        merge: Block,
-    ) -> Result<(), String> {
-        let t = self.t;
-        let region = &t.nodes[id].node.regions[i];
-        let out = self.region(fx, region, &format!("{at}/{i}"), args)?;
-        self.jump(fx, merge, &out);
-        Ok(())
-    }
-
     /// The runtime's failure word as the node's result, the other outputs states.
     fn fail(&mut self, fx: &mut Fx<'_>, n: usize, merge: Block) {
         let w = self.call_word(fx, "rt_pending", &[]);
@@ -674,16 +746,11 @@ impl<M: Module> Gen<'_, M> {
         fx.b.ins().jump(fx.err, &[]);
     }
 
-    fn branch(
-        &mut self,
-        fx: &mut Fx<'_>,
-        id: usize,
-        at: &str,
-        ins: &[Loc],
-    ) -> Result<Vec<W>, String> {
-        let n = self.t.nodes[id].node.outputs.len();
+    /// The test of `if` node `id`; `early` releases the condition once an arm is chosen.
+    fn branch(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[Loc], early: bool) -> Open {
+        let n = self.t.nodes[id].node().outputs.len();
         let merge = self.merge(fx, n);
-        let arms = [fx.b.create_block(), fx.b.create_block()];
+        let arms = vec![fx.b.create_block(), fx.b.create_block()];
         let fail = fx.b.create_block();
         let slow = fx.b.create_block();
         let c = self.get(fx, ins[0]);
@@ -697,26 +764,24 @@ impl<M: Module> Gen<'_, M> {
         }
         let k = fx.b.ins().iconst(I64, id as i64);
         let r = self.call(fx, "rt_branch", &[k])[0];
-        self.dispatch(fx, r, &[arms[0], arms[1], fail]);
-        for (i, b) in arms.into_iter().enumerate() {
-            fx.b.switch_to_block(b);
-            self.arm(fx, id, at, i, ins[1..].to_vec(), merge)?;
+        // On the fast path the condition is a bool, which holds no cell to release.
+        if early {
+            self.dec(fx, c);
         }
-        fx.b.switch_to_block(fail);
-        self.fail(fx, n, merge);
-        fx.b.switch_to_block(merge);
-        Ok(self.params(fx, merge))
+        self.dispatch(fx, r, &[arms[0], arms[1], fail]);
+        Open {
+            merge,
+            fail,
+            arms,
+            binders: vec![0, 0],
+            next: 0,
+            early,
+        }
     }
 
-    fn matched(
-        &mut self,
-        fx: &mut Fx<'_>,
-        id: usize,
-        at: &str,
-        binders: Vec<usize>,
-        ins: &[Loc],
-    ) -> Result<Vec<W>, String> {
-        let n = self.t.nodes[id].node.outputs.len();
+    /// The test of `match` node `id`, whose arms have `binders` binders.
+    fn matched(&mut self, fx: &mut Fx<'_>, id: usize, binders: Vec<usize>, ins: &[Loc]) -> Open {
+        let n = self.t.nodes[id].node().outputs.len();
         let merge = self.merge(fx, n);
         for l in ins {
             let w = self.get(fx, *l);
@@ -724,25 +789,19 @@ impl<M: Module> Gen<'_, M> {
         }
         let k = fx.b.ins().iconst(I64, id as i64);
         let r = self.call(fx, "rt_match", &[k])[0];
-        let mut blocks: Vec<Block> = binders.iter().map(|_| fx.b.create_block()).collect();
+        let mut arms: Vec<Block> = binders.iter().map(|_| fx.b.create_block()).collect();
         let fail = fx.b.create_block();
-        blocks.push(fail);
-        self.dispatch(fx, r, &blocks);
-        for (i, nb) in binders.iter().enumerate() {
-            fx.b.switch_to_block(blocks[i]);
-            let mut args = Vec::new();
-            for b in 0..*nb {
-                let k = fx.b.ins().iconst(I64, b as i64);
-                let w = self.call(fx, "rt_out", &[k]);
-                args.push(self.put(fx, (w[0], w[1])));
-            }
-            args.extend_from_slice(&ins[1..]);
-            self.arm(fx, id, at, i, args, merge)?;
+        arms.push(fail);
+        self.dispatch(fx, r, &arms);
+        arms.pop();
+        Open {
+            merge,
+            fail,
+            arms,
+            binders,
+            next: 0,
+            early: false,
         }
-        fx.b.switch_to_block(fail);
-        self.fail(fx, n, merge);
-        fx.b.switch_to_block(merge);
-        Ok(self.params(fx, merge))
     }
 }
 

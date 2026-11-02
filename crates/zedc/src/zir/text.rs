@@ -25,6 +25,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use num_bigint::BigInt;
 use zed_kernel::family::Family;
@@ -416,7 +417,7 @@ fn build(lines: &[(Line, usize)], i: &mut usize, path: &[usize]) -> Result<Regio
             let sub = [p.as_slice(), &[regions.len()]].concat();
             match lines.get(*i) {
                 Some((l, _)) if l.path == sub && matches!(l.body, Body::Header(..)) => {
-                    regions.push(build(lines, i, &sub)?);
+                    regions.push(Arc::new(build(lines, i, &sub)?));
                 }
                 _ => break,
             }

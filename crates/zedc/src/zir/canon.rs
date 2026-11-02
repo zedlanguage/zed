@@ -22,6 +22,8 @@
 //! [`key`] hashes a node from the keys of its regions, so the lowering keys each new node
 //! without walking the regions below it again.
 
+use std::sync::Arc;
+
 use zed_kernel::term::{Pattern, Term};
 use zed_kernel::value::Value;
 
@@ -80,7 +82,9 @@ fn normalize(g: &mut Region) {
     g.args.iter_mut().for_each(normal_edge);
     for n in &mut g.nodes {
         normal_shell(n);
-        n.regions.iter_mut().for_each(normalize);
+        n.regions
+            .iter_mut()
+            .for_each(|r| normalize(Arc::make_mut(r)));
     }
 }
 
@@ -172,7 +176,7 @@ pub fn key(g: &Region) -> ContentAddress {
     let inner: Vec<Vec<ContentAddress>> = g
         .nodes
         .iter()
-        .map(|n| n.regions.iter().map(key).collect())
+        .map(|n| n.regions.iter().map(|r| key(r)).collect())
         .collect();
     region_key(g, &inner)
 }
@@ -220,7 +224,7 @@ fn rename_first(g: &mut Region) -> bool {
             for (arm, p) in ps.iter_mut().enumerate() {
                 let mut index = 0;
                 if let Some(name) = rename_in(p, &mut index) {
-                    if let Edge::Value(v) = &mut node.regions[arm].args[index] {
+                    if let Edge::Value(v) = &mut Arc::make_mut(&mut node.regions[arm]).args[index] {
                         v.facets.push(Facet {
                             hint: true,
                             kind: "binder".into(),
@@ -234,7 +238,11 @@ fn rename_first(g: &mut Region) -> bool {
                 }
             }
         }
-        if node.regions.iter_mut().any(rename_first) {
+        if node
+            .regions
+            .iter_mut()
+            .any(|r| rename_first(Arc::make_mut(r)))
+        {
             return true;
         }
     }
@@ -286,6 +294,8 @@ fn each_edge_mut(g: &mut Region, f: &mut dyn FnMut(&mut Edge)) {
     g.args.iter_mut().for_each(&mut *f);
     for node in &mut g.nodes {
         node.outputs.iter_mut().for_each(&mut *f);
-        node.regions.iter_mut().for_each(|r| each_edge_mut(r, f));
+        node.regions
+            .iter_mut()
+            .for_each(|r| each_edge_mut(Arc::make_mut(r), f));
     }
 }

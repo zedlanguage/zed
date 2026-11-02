@@ -2,6 +2,8 @@
 //! drop leaves a cell live, a missing dup frees a cell still in use, and a borrowed argument
 //! given to a parameter that consumes it is the machine's error, word for word.
 
+use std::sync::Arc;
+
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, World};
 use zedc::zir::memory::Mode;
@@ -22,7 +24,7 @@ fn reads_twice() -> zed_kernel::Term {
     )
 }
 
-fn run(g: &zedc::zir::Region, p: &zedc::zir::memory::Plan) -> Result<String, String> {
+fn run(g: &Arc<zedc::zir::Region>, p: &zedc::zir::memory::Plan) -> Result<String, String> {
     zed_native::run(g, p, &mut Evaluator::new(World::new())).map(|o| o.value.to_string())
 }
 

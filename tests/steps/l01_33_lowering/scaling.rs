@@ -27,7 +27,7 @@ pub(crate) fn chain(k: usize) -> Term {
 fn nodes(g: &Region) -> usize {
     g.nodes
         .iter()
-        .map(|n| 1 + n.regions.iter().map(nodes).sum::<usize>())
+        .map(|n| 1 + n.regions.iter().map(|r| nodes(r)).sum::<usize>())
         .sum()
 }
 
@@ -255,6 +255,84 @@ fn lowering_pushes_to_many_ports_scales() {
             scaling::check("lowering pushes to n ports", 2000, |n| {
                 lower(&pushes_to_many_ports(n)).unwrap();
             });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// A price table: `base = 2 * 5; if base < 0 then 0 else if base < 1 then 1 else …`, `d` tests
+/// in a chain, each reading `base` from outside its own region, ending at `d`.
+fn prices(d: usize) -> Term {
+    use zed_kernel::Prim;
+    use zed_kernel::term::build::{if_, prim};
+    let chain = (0..d).rev().fold(lit(d as i64), |rest, i| {
+        let c = prim(Prim::Lt, vec![var("base"), lit(i as i64)]);
+        if_(c, lit(i as i64), rest)
+    });
+    let_("base", prim(Prim::Mul, vec![lit(2i64), lit(5i64)]), chain)
+}
+
+/// The most inputs of any node in `g`.
+fn widest(g: &Region) -> usize {
+    g.nodes
+        .iter()
+        .map(|n| {
+            let below = n.regions.iter().map(|r| widest(r)).max().unwrap_or(0);
+            n.inputs.len().max(below)
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+#[test]
+fn a_name_read_at_every_depth_enters_each_region_once() {
+    // The condition and `base`, however many reads of `base` lie below.
+    assert_eq!(widest(&lower(&prices(40)).unwrap()), 2);
+}
+
+#[test]
+fn a_name_read_at_every_depth_keeps_its_meaning() {
+    use zed_kernel::Prim;
+    use zed_kernel::term::build::{if_, prim};
+    let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
+    for t in [
+        prices(0),
+        prices(1),
+        prices(12),
+        prices(40),
+        // Read in both arms, and in the second through a name bound inside the first level.
+        let_(
+            "a",
+            prim(Prim::Mul, vec![lit(2i64), lit(3i64)]),
+            if_(
+                prim(Prim::Lt, vec![var("a"), lit(9i64)]),
+                let_(
+                    "b",
+                    prim(Prim::Add, vec![var("a"), var("a")]),
+                    if_(
+                        prim(Prim::Lt, vec![var("b"), var("a")]),
+                        var("a"),
+                        prim(Prim::Add, vec![var("b"), var("a")]),
+                    ),
+                ),
+                var("a"),
+            ),
+        ),
+    ] {
+        assert_eq!(run(&raise(&lower(&t).unwrap()).unwrap()), run(&t), "{t}");
+    }
+}
+
+#[test]
+fn a_name_read_at_every_depth_scales() {
+    // Each read carried the name through every region above it, as a new input of each.
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(|| {
+            scaling::check("lowering n nested reads of one name", 500, |d| {
+                lower(&prices(d)).unwrap();
+            })
         })
         .unwrap()
         .join()

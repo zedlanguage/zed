@@ -1,27 +1,35 @@
 //! What the generated code and the runtime hooks share about one graph: each node the
 //! counting machine runs, numbered, with its plan; each lambda; the constants; the
 //! primitives used as values; the lookup ports.
+//!
+//! The tables share the graph: a node is its region and its index there, so entering a node
+//! costs a reference count however much lies below it. Where a node is (`r.3/0.1`) is worked
+//! out for a message, from the links up, and is not kept: a path is as long as its depth.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::Write as _;
+use std::sync::Arc;
 
 use zed_kernel::{Prim, Value};
-use zedc::zir::memory::{Mode, Plan};
-use zedc::zir::{Node, Op, Region, RegionKind, Src};
+use zedc::zir::memory::{Mode, Plan, RegionPlan};
+use zedc::zir::{Node, Op, Region, Src};
 
 use zed_rt::Word;
 
 /// One node of a planned region.
 pub(crate) struct NodeInfo {
-    /// The node.
-    pub node: Node,
-    /// The node alone in a region whose arguments are its inputs, for the kernel.
-    pub alone: Region,
-    /// Where it is (`r.3/0.1`), for messages.
-    pub path: String,
+    /// The graph's region that holds the node.
+    region: Arc<Region>,
+    /// The number of that region in [`Tables::regions`].
+    pub at: usize,
+    /// The node's index in that region.
+    pub k: usize,
     /// How it takes each input.
     pub modes: Vec<Mode>,
     /// For an `if` or a `match`: how each arm holds its arguments.
     pub arms: Vec<Vec<Mode>>,
+    /// For a lambda, an `if` or a `match`: the numbers of its regions.
+    pub subs: Vec<usize>,
     /// For a lambda: its index among the lambdas.
     pub lambda: Option<usize>,
     /// For an `apply` the plan resolves: the callee's lambda.
@@ -30,12 +38,29 @@ pub(crate) struct NodeInfo {
     pub error: Option<String>,
 }
 
-/// One lambda: its node, the path of its body, its parameters and how the body holds them.
+impl NodeInfo {
+    /// The node.
+    pub fn node(&self) -> &Node {
+        &self.region.nodes[self.k]
+    }
+}
+
+/// One planned region: the root, a lambda's body or an arm.
+pub(crate) struct RegionInfo {
+    /// The graph's region.
+    pub region: Arc<Region>,
+    /// The node that holds it and its index among that node's regions; the root has none.
+    up: Option<(usize, usize)>,
+    /// The numbers of its nodes.
+    pub ids: Vec<usize>,
+}
+
+/// One lambda: its node, the number of its body, its parameters and how the body holds them.
 pub(crate) struct LambdaInfo {
     /// The lambda node's number.
     pub node: usize,
-    /// The body's path.
-    pub path: String,
+    /// The body's number among the regions.
+    pub body: usize,
     /// The number of parameters, before the captures.
     pub params: usize,
     /// How the body holds each parameter.
@@ -44,10 +69,10 @@ pub(crate) struct LambdaInfo {
 
 /// The tables of one graph.
 pub(crate) struct Tables {
-    /// The nodes, in the order the generator visits them.
+    /// The nodes, in preorder.
     pub nodes: Vec<NodeInfo>,
-    /// Each node's number by its path.
-    pub ids: HashMap<String, usize>,
+    /// The planned regions; the root is the first.
+    pub regions: Vec<RegionInfo>,
     /// The lambdas.
     pub lambdas: Vec<LambdaInfo>,
     /// The constants that are not scalars, which the heap holds uncounted.
@@ -55,71 +80,108 @@ pub(crate) struct Tables {
     /// The primitives used as values.
     pub prims: Vec<Prim>,
     /// The lookup ports.
-    pub ports: Vec<std::sync::Arc<str>>,
+    pub ports: Vec<Arc<str>>,
     /// Each lookup port's index among the ports.
-    pub port_at: HashMap<std::sync::Arc<str>, usize>,
+    pub port_at: HashMap<Arc<str>, usize>,
     /// Each constant's index among the constants.
     const_at: BTreeMap<Value, usize>,
-    /// Each lambda's index by the path of its body.
-    lambda_at: HashMap<String, usize>,
     /// Whether a `match` fuses its release.
     pub fuse: bool,
 }
 
+/// A region being numbered. Regions nest as deep as the term, so the regions in progress are
+/// on a stack, each with its next node.
+struct Visit<'g, 'p> {
+    /// Its number.
+    at: usize,
+    /// The region.
+    region: &'g Arc<Region>,
+    /// Its path, the plan's own key.
+    path: &'p str,
+    /// The next node.
+    k: usize,
+}
+
 impl Tables {
-    /// The tables of graph `g` under `plan`.
-    pub fn new(g: &Region, plan: &Plan) -> Result<Tables, String> {
+    /// The tables of graph `g` under `plan`, and each region's plan by its number.
+    pub fn new<'p>(
+        g: &Arc<Region>,
+        plan: &'p Plan,
+    ) -> Result<(Tables, Vec<&'p RegionPlan>), String> {
         let mut t = Tables {
             nodes: Vec::new(),
-            ids: HashMap::new(),
+            regions: Vec::new(),
             lambdas: Vec::new(),
             consts: Vec::new(),
             prims: Vec::new(),
             ports: Vec::new(),
             port_at: HashMap::new(),
             const_at: BTreeMap::new(),
-            lambda_at: HashMap::new(),
             fuse: plan.fuse,
         };
-        t.visit(g, "r", plan)?;
+        let mut plans = Vec::new();
+        let mut lambda_at = HashMap::new();
+        t.visit(g, plan, &mut plans, &mut lambda_at)?;
         // An `apply` may call a lambda the generator visits after it.
         for id in 0..t.nodes.len() {
-            t.resolve(id, plan)?;
+            t.resolve(id, &plans, &lambda_at)?;
         }
-        Ok(t)
+        Ok((t, plans))
     }
 
-    fn visit(&mut self, r: &Region, path: &str, plan: &Plan) -> Result<(), String> {
-        let rp = plan.regions.get(path).ok_or_else(|| {
-            format!("native: region `{path}` has no plan; only the root, lambda bodies and arms do")
+    /// Numbers the nodes of `g` and its planned regions in preorder.
+    fn visit<'p>(
+        &mut self,
+        g: &Arc<Region>,
+        plan: &'p Plan,
+        plans: &mut Vec<&'p RegionPlan>,
+        lambda_at: &mut HashMap<&'p str, usize>,
+    ) -> Result<(), String> {
+        let (path, rp) = plan.regions.get_key_value("r").ok_or_else(|| {
+            "native: region `r` has no plan; only the root, lambda bodies and arms do".to_string()
         })?;
-        for s in &r.results {
-            self.constant(s);
-        }
-        for (k, node) in r.nodes.iter().enumerate() {
-            let at = format!("{path}.{k}");
+        plans.push(rp);
+        self.regions.push(RegionInfo {
+            region: g.clone(),
+            up: None,
+            ids: Vec::new(),
+        });
+        let mut stack = vec![Visit {
+            at: 0,
+            region: g,
+            path,
+            k: 0,
+        }];
+        let mut sub = String::new();
+        while let Some(v) = stack.last_mut() {
+            if v.k == 0 {
+                for s in &v.region.results {
+                    self.constant(s);
+                }
+            }
+            if v.k == v.region.nodes.len() {
+                stack.pop();
+                continue;
+            }
+            let (at, region, path, k) = (v.at, v.region, v.path, v.k);
+            v.k += 1;
+            let node = &region.nodes[k];
             let id = self.nodes.len();
-            self.ids.insert(at.clone(), id);
+            self.regions[at].ids.push(id);
             for s in &node.inputs {
                 self.constant(s);
             }
-            let mut n = node.clone();
-            n.inputs = (0..n.inputs.len()).map(Src::Arg).collect();
-            self.nodes.push(NodeInfo {
-                node: node.clone(),
-                alone: Region {
-                    kind: RegionKind::Function,
-                    args: Vec::new(),
-                    nodes: vec![n],
-                    results: vec![Src::Out(0, 0)],
-                },
-                path: at.clone(),
-                modes: rp.nodes[k].modes.clone(),
+            let mut info = NodeInfo {
+                region: region.clone(),
+                at,
+                k,
+                modes: plans[at].nodes[k].modes.clone(),
                 arms: Vec::new(),
+                subs: Vec::new(),
                 lambda: None,
                 callee: None,
                 error: None,
-            });
+            };
             match &node.op {
                 Op::Prim(p) if node.inputs.is_empty() && p.arity().is_some() => {
                     if !self.prims.contains(p) {
@@ -132,68 +194,86 @@ impl Tables {
                         self.ports.push(p.clone());
                     }
                 }
-                Op::Lambda => {
-                    let body = format!("{at}/0");
-                    let params = node.regions[0].args.len() - node.inputs.len();
-                    let modes = plan
-                        .regions
-                        .get(&body)
-                        .ok_or_else(|| format!("native: lambda body `{body}` has no plan"))?
-                        .args[..params]
-                        .to_vec();
-                    self.lambda_at.insert(body.clone(), self.lambdas.len());
-                    self.nodes[id].lambda = Some(self.lambdas.len());
-                    self.lambdas.push(LambdaInfo {
-                        node: id,
-                        path: body.clone(),
-                        params,
-                        modes,
-                    });
-                    self.visit(&node.regions[0], &body, plan)?;
-                }
-                Op::If | Op::Match(_) => {
-                    for (i, arm) in node.regions.iter().enumerate() {
-                        let p = format!("{at}/{i}");
-                        let modes = plan
-                            .regions
-                            .get(&p)
-                            .ok_or_else(|| format!("native: arm `{p}` has no plan"))?
-                            .args
-                            .clone();
-                        self.nodes[id].arms.push(modes);
-                        self.visit(arm, &p, plan)?;
+                Op::Lambda | Op::If | Op::Match(_) => {
+                    // The first region is numbered first, so it is last on the stack.
+                    let first = stack.len();
+                    for (i, r) in node.regions.iter().enumerate() {
+                        sub.clear();
+                        write!(sub, "{path}.{k}/{i}").expect("a write to a string");
+                        let (path, rp) = plan.regions.get_key_value(&sub).ok_or_else(|| {
+                            let what = match node.op {
+                                Op::Lambda => "lambda body",
+                                _ => "arm",
+                            };
+                            format!("native: {what} `{sub}` has no plan")
+                        })?;
+                        let at = self.regions.len();
+                        info.subs.push(at);
+                        plans.push(rp);
+                        self.regions.push(RegionInfo {
+                            region: r.clone(),
+                            up: Some((id, i)),
+                            ids: Vec::new(),
+                        });
+                        stack.push(Visit {
+                            at,
+                            region: r,
+                            path,
+                            k: 0,
+                        });
+                        if matches!(node.op, Op::Lambda) {
+                            let params = r.args.len() - node.inputs.len();
+                            lambda_at.insert(path.as_str(), self.lambdas.len());
+                            info.lambda = Some(self.lambdas.len());
+                            self.lambdas.push(LambdaInfo {
+                                node: id,
+                                body: at,
+                                params,
+                                modes: rp.args[..params].to_vec(),
+                            });
+                            break;
+                        }
+                        info.arms.push(rp.args.clone());
                     }
+                    stack[first..].reverse();
                 }
                 _ => {}
             }
+            self.nodes.push(info);
         }
         Ok(())
     }
 
     /// Resolves node `id`'s callee, when it is an `apply` the plan resolves, and records the
     /// error a call raises that passes borrowed what the callee consumes.
-    fn resolve(&mut self, id: usize, plan: &Plan) -> Result<(), String> {
+    fn resolve(
+        &mut self,
+        id: usize,
+        plans: &[&RegionPlan],
+        lambda_at: &HashMap<&str, usize>,
+    ) -> Result<(), String> {
         let ni = &self.nodes[id];
-        if ni.node.op != Op::Apply {
+        let node = ni.node();
+        if node.op != Op::Apply {
             return Ok(());
         }
-        let (parent, k) = ni.path.rsplit_once('.').expect("a node path");
-        let np = &plan.regions[parent].nodes[k.parse::<usize>().expect("a node index")];
-        let Some(want) = &np.callee else {
+        let Some(want) = &plans[ni.at].nodes[ni.k].callee else {
             return Ok(());
         };
-        let li = *self
-            .lambda_at
-            .get(want)
-            .ok_or_else(|| format!("native: {}: the plan calls `{want}`, no lambda", ni.path))?;
+        let li = *lambda_at.get(want.as_str()).ok_or_else(|| {
+            format!(
+                "native: {}: the plan calls `{want}`, no lambda",
+                self.path(id)
+            )
+        })?;
         let l = &self.lambdas[li];
         let mut error = None;
-        if l.params + 1 == ni.node.inputs.len() {
+        if l.params + 1 == node.inputs.len() {
             for i in 0..l.params {
                 if ni.modes[1 + i] == Mode::Borrowed && l.modes[i] == Mode::Owned {
                     error = Some(format!(
                         "memory: {}: argument {i} is passed borrowed to `{want}`, which consumes it",
-                        ni.path
+                        self.path(id)
                     ));
                     break;
                 }
@@ -202,6 +282,33 @@ impl Tables {
         self.nodes[id].callee = Some(li);
         self.nodes[id].error = error;
         Ok(())
+    }
+
+    /// Where node `id` is (`r.3/0.1`), for a message.
+    pub fn path(&self, id: usize) -> String {
+        let mut steps = vec![(self.nodes[id].k, None)];
+        let mut at = self.nodes[id].at;
+        while let Some((up, i)) = self.regions[at].up {
+            let ni = &self.nodes[up];
+            steps.push((ni.k, Some(i)));
+            at = ni.at;
+        }
+        let mut path = String::from("r");
+        for (k, i) in steps.into_iter().rev() {
+            write!(path, ".{k}").expect("a write to a string");
+            if let Some(i) = i {
+                write!(path, "/{i}").expect("a write to a string");
+            }
+        }
+        path
+    }
+
+    /// Where region `at` is (`r.3/0`), for a message.
+    pub fn region_path(&self, at: usize) -> String {
+        match self.regions[at].up {
+            None => "r".into(),
+            Some((up, i)) => format!("{}/{i}", self.path(up)),
+        }
     }
 
     fn constant(&mut self, s: &Src) {

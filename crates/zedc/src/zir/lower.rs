@@ -10,9 +10,9 @@
 //!   apart: a fold of `+` itself sums exactly, and of `(a, b) -> a + b` rounds at each step. A call of a literal lambda,
 //!   `((x) -> e)(a)`, binds `x` to `a`'s edge and lowers `e` in place.
 //! - **Captures on demand.** A name bound outside the region being built enters it as a
-//!   capture, through every region between, in the order the body first reads it. The regions
-//!   of one node share one capture list, the union of theirs in order, so each region is
-//!   renumbered to it after it is built.
+//!   capture, through every region between, in the order the body first reads it, and once
+//!   however often it is read. The regions of one node share one capture list, the union of
+//!   theirs in order, so each region is renumbered to it after it is built.
 //! - **State edges on demand.** The first read of or push to a port takes its state edge,
 //!   which enters a region as a capture and leaves it as a result, after the values. Only
 //!   `match` and `port` regions carry state (step L1.31), so a `match` or `if` whose arms touch
@@ -87,6 +87,9 @@ struct Frame {
     fixed: usize,
     /// Where each capture comes from in the enclosing region, in argument order.
     captures: Vec<Src>,
+    /// The argument that holds each edge already captured: the depth of the region it comes
+    /// from and its key there.
+    brought: HashMap<(usize, (usize, usize)), Src>,
     /// The current state edge of each port the region has touched.
     states: HashMap<Arc<str>, Src>,
     /// The nodes entered by content address.
@@ -106,6 +109,7 @@ impl Frame {
                 results: Vec::new(),
             },
             captures: Vec::new(),
+            brought: HashMap::new(),
             states: HashMap::new(),
             seen: HashMap::new(),
             keys: Vec::new(),
@@ -242,15 +246,27 @@ impl Lower {
         if matches!(s, Src::Const(_)) {
             return s;
         }
-        let mut s = s;
-        for k in at + 1..self.frames.len() {
+        // Each region holds an edge once, however often it is read, so a region's arguments
+        // do not grow with the reads below it. The walk stops at the nearest region that has
+        // the edge, and every region it passes takes the edge, so a read costs O(1) amortized.
+        let key = (at, captured(&s));
+        let top = self.frames.len() - 1;
+        let mut from = top;
+        while from > at && !self.frames[from].brought.contains_key(&key) {
+            from -= 1;
+        }
+        let mut s = match self.frames[from].brought.get(&key) {
+            Some(held) if from > at => held.clone(),
+            _ => s,
+        };
+        for k in from + 1..=top {
             s = self.capture(k, s);
+            self.frames[k].brought.insert(key, s.clone());
         }
         s
     }
 
-    /// The argument of frame `k` that receives `s`, an edge of frame `k - 1`. A name read twice
-    /// is captured twice; [`Lower::node`] merges the repeats.
+    /// The argument of frame `k` that receives `s`, an edge of frame `k - 1`.
     fn capture(&mut self, k: usize, s: Src) -> Src {
         let edge = self.frames[k - 1].region.edge(&s);
         let f = &mut self.frames[k];
@@ -432,7 +448,7 @@ impl Lower {
                 r.results.push(fin);
             }
             keys.push(canon::region_key(&r, &b.keys));
-            regions.push(r);
+            regions.push(Arc::new(r));
         }
         let mut outputs = vec![top(); values];
         outputs.extend(ports.iter().map(|(_, p)| Edge::State(p.clone())));
@@ -1040,11 +1056,12 @@ fn unit() -> Term {
     Term::Lit(zed_kernel::Value::Tuple(Vec::new()))
 }
 
+fn fresh_name(fresh: &mut usize) -> Arc<str> {
+    *fresh += 1;
+    format!("\0raise{fresh}").into()
+}
+
 fn raise_region(r: &Region, args: &[Term], fresh: &mut usize, path: &str) -> Result<Term, String> {
-    let name = |fresh: &mut usize| -> Arc<str> {
-        *fresh += 1;
-        format!("\0raise{fresh}").into()
-    };
     let mut lets: Vec<(Arc<str>, Term)> = Vec::new();
     let mut outs: Vec<Arc<str>> = Vec::new();
     let term_of = |s: &Src, outs: &[Arc<str>]| match s {
@@ -1054,134 +1071,9 @@ fn raise_region(r: &Region, args: &[Term], fresh: &mut usize, path: &str) -> Res
         Src::Const(v) => Term::Lit(v.clone()),
     };
     for (k, node) in r.nodes.iter().enumerate() {
-        let at = format!("{path}.{k}");
         let ins: Vec<Term> = node.inputs.iter().map(|s| term_of(s, &outs)).collect();
-        let a = |i: usize| Arc::new(ins[i].clone());
-        let sub = |i: usize, fixed: Vec<Term>, from: usize, fresh: &mut usize| {
-            let mut xs = fixed;
-            xs.extend(ins[from..].iter().cloned());
-            raise_region(&node.regions[i], &xs, fresh, &format!("{at}/{i}"))
-        };
-        let t = match &node.op {
-            Op::Prim(p) if ins.is_empty() && p.arity().is_some() => Term::PrimFn(*p),
-            Op::Prim(p) => Term::Prim(*p, ins.clone()),
-            // A state edge has no term: the kernel orders effects by evaluation. The states
-            // are the last inputs, one for each output after the value.
-            Op::Apply => Term::App(a(0), ins[1..ins.len() + 1 - node.outputs.len()].to_vec()),
-            Op::Lambda => {
-                let lead = &node.regions[0].args[..node.regions[0].args.len() - ins.len()];
-                let mut ps: Vec<Arc<str>> = Vec::new();
-                let mut vars = Vec::new();
-                for e in lead {
-                    if e.is_state() {
-                        vars.push(unit());
-                    } else {
-                        let p = name(fresh);
-                        vars.push(Term::Var(p.clone()));
-                        ps.push(p);
-                    }
-                }
-                Term::Lam(ps, Arc::new(sub(0, vars, 0, fresh)?))
-            }
-            Op::If => Term::If(
-                a(0),
-                Arc::new(sub(0, Vec::new(), 1, fresh)?),
-                Arc::new(sub(1, Vec::new(), 1, fresh)?),
-            ),
-            Op::Match(ps) => {
-                let mut arms = Vec::new();
-                for (i, p) in ps.iter().enumerate() {
-                    let mut p = p.clone();
-                    let mut xs = Vec::new();
-                    rename(&mut p, &mut || {
-                        let x = name(fresh);
-                        xs.push(Term::Var(x.clone()));
-                        x
-                    });
-                    arms.push((p, sub(i, xs, 1, fresh)?));
-                }
-                Term::Match(a(0), arms)
-            }
-            Op::Fam => {
-                let var = name(fresh);
-                let body = sub(0, vec![Term::Var(var.clone())], 1, fresh)?;
-                Term::Fam {
-                    domain: a(0),
-                    var,
-                    body: Arc::new(body),
-                }
-            }
-            Op::Reindex(w) => Term::Reindex {
-                family: a(0),
-                kf: a(1),
-                vf: a(2),
-                witness: w.clone(),
-            },
-            Op::Discard => Term::Discard {
-                family: a(0),
-                sel: a(1),
-            },
-            Op::Fold {
-                depth,
-                identity,
-                ev,
-            } => Term::Fold {
-                family: a(0),
-                op: a(1),
-                identity: identity.then(|| a(2)),
-                depth: *depth,
-                ev: ev.clone(),
-            },
-            Op::Fix { lattice: true, ev } => {
-                let x = name(fresh);
-                let body = sub(0, vec![Term::Var(x.clone())], 2, fresh)?;
-                Term::Fix {
-                    init: a(0),
-                    step: Arc::new(Term::Lam(vec![x], Arc::new(body))),
-                    this: "".into(),
-                    key: "".into(),
-                    kind: FixKind::Lattice { join: a(1) },
-                    ev: ev.clone(),
-                }
-            }
-            Op::Fix { lattice: false, ev } => {
-                let (this, key) = (name(fresh), name(fresh));
-                let xs = vec![Term::Var(this.clone()), Term::Var(key.clone())];
-                Term::Fix {
-                    init: a(0),
-                    step: Arc::new(sub(0, xs, 1, fresh)?),
-                    this,
-                    key,
-                    kind: FixKind::Definedness,
-                    ev: ev.clone(),
-                }
-            }
-            Op::Gen(pos) => {
-                let mut fs = Vec::new();
-                for i in 0..2 {
-                    let x = name(fresh);
-                    let body = sub(i, vec![Term::Var(x.clone())], 1, fresh)?;
-                    fs.push(Arc::new(Term::Lam(vec![x], Arc::new(body))));
-                }
-                let guard = fs.pop().expect("two regions");
-                let step = fs.pop().expect("two regions");
-                Term::Gen {
-                    init: a(0),
-                    step,
-                    guard,
-                    pos: *pos,
-                }
-            }
-            Op::Read(p) => Term::Read(p.clone()),
-            Op::Push(p) => Term::Push(p.clone(), a(1)),
-            op @ (Op::Derived(_) | Op::Rec | Op::Wave) => {
-                return Err(format!(
-                    "{at}: `{}` has no kernel term here; the lowering does not make it",
-                    op_name(op)
-                ));
-            }
-        };
-        let x = name(fresh);
+        let t = node_term(node, &ins, fresh, &format!("{path}.{k}"))?;
+        let x = fresh_name(fresh);
         lets.push((x.clone(), t));
         outs.push(x);
     }
@@ -1190,6 +1082,141 @@ fn raise_region(r: &Region, args: &[Term], fresh: &mut usize, path: &str) -> Res
         .into_iter()
         .rev()
         .fold(body, |b, (x, e)| Term::Let(x, Arc::new(e), Arc::new(b))))
+}
+
+/// The term `node` computes alone, its inputs being `ins`. It reads the node's regions and
+/// no copy of them, so a caller holding a node of any depth pays only for the node's own
+/// inputs and, when the term runs, what it raises.
+pub fn raise_node(node: &Node, ins: &[Term]) -> Result<Term, String> {
+    node_term(node, ins, &mut 0, "r.0")
+}
+
+fn node_term(node: &Node, ins: &[Term], fresh: &mut usize, at: &str) -> Result<Term, String> {
+    let a = |i: usize| Arc::new(ins[i].clone());
+    let sub = |i: usize, fixed: Vec<Term>, from: usize, fresh: &mut usize| {
+        let mut xs = fixed;
+        xs.extend(ins[from..].iter().cloned());
+        raise_region(&node.regions[i], &xs, fresh, &format!("{at}/{i}"))
+    };
+    Ok(match &node.op {
+        Op::Prim(p) if ins.is_empty() && p.arity().is_some() => Term::PrimFn(*p),
+        Op::Prim(p) => Term::Prim(*p, ins.to_vec()),
+        // A state edge has no term: the kernel orders effects by evaluation. The states
+        // are the last inputs, one for each output after the value.
+        Op::Apply => Term::App(a(0), ins[1..ins.len() + 1 - node.outputs.len()].to_vec()),
+        Op::Lambda => {
+            let lead = &node.regions[0].args[..node.regions[0].args.len() - ins.len()];
+            let mut ps: Vec<Arc<str>> = Vec::new();
+            let mut vars = Vec::new();
+            for e in lead {
+                if e.is_state() {
+                    vars.push(unit());
+                } else {
+                    let p = fresh_name(fresh);
+                    vars.push(Term::Var(p.clone()));
+                    ps.push(p);
+                }
+            }
+            Term::Lam(ps, Arc::new(sub(0, vars, 0, fresh)?))
+        }
+        Op::If => Term::If(
+            a(0),
+            Arc::new(sub(0, Vec::new(), 1, fresh)?),
+            Arc::new(sub(1, Vec::new(), 1, fresh)?),
+        ),
+        Op::Match(ps) => {
+            let mut arms = Vec::new();
+            for (i, p) in ps.iter().enumerate() {
+                let mut p = p.clone();
+                let mut xs = Vec::new();
+                rename(&mut p, &mut || {
+                    let x = fresh_name(fresh);
+                    xs.push(Term::Var(x.clone()));
+                    x
+                });
+                arms.push((p, sub(i, xs, 1, fresh)?));
+            }
+            Term::Match(a(0), arms)
+        }
+        Op::Fam => {
+            let var = fresh_name(fresh);
+            let body = sub(0, vec![Term::Var(var.clone())], 1, fresh)?;
+            Term::Fam {
+                domain: a(0),
+                var,
+                body: Arc::new(body),
+            }
+        }
+        Op::Reindex(w) => Term::Reindex {
+            family: a(0),
+            kf: a(1),
+            vf: a(2),
+            witness: w.clone(),
+        },
+        Op::Discard => Term::Discard {
+            family: a(0),
+            sel: a(1),
+        },
+        Op::Fold {
+            depth,
+            identity,
+            ev,
+        } => Term::Fold {
+            family: a(0),
+            op: a(1),
+            identity: identity.then(|| a(2)),
+            depth: *depth,
+            ev: ev.clone(),
+        },
+        Op::Fix { lattice: true, ev } => {
+            let x = fresh_name(fresh);
+            let body = sub(0, vec![Term::Var(x.clone())], 2, fresh)?;
+            Term::Fix {
+                init: a(0),
+                step: Arc::new(Term::Lam(vec![x], Arc::new(body))),
+                this: "".into(),
+                key: "".into(),
+                kind: FixKind::Lattice { join: a(1) },
+                ev: ev.clone(),
+            }
+        }
+        Op::Fix { lattice: false, ev } => {
+            let (this, key) = (fresh_name(fresh), fresh_name(fresh));
+            let xs = vec![Term::Var(this.clone()), Term::Var(key.clone())];
+            Term::Fix {
+                init: a(0),
+                step: Arc::new(sub(0, xs, 1, fresh)?),
+                this,
+                key,
+                kind: FixKind::Definedness,
+                ev: ev.clone(),
+            }
+        }
+        Op::Gen(pos) => {
+            let mut fs = Vec::new();
+            for i in 0..2 {
+                let x = fresh_name(fresh);
+                let body = sub(i, vec![Term::Var(x.clone())], 1, fresh)?;
+                fs.push(Arc::new(Term::Lam(vec![x], Arc::new(body))));
+            }
+            let guard = fs.pop().expect("two regions");
+            let step = fs.pop().expect("two regions");
+            Term::Gen {
+                init: a(0),
+                step,
+                guard,
+                pos: *pos,
+            }
+        }
+        Op::Read(p) => Term::Read(p.clone()),
+        Op::Push(p) => Term::Push(p.clone(), a(1)),
+        op @ (Op::Derived(_) | Op::Rec | Op::Wave) => {
+            return Err(format!(
+                "{at}: `{}` has no kernel term here; the lowering does not make it",
+                op_name(op)
+            ));
+        }
+    })
 }
 
 /// Renames each binder of `p`, in preorder, to what `f` gives.

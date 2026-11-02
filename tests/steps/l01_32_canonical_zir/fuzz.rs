@@ -165,7 +165,9 @@ fn reverse_facets(g: &mut zedc::zir::Region) {
                 v.facets.reverse();
             }
         }
-        n.regions.iter_mut().for_each(reverse_facets);
+        n.regions
+            .iter_mut()
+            .for_each(|r| reverse_facets(std::sync::Arc::make_mut(r)));
     }
 }
 
@@ -207,7 +209,8 @@ fn the_key_agrees_with_the_address() {
         .filter_map(|g| {
             let mut c = g.clone();
             let n = c.nodes.iter_mut().find(|n| !n.regions.is_empty())?;
-            n.regions[0].results[0] = zedc::zir::Src::Const(zed_kernel::Value::Int(99));
+            std::sync::Arc::make_mut(&mut n.regions[0]).results[0] =
+                zedc::zir::Src::Const(zed_kernel::Value::Int(99));
             Some(c)
         })
         .collect();

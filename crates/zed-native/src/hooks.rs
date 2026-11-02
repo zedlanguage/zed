@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, KernelError, Pattern, Prim, Term, Value};
 use zedc::zir::Op;
-use zedc::zir::lower::raise_with;
+use zedc::zir::lower::raise_node;
 use zedc::zir::memory::Mode;
 
 use zed_rt::{Heap, Obj, Rope, Word};
@@ -237,7 +237,7 @@ fn node(s: &mut State, id: usize, ins: Vec<Word>) -> Result<Word, String> {
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .all(|d| d);
-    match &ni.node.op {
+    match &ni.node().op {
         Op::Prim(Prim::Tuple) if all_data && !ins.is_empty() => Ok(s.heap.alloc(Obj::Tuple(ins))),
         Op::Prim(Prim::Atom) if all_data => {
             let v = kernel(s, ni, &ins)?;
@@ -342,7 +342,7 @@ fn kernel(s: &mut State, ni: &NodeInfo, ins: &[Word]) -> Result<Value, String> {
     for w in ins {
         terms.push(term(s, *w, &mut lets)?);
     }
-    let t = raise_with(&ni.alone, &terms)?;
+    let t = raise_node(ni.node(), &terms)?;
     run(s, &wrap(lets, t))
 }
 
@@ -372,7 +372,7 @@ fn term(s: &mut State, w: Word, lets: &mut Lets) -> Result<Term, String> {
                 terms.push(term(s, c, lets)?);
             }
             let t = s.t.clone();
-            raise_with(&t.nodes[t.lambdas[lambda].node].alone, &terms)?
+            raise_node(t.nodes[t.lambdas[lambda].node].node(), &terms)?
         }
         _ => Term::Lit(s.heap.value(w)?),
     })
@@ -432,7 +432,7 @@ fn branch(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
 fn matched(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
     let t = s.t.clone();
     let ni = &t.nodes[id];
-    let Op::Match(ps) = &ni.node.op else {
+    let Op::Match(ps) = &ni.node().op else {
         unreachable!("a match node")
     };
     let scrut = ins[0];
@@ -454,7 +454,7 @@ fn matched(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
                 if !function {
                     return Err(format!(
                         "native: {}: no pattern matches natively, and the kernel picks arm {i}",
-                        ni.path
+                        t.path(id)
                     ));
                 }
                 let binders = vals.into_iter().map(|v| (s.heap.uncounted(v), None));
@@ -499,7 +499,7 @@ fn matched(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
             if arm[b] == Mode::Owned {
                 return Err(format!(
                     "memory: {}: the scrutinee is borrowed, and arm {i} owns binder {b}",
-                    ni.path
+                    t.path(id)
                 ));
             }
             words.push(*w);

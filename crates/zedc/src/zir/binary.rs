@@ -9,6 +9,8 @@
 //! the kernel, and its printed form is its exact, canonical description. A primitive is its
 //! index in [`PRIMS`]. A decoding error names the byte offset at which it was found.
 
+use std::sync::Arc;
+
 use num_bigint::BigInt;
 use zed_kernel::family::Family;
 use zed_kernel::num::Rat;
@@ -94,7 +96,7 @@ impl W {
         self.op(&n.op);
         self.many(&n.inputs, Self::src);
         self.many(&n.outputs, Self::edge);
-        self.many(&n.regions, Self::region);
+        self.many(&n.regions, |e, r| e.region(r));
     }
 
     fn edge(&mut self, e: &Edge) {
@@ -387,7 +389,7 @@ impl<'a> R<'a> {
             op: self.op()?,
             inputs: self.many(Self::src)?,
             outputs: self.many(Self::edge)?,
-            regions: self.many(Self::region)?,
+            regions: self.many(|d| d.region().map(Arc::new))?,
         })
     }
 

@@ -11,6 +11,8 @@ mod scalars;
 mod scaling;
 mod strings;
 
+use std::sync::Arc;
+
 use zed_kernel::{Evaluator, F64, Term, Value, World};
 use zedc::zir::Region;
 use zedc::zir::lower::lower;
@@ -22,10 +24,10 @@ pub(crate) fn float(x: f64) -> Term {
 }
 
 /// `t` lowered and planned with fusion.
-pub(crate) fn planned(t: &Term) -> (Region, Plan) {
+pub(crate) fn planned(t: &Term) -> (Arc<Region>, Plan) {
     let g = lower(t).unwrap_or_else(|e| panic!("{e}"));
     let p = memory::plan(&g, true);
-    (g, p)
+    (Arc::new(g), p)
 }
 
 /// `t` run natively with no ports.

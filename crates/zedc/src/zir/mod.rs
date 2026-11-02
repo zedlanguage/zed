@@ -202,8 +202,9 @@ pub struct Node {
     pub inputs: Vec<Src>,
     /// The outputs' edge types.
     pub outputs: Vec<Edge>,
-    /// The regions, for a region node or a derived node.
-    pub regions: Vec<Region>,
+    /// The regions, for a region node or a derived node, shared: a copy of a node copies its
+    /// own fields and not what lies below it, so a pass may hold a node of any depth.
+    pub regions: Vec<Arc<Region>>,
 }
 
 /// A region.

@@ -51,14 +51,15 @@ fn isa(pic: bool) -> Result<Arc<dyn cranelift_codegen::isa::TargetIsa>, String> 
 
 /// Compiles graph `g` under `plan` by the JIT and runs it, the kernel in `ev` running the
 /// nodes the runtime does not.
-pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, String> {
-    let t = Arc::new(Tables::new(g, plan)?);
+pub fn run(g: &Arc<Region>, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, String> {
+    let (t, plans) = Tables::new(g, plan)?;
+    let t = Arc::new(t);
     let mut b = JITBuilder::with_isa(isa(false)?, default_libcall_names());
     for ((name, _, _), a) in hooks::HOOKS.iter().zip(hooks::addresses()) {
         b.symbol(*name, a);
     }
     let mut m = JITModule::new(b);
-    let f = codegen::define(&mut m, &t, plan, g)?;
+    let f = codegen::define(&mut m, &t, &plans)?;
     m.finalize_definitions()
         .map_err(|e| format!("native: {e}"))?;
     let code = m.get_finalized_function(f.root);
@@ -86,12 +87,12 @@ pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, Strin
 
 /// The object file of graph `g` under `plan`, for the host: `zed_root` exported, the
 /// runtime's hooks imported.
-pub fn object(g: &Region, plan: &Plan) -> Result<Vec<u8>, String> {
-    let t = Tables::new(g, plan)?;
+pub fn object(g: &Arc<Region>, plan: &Plan) -> Result<Vec<u8>, String> {
+    let (t, plans) = Tables::new(g, plan)?;
     let b = ObjectBuilder::new(isa(true)?, "zed", default_libcall_names())
         .map_err(|e| format!("native: {e}"))?;
     let mut m = ObjectModule::new(b);
-    codegen::define(&mut m, &t, plan, g)?;
+    codegen::define(&mut m, &t, &plans)?;
     m.finish().emit().map_err(|e| format!("native: {e}"))
 }
 
@@ -99,7 +100,7 @@ pub fn object(g: &Region, plan: &Plan) -> Result<Vec<u8>, String> {
 /// `zedc::testing::test_through` and `Program::run_through`.
 pub fn through(fuse: bool) -> impl Fn(&Term, &mut Evaluator) -> Result<Value, String> {
     move |t, ev| {
-        let g = lower(t)?;
+        let g = Arc::new(lower(t)?);
         run(&g, &plan(&g, fuse), ev).map(|o| o.value)
     }
 }

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
+use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Value, World};
 use zed_tests::scaling;
 use zedc::zir::memory;
@@ -166,4 +166,231 @@ fn one_value_used_many_times_scales() {
         &World::new(),
         dups,
     );
+}
+
+/// `t` run by the counting machine and natively: both values and both counts agree.
+fn counted(t: &Term) -> String {
+    let (g, p) = planned(t);
+    let w = World::new();
+    let (v, s) =
+        memory::run(&g, &p, &mut Evaluator::new(w.clone())).unwrap_or_else(|e| panic!("{t}: {e}"));
+    let o = zed_native::run(&g, &p, &mut Evaluator::new(w)).unwrap_or_else(|e| panic!("{t}: {e}"));
+    assert_eq!(o.value, v);
+    let native = (o.stats.increments, o.stats.decrements, o.stats.allocations);
+    assert_eq!(native, (s.increments, s.decrements, s.allocations), "{t}");
+    v.to_string()
+}
+
+/// A rate table: `x = d * 1; if x < 0 then "t0" else if x < 1 then "t1" else …`, `d` tests in
+/// a chain, each in the other's `else`, ending at `"top"`, with `x` given by `at`.
+fn tiers(d: usize, at: i64) -> Term {
+    let chain = (0..d).rev().fold(lit("top"), |rest, i| {
+        let c = prim(Prim::Lt, vec![var("x"), lit(i as i64)]);
+        if_(c, lit(format!("t{i}").as_str()), rest)
+    });
+    let_("x", prim(Prim::Mul, vec![lit(at), lit(1i64)]), chain)
+}
+
+/// `if i < d then (y = (…) + 1; y) else i`, `d` deep through the first arms: each level holds
+/// a node after its arm, so the arm's parent frame has work left when the arm ends.
+fn nest(d: usize) -> Term {
+    (0..d).fold(lit(0i64), |t, i| {
+        let y = format!("y{i}");
+        if_(
+            prim(Prim::Lt, vec![lit(i as i64), lit(d as i64)]),
+            let_(&y, prim(Prim::Add, vec![t, lit(1i64)]), var(&y)),
+            lit(i as i64),
+        )
+    })
+}
+
+/// A decoder of `d` cases: `match x { 0 -> "c0", _ -> match x { 1 -> "c1", _ -> … } }`.
+fn cases(d: usize, at: i64) -> Term {
+    let chain = (0..d).rev().fold(lit("none"), |rest, i| {
+        let hit = (
+            Pattern::Lit(Value::Int(i as i64)),
+            lit(format!("c{i}").as_str()),
+        );
+        Term::Match(Arc::new(var("x")), vec![hit, (Pattern::Wild, rest)])
+    });
+    let_("x", prim(Prim::Mul, vec![lit(at), lit(1i64)]), chain)
+}
+
+/// A curried sum: `(a0) -> (a1) -> … -> a0 + a{d-1}`, applied to `1, 2, …`, one at a time.
+fn curried(d: usize) -> Term {
+    let last = format!("a{}", d - 1);
+    let sum = prim(Prim::Add, vec![var("a0"), var(&last)]);
+    let f = (0..d).rev().fold(sum, |b, i| lam(&[&format!("a{i}")], b));
+    (0..d).fold(f, |f, i| app(f, vec![lit(i as i64 + 1)]))
+}
+
+/// Runs `f` with a stack that holds the recursive passes of a term thousands deep: lowering,
+/// planning and the drop of a graph.
+fn on_big_stack(f: impl FnOnce() + Send) {
+    on_stack(1 << 30, f)
+}
+
+#[test]
+fn a_rate_table_gives_each_tier() {
+    assert_eq!(counted(&tiers(3, -1)), r#""t0""#);
+    assert_eq!(counted(&tiers(3, 1)), r#""t2""#);
+    assert_eq!(counted(&tiers(3, 7)), r#""top""#);
+}
+
+#[test]
+fn a_decoder_gives_each_case() {
+    assert_eq!(counted(&cases(3, 0)), r#""c0""#);
+    assert_eq!(counted(&cases(3, 2)), r#""c2""#);
+    assert_eq!(counted(&cases(3, 9)), r#""none""#);
+}
+
+#[test]
+fn a_node_after_an_arm_sees_the_arm_result() {
+    assert_eq!(counted(&nest(1)), "1");
+    assert_eq!(counted(&nest(5)), "5");
+}
+
+#[test]
+fn a_curried_sum_runs() {
+    assert_eq!(counted(&curried(1)), "2");
+    assert_eq!(counted(&curried(4)), "5");
+}
+
+/// `s = "ab" ++ "c"`, wrapped around `body`.
+fn with_cell(body: Term) -> Term {
+    let_("s", prim(Prim::Concat, vec![lit("ab"), lit("c")]), body)
+}
+
+#[test]
+fn a_computed_condition_is_released_as_the_machine_releases_it() {
+    let same = prim(Prim::Eq, vec![var("s"), lit("abc")]);
+    // The condition is a fresh bool, and the cell it was computed from is used by one arm.
+    let one_arm = with_cell(if_(same.clone(), var("s"), lit("no")));
+    assert_eq!(counted(&one_arm), r#""abc""#);
+    // The condition is used by an arm as well, so it is not released at the test.
+    let kept = let_("c", same.clone(), if_(var("c"), var("c"), lit(false)));
+    assert_eq!(counted(&with_cell(kept)), "true");
+    // The condition is used again after the `if`.
+    let after = let_(
+        "c",
+        same,
+        prim(
+            Prim::Tuple,
+            vec![if_(var("c"), lit(1i64), lit(2i64)), var("c")],
+        ),
+    );
+    assert_eq!(counted(&with_cell(after)), "(1, true)");
+}
+
+#[test]
+fn a_condition_that_is_a_cell_fails_as_the_machine_fails() {
+    // The condition is a string, so the kernel decides, and it gives a failure value.
+    let t = with_cell(if_(var("s"), lit(1i64), lit(2i64)));
+    let once = with_cell(prim(Prim::Tuple, vec![if_(var("s"), lit(1i64), lit(2i64))]));
+    for t in [t, once] {
+        let (g, p) = planned(&t);
+        let machine = memory::run(&g, &p, &mut Evaluator::new(World::new()));
+        let native = zed_native::run(&g, &p, &mut Evaluator::new(World::new()));
+        match (machine, native) {
+            (Ok((v, s)), Ok(o)) => {
+                assert_eq!(o.value, v);
+                assert_eq!(o.stats.decrements, s.decrements);
+            }
+            (Err(a), Err(b)) => assert_eq!(a, b),
+            (a, b) => panic!("the machine gave {a:?}, the native run {b:?}"),
+        }
+    }
+}
+
+/// Runs `f` on a thread with a stack of `bytes`.
+fn on_stack(bytes: usize, f: impl FnOnce() + Send) {
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(bytes)
+            .spawn_scoped(s, f)
+            .unwrap()
+            .join()
+            .unwrap()
+    })
+}
+
+/// Code generation keeps the regions in progress on its own stacks: terms far deeper than a
+/// thread of 128 KiB could hold in calls compile there. The code runs on a larger stack, since
+/// one function's frame holds a slot for each of its words, and agrees with the machine.
+#[test]
+fn terms_thousands_deep_compile_on_a_small_stack_and_run() {
+    on_big_stack(|| {
+        let d = 4000;
+        for (t, want) in [
+            (tiers(d, d as i64 / 2), format!(r#""t{}""#, d / 2 + 1)),
+            (cases(d, d as i64 - 1), format!(r#""c{}""#, d - 1)),
+            (nest(d), d.to_string()),
+        ] {
+            let (g, p) = planned(&t);
+            let (v, s) = memory::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
+            assert_eq!(v.to_string(), want);
+            on_stack(1 << 17, || {
+                assert!(!zed_native::object(&g, &p).unwrap().is_empty());
+            });
+            on_stack(1 << 24, || {
+                let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
+                assert_eq!(o.value, v);
+                assert_eq!(o.stats.decrements, s.decrements);
+            });
+        }
+    });
+}
+
+/// Paths are worked out for a message only, and the message is the one a path string gives.
+#[test]
+fn a_wrong_plan_deep_in_the_term_names_the_path() {
+    let t = with_cell(if_(
+        lit(true),
+        if_(lit(true), var("s"), lit("no")),
+        lit("no"),
+    ));
+    let (g, mut p) = planned(&t);
+    let arm = "r.1/0.0/0";
+    assert!(p.regions.remove(arm).is_some(), "{:?}", p.regions.keys());
+    assert_eq!(
+        zed_native::object(&g, &p).unwrap_err(),
+        format!("native: arm `{arm}` has no plan")
+    );
+}
+
+/// `make` at each of `n` and `8n`, planned ahead of the timing, with the object file of each
+/// timed by `scaling::check`.
+fn check_depth(what: &str, n: usize, make: fn(usize) -> Term) {
+    on_big_stack(|| {
+        let at = |m: usize| planned(&make(m));
+        let (small, large) = (at(n), at(8 * n));
+        scaling::check(what, n, |m| {
+            let (g, p) = if m == n { &small } else { &large };
+            std::hint::black_box(zed_native::object(g, p).unwrap());
+        });
+    });
+}
+
+#[test]
+fn a_rate_table_of_many_tiers_scales() {
+    check_depth("a chain of n `if`s, to an object file", 500, |d| {
+        tiers(d, 0)
+    });
+}
+
+#[test]
+fn ifs_nested_through_the_first_arm_scale() {
+    check_depth("n nested `if`s, to an object file", 500, nest);
+}
+
+#[test]
+fn a_decoder_of_many_cases_scales() {
+    check_depth("a chain of n `match`es, to an object file", 500, |d| {
+        cases(d, 0)
+    });
+}
+
+#[test]
+fn a_curried_function_of_many_parameters_scales() {
+    check_depth("n nested lambdas, to an object file", 200, curried);
 }
