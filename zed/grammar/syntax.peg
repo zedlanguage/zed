@@ -284,9 +284,10 @@ TypePrimary   = ~TypeApply                                                      
               | ~GroupType                                                         L1
               | ~RecordType                                                        L2
               | ~SetType                                                           L10
-              | ~SignedLit                                                         L10
+              | ~LitType                                                           L10
               | ~InferType                                                         L10
               | ~HoleType                                                          L15
+LitType       = SignedLit                                                          L10
 TypeApply     = Path '(' nest(TypeParam % ',' ','?) ')'                            L2
 TypeName      = Path                                                               L1
 AtomApply     = ATOM '(' nest(TypeParam % ',' ','?) ')'                            L2

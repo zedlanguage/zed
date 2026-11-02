@@ -93,7 +93,7 @@ fn a_type_union_prints_flat_and_keeps_its_grouping() {
 
 #[test]
 fn an_alternative_past_its_ring_is_not_tried_through_a_mark() {
-    let g = Grammar::read(&["E = ~T L5\n  | 'x' L1\nT = 'y' L1\n"]).unwrap();
+    let g = Grammar::read(&["E = ~T L5\n  | 'x' L1\nT = 'y' L5\n"]).unwrap();
     let text = "y";
     let tokens = lex(text).unwrap();
     assert!(parse_with(&g, text, &tokens, "E", 1).is_err());
@@ -121,6 +121,7 @@ fn a_mark_is_refused_outside_the_top_of_its_alternative() {
         ("E = ~'x' L1\n", "a ~ mark must be on a plain rule name"),
         ("E = ~IDENT L1\n", "a ~ mark must be on a plain rule name"),
         ("E = 'x' ~T L1\n", "beside a ~ mark"),
+        ("E = ~T L2\n", "E marks T at L2, above its lowest layer L1"),
     ] {
         let text = format!("{rule}T = 'y' L1\n");
         let err = Grammar::read(&[&text]).unwrap_err().to_string();

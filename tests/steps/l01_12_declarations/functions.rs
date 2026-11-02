@@ -82,5 +82,17 @@ fn a_form_of_a_later_layer_names_that_layer() {
             "t[i] <- 1;",
             "error: this form (KeyedPush) is built from layer L7",
         ),
+        (
+            "p(x) = x is 1;",
+            "error: this form (LitType) is built from layer L10",
+        ),
+        (
+            "p(x) = x is -1;",
+            "error: this form (LitType) is built from layer L10",
+        ),
+        (
+            "p(x) = x is (\"h\");",
+            "error: this form (LitType) is built from layer L10",
+        ),
     ]);
 }

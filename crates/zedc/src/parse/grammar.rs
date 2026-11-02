@@ -5,7 +5,8 @@
 //! below the postfixes `*`, `+`, `?` and `e % sep` (`e (sep e)*`); `head(e)` and `nest(e)` set
 //! and clear the flag that `HEAD` tests, and a name in capitals that is no rule is a token kind.
 //! `~R` at the top of an alternative that holds nothing else but lookaheads means that the
-//! alternative builds no node, and the match is the node of the rule `R`.
+//! alternative builds no node, and the match is the node of the rule `R`. Its layer is not above
+//! the lowest layer of `R`, since the node of `R` is what reports a layer.
 
 use std::collections::HashMap;
 
@@ -139,7 +140,7 @@ impl Grammar {
                 return Err(format!("trailing text in {l:?}"));
             }
             let pass = p.marked;
-            if pass && !only_mark(&e) {
+            if pass && marked_rule(&e).is_none() {
                 return Err(format!("beside a ~ mark {l:?} holds only lookaheads"));
             }
             let alt = Alt {
@@ -159,6 +160,27 @@ impl Grammar {
                     .push(alt),
             }
         }
+        let lowest: Vec<u32> = rules
+            .iter()
+            .map(|r| {
+                r.alts
+                    .iter()
+                    .map(|a| a.layer)
+                    .min()
+                    .expect("an alternative")
+            })
+            .collect();
+        for rule in &rules {
+            for alt in rule.alts.iter().filter(|a| a.pass) {
+                let r = marked_rule(&alt.expr).expect("read above");
+                if alt.layer > lowest[r] {
+                    return Err(format!(
+                        "{} marks {} at L{}, above its lowest layer L{}",
+                        rule.name, rules[r].name, alt.layer, lowest[r]
+                    ));
+                }
+            }
+        }
         Ok(Grammar { rules, index })
     }
 
@@ -168,15 +190,20 @@ impl Grammar {
     }
 }
 
-/// Whether the alternative `e`, which holds a `~` mark, holds nothing else but lookaheads.
-fn only_mark(e: &Expr) -> bool {
+/// The rule of the `~` mark in the alternative `e`, if `e` holds nothing else but lookaheads.
+fn marked_rule(e: &Expr) -> Option<usize> {
     match e {
-        Expr::Rule(_) => true,
+        Expr::Rule(r) => Some(*r),
         Expr::Seq(items) => {
-            let look = |x: &&Expr| matches!(x, Expr::And(_) | Expr::Not(_));
-            items.iter().filter(|x| !look(x)).count() == 1
+            let mut rest = items
+                .iter()
+                .filter(|x| !matches!(x, Expr::And(_) | Expr::Not(_)));
+            match (rest.next(), rest.next()) {
+                (Some(Expr::Rule(r)), None) => Some(*r),
+                _ => None,
+            }
         }
-        _ => false,
+        _ => None,
     }
 }
 
