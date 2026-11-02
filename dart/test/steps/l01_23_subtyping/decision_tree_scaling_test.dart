@@ -26,12 +26,12 @@ Type lit(int i) => Type.lit(Int(i))!;
 void main() {
   test('a decision tree is decided in polynomial time', () {
     // Splitting the product on every row in turn made `3^c` pieces: 1.14 s at `c = 64` and
-    // cubic from there once the split took a column whose cells are disjoint. Each split now
-    // narrows every row on every column, `O(c²)` types per split over `c` splits: `O(c³)`,
-    // which is `N^1.5` in the `N ≈ 2c²` components written. That is above the rule of low
-    // complexity, an open item (DESIGN.md L1.23); this test holds it to that order.
+    // cubic from there once the split took a column whose cells are disjoint. Narrowing every
+    // row on every column at each of the `c` splits was `O(c³)`, `N^1.5` in the `N ≈ 2c²`
+    // components written: 2.1 s at `c = 128`. A split now tests again only the rows open on
+    // the column it changed: `O(c²)`, linear in `N`.
     var fresh = 1;
-    checkOrder('a decision tree, by column count', 16, 3, (c) {
+    checkOrder('a decision tree, by column count', 16, 2, (c) {
       final (p, rows) = decisionTree(c, 1000 * fresh++);
       expect(
         (p - Type.unionAll(rows)).isEmpty,

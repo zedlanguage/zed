@@ -9,12 +9,14 @@ part of 'types.dart';
 // each tuple type is known to hold the box, known to miss it, or open on it; the part is
 // evaluated in three-valued logic on what is known; a tuple type in every value of the part
 // narrows the box to it, and one in no value takes itself out of the one component where it
-// does not hold the box. When narrowing stops, a component whose pieces cut by the open tuple
-// types are pairwise equal or disjoint is split into those pieces, and each piece decided;
-// otherwise each piece on which narrowing alone proves the part empty is taken out of the box;
-// otherwise, once on each branch, when the part holds nothing outside the open tuple types,
-// the box is split into its meet with each of them. A box none of these steps settles counts
-// as inhabited. The morphism part is decided the same way, by the variance law: contravariant
+// does not hold the box. A tuple type that misses or holds a component still does when the box
+// shrinks, so only the components changed since they were last tested are tested again,
+// against the tuple types open on them. When narrowing stops, a component whose pieces cut by
+// the open tuple types are pairwise equal or disjoint is split into those pieces, and each
+// piece decided; otherwise each piece on which narrowing alone proves the part empty is taken
+// out of the box; otherwise, once on each branch, when the part holds nothing outside the open
+// tuple types, the box is split into its meet with each of them. A box none of these steps
+// settles counts as inhabited. The morphism part is decided the same way, by the variance law: contravariant
 // in the guarantee, covariant in the permission and the value type. A morphism type admits no
 // morphism only when a key it promises is shown to exist, by a value found in the key type.
 //
@@ -161,66 +163,91 @@ final class _Search {
     r = false;
     if (p.structs || p.tuples.rest) return;
     for (final e in p.tuples.lens.entries) {
-      yield* tuples(_Box(List.filled(e.key, Type.top), e.value), true);
+      yield* tuples(_Region(List.filled(e.key, Type.top), e.value), true);
       if (!r) return;
     }
     yield* morphisms(Morphism(Type.empty, Type.top, Type.top), p.morphisms, true);
   }
 
+  /// Tests each changed component of the box against the tuple types of its part open on it,
+  /// and closes those it settles. A tuple type that misses one is out of the part, so whether
+  /// it holds the others is not tested.
+  Iterable<void> retest(_Region g) sync* {
+    final changed = [
+      for (var j = 0; j < g.items.length; j++)
+        if (g.changed[j]) j,
+    ];
+    if (changed.isEmpty) return;
+    for (final j in changed) {
+      g.tested(j);
+    }
+    live:
+    for (final a in g.live()) {
+      for (final j in changed) {
+        if (!g.open[j].contains(a)) continue;
+        yield* empty(g.items[j] & a.type.items[j]);
+        if (r) {
+          g.close(a, j, missed: true);
+          continue live;
+        }
+      }
+      for (final j in changed) {
+        if (!g.open[j].contains(a)) continue;
+        yield* empty(g.items[j] - a.type.items[j]);
+        if (r) g.close(a, j, missed: false);
+      }
+    }
+  }
+
   /// Narrows the box and its part to what the part forces on it: a tuple type in every value
   /// of the part meets the box, and a tuple type in none is taken out of the box when it holds
   /// the box in every component but one. True when the part is proved empty on the box.
-  Iterable<void> narrow(_Box b) sync* {
-    final items = b.items;
+  Iterable<void> narrow(_Region g) sync* {
+    final items = g.items;
     while (true) {
       for (final t in items) {
         yield* empty(t);
         if (r) return;
       }
-      // Where each tuple type stands on the box: false if they are disjoint, true if it
-      // holds the box, null if it is open on it.
-      final stand = <Components, bool?>{};
-      for (final a in _atoms(b.part)) {
-        if (stand.containsKey(a)) continue;
-        bool? s;
-        for (var i = 0; i < items.length && s == null; i++) {
-          yield* empty(items[i] & a.items[i]);
-          if (r) s = false;
-        }
-        if (s == null) {
-          var holds = true;
-          for (var i = 0; i < items.length && holds; i++) {
-            yield* empty(items[i] - a.items[i]);
-            holds = r;
-          }
-          if (holds) s = true;
-        }
-        stand[a] = s;
-      }
-      b.part = b.part.restrict((a) => stand[a]).settle();
-      if (b.part.leaf case final v?) {
+      yield* retest(g);
+      g.part = g.part.restrict((a) => g.stands[a]!.stand).settle();
+      if (g.part.leaf case final v?) {
         r = !v;
         return;
       }
-      final (taken, refused) = b.part.forced();
-      var changed = taken.isNotEmpty;
+      final (taken, refused) = g.part.forced();
+      // The components changed in this pass, against which a refused tuple type's standing is
+      // tested before it is used.
+      final shrunk = <int>{};
       for (final a in taken) {
-        for (var i = 0; i < items.length; i++) {
-          items[i] = items[i] & a.items[i];
-        }
-      }
-      for (final a in refused) {
-        final open = <int>[];
+        final s = g.stands[a]!;
         for (var j = 0; j < items.length; j++) {
-          yield* empty(items[j] - a.items[j]);
-          if (!r) open.add(j);
-        }
-        if (open case [final j]) {
-          items[j] = items[j] - a.items[j];
-          changed = true;
+          if (g.open[j].contains(s)) {
+            g.shrink(j, items[j] & a.items[j]);
+            shrunk.add(j);
+          }
         }
       }
-      if (!changed) {
+      refused:
+      for (final a in refused) {
+        final s = g.stands[a]!;
+        var (loose, at) = (s.loose, s.at);
+        for (final j in shrunk) {
+          if (!g.open[j].contains(s)) continue;
+          yield* empty(items[j] & a.items[j]);
+          if (r) continue refused;
+          yield* empty(items[j] - a.items[j]);
+          if (r) {
+            loose--;
+            at -= j;
+          }
+        }
+        if (s.missed == 0 && loose == 1) {
+          g.shrink(at, items[at] - a.items[at]);
+          shrunk.add(at);
+        }
+      }
+      if (shrunk.isEmpty) {
         r = false;
         return;
       }
@@ -228,43 +255,50 @@ final class _Search {
   }
 
   /// Whether no tuple in the box is in its part: the part is narrowed by what it forces; then
-  /// a component whose pieces cut by the open tuple types are pairwise equal or disjoint is
-  /// split into them; else each such piece on which narrowing alone proves the part empty is
-  /// taken out; else, once on each branch (`mayCover`), when the part holds nothing outside
-  /// the open tuple types, each of them is decided on its own. What is left counts as
-  /// inhabited. A split into disjoint pieces sends each open tuple type to one piece, and a
-  /// component split is never split again below, so the nodes are polynomial in the tuple
-  /// types.
-  Iterable<void> tuples(_Box b, bool mayCover) sync* {
-    final items = b.items;
+  /// a component on which every open tuple type is open, and whose pieces cut by them are
+  /// pairwise equal or disjoint, is split into them; else each such piece on which narrowing
+  /// alone proves the part empty is taken out; else, once on each branch (`mayCover`), when
+  /// the part holds nothing outside the open tuple types, each of them is decided on its own.
+  /// What is left counts as inhabited. A split into disjoint pieces sends each open tuple type
+  /// to one piece, and a component split is never split again below, so the nodes are
+  /// polynomial in the tuple types. The components tried for a split are those on which the
+  /// open tuple type open on fewest is open, so a box most of whose components the tuple types
+  /// hold is not searched. Each piece is tried on the box and the box restored after.
+  Iterable<void> tuples(_Region g, bool mayCover) sync* {
+    final items = g.items;
     while (true) {
-      yield* narrow(b);
+      yield* narrow(g);
       if (r) return;
-      if (b.part.leaf != null) {
+      if (g.part.leaf != null) {
         r = false;
         return;
       }
-      final open = _atoms(b.part);
+      final open = g.live();
+      final fewest = open.reduce((a, b) => b.loose < a.loose ? b : a);
       split:
       for (var j = 0; j < items.length; j++) {
-        final cells = <Type>[], seen = <Type>{};
+        final on = g.open[j];
+        if (!on.contains(fewest) || on.length < open.length || !open.every(on.contains)) {
+          continue;
+        }
+        final cells = <Type>{};
         var union = Type.empty;
         for (final a in open) {
-          final c = a.items[j] & items[j];
-          yield* empty(items[j] - c);
-          if (r) continue split;
-          if (seen.contains(c)) continue;
+          final c = a.type.items[j] & items[j];
+          if (cells.contains(c)) continue;
           yield* empty(c & union);
           if (!r) continue split;
           union = union | c;
           cells.add(c);
-          seen.add(c);
         }
         final rest = items[j] - union;
         yield* empty(rest);
         if (!r) cells.add(rest);
         for (final c in cells) {
-          yield* tuples(_Box([...items]..[j] = c, b.part), mayCover);
+          final mark = g.mark;
+          g.shrink(j, c);
+          yield* tuples(g, mayCover);
+          g.restore(mark);
           if (!r) return;
         }
         r = true;
@@ -274,28 +308,34 @@ final class _Search {
       for (var j = 0; j < items.length; j++) {
         final tried = <Type>{};
         for (final a in open) {
-          for (final c in [a.items[j] & items[j], items[j] - a.items[j]]) {
+          final t = a.type.items[j];
+          for (final c in [t & items[j], items[j] - t]) {
             if (tried.contains(c)) continue;
             yield* empty(c);
             if (r) continue;
             yield* empty(items[j] - c);
             if (r) continue;
             tried.add(c);
-            yield* narrow(_Box([...items]..[j] = c, b.part));
+            final mark = g.mark;
+            g.shrink(j, c);
+            yield* narrow(g);
+            g.restore(mark);
             if (r) {
-              items[j] = items[j] - c;
+              g.shrink(j, items[j] - c);
               narrowed = true;
             }
           }
         }
       }
       if (narrowed) continue;
-      if (mayCover && b.part.eval3((_) => false) == false) {
+      if (mayCover && g.part.eval3((_) => false) == false) {
         for (final a in open) {
-          yield* tuples(
-            _Box([for (var i = 0; i < items.length; i++) items[i] & a.items[i]], b.part),
-            false,
-          );
+          final mark = g.mark;
+          for (var j = 0; j < items.length; j++) {
+            if (g.open[j].contains(a)) g.shrink(j, items[j] & a.type.items[j]);
+          }
+          yield* tuples(g, false);
+          g.restore(mark);
           if (!r) return;
         }
         r = true;
@@ -364,12 +404,12 @@ final class _Search {
       return;
     }
     for (final MapEntry(key: len, value: f) in t.tuples.lens.entries) {
-      final box = _Box(List.filled(len, Type.top), f);
-      yield* narrow(box);
+      final g = _Region(List.filled(len, Type.top), f);
+      yield* narrow(g);
       if (r) continue;
-      final rows = [Components(box.items)];
-      if (_first(box.part) case final a?) {
-        rows.add(Components([for (var i = 0; i < len; i++) box.items[i] & a.items[i]]));
+      final rows = [Components(g.items)];
+      if (_first(g.part) case final a?) {
+        rows.add(Components([for (var i = 0; i < len; i++) g.items[i] & a.items[i]]));
       }
       for (final row in rows) {
         var all = true;
@@ -540,13 +580,116 @@ A? _first<A extends Literal<A>>(Part<A> p) {
   return first;
 }
 
-/// A box of tuples, one type per component, and the part decided on it; both are narrowed in
-/// place.
-final class _Box {
+/// A box of tuples, one type per component, the part decided on it, and where each tuple type
+/// of the part stands on it component by component: missing it, holding it, or open on it. A
+/// tuple type that misses a component of the box, or holds it, still does when the box
+/// shrinks, so a component that changed is tested again only against the tuple types open on
+/// it and still in the part, and only when they are next read. Each tuple type starts open on
+/// every component, and each component changed. Each change is logged, so a piece of the box
+/// is tried and the box and the part restored after.
+final class _Region {
   final List<Type> items;
-  Part<Components> part;
+  Part<Components> _part;
 
-  _Box(this.items, this.part);
+  /// Each tuple type of the part, with where it stands.
+  final stands = <Components, _Stand>{};
+
+  /// For each component, the tuple types open on it when it was last tested.
+  final List<Set<_Stand>> open;
+
+  /// For each component, whether it changed since it was last tested.
+  final List<bool> changed;
+
+  /// How to undo each change, in the order made.
+  final _log = <void Function()>[];
+
+  _Region(this.items, this._part)
+    : open = [for (final _ in items) <_Stand>{}],
+      changed = List.filled(items.length, true) {
+    final at = items.length * (items.length - 1) ~/ 2;
+    for (final a in _atoms(_part)) {
+      stands.putIfAbsent(a, () {
+        final s = _Stand(a, items.length, at);
+        for (final on in open) {
+          on.add(s);
+        }
+        return s;
+      });
+    }
+  }
+
+  Part<Components> get part => _part;
+
+  set part(Part<Components> p) {
+    final before = _part;
+    _log.add(() => _part = before);
+    _part = p;
+  }
+
+  /// The tuple types of the part, each once.
+  Set<_Stand> live() => {for (final a in _atoms(_part)) stands[a]!};
+
+  /// The point [restore] goes back to.
+  int get mark => _log.length;
+
+  /// Undoes the changes made after `mark`.
+  void restore(int mark) {
+    while (_log.length > mark) {
+      _log.removeLast()();
+    }
+  }
+
+  /// Sets component `j` of the box to `t`, which is within it.
+  void shrink(int j, Type t) {
+    final (before, was) = (items[j], changed[j]);
+    _log.add(() {
+      items[j] = before;
+      changed[j] = was;
+    });
+    items[j] = t;
+    changed[j] = true;
+  }
+
+  /// Marks component `j` tested.
+  void tested(int j) {
+    changed[j] = false;
+    _log.add(() => changed[j] = true);
+  }
+
+  /// Marks `a` no longer open on component `j`: missing it, or holding it.
+  void close(_Stand a, int j, {required bool missed}) {
+    open[j].remove(a);
+    if (missed) {
+      a.missed++;
+    } else {
+      a.loose--;
+      a.at -= j;
+    }
+    _log.add(() {
+      open[j].add(a);
+      if (missed) {
+        a.missed--;
+      } else {
+        a.loose++;
+        a.at += j;
+      }
+    });
+  }
+}
+
+/// A tuple type of a part, and where it stands on the box of its region: how many components
+/// it misses, and how many it does not hold with the sum of their positions, which is the
+/// position when there is one.
+final class _Stand {
+  final Components type;
+  var missed = 0;
+  int loose, at;
+
+  _Stand(this.type, this.loose, this.at);
+
+  /// Where it stands on the box, as last tested: false if it misses it, true if it holds it,
+  /// null if it is open on it.
+  bool? get stand => missed > 0 ? false : (loose == 0 ? true : null);
 }
 
 /// A value known to be in a type, held as the types of its parts, each with a representative

@@ -692,9 +692,10 @@ impl<A: Literal> Part<A> {
                 }
                 match &e.form {
                     Form::Not(a) => stack.push(a.clone()),
+                    // The first operand is pushed last, so it is walked first.
                     Form::Or(a, b) | Form::And(a, b) => {
-                        stack.push(a.clone());
                         stack.push(b.clone());
+                        stack.push(a.clone());
                     }
                 }
             }

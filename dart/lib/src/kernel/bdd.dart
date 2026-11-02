@@ -124,17 +124,19 @@ sealed class Part<A extends Literal<A>> implements Comparable<Part<A>> {
   Part<A> settle() {
     var p = this;
     while (true) {
+      // The shared subexpressions, in the order the walk finds them shared.
       final uses = Map<Expr<A>, int>.identity();
+      final shared = <Expr<A>>[];
       final stack = [p];
       while (stack.isNotEmpty) {
         if (stack.removeLast() case final Expr<A> e) {
           final n = uses[e] = (uses[e] ?? 0) + 1;
           if (n == 1) stack.addAll([?e.b, e.a]);
+          if (n == 2) shared.add(e);
         }
       }
       final pins = Map<Expr<A>, bool>.identity();
-      for (final MapEntry(key: e, value: n) in uses.entries) {
-        if (n < 2) continue;
+      for (final e in shared) {
         for (final v in [true, false]) {
           pins[e] = !v;
           if (p._eval3((_) => null, pins) == false) {
@@ -428,12 +430,7 @@ sealed class Bdd<A extends Literal<A>> extends Part<A> {
   /// its atom, an edge to its `lo` its state; a node's state is `join` of the states of the
   /// edges into it. Each node is visited once, after every node with an edge into it, so the
   /// time is linear in the nodes however many paths there are.
-  bool reaching<S>(
-    S start,
-    S Function(S, A) take,
-    S Function(S, S) join,
-    bool Function(A, S) f,
-  ) {
+  bool reaching<S>(S start, S Function(S, A) take, S Function(S, S) join, bool Function(A, S) f) {
     final root = this;
     if (root is! Node<A>) return true;
     // Nodes in reverse postorder of a depth-first walk: each after those above it.
@@ -542,18 +539,18 @@ sealed class Bdd<A extends Literal<A>> extends Part<A> {
     return known(this)!;
   }
 
-  /// [Part.forced] of a diagram: the atoms taken on every path to `true`, and those refused
-  /// on every path, found as the branches that dominate the `true` leaf. The nodes that reach
-  /// it are taken in topological order, and each branch between them is a vertex of its own;
-  /// a vertex's dominator is the nearest common one of the vertices with an edge into it,
-  /// found by binary lifting, so the time is `O(n log n)` in the nodes.
+  /// [Part.forced] of a diagram. The atoms are ordered, so an atom is free in some value when
+  /// a path to `true` passes its place in the order without testing it, or tests it and goes
+  /// on to `true` both ways. One pass over the nodes that reach `true` marks the places each
+  /// edge passes over and the ways each node goes on; the atoms are then sorted, so the time is
+  /// `O(n log n)` in the nodes.
   (List<A>, List<A>) _forced() {
     final root = this;
     if (root is! Node<A>) return (<A>[], <A>[]);
-    // The nodes that reach `true`, in postorder of a depth-first walk that takes `hi` first.
+    // The nodes that reach `true`, found in postorder of a depth-first walk.
     final reaches = <int, bool>{};
     final entered = <int>{};
-    final post = <Node<A>>[];
+    final live = <Node<A>>[];
     bool reach(Bdd<A> b) => switch (b) {
       Leaf(:final value) => value,
       Node(:final id) => reaches[id]!,
@@ -562,8 +559,7 @@ sealed class Bdd<A extends Literal<A>> extends Part<A> {
     while (walk.isNotEmpty) {
       final (n, below) = walk.removeLast();
       if (below) {
-        final r = reaches[n.id] = reach(n.hi) || reach(n.lo);
-        if (r) post.add(n);
+        if (reaches[n.id] = reach(n.hi) || reach(n.lo)) live.add(n);
         continue;
       }
       if (!entered.add(n.id)) continue;
@@ -572,63 +568,45 @@ sealed class Bdd<A extends Literal<A>> extends Part<A> {
         if (c is Node<A> && !entered.contains(c.id)) walk.add((c, false));
       }
     }
-    if (post.isEmpty) return (<A>[], <A>[]);
-    // Vertex 0 is the `true` leaf, 1 to `nodes.length` the nodes, root first, and then a
-    // vertex per branch, with its node's vertex and whether it is the `hi` branch. Each vertex
-    // has its dominator (-1 while none is known), its depth in the dominator tree, and its
-    // ancestors there `2^i` steps up.
-    final nodes = post.reversed.toList();
-    final index = {for (var k = 0; k < nodes.length; k++) nodes[k].id: k + 1};
-    final up = [-1, for (var k = 0; k < nodes.length; k++) k == 0 ? 1 : -1];
-    final depth = List.filled(nodes.length + 1, 0, growable: true);
-    final lift = List<List<int>>.filled(nodes.length + 1, const [], growable: true);
-    final branch = List<(int, bool)?>.filled(nodes.length + 1, null, growable: true);
-    List<int> ancestors(int p) {
-      final l = [p];
-      while (l.length - 1 < lift[l.last].length) {
-        l.add(lift[l.last][l.length - 1]);
+    if (live.isEmpty) return (<A>[], <A>[]);
+    // Each node's place: the index of its atom among the distinct atoms, in their order.
+    live.sort((x, y) => x.atom.compareTo(y.atom));
+    final atoms = <A>[];
+    final place = <int, int>{};
+    for (final n in live) {
+      if (atoms.isEmpty || atoms.last.compareTo(n.atom) != 0) atoms.add(n.atom);
+      place[n.id] = atoms.length - 1;
+    }
+    // `passed` is a difference array: an edge from place `from` to place `to` passes over the
+    // places from `from` up to `to`, the places above the root being passed over on the way in.
+    final count = atoms.length;
+    final passed = List.filled(count + 1, 0);
+    final (hi, lo) = (List.filled(count, false), List.filled(count, false));
+    void pass(int from, int to) {
+      if (from < to) {
+        passed[from]++;
+        passed[to]--;
       }
-      return l;
     }
 
-    int meet(int a, int b) {
-      if (depth[a] < depth[b]) (a, b) = (b, a);
-      for (var (i, d) = (0, depth[a] - depth[b]); d > 0; i++, d >>= 1) {
-        if (d & 1 != 0) a = lift[a][i];
-      }
-      if (a == b) return a;
-      for (var i = lift[a].length - 1; i >= 0; i--) {
-        if (i < lift[a].length && lift[a][i] != lift[b][i]) {
-          (a, b) = (lift[a][i], lift[b][i]);
-        }
-      }
-      return lift[a][0];
-    }
-
-    for (var k = 0; k < nodes.length; k++) {
-      final u = k + 1;
-      // Every edge into the node comes from a node before it, so its dominator is known.
-      if (u != 1) {
-        depth[u] = depth[up[u]] + 1;
-        lift[u] = ancestors(up[u]);
-      }
-      for (final (child, v) in [(nodes[k].hi, true), (nodes[k].lo, false)]) {
-        final c = switch (child) {
-          Leaf(:final value) => value ? 0 : null,
-          Node(:final id) => index[id],
+    pass(0, place[root.id]!);
+    for (final n in live) {
+      final i = place[n.id]!;
+      for (final (child, v) in [(n.hi, true), (n.lo, false)]) {
+        final to = switch (child) {
+          Leaf(:final value) => value ? count : null,
+          Node(:final id) => place[id],
         };
-        if (c == null) continue;
-        final e = up.length;
-        up.add(u);
-        depth.add(depth[u] + 1);
-        lift.add(ancestors(u));
-        branch.add((u, v));
-        up[c] = up[c] == -1 ? e : meet(up[c], e);
+        if (to == null) continue;
+        pass(i + 1, to);
+        (v ? hi : lo)[i] = true;
       }
     }
     final taken = <A>[], refused = <A>[];
-    for (var x = up[0]; x != 1; x = up[x]) {
-      if (branch[x] case (final u, final v)) (v ? taken : refused).add(nodes[u - 1].atom);
+    var over = 0;
+    for (var i = 0; i < count; i++) {
+      over += passed[i];
+      if (over == 0 && hi[i] != lo[i]) (hi[i] ? taken : refused).add(atoms[i]);
     }
     return (taken, refused);
   }

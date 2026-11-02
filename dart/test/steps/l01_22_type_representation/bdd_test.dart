@@ -7,6 +7,8 @@ import 'package:test/test.dart';
 import 'package:zed/kernel.dart';
 import 'package:zed/src/kernel/types.dart';
 
+import '../../support/scaling.dart';
+
 /// The tuple type of one integer, an atom independent of the others.
 Components atom(int i) => Components([Type.lit(Int(i))!]);
 
@@ -110,11 +112,46 @@ void main() {
         final i = index(a)!;
         if (!inside.every((s) => s & (1 << i) == 0)) fail('$p refuses $i');
       }
+      // On a diagram every atom in all assignments, or in none, is found.
+      if (p is Bdd<Components> && inside.isNotEmpty) {
+        for (var i = 0; i < 6; i++) {
+          bool at(int s) => s & (1 << i) != 0;
+          expect(taken.contains(atoms[i]), inside.every(at), reason: '$p at $i');
+          expect(refused.contains(atoms[i]), !inside.any(at), reason: '$p at $i');
+        }
+      }
     }
     expect(
       exprs > 500 && decided > 300 && forced > 1000 && settled > 100,
       isTrue,
       reason: '$exprs $decided $forced $settled',
     );
+  });
+
+  test('the forced atoms of a long chain scale', () {
+    // `w & ((x_1 & … & x_m) | z)`: `true` is reached past `z` from every `x_k`, so no branch
+    // below `w` is on every path. `w` is the first atom in the order and `z` the last, and
+    // the conjunction is built by halves, since a union or intersection counts the nodes of
+    // its result.
+    (Part<Components>, Components) chain(int m) {
+      final xs = [for (var i = 0; i < m + 2; i++) atom(i)]..sort((a, b) => a.compareTo(b));
+      Part<Components> all(int from, int to) => to - from == 1
+          ? Part.literal(xs[from])
+          : all(from, (from + to) ~/ 2).zip(all((from + to) ~/ 2, to), false);
+      final body = all(1, m + 1).zip(Part.literal(xs[m + 1]), true);
+      return (Part.literal(xs[0]).zip(body, false), xs[0]);
+    }
+
+    const n = 1 << 12;
+    final built = {
+      for (final m in [n, factor * n]) m: chain(m),
+    };
+    check('the forced atoms of a chain, by its length', n, (m) {
+      final (p, w) = built[m]!;
+      expect(p, isA<Bdd<Components>>());
+      final (taken, refused) = p.forced();
+      expect(taken, [w]);
+      expect(refused, isEmpty);
+    });
   });
 }
