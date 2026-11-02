@@ -41,7 +41,7 @@ use std::sync::Arc;
 
 use zed_kernel::provenance::{FactAddress, NodeAddress, Vector};
 use zed_kernel::types::{Type, Universe};
-use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
 
 use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
@@ -1250,8 +1250,7 @@ impl Scope {
     }
 
     /// Enumeration: the written constraints on each small integer name, and those on static
-    /// names only. Each constraint is enumerated once for its static names, and every
-    /// evaluation of one call shares one thread.
+    /// names only. Each constraint is enumerated once for its static names.
     fn enumerate(&mut self) {
         if self.exact {
             self.enumerate_exactly();
@@ -1278,10 +1277,10 @@ impl Scope {
         if pending.is_empty() {
             return;
         }
-        on_stack(|stack| self.enumerate_on(stack, pending));
+        on_stack(|| self.enumerate_on(pending));
     }
 
-    fn enumerate_on(&mut self, stack: &Stack, pending: Vec<(Term, Vec<Arc<str>>, Enumerated)>) {
+    fn enumerate_on(&mut self, pending: Vec<(Term, Vec<Arc<str>>, Enumerated)>) {
         let int = Type::int();
         for (c, open, key) in pending {
             let at = |extra: Option<(&Arc<str>, i64)>| {
@@ -1293,7 +1292,7 @@ impl Scope {
                     ),
                     None => c.clone(),
                 };
-                Evaluator::new(World::new()).run_on(stack, &t)
+                Evaluator::new(World::new()).run(&t)
             };
             match &open[..] {
                 [] => {
@@ -1505,7 +1504,7 @@ fn substitute(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Term {
 /// revision table's forward transfer over integers, or the join of an `if`'s reachable arms.
 /// `scope` is as it was on return.
 pub fn forward(e: &Term, scope: &mut Scope) -> Product {
-    on_stack(|_| forward_in(e, scope))
+    on_stack(|| forward_in(e, scope))
 }
 
 fn forward_in(e: &Term, scope: &mut Scope) -> Product {
@@ -1633,8 +1632,7 @@ impl Arm {
 /// arguments; it does not enter a function body or a construct that binds names by pattern.
 /// The premise of each test is its position in the walk.
 pub fn arms(term: &Term, scope: &Scope) -> Vec<Arm> {
-    // One evaluation thread serves every evaluation of the walk.
-    on_stack(|_| {
+    on_stack(|| {
         let mut out = Vec::new();
         let mut count = 0;
         walk(term, &mut scope.clone(), &mut out, &mut count);

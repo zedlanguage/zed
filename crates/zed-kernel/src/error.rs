@@ -32,8 +32,6 @@ pub enum KernelError {
     /// The evaluation used up its fuel: a `fix` whose ascent or a `gen` that did not stop
     /// within the step budget (sec:generations, divergence).
     OutOfFuel,
-    /// Calls nested deeper than the reference evaluator follows ([`crate::eval::MAX_DEPTH`]).
-    TooDeep,
     /// A number beyond the size the reference evaluator builds ([`crate::num::MAX_BITS`]): a
     /// limit of its memory, since `int` and `rat` are unbounded.
     Overflow,
@@ -64,7 +62,6 @@ impl fmt::Display for KernelError {
             KernelError::UnknownPort(name) => write!(f, "unknown port `{name}`"),
             KernelError::Port(name, why) => write!(f, "port `{name}`: {why}"),
             KernelError::OutOfFuel => write!(f, "out of fuel"),
-            KernelError::TooDeep => write!(f, "calls nested too deeply"),
             KernelError::Overflow => write!(f, "a number beyond the evaluator's size limit"),
             KernelError::Stalled { keys } => {
                 write!(f, "recursion stalled: entries ")?;
@@ -110,7 +107,6 @@ mod tests {
             "unknown port `p`"
         );
         assert_eq!(KernelError::OutOfFuel.to_string(), "out of fuel");
-        assert_eq!(KernelError::TooDeep.to_string(), "calls nested too deeply");
         assert_eq!(
             KernelError::Overflow.to_string(),
             "a number beyond the evaluator's size limit"

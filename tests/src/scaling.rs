@@ -37,7 +37,7 @@ pub fn check_order(what: &str, n: usize, power: u32, run: impl Fn(usize)) {
             .expect("five runs")
     };
     let limit = RATIO * (FACTOR as f64).powi(power as i32 - 1);
-    // A first run warms caches and the evaluation thread.
+    // A first run warms caches.
     run(n);
     let mut seen = Vec::new();
     for _ in 0..TRIES {

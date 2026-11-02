@@ -1,6 +1,7 @@
 //! The minimum resource limits: an evaluation within them is accepted by the reference
-//! evaluator with its default settings. Each program is sized to its limit, and one step or
-//! one call more is shown to cross it, so the sizes are measured and not estimated.
+//! evaluator with its default settings. The step program is sized to its limit, and one step
+//! more is shown to cross it, so the size is measured and not estimated. Nested calls have a
+//! minimum and no maximum: a chain past the minimum is accepted too.
 
 use zed_kernel::eval::{MIN_MEMORY, MIN_NESTED_CALLS, MIN_STEPS};
 use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
@@ -37,7 +38,6 @@ fn ten_million_steps_are_accepted() {
         with_fuel(MIN_STEPS, &count_leaves(5_000_001)),
         Err(KernelError::OutOfFuel)
     );
-    // The default fuel is at least the minimum: a compile-time assertion in `zed_kernel::eval`.
 }
 
 /// A chain of `n` calls, each nested in the one before:
@@ -65,7 +65,8 @@ fn nested(n: i64) -> Term {
 fn twenty_thousand_nested_calls_are_accepted() {
     let n = MIN_NESTED_CALLS as i64;
     assert_eq!(eval(&nested(n)), Ok(Value::Int(n)));
-    assert_eq!(eval(&nested(n + 1)), Err(KernelError::TooDeep));
+    assert_eq!(eval(&nested(n + 1)), Ok(Value::Int(n + 1)));
+    assert_eq!(eval(&nested(50 * n)), Ok(Value::Int(50 * n)));
 }
 
 #[test]

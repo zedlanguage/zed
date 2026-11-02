@@ -6,7 +6,7 @@
 
 use zed_kernel::term::build::if_;
 use zed_kernel::term::build::lit;
-use zed_kernel::{Evaluator, Family, Schedule, Term, Value, World};
+use zed_kernel::{Evaluator, Family, KernelError, Schedule, Term, Value, World};
 use zed_tests::kernel::*;
 use zed_tests::scaling;
 
@@ -34,26 +34,19 @@ fn run(t: &Term, schedule: Schedule) -> Value {
 
 #[test]
 fn the_definedness_fix_scales() {
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            // Two rounds: every entry but 0 is postponed once.
-            scaling::check("rounds, entries reading entry 0, by keys", 1000, |d| {
-                run(&counts(d, false), Schedule::Rounds);
-            });
-            scaling::check("chaotic, entries reading entry 0, by keys", 1000, |d| {
-                run(&counts(d, false), Schedule::Chaotic(7));
-            });
-            // Each entry waits on, or demands, the one before it.
-            for schedule in [Schedule::Rounds, Schedule::Chaotic(7), Schedule::Pull] {
-                scaling::check(&format!("{schedule:?}, a chain, by keys"), 1000, |d| {
-                    run(&counts(d, true), schedule);
-                });
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // Two rounds: every entry but 0 is postponed once.
+    scaling::check("rounds, entries reading entry 0, by keys", 1000, |d| {
+        run(&counts(d, false), Schedule::Rounds);
+    });
+    scaling::check("chaotic, entries reading entry 0, by keys", 1000, |d| {
+        run(&counts(d, false), Schedule::Chaotic(7));
+    });
+    // Each entry waits on, or demands, the one before it.
+    for schedule in [Schedule::Rounds, Schedule::Chaotic(7), Schedule::Pull] {
+        scaling::check(&format!("{schedule:?}, a chain, by keys"), 1000, |d| {
+            run(&counts(d, true), schedule);
+        });
+    }
 }
 
 #[test]
@@ -126,30 +119,49 @@ fn an_entry_reading_many_undefined_entries_scales_under_demand() {
     // Each read of an undefined entry stopped the attempt, and the entry was tried again from
     // the start once the entry read was defined: entry 0 of `fan_in(d)` was tried `d` times
     // and read `d²/2` entries. Now the entry read is evaluated where it is read.
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            scaling::check("pull, one entry reading every other, by keys", 1000, |d| {
-                let v = run(&fan_in(d), Schedule::Pull);
-                let sum = (d * (d - 1) / 2) as i64;
-                assert_eq!(
-                    v.as_family().unwrap().get(&Value::Int(0)),
-                    Some(&Value::Int(sum))
-                );
-            });
-            scaling::check(
-                "pull, entries reading the ones after them, by keys",
-                1000,
-                |d| {
-                    let v = run(&reverse_chain(d), Schedule::Pull);
-                    let f = v.as_family().unwrap();
-                    assert_eq!(f.get(&Value::Int(0)), Some(&Value::Int(tail_sum(d, 0))));
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::check("pull, one entry reading every other, by keys", 1000, |d| {
+        let v = run(&fan_in(d), Schedule::Pull);
+        let sum = (d * (d - 1) / 2) as i64;
+        assert_eq!(
+            v.as_family().unwrap().get(&Value::Int(0)),
+            Some(&Value::Int(sum))
+        );
+    });
+    scaling::check(
+        "pull, entries reading the ones after them, by keys",
+        1000,
+        |d| {
+            let v = run(&reverse_chain(d), Schedule::Pull);
+            let f = v.as_family().unwrap();
+            assert_eq!(f.get(&Value::Int(0)), Some(&Value::Int(tail_sum(d, 0))));
+        },
+    );
+}
+
+/// The chain of [`counts`] in reverse with its last entry reading the one before it, so that
+/// every demand begun at entry 0 nests down to a cycle of two.
+fn chain_to_a_cycle(d: usize) -> Term {
+    let keys = lit(Value::Family(Family::set(0..d as i64)));
+    fix_defined(keys, |this, k| {
+        let last = eq(k.clone(), lit(d as i64 - 1));
+        let read = if_(last, sub(k.clone(), lit(1)), add(k, lit(1)));
+        get(this, read)
+    })
+}
+
+#[test]
+fn a_chain_ending_in_a_cycle_stalls_in_linear_time_under_demand() {
+    // When the cycle stops the nested demands, every entry on the chain has stalled. Trying
+    // each from the start again would walk the rest of the chain each time, `D²/2` reads.
+    scaling::check("pull, a chain ending in a cycle, by keys", 1000, |d| {
+        let out = Evaluator::new(World::new())
+            .with_schedule(Schedule::Pull)
+            .run(&chain_to_a_cycle(d));
+        let Err(KernelError::Stalled { keys }) = out else {
+            panic!("{out:?}")
+        };
+        assert_eq!(keys.len(), d);
+    });
 }
 
 /// The address and value of every fact of a run of `t` under `schedule`, sorted.
@@ -171,10 +183,8 @@ fn facts(t: &Term, schedule: Schedule) -> (Value, Vec<String>) {
 #[test]
 fn a_demanded_entry_has_the_facts_it_has_in_rounds() {
     // An entry demanded where it is read records its facts at its own keypath, not inside the
-    // entry reading it. A chain longer than the depth of nested demands falls back to the
-    // stack of demands, and an attempt stopped there drops the entries it demanded with its
-    // facts, so each entry is still one set of facts.
-    for d in [5, 40, zed_kernel::eval::MAX_DEPTH + 500] {
+    // entry reading it, at any depth of nested demands, so each entry is one set of facts.
+    for d in [5, 40, zed_kernel::eval::MIN_NESTED_CALLS + 500] {
         let t = reverse_chain(d);
         let (v, pull) = facts(&t, Schedule::Pull);
         let (w, rounds) = facts(&t, Schedule::Rounds);
@@ -219,21 +229,14 @@ fn a_lattice_ascent_by_one_key_a_round_scales() {
     // The test for the fixpoint compared the iterate with the one before in the total order
     // of values, reading both in full each round: `n` rounds took `O(n²)` steps (ratio 40 to
     // 44). Families are now equal by their maps, which differ at once in size.
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            scaling::check(
-                "a lattice ascent adding a key a round, by keys",
-                1000,
-                |n| {
-                    let v = run(&ascent(n), Schedule::Rounds);
-                    assert_eq!(v.as_family().unwrap().len(), n);
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::check(
+        "a lattice ascent adding a key a round, by keys",
+        1000,
+        |n| {
+            let v = run(&ascent(n), Schedule::Rounds);
+            assert_eq!(v.as_family().unwrap().len(), n);
+        },
+    );
 }
 
 /// `"ab…"`, the `n` letters of the sequence `0..n -> letter` joined by a `foldl` of `++`.
@@ -257,18 +260,11 @@ fn a_string_joined_by_a_fold_scales() {
     // `++` copied both strings, and a `foldl` keeps every accumulator, so joining `n` pieces
     // took `O(n²)` time and memory (8,000 against 64,000 pieces: ratio 26.5). A join is now
     // the node of its two parts, written out once when it is read as text.
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            scaling::check("a foldl of ++, by pieces", 8000, |n| {
-                let Value::Str(s) = run(&joined(n), Schedule::Rounds) else {
-                    panic!("not a string")
-                };
-                assert_eq!(s.len(), n);
-                assert!(s.starts_with("abcab"));
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::check("a foldl of ++, by pieces", 8000, |n| {
+        let Value::Str(s) = run(&joined(n), Schedule::Rounds) else {
+            panic!("not a string")
+        };
+        assert_eq!(s.len(), n);
+        assert!(s.starts_with("abcab"));
+    });
 }

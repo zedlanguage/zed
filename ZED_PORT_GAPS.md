@@ -575,3 +575,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `catch_unwind` | 1 | 0 | 0 | 0 | 1 | Evaluator::run `zed-kernel/eval.rs:370` (1) |
 | `hash_trait` | 2 | 6 | 0 | 0 | 8 | Text::hash `zed-kernel/text.rs:155` (1); Type::hash `zed-kernel/types.rs:69` (1); address_at `zedc/canon/mod.rs:196` (1) |
 | `phantom` | 3 | 0 | 0 | 0 | 3 | on_stack `zed-kernel/eval.rs:292` (2) |
+
+## Entries from T2-eval (`zed-kernel/src/eval.rs`, `exact.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Vec` of an enum as an explicit stack, popped and pushed in a loop | `Machine::run`, `Frame`, `Wait`, `exact::CanonicalTree` | Mutation | A state receiver; a list value updated per step would allocate per frame unless the runtime reuses it |
+| Terms borrowed for the run: `Frame<'t>`, `Step<'t>`, `V<'t>` | throughout `eval.rs` | None | Zed shares values, so a term is held without a lifetime |
+| `Rc<RefCell<...>>` cells shared by frames | `Definedness::{defined, busy, stalled}`, `Drops::envs` | Mutation, identity | State threaded through the machine, keyed by a fix's id (gaps 1 and 3 of the T13 catalog) |
+| `impl Drop for Closure`: environments put on a list so that their release does not recurse | `Drops`, `Closure` | None | Removed: the runtime frees values, and must free a deep chain without recursion itself |
+| `std::mem::take`, `std::mem::replace` of a field in place | `Evaluator::run`, the fix frames | Mutation | A state receiver |

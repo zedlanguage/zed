@@ -68,7 +68,7 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, eval, on_stack};
+use zed_kernel::{Evaluator, Prim, Term, Value, World, eval, on_stack};
 
 use super::interval::{self, End, IntervalSet};
 use super::lattice::{Congruence, Landmarks, Lattice};
@@ -159,6 +159,15 @@ pub struct Preimage {
     pub relation: Option<Relation>,
 }
 
+/// The value of the closed term `t`, if its form shows that it ends ([`stage::ends`]) and it
+/// evaluates. A term not shown to end stays unevaluated, since a program may loop forever.
+fn run_closed(t: &Term) -> Option<Value> {
+    if !stage::ends(t) {
+        return None;
+    }
+    eval(t).ok()
+}
+
 /// The most factors read as one power: an integer power past 64 of anything but -1, 0 and 1
 /// leaves `i64`.
 const POWER_FACTORS: usize = 64;
@@ -166,8 +175,7 @@ const POWER_FACTORS: usize = 64;
 /// The preimage of `demand` under `term`, whose free names in `inputs` range over their
 /// domains.
 pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
-    // One evaluation thread serves every evaluation of the transfer.
-    on_stack(|_| preimage_in(term, inputs, demand))
+    on_stack(|| preimage_in(term, inputs, demand))
 }
 
 fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
@@ -1113,9 +1121,9 @@ impl Cx {
                 Term::If(g, a, b) => match self.constant(g, env)? {
                     Value::Bool(true) => self.constant(a, env),
                     Value::Bool(false) => self.constant(b, env),
-                    _ => eval(&self.close(t, env)?).ok(),
+                    _ => run_closed(&self.close(t, env)?),
                 },
-                _ => eval(&self.close(t, env)?).ok(),
+                _ => run_closed(&self.close(t, env)?),
             }
         })
     }
@@ -2201,7 +2209,7 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Res> {
             exact: true,
         });
     }
-    on_stack(|stack| enumerate_on(stack, term, &axes, demand))
+    on_stack(|| enumerate_on(term, &axes, demand))
 }
 
 /// The congruence class of each input that has one, under `@exact`; an input not listed may be
@@ -2222,7 +2230,7 @@ pub fn exact_preimage(
     classes: &Classes,
     demand: &Demand,
 ) -> Preimage {
-    on_stack(|stack| {
+    on_stack(|| {
         let mut p = preimage_in(term, inputs, demand);
         if p.exact {
             // Every point of the box meets the demand, so the classes alone narrow it.
@@ -2234,7 +2242,7 @@ pub fn exact_preimage(
         if !stage::ends(term) {
             return p;
         }
-        let Some((domains, exact)) = exact_search(stack, term, &p.domains, classes, demand) else {
+        let Some((domains, exact)) = exact_search(term, &p.domains, classes, demand) else {
             return p;
         };
         Preimage {
@@ -2291,10 +2299,9 @@ pub fn witness(
             Some(_) => None,
         };
     }
-    on_stack(|stack| {
+    on_stack(|| {
         let mut found = None;
         branch(
-            stack,
             term,
             dom,
             classes,
@@ -2312,7 +2319,6 @@ pub fn witness(
 /// The projection of the points of `dom` in `classes` meeting `demand`, and whether their box
 /// holds no point that fails it; `None` when an input is unbounded or a point cannot be run.
 fn exact_search(
-    stack: &Stack,
     term: &Term,
     dom: &Domains,
     classes: &Classes,
@@ -2337,7 +2343,6 @@ fn exact_search(
             .collect::<Domains>(),
     );
     branch(
-        stack,
         term,
         dom,
         classes,
@@ -2362,7 +2367,6 @@ fn exact_search(
         Demand::Ints(z) => Demand::Ints(z.complement_in(&IntervalSet::top())),
     };
     let found = branch(
-        stack,
         term,
         met.clone(),
         classes,
@@ -2379,7 +2383,6 @@ fn exact_search(
 /// is smaller than the one it was split from, so the search ends. `Some(true)` when `all`
 /// stopped it, `None` when a point cannot be run.
 fn branch(
-    stack: &Stack,
     term: &Term,
     root: Domains,
     classes: &Classes,
@@ -2426,7 +2429,7 @@ fn branch(
                 };
                 t = Term::Let(k.clone(), Arc::new(Term::Lit(Value::Int(v))), Arc::new(t));
             }
-            let v = Evaluator::new(World::new()).run_on(stack, &t).ok()?;
+            let v = Evaluator::new(World::new()).run(&t).ok()?;
             if demand.holds(&v) && all(&b) {
                 return Some(true);
             }
@@ -2594,13 +2597,8 @@ fn is_point(s: &IntervalSet) -> bool {
     matches!(s.bounds(), Some((Fin(a), Fin(b))) if a == b)
 }
 
-/// The enumeration of [`enumerate`] over `axes`, each point evaluated on `stack`.
-fn enumerate_on(
-    stack: &Stack,
-    term: &Term,
-    axes: &[(Arc<str>, Vec<i64>)],
-    demand: &Demand,
-) -> Option<Res> {
+/// The enumeration of [`enumerate`] over `axes`, each point evaluated in turn.
+fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> Option<Res> {
     let mut met: Vec<Vec<i64>> = vec![Vec::new(); axes.len()];
     let mut count: u64 = 0;
     let mut point = vec![0usize; axes.len()];
@@ -2613,7 +2611,7 @@ fn enumerate_on(
                 Arc::new(t),
             );
         }
-        let v = Evaluator::new(World::new()).run_on(stack, &t).ok()?;
+        let v = Evaluator::new(World::new()).run(&t).ok()?;
         if demand.holds(&v) {
             count += 1;
             for (j, &i) in point.iter().enumerate() {

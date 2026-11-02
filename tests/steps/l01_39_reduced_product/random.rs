@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
 use zed_tests::instances::Rng;
 use zedc::store::product::Arm;
 
@@ -79,22 +79,22 @@ impl Shape {
 }
 
 /// The value of `t` at the state `env`.
-fn at(stack: &Stack, t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Option<Value> {
+fn at(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Option<Value> {
     let t = env.iter().fold(t.clone(), |b, (n, v)| {
         Term::Let(n.clone(), Arc::new(Term::Lit(v.clone())), Arc::new(b))
     });
-    Evaluator::new(World::new()).run_on(stack, &t).ok()
+    Evaluator::new(World::new()).run(&t).ok()
 }
 
 /// Checks `arms` against the interpreter over the window: the number of (point, arm) pairs
 /// checked, or the first point that reaches an arm whose scope does not hold it.
 pub(super) fn check(s: &Shape, arms: &[Arm]) -> Result<usize, String> {
     assert_eq!(arms.len(), 6);
-    on_stack(|stack| check_on(stack, s, arms))
+    on_stack(|| check_on(s, arms))
 }
 
-fn check_on(stack: &Stack, s: &Shape, arms: &[Arm]) -> Result<usize, String> {
-    let at = |t: &Term, env: &BTreeMap<Arc<str>, Value>| at(stack, t, env);
+fn check_on(s: &Shape, arms: &[Arm]) -> Result<usize, String> {
+    let at = |t: &Term, env: &BTreeMap<Arc<str>, Value>| at(t, env);
     let mut checked = 0;
     for x in LO..=HI {
         for y in LO..=HI {

@@ -18,15 +18,8 @@ fn a_chain_of_n_failures_merging_scales() {
             .unwrap()
             .to_string()
     };
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(move || {
-            zed_tests::scaling::check("n failures merged by a chain of `+`", 1000, |n| {
-                run(n);
-            });
-            assert_eq!(run(3), "#errs({#e0, #e1, #e2})");
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    zed_tests::scaling::check("n failures merged by a chain of `+`", 1000, |n| {
+        run(n);
+    });
+    assert_eq!(run(3), "#errs({#e0, #e1, #e2})");
 }

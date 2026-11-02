@@ -10,6 +10,7 @@ use zed_kernel::{
 };
 use zed_tests::kernel::*;
 
+mod deep;
 mod scaling;
 
 #[test]
@@ -461,11 +462,13 @@ fn a_loop_that_never_stops_runs_out_of_fuel() {
 }
 
 #[test]
-fn self_application_is_cut_off() {
+fn self_application_runs_until_the_fuel_ends() {
+    // `x(x)` is a loop in tail position, which holds no frames, so only fuel stops it.
     let w = lam(&["x"], app(var("x"), vec![var("x")]));
+    let mut ev = Evaluator::new(World::new()).with_fuel(100_000);
     assert_eq!(
-        eval(&app(w.clone(), vec![w])).unwrap_err(),
-        KernelError::TooDeep
+        ev.run(&app(w.clone(), vec![w])).unwrap_err(),
+        KernelError::OutOfFuel
     );
 }
 

@@ -136,32 +136,96 @@ pub fn exact_sum(xs: &[f64]) -> f64 {
     }
 }
 
-/// Reduces a nonempty sequence on the canonical tree of (sec:reduction), whose shape depends
-/// on its length alone: one element is itself; a power-of-two length reduces its two halves;
-/// any other length `n`, with `p` the largest power of two dividing `n`, reduces the first
-/// `n - p` elements and the last `p`. The left result is always combined with the right.
-pub fn canonical_tree<T: Clone, E>(
-    xs: &[T],
-    op: &mut impl FnMut(T, T) -> Result<T, E>,
-) -> Result<T, E> {
-    let n = xs.len();
-    assert!(
-        n > 0,
-        "the canonical tree of an empty level is the empty-fold rule's business"
-    );
-    if n == 1 {
-        return Ok(xs[0].clone());
+/// A nonempty sequence being reduced on the canonical tree of (sec:reduction), whose shape
+/// depends on its length alone: one element is itself; a power-of-two length reduces its two
+/// halves; any other length `n`, with `p` the largest power of two dividing `n`, reduces the
+/// first `n - p` elements and the last `p`. The left result is always combined with the right.
+///
+/// The caller drives it: [`CanonicalTree::advance`] asks for one combination, and
+/// [`CanonicalTree::give`] hands back its result, so the combining can run anywhere.
+pub struct CanonicalTree<T> {
+    xs: std::vec::IntoIter<T>,
+    todo: Vec<Task>,
+    results: Vec<T>,
+}
+
+/// What is left to do on a [`CanonicalTree`], last first.
+enum Task {
+    /// Reduce the next `n` elements.
+    Reduce(usize),
+    /// Combine the last two results.
+    Combine,
+}
+
+/// What a [`CanonicalTree`] asks for next.
+pub enum TreeStep<T> {
+    /// Combine these, left then right, and give back the result.
+    Join(T, T),
+    /// The reduction is over, with this result.
+    Done(T),
+}
+
+impl<T> CanonicalTree<T> {
+    /// The reduction of `xs`, not yet begun.
+    pub fn new(xs: Vec<T>) -> Self {
+        assert!(
+            !xs.is_empty(),
+            "the canonical tree of an empty level is the empty-fold rule's business"
+        );
+        CanonicalTree {
+            todo: vec![Task::Reduce(xs.len())],
+            xs: xs.into_iter(),
+            results: Vec::new(),
+        }
     }
-    let p = 1 << n.trailing_zeros();
-    let split = if p == n { n / 2 } else { n - p };
-    let left = canonical_tree(&xs[..split], op)?;
-    let right = canonical_tree(&xs[split..], op)?;
-    op(left, right)
+
+    /// The next combination, or the result when none is left.
+    pub fn advance(&mut self) -> TreeStep<T> {
+        let pop = |results: &mut Vec<T>| results.pop().expect("a result of the tree");
+        while let Some(task) = self.todo.pop() {
+            match task {
+                Task::Combine => {
+                    let right = pop(&mut self.results);
+                    return TreeStep::Join(pop(&mut self.results), right);
+                }
+                Task::Reduce(1) => self
+                    .results
+                    .push(self.xs.next().expect("an element of the level")),
+                Task::Reduce(n) => {
+                    let p = 1 << n.trailing_zeros();
+                    let split = if p == n { n / 2 } else { n - p };
+                    self.todo.push(Task::Combine);
+                    self.todo.push(Task::Reduce(n - split));
+                    self.todo.push(Task::Reduce(split));
+                }
+            }
+        }
+        TreeStep::Done(pop(&mut self.results))
+    }
+
+    /// Hands back the result of the combination [`CanonicalTree::advance`] asked for.
+    pub fn give(&mut self, result: T) {
+        self.results.push(result);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reduces `xs` on the canonical tree with `op`.
+    fn canonical_tree<T: Clone, E>(
+        xs: &[T],
+        op: &mut impl FnMut(T, T) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let mut tree = CanonicalTree::new(xs.to_vec());
+        loop {
+            match tree.advance() {
+                TreeStep::Join(a, b) => tree.give(op(a, b)?),
+                TreeStep::Done(v) => return Ok(v),
+            }
+        }
+    }
 
     #[test]
     fn exact_sum_rounds_once() {
