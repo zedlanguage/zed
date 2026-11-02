@@ -76,11 +76,11 @@ fn a_form_of_a_later_layer_names_that_layer() {
     check(&[
         (
             "f(x) -> int = x;",
-            "error: this form (Result) is built from layer L10",
+            "error: this form (ResultType) is built from layer L10",
         ),
         (
             "t[i] <- 1;",
-            "error: this form (Push) is built from layer L7",
+            "error: this form (KeyedPush) is built from layer L7",
         ),
     ]);
 }

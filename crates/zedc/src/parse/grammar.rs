@@ -4,6 +4,8 @@
 //! is a parsing expression: ordered choice `|` below sequence, below the prefixes `&` and `!`,
 //! below the postfixes `*`, `+`, `?` and `e % sep` (`e (sep e)*`); `head(e)` and `nest(e)` set
 //! and clear the flag that `HEAD` tests, and a name in capitals that is no rule is a token kind.
+//! `~R` at the top of an alternative that holds nothing else but lookaheads means that the
+//! alternative builds no node, and the match is the node of the rule `R`.
 
 use std::collections::HashMap;
 
@@ -65,13 +67,24 @@ pub enum Expr {
     ClearHead(Box<Expr>),
 }
 
-/// A rule: its name and its alternatives, in order, each with its layer.
+/// An alternative of a rule.
+#[derive(Clone, Debug)]
+pub struct Alt {
+    /// Its expression.
+    pub expr: Expr,
+    /// The layer it joins.
+    pub layer: u32,
+    /// Whether it is a `~` alternative, which builds no node.
+    pub pass: bool,
+}
+
+/// A rule: its name and its alternatives, in order.
 #[derive(Clone, Debug)]
 pub struct Rule {
     /// The name.
     pub name: String,
-    /// The alternatives and their layers.
-    pub alts: Vec<(Expr, u32)>,
+    /// The alternatives.
+    pub alts: Vec<Alt>,
 }
 
 /// A grammar: its rules, in the order they are written.
@@ -118,21 +131,32 @@ impl Grammar {
                 toks: &toks,
                 i: 0,
                 index: &index,
+                depth: 0,
+                marked: false,
             };
             let e = p.choice()?;
             if p.i != toks.len() {
                 return Err(format!("trailing text in {l:?}"));
             }
+            let pass = p.marked;
+            if pass && !only_mark(&e) {
+                return Err(format!("beside a ~ mark {l:?} holds only lookaheads"));
+            }
+            let alt = Alt {
+                expr: e,
+                layer,
+                pass,
+            };
             match head {
                 Some(name) => rules.push(Rule {
                     name: name.into(),
-                    alts: vec![(e, layer)],
+                    alts: vec![alt],
                 }),
                 None => rules
                     .last_mut()
                     .ok_or("an alternative before any rule")?
                     .alts
-                    .push((e, layer)),
+                    .push(alt),
             }
         }
         Ok(Grammar { rules, index })
@@ -141,6 +165,18 @@ impl Grammar {
     /// The index of the rule `name`, if there is one.
     pub fn rule(&self, name: &str) -> Option<usize> {
         self.index.get(name).copied()
+    }
+}
+
+/// Whether the alternative `e`, which holds a `~` mark, holds nothing else but lookaheads.
+fn only_mark(e: &Expr) -> bool {
+    match e {
+        Expr::Rule(_) => true,
+        Expr::Seq(items) => {
+            let look = |x: &&Expr| matches!(x, Expr::And(_) | Expr::Not(_));
+            items.iter().filter(|x| !look(x)).count() == 1
+        }
+        _ => false,
     }
 }
 
@@ -173,7 +209,7 @@ fn tokens(body: &str) -> Result<Vec<GTok>, String> {
                 }
                 out.push(GTok::Lit(lit));
             }
-            '(' | ')' | '|' | '*' | '+' | '?' | '&' | '!' | '%' => out.push(GTok::Op(c)),
+            '(' | ')' | '|' | '*' | '+' | '?' | '&' | '!' | '%' | '~' => out.push(GTok::Op(c)),
             c if c.is_ascii_alphabetic() || c == '_' => {
                 let mut end = i + 1;
                 while let Some(&(j, d)) = chars.peek() {
@@ -206,6 +242,10 @@ struct Reader<'a> {
     toks: &'a [GTok],
     i: usize,
     index: &'a HashMap<String, usize>,
+    /// How many groups and lookaheads are open.
+    depth: usize,
+    /// Whether the alternative holds a `~` mark.
+    marked: bool,
 }
 
 impl Reader<'_> {
@@ -241,12 +281,43 @@ impl Reader<'_> {
 
     fn prefix(&mut self) -> Result<Expr, String> {
         if self.eat('&') {
-            Ok(Expr::And(Box::new(self.prefix()?)))
+            Ok(Expr::And(Box::new(self.within(Self::prefix)?)))
         } else if self.eat('!') {
-            Ok(Expr::Not(Box::new(self.prefix()?)))
+            Ok(Expr::Not(Box::new(self.within(Self::prefix)?)))
+        } else if self.eat('~') {
+            self.mark()
         } else {
             self.postfix()
         }
+    }
+
+    /// Reads with `read` inside a group or a lookahead.
+    fn within(&mut self, read: fn(&mut Self) -> Result<Expr, String>) -> Result<Expr, String> {
+        self.depth += 1;
+        let e = read(self);
+        self.depth -= 1;
+        e
+    }
+
+    /// The rule after a `~`.
+    fn mark(&mut self) -> Result<Expr, String> {
+        if self.depth != 0 {
+            return Err("a ~ mark must stand at the top of its alternative".into());
+        }
+        if self.marked {
+            return Err("an alternative holds at most one ~ mark".into());
+        }
+        self.marked = true;
+        let plain = "a ~ mark must be on a plain rule name";
+        if !matches!(self.toks.get(self.i), Some(GTok::Name(_))) {
+            return Err(plain.into());
+        }
+        let e = self.primary()?;
+        let repeated = matches!(self.toks.get(self.i), Some(GTok::Op('*' | '+' | '?' | '%')));
+        if repeated || !matches!(e, Expr::Rule(_)) {
+            return Err(plain.into());
+        }
+        Ok(e)
     }
 
     fn postfix(&mut self) -> Result<Expr, String> {
@@ -284,7 +355,7 @@ impl Reader<'_> {
                 None => kind(&n).ok_or(format!("the rule {n} is not defined")),
             },
             GTok::Wrap(w) => {
-                let e = Box::new(self.choice()?);
+                let e = Box::new(self.within(Self::choice)?);
                 if !self.eat(')') {
                     return Err(format!("`{w}(` is not closed"));
                 }
@@ -295,7 +366,7 @@ impl Reader<'_> {
                 })
             }
             GTok::Op('(') => {
-                let e = self.choice()?;
+                let e = self.within(Self::choice)?;
                 if !self.eat(')') {
                     return Err("`(` is not closed".into());
                 }

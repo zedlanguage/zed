@@ -240,3 +240,36 @@ R3 = ('c' | R0*) head((R3 'c')) L1
 R4 = R1 R3 (R4 'c')? L1
 R5 = ('a' R1)* L1
 R1 ::: a c ::: ( (a (  ( ) c)))
+
+grammar skip marks: a ladder of left-associative rules builds only the nodes of its operators
+S = S '+' P L1
+  | ~P L1
+P = P '*' A L1
+  | ~A L1
+A = 'a' L1
+  | '(' S ')' L1
+S ::: a ::: a
+S ::: a + a + a ::: ((a + a) + a)
+S ::: a * a + a ::: ((a * a) + a)
+S ::: a + a * a ::: (a + (a * a))
+S ::: ( a + a ) * a ::: ((( (a + a) )) * a)
+S ::: a + ::: ERROR@2 '(' 'a'
+S ::: + a ::: ERROR@0 '(' 'a'
+
+grammar skip marks beside a lookahead: the mark's span is the alternative's span
+B = !'x' ~C L1
+  | ~C &'y' L1
+  | 'x' L1
+C = 'x' 'z' L1
+  | 'a' L1
+B ::: a ::: a
+B ::: x z y ::: ERROR@2 END
+B ::: x ::: x
+grammar a skip mark into a left-recursive rule that a lookahead also reads
+T = &(L !'q') ~L L1
+  | 'c' L1
+L = L 'a' L1
+  | 'a' L1
+T ::: a a ::: (a a)
+T ::: a a q ::: ERROR@2 'a'
+T ::: c ::: c

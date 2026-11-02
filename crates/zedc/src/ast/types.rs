@@ -89,38 +89,28 @@ impl Builder<'_> {
         let kids = self.kids(n);
         let node = &self.tree.nodes[n];
         let span = self.span(n);
-        let kind = match (self.tree.name(n), node.alt) {
-            ("Type", _)
-            | ("TypeNot", 1)
-            | ("TypePostfix", _)
-            | ("TypeUnion", 1)
-            | ("TypeAnd", _)
-                if kids.len() == 1 =>
-            {
-                return self.ty(kids[0]);
-            }
-            ("Type" | "TypePostfix", _) => return Err(self.later(kids[1])),
-            ("Arrow", 0) => {
+        let kind = match self.tree.name(n) {
+            "Type" if kids.len() == 1 => return self.ty(kids[0]),
+            "Type" => return Err(self.later(kids[1])),
+            "TypePostfix" => return Err(self.later(self.kids(self.spine(n).1[0])[1])),
+            "Arrow" if self.tree.name(kids[0]) == "ArrowParams" => {
                 let params = self.arrow_params(kids[0])?;
                 self.arrow(params, kids[0], kids[1])?
             }
-            ("Arrow", 1) => match kids[..] {
-                [t] => return self.ty(t),
-                [t, r] => {
-                    let ty = self.ty(t)?;
-                    let param = TypeParam {
-                        name: None,
-                        positional: false,
-                        ty,
-                    };
-                    self.arrow(vec![param], t, r)?
-                }
-                _ => unreachable!("Arrow = TypeUnion (('->' | '->?') Arrow)?"),
-            },
-            ("TypeUnion", 0) => {
-                let mut t = self.ty(kids[0])?;
-                for &k in &kids[1..] {
-                    let r = self.ty(k)?;
+            "Arrow" => {
+                let ty = self.ty(kids[0])?;
+                let param = TypeParam {
+                    name: None,
+                    positional: false,
+                    ty,
+                };
+                self.arrow(vec![param], kids[0], kids[1])?
+            }
+            "TypeDiff" => {
+                let (base, links) = self.spine(n);
+                let mut t = self.ty(base)?;
+                for l in links {
+                    let r = self.ty(self.kids(l)[1])?;
                     let span = Span {
                         start: t.span.start,
                         end: r.span.end,
@@ -132,23 +122,23 @@ impl Builder<'_> {
                 }
                 return Ok(t);
             }
-            ("TypeUnion", 1) => TypeKind::Union(self.types(kids)?),
-            ("TypeAnd", _) => TypeKind::And(self.types(kids)?),
-            ("TypePrimary", 1) => TypeKind::Name(
+            "TypeOr" => TypeKind::Union(self.operands(n)?),
+            "TypeAnd" => TypeKind::And(self.operands(n)?),
+            "TypeName" => TypeKind::Name(
                 (node.start..node.end)
                     .step_by(2)
                     .map(|i| self.word(i))
                     .collect::<Vec<_>>()
                     .join("."),
             ),
-            ("TypePrimary", 3) => {
+            "AtomType" => {
                 let Tok::Atom(a) = &self.tokens[node.start].tok else {
                     unreachable!("an ATOM token")
                 };
                 TypeKind::Atom(a.clone())
             }
-            ("TypePrimary", 6) => TypeKind::Tuple(self.types(kids)?),
-            ("TypePrimary", 8) => {
+            "TupleType" => TypeKind::Tuple(self.types(kids)?),
+            "GroupType" => {
                 return Ok(Type {
                     span,
                     ..self.ty(kids[0])?
@@ -157,6 +147,16 @@ impl Builder<'_> {
             _ => return Err(self.later(n)),
         };
         Ok(Type { kind, span })
+    }
+
+    /// The operands of the left-recursive chain of node `n`, in written order.
+    fn operands(&self, n: usize) -> Result<Vec<Type>, Error> {
+        let (base, links) = self.spine(n);
+        let mut ts = vec![self.ty(base)?];
+        for l in links {
+            ts.push(self.ty(self.kids(l)[1])?);
+        }
+        Ok(ts)
     }
 
     fn types(&self, kids: &[usize]) -> Result<Vec<Type>, Error> {
@@ -175,14 +175,17 @@ impl Builder<'_> {
 
     fn arrow_params(&self, n: usize) -> Result<Vec<TypeParam>, Error> {
         let node = &self.tree.nodes[n];
-        match node.alt {
-            0 => Ok(Vec::new()),
-            1 => node.kids.iter().map(|&k| self.type_param(k)).collect(),
-            _ => Ok(vec![TypeParam {
-                name: Some(self.word(self.tree.nodes[node.kids[0]].start).into()),
+        match node.kids[..] {
+            [] => Ok(Vec::new()),
+            [first, ..] if self.tree.name(first) == "TypeParam" => {
+                node.kids.iter().map(|&k| self.type_param(k)).collect()
+            }
+            [name, ty] => Ok(vec![TypeParam {
+                name: Some(self.word(self.tree.nodes[name].start).into()),
                 positional: self.word(node.start + 1) == "positional",
-                ty: self.ty(node.kids[1])?,
+                ty: self.ty(ty)?,
             }]),
+            _ => unreachable!("ArrowParams has no other form"),
         }
     }
 
@@ -210,12 +213,12 @@ impl Builder<'_> {
 
     fn param(&self, n: usize) -> Result<Param, Error> {
         let node = &self.tree.nodes[n];
-        if self.tree.name(n) == "PosParam" && node.alt == 0 {
+        if self.tree.name(n) == "TupleParam" {
             return Err(self.later(n));
         }
         let mut p = Param {
             name: self.word(self.tree.nodes[node.kids[0]].start).into(),
-            positional: self.tree.name(n) == "PosParam",
+            positional: self.tree.name(n) == "PositionalParam",
             ty: None,
             default: None,
             span: self.span(n),
@@ -230,11 +233,10 @@ impl Builder<'_> {
         Ok(p)
     }
 
-    /// The pattern of node `n`, a `Pattern` or an `AtomPattern`.
+    /// The pattern of node `n`.
     pub(super) fn pattern(&self, n: usize) -> Result<Pattern, Error> {
         let node = &self.tree.nodes[n];
         match self.tree.name(n) {
-            "Pattern" if node.alt == 1 => self.pattern(node.kids[0]),
             "AtomPattern" => {
                 let Tok::Atom(name) = &self.tokens[node.start].tok else {
                     unreachable!("AtomPattern = ATOM …")

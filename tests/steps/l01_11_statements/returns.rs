@@ -16,7 +16,7 @@ fn return_forms() {
         ("xs -> { return xs.min, xs.max, }", "syntax"),
         (
             "xs -> { return { lo: xs.min }; }",
-            "error: this form (Primary) is built from layer L2",
+            "error: this form (Display) is built from layer L2",
         ),
         ("xs -> { return; }", "syntax"),
     ]);

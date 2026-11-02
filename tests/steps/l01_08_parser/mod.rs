@@ -3,6 +3,8 @@
 
 mod cases;
 mod errors;
+mod grammar_scaling;
+mod grammar_shape;
 mod left_recursion;
 mod rings;
 mod scaling;

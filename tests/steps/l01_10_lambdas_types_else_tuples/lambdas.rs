@@ -34,7 +34,7 @@ fn a_brace_after_the_arrow_is_a_block() {
         // A record display after the arrow is parenthesized; displays arrive at L2.
         (
             "p -> ({ x: p.x })",
-            "error: this form (Primary) is built from layer L2",
+            "error: this form (Display) is built from layer L2",
         ),
         ("p -> { x: p.x }", "syntax"),
     ]);
@@ -44,6 +44,6 @@ fn a_brace_after_the_arrow_is_a_block() {
 fn a_tuple_parameter_is_destructured_from_layer_2() {
     check(&[(
         "((s, c)) -> s.region",
-        "error: this form (PosParam) is built from layer L2",
+        "error: this form (TupleParam) is built from layer L2",
     )]);
 }

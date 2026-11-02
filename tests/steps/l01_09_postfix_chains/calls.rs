@@ -74,11 +74,14 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
 #[test]
 fn a_form_of_a_later_layer_names_that_layer() {
     let cases = [
-        ("data::len", "this form (Suffix) is built from layer L3"),
-        ("rows*.price", "this form (Suffix) is built from layer L6"),
+        ("data::len", "this form (ReadSuffix) is built from layer L3"),
+        (
+            "rows*.price",
+            "this form (SpreadSuffix) is built from layer L6",
+        ),
         (
             "sort(desc score)",
-            "this form (PosArg) is built from layer L5",
+            "this form (SortArg) is built from layer L5",
         ),
     ];
     for (text, want) in cases {

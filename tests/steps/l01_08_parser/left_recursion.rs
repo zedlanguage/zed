@@ -62,7 +62,7 @@ fn every_left_recursion_case_gives_its_tree() {
             }
         }
     }
-    assert_eq!(n, 72, "the number of cases");
+    assert_eq!(n, 85, "the number of cases");
     assert!(
         wrong.is_empty(),
         "{} wrong:\n{}",

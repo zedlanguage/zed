@@ -15,7 +15,10 @@ fn every_block_in_expression_position_builds_or_names_its_step() {
         let start = if f.notation { "DocFence" } else { "Unit" };
         let tree = parse(&f.text, &tokens, start, TOP).unwrap();
         for (p, node) in tree.nodes.iter().enumerate() {
-            if !matches!(tree.name(p), "Primary" | "Lambda" | "ElseTail") {
+            if matches!(
+                tree.name(p),
+                "Body" | "If" | "For" | "Loop" | "Proof" | "Arm"
+            ) {
                 continue;
             }
             for &n in &node.kids {

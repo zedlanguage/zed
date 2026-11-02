@@ -1,7 +1,8 @@
 //! The syntax tree of expressions, statements and units (steps L1.9 to L1.12), built from a
 //! parse tree (`crate::parse`).
 //!
-//! A node of the parse tree records only its rule and tokens; here an expression is one node
+//! A node of the parse tree records its rule and tokens, and a left-associative chain nests
+//! to the left; here an expression is one node
 //! per operation, with its operands. Parentheses group and leave no node; the grouped
 //! expression's span includes them. A postfix chain is
 //! built left to right: a call with its positional arguments, then its named ones, and
@@ -251,10 +252,9 @@ impl Builder<'_> {
 
     fn node(&self, n: usize) -> Result<Expr, Error> {
         let kids = self.kids(n);
-        let alt = self.tree.nodes[n].alt;
         match self.tree.name(n) {
-            "Expr" if alt == 2 => self.node(kids[0]),
-            "Expr" if alt == 0 => self.lambda(n),
+            "Expr" => self.node(kids[0]),
+            "Lambda" => self.lambda(n),
             "Expr12" => {
                 let mut e = self.node(kids[0])?;
                 for &t in &kids[1..] {
@@ -262,41 +262,27 @@ impl Builder<'_> {
                 }
                 Ok(e)
             }
-            "Or" | "And" | "Additive" | "Multiplicative" => self.fold(n),
-            "Equality" if alt == 1 => self.fold(n),
-            "Relation" if alt == 2 => match kids {
-                [r] => self.node(*r),
-                [l, tail] if self.tree.nodes[*tail].alt == 0 => {
-                    let r = self.kids(*tail)[0];
-                    let op = self.op(self.tree.nodes[*tail].start);
-                    self.binary(op, *l, r)
-                }
-                [l, tail] if self.tree.nodes[*tail].alt == 1 => {
-                    let of = self.node(*l)?;
-                    let t = self.tree.nodes[*tail].start;
-                    let ty = self.ty(self.kids(*tail)[0])?;
-                    let span = Span {
-                        start: of.span.start,
-                        end: ty.span.end,
-                    };
-                    Ok(Expr {
-                        kind: ExprKind::Is {
-                            of: Box::new(of),
-                            ty,
-                            negated: self.word(t + 1) == "not",
-                        },
-                        span,
-                    })
-                }
-                [_, tail] => Err(self.later(*tail)),
-                _ => unreachable!("Relation = Reduce RelTail?"),
-            },
-            "Reduce" | "Range" => match kids {
-                [k] => self.node(*k),
-                [_, tail, ..] => Err(self.later(*tail)),
-                [] => unreachable!("{} begins with a rule", self.tree.name(n)),
-            },
-            "Prefix" if alt == 0 => {
+            "Or" | "And" | "Additive" | "Multiplicative" | "Equality" | "Compare" => self.fold(n),
+            "IsTest" => {
+                let of = self.node(kids[0])?;
+                let is = self.tree.nodes[kids[0]].end;
+                let ty = self.ty(kids[1])?;
+                let span = Span {
+                    start: of.span.start,
+                    end: ty.span.end,
+                };
+                Ok(Expr {
+                    kind: ExprKind::Is {
+                        of: Box::new(of),
+                        ty,
+                        negated: self.word(is + 1) == "not",
+                    },
+                    span,
+                })
+            }
+            "Reduce" => Err(self.later(self.kids(self.spine(n).1[0])[1])),
+            "Range" => Err(self.later(kids[1])),
+            "Prefix" => {
                 let op = self.op(self.tree.nodes[n].start);
                 let e = self.node(kids[0])?;
                 Ok(Expr {
@@ -304,46 +290,37 @@ impl Builder<'_> {
                     span: self.span(n),
                 })
             }
-            "Prefix" => self.node(kids[0]),
-            "Power" => match kids {
-                [k] => self.node(*k),
-                [l, r] => self.binary("**", *l, *r),
-                _ => unreachable!("Power = Postfix ('**' Prefix)?"),
-            },
+            "Power" => self.binary("**", kids[0], kids[1]),
             "Postfix" => {
-                let mut e = self.node(kids[0])?;
-                for &s in &kids[1..] {
-                    e = self.suffix(e, s)?;
+                let (base, links) = self.spine(n);
+                let mut e = self.node(base)?;
+                for l in links {
+                    e = self.suffix(e, self.kids(l)[1])?;
                 }
                 Ok(e)
             }
-            "Primary" => match alt {
-                0 => self.node(kids[0]),
-                1 => {
-                    let i = self.tree.nodes[n].start;
-                    let Tok::Atom(a) = &self.tokens[i].tok else {
-                        unreachable!("an ATOM token")
-                    };
-                    Ok(Expr {
-                        kind: ExprKind::Atom(a.clone()),
-                        span: self.span(n),
-                    })
-                }
-                2 | 7 | 13 => self.node(kids[0]),
-                5 => Ok(Expr {
+            "AtomExpr" => {
+                let i = self.tree.nodes[n].start;
+                let Tok::Atom(a) = &self.tokens[i].tok else {
+                    unreachable!("an ATOM token")
+                };
+                Ok(Expr {
+                    kind: ExprKind::Atom(a.clone()),
                     span: self.span(n),
-                    ..self.node(kids[0])?
-                }),
-                6 => Ok(Expr {
-                    kind: ExprKind::Tuple(
-                        kids.iter()
-                            .map(|&k| self.node(k))
-                            .collect::<Result<_, _>>()?,
-                    ),
-                    span: self.span(n),
-                }),
-                _ => Err(self.later(n)),
-            },
+                })
+            }
+            "Group" => Ok(Expr {
+                span: self.span(n),
+                ..self.node(kids[0])?
+            }),
+            "TupleExpr" => Ok(Expr {
+                kind: ExprKind::Tuple(
+                    kids.iter()
+                        .map(|&k| self.node(k))
+                        .collect::<Result<_, _>>()?,
+                ),
+                span: self.span(n),
+            }),
             "Block" => self.block(n, true),
             "If" => Ok(Expr {
                 kind: ExprKind::If {
@@ -360,6 +337,20 @@ impl Builder<'_> {
             "Literal" => self.literal(n),
             _ => Err(self.later(n)),
         }
+    }
+
+    /// The left spine of node `n`, of a left-recursive rule `R = R … | …`: the first child
+    /// below the last node of rule `R`, and those nodes from the innermost out.
+    fn spine(&self, n: usize) -> (usize, Vec<usize>) {
+        let rule = self.tree.nodes[n].rule;
+        let mut links = vec![n];
+        let mut base = self.kids(n)[0];
+        while self.tree.nodes[base].rule == rule {
+            links.push(base);
+            base = self.kids(base)[0];
+        }
+        links.reverse();
+        (base, links)
     }
 
     /// The operator token at `i`, as the lexer's static text.
@@ -382,12 +373,12 @@ impl Builder<'_> {
         })
     }
 
-    /// A left-associative chain `k0 op k1 op k2 …`; each operator is the token before its
-    /// right operand.
+    /// A left-associative chain; each operator is the token before its right operand.
     fn fold(&self, n: usize) -> Result<Expr, Error> {
-        let kids = self.kids(n);
-        let mut e = self.node(kids[0])?;
-        for &k in &kids[1..] {
+        let (base, links) = self.spine(n);
+        let mut e = self.node(base)?;
+        for l in links {
+            let k = self.kids(l)[1];
             let op = self.op(self.tree.nodes[k].start - 1);
             let r = self.node(k)?;
             let span = Span {
@@ -404,8 +395,7 @@ impl Builder<'_> {
 
     /// A lambda: `Name '->' body` or `'(' Params? ')' '->' body`.
     fn lambda(&self, n: usize) -> Result<Expr, Error> {
-        let lam = self.kids(n)[0];
-        let kids = self.kids(lam);
+        let kids = self.kids(n);
         let body = *kids.last().expect("Lambda ends in its body");
         let params = match kids {
             [_] => Vec::new(),
@@ -457,12 +447,13 @@ impl Builder<'_> {
             end: self.tokens[node.end - 1].span.end,
         };
         let of = Box::new(of);
-        let kind = match node.alt {
-            0 => {
+        let name = self.tree.name(s);
+        let kind = match name {
+            "CallSuffix" => {
                 let (positional, named, curry) = match node.kids[..] {
                     [] => (Vec::new(), Vec::new(), false),
                     [args] => self.args(args)?,
-                    _ => unreachable!("Suffix = '(' Args? ')'"),
+                    _ => unreachable!("CallSuffix = '(' Args? ')'"),
                 };
                 ExprKind::Call {
                     callee: of,
@@ -471,11 +462,11 @@ impl Builder<'_> {
                     curry,
                 }
             }
-            1 => ExprKind::Index(of, Box::new(self.node(node.kids[0])?)),
-            2 | 3 => ExprKind::Member {
+            "IndexSuffix" => ExprKind::Index(of, Box::new(self.node(node.kids[0])?)),
+            "MemberSuffix" | "SafeSuffix" => ExprKind::Member {
                 of,
                 name: self.word(node.end - 1).into(),
-                safe: node.alt == 3,
+                safe: name == "SafeSuffix",
             },
             _ => return Err(self.later(s)),
         };
@@ -490,12 +481,13 @@ impl Builder<'_> {
         let mut seen: HashMap<String, Span> = HashMap::new();
         for &k in &node.kids {
             let kids = self.kids(k);
-            if self.tree.name(k) == "PosArg" {
-                if self.tree.nodes[k].alt == 0 {
-                    return Err(self.later(k));
+            match self.tree.name(k) {
+                "PlainArg" => {
+                    positional.push(self.node(kids[0])?);
+                    continue;
                 }
-                positional.push(self.node(kids[0])?);
-                continue;
+                "SortArg" => return Err(self.later(k)),
+                _ => {}
             }
             let name = self.node(kids[0])?;
             let ExprKind::Name(word) = &name.kind else {

@@ -1,6 +1,8 @@
 //! Every postfix chain in the documentation's fences builds, or names the later step or layer
 //! of a form inside it.
 
+use std::collections::HashSet;
+
 use zed_tests::fences;
 use zedc::ast::expr;
 use zedc::lex::lex_fence;
@@ -13,8 +15,13 @@ fn every_chain_in_the_fences_builds_or_names_its_step() {
         let tokens = lex_fence(&f.text).unwrap();
         let start = if f.notation { "DocFence" } else { "Unit" };
         let tree = parse(&f.text, &tokens, start, TOP).unwrap();
+        // A chain is its outermost `Postfix`; the first child of a `Postfix` is the chain so far.
+        let inner: HashSet<usize> = (0..tree.nodes.len())
+            .filter(|&n| tree.name(n) == "Postfix")
+            .map(|n| tree.nodes[n].kids[0])
+            .collect();
         for (n, node) in tree.nodes.iter().enumerate() {
-            if tree.name(n) != "Postfix" || node.kids.len() < 2 {
+            if tree.name(n) != "Postfix" || inner.contains(&n) {
                 continue;
             }
             match expr(&f.text, &tokens, &tree, n) {

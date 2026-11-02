@@ -5,7 +5,8 @@
 //! precedence ladder is the grammar's, rung for rung, and its trees are the trees
 //! `tools/grammar/lib/check.dart` builds. A parse is at a ring: only the alternatives of that layer
 //! and below are tried. Each node records its alternative, so a node of a later layer than the
-//! program's is found later, by the elaborator, not here.
+//! program's is found later, by the elaborator, not here. An alternative marked `~` builds no
+//! node, and the rule's match is the node of the marked rule.
 //!
 //! A literal in the grammar matches a keyword, an operator or a name with its text, so the
 //! positional words `where` and `sep` are names the grammar matches by their text.
@@ -19,7 +20,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::OnceLock;
 
-pub use grammar::{Expr, Grammar, Kind, Rule};
+pub use grammar::{Alt, Expr, Grammar, Kind, Rule};
 
 use crate::lex::{Part, Span, Tok, Token};
 
@@ -73,7 +74,7 @@ impl Tree {
     /// The layer of the alternative node `n` matched.
     pub fn layer(&self, n: usize) -> u32 {
         let node = &self.nodes[n];
-        grammar().rules[node.rule].alts[node.alt].1
+        grammar().rules[node.rule].alts[node.alt].layer
     }
 }
 
@@ -319,15 +320,18 @@ impl Parser<'_> {
     /// The first alternative of rule `r` that matches at `pos`, as a node.
     fn alternatives(&mut self, r: usize, pos: usize, head: bool) -> Res {
         let g = self.g;
-        for (alt, (e, layer)) in g.rules[r].alts.iter().enumerate() {
-            if *layer > self.ring {
+        for (i, alt) in g.rules[r].alts.iter().enumerate() {
+            if alt.layer > self.ring {
                 continue;
             }
             let mut sub = Vec::new();
-            if let Some(end) = self.m(e, pos, head, &mut sub) {
+            if let Some(end) = self.m(&alt.expr, pos, head, &mut sub) {
+                if alt.pass {
+                    return Some((end, sub[0]));
+                }
                 self.nodes.push(Node {
                     rule: r,
-                    alt,
+                    alt: i,
                     start: pos,
                     end,
                     kids: sub,

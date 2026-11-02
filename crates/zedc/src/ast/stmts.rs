@@ -133,20 +133,16 @@ impl Builder<'_> {
 
     /// The statement of node `n`, an `Item`.
     pub(super) fn item(&self, n: usize) -> Result<Stmt, Error> {
-        let node = &self.tree.nodes[n];
-        if node.alt != 3 {
-            return Err(self.later(n));
-        }
-        let d = node.kids[0];
+        let d = self.kids(n)[0];
         let kids = self.kids(d);
-        let kind = match (self.tree.nodes[d].alt, kids) {
-            (7, _) => StmtKind::Return(
+        let kind = match self.tree.name(d) {
+            "Return" => StmtKind::Return(
                 kids.iter()
                     .map(|&k| self.node(k))
                     .collect::<Result<_, _>>()?,
             ),
-            (15, &[b]) if self.tree.nodes[b].alt == 1 => {
-                let (&value, targets) = self.kids(b).split_last().expect("Binding ends in a value");
+            "PlainBinding" => {
+                let (&value, targets) = kids.split_last().expect("PlainBinding ends in a value");
                 StmtKind::Bind {
                     targets: targets
                         .iter()
@@ -158,15 +154,11 @@ impl Builder<'_> {
                     value: self.node(value)?,
                 }
             }
-            (11, &[f]) => StmtKind::Function(self.function(f)?),
-            (14, &[p]) if self.tree.nodes[p].alt == 1 => {
-                let kids = self.kids(p);
-                StmtKind::Push {
-                    port: self.word(self.tree.nodes[kids[0]].start).into(),
-                    value: self.node(kids[1])?,
-                }
-            }
-            (14 | 15, &[k]) => return Err(self.later(k)),
+            "Function" => StmtKind::Function(self.function(d)?),
+            "WholePush" => StmtKind::Push {
+                port: self.word(self.tree.nodes[kids[0]].start).into(),
+                value: self.node(kids[1])?,
+            },
             _ => return Err(self.later(d)),
         };
         Ok(Stmt {
@@ -183,7 +175,7 @@ impl Builder<'_> {
         for &k in &head[1..] {
             match self.tree.name(k) {
                 "Params" => params = self.params(k)?,
-                _ if self.tree.nodes[k].alt == 0 => {
+                "Ports" => {
                     let port = |p: &usize| {
                         let pk = self.kids(*p);
                         Ok(Port {
@@ -211,7 +203,7 @@ impl Builder<'_> {
         };
         let mut tests = Vec::new();
         for &t in trailers {
-            if self.tree.nodes[t].alt != 0 {
+            if self.tree.name(t) != "TestTable" {
                 return Err(self.later(t));
             }
             for &c in self.kids(t) {

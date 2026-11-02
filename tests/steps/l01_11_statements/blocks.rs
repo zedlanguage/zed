@@ -45,12 +45,12 @@ fn the_semicolon_rule() {
         // The trailing expression takes none; an expression statement is layer L6.
         (
             "x -> { y = x; y; }",
-            "error: this form (Decl) is built from layer L6",
+            "error: this form (ExprStmt) is built from layer L6",
         ),
         // A brace holding only an expression is a display (`{ x }` is a set), not a block.
         (
             "({ x })",
-            "error: this form (Primary) is built from layer L2",
+            "error: this form (Display) is built from layer L3",
         ),
     ]);
 }
@@ -82,7 +82,7 @@ fn a_statement_of_a_later_layer_names_that_layer() {
     check(&[
         (
             "x -> { n: int = x; n }",
-            "error: this form (Binding) is built from layer L10",
+            "error: this form (TypedBinding) is built from layer L10",
         ),
         (
             "x -> { y = x with z = 1; y }",
@@ -90,7 +90,7 @@ fn a_statement_of_a_later_layer_names_that_layer() {
         ),
         (
             "x -> { local y = x; y }",
-            "error: this form (Decl) is built from layer L2",
+            "error: this form (Local) is built from layer L2",
         ),
     ]);
 }
