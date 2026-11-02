@@ -31,9 +31,14 @@ fn with_fuel(fuel: u64, t: &Term) -> Result<Value, KernelError> {
 
 #[test]
 fn ten_million_steps_are_accepted() {
-    // 5,000,000 items make 9,999,999 calls; 5,000,001 make 10,000,001.
+    // 5,000,000 items make 9,999,999 calls.
     let within = count_leaves(5_000_000);
     assert_eq!(with_fuel(MIN_STEPS, &within), Ok(Value::Int(5_000_000)));
+}
+
+#[test]
+fn the_step_past_ten_million_is_refused() {
+    // 5,000,001 items make 10,000,001 calls.
     assert_eq!(
         with_fuel(MIN_STEPS, &count_leaves(5_000_001)),
         Err(KernelError::OutOfFuel)

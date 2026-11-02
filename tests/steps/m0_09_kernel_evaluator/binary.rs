@@ -43,7 +43,8 @@ fn zedc_compares_a_value_20000_deep_on_an_ordinary_stack() {
         "this test needs a stack of at most {STACK_LIMIT} bytes and has {limit:?}: \
          run it after `ulimit -s 8192`"
     );
-    let file = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("deep_value.zed");
+    let name = format!("deep_value_{}.zed", std::process::id());
+    let file = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     fs::write(&file, PROGRAM).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_zedc"))
         .arg("run")

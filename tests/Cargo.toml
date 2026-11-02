@@ -20,7 +20,7 @@ name = "full"
 path = "full/main.rs"
 required-features = ["full"]
 
-# These two take many gigabytes or time what they run, so each needs a piece of its own.
+# These two take many gigabytes, so tools/run_tests.sh gives each of their tests a piece of its own.
 [[test]]
 name = "deep_values"
 path = "steps/m0_09_kernel_evaluator/deep_values.rs"
@@ -44,6 +44,8 @@ zedc.workspace = true
 zed-kernel.workspace = true
 zed-native.workspace = true
 zed-rt.workspace = true
+rustix.workspace = true
+perf-event2.workspace = true
 unicode-normalization = "0.1.26"
 
 [lints]

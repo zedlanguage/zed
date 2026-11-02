@@ -14,3 +14,7 @@ imbl = "7.0.2"
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
+
+[dev-dependencies]
+rustix.workspace = true
+perf-event2.workspace = true

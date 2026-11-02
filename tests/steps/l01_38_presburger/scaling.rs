@@ -6,7 +6,6 @@
 //! without the real shadows (it passes the step budget at 15 variables).
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use zed_tests::scaling;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, satisfiable};
@@ -75,37 +74,30 @@ fn chains_of_inexact_eliminations_are_answered() {
 /// A family of problems by their number of variables.
 type Family = fn(usize) -> Formula;
 
-/// The fastest of five runs of `f`.
-fn fastest(f: impl Fn()) -> Duration {
-    f();
-    (0..5)
-        .map(|_| {
-            let t = Instant::now();
-            f();
-            t.elapsed()
-        })
-        .min()
-        .expect("five runs")
-}
-
 #[test]
 fn a_chain_of_inexact_eliminations_does_not_double() {
     // The variables are bounded by the budget of 16, so the n-against-8n test of
     // `zed_tests::scaling` does not apply; a chain of 15 against one of 7 tells doubling (256
-    // times as long) from the polynomial cost of the eliminations (about 10 times).
+    // times the work) from the polynomial cost of the eliminations (about 10 times).
     let cases: [(&str, Family); 3] = [
         ("the chain with a point", |v| chain(v, 3)),
         ("the empty chain", |v| chain(v, 0)),
         ("the rising chain", rising),
     ];
     for (what, f) in cases {
-        let small = fastest(|| drop(satisfiable(&f(7))));
-        let large = fastest(|| drop(satisfiable(&f(15))));
-        let ratio = large.as_secs_f64() / small.as_secs_f64();
+        // The second run of each is measured: the first warms caches.
+        let mut meter = scaling::Meter::new();
+        let run = |v| drop(satisfiable(&f(v)));
+        run(7);
+        let small = meter.work(|| run(7));
+        run(15);
+        let large = meter.work(|| run(15));
+        let ratio = large as f64 / small as f64;
         assert!(
             ratio <= scaling::RATIO,
-            "{what}: 7 variables take {small:?} and 15 take {large:?}, {ratio:.1} times as \
-             long; doubling with each variable would be 256 times"
+            "{what}: 7 variables take {small} and 15 take {large} {}, {ratio:.1} times the work; \
+             doubling with each variable would be 256 times",
+            meter.unit()
         );
     }
 }

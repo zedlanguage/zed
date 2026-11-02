@@ -102,7 +102,7 @@ fn the_classes_alone_decide_a_box_of_any_size() {
     let d = doms(&[("x", Some(0), Some(1_000_000_000_000_000))]);
     let (_, no) = function("ok(x) = x * x mod 10 == 9;\n");
     let (_, yes) = function("ok(x) = x * x mod 10 != 9;\n");
-    let t0 = std::time::Instant::now();
+    let t0 = zed_tests::scaling::cpu_time();
     assert_eq!(witness(&no, &d, &five, &t), Some(None));
     assert_eq!(
         witness(&yes, &d, &five, &t)
@@ -110,5 +110,6 @@ fn the_classes_alone_decide_a_box_of_any_size() {
             .expect("a point")["x"],
         5
     );
-    assert!(t0.elapsed().as_secs() < 1, "took {:?}", t0.elapsed());
+    let took = zed_tests::scaling::cpu_time() - t0;
+    assert!(took.as_secs() < 1, "took {took:?}");
 }

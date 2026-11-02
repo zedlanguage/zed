@@ -103,10 +103,11 @@ fn a_point_inside_a_huge_range_is_excluded_without_listing_the_range() {
     let t = product_mod_10("n", "n", 9);
     let s = written(within(&[("n", 0, 1_000_000_000_000)], true), &[t]);
     assert!(!s.bottom);
-    let t0 = std::time::Instant::now();
+    let t0 = zed_tests::scaling::cpu_time();
     assert!(s.assume(&is("n", 4), true, &none()).bottom);
     assert!(!s.assume(&is("n", 999_999_999_997), true, &none()).bottom);
-    assert!(t0.elapsed().as_secs() < 5, "took {:?}", t0.elapsed());
+    let took = zed_tests::scaling::cpu_time() - t0;
+    assert!(took.as_secs() < 5, "took {took:?}");
 }
 
 #[test]

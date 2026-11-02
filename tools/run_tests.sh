@@ -1,7 +1,8 @@
 #!/bin/bash
-# Runs every test in pieces, one test binary or step folder each, each under a 60 s limit, and
-# prints a line per piece as it ends. Usage: tools/run_tests.sh [--full] [jobs], from a checkout's
-# root. Without --full this is the local suite, which needs only the Rust toolchain and runs in CI.
+# Runs every test in pieces, one test binary, step folder or very large test each, each under a
+# 60 s limit, and prints a line per piece as it ends. Usage: tools/run_tests.sh [--full] [jobs],
+# from a checkout's root. Without --full this is the local suite, which needs only the Rust
+# toolchain and runs in CI.
 # --full adds tests/full/, the battery that needs emulators, containers, databases and other
 # outside tools. It stops before any test if a tool is missing; nothing is skipped.
 # A failed piece keeps its output in build/test-logs/<piece>.log. Every piece runs in the
@@ -42,6 +43,17 @@ full=$(echo "$bins" | grep '/full-')
     n=$(basename "$p")
     case $n in
       steps-* | full-*) ;;
+      deep_values-* | deep_scaling-*)
+        # Tests of many gigabytes at once slow each other through the lock on the address space
+        # of their process: 59 s together against 17 s alone at load 50. Each gets a process.
+        if tests=$("$p" --list --format terse); then
+          for t in $(echo "$tests" | sed -n "s/: test$//p"); do
+            echo "$t tests $p --exact $t"
+          done
+        else
+          echo "$n tests $p"
+        fi
+        ;;
       zedc-*) echo "$n crates/zedc $p" ;;
       zed_kernel-*) echo "$n crates/zed-kernel $p" ;;
       zed_native-*) echo "$n crates/zed-native $p" ;;
@@ -61,11 +73,28 @@ full=$(echo "$bins" | grep '/full-')
     done
   fi
 } >"$out/pieces"
-export root out
+# At most `slots` pieces run at once on this machine, whichever checkout started them. A piece holds
+# a lock on one file of $slot_dir until it ends, so a killed run frees its slots, and its 60 s start
+# when it has one. Four suites at once took 2:13 with 8 slots and 2:05 without, and the longest
+# piece 28 s against 53 s.
+slots=8
+slot_dir=${XDG_RUNTIME_DIR:-/tmp}/zedtests-slots
+mkdir -p "$slot_dir"
+export root out slots slot_dir
+take_slot() {
+  while :; do
+    for i in $(seq "$slots"); do
+      exec 9>"$slot_dir/$i"
+      flock -n 9 && return
+    done
+    sleep 0.1
+  done
+}
 piece() {
   name=$1 dir=$2
   shift 2
   log=$out/$name.log
+  take_slot
   start=$(date +%s%N)
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
     systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
@@ -76,7 +105,7 @@ piece() {
   [ "$rc" = 0 ] && rm -f "$log"
   [ "$rc" = 0 ]
 }
-export -f piece
+export -f take_slot piece
 xargs -P "$jobs" -L 1 bash -c 'piece "$@"' _ <"$out/pieces" | tee "$out/summary"
 bad=$(grep -vc 'rc=0 ' "$out/summary")
 echo "pieces: $(wc -l <"$out/summary"), failed: $bad"
