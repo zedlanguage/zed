@@ -25,11 +25,11 @@ Type lit(int i) => Type.lit(Int(i))!;
 
 void main() {
   test('a decision tree is decided in polynomial time', () {
-    // Splitting the product on every row in turn made `3^c` pieces: 1.14 s at `c = 64` and
-    // cubic from there once the split took a column whose cells are disjoint. Narrowing every
-    // row on every column at each of the `c` splits was `O(c³)`, `N^1.5` in the `N ≈ 2c²`
-    // components written: 2.1 s at `c = 128`. A split now tests again only the rows open on
-    // the column it changed: `O(c²)`, linear in `N`.
+    // Splitting the product on every row in turn made `3^c` pieces, and cubic from there once
+    // the split took a column whose cells are disjoint. Narrowing every row on every column at
+    // each of the `c` splits was `O(c³)`, `N^1.5` in the `N ≈ 2c²` components written: 6.2 s
+    // at `c = 128`. A split now tests again only the rows open on the column it changed:
+    // `O(c²)`, linear in `N`.
     var fresh = 1;
     checkOrder('a decision tree, by column count', 16, 2, (c) {
       final (p, rows) = decisionTree(c, 1000 * fresh++);
