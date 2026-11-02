@@ -576,25 +576,27 @@ These 1336 pairs are at different levels, have no directed path between them, an
 - L29.1: L21.2, L25.3, L25.1, L15.6, L22.2, L16.3, L21.1, L25.4, L25.5, L25.6, L26.1, L30.4, L25.7, L27.3, L27.1, L27.2, L25.8, L26.2, L27.4
 - L29.2: L26.1, L27.3, L27.1, L26.2, L27.4
 
-## Items this machine cannot do in full
+## Machine limits and tools
 
-Tool absence below was confirmed with `command -v` on 2026-11-02, unless marked otherwise. Installing a system package needs the user's approval. All tests stay under 60 s each and 112 GB in total.
+The author installed the tools below on 2026-11-02. Each was run that day on a small input, and the versions are the ones reported. All tests stay under 60 s each and 112 GB in total. A test that needs one of these tools finds it on `PATH`, and fails with a message naming the tool if it is absent; it is never skipped silently.
 
-| Items | Limit | What to do |
+| Items | Tools and what was run | What to do |
 |---|---|---|
-| L21.1, L21.3 | `postgres`, `pg_ctl`, `initdb` and `mysqld` are absent. Only the Android SDK `sqlite3` is present (earlier check). | Install a local server. Without one, report the database test as not run. |
-| L26.1 | `wasmtime` is absent. | Use a Rust test dependency, or node v22. |
-| L27.1 | The RTX 3050, `nvidia-smi` and `vulkaninfo` are present. CI has no GPU unless it uses software Vulkan (inferred). | Run the GPU tests locally. Do not expect them to run in CI. |
+| L21.1, L21.3 | PostgreSQL 18.6 (`initdb`, `pg_ctl`, a query), MariaDB 11.8.8 (`mariadb-install-db`, `mariadbd` as `mysqld`, a query), SQLite 3.51.2. | Run private instances as the user, in a temporary directory, on a socket with networking off. Do not use the system services. |
+| L26.1 | `wasmtime` 50.0.1 from cargo, in `~/.cargo/bin`, which must be on `PATH`. Ran a module built with `clang --target=wasm32` and `wasm-ld`. | Use `wasmtime` for the cross-target tests. |
+| L27.1 | RTX 3050, driver 615.78.08, Vulkan 1.4. `llvmpipe` software Vulkan is also present. | Run the GPU tests on the card locally. `llvmpipe` gives a software device where no GPU exists. |
 | L27.2 | One machine only. | Use local processes with SIGKILL and SIGSTOP. State in the end-of-layer test that real multi-host behavior was not exercised. |
-| L27.3 | `yosys`, `verilator` and `iverilog` are absent. | Install them, or fall back to a test simulator and report synthesis as not run. |
-| L28.1, L28.2 | `mlir-opt`, `mlir-translate`, `llc`, `opt` and `wasm-ld` are absent. `clang` 22.1.8 is present. | Install from dnf (`mlir`, `mlir-devel` 22.1.8 and `llvm`, available at the earlier check). |
-| L29.1, L29.2 | `qemu-aarch64` and `qemu-riscv64` are absent. | Install user-mode QEMU, or report cross-target runs as not run. |
-| L30.1, L30.6 | `code` and node v22 are present. `Xvfb` is absent. | Install `xorg-x11-server-Xvfb` for headless editor tests. |
+| L27.3 | Yosys 0.67 (synthesis of a small module), Verilator 5.046 (lint), Icarus Verilog 13.0 (simulation). | Use these. |
+| L28.1, L28.2 | `mlir-opt`, `mlir-translate`, `llc`, `opt` and `wasm-ld`, all LLVM 22.1.8, matching `clang`. Lowered a small module from MLIR through `llc`. | Use these. |
+| L29.1, L29.2 | `qemu-aarch64` and `qemu-riscv64` 10.2.2 ran static binaries built with `clang` and `lld`. No target C library is installed, so such binaries have no libc. | Generated code runs without a target libc, or the step installs one. |
+| L30.1, L30.6 | `code`, node v22, `Xvfb` and `xvfb-run` (ran a command under `xvfb-run`). | Run headless editor tests under `xvfb-run -a`. |
 | L5.14, L23.5 | Timing runs must not share the 32 cores with other branches. | Run these alone, with no parallel branch active. |
 | L7.14 | The 10 GB demo must fit the 112 GB and 60 s caps. | Size the run to fit, and report the size used. |
 | L19.3 | The run takes over 60 s. | Split it per program. |
-| XE2 | Needs the Codex and `agy` logins, and `agy`'s three environment variables. | Run where those logins work. If they fail, stop and report. |
+| XE2 | Codex and `agy` logins; `agy`'s three environment variables. | Running now. If a login fails, report it. |
 | T2, T4 | Dart reference code is no longer in the tree. | Read it from git at commit 644e333. |
+
+CI has none of these tools unless its workflow installs them, so steps that need them state which tests run locally only.
 
 ## Why each item waits
 
