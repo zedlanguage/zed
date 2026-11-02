@@ -33,5 +33,12 @@ all = { level = "warn", priority = -1 }
 
 # The step tests run programs of up to 10^7 evaluation steps and scaling tests at large sizes, so
 # every crate is optimized in test builds; overflow checks and debug assertions stay on.
+# Debug info is off: it takes 69% of the build directory and a third of the build time.
 [profile.dev]
 opt-level = 2
+debug = false
+
+# For perf and gdb only: cargo test --profile profiling. Delete build/cargo/profiling afterward.
+[profile.profiling]
+inherits = "dev"
+debug = true

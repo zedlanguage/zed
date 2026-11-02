@@ -102,4 +102,5 @@ specifies, and run by the Rust harness.
 `.cargo/config.toml` sets Cargo's target directory to `build/cargo`. Every other generated
 file goes under `build/` too, each tool in its own subdirectory, such as compiler caches,
 native objects and coverage reports. Deleting `build/` loses nothing that a build cannot make
-again.
+again. Test builds carry no debug info, which keeps them about a third of the size. For perf or
+gdb use `cargo test --profile profiling`, then delete `build/cargo/profiling`.
