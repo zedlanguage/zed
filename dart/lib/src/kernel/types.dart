@@ -821,8 +821,14 @@ final class Components implements Literal<Components> {
 
   Components(this.items) : digest = items.fold(5, (h, t) => mix(h, t.digest));
 
+  /// Ordered by the hash first, so two are ordered without reading their components unless
+  /// their hashes are equal.
   @override
-  int compareTo(Components o) => _lex(items, o.items, (a, b) => a.compareTo(b));
+  int compareTo(Components o) {
+    if (identical(this, o)) return 0;
+    final c = _cmpDigest(digest, o.digest);
+    return c != 0 ? c : _lex(items, o.items, (a, b) => a.compareTo(b));
+  }
 
   @override
   bool operator ==(Object other) => other is Components && compareTo(other) == 0;

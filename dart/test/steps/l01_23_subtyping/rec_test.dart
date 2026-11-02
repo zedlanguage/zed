@@ -341,4 +341,44 @@ void main() {
       def('B', [], or([r(0), bare('b')])),
     ]);
   });
+
+  test('products of recursive types', () {
+    // Deciding these meets one type per state of the product of the definitions, or per set
+    // of states of a definition whose alternatives overlap: 30 states for 2, 3 and 5, about
+    // 1000 types for the third item from the end. Both grow exponentially with the
+    // definitions and the item, as emptiness of regular tree types can (DESIGN.md L1.23).
+    final six = multiple(2) & multiple(3) & multiple(5);
+    expect(six.subtype(multiple(30)) && multiple(30).subtype(six), isTrue);
+    expect((multiple(2) & multiple(3)).subtype(multiple(12)), isFalse);
+    expect(multiple(4).subtype(multiple(6)), isFalse);
+    for (var n = 1; n <= 3; n++) {
+      expect(nthFromEnd(n).subtype(nthFromEnd(n)), isTrue, reason: 'n = $n');
+      if (n < 3) expect(nthFromEnd(n).equiv(nthFromEnd(n + 1)), isFalse, reason: 'n = $n');
+    }
+  });
 }
+
+/// Lists of int whose length is a multiple of `p`.
+Type multiple(int p) {
+  var body = r(0);
+  for (var i = 0; i < p; i++) {
+    body = atom('cons', [ty(Type.integer), body]);
+  }
+  return one([
+    def('M', [], or([bare('nil'), body])),
+  ]);
+}
+
+/// Lists of int whose `n`-th item from the end is `1`, guessed where it is.
+Type nthFromEnd(int n) => rec.Group([
+  def('R0', [], bare('nil')),
+  for (var k = 1; k < n; k++) def('R$k', [], atom('cons', [ty(Type.integer), r(k - 1)])),
+  def(
+    'G',
+    [],
+    or([
+      atom('cons', [ty(Type.integer), r(n)]),
+      atom('cons', [ty(Type.lit(const Int(1))!), r(n - 1)]),
+    ]),
+  ),
+]).instance([]).last;

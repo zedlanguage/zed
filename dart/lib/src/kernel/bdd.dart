@@ -20,12 +20,16 @@ part of 'types.dart';
 // their atoms: `(m1 & !n1) | … | (mC & !nC)`, with every `m` ordered before every `n`, has
 // `2^C` nodes. A union or intersection therefore keeps its diagram only when it has no more
 // nodes than its two operands together, and otherwise keeps the expression ([Expr]), built in
-// constant time; so a diagram has no more nodes than the atoms written to build it. An
-// expression is decided by its paths ([Part.paths]): its Shannon expansion on the smallest
-// atom at its top, each step taking the cofactors of its operands, each operand once.
-// Emptiness of these Boolean combinations is coNP-hard, so the number of paths can be
-// exponential in the atoms; the walk holds one path at a time, and no count of nodes or paths
-// stops it.
+// constant time; so a diagram has no more nodes than the atoms written to build it.
+//
+// A part is decided (empty.dart) by three-valued operations, none of which walks paths, whose
+// number can be exponential in the nodes. It is evaluated with some atoms known
+// ([Part.eval3]) and restricted to them ([Part.restrict]), each in one pass over its nodes and
+// expressions; settled on its shared subexpressions ([Part.settle]), one pass per shared
+// subexpression in each round; and asked which atoms every value takes or refuses
+// ([Part.forced]): for a diagram in time `O(n log n)` in its nodes, for an expression one pass
+// per atom. Listing values takes one pass over the nodes ([Bdd.reaching]); [Bdd.walk] remains
+// for display.
 
 /// An atom of a diagram: a tuple type of one length, or a morphism type.
 abstract interface class Literal<A> implements Comparable<A> {
@@ -70,133 +74,135 @@ sealed class Part<A extends Literal<A>> implements Comparable<Part<A>> {
     return Expr(or ? ExprOp.or : ExprOp.and, this, o);
   }
 
-  /// The paths of the part to `true`, as [Bdd.walk] gives them with `prune`, to be asked of a
-  /// test that must hold of a path whenever it holds of one that takes a subset of its atoms and
-  /// refuses a subset of its atoms. An
-  /// expression is first expanded on a subexpression it shares between two operands: it is
-  /// `x & e[x := true] | !x & e[x := false]`, and the two cofactors are built again from their
-  /// operands, so a part like `b & !(b | a)` is `false` at once. Each expansion leaves one fewer
-  /// shared subexpression. An expression that shares none is expanded on the smallest atom at
-  /// the top of any of its diagrams, its cofactors being its operands' cofactors combined
-  /// again.
-  Paths<A> paths() {
-    final q = Paths<A>._();
-    final pos = <A>[], neg = <A>[];
-    // Each expansion is a generator, and `yield*` keeps the suspended ones on the heap, so the
-    // depth of the expansion is not bounded by the call stack. A path where the test fails
-    // clears `q.result` and ends every generator above.
-    Iterable<(List<A>, List<A>)> go(Part<A> p) sync* {
-      if (p is Bdd<A>) {
-        // The diagram's own walk, after the atoms taken and refused so far.
-        final w = p._walk(true);
-        for (final (bp, bn) in w.asked) {
-          yield ([...pos, ...bp], [...neg, ...bn]);
-          w.held = q.held;
-        }
-        q.result = w.result;
-        return;
+  /// The part's value on a set of values where `holds` gives each atom's: in every value
+  /// (true), in none (false), or in some (null), by three-valued logic, each node and
+  /// expression evaluated once. True or false is the part's value on every value of the set;
+  /// null says nothing.
+  bool? eval3(bool? Function(A) holds) => _eval3(holds, const {});
+
+  /// [eval3], with each expression in `pins` taken to have the value beside it.
+  bool? _eval3(bool? Function(A) holds, Map<Expr<A>, bool> pins) {
+    final nodes = <int, bool?>{};
+    final exprs = Map<Expr<A>, bool?>.identity()..addAll(pins);
+    bool known(Part<A> p) => p is! Expr<A> || exprs.containsKey(p);
+    bool? value(Part<A> p) => switch (p) {
+      final Bdd<A> b => b._value3(holds, nodes),
+      final Expr<A> e => exprs[e],
+    };
+    // Each expression is evaluated after its operands, on a stack of parts still to do.
+    final stack = <Part<A>>[this];
+    while (stack.isNotEmpty) {
+      final p = stack.last;
+      if (known(p)) {
+        stack.removeLast();
+        continue;
       }
-      if (p._shared() case final x?) {
+      p as Expr<A>;
+      final missing = [?p.b, p.a].where((q) => !known(q)).toList();
+      if (missing.isNotEmpty) {
+        stack.addAll(missing);
+        continue;
+      }
+      stack.removeLast();
+      final (x, y) = (value(p.a), p.b == null ? null : value(p.b!));
+      exprs[p] = switch (p.op) {
+        ExprOp.not => x == null ? null : !x,
+        ExprOp.or => x == true || y == true ? true : (x == false && y == false ? false : null),
+        ExprOp.and => x == false || y == false ? false : (x == true && y == true ? true : null),
+      };
+    }
+    return value(this);
+  }
+
+  /// The part with each expression used more than once in it replaced by `true` when making
+  /// it `false` makes the part `false` by three-valued logic, every atom unknown, and by
+  /// `false` in the converse case, until no more is replaced. Every value of the part is in,
+  /// or outside, such an expression, so the result holds every value of the part, and may
+  /// hold more: it is empty only if the part is. Each round evaluates the part once per
+  /// shared expression and replaces at least one, so the time is at most the square of the
+  /// shared expressions times the size.
+  Part<A> settle() {
+    var p = this;
+    while (true) {
+      final uses = Map<Expr<A>, int>.identity();
+      final stack = [p];
+      while (stack.isNotEmpty) {
+        if (stack.removeLast() case final Expr<A> e) {
+          final n = uses[e] = (uses[e] ?? 0) + 1;
+          if (n == 1) stack.addAll([?e.b, e.a]);
+        }
+      }
+      final pins = Map<Expr<A>, bool>.identity();
+      for (final MapEntry(key: e, value: n) in uses.entries) {
+        if (n < 2) continue;
         for (final v in [true, false]) {
-          final rest = p._substitute(x, v, Map.identity());
-          final side = v ? x : ~x;
-          yield* go(side.zip(rest, false));
-          if (!q.result) return;
-        }
-        return;
-      }
-      final a = p._top();
-      if (a == null) {
-        // An expression of leaves alone is a constant.
-        if (p.eval((_) => false)) {
-          yield (pos, neg);
-          q.result = q.held;
-        }
-        return;
-      }
-      final hi = p._cofactor(a, true, Map.identity());
-      pos.add(a);
-      var skip = hi.leaf == false;
-      if (!skip) {
-        yield (pos, const []);
-        skip = q.held;
-      }
-      if (!skip) yield* go(hi);
-      pos.removeLast();
-      if (!q.result) return;
-      final lo = p._cofactor(a, false, Map.identity());
-      final refuse = hi.leaf != true;
-      if (refuse) neg.add(a);
-      yield* go(lo);
-      if (refuse) neg.removeLast();
-    }
-
-    q.asked = go(this);
-    return q;
-  }
-
-  /// An expression that is an operand of two connectives in the part, if any: the first met
-  /// from the root, so the largest.
-  Expr<A>? _shared() {
-    final seen = Map<Expr<A>, int>.identity();
-    void count(Part<A> p) {
-      if (p is! Expr<A>) return;
-      final n = seen[p] = (seen[p] ?? 0) + 1;
-      if (n == 1) {
-        count(p.a);
-        if (p.b case final b?) count(b);
-      }
-    }
-
-    final done = Set<Expr<A>>.identity();
-    Expr<A>? find(Part<A> p) {
-      if (p is! Expr<A>) return null;
-      if (seen[p]! > 1) return p;
-      if (!done.add(p)) return null;
-      return find(p.a) ?? (p.b == null ? null : find(p.b!));
-    }
-
-    count(this);
-    return find(this);
-  }
-
-  /// The part with the expression `x` replaced by the leaf `v`, each expression rebuilt once.
-  Part<A> _substitute(Expr<A> x, bool v, Map<Expr<A>, Part<A>> memo) {
-    final e = this;
-    if (e is! Expr<A>) return e;
-    if (identical(e, x)) return Leaf<A>(v);
-    return memo[e] ??= e._rebuild((p) => p._substitute(x, v, memo));
-  }
-
-  /// The smallest atom at the top of a diagram in the part, each expression visited once.
-  A? _top() {
-    final seen = Set<Expr<A>>.identity();
-    A? best;
-    void go(Part<A> p) {
-      switch (p) {
-        case Leaf():
-          break;
-        case Node(:final atom):
-          if (best == null || atom.compareTo(best as A) < 0) best = atom;
-        case Expr(:final a, :final b):
-          if (seen.add(p)) {
-            go(a);
-            if (b != null) go(b);
+          pins[e] = !v;
+          if (p._eval3((_) => null, pins) == false) {
+            pins[e] = v;
+            break;
           }
+          pins.remove(e);
+        }
       }
+      if (pins.isEmpty) return p;
+      p = p._map((b) => b, pins);
     }
-
-    go(this);
-    return best;
   }
 
-  /// The part with `a` taken (`v`) or refused, for `a` no larger than any atom in it, each
+  /// The part with each atom that `fix` decides replaced by its value, each node and
   /// expression rebuilt once.
-  Part<A> _cofactor(A a, bool v, Map<Expr<A>, Part<A>> memo) => switch (this) {
-    Node(:final atom, :final hi, :final lo) when atom.compareTo(a) == 0 => v ? hi : lo,
-    Bdd() => this,
-    final Expr<A> e => memo[e] ??= e._rebuild((p) => p._cofactor(a, v, memo)),
-  };
+  Part<A> restrict(bool? Function(A) fix) {
+    final nodes = <int, Bdd<A>>{};
+    return _map((b) => b._restrict(fix, nodes), const {});
+  }
+
+  /// The part with each diagram replaced by `bdd` of it, and each expression in `pins` by its
+  /// value, each expression rebuilt once, after its operands.
+  Part<A> _map(Bdd<A> Function(Bdd<A>) bdd, Map<Expr<A>, bool> pins) {
+    final memo = Map<Expr<A>, Part<A>>.identity();
+    Part<A>? known(Part<A> p) => switch (p) {
+      final Bdd<A> b => bdd(b),
+      final Expr<A> e => pins[e] == null ? memo[e] : Leaf<A>(pins[e]!),
+    };
+    final stack = <Part<A>>[this];
+    while (stack.isNotEmpty) {
+      final p = stack.last;
+      if (p is! Expr<A> || known(p) != null) {
+        stack.removeLast();
+        continue;
+      }
+      final missing = [?p.b, p.a].where((q) => known(q) == null).toList();
+      if (missing.isNotEmpty) {
+        stack.addAll(missing);
+        continue;
+      }
+      stack.removeLast();
+      memo[p] = p._rebuild((q) => known(q)!);
+    }
+    return known(this)!;
+  }
+
+  /// The atoms in every value of the part (`.$1`) and those in none (`.$2`), among the atoms
+  /// in it: for a diagram, those taken or refused on every path to `true`; for an expression,
+  /// each atom whose refusal, or whose taking, makes the part `false` by three-valued logic,
+  /// one evaluation per atom.
+  (List<A>, List<A>) forced() {
+    if (this case final Bdd<A> b) return b._forced();
+    final atoms = SplayTreeSet<A>((x, y) => x.compareTo(y));
+    this.atoms((a) {
+      atoms.add(a);
+      return true;
+    });
+    final taken = <A>[], refused = <A>[];
+    for (final a in atoms) {
+      if (eval3((x) => x == a ? false : null) == false) {
+        taken.add(a);
+      } else if (eval3((x) => x == a ? true : null) == false) {
+        refused.add(a);
+      }
+    }
+    return (taken, refused);
+  }
 
   /// Whether the value whose membership in each atom `holds` decides is in the part.
   bool eval(bool Function(A) holds) {
@@ -470,6 +476,161 @@ sealed class Bdd<A extends Literal<A>> extends Part<A> {
           b = holds(atom) ? hi : lo;
       }
     }
+  }
+
+  /// [Part.eval3] of the diagram, each node's value kept in `memo`.
+  bool? _value3(bool? Function(A) holds, Map<int, bool?> memo) {
+    bool known(Bdd<A> b) => b is! Node<A> || memo.containsKey(b.id);
+    bool? value(Bdd<A> b) => switch (b) {
+      Leaf(:final value) => value,
+      Node(:final id) => memo[id],
+    };
+    // The nodes to evaluate, each popped once the branches it reads are evaluated.
+    final stack = <Bdd<A>>[this];
+    while (stack.isNotEmpty) {
+      final b = stack.last;
+      if (known(b)) {
+        stack.removeLast();
+        continue;
+      }
+      final n = b as Node<A>;
+      final h = holds(n.atom);
+      final (needHi, needLo) = (h != false && !known(n.hi), h != true && !known(n.lo));
+      if (needHi || needLo) {
+        if (needLo) stack.add(n.lo);
+        if (needHi) stack.add(n.hi);
+        continue;
+      }
+      stack.removeLast();
+      memo[n.id] = switch (h) {
+        true => value(n.hi),
+        false => value(n.lo),
+        null => value(n.hi) == value(n.lo) ? value(n.hi) : null,
+      };
+    }
+    return value(this);
+  }
+
+  /// The diagram with each atom that `fix` decides replaced by its value, each node rebuilt
+  /// once; `memo` holds the nodes rebuilt so far.
+  Bdd<A> _restrict(bool? Function(A) fix, Map<int, Bdd<A>> memo) {
+    Bdd<A>? known(Bdd<A> b) => b is Node<A> ? memo[b.id] : b;
+    // The nodes to rebuild, each popped once the branches it keeps are rebuilt.
+    final stack = <Bdd<A>>[this];
+    while (stack.isNotEmpty) {
+      final b = stack.last;
+      if (known(b) != null) {
+        stack.removeLast();
+        continue;
+      }
+      final n = b as Node<A>;
+      final v = fix(n.atom);
+      final hi = v == false ? null : known(n.hi), lo = v == true ? null : known(n.lo);
+      final (needHi, needLo) = (v != false && hi == null, v != true && lo == null);
+      if (needHi || needLo) {
+        if (needLo) stack.add(n.lo);
+        if (needHi) stack.add(n.hi);
+        continue;
+      }
+      stack.removeLast();
+      memo[n.id] = switch (v) {
+        true => hi!,
+        false => lo!,
+        null => _node(n.atom, hi!, lo!),
+      };
+    }
+    return known(this)!;
+  }
+
+  /// [Part.forced] of a diagram: the atoms taken on every path to `true`, and those refused
+  /// on every path, found as the branches that dominate the `true` leaf. The nodes that reach
+  /// it are taken in topological order, and each branch between them is a vertex of its own;
+  /// a vertex's dominator is the nearest common one of the vertices with an edge into it,
+  /// found by binary lifting, so the time is `O(n log n)` in the nodes.
+  (List<A>, List<A>) _forced() {
+    final root = this;
+    if (root is! Node<A>) return (<A>[], <A>[]);
+    // The nodes that reach `true`, in postorder of a depth-first walk that takes `hi` first.
+    final reaches = <int, bool>{};
+    final entered = <int>{};
+    final post = <Node<A>>[];
+    bool reach(Bdd<A> b) => switch (b) {
+      Leaf(:final value) => value,
+      Node(:final id) => reaches[id]!,
+    };
+    final walk = [(root, false)];
+    while (walk.isNotEmpty) {
+      final (n, below) = walk.removeLast();
+      if (below) {
+        final r = reaches[n.id] = reach(n.hi) || reach(n.lo);
+        if (r) post.add(n);
+        continue;
+      }
+      if (!entered.add(n.id)) continue;
+      walk.add((n, true));
+      for (final c in [n.lo, n.hi]) {
+        if (c is Node<A> && !entered.contains(c.id)) walk.add((c, false));
+      }
+    }
+    if (post.isEmpty) return (<A>[], <A>[]);
+    // Vertex 0 is the `true` leaf, 1 to `nodes.length` the nodes, root first, and then a
+    // vertex per branch, with its node's vertex and whether it is the `hi` branch. Each vertex
+    // has its dominator (-1 while none is known), its depth in the dominator tree, and its
+    // ancestors there `2^i` steps up.
+    final nodes = post.reversed.toList();
+    final index = {for (var k = 0; k < nodes.length; k++) nodes[k].id: k + 1};
+    final up = [-1, for (var k = 0; k < nodes.length; k++) k == 0 ? 1 : -1];
+    final depth = List.filled(nodes.length + 1, 0, growable: true);
+    final lift = List<List<int>>.filled(nodes.length + 1, const [], growable: true);
+    final branch = List<(int, bool)?>.filled(nodes.length + 1, null, growable: true);
+    List<int> ancestors(int p) {
+      final l = [p];
+      while (l.length - 1 < lift[l.last].length) {
+        l.add(lift[l.last][l.length - 1]);
+      }
+      return l;
+    }
+
+    int meet(int a, int b) {
+      if (depth[a] < depth[b]) (a, b) = (b, a);
+      for (var (i, d) = (0, depth[a] - depth[b]); d > 0; i++, d >>= 1) {
+        if (d & 1 != 0) a = lift[a][i];
+      }
+      if (a == b) return a;
+      for (var i = lift[a].length - 1; i >= 0; i--) {
+        if (i < lift[a].length && lift[a][i] != lift[b][i]) {
+          (a, b) = (lift[a][i], lift[b][i]);
+        }
+      }
+      return lift[a][0];
+    }
+
+    for (var k = 0; k < nodes.length; k++) {
+      final u = k + 1;
+      // Every edge into the node comes from a node before it, so its dominator is known.
+      if (u != 1) {
+        depth[u] = depth[up[u]] + 1;
+        lift[u] = ancestors(up[u]);
+      }
+      for (final (child, v) in [(nodes[k].hi, true), (nodes[k].lo, false)]) {
+        final c = switch (child) {
+          Leaf(:final value) => value ? 0 : null,
+          Node(:final id) => index[id],
+        };
+        if (c == null) continue;
+        final e = up.length;
+        up.add(u);
+        depth.add(depth[u] + 1);
+        lift.add(ancestors(u));
+        branch.add((u, v));
+        up[c] = up[c] == -1 ? e : meet(up[c], e);
+      }
+    }
+    final taken = <A>[], refused = <A>[];
+    for (var x = up[0]; x != 1; x = up[x]) {
+      if (branch[x] case (final u, final v)) (v ? taken : refused).add(nodes[u - 1].atom);
+    }
+    return (taken, refused);
   }
 }
 

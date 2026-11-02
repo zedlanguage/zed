@@ -1,6 +1,6 @@
-/// Step L1.22: the paths of a tuple or morphism part, as emptiness reads them, against the
-/// part evaluated at each assignment of its atoms, for parts kept as diagrams and as
-/// expressions, shared subexpressions among them.
+/// Step L1.22: the three-valued operations emptiness decides a tuple or morphism part by,
+/// against the part evaluated at each assignment of its atoms, for parts kept as diagrams and
+/// as expressions, shared subexpressions among them.
 library;
 
 import 'package:test/test.dart';
@@ -48,38 +48,73 @@ Part<Components> randomExpr(Seed s, int depth, List<Part<Components>> pool) {
   return p;
 }
 
-/// Whether an expression in `p` is an operand of two connectives.
-bool shares(Part<Components> p) {
-  final seen = Set<Expr<Components>>.identity();
-  bool go(Part<Components> p) {
-    if (p is! Expr<Components>) return false;
-    if (!seen.add(p)) return true;
-    return go(p.a) || (p.b != null && go(p.b!));
-  }
-
-  return go(p);
-}
-
 void main() {
-  test('the paths of a part are its assignments', () {
-    // Each set of the six atoms is one assignment. It is outside the part exactly when every
-    // path excludes it: takes an atom not in the set, or refuses one in it. That test holds of
-    // a path whenever it holds of a path with fewer atoms, as `paths` asks.
+  test('three-valued operations keep the assignments', () {
+    // Each set of the six atoms is one assignment, and a partial assignment fixes the atoms of
+    // `known` to their membership in `fixed`. A three-valued value is the value of every
+    // assignment that agrees with it; restricting keeps the value of every assignment agreeing
+    // with what it fixes; settling keeps every assignment in the part, and makes it empty only
+    // when the part is; an atom forced taken is in every assignment in the part, and one forced
+    // refused in none.
     final atoms = [for (var i = 0; i < 6; i++) atom(i)];
+    int? index(Components t) {
+      for (var i = 0; i < 6; i++) {
+        if (t == atoms[i]) return i;
+      }
+      return null;
+    }
+
+    bool Function(Components) holds(int set) => (t) {
+      final i = index(t);
+      return i != null && set & (1 << i) != 0;
+    };
     final s = Seed(7);
-    var (exprs, shared, found) = (0, 0, 0);
-    for (var n = 0; n < 3000; n++) {
+    var (exprs, decided, forced, settled) = (0, 0, 0, 0);
+    for (var k = 0; k < 3000; k++) {
       final p = s.state % 2 == 0 ? random(s, 6) : randomExpr(s, 5, []);
       if (p is Expr) exprs++;
-      if (shares(p)) shared++;
+      final inside = [
+        for (var set = 0; set < 64; set++)
+          if (p.eval(holds(set))) set,
+      ];
+      final (known, fixed) = (k % 64, (k ~/ 64) % 64);
+      bool? fix(Components t) {
+        final i = index(t);
+        return i != null && known & (1 << i) != 0 ? fixed & (1 << i) != 0 : null;
+      }
+
+      bool agree(int set) => (set ^ fixed) & known == 0;
+      if (p.eval3(fix) case final v?) {
+        decided++;
+        for (var set = 0; set < 64; set++) {
+          if (agree(set) && p.eval(holds(set)) != v) fail('$p: eval3 at ${set.toRadixString(2)}');
+        }
+      }
+      final r = p.restrict(fix);
+      final t = p.settle();
+      if (inside.isEmpty && t.leaf == false) settled++;
       for (var set = 0; set < 64; set++) {
-        bool holds(Components t) =>
-            [for (var i = 0; i < 6; i++) i].any((i) => set & (1 << i) != 0 && t == atoms[i]);
-        final out = p.paths().all((pos, neg) => pos.any((a) => !holds(a)) || neg.any(holds));
-        if (out == p.eval(holds)) fail('${set.toRadixString(2)}: paths and eval disagree');
-        if (!out) found++;
+        final v = p.eval(holds(set));
+        if (agree(set) && r.eval(holds(set)) != v) {
+          fail('$p: restrict at ${set.toRadixString(2)}');
+        }
+        if (v && !t.eval(holds(set))) fail('$p: settle at ${set.toRadixString(2)}');
+      }
+      final (taken, refused) = p.forced();
+      forced += taken.length + refused.length;
+      for (final a in taken) {
+        final i = index(a)!;
+        if (!inside.every((s) => s & (1 << i) != 0)) fail('$p takes $i');
+      }
+      for (final a in refused) {
+        final i = index(a)!;
+        if (!inside.every((s) => s & (1 << i) == 0)) fail('$p refuses $i');
       }
     }
-    expect(exprs > 500 && shared > 200 && found > 10000, isTrue, reason: '$exprs $shared $found');
+    expect(
+      exprs > 500 && decided > 300 && forced > 1000 && settled > 100,
+      isTrue,
+      reason: '$exprs $decided $forced $settled',
+    );
   });
 }

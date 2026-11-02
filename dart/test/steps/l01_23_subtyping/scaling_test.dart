@@ -26,12 +26,19 @@ Type pair(int i) => Type.tuple([lit(i), Type.top]);
 Type union(int c, Type Function(int) atom) =>
     [for (var i = 0; i < c; i++) i].fold(Type.empty, (u, i) => u | (atom(i) - atom(i + 1000)));
 
-/// The exclusive or of `c` tuple types `(i, i)`: a diagram of about `2c` nodes with
+/// The exclusive or of `c` tuple types `(b + i, b + i)`: a diagram of about `2c` nodes with
 /// `2^(c - 1)` paths to `true`, holding `c` values.
-Type oddTuples(int c) => [for (var i = 0; i < c; i++) i].fold(Type.empty, (x, i) {
-  final t = Type.tuple([lit(i), lit(i)]);
+Type oddTuples(int c, int b) => [for (var i = 0; i < c; i++) i].fold(Type.empty, (x, i) {
+  final t = Type.tuple([lit(b + i), lit(b + i)]);
   return (x - t) | (t - x);
 });
+
+/// The one-tuples of `ints` but `0` to `c - 1`, each taken out as its own tuple type.
+Type pastExcluded(int c, Type ints) =>
+    Type.tuple([ints]) -
+    Type.unionAll([
+      for (var i = 0; i < c; i++) Type.tuple([lit(i)]),
+    ]);
 
 void run(int c, Type Function(int) atom) {
   final b = union(c, atom);
@@ -279,13 +286,65 @@ void main() {
   test('listing a diagram with exponentially many paths scales', () {
     // Listing walked every path of the diagram: `2^(c - 1)` at `c` tuple types.
     for (final c in [1, 2, 7]) {
-      expect(oddTuples(c).listed?.length, c, reason: 'c = $c');
+      expect(oddTuples(c, 0).listed?.length, c, reason: 'c = $c');
     }
-    final built = {for (final c in [64, 512]) c: oddTuples(c)};
+    final built = {
+      for (final c in [64, 512]) c: oddTuples(c, 0),
+    };
     // One pass over the nodes lists the candidates, but each of the `c` rows is still checked
     // along a path of up to `c` nodes: order `c²`, an open item (DESIGN.md L1.23).
     checkOrder('listing an exclusive or of tuple types, by count', 64, 2, (c) {
       expect(built[c]!.listed?.length, c);
+    });
+  });
+
+  test('a type not proved empty promises no key', () {
+    // A type the check does not prove empty may still be empty, so it promises no key: here
+    // four pigeons in three holes, a Boolean tuple type that no valuation of its 4096 is in.
+    const pigeons = 4, holes = 3;
+    const d = pigeons * holes;
+    final bit = Type.boolean;
+    Type row(bool Function(int) hit, bool b) =>
+        Type.tuple([for (var j = 0; j < d; j++) hit(j) ? Type.lit(Bool(b))! : bit]);
+    final forbidden = [
+      for (var p = 0; p < pigeons; p++) row((j) => j ~/ holes == p, false),
+      for (var h = 0; h < holes; h++)
+        for (var p = 0; p < pigeons; p++)
+          for (var q = p + 1; q < pigeons; q++)
+            row((j) => j == p * holes + h || j == q * holes + h, true),
+    ];
+    final unknown = Type.tuple(List.filled(d, bit)) - Type.unionAll(forbidden);
+    for (var mask = 0; mask < 1 << d; mask++) {
+      final v = Tuple([for (var j = 0; j < d; j++) Bool(mask >> j & 1 != 0)]);
+      expect(unknown.contains(v), isFalse, reason: 'a valuation is in the pigeonhole type');
+    }
+    expect(unknown.isEmpty, isFalse, reason: 'the check proves the pigeonhole type empty');
+    final m = Type.morphism(unknown, Type.empty, Type.integer);
+    expect(m.isEmpty, isFalse, reason: 'the empty morphism is in it');
+    // A key shown in the type is promised: a scalar, a tuple, an atom's payload.
+    final pair = Type.tuple([Type.integer, Type.string]);
+    final tagged = Type.atomWith('p', pair);
+    for (final key in [Type.boolean, pair, tagged]) {
+      expect(Type.morphism(key, Type.empty, Type.integer).isEmpty, isTrue, reason: '$key');
+      expect(Type.exact(key, Type.empty).isEmpty, isTrue, reason: '$key');
+    }
+  });
+
+  test('a key past many excluded tuples is found and scales', () {
+    // Each tuple type tried as the key's representative was tested against every other.
+    Type promised(int c) => Type.exact(pastExcluded(c, Type.integer), Type.empty);
+    for (final c in [1, 2, 7]) {
+      expect(promised(c).isEmpty, isTrue, reason: 'c = $c');
+      // When every one-tuple is taken out, no key is promised, and the empty morphism is in it.
+      final all = Type.unionAll([for (var i = 0; i < c; i++) lit(i)]);
+      expect(Type.exact(pastExcluded(c, all), Type.empty).isEmpty, isFalse, reason: 'c = $c');
+    }
+    final built = {
+      for (final c in [512, 4096]) c: promised(c),
+    };
+    check("a key's representative past excluded tuple types, by count", 512, (c) {
+      Emptiness.forget();
+      expect(built[c]!.isEmpty, isTrue);
     });
   });
 }
