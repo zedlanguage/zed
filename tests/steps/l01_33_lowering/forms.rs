@@ -105,7 +105,7 @@ fn reachability_is_a_lattice_fixpoint() {
             ("cdg", "lhr"),
             ("syd", "akl"),
         ]
-        .map(|(a, b)| Value::Tuple(vec![s(a), s(b)])),
+        .map(|(a, b)| Value::tuple(vec![s(a), s(b)])),
     );
     let from_reached = discard(
         lit(edges),
@@ -218,7 +218,7 @@ fn nested_patterns_bind_in_preorder() {
         (Pattern::Wild, lit("ok")),
     ];
     for r in [
-        Value::Tuple(vec![s("fig"), Value::Int(0)]),
+        Value::tuple(vec![s("fig"), Value::Int(0)]),
         Value::atom_with("parseError", vec![Value::Int(17), s("expected , at ")]),
         Value::Int(3),
     ] {

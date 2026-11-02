@@ -18,7 +18,7 @@ fn bind(x: &str) -> Pattern {
 
 /// `(1, "x")`, a constant.
 fn limits() -> Term {
-    lit(Value::Tuple(vec![Value::Int(1), Value::str("x")]))
+    lit(Value::tuple(vec![Value::Int(1), Value::str("x")]))
 }
 
 /// A cell holding the constant `limits()` and a computed part.
@@ -91,7 +91,7 @@ fn a_binder_beside_a_constant_in_a_shared_cell() {
             vec![(p, body)],
         ),
     );
-    agrees(&t, Value::Tuple(vec![Value::Int(1), Value::Int(2)]));
+    agrees(&t, Value::tuple(vec![Value::Int(1), Value::Int(2)]));
 }
 
 #[test]

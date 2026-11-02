@@ -540,7 +540,7 @@ mod tests {
     #[test]
     fn a_pair_of_strings_is_three_cells_and_frees_whole() {
         let mut h = Heap::new();
-        let v = Value::Tuple(vec![Value::str("a"), Value::str("b")]);
+        let v = Value::tuple(vec![Value::str("a"), Value::str("b")]);
         let w = h.fresh(&v);
         assert_eq!((h.stats.allocations, h.live()), (3, 3));
         assert_eq!(h.value(w).unwrap(), v);
@@ -567,7 +567,7 @@ mod tests {
         assert_eq!((h.stats.decrements, h.live()), (2, 0));
         assert_eq!(h.todo.capacity(), 0, "no stack was needed");
         // A nest of tuples: the stack grows once and is kept for the next free.
-        let v = Value::Tuple(vec![Value::Tuple(vec![Value::str("a")]), Value::str("b")]);
+        let v = Value::tuple(vec![Value::tuple(vec![Value::str("a")]), Value::str("b")]);
         let w = h.fresh(&v);
         h.dec(w).unwrap();
         assert_eq!(h.live(), 0);
@@ -588,7 +588,7 @@ mod tests {
             format!("runtime: cell {} is dropped after it was freed", s.bits)
         );
         assert!(h.todo.is_empty());
-        let w = h.fresh(&Value::Tuple(vec![Value::str("b")]));
+        let w = h.fresh(&Value::tuple(vec![Value::str("b")]));
         h.dec(w).unwrap();
         assert_eq!(h.live(), 0);
     }
@@ -596,7 +596,7 @@ mod tests {
     #[test]
     fn fused_release_keeps_one_part_with_no_count_write() {
         let mut h = Heap::new();
-        let w = h.fresh(&Value::Tuple(vec![Value::str("a"), Value::str("b")]));
+        let w = h.fresh(&Value::tuple(vec![Value::str("a"), Value::str("b")]));
         let mut out = Vec::new();
         let p = Pattern::Tuple(vec![Pattern::Bind("x".into()), Pattern::Wild]);
         assert!(h.matches(&p, w, &mut Vec::new(), &mut out).unwrap());
@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn a_shared_release_stops_at_a_constant_and_writes_no_count_for_it() {
         let mut h = Heap::new();
-        let k = h.uncounted(Value::Tuple(vec![Value::Int(1), Value::str("x")]));
+        let k = h.uncounted(Value::tuple(vec![Value::Int(1), Value::str("x")]));
         let t = h.alloc(Obj::Tuple(vec![k, Word::int(2)]));
         h.inc(t);
         h.release(t, &[&[0, 1]]).unwrap();

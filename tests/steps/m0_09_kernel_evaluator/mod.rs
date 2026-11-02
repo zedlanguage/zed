@@ -46,7 +46,7 @@ fn orders() -> Value {
     Value::Family(Family::of(rows.map(|(id, c, r, a)| {
         (
             Value::Int(id),
-            Value::Tuple(vec![s(c), s(r), Value::float(a)]),
+            Value::tuple(vec![s(c), s(r), Value::float(a)]),
         )
     })))
 }
@@ -286,7 +286,7 @@ fn edges() -> Value {
         ("syd", "akl"),
     ];
     Value::Family(Family::set(
-        pairs.map(|(a, b)| Value::Tuple(vec![s(a), s(b)])),
+        pairs.map(|(a, b)| Value::tuple(vec![s(a), s(b)])),
     ))
 }
 
@@ -743,11 +743,11 @@ fn match_destructures_tuples_and_atom_payloads() {
         eval(&Term::Match(rc(lit(r)), arms)).unwrap()
     };
     assert_eq!(
-        report(Value::Tuple(vec![s("fig"), Value::Int(0)])),
+        report(Value::tuple(vec![s("fig"), Value::Int(0)])),
         s("fig: out of stock")
     );
     assert_eq!(
-        report(Value::Tuple(vec![s("fig"), Value::Int(4)])),
+        report(Value::tuple(vec![s("fig"), Value::Int(4)])),
         s("fig: ok")
     );
     assert_eq!(

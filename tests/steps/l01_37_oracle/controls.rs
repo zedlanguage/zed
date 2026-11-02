@@ -17,7 +17,7 @@ fn off_by_one(t: &Term, ev: &mut Evaluator) -> Result<Value, String> {
 }
 
 fn silent(_: &Term, _: &mut Evaluator) -> Result<Value, String> {
-    Ok(Value::Tuple(Vec::new()))
+    Ok(Value::tuple(Vec::new()))
 }
 
 fn failing(_: &Term, _: &mut Evaluator) -> Result<Value, String> {

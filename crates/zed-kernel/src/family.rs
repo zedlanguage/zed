@@ -6,11 +6,16 @@
 //! every keypath has exactly one writer, and an outer key over an empty level has no keypath,
 //! so it is dropped.
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::fmt;
+use std::collections::btree_map::Entry;
+use std::mem;
 
 use imbl::OrdMap;
+use imbl::ordmap::Iter;
+use imbl::shared_ptr::DefaultSharedPtr;
 
+use crate::deep::{self, Part};
 use crate::error::KernelError;
 use crate::value::Value;
 
@@ -20,85 +25,122 @@ pub type Keypath = Vec<Value>;
 /// A finite family. No level of a family is empty except a whole family that has no entries.
 /// Its entries sit in a persistent map: a copy of a family costs O(1) whatever its size, and
 /// a family one entry larger than another shares all but O(log n) of its nodes with it.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
-pub struct Family(OrdMap<Value, Value>);
+#[derive(Clone, Default)]
+pub struct Family(pub(crate) OrdMap<Value, Value>);
 
-/// A level being built. A leaf may hold a whole family, shared, until a leaf beneath it is
-/// added, when its top level is expanded into an inner node.
-enum Node {
+impl Drop for Family {
+    fn drop(&mut self) {
+        if !self.0.is_empty() {
+            deep::free(Part::Map(mem::take(&mut self.0)));
+        }
+    }
+}
+
+impl PartialEq for Family {
+    fn eq(&self, other: &Self) -> bool {
+        deep::families_eq(self, other)
+    }
+}
+
+impl Eq for Family {}
+
+impl Ord for Family {
+    fn cmp(&self, other: &Self) -> Ordering {
+        deep::families_cmp(self, other)
+    }
+}
+
+impl PartialOrd for Family {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// An entry of a level being built. A leaf may hold a whole family, shared, until a leaf beneath
+/// it is added, when its top level is expanded into a level of its own.
+enum Slot {
     Leaf(Value),
-    Inner(BTreeMap<Value, Node>),
+    /// The index of the level beneath.
+    Inner(usize),
 }
 
-/// Expands a leaf holding a family into an inner node over the family's top level.
-fn expand(node: &mut Node) {
-    let level = match node {
-        Node::Leaf(Value::Family(f)) => f.iter().map(|(k, v)| (k.clone(), Node::Leaf(v.clone()))),
-        _ => return,
-    };
-    *node = Node::Inner(level.collect());
-}
+/// The levels of a family being built, the top one first. A level beneath another is always
+/// added after it, so a deep keypath needs no recursion to walk or to finish.
+struct Levels(Vec<BTreeMap<Value, Slot>>);
 
-/// Puts the nonempty family `sub` at `path` as one shared leaf, and returns true, when no leaf
-/// is at `path` and none above it. Otherwise returns false, having added only inner nodes
-/// that the leaves of `sub` would add.
-fn place(level: &mut BTreeMap<Value, Node>, path: &[Value], sub: &Family) -> bool {
-    let (key, rest) = path.split_first().expect("keypaths are nonempty");
-    let key = key.key();
-    if rest.is_empty() {
-        if level.contains_key(&key) {
-            return false;
+impl Levels {
+    /// The level beneath `key` of level `at`, added if there is none, a leaf holding a family
+    /// expanded. `None` when a leaf is there.
+    fn descend(&mut self, at: usize, key: Value) -> Option<usize> {
+        let next = self.0.len();
+        let slot = self.0[at].entry(key).or_insert(Slot::Inner(next));
+        let level = match &*slot {
+            Slot::Inner(i) if *i == next => BTreeMap::new(),
+            Slot::Inner(i) => return Some(*i),
+            Slot::Leaf(Value::Family(f)) => f
+                .iter()
+                .map(|(k, v)| (k.clone(), Slot::Leaf(v.clone())))
+                .collect(),
+            Slot::Leaf(_) => return None,
+        };
+        *slot = Slot::Inner(next);
+        self.0.push(level);
+        Some(next)
+    }
+
+    /// Puts the nonempty family `sub` at `path` as one shared leaf, and returns true, when no
+    /// leaf is at `path` and none above it. Otherwise returns false, having added only levels
+    /// that the leaves of `sub` would add.
+    fn place(&mut self, path: &[Value], sub: &Family) -> bool {
+        let (last, above) = path.split_last().expect("keypaths are nonempty");
+        let mut at = 0;
+        for key in above {
+            match self.descend(at, key.key()) {
+                Some(next) => at = next,
+                None => return false,
+            }
         }
-        level.insert(key, Node::Leaf(Value::Family(sub.clone())));
-        return true;
-    }
-    let node = level
-        .entry(key)
-        .or_insert_with(|| Node::Inner(BTreeMap::new()));
-    expand(node);
-    match node {
-        Node::Inner(inner) => place(inner, rest, sub),
-        Node::Leaf(_) => false,
-    }
-}
-
-fn into_family(level: BTreeMap<Value, Node>) -> Family {
-    Family(
-        level
-            .into_iter()
-            .map(|(k, node)| match node {
-                Node::Leaf(v) => (k, v),
-                Node::Inner(inner) => (k, Value::Family(into_family(inner))),
-            })
-            .collect(),
-    )
-}
-
-fn insert(
-    level: &mut BTreeMap<Value, Node>,
-    path: &[Value],
-    leaf: Value,
-    whole: &[Value],
-) -> Result<(), KernelError> {
-    let collision = || KernelError::Collision {
-        keypath: whole.to_vec(),
-    };
-    let (key, rest) = path.split_first().expect("keypaths are nonempty");
-    let key = &key.key();
-    if rest.is_empty() {
-        if level.contains_key(key) {
-            return Err(collision());
+        match self.0[at].entry(last.key()) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(slot) => {
+                slot.insert(Slot::Leaf(Value::Family(sub.clone())));
+                true
+            }
         }
-        level.insert(key.clone(), Node::Leaf(leaf));
-        return Ok(());
     }
-    let node = level
-        .entry(key.clone())
-        .or_insert_with(|| Node::Inner(BTreeMap::new()));
-    expand(node);
-    match node {
-        Node::Leaf(_) => Err(collision()),
-        Node::Inner(inner) => insert(inner, rest, leaf, whole),
+
+    /// Adds `leaf` at `path`, which `path` reports if it collides.
+    fn insert(&mut self, path: &[Value], leaf: Value) -> Result<(), KernelError> {
+        let collision = || KernelError::Collision {
+            keypath: path.to_vec(),
+        };
+        let (last, above) = path.split_last().expect("keypaths are nonempty");
+        let mut at = 0;
+        for key in above {
+            at = self.descend(at, key.key()).ok_or_else(collision)?;
+        }
+        match self.0[at].entry(last.key()) {
+            Entry::Occupied(_) => Err(collision()),
+            Entry::Vacant(slot) => {
+                slot.insert(Slot::Leaf(leaf));
+                Ok(())
+            }
+        }
+    }
+
+    /// The family, each level built after the levels beneath it.
+    fn into_family(self) -> Family {
+        let mut built = Vec::new();
+        built.resize_with(self.0.len(), Family::new);
+        for (i, level) in self.0.into_iter().enumerate().rev() {
+            let entries = level.into_iter().map(|(k, slot)| match slot {
+                Slot::Leaf(v) => (k, v),
+                Slot::Inner(j) => (k, Value::Family(mem::take(&mut built[j]))),
+            });
+            let family = Family(entries.collect());
+            built[i] = family;
+        }
+        built.swap_remove(0)
     }
 }
 
@@ -141,41 +183,51 @@ impl Family {
     pub fn from_leaves(
         leaves: impl IntoIterator<Item = (Keypath, Value)>,
     ) -> Result<Self, KernelError> {
-        let mut root = BTreeMap::new();
+        let mut levels = Levels(vec![BTreeMap::new()]);
         for (path, value) in leaves {
             if path.is_empty() {
                 return Err(KernelError::EmptyKeypath);
             }
             match value {
-                Value::Family(sub) if sub.is_empty() || place(&mut root, &path, &sub) => {}
+                Value::Family(sub) if sub.is_empty() || levels.place(&path, &sub) => {}
                 Value::Family(sub) => {
                     for (mut sub_path, leaf) in sub.leaves() {
                         let mut whole = path.clone();
                         whole.append(&mut sub_path);
-                        insert(&mut root, &whole, leaf, &whole)?;
+                        levels.insert(&whole, leaf)?;
                     }
                 }
-                leaf => insert(&mut root, &path, leaf, &path)?,
+                leaf => levels.insert(&path, leaf)?,
             }
         }
-        Ok(into_family(root))
+        Ok(levels.into_family())
     }
 
     /// The leaves with their keypaths, in keypath order.
     pub fn leaves(&self) -> Vec<(Keypath, Value)> {
         let mut out = Vec::new();
-        self.collect_leaves(&mut Vec::new(), &mut out);
-        out
-    }
-
-    fn collect_leaves(&self, prefix: &mut Keypath, out: &mut Vec<(Keypath, Value)>) {
-        for (k, v) in self.0.iter() {
-            prefix.push(k.clone());
-            match v {
-                Value::Family(sub) => sub.collect_leaves(prefix, out),
-                leaf => out.push((prefix.clone(), leaf.clone())),
+        let mut prefix = Vec::new();
+        let mut level = self.0.iter();
+        let mut above = Vec::new();
+        loop {
+            match level.next() {
+                Some((k, Value::Family(sub))) => {
+                    prefix.push(k.clone());
+                    above.push(mem::replace(&mut level, sub.0.iter()));
+                }
+                Some((k, leaf)) => {
+                    prefix.push(k.clone());
+                    out.push((prefix.clone(), leaf.clone()));
+                    prefix.pop();
+                }
+                None => match above.pop() {
+                    Some(outer) => {
+                        level = outer;
+                        prefix.pop();
+                    }
+                    None => return out,
+                },
             }
-            prefix.pop();
         }
     }
 
@@ -204,7 +256,7 @@ impl Family {
     /// costs O(m log n) for the smaller size m and the larger n: the larger family's entries
     /// are shared, not copied.
     pub fn union(&self, other: &Family) -> Result<Family, KernelError> {
-        union_at(self, other, &mut Vec::new())
+        union(self, other)
     }
 
     /// Adds `v` at key `k` of the top level, sharing all but O(log n) of the map's nodes with
@@ -224,23 +276,59 @@ impl Family {
     }
 }
 
-/// The union of `a` and `b`, the levels beneath `prefix`. A collision is reported as building
-/// `a`'s leaves and then `b`'s would report it: at `b`'s leaf, or, where `a` has a leaf above a
-/// subtree of `b`, at the subtree's first leaf.
-fn union_at(a: &Family, b: &Family, prefix: &mut Keypath) -> Result<Family, KernelError> {
-    let small_is_b = a.len() >= b.len();
-    let (big, small) = if small_is_b { (a, b) } else { (b, a) };
-    let mut out = big.0.clone();
-    for (k, s) in small.0.iter() {
-        let Some(g) = big.0.get(k) else {
-            out.insert(k.clone(), s.clone());
+/// One level of a union in progress: the larger family, the smaller family's entries yet to
+/// add, and the entries so far.
+struct Merging<'a> {
+    big: &'a Family,
+    left: Iter<'a, Value, Value, DefaultSharedPtr>,
+    small_is_b: bool,
+    out: OrdMap<Value, Value>,
+}
+
+impl<'a> Merging<'a> {
+    fn new(a: &'a Family, b: &'a Family) -> Self {
+        let small_is_b = a.len() >= b.len();
+        let (big, small) = if small_is_b { (a, b) } else { (b, a) };
+        Merging {
+            big,
+            left: small.0.iter(),
+            small_is_b,
+            out: big.0.clone(),
+        }
+    }
+}
+
+/// The union of `a` and `b`. A collision is reported as building `a`'s leaves and then `b`'s
+/// would report it: at `b`'s leaf, or, where `a` has a leaf above a subtree of `b`, at the
+/// subtree's first leaf.
+fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
+    let mut prefix = Vec::new();
+    let mut level = Merging::new(a, b);
+    let mut above = Vec::new();
+    loop {
+        let Some((k, s)) = level.left.next() else {
+            let Some(outer) = above.pop() else {
+                return Ok(Family(level.out));
+            };
+            let inner = mem::replace(&mut level, outer);
+            let key = prefix
+                .pop()
+                .expect("each level beneath the top has its key");
+            level.out.insert(key, Value::Family(Family(inner.out)));
             continue;
         };
-        let (x, y) = if small_is_b { (g, s) } else { (s, g) };
+        let big = level.big;
+        let Some(g) = big.0.get(k) else {
+            level.out.insert(k.clone(), s.clone());
+            continue;
+        };
+        let (x, y) = if level.small_is_b { (g, s) } else { (s, g) };
         prefix.push(k.clone());
-        let merged = match (x, y) {
-            (Value::Family(x), Value::Family(y)) => Value::Family(union_at(x, y, prefix)?),
-            (Value::Family(_), _) => None.ok_or_else(|| collision(prefix))?,
+        match (x, y) {
+            (Value::Family(x), Value::Family(y)) => {
+                above.push(mem::replace(&mut level, Merging::new(x, y)));
+            }
+            (Value::Family(_), _) => return Err(collision(&prefix)),
             (_, Value::Family(y)) => {
                 let mut sub = y;
                 loop {
@@ -248,41 +336,22 @@ fn union_at(a: &Family, b: &Family, prefix: &mut Keypath) -> Result<Family, Kern
                     prefix.push(k.clone());
                     match v {
                         Value::Family(f) => sub = f,
-                        _ => return Err(collision(prefix)),
+                        _ => return Err(collision(&prefix)),
                     }
                 }
             }
-            (x, y) if x == y => x.clone(),
-            _ => return Err(collision(prefix)),
-        };
-        prefix.pop();
-        out.insert(k.clone(), merged);
+            (x, y) if x == y => {
+                prefix.pop();
+                level.out.insert(k.clone(), x.clone());
+            }
+            _ => return Err(collision(&prefix)),
+        }
     }
-    Ok(Family(out))
 }
 
 fn collision(keypath: &Keypath) -> KernelError {
     KernelError::Collision {
         keypath: keypath.clone(),
-    }
-}
-
-impl fmt::Display for Family {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // A set, each leaf its own key (`k -> k`), is written by its members.
-        let set = !self.0.is_empty() && self.0.iter().all(|(k, v)| k == v);
-        write!(f, "{{")?;
-        for (i, (k, v)) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            if set {
-                write!(f, "{k}")?;
-            } else {
-                write!(f, "{k} -> {v}")?;
-            }
-        }
-        write!(f, "}}")
     }
 }
 
@@ -403,7 +472,7 @@ mod tests {
             Err(KernelError::Collision { .. })
         ));
         // At any depth: inside a tuple key, and at an inner level.
-        let t = |z| Value::Tuple(vec![Value::str("x"), Value::float(z)]);
+        let t = |z| Value::tuple(vec![Value::str("x"), Value::float(z)]);
         let g = Family::from_leaves([(vec![t(-0.0), neg()], Value::Int(3))]).unwrap();
         assert_eq!(g.to_string(), "{(\"x\", 0.0) -> {0.0 -> 3}}");
         assert_eq!(Family::set([neg(), Value::float(0.0)]).len(), 1);

@@ -43,7 +43,7 @@ fn either_zero_finds_the_one_key() {
     // A lookup is copied into key form only when it holds a `-0.0`, at any depth.
     use zed_kernel::{Family, Value};
     let (pos, neg) = (Value::float(0.0), Value::float(-0.0));
-    let pair = |z: &Value| Value::Tuple(vec![Value::Int(1), z.clone()]);
+    let pair = |z: &Value| Value::tuple(vec![Value::Int(1), z.clone()]);
     let f = Family::of([(neg.clone(), Value::Int(1)), (pair(&pos), Value::Int(2))]);
     for z in [&pos, &neg] {
         assert_eq!(f.get(z), Some(&Value::Int(1)), "{z:?}");

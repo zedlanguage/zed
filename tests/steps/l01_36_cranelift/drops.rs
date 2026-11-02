@@ -93,7 +93,7 @@ fn drops_that_leave_a_cell_live_scale() {
 #[test]
 fn a_word_that_is_not_a_cell_writes_no_count() {
     let mut h = Heap::new();
-    let k = h.uncounted(Value::Tuple(Vec::new()));
+    let k = h.uncounted(Value::tuple(Vec::new()));
     for w in [Word::int(1), Word::state(), k] {
         h.dec(w).unwrap();
     }

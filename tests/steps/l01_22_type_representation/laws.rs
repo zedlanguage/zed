@@ -127,16 +127,16 @@ fn values() -> Vec<Value> {
         Value::atom_with("a", vec![int(1), Value::str("a")]),
         Value::atom_with("b", vec![int(0)]),
         Value::atom_named("a", vec![(Arc::from("x"), int(1))]).unwrap(),
-        Value::Path(vec![int(0), int(1)]),
+        Value::path(vec![int(0), int(1)]),
         Value::Family(Family::new()),
-        Value::Tuple(vec![]),
-        Value::Tuple(vec![Value::Tuple(vec![int(0)])]),
+        Value::tuple(vec![]),
+        Value::tuple(vec![Value::tuple(vec![int(0)])]),
     ];
     vs.extend(small());
     for a in small() {
-        vs.push(Value::Tuple(vec![a.clone()]));
+        vs.push(Value::tuple(vec![a.clone()]));
         for b in small() {
-            vs.push(Value::Tuple(vec![a.clone(), b]));
+            vs.push(Value::tuple(vec![a.clone(), b]));
         }
     }
     vs

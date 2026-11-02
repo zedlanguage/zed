@@ -1053,7 +1053,7 @@ pub fn raise_with(r: &Region, args: &[Term]) -> Result<Term, String> {
 }
 
 fn unit() -> Term {
-    Term::Lit(zed_kernel::Value::Tuple(Vec::new()))
+    Term::Lit(zed_kernel::Value::tuple(Vec::new()))
 }
 
 fn fresh_name(fresh: &mut usize) -> Arc<str> {

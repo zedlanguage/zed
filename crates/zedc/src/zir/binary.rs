@@ -452,11 +452,11 @@ impl<'a> R<'a> {
                 Value::Atom(Atom {
                     name: name.into(),
                     fields: fields.into_iter().map(Into::into).collect(),
-                    args,
+                    args: args.into(),
                 })
             }
-            7 => Value::Tuple(self.many(Self::value)?),
-            8 => Value::Path(self.many(Self::value)?),
+            7 => Value::tuple(self.many(Self::value)?),
+            8 => Value::path(self.many(Self::value)?),
             _ => {
                 let entries = self.many(|r| Ok((r.value()?, r.value()?)))?;
                 Value::Family(Family::of(entries))

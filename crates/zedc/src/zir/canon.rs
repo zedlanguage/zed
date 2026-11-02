@@ -196,7 +196,7 @@ fn def(v: &super::ValueEdge) -> Def {
         name: "".into(),
         domain: Some(v.domain.clone()),
         facets: v.facets.clone(),
-        body: Term::Lit(Value::Tuple(Vec::new())),
+        body: Term::Lit(Value::tuple(Vec::new())),
     }
 }
 
@@ -228,7 +228,7 @@ fn rename_first(g: &mut Region) -> bool {
                         v.facets.push(Facet {
                             hint: true,
                             kind: "binder".into(),
-                            value: Value::Tuple(vec![
+                            value: Value::tuple(vec![
                                 Value::Int(index as i64),
                                 Value::Str(name.into()),
                             ]),

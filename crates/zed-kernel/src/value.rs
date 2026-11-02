@@ -9,11 +9,15 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::mem;
+use std::ops::Deref;
+use std::slice;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 
+use crate::deep::{self, Part};
 use crate::family::Family;
 use crate::num::{Exact, Rat};
 use crate::text::Text;
@@ -74,12 +78,101 @@ pub struct Atom {
     /// The field names of a struct payload, sorted; empty for a tuple payload.
     pub fields: Vec<Arc<str>>,
     /// The payload's values, one per field of a struct payload; empty for a bare atom.
-    pub args: Vec<Value>,
+    pub args: Items,
+}
+
+/// The values inside a tuple, a keypath or a payload. It owns its drop, copy, comparison and
+/// `Debug` form so that each runs on the heap, whatever the depth (see [`crate::deep`]).
+#[derive(Default)]
+pub struct Items(Vec<Value>);
+
+impl Items {
+    /// The values, in order.
+    pub fn as_slice(&self) -> &[Value] {
+        &self.0
+    }
+
+    /// The values, as a vector.
+    pub fn into_vec(mut self) -> Vec<Value> {
+        mem::take(&mut self.0)
+    }
+}
+
+impl Deref for Items {
+    type Target = [Value];
+
+    fn deref(&self) -> &[Value] {
+        &self.0
+    }
+}
+
+impl From<Vec<Value>> for Items {
+    fn from(values: Vec<Value>) -> Self {
+        Items(values)
+    }
+}
+
+impl FromIterator<Value> for Items {
+    fn from_iter<I: IntoIterator<Item = Value>>(values: I) -> Self {
+        Items(values.into_iter().collect())
+    }
+}
+
+impl IntoIterator for Items {
+    type Item = Value;
+    type IntoIter = std::vec::IntoIter<Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_vec().into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Items {
+    type Item = &'a Value;
+    type IntoIter = slice::Iter<'a, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl Clone for Items {
+    fn clone(&self) -> Self {
+        Items(deep::copy(&self.0, Value::clone))
+    }
+}
+
+impl Drop for Items {
+    fn drop(&mut self) {
+        if !self.0.is_empty() {
+            deep::free(Part::Items(mem::take(&mut self.0)));
+        }
+    }
+}
+
+impl PartialEq for Items {
+    fn eq(&self, other: &Self) -> bool {
+        deep::items_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Items {}
+
+impl Ord for Items {
+    fn cmp(&self, other: &Self) -> Ordering {
+        deep::items_cmp(&self.0, &other.0)
+    }
+}
+
+impl PartialOrd for Items {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// A kernel value. Values are totally ordered, so any value can be a key; the order of keys
 /// is the order a family's entries are visited in.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Value {
     /// `true` or `false`.
     Bool(bool),
@@ -96,9 +189,9 @@ pub enum Value {
     /// A failure atom.
     Atom(Atom),
     /// A tuple, such as a composite key.
-    Tuple(Vec<Value>),
+    Tuple(Items),
     /// A keypath as a value: what a `reindex` key map reads and returns (sec:keypaths).
-    Path(Vec<Value>),
+    Path(Items),
     /// A family: one level of keys, whose values may be families in turn.
     Family(Family),
 }
@@ -107,6 +200,16 @@ impl Value {
     /// A string value.
     pub fn str(s: &str) -> Self {
         Value::Str(s.into())
+    }
+
+    /// A tuple value.
+    pub fn tuple(items: Vec<Value>) -> Self {
+        Value::Tuple(items.into())
+    }
+
+    /// A keypath value.
+    pub fn path(keys: Vec<Value>) -> Self {
+        Value::Path(keys.into())
     }
 
     /// A float value.
@@ -119,7 +222,7 @@ impl Value {
         Value::Atom(Atom {
             name: name.into(),
             fields: Vec::new(),
-            args: Vec::new(),
+            args: Items::default(),
         })
     }
 
@@ -128,7 +231,7 @@ impl Value {
         Value::Atom(Atom {
             name: name.into(),
             fields: Vec::new(),
-            args,
+            args: args.into(),
         })
     }
 
@@ -140,11 +243,11 @@ impl Value {
         if fields.windows(2).any(|w| w[0].0 == w[1].0) {
             return None;
         }
-        let (fields, args) = fields.into_iter().unzip();
+        let (fields, args): (_, Vec<Value>) = fields.into_iter().unzip();
         Some(Value::Atom(Atom {
             name: name.into(),
             fields,
-            args,
+            args: args.into(),
         }))
     }
 
@@ -216,67 +319,44 @@ impl Value {
     /// makes the two zeros one key, which then holds the same bits whichever zero arrived
     /// first. NaN is already one value.
     pub fn key(&self) -> Value {
-        let all = |vs: &[Value]| vs.iter().map(Value::key).collect();
         match self {
-            Value::Float(x) if x.get() == 0.0 => Value::float(0.0),
-            Value::Tuple(vs) => Value::Tuple(all(vs)),
-            Value::Path(vs) => Value::Path(all(vs)),
-            Value::Atom(a) if !a.args.is_empty() => Value::Atom(Atom {
-                args: all(&a.args),
-                ..a.clone()
-            }),
-            v => v.clone(),
+            Value::Tuple(_) | Value::Path(_) | Value::Atom(_) => {
+                let mut one = deep::copy(slice::from_ref(self), key_leaf);
+                one.pop().expect("a copy of one value holds one value")
+            }
+            leaf => key_leaf(leaf),
         }
     }
 
     /// Whether the value is its own key: whether it holds no `-0.0`.
     pub fn is_key(&self) -> bool {
-        match self {
+        deep::all_leaves(slice::from_ref(self), |v| match v {
             Value::Float(x) => !(x.get() == 0.0 && x.get().is_sign_negative()),
-            Value::Tuple(vs) | Value::Path(vs) => vs.iter().all(Value::is_key),
-            Value::Atom(a) => a.args.iter().all(Value::is_key),
             _ => true,
-        }
+        })
     }
 
     /// The language's order on two values of one kind: structural, except that two floats
     /// compare as IEEE 754 does, so `-0.0` and `0.0` are equal and a NaN is unordered, and
     /// tuples compare component by component in that order. `None` when they are unordered.
     pub fn surface_cmp(&self, other: &Value) -> Option<Ordering> {
-        match (self, other) {
-            (Value::Float(a), Value::Float(b)) => a.get().partial_cmp(&b.get()),
-            (Value::Tuple(a), Value::Tuple(b)) => {
-                for (x, y) in a.iter().zip(b) {
-                    match x.surface_cmp(y)? {
-                        Ordering::Equal => {}
-                        o => return Some(o),
-                    }
-                }
-                Some(a.len().cmp(&b.len()))
-            }
-            (a, b) => Some(a.cmp(b)),
-        }
+        deep::surface_cmp(self, other)
     }
 
     /// The language's `==` (sec:failure, M0.11): structural, except that two floats compare
     /// as IEEE 754 does, so `NaN != NaN` and `0.0 == -0.0`, at any depth.
     pub fn surface_eq(&self, other: &Value) -> bool {
-        let all = |a: &[Value], b: &[Value]| {
-            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.surface_eq(y))
-        };
+        deep::surface_eq(self, other)
+    }
+
+    /// The order on two values at least one of which holds no parts: the two values' kinds,
+    /// or their scalars. Two values of one kind with parts are compared in [`crate::deep`].
+    pub(crate) fn scalar_cmp(&self, other: &Value) -> Ordering {
         match (self, other) {
-            (Value::Float(a), Value::Float(b)) => a.get() == b.get(),
-            (Value::Tuple(a), Value::Tuple(b)) | (Value::Path(a), Value::Path(b)) => all(a, b),
-            (Value::Atom(a), Value::Atom(b)) => {
-                a.name == b.name && a.fields == b.fields && all(&a.args, &b.args)
-            }
-            (Value::Family(a), Value::Family(b)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b.iter())
-                        .all(|((k, v), (l, w))| k == l && v.surface_eq(w))
-            }
-            _ => self == other,
+            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            (Value::Str(a), Value::Str(b)) => a.cmp(b),
+            _ if self.kind() == 2 && other.kind() == 2 => number_cmp(self, other),
+            _ => self.kind().cmp(&other.kind()),
         }
     }
 
@@ -331,6 +411,14 @@ impl Value {
     }
 }
 
+/// A value `Value::key` keeps: anything but a zero, which is made positive.
+fn key_leaf(v: &Value) -> Value {
+    match v {
+        Value::Float(x) if x.get() == 0.0 => Value::float(0.0),
+        v => v.clone(),
+    }
+}
+
 /// Two numbers by value; equal values by kind, `int` before `rat` before a float, and two
 /// floats by their total order, which puts `-0.0` before `0.0` and NaN last.
 fn number_cmp(a: &Value, b: &Value) -> Ordering {
@@ -347,16 +435,7 @@ fn number_cmp(a: &Value, b: &Value) -> Ordering {
 
 impl Ord for Value {
     fn cmp(&self, other: &Self) -> Ordering {
-        use Value::*;
-        match (self, other) {
-            (Bool(a), Bool(b)) => a.cmp(b),
-            (Str(a), Str(b)) => a.cmp(b),
-            (Atom(a), Atom(b)) => a.cmp(b),
-            (Tuple(a), Tuple(b)) | (Path(a), Path(b)) => a.cmp(b),
-            (Family(a), Family(b)) => a.cmp(b),
-            _ if self.kind() == 2 && other.kind() == 2 => number_cmp(self, other),
-            _ => self.kind().cmp(&other.kind()),
-        }
+        deep::cmp(self, other)
     }
 }
 
@@ -375,7 +454,8 @@ impl PartialEq for Value {
         match (self, other) {
             (Family(a), Family(b)) => a == b,
             (Tuple(a), Tuple(b)) | (Path(a), Path(b)) => a == b,
-            _ => self.cmp(other) == Ordering::Equal,
+            (Atom(a), Atom(b)) => a == b,
+            _ => self.scalar_cmp(other) == Ordering::Equal,
         }
     }
 }
@@ -406,62 +486,6 @@ impl From<Family> for Value {
     }
 }
 
-fn write_list(f: &mut fmt::Formatter<'_>, items: &[Value]) -> fmt::Result {
-    for (i, v) in items.iter().enumerate() {
-        if i > 0 {
-            write!(f, ", ")?;
-        }
-        write!(f, "{v}")?;
-    }
-    Ok(())
-}
-
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Value::Bool(b) => write!(f, "{b}"),
-            Value::Int(n) => write!(f, "{n}"),
-            Value::Big(n) => write!(f, "{n}"),
-            Value::Rat(r) => write!(f, "{r}"),
-            Value::Float(x) => write!(f, "{}", crate::num::show_f64(x.get())),
-            Value::Str(s) => write!(f, "{s:?}"),
-            Value::Atom(a) => {
-                write!(f, "#{}", a.name)?;
-                if !a.args.is_empty() {
-                    write!(f, "(")?;
-                    for (i, v) in a.args.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        if let Some(k) = a.fields.get(i) {
-                            write!(f, "{k}: ")?;
-                        }
-                        write!(f, "{v}")?;
-                    }
-                    write!(f, ")")?;
-                }
-                Ok(())
-            }
-            Value::Tuple(items) => {
-                write!(f, "(")?;
-                write_list(f, items)?;
-                write!(f, ")")
-            }
-            Value::Path(keys) => {
-                write!(f, "[")?;
-                for (i, k) in keys.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " -> ")?;
-                    }
-                    write!(f, "{k}")?;
-                }
-                write!(f, "]")
-            }
-            Value::Family(fam) => write!(f, "{fam}"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,9 +504,9 @@ mod tests {
         assert_eq!(Value::atom("empty").to_string(), "#empty");
         let io = Value::atom_with("ioError", vec![Value::str("disk full")]);
         assert_eq!(io.to_string(), "#ioError(\"disk full\")");
-        let t = Value::Tuple(vec![Value::Int(1), Value::Bool(true), Value::float(-0.0)]);
+        let t = Value::tuple(vec![Value::Int(1), Value::Bool(true), Value::float(-0.0)]);
         assert_eq!(t.to_string(), "(1, true, -0.0)");
-        let p = Value::Path(vec![Value::str("ann"), Value::Int(2)]);
+        let p = Value::path(vec![Value::str("ann"), Value::Int(2)]);
         assert_eq!(p.to_string(), r#"["ann" -> 2]"#);
     }
 

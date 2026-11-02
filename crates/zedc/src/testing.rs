@@ -194,7 +194,7 @@ fn wave(cones: &Cones<'_>, program: &Program, t: &Test, map: &Through<'_>) -> Re
     let outputs = program.outputs();
     let wants = match (outputs.len(), value(cones, &t.want, map)?) {
         (1, v) => vec![v],
-        (n, Value::Tuple(xs)) if xs.len() == n => xs,
+        (n, Value::Tuple(xs)) if xs.len() == n => xs.into_vec(),
         (n, v) => {
             return Err(format!(
                 "the expected value is a String for each of the {n} output ports, not {v}"

@@ -7,6 +7,7 @@
 //! adds the executable big-step reference evaluator here; the inventory is fixed by M0 and
 //! built whole at L1 (steps L1.15 and L1.31), so later layers add no term and no node kind.
 
+mod deep;
 pub mod error;
 pub mod eval;
 pub mod exact;
@@ -33,4 +34,4 @@ pub use provenance::{Fact, FactAddress, NodeAddress, Provenance};
 pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
 pub use text::Text;
 pub use types::Universe;
-pub use value::{Atom, F64, Value};
+pub use value::{Atom, F64, Items, Value};

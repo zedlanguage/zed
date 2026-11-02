@@ -175,7 +175,7 @@ fn confluence_a_pure_pipeline_gives_one_result_for_every_arrival_order() {
         let f = Family::of(
             order
                 .iter()
-                .map(|&(id, r, x)| (Value::Int(id), Value::Tuple(vec![s(r), Value::float(x)]))),
+                .map(|&(id, r, x)| (Value::Int(id), Value::tuple(vec![s(r), Value::float(x)]))),
         );
         let by_region = group_by(lit(Value::Family(f)), |v| nth(v, 0));
         let amounts = reindex(by_region, func(|[p, _]| p), func(|[_, v]| nth(v, 1)));

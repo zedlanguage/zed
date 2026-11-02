@@ -243,7 +243,7 @@ fn node(s: &mut State, id: usize, ins: Vec<Word>) -> Result<Word, String> {
             let v = kernel(s, ni, &ins)?;
             let names = match s.heap.value(ins[1])? {
                 Value::Tuple(ns) => ns,
-                _ => Vec::new(),
+                _ => Default::default(),
             };
             match v {
                 Value::Atom(a) if !a.args.is_empty() && a.args.len() + 2 == ins.len() => {
@@ -355,7 +355,7 @@ fn run(s: &mut State, t: &Term) -> Result<Value, String> {
 fn term(s: &mut State, w: Word, lets: &mut Lets) -> Result<Term, String> {
     Ok(match w.tag {
         Word::PRIM => Term::PrimFn(s.t.prims[w.bits as usize]),
-        Word::STATE => Term::Lit(Value::Tuple(Vec::new())),
+        Word::STATE => Term::Lit(Value::tuple(Vec::new())),
         Word::SOURCE => {
             let p = s.t.ports[w.bits as usize].clone();
             if lets.seen.insert(p.clone()) {
@@ -534,8 +534,9 @@ fn kernel_match(
     }
     let q = wrap(lets, Term::Match(Arc::new(st), arms));
     Ok(match run(s, &q)? {
-        Value::Tuple(mut xs) if matches!(xs.first(), Some(Value::Int(i)) if (*i as usize) < ps.len()) =>
+        Value::Tuple(xs) if matches!(xs.first(), Some(Value::Int(i)) if (*i as usize) < ps.len()) =>
         {
+            let mut xs = xs.into_vec();
             let Value::Int(i) = xs.remove(0) else {
                 unreachable!("checked above")
             };

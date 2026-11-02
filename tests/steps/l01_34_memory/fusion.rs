@@ -66,7 +66,7 @@ fn a_shared_scrutinee_dups_what_it_keeps() {
 fn a_struct_binder_is_found_by_field_name() {
     // `#point(x: "a" ++ "b", y: "c" ++ "d")` matched by `#point(y: v)`: the payload is
     // sorted by field name, and the arm keeps the cell of `y`.
-    let names = Value::Tuple(vec![Value::str("y"), Value::str("x")]);
+    let names = Value::tuple(vec![Value::str("y"), Value::str("x")]);
     let atom = prim(
         Prim::Atom,
         vec![lit("point"), lit(names), cat("c", "d"), cat("a", "b")],

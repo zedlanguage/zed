@@ -8,7 +8,7 @@
 //! It runs as a machine with a stack of its own: a [`Frame`] holds what is left to do when the
 //! term under evaluation gives its value, so nesting uses memory on the heap, not the thread's
 //! stack, and the depth of a program is limited by the machine's memory alone (DESIGN.md
-//! sec:verification, "Budgets"). A call in tail position leaves no frame unless provenance is
+//! sec:verification, step M0.11). A call in tail position leaves no frame unless provenance is
 //! recorded, so a loop written as tail recursion runs in constant space.
 
 use imbl::{OrdMap, Vector};
@@ -31,7 +31,7 @@ use crate::term::{FixKind, GuardPos, Pattern, Prim, Term};
 use crate::value::Value;
 
 /// The minimum resource limits of compile-time evaluation (DESIGN.md sec:verification,
-/// "Budgets"; fixed by step M0.11). A conforming compiler never rejects an evaluation within
+/// fixed by step M0.11). A conforming compiler never rejects an evaluation within
 /// them; past them, running out is a build failure, the machine's and not the program's.
 ///
 /// Steps of the definitional interpreter, counted as [`Evaluator::with_fuel`] counts them.
@@ -1154,7 +1154,7 @@ impl<'t> Machine<'_, 't> {
                 let value = data(v)?;
                 self.ev.leave(st.path.len());
                 let key = match st.key.take().expect("a `reindex` has a key in hand") {
-                    Value::Path(keys) => keys,
+                    Value::Path(keys) => keys.into_vec(),
                     single => vec![single],
                 };
                 st.out.push((key, value));
@@ -1361,7 +1361,7 @@ impl<'t> Machine<'_, 't> {
             return give(Value::Family(Family::from_leaves(st.out)?));
         };
         self.ev.enter(&path);
-        let p = Value::Path(path.clone());
+        let p = Value::path(path.clone());
         self.ev.aim(st.kf.1, vec![st.from; 2]);
         let step = self.call2(&st.kf.0, p.clone(), v.clone());
         st.path = path;
@@ -1379,7 +1379,7 @@ impl<'t> Machine<'_, 't> {
                 self.ev.enter(std::slice::from_ref(&k));
                 st.prefix.push(k);
                 self.ev.aim(st.sel.1, vec![st.from; 2]);
-                let path = Value::Path(st.prefix.clone());
+                let path = Value::path(st.prefix.clone());
                 let step = self.call2(&st.sel.0, path, v);
                 self.wait(Wait::Discard(st));
                 return step;
@@ -1980,8 +1980,8 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
     // These two keep the values they are given: copying a tuple that holds a list would make
     // building the list quadratic in its length.
     match p {
-        Prim::Tuple => return Ok(Value::Tuple(vals)),
-        Prim::Path => return Ok(Value::Path(vals)),
+        Prim::Tuple => return Ok(Value::tuple(vals)),
+        Prim::Path => return Ok(Value::path(vals)),
         _ => {}
     }
     let ty = |vals: &[Value]| {

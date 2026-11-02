@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 
 pub mod check;
+pub mod deep;
 pub mod fences;
 pub mod instances;
 pub mod kernel;

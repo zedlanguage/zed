@@ -229,7 +229,7 @@ fn a_lattice_fixpoint_names_each_iterate() {
             ("jfk", "sfo"),
             ("syd", "akl"),
         ]
-        .map(|(a, b)| Value::Tuple(vec![s(a), s(b)])),
+        .map(|(a, b)| Value::tuple(vec![s(a), s(b)])),
     ));
     let from_reached = discard(
         lit(routes),

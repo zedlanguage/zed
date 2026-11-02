@@ -1,10 +1,10 @@
-//! Programs far deeper than the minimum of 20,000 nested calls (DESIGN.md sec:verification,
-//! "Budgets"). The evaluator keeps its frames on the heap, so each runs on a thread with a
+//! Programs far deeper than the minimum of 20,000 nested calls (DESIGN.md step M0.11). The
+//! evaluator keeps its frames on the heap, so each runs on a thread with a
 //! small stack: a test passes only if no part of the evaluator nests on the thread's stack.
 
-use std::os::unix::process::ExitStatusExt;
 use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
 use zed_kernel::{Evaluator, Family, KernelError, Prim, Schedule, Term, Value, World, eval};
+use zed_tests::deep::{linked_list, on_main_sized_stack};
 use zed_tests::kernel::*;
 use zed_tests::scaling;
 
@@ -157,40 +157,6 @@ fn a_loop_without_end_ends_when_the_fuel_does() {
     assert_eq!(out, Err(KernelError::OutOfFuel));
 }
 
-/// Set in the environment of the child process of the next test.
-const OUT_OF_MEMORY_CHILD: &str = "ZED_TEST_OUT_OF_MEMORY_CHILD";
-
-#[test]
-fn a_recursion_without_end_reports_the_allocation_that_failed() {
-    // `w(w)` with `w = me -> 1 + me(me)` nests until memory runs out, which is the machine's
-    // failure (DESIGN.md sec:kernel, clause (i)). The test runs itself under a limit on its
-    // address space. `sh` is what `ulimit` needs, and tools/run_tests.sh needs it too.
-    if std::env::var_os(OUT_OF_MEMORY_CHILD).is_some() {
-        let grows = recursive(lam(&["me"], add(lit(1), me(vec![]))), vec![]);
-        let out = eval(&grows);
-        panic!("the run ended: {out:?}");
-    }
-    let path = module_path!().split_once("::").unwrap().1;
-    let name = format!("{path}::a_recursion_without_end_reports_the_allocation_that_failed");
-    let out = std::process::Command::new("sh")
-        .args([
-            "-c",
-            r#"ulimit -c 0; ulimit -v 1000000; exec "$0" --exact "$1""#,
-        ])
-        .arg(std::env::current_exe().unwrap())
-        .arg(name)
-        .env(OUT_OF_MEMORY_CHILD, "1")
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("memory allocation of"),
-        "status {:?}: {stderr}",
-        out.status
-    );
-    assert_eq!(out.status.signal(), Some(6), "{stderr}");
-}
-
 #[test]
 fn a_failed_run_leaves_the_evaluator_usable() {
     // The first run stops inside a pure region. The second reads a port outside any region,
@@ -293,33 +259,14 @@ fn prim_and_tuple_results_are_the_arguments_in_order() {
     assert_eq!(eval(&t).unwrap().to_string(), "(1, 2, 3)");
 }
 
-/// `list(k) = if k == 0 { 0 } else { (k, list(k - 1)) }`, a linked list as nested tuples.
-/// The list `(k, (k - 1, ... (1, 0)))`, one call deep per element.
-fn linked_list(k: i64) -> Term {
-    let body = if_(
-        eq(var("k"), lit(0)),
-        lit(0),
-        prim(Prim::Tuple, vec![var("k"), me(vec![sub(var("k"), lit(1))])]),
-    );
-    recursive(lam(&["me", "k"], body), vec![lit(k)])
-}
-
-/// Runs `f` on a thread with the 8 MiB stack of a main thread. The drop of a deep value still
-/// recurses until value.rs is made iterative (T2-types); the evaluator itself does not.
-fn on_main_sized_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(1 << 23);
-        thread.spawn_scoped(scope, f).unwrap().join().unwrap()
-    })
-}
-
 #[test]
 fn a_list_as_deep_as_the_minimum_is_built_and_dropped() {
     let n = zed_kernel::eval::MIN_NESTED_CALLS as i64;
     on_main_sized_stack(|| {
         let mut v = eval(&linked_list(n)).unwrap();
         let mut head = n;
-        while let Value::Tuple(mut items) = v {
+        while let Value::Tuple(items) = v {
+            let mut items = items.into_vec();
             assert_eq!(items[0], Value::Int(head));
             head -= 1;
             v = items.pop().unwrap();

@@ -26,7 +26,8 @@ mod empty;
 pub mod rec;
 
 use imbl::{OrdMap, OrdSet};
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::ops::{BitAnd, BitOr, Not, Sub};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -87,6 +88,14 @@ fn bytes(b: &[u8]) -> u64 {
     b.iter().fold(0xcbf2_9ce4_8422_2325, |h, &x| {
         (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3)
     })
+}
+
+/// What the top level of a value says of its membership in a type.
+enum Member<'v> {
+    Known(bool),
+    /// In the type exactly when the tuple of these values is, read in place: an atom's payload
+    /// was copied into a tuple to be tested, so a value nested `d` deep was copied `d` times.
+    Tuple(Type, &'v [Value]),
 }
 
 /// A hash of a literal: equal literals print alike.
@@ -705,7 +714,7 @@ impl Type {
                     };
                     found.into_iter().all(|r| {
                         let fits = |t: &Row| t.iter().zip(&r).all(|(t, v)| t.contains(v));
-                        !b.eval(fits) || add(Value::Tuple(r), &mut out)
+                        !b.eval(fits) || add(Value::tuple(r), &mut out)
                     })
                 },
             );
@@ -716,39 +725,70 @@ impl Type {
         Some(out.into_iter().collect())
     }
 
-    /// Whether `v` is in `self`, for a decidable `self`.
+    /// Whether `v` is in `self`, for a decidable `self`. Each tuple and payload of `v` is tested
+    /// once against each component type it meets, innermost first, so the cost follows the
+    /// size of `v` and its depth is limited by memory alone.
     pub fn contains(&self, v: &Value) -> bool {
+        let first = match self.member(v) {
+            Member::Known(b) => return b,
+            Member::Tuple(ty, xs) => (ty, xs),
+        };
+        let key = |t: &Type, xs: &[Value]| (Arc::as_ptr(&t.0), xs.as_ptr(), xs.len());
+        let mut known = HashMap::new();
+        let mut todo = vec![first];
+        loop {
+            let (ty, xs) = todo.last().expect("the first test ends the loop");
+            let xs = *xs;
+            let waiting = RefCell::new(Vec::new());
+            let fits = ty.p().tuples.get(xs.len()).eval(&|row: &Row| {
+                let mut fits = true;
+                for (t, x) in row.iter().zip(xs) {
+                    fits &= match t.member(x) {
+                        Member::Known(b) => b,
+                        Member::Tuple(t, ys) => match known.get(&key(&t, ys)) {
+                            Some(b) => *b,
+                            None => {
+                                waiting.borrow_mut().push((t, ys));
+                                false
+                            }
+                        },
+                    };
+                }
+                fits
+            });
+            let waiting = waiting.into_inner();
+            if !waiting.is_empty() {
+                todo.extend(waiting);
+                continue;
+            }
+            let (ty, xs) = todo.pop().expect("the loop read the top of the stack");
+            if todo.is_empty() {
+                return fits;
+            }
+            known.insert(key(&ty, xs), fits);
+        }
+    }
+
+    /// Whether `v` is in `self`, as far as `v`'s top level decides.
+    fn member<'v>(&self, v: &'v Value) -> Member<'v> {
         let p = self.p();
-        match v {
+        Member::Known(match v {
             Value::Bool(b) => p.bools & (1 << u8::from(*b)) != 0,
             Value::Int(_) | Value::Big(_) => p.ints.contains(v),
             Value::Rat(_) => p.rats.contains(v),
             Value::Float(_) => p.floats.contains(v),
             Value::Str(_) => p.strings.contains(v),
-            Value::Atom(a) => {
-                let Some(part) = p.atoms.names.get(&a.name) else {
-                    return p.atoms.cofinite;
-                };
-                if a.args.is_empty() {
-                    part.bare
-                } else if a.fields.is_empty() {
-                    part.payload.contains_tuple(&a.args)
-                } else {
-                    part.payload.p().structs
+            Value::Atom(a) => match p.atoms.names.get(&a.name) {
+                None => p.atoms.cofinite,
+                Some(part) if a.args.is_empty() => part.bare,
+                Some(part) if a.fields.is_empty() => {
+                    return Member::Tuple(part.payload.clone(), &a.args);
                 }
-            }
-            Value::Tuple(xs) | Value::Path(xs) => self.contains_tuple(xs),
+                Some(part) => part.payload.p().structs,
+            },
+            Value::Tuple(xs) | Value::Path(xs) => return Member::Tuple(self.clone(), xs),
             Value::Family(_) => self.functions(),
-        }
-    }
-
-    /// Whether the tuple of `xs` is in `self`, read in place: an atom's payload was copied
-    /// into a tuple to be tested, so a value nested `d` deep was copied `d` times.
-    fn contains_tuple(&self, xs: &[Value]) -> bool {
-        self.p()
-            .tuples
-            .get(xs.len())
-            .eval(&|t: &Row| t.iter().zip(xs).all(|(t, x)| t.contains(x)))
+        })
     }
 
     fn zip(&self, other: &Type, op: Op) -> Type {

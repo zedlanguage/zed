@@ -36,7 +36,7 @@ fn complement_is_taken_within_each_universe() {
         "(| bool rat f64 String #_ tuple struct morphism)"
     );
     let not_int = !Type::int();
-    assert!(not_int.contains(&Value::Tuple(vec![Value::Int(1)])));
+    assert!(not_int.contains(&Value::tuple(vec![Value::Int(1)])));
     assert!(not_int.contains(&Value::str("1")));
     assert!(not_int.functions());
     assert!(!not_int.contains(&Value::Int(1)));
@@ -108,7 +108,7 @@ fn tuples_meet_componentwise_and_lengths_are_disjoint() {
     assert_eq!((&tuples - &t) | t.clone(), tuples);
     // Two clauses merge only when the rest of them is equal: `(t & !u) | !t` is `!u` only
     // because `u` is within `t`, and `t | (u & !t)` is `t | u`.
-    let tup = |v: Value| Value::Tuple(vec![v]);
+    let tup = |v: Value| Value::tuple(vec![v]);
     let one = Type::tuple(vec![Type::lit(&Value::Int(1)).unwrap()]);
     let (t, u) = (
         Type::tuple(vec![Type::int()]),

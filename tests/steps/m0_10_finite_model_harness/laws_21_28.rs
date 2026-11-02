@@ -87,7 +87,7 @@ fn tree(t: &Tree) -> Term {
     let entries = t.iter().enumerate().map(|(i, &(v, l, r))| {
         (
             i as i64,
-            Value::Tuple(vec![Value::Int(v), Value::Int(l), Value::Int(r)]),
+            Value::tuple(vec![Value::Int(v), Value::Int(l), Value::Int(r)]),
         )
     });
     lit(Value::Family(Family::of(entries)))
@@ -313,7 +313,7 @@ fn law_23_two_folds_of_one_level_are_one_pass() {
     assert!(m.is_empty());
     assert_eq!(
         a,
-        Ok(Value::Tuple(vec![
+        Ok(Value::tuple(vec![
             Value::atom("empty"),
             Value::atom("empty")
         ]))
@@ -504,7 +504,7 @@ fn loan(x0: i64, y0: i64, guard: Term) -> Term {
         ])
     });
     Term::Gen {
-        init: rc(lit(Value::Tuple(vec![
+        init: rc(lit(Value::tuple(vec![
             Value::Int(0),
             Value::Int(x0),
             Value::Int(y0),
@@ -523,7 +523,7 @@ fn abstract_loan(x0: i64) -> Term {
         ])
     });
     Term::Gen {
-        init: rc(lit(Value::Tuple(vec![Value::Int(0), Value::Int(x0)]))),
+        init: rc(lit(Value::tuple(vec![Value::Int(0), Value::Int(x0)]))),
         step: rc(step),
         guard: rc(func(|[f]| lt(nth(f, 0), lit(4)))),
         pos: GuardPos::Before,

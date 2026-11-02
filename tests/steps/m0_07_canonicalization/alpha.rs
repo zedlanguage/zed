@@ -184,7 +184,7 @@ fn literals_are_hashed_by_their_exact_value() {
     assert_eq!(l(Value::float(f64::NAN)), l(Value::float(-f64::NAN)));
     assert_ne!(l(Value::Int(1)), l(Value::float(1.0)));
     assert_ne!(l(Value::str("empty")), l(Value::atom("empty")));
-    assert_ne!(l(Value::Tuple(vec![])), l(Value::Path(vec![])));
+    assert_ne!(l(Value::tuple(vec![])), l(Value::path(vec![])));
 }
 
 #[test]

@@ -15,5 +15,10 @@ unicode-normalization = "0.1.26"
 unicode-script = "0.5.8"
 zed-kernel.workspace = true
 
+# Runs the zedc executable itself, which only a test of this package can name.
+[[test]]
+name = "zedc_binary"
+path = "../../tests/steps/m0_09_kernel_evaluator/binary.rs"
+
 [lints]
 workspace = true

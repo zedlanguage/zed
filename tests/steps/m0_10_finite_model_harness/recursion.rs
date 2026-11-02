@@ -177,7 +177,7 @@ fn every_schedule_agrees_on_random_graphs_with_dependencies_out_of_key_order() {
 fn edit_distance(a: &str, b: &str) -> Term {
     let (n, m) = (a.len() as i64, b.len() as i64);
     let cells: Vec<Value> = (0..=n)
-        .flat_map(|i| (0..=m).map(move |j| Value::Tuple(vec![Value::Int(i), Value::Int(j)])))
+        .flat_map(|i| (0..=m).map(move |j| Value::tuple(vec![Value::Int(i), Value::Int(j)])))
         .collect();
     let chars = |w: &str| {
         lit(Value::Family(Family::of(
@@ -257,7 +257,7 @@ fn edit_distance_top_down_memoized_equals_the_bottom_up_wavefront() {
         for sch in schedules() {
             assert_eq!(run(&t, sch).as_ref(), Ok(&wave), "{sch:?} on {a:?}, {b:?}");
         }
-        let corner = Value::Tuple(vec![Value::Int(a.len() as i64), Value::Int(b.len() as i64)]);
+        let corner = Value::tuple(vec![Value::Int(a.len() as i64), Value::Int(b.len() as i64)]);
         assert_eq!(
             wave.as_family().unwrap().get(&corner),
             Some(&Value::Int(levenshtein(a, b))),

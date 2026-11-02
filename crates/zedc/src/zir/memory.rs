@@ -654,13 +654,13 @@ impl<'g> Machine<'g, '_> {
             Op::Prim(Prim::Tuple) if ins.iter().all(data) && !ins.is_empty() => {
                 let vals = ins.iter().map(value).collect();
                 let cell = self.alloc(ins.iter().map(Mv::cell).collect());
-                vec![Mv::Data(Value::Tuple(vals), Some(cell))]
+                vec![Mv::Data(Value::tuple(vals), Some(cell))]
             }
             Op::Prim(Prim::Atom) if ins.iter().all(data) => {
                 let v = self.kernel(node, &ins)?;
-                let names = match &ins[1] {
-                    Mv::Data(Value::Tuple(ns), _) => ns.clone(),
-                    _ => Vec::new(),
+                let names: &[Value] = match &ins[1] {
+                    Mv::Data(Value::Tuple(ns), _) => ns,
+                    _ => &[],
                 };
                 match &v {
                     Value::Atom(a) if !a.args.is_empty() && a.args.len() + 2 == ins.len() => {
@@ -835,8 +835,9 @@ impl<'g> Machine<'g, '_> {
         }
         let t = wrap(lets, Term::Match(Arc::new(s), arms));
         let (i, vals) = match self.ev.run(&t).map_err(|e| e.to_string())? {
-            Value::Tuple(mut xs) if matches!(xs.first(), Some(Value::Int(i)) if (*i as usize) < ps.len()) =>
+            Value::Tuple(xs) if matches!(xs.first(), Some(Value::Int(i)) if (*i as usize) < ps.len()) =>
             {
+                let mut xs = xs.into_vec();
                 let Value::Int(i) = xs.remove(0) else {
                     unreachable!("checked above")
                 };
@@ -986,7 +987,7 @@ impl<'g> Machine<'g, '_> {
         Ok(match v {
             Mv::Data(v, _) => Term::Lit(v.clone()),
             Mv::Prim(p) => Term::PrimFn(*p),
-            Mv::State => Term::Lit(Value::Tuple(Vec::new())),
+            Mv::State => Term::Lit(Value::tuple(Vec::new())),
             Mv::Source(p) => {
                 if lets.seen.insert(p.clone()) {
                     lets.order.push(p.clone());

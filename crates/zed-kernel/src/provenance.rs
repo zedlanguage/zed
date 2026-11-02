@@ -167,14 +167,17 @@ impl Provenance {
 /// Adds to `found` each failure of `members` that `v` holds: that `v` is, has as a member of
 /// an `#errs`, or holds in a tuple, a family or a payload.
 fn holds<'a>(v: &Value, members: &'a BTreeSet<Value>, found: &mut BTreeSet<&'a Value>) {
-    if let Some(m) = members.get(v) {
-        found.insert(m);
-    }
-    match v {
-        Value::Atom(a) => a.args.iter().for_each(|x| holds(x, members, found)),
-        Value::Tuple(xs) | Value::Path(xs) => xs.iter().for_each(|x| holds(x, members, found)),
-        Value::Family(f) => f.iter().for_each(|(_, x)| holds(x, members, found)),
-        _ => {}
+    let mut todo = vec![v];
+    while let Some(v) = todo.pop() {
+        if let Some(m) = members.get(v) {
+            found.insert(m);
+        }
+        match v {
+            Value::Atom(a) => todo.extend(&a.args),
+            Value::Tuple(xs) | Value::Path(xs) => todo.extend(xs),
+            Value::Family(f) => todo.extend(f.iter().map(|(_, x)| x)),
+            _ => {}
+        }
     }
 }
 

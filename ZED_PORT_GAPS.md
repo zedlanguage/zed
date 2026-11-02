@@ -586,3 +586,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `impl Drop for Closure`: environments put on a list so that their release does not recurse | `Drops`, `Closure` | None | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `std::mem::take`, `std::mem::replace` of a field in place | `Evaluator::run`, the fix frames | Mutation | A state receiver |
 | `imbl::HashMap` and `imbl::OrdMap`, persistent maps sharing structure | `preimage::Scope`, `preimage::Sets` | None | Zed's maps are values: an update makes a new map, and the runtime must share its structure to keep the update at `O(log n)` |
+## Entries from T2-eval-repair (`zed-kernel/src/deep.rs`, `value.rs`, `family.rs`, `types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `thread_local!` list of parts waiting to be freed, and a flag for the walk that holds it | `deep::free`, `FREEING`, `PARTS` | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
+| `thread_local!` queue of families to compare, because `==` is called from inside `imbl` where no stack of ours reaches | `deep::settle`, `COMPARING`, `PAIRS` | Mutation, global state | Zed's map comparison takes the element test as a function, so the queue is a state receiver or goes away |
+| `impl Drop` on a newtype, with `mem::take` of its `Vec` | `Items`, `Family` | None | Removed, with the first row |
+| `slice::Iter` held in a stack frame, a borrow into the value being walked | `walk`, `Copying`, `all_leaves` | None | An index into a shared tuple |
+| `RefCell` to collect from inside a `Fn` closure that `Expr::eval` calls | `Type::contains` | Mutation | The closure returns what it needs, as a value |
+| Raw pointers as map keys, `*const Node` and `*const Value` | `Type::contains` | Identity | Keyed by a hash-consed id of the type and the position in the value |

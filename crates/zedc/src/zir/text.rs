@@ -918,8 +918,8 @@ impl<'a> P<'a> {
                 Value::atom_named(name, fields.into_iter().zip(args).collect())
                     .ok_or_else(|| format!("atom `#{name}` names a field twice"))
             }
-            Some('(') => Ok(Value::Tuple(self.list("(", ")", ",", Self::value)?)),
-            Some('[') => Ok(Value::Path(self.list("[", "]", "->", Self::value)?)),
+            Some('(') => Ok(Value::tuple(self.list("(", ")", ",", Self::value)?)),
+            Some('[') => Ok(Value::path(self.list("[", "]", "->", Self::value)?)),
             Some('{') => {
                 self.expect("{")?;
                 if self.eat("}") {

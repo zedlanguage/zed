@@ -20,6 +20,15 @@ name = "full"
 path = "full/main.rs"
 required-features = ["full"]
 
+# These two take many gigabytes or time what they run, so each needs a piece of its own.
+[[test]]
+name = "deep_values"
+path = "steps/m0_09_kernel_evaluator/deep_values.rs"
+
+[[test]]
+name = "deep_scaling"
+path = "steps/m0_09_kernel_evaluator/deep_scaling.rs"
+
 [features]
 full = []
 

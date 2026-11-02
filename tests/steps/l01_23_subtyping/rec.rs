@@ -304,7 +304,7 @@ fn recursive_definitions_scale() {
                     body = atom("n", vec![body]);
                 }
                 let t = one(vec![def("T", &[], or(vec![body, bare("z")]))]);
-                let mut v = Value::Tuple(vec![Value::atom("z"), Value::Int(1)]);
+                let mut v = Value::tuple(vec![Value::atom("z"), Value::Int(1)]);
                 for _ in 0..d {
                     v = Value::atom_with("n", vec![v]);
                 }

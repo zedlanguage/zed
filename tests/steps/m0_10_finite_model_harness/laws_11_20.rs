@@ -234,7 +234,7 @@ fn affine_then(f: Term, g: Term) -> Term {
 
 /// `step^n` by repeated squaring, built for the static `n`.
 fn power(step: Term, n: u32) -> Term {
-    let mut acc = lit(Value::Tuple(vec![Value::Int(1), Value::Int(0)]));
+    let mut acc = lit(Value::tuple(vec![Value::Int(1), Value::Int(0)]));
     let mut square = step;
     let mut k = n;
     while k > 0 {
@@ -260,7 +260,7 @@ fn counted(x0: i64, n: u32, next: impl Fn(Term, Term) -> Term) -> Term {
         )
     });
     let frames = Term::Gen {
-        init: rc(lit(Value::Tuple(vec![Value::Int(0), Value::Int(x0)]))),
+        init: rc(lit(Value::tuple(vec![Value::Int(0), Value::Int(x0)]))),
         step: rc(step),
         guard: rc(func(|[f]| lt(nth(f, 0), lit(n as i64)))),
         pos: GuardPos::Before,
@@ -286,7 +286,7 @@ fn affine_cases() -> Vec<(i64, i64, i64, u32)> {
 fn law_14_a_counted_affine_loop_is_one_power_of_its_step() {
     // Compound interest with a fee, `x -> a * x + b`, run for n periods.
     let n = holds(affine_cases(), |&(a, b, x0, n)| {
-        let step = lit(Value::Tuple(vec![Value::Int(a), Value::Int(b)]));
+        let step = lit(Value::tuple(vec![Value::Int(a), Value::Int(b)]));
         let p = power(step, n);
         (
             counted(x0, n, |_, x| add(mul(lit(a), x), lit(b))),
@@ -298,7 +298,7 @@ fn law_14_a_counted_affine_loop_is_one_power_of_its_step() {
     // so no single action has a power: the power of its first action, the identity, misses
     // every later one.
     let (_, a, b) = refuted(affine_cases(), |&(_, _, x0, n)| {
-        let first_action = lit(Value::Tuple(vec![Value::Int(1), Value::Int(0)]));
+        let first_action = lit(Value::tuple(vec![Value::Int(1), Value::Int(0)]));
         let p = power(first_action, n);
         (
             counted(x0, n, add),
