@@ -35,6 +35,7 @@ tools/                helper commands, a Dart package: tools/bin/sync.dart, audi
                       and progress.dart
 build/                every generated file; ignored by git
 STATUS.md             progress and handoff notes
+ZED_PORT_GAPS.md      what the Rust relies on that Zed lacks; each step adds to it
 ```
 
 ## Crates
