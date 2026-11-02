@@ -2,7 +2,7 @@
 
 On 2026-10-31 the author stopped the Rust implementation and ordered a port of all of it, tests
 included, to Dart, step by step in the plan's order. This file records the Rust baseline and
-will hold the Dart numbers for the same steps once the port reaches the same point. PROGRESS.md
+holds the Dart numbers for the same steps. PROGRESS.md
 marks each step `[d]` once its Dart port passes.
 
 ## Where the Rust work stopped
@@ -309,7 +309,7 @@ performance pass from then to the stop at 2026-10-31 02:15 MDT. Rows marked `pas
 performance-pass rows of COMPLEXITY.md, each of which revisited one or more earlier steps.
 Hand-off waits between sessions (21.0 h in all) are excluded.
 
-The Dart columns are filled as the port reaches each step.
+The Dart columns cover the whole port; the performance work each Dart step did is in its own row.
 
 | Step | Rust model time | Rust tool time | Rust borrow-checker errors (runs) | Rust other compile errors (runs) | Dart model time | Dart tool time | Dart compile errors (runs) |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -364,7 +364,7 @@ The Dart columns are filled as the port reaches each step.
 | L1.36 | 0:26 | 0:04 | 0 (0) | 12 (2) | 0:16 | 0:17 | 10 (3) |
 | L1.37 | 0:07 | 0:04 | 0 (0) | 0 (0) | 0:03 | 0:11 | 15 (1) |
 | L1.38 | 0:17 | 0:09 | 0 (0) | 6 (2) | 0:15 | 0:36 | 13 (4) |
-| L1.39 | 0:36 | 0:20 | 0 (0) | 6 (3) | 4:42 | 5:57 | 121 (13) |
+| L1.39 | 0:36 | 0:20 | 0 (0) | 6 (3) | 1:13 | 1:55 | 103 (10) |
 | pass S2,S4 | 0:07 | 0:17 | 1 (1) | 0 (0) | | | |
 | pass S5 | 0:04 | 0:04 | 0 (0) | 0 (0) | | | |
 | pass S3 | 0:07 | 0:12 | 0 (0) | 0 (0) | | | |
@@ -415,7 +415,7 @@ The Dart columns are filled as the port reaches each step.
 | pass Z6 | 0:01 | 0:03 | 0 (0) | 0 (0) | | | |
 | pass Z7 | 0:00 | 0:03 | 0 (0) | 0 (0) | | | |
 | pass Z8, Z9 (stopped) | 0:00 | 0:00 | 0 (0) | 0 (0) | | | |
-| **Total** | **20:10** | **15:04** | **12 (10)** | **217 (84)** | | | |
+| **Total** | **20:10** | **15:04** | **12 (10)** | **217 (84)** | **7:40** | **8:32** | **388 (71)** |
 
 ## Changes per file
 
@@ -879,7 +879,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zed-kernel/src/error.rs` | 4,895 | `lib/src/kernel/error.dart`<br>`test/kernel/error_test.dart` | 4,993 | 1.02 |
 | `crates/zed-kernel/src/eval.rs` | 60,185 | `lib/src/kernel/eval.dart` | 42,495 | 0.71 |
 | `crates/zed-kernel/src/exact.rs` | 9,165 | `lib/src/kernel/exact.dart`<br>`test/kernel/exact_test.dart` | 6,847 | 0.75 |
-| `crates/zed-kernel/src/family.rs` | 14,132 | `lib/src/kernel/family.dart`<br>`lib/src/kernel/pmap.dart`<br>`test/kernel/family_test.dart` | 20,523 | 1.45 |
+| `crates/zed-kernel/src/family.rs` | 14,132 | `lib/src/kernel/family.dart`<br>`lib/src/kernel/pmap.dart`<br>`test/kernel/family_test.dart`<br>`test/kernel/pmap_test.dart` | 23,668 | 1.67 |
 | `crates/zed-kernel/src/lib.rs` | 1,297 | `lib/kernel.dart` | 362 | 0.28 |
 | `crates/zed-kernel/src/num.rs` | 7,397 | `lib/src/kernel/num.dart` | 5,993 | 0.81 |
 | `crates/zed-kernel/src/print.rs` | 16,237 | `lib/src/kernel/print.dart` | 12,393 | 0.76 |
@@ -940,7 +940,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `crates/zedc/src/store/lattice.rs` | 16,014 | `lib/src/store/lattice.dart`<br>`test/store/lattice_test.dart` | 13,029 | 0.81 |
 | `crates/zedc/src/store/mod.rs` | 704 | `lib/store.dart` | 510 | 0.72 |
 | `crates/zedc/src/store/preimage.rs` | 100,503 | `lib/src/store/preimage.dart` | 82,419 | 0.82 |
-| `crates/zedc/src/store/presburger.rs` | 57,313 | `lib/presburger.dart`<br>`lib/src/store/presburger.dart` | 48,606 | 0.85 |
+| `crates/zedc/src/store/presburger.rs` | 57,313 | `lib/presburger.dart`<br>`lib/src/store/presburger.dart`<br>`test/steps/l01_38_presburger/unit_test.dart` | 50,418 | 0.88 |
 | `crates/zedc/src/store/product.rs` | 63,531 | `lib/src/store/product.dart` | 59,149 | 0.93 |
 | `crates/zedc/src/store/revision.rs` | 25,960 | `lib/src/store/revision.dart`<br>`test/store/revision_test.dart` | 23,082 | 0.89 |
 | `crates/zedc/src/store/wto.rs` | 10,717 | `lib/src/store/wto.dart`<br>`test/store/wto_test.dart` | 8,951 | 0.84 |
@@ -991,7 +991,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_10_lambdas_types_else_tuples/fences.rs` | 1,170 | `test/steps/l01_10_lambdas_types_else_tuples/fences_test.dart` | 1,710 | 1.46 |
 | `tests/steps/l01_10_lambdas_types_else_tuples/lambdas.rs` | 1,491 | `test/steps/l01_10_lambdas_types_else_tuples/lambdas_test.dart` | 1,420 | 0.95 |
 | `tests/steps/l01_10_lambdas_types_else_tuples/mod.rs` | 1,055 | `test/steps/l01_10_lambdas_types_else_tuples/sx.dart` | 929 | 0.88 |
-| `tests/steps/l01_10_lambdas_types_else_tuples/scaling.rs` | 1,884 | | | |
+| `tests/steps/l01_10_lambdas_types_else_tuples/scaling.rs` | 1,884 | `test/steps/l01_10_lambdas_types_else_tuples/scaling_test.dart` | 2,360 | 1.25 |
 | `tests/steps/l01_10_lambdas_types_else_tuples/tests_of_types.rs` | 2,064 | `test/steps/l01_10_lambdas_types_else_tuples/types_test.dart` | 1,967 | 0.95 |
 | `tests/steps/l01_10_lambdas_types_else_tuples/tuples.rs` | 402 | `test/steps/l01_10_lambdas_types_else_tuples/tuples_test.dart` | 448 | 1.11 |
 | `tests/steps/l01_11_statements/blocks.rs` | 3,631 | `test/steps/l01_11_statements/blocks_test.dart` | 3,075 | 0.85 |
@@ -1059,7 +1059,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_23_subtyping/mod.rs` | 549 | | | |
 | `tests/steps/l01_23_subtyping/oracle.rs` | 8,422 | `test/steps/l01_23_subtyping/oracle_test.dart` | 7,814 | 0.93 |
 | `tests/steps/l01_23_subtyping/rec.rs` | 15,010 | `test/steps/l01_23_subtyping/rec_test.dart` | 13,432 | 0.89 |
-| `tests/steps/l01_23_subtyping/scaling.rs` | 21,258 | `test/steps/l01_23_subtyping/scaling_test.dart` | 15,559 | 0.73 |
+| `tests/steps/l01_23_subtyping/scaling.rs` | 21,258 | `test/steps/l01_23_subtyping/scaling_test.dart`<br>`test/steps/l01_23_subtyping/decision_tree_scaling_test.dart` | 17,745 | 0.83 |
 | `tests/steps/l01_24_refinement_lattices/bounds.rs` | 6,164 | `test/steps/l01_24_refinement_lattices/bounds_test.dart` | 5,020 | 0.81 |
 | `tests/steps/l01_24_refinement_lattices/cell.rs` | 6,341 | `test/steps/l01_24_refinement_lattices/cell_test.dart` | 5,524 | 0.87 |
 | `tests/steps/l01_24_refinement_lattices/float.rs` | 3,442 | `test/steps/l01_24_refinement_lattices/float_test.dart` | 2,934 | 0.85 |
@@ -1085,7 +1085,7 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/l01_27_absences/families.rs` | 3,030 | `test/steps/l01_27_absences/families_test.dart` | 2,844 | 0.94 |
 | `tests/steps/l01_27_absences/loose.rs` | 3,243 | `test/steps/l01_27_absences/loose_test.dart` | 3,109 | 0.96 |
 | `tests/steps/l01_27_absences/mod.rs` | 578 | | | |
-| `tests/steps/l01_27_absences/scaling.rs` | 1,463 | | | |
+| `tests/steps/l01_27_absences/scaling.rs` | 1,463 | `test/steps/l01_27_absences/scaling_test.dart` | 1,044 | 0.71 |
 | `tests/steps/l01_28_staging/mix.rs` | 7,525 | `test/steps/l01_28_staging/mix_test.dart` | 6,867 | 0.91 |
 | `tests/steps/l01_28_staging/mod.rs` | 1,692 | `test/steps/l01_28_staging/staging.dart` | 1,345 | 0.79 |
 | `tests/steps/l01_28_staging/scaling.rs` | 4,036 | `test/steps/l01_28_staging/scaling_test.dart` | 3,555 | 0.88 |
@@ -1175,8 +1175,25 @@ the Rust file it ports; a Rust file only partly ported so far shows the Dart wri
 | `tests/steps/m0_11_prelude_axioms_and_limits/signed_zero.rs` | 1,622 | `test/steps/m0_11_prelude_axioms_and_limits/signed_zero_test.dart` | 892 | 0.55 |
 | `tests/steps/m0_11_prelude_axioms_and_limits/units.rs` | 3,566 | `test/steps/m0_11_prelude_axioms_and_limits/units_test.dart` | 2,803 | 0.79 |
 | `tests/steps/main.rs` | 1,298 | | | |
+| (none) | | `lib/src/lex/text.dart` | 1,679 | |
+| (none) | | `lib/src/parse/peg.dart` | 19,440 | |
+| (none) | | `lib/src/unicode.dart` | 5,072 | |
+| (none) | | `test/steps/l01_01_source_loading/scaling_test.dart` | 1,409 | |
+| (none) | | `test/steps/l01_02_lexer_names/scaling_test.dart` | 891 | |
+| (none) | | `test/steps/l01_03_lexer_integers/scaling_test.dart` | 785 | |
+| (none) | | `test/steps/l01_04_lexer_floats_and_rationals/scaling_test.dart` | 848 | |
+| (none) | | `test/steps/l01_06_lexer_tokens/scaling_test.dart` | 1,156 | |
+| (none) | | `test/steps/l01_07_fences/scaling_test.dart` | 878 | |
+| (none) | | `test/steps/l01_08_parser/scaling_test.dart` | 1,349 | |
+| (none) | | `test/steps/l01_09_postfix_chains/scaling_test.dart` | 928 | |
+| (none) | | `test/steps/l01_11_statements/scaling_test.dart` | 960 | |
+| (none) | | `test/steps/l01_12_declarations/scaling_test.dart` | 2,321 | |
+| (none) | | `test/unicode/case_test.dart` | 1,745 | |
+| (none) | | `test/unicode/unicode_test.dart` | 1,904 | |
 | **all 300 Rust files** | **2,438,202** | | | |
-| **the Rust files ported so far** | **2,428,331** | | **2,101,179** | **0.87** |
+| **the Rust files ported so far** | **2,431,678** | | **2,111,726** | **0.87** |
+| **Dart files that port no Rust file** | | | **41,365** | |
+| **all Dart files** | | | **2,153,091** | |
 <!-- /sizes -->
 
 ## Ease of each step in each language
@@ -1772,7 +1789,7 @@ Dart:
 
 ## Dart
 
-*In progress.* Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34, L1.35, L1.36, L1.37, L1.38, L1.39. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
+Complete on 2026-11-01: every step the Rust built is ported. Steps ported: M0.1, M0.2, M0.3, M0.4, M0.9, M0.10, M0.5, M0.6, M0.7, M0.8, M0.11, L1.1, L1.2, L1.3, L1.4, L1.5, L1.6, L1.7, L1.8, L1.9, L1.10, L1.11, L1.12, L1.13, L1.14, L1.15, L1.16, L1.17, L1.18, L1.19, L1.20, L1.21, L1.22, L1.23, L1.24, L1.25, L1.26, L1.27, L1.28, L1.29, L1.30, L1.31, L1.32, L1.33, L1.34, L1.35, L1.36, L1.37, L1.38, L1.39. The port lives in `dart/` (Dart 3.13, `dart format -l 100`, `dart analyze`,
 `dart test`). It carries its own expected-output files under `dart/test/steps/<step>/expected/` and does
 not read the Rust tree.
 The Unicode data, which the port first took from tables it generated from the Unicode 18.0.0
@@ -1786,6 +1803,163 @@ everywhere. The case mappings agree except that the binding drops a leading U+FE
 `lib/src/unicode.dart` restores (a new test; with the restoring loop removed it fails).
 `unicode.dart` falls from 253 lines to 118, and the 662 Dart tests pass, the conformance test
 of `NormalizationTest.txt` among them.
+
+### Build and test baseline (Dart)
+
+Measured on 2026-11-01 at `59d8bb5`, on the same machine as the Rust baseline, in a scope
+capped at 64 GB.
+
+| Measurement | Dart | Rust |
+|---|---:|---:|
+| Tests | 1,094, all pass | 1,001, all pass (release) |
+| Full test run, in groups of one process each, run in turn | 147.6 s | 109.3 s (release) |
+| Slowest single test | 50.5 s (L1.27 chain, under `-j 32`) | over 60 s in debug (four tests, below) |
+| Static check of the whole tree | `dart analyze` 0.46 s | `cargo clippy` 28.2 s |
+| Cold start | first test 23.3 s, most of it the ICU4X build hook | 38.3 s build with tests, 2.4 GB of output |
+| Native executable | `dart build cli` 25.6 s, 8.9 MB (8.6 MB program, 676 KB ICU4X) | 67.8 s release build |
+
+The Dart groups are `l01_2*` (283 tests, 47.2 s), `l01_3*` (222, 50.9 s), `l01_0*` and
+`l01_1*` (300, 18.6 s), and `m0_*` with the rest (289, 30.9 s); the whole suite in one process
+takes more than 60 s. The Rust release groups take 36.4, 19.2, 16.4, 30.2 and 7.0 s. In the
+Rust debug build, which CI runs, four tests take more than 60 s even alone: three L1.36
+scaling tests (many lambdas, a tuple of many lookup ports, an atom of many named fields) and
+the L1.39 join test; in release they take 14.8, 12.8, 6.1 and 10.6 s. This is a fault of the
+Rust build setup: the dev profile optimizes only `zed-kernel` (`Cargo.toml`, line 36), and the
+native backend and the store run unoptimized. `dart analyze` reports 10 infos, all
+`hash_and_equals` (`family.dart`, `num.dart`, `value.dart`), no warnings.
+
+### Speed of the same work
+
+The same input, timed in both languages on one machine, best of three:
+
+| Work | Rust (release) | Dart (JIT) | Dart (AOT) | Dart / Rust |
+|---|---:|---:|---:|---:|
+| L1.23 decision tree, `c = 128` | 181 ms | 551 ms | 777 ms | 3.0, 4.3 |
+| L1.23 decision tree, `c = 256` | 715 ms | 2,215 ms | 3,027 ms | 3.1, 4.2 |
+| L1.23 decision tree, `c = 512` | 2,862 ms | 8,946 ms | 12,933 ms | 3.1, 4.5 |
+| M0.11 ten million evaluator steps, the whole test | 16.8 s | 21 s | | 1.25 |
+| 10⁶ sums of products of 104-bit integers | 39 ms (`num-bigint`) | 112 ms | 107 ms | 2.9 |
+| 30000! by one product per factor | 60 ms | 108 ms | 111 ms | 1.8 |
+| the square of 30000! | 3.6 ms | 32 ms | 34 ms | 9.0 |
+| the decimal text of that square (242,575 digits) | 29 ms | 3,243 ms | 3,061 ms | 111 |
+
+Both languages scale the same in the decision tree (about 4× per doubling of `c`, linear in
+the input); the Dart constant is 3 to 4.5 times the Rust one, and the AOT build is slower than
+the JIT. The evaluator, which allocates and looks up maps, is within 25%. Dart's
+`BigInt.toString` is quadratic (72, 200, 781 and 3,047 ms for 100,000 to 800,000 bits), where
+Rust's is not; a divide-and-conquer conversion in Dart would fix it. Dart has no 128-bit
+integer, so the interval ends that Rust keeps in `i128` go through `BigInt`, which allocates.
+
+### Time and errors in all
+
+| | Rust | Dart |
+|---|---:|---:|
+| Model time | 20:10 | 7:40 |
+| Tool time | 15:04 | 8:32 |
+| Compile errors (runs) | 229 (94), 12 of them the borrow checker | 388 (71), from `dart analyze` |
+| Failing test runs | 399 | 43 |
+| Bytes of code, tests included | 2,438,202 | 2,153,091 (the files that port a Rust file: 0.87 of it) |
+
+The two are not the same work. The Rust time includes reading the specification, designing
+each step and the performance pass (COMPLEXITY.md), whose rows took 8:14 model and 10:19 tool
+time; on the 47 rows both have, the Rust took 11:56 model and 4:45 tool time. The Dart time is
+a port of code that already worked, with its tests and expected outputs, but it also includes
+writing a scaling test and a negative control for each step, finding and fixing in both
+languages the faults below, and the Rust extension of L1.39. So the ratio of the totals,
+2.2, measures a first implementation against a second one more than it measures the
+languages. The compile errors are counted differently: the Rust count is one per run per error
+code and location, and `rustc` reports borrow errors only once a file has no type errors, so
+they are undercounted; `dart analyze` reports every error of every file at once, follow-on
+errors included. The failing test runs are counted from the transcript (a `dart test` result
+that says some tests failed, between the stop order and the L1.39 commit, leaving out the
+type-emptiness and top-type work done in the same hours, which failed 35 more times).
+
+The L1.39 Dart time was first entered as 4:42 model, 5:57 tool and 121 (13) errors: the hours
+between the L1.38 and L1.39 commits, which also held the type-emptiness review (1:26, 2:09),
+the `_` top type (1:40, 1:53) and an L1.38 follow-up. It was corrected by attributing each
+interval to the files named by the last tool call before it.
+
+### What the port found in the shared design
+
+A second implementation, with a scaling test and a negative control at every step, found
+faults that the Rust had and its tests missed. Each is now fixed in both languages with a test
+that fails on the old code (COMPLEXITY.md): K18 (failure sets merged by copying, O(n²)), F20
+(the cost frontier compared every pair of plans), F21 (set difference over all atoms at each
+operator, Rust only), F22 (unions built one member at a time), K19 and F24 (texts copied into
+the texts around them, O(n·depth)), F23 (each named argument searched among all parameters),
+F27 (the test runner searched all writes per port), and F32 (emptiness results kept across
+units, so an equal unit compared types in full). It also found a gap in the L1.23 scaling test
+(a search run once per definition was not caught), and at L1.38 that the Rust Omega test is
+cubic in the length of a chain and that its test cites a budget the module no longer has. None
+of these is a property of either language: they are what a second reading with stricter tests
+finds.
+
+### Troubles in each language
+
+Dart:
+
+- **The call stack.** A Dart isolate's stack holds about 45,500 frames and no flag enlarges
+  it. Recursion over the program overflowed it in eight steps (L1.5, L1.8, L1.16, L1.21, L1.23,
+  L1.28, L1.31, L1.34), and each walk was rewritten as a loop over its own stack or as `sync*`
+  generators stepped by one loop; the walks of L1.13 to L1.15 were written that way from the
+  start. This costs code and time, but the result is
+  better than the Rust, whose tests run the same walks on threads with 256 MB to 4 GB of stack
+  (20 test files set `stack_size`). The `zedc` binary sets no larger stack (only the kernel
+  evaluator does, `eval.rs` line 296), so a program nested deeply enough crashes the Rust
+  parser or checker, and not the Dart ones.
+- **The ICU4X build hook.** Two `dart test` processes running the hook at once rewrote the
+  native library under each other and killed tests with SIGBUS or a failed library load, so
+  test files cannot run as parallel processes; `tools/bin/tests.dart` and one `dart test -j 32`
+  per group avoid it. `dart compile exe` refuses a package with build hooks, so the native
+  executable needs `dart build cli`.
+- **No code generator library.** Rust has Cranelift; Dart has none, so L1.36 has its own x86-64
+  assembler, code generator, JIT through `dart:ffi` and ELF writer (`lib/native.dart` and
+  `lib/src/native`, 74,912 bytes with the runtime, against 87,058 for `zed-native` and `zed-rt`,
+  where Cranelift does the encoding). It runs on x86-64 Linux only;
+  each further target needs its own assembler and object format. Cranelift's own optimizer and
+  register allocator had to be turned off in Rust for their super-linear cost (Z15), and the
+  plan is an e-graph optimizer of our own in ZIR, so what Cranelift still gives is instruction
+  selection, register allocation and the object formats for several targets.
+- **Type-system holes found at run time.** A `const FiniteSet.top()` inside the generic class
+  typed as `FiniteSet<Never>` and failed at run time (L1.39); covariant generics and
+  `operator ==` without `hashCode` (the 10 infos) are checked by the analyzer only in part.
+- **Timing tests under load.** Two scaling tests with a base time near 1 ms (L1.32 rewrite
+  step, L1.34 chain of live pairs) failed once each under `-j 32` and pass alone: their
+  smaller size is too small to time. Both should start from a larger `n`.
+- **BigInt.** 2 to 9 times slower than `num-bigint` and quadratic to print (above).
+
+Rust:
+
+- **The borrow checker.** 12 errors, but most of its cost never reached the compiler: values
+  were cloned, shared through `Arc` or kept in index graphs so that no borrow error arose, and
+  five performance-pass rows (K6, K7, K13, F17, Z9) existed to undo copies made only to satisfy
+  ownership. Z9 was the one the Rust could not finish: `visit` clones each node because it holds
+  a borrow of the tree while it builds the tables, and the attempt to release it early failed.
+  The Dart scope holds persistent maps and copies in O(1); Rust can do the same with `imbl`,
+  which it already uses.
+- **Deep recursion** is solved with big thread stacks rather than with loops (above).
+- **The debug build** leaves four tests over 60 s (above), and a cold build writes 2.4 GB.
+- **Slower static checks.** `cargo clippy` takes 28 s against 0.46 s for `dart analyze`.
+
+Of the 73 cases in the table below, 42 were more natural in Rust, 29 in Dart and 2 equal.
+Rust's were mostly `match` on enums with data, `?` to stop at an error, `i128`, `Ord` derived
+for keys, and recursion on a large stack; Dart's were the garbage collector sharing values
+with no `Arc` or clone, `BigInt` in the core library, `SplayTreeMap`, records, and generators.
+
+### Recommendation
+
+| Option | Score (0–10) | Reasoning |
+|---|---:|---|
+| Continue in Rust, taking the Dart port's structure back | 8 | 3–4.5 times faster in the type kernel and BigInt, which every later step (L1.40 on, the optimizer, proof checking) leans on; Cranelift's targets; `i128`. The costs found are fixable: persistent maps (`imbl`) in place of clones (Z9), loops in place of large stacks, an optimized dev profile. |
+| Continue in Dart | 6 | Shorter code (0.87), sharing with no ownership work, analysis in half a second, and the port went smoothly. But the constant factor is 3 to 4.5 in the heaviest code, the native backend is x86-64 Linux only, and the ICU4X hook constrains how tests run. |
+| Continue in both | 3 | Each step costs twice, for a check that the stricter tests now give at each step anyway. |
+
+Continue in Rust. The port's main value was the second reading, not the language, and its
+lessons carry over: before L1.40, (1) give the Rust dev profile `opt-level` for all crates, so
+CI's debug tests fit in 60 s; (2) replace the large thread stacks by explicit stacks, as the
+Dart has, starting with the walks the Dart rewrote; (3) finish Z8 and Z9 with persistent maps
+in place of the cloned nodes. Keep `dart/` at L1.39 as it is, with its tests passing, and stop
+adding to it.
 
 ### What each language expresses more naturally
 

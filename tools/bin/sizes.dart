@@ -2,7 +2,8 @@
 /// file and, once ported, of the Dart files tools/dart_map.txt pairs with it.
 ///
 /// dart_map.txt has one line per Dart file: `<dart path> <rust path>`, both relative to
-/// zed-impl. Several Dart files may port one Rust file; their sizes add up in its row.
+/// zed-impl. Several Dart files may port one Rust file; their sizes add up in its row. A Rust
+/// path of `-` marks a Dart file that ports no Rust file; those are listed after the table.
 ///
 /// Usage: dart tools/bin/sizes.dart
 library;
@@ -17,9 +18,14 @@ void main() {
     ..sort();
   final known = rust.toSet();
   final dart = <String, List<String>>{};
+  final own = <String>[];
   for (final line in File('$impl/tools/dart_map.txt').readAsLinesSync()) {
     if (line.trim().isEmpty || line.startsWith('#')) continue;
     final [d, r] = line.trim().split(RegExp(r'\s+'));
+    if (r == '-') {
+      own.add(d);
+      continue;
+    }
     if (!known.contains(r)) {
       stderr.writeln('dart_map.txt: no Rust file $r');
       exit(1);
@@ -46,6 +52,10 @@ void main() {
   }
 
   final ratio = rPorted > 0 ? _ratio(dTotal, rPorted) : '';
+  final ownBytes = own.map(size).fold(0, (a, b) => a + b);
+  for (final d in own..sort()) {
+    rows.add('| (none) | | `${d.replaceFirst(RegExp('^dart/'), '')}` | ${_grouped(size(d))} | |');
+  }
   final table = [
     '| Rust file | bytes | Dart files | bytes | Dart / Rust |',
     '|---|---:|---|---:|---:|',
@@ -53,6 +63,8 @@ void main() {
     '| **all ${rust.length} Rust files** | **${_grouped(rTotal)}** | | | |',
     '| **the Rust files ported so far** | **${_grouped(rPorted)}** | | '
         '**${_grouped(dTotal)}** | **$ratio** |',
+    '| **Dart files that port no Rust file** | | | **${_grouped(ownBytes)}** | |',
+    '| **all Dart files** | | | **${_grouped(dTotal + ownBytes)}** | |',
   ].join('\n');
   final doc = File('$impl/RUST_VS_ZED.md');
   final block = RegExp(r'(<!-- sizes -->\n)(?:.*?\n)?(<!-- /sizes -->)', dotAll: true);
@@ -64,7 +76,8 @@ void main() {
   doc.writeAsStringSync(text.replaceFirstMapped(block, (m) => '${m[1]}$table\n${m[2]}'));
   print(
     '${rust.length} Rust files, ${_grouped(rTotal)} bytes; '
-    'ported ${_grouped(rPorted)} -> Dart ${_grouped(dTotal)}',
+    'ported ${_grouped(rPorted)} -> Dart ${_grouped(dTotal)}; '
+    '${own.length} Dart files port no Rust file, ${_grouped(ownBytes)} bytes',
   );
 }
 

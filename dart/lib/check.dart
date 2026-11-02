@@ -185,10 +185,8 @@ final class _SrcGot extends _Src {
 }
 
 /// The positional and named arguments of a call, as expressions.
-(List<_Src>, List<(String, _Src)>) _srcs(List<Expr> positional, List<(String, Expr)> named) => (
-  [for (final e in positional) _SrcExpr(e)],
-  [for (final (n, e) in named) (n, _SrcExpr(e))],
-);
+(List<_Src>, List<(String, _Src)>) _srcs(List<Expr> positional, List<(String, Expr)> named) =>
+    ([for (final e in positional) _SrcExpr(e)], [for (final (n, e) in named) (n, _SrcExpr(e))]);
 
 /// Facts an `is` test makes: binders narrowed to a type, and the test.
 typedef _Facts = List<(Binder, Ty, Span)>;
@@ -1051,8 +1049,7 @@ final class _Ck {
         plain(t) &&
         t.fns.every(
           (s) =>
-              s.data &&
-              s.arrows.every((a) => plain(a.result) && strings(a.result.set - notFound)),
+              s.data && s.arrows.every((a) => plain(a.result) && strings(a.result.set - notFound)),
         );
     if (!ok && !t.isDynamic && t.vars.isEmpty) {
       error(span, 'a `Lines` port takes a `String` or a family of strings, not ${show(t)}');
@@ -1831,9 +1828,7 @@ final class _Ck {
             acc = apply('`sum`', add, [_Arg(acc), _Arg(c)], true, span).$1;
           }
           final bad = acc.pieces
-              .where(
-                (p) => p is! PVar && !p.isAtoms && !(p.carrier?.numeric ?? false),
-              )
+              .where((p) => p is! PVar && !p.isAtoms && !(p.carrier?.numeric ?? false))
               .firstOrNull;
           if (bad != null) error(span, '`sum` does not take (${bad.ty})');
           out = out.union(acc);
@@ -1950,8 +1945,7 @@ final class _Ck {
     }
     for (final a in positional) {
       if (next >= n ||
-          !(sig.params[next].positional ||
-              !isDeclared && sig.params.every((p) => p.positional))) {
+          !(sig.params[next].positional || !isDeclared && sig.params.every((p) => p.positional))) {
         yield unfitted();
         return;
       }
@@ -2025,14 +2019,7 @@ final class _Ck {
   /// A partial application of `sig`: the arguments `args`, those at `missing` left out, gives
   /// a function of the missing parameters, positional ones with no default for a `section`.
   /// The needs on the variables only those parameters hold are the new function's.
-  Ty partial(
-    Sig sig,
-    List<_Arg?> args,
-    List<int> missing,
-    bool section,
-    String what,
-    Span span,
-  ) {
+  Ty partial(Sig sig, List<_Arg?> args, List<int> missing, bool section, String what, Span span) {
     final out = List.filled(sig.params.length, false);
     for (final j in missing) {
       out[j] = true;
@@ -2051,10 +2038,7 @@ final class _Ck {
     if (applied == null || missing.isEmpty) return result;
     final (binds, needs) = applied;
     final params = [
-      for (final j in missing)
-        section
-            ? SParam(sig.params[j].name, true)
-            : sig.params[j],
+      for (final j in missing) section ? SParam(sig.params[j].name, true) : sig.params[j],
     ];
     final arrows = [
       for (final c in kept)
@@ -2338,7 +2322,9 @@ final class _Ck {
     }
     final permuted = Sig(
       e.params,
-      [for (final a in s.arrows) Arrow([for (final i in inv) a.params[i]], a.result)],
+      [
+        for (final a in s.arrows) Arrow([for (final i in inv) a.params[i]], a.result),
+      ],
       bounds: SplayTreeMap.of(s.bounds),
       data: s.data,
       needs: s.needs,
@@ -3201,10 +3187,7 @@ List<String> sigVars(Sig s) {
     for (final (i, s) in fns.indexed)
       held[i].isEmpty && own[i].isEmpty
           ? s
-          : s.copy(
-              needs: [...s.needs, ...held[i]],
-              own: SplayTreeSet.of([...s.own, ...own[i]]),
-            ),
+          : s.copy(needs: [...s.needs, ...held[i]], own: SplayTreeSet.of([...s.own, ...own[i]])),
   ];
   return (t.withFns(out), now);
 }
