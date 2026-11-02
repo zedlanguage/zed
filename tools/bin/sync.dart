@@ -82,7 +82,7 @@ String render(String path, Spec spec, WordTable table) {
 
 /// (destination, text) of every copy: the fences in zed/fences, and in zed/grammar the
 /// syntactic grammar and the documentation notation of sec:grammar and the bracketing cases
-/// (step L1.8).
+/// and left-recursion cases (steps L1.8 and LR1).
 List<(String, String)> copies(String here, Spec spec, WordTable table) {
   final grammar = '$here/../grammar';
   return [
@@ -91,6 +91,7 @@ List<(String, String)> copies(String here, Spec spec, WordTable table) {
     ('$grammar/syntax.peg', '${spec.synText}\n'),
     ('$grammar/notation.peg', '${spec.docText}\n'),
     ('$grammar/cases.txt', readText('${spec.root}/tools/grammar/cases.txt')),
+    ('$grammar/leftrec.txt', readText('${spec.root}/tools/grammar/leftrec.txt')),
   ];
 }
 

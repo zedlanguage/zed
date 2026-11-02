@@ -1,0 +1,157 @@
+# Left-recursive rules, parsed by the reference parser (bin/cases.dart) and by the compiler's
+# parser: the grammars of the Squirrel paper's figure of left recursion types, and the cases
+# where seed growing meets lookahead, layers, `head`, and error reports.
+#
+# `grammar <title>` starts a block; its lines are grammar lines, as in sec:grammar, and cases
+# `START[@RING] ::: TEXT ::: WANT`. WANT `ERROR` accepts any error; `ERROR@k e...` says the
+# parse stopped at token k expecting exactly `e...`, sorted.
+
+grammar direct (fig. a)
+A = A 'x' L1
+  | 'x' L1
+A ::: x ::: x
+A ::: x x ::: (x x)
+A ::: x x x ::: ((x x) x)
+A ::: x x x x ::: (((x x) x) x)
+A ::: y ::: ERROR@0 'x'
+A ::: x y ::: ERROR@1 'x' END
+
+grammar indirect (fig. b): an alternative that matched in one round fails in a later one
+A = B L1
+  | 'x' L1
+B = A 'y' L1
+  | A 'x' L1
+A ::: x ::: x
+A ::: x x ::: (x x)
+A ::: x x y x ::: (((x x) y) x)
+
+grammar left-recursive for some inputs only, by choice (fig. c)
+A = B L1
+  | 'z' L1
+B = 'x' A L1
+  | A 'y' L1
+A ::: z ::: z
+A ::: z y ::: (z y)
+A ::: x z ::: (x z)
+A ::: x x z y y y ::: (x (x (((z y) y) y)))
+
+grammar left-recursive for some inputs only, by an empty option (fig. d)
+A = 'x'? (A 'y' | A | 'y') L1
+A ::: y ::: y
+A ::: x y ::: (x y)
+A ::: y y y ::: ((y y) y)
+A ::: x x y y y ::: (x (x ((y y) y)))
+
+grammar three interwoven cycles (fig. e)
+E = F 'n' L1
+  | 'n' L1
+F = E '+' I* L1
+  | G '-' L1
+G = H 'm' L1
+  | E L1
+H = G 'l' L1
+I = '(' Letter+ ')' L1
+Letter = 'a' L1
+E ::: n ::: n
+E ::: n + n ::: ((n +) n)
+E ::: n l m - n ::: ((((n l) m) -) n)
+E ::: n l m - n + ( a a a ) n ::: ((((((n l) m) -) n) + (( a a a ))) n)
+
+grammar two interwoven cycles (fig. f)
+L = P '.' 'x' L1
+  | 'x' L1
+P = P '(' 'n' ')' L1
+  | L L1
+L ::: x ::: x
+L ::: x . x ::: (x . x)
+L ::: x ( n ) . x ::: ((x ( n )) . x)
+L ::: x . x ( n ) ( n ) . x . x ::: (((((x . x) ( n )) ( n )) . x) . x)
+
+grammar explicitly left-associative (fig. g)
+E = E '+' N L1
+  | N L1
+N = INT L1
+E ::: 0 ::: 0
+E ::: 0 + 1 + 2 + 3 ::: (((0 + 1) + 2) + 3)
+
+grammar explicitly right-associative (fig. h)
+E = N '+' E L1
+  | N L1
+N = INT L1
+E ::: 0 + 1 + 2 + 3 ::: (0 + (1 + (2 + 3)))
+
+grammar both operands recursive: the right one takes the rest, so this form is not for LR2 (fig. i)
+E = E '+' E L1
+  | N L1
+N = INT L1
+E ::: 0 + 1 + 2 + 3 ::: (0 + (1 + (2 + 3)))
+
+grammar growth stops at the longest match, and a shorter one is not gone back to
+S = A 'x' 'y' L1
+A = B !'y' L1
+  | 'x' L1
+B = A 'x' L1
+S ::: x x x y ::: ((x x) x y)
+
+grammar a seed that matches nothing
+A = A 'x' L1
+  | 'y'? L1
+A ::: x x ::: (( x) x)
+A ::: y x ::: (y x)
+
+grammar left recursion inside a repetition
+A = (A 'x')+ L1
+  | 'y' L1
+A ::: y x x ::: ((y x) x)
+
+grammar left recursion inside lookahead
+S = &(A 'y') A 'y' L1
+  | !(A 'z') A L1
+A = A 'x' L1
+  | 'x' L1
+S ::: x x y ::: ((x x) y)
+S ::: x x x ::: ((x x) x)
+S ::: x x z ::: ERROR
+
+grammar an alternative of a later layer
+A = A 'x' L3
+  | 'x' L1
+A@1 ::: x ::: x
+A@1 ::: x x ::: ERROR@1 END
+A@3 ::: x x x ::: ((x x) x)
+
+grammar both `head` values at one token, grown one after the other
+S = head(E) 'a' L1
+  | nest(E) '+' 'x' 'b' L1
+T = nest(E) 'a' L1
+  | head(E) 'b' L1
+E = E '+' HEAD 'x' L1
+  | 'x' L1
+S ::: x + x a ::: ((x + x) a)
+S ::: x + x b ::: (x + x b)
+T ::: x + x + x b ::: (((x + x) + x) b)
+
+grammar precedence, left-recursive
+E = E '+' T L1
+  | T L1
+T = T '*' F L1
+  | F L1
+F = '(' E ')' L1
+  | INT L1
+E ::: 1 + 2 * 3 + 4 ::: ((1 + (2 * 3)) + 4)
+E ::: ( 1 + 2 ) * 3 ::: ((( (1 + 2) )) * 3)
+E ::: 1 + ::: ERROR@2 '(' INT
+E ::: 1 + 2 3 ::: ERROR@3 '*' '+' END
+E ::: ( 1 + 2 ::: ERROR@4 ')' '*' '+'
+E ::: 1 * ( 2 + ; ::: ERROR@5 '(' INT
+
+grammar precedence, as repetitions: the errors are those of the left-recursive grammar above
+E = T ('+' T)* L1
+T = F ('*' F)* L1
+F = '(' E ')' L1
+  | INT L1
+E ::: 1 + 2 * 3 + 4 ::: (1 + (2 * 3) + 4)
+E ::: 1 + ::: ERROR@2 '(' INT
+E ::: 1 + 2 3 ::: ERROR@3 '*' '+' END
+E ::: ( 1 + 2 ::: ERROR@4 ')' '*' '+'
+E ::: 1 * ( 2 + ; ::: ERROR@5 '(' INT

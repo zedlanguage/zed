@@ -3,4 +3,6 @@
 
 mod cases;
 mod errors;
+mod left_recursion;
 mod rings;
+mod scaling;

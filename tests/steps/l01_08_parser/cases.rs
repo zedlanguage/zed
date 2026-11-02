@@ -108,6 +108,8 @@ fn the_copies_match_the_spec_where_it_is_present() {
     let stale = "zed/grammar is out of date: run tools/bin/sync.dart";
     assert_eq!(read("syntax.peg"), pegs[1], "{stale}");
     assert_eq!(read("notation.peg"), pegs[2], "{stale}");
-    let cases = std::fs::read_to_string(spec.join("tools/grammar/cases.txt")).unwrap();
-    assert_eq!(read("cases.txt"), cases, "{stale}");
+    for copy in ["cases.txt", "leftrec.txt"] {
+        let want = std::fs::read_to_string(spec.join("tools/grammar").join(copy)).unwrap();
+        assert_eq!(read(copy), want, "{stale}");
+    }
 }

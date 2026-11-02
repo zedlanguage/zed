@@ -9,6 +9,9 @@
 //!
 //! A literal in the grammar matches a keyword, an operator or a name with its text, so the
 //! positional words `where` and `sep` are names the grammar matches by their text.
+//!
+//! A left-recursive rule grows from a failed seed, by the Squirrel parser's algorithm
+//! (`squirrel_parser.tex`, fig. Code); a grammar with no left recursion never reaches that code.
 
 mod grammar;
 
@@ -95,20 +98,34 @@ pub fn parse(text: &str, tokens: &[Token], start: &str, ring: u32) -> Result<Tre
         start: text.len(),
         end: text.len(),
     };
-    parse_to(text, tokens, start, ring, end)
+    parse_to(grammar(), text, tokens, start, ring, end)
+}
+
+/// Parses as [`parse`] does, by the grammar `g`, which needs a rule `Expr` for a string's holes.
+pub fn parse_with(
+    g: &Grammar,
+    text: &str,
+    tokens: &[Token],
+    start: &str,
+    ring: u32,
+) -> Result<Tree, Error> {
+    let end = Span {
+        start: text.len(),
+        end: text.len(),
+    };
+    parse_to(g, text, tokens, start, ring, end)
 }
 
 /// Parses as `parse` does; `end` is the span reported for an error at the end of `tokens`.
 fn parse_to(
+    g: &Grammar,
     text: &str,
     tokens: &[Token],
     start: &str,
     ring: u32,
     end: Span,
 ) -> Result<Tree, Error> {
-    let start = grammar()
-        .rule(start)
-        .unwrap_or_else(|| panic!("no rule {start}"));
+    let start = g.rule(start).unwrap_or_else(|| panic!("no rule {start}"));
     let mut toks: Vec<(Kind, &str)> = tokens
         .iter()
         .map(|t| (kind(&t.tok), &text[t.span.start..t.span.end]))
@@ -116,10 +133,11 @@ fn parse_to(
     toks.push((Kind::End, ""));
     let span = |i: usize| tokens.get(i).map_or(end, |t| t.span);
     let mut p = Parser {
-        g: grammar(),
+        g,
         ring,
         toks: &toks,
         memo: HashMap::new(),
+        versions: vec![0; toks.len() + 1],
         nodes: Vec::new(),
         far: 0,
         expected: BTreeSet::new(),
@@ -149,7 +167,7 @@ fn parse_to(
                         start: span.end - 1,
                         end: span.end,
                     };
-                    holes.push(parse_to(text, tokens, "Expr", ring, close)?);
+                    holes.push(parse_to(g, text, tokens, "Expr", ring, close)?);
                 }
             }
         }
@@ -176,12 +194,32 @@ fn kind(tok: &Tok) -> Kind {
     }
 }
 
+/// A rule's result at a token: the end and node of its match, or `None` for no match.
+type Res = Option<(usize, usize)>;
+
+/// What is known of a rule at a token.
+#[derive(Clone, Copy, Default)]
+struct Entry {
+    /// The longest result so far, once there is one.
+    best: Option<Res>,
+    /// The rule is being matched here, on the current path of calls.
+    in_path: bool,
+    /// A call on that path reached this entry again: the rule is left-recursive here.
+    left_rec: bool,
+    /// The token's version when `best` was last computed or confirmed.
+    version: usize,
+}
+
 struct Parser<'a> {
     g: &'a Grammar,
     ring: u32,
     toks: &'a [(Kind, &'a str)],
-    /// (rule, token, head) to the end and node of its match, or `None` for no match.
-    memo: HashMap<(usize, usize, bool), Option<(usize, usize)>>,
+    /// (rule, token, head) to what is known there.
+    memo: HashMap<(usize, usize, bool), Entry>,
+    /// How many times a left-recursive match has grown at each token, for both values of
+    /// `head`. An entry behind its token's version may read a longer seed now, so it is matched
+    /// again.
+    versions: Vec<usize>,
     nodes: Vec<Node>,
     far: usize,
     expected: BTreeSet<String>,
@@ -202,15 +240,54 @@ impl Parser<'_> {
     /// Matches rule `r` at `pos`, pushing its node onto `kids`.
     fn rule(&mut self, r: usize, pos: usize, head: bool, kids: &mut Vec<usize>) -> Option<usize> {
         let key = (r, pos, head);
-        if let Some(&res) = self.memo.get(&key) {
-            let (end, node) = res?;
-            kids.push(node);
-            return Some(end);
+        let now = self.versions[pos];
+        let entry = self.memo.entry(key).or_default();
+        let res = match entry.best {
+            Some(res) if entry.version == now => res,
+            best if entry.in_path => {
+                // Left recursion: the first time, this call fails, which seeds the growth.
+                if best.is_none() {
+                    entry.left_rec = true;
+                    entry.best = Some(None);
+                }
+                entry.version = now;
+                best.flatten()
+            }
+            _ => {
+                entry.in_path = true;
+                self.grow(key)
+            }
+        };
+        let (end, node) = res?;
+        kids.push(node);
+        Some(end)
+    }
+
+    /// Matches the rule of `key`, and while it is left-recursive there and its match gets
+    /// longer, matches it again over that match. A match is never replaced by a shorter one.
+    fn grow(&mut self, key: (usize, usize, bool)) -> Res {
+        let (r, pos, head) = key;
+        loop {
+            let res = self.alternatives(r, pos, head);
+            let entry = self.memo.get_mut(&key).expect("`rule` made this entry");
+            let end = |res: Res| res.map(|(end, _)| end);
+            let longer = entry.best.is_none_or(|best| end(res) > end(best));
+            if longer {
+                entry.best = Some(res);
+            }
+            if !longer || !entry.left_rec {
+                entry.in_path = false;
+                entry.version = self.versions[pos];
+                return entry.best.flatten();
+            }
+            self.versions[pos] += 1;
+            entry.version = self.versions[pos];
         }
-        // A left-recursive call fails, as in check.dart; the grammar has none.
-        self.memo.insert(key, None);
+    }
+
+    /// The first alternative of rule `r` that matches at `pos`, as a node.
+    fn alternatives(&mut self, r: usize, pos: usize, head: bool) -> Res {
         let g = self.g;
-        let mut res = None;
         for (alt, (e, layer)) in g.rules[r].alts.iter().enumerate() {
             if *layer > self.ring {
                 continue;
@@ -224,14 +301,10 @@ impl Parser<'_> {
                     end,
                     kids: sub,
                 });
-                res = Some((end, self.nodes.len() - 1));
-                break;
+                return Some((end, self.nodes.len() - 1));
             }
         }
-        self.memo.insert(key, res);
-        let (end, node) = res?;
-        kids.push(node);
-        Some(end)
+        None
     }
 
     fn m(&mut self, e: &Expr, pos: usize, head: bool, kids: &mut Vec<usize>) -> Option<usize> {
