@@ -353,7 +353,37 @@ fn run(s: &mut State, t: &Term) -> Result<Value, String> {
 
 /// The kernel term for word `w`; a lookup port is read once, by a `let` in `lets`.
 fn term(s: &mut State, w: Word, lets: &mut Lets) -> Result<Term, String> {
-    Ok(match w.tag {
+    // Closures capture closures as deep as a program builds them, so the closures in progress
+    // are on a stack, each with the terms of its captures so far.
+    let mut stack: Vec<(Word, Vec<Term>)> = Vec::new();
+    let mut made = term_of(s, w, lets, &mut stack)?;
+    loop {
+        let Some((clo, terms)) = stack.last_mut() else {
+            return Ok(made.expect("an empty stack follows a finished term"));
+        };
+        terms.extend(made.take());
+        let Some(Obj::Clo { lambda, caps }) = s.heap.obj(*clo)? else {
+            unreachable!("only closures are entered")
+        };
+        match caps.get(terms.len()) {
+            Some(&c) => made = term_of(s, c, lets, &mut stack)?,
+            None => {
+                let node = s.t.nodes[s.t.lambdas[*lambda].node].node();
+                made = Some(raise_node(node, terms)?);
+                stack.pop();
+            }
+        }
+    }
+}
+
+/// The term of `w` when it is not a closure; a closure is entered on `stack`.
+fn term_of(
+    s: &mut State,
+    w: Word,
+    lets: &mut Lets,
+    stack: &mut Vec<(Word, Vec<Term>)>,
+) -> Result<Option<Term>, String> {
+    Ok(Some(match w.tag {
         Word::PRIM => Term::PrimFn(s.t.prims[w.bits as usize]),
         Word::STATE => Term::Lit(Value::tuple(Vec::new())),
         Word::SOURCE => {
@@ -364,18 +394,11 @@ fn term(s: &mut State, w: Word, lets: &mut Lets) -> Result<Term, String> {
             Term::Var(port_var(&p))
         }
         Word::CELL if s.heap.is_function(w)? => {
-            let Some(Obj::Clo { lambda, caps }) = s.heap.obj(w)?.cloned() else {
-                unreachable!("checked to be a closure")
-            };
-            let mut terms = Vec::new();
-            for c in caps {
-                terms.push(term(s, c, lets)?);
-            }
-            let t = s.t.clone();
-            raise_node(t.nodes[t.lambdas[lambda].node].node(), &terms)?
+            stack.push((w, Vec::new()));
+            return Ok(None);
         }
         _ => Term::Lit(s.heap.value(w)?),
-    })
+    }))
 }
 
 fn port_var(p: &str) -> Arc<str> {
@@ -548,11 +571,14 @@ fn kernel_match(
 
 /// Renames each binder of `p`, in preorder, to what `f` gives.
 fn rename(p: &mut Pattern, f: &mut dyn FnMut() -> Arc<str>) {
-    match p {
-        Pattern::Bind(x) => *x = f(),
-        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter_mut().for_each(|q| rename(q, f)),
-        Pattern::Fields(_, fs) => fs.iter_mut().for_each(|(_, q)| rename(q, f)),
-        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
+        match p {
+            Pattern::Bind(x) => *x = f(),
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut().rev()),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().rev().map(|(_, q)| q)),
+            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+        }
     }
 }
 
@@ -579,4 +605,69 @@ pub(crate) fn finish(s: &mut State, w: Word) -> Result<Value, String> {
         ));
     }
     v.ok_or_else(|| KernelError::Type("the program's result is a function".into()).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::mem::ManuallyDrop;
+
+    use zed_kernel::World;
+    use zed_kernel::term::build::{lam, var};
+    use zedc::zir::lower::lower;
+    use zedc::zir::memory::plan;
+
+    use super::*;
+
+    /// How deep the tests go, on the default test stack; each old function overflowed it.
+    const DEPTH: usize = 1_000_000;
+
+    #[test]
+    fn a_chain_of_closures_becomes_a_term() {
+        // `(x) -> (y) -> x`, whose inner lambda captures one value.
+        let g = Arc::new(lower(&lam(&["x"], lam(&["y"], var("x")))).unwrap());
+        let (t, _) = Tables::new(&g, &plan(&g, false)).unwrap();
+        let captures = |l: &&crate::tables::LambdaInfo| !t.nodes[l.node].node().inputs.is_empty();
+        let inner = t.lambdas.iter().position(|l| captures(&l)).unwrap();
+        let mut s = State::new(Arc::new(t), Evaluator::new(World::new()));
+        let mut w = Word::int(7);
+        for _ in 0..DEPTH {
+            w = s.heap.alloc(Obj::Clo {
+                lambda: inner,
+                caps: vec![w],
+            });
+        }
+        // The kernel's terms drop by recursion, so this one is left to the end of the process.
+        let made = ManuallyDrop::new(term(&mut s, w, &mut Lets::default()).unwrap());
+        let (mut at, mut depth) = (&*made, 0);
+        while let Term::Lam(_, body) = at {
+            (at, depth) = (&**body, depth + 1);
+        }
+        assert_eq!(depth, DEPTH);
+        assert_eq!(at.to_string(), "7");
+    }
+
+    #[test]
+    fn binders_of_a_deep_pattern_are_renamed_in_preorder() {
+        let bind = |x: &str| Pattern::Bind(x.into());
+        let inner = (0..DEPTH).fold(bind("c"), |p, _| Pattern::Tuple(vec![p]));
+        let mut p = ManuallyDrop::new(Pattern::Fields(
+            "pair".into(),
+            vec![("a".into(), bind("a")), ("b".into(), inner)],
+        ));
+        let mut n = 0;
+        rename(&mut p, &mut || {
+            n += 1;
+            format!("v{n}").into()
+        });
+        assert_eq!(n, 2);
+        let Pattern::Fields(_, fs) = &*p else {
+            unreachable!()
+        };
+        assert!(matches!(&fs[0].1, Pattern::Bind(x) if &**x == "v1"));
+        let mut at = &fs[1].1;
+        while let Pattern::Tuple(ps) = at {
+            at = &ps[0];
+        }
+        assert!(matches!(at, Pattern::Bind(x) if &**x == "v2"));
+    }
 }

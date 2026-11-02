@@ -586,6 +586,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `impl Drop for Closure`: environments put on a list so that their release does not recurse | `Drops`, `Closure` | None | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `std::mem::take`, `std::mem::replace` of a field in place | `Evaluator::run`, the fix frames | Mutation | A state receiver |
 | `imbl::HashMap` and `imbl::OrdMap`, persistent maps sharing structure | `preimage::Scope`, `preimage::Sets` | None | Zed's maps are values: an update makes a new map, and the runtime must share its structure to keep the update at `O(log n)` |
+
+## Entries from T2-native (`zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Vec` of frames as an explicit stack, each frame growing its own `Vec` of results | `Making`, `Reading`, `Matching`, `hooks::term` | Mutation | As for `Machine::run`: a state receiver |
+| `slice::Iter` held in a frame across steps, to resume a walk | `Making::rest` | None | An index into the list |
+| Reborrowing `&mut` to each sub-pattern through a stack | `hooks::rename` | Mutation | Zed builds the renamed pattern as a new value |
 ## Entries from T2-eval-repair (`zed-kernel/src/deep.rs`, `value.rs`, `family.rs`, `types.rs`)
 
 | Rust construct | Sites | Gap | At the port |

@@ -29,6 +29,12 @@ path = "steps/m0_09_kernel_evaluator/deep_values.rs"
 name = "deep_scaling"
 path = "steps/m0_09_kernel_evaluator/deep_scaling.rs"
 
+# Its own binary, so the default stack of a test thread is what it runs on, and its deep tests
+# do not lengthen the piece of step L1.36.
+[[test]]
+name = "deep_heap"
+path = "steps/l01_36_cranelift/deep_heap.rs"
+
 [features]
 full = []
 

@@ -44,6 +44,10 @@ fn isa(pic: bool) -> Result<Arc<dyn cranelift_codegen::isa::TargetIsa>, String> 
     set(&mut flags, "opt_level", "none")?;
     set(&mut flags, "regalloc_algorithm", "single_pass")?;
     set(&mut flags, "is_pic", if pic { "true" } else { "false" })?;
+    // A body's frame grows with its size, so a frame can be larger than the guard page below the
+    // stack; without probes its first write could land past that page, in other memory.
+    set(&mut flags, "enable_probestack", "true")?;
+    set(&mut flags, "probestack_strategy", "inline")?;
     let host = cranelift_native::builder().map_err(|e| format!("native: {e}"))?;
     host.finish(settings::Flags::new(flags))
         .map_err(|e| format!("native: {e}"))

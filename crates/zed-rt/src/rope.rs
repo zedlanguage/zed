@@ -1,13 +1,20 @@
 //! A rope-backed `String` (step L1.36): concatenation shares both sides and copies nothing,
 //! and a rope is flattened to one buffer, once, when a primitive needs its text.
 
+use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 /// An immutable string as a tree of shared pieces.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Rope(Arc<Node>);
 
-#[derive(Debug)]
+// A chain of concatenations is as deep as it is long, so this shows the length and not the tree.
+impl fmt::Debug for Rope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Rope({} bytes)", self.bytes())
+    }
+}
+
 enum Node {
     Leaf(Arc<str>),
     Cat {
@@ -142,6 +149,7 @@ mod tests {
             r = Rope::cat(&Rope::leaf("y".into()), &r);
         }
         assert_eq!(r.bytes(), 200_001);
+        assert_eq!(format!("{r:?}"), "Rope(200001 bytes)");
         drop(r);
     }
 }

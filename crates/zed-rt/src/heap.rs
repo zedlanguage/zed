@@ -14,6 +14,7 @@
 //! cell holding the kernel value. A cell's count is the number of references to it; at 0 it
 //! is freed, its parts dropped, and a later use of it is an error.
 
+use std::slice;
 use std::sync::Arc;
 
 use zed_kernel::term::Pattern;
@@ -174,6 +175,93 @@ enum Parts {
     Other,
 }
 
+/// A tuple or an atom [`Heap::fresh`] has entered: its payload's atom, its parts still to make,
+/// and the words of those made. Values nest as deep as a program builds them, so the values in
+/// progress are on a stack.
+struct Making<'v> {
+    /// The atom; none for a tuple.
+    atom: Option<&'v Atom>,
+    rest: slice::Iter<'v, Value>,
+    parts: Vec<Word>,
+}
+
+/// A cell [`Heap::value`] has entered: its word, and the values of its parts read so far, which
+/// also says which part is next.
+struct Reading {
+    w: Word,
+    parts: Vec<Value>,
+}
+
+/// The sub-patterns of a pattern [`Heap::matches`] has entered.
+enum Subs<'p> {
+    /// Positional: pattern `i` reads part `i`.
+    Items(&'p [Pattern]),
+    /// Named: each pattern reads the part of its field in `fields`.
+    Fields(&'p [(Arc<str>, Pattern)], Vec<Arc<str>>),
+}
+
+/// A tuple or atom pattern [`Heap::matches`] has entered, with the parts of the word it reads.
+struct Matching<'p> {
+    subs: Subs<'p>,
+    words: Vec<Word>,
+    /// The next sub-pattern.
+    next: usize,
+}
+
+/// What comes next in a [`Matching`].
+enum Next<'p> {
+    /// Sub-pattern on part `i`.
+    Part(usize, &'p Pattern, Word),
+    /// A named field the word does not have.
+    Missing,
+    /// Every sub-pattern has matched.
+    End,
+}
+
+impl<'p> Matching<'p> {
+    fn next(&mut self) -> Next<'p> {
+        let n = self.next;
+        self.next += 1;
+        match &self.subs {
+            Subs::Items(ps) => match ps.get(n) {
+                Some(q) => Next::Part(n, q, self.words[n]),
+                None => Next::End,
+            },
+            Subs::Fields(fs, fields) => match fs.get(n) {
+                Some((f, q)) => match fields.binary_search(f) {
+                    Ok(i) => Next::Part(i, q, self.words[i]),
+                    Err(_) => Next::Missing,
+                },
+                None => Next::End,
+            },
+        }
+    }
+}
+
+/// What reading one word against one pattern, without its sub-patterns, gives.
+enum Shallow<'p> {
+    /// It does not match.
+    No,
+    /// It matches, with nothing below.
+    Yes,
+    /// It matches so far; the sub-patterns decide.
+    Below(Matching<'p>),
+}
+
+/// What cell `w` of `cells` holds; `None` for a word that is not a cell.
+fn obj_in(cells: &[Cell], w: Word) -> Result<Option<&Obj>, String> {
+    if w.tag != Word::CELL {
+        return Ok(None);
+    }
+    match &cells[w.bits as usize].obj {
+        Some(o) => Ok(Some(o)),
+        None => Err(format!(
+            "runtime: cell {} is used after it was freed",
+            w.bits
+        )),
+    }
+}
+
 /// The heap of one run.
 #[derive(Debug, Default)]
 pub struct Heap {
@@ -233,24 +321,55 @@ impl Heap {
     /// A fresh word for `v`, owned: its cells allocated, each part of a tuple or an atom its
     /// own, as the counting machine allocates a value the kernel returns.
     pub fn fresh(&mut self, v: &Value) -> Word {
+        let mut stack: Vec<Making<'_>> = Vec::new();
+        let mut next = v;
+        loop {
+            let (atom, items): (_, &[Value]) = match next {
+                Value::Tuple(xs) => (None, xs),
+                Value::Atom(a) => (Some(a), &a.args),
+                _ => (None, &[]),
+            };
+            let mut rest = items.iter();
+            if let Some(first) = rest.next() {
+                stack.push(Making {
+                    atom,
+                    rest,
+                    parts: Vec::with_capacity(items.len()),
+                });
+                next = first;
+                continue;
+            }
+            let mut w = self.fresh_leaf(next);
+            // Each finished value is a part of the one below it on the stack.
+            loop {
+                let Some(top) = stack.last_mut() else {
+                    return w;
+                };
+                top.parts.push(w);
+                if let Some(x) = top.rest.next() {
+                    next = x;
+                    break;
+                }
+                let m = stack.pop().expect("the stack has a top");
+                w = self.alloc(match m.atom {
+                    None => Obj::Tuple(m.parts),
+                    Some(a) => Obj::Atom {
+                        name: a.name.clone(),
+                        fields: a.fields.clone(),
+                        args: m.parts,
+                    },
+                });
+            }
+        }
+    }
+
+    /// The fresh word of `v`, which has no parts of its own.
+    fn fresh_leaf(&mut self, v: &Value) -> Word {
         if let Some(w) = Word::scalar(v) {
             return w;
         }
         match v {
-            Value::Tuple(xs) if xs.is_empty() => self.uncounted(v.clone()),
-            Value::Atom(a) if a.args.is_empty() => self.uncounted(v.clone()),
-            Value::Tuple(xs) => {
-                let parts = xs.iter().map(|x| self.fresh(x)).collect();
-                self.alloc(Obj::Tuple(parts))
-            }
-            Value::Atom(a) => {
-                let args = a.args.iter().map(|x| self.fresh(x)).collect();
-                self.alloc(Obj::Atom {
-                    name: a.name.clone(),
-                    fields: a.fields.clone(),
-                    args,
-                })
-            }
+            Value::Tuple(_) | Value::Atom(_) => self.uncounted(v.clone()),
             Value::Str(s) => self.alloc(Obj::Str(Rope::leaf(s.clone().into()))),
             _ => self.alloc(Obj::Data(v.clone())),
         }
@@ -258,16 +377,7 @@ impl Heap {
 
     /// What live cell `w` holds; `None` for a word that is not a cell.
     pub fn obj(&self, w: Word) -> Result<Option<&Obj>, String> {
-        if w.tag != Word::CELL {
-            return Ok(None);
-        }
-        match &self.cells[w.bits as usize].obj {
-            Some(o) => Ok(Some(o)),
-            None => Err(format!(
-                "runtime: cell {} is used after it was freed",
-                w.bits
-            )),
-        }
+        obj_in(&self.cells, w)
     }
 
     /// Whether `w` is a function: a closure, a primitive or a lookup port.
@@ -281,32 +391,53 @@ impl Heap {
 
     /// The kernel value of data word `w`; a string's rope is flattened.
     pub fn value(&mut self, w: Word) -> Result<Value, String> {
-        Ok(match w.tag {
+        let mut stack = Vec::new();
+        let mut made = self.read(w, &mut stack)?;
+        loop {
+            let Some(top) = stack.last_mut() else {
+                return Ok(made.expect("an empty stack follows a finished value"));
+            };
+            top.parts.extend(made.take());
+            let parts = self.obj(top.w)?.map_or(&[][..], Obj::parts);
+            match parts.get(top.parts.len()) {
+                Some(&part) => made = self.read(part, &mut stack)?,
+                None => {
+                    let r = stack.pop().expect("the stack has a top");
+                    made = Some(match self.obj(r.w)? {
+                        Some(Obj::Atom { name, fields, .. }) => Value::Atom(Atom {
+                            name: name.clone(),
+                            fields: fields.clone(),
+                            args: r.parts.into(),
+                        }),
+                        _ => Value::Tuple(r.parts.into()),
+                    });
+                }
+            }
+        }
+    }
+
+    /// The value of `w` when it has no parts to read; otherwise enters it on `stack`.
+    fn read(&mut self, w: Word, stack: &mut Vec<Reading>) -> Result<Option<Value>, String> {
+        Ok(Some(match w.tag {
             Word::INT => Value::Int(w.bits),
             Word::FLOAT => Value::float(f64::from_bits(w.bits as u64)),
             Word::BOOL => Value::Bool(w.bits != 0),
             Word::VAL => self.vals[w.bits as usize].clone(),
-            Word::CELL => match self.obj(w)?.cloned() {
+            Word::CELL => match obj_in(&self.cells, w)? {
                 Some(Obj::Str(r)) => Value::Str(r.flat(&mut self.stats.copied).into()),
-                Some(Obj::Tuple(xs)) => Value::Tuple(
-                    xs.iter()
-                        .map(|x| self.value(*x))
-                        .collect::<Result<_, _>>()?,
-                ),
-                Some(Obj::Atom { name, fields, args }) => Value::Atom(Atom {
-                    name,
-                    fields,
-                    args: args
-                        .iter()
-                        .map(|x| self.value(*x))
-                        .collect::<Result<_, _>>()?,
-                }),
-                Some(Obj::Data(v)) => v,
+                Some(Obj::Tuple(_) | Obj::Atom { .. }) => {
+                    stack.push(Reading {
+                        w,
+                        parts: Vec::new(),
+                    });
+                    return Ok(None);
+                }
+                Some(Obj::Data(v)) => v.clone(),
                 Some(Obj::Clo { .. }) => return Err("runtime: a closure is not data".into()),
-                None => unreachable!("obj checks the cell is live"),
+                None => unreachable!("obj_in checks the cell is live"),
             },
             t => return Err(format!("runtime: a word tagged {t} is not data")),
-        })
+        }))
     }
 
     /// Adds a reference to `w`, when it is a cell.
@@ -376,6 +507,27 @@ impl Heap {
     /// moving out of it and the others dropped; a shared cell gives each kept part a
     /// reference and loses one.
     pub fn release(&mut self, w: Word, kept: &[&[usize]]) -> Result<(), String> {
+        let mut todo = Vec::new();
+        self.release_one(w, kept, &mut todo)?;
+        // An empty list of paths on the stack is a part nothing keeps.
+        while let Some((part, sub)) = todo.pop() {
+            if sub.is_empty() {
+                self.dec(part)?;
+            } else {
+                self.release_one(part, &sub, &mut todo)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One cell of a fused release: the parts of a cell it frees go on `todo`, the first on top,
+    /// each with the paths kept in it.
+    fn release_one<'k>(
+        &mut self,
+        w: Word,
+        kept: &[&'k [usize]],
+        todo: &mut Vec<(Word, Vec<&'k [usize]>)>,
+    ) -> Result<(), String> {
         if w.tag != Word::CELL || kept.iter().any(|p| p.is_empty()) {
             return Ok(());
         }
@@ -386,14 +538,9 @@ impl Heap {
             let obj = c.obj.take().expect("checked live");
             self.stats.frees += 1;
             self.live -= 1;
-            for (i, part) in obj.take_parts().into_iter().enumerate() {
-                let sub: Vec<&[usize]> =
-                    kept.iter().filter(|p| p[0] == i).map(|p| &p[1..]).collect();
-                if sub.is_empty() {
-                    self.dec(part)?;
-                } else {
-                    self.release(part, &sub)?;
-                }
+            for (i, part) in obj.take_parts().into_iter().enumerate().rev() {
+                let sub = kept.iter().filter(|p| p[0] == i).map(|p| &p[1..]).collect();
+                todo.push((part, sub));
             }
         } else {
             for p in kept {
@@ -462,72 +609,112 @@ impl Heap {
         at: &mut Vec<usize>,
         out: &mut Vec<(Word, Vec<usize>)>,
     ) -> Result<bool, String> {
+        let start = at.len();
+        let r = self.match_all(p, w, at, out);
+        at.truncate(start);
+        r
+    }
+
+    /// [`Heap::matches`], leaving `at` where it stopped. Patterns nest as deep as the source
+    /// writes them, so the patterns in progress are on a stack, each with its next part.
+    fn match_all(
+        &mut self,
+        p: &Pattern,
+        w: Word,
+        at: &mut Vec<usize>,
+        out: &mut Vec<(Word, Vec<usize>)>,
+    ) -> Result<bool, String> {
+        let mut stack: Vec<Matching<'_>> = Vec::new();
+        let (mut p, mut w) = (p, w);
+        loop {
+            let mut ended = match self.match_shallow(p, w, at, out)? {
+                Shallow::No => return Ok(false),
+                Shallow::Yes => true,
+                Shallow::Below(m) => {
+                    stack.push(m);
+                    false
+                }
+            };
+            loop {
+                if ended {
+                    // A pattern that has ended and is not the whole leaves its part.
+                    if stack.is_empty() {
+                        return Ok(true);
+                    }
+                    at.pop();
+                }
+                match stack.last_mut().expect("a pattern is in progress").next() {
+                    Next::Part(i, q, x) => {
+                        at.push(i);
+                        (p, w) = (q, x);
+                        break;
+                    }
+                    Next::Missing => return Ok(false),
+                    Next::End => {
+                        stack.pop();
+                        ended = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Reads `w` against `p`, leaving any sub-patterns to [`Heap::match_all`].
+    fn match_shallow<'p>(
+        &mut self,
+        p: &'p Pattern,
+        w: Word,
+        at: &[usize],
+        out: &mut Vec<(Word, Vec<usize>)>,
+    ) -> Result<Shallow<'p>, String> {
+        let yes = |m: bool| if m { Shallow::Yes } else { Shallow::No };
         if self.is_function(w)? {
             return Ok(match p {
-                Pattern::Wild => true,
+                Pattern::Wild => Shallow::Yes,
                 Pattern::Bind(_) => {
-                    out.push((w, at.clone()));
-                    true
+                    out.push((w, at.to_vec()));
+                    Shallow::Yes
                 }
-                Pattern::Is(t) => t.functions(),
-                _ => false,
+                Pattern::Is(t) => yes(t.functions()),
+                _ => Shallow::No,
             });
         }
-        let mut sub = |h: &mut Heap, i: usize, q: &Pattern, x: Word, out: &mut Vec<_>| {
-            at.push(i);
-            let m = h.matches(q, x, at, out);
-            at.pop();
-            m
+        let below = |subs, words| {
+            Shallow::Below(Matching {
+                subs,
+                words,
+                next: 0,
+            })
         };
         Ok(match p {
-            Pattern::Wild => true,
+            Pattern::Wild => Shallow::Yes,
             Pattern::Bind(_) => {
-                out.push((w, at.clone()));
-                true
+                out.push((w, at.to_vec()));
+                Shallow::Yes
             }
-            Pattern::Lit(l) => self.value(w)? == *l,
-            Pattern::AnyAtom => matches!(self.parts(w)?, Parts::Atom(..)),
+            Pattern::Lit(l) => yes(self.value(w)? == *l),
+            Pattern::AnyAtom => yes(matches!(self.parts(w)?, Parts::Atom(..))),
             Pattern::Is(t) => {
                 let v = self.value(w)?;
-                t.contains(&v)
+                yes(t.contains(&v))
             }
             Pattern::Atom(name, ps) => match self.parts(w)? {
                 Parts::Atom(n, fields, args)
                     if n == *name && fields.is_empty() && ps.len() == args.len() =>
                 {
-                    for (i, (q, x)) in ps.iter().zip(args).enumerate() {
-                        if !sub(self, i, q, x, out)? {
-                            return Ok(false);
-                        }
-                    }
-                    true
+                    below(Subs::Items(ps), args)
                 }
-                _ => false,
+                _ => Shallow::No,
             },
             Pattern::Fields(name, fs) => match self.parts(w)? {
                 Parts::Atom(n, fields, args) if n == *name && !fields.is_empty() => {
-                    for (f, q) in fs {
-                        let Ok(i) = fields.binary_search(f) else {
-                            return Ok(false);
-                        };
-                        if !sub(self, i, q, args[i], out)? {
-                            return Ok(false);
-                        }
-                    }
-                    true
+                    below(Subs::Fields(fs, fields), args)
                 }
-                _ => false,
+                _ => Shallow::No,
             },
             Pattern::Tuple(ps) => match self.parts(w)? {
-                Parts::Tuple(xs) if xs.len() == ps.len() => {
-                    for (i, (q, x)) in ps.iter().zip(xs).enumerate() {
-                        if !sub(self, i, q, x, out)? {
-                            return Ok(false);
-                        }
-                    }
-                    true
-                }
-                _ => false,
+                Parts::Tuple(xs) if xs.len() == ps.len() => below(Subs::Items(ps), xs),
+                _ => Shallow::No,
             },
         })
     }
