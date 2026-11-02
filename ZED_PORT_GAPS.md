@@ -585,3 +585,4 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Rc<RefCell<...>>` cells shared by frames | `Definedness::{defined, busy, stalled}`, `Drops::envs` | Mutation, identity | State threaded through the machine, keyed by a fix's id (gaps 1 and 3 of the T13 catalog) |
 | `impl Drop for Closure`: environments put on a list so that their release does not recurse | `Drops`, `Closure` | None | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `std::mem::take`, `std::mem::replace` of a field in place | `Evaluator::run`, the fix frames | Mutation | A state receiver |
+| `imbl::HashMap` and `imbl::OrdMap`, persistent maps sharing structure | `preimage::Scope`, `preimage::Sets` | None | Zed's maps are values: an update makes a new map, and the runtime must share its structure to keep the update at `O(log n)` |

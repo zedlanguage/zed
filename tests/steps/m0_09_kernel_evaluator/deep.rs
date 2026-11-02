@@ -281,6 +281,7 @@ fn a_list_as_deep_as_the_minimum_is_built_and_dropped() {
             v = items.pop().unwrap();
         }
         assert_eq!((head, v), (0, Value::Int(0)));
+        drop(eval(&linked_list(n)).unwrap());
     });
 }
 

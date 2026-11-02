@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
-use zedc::store::preimage::{Classes, Demand, exact_preimage, preimage};
+use zedc::store::interval::{End::Fin, IntervalSet};
+use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage};
 
 use super::{doms, shown};
 
@@ -250,4 +251,99 @@ fn the_linear_translation_of_calls_scales() {
             },
         );
     }
+}
+
+/// `x1 = max(i, i); x2 = max(x1, i); …; xk >= 0`: each name reads the input past every other.
+fn reading_the_input(k: usize) -> Term {
+    let mut body = prim(Prim::Ge, var(&format!("x{k}")), int(0));
+    for j in (1..=k).rev() {
+        let prev = if j == 1 {
+            "i".to_string()
+        } else {
+            format!("x{}", j - 1)
+        };
+        let e = prim(Prim::Max, var(&prev), var("i"));
+        body = Term::Let(format!("x{j}").into(), Arc::new(e), Arc::new(body));
+    }
+    body
+}
+
+/// `x0 >= 0 && x1 >= 1 && …`, an input for each test.
+fn tests_of_many_inputs(k: usize) -> Term {
+    (1..k as i64).fold(prim(Prim::Ge, var("x0"), int(0)), |a, j| {
+        prim(Prim::And, a, prim(Prim::Ge, var(&format!("x{j}")), int(j)))
+    })
+}
+
+fn many_inputs(k: usize) -> Domains {
+    (0..k)
+        .map(|j| {
+            (
+                format!("x{j}").into(),
+                IntervalSet::range(Fin(-50), Fin(5000)),
+            )
+        })
+        .collect()
+}
+
+/// The sizes the rule of low complexity is about: a summary reads each name in `O(log n)`, and
+/// its result and context take the space of what its body reads, whatever encloses it. Sizes
+/// 6 and 48 did not show a growth of `n^1.8` that sizes 48 and 384 do. The stack is what the
+/// recursion of the transfer needs until T2-mid; the terms are built before the timing.
+fn long(what: &'static str, make: fn(usize) -> Term, ds: fn(usize) -> Domains) {
+    let measure = move || {
+        let (n, large) = (48, 48 * scaling::FACTOR);
+        let (a, b) = ((make(n), ds(n)), (make(large), ds(large)));
+        scaling::check(what, n, |k| {
+            let (t, d) = if k == n { &a } else { &b };
+            preimage(t, d, &Demand::Bool(true));
+        });
+    };
+    let thread = std::thread::Builder::new().stack_size(1 << 28);
+    thread.spawn(measure).unwrap().join().unwrap();
+}
+
+fn one(_: usize) -> Domains {
+    doms(&[("i", Some(-50), Some(50))])
+}
+
+#[test]
+fn long_calls_apart() {
+    long(
+        "functions each calling the one before twice, apart",
+        calls_apart,
+        one,
+    );
+}
+
+#[test]
+fn long_calls_alike() {
+    long(
+        "functions each calling the one before twice, alike",
+        calls_alike,
+        one,
+    );
+}
+
+#[test]
+fn long_doubling() {
+    long("a chain of `let`s, each name read twice", doubling, one);
+}
+
+#[test]
+fn long_reading_the_input() {
+    long(
+        "a chain of `let`s, each reading the input",
+        reading_the_input,
+        one,
+    );
+}
+
+#[test]
+fn long_tests_of_many_inputs() {
+    long(
+        "a conjunction of tests of many inputs",
+        tests_of_many_inputs,
+        many_inputs,
+    );
 }

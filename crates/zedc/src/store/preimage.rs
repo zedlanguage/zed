@@ -179,13 +179,16 @@ pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
 }
 
 fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
-    let root = Rc::new(Scope::Empty);
+    let root = Env::default();
     let marks = landmarks(term, inputs, demand);
     let cx = Cx::new(inputs, marks.clone());
     interval::rounded();
-    let mut r = cx.back(term, &root, demand);
-    // An exact backward transfer through a rounded end may keep points that fail.
-    r.exact &= !interval::rounded();
+    let r = cx.back(term, &root, demand);
+    let mut r = Whole {
+        dom: cx.whole(&r),
+        // An exact backward transfer through a rounded end may keep points that fail.
+        exact: r.exact && !interval::rounded(),
+    };
     let mut stops = cx.shared.stops.take();
     let mut enumerated = false;
     if !r.exact && !is_empty(&r.dom) {
@@ -201,7 +204,7 @@ fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
         && let Some((dom, exact, rel)) = linear(term, &r.dom, demand)
     {
         let exact = exact && !interval::rounded();
-        r = Res { dom, exact };
+        r = Whole { dom, exact };
         relation = (!exact).then_some(rel);
     }
     if !r.exact
@@ -236,15 +239,15 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         defs: Vec::new(),
         products,
     };
-    let root = Rc::new(Scope::Empty);
+    let root = Env::default();
     let mut out = Vec::new();
     for t in terms {
         // An auxiliary variable belongs to the relation of the term that made it.
-        cx.memo.lin.borrow_mut().clear();
-        cx.memo.formula.borrow_mut().clear();
-        cx.memo.lin_calls.borrow_mut().clear();
-        cx.memo.formula_calls.borrow_mut().clear();
-        cx.memo.log.borrow_mut().clear();
+        cx.shared.memo.lin.borrow_mut().clear();
+        cx.shared.memo.formula.borrow_mut().clear();
+        cx.shared.memo.lin_calls.borrow_mut().clear();
+        cx.shared.memo.formula_calls.borrow_mut().clear();
+        cx.shared.memo.log.borrow_mut().clear();
         let first = tr.defs.len();
         let body = cx.formula(&mut tr, t, &root)?;
         out.push(Relation {
@@ -264,7 +267,7 @@ fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool,
         defs: Vec::new(),
         products: false,
     };
-    let root = Rc::new(Scope::Empty);
+    let root = Env::default();
     let body = match demand {
         Demand::Bool(w) => {
             let f = cx.formula(&mut tr, term, &root)?;
@@ -451,8 +454,11 @@ struct Shared {
     fwds: RefCell<HashMap<Summary, Fwd>>,
     backs: RefCell<HashMap<(Summary, Demand), Res>>,
     scanned: RefCell<HashSet<Summary>>,
-    /// The scopes the summaries are keyed by, kept alive so that no key is reused.
+    /// The scopes the summaries and the memo are keyed by, kept alive so that no key is reused.
     keep: RefCell<Vec<Env>>,
+    /// Whether an input's domain is empty, so that no point exists.
+    void: bool,
+    memo: Memo,
 }
 
 fn is_empty(d: &Domains) -> bool {
@@ -460,11 +466,9 @@ fn is_empty(d: &Domains) -> bool {
 }
 
 /// A scope: the names bound by `let` and by calls, each to a term and the scope it is read
-/// in.
-enum Scope {
-    Empty,
-    Bind(Arc<str>, Term, Env, Env),
-}
+/// in. It is persistent, so a name is found in `O(log n)` however many names are bound.
+#[derive(Default)]
+struct Scope(imbl::HashMap<Arc<str>, Rc<(Term, Env)>>);
 
 type Env = Rc<Scope>;
 
@@ -477,28 +481,30 @@ enum Callee<'e> {
 }
 
 fn bind(parent: &Env, name: &Arc<str>, term: &Term, at: &Env) -> Env {
-    Rc::new(Scope::Bind(
-        name.clone(),
-        term.clone(),
-        at.clone(),
-        parent.clone(),
-    ))
+    let binding = Rc::new((term.clone(), at.clone()));
+    Rc::new(Scope(parent.0.update(name.clone(), binding)))
 }
 
 fn lookup<'a>(env: &'a Env, name: &str) -> Option<(&'a Term, &'a Env)> {
-    let mut s = env;
-    while let Scope::Bind(n, t, at, parent) = &**s {
-        if &**n == name {
-            return Some((t, at));
-        }
-        s = parent;
-    }
-    None
+    env.0.get(name).map(|b| (&b.0, &b.1))
 }
 
-/// A result before the final checks: the box and whether it is exact.
+/// An interval per name, persistent: a copy takes `O(1)` and a change `O(log n)`.
+type Sets = imbl::OrdMap<Arc<str>, Rc<IntervalSet>>;
+
+/// A result of the transfer: the box, by the inputs it narrows, so that a result takes the
+/// space of what the term reads and not of every enclosing parameter. A name not in `dom` has
+/// the whole of its domain.
 #[derive(Clone)]
 struct Res {
+    dom: Sets,
+    /// Whether the box holds no point.
+    none: bool,
+    exact: bool,
+}
+
+/// A box over every input, after the transfer.
+struct Whole {
     dom: Domains,
     exact: bool,
 }
@@ -581,9 +587,11 @@ fn key(t: &Term, env: &Env) -> Key {
 }
 
 /// What the transfer has computed, for each pair of a term and a scope, so that a name bound
-/// once is followed once however often it is read (the rule of low complexity, Part G). Every
-/// scope and term the transfer makes is kept here for the life of the context, so that no
-/// address in a key is used again.
+/// once is followed once however often it is read (the rule of low complexity, Part G), from
+/// whichever summary it is read. The pair fixes the value: the inputs of the transfer are the
+/// same in every context, and a parameter is read through the scope that binds it, which is
+/// made once for each summary. Every scope and term the transfer makes is kept for the life of
+/// the transfer, so that no address in a key is used again.
 #[derive(Default)]
 struct Memo {
     /// The scopes of `let` bodies, call bodies and lambda bodies, by the term that makes them.
@@ -621,20 +629,22 @@ enum Logged {
 }
 
 struct Cx {
-    inputs: Domains,
+    inputs: Sets,
     shared: Rc<Shared>,
     /// The lowest place on the stack of lambdas being read whose lambda a call stopped at,
     /// since the result being computed began. A result is remembered only when that place is
     /// not below the stack's height when it began: otherwise it depends on where it was
     /// reached.
     cut: Cell<usize>,
-    memo: Memo,
 }
 
 impl Cx {
     fn new(inputs: &Domains, marks: Landmarks) -> Self {
         Cx {
-            inputs: inputs.clone(),
+            inputs: inputs
+                .iter()
+                .map(|(k, v)| (k.clone(), Rc::new(v.clone())))
+                .collect(),
             shared: Rc::new(Shared {
                 stops: RefCell::new(Vec::new()),
                 seen: RefCell::new(HashSet::new()),
@@ -644,9 +654,10 @@ impl Cx {
                 backs: RefCell::new(HashMap::new()),
                 scanned: RefCell::new(HashSet::new()),
                 keep: RefCell::new(Vec::new()),
+                void: is_empty(inputs),
+                memo: Memo::default(),
             }),
             cut: Cell::new(usize::MAX),
-            memo: Memo::default(),
         }
     }
 
@@ -684,12 +695,14 @@ impl Cx {
         args: &[Term],
         env: &Env,
     ) -> Option<Call> {
-        let empty = Rc::new(Scope::Empty);
+        let empty = Env::default();
         let (mut sig, mut binds, mut params) = (Vec::new(), Vec::new(), Vec::new());
         for (i, (p, a)) in ps.iter().zip(args).enumerate() {
             if self.mentions(a, env)? {
                 let f = self.fwd(a, env);
-                if !f.is_int() {
+                // An argument with no value has no parameter: a context's points are those
+                // of the transfer.
+                if !f.is_int() || f.ints.is_empty() {
                     return None;
                 }
                 let dom = f.ints.snap(&self.shared.marks);
@@ -735,17 +748,17 @@ impl Cx {
     fn open(&self, call: &Call, lam: &Env) -> (Cx, Env) {
         let mut inputs = self.inputs.clone();
         for (_, n, d) in &call.params {
-            inputs.insert(n.clone(), d.clone());
+            inputs.insert(n.clone(), Rc::new(d.clone()));
         }
         let mut e = lam.clone();
         for (p, t, at) in &call.binds {
             e = bind(&e, p, t, at);
         }
+        self.shared.keep.borrow_mut().push(e.clone());
         let cx = Cx {
             inputs,
             shared: self.shared.clone(),
             cut: Cell::new(usize::MAX),
-            memo: Memo::default(),
         };
         (cx, e)
     }
@@ -806,30 +819,28 @@ impl Cx {
             Some(r) => r,
             None => {
                 let (sub, e) = self.open(&call, lam);
-                let mut r = sub.back_at(body, &e, &d);
-                r.dom.retain(|k, z| *z != sub.inputs[k]);
+                let r = sub.back_at(body, &e, &d);
                 if self.closes(&sub, place) {
                     self.shared.backs.borrow_mut().insert(k, r.clone());
                 }
                 r
             }
         };
-        if is_empty(&r.dom) {
+        if r.none {
             return self.none();
         }
-        let mut out = Res {
-            dom: self
-                .inputs
-                .iter()
-                .map(|(k, z)| (k.clone(), r.dom.get(k).unwrap_or(z).clone()))
-                .collect(),
-            exact: r.exact && same,
-        };
+        let mut out = self.all();
+        out.exact = r.exact && same;
+        for (k, z) in &r.dom {
+            if self.inputs.get(k).is_some_and(|w| w != z) {
+                out.dom.insert(k.clone(), z.clone());
+            }
+        }
         for (i, n, dom) in &call.params {
             if let Some(z) = r.dom.get(n)
                 && !dom.is_subset(z)
             {
-                let ra = self.back_at(&args[*i], env, &Demand::Ints(z.clone()));
+                let ra = self.back_at(&args[*i], env, &Demand::Ints((**z).clone()));
                 out = self.meet(out, ra);
             }
         }
@@ -870,20 +881,22 @@ impl Cx {
         let known = map.borrow().contains_key(&k);
         let v = self.cached(map, k.clone(), f);
         if !known && map.borrow().contains_key(&k) {
-            self.memo.log.borrow_mut().push(logged(k));
+            self.shared.memo.log.borrow_mut().push(logged(k));
         }
         v
     }
 
     /// Removes the translation's entries made after the first `mark`.
     fn forget(&self, mark: usize) {
-        let undone: Vec<Logged> = self.memo.log.borrow_mut().drain(mark..).collect();
+        let undone: Vec<Logged> = self.shared.memo.log.borrow_mut().drain(mark..).collect();
         for e in undone {
             match e {
-                Logged::Lin(k) => _ = self.memo.lin.borrow_mut().remove(&k),
-                Logged::Formula(k) => _ = self.memo.formula.borrow_mut().remove(&k),
-                Logged::LinCall(k) => _ = self.memo.lin_calls.borrow_mut().remove(&k),
-                Logged::FormulaCall(k) => _ = self.memo.formula_calls.borrow_mut().remove(&k),
+                Logged::Lin(k) => _ = self.shared.memo.lin.borrow_mut().remove(&k),
+                Logged::Formula(k) => _ = self.shared.memo.formula.borrow_mut().remove(&k),
+                Logged::LinCall(k) => _ = self.shared.memo.lin_calls.borrow_mut().remove(&k),
+                Logged::FormulaCall(k) => {
+                    _ = self.shared.memo.formula_calls.borrow_mut().remove(&k)
+                }
             }
         }
     }
@@ -898,7 +911,7 @@ impl Cx {
         args: &[Term],
         env: &Env,
     ) -> Option<CallKey> {
-        let (mark, logged) = (tr.defs.len(), self.memo.log.borrow().len());
+        let (mark, logged) = (tr.defs.len(), self.shared.memo.log.borrow().len());
         let lins: Option<Vec<Lin>> = args.iter().map(|a| self.lin(tr, a, env)).collect();
         if lins.is_none() {
             tr.defs.truncate(mark);
@@ -909,7 +922,8 @@ impl Cx {
 
     /// The scope of a `let` body, made once for each `let` and scope.
     fn let_env(&self, t: &Term, n: &Arc<str>, e: &Term, env: &Env) -> Env {
-        self.memo
+        self.shared
+            .memo
             .envs
             .borrow_mut()
             .entry(key(t, env))
@@ -919,7 +933,8 @@ impl Cx {
 
     /// The primitive application a call `t` of a prelude word stands for.
     fn call_prim(&self, t: &Term, env: &Env, p: Prim, args: &[Term]) -> Rc<Term> {
-        self.memo
+        self.shared
+            .memo
             .calls
             .borrow_mut()
             .entry(key(t, env))
@@ -929,20 +944,45 @@ impl Cx {
 
     fn all(&self) -> Res {
         Res {
-            dom: self.inputs.clone(),
+            dom: Sets::new(),
+            none: false,
             exact: true,
         }
     }
 
     fn none(&self) -> Res {
         Res {
-            dom: self
-                .inputs
-                .keys()
-                .map(|k| (k.clone(), IntervalSet::empty()))
-                .collect(),
-            exact: true,
+            none: true,
+            ..self.all()
         }
+    }
+
+    /// The whole box, which is not known to be exact.
+    fn unknown(&self) -> Res {
+        Res {
+            exact: false,
+            ..self.all()
+        }
+    }
+
+    /// Whether the box holds no point.
+    fn empty(&self, r: &Res) -> bool {
+        r.none || self.shared.void
+    }
+
+    /// The box over every input. A box that narrows a name of an empty domain is empty in
+    /// every name, as a box found empty is; one that narrows nothing keeps the domains.
+    fn whole(&self, r: &Res) -> Domains {
+        let none = r.none || (self.shared.void && !r.dom.is_empty());
+        let of = |k: &Arc<str>, z: &Rc<IntervalSet>| {
+            let z = match r.dom.get(k) {
+                _ if none => IntervalSet::empty(),
+                Some(n) => (**n).clone(),
+                None => (**z).clone(),
+            };
+            (k.clone(), z)
+        };
+        self.inputs.iter().map(|(k, z)| of(k, z)).collect()
     }
 
     fn stop(&self, kind: StopKind, t: &Term) -> Res {
@@ -953,45 +993,74 @@ impl Cx {
         if self.shared.seen.borrow_mut().insert(s.to_string()) {
             self.shared.stops.borrow_mut().push(s);
         }
-        Res {
-            dom: self.inputs.clone(),
-            exact: false,
-        }
+        self.unknown()
     }
 
+    /// The meet, in time of the smaller box's names.
     fn meet(&self, a: Res, b: Res) -> Res {
-        let dom: Domains = a
-            .dom
-            .iter()
-            .map(|(k, v)| (k.clone(), v.meet(&b.dom[k])))
-            .collect();
-        if is_empty(&dom) {
+        if self.empty(&a) || self.empty(&b) {
             return self.none();
+        }
+        let exact = a.exact && b.exact;
+        let (mut dom, small) = if a.dom.len() < b.dom.len() {
+            (b.dom, a.dom)
+        } else {
+            (a.dom, b.dom)
+        };
+        for (k, v) in &small {
+            let met = match dom.get(k) {
+                Some(w) => Rc::new(v.meet(w)),
+                None => v.clone(),
+            };
+            if met.is_empty() {
+                return self.none();
+            }
+            dom.insert(k.clone(), met);
         }
         Res {
             dom,
-            exact: a.exact && b.exact,
+            none: false,
+            exact,
         }
     }
 
     /// The union, as the per-input join of the two boxes: exact when both are and the union
-    /// is itself a box.
+    /// is itself a box. A name in only one box joins to its whole domain, so the time is that
+    /// of the smaller box's names.
     fn union(&self, a: Res, b: Res) -> Res {
-        if is_empty(&a.dom) {
+        if self.empty(&a) {
             return b;
         }
-        if is_empty(&b.dom) {
+        if self.empty(&b) {
             return a;
         }
-        let differ = a.dom.iter().filter(|(k, v)| **v != b.dom[*k]).count();
-        let within = |x: &Domains, y: &Domains| x.iter().all(|(k, v)| v.is_subset(&y[k]));
-        let boxed = differ <= 1 || within(&a.dom, &b.dom) || within(&b.dom, &a.dom);
+        let (small, large) = if a.dom.len() < b.dom.len() {
+            (&a.dom, &b.dom)
+        } else {
+            (&b.dom, &a.dom)
+        };
+        let mut dom = Sets::new();
+        let (mut common, mut changed) = (0, 0);
+        let (mut small_within, mut large_within) = (true, true);
+        for (k, v) in small {
+            let Some(w) = large.get(k) else { continue };
+            common += 1;
+            changed += usize::from(v != w);
+            small_within &= v.is_subset(w);
+            large_within &= w.is_subset(v);
+            let joined = v.join(w);
+            if self.inputs.get(k).is_none_or(|z| **z != joined) {
+                dom.insert(k.clone(), Rc::new(joined));
+            }
+        }
+        // A box within another narrows every name that one narrows.
+        small_within &= common == large.len();
+        large_within &= common == small.len();
+        let differ = small.len() + large.len() - 2 * common + changed;
+        let boxed = differ <= 1 || small_within || large_within;
         Res {
-            dom: a
-                .dom
-                .iter()
-                .map(|(k, v)| (k.clone(), v.join(&b.dom[k])))
-                .collect(),
+            dom,
+            none: false,
             exact: a.exact && b.exact && boxed,
         }
     }
@@ -999,7 +1068,7 @@ impl Cx {
     /// The input names the term reads, or `None` when it reads a term the catalog does not
     /// follow.
     fn mentions(&self, t: &Term, env: &Env) -> Option<bool> {
-        self.cached(&self.memo.mentions, key(t, env), || {
+        self.cached(&self.shared.memo.mentions, key(t, env), || {
             self.mentions_at(t, env)
         })
     }
@@ -1025,6 +1094,7 @@ impl Cx {
             Term::Lam(ps, b) => {
                 // A parameter is not an input, even where it shadows one.
                 let inner = self
+                    .shared
                     .memo
                     .envs
                     .borrow_mut()
@@ -1071,13 +1141,13 @@ impl Cx {
             Term::Let(n, e, b) => {
                 // The body reads `n` as the closed bound term.
                 let e = c(e, env)?;
-                let inner = bind(env, n, &e, &Rc::new(Scope::Empty));
+                let inner = bind(env, n, &e, &Env::default());
                 c(b, &inner)?
             }
             Term::Lam(ps, b) => {
                 let mut inner = env.clone();
                 for p in ps {
-                    inner = bind(&inner, p, &Term::Var(p.clone()), &Rc::new(Scope::Empty));
+                    inner = bind(&inner, p, &Term::Var(p.clone()), &Env::default());
                 }
                 Term::Lam(ps.clone(), Arc::new(c(b, &inner)?))
             }
@@ -1099,7 +1169,7 @@ impl Cx {
 
     /// The value of a term that reads no input, when the evaluator can compute it.
     fn constant(&self, t: &Term, env: &Env) -> Option<Value> {
-        self.cached(&self.memo.constant, key(t, env), || {
+        self.cached(&self.shared.memo.constant, key(t, env), || {
             if self.mentions(t, env)? {
                 return None;
             }
@@ -1156,7 +1226,8 @@ impl Cx {
     /// The scope of a call's body: the lambda's scope with each parameter bound to its
     /// argument, read in the caller's scope.
     fn call_env(&self, t: &Term, ps: &[Arc<str>], args: &[Term], lam: &Env, caller: &Env) -> Env {
-        self.memo
+        self.shared
+            .memo
             .envs
             .borrow_mut()
             .entry(key(t, caller))
@@ -1206,7 +1277,7 @@ impl Cx {
 
     /// The linear term an integer term states over the inputs.
     fn lin(&self, tr: &mut Tr, t: &Term, env: &Env) -> Option<Lin> {
-        self.translated(&self.memo.lin, key(t, env), Logged::Lin, || {
+        self.translated(&self.shared.memo.lin, key(t, env), Logged::Lin, || {
             self.lin_at(tr, t, env)
         })
     }
@@ -1238,7 +1309,9 @@ impl Cx {
                     };
                     match self.call_key(tr, body, lam, args, env) {
                         Some(k) => {
-                            self.translated(&self.memo.lin_calls, k, Logged::LinCall, || read(tr))
+                            self.translated(&self.shared.memo.lin_calls, k, Logged::LinCall, || {
+                                read(tr)
+                            })
                         }
                         None => read(tr),
                     }
@@ -1336,9 +1409,12 @@ impl Cx {
 
     /// The formula a test states over the inputs.
     fn formula(&self, tr: &mut Tr, t: &Term, env: &Env) -> Option<Formula> {
-        self.translated(&self.memo.formula, key(t, env), Logged::Formula, || {
-            self.formula_at(tr, t, env)
-        })
+        self.translated(
+            &self.shared.memo.formula,
+            key(t, env),
+            Logged::Formula,
+            || self.formula_at(tr, t, env),
+        )
     }
 
     fn formula_at(&self, tr: &mut Tr, t: &Term, env: &Env) -> Option<Formula> {
@@ -1366,7 +1442,7 @@ impl Cx {
                     };
                     match self.call_key(tr, body, lam, args, env) {
                         Some(k) => self.translated(
-                            &self.memo.formula_calls,
+                            &self.shared.memo.formula_calls,
                             k,
                             Logged::FormulaCall,
                             || read(tr),
@@ -1399,7 +1475,7 @@ impl Cx {
                     })
                 }
                 Lt | Le | Gt | Ge | Eq | Ne => {
-                    let (mark, logged) = (tr.defs.len(), self.memo.log.borrow().len());
+                    let (mark, logged) = (tr.defs.len(), self.shared.memo.log.borrow().len());
                     if let (Some(a), Some(b)) =
                         (self.lin(tr, &args[0], env), self.lin(tr, &args[1], env))
                     {
@@ -1444,7 +1520,7 @@ impl Cx {
     // ---- Forward transfer -------------------------------------------------------------
 
     fn fwd(&self, t: &Term, env: &Env) -> Fwd {
-        self.cached(&self.memo.fwd, key(t, env), || self.fwd_at(t, env))
+        self.cached(&self.shared.memo.fwd, key(t, env), || self.fwd_at(t, env))
     }
 
     fn fwd_at(&self, t: &Term, env: &Env) -> Fwd {
@@ -1462,7 +1538,7 @@ impl Cx {
             Term::Var(x) => match lookup(env, x) {
                 Some((bt, benv)) => self.fwd(bt, &benv.clone()),
                 None => match self.inputs.get(x) {
-                    Some(dom) => Fwd::int(dom.clone()),
+                    Some(dom) => Fwd::int((**dom).clone()),
                     None => Fwd::top(),
                 },
             },
@@ -1587,7 +1663,7 @@ impl Cx {
     }
 
     fn back_at(&self, t: &Term, env: &Env, d: &Demand) -> Res {
-        self.cached(&self.memo.back, (key(t, env), d.clone()), || {
+        self.cached(&self.shared.memo.back, (key(t, env), d.clone()), || {
             self.back_in(t, env, d)
         })
     }
@@ -1609,9 +1685,15 @@ impl Cx {
                 Some((bt, benv)) => self.back_at(bt, &benv.clone(), d),
                 None => match (self.inputs.get(x), d) {
                     (Some(dom), Demand::Ints(z)) => {
+                        let met = dom.meet(z);
                         let mut r = self.all();
-                        r.dom.insert(x.clone(), dom.meet(z));
-                        if is_empty(&r.dom) { self.none() } else { r }
+                        if met.is_empty() {
+                            return self.none();
+                        }
+                        if met != **dom {
+                            r.dom.insert(x.clone(), Rc::new(met));
+                        }
+                        r
                     }
                     (Some(_), Demand::Bool(_)) => self.none(),
                     (None, _) => self.stop(StopKind::Foreign(x.clone()), t),
@@ -1636,11 +1718,7 @@ impl Cx {
             }
             Term::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
-                    let stopped = Res {
-                        dom: self.inputs.clone(),
-                        exact: false,
-                    };
-                    self.through(t, body, stopped, |place| {
+                    self.through(t, body, self.unknown(), |place| {
                         match self.summon(ps, body, lam, args, env) {
                             Some(call) => self.call_back(call, body, lam, args, env, d, place),
                             None => self.back_at(body, &self.call_env(t, ps, args, lam, env), d),
@@ -1673,10 +1751,7 @@ impl Cx {
             // terms below it may still stop.
             Len => {
                 self.scan(&args[0], env);
-                Res {
-                    dom: self.inputs.clone(),
-                    exact: false,
-                }
+                self.unknown()
             }
             Not | And | Or => match *d {
                 Demand::Ints(_) => self.none(),
@@ -1748,6 +1823,7 @@ impl Cx {
         if ints || (ordered_or_eq(&fa) && ordered_or_eq(&fb) && (p != Prim::Eq || one_int)) {
             // Between two integers, `a op b` is `a - b op 0`.
             let diff = self
+                .shared
                 .memo
                 .diffs
                 .borrow_mut()
@@ -1759,15 +1835,13 @@ impl Cx {
         // Operands of other kinds, or two that may both fail, which `==` finds equal.
         self.scan(a, env);
         self.scan(b, env);
-        let mut r = self.all();
-        r.exact = false;
-        r
+        self.unknown()
     }
 
     /// Reports the stops in a term whose value the transfer does not follow.
     fn scan(&self, t: &Term, env: &Env) {
         // A term is scanned once in each scope: its stops are reported the first time.
-        if !self.memo.scan.borrow_mut().insert(key(t, env)) {
+        if !self.shared.memo.scan.borrow_mut().insert(key(t, env)) {
             return;
         }
         if self.mentions(t, env) == Some(false) {
@@ -1931,7 +2005,7 @@ impl Cx {
         let ra = self.back_at(a, env, &Demand::Ints(za));
         let rb = self.back_at(b, env, &Demand::Ints(zb));
         let mut r = self.meet(ra, rb);
-        r.exact = is_empty(&r.dom);
+        r.exact = self.empty(&r);
         r
     }
 
@@ -1940,7 +2014,7 @@ impl Cx {
         let ra = self.back_at(a, env, &top);
         let rb = self.back_at(b, env, &top);
         let mut r = self.meet(ra, rb);
-        r.exact = is_empty(&r.dom);
+        r.exact = self.empty(&r);
         r
     }
 }
@@ -2185,7 +2259,7 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
 /// points number no more than the endpoints written (docs/thresholds.md, replacement 8). The
 /// term's form must show that it ends ([`stage::ends`]). A range is left to the catalog and the
 /// linear relation.
-fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Res> {
+fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
     if !stage::ends(term) {
         return None;
     }
@@ -2204,7 +2278,7 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Res> {
         return None;
     }
     if axes.iter().any(|(_, vs)| vs.is_empty()) {
-        return Some(Res {
+        return Some(Whole {
             dom: dom.clone(),
             exact: true,
         });
@@ -2598,7 +2672,7 @@ fn is_point(s: &IntervalSet) -> bool {
 }
 
 /// The enumeration of [`enumerate`] over `axes`, each point evaluated in turn.
-fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> Option<Res> {
+fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> Option<Whole> {
     let mut met: Vec<Vec<i64>> = vec![Vec::new(); axes.len()];
     let mut count: u64 = 0;
     let mut point = vec![0usize; axes.len()];
@@ -2643,7 +2717,7 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> 
                         vs.len() as u64
                     })
                     .product();
-                return Some(Res {
+                return Some(Whole {
                     exact: product == count,
                     dom,
                 });

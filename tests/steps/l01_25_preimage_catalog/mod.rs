@@ -13,6 +13,7 @@ mod entries;
 mod exact;
 mod random;
 mod scaling;
+mod scopes;
 mod stops;
 mod tonicity;
 
