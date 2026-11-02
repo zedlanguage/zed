@@ -215,3 +215,28 @@ Sum ::: ( 1 , 2 ) + 3 + 4 ::: (((( 1 , 2 )) + 3) + 4)
 Sum ::: ( 1 , 2 ) z + 3 ::: ERROR@5 '+' 'q' END
 Sum ::: ( 1 , 2 w ) + 3 q + 4 ::: ERROR@9 'q' END
 Sum ::: ( 1 , 2 ) + ::: ERROR@6 INT
+
+# The next two were found by random search against an algorithm where every entry is matched
+# again at each growth. In both, a rule at an earlier token read a marked entry at a later
+# token, so that rule must be marked too, or it keeps a match that a growth has made too short.
+
+grammar a rule that read a marked entry at a later token: an unmarked one rejects this input
+R0 = R2 (R1* | R0) L1
+  | ('a' | 'a') L1
+R1 = R2 R3 L1
+  | R0 L1
+R2 = R3* R3 L1
+  | (R5 R4)* L1
+R3 = 'a' head(R2) L1
+R4 = ('a' | HEAD) L1
+R5 = R0 R1 L1
+R1 ::: a a ::: ( (a ((a ) )))
+
+grammar a rule that read a marked entry at a later token: an unmarked one gives the wrong tree
+R0 = R5 'a' L1
+R1 = R4* L1
+R3 = ('c' | R0*) head((R3 'c')) L1
+  | R5 L1
+R4 = R1 R3 (R4 'c')? L1
+R5 = ('a' R1)* L1
+R1 ::: a c ::: ( (a (  ( ) c)))

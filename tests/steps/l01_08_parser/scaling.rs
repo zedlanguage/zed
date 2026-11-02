@@ -198,3 +198,28 @@ fn lookahead_over_a_left_recursive_rule_at_every_token_is_quadratic() {
         parse_with(&g, text, tokens, "S", TOP).unwrap();
     });
 }
+
+/// `Inner` and `Outer` are a cycle of two rules, so they stay marked, and so does each rule that
+/// reads them, at any token: `Items` here reads them after its first number. So `Items` is
+/// matched again at each growth of `Sum` at its own token, and walks its list. Quadratic, and no
+/// worse; a list over items that read no cycle is linear
+/// (`a_long_alternative_that_failed_...`). COMPLEXITY.md F35.
+#[test]
+fn a_cycle_of_two_rules_under_a_list_at_the_growing_token_is_quadratic() {
+    let g = Grammar::read(&["
+Sum = Attempt L1
+  | Sum '+' INT L1
+  | Items L1
+Attempt = Items 'q' L1
+Items = INT (',' Outer)* L1
+Outer = Inner L1
+Inner = Outer 'w' L1
+  | INT L1
+"])
+    .unwrap();
+    let inputs = inputs(250, |n| format!("1{}{}", ", 2".repeat(n), " + 3".repeat(n)));
+    check_order("a list of n numbers and n operators", 250, 2, |n| {
+        let (text, tokens) = &inputs[&n];
+        parse_with(&g, text, tokens, "Sum", TOP).unwrap();
+    });
+}

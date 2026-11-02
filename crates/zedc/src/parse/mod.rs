@@ -102,6 +102,8 @@ pub fn parse(text: &str, tokens: &[Token], start: &str, ring: u32) -> Result<Tre
 }
 
 /// Parses as [`parse`] does, by the grammar `g`, which needs a rule `Expr` for a string's holes.
+/// [`Tree::name`] and [`Tree::layer`] read [`grammar`], so they do not apply to this tree; a
+/// node's `rule` and `alt` index `g`.
 pub fn parse_with(
     g: &Grammar,
     text: &str,
@@ -211,9 +213,10 @@ struct Entry {
     /// How many rules were on that path at this token, this one included, when this match
     /// began.
     depth: u32,
-    /// The match read the seed of a rule further out, or another rule read its seed. It holds
-    /// only for that seed, or a later match may enter the cycle through that other rule. Any
-    /// other entry cannot go stale: all it read is indexed by token and no seed changed it.
+    /// The match read the seed of a rule further out, another rule read its seed, or it read
+    /// an entry with this mark, at this token or a later one. It holds only for those seeds,
+    /// or a later match may enter the cycle through that other rule. Any other entry cannot
+    /// go stale: no seed reached anything it read.
     reads_seed: bool,
     /// The token's version when `best` was last computed.
     version: usize,
@@ -232,7 +235,7 @@ struct Parser<'a> {
     /// How many rules are on the path of calls at each token.
     open: Vec<u32>,
     /// The least `depth` of a seed the current match read, or `u32::MAX` for none. 0 is
-    /// below every rule at the token.
+    /// below every rule, so it marks every rule on the path, at every token.
     low: u32,
     nodes: Vec<Node>,
     far: usize,
@@ -268,10 +271,8 @@ impl Parser<'_> {
             }
             Some(res) if !entry.reads_seed => res,
             Some(res) if entry.version == now => {
-                // Which seed it read is not kept, so it counts as the outermost at this token.
-                if self.open[pos] > 0 {
-                    self.low = 0;
-                }
+                // Which seed it read is not kept, so it counts as the outermost.
+                self.low = 0;
                 res
             }
             _ => {
@@ -288,8 +289,9 @@ impl Parser<'_> {
     /// Matches the rule of `key`, and while it is left-recursive there and its match gets
     /// longer, matches it again over that match. A match is never replaced by a shorter one.
     /// When this returns, this rule's own seed is finished, so its own reads do not mark the
-    /// entry. Any other read does, for good, since `best` may keep what that read gave, and
-    /// passes one rule outward, within the token.
+    /// entry. Any other read does, for good, since `best` may keep what that read gave. A
+    /// marked entry marks every rule on the path, at earlier tokens too, since each of them
+    /// may keep what it read from this one.
     fn grow(&mut self, key: (usize, usize, bool)) -> Res {
         let (r, pos, head) = key;
         self.open[pos] += 1;
@@ -307,11 +309,7 @@ impl Parser<'_> {
                 entry.version = self.versions[pos];
                 entry.reads_seed |= self.low < entry.depth;
                 self.open[pos] = entry.depth - 1;
-                self.low = if entry.reads_seed && entry.depth > 1 {
-                    caller.min(self.low.min(entry.depth - 1).saturating_sub(1))
-                } else {
-                    caller
-                };
+                self.low = if entry.reads_seed { 0 } else { caller };
                 return entry.best.flatten();
             }
             self.versions[pos] += 1;
