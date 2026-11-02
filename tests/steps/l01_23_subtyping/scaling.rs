@@ -329,3 +329,81 @@ fn listing_values_past_the_cap_stops_early() {
     assert_eq!(rest.values(8), None);
     assert_eq!(rest.values(9).map(|v| v.len()), Some(8));
 }
+
+/// The exclusive or of `c` tuple types `(b + i, _)`, `(b + i, b + i)` among them: a diagram of
+/// about `2c` nodes with `2^(c - 1)` paths to `true`, holding `c` values.
+fn odd_tuples(c: usize, b: usize) -> Type {
+    (0..c).fold(Type::empty(), |x, i| {
+        let t = Type::tuple(vec![lit(b + i), lit(b + i)]);
+        &(&x - &t) | &(&t - &x)
+    })
+}
+
+#[test]
+fn listing_a_diagram_with_exponentially_many_paths_scales() {
+    // Listing walked every path of the diagram: `2^(c - 1)` at `c` tuple types.
+    for c in [1, 2, 7] {
+        assert_eq!(odd_tuples(c, 0).listed().map(|v| v.len()), Some(c), "c = {c}");
+    }
+    let built: std::collections::HashMap<usize, Type> =
+        [64, 512].into_iter().map(|c| (c, odd_tuples(c, 0))).collect();
+    // One pass over the nodes lists the candidates, but each of the `c` rows is still checked
+    // along a path of up to `c` nodes: order `c²`, an open item (DESIGN.md L1.23).
+    scaling::check_order("listing an exclusive or of tuple types, by count", 64, 2, |c| {
+        assert_eq!(built[&c].listed().map(|v| v.len()), Some(c));
+    });
+}
+
+/// The rows of a decision tree on `c` columns of `{b, b + 1, b + 2}`: on column `i`, after
+/// `b + 2` in every column before it, `b` and `b + 1` each end a row and `b + 2` goes on; on
+/// the last column `b + 2` ends a row too. The rows cover the product of the columns.
+fn decision_tree(c: usize, b: usize) -> (Type, Vec<Type>) {
+    let column = Type::union_all((b..b + 3).map(lit));
+    let row = |i: usize, v: usize| {
+        Type::tuple((0..c).map(|j| match j.cmp(&i) {
+            std::cmp::Ordering::Less => lit(b + 2),
+            std::cmp::Ordering::Equal => lit(v),
+            std::cmp::Ordering::Greater => column.clone(),
+        }).collect())
+    };
+    let mut rows: Vec<Type> = (0..c).flat_map(|i| [row(i, b), row(i, b + 1)]).collect();
+    rows.push(row(c - 1, b + 2));
+    (Type::tuple(vec![column.clone(); c]), rows)
+}
+
+#[test]
+fn a_decision_tree_is_decided_in_polynomial_time() {
+    // Splitting the product on every row in turn made `3^c` pieces: 1.14 s at `c = 64` and
+    // cubic from there once the split took a column whose cells are disjoint. Each split now
+    // narrows every row on every column, `O(c²)` types per split over `c` splits: `O(c³)`,
+    // which is `N^1.5` in the `N ≈ 2c²` components written. That is above the rule of low
+    // complexity, an open item (DESIGN.md L1.23); this test holds it to that order.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            let fresh = std::cell::Cell::new(1);
+            scaling::check_order("a decision tree, by column count", 16, 3, |c| {
+                let (p, rows) = decision_tree(c, 1000 * fresh.replace(fresh.get() + 1));
+                assert!(
+                    (&p - &Type::union_all(rows)).is_empty(),
+                    "the rows cover the product at c = {c}"
+                );
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn a_row_left_out_of_a_decision_tree_is_found() {
+    for c in [1, 2, 5, 16] {
+        let (p, rows) = decision_tree(c, 0);
+        assert!((&p - &Type::union_all(rows.iter().cloned())).is_empty(), "c = {c}");
+        for i in 0..rows.len() {
+            let mut less = rows.clone();
+            less.remove(i);
+            assert!(!(&p - &Type::union_all(less)).is_empty(), "c = {c}, row {i} left out");
+        }
+    }
+}

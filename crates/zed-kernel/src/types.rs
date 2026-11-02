@@ -216,6 +216,67 @@ pub struct Morphism {
     pub value: Type,
 }
 
+/// The component types of a tuple type, an atom of the tuple parts, kept with their hash in
+/// one shared node: a row is copied in constant time, and compared in constant time unless it
+/// equals a row built apart from it.
+#[derive(Clone)]
+pub(crate) struct Row(Arc<(u64, Vec<Type>)>);
+
+impl Row {
+    pub(crate) fn new(items: Vec<Type>) -> Row {
+        let digest = items.iter().fold(5, |h, t| mix(h, t.digest()));
+        Row(Arc::new((digest, items)))
+    }
+
+    pub(crate) fn digest(&self) -> u64 {
+        self.0.0
+    }
+}
+
+impl std::ops::Deref for Row {
+    type Target = [Type];
+    fn deref(&self) -> &[Type] {
+        &self.0.1
+    }
+}
+
+impl<'a> IntoIterator for &'a Row {
+    type Item = &'a Type;
+    type IntoIter = std::slice::Iter<'a, Type>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.1.iter()
+    }
+}
+
+impl Ord for Row {
+    fn cmp(&self, other: &Row) -> std::cmp::Ordering {
+        if Arc::ptr_eq(&self.0, &other.0) {
+            return std::cmp::Ordering::Equal;
+        }
+        self.0.0.cmp(&other.0.0).then_with(|| self.0.1.cmp(&other.0.1))
+    }
+}
+
+impl PartialOrd for Row {
+    fn partial_cmp(&self, other: &Row) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Row {
+    fn eq(&self, other: &Row) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for Row {}
+
+impl fmt::Debug for Row {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.1.fmt(f)
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct Parts {
     /// The hash of the other fields, set by [`Type::new`].
@@ -264,7 +325,7 @@ struct AtomPart {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 struct Tuples {
     rest: bool,
-    lens: BTreeMap<usize, Part<Vec<Type>>>,
+    lens: BTreeMap<usize, Part<Row>>,
 }
 
 thread_local! {
@@ -537,8 +598,8 @@ impl Type {
     /// Every value of `self`, when there are at most `cap` of them and each can be listed:
     /// bools, finite literal sets, bare atoms, and tuples of such components. `None` for a
     /// type with more values, an infinite part, a payload, a struct or a function, and for a
-    /// tuple type one of whose paths has more than `cap` rows before its negated tuples are
-    /// taken out.
+    /// tuple type one of whose tuple types, met with the tuple types taken on the paths to it,
+    /// has more than `cap` rows before the diagram's other tuple types are taken into account.
     pub fn values(&self, cap: usize) -> Option<Vec<Value>> {
         self.list(cap, true)
     }
@@ -591,24 +652,24 @@ impl Type {
             let Part::Bdd(b) = part else {
                 return None;
             };
-            let mut rows = None;
-            let listed = b.paths(&mut |pos, neg| {
-                let meet = pos.iter().fold(vec![Type::top(); *len], |m, p| {
-                    m.iter().zip(p.iter()).map(|(a, b)| a & b).collect()
-                });
+            // A value of the part is in every tuple type its path takes, so in the last one, which
+            // the path takes from the node of that tuple type. The path that takes none would
+            // hold the values outside every tuple type of the part, which are not listed.
+            if b.eval(|_| false) {
+                return None;
+            }
+            let rows = |r: &Row| -> Option<Vec<Vec<Value>>> {
                 let mut found = vec![Vec::new()];
                 let mut written = 0usize;
-                for item in &meet {
-                    let Some(vs) = item.list(cap, spread) else {
-                        return false;
-                    };
+                for item in r.iter() {
+                    let vs = item.list(cap, spread)?;
                     written = written.saturating_add(vs.len());
                     if !spread && found.len().saturating_mul(vs.len()) > written {
-                        return false;
+                        return None;
                     }
                     // Compared with the cap before the product is built, which can be `cap²`.
                     if found.len().saturating_mul(vs.len()) > cap {
-                        return false;
+                        return None;
                     }
                     found = found
                         .iter()
@@ -621,21 +682,30 @@ impl Type {
                         })
                         .collect();
                 }
-                let fits =
-                    |t: &Vec<Type>, r: &Vec<Value>| t.iter().zip(r).all(|(t, v)| t.contains(v));
-                found.retain(|r| !neg.iter().any(|n| fits(n, r)));
-                // The paths are disjoint, so their rows are distinct values.
-                let rows = rows.get_or_insert_with(Vec::new);
-                rows.extend(found);
-                rows.len() <= cap
-            });
+                Some(found)
+            };
+            // Each node's tuple type is listed alone, or else met with the union of the meets
+            // of the tuple types taken on the paths to the node, kept a component at a time,
+            // and each row is kept when the diagram holds it: one pass over the nodes, never
+            // over the paths, whose number can be exponential in the nodes.
+            let listed = b.reaching(
+                Row::new(vec![Type::top(); *len]),
+                |r, a| Row::new(r.iter().zip(a.iter()).map(|(x, y)| x & y).collect()),
+                |r, s| Row::new(r.iter().zip(s.iter()).map(|(x, y)| x | y).collect()),
+                |a, r| {
+                    let Some(found) = rows(a).or_else(|| {
+                        rows(&Row::new(a.iter().zip(r.iter()).map(|(x, y)| x & y).collect()))
+                    }) else {
+                        return false;
+                    };
+                    found.into_iter().all(|r| {
+                        let fits = |t: &Row| t.iter().zip(&r).all(|(t, v)| t.contains(v));
+                        !b.eval(fits) || add(Value::Tuple(r), &mut out)
+                    })
+                },
+            );
             if !listed {
                 return None;
-            }
-            for r in rows.into_iter().flatten() {
-                if !add(Value::Tuple(r), &mut out) {
-                    return None;
-                }
             }
         }
         Some(out.into_iter().collect())
@@ -673,7 +743,7 @@ impl Type {
         self.p()
             .tuples
             .get(xs.len())
-            .eval(&|t: &Vec<Type>| t.iter().zip(xs).all(|(t, x)| t.contains(x)))
+            .eval(&|t: &Row| t.iter().zip(xs).all(|(t, x)| t.contains(x)))
     }
 
     fn zip(&self, other: &Type, op: Op) -> Type {
@@ -897,11 +967,11 @@ impl Tuples {
     fn literal(items: Vec<Type>) -> Tuples {
         Tuples {
             rest: false,
-            lens: BTreeMap::from([(items.len(), Part::literal(items))]),
+            lens: BTreeMap::from([(items.len(), Part::literal(Row::new(items)))]),
         }
     }
 
-    fn get(&self, len: usize) -> Part<Vec<Type>> {
+    fn get(&self, len: usize) -> Part<Row> {
         match self.lens.get(&len) {
             Some(b) => b.clone(),
             None => Part::leaf(self.rest),
@@ -909,7 +979,7 @@ impl Tuples {
     }
 
     /// Drops the lengths whose part is what an unlisted length has.
-    fn normal(rest: bool, lens: BTreeMap<usize, Part<Vec<Type>>>) -> Tuples {
+    fn normal(rest: bool, lens: BTreeMap<usize, Part<Row>>) -> Tuples {
         let lens = lens
             .into_iter()
             .filter(|(_, b)| b.is_leaf() != Some(rest))
@@ -937,7 +1007,7 @@ impl Tuples {
     }
 
     /// Whether `f` holds of every tuple type in a part.
-    fn atoms(&self, f: &mut impl FnMut(&Vec<Type>) -> bool) -> bool {
+    fn atoms(&self, f: &mut impl FnMut(&Row) -> bool) -> bool {
         self.lens.values().all(|b| b.atoms(f))
     }
 }
@@ -1209,9 +1279,9 @@ fn tuples(items: &mut Vec<Rope>, t: &Tuples) {
         });
         return;
     }
-    let tuple = |t: &Vec<Type>| Rope::listed("(tuple", t.iter().map(Type::rope));
+    let tuple = |t: &Row| Rope::listed("(tuple", t.iter().map(Type::rope));
     for (len, b) in &t.lens {
-        clauses(items, &tuple(&vec![Type::top(); *len]), b, &tuple);
+        clauses(items, &tuple(&Row::new(vec![Type::top(); *len])), b, &tuple);
     }
 }
 

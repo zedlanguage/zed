@@ -2,33 +2,40 @@
 //! is empty, decided by a memoized coinductive check.
 //!
 //! A type is empty when every part is. The scalar and struct parts are exact, so their
-//! emptiness is read off. A tuple clause is empty when the meet of its positive tuple types is
-//! covered by its negated ones, which is decided by splitting the meet into disjoint pieces
-//! outside each negated type in turn, passing over a negated type disjoint from the piece. A
-//! morphism clause is empty when its positive types admit no morphism,
-//! or one negated type contains every morphism they admit, which the variance law decides:
-//! contravariant in the guarantee, covariant in the permission and the value type. A union of
-//! negated morphism types is taken one type at a time, so a clause whose positive part is
-//! covered by several negated types together, and by none alone, counts as inhabited: the
-//! check is sound but not complete there.
+//! emptiness is read off. The tuple part of each length, a Boolean combination of tuple types
+//! (module `bdd`), is decided on a box, one type per component, starting from the whole
+//! product: each tuple type is known to hold the box, known to miss it, or open on it; the
+//! part is evaluated in three-valued logic on what is known; a tuple type in every value of
+//! the part narrows the box to it, and one in no value takes itself out of the one component
+//! where it does not hold the box. When narrowing stops, a component whose pieces cut by the
+//! open tuple types are pairwise equal or disjoint is split into those pieces, and each piece
+//! decided; otherwise each piece on which narrowing alone proves the part empty is taken out
+//! of the box; otherwise, once on each branch, when the part holds nothing outside the open
+//! tuple types, the box is split into its meet with each of them. A box none of these steps
+//! settles counts as inhabited. The morphism part is decided the same way, by the variance
+//! law: contravariant in the guarantee, covariant in the permission and the value type.
 //!
-//! A tuple or morphism part kept as an expression (module `bdd`) is decided by its paths, as a
-//! diagram is. Apart from the union of negated morphism types above, `is_empty` is exact: no
-//! count of nodes, paths or splits stops it. Emptiness of Boolean combinations of tuple types
-//! is coNP-hard, so its time can be exponential in the tuple types written; its memory is one
-//! path and one split at a time.
+//! So `is_empty` is sound, never empty for an inhabited type, and its time is polynomial in
+//! the types written; it is not complete, since emptiness of Boolean combinations of tuple
+//! types is coNP-hard. A part that only a split of the box in more than one component at once
+//! proves empty counts as inhabited: a subtyping check then fails, and the error names the
+//! types, so the program states the case split itself (DESIGN.md L1.23).
 //!
 //! The check is coinductive: a type met again while its own emptiness is being decided is
 //! assumed empty. Values are finite, so a type whose every value would contain a smaller value
 //! of the same type is empty, which is the answer the assumption gives; contractive, regular
-//! and monotone definitions (module `rec`) make the set of types met finite. A result that
-//! rests on an assumption later found false is dropped. Results are kept for the thread, until
+//! and monotone definitions (module `rec`) make the set of types met finite. A result, empty
+//! or inhabited, that rests on an assumption later found false is dropped, and only such a
+//! result, so no result is decided again unless an assumption it read changed: a tuple type
+//! wrongly assumed disjoint from the box leaves a clause, so a wrong assumption can make a
+//! type count as inhabited too. Results are kept for the thread, until
 //! `Type::forget_emptiness`.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Morphism, Parts, Type};
+use super::bdd::Part;
+use super::{Morphism, Parts, Row, Type};
 
 thread_local! {
     static MEMO: RefCell<BTreeMap<Type, bool>> = const { RefCell::new(BTreeMap::new()) };
@@ -64,13 +71,17 @@ impl Type {
     }
 }
 
-/// One query's state: the types being decided, assumed empty, and those decided; and the
-/// types decided empty, in the order they were decided.
+/// One query's state: the types being decided, assumed empty, each with its depth among them;
+/// those decided; the types decided on assumptions still being made, in the order they were
+/// decided, each with the depths of those assumptions; and the depths of the assumptions the
+/// current decision has used.
 #[derive(Default)]
 struct Search {
-    busy: BTreeSet<Type>,
+    busy: BTreeMap<Type, usize>,
     done: BTreeMap<Type, bool>,
-    empties: Vec<Type>,
+    pending: Vec<Type>,
+    rests: BTreeMap<Type, BTreeSet<usize>>,
+    reads: BTreeSet<usize>,
 }
 
 impl Search {
@@ -79,22 +90,49 @@ impl Search {
             return b;
         }
         if let Some(b) = self.done.get(t) {
+            if let Some(r) = self.rests.get(t) {
+                self.reads.extend(r);
+            }
             return *b;
         }
-        if self.busy.contains(t) {
+        if let Some(d) = self.busy.get(t) {
+            self.reads.insert(*d);
             return true;
         }
-        self.busy.insert(t.clone());
-        let mark = self.empties.len();
+        let depth = self.busy.len();
+        self.busy.insert(t.clone(), depth);
+        let mark = self.pending.len();
+        let outer = std::mem::take(&mut self.reads);
         let b = self.parts(t.p());
+        let mut rests = std::mem::replace(&mut self.reads, outer);
+        rests.remove(&depth);
         self.busy.remove(t);
-        if b {
-            self.empties.push(t.clone());
-        } else {
-            // Every emptiness decided since `t` was assumed empty may rest on that.
-            for e in self.empties.drain(mark..) {
-                self.done.remove(&e);
+        // Only results decided since `t` was assumed empty can rest on that. A wrong
+        // assumption can make a result wrong either way: an assumed disjointness drops a tuple
+        // type from a clause, which can leave the clause inhabited. So when `t` is inhabited,
+        // each result that rests on it is dropped; when it is empty, each rests instead on
+        // what `t` rests on, and is confirmed when that is nothing.
+        let since: Vec<Type> = self.pending.drain(mark..).collect();
+        for e in since {
+            let r = self.rests.get_mut(&e).expect("a pending result has its assumptions");
+            if r.remove(&depth) {
+                if !b {
+                    self.done.remove(&e);
+                    self.rests.remove(&e);
+                    continue;
+                }
+                r.extend(&rests);
             }
+            if r.is_empty() {
+                self.rests.remove(&e);
+            } else {
+                self.pending.push(e);
+            }
+        }
+        if !rests.is_empty() {
+            self.reads.extend(&rests);
+            self.pending.push(t.clone());
+            self.rests.insert(t.clone(), rests);
         }
         self.done.insert(t.clone(), b);
         b
@@ -114,74 +152,231 @@ impl Search {
             && p.tuples
                 .lens
                 .iter()
-                .all(|(len, b)| b.paths(&mut |pos, neg| self.tuples(*len, pos, neg)))
-            && p.morphisms.paths(&mut |pos, neg| self.morphisms(pos, neg))
+                .all(|(len, b)| self.tuples(vec![Type::top(); *len], b.clone(), true))
+            && self.morphisms(
+                Morphism {
+                    guarantee: Type::empty(),
+                    permission: Type::top(),
+                    value: Type::top(),
+                },
+                p.morphisms.clone(),
+                true,
+            )
     }
 
-    /// The tuples of length `len` in every type of `pos` and in none of `neg`.
-    fn tuples(&mut self, len: usize, pos: &[&Vec<Type>], neg: &[&Vec<Type>]) -> bool {
-        let meet = pos.iter().fold(vec![Type::top(); len], |m, p| {
-            m.iter().zip(p.iter()).map(|(a, b)| a & b).collect()
+    /// Where each tuple type of `f` stands on the box `r`: `Some(false)` if they are disjoint,
+    /// `Some(true)` if it holds the box, `None` if it is open on it.
+    fn tuple_atoms(&mut self, r: &[Type], f: &Part<Row>) -> BTreeMap<Row, Option<bool>> {
+        let mut atoms = Vec::new();
+        f.atoms(&mut |a| {
+            atoms.push(a.clone());
+            true
         });
-        self.product(meet, neg)
+        atoms
+            .into_iter()
+            .map(|a| {
+                let s = if r.iter().zip(&a).any(|(x, y)| self.empty(&(x & y))) {
+                    Some(false)
+                } else if r.iter().zip(&a).all(|(x, y)| self.empty(&(x - y))) {
+                    Some(true)
+                } else {
+                    None
+                };
+                (a, s)
+            })
+            .collect()
     }
 
-    /// Whether the tuples with components in `p` are all in some type of `neg`. A negated
-    /// type disjoint from `p` in some component is passed over. Outside a negated type means
-    /// outside it first in component `j`, so the pieces are disjoint: the components before `j`
-    /// inside it, component `j` outside it, and the rest as in `p`.
-    fn product(&mut self, p: Vec<Type>, neg: &[&Vec<Type>]) -> bool {
-        if p.iter().any(|t| self.empty(t)) {
-            return true;
-        }
-        let mut rest = neg;
-        let n = loop {
-            let Some((n, r)) = rest.split_first() else {
+    /// Narrows the box `r` and the part `f` to what `f` forces on it: a tuple type in every
+    /// value of `f` meets `r`, and a tuple type in none is taken out of `r` when it holds `r`
+    /// in every component but one. True when `f` is proved empty on `r`.
+    fn narrow_tuples(&mut self, r: &mut [Type], f: &mut Part<Row>) -> bool {
+        loop {
+            if r.iter().any(|t| self.empty(t)) {
+                return true;
+            }
+            let st = self.tuple_atoms(r, f);
+            *f = f.restrict(&|a| st.get(a).copied().flatten()).settle();
+            match f.is_leaf() {
+                Some(b) => return !b,
+                None => {}
+            }
+            let (taken, refused) = f.forced();
+            let mut changed = !taken.is_empty();
+            for a in &taken {
+                for (x, y) in r.iter_mut().zip(a) {
+                    *x = &*x & y;
+                }
+            }
+            for a in &refused {
+                let open: Vec<usize> = (0..r.len())
+                    .filter(|&j| !self.empty(&(&r[j] - &a[j])))
+                    .collect();
+                if let [j] = open[..] {
+                    r[j] = &r[j] - &a[j];
+                    changed = true;
+                }
+            }
+            if !changed {
                 return false;
-            };
-            rest = r;
-            if !p.iter().zip(n.iter()).any(|(a, b)| self.empty(&(a & b))) {
-                break n;
             }
-        };
-        (0..p.len()).all(|j| {
-            let mut q = p.clone();
-            for i in 0..j {
-                q[i] = &p[i] & &n[i];
-            }
-            q[j] = &p[j] - &n[j];
-            self.product(q, rest)
-        })
+        }
     }
 
-    fn morphisms(&mut self, pos: &[&Morphism], neg: &[&Morphism]) -> bool {
-        let meet = pos.iter().fold(
-            Morphism {
-                guarantee: Type::empty(),
-                permission: Type::top(),
-                value: Type::top(),
-            },
-            |m, p| Morphism {
-                guarantee: &m.guarantee | &p.guarantee,
-                permission: &m.permission & &p.permission,
-                value: &m.value & &p.value,
-            },
-        );
-        let Morphism {
-            guarantee: l,
-            permission: u,
-            value: v,
-        } = &meet;
-        // No domain lies between the bounds, or a key is promised and no value can be its.
-        if !self.empty(&(l - u)) || (!self.empty(l) && self.empty(v)) {
-            return true;
+    /// Whether no tuple in the box `r` is in `f`: `f` is narrowed by what it forces; then a
+    /// component whose pieces cut by the open tuple types are pairwise equal or disjoint is
+    /// split into them; else each such piece on which narrowing alone proves `f` empty is
+    /// taken out; else, once on each branch, when `f` holds nothing outside the open tuple
+    /// types, each of them is decided on its own. What is left counts as inhabited. A split
+    /// into disjoint pieces sends each open tuple type to one piece, and a component split is
+    /// never split again below, so the nodes are polynomial in the tuple types.
+    fn tuples(&mut self, mut r: Vec<Type>, mut f: Part<Row>, may_cover: bool) -> bool {
+        loop {
+            if self.narrow_tuples(&mut r, &mut f) {
+                return true;
+            }
+            if f.is_leaf().is_some() {
+                return false;
+            }
+            let mut open = Vec::new();
+            f.atoms(&mut |a| {
+                open.push(a.clone());
+                true
+            });
+            for j in 0..r.len() {
+                let mut cells: Vec<Type> = Vec::new();
+                let mut union = Type::empty();
+                let ok = open.iter().all(|a| {
+                    let c = &a[j] & &r[j];
+                    if self.empty(&(&r[j] - &c)) {
+                        return false;
+                    }
+                    if cells.contains(&c) {
+                        return true;
+                    }
+                    if !self.empty(&(&c & &union)) {
+                        return false;
+                    }
+                    union = &union | &c;
+                    cells.push(c);
+                    true
+                });
+                if !ok {
+                    continue;
+                }
+                let rest = &r[j] - &union;
+                if !self.empty(&rest) {
+                    cells.push(rest);
+                }
+                return cells.into_iter().all(|c| {
+                    let mut q = r.clone();
+                    q[j] = c;
+                    self.tuples(q, f.clone(), may_cover)
+                });
+            }
+            let mut narrowed = false;
+            for j in 0..r.len() {
+                let mut tried: Vec<Type> = Vec::new();
+                for a in &open {
+                    for c in [&a[j] & &r[j], &r[j] - &a[j]] {
+                        if tried.contains(&c) || self.empty(&c) || self.empty(&(&r[j] - &c)) {
+                            continue;
+                        }
+                        tried.push(c.clone());
+                        let mut q = r.clone();
+                        q[j] = c.clone();
+                        if self.narrow_tuples(&mut q, &mut f.clone()) {
+                            r[j] = &r[j] - &c;
+                            narrowed = true;
+                        }
+                    }
+                }
+            }
+            if narrowed {
+                continue;
+            }
+            if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
+                return open.iter().all(|a| {
+                    let q = r.iter().zip(a).map(|(x, y)| x & y).collect();
+                    self.tuples(q, f.clone(), false)
+                });
+            }
+            return false;
         }
-        // With no value, the empty morphism is the only one, and its domain is the guarantee.
-        let no_value = self.empty(v);
-        neg.iter().any(|n| {
-            self.empty(&(&n.guarantee - l))
-                && (no_value || self.empty(&(u - &n.permission)))
-                && (no_value || self.empty(u) || self.empty(&(v - &n.value)))
-        })
+    }
+
+    /// Whether `m` admits no morphism: no domain lies between the bounds, or a key is promised
+    /// and no value can be its.
+    fn no_morphism(&mut self, m: &Morphism) -> bool {
+        !self.empty(&(&m.guarantee - &m.permission))
+            || (!self.empty(&m.guarantee) && self.empty(&m.value))
+    }
+
+    /// Whether every morphism `m` admits is in `n`, by the variance law. With no value, the
+    /// empty morphism is the only one, and its domain is the guarantee.
+    fn within(&mut self, m: &Morphism, n: &Morphism) -> bool {
+        let no_value = self.empty(&m.value);
+        self.empty(&(&n.guarantee - &m.guarantee))
+            && (no_value || self.empty(&(&m.permission - &n.permission)))
+            && (no_value || self.empty(&m.permission) || self.empty(&(&m.value - &n.value)))
+    }
+
+    /// Whether no morphism `r` admits is in `f`, decided as for tuples: `r` meets the morphism
+    /// types in every value of `f`, and, once on each branch, when `f` holds nothing outside
+    /// the open morphism types, each is decided on its own. Morphism types are closed under
+    /// meet but not under difference, so a type in no value of `f` narrows nothing.
+    fn morphisms(&mut self, mut r: Morphism, mut f: Part<Morphism>, may_cover: bool) -> bool {
+        loop {
+            if self.no_morphism(&r) {
+                return true;
+            }
+            let mut atoms = Vec::new();
+            f.atoms(&mut |a| {
+                atoms.push(a.clone());
+                true
+            });
+            let st: BTreeMap<Morphism, Option<bool>> = atoms
+                .into_iter()
+                .map(|a| {
+                    let s = if self.no_morphism(&meet(&r, &a)) {
+                        Some(false)
+                    } else if self.within(&r, &a) {
+                        Some(true)
+                    } else {
+                        None
+                    };
+                    (a, s)
+                })
+                .collect();
+            f = f.restrict(&|a| st.get(a).copied().flatten()).settle();
+            if let Some(b) = f.is_leaf() {
+                return !b;
+            }
+            let (taken, _) = f.forced();
+            if !taken.is_empty() {
+                r = taken.iter().fold(r, |r, a| meet(&r, a));
+                continue;
+            }
+            if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
+                let mut open = Vec::new();
+                f.atoms(&mut |a| {
+                    open.push(a.clone());
+                    true
+                });
+                return open
+                    .iter()
+                    .all(|a| self.morphisms(meet(&r, a), f.clone(), false));
+            }
+            return false;
+        }
+    }
+}
+
+/// The morphisms both `a` and `b` admit.
+fn meet(a: &Morphism, b: &Morphism) -> Morphism {
+    Morphism {
+        guarantee: &a.guarantee | &b.guarantee,
+        permission: &a.permission & &b.permission,
+        value: &a.value & &b.value,
     }
 }

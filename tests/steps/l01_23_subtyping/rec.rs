@@ -353,3 +353,48 @@ fn the_lowest_definition_on_a_cycle_is_named() {
         .is_ok()
     );
 }
+
+/// Lists of int whose length is a multiple of `p`.
+fn multiple(p: usize) -> Type {
+    let mut body = r(0, vec![]);
+    for _ in 0..p {
+        body = atom("cons", vec![ty(Type::int()), body]);
+    }
+    one(vec![def("M", &[], or(vec![bare("nil"), body]))])
+}
+
+/// Lists of int whose `n`-th item from the end is `1`, guessed where it is.
+fn nth_from_end(n: usize) -> Type {
+    let one_ = Type::lit(&Value::Int(1)).unwrap();
+    let mut rest = vec![def("R0", &[], bare("nil"))];
+    for k in 1..n {
+        rest.push(def(&format!("R{k}"), &[], atom("cons", vec![ty(Type::int()), r(k - 1, vec![])])));
+    }
+    rest.push(def(
+        "G",
+        &[],
+        or(vec![
+            atom("cons", vec![ty(Type::int()), r(n, vec![])]),
+            atom("cons", vec![ty(one_), r(n - 1, vec![])]),
+        ]),
+    ));
+    Group::new(rest).unwrap().instance(vec![]).pop().unwrap()
+}
+
+#[test]
+fn products_of_recursive_types() {
+    // Deciding these meets one type per state of the product of the definitions, or per set
+    // of states of a definition whose alternatives overlap: 30 states for 2, 3 and 5, about
+    // 1000 types for the third item from the end. Both grow exponentially with the
+    // definitions and the item, as emptiness of regular tree types can (DESIGN.md L1.23).
+    let six = &(&multiple(2) & &multiple(3)) & &multiple(5);
+    assert!(six.subtype(&multiple(30)) && multiple(30).subtype(&six));
+    assert!(!(&multiple(2) & &multiple(3)).subtype(&multiple(12)));
+    assert!(!multiple(4).subtype(&multiple(6)));
+    for n in 1..=3 {
+        assert!(nth_from_end(n).subtype(&nth_from_end(n)), "n = {n}");
+        if n < 3 {
+            assert!(!nth_from_end(n).equiv(&nth_from_end(n + 1)), "n = {n}");
+        }
+    }
+}
