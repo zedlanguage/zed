@@ -155,3 +155,63 @@ E ::: 1 + ::: ERROR@2 '(' INT
 E ::: 1 + 2 3 ::: ERROR@3 '*' '+' END
 E ::: ( 1 + 2 ::: ERROR@4 ')' '*' '+'
 E ::: 1 * ( 2 + ; ::: ERROR@5 '(' INT
+
+# A rule that read no seed keeps its match through each growth.
+grammar a long alternative that fails
+Sum = Lambda L1
+  | Sum '+' Term L1
+  | Term L1
+Lambda = Tuple '->' Term L1
+Tuple = '(' IDENT (',' IDENT)* ')' L1
+Term = Tuple L1
+  | INT L1
+Sum ::: ( a , b ) + 1 + 2 ::: ((( a , b ) + 1) + 2)
+Sum ::: ( a , b ) -> 1 ::: (( a , b ) -> 1)
+Sum ::: 1 + ( a ) + 2 ::: ((1 + ( a )) + 2)
+Sum ::: ( a , b ) + ::: ERROR@6 '(' INT
+
+# A rung whose growth is over is read again at each growth of the rung above.
+grammar a finished rung
+Sum = Product '->' Sum L1
+  | Sum '+' Product L1
+  | Product L1
+Product = Product '*' INT L1
+  | '[' INT ( ',' INT )* ']' L1
+  | INT L1
+Sum ::: 1 * 2 + 3 * 4 + 5 ::: (((1 * 2) + (3 * 4)) + 5)
+Sum ::: [ 1 , 2 ] * 3 + 4 + 5 ::: ((([ 1 , 2 ] * 3) + 4) + 5)
+Sum ::: 1 * 2 -> 3 + 4 ::: ((1 * 2) -> (3 + 4))
+Sum ::: 1 * 2 + 3 -> 4 ::: ERROR@5 '*' '+' END
+
+# A cycle of two rules can be entered at either, so neither is finished when it closes.
+grammar a cycle entered at either rule
+S = A 'q' L1
+  | B 'r' L1
+  | A L1
+  | B L1
+A = B 'x' L1
+  | 'x' L1
+B = A 'y' L1
+  | 'z' L1
+S ::: x y x q ::: (((x y) x) q)
+S ::: x y r ::: ((x y) r)
+S ::: z x y ::: ERROR@3 'r' 'x'
+S ::: x y x y ::: ERROR@4 'r' 'x'
+S ::: z x y x r ::: ERROR@4 'q' 'y' END
+
+# Each growth of `Sum` matches `Attempt` again; `Inner` read another seed at another token.
+grammar a stale rule at a later token
+Sum = Attempt L1
+  | Sum '+' INT L1
+  | '(' Inner ')' L1
+  | INT L1
+Attempt = Sum 'q' L1
+  | '(' Outer 'z' L1
+  | '(' Inner 'z' L1
+Outer = Inner L1
+Inner = Outer 'w' L1
+  | INT ( ',' INT )* L1
+Sum ::: ( 1 , 2 ) + 3 + 4 ::: (((( 1 , 2 )) + 3) + 4)
+Sum ::: ( 1 , 2 ) z + 3 ::: ERROR@5 '+' 'q' END
+Sum ::: ( 1 , 2 w ) + 3 q + 4 ::: ERROR@9 'q' END
+Sum ::: ( 1 , 2 ) + ::: ERROR@6 INT

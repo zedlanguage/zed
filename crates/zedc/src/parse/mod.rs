@@ -138,6 +138,8 @@ fn parse_to(
         toks: &toks,
         memo: HashMap::new(),
         versions: vec![0; toks.len() + 1],
+        open: vec![0; toks.len() + 1],
+        low: u32::MAX,
         nodes: Vec::new(),
         far: 0,
         expected: BTreeSet::new(),
@@ -206,7 +208,14 @@ struct Entry {
     in_path: bool,
     /// A call on that path reached this entry again: the rule is left-recursive here.
     left_rec: bool,
-    /// The token's version when `best` was last computed or confirmed.
+    /// How many rules were on that path at this token, this one included, when this match
+    /// began.
+    depth: u32,
+    /// The match read the seed of a rule further out, or another rule read its seed. It holds
+    /// only for that seed, or a later match may enter the cycle through that other rule. Any
+    /// other entry cannot go stale: all it read is indexed by token and no seed changed it.
+    reads_seed: bool,
+    /// The token's version when `best` was last computed.
     version: usize,
 }
 
@@ -217,9 +226,14 @@ struct Parser<'a> {
     /// (rule, token, head) to what is known there.
     memo: HashMap<(usize, usize, bool), Entry>,
     /// How many times a left-recursive match has grown at each token, for both values of
-    /// `head`. An entry behind its token's version may read a longer seed now, so it is matched
-    /// again.
+    /// `head`. An entry with `reads_seed` behind its token's version may read a longer seed
+    /// now, so it is matched again.
     versions: Vec<usize>,
+    /// How many rules are on the path of calls at each token.
+    open: Vec<u32>,
+    /// The least `depth` of a seed the current match read, or `u32::MAX` for none. 0 is
+    /// below every rule at the token.
+    low: u32,
     nodes: Vec<Node>,
     far: usize,
     expected: BTreeSet<String>,
@@ -243,18 +257,26 @@ impl Parser<'_> {
         let now = self.versions[pos];
         let entry = self.memo.entry(key).or_default();
         let res = match entry.best {
-            Some(res) if entry.version == now => res,
-            best if entry.in_path => {
+            _ if entry.in_path => {
                 // Left recursion: the first time, this call fails, which seeds the growth.
-                if best.is_none() {
+                if entry.best.is_none() {
                     entry.left_rec = true;
                     entry.best = Some(None);
                 }
-                entry.version = now;
-                best.flatten()
+                self.low = self.low.min(entry.depth);
+                entry.best.flatten()
+            }
+            Some(res) if !entry.reads_seed => res,
+            Some(res) if entry.version == now => {
+                // Which seed it read is not kept, so it counts as the outermost at this token.
+                if self.open[pos] > 0 {
+                    self.low = 0;
+                }
+                res
             }
             _ => {
                 entry.in_path = true;
+                entry.depth = self.open[pos] + 1;
                 self.grow(key)
             }
         };
@@ -265,8 +287,13 @@ impl Parser<'_> {
 
     /// Matches the rule of `key`, and while it is left-recursive there and its match gets
     /// longer, matches it again over that match. A match is never replaced by a shorter one.
+    /// When this returns, this rule's own seed is finished, so its own reads do not mark the
+    /// entry. Any other read does, for good, since `best` may keep what that read gave, and
+    /// passes one rule outward, within the token.
     fn grow(&mut self, key: (usize, usize, bool)) -> Res {
         let (r, pos, head) = key;
+        self.open[pos] += 1;
+        let caller = std::mem::replace(&mut self.low, u32::MAX);
         loop {
             let res = self.alternatives(r, pos, head);
             let entry = self.memo.get_mut(&key).expect("`rule` made this entry");
@@ -278,10 +305,16 @@ impl Parser<'_> {
             if !longer || !entry.left_rec {
                 entry.in_path = false;
                 entry.version = self.versions[pos];
+                entry.reads_seed |= self.low < entry.depth;
+                self.open[pos] = entry.depth - 1;
+                self.low = if entry.reads_seed && entry.depth > 1 {
+                    caller.min(self.low.min(entry.depth - 1).saturating_sub(1))
+                } else {
+                    caller
+                };
                 return entry.best.flatten();
             }
             self.versions[pos] += 1;
-            entry.version = self.versions[pos];
         }
     }
 

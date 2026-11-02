@@ -1,5 +1,5 @@
-//! How long left-recursive parsing takes (COMPLEXITY.md F35): growth costs a constant at
-//! each token, and memo entries at other tokens stay good, so a chain is linear in its length.
+//! How long left-recursive parsing takes (COMPLEXITY.md F35): a growth matches again only the
+//! rules at its token that read a seed still growing, so a chain is linear in its length.
 
 use std::collections::HashMap;
 
@@ -49,25 +49,141 @@ fn many_short_chains_are_linear() {
     });
 }
 
-/// A ladder of `k` left-recursive rungs over an amount.
+/// A ladder of `k` left-recursive rungs over an amount, rung `i` with the operator `o{i}`.
 fn ladder(k: usize) -> Grammar {
     let mut text = String::from("R0 = INT L1\n");
     for i in 1..=k {
         let below = i - 1;
-        text += &format!("R{i} = R{i} '+' R{below} L1\n  | R{below} L1\n");
+        text += &format!("R{i} = R{i} 'o{i}' R{below} L1\n  | R{below} L1\n");
     }
     Grammar::read(&[&text]).unwrap()
 }
 
-/// Each rung ending its growth at a token matches every rung below it again, once, because
-/// each growth moves the token's version: quadratic in the rungs, a constant of the grammar.
+/// With its operators on the top rung, each operand passes through every rung. A rung's match,
+/// once ended, reads no seed of the rung above, so each is matched once at each token: the
+/// work is linear in the rungs, not quadratic.
 #[test]
-fn each_operand_costs_at_most_the_square_of_the_rungs() {
+fn each_operand_costs_a_constant_per_rung() {
     let grammars: HashMap<usize, Grammar> = [8, 64].map(|k| (k, ladder(k))).into();
-    let text = "1 + ".repeat(100) + "2";
-    let tokens = lex(&text).unwrap();
-    check_order("a ladder of n rungs", 8, 2, |k| {
-        parse_with(&grammars[&k], &text, &tokens, &format!("R{k}"), TOP).unwrap();
+    let texts: HashMap<usize, String> = [8, 64]
+        .map(|k| (k, format!("1 o{k} ").repeat(100) + "2"))
+        .into();
+    let tokens: HashMap<usize, Vec<Token>> =
+        texts.iter().map(|(k, t)| (*k, lex(t).unwrap())).collect();
+    check("a ladder of n rungs", 8, |k| {
+        parse_with(
+            &grammars[&k],
+            &texts[&k],
+            &tokens[&k],
+            &format!("R{k}"),
+            TOP,
+        )
+        .unwrap();
+    });
+}
+
+/// A function's parameters at the head of a sum: `Lambda` fails after the whole list, and no
+/// growth of the sum reads its seed, so the list is walked once however long the sum is.
+#[test]
+fn a_long_alternative_that_failed_is_not_walked_again_at_each_growth() {
+    let g = Grammar::read(&["
+Sum = Lambda L1
+  | Sum '+' Term L1
+  | Term L1
+Lambda = Tuple '->' Term L1
+Tuple = '(' IDENT (',' IDENT)* ')' L1
+Term = Tuple L1
+  | INT L1
+"])
+    .unwrap();
+    let inputs = inputs(1_000, |n| {
+        format!("(x{}) {}", ", x".repeat(n), "+ 1 ".repeat(n))
+    });
+    check("a list of n names and n operators", 1_000, |n| {
+        let (text, tokens) = &inputs[&n];
+        parse_with(&g, text, tokens, "Sum", TOP).unwrap();
+    });
+}
+
+/// A check for a mistake before the left recursion: `Pending` reads no seed, so its long walk
+/// over the tokens is done once.
+#[test]
+fn a_lookahead_before_the_left_recursion_is_matched_once() {
+    let g = Grammar::read(&["
+Paid = !Pending Paid 'x' L1
+  | 'x' L1
+Pending = Items 'q' L1
+Items = 'x'* L1
+"])
+    .unwrap();
+    let inputs = inputs(1_000, |n| "x ".repeat(n));
+    check("a check over n tokens", 1_000, |n| {
+        let (text, tokens) = &inputs[&n];
+        parse_with(&g, text, tokens, "Paid", TOP).unwrap();
+    });
+}
+
+/// `Sum` tries an arrow over `Product` before each `+`, so each growth of `Sum` reads `Product`
+/// at the head, a left-recursive rung that writes a list in its own body. The growth of
+/// `Product` is over and read no seed of `Sum`, so its list is not walked again.
+#[test]
+fn a_finished_rung_is_not_matched_again_by_the_rung_above() {
+    let g = Grammar::read(&["
+Sum = Product '->' Sum L1
+  | Sum '+' Product L1
+  | Product L1
+Product = Product '*' INT L1
+  | '[' INT (',' INT)* ']' L1
+  | INT L1
+"])
+    .unwrap();
+    let inputs = inputs(1_000, |n| {
+        format!("[1{}]{}", ", 2".repeat(n), " + 3".repeat(n))
+    });
+    check("a list of n numbers and n operators", 1_000, |n| {
+        let (text, tokens) = &inputs[&n];
+        parse_with(&g, text, tokens, "Sum", TOP).unwrap();
+    });
+}
+
+/// `Inner` reads the seed of `Outer` and walks a list after `(`. Each growth of `Sum` makes
+/// `Attempt` stale at the first token, where `Attempt` reads `Inner` at the second token. The
+/// growth moves only the first token's version, so `Inner` stays good and its list is walked
+/// once. One version for all tokens would walk it at each growth.
+#[test]
+fn a_growth_leaves_a_stale_rule_at_a_later_token_good() {
+    let g = Grammar::read(&["
+Sum = Attempt L1
+  | Sum '+' INT L1
+  | '(' Inner ')' L1
+  | INT L1
+Attempt = Sum 'q' L1
+  | '(' Outer 'z' L1
+  | '(' Inner 'z' L1
+Outer = Inner L1
+Inner = Outer 'w' L1
+  | INT (',' INT)* L1
+"])
+    .unwrap();
+    let inputs = inputs(1_000, |n| {
+        format!("(1{}){}", ", 2".repeat(n), " + 3".repeat(n))
+    });
+    check("a list of n numbers and n operators", 1_000, |n| {
+        let (text, tokens) = &inputs[&n];
+        parse_with(&g, text, tokens, "Sum", TOP).unwrap();
+    });
+}
+
+/// A `*` is no rule and has no memo entry, so one written in the left-recursive rule itself,
+/// before a token that fails, is walked again at each growth. Quadratic, and no worse; moved
+/// to a rule of its own it is linear (`a_long_alternative_that_failed_...`). COMPLEXITY.md F35.
+#[test]
+fn a_loop_written_inside_the_left_recursive_rule_is_quadratic() {
+    let g = Grammar::read(&["A = 'x'* 'q' L1\n  | A 'x' L1\n  | 'x' L1\n"]).unwrap();
+    let inputs = inputs(250, |n| "x ".repeat(n));
+    check_order("a loop over n tokens", 250, 2, |n| {
+        let (text, tokens) = &inputs[&n];
+        parse_with(&g, text, tokens, "A", TOP).unwrap();
     });
 }
 
