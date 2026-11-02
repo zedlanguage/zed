@@ -27,6 +27,4 @@ flamegraph.svg
 .DS_Store
 
 # Dart.
-/dart/.dart_tool/
-/dart/build/
 /tools/.dart_tool/

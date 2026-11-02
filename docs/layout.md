@@ -29,7 +29,7 @@ tests/                the step tests (the `zed-tests` crate)
   steps/<step>/       one folder per step of Part G
 docs/                 documentation of the implementation
 tools/                helper commands, a Dart package: tools/bin/sync.dart, audit.dart,
-                      progress.dart and sizes.dart
+                      and progress.dart
 build/                every generated file; ignored by git
 STATUS.md             progress and handoff notes
 ```
