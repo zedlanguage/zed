@@ -6,6 +6,8 @@ in docs/layout.md.
 
 ## Current position
 
+- Two test suites: `tools/run_tests.sh` is the local suite, which CI runs; `tools/run_tests.sh --full`
+  adds `tests/full/`, which needs outside tools and the files from `tools/fetch_test_deps.sh`.
 - Done: **M0.1** (repository scaffolding), **M0.4** (the corpus, in `zed/corpus/`), **M0.9**
   (kernel reference evaluator), and in the spec, M0.2 and M0.3 (the desugaring rules, spec
   commit e3b217f).

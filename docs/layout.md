@@ -26,7 +26,10 @@ zed/                  Zed source code
 tests/                the step tests (the `zed-tests` crate)
   src/                helpers shared by every step
   steps/main.rs       declares one module per step, in plan order
-  steps/<step>/       one folder per step of Part G
+  steps/<step>/       one folder per step of Part G; the local suite, which needs only the
+                      Rust toolchain
+  full/<step>/        tests of a step that need outside tools, listed in the folder's file
+                      `needs`; run by tools/run_tests.sh --full
 docs/                 documentation of the implementation
 tools/                helper commands, a Dart package: tools/bin/sync.dart, audit.dart,
                       and progress.dart
