@@ -206,6 +206,10 @@ final class Lin implements Comparable<Lin> {
   /// `this - other`.
   Lin minus(Lin other) => plus(other.times(BigInt.from(-1)));
 
+  /// `this / k`, for a `k` that divides each coefficient and the constant.
+  Lin over(BigInt k) =>
+      Lin._(SplayTreeMap.of(terms.map((a, c) => MapEntry(a, c ~/ k))), constant ~/ k);
+
   /// Whether every atom is a symbol or an auxiliary variable.
   bool get isLinear => !terms.keys.any((a) => a is Product);
 
@@ -345,16 +349,28 @@ sealed class Formula {
 
   /// The disjunction of `a` and `b` with the conjuncts they share taken out of it, so that
   /// joining two narrowings of one relation does not copy the relation into each disjunct.
-  static Formula either(Formula a, Formula b) {
+  /// Each constraint of the rest of each side is replaced by `rest` of it.
+  static Formula either(Formula a, Formula b, Formula Function(Con) rest) {
     final (pa, pb) = (a.conjuncts, b.conjuncts);
     final inB = pb.toSet();
     final shared = pa.where(inB.contains).toSet();
-    Formula rest(List<Formula> p) => and([...p.where((g) => !shared.contains(g))]);
+    Formula left(List<Formula> p) => and([
+      for (final g in p)
+        if (!shared.contains(g)) g.mapCons(rest),
+    ]);
     return and([
       ...pa.where(shared.contains),
-      or([rest(pa), rest(pb)]),
+      or([left(pa), left(pb)]),
     ]);
   }
+
+  /// The formula with each constraint `c` replaced by `f(c)`.
+  Formula mapCons(Formula Function(Con) f) => switch (this) {
+    final Con c => f(c),
+    Not(:final inner) => negate(inner.mapCons(f)),
+    And(:final items) => and([for (final g in items) g.mapCons(f)]),
+    Or(:final items) => or([for (final g in items) g.mapCons(f)]),
+  };
 
   /// The negation, with double negations and constants removed.
   static Formula negate(Formula f) => switch (f) {

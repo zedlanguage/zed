@@ -98,3 +98,13 @@ fn a_meet_takes_the_earlier_binding_time_and_a_join_the_later() {
     assert_eq!(k.time.element, Time::Run);
     assert_eq!(k.ints().to_string(), "[1..]");
 }
+
+#[test]
+fn a_join_keeps_the_affine_relation_of_its_sides() {
+    // Each side fixes `i` to one value, so `i + j == n` holds on both; the join keeps it.
+    let src = "ok = (i, j, n) -> if (i == 0 && j == n) || (i == 1 && j == n - 1) { if i + j != n { 1 } else { 2 } } else { 0 };";
+    accepted(src);
+    let (_, _, a) = arms_of(src);
+    assert!(!arm(&a, "((i + j) != n)", true).reachable());
+    assert!(arm(&a, "((i + j) != n)", false).reachable());
+}

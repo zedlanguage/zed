@@ -8,6 +8,7 @@
 pub mod affine;
 pub mod cell;
 pub mod float;
+pub mod hull;
 pub mod interval;
 pub mod iterate;
 pub mod lattice;

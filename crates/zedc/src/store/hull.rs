@@ -1,0 +1,298 @@
+//! The affine hull of a set of integer points (Karr's join, step L1.39): the affine equalities
+//! that hold at every point, and the join that keeps the equalities two sets both satisfy.
+//!
+//! The equalities are kept in reduced row echelon form over the rationals, each row scaled to
+//! integers with no common factor and its first coefficient positive. No row mentions another
+//! row's pivot. A new row's pivot is its atom the fewest rows mention, the first of them on a
+//! tie, so that adding it rewrites as few rows as it can: rows `x1 - x2`, `x1 - x3`, … each
+//! take their last atom and rewrite none, where taking `x1` would rewrite every row before.
+//! Two hulls of one set may then have different rows. A row `t` means `t == 0`. The rows are in persistent maps, so a hull made from another
+//! by a few changes shares the rest with it, and the join of the two finds the rows that
+//! differ in time near their number. A coefficient past 128 bits drops the equalities, which
+//! leaves a hull that holds more points.
+
+use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::Arc;
+
+use imbl::OrdMap;
+use imbl::ordmap::DiffItem;
+
+use super::presburger::{Atom, Con, Formula, Lin, Over, Rel};
+
+/// The affine hull of a set of points, as the equalities that hold on it.
+#[derive(Clone, Debug, Default)]
+pub struct Hull {
+    /// The rows by their pivots.
+    rows: OrdMap<Atom, Arc<Lin>>,
+    /// The pivots of the rows that mention each atom other than their pivot.
+    uses: OrdMap<Atom, OrdMap<Atom, ()>>,
+    /// Whether the set has no point.
+    pub is_empty: bool,
+}
+
+impl Hull {
+    /// The hull of every point: no equality.
+    pub fn all() -> Hull {
+        Hull::default()
+    }
+
+    /// The hull of the empty set.
+    pub fn empty() -> Hull {
+        Hull {
+            is_empty: true,
+            ..Hull::default()
+        }
+    }
+
+    /// The hull of the points where each term of `terms` is zero.
+    pub fn of<'a>(terms: impl IntoIterator<Item = &'a Lin>) -> Hull {
+        terms.into_iter().fold(Hull::all(), |h, t| h.and(t))
+    }
+
+    /// The rows, in pivot order.
+    pub fn rows(&self) -> impl Iterator<Item = &Lin> {
+        self.rows.values().map(|t| &**t)
+    }
+
+    /// A constraint that holds at the same points of the hull as `c`, with each row's pivot
+    /// replaced by the rest of its row: for a row `k * p + s` and `c` of `a * p + r`, the term
+    /// `|k| * (a * p + r) - sign(k) * a * (k * p + s)`, which mentions no `p`. One pass
+    /// suffices, since no row mentions another's pivot. The result's coefficients have no
+    /// common factor: a `>=` constant is rounded down, and an equality whose constant the
+    /// factor does not divide is `false`.
+    pub fn reduce(&self, c: &Con) -> Result<Formula, Over> {
+        let mut lin = c.lin.clone();
+        for a in c.lin.terms.keys() {
+            if let Some(t) = self.rows.get(a) {
+                let k = t.terms[a];
+                let s = lin.terms[a].checked_mul(k.signum()).ok_or(Over)?;
+                lin = lin.times(k.abs())?.minus(&t.times(s)?)?;
+            }
+        }
+        let g = lin.terms.values().fold(0, |g, &c| gcd(g, c));
+        if g == 0 {
+            let holds = match c.rel {
+                Rel::Ge => lin.constant >= 0,
+                Rel::Eq => lin.constant == 0,
+            };
+            return Ok(if holds {
+                Formula::top()
+            } else {
+                Formula::bottom()
+            });
+        }
+        if c.rel == Rel::Eq && lin.constant % g != 0 {
+            return Ok(Formula::bottom());
+        }
+        let constant = lin.constant.div_euclid(g);
+        let terms = lin.terms.into_iter().map(|(a, k)| (a, k / g)).collect();
+        Ok(Formula::Con(Con {
+            lin: Lin { terms, constant },
+            rel: c.rel,
+        }))
+    }
+
+    /// The hull of the points of this one where `t` is zero.
+    pub fn and(&self, t: &Lin) -> Hull {
+        if self.is_empty {
+            return self.clone();
+        }
+        self.and_checked(t).unwrap_or_else(|Over| Hull::all())
+    }
+
+    fn and_checked(&self, t: &Lin) -> Result<Hull, Over> {
+        let mut r = t.clone();
+        for a in t.terms.keys() {
+            if let Some(p) = self.rows.get(a) {
+                r = eliminate(&r, p, a)?;
+            }
+        }
+        if r.terms.is_empty() {
+            return Ok(if r.constant == 0 {
+                self.clone()
+            } else {
+                Hull::empty()
+            });
+        }
+        let r = primitive(r);
+        let pivot = r
+            .terms
+            .keys()
+            .min_by_key(|a| self.uses.get(*a).map_or(0, OrdMap::len))
+            .expect("a term")
+            .clone();
+        let mut out = self.clone();
+        let mentions: Vec<Atom> = self
+            .uses
+            .get(&pivot)
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+        for q in mentions {
+            let old = out.rows[&q].clone();
+            let now = eliminate(&old, &r, &pivot)?;
+            out.uses = used(out.uses, &old, &q, false);
+            out.uses = used(out.uses, &now, &q, true);
+            out.rows.insert(q, Arc::new(now));
+        }
+        out.uses = used(out.uses, &r, &pivot, true);
+        out.rows.insert(pivot, Arc::new(r));
+        Ok(out)
+    }
+
+    /// The hull of the union of the two sets: the equalities both hold. The rows the two have
+    /// in common are kept, and the rest are intersected. The rows both span are the common
+    /// rows plus what the rest of each span in common, since neither rest mentions a common
+    /// row's pivot; so a join of hulls that differ in a few rows costs near the rows that
+    /// differ.
+    pub fn join(&self, other: &Hull) -> Hull {
+        if self.is_empty {
+            return other.clone();
+        }
+        if other.is_empty {
+            return self.clone();
+        }
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        let mut out = self.clone();
+        for d in self.rows.diff(&other.rows) {
+            let (s, t) = match d {
+                DiffItem::Add(_, t) => (None, Some(t)),
+                DiffItem::Remove(p, s) => (Some((p, s)), None),
+                DiffItem::Update { old, new } => (Some(old), Some(new.1)),
+            };
+            if let Some((p, s)) = s {
+                out.rows.remove(p);
+                out.uses = used(out.uses, s, p, false);
+                a.push(s.clone());
+            }
+            if let Some(t) = t {
+                b.push(t.clone());
+            }
+        }
+        // The common rows are reduced against each other already.
+        match intersect(&a, &b) {
+            Ok(ts) => ts.iter().fold(out, |h, t| h.and(t)),
+            Err(Over) => Hull::all(),
+        }
+    }
+}
+
+impl fmt::Display for Hull {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_empty {
+            return write!(f, "empty");
+        }
+        let rows: Vec<String> = self.rows().map(|t| format!("{t} == 0")).collect();
+        write!(f, "{}", rows.join(", "))
+    }
+}
+
+/// `uses` with the row `t` at `pivot` added or removed.
+fn used(
+    mut uses: OrdMap<Atom, OrdMap<Atom, ()>>,
+    t: &Lin,
+    pivot: &Atom,
+    add: bool,
+) -> OrdMap<Atom, OrdMap<Atom, ()>> {
+    for a in t.terms.keys().filter(|a| *a != pivot) {
+        let mut m = uses.get(a).cloned().unwrap_or_default();
+        if add {
+            m.insert(pivot.clone(), ());
+        } else {
+            m.remove(pivot);
+        }
+        if m.is_empty() {
+            uses.remove(a);
+        } else {
+            uses.insert(a.clone(), m);
+        }
+    }
+    uses
+}
+
+/// `r` with the atom `a` removed by adding a multiple of `p`, whose coefficient of `a` is
+/// positive.
+fn eliminate(r: &Lin, p: &Lin, a: &Atom) -> Result<Lin, Over> {
+    match r.terms.get(a) {
+        None => Ok(r.clone()),
+        Some(&c) => Ok(primitive(r.times(p.terms[a])?.minus(&p.times(c)?)?)),
+    }
+}
+
+fn gcd(a: i128, b: i128) -> i128 {
+    let (mut a, mut b) = (a.unsigned_abs(), b.unsigned_abs());
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    // A gcd of 2^127, from a coefficient of -2^127, is taken as 1: the row is not divided.
+    i128::try_from(a).unwrap_or(1)
+}
+
+/// The gcd of a term's coefficients and constant.
+fn content(t: &Lin) -> i128 {
+    t.terms.values().fold(t.constant, |g, &c| gcd(g, c))
+}
+
+/// `t` divided by `k`, which divides each coefficient and the constant.
+fn over(t: &Lin, k: i128) -> Lin {
+    Lin {
+        terms: t.terms.iter().map(|(a, c)| (a.clone(), c / k)).collect(),
+        constant: t.constant / k,
+    }
+}
+
+/// `t` divided by the gcd of its coefficients and constant, its first coefficient positive.
+fn primitive(t: Lin) -> Lin {
+    let mut g = content(&t);
+    if g == 0 {
+        return t;
+    }
+    if t.terms.values().next().is_some_and(|c| *c < 0) {
+        g = -g;
+    }
+    if g == 1 { t } else { over(&t, g) }
+}
+
+/// Terms spanning the terms both `a` and `b` span (Zassenhaus): each term `t` of `a` enters as
+/// the pair `(t, t)` and each of `b` as `(t, 0)`, and the pairs are brought to echelon form on
+/// their first halves; the second half of a pair whose first half becomes zero is a sum of
+/// terms of `a` that is also a sum of terms of `b`.
+fn intersect(a: &[Arc<Lin>], b: &[Arc<Lin>]) -> Result<Vec<Lin>, Over> {
+    if a.is_empty() || b.is_empty() {
+        return Ok(Vec::new());
+    }
+    // The pairs by the first atom of their first half; `None` for a first half that is a
+    // constant.
+    let mut pivots: BTreeMap<Option<Atom>, (Lin, Lin)> = BTreeMap::new();
+    let mut out = Vec::new();
+    let pairs = a
+        .iter()
+        .map(|t| ((**t).clone(), (**t).clone()))
+        .chain(b.iter().map(|t| ((**t).clone(), Lin::default())));
+    for (mut l, mut r) in pairs {
+        loop {
+            if l.terms.is_empty() && l.constant == 0 {
+                out.push(r);
+                break;
+            }
+            let k = l.terms.keys().next().cloned();
+            let Some((pl, pr)) = pivots.get(&k) else {
+                pivots.insert(k, (l, r));
+                break;
+            };
+            let (c, cp) = match &k {
+                None => (l.constant, pl.constant),
+                Some(k) => (l.terms[k], pl.terms[k]),
+            };
+            let nl = l.times(cp)?.minus(&pl.times(c)?)?;
+            let nr = r.times(cp)?.minus(&pr.times(c)?)?;
+            let g = gcd(content(&nl), content(&nr));
+            (l, r) = if g <= 1 {
+                (nl, nr)
+            } else {
+                (over(&nl, g), over(&nr, g))
+            };
+        }
+    }
+    Ok(out)
+}

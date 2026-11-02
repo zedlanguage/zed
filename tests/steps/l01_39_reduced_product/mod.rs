@@ -11,6 +11,7 @@
 
 mod controls;
 mod exact;
+mod hull;
 mod random;
 mod scaling;
 mod spec;

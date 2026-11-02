@@ -124,6 +124,70 @@ final class PMap<K, V> {
     }
     return true;
   }
+
+  /// The keys whose entries differ between this map and `other`, in key order: in one map only,
+  /// or with values that are not the same object. A subtree the two trees share is skipped
+  /// whole, so a map made from the other by d puts and removes is compared in O(d log² n).
+  List<K> diff(PMap<K, V> other) {
+    final out = <K>[];
+    // Each stack holds what is still to be visited, the next on top: a subtree whole, or one
+    // node's own entry when `whole` is false.
+    final a = <(_Node<K, V>, bool)>[], b = <(_Node<K, V>, bool)>[];
+    if (_root case final r?) a.add((r, true));
+    if (other._root case final r?) b.add((r, true));
+    void open(List<(_Node<K, V>, bool)> s) {
+      final (n, _) = s.removeLast();
+      if (n.right case final r?) s.add((r, true));
+      s.add((n, false));
+      if (n.left case final l?) s.add((l, true));
+    }
+
+    K least((_Node<K, V>, bool) t) {
+      var (n, whole) = t;
+      while (whole && n.left != null) {
+        n = n.left!;
+      }
+      return n.key;
+    }
+
+    while (a.isNotEmpty && b.isNotEmpty) {
+      final (ta, tb) = (a.last, b.last);
+      if (ta.$2 && tb.$2 && identical(ta.$1, tb.$1)) {
+        a.removeLast();
+        b.removeLast();
+        continue;
+      }
+      final c = compare(least(ta), least(tb));
+      // The side whose next key comes first: a whole subtree is opened, an entry is in that
+      // map alone.
+      final first = c < 0 ? a : (c > 0 ? b : null);
+      if (first != null) {
+        if (first.last.$2) {
+          open(first);
+        } else {
+          out.add(first.removeLast().$1.key);
+        }
+      } else if (!ta.$2 && !tb.$2) {
+        if (!identical(ta.$1.value, tb.$1.value)) out.add(ta.$1.key);
+        a.removeLast();
+        b.removeLast();
+      } else if (ta.$2 && (!tb.$2 || ta.$1.size >= tb.$1.size)) {
+        open(a);
+      } else {
+        open(b);
+      }
+    }
+    // One stack is empty; what the other holds comes after every key already added.
+    final rest = a.isEmpty ? b : a;
+    while (rest.isNotEmpty) {
+      if (rest.last.$2) {
+        open(rest);
+      } else {
+        out.add(rest.removeLast().$1.key);
+      }
+    }
+    return out;
+  }
 }
 
 final class _Node<K, V> {

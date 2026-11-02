@@ -2,10 +2,14 @@
 //! DESIGN.md Part G): a conjunction of disjunctions narrows a scope in time near linear in
 //! its length.
 
-use zedc::store::cell::Premises;
+use std::collections::BTreeMap;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use zed_kernel::{Prim, Term, Value};
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
+use zedc::store::cell::Premises;
+use zedc::store::product::Scope;
 
 use super::ints;
 
@@ -132,4 +136,144 @@ fn a_binding_forgets_what_held_of_the_name_it_shadows() {
     assert!(!reached.scope.bottom, "{shown:#?}");
     let at = std::collections::BTreeMap::from([("x".into(), zed_kernel::Value::Int(-100))]);
     assert!(reached.scope.contains(&at), "{shown:#?}");
+}
+
+/// `(x1 == 0 && … && xk == 0) || (x1 == 1 && … && xk == 1)`.
+fn all_zero_or_all_one(k: usize) -> Term {
+    let all = |v: i64| {
+        (2..=k).fold(prim(Prim::Eq, var("x1"), int(v)), |a, i| {
+            prim(Prim::And, a, prim(Prim::Eq, var(&format!("x{i}")), int(v)))
+        })
+    };
+    prim(Prim::Or, all(0), all(1))
+}
+
+#[test]
+fn a_join_keeps_the_equalities_of_its_sides_and_scales() {
+    let names = |k: usize| -> Vec<std::sync::Arc<str>> {
+        (1..=k).map(|i| format!("x{i}").into()).collect()
+    };
+    for k in [2, 5, 10, 20] {
+        let r = ints(&names(k)).assume(&all_zero_or_all_one(k), true, &Premises::new());
+        let differ = prim(Prim::Ne, var("x1"), var(&format!("x{k}")));
+        assert!(
+            r.assume(&differ, true, &Premises::new()).bottom,
+            "k = {k}: {}",
+            r.relation
+        );
+        let x1 = prim(Prim::Eq, var("x1"), int(1));
+        assert!(!r.assume(&x1, true, &Premises::new()).bottom, "k = {k}");
+    }
+    // The two sides, built before the timing; the join of the two, reduced, is timed.
+    let sides = |k: usize| {
+        let s = ints(&names(k));
+        let Term::Prim(_, a) = all_zero_or_all_one(k) else {
+            unreachable!("a disjunction")
+        };
+        let p = Premises::new();
+        (s.assume(&a[0], true, &p), s.assume(&a[1], true, &p))
+    };
+    let built: BTreeMap<usize, (Scope, Scope)> = [8, 32, 64, 256]
+        .into_iter()
+        .map(|k| (k, sides(k)))
+        .collect();
+    scaling::check("the join of two sides that fix k names, reduced", 32, |k| {
+        let (l, r) = &built[&k];
+        l.join(r).reduce();
+    });
+    let caught = catch_unwind(AssertUnwindSafe(|| {
+        scaling::check("the join reduced as a whole", 8, |k| {
+            let (l, r) = &built[&k];
+            l.join(r).reduce_whole();
+        });
+    }));
+    assert!(
+        caught.is_err(),
+        "the check passed a join reduced as a whole"
+    );
+}
+
+/// A random conjunction over `x1`..`x5`: bounds, differences and sums of two names, and
+/// disjunctions of two of these, so that the blocks form chains, trees and cycles.
+fn random_conjunction(rnd: &mut Rng) -> Term {
+    let name = |rnd: &mut Rng| var(&format!("x{}", rnd.int(1, 5)));
+    let atom = |rnd: &mut Rng| {
+        let rel = rnd.pick(&[Prim::Lt, Prim::Le, Prim::Eq]);
+        let (a, b) = (name(rnd), name(rnd));
+        match rnd.below(3) {
+            0 => prim(rel, a, int(rnd.int(-3, 3))),
+            1 => prim(rel, a, prim(Prim::Add, b, int(rnd.int(-2, 2)))),
+            _ => prim(rel, prim(Prim::Add, a, b), int(rnd.int(-4, 4))),
+        }
+    };
+    let conjunct = |rnd: &mut Rng| {
+        if rnd.below(3) == 0 {
+            prim(Prim::Or, atom(rnd), atom(rnd))
+        } else {
+            atom(rnd)
+        }
+    };
+    let n = rnd.int(2, 7);
+    (1..n).fold(conjunct(rnd), |t, _| prim(Prim::And, t, conjunct(rnd)))
+}
+
+#[test]
+fn projecting_by_blocks_keeps_what_projecting_whole_trees_keeps() {
+    let names: Vec<std::sync::Arc<str>> = (1..=5).map(|i| format!("x{i}").into()).collect();
+    let s = ints(&names);
+    let mut rnd = Rng::new(39);
+    let mut empty = 0;
+    for _ in 0..zed_tests::instances::RANDOM_INSTANCES {
+        let t = random_conjunction(&mut rnd);
+        let a = s.assume(&t, true, &Premises::new());
+        let (mut blocks, mut whole) = (a.clone(), a);
+        blocks.reduce();
+        whole.reduce_whole();
+        assert_eq!(blocks.bottom, whole.bottom, "{t:?}");
+        if blocks.bottom {
+            empty += 1;
+            continue;
+        }
+        for x in &names {
+            assert_eq!(blocks.get(x), whole.get(x), "{x} in {t:?}");
+        }
+    }
+    // Both kinds of case occur.
+    assert!(
+        0 < empty && empty < zed_tests::instances::RANDOM_INSTANCES,
+        "{empty} empty"
+    );
+}
+
+#[test]
+fn a_cycle_of_strict_orders_is_empty() {
+    // x < y and y < x: each bound raises the other without end unless the cycle is seen.
+    let s = ints(&["x".into(), "y".into()]);
+    let t = prim(
+        Prim::And,
+        prim(Prim::Lt, var("x"), var("y")),
+        prim(Prim::Lt, var("y"), var("x")),
+    );
+    let mut a = s.assume(&t, true, &Premises::new());
+    a.reduce();
+    assert!(a.bottom, "{a}");
+}
+
+#[test]
+fn an_even_number_that_is_odd_is_empty() {
+    // c == 2a, c == 2b + 1, c >= 0: no bound is ever tight, only the parity is.
+    let s = ints(&["a".into(), "b".into(), "c".into()]);
+    let two = |x: &str| prim(Prim::Mul, int(2), var(x));
+    let t = prim(
+        Prim::And,
+        prim(
+            Prim::And,
+            prim(Prim::Eq, var("c"), two("a")),
+            prim(Prim::Eq, var("c"), prim(Prim::Add, two("b"), int(1))),
+        ),
+        prim(Prim::Le, int(0), var("c")),
+    );
+    let mut a = s.assume(&t, true, &Premises::new());
+    a.reduce();
+    assert!(a.bottom, "{a}");
 }

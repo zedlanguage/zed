@@ -390,7 +390,8 @@ impl Formula {
 
     /// The disjunction of `a` and `b` with the conjuncts they share taken out of it, so that
     /// joining two narrowings of one relation does not copy the relation into each disjunct.
-    pub fn either(a: &Formula, b: &Formula) -> Formula {
+    /// Each constraint of the rest of each side is replaced by `rest` of it.
+    pub fn either(a: &Formula, b: &Formula, rest: &dyn Fn(&Con) -> Formula) -> Formula {
         fn parts(f: &Formula) -> &[Formula] {
             match f {
                 Formula::And(gs) => gs,
@@ -401,11 +402,16 @@ impl Formula {
         let in_b: std::collections::HashSet<&Formula> = pb.iter().collect();
         let shared: std::collections::HashSet<&Formula> =
             pa.iter().filter(|g| in_b.contains(g)).collect();
-        let rest = |p: &[Formula]| {
-            Formula::and(p.iter().filter(|g| !shared.contains(g)).cloned().collect())
+        let left = |p: &[Formula]| {
+            Formula::and(
+                p.iter()
+                    .filter(|g| !shared.contains(g))
+                    .map(|g| g.map_cons(rest))
+                    .collect(),
+            )
         };
         let mut out: Vec<Formula> = pa.iter().filter(|g| shared.contains(g)).cloned().collect();
-        out.push(Formula::or(vec![rest(pa), rest(pb)]));
+        out.push(Formula::or(vec![left(pa), left(pb)]));
         Formula::and(out)
     }
 
@@ -433,6 +439,16 @@ impl Formula {
             }
         }
         go(self, sym, true)
+    }
+
+    /// The formula with each constraint `c` replaced by `f(c)`.
+    pub fn map_cons(&self, f: &dyn Fn(&Con) -> Formula) -> Formula {
+        match self {
+            Formula::Con(c) => f(c),
+            Formula::Not(g) => Formula::negate(g.map_cons(f)),
+            Formula::And(gs) => Formula::and(gs.iter().map(|g| g.map_cons(f)).collect()),
+            Formula::Or(gs) => Formula::or(gs.iter().map(|g| g.map_cons(f)).collect()),
+        }
     }
 
     /// The negation, with double negations and constants removed.

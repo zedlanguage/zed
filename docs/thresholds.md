@@ -268,6 +268,18 @@ formula with disjunctions is no longer split into all its conjunctions:
   sides hold it. Two top-level constraints with the same terms are merged when the formula
   is built (the tighter bound; two different equalities give no point), and an exact test on
   one name adds nothing to the relation, since the interval holds it.
+- **Blocks** (step L1.39). The top-level conjuncts that share an atom other than a name, or
+  lie on a cycle through names, form one block, so the blocks and the names two of them
+  share form a forest. A block's parts are its constraints together and each other conjunct
+  with them. Each tree's blocks are projected from the leaves to the root and back, a block
+  only when one of its parts is due, which carries a bound across the tree in one round;
+  within a block, a bound one part gives another waits for the next narrowing, as before.
+  A tree with a block still due after the two passes is projected by the parts of the whole
+  tree. A part's record is kept under its conjunct, not under the constraints it was
+  projected with, so a part is not projected again when only the constraints have grown: a
+  disjunction narrowed before a constraint that rules out one of its disjuncts keeps that
+  disjunct's points. Keying by the part with its constraints is exact here but projects
+  every part of a block again at each new constraint, quadratic in the clauses.
 
 Termination: every loop removes a disjunct, a variable, or halves a step, and none of these
 is undone, so each ends; the reduction rounds of the scope are meets (replacement 3).

@@ -9,5 +9,6 @@ export 'src/store/interval.dart';
 export 'src/store/iterate.dart';
 export 'src/store/lattice.dart';
 export 'src/store/preimage.dart';
+export 'src/store/product.dart';
 export 'src/store/revision.dart';
 export 'src/store/wto.dart';

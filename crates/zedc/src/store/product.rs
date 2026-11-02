@@ -45,10 +45,11 @@ use zed_kernel::{Evaluator, Prim, Stack, Term, Value, World, on_stack};
 
 use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
+use super::hull::Hull;
 use super::interval::{End, IntervalSet};
 use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
 use super::preimage::{Classes, Demand, Domains, Point, preimage, relations, witness};
-use super::presburger::{self, Atom, Con, Formula, Lin};
+use super::presburger::{self, Atom, Con, Formula, Lin, Rel};
 use super::revision::{self, Op, reduce_congruence};
 use crate::stage;
 
@@ -441,6 +442,206 @@ pub struct Scope {
 /// The intervals and classes of a part's names when it was last projected.
 pub type Projected = Vec<(Arc<str>, IntervalSet, Congruence)>;
 
+/// The names a formula mentions.
+fn syms(f: &Formula) -> Vec<Arc<str>> {
+    f.atoms()
+        .into_iter()
+        .filter_map(|a| match a {
+            Atom::Sym(n) => Some(n),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Each of `conjuncts` that is not a constraint, with the constraints, and the constraints
+/// alone when there are any; each part with the conjunct it is projected for, or the
+/// constraints for theirs.
+fn split<'a>(conjuncts: impl Iterator<Item = &'a Formula>) -> Vec<(Formula, Formula)> {
+    let (cons, others): (Vec<&Formula>, Vec<&Formula>) =
+        conjuncts.partition(|g| matches!(g, Formula::Con(_)));
+    let base = Formula::and(cons.into_iter().cloned().collect());
+    let mut parts: Vec<(Formula, Formula)> = others
+        .into_iter()
+        .map(|g| (g.clone(), Formula::and(vec![g.clone(), base.clone()])))
+        .collect();
+    if base != Formula::top() {
+        parts.push((base.clone(), base));
+    }
+    parts
+}
+
+/// Top-level conjuncts of a relation projected together.
+struct Block {
+    /// What is projected: each conjunct that is not a constraint, with the constraints, and
+    /// the constraints alone, each with the conjunct it is projected for ([`split`]). A new
+    /// conjunct then costs its own part, not the block's.
+    parts: Vec<(Formula, Formula)>,
+    /// The conjuncts, by their places.
+    conjuncts: Vec<usize>,
+    /// The names they mention.
+    names: Vec<Arc<str>>,
+    /// The tree of blocks it lies in.
+    tree: usize,
+}
+
+/// The blocks of `conjuncts`, each tree's in preorder from a root. Conjuncts that share an
+/// atom other than a name are first put together; the blocks are then the biconnected
+/// components of the graph whose vertices are these groups and the names, with an edge from a
+/// group to each name it mentions, where components that share a group are one block (Tarjan's
+/// algorithm, with a stack in place of recursion). In linear time but for the sorting of atoms.
+fn blocks(conjuncts: &[Formula]) -> Vec<Block> {
+    fn find(up: &mut [usize], mut i: usize) -> usize {
+        while up[i] != i {
+            up[i] = up[up[i]];
+            i = up[i];
+        }
+        i
+    }
+    let n = conjuncts.len();
+    let mut up: Vec<usize> = (0..n).collect();
+    let mut name_of: Vec<Arc<str>> = Vec::new();
+    let mut index: BTreeMap<Atom, usize> = BTreeMap::new();
+    // Each conjunct's names, numbered, and the first conjunct of each other atom.
+    let mut mentions: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut other: BTreeMap<Atom, usize> = BTreeMap::new();
+    for (i, g) in conjuncts.iter().enumerate() {
+        for a in g.atoms() {
+            if let Atom::Sym(x) = &a {
+                let j = *index.entry(a.clone()).or_insert_with(|| {
+                    name_of.push(x.clone());
+                    name_of.len() - 1
+                });
+                mentions[i].push(j);
+            } else if let Some(&k) = other.get(&a) {
+                let (r, s) = (find(&mut up, i), find(&mut up, k));
+                up[r] = s;
+            } else {
+                other.insert(a, i);
+            }
+        }
+    }
+    // A group's vertex is its root conjunct's, with the edges of all of its conjuncts; name
+    // `j` is vertex `n + j`.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n + name_of.len()];
+    for (i, js) in mentions.iter().enumerate() {
+        let r = find(&mut up, i);
+        for &j in js {
+            adj[r].push(n + j);
+            adj[n + j].push(r);
+        }
+    }
+    for es in adj.iter_mut() {
+        es.sort_unstable();
+        es.dedup();
+    }
+    let mut disc = vec![usize::MAX; adj.len()];
+    let mut low = vec![0; adj.len()];
+    let mut time = 0;
+    let mut edges: Vec<(usize, usize)> = Vec::new();
+    for s in 0..n {
+        if disc[s] != usize::MAX || find(&mut up, s) != s {
+            continue;
+        }
+        disc[s] = time;
+        low[s] = time;
+        time += 1;
+        let mut stack: Vec<(usize, usize, usize)> = vec![(s, usize::MAX, 0)];
+        while let Some(&mut (v, parent, ref mut next)) = stack.last_mut() {
+            if let Some(&w) = adj[v].get(*next) {
+                *next += 1;
+                if disc[w] == usize::MAX {
+                    edges.push((v, w));
+                    disc[w] = time;
+                    low[w] = time;
+                    time += 1;
+                    stack.push((w, v, 0));
+                } else if w != parent && disc[w] < disc[v] {
+                    edges.push((v, w));
+                    low[v] = low[v].min(disc[w]);
+                }
+                continue;
+            }
+            stack.pop();
+            let Some(&(u, _, _)) = stack.last() else {
+                continue;
+            };
+            low[u] = low[u].min(low[v]);
+            if low[v] >= disc[u] {
+                // A component: its groups are one block.
+                let mut first = None;
+                while let Some((a, b)) = edges.pop() {
+                    for x in [a, b].into_iter().filter(|&x| x < n) {
+                        match first {
+                            None => first = Some(find(&mut up, x)),
+                            Some(f) => {
+                                let r = find(&mut up, x);
+                                up[r] = f;
+                            }
+                        }
+                    }
+                    if (a, b) == (u, v) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    // The blocks, and the blocks that mention each name.
+    let mut place: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut members: Vec<Vec<usize>> = Vec::new();
+    for i in 0..n {
+        let r = find(&mut up, i);
+        let b = *place.entry(r).or_insert_with(|| {
+            members.push(Vec::new());
+            members.len() - 1
+        });
+        members[b].push(i);
+    }
+    let mut names: Vec<Vec<usize>> = vec![Vec::new(); members.len()];
+    let mut at: Vec<Vec<usize>> = vec![Vec::new(); name_of.len()];
+    for (b, is) in members.iter().enumerate() {
+        let mut js: Vec<usize> = is.iter().flat_map(|&i| mentions[i].clone()).collect();
+        js.sort_unstable();
+        js.dedup();
+        for &j in &js {
+            at[j].push(b);
+        }
+        names[b] = js;
+    }
+    // Each tree in preorder.
+    let mut out = Vec::new();
+    let mut seen = vec![false; members.len()];
+    let mut crossed = vec![false; name_of.len()];
+    for root in 0..members.len() {
+        if seen[root] {
+            continue;
+        }
+        let tree = root;
+        seen[root] = true;
+        let mut work = vec![root];
+        while let Some(b) = work.pop() {
+            for &j in &names[b] {
+                if !crossed[j] {
+                    crossed[j] = true;
+                    for &c in &at[j] {
+                        if !seen[c] {
+                            seen[c] = true;
+                            work.push(c);
+                        }
+                    }
+                }
+            }
+            out.push(Block {
+                parts: split(members[b].iter().map(|&i| &conjuncts[i])),
+                conjuncts: members[b].clone(),
+                names: names[b].iter().map(|&j| name_of[j].clone()).collect(),
+                tree,
+            });
+        }
+    }
+    out
+}
+
 /// A written constraint's text with the values of its static names.
 pub type Enumerated = (String, Vec<(Arc<str>, Value)>);
 
@@ -597,8 +798,27 @@ impl Scope {
         for n in other.names.keys() {
             names.entry(n.clone()).or_insert_with(Product::top);
         }
+        // The equalities of two or more atoms that hold on both sides (Karr's join), which the
+        // disjunction of the relations holds but no projection of one of its parts finds. Each
+        // side implies them, so each side's rest holds where they do as it holds with their
+        // pivots replaced; the disjunction then mentions no pivot, and a join of sides that fix
+        // `k` names leaves a disjunction of one name and `k - 1` equalities of two.
+        let hull = self.hull().join(&other.hull());
+        let reduce = |c: &Con| hull.reduce(c).unwrap_or_else(|_| Formula::Con(c.clone()));
+        let kept: Vec<Formula> = hull
+            .rows()
+            .filter(|t| t.terms.len() > 1)
+            .map(|t| {
+                Formula::Con(Con {
+                    lin: t.clone(),
+                    rel: Rel::Eq,
+                })
+            })
+            .collect();
+        let mut relation = vec![Formula::either(&self.relation, &other.relation, &reduce)];
+        relation.extend(kept);
         Scope {
-            relation: Formula::either(&self.relation, &other.relation),
+            relation: Formula::and(relation),
             written: self
                 .written
                 .iter()
@@ -638,6 +858,33 @@ impl Scope {
                 .collect(),
             names,
         }
+    }
+
+    /// The affine hull of the scope's points: the equalities among the relation's top-level
+    /// conjuncts, and each name of one integer value.
+    fn hull(&self) -> Hull {
+        if self.bottom {
+            return Hull::empty();
+        }
+        let conjuncts = match &self.relation {
+            Formula::And(gs) => gs.as_slice(),
+            g => std::slice::from_ref(g),
+        };
+        let mut terms: Vec<Lin> = conjuncts
+            .iter()
+            .filter_map(|g| match g {
+                Formula::Con(c) if c.rel == Rel::Eq => Some(c.lin.clone()),
+                _ => None,
+            })
+            .collect();
+        for (n, p) in &self.names {
+            if let Some(Value::Int(v)) = p.value()
+                && let Ok(t) = Lin::atom(Atom::Sym(n.clone())).minus(&Lin::constant((*v).into()))
+            {
+                terms.push(t);
+            }
+        }
+        Hull::of(&terms)
     }
 
     /// This scope where `test` gave `outcome`, reduced.
@@ -801,6 +1048,17 @@ impl Scope {
     /// rounding moves no endpoint the projection gave, since the projection reads every
     /// congruence and so its hulls end at members of each class.
     pub fn reduce(&mut self) {
+        self.reduce_with(false);
+    }
+
+    /// [`Scope::reduce`] with every tree of blocks projected as a whole, for the control of
+    /// the test that the blocks scale.
+    #[doc(hidden)]
+    pub fn reduce_whole(&mut self) {
+        self.reduce_with(true);
+    }
+
+    fn reduce_with(&mut self, whole: bool) {
         let mut projected: Option<BTreeMap<Arc<str>, Product>> = None;
         loop {
             if self.bottom || self.names.values().any(Product::is_empty) {
@@ -808,7 +1066,7 @@ impl Scope {
             }
             let before = self.names.clone();
             if projected.as_ref() != Some(&self.names) {
-                self.project();
+                self.project(whole);
                 projected = Some(self.names.clone());
             }
             for p in self.names.values_mut() {
@@ -831,13 +1089,18 @@ impl Scope {
         }
     }
 
-    /// The projection of the relation, within every interval, onto each name it mentions:
-    /// of its top-level constraints together, and of each other top-level conjunct with them,
-    /// each part only when it is new or a product of a name it mentions has changed since its
-    /// last projection. The parts pass information through the products alone, so a change
-    /// spreads to the parts that mention the names it narrowed and to no others, and a test
-    /// that narrows nothing costs its own parts alone.
-    fn project(&mut self) {
+    /// The projection of the relation, within every interval, onto each name it mentions, by
+    /// blocks. The top-level conjuncts that share an atom other than a name, or a cycle
+    /// through names, form one block, so two blocks share at most one name and the blocks
+    /// and the names they share form a forest (docs/thresholds.md, replacement 4). Each block
+    /// is projected from the leaves of its tree to the root and back, which carries every
+    /// bound across the tree, and each only when one of its parts is new or an interval or
+    /// class of a name it mentions has changed since its last projection: a test that
+    /// narrows nothing costs its own blocks alone. A tree some block of which is due after
+    /// the two passes has a block whose projection lost points the interval holds, and its
+    /// conjuncts are then projected as a whole: its constraints together, and each other
+    /// conjunct with them; with `whole`, every tree is.
+    fn project(&mut self, whole: bool) {
         if self.relation == Formula::top() {
             self.projected.clear();
             return;
@@ -846,44 +1109,90 @@ impl Scope {
             Formula::And(gs) => gs.clone(),
             g => vec![g.clone()],
         };
-        let (cons, others): (Vec<Formula>, Vec<Formula>) = conjuncts
-            .into_iter()
-            .partition(|g| matches!(g, Formula::Con(_)));
-        let base = Formula::and(cons);
-        let mut parts = others;
-        if base != Formula::top() {
-            parts.push(base.clone());
+        let blocks = blocks(&conjuncts);
+        let mut used: HashSet<Formula> = HashSet::new();
+        if !whole {
+            for b in blocks.iter().rev().chain(&blocks) {
+                self.project_block(b);
+            }
         }
-        let snapshot = |s: &Scope, f: &Formula| -> Projected {
-            f.atoms()
+        // A tree's blocks are together, and no two trees share a name, so projecting one tree
+        // leaves the others as they were.
+        for tree in blocks.chunk_by(|a, b| a.tree == b.tree) {
+            let due = whole
+                || tree.iter().any(|b| {
+                    let at = self.snapshot(&b.names);
+                    b.parts
+                        .iter()
+                        .any(|(key, _)| self.projected.get(key) != Some(&at))
+                });
+            if !due {
+                continue;
+            }
+            // Keyed by the whole part, apart from the blocks' parts; with `whole`, which
+            // projects no block, by its conjunct as a block's part is.
+            let tree = tree
                 .iter()
-                .filter_map(|a| match a {
-                    Atom::Sym(n) => {
-                        let p = s.get(n);
-                        Some((n.clone(), p.ints().clone(), p.cell.congruence.element))
-                    }
-                    _ => None,
-                })
-                .collect()
-        };
-        let due: Vec<Formula> = parts
+                .flat_map(|b| b.conjuncts.iter().map(|&i| &conjuncts[i]));
+            for (key, g) in split(tree) {
+                let key = if whole { key } else { g.clone() };
+                let names = syms(&g);
+                self.project_due(&key, &g, &names);
+                used.insert(key);
+            }
+        }
+        used.extend(
+            blocks
+                .into_iter()
+                .flat_map(|b| b.parts.into_iter().map(|(key, _)| key)),
+        );
+        self.projected.retain(|g, _| used.contains(g));
+    }
+
+    /// Projects the parts of `b` that are due, then marks every part of `b` projected: a bound
+    /// one part gives another in the block waits for the next narrowing, so that a narrowing
+    /// costs the block's due parts and not every part again.
+    fn project_block(&mut self, b: &Block) {
+        let at = self.snapshot(&b.names);
+        let due: Vec<&Formula> = b
+            .parts
             .iter()
-            .filter(|g| {
-                let whole = Formula::and(vec![(*g).clone(), base.clone()]);
-                self.projected.get(*g) != Some(&snapshot(self, &whole))
-            })
-            .cloned()
+            .filter(|(key, _)| self.projected.get(key) != Some(&at))
+            .map(|(_, g)| g)
             .collect();
-        let kept: HashSet<&Formula> = parts.iter().collect();
-        self.projected.retain(|g, _| kept.contains(g));
-        for g in &due {
-            self.project_part(&Formula::and(vec![g.clone(), base.clone()]));
+        if due.is_empty() {
+            return;
         }
         for g in due {
-            let whole = Formula::and(vec![g.clone(), base.clone()]);
-            let at = snapshot(self, &whole);
-            self.projected.insert(g, at);
+            self.project_part(g);
         }
+        let at = self.snapshot(&b.names);
+        for (key, _) in &b.parts {
+            self.projected.insert(key.clone(), at.clone());
+        }
+    }
+
+    /// Projects `part`, which mentions `names`, when `key` is new or one of their intervals
+    /// or classes has changed since its last projection. A part keyed by its conjunct alone
+    /// is not projected again when only the constraints it is projected with have grown.
+    fn project_due(&mut self, key: &Formula, part: &Formula, names: &[Arc<str>]) {
+        if self.projected.get(key) == Some(&self.snapshot(names)) {
+            return;
+        }
+        self.project_part(part);
+        let at = self.snapshot(names);
+        self.projected.insert(key.clone(), at);
+    }
+
+    /// The interval and class of each of `names`.
+    fn snapshot(&self, names: &[Arc<str>]) -> Projected {
+        names
+            .iter()
+            .map(|n| {
+                let p = self.get(n);
+                (n.clone(), p.ints().clone(), p.cell.congruence.element)
+            })
+            .collect()
     }
 
     /// Meets each name `part` mentions with its projection, within every interval.
