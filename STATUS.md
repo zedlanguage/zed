@@ -628,3 +628,8 @@ The spec's sec:grammar now has a `desugar` fence with one rule per syntactic pro
 - Recursion enters at L6. A recursive function is the definedness fix over its parameter domain, evaluated on demand. The M0.9 evaluator computes that fix over a finite domain only; the L1/L6 interpreter evaluates on demand.
 - Kernel primitives the rules name that the M0.9 kernel lacks: `pow` (L1), `range` (L3), and the type test `is` (L1). They are added at those steps.
 - `break e`: the step's guard returns `#break(e)` and the loop's result is `e`.
+- T14 and T11 findings are now nodes in `docs/plan_dag.md`, with a table placing each finding
+  (section "T14 and T11 findings"): T14-bugs-rt, T14-bugs-kernel, T14-value, T14-heap,
+  T14-hooks, T14-rope, T14-bring, T14-paths, T14-provenance, T14-low, T14-rest, T11-preimage,
+  T11-ty, T11-check, T11-elab. T14 itself blocks nothing; T12 needs every fix node, which
+  orders them before L1.40. Plan only: no code changed.
