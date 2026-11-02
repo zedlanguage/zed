@@ -1051,8 +1051,8 @@ impl Scope {
         self.reduce_with(false);
     }
 
-    /// [`Scope::reduce`] with every tree of blocks projected as a whole, for the control of
-    /// the test that the blocks scale.
+    /// [`Scope::reduce`] with every tree of blocks projected as a whole, for the test that
+    /// projecting by blocks keeps what this keeps.
     #[doc(hidden)]
     pub fn reduce_whole(&mut self) {
         self.reduce_with(true);

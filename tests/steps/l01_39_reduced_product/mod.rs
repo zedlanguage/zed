@@ -6,8 +6,7 @@
 //! arm whose test no value meets is unreachable and the program is accepted, and a binding
 //! read from a static `if` is static. `random` checks against the interpreter that each
 //! arm's scope holds every value that reaches it and that no value reaches an unreachable
-//! arm, and `controls` checks each reduction and that each check of `random` rejects a wrong
-//! answer.
+//! arm, and `controls` checks each reduction.
 
 mod controls;
 mod exact;

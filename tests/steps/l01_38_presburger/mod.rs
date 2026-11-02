@@ -5,8 +5,8 @@
 //! `y * w + x < h * w` follows from `0 <= y < h` and `0 <= x < w`, and not from `y <= h`.
 //! `preimage` checks the z3 fixtures and the relation a non-box preimage keeps. `random`
 //! checks the translation, the Omega test, the projection and entailment against the
-//! interpreter at every point of a window, and `controls` checks the budgets of step M0.5
-//! and that each check of `random` rejects a wrong answer.
+//! interpreter at every point of a window, and `controls` checks relations of any size
+//! and the undecided fragment.
 
 mod controls;
 mod entailment;

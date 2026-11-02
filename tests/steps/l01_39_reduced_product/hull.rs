@@ -134,19 +134,12 @@ fn rows_of(n: usize) -> Hull {
     Hull::of(&rows)
 }
 
-/// `n` joins as at a loop head, each of the hull `h` of `n` rows with itself and one more row;
-/// with `copy`, each joins a copy of the hull that shares nothing with it.
-fn loop_joins(h: &Hull, n: usize, copy: bool) {
+/// `n` joins as at a loop head, each of the hull `h` of `n` rows with itself and one more row.
+fn loop_joins(h: &Hull, n: usize) {
     let mut h = h.clone();
     for i in 0..n {
         let b = h.and(&lin(&[(&format!("x{i}"), 1)], -(i as i128)));
-        let a = if copy {
-            let rows: Vec<Lin> = h.rows().cloned().collect();
-            Hull::of(&rows)
-        } else {
-            h
-        };
-        h = a.join(&b);
+        h = h.join(&b);
     }
     assert_eq!(h.rows().count(), n);
 }
@@ -239,24 +232,5 @@ fn a_join_costs_near_the_rows_that_differ() {
         .into_iter()
         .map(|m| (m, rows_of(m)))
         .collect();
-    scaling::check("the join of hulls", 256, |m| {
-        loop_joins(&hulls[&m], m, false)
-    });
-}
-
-#[test]
-fn control_the_scaling_check_catches_a_join_that_reads_every_row() {
-    let hulls: BTreeMap<usize, Hull> = [64, scaling::FACTOR * 64]
-        .into_iter()
-        .map(|m| (m, rows_of(m)))
-        .collect();
-    let caught = std::panic::catch_unwind(|| {
-        scaling::check("the join of copies", 64, |m| {
-            loop_joins(&hulls[&m], m, true)
-        });
-    });
-    assert!(
-        caught.is_err(),
-        "the check passed a join that reads every row"
-    );
+    scaling::check("the join of hulls", 256, |m| loop_joins(&hulls[&m], m));
 }

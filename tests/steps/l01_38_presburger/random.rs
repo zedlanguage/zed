@@ -98,7 +98,7 @@ fn whole(r: &Relation, names: &[Arc<str>]) -> Formula {
 }
 
 /// The relation holds at each point of the window exactly where `t` does.
-pub(super) fn check_points(r: &Relation, t: &Term, names: &[Arc<str>]) -> Result<(), String> {
+fn check_points(r: &Relation, t: &Term, names: &[Arc<str>]) -> Result<(), String> {
     for p in window(names.len(), LO, HI) {
         let at = Formula::and(
             names
@@ -125,11 +125,7 @@ pub(super) fn check_points(r: &Relation, t: &Term, names: &[Arc<str>]) -> Result
 
 /// The Omega test finds a point of the window exactly when `t` holds at one, and the point
 /// it finds is one.
-pub(super) fn check_model(
-    found: Option<Vec<i64>>,
-    t: &Term,
-    names: &[Arc<str>],
-) -> Result<(), String> {
+fn check_model(found: Option<Vec<i64>>, t: &Term, names: &[Arc<str>]) -> Result<(), String> {
     let any = window(names.len(), LO, HI)
         .into_iter()
         .find(|p| holds(t, names, p));
@@ -144,11 +140,7 @@ pub(super) fn check_model(
 }
 
 /// Each claimed projection holds every value the points of `t` take, within their hull.
-pub(super) fn check_projection(
-    claimed: &[IntervalSet],
-    t: &Term,
-    names: &[Arc<str>],
-) -> Result<(), String> {
+fn check_projection(claimed: &[IntervalSet], t: &Term, names: &[Arc<str>]) -> Result<(), String> {
     let points: Vec<Vec<i64>> = window(names.len(), LO, HI)
         .into_iter()
         .filter(|p| holds(t, names, p))
@@ -173,12 +165,7 @@ pub(super) fn check_projection(
 
 /// No point of the window refutes a proved entailment from `p` to `g`, and a countermodel
 /// is one.
-pub(super) fn check_entailment(
-    e: &Entailment,
-    p: &Term,
-    g: &Term,
-    names: &[Arc<str>],
-) -> Result<(), String> {
+fn check_entailment(e: &Entailment, p: &Term, g: &Term, names: &[Arc<str>]) -> Result<(), String> {
     let counter = window(names.len(), LO, HI)
         .into_iter()
         .find(|q| holds(p, names, q) && !holds(g, names, q));

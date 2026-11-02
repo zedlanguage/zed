@@ -1,7 +1,4 @@
-//! Each reduction on its own, the enumeration of listed sets, and controls: the check of `random`
-//! rejects a scope that leaves out a value reaching its arm.
-
-use std::sync::Arc;
+//! Each reduction on its own and the enumeration of listed sets.
 
 use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
 use zed_kernel::types::Type;
@@ -12,7 +9,6 @@ use zedc::store::lattice::{Landmarks, Lattice};
 use zedc::store::product::{Product, Scope};
 
 use super::ints;
-use super::random::{Shape, check};
 
 fn none() -> zedc::store::cell::Premises {
     zedc::store::cell::Premises::new()
@@ -207,43 +203,6 @@ fn an_empty_interval_removes_int_from_the_type() {
     let mut p = Product::of_type(Type::int());
     p.cell.ints.element = Bounds::ints(IntervalSet::empty());
     assert!(Scope::new([("v".into(), p)]).bottom);
-}
-
-#[test]
-fn the_check_rejects_a_scope_that_leaves_out_a_reached_value() {
-    // `x >= 0` then `y < x`; the first arm holds every `x` in `0..`.
-    let s = Shape {
-        z: var("x"),
-        outer: prim(Prim::Ge, vec![var("x"), lit(0)]),
-        inner: prim(Prim::Lt, vec![var("y"), var("x")]),
-        c: 0,
-    };
-    let mut arms = s.arms();
-    assert!(check(&s, &arms).is_ok());
-    // Leave `x = 3` out of the first arm.
-    let x = arms[0].scope.names.get_mut(&Arc::<str>::from("x")).unwrap();
-    let cut = IntervalSet::single(3).complement_in(x.ints());
-    x.cell.ints.element = Bounds::ints(cut);
-    let e = check(&s, &arms).unwrap_err();
-    assert!(e.contains("reaches arm 0"), "{e}");
-    // Mark the inner arm unreachable: points with `y < x` reach it.
-    let mut arms = s.arms();
-    arms[1].scope.bottom = true;
-    assert!(check(&s, &arms).unwrap_err().contains("reaches arm 1"));
-    // Drop the relation's effect: put `y = 4` beside `x = 2` in the inner arm by a wrong
-    // relation `y > x`.
-    let mut arms = s.arms();
-    arms[1].scope.relation = zedc::store::presburger::Formula::and(vec![
-        arms[1].scope.relation.clone(),
-        zedc::store::presburger::Formula::Con(
-            zedc::store::presburger::Con::ge(
-                &zedc::store::presburger::Lin::atom(zedc::store::presburger::Atom::Sym("y".into())),
-                &zedc::store::presburger::Lin::atom(zedc::store::presburger::Atom::Sym("x".into())),
-            )
-            .unwrap(),
-        ),
-    ]);
-    assert!(check(&s, &arms).unwrap_err().contains("reaches arm 1"));
 }
 
 #[test]

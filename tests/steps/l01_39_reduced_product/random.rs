@@ -20,12 +20,12 @@ use super::ints;
 use crate::l01_38_presburger::random::{bool_term, int_term};
 
 /// The window of `x` and `y`.
-pub(super) const LO: i64 = -6;
-pub(super) const HI: i64 = 6;
+const LO: i64 = -6;
+const HI: i64 = 6;
 
 /// One body of the shape.
 #[derive(Clone, Debug)]
-pub(super) struct Shape {
+struct Shape {
     pub z: Term,
     pub outer: Term,
     pub inner: Term,
@@ -45,7 +45,7 @@ fn if_(c: Term, a: Term, b: Term) -> Term {
 }
 
 impl Shape {
-    pub(super) fn random(rng: &mut Rng) -> Shape {
+    fn random(rng: &mut Rng) -> Shape {
         Shape {
             z: int_term(rng, 2),
             outer: bool_term(rng, 2),
@@ -58,7 +58,7 @@ impl Shape {
         Term::Prim(Prim::Gt, vec![var("z"), lit(self.c)])
     }
 
-    pub(super) fn body(&self) -> Term {
+    fn body(&self) -> Term {
         Term::Let(
             "z".into(),
             Arc::new(self.z.clone()),
@@ -72,7 +72,7 @@ impl Shape {
 
     /// The six arms of the body's own tests, in the walk's order: those of `z`'s term come
     /// first.
-    pub(super) fn arms(&self) -> Vec<Arm> {
+    fn arms(&self) -> Vec<Arm> {
         let all = zedc::store::product::arms(&self.body(), &ints(&["x".into(), "y".into()]));
         all[all.len() - 6..].to_vec()
     }
@@ -88,7 +88,7 @@ fn at(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Option<Value> {
 
 /// Checks `arms` against the interpreter over the window: the number of (point, arm) pairs
 /// checked, or the first point that reaches an arm whose scope does not hold it.
-pub(super) fn check(s: &Shape, arms: &[Arm]) -> Result<usize, String> {
+fn check(s: &Shape, arms: &[Arm]) -> Result<usize, String> {
     assert_eq!(arms.len(), 6);
     on_stack(|| check_on(s, arms))
 }

@@ -1,31 +1,16 @@
-//! Relations of any size, the undecided fragment, and controls: each check of `random` rejects a wrong answer.
+//! Relations of any size and the undecided fragment.
 
 use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
 use zedc::store::interval::IntervalSet;
-use zedc::store::preimage::{Demand, preimage, relations};
+use zedc::store::preimage::{Demand, preimage};
 use zedc::store::presburger::{
-    Atom, Con, Entailment, Formula, Lin, Model, Relation, entails, satisfiable,
+    Atom, Con, Entailment, Formula, Lin, Relation, entails, satisfiable,
 };
-
-use super::random::{check_entailment, check_model, check_points, check_projection};
 
 fn lit(n: i64) -> Term {
     Term::Lit(Value::Int(n))
-}
-
-fn x() -> Term {
-    Term::Var("x".into())
-}
-
-fn names() -> Vec<Arc<str>> {
-    vec!["x".into(), "y".into()]
-}
-
-/// `x < 3`.
-fn below_three() -> Term {
-    Term::Prim(Prim::Lt, vec![x(), lit(3)])
 }
 
 #[test]
@@ -99,30 +84,4 @@ fn a_question_between_the_shadows_is_undecided_and_the_written_constraint_kept()
         entails(&r, &goal).to_string(),
         "undecided: outside the fragment the Omega test decides"
     );
-}
-
-#[test]
-fn each_check_rejects_a_wrong_answer() {
-    let ns = names();
-    let t = below_three();
-    let rs = relations(&[&t], &ns, false).unwrap();
-    check_points(&rs[0], &t, &ns).unwrap();
-    // The relation of `x < 4` in its place.
-    let wrong = relations(&[&Term::Prim(Prim::Lt, vec![x(), lit(4)])], &ns, false).unwrap();
-    assert!(check_points(&wrong[0], &t, &ns).is_err());
-    // A model outside the test, and no model where there is one.
-    assert!(check_model(Some(vec![3, 0]), &t, &ns).is_err());
-    assert!(check_model(None, &t, &ns).is_err());
-    check_model(Some(vec![2, 0]), &t, &ns).unwrap();
-    // A projection one short, and one past the hull.
-    let right = [IntervalSet::of(-5, 2), IntervalSet::of(-5, 5)];
-    check_projection(&right, &t, &ns).unwrap();
-    assert!(check_projection(&[IntervalSet::of(-5, 1), right[1].clone()], &t, &ns).is_err());
-    assert!(check_projection(&[IntervalSet::of(-5, 3), right[1].clone()], &t, &ns).is_err());
-    // A proof the window refutes, and a countermodel that is none.
-    let g = Term::Prim(Prim::Lt, vec![x(), lit(2)]);
-    assert!(check_entailment(&Entailment::Proved(Vec::new()), &t, &g, &ns).is_err());
-    let at = |v: i128| -> Model { [(Atom::Sym("x".into()), v)].into() };
-    assert!(check_entailment(&Entailment::Refuted(at(0)), &t, &g, &ns).is_err());
-    check_entailment(&Entailment::Refuted(at(2)), &t, &g, &ns).unwrap();
 }

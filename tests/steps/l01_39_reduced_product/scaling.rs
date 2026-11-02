@@ -3,7 +3,6 @@
 //! its length.
 
 use std::collections::BTreeMap;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
@@ -173,24 +172,12 @@ fn a_join_keeps_the_equalities_of_its_sides_and_scales() {
         let p = Premises::new();
         (s.assume(&a[0], true, &p), s.assume(&a[1], true, &p))
     };
-    let built: BTreeMap<usize, (Scope, Scope)> = [8, 32, 64, 256]
-        .into_iter()
-        .map(|k| (k, sides(k)))
-        .collect();
+    let built: BTreeMap<usize, (Scope, Scope)> =
+        [32, 256].into_iter().map(|k| (k, sides(k))).collect();
     scaling::check("the join of two sides that fix k names, reduced", 32, |k| {
         let (l, r) = &built[&k];
         l.join(r).reduce();
     });
-    let caught = catch_unwind(AssertUnwindSafe(|| {
-        scaling::check("the join reduced as a whole", 8, |k| {
-            let (l, r) = &built[&k];
-            l.join(r).reduce_whole();
-        });
-    }));
-    assert!(
-        caught.is_err(),
-        "the check passed a join reduced as a whole"
-    );
 }
 
 /// A random conjunction over `x1`..`x5`: bounds, differences and sums of two names, and

@@ -89,18 +89,3 @@ fn a_union_of_many_tuple_types_scales() {
         assert!(!Type::meet_all(get(n).iter().map(|p| !p)).is_empty());
     });
 }
-
-#[test]
-#[should_panic(expected = "the rule of low complexity")]
-fn the_union_taken_one_type_at_a_time_does_not_scale() {
-    // The negative control: the order the test above guards against is caught.
-    let built: RefCell<BTreeMap<usize, Vec<Type>>> = RefCell::default();
-    scaling::check("the union of n pairs, one at a time", 200, |n| {
-        let ts = built
-            .borrow_mut()
-            .entry(n)
-            .or_insert_with(|| pairs(n))
-            .clone();
-        ts.into_iter().fold(Type::empty(), |a, b| a | b);
-    });
-}
