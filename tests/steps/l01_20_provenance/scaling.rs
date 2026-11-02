@@ -92,7 +92,8 @@ fn the_origins_of_a_failure_with_many_members_scale() {
         assert_eq!(v.errs().map(|e| e.len()), Some(n), "{v}");
         let o = p.origins(p.result());
         assert_eq!(o.len(), n);
-        let at = |j: usize| p.term(&p.facts()[j].address.node);
+        let terms = p.terms();
+        let at = |j: usize| terms[p.facts()[j].address.node.position() as usize];
         assert!(o.iter().all(|&j| matches!(at(j), Term::Lit(_))));
     });
 }

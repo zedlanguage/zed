@@ -153,10 +153,12 @@ fn chain_to_a_cycle(d: usize) -> Term {
 fn a_chain_ending_in_a_cycle_stalls_in_linear_time_under_demand() {
     // When the cycle stops the nested demands, every entry on the chain has stalled. Trying
     // each from the start again would walk the rest of the chain each time, `D²/2` reads.
+    let (small, large) = (chain_to_a_cycle(1000), chain_to_a_cycle(8000));
     scaling::check("pull, a chain ending in a cycle, by keys", 1000, |d| {
+        let chain = if d == 1000 { &small } else { &large };
         let out = Evaluator::new(World::new())
             .with_schedule(Schedule::Pull)
-            .run(&chain_to_a_cycle(d));
+            .run(chain);
         let Err(KernelError::Stalled { keys }) = out else {
             panic!("{out:?}")
         };

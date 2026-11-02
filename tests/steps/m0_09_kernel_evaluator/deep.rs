@@ -2,6 +2,7 @@
 //! "Budgets"). The evaluator keeps its frames on the heap, so each runs on a thread with a
 //! small stack: a test passes only if no part of the evaluator nests on the thread's stack.
 
+use std::os::unix::process::ExitStatusExt;
 use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
 use zed_kernel::{Evaluator, Family, KernelError, Prim, Schedule, Term, Value, World, eval};
 use zed_tests::kernel::*;
@@ -145,6 +146,49 @@ fn deep_recursion_ends_when_the_fuel_does() {
     let mut ev = Evaluator::new(World::new()).with_fuel(1000);
     let out = on_small_stack(|| ev.run(&total(DEEP)));
     assert_eq!(out, Err(KernelError::OutOfFuel));
+}
+
+#[test]
+fn a_loop_without_end_ends_when_the_fuel_does() {
+    // `w(w)` with `w = me -> me(me)` has no base case and leaves no frame.
+    let spin = recursive(lam(&["me"], me(vec![])), vec![]);
+    let mut ev = Evaluator::new(World::new()).with_fuel(1_000_000);
+    let out = on_small_stack(|| ev.run(&spin));
+    assert_eq!(out, Err(KernelError::OutOfFuel));
+}
+
+/// Set in the environment of the child process of the next test.
+const OUT_OF_MEMORY_CHILD: &str = "ZED_TEST_OUT_OF_MEMORY_CHILD";
+
+#[test]
+fn a_recursion_without_end_reports_the_allocation_that_failed() {
+    // `w(w)` with `w = me -> 1 + me(me)` nests until memory runs out, which is the machine's
+    // failure (DESIGN.md sec:kernel, clause (i)). The test runs itself under a limit on its
+    // address space. `sh` is what `ulimit` needs, and tools/run_tests.sh needs it too.
+    if std::env::var_os(OUT_OF_MEMORY_CHILD).is_some() {
+        let grows = recursive(lam(&["me"], add(lit(1), me(vec![]))), vec![]);
+        let out = eval(&grows);
+        panic!("the run ended: {out:?}");
+    }
+    let path = module_path!().split_once("::").unwrap().1;
+    let name = format!("{path}::a_recursion_without_end_reports_the_allocation_that_failed");
+    let out = std::process::Command::new("sh")
+        .args([
+            "-c",
+            r#"ulimit -c 0; ulimit -v 1000000; exec "$0" --exact "$1""#,
+        ])
+        .arg(std::env::current_exe().unwrap())
+        .arg(name)
+        .env(OUT_OF_MEMORY_CHILD, "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("memory allocation of"),
+        "status {:?}: {stderr}",
+        out.status
+    );
+    assert_eq!(out.status.signal(), Some(6), "{stderr}");
 }
 
 #[test]
