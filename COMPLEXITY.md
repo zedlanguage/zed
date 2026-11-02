@@ -125,6 +125,7 @@ Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason)
 | R5 | rope flattened again after every append | O(n²) | open |
 | R6 | heap never reuses a freed cell; `vals` only grows | O(allocations) memory | open |
 | R7 | `matched` deep-copies a binder the arm does not use | O(unused) | open |
+| R8 | `Heap::dec` allocated a stack on every call, even for a word that is not a cell or a count that stays above 0 | O(1) with an allocation per call | fixed: returns at once for those two cases, frees a cell with no parts with no stack, and otherwise reuses the stack `Heap::todo` through `mem::take`. About 12 ns to about 4.7 ns per drop that leaves the cell live (50 million drops, three runs each). The old code is also linear, so a timing test cannot fail on it; `heap.rs` tests check the stack is unused or kept. Tests `l01_36_cranelift::drops`, three shapes at n = 4000. Controls: a count of live cells per drop fails the shared-string test, 90 to 92 times as long at 8 times the size; a queue in place of the stack fails the wide-tuple test, 60 to 62 times |
 
 ## Kept
 

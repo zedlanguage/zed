@@ -182,6 +182,8 @@ pub struct Heap {
     /// The counts so far.
     pub stats: Stats,
     live: u64,
+    /// The stack of words [`Heap::dec`] still has to drop, empty between calls.
+    todo: Vec<Word>,
 }
 
 impl Heap {
@@ -322,30 +324,51 @@ impl Heap {
     }
 
     /// Drops a reference to `w`, when it is a cell, freeing it and dropping its parts at 0.
+    /// Work beyond the one count write happens only when a cell with parts is freed, and that
+    /// work is paid for by the parts' allocation.
     pub fn dec(&mut self, w: Word) -> Result<(), String> {
-        let mut todo = vec![w];
+        let Some(obj) = self.drop_ref(w)? else {
+            return Ok(());
+        };
+        if obj.parts().is_empty() {
+            return Ok(());
+        }
+        // The stack keeps its capacity across calls. An error ends the run, so that path
+        // leaves `self.todo` empty and gives up only the capacity.
+        let mut todo = std::mem::take(&mut self.todo);
+        // In reverse, so the parts are dropped first to last.
+        todo.extend(obj.take_parts().into_iter().rev());
         while let Some(w) = todo.pop() {
-            if w.tag != Word::CELL {
-                continue;
-            }
-            self.stats.decrements += 1;
-            let c = &mut self.cells[w.bits as usize];
-            if c.count == 0 {
-                return Err(format!(
-                    "runtime: cell {} is dropped after it was freed",
-                    w.bits
-                ));
-            }
-            c.count -= 1;
-            if c.count == 0 {
-                let obj = c.obj.take().expect("a live cell holds its contents");
-                self.stats.frees += 1;
-                self.live -= 1;
-                // In reverse, so the parts are dropped first to last.
+            if let Some(obj) = self.drop_ref(w)? {
                 todo.extend(obj.take_parts().into_iter().rev());
             }
         }
+        self.todo = todo;
         Ok(())
+    }
+
+    /// Writes one decrement of `w`, when it is a cell; gives back the contents of a cell that
+    /// reached 0.
+    fn drop_ref(&mut self, w: Word) -> Result<Option<Obj>, String> {
+        if w.tag != Word::CELL {
+            return Ok(None);
+        }
+        self.stats.decrements += 1;
+        let c = &mut self.cells[w.bits as usize];
+        if c.count == 0 {
+            return Err(format!(
+                "runtime: cell {} is dropped after it was freed",
+                w.bits
+            ));
+        }
+        c.count -= 1;
+        if c.count > 0 {
+            return Ok(None);
+        }
+        let obj = c.obj.take().expect("a live cell holds its contents");
+        self.stats.frees += 1;
+        self.live -= 1;
+        Ok(Some(obj))
     }
 
     /// The fused release of step L1.34 of scrutinee `w`, keeping the parts at the paths
@@ -382,9 +405,13 @@ impl Heap {
         Ok(())
     }
 
-    /// The part of `w` at the path of part indices `path`.
+    /// The part of `w` at the path of part indices `path`, or the first constant on the way
+    /// there: every part of a constant is a constant, which [`Heap::inc`] does not count.
     fn at(&self, mut w: Word, path: &[usize]) -> Result<Word, String> {
         for &i in path {
+            if w.tag == Word::VAL {
+                break;
+            }
             w = match self.obj(w)? {
                 Some(o) => o.parts()[i],
                 None => return Err(format!("runtime: a word tagged {} has no parts", w.tag)),
@@ -524,6 +551,49 @@ mod tests {
     }
 
     #[test]
+    fn a_drop_uses_the_stack_only_to_free_a_cell_with_parts() {
+        let mut h = Heap::new();
+        h.dec(Word::int(3)).unwrap();
+        assert_eq!(
+            h.stats.decrements, 0,
+            "a word that is not a cell is no write"
+        );
+        // A shared string, then the last reference to it.
+        let s = h.fresh(&Value::str("a"));
+        h.inc(s);
+        h.dec(s).unwrap();
+        assert_eq!((h.stats.decrements, h.live()), (1, 1));
+        h.dec(s).unwrap();
+        assert_eq!((h.stats.decrements, h.live()), (2, 0));
+        assert_eq!(h.todo.capacity(), 0, "no stack was needed");
+        // A nest of tuples: the stack grows once and is kept for the next free.
+        let v = Value::Tuple(vec![Value::Tuple(vec![Value::str("a")]), Value::str("b")]);
+        let w = h.fresh(&v);
+        h.dec(w).unwrap();
+        assert_eq!(h.live(), 0);
+        let cap = h.todo.capacity();
+        assert!(cap > 0 && h.todo.is_empty());
+        let w = h.fresh(&v);
+        h.dec(w).unwrap();
+        assert_eq!((h.live(), h.todo.capacity()), (0, cap));
+    }
+
+    #[test]
+    fn a_drop_after_a_free_inside_a_nest_is_an_error_and_the_next_drop_starts_clean() {
+        let mut h = Heap::new();
+        let s = h.fresh(&Value::str("a"));
+        let w = h.alloc(Obj::Tuple(vec![s, s]));
+        assert_eq!(
+            h.dec(w).unwrap_err(),
+            format!("runtime: cell {} is dropped after it was freed", s.bits)
+        );
+        assert!(h.todo.is_empty());
+        let w = h.fresh(&Value::Tuple(vec![Value::str("b")]));
+        h.dec(w).unwrap();
+        assert_eq!(h.live(), 0);
+    }
+
+    #[test]
     fn fused_release_keeps_one_part_with_no_count_write() {
         let mut h = Heap::new();
         let w = h.fresh(&Value::Tuple(vec![Value::str("a"), Value::str("b")]));
@@ -538,6 +608,28 @@ mod tests {
             (0, 1, 1)
         );
         assert_eq!(h.value(out[0].0).unwrap(), Value::str("a"));
+    }
+
+    #[test]
+    fn a_shared_release_stops_at_a_constant_and_writes_no_count_for_it() {
+        let mut h = Heap::new();
+        let k = h.uncounted(Value::Tuple(vec![Value::Int(1), Value::str("x")]));
+        let t = h.alloc(Obj::Tuple(vec![k, Word::int(2)]));
+        h.inc(t);
+        h.release(t, &[&[0, 1]]).unwrap();
+        assert_eq!((h.stats.increments, h.stats.decrements), (1, 1));
+        assert_eq!(h.live(), 1);
+    }
+
+    #[test]
+    fn a_path_into_a_scalar_is_an_error() {
+        let mut h = Heap::new();
+        let t = h.alloc(Obj::Tuple(vec![Word::int(1)]));
+        h.inc(t);
+        assert_eq!(
+            h.release(t, &[&[0, 0]]).unwrap_err(),
+            "runtime: a word tagged 0 has no parts"
+        );
     }
 
     #[test]

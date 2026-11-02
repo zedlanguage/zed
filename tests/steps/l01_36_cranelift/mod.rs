@@ -5,7 +5,9 @@
 
 mod aot;
 mod checks;
+mod constants;
 mod corpus;
+mod drops;
 mod ports;
 mod scalars;
 mod scaling;
