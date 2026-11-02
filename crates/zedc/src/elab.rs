@@ -710,12 +710,12 @@ impl<'a> Elab<'a> {
         if let Some(t) = self.passing.get(&e.span) {
             return Some(Term::Var(t.clone()));
         }
-        if let Some(at) = self.info.passes.get(&e.span).cloned() {
-            if self.guarding.insert(e.span) {
-                let r = self.passes(e, &at);
-                self.guarding.remove(&e.span);
-                return r;
-            }
+        if let Some(at) = self.info.passes.get(&e.span).cloned()
+            && self.guarding.insert(e.span)
+        {
+            let r = self.passes(e, &at);
+            self.guarding.remove(&e.span);
+            return r;
         }
         if let Some(fit) = self.info.fits.get(&e.span).cloned() {
             return self.fit(e, fit);

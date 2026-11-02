@@ -204,7 +204,10 @@ impl Search {
         // what `t` rests on, and is confirmed when that is nothing.
         let since: Vec<Type> = self.pending.drain(mark..).collect();
         for e in since {
-            let r = self.rests.get_mut(&e).expect("a pending result has its assumptions");
+            let r = self
+                .rests
+                .get_mut(&e)
+                .expect("a pending result has its assumptions");
             if r.remove(&depth) {
                 if !b {
                     self.done.remove(&e);
@@ -502,7 +505,8 @@ impl Search {
         if p.bools != 0 {
             return Some(Rep::Value(Value::Bool(p.bools & 1 == 0)));
         }
-        let fresh: [(&Lits, Option<fn(i64) -> Value>); 4] = [
+        type Fresh = Option<fn(i64) -> Value>;
+        let fresh: [(&Lits, Fresh); 4] = [
             (&p.ints, Some(Value::Int)),
             (&p.strings, Some(|i| Value::str(&i.to_string()))),
             (&p.rats, None),

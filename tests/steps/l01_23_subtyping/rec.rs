@@ -368,7 +368,11 @@ fn nth_from_end(n: usize) -> Type {
     let one_ = Type::lit(&Value::Int(1)).unwrap();
     let mut rest = vec![def("R0", &[], bare("nil"))];
     for k in 1..n {
-        rest.push(def(&format!("R{k}"), &[], atom("cons", vec![ty(Type::int()), r(k - 1, vec![])])));
+        rest.push(def(
+            &format!("R{k}"),
+            &[],
+            atom("cons", vec![ty(Type::int()), r(k - 1, vec![])]),
+        ));
     }
     rest.push(def(
         "G",

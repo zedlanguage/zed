@@ -253,7 +253,10 @@ impl Ord for Row {
         if Arc::ptr_eq(&self.0, &other.0) {
             return std::cmp::Ordering::Equal;
         }
-        self.0.0.cmp(&other.0.0).then_with(|| self.0.1.cmp(&other.0.1))
+        self.0
+            .0
+            .cmp(&other.0.0)
+            .then_with(|| self.0.1.cmp(&other.0.1))
     }
 }
 
@@ -694,7 +697,9 @@ impl Type {
                 |r, s| Row::new(r.iter().zip(s.iter()).map(|(x, y)| x | y).collect()),
                 |a, r| {
                     let Some(found) = rows(a).or_else(|| {
-                        rows(&Row::new(a.iter().zip(r.iter()).map(|(x, y)| x & y).collect()))
+                        rows(&Row::new(
+                            a.iter().zip(r.iter()).map(|(x, y)| x & y).collect(),
+                        ))
                     }) else {
                         return false;
                     };

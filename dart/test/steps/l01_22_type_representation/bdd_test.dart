@@ -154,4 +154,26 @@ void main() {
       expect(refused, isEmpty);
     });
   });
+
+  test('comparing equal expressions built apart scales', () {
+    // `x_{k+1} = x_k & !x_k`, built twice: both operands of each level lead to the level
+    // below, so comparing operand by operand met the bottom `2^depth` times.
+    Part<Components> build(int depth) {
+      Part<Components> x = Part.literal(atom(0));
+      for (var k = 0; k < depth; k++) {
+        x = Expr(ExprOp.and, x, ~x);
+      }
+      return x;
+    }
+
+    const n = 1 << 12;
+    final built = {
+      for (final m in [n, factor * n]) m: (build(m), build(m)),
+    };
+    check('comparing equal expressions built apart, by depth', n, (m) {
+      final (a, b) = built[m]!;
+      expect(identical(a, b), isFalse);
+      expect(a.compareTo(b), 0);
+    });
+  });
 }

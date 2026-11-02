@@ -343,15 +343,26 @@ fn odd_tuples(c: usize, b: usize) -> Type {
 fn listing_a_diagram_with_exponentially_many_paths_scales() {
     // Listing walked every path of the diagram: `2^(c - 1)` at `c` tuple types.
     for c in [1, 2, 7] {
-        assert_eq!(odd_tuples(c, 0).listed().map(|v| v.len()), Some(c), "c = {c}");
+        assert_eq!(
+            odd_tuples(c, 0).listed().map(|v| v.len()),
+            Some(c),
+            "c = {c}"
+        );
     }
-    let built: std::collections::HashMap<usize, Type> =
-        [64, 512].into_iter().map(|c| (c, odd_tuples(c, 0))).collect();
+    let built: std::collections::HashMap<usize, Type> = [64, 512]
+        .into_iter()
+        .map(|c| (c, odd_tuples(c, 0)))
+        .collect();
     // One pass over the nodes lists the candidates, but each of the `c` rows is still checked
     // along a path of up to `c` nodes: order `c²`, an open item (DESIGN.md L1.23).
-    scaling::check_order("listing an exclusive or of tuple types, by count", 64, 2, |c| {
-        assert_eq!(built[&c].listed().map(|v| v.len()), Some(c));
-    });
+    scaling::check_order(
+        "listing an exclusive or of tuple types, by count",
+        64,
+        2,
+        |c| {
+            assert_eq!(built[&c].listed().map(|v| v.len()), Some(c));
+        },
+    );
 }
 
 /// The rows of a decision tree on `c` columns of `{b, b + 1, b + 2}`: on column `i`, after
@@ -360,11 +371,15 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
 fn decision_tree(c: usize, b: usize) -> (Type, Vec<Type>) {
     let column = Type::union_all((b..b + 3).map(lit));
     let row = |i: usize, v: usize| {
-        Type::tuple((0..c).map(|j| match j.cmp(&i) {
-            std::cmp::Ordering::Less => lit(b + 2),
-            std::cmp::Ordering::Equal => lit(v),
-            std::cmp::Ordering::Greater => column.clone(),
-        }).collect())
+        Type::tuple(
+            (0..c)
+                .map(|j| match j.cmp(&i) {
+                    std::cmp::Ordering::Less => lit(b + 2),
+                    std::cmp::Ordering::Equal => lit(v),
+                    std::cmp::Ordering::Greater => column.clone(),
+                })
+                .collect(),
+        )
     };
     let mut rows: Vec<Type> = (0..c).flat_map(|i| [row(i, b), row(i, b + 1)]).collect();
     rows.push(row(c - 1, b + 2));
@@ -399,11 +414,17 @@ fn a_decision_tree_is_decided_in_polynomial_time() {
 fn a_row_left_out_of_a_decision_tree_is_found() {
     for c in [1, 2, 5, 16] {
         let (p, rows) = decision_tree(c, 0);
-        assert!((&p - &Type::union_all(rows.iter().cloned())).is_empty(), "c = {c}");
+        assert!(
+            (&p - &Type::union_all(rows.iter().cloned())).is_empty(),
+            "c = {c}"
+        );
         for i in 0..rows.len() {
             let mut less = rows.clone();
             less.remove(i);
-            assert!(!(&p - &Type::union_all(less)).is_empty(), "c = {c}, row {i} left out");
+            assert!(
+                !(&p - &Type::union_all(less)).is_empty(),
+                "c = {c}, row {i} left out"
+            );
         }
     }
 }
@@ -418,7 +439,11 @@ fn a_type_not_proved_empty_promises_no_key() {
     let mut forbidden = Vec::new();
     let row = |hit: &dyn Fn(usize) -> bool, b: bool| {
         let lit = Type::lit(&Value::Bool(b)).unwrap();
-        Type::tuple((0..d).map(|j| if hit(j) { lit.clone() } else { bit.clone() }).collect())
+        Type::tuple(
+            (0..d)
+                .map(|j| if hit(j) { lit.clone() } else { bit.clone() })
+                .collect(),
+        )
     };
     for p in 0..pigeons {
         forbidden.push(row(&|j| j / holes == p, false));
@@ -433,9 +458,15 @@ fn a_type_not_proved_empty_promises_no_key() {
     let unknown = &Type::tuple(vec![bit; d]) - &Type::union_all(forbidden);
     for mask in 0..1usize << d {
         let v = Value::Tuple((0..d).map(|j| Value::Bool(mask >> j & 1 != 0)).collect());
-        assert!(!unknown.contains(&v), "a valuation is in the pigeonhole type");
+        assert!(
+            !unknown.contains(&v),
+            "a valuation is in the pigeonhole type"
+        );
     }
-    assert!(!unknown.is_empty(), "the check proves the pigeonhole type empty");
+    assert!(
+        !unknown.is_empty(),
+        "the check proves the pigeonhole type empty"
+    );
     let m = Type::morphism(unknown, Type::empty(), Type::int());
     assert!(!m.is_empty(), "the empty morphism is in it");
     // A key shown in the type is promised: a scalar, a tuple, an atom's payload.
@@ -460,12 +491,19 @@ fn a_key_past_many_excluded_tuples_is_found_and_scales() {
         assert!(promised(c).is_empty(), "c = {c}");
         // When every one-tuple is taken out, no key is promised, and the empty morphism is in it.
         let all = Type::union_all((0..c).map(lit));
-        assert!(!Type::exact(past_excluded(c, all), Type::empty()).is_empty(), "c = {c}");
+        assert!(
+            !Type::exact(past_excluded(c, all), Type::empty()).is_empty(),
+            "c = {c}"
+        );
     }
     let built: std::collections::HashMap<usize, Type> =
         [512, 4096].into_iter().map(|c| (c, promised(c))).collect();
-    scaling::check("a key's representative past excluded tuple types, by count", 512, |c| {
-        Type::forget_emptiness();
-        assert!(built[&c].is_empty());
-    });
+    scaling::check(
+        "a key's representative past excluded tuple types, by count",
+        512,
+        |c| {
+            Type::forget_emptiness();
+            assert!(built[&c].is_empty());
+        },
+    );
 }

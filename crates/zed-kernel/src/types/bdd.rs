@@ -12,7 +12,8 @@
 //! Nodes are shared: the nodes of a thread are kept in a table, so that one atom with one pair
 //! of children is one node, and two equal diagrams built on one thread are one pointer. Each
 //! node and expression keeps a hash of its contents made from its children's, and two are
-//! ordered by it first, so a comparison reads their contents only when the hashes are equal.
+//! ordered by it first, so a comparison reads their contents only when the hashes are equal,
+//! and reads each pair of nodes or expressions at most once ([`order`]).
 //!
 //! A diagram is canonical, so some functions have only diagrams exponential in the number of
 //! their atoms: `(m1 & !n1) | … | (mC & !nC)`, with every `m` ordered before every `n`, has
@@ -250,10 +251,10 @@ impl<A: Literal> Bdd<A> {
             if !expanded {
                 stack.push((n, true));
                 for c in [&n.lo, &n.hi] {
-                    if let Bdd::Node(m) = c {
-                        if !reaches.contains_key(&m.id) {
-                            stack.push((m, false));
-                        }
+                    if let Bdd::Node(m) = c
+                        && !reaches.contains_key(&m.id)
+                    {
+                        stack.push((m, false));
                     }
                 }
                 continue;
@@ -430,7 +431,9 @@ impl<A> Bdd<A> {
         }
         let mut state: HashMap<u64, S> = HashMap::from([(root.id, start)]);
         for n in order.into_iter().rev() {
-            let here = state.remove(&n.id).expect("a node is reached before it is visited");
+            let here = state
+                .remove(&n.id)
+                .expect("a node is reached before it is visited");
             if !matches!(n.hi, Bdd::Leaf(false)) && !f(&n.atom, &here) {
                 return false;
             }
@@ -464,7 +467,7 @@ impl<A> Bdd<A> {
 
 /// A tuple part of one length, or the morphism part: a diagram, or, when a connective's diagram
 /// would have more nodes than its operands together, the connective applied to its operands.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Debug)]
 pub(super) enum Part<A: Ord> {
     Bdd(Bdd<A>),
     Expr(Arc<Expr<A>>),
@@ -475,7 +478,7 @@ pub(super) struct Expr<A: Ord> {
     form: Form<A>,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Debug)]
 pub(super) enum Form<A: Ord> {
     Not(Part<A>),
     Or(Part<A>, Part<A>),
@@ -603,7 +606,11 @@ impl<A: Literal> Part<A> {
                 Some(false) => bdd(&n.lo, holds, memo),
                 None => {
                     let hi = bdd(&n.hi, holds, memo);
-                    if hi.is_none() { None } else { bdd(&n.lo, holds, memo).filter(|lo| Some(*lo) == hi) }
+                    if hi.is_none() {
+                        None
+                    } else {
+                        bdd(&n.lo, holds, memo).filter(|lo| Some(*lo) == hi)
+                    }
                 }
             };
             memo.insert(n.id, v);
@@ -626,16 +633,21 @@ impl<A: Literal> Part<A> {
             if memo.contains_key(&key) {
                 continue;
             }
-            let value = |q: &Part<A>, nodes: &mut HashMap<u64, Option<bool>>, memo: &HashMap<*const Expr<A>, Option<bool>>| match q {
-                Part::Bdd(b) => Some(bdd(b, holds, nodes)),
-                Part::Expr(x) => memo.get(&Arc::as_ptr(x)).copied(),
-            };
+            let value =
+                |q: &Part<A>,
+                 nodes: &mut HashMap<u64, Option<bool>>,
+                 memo: &HashMap<*const Expr<A>, Option<bool>>| match q {
+                    Part::Bdd(b) => Some(bdd(b, holds, nodes)),
+                    Part::Expr(x) => memo.get(&Arc::as_ptr(x)).copied(),
+                };
             let operands: Vec<&Part<A>> = match &e.form {
                 Form::Not(a) => vec![a],
                 Form::Or(a, b) | Form::And(a, b) => vec![a, b],
             };
-            let vs: Vec<Option<Option<bool>>> =
-                operands.iter().map(|q| value(q, &mut nodes, &memo)).collect();
+            let vs: Vec<Option<Option<bool>>> = operands
+                .iter()
+                .map(|q| value(q, &mut nodes, &memo))
+                .collect();
             if vs.iter().any(|v| v.is_none()) {
                 stack.push(p.clone());
                 for (q, v) in operands.iter().zip(&vs) {
@@ -834,14 +846,119 @@ impl<A: Literal> Part<A> {
     }
 }
 
+/// Two diagrams, expressions or parts to compare, or two nodes or expressions whose contents
+/// compared equal.
+enum Step<'a, A: Ord> {
+    Bdds(&'a Bdd<A>, &'a Bdd<A>),
+    Exprs(&'a Expr<A>, &'a Expr<A>),
+    Parts(&'a Part<A>, &'a Part<A>),
+    Equal(usize, usize),
+}
+
+/// The order of the pair in `first`: by digest, then by atom or connective, then by `hi` and
+/// `lo` or by operands, a diagram before an expression. Two nodes or expressions found equal are
+/// kept by address and not compared again, so the cost is one step per pair of nodes compared,
+/// not one per path to them, and linear in the size when the two are equal. A loop with its own
+/// stack, as a part can be deeper than the call stack.
+fn order<A: Ord>(first: Step<'_, A>) -> Ordering {
+    let mut equal = HashSet::new();
+    let mut steps = vec![first];
+    while let Some(step) = steps.pop() {
+        let c = match step {
+            Step::Equal(a, b) => {
+                equal.insert((a, b));
+                Ordering::Equal
+            }
+            Step::Parts(Part::Bdd(a), Part::Bdd(b)) => {
+                steps.push(Step::Bdds(a, b));
+                Ordering::Equal
+            }
+            Step::Parts(Part::Expr(a), Part::Expr(b)) => {
+                steps.push(Step::Exprs(a, b));
+                Ordering::Equal
+            }
+            Step::Parts(Part::Bdd(_), Part::Expr(_)) => Ordering::Less,
+            Step::Parts(Part::Expr(_), Part::Bdd(_)) => Ordering::Greater,
+            Step::Bdds(Bdd::Leaf(a), Bdd::Leaf(b)) => a.cmp(b),
+            Step::Bdds(Bdd::Leaf(_), Bdd::Node(_)) => Ordering::Less,
+            Step::Bdds(Bdd::Node(_), Bdd::Leaf(_)) => Ordering::Greater,
+            Step::Bdds(Bdd::Node(a), Bdd::Node(b)) => {
+                let key = (Arc::as_ptr(a) as usize, Arc::as_ptr(b) as usize);
+                if key.0 == key.1 || equal.contains(&key) {
+                    continue;
+                }
+                let c = a.digest.cmp(&b.digest).then_with(|| a.atom.cmp(&b.atom));
+                if c == Ordering::Equal {
+                    // `hi` is pushed last, so it is compared first.
+                    steps.extend([
+                        Step::Equal(key.0, key.1),
+                        Step::Bdds(&a.lo, &b.lo),
+                        Step::Bdds(&a.hi, &b.hi),
+                    ]);
+                }
+                c
+            }
+            Step::Exprs(a, b) => {
+                let key = (
+                    std::ptr::from_ref(a) as usize,
+                    std::ptr::from_ref(b) as usize,
+                );
+                if key.0 == key.1 || equal.contains(&key) {
+                    continue;
+                }
+                let (x, y) = (a.form.operands(), b.form.operands());
+                let c = a.digest.cmp(&b.digest).then_with(|| x.0.cmp(&y.0));
+                if c == Ordering::Equal {
+                    steps.push(Step::Equal(key.0, key.1));
+                    if let (Some(p), Some(q)) = (x.2, y.2) {
+                        steps.push(Step::Parts(p, q));
+                    }
+                    steps.push(Step::Parts(x.1, y.1));
+                }
+                c
+            }
+        };
+        if c != Ordering::Equal {
+            return c;
+        }
+    }
+    Ordering::Equal
+}
+
+impl<A: Ord> Form<A> {
+    /// The connective's rank in the order (`Not`, `Or`, `And`) and its operands.
+    fn operands(&self) -> (u8, &Part<A>, Option<&Part<A>>) {
+        match self {
+            Form::Not(a) => (0, a, None),
+            Form::Or(a, b) => (1, a, Some(b)),
+            Form::And(a, b) => (2, a, Some(b)),
+        }
+    }
+}
+
+impl<A: Ord> Ord for Part<A> {
+    fn cmp(&self, other: &Part<A>) -> Ordering {
+        order(Step::Parts(self, other))
+    }
+}
+
+impl<A: Ord> PartialOrd for Part<A> {
+    fn partial_cmp(&self, other: &Part<A>) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<A: Ord> PartialEq for Part<A> {
+    fn eq(&self, other: &Part<A>) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl<A: Ord> Eq for Part<A> {}
+
 impl<A: Ord> Ord for Expr<A> {
     fn cmp(&self, other: &Expr<A>) -> Ordering {
-        if std::ptr::eq(self, other) {
-            return Ordering::Equal;
-        }
-        self.digest
-            .cmp(&other.digest)
-            .then_with(|| self.form.cmp(&other.form))
+        order(Step::Exprs(self, other))
     }
 }
 
@@ -867,18 +984,7 @@ impl<A: Ord + fmt::Debug> fmt::Debug for Expr<A> {
 
 impl<A: Ord> Ord for Bdd<A> {
     fn cmp(&self, other: &Bdd<A>) -> Ordering {
-        match (self, other) {
-            (Bdd::Leaf(a), Bdd::Leaf(b)) => a.cmp(b),
-            (Bdd::Leaf(_), Bdd::Node(_)) => Ordering::Less,
-            (Bdd::Node(_), Bdd::Leaf(_)) => Ordering::Greater,
-            (Bdd::Node(a), Bdd::Node(b)) if Arc::ptr_eq(a, b) => Ordering::Equal,
-            (Bdd::Node(a), Bdd::Node(b)) => a
-                .digest
-                .cmp(&b.digest)
-                .then_with(|| a.atom.cmp(&b.atom))
-                .then_with(|| a.hi.cmp(&b.hi))
-                .then_with(|| a.lo.cmp(&b.lo)),
-        }
+        order(Step::Bdds(self, other))
     }
 }
 
@@ -981,14 +1087,24 @@ mod tests {
                 random_expr(&mut seed, 5, &mut Vec::new())
             };
             exprs += usize::from(matches!(p, Part::Expr(_)));
-            let holds = |set: u32| move |t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
+            let holds =
+                |set: u32| move |t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
             let inside: Vec<u32> = (0..64).filter(|&set| p.eval(&holds(set))).collect();
             let (known, fixed) = (k % 64, (k / 64) % 64);
-            let fix = |t: &Row| (0..6).find(|&i| *t == atom(i) && known & (1 << i) != 0).map(|i| fixed & (1 << i) != 0);
+            let fix = |t: &Row| {
+                (0..6)
+                    .find(|&i| *t == atom(i) && known & (1 << i) != 0)
+                    .map(|i| fixed & (1 << i) != 0)
+            };
             let agree = |set: u32| (set ^ fixed) & known == 0;
             if let Some(v) = p.eval3(&fix) {
                 decided += 1;
-                assert!((0..64).filter(|&s| agree(s)).all(|s| p.eval(&holds(s)) == v), "{p:?}");
+                assert!(
+                    (0..64)
+                        .filter(|&s| agree(s))
+                        .all(|s| p.eval(&holds(s)) == v),
+                    "{p:?}"
+                );
             }
             let r = p.restrict(&fix);
             let t = p.settle();
@@ -997,7 +1113,10 @@ mod tests {
                 if agree(set) {
                     assert_eq!(r.eval(&holds(set)), p.eval(&holds(set)), "{p:?} at {set:b}");
                 }
-                assert!(!p.eval(&holds(set)) || t.eval(&holds(set)), "{p:?} at {set:b}");
+                assert!(
+                    !p.eval(&holds(set)) || t.eval(&holds(set)),
+                    "{p:?} at {set:b}"
+                );
             }
             let (taken, refused) = p.forced();
             forced += taken.len() + refused.len();
@@ -1007,7 +1126,10 @@ mod tests {
             }
             for a in &refused {
                 let i = (0..6).find(|&i| *a == atom(i)).unwrap();
-                assert!(inside.iter().all(|s| s & (1 << i) == 0), "{p:?} refuses {i}");
+                assert!(
+                    inside.iter().all(|s| s & (1 << i) == 0),
+                    "{p:?} refuses {i}"
+                );
             }
             // On a diagram every atom in all assignments, or in none, is found.
             if matches!(p, Part::Bdd(_)) && !inside.is_empty() {
@@ -1067,5 +1189,71 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    #[test]
+    fn comparing_equal_expressions_built_apart_scales() {
+        // `x_{k+1} = x_k & !x_k`, built twice: both operands of each level lead to the level
+        // below, so comparing operand by operand met the bottom `2^depth` times.
+        std::thread::Builder::new()
+            .stack_size(1 << 28)
+            .spawn(|| {
+                let build = |depth: usize| {
+                    let mut x = Part::literal(atom(0));
+                    for _ in 0..depth {
+                        x = Part::expr(Form::And(x.clone(), x.not()));
+                    }
+                    x
+                };
+                let n = 1 << 12;
+                let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
+                    .into_iter()
+                    .map(|m| (m, (build(m), build(m))))
+                    .collect();
+                scaling::check(
+                    "comparing equal expressions built apart, by depth",
+                    n,
+                    |m| {
+                        let (a, b) = &built[&m];
+                        assert_eq!(a.cmp(b), Ordering::Equal);
+                    },
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn comparing_equal_diagrams_built_on_two_threads_scales() {
+        // The parity of `m` atoms: two nodes on each atom, each pointing to both nodes on the
+        // next. Each thread has its own table of nodes, so the two diagrams share no node, and
+        // comparing `hi` then `lo` met the last atom `2^m` times.
+        let parity = |m: usize| {
+            let mut xs: Vec<Row> = (0..m as u64).map(atom).collect();
+            xs.sort();
+            let (mut even, mut odd) = (Bdd::Leaf(true), Bdd::Leaf(false));
+            for x in xs.iter().rev() {
+                (even, odd) = (
+                    Bdd::node(x.clone(), odd.clone(), even.clone()),
+                    Bdd::node(x.clone(), even.clone(), odd.clone()),
+                );
+            }
+            Part::Bdd(even)
+        };
+        let n = 1 << 10;
+        let on_a_thread = |m: usize| std::thread::spawn(move || parity(m)).join().unwrap();
+        let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| (m, (on_a_thread(m), on_a_thread(m))))
+            .collect();
+        scaling::check(
+            "comparing equal diagrams built on two threads, by atoms",
+            n,
+            |m| {
+                let (a, b) = &built[&m];
+                assert_eq!(a.cmp(b), Ordering::Equal);
+            },
+        );
     }
 }

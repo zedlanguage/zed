@@ -192,14 +192,20 @@ fn program(defs: &str, body: &str) -> String {
 /// Checks that the program `src` is rejected.
 fn refused(src: &str) {
     if load(src.as_bytes()).is_ok() {
-        panic!("accepted, and on input 7 it gives {:?}:\n{src}", run(src, "7"));
+        panic!(
+            "accepted, and on input 7 it gives {:?}:\n{src}",
+            run(src, "7")
+        );
     }
 }
 
 #[test]
 fn a_section_or_a_curried_call_checks_what_it_leaves_out_when_it_is_called() {
     let add = "add(positional a, positional b) = a + b;";
-    assert_eq!(run(&program(add, r#"f = add[1]; stdout <- "${f(2)}";"#), ""), "3\n");
+    assert_eq!(
+        run(&program(add, r#"f = add[1]; stdout <- "${f(2)}";"#), ""),
+        "3\n"
+    );
     refused(&program(add, r#"f = add[1]; stdout <- "${f("x")}";"#));
     let first = "first(positional t, positional u) = t[0];";
     refused(&program(first, r#"f = first[5]; stdout <- "${f(1)}";"#));
@@ -208,7 +214,10 @@ fn a_section_or_a_curried_call_checks_what_it_leaves_out_when_it_is_called() {
     let greet = r#"greet(positional name, punct = "!", lead = "hi") = "${lead}, ${name}${punct}";"#;
     let body = r#"h = greet("Al", lead: "yo", ...); stdout <- h(punct: "?");"#;
     assert_eq!(run(&program(greet, body), ""), "yo, Al?\n");
-    refused(&program(greet, r#"h = greet("Al", lead: "yo", ...); stdout <- h(punct: 5);"#));
+    refused(&program(
+        greet,
+        r#"h = greet("Al", lead: "yo", ...); stdout <- h(punct: 5);"#,
+    ));
 }
 
 #[test]
@@ -217,7 +226,10 @@ fn a_returned_function_carries_the_needs_of_its_parameters() {
                 compose(positional f, positional g) = x -> f(g(x));\n\
                 twice(positional f) = compose(f, f);\n\
                 len2(positional s) = len(s);";
-    assert_eq!(run(&program(defs, r#"stdout <- "${twice(inc)(3)}";"#), ""), "5\n");
+    assert_eq!(
+        run(&program(defs, r#"stdout <- "${twice(inc)(3)}";"#), ""),
+        "5\n"
+    );
     refused(&program(defs, r#"stdout <- "${twice(inc)("a")}";"#));
     refused(&program(defs, r#"stdout <- "${twice(len2)("abc")}";"#));
     let bang = r#"h = twice(x -> x ++ "!"); stdout <- h("a");"#;
@@ -232,49 +244,92 @@ fn a_returned_function_carries_the_needs_of_its_parameters() {
 
 #[test]
 fn a_name_an_else_pattern_binds_has_the_type_of_its_payload() {
-    let parse = r#"parse(positional text) = if text == "" { #parseError(line: 1, col: 0) } else { 42 };"#;
+    let parse =
+        r#"parse(positional text) = if text == "" { #parseError(line: 1, col: 0) } else { 42 };"#;
     let both = r#"both = parse("") else #parseError(line:, col:) -> line * 100 + col; stdout <- "${both}" else "?";"#;
     assert_eq!(run(&program(parse, both), ""), "100\n");
     let wrap = "wrap(positional v) = #w(v: v);";
     let five = r#"r = wrap(5) else #w(v:) -> v + 1; stdout <- "${r}" else "?";"#;
     assert_eq!(run(&program(wrap, five), ""), "6\n");
-    refused(&program(wrap, r#"r = wrap("a") else #w(v:) -> v + 1; stdout <- "${r}";"#));
-    refused(&program("", r#"r = #e(x: "a") else #e(x:) -> x + 1; stdout <- "${r}";"#));
+    refused(&program(
+        wrap,
+        r#"r = wrap("a") else #w(v:) -> v + 1; stdout <- "${r}";"#,
+    ));
+    refused(&program(
+        "",
+        r#"r = #e(x: "a") else #e(x:) -> x + 1; stdout <- "${r}";"#,
+    ));
     // Of two shapes, the name has the union of both.
     let pick = r#"pick(positional c: bool) = if c { #e(x: 1) } else { #e(x: "a") };"#;
-    refused(&program(pick, r#"r = pick(true) else #e(x:) -> x + 1; stdout <- "${r}";"#));
+    refused(&program(
+        pick,
+        r#"r = pick(true) else #e(x:) -> x + 1; stdout <- "${r}";"#,
+    ));
     let pick = "pick(positional c: bool) = if c { #e(x: 1) } else { #e(x: 2, y: 3) };";
     let y = r#"r = pick(false) else #e(y:) -> y + 1; stdout <- "${r}" else "?";"#;
     assert_eq!(run(&program(pick, y), ""), "4\n");
     let nested = r#"r = #o(i: #e(x: 2)) else #o(i: #e(x:)) -> x * 3; stdout <- "${r}" else "?";"#;
     assert_eq!(run(&program("", nested), ""), "6\n");
     let v = "v = #e(code: 5) else #e(code:) -> code;";
-    assert_eq!(run(&program(v, r#"stdout <- String(v + 1) else "z";"#), ""), "6\n");
-    refused(&program(&format!("{FIRST}\n{v}"), r#"stdout <- String(first(v)) else "z";"#));
+    assert_eq!(
+        run(&program(v, r#"stdout <- String(v + 1) else "z";"#), ""),
+        "6\n"
+    );
+    refused(&program(
+        &format!("{FIRST}\n{v}"),
+        r#"stdout <- String(first(v)) else "z";"#,
+    ));
     refused(&program(v, r#"stdout <- String(v ++ "a") else "z";"#));
-    refused(&program(&format!("{APP}\n{v}"), r#"stdout <- String(app(v)) else "z";"#));
+    refused(&program(
+        &format!("{APP}\n{v}"),
+        r#"stdout <- String(app(v)) else "z";"#,
+    ));
 }
 
 #[test]
 fn a_generic_else_pattern_binds_the_payload_each_call_passes() {
     let g = "g(positional e) = e else #e(code:) -> code;";
-    assert_eq!(run(&program(g, r#"stdout <- String(g(#e(code: 5)) + 1) else "z";"#), ""), "6\n");
-    assert_eq!(run(&program(g, r#"stdout <- String(g(3) + 1) else "z";"#), ""), "4\n");
-    refused(&program(g, r#"stdout <- String(g(#e(code: "a")) + 1) else "z";"#));
+    assert_eq!(
+        run(
+            &program(g, r#"stdout <- String(g(#e(code: 5)) + 1) else "z";"#),
+            ""
+        ),
+        "6\n"
+    );
+    assert_eq!(
+        run(&program(g, r#"stdout <- String(g(3) + 1) else "z";"#), ""),
+        "4\n"
+    );
+    refused(&program(
+        g,
+        r#"stdout <- String(g(#e(code: "a")) + 1) else "z";"#,
+    ));
     refused(&program(
         &format!("{g}\n{FIRST}"),
         r#"stdout <- String(first(g(#e(code: 5)))) else "z";"#,
     ));
     let h = "h(positional e) = e else #o(i: #e(x:)) -> x;";
-    assert_eq!(run(&program(h, r#"stdout <- String(h(#o(i: #e(x: 2))) * 3) else "z";"#), ""), "6\n");
-    refused(&program(h, r#"stdout <- String(h(#o(i: #e(x: "s"))) * 3) else "z";"#));
+    assert_eq!(
+        run(
+            &program(h, r#"stdout <- String(h(#o(i: #e(x: 2))) * 3) else "z";"#),
+            ""
+        ),
+        "6\n"
+    );
+    refused(&program(
+        h,
+        r#"stdout <- String(h(#o(i: #e(x: "s"))) * 3) else "z";"#,
+    ));
 }
 
 #[test]
 fn a_self_application_takes_the_least_settled_result() {
     // Inside `w(w)` the inner use first gives nothing; the outer then gives 1, which settles.
     let settles = "w(positional f) = if true { 1 } else { f(f) + 1 };\nspin = w(w);";
-    assert_eq!(run(&program(settles, r#"stdout <- String(spin) else "z";"#), ""), "1\n");
+    assert_eq!(
+        run(&program(settles, r#"stdout <- String(spin) else "z";"#), ""),
+        "1\n"
+    );
     // Here the inner use must give a string, and the outer gives 1 | String: not settled.
     let grows = "w(positional f) = if true { 1 } else { f(f) ++ \"a\" };\nspin = w(w);";
     refused(&program(grows, r#"stdout <- "x";"#));

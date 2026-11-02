@@ -51,8 +51,8 @@ use crate::store::interval::{
 use crate::store::revision::{Op, forward};
 
 use ty::{
-    Arrow, Binds, Carrier, EVERY, Need, NeedKind, OTHER, Piece, SParam, Shape, Sig, Slot, Ty, Vars, atoms, errs,
-    mask_text,
+    Arrow, Binds, Carrier, EVERY, Need, NeedKind, OTHER, Piece, SParam, Shape, Sig, Slot, Ty, Vars,
+    atoms, errs, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -162,7 +162,7 @@ impl Arg {
 #[derive(Clone)]
 enum ArgSrc<'a> {
     Expr(&'a Expr),
-    Got(Arg),
+    Got(Box<Arg>),
 }
 
 /// The positional and named arguments of a call, as expressions.
@@ -728,7 +728,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let mut sig = sig.replace(&names);
         sig.bounds.extend(bounds);
-        sig.own = names.values().flat_map(|t| t.vars.iter().cloned()).collect();
+        sig.own = names
+            .values()
+            .flat_map(|t| t.vars.iter().cloned())
+            .collect();
         self.level -= 1;
         Arc::new(sig)
     }
@@ -964,11 +967,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             } => {
                 let positional: Vec<ArgSrc> = positional
                     .iter()
-                    .map(|t| ArgSrc::Got(Arg::of(b(t))))
+                    .map(|t| ArgSrc::Got(Box::new(Arg::of(b(t)))))
                     .collect();
                 let named: Vec<(String, ArgSrc)> = named
                     .iter()
-                    .map(|(m, t)| (m.to_string(), ArgSrc::Got(Arg::of(b(t)))))
+                    .map(|(m, t)| (m.to_string(), ArgSrc::Got(Box::new(Arg::of(b(t))))))
                     .collect();
                 self.call_value(&on, what, None, &positional, &named, *curry, span)
             }
@@ -1661,7 +1664,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let slots = fields
             .iter()
             .map(|(f, sub)| (Slot::Field(f.as_str().into()), sub.as_ref()))
-            .chain(items.iter().enumerate().map(|(i, sub)| (Slot::Item(i), Some(sub))));
+            .chain(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, sub)| (Slot::Item(i), Some(sub))),
+            );
         for (slot, sub) in slots {
             let t = self.payload(v, &atom, &slot, *span);
             match sub {
@@ -2209,7 +2217,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let (positional, named) = match f.pieces().iter().any(|p| self.class_of(p).is_some()) {
             true => {
                 let mut got = |a: &ArgSrc<'a>| match a {
-                    ArgSrc::Expr(e) => ArgSrc::Got(self.arg(e, None)),
+                    ArgSrc::Expr(e) => ArgSrc::Got(Box::new(self.arg(e, None))),
                     ArgSrc::Got(x) => ArgSrc::Got(x.clone()),
                 };
                 let p: Vec<ArgSrc<'a>> = positional.iter().map(&mut got).collect();
@@ -2357,7 +2365,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let want = Ty::union_all(sig.arrows.iter().map(|ar| &ar.params[j]));
                     Some(self.arg(a, Some(&want)))
                 }
-                Some(ArgSrc::Got(x)) => Some(x.clone()),
+                Some(ArgSrc::Got(x)) => Some(Arg::clone(x)),
                 None => None,
             });
         }

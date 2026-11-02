@@ -14,7 +14,8 @@ part of 'types.dart';
 // Nodes are shared: every node is kept in one table, so that one atom with one pair of
 // children is one node, and two equal diagrams are one object. Each node and expression keeps
 // a hash of its contents made from its children's, and two are ordered by it first, so a
-// comparison reads their contents only when the hashes are equal.
+// comparison reads their contents only when the hashes are equal, and reads each pair of nodes
+// or expressions at most once ([_order]).
 //
 // A diagram is canonical, so some functions have only diagrams exponential in the number of
 // their atoms: `(m1 & !n1) | … | (mC & !nC)`, with every `m` ordered before every `n`, has
@@ -650,15 +651,7 @@ final class Node<A extends Literal<A>> extends Bdd<A> {
   int get _id => id;
 
   @override
-  int compareTo(Part<A> o) {
-    if (identical(this, o)) return 0;
-    if (o is! Node<A>) return o is Leaf<A> ? 1 : -1;
-    var c = _cmpDigest(digest, o.digest);
-    if (c == 0) c = atom.compareTo(o.atom);
-    if (c == 0) c = hi.compareTo(o.hi);
-    if (c == 0) c = lo.compareTo(o.lo);
-    return c;
-  }
+  int compareTo(Part<A> o) => _order(this, o);
 }
 
 /// The connective of an [Expr], in the order expressions sort by.
@@ -691,13 +684,51 @@ final class Expr<A extends Literal<A>> extends Part<A> {
   };
 
   @override
-  int compareTo(Part<A> o) {
-    if (identical(this, o)) return 0;
-    if (o is! Expr<A>) return 1;
-    var c = _cmpDigest(digest, o.digest);
-    if (c == 0) c = op.index - o.op.index;
-    if (c == 0) c = a.compareTo(o.a);
-    if (c == 0 && b != null) c = b!.compareTo(o.b!);
-    return c;
+  int compareTo(Part<A> o) => _order(this, o);
+}
+
+/// The order of `first` and `second`: by digest, then by atom or connective, then by `hi` and
+/// `lo` or by operands, a diagram before an expression. Two nodes or expressions found equal are
+/// kept and not compared again, so the cost is one step per pair of nodes compared, not one per
+/// path to them, and linear in the size when the two are equal. A loop with its own stack, as a
+/// part can be deeper than the call stack.
+int _order<A extends Literal<A>>(Part<A> first, Part<A> second) {
+  final equal = HashSet<(Part<A>, Part<A>)>(
+    equals: (p, q) => identical(p.$1, q.$1) && identical(p.$2, q.$2),
+    hashCode: (p) => Object.hash(identityHashCode(p.$1), identityHashCode(p.$2)),
+  );
+  // Pairs to compare, and, marked `done`, pairs whose contents compared equal. `hi` and the
+  // first operand are pushed last, so they are compared first.
+  final steps = [(first, second, false)];
+  while (steps.isNotEmpty) {
+    final (x, y, done) = steps.removeLast();
+    if (done) {
+      equal.add((x, y));
+      continue;
+    }
+    if (identical(x, y) || equal.contains((x, y))) continue;
+    var c = 0;
+    switch ((x, y)) {
+      case (Leaf(value: final a), Leaf(value: final b)):
+        c = _cmpBool(a, b);
+      case (Leaf(), _) || (Node(), Expr()):
+        c = -1;
+      case (_, Leaf()) || (Expr(), Node()):
+        c = 1;
+      case (Node<A> m, Node<A> n):
+        c = _cmpDigest(m.digest, n.digest);
+        if (c == 0) c = m.atom.compareTo(n.atom);
+        if (c == 0) steps.addAll([(x, y, true), (m.lo, n.lo, false), (m.hi, n.hi, false)]);
+      case (Expr<A> e, Expr<A> f):
+        c = _cmpDigest(e.digest, f.digest);
+        if (c == 0) c = e.op.index - f.op.index;
+        if (c == 0) {
+          steps.add((x, y, true));
+          if (e.b != null) steps.add((e.b!, f.b!, false));
+          steps.add((e.a, f.a, false));
+        }
+    }
+    if (c != 0) return c;
   }
+  return 0;
 }
