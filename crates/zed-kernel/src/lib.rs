@@ -20,6 +20,11 @@ pub mod types;
 pub mod value;
 pub mod words;
 
+/// The scaling test of the rule of low complexity, shared with the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/scaling.rs"]
+mod scaling;
+
 pub use error::KernelError;
 pub use eval::{Evaluator, Lookup, Schedule, Stack, World, eval, on_stack};
 pub use family::{Family, Keypath};

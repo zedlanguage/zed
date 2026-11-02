@@ -19,11 +19,13 @@
 //! `2^C` nodes. A union or intersection therefore keeps its diagram only when it has no more
 //! nodes than its two operands together, and otherwise keeps the expression (`Part::Expr`),
 //! built in constant time; so a diagram has no more nodes than the atoms written to build it.
-//! A part is decided (module `empty`) by three-valued operations, each linear in its nodes: it
-//! is evaluated with some atoms known (`Part::eval3`), restricted to them (`Part::restrict`),
-//! settled on its shared subexpressions (`Part::settle`), and asked which atoms every value
-//! takes or refuses (`Part::forced`). None of them walks paths, whose number can be
-//! exponential in the nodes. Listing values takes one pass over the nodes (`Bdd::reaching`);
+//! A part is decided (module `empty`) by three-valued operations: it is evaluated with some
+//! atoms known (`Part::eval3`) and restricted to them (`Part::restrict`), each in time linear in
+//! its nodes; asked which atoms every value takes or refuses (`Part::forced`), in `O(n log n)`
+//! on a diagram and one evaluation per atom on an expression; and settled on its shared
+//! subexpressions (`Part::settle`), one evaluation per shared subexpression in each round. The
+//! last two are above the rule of low complexity, an open item (DESIGN.md L1.23). None of them
+//! walks paths, whose number can be exponential in the nodes. Listing values takes one pass over the nodes (`Bdd::reaching`);
 //! `Bdd::paths` remains for display.
 
 use std::cell::RefCell;
@@ -228,95 +230,91 @@ impl<A: Literal> Bdd<A> {
         r
     }
 
-    /// The atoms taken on every path to `true`, and those refused on every path, found as the
-    /// branches that dominate the `true` leaf: one pass over the nodes in topological order,
-    /// each node's dominator the nearest common one of the branches into it.
+    /// The atoms every value takes, and those every value refuses. The atoms are ordered, so an
+    /// atom is free in some value when a path to `true` passes its place in the order without
+    /// testing it, or tests it and goes on to `true` both ways. One pass over the nodes that
+    /// reach `true` marks the places each edge passes over and the ways each node goes on; the
+    /// atoms are then sorted, so the time is `O(n log n)` in the nodes.
     fn forced(&self) -> (Vec<A>, Vec<A>) {
-        fn order<A>(
-            b: &Bdd<A>,
-            seen: &mut HashMap<u64, bool>,
-            post: &mut Vec<Arc<Branch<A>>>,
-        ) -> bool {
-            let n = match b {
-                Bdd::Leaf(v) => return *v,
-                Bdd::Node(n) => n,
-            };
-            if let Some(r) = seen.get(&n.id) {
-                return *r;
+        let Bdd::Node(root) = self else {
+            return (Vec::new(), Vec::new());
+        };
+        // The nodes from which `true` is reached, each once.
+        let mut reaches: HashMap<u64, bool> = HashMap::new();
+        let mut live: Vec<&Arc<Branch<A>>> = Vec::new();
+        let mut stack = vec![(root, false)];
+        while let Some((n, expanded)) = stack.pop() {
+            if reaches.contains_key(&n.id) {
+                continue;
             }
-            let hi = order(&n.hi, seen, post);
-            let lo = order(&n.lo, seen, post);
-            seen.insert(n.id, hi || lo);
-            if hi || lo {
-                post.push(n.clone());
+            if !expanded {
+                stack.push((n, true));
+                for c in [&n.lo, &n.hi] {
+                    if let Bdd::Node(m) = c {
+                        if !reaches.contains_key(&m.id) {
+                            stack.push((m, false));
+                        }
+                    }
+                }
+                continue;
             }
-            hi || lo
+            let r = [&n.hi, &n.lo].into_iter().any(|c| match c {
+                Bdd::Leaf(v) => *v,
+                Bdd::Node(m) => reaches[&m.id],
+            });
+            reaches.insert(n.id, r);
+            if r {
+                live.push(n);
+            }
         }
-        let mut seen = HashMap::new();
-        let mut post = Vec::new();
-        if !order(self, &mut seen, &mut post) || post.is_empty() {
+        if !reaches[&root.id] {
             return (Vec::new(), Vec::new());
         }
-        // Dominator tree over the nodes, the branches between them, and the `true` leaf; a
-        // branch is its node's index with `true` or `false` beside it.
-        let mut index: HashMap<u64, usize> = HashMap::new();
-        let mut up: Vec<usize> = Vec::new();
-        let mut depth: Vec<usize> = Vec::new();
-        let mut branch: Vec<Option<(usize, bool)>> = Vec::new();
-        let leaf = 0;
-        up.push(usize::MAX);
-        depth.push(0);
-        branch.push(None);
-        fn meet(up: &[usize], depth: &[usize], mut a: usize, mut b: usize) -> usize {
-            while a != b {
-                if depth[a] >= depth[b] {
-                    a = up[a];
-                } else {
-                    b = up[b];
-                }
+        let mut atoms: Vec<&A> = live.iter().map(|n| &n.atom).collect();
+        atoms.sort();
+        atoms.dedup();
+        let place = |a: &A| {
+            atoms
+                .binary_search(&a)
+                .expect("an atom of a node is placed")
+        };
+        // `passed[i] - passed[i - 1]` edges pass over place `i`; `ways[i]` the ways on.
+        let count = atoms.len();
+        let mut passed = vec![0isize; count + 1];
+        let mut ways = vec![(false, false); count];
+        let mut pass = |from: usize, to: usize| {
+            if from < to {
+                passed[from] += 1;
+                passed[to] -= 1;
             }
-            a
-        }
-        let nodes: Vec<Arc<Branch<A>>> = post.into_iter().rev().collect();
-        for (k, n) in nodes.iter().enumerate() {
-            index.insert(n.id, k + 1);
-            up.push(if k == 0 { k + 1 } else { usize::MAX });
-            depth.push(0);
-            branch.push(None);
-        }
-        for (k, n) in nodes.iter().enumerate() {
-            let u = k + 1;
-            if u != 1 {
-                depth[u] = depth[up[u]] + 1;
-            }
-            for (child, v) in [(&n.hi, true), (&n.lo, false)] {
-                let c = match child {
-                    Bdd::Leaf(true) => leaf,
+        };
+        pass(0, place(&root.atom));
+        for n in &live {
+            let i = place(&n.atom);
+            for (c, v) in [(&n.hi, true), (&n.lo, false)] {
+                let to = match c {
+                    Bdd::Leaf(true) => count,
                     Bdd::Leaf(false) => continue,
-                    Bdd::Node(m) => match index.get(&m.id) {
-                        Some(c) => *c,
-                        None => continue,
-                    },
+                    Bdd::Node(m) if reaches[&m.id] => place(&m.atom),
+                    Bdd::Node(_) => continue,
                 };
-                let e = up.len();
-                up.push(u);
-                depth.push(depth[u] + 1);
-                branch.push(Some((u, v)));
-                up[c] = if up[c] == usize::MAX {
-                    e
+                pass(i + 1, to);
+                if v {
+                    ways[i].0 = true;
                 } else {
-                    meet(&up, &depth, up[c], e)
-                };
+                    ways[i].1 = true;
+                }
             }
         }
         let (mut taken, mut refused) = (Vec::new(), Vec::new());
-        let mut x = up[leaf];
-        while x != 1 {
-            if let Some((u, v)) = branch[x] {
-                let a = nodes[u - 1].atom.clone();
-                if v { taken.push(a) } else { refused.push(a) }
+        let mut over = 0;
+        for (i, a) in atoms.iter().enumerate() {
+            over += passed[i];
+            match (over, ways[i]) {
+                (0, (true, false)) => taken.push((*a).clone()),
+                (0, (false, true)) => refused.push((*a).clone()),
+                _ => {}
             }
-            x = up[x];
         }
         (taken, refused)
     }
@@ -677,12 +675,18 @@ impl<A: Literal> Part<A> {
     pub(super) fn settle(&self) -> Part<A> {
         let mut p = self.clone();
         loop {
-            let mut uses: HashMap<*const Expr<A>, (usize, Arc<Expr<A>>)> = HashMap::new();
+            // The shared subexpressions, in the order the walk finds them shared, so that the
+            // pins taken do not depend on where the expressions are in memory.
+            let mut uses: HashMap<*const Expr<A>, usize> = HashMap::new();
+            let mut shared = Vec::new();
             let mut stack = vec![p.clone()];
             while let Some(q) = stack.pop() {
                 let Part::Expr(e) = q else { continue };
-                let n = &mut uses.entry(Arc::as_ptr(&e)).or_insert((0, e.clone())).0;
+                let n = uses.entry(Arc::as_ptr(&e)).or_insert(0);
                 *n += 1;
+                if *n == 2 {
+                    shared.push(Arc::as_ptr(&e));
+                }
                 if *n > 1 {
                     continue;
                 }
@@ -695,17 +699,14 @@ impl<A: Literal> Part<A> {
                 }
             }
             let mut pins = HashMap::new();
-            for (key, (n, _)) in &uses {
-                if *n < 2 {
-                    continue;
-                }
+            for key in shared {
                 for v in [true, false] {
-                    let mut tried = pins.clone();
-                    tried.insert(*key, !v);
-                    if p.eval3_pinned(&|_| None, &tried) == Some(false) {
-                        pins.insert(*key, v);
+                    pins.insert(key, !v);
+                    if p.eval3_pinned(&|_| None, &pins) == Some(false) {
+                        pins.insert(key, v);
                         break;
                     }
+                    pins.remove(&key);
                 }
             }
             if pins.is_empty() {
@@ -906,6 +907,8 @@ mod tests {
     use crate::types::Type;
     use crate::value::Value;
 
+    use crate::scaling;
+
     /// The tuple type of one integer, an atom independent of the others.
     fn atom(i: u64) -> Row {
         Row::new(vec![Type::lit(&Value::Int(i as i64)).unwrap()])
@@ -997,10 +1000,63 @@ mod tests {
                 let i = (0..6).find(|&i| *a == atom(i)).unwrap();
                 assert!(inside.iter().all(|s| s & (1 << i) == 0), "{p:?} refuses {i}");
             }
+            // On a diagram every atom in all assignments, or in none, is found.
+            if matches!(p, Part::Bdd(_)) && !inside.is_empty() {
+                for i in 0..6 {
+                    let at = |set: &u32| set & (1 << i) != 0;
+                    assert_eq!(
+                        taken.contains(&atom(i)),
+                        inside.iter().all(at),
+                        "{p:?} at {i}"
+                    );
+                    assert_eq!(
+                        refused.contains(&atom(i)),
+                        !inside.iter().any(at),
+                        "{p:?} at {i}"
+                    );
+                }
+            }
         }
         assert!(
             exprs > 500 && decided > 300 && forced > 1000 && settled > 100,
             "{exprs} {decided} {forced} {settled}"
         );
+    }
+    #[test]
+    fn forced_atoms_of_a_long_chain_scale() {
+        // `w ∧ ((x_1 ∧ … ∧ x_m) ∨ z)`: `true` is reached past `z` from every `x_k`. Finding the
+        // branches that dominate `true` took the nearest common dominator of `m` branches at
+        // growing depths, walking up one step at a time: `O(m²)`.
+        std::thread::Builder::new()
+            .stack_size(1 << 28)
+            .spawn(|| {
+                // Built node by node, the atoms in their order: a union or intersection counts
+                // the nodes of its result. `w` is the first atom, `z` the last.
+                let chain = |m: usize| {
+                    let mut xs: Vec<Row> = (0..m as u64 + 2).map(atom).collect();
+                    xs.sort();
+                    let z = Bdd::literal(xs[m + 1].clone());
+                    let mut g = Bdd::node(xs[m].clone(), Bdd::Leaf(true), z.clone());
+                    for x in xs[1..m].iter().rev() {
+                        g = Bdd::node(x.clone(), g, z.clone());
+                    }
+                    (
+                        Part::Bdd(Bdd::node(xs[0].clone(), g, Bdd::Leaf(false))),
+                        xs[0].clone(),
+                    )
+                };
+                let n = 1 << 12;
+                let built: BTreeMap<usize, (Part<Row>, Row)> = [n, scaling::FACTOR * n]
+                    .into_iter()
+                    .map(|m| (m, chain(m)))
+                    .collect();
+                scaling::check("the forced atoms of a chain, by its length", n, |m| {
+                    let (p, w) = &built[&m];
+                    assert_eq!(p.forced(), (vec![w.clone()], Vec::new()));
+                });
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
