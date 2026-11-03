@@ -2,6 +2,7 @@
 //! program of its number prints on the `.in` file of the same name. The references compute the
 //! outputs without the compiler, so the corpus tests the compiler rather than repeating it.
 
+mod p14_oracle;
 mod scaling;
 
 use std::fs;
@@ -407,6 +408,182 @@ fn clustering_breaks_ties_by_label() {
     let (out, result) = on_text("14", "cluster_ties", input);
     assert_eq!(result, Ok(()));
     assert_eq!(out, "0: 0 1 2\n3: 3\n");
+}
+
+/// All three pairs of neighbors are at distance 1. Merging 3 into 0 makes the pair of points 3
+/// and 2 one of clusters 0 and 2, which then comes before the pair of 1 and 2: the key reads the
+/// labels the clusters have now.
+#[test]
+fn clustering_ties_use_current_cluster_labels() {
+    let (out, result) = on_text("14", "cluster_current_labels", "2\n0 0\n3 0\n2 0\n1 0\n");
+    assert_eq!((out.as_str(), result), ("0: 0 2 3\n1: 1\n", Ok(())));
+}
+
+/// Points 3 and 4 are equal and join first, and 0 takes them at distance 1. At distance 2 the
+/// pairs of that cluster with point 2 and of point 1 with point 2 tie, and the cluster goes by
+/// its least point 0, so it takes 2 before 1 can. Labeled by the root of its union-find tree,
+/// point 3, it would come after 1.
+#[test]
+fn clustering_start_order_uses_least_label() {
+    let input = "2\n0 1\n2 2\n2 0\n0 0\n0 0\n";
+    let (out, result) = on_text("14", "cluster_start_order", input);
+    assert_eq!((out.as_str(), result), ("0: 0 2 3 4\n1: 1\n", Ok(())));
+}
+
+/// What each count of points and clusters gives: a merge reads both coordinates of every point
+/// first, and a merge past one cluster is an error.
+#[test]
+fn clustering_errors_by_the_count_of_points_and_clusters() {
+    let none = "min() of no pairs";
+    let cases: [(&str, &str, Result<(), &str>); 12] = [
+        ("0\n", "", Ok(())),
+        ("3\n", "", Ok(())),
+        ("-1\n", "", Err(none)),
+        ("1\n7\n", "0: 0\n", Ok(())),
+        ("0\n7\n", "", Err(none)),
+        ("-5\n7 1\n", "", Err(none)),
+        ("2\n7\n8\n", "0: 0\n1: 1\n", Ok(())),
+        ("1\n0 0\n7\n", "", Err("index 1 out of range 0..1")),
+        ("1\n0\n7 1\n", "", Err("index 1 out of range 0..1")),
+        ("0\n0 0\n1 1\n", "", Err(none)),
+        ("0\n0 0\n1\n", "", Err("index 1 out of range 0..1")),
+        ("1\n0 0\n1 1\n", "0: 0 1\n", Ok(())),
+    ];
+    for (input, want_out, want) in cases {
+        let (out, result) = cluster_text(input);
+        assert_eq!(
+            (out.as_str(), result),
+            (want_out, want.map_err(str::to_string)),
+            "{input:?}"
+        );
+    }
+}
+
+/// The lines of `text` as the references read a file of it.
+fn input_lines(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let body = text.strip_suffix('\n').unwrap_or(text);
+    body.split('\n').map(String::from).collect()
+}
+
+/// Reference 14's output and result on `text`, read as a file of it.
+fn cluster_text(text: &str) -> (String, Result<(), String>) {
+    let run = zed_corpus_ref::program("14").expect("reference 14");
+    let mut out = String::new();
+    let result = run(&input_lines(text), &mut out);
+    (out, result)
+}
+
+/// The input `text` if reference 14 and its O(n²) form give it different outputs or results.
+fn clustering_differs_from_oracle(text: &str) -> Option<String> {
+    let mut out = String::new();
+    let result = p14_oracle::run(&input_lines(text), &mut out);
+    (cluster_text(text) != (out, result)).then(|| text.to_string())
+}
+
+/// Counts the inputs on which reference 14 and its O(n²) form differ, and shows the first.
+fn count_differences(inputs: impl Iterator<Item = String>) -> (usize, usize, Option<String>) {
+    let (mut seen, mut differ, mut first) = (0, 0, None);
+    for text in inputs {
+        seen += 1;
+        if let Some(text) = clustering_differs_from_oracle(&text) {
+            differ += 1;
+            first.get_or_insert(text);
+        }
+    }
+    (seen, differ, first)
+}
+
+/// Every sequence of up to 5 points of the 3 by 3 grid, points repeated or not, and every count
+/// of clusters from -1 to n + 1. A sequence is a set in one order, and every order of every set
+/// is here, so this also checks that reordering the input lines renames the clusters as the
+/// O(n²) form does.
+#[test]
+fn clustering_agrees_with_its_quadratic_form_on_every_small_grid_input() {
+    let grid: Vec<String> = (0..9).map(|c| format!("{} {}\n", c % 3, c / 3)).collect();
+    let mut inputs = Vec::new();
+    let mut points = vec![String::new()];
+    for n in 0..=5 {
+        for body in &points {
+            for k in -1..=n + 1 {
+                inputs.push(format!("{k}\n{body}"));
+            }
+        }
+        points = points
+            .iter()
+            .flat_map(|body| grid.iter().map(move |p| format!("{body}{p}")))
+            .collect();
+    }
+    let (seen, differ, first) = count_differences(inputs.into_iter());
+    assert_eq!(seen, 523_137);
+    assert_eq!((differ, first), (0, None), "of {seen} inputs");
+}
+
+/// splitmix64: the `i`th number of the sequence that starts at `seed`.
+fn splitmix(seed: u64, i: u64) -> u64 {
+    let mut z = seed.wrapping_add(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Random sets of up to 40 points: coordinates from ranges of 3, 10 and 1000 values, which give
+/// equal points and equal distances often, and from 2^40 values times 10^20, which needs more
+/// than 64 bits; a count of clusters from -1 to n + 1 at random.
+#[test]
+fn clustering_agrees_with_its_quadratic_form_on_random_inputs() {
+    let mut inputs = Vec::new();
+    for case in 0..6000u64 {
+        let draw = |i: u64| splitmix(case, i);
+        let n = draw(0) % 41;
+        let (range, scale) = [
+            (3, ""),
+            (10, ""),
+            (1000, ""),
+            (1 << 40, "00000000000000000000"),
+        ][(draw(1) % 4) as usize];
+        let coordinate = |i: u64| {
+            let c = (draw(i) % range) as i64 - (range / 2) as i64;
+            if c == 0 {
+                "0".to_string()
+            } else {
+                format!("{c}{scale}")
+            }
+        };
+        let body: String = (0..n)
+            .map(|i| format!("{} {}\n", coordinate(2 + 2 * i), coordinate(3 + 2 * i)))
+            .collect();
+        let k = (draw(100) % (n + 3)) as i64 - 1;
+        inputs.push(format!("{k}\n{body}"));
+    }
+    let (seen, differ, first) = count_differences(inputs.into_iter());
+    assert_eq!((differ, first), (0, None), "of {seen} inputs");
+}
+
+/// Malformed and unusual inputs give what the O(n²) form gives, errors with its messages.
+#[test]
+fn clustering_agrees_with_its_quadratic_form_on_malformed_inputs() {
+    let inputs = [
+        "",
+        "2",
+        "two\n0 0\n",
+        "1.5\n0 0\n",
+        "1\n0 0\n1\n",
+        "1\n0 0\n1 x\n",
+        "1\n0 0\nx 1\n",
+        "1\n0 0\n1.5 2\n",
+        "1\n0  0\n1 1\n",
+        "1\n0 0\n\n",
+        "1\n0 0 9\n1 1\n",
+        "2\n0 0\n1\n",
+        "3\n0 0\n1\n",
+        "1\n0\n1\n2\n",
+        "-1000000000000000000000000\n0 0\n1 1\n",
+    ];
+    let (seen, differ, first) = count_differences(inputs.into_iter().map(String::from));
+    assert_eq!((seen, differ, first), (inputs.len(), 0, None));
 }
 
 #[test]

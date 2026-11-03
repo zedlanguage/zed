@@ -49,6 +49,8 @@ zed-rt.workspace = true
 rustix.workspace = true
 perf-event2.workspace = true
 unicode-normalization = "0.1.26"
+num-bigint = "0.4.8"
+num-traits = "0.2"
 
 [lints]
 workspace = true

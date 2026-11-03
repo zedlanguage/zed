@@ -979,6 +979,8 @@ name = "zed-tests"
 version = "0.0.0"
 dependencies = [
  "insta",
+ "num-bigint",
+ "num-traits",
  "perf-event2",
  "rustix",
  "unicode-normalization",

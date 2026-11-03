@@ -1,7 +1,7 @@
 //! How the reference programs scale with their input. Each input is built before timing, at n
 //! and 8n. Most are linear up to a sort or a tree lookup; the ones that are not name why at their
 //! test: the power is what the problem forces, such as a full table in the output, not the
-//! algorithm of the corpus program. Reference 14 is the one exception, named at its test.
+//! algorithm of the corpus program.
 
 use std::fmt::Write;
 use std::fs;
@@ -175,15 +175,161 @@ fn union_find_over_few_edges_among_huge_node_numbers() {
     });
 }
 
-/// This reference reads all n(n-1)/2 distances, and keeping each cluster's nearest by key makes the
-/// merges cost no more than that. The problem does not force n²: the points are in the plane, so
-/// single linkage to k clusters follows the Euclidean minimum spanning tree, O(n log n) by a
-/// Delaunay or relative neighborhood graph. That form is plan node P14-MST, which needs a
-/// cross-review round.
+/// Checks reference 14 at n and 8n on `input`, after its output at n is checked to be that of
+/// the O(n²) form. The merges follow a Delaunay triangulation: O(n log n).
+fn clustering_scales(what: &str, n: usize, input: impl Fn(usize) -> String) {
+    let small = input(n);
+    let differs = super::clustering_differs_from_oracle(&small);
+    assert!(differs.is_none(), "{what}: the O(n²) form differs at {n}");
+    scales(what, "14", n, 1, input);
+}
+
+/// The side of the smallest square grid of at least `n` points.
+fn side(n: usize) -> usize {
+    (1..).find(|w| w * w >= n).expect("a side")
+}
+
+/// Nearly collinear points far apart.
 #[test]
-fn clustering_is_quadratic_in_the_number_of_points() {
-    scales("clustering", "14", 200, 2, |n| {
+fn clustering_of_points_near_a_line() {
+    clustering_scales("clustering near a line", 1000, |n| {
         format!("1\n{}", lines(n, |i| format!("{} {}", i * i, i % 3)))
+    });
+}
+
+/// A grid: every side of every square at one distance, so the label rule orders whole levels.
+#[test]
+fn clustering_of_a_grid() {
+    clustering_scales("clustering grid", 1000, |n| {
+        let w = side(n);
+        format!(
+            "{}\n{}",
+            n / 2,
+            lines(n, |i| format!("{} {}", i % w, i / w))
+        )
+    });
+}
+
+/// The grid turned by the angle whose cosine is 3/5 and scaled by 5: (3a + 4b, -4a + 3b).
+#[test]
+fn clustering_of_a_rotated_grid() {
+    clustering_scales("clustering rotated grid", 1000, |n| {
+        let w = side(n);
+        let point = |i: usize| {
+            let (a, b) = ((i % w) as i64, (i / w) as i64);
+            format!("{} {}", 3 * a + 4 * b, -4 * a + 3 * b)
+        };
+        format!("{}\n{}", n / 2, lines(n, point))
+    });
+}
+
+/// splitmix64 of `i`, cut to 30 bits.
+fn hash(i: usize) -> u64 {
+    let mut z = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (z ^ (z >> 31)) >> 34
+}
+
+/// Points in random places: each coordinate a hash of its position in the input.
+#[test]
+fn clustering_of_random_points() {
+    clustering_scales("clustering random", 1000, |n| {
+        format!(
+            "1\n{}",
+            lines(n, |i| format!("{} {}", hash(2 * i + 1), hash(2 * i + 2)))
+        )
+    });
+}
+
+/// Random points on an n/8 by n/8 square, so about one point in eight equals an earlier one.
+#[test]
+fn clustering_of_many_equal_points() {
+    clustering_scales("clustering equal points", 1000, |n| {
+        let m = (n / 8) as u64;
+        let point = |i: usize| format!("{} {}", hash(2 * i + 1) % m, hash(2 * i + 2) % m);
+        format!("{}\n{}", n / 16, lines(n, point))
+    });
+}
+
+/// Points all on one line, in an order far from sorted: the triangulation is their path.
+#[test]
+fn clustering_of_points_on_one_line() {
+    clustering_scales("clustering on a line", 1000, |n| {
+        let point = |i: usize| {
+            let x = i * 7919 % n;
+            format!("{x} {}", 2 * x)
+        };
+        format!("1\n{}", lines(n, point))
+    });
+}
+
+/// Points all on one circle, where every in-circle test of four of them is 0: the first n of the
+/// 8192 lattice points of x² + y² = 5 · 13 · 17 · 29 · 37 · 41 · 53 · 61 · 73 · 89 · 97, each a
+/// product of one of a ± bi per prime p = a² + b², times a unit.
+#[test]
+fn clustering_of_points_on_one_circle() {
+    let primes = [
+        (1, 2),
+        (2, 3),
+        (1, 4),
+        (2, 5),
+        (1, 6),
+        (4, 5),
+        (2, 7),
+        (5, 6),
+        (3, 8),
+        (5, 8),
+        (4, 9),
+    ];
+    let mut zs: Vec<(i64, i64)> = vec![(1, 0)];
+    for (a, b) in primes {
+        zs = zs
+            .iter()
+            .flat_map(|&(x, y)| {
+                [
+                    (x * a - y * b, x * b + y * a),
+                    (x * a + y * b, y * a - x * b),
+                ]
+            })
+            .collect();
+    }
+    let circle: Vec<(i64, i64)> = zs
+        .into_iter()
+        .flat_map(|(x, y)| [(x, y), (-y, x), (-x, -y), (y, -x)])
+        .collect();
+    clustering_scales("clustering circle", 1000, |n| {
+        let (x, y): (Vec<i64>, Vec<i64>) = circle[..n].iter().copied().unzip();
+        format!("1\n{}", lines(n, |i| format!("{} {}", x[i], y[i])))
+    });
+}
+
+/// Two parabolas facing apart, x = ±(10000 + t²) and y = 5000t: every point is on the hull of its
+/// half, so each merge of the triangulation walks long hull chains.
+#[test]
+fn clustering_of_two_parabolas_facing_apart() {
+    clustering_scales("clustering two parabolas", 1000, |n| {
+        format!(
+            "1\n{}",
+            lines(n, |i| {
+                let t = (i / 2) as i64 - n as i64 / 4;
+                let x = 10_000 + t * t;
+                let x = if i % 2 == 0 { -x } else { x };
+                format!("{x} {}", 5_000 * t)
+            })
+        )
+    });
+}
+
+/// Points (i, i²) and (i, -i²) in turn: two parabolas facing apart, interleaved in the input.
+#[test]
+fn clustering_of_points_on_two_parabolas_by_turns() {
+    clustering_scales("clustering parabolas by turns", 1000, |n| {
+        let point = |i: usize| {
+            let y = (i * i) as i64;
+            format!("{i} {}", if i % 2 == 1 { y } else { -y })
+        };
+        format!("1\n{}", lines(n, point))
     });
 }
 

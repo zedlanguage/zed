@@ -1,62 +1,163 @@
 //! 14 single-linkage clustering to k clusters: the closest pair of points in different clusters,
 //! ties broken by (distance², smaller label, larger label) in natural tuple order; the larger
-//! label is renamed to the smaller. n - k merges (none if k >= n). A cluster goes by its label.
+//! label is renamed to the smaller. n - k merges (none if k >= n). A cluster goes by its label,
+//! which is therefore its least point.
 //!
-//! Each cluster keeps its distance to every other and which of them comes first by that key. On
-//! merging b into a, a's key to any c is at most b's, since a < b, so c's nearest is either
-//! unchanged or a, which one comparison decides. Only a's own nearest needs a scan of its row.
+//! The merges come in rising distance, a level of equal distances at a time. Before the merges of
+//! distance d the clusters are the components of the pairs nearer than d, whatever happened
+//! within the levels below. Two points p, q at distance d in different clusters during that
+//! level have no other point in the closed disk on pq as diameter, since a point r there would be
+//! nearer than d to both, or a copy of p or q; so pq is an edge of every Delaunay triangulation of
+//! the distinct points. A triangulation and a chain through each set of equal points therefore
+//! hold every pair a level can merge, O(n) edges in all. Within a level the key picks the least
+//! label that has a pair at all and joins its nearest-labeled neighbor to it, until its connected
+//! part of the level is one cluster; then the next least label. That is a search by least label,
+//! which [`Level::merge`] runs on the level's edges. O(n log n).
 
-use std::cmp::Ordering;
-use std::collections::BTreeMap;
+mod delaunay;
+
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
 
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 
 use crate::zedrt::{at, parse_int};
+use delaunay::Point;
 
-/// The distances between clusters, each pair once.
-struct Distances {
-    n: usize,
-    cells: Vec<BigInt>,
+/// The clusters, as a union–find by size with path halving; each root holds its cluster's label.
+struct Clusters {
+    parent: Vec<usize>,
+    size: Vec<usize>,
+    least: Vec<usize>,
 }
 
-impl Distances {
-    fn cell(&self, x: usize, y: usize) -> usize {
-        let (i, j) = (x.min(y), x.max(y));
-        i * (2 * self.n - i - 1) / 2 + j - i - 1
-    }
-
-    fn at(&self, x: usize, y: usize) -> &BigInt {
-        &self.cells[self.cell(x, y)]
-    }
-
-    /// Orders the pairs (c, x) and (c, y) by distance, smaller label, larger label.
-    fn order(&self, c: usize, x: usize, y: usize) -> Ordering {
-        let labels = |o: usize| (c.min(o), c.max(o));
-        let by_distance = self.at(c, x).cmp(self.at(c, y));
-        by_distance.then_with(|| labels(x).cmp(&labels(y)))
-    }
-
-    /// Orders the pairs (c, x) and (d, y) likewise.
-    fn order_pairs(&self, (c, x): (usize, usize), (d, y): (usize, usize)) -> Ordering {
-        let by_distance = self.at(c, x).cmp(self.at(d, y));
-        by_distance.then_with(|| (c.min(x), c.max(x)).cmp(&(d.min(y), d.max(y))))
-    }
-}
-
-/// The squared distance of every pair of `pts`. The plane does not force these n²: single linkage
-/// to k clusters follows the Euclidean minimum spanning tree, O(n log n) by a Delaunay or relative
-/// neighborhood graph (plan node P14-MST).
-fn squared_distances(pts: &[Vec<BigInt>]) -> Result<Vec<BigInt>, String> {
-    let mut cells = Vec::with_capacity(pts.len() * pts.len().saturating_sub(1) / 2);
-    for (i, p) in pts.iter().enumerate() {
-        for q in &pts[i + 1..] {
-            let dx = at(p, 0)? - at(q, 0)?;
-            let dy = at(p, 1)? - at(q, 1)?;
-            cells.push(&dx * &dx + &dy * &dy);
+impl Clusters {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+            size: vec![1; n],
+            least: (0..n).collect(),
         }
     }
-    Ok(cells)
+
+    fn root(&mut self, mut x: usize) -> usize {
+        while self.parent[x] != x {
+            self.parent[x] = self.parent[self.parent[x]];
+            x = self.parent[x];
+        }
+        x
+    }
+
+    fn label(&mut self, x: usize) -> usize {
+        let r = self.root(x);
+        self.least[r]
+    }
+
+    /// Joins the clusters of `a` and `b`, which differ.
+    fn join(&mut self, a: usize, b: usize) {
+        let (mut a, mut b) = (self.root(a), self.root(b));
+        if self.size[a] < self.size[b] {
+            std::mem::swap(&mut a, &mut b);
+        }
+        self.parent[b] = a;
+        self.size[a] += self.size[b];
+        self.least[a] = self.least[a].min(self.least[b]);
+    }
+}
+
+/// The work space of one level, by the root of each cluster at its start, empty between levels.
+struct Level {
+    near: Vec<Vec<usize>>,
+    seen: Vec<bool>,
+}
+
+impl Level {
+    /// Makes the first of at most `left` merges of the level `pairs`, pairs of points at one
+    /// distance, and returns how many it made: by least label, each joining the least label it
+    /// has a pair with, as the key orders them.
+    fn merge(&mut self, pairs: &[(BigInt, usize, usize)], left: usize, c: &mut Clusters) -> usize {
+        let mut touched = Vec::new();
+        for &(_, p, q) in pairs {
+            let (a, b) = (c.root(p), c.root(q));
+            if a == b {
+                continue;
+            }
+            for (u, v) in [(a, b), (b, a)] {
+                if self.near[u].is_empty() {
+                    touched.push(u);
+                }
+                self.near[u].push(v);
+            }
+        }
+        touched.sort_unstable_by_key(|&u| c.least[u]);
+        let mut made = 0;
+        'search: for &start in &touched {
+            if self.seen[start] {
+                continue;
+            }
+            self.seen[start] = true;
+            let mut next = BinaryHeap::new();
+            let mut reach = |u: usize, next: &mut BinaryHeap<_>, c: &Clusters| {
+                for &v in &self.near[u] {
+                    if !self.seen[v] {
+                        self.seen[v] = true;
+                        next.push(Reverse((c.least[v], v)));
+                    }
+                }
+            };
+            reach(start, &mut next, c);
+            while let Some(Reverse((_, v))) = next.pop() {
+                if made == left {
+                    break 'search;
+                }
+                c.join(start, v);
+                made += 1;
+                reach(v, &mut next, c);
+            }
+        }
+        for u in touched {
+            self.near[u].clear();
+            self.seen[u] = false;
+        }
+        made
+    }
+}
+
+/// Makes the first `merges`, fewer than the number of points, in the order the key gives.
+fn link(points: Vec<Point>, merges: usize, clusters: &mut Clusters) {
+    let n = points.len();
+    let mut order: Vec<(Point, usize)> = points.into_iter().zip(0..).collect();
+    order.sort_unstable();
+    let mut pairs = Vec::new();
+    // The distinct points in (x, y) order, and the first index of each in the input.
+    let (mut sites, mut first): (Vec<Point>, Vec<usize>) = (Vec::new(), Vec::new());
+    let mut previous = 0;
+    for (point, p) in order {
+        if sites.last() == Some(&point) {
+            pairs.push((BigInt::zero(), previous, p));
+        } else {
+            sites.push(point);
+            first.push(p);
+        }
+        previous = p;
+    }
+    for (s, t) in delaunay::edges(&sites) {
+        let (dx, dy) = (&sites[s].0 - &sites[t].0, &sites[s].1 - &sites[t].1);
+        pairs.push((&dx * &dx + &dy * &dy, first[s], first[t]));
+    }
+    pairs.sort_by(|x, y| x.0.cmp(&y.0));
+    let mut level = Level {
+        near: vec![Vec::new(); n],
+        seen: vec![false; n],
+    };
+    let mut left = merges;
+    for pairs in pairs.chunk_by(|x, y| x.0 == y.0) {
+        if left == 0 {
+            break;
+        }
+        left -= level.merge(pairs, left, clusters);
+    }
 }
 
 /// Runs the program.
@@ -68,54 +169,32 @@ pub fn run(lines: &[String], out: &mut String) -> Result<(), String> {
         pts.push(point.collect::<Result<Vec<BigInt>, String>>()?);
     }
     let n = pts.len();
-    let mut label: Vec<usize> = (0..n).collect();
+    let mut clusters = Clusters::new(n);
     let merges = (BigInt::from(n) - k).max(BigInt::zero());
     if !merges.is_zero() {
-        let mut d = Distances {
-            n,
-            cells: squared_distances(&pts)?,
-        };
-        let mut alive: Vec<usize> = (0..n).collect();
-        let nearest_of = |d: &Distances, alive: &[usize], c: usize| {
-            let others = alive.iter().copied().filter(|&x| x != c);
-            others.min_by(|&x, &y| d.order(c, x, y))
-        };
-        let mut nearest: Vec<usize> = alive
-            .iter()
-            .map(|&c| nearest_of(&d, &alive, c).unwrap_or(c))
-            .collect();
-        // Past the number of points the loop stops at its error, so a size no `usize` holds is
-        // as good as any other.
-        for _ in 0..merges.to_usize().unwrap_or(usize::MAX) {
-            if alive.len() < 2 {
-                return Err("min() of no pairs".into());
-            }
-            let first = |x: &usize, y: &usize| d.order_pairs((*x, nearest[*x]), (*y, nearest[*y]));
-            let c = alive.iter().copied().min_by(first).expect("two are alive");
-            let (a, b) = (c.min(nearest[c]), c.max(nearest[c]));
-            alive.retain(|&x| x != b);
-            for &c in alive.iter().filter(|&&c| c != a) {
-                let (ab, bc) = (d.cell(a, c), d.cell(b, c));
-                if d.cells[bc] < d.cells[ab] {
-                    d.cells.swap(ab, bc);
-                }
-                if nearest[c] == b || d.order(c, a, nearest[c]) != Ordering::Greater {
-                    nearest[c] = a;
-                }
-            }
-            nearest[a] = nearest_of(&d, &alive, a).unwrap_or(a);
-            for l in &mut label {
-                if *l == b {
-                    *l = a;
-                }
+        // Any merge reads the coordinates of every point, when there are two to pair.
+        let mut points = Vec::with_capacity(n);
+        if n >= 2 {
+            for p in pts {
+                at(&p, 1)?;
+                let mut p = p.into_iter();
+                let x = p
+                    .next()
+                    .expect("a first coordinate, since there is a second");
+                points.push((x, p.next().expect("a second coordinate, checked")));
             }
         }
+        let merges = merges.to_usize().filter(|&m| m < n);
+        link(points, merges.ok_or("min() of no pairs")?, &mut clusters);
     }
-    let mut clusters: BTreeMap<usize, Vec<String>> = BTreeMap::new();
-    for (i, &c) in label.iter().enumerate() {
-        clusters.entry(c).or_default().push(i.to_string());
+    let mut by_label: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    for i in 0..n {
+        by_label
+            .entry(clusters.label(i))
+            .or_default()
+            .push(i.to_string());
     }
-    for (c, members) in clusters {
+    for (c, members) in by_label {
         say!(out, "{c}: {}", members.join(" "));
     }
     Ok(())
