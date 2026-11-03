@@ -87,7 +87,7 @@ pub(super) fn boxed(names: &[Arc<str>]) -> Formula {
     Formula::and(
         names
             .iter()
-            .map(|n| member(&Atom::Sym(n.clone()), &IntervalSet::of(LO, HI)).expect("answered"))
+            .map(|n| member(&Atom::Sym(n.clone()), &IntervalSet::of(LO, HI)))
             .collect(),
     )
 }
@@ -106,7 +106,7 @@ fn check_points(r: &Relation, t: &Term, names: &[Arc<str>]) -> Result<(), String
                 .zip(&p)
                 .map(|(n, v)| {
                     let x = Lin::atom(Atom::Sym(n.clone()));
-                    Formula::Con(Con::eq(&x, &Lin::constant((*v).into())).expect("small"))
+                    Formula::Con(Con::eq(&x, &Lin::constant(*v)))
                 })
                 .collect(),
         );

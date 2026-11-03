@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use zed_tests::scaling;
 use zedc::store::hull::Hull;
+use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Lin};
 
 /// `sum of c * name` plus `k`.
@@ -12,9 +13,9 @@ fn lin(terms: &[(&str, i128)], k: i128) -> Lin {
         terms: terms
             .iter()
             .filter(|(_, c)| *c != 0)
-            .map(|(s, c)| (Atom::Sym((*s).into()), *c))
+            .map(|(s, c)| (Atom::Sym((*s).into()), Int::from(*c)))
             .collect(),
-        constant: k,
+        constant: Int::from(k),
     }
 }
 
@@ -30,7 +31,11 @@ fn point(names: &[String], v: &[i128]) -> Hull {
 
 /// The value of `t` at `m`.
 fn eval(t: &Lin, m: &BTreeMap<Atom, i128>) -> i128 {
-    t.terms.iter().map(|(a, c)| c * m[a]).sum::<i128>() + t.constant
+    t.terms
+        .iter()
+        .map(|(a, c)| c.to_i128().expect("small") * m[a])
+        .sum::<i128>()
+        + t.constant.to_i128().expect("small")
 }
 
 /// The rank of the integer vectors, by fraction-free elimination.

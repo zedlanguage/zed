@@ -438,6 +438,9 @@ pub struct Scope {
     /// Under `@exact`, each group of written constraints that share names, by their texts with
     /// the static values substituted, with a point that meets them all.
     pub exactly: BTreeMap<Vec<String>, Point>,
+    /// The causes for which the integer solver left a question undecided while this scope was
+    /// narrowed or projected; each one leaves the scope sound but wider than it could be.
+    pub refusals: BTreeSet<presburger::Refusal>,
 }
 
 /// The intervals and classes of a part's names when it was last projected.
@@ -677,6 +680,7 @@ impl Scope {
             projected: std::collections::HashMap::new(),
             exact,
             exactly: BTreeMap::new(),
+            refusals: BTreeSet::new(),
         };
         s.reduce();
         s
@@ -805,7 +809,7 @@ impl Scope {
         // pivots replaced; the disjunction then mentions no pivot, and a join of sides that fix
         // `k` names leaves a disjunction of one name and `k - 1` equalities of two.
         let hull = self.hull().join(&other.hull());
-        let reduce = |c: &Con| hull.reduce(c).unwrap_or_else(|_| Formula::Con(c.clone()));
+        let reduce = |c: &Con| hull.reduce(c);
         let kept: Vec<Formula> = hull
             .rows()
             .filter(|t| t.terms.len() > 1)
@@ -857,6 +861,7 @@ impl Scope {
                 .chain(&self.exactly)
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            refusals: self.refusals.union(&other.refusals).copied().collect(),
             names,
         }
     }
@@ -879,10 +884,8 @@ impl Scope {
             })
             .collect();
         for (n, p) in &self.names {
-            if let Some(Value::Int(v)) = p.value()
-                && let Ok(t) = Lin::atom(Atom::Sym(n.clone())).minus(&Lin::constant((*v).into()))
-            {
-                terms.push(t);
+            if let Some(Value::Int(v)) = p.value() {
+                terms.push(Lin::atom(Atom::Sym(n.clone())).minus(&Lin::constant(*v)));
             }
         }
         Hull::of(&terms)
@@ -1004,6 +1007,9 @@ impl Scope {
                 .collect();
             let pre = preimage(&t, &doms, &Demand::Bool(outcome));
             exact = pre.exact;
+            if let Some(r) = pre.refusal {
+                self.refusals.insert(r);
+            }
             for (n, d) in &pre.domains {
                 if let Some(p) = self.names.get_mut(n) {
                     p.meet_ints(d, prem);
@@ -1199,16 +1205,13 @@ impl Scope {
     /// Meets each name `part` mentions with its projection, within every interval.
     fn project_part(&mut self, part: &Formula) {
         let mentioned = part.atoms();
-        let within: Result<Vec<Formula>, presburger::Refusal> = mentioned
+        let mut parts: Vec<Formula> = mentioned
             .iter()
             .filter_map(|a| match a {
                 Atom::Sym(n) => Some(presburger::member(a, self.get(n).ints())),
                 _ => None,
             })
             .collect();
-        let Ok(mut parts) = within else {
-            return;
-        };
         // Each name's congruence, `x == m * k + r` with `k` free, so that the projection
         // already lies in the class: otherwise the class moves an endpoint, the relation moves
         // another name's to match, and the two pass a bound back and forth without end.
@@ -1218,16 +1221,10 @@ impl Scope {
                 && modulus > 1
             {
                 let k = Lin::atom(Atom::Sym(format!("{n} mod").into()));
-                let Ok(Ok(rhs)) = k
-                    .times(modulus.into())
-                    .map(|m| m.plus(&Lin::constant(residue.into())))
-                else {
-                    return;
-                };
-                let Ok(c) = Con::eq(&Lin::atom(a.clone()), &rhs) else {
-                    return;
-                };
-                parts.push(Formula::Con(c));
+                let rhs = k
+                    .times(Int::from(modulus as i128))
+                    .plus(&Lin::constant(residue));
+                parts.push(Formula::Con(Con::eq(&Lin::atom(a.clone()), &rhs)));
             }
         }
         parts.push(part.clone());
@@ -1236,12 +1233,22 @@ impl Scope {
             .into_iter()
             .filter(|a| matches!(a, Atom::Sym(_)))
             .collect();
-        let Ok(each) = presburger::project_each(&whole, &syms) else {
-            return;
+        let each = match presburger::project_each(&whole, &syms) {
+            Ok(each) => each,
+            Err(r) => {
+                self.refusals.insert(r);
+                return;
+            }
         };
         for (a, x) in syms.iter().zip(each) {
+            let x = match x {
+                Ok(x) => x,
+                Err(r) => {
+                    self.refusals.insert(r);
+                    continue;
+                }
+            };
             if let Atom::Sym(n) = a
-                && let Ok(x) = x
                 && let Some(p) = self.names.get_mut(n)
             {
                 let prem = p.premises();

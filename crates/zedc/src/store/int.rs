@@ -12,15 +12,39 @@ use num_integer::Integer;
 
 /// An integer. A value that fits in `i128` is always `Small`, so that two equal values have
 /// one form.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum Repr {
     Small(i128),
     Big(Box<BigInt>),
 }
 
 /// An unbounded integer.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Int(Repr);
+
+impl Default for Int {
+    fn default() -> Int {
+        Int::ZERO
+    }
+}
+
+impl From<i32> for Int {
+    fn from(v: i32) -> Int {
+        Int(Repr::Small(v.into()))
+    }
+}
+
+impl From<i64> for Int {
+    fn from(v: i64) -> Int {
+        Int(Repr::Small(v.into()))
+    }
+}
+
+impl From<usize> for Int {
+    fn from(v: usize) -> Int {
+        Int(Repr::Small(v as i128))
+    }
+}
 
 impl From<i128> for Int {
     fn from(v: i128) -> Int {

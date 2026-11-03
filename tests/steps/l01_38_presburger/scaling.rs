@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use zed_tests::scaling;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, satisfiable};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
 
 fn x(i: usize) -> Lin {
     Lin::atom(Atom::Sym(Arc::from(format!("x{i}"))))
@@ -18,14 +18,10 @@ fn x(i: usize) -> Lin {
 fn chain(v: usize, k: i128) -> Formula {
     let mut cons = Vec::new();
     for i in 0..v {
-        let a = x(i).times(2).unwrap();
-        let b = x(i + 1).times(3).unwrap();
-        cons.push(Formula::Con(
-            Con::ge(&b, &a.plus(&Lin::constant(1)).unwrap()).unwrap(),
-        ));
-        cons.push(Formula::Con(
-            Con::ge(&a.plus(&Lin::constant(k)).unwrap(), &b).unwrap(),
-        ));
+        let a = x(i).times(2);
+        let b = x(i + 1).times(3);
+        cons.push(Formula::Con(Con::ge(&b, &a.plus(&Lin::constant(1)))));
+        cons.push(Formula::Con(Con::ge(&a.plus(&Lin::constant(k)), &b)));
     }
     Formula::and(cons)
 }
@@ -35,18 +31,14 @@ fn chain(v: usize, k: i128) -> Formula {
 fn rising(v: usize) -> Formula {
     let zero = Lin::constant(0);
     let mut cons = vec![
-        Formula::Con(Con::ge(&x(0), &zero).unwrap()),
-        Formula::Con(Con::ge(&zero, &x(v)).unwrap()),
+        Formula::Con(Con::ge(&x(0), &zero)),
+        Formula::Con(Con::ge(&zero, &x(v))),
     ];
     for i in 0..v {
-        let a = x(i).times(3).unwrap();
-        let b = x(i + 1).times(2).unwrap();
-        cons.push(Formula::Con(
-            Con::ge(&b, &a.plus(&Lin::constant(1)).unwrap()).unwrap(),
-        ));
-        cons.push(Formula::Con(
-            Con::ge(&a.plus(&Lin::constant(5)).unwrap(), &b).unwrap(),
-        ));
+        let a = x(i).times(3);
+        let b = x(i + 1).times(2);
+        cons.push(Formula::Con(Con::ge(&b, &a.plus(&Lin::constant(1)))));
+        cons.push(Formula::Con(Con::ge(&a.plus(&Lin::constant(5)), &b)));
     }
     Formula::and(cons)
 }
@@ -135,4 +127,123 @@ fn a_long_empty_chain_scales() {
 #[test]
 fn a_long_rising_chain_scales() {
     scales("the long rising chain", 2048, false, rising);
+}
+
+/// `Σ c·x[i] + k >= 0` over the pairs `(i, c)`, with each `x[i]` moved by `shift(i)` when
+/// `shifted`, so that neither the origin nor small values stay points.
+fn row(t: &[(usize, i64)], k: i64, shifted: bool) -> Formula {
+    let shift = |i: usize| ((i as i64 * 7919 + 13) % 2001) - 1000;
+    let k = if shifted {
+        k - t.iter().map(|(i, c)| c * shift(*i)).sum::<i64>()
+    } else {
+        k
+    };
+    let l = t
+        .iter()
+        .fold(Lin::constant(k), |l, (i, c)| l.plus(&x(*i).times(*c)));
+    Formula::Con(Con::ge(&l, &Lin::constant(0)))
+}
+
+/// Three rows of three variables at each `i`, cyclically, shifted: the family on which Bland's
+/// rule alone takes about 2^(0.7n) pivots. No elimination keeps the rows, so the answer is the
+/// refusal [`Refusal::Growth`], given once the simplex finds the rational vertex and it is not
+/// an integer point; the work is the simplex's.
+fn sparse(n: usize) -> Formula {
+    let mut r = Vec::new();
+    for i in 0..n {
+        let (a, b, c) = (i, (i + 1) % n, (i + 2) % n);
+        r.push(row(&[(a, 2), (b, -3), (c, 1)], 5, true));
+        r.push(row(&[(a, -3), (b, 1), (c, -2)], 5, true));
+        r.push(row(&[(a, 1), (b, 2), (c, -3)], 5, true));
+    }
+    Formula::and(r)
+}
+
+/// `2n` rows `±x[a] ± x[b] + k >= 0`, shifted, with a point: decided by the parity test.
+fn utvpi(n: usize) -> Formula {
+    let mut r = Vec::new();
+    for i in 0..2 * n {
+        let a = (i * 37 + 11) % n;
+        let mut b = (i * 53 + 5) % n;
+        if a == b {
+            b = (b + 1) % n;
+        }
+        let (ca, cb) = (
+            if i % 3 == 0 { -1 } else { 1 },
+            if i % 2 == 0 { -1 } else { 1 },
+        );
+        r.push(row(&[(a, ca), (b, cb)], (i % 4) as i64, true));
+    }
+    Formula::and(r)
+}
+
+/// `x[0] + x[1] == 1` and `x[i] == x[i+1]` around a cycle of `n`: the rational point `1/2`
+/// and no integer point, shown by the parity of a zero-weight cycle.
+fn odd_cycle(n: usize) -> Formula {
+    let mut r = vec![
+        row(&[(0, 1), (1, 1)], -1, false),
+        row(&[(0, -1), (1, -1)], 1, false),
+    ];
+    for i in 1..n {
+        r.push(row(&[(i, 1), ((i + 1) % n, -1)], 0, false));
+        r.push(row(&[((i + 1) % n, 1), (i, -1)], 0, false));
+    }
+    Formula::and(r)
+}
+
+/// `n` disjoint copies of Pugh's example, shifted: each part has two variables and is decided
+/// exactly, and each is empty.
+fn pugh_pairs(n: usize) -> Formula {
+    let mut r = Vec::new();
+    for i in 0..n {
+        let (a, b) = (2 * i, 2 * i + 1);
+        r.push(row(&[(a, 11), (b, 13)], -27, true));
+        r.push(row(&[(a, -11), (b, -13)], 45, true));
+        r.push(row(&[(a, 7), (b, -9)], 10, true));
+        r.push(row(&[(a, -7), (b, 9)], 4, true));
+    }
+    Formula::and(r)
+}
+
+/// Times `decide` on the formulas of `make` at `n` and 8n, built first, each first checked to
+/// give `answer`.
+fn decides(what: &str, n: usize, answer: Result<bool, Refusal>, make: impl Fn(usize) -> Formula) {
+    let (small, large) = (make(n), make(scaling::FACTOR * n));
+    for f in [&small, &large] {
+        assert_eq!(decide(f), answer, "{what}");
+    }
+    scaling::check(what, n, |m| {
+        let f = if m == n { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
+}
+
+#[test]
+fn the_shifted_sparse_family_scales() {
+    decides(
+        "the shifted sparse family",
+        128,
+        Err(Refusal::Growth),
+        sparse,
+    );
+}
+
+#[test]
+fn rows_of_two_unit_coefficients_scale() {
+    decides("rows of two unit coefficients", 256, Ok(true), utvpi);
+}
+
+#[test]
+fn an_odd_cycle_scales() {
+    decides("an odd cycle", 256, Ok(false), odd_cycle);
+}
+
+#[test]
+fn disjoint_two_variable_parts_scale() {
+    decides(
+        "disjoint copies of Pugh's example",
+        256,
+        Ok(false),
+        pugh_pairs,
+    );
 }

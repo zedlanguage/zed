@@ -8,8 +8,7 @@
 //! take their last atom and rewrite none, where taking `x1` would rewrite every row before.
 //! Two hulls of one set may then have different rows. A row `t` means `t == 0`. The rows are in persistent maps, so a hull made from another
 //! by a few changes shares the rest with it, and the join of the two finds the rows that
-//! differ in time near their number. A coefficient past 128 bits drops the equalities, which
-//! leaves a hull that holds more points.
+//! differ in time near their number. Coefficients are unbounded integers.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -18,7 +17,8 @@ use std::sync::Arc;
 use imbl::OrdMap;
 use imbl::ordmap::DiffItem;
 
-use super::presburger::{Atom, Con, Formula, Lin, Refusal, Rel};
+use super::int::Int;
+use super::presburger::{Atom, Con, Formula, Lin, Rel};
 
 /// The affine hull of a set of points, as the equalities that hold on it.
 #[derive(Clone, Debug, Default)]
@@ -61,38 +61,44 @@ impl Hull {
     /// suffices, since no row mentions another's pivot. The result's coefficients have no
     /// common factor: a `>=` constant is rounded down, and an equality whose constant the
     /// factor does not divide is `false`.
-    pub fn reduce(&self, c: &Con) -> Result<Formula, Refusal> {
+    pub fn reduce(&self, c: &Con) -> Formula {
         let mut lin = c.lin.clone();
         for a in c.lin.terms.keys() {
             if let Some(t) = self.rows.get(a) {
-                let k = t.terms[a];
-                let s = lin.terms[a]
-                    .checked_mul(k.signum())
-                    .ok_or(Refusal::Coefficient)?;
-                lin = lin.times(k.abs())?.minus(&t.times(s)?)?;
+                let k = &t.terms[a];
+                let s = if k.is_negative() {
+                    -&lin.terms[a]
+                } else {
+                    lin.terms[a].clone()
+                };
+                lin = lin.times(k.abs()).minus(&t.times(s));
             }
         }
-        let g = lin.terms.values().fold(0, |g, &c| gcd(g, c));
-        if g == 0 {
+        let g = lin.terms.values().fold(Int::ZERO, |g, c| g.gcd(c));
+        if g.is_zero() {
             let holds = match c.rel {
-                Rel::Ge => lin.constant >= 0,
-                Rel::Eq => lin.constant == 0,
+                Rel::Ge => !lin.constant.is_negative(),
+                Rel::Eq => lin.constant.is_zero(),
             };
-            return Ok(if holds {
+            return if holds {
                 Formula::top()
             } else {
                 Formula::bottom()
-            });
+            };
         }
-        if c.rel == Rel::Eq && lin.constant % g != 0 {
-            return Ok(Formula::bottom());
+        if c.rel == Rel::Eq && !lin.constant.mod_floor(&g).is_zero() {
+            return Formula::bottom();
         }
-        let constant = lin.constant.div_euclid(g);
-        let terms = lin.terms.into_iter().map(|(a, k)| (a, k / g)).collect();
-        Ok(Formula::Con(Con {
+        let constant = lin.constant.div_floor(&g);
+        let terms = lin
+            .terms
+            .into_iter()
+            .map(|(a, k)| (a, k.div_floor(&g)))
+            .collect();
+        Formula::Con(Con {
             lin: Lin { terms, constant },
             rel: c.rel,
-        }))
+        })
     }
 
     /// The hull of the points of this one where `t` is zero.
@@ -100,22 +106,18 @@ impl Hull {
         if self.is_empty {
             return self.clone();
         }
-        self.and_checked(t).unwrap_or_else(|_| Hull::all())
-    }
-
-    fn and_checked(&self, t: &Lin) -> Result<Hull, Refusal> {
         let mut r = t.clone();
         for a in t.terms.keys() {
             if let Some(p) = self.rows.get(a) {
-                r = eliminate(&r, p, a)?;
+                r = eliminate(&r, p, a);
             }
         }
         if r.terms.is_empty() {
-            return Ok(if r.constant == 0 {
+            return if r.constant.is_zero() {
                 self.clone()
             } else {
                 Hull::empty()
-            });
+            };
         }
         let r = primitive(r);
         let pivot = r
@@ -132,14 +134,14 @@ impl Hull {
             .unwrap_or_default();
         for q in mentions {
             let old = out.rows[&q].clone();
-            let now = eliminate(&old, &r, &pivot)?;
+            let now = eliminate(&old, &r, &pivot);
             out.uses = used(out.uses, &old, &q, false);
             out.uses = used(out.uses, &now, &q, true);
             out.rows.insert(q, Arc::new(now));
         }
         out.uses = used(out.uses, &r, &pivot, true);
         out.rows.insert(pivot, Arc::new(r));
-        Ok(out)
+        out
     }
 
     /// The hull of the union of the two sets: the equalities both hold. The rows the two have
@@ -172,10 +174,7 @@ impl Hull {
             }
         }
         // The common rows are reduced against each other already.
-        match intersect(&a, &b) {
-            Ok(ts) => ts.iter().fold(out, |h, t| h.and(t)),
-            Err(_) => Hull::all(),
-        }
+        intersect(&a, &b).iter().fold(out, |h, t| h.and(t))
     }
 }
 
@@ -214,54 +213,51 @@ fn used(
 
 /// `r` with the atom `a` removed by adding a multiple of `p`, whose coefficient of `a` is
 /// positive.
-fn eliminate(r: &Lin, p: &Lin, a: &Atom) -> Result<Lin, Refusal> {
+fn eliminate(r: &Lin, p: &Lin, a: &Atom) -> Lin {
     match r.terms.get(a) {
-        None => Ok(r.clone()),
-        Some(&c) => Ok(primitive(r.times(p.terms[a])?.minus(&p.times(c)?)?)),
+        None => r.clone(),
+        Some(c) => primitive(r.times(p.terms[a].clone()).minus(&p.times(c.clone()))),
     }
-}
-
-fn gcd(a: i128, b: i128) -> i128 {
-    let (mut a, mut b) = (a.unsigned_abs(), b.unsigned_abs());
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    // A gcd of 2^127, from a coefficient of -2^127, is taken as 1: the row is not divided.
-    i128::try_from(a).unwrap_or(1)
 }
 
 /// The gcd of a term's coefficients and constant.
-fn content(t: &Lin) -> i128 {
-    t.terms.values().fold(t.constant, |g, &c| gcd(g, c))
+fn content(t: &Lin) -> Int {
+    t.terms.values().fold(t.constant.clone(), |g, c| g.gcd(c))
 }
 
-/// `t` divided by `k`, which divides each coefficient and the constant.
-fn over(t: &Lin, k: i128) -> Lin {
+/// `t` divided by `k`, above zero, which divides each coefficient and the constant.
+fn over(t: &Lin, k: &Int) -> Lin {
     Lin {
-        terms: t.terms.iter().map(|(a, c)| (a.clone(), c / k)).collect(),
-        constant: t.constant / k,
+        terms: t
+            .terms
+            .iter()
+            .map(|(a, c)| (a.clone(), c.div_floor(k)))
+            .collect(),
+        constant: t.constant.div_floor(k),
     }
 }
 
 /// `t` divided by the gcd of its coefficients and constant, its first coefficient positive.
 fn primitive(t: Lin) -> Lin {
-    let mut g = content(&t);
-    if g == 0 {
+    let g = content(&t);
+    if g.is_zero() {
         return t;
     }
-    if t.terms.values().next().is_some_and(|c| *c < 0) {
-        g = -g;
+    let t = if g.is_unit() { t } else { over(&t, &g) };
+    if t.terms.values().next().is_some_and(Int::is_negative) {
+        t.times(-1)
+    } else {
+        t
     }
-    if g == 1 { t } else { over(&t, g) }
 }
 
 /// Terms spanning the terms both `a` and `b` span (Zassenhaus): each term `t` of `a` enters as
 /// the pair `(t, t)` and each of `b` as `(t, 0)`, and the pairs are brought to echelon form on
 /// their first halves; the second half of a pair whose first half becomes zero is a sum of
 /// terms of `a` that is also a sum of terms of `b`.
-fn intersect(a: &[Arc<Lin>], b: &[Arc<Lin>]) -> Result<Vec<Lin>, Refusal> {
+fn intersect(a: &[Arc<Lin>], b: &[Arc<Lin>]) -> Vec<Lin> {
     if a.is_empty() || b.is_empty() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
     // The pairs by the first atom of their first half; `None` for a first half that is a
     // constant.
@@ -273,7 +269,7 @@ fn intersect(a: &[Arc<Lin>], b: &[Arc<Lin>]) -> Result<Vec<Lin>, Refusal> {
         .chain(b.iter().map(|t| ((**t).clone(), Lin::default())));
     for (mut l, mut r) in pairs {
         loop {
-            if l.terms.is_empty() && l.constant == 0 {
+            if l.terms.is_empty() && l.constant.is_zero() {
                 out.push(r);
                 break;
             }
@@ -283,18 +279,18 @@ fn intersect(a: &[Arc<Lin>], b: &[Arc<Lin>]) -> Result<Vec<Lin>, Refusal> {
                 break;
             };
             let (c, cp) = match &k {
-                None => (l.constant, pl.constant),
-                Some(k) => (l.terms[k], pl.terms[k]),
+                None => (&l.constant, &pl.constant),
+                Some(k) => (&l.terms[k], &pl.terms[k]),
             };
-            let nl = l.times(cp)?.minus(&pl.times(c)?)?;
-            let nr = r.times(cp)?.minus(&pr.times(c)?)?;
-            let g = gcd(content(&nl), content(&nr));
-            (l, r) = if g <= 1 {
+            let nl = l.times(cp.clone()).minus(&pl.times(c.clone()));
+            let nr = r.times(cp.clone()).minus(&pr.times(c.clone()));
+            let g = content(&nl).gcd(&content(&nr));
+            (l, r) = if g.is_zero() || g.is_unit() {
                 (nl, nr)
             } else {
-                (over(&nl, g), over(&nr, g))
+                (over(&nl, &g), over(&nr, &g))
             };
         }
     }
-    Ok(out)
+    out
 }

@@ -9,9 +9,11 @@
 //! the polynomial fragment is refused, and that each check of `random` rejects a wrong
 //! answer. `omega` holds the solver's corner cases.
 
+mod checker;
 mod controls;
 mod entailment;
 mod omega;
+mod oracle;
 mod preimage;
 pub(crate) mod random;
 mod scaling;

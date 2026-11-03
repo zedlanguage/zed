@@ -1,6 +1,7 @@
 //! Rung 2 on the facts the design names, written as Zed functions over the same parameters.
 
-use zedc::store::presburger::{Entailment, entails};
+use zedc::store::int::Int;
+use zedc::store::presburger::{Atom, Entailment, entails};
 
 use super::{holds, point, relation};
 use crate::l01_25_preimage_catalog::function;
@@ -64,9 +65,22 @@ fn a_product_is_bounded_only_through_the_premises_on_its_factors() {
         "ok(y, w, x, h) = y <= h;",
         "ok(y, w, x, h) = y * w <= h * w;",
     );
-    assert_eq!(
-        e.to_string(),
-        "not proved: the linear reading fails at h = 0, y = 0, h * w = -1, w * y = 0"
+    // Any such point will do, so the point is checked, not its text: the premise holds, the
+    // goal read linearly fails, and some product atom is not the product.
+    let Entailment::NotProved(m) = &e else {
+        panic!("{e}")
+    };
+    let v = |s: &str| m.get(&Atom::Sym(s.into())).cloned().unwrap_or(Int::ZERO);
+    let p = |a: &str, b: &str| {
+        m.get(&Atom::product(&a.into(), &b.into()))
+            .cloned()
+            .unwrap_or(Int::ZERO)
+    };
+    assert!(v("y") <= v("h"), "{e}");
+    assert!(p("w", "y") > p("h", "w"), "{e}");
+    assert!(
+        p("w", "y") != &v("w") * &v("y") || p("h", "w") != &v("h") * &v("w"),
+        "{e}"
     );
 }
 

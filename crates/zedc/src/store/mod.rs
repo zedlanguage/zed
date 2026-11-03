@@ -17,4 +17,7 @@ pub mod preimage;
 pub mod presburger;
 pub mod product;
 pub mod revision;
+pub mod simplex;
+pub mod twovar;
+pub mod utvpi;
 pub mod wto;

@@ -176,7 +176,61 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
     let stmts = ast::unit(text, &tokens, &tree).map_err(|e| all(vec![e]))?;
     let res = resolve::resolve(&stmts).map_err(all)?;
     let unit = elaborate(&stmts, &res).map_err(all)?;
+    let refused = linear_questions(&stmts, &unit);
+    if !refused.is_empty() {
+        return Err(all(refused));
+    }
     Ok((stmts, unit))
+}
+
+/// The linear questions of the unit (step L1.38): for each function other than `main` whose
+/// body the linear-relation domain states over its parameters, whether the body can hold and
+/// whether it can fail. A question the solver refuses is a rejection at the function, with
+/// its cause and the constraints (DESIGN.md "Diagnostics"); a decided question rejects nothing,
+/// since a test that never holds is an unreachable arm (step L1.39).
+fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
+    use crate::store::{preimage, presburger};
+    let defs: std::collections::HashMap<&str, &Term> = unit
+        .defs
+        .iter()
+        .map(|d| (d.name.as_str(), &d.term))
+        .collect();
+    let cones = crate::elab::Cones::new(unit);
+    let mut out = Vec::new();
+    for s in stmts {
+        let StmtKind::Function(f) = &s.kind else {
+            continue;
+        };
+        if f.name == "main" {
+            continue;
+        }
+        let Some(Term::Lam(ps, body)) = defs.get(f.name.as_str()) else {
+            continue;
+        };
+        let body = interp::prelude(cones.close((**body).clone()));
+        let Some(rs) = preimage::relations(&[&body], ps, true) else {
+            continue;
+        };
+        for r in rs {
+            for (can, question) in [
+                ("hold", r.body.clone()),
+                ("fail", presburger::Formula::negate(r.body.clone())),
+            ] {
+                let q = presburger::Formula::and(vec![r.defined(), question]);
+                if let Err(why) = presburger::decide(&q) {
+                    out.push(ast::Error {
+                        span: s.span,
+                        message: format!("whether `{}` can {can} is not decided: {why}", f.name),
+                        notes: vec![ast::Note {
+                            span: f.body.span,
+                            text: format!("the constraints: {r}"),
+                        }],
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The step a note is in `text`: its line and column, the source line, and the characters of

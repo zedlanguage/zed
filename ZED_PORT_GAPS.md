@@ -373,10 +373,10 @@ which 196 inside a loop body; `?` 1015, of which 276 in a loop; `continue` 110; 
 
 ### Further points of cost
 
-- **Overflow as refusal.** `Over` in `presburger.rs` is returned when i128 arithmetic overflows,
-  and `checked_*` (33) detect it. Zed's `int` is unbounded, so a direct port never refuses and could
-  differ from the Rust oracle at S.3, or run far longer. The bound must be ported as an explicit
-  test (`MAX_BITS` likewise, `num.rs:19`).
+- **Overflow as refusal.** Since T4 the Omega test, the simplex, `twovar` and `utvpi` compute in
+  `store::int::Int`, unbounded with i128 while a value fits, and no coefficient refuses a
+  question; in Zed this is `int`, and `store::int` goes at the port. `checked_*` remain elsewhere
+  (`MAX_BITS`, `num.rs:19`, is still a bound to port as an explicit test).
 - **`as` casts** (272): most go, but a truncating cast must become `mod 2 ** k`.
 
 ## Mechanical rewrites

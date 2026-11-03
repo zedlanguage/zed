@@ -157,6 +157,9 @@ pub struct Preimage {
     /// domain states the demand: every point meeting the demand meets it, and every point of
     /// the box meeting it meets the demand.
     pub relation: Option<Relation>,
+    /// Why the linear-relation domain left the demand undecided, when it did and the box is
+    /// not exact.
+    pub refusal: Option<Refusal>,
 }
 
 /// The value of the closed term `t`, if its form shows that it ends ([`stage::ends`]) and it
@@ -197,15 +200,21 @@ fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
             r.exact = true;
         }
     }
-    let mut relation = None;
+    let (mut relation, mut refusal) = (None, None);
     interval::rounded();
     if !r.exact
         && !is_empty(&r.dom)
-        && let Some((dom, exact, rel)) = linear(term, &r.dom, demand)
+        && let Some((rel, found)) = linear(term, &r.dom, demand)
     {
-        let exact = exact && !interval::rounded();
-        r = Whole { dom, exact };
-        relation = (!exact).then_some(rel);
+        match found {
+            Ok((dom, exact, why)) => {
+                let exact = exact && !interval::rounded();
+                r = Whole { dom, exact };
+                relation = (!exact).then_some(rel);
+                refusal = why;
+            }
+            Err(why) => refusal = Some(why),
+        }
     }
     if !r.exact
         && let Some(e) = enumerate(term, &r.dom, demand)
@@ -214,6 +223,7 @@ fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
         enumerated = true;
         if r.exact {
             relation = None;
+            refusal = None;
         }
     }
     stops.dedup();
@@ -223,6 +233,7 @@ fn preimage_in(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
         enumerated,
         stops,
         relation,
+        refusal,
     }
 }
 
@@ -259,9 +270,15 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 }
 
 /// The linear stage: the relation of the demand over the box `dom`, the box narrowed to its
-/// projections, whether the box entails the relation, and the relation. `None` when the term
+/// projections and whether the box entails the relation, with the refusal that left the latter
+/// undecided, or the refusal that left the projections undecided. `None` when the term
 /// is outside the domain or the relation is refused.
-fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool, Relation)> {
+#[allow(clippy::type_complexity)]
+fn linear(
+    term: &Term,
+    dom: &Domains,
+    demand: &Demand,
+) -> Option<(Relation, Result<(Domains, bool, Option<Refusal>), Refusal>)> {
     let cx = Cx::new(dom, Landmarks::none());
     let mut tr = Tr {
         defs: Vec::new(),
@@ -275,22 +292,22 @@ fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool,
         }
         Demand::Ints(z) => {
             let l = cx.lin(&mut tr, term, &root)?;
-            presburger::within(&l, z).ok()?
+            presburger::within(&l, z)
         }
     };
     let rel = Relation {
         body,
         defs: tr.defs,
     };
-    let go = || -> Result<(Domains, bool), Refusal> {
-        let within = |d: &Domains| -> Result<Formula, Refusal> {
+    let go = || -> Result<(Domains, bool, Option<Refusal>), Refusal> {
+        let within = |d: &Domains| -> Formula {
             let parts = d
                 .iter()
                 .map(|(k, v)| presburger::member(&presburger::Atom::Sym(k.clone()), v))
-                .collect::<Result<_, _>>()?;
-            Ok(Formula::and(parts))
+                .collect();
+            Formula::and(parts)
         };
-        let whole = Formula::and(vec![rel.defined(), within(dom)?, rel.body.clone()]);
+        let whole = Formula::and(vec![rel.defined(), within(dom), rel.body.clone()]);
         let mut mentioned = rel.body.atoms();
         for (_, _, f) in &rel.defs {
             mentioned.extend(f.atoms());
@@ -317,18 +334,20 @@ fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool,
                 .keys()
                 .map(|k| (k.clone(), IntervalSet::empty()))
                 .collect();
-            return Ok((none, true));
+            return Ok((none, true, None));
         }
         let outside = Formula::and(vec![
             rel.defined(),
-            within(&out)?,
+            within(&out),
             Formula::negate(rel.body.clone()),
         ]);
-        let exact = matches!(presburger::satisfiable(&outside), Ok(None));
-        Ok((out, exact))
+        Ok(match presburger::decide(&outside) {
+            Ok(meets) => (out, !meets, None),
+            Err(why) => (out, false, Some(why)),
+        })
     };
-    let (out, exact) = go().ok()?;
-    Some((out, exact, rel))
+    let found = go();
+    Some((rel, found))
 }
 
 /// The translation of terms into the linear-relation domain: the definitions of the auxiliary
@@ -1286,7 +1305,7 @@ impl Cx {
         use Prim::*;
         if let Some(v) = self.constant(t, env) {
             return match v {
-                Value::Int(n) => Some(Lin::constant(n.into())),
+                Value::Int(n) => Some(Lin::constant(n)),
                 _ => None,
             };
         }
@@ -1325,11 +1344,8 @@ impl Cx {
                 let v = presburger::Atom::Aux(tr.defs.len() as u32);
                 let x = Lin::atom(v.clone());
                 let def = Formula::or(vec![
-                    Formula::and(vec![g.clone(), Formula::Con(Con::eq(&x, &la).ok()?)]),
-                    Formula::and(vec![
-                        Formula::negate(g),
-                        Formula::Con(Con::eq(&x, &lb).ok()?),
-                    ]),
+                    Formula::and(vec![g.clone(), Formula::Con(Con::eq(&x, &la))]),
+                    Formula::and(vec![Formula::negate(g), Formula::Con(Con::eq(&x, &lb))]),
                 ]);
                 tr.aux(t.to_string(), def);
                 Some(x)
@@ -1337,22 +1353,22 @@ impl Cx {
             Term::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
                 let arg = |tr: &mut Tr, i: usize| self.lin(tr, &args[i], env);
                 match p {
-                    Add => arg(tr, 0)?.plus(&arg(tr, 1)?).ok(),
-                    Sub => arg(tr, 0)?.minus(&arg(tr, 1)?).ok(),
-                    Neg => arg(tr, 0)?.times(-1).ok(),
+                    Add => Some(arg(tr, 0)?.plus(&arg(tr, 1)?)),
+                    Sub => Some(arg(tr, 0)?.minus(&arg(tr, 1)?)),
+                    Neg => Some(arg(tr, 0)?.times(-1)),
                     Mul => {
                         let (a, b) = (arg(tr, 0)?, arg(tr, 1)?);
                         if !tr.products && !a.terms.is_empty() && !b.terms.is_empty() {
                             return None;
                         }
-                        a.product(&b)?.ok()
+                        a.product(&b)
                     }
                     Pow => match self.constant_int(&args[1], env)? {
                         0 => Some(Lin::constant(1)),
                         1 => arg(tr, 0),
                         2 if tr.products => {
                             let a = arg(tr, 0)?;
-                            a.product(&a)?.ok()
+                            a.product(&a)
                         }
                         _ => None,
                     },
@@ -1367,9 +1383,9 @@ impl Cx {
                         );
                         let c = i128::from(c);
                         let def = Formula::and(vec![
-                            Formula::Con(Con::eq(&a, &q.times(c).ok()?.plus(&r).ok()?).ok()?),
-                            Formula::Con(Con::ge(&r, &Lin::constant(0)).ok()?),
-                            Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r).ok()?),
+                            Formula::Con(Con::eq(&a, &q.times(c).plus(&r))),
+                            Formula::Con(Con::ge(&r, &Lin::constant(0))),
+                            Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r)),
                         ]);
                         let shown = |op: &str| format!("{} {op} {c}", args[0]);
                         tr.defs.push((n, shown("div"), def));
@@ -1378,23 +1394,19 @@ impl Cx {
                     }
                     Min | Max | Abs => {
                         let a = arg(tr, 0)?;
-                        let b = if *p == Abs {
-                            a.times(-1).ok()?
-                        } else {
-                            arg(tr, 1)?
-                        };
+                        let b = if *p == Abs { a.times(-1) } else { arg(tr, 1)? };
                         let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
                         // `min` takes `a` where `a <= b`, `max` and `abs` where `a >= b`.
                         let (lo, hi) = if *p == Min { (&a, &b) } else { (&b, &a) };
-                        let first = Con::ge(hi, lo).ok()?;
+                        let first = Con::ge(hi, lo);
                         let def = Formula::or(vec![
                             Formula::and(vec![
                                 Formula::Con(first.clone()),
-                                Formula::Con(Con::eq(&x, &a).ok()?),
+                                Formula::Con(Con::eq(&x, &a)),
                             ]),
                             Formula::and(vec![
                                 Formula::negate(Formula::Con(first)),
-                                Formula::Con(Con::eq(&x, &b).ok()?),
+                                Formula::Con(Con::eq(&x, &b)),
                             ]),
                         ]);
                         tr.aux(t.to_string(), def);
@@ -1481,13 +1493,12 @@ impl Cx {
                     {
                         let one = Lin::constant(1);
                         let c = match p {
-                            Lt => Con::ge(&b, &a.plus(&one).ok()?),
+                            Lt => Con::ge(&b, &a.plus(&one)),
                             Le => Con::ge(&b, &a),
-                            Gt => Con::ge(&a, &b.plus(&one).ok()?),
+                            Gt => Con::ge(&a, &b.plus(&one)),
                             Ge => Con::ge(&a, &b),
                             _ => Con::eq(&a, &b),
-                        }
-                        .ok()?;
+                        };
                         let f = Formula::Con(c);
                         return Some(if *p == Ne { Formula::negate(f) } else { f });
                     }
@@ -2325,6 +2336,7 @@ pub fn exact_preimage(
             enumerated: true,
             stops: p.stops,
             relation: if exact { None } else { p.relation },
+            refusal: if exact { None } else { p.refusal },
         }
     })
 }

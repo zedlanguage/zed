@@ -17,16 +17,16 @@ fn sym(s: &str) -> Atom {
 /// `Σ c·s + k`.
 fn lin(terms: &[(&str, i128)], k: i128) -> Lin {
     terms.iter().fold(Lin::constant(k), |l, (s, c)| {
-        l.plus(&Lin::atom(sym(s)).times(*c).unwrap()).unwrap()
+        l.plus(&Lin::atom(sym(s)).times(*c))
     })
 }
 
 fn ge(terms: &[(&str, i128)], k: i128) -> Formula {
-    Formula::Con(Con::ge(&lin(terms, k), &Lin::constant(0)).unwrap())
+    Formula::Con(Con::ge(&lin(terms, k), &Lin::constant(0)))
 }
 
 fn eq(terms: &[(&str, i128)], k: i128) -> Formula {
-    Formula::Con(Con::eq(&lin(terms, k), &Lin::constant(0)).unwrap())
+    Formula::Con(Con::eq(&lin(terms, k), &Lin::constant(0)))
 }
 
 #[test]
@@ -117,16 +117,31 @@ fn each_cause_of_a_refusal_has_its_own_message() {
         assert_eq!(e, Entailment::Refused(why));
         assert_eq!(e.to_string(), format!("refused: {text}"));
     };
-    // Pugh's example: rational points, no integer point, and only the splinters would show it.
+    // Every elimination of each variable adds terms, the rows have rational points, and the
+    // vertex the simplex reaches is not an integer point.
     refused(
         Formula::and(vec![
-            ge(&[("x", 11), ("y", 13)], -27),
-            ge(&[("x", -11), ("y", -13)], 45),
-            ge(&[("x", 7), ("y", -9)], 10),
-            ge(&[("x", -7), ("y", 9)], 4),
+            ge(&[("x", 4), ("w", -12), ("y", -10), ("z", -12)], 11),
+            ge(&[("w", 4), ("x", 10), ("y", -10), ("z", -11)], -28),
+            ge(&[("w", 11), ("x", 4), ("y", -1), ("z", 12)], -28),
+            ge(&[("w", -8), ("x", -5), ("y", 12), ("z", -1)], 31),
+        ]),
+        Refusal::Growth,
+        "the integer constraints have three variables or more, each of whose elimination \
+         would enlarge them, so whether they hold at an integer point is not decided",
+    );
+    // A splinter of the dark elimination takes a dark shadow of its own that has no point.
+    refused(
+        Formula::and(vec![
+            ge(&[("x", -2), ("y", -3), ("z", -6)], 4),
+            ge(&[("x", -4), ("z", -6)], -22),
+            ge(&[("x", 1), ("y", -1), ("z", 4)], 36),
+            ge(&[("x", 2), ("y", 3), ("z", 3)], -24),
         ]),
         Refusal::Shadows,
-        "the relation has rational points but no integer point was found or ruled out",
+        "the integer constraints have rational points, and an integer point could lie only \
+         in a splinter of a splinter of their projection, so whether one exists is not \
+         decided",
     );
     // Four tasks, three slots, each pair in different slots: no slot assignment, which the
     // search through the disjunctions does not show by propagation.
@@ -140,14 +155,7 @@ fn each_cause_of_a_refusal_has_its_own_message() {
     refused(
         Formula::and(rows),
         Refusal::Disjuncts,
-        "no choice among the relation's disjunctions was settled",
-    );
-    // A written coefficient past `i128`.
-    let top = Lin::constant(i128::MAX);
-    assert_eq!(top.plus(&Lin::constant(1)), Err(Refusal::Coefficient));
-    assert_eq!(
-        Refusal::Coefficient.to_string(),
-        "a coefficient of the relation does not fit in 128 bits"
+        "no choice among the disjunctions of the integer constraints was settled",
     );
 }
 
@@ -238,7 +246,10 @@ fn the_answer_is_the_answer_of_every_point_of_a_small_box() {
             Err(_) => refused += 1,
         }
     }
-    assert!(refused * 50 < answered, "{refused} refused, {answered} answered");
+    assert!(
+        refused * 50 < answered,
+        "{refused} refused, {answered} answered"
+    );
 }
 
 /// `3·x[i] + 5·x[i+1] == 7`: one solution line, whose values need about n digits.
@@ -258,7 +269,12 @@ fn euclid_chain3(n: usize) -> Formula {
     Formula::and(
         names
             .windows(3)
-            .map(|p| eq(&[(p[0].as_str(), 6), (p[1].as_str(), 10), (p[2].as_str(), 15)], -7))
+            .map(|p| {
+                eq(
+                    &[(p[0].as_str(), 6), (p[1].as_str(), 10), (p[2].as_str(), 15)],
+                    -7,
+                )
+            })
             .collect(),
     )
 }
@@ -294,7 +310,7 @@ fn a_disjunct_refused_by_the_solver_is_reported_by_its_own_cause() {
         ge(&[("x", -7), ("y", 9)], 4),
     ]);
     let f = Formula::or(vec![pugh.clone(), pugh]);
-    assert_eq!(satisfiable(&f), Err(Refusal::Shadows));
+    assert_eq!(satisfiable(&f), Ok(None));
 }
 
 #[test]
