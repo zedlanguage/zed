@@ -2318,23 +2318,62 @@ fn listed<'a>(p: &'a Parts, u: usize, none: &Type) -> (bool, Vec<(Key<'a>, bool)
     }
 }
 
+/// An edge of the trie `overlaps` builds: an atom name or a tuple length.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Edge<'a> {
+    Atom(&'a std::sync::Arc<str>),
+    Len(usize),
+}
+
 /// The trie of keys: node 0 is the whole type; below a node, one node per atom name and per
-/// tuple length that a type holds there. A node is made after its parent.
+/// tuple length that a type holds there. Two nodes merged are one node from then on, and so
+/// are their children by each edge.
 struct Trie<'a> {
-    /// Each node's parent.
-    up: Vec<usize>,
-    /// The node below a node for an atom name or tuple length.
-    below: BTreeMap<(usize, Key<'a>), usize>,
+    /// Each node's children by edge; a merged node's children are its class root's.
+    kids: Vec<HashMap<Edge<'a>, usize>>,
+    /// The union-find of merged nodes.
+    same: Vec<usize>,
 }
 
 impl<'a> Trie<'a> {
-    fn child(&mut self, x: usize, k: Key<'a>) -> usize {
-        let next = self.up.len();
-        let y = *self.below.entry((x, k)).or_insert(next);
+    fn find(&mut self, x: usize) -> usize {
+        root(&mut self.same, x)
+    }
+
+    fn child(&mut self, x: usize, e: Edge<'a>) -> usize {
+        let x = self.find(x);
+        let next = self.kids.len();
+        let y = *self.kids[x].entry(e).or_insert(next);
         if y == next {
-            self.up.push(x);
+            self.kids.push(HashMap::new());
+            self.same.push(next);
         }
-        y
+        self.find(y)
+    }
+
+    /// Makes `x` and `y` one node, and their children by each edge, in turn. The smaller map
+    /// of children moves into the larger, so each child moves O(log n) times over all merges.
+    fn merge(&mut self, x: usize, y: usize) {
+        let mut todo = vec![(x, y)];
+        while let Some((x, y)) = todo.pop() {
+            let (x, y) = (self.find(x), self.find(y));
+            if x == y {
+                continue;
+            }
+            let (big, small) = match self.kids[x].len() >= self.kids[y].len() {
+                true => (x, y),
+                false => (y, x),
+            };
+            self.same[small] = big;
+            for (e, c) in std::mem::take(&mut self.kids[small]) {
+                match self.kids[big].entry(e) {
+                    Entry::Vacant(v) => {
+                        v.insert(c);
+                    }
+                    Entry::Occupied(o) => todo.push((*o.get(), c)),
+                }
+            }
+        }
     }
 }
 
@@ -2342,25 +2381,23 @@ impl<'a> Trie<'a> {
 /// at each node, what it lists in each universe at each node, and the nodes under which it holds
 /// every value.
 struct Walk<'a> {
-    /// The type walked, by index.
-    i: usize,
-    /// Each type inside met so far and the node it was met at.
-    seen: HashMap<*const super::Node, usize>,
+    /// Each type inside met so far, by structure, and the node it was first met at.
+    seen: HashMap<&'a Type, usize>,
     /// The types inside still to walk, with their nodes.
     todo: Vec<(usize, &'a Parts)>,
 }
 
 impl<'a> Walk<'a> {
-    /// Puts the values of `t` under node `y`. A type met again at the same node adds nothing;
-    /// met at another node, it holds every value under `y`, in `wholes`.
-    fn enter(&mut self, y: usize, t: &'a Type, wholes: &mut Vec<(usize, usize)>) {
-        match self.seen.entry(std::sync::Arc::as_ptr(&t.0)) {
+    /// Puts the values of `t` under node `y`. A type met again adds nothing: met at another
+    /// node, that node and the first are merged, so its keys under the first are its keys
+    /// under both.
+    fn enter(&mut self, trie: &mut Trie<'a>, y: usize, t: &'a Type) {
+        match self.seen.entry(t) {
             Entry::Vacant(v) => {
                 v.insert(y);
                 self.todo.push((y, t.p()));
             }
-            Entry::Occupied(o) if *o.get() == y => {}
-            Entry::Occupied(_) => wholes.push((y, self.i)),
+            Entry::Occupied(o) => trie.merge(*o.get(), y),
         }
     }
 }
@@ -2389,32 +2426,48 @@ fn join(parent: &mut [usize], a: usize, b: usize) {
 /// each node, the cofinite types of a universe share it whole. A finite type meets one of them
 /// exactly when it holds a key that one does not list, so it shares the whole universe when it
 /// holds a key outside those every cofinite type lists; that set is the meet of their lists,
-/// taken from the shortest. Each type inside a type is walked once for it, so the work is the
-/// size of the types times the log of the keys.
+/// taken from the shortest. Each type inside a type is walked once for it, found by its
+/// structure, so the classes do not depend on whether equal types are one shared type; met
+/// again at another node, it merges that node with the first. The work is the size of the
+/// types times the log of the keys, and each child of a merged node moves O(log n) times.
 // Complexity tradeoff: the keys are coarser than the meet of two types in three cases, each of
 // which joins disjoint types: tuples are keyed by their first component only, so `(1, 2)` and
 // `(1, 3)` land in one class; a tuple part that is not within its tuple types (a negated tuple
-// type outside any other) holds every tuple of its length; and a type met twice inside one
-// type, at two nodes, holds every value under the second. Joined types get the later steps of
-// `tuples` on the part whole; where those steps do not decide it, the part counts as inhabited
-// for `is_empty`, and `verdict` answers `Refused(TupleSplit)` (a subtyping check fails and
-// names the types). Why: the meet of two tuple types is an emptiness check in each component,
-// and testing it for each pair costs their square and a search each, while one component's
-// keys cost the size of the types; walking a type inside a type once per node it is met at
-// would unfold a shared type, exponential in its nesting. Trigger: cells on the split component
-// that differ only after the first component of a tuple, a negated tuple type, or one type
-// reached by two paths inside a cell. Tests:
+// type outside any other) holds every tuple of its length, so it joins every type under that
+// node; and a type met at two nodes inside one type merges the two, so `(2,)` and `#e((2,))`
+// are joined beside `(1,) | #e((1,))`. Joined types get the later steps of `tuples` on the part
+// whole; where those steps do not decide it, the part counts as inhabited for `is_empty`, and
+// `verdict` answers `Refused(TupleSplit)` (a subtyping check fails and names the types). The
+// cost of a joined class is that of deciding it whole: k pinwheels joined in one class by the
+// first two cases cost order k^2 (78,974M instructions at k = 128 with one end outside every
+// tuple type, 19,555M at k = 64; 62,927M and 15,893M with one first component), while merged
+// nodes join only types that hold one key under them, and k pinwheels whose ends repeat one
+// integer under a tuple and a payload stay k classes (4,508M instructions at k = 512, 9.0
+// times k = 64). Why: the meet of two tuple types
+// is an emptiness check in each component, and testing it for each pair costs their square and
+// a search each, while one component's keys cost the size of the types; a tuple part outside
+// its tuple types meets another type exactly when that type is not within the union of the
+// part's negated tuple types, which is itself an emptiness check; walking a type inside a type
+// once per node it is met at would unfold a shared type, exponential in its nesting. Trigger:
+// cells on the split component that differ only after the first component of a tuple, a
+// negated tuple type, or one type reached by two paths inside a cell. Tests:
 // `types::empty::tests::classes_are_exact_on_cofinite_sets_names_and_lengths_and_join_tuples_by_first_component`
 // (`(1, 2)` and `(1, 3)` in one class, `#a((1,))` and `#a((2,))` apart, cofinite sets joined
-// only where they meet) and `l01_23_subtyping::scaling::payload_and_one_tuple_pinwheels_scale`
-// (the classes split under an atom name and a tuple length). COMPLEXITY.md K36. A complete
-// solution needs the connected parts of the graph in which two types meet: for tuples that is
-// the intersection graph of boxes, whose edges can number the square of the types.
+// only where they meet),
+// `types::empty::tests::classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_type_met_twice`,
+// and in `l01_23_subtyping::scaling`: `pinwheels_whose_ends_share_a_first_component_are_decided`,
+// `pinwheels_with_an_end_outside_every_tuple_type_are_decided`,
+// `pinwheels_joined_in_one_class_are_decided_at_quadratic_cost` (order k^2 at k = 8 and 64),
+// `pinwheels_whose_ends_repeat_an_integer_agree_with_the_model` and `…_scale` (k = 64 and 512,
+// shared and built apart), and `payload_and_one_tuple_pinwheels_scale`. COMPLEXITY.md K36. A
+// complete solution needs the connected parts of the graph in which two types meet: for tuples
+// that is the intersection graph of boxes, whose edges can number the square of the types, and
+// each edge an emptiness check.
 fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>) -> Vec<Vec<usize>> {
     let none = Type::empty();
     let mut trie = Trie {
-        up: vec![0],
-        below: BTreeMap::new(),
+        kids: vec![HashMap::new()],
+        same: vec![0],
     };
     // Each type's keys, as (node, key, type).
     let mut points: Vec<(usize, Key<'a>, usize)> = Vec::new();
@@ -2427,7 +2480,6 @@ fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>) -> Vec<Vec<usize>> {
     for (i, p) in ps.enumerate() {
         parent.push(i);
         let mut walk = Walk {
-            i,
             seen: HashMap::new(),
             todo: vec![(0, p)],
         };
@@ -2444,26 +2496,26 @@ fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>) -> Vec<Vec<usize>> {
                 if !a.bare && a.payload == none {
                     continue;
                 }
-                let y = trie.child(x, Key::Atom(n));
+                let y = trie.child(x, Edge::Atom(n));
                 if a.bare {
                     points.push((y, Key::Bare, i));
                 }
                 if a.payload != none {
-                    walk.enter(y, &a.payload, &mut wholes);
+                    walk.enter(&mut trie, y, &a.payload);
                 }
             }
             for (&n, f) in &p.tuples.lens {
                 if f.is_leaf() == Some(false) {
                     continue;
                 }
-                let y = trie.child(x, Key::Len(n));
+                let y = trie.child(x, Edge::Len(n));
                 // Every value of a part `false` outside its tuple types is in one of them.
                 if n == 0 || f.eval3(&|_| Some(false)) != Some(false) {
                     wholes.push((y, i));
                     continue;
                 }
                 f.atoms(&mut |row: &'a Row| {
-                    walk.enter(y, &row[0], &mut wholes);
+                    walk.enter(&mut trie, y, &row[0]);
                     true
                 });
             }
@@ -2477,11 +2529,13 @@ fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>) -> Vec<Vec<usize>> {
             }
         }
     }
+    // Each node's merged node, from here on its name.
+    let at: Vec<usize> = (0..trie.same.len()).map(|x| trie.find(x)).collect();
     // Per node and universe with a cofinite type, the keys every cofinite type there lists.
     let mut cofinites: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
     for (l, (x, u, cofinite, _, _)) in lists.iter().enumerate() {
         if *cofinite {
-            cofinites.entry((*x, *u)).or_default().push(l);
+            cofinites.entry((at[*x], *u)).or_default().push(l);
         }
     }
     let shut: BTreeMap<(usize, usize), BTreeSet<Key<'a>>> = cofinites
@@ -2503,27 +2557,39 @@ fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>) -> Vec<Vec<usize>> {
         .collect();
     for (x, u, cofinite, ks, i) in &lists {
         let outside = |s: &BTreeSet<Key>| ks.iter().any(|(k, held)| *held && !s.contains(k));
-        if *cofinite || shut.get(&(*x, *u)).is_some_and(outside) {
+        if *cofinite || shut.get(&(at[*x], *u)).is_some_and(outside) {
             points.push((*x, Key::All(*u), *i));
         }
     }
-    // Per node, a type that holds every value under it or under a node above it.
-    let mut whole: Vec<Option<usize>> = vec![None; trie.up.len()];
+    // Per node, a type that holds every value under it or under a node above it. Merged nodes
+    // can make a node the child of several nodes, or of one below it, so each node gets a type
+    // once and passes it to its children once.
+    let mut whole: Vec<Option<usize>> = vec![None; at.len()];
+    let mut down = Vec::new();
     for &(x, i) in &wholes {
-        match whole[x] {
+        match whole[at[x]] {
             Some(w) => join(&mut parent, w, i),
-            None => whole[x] = Some(i),
+            None => {
+                whole[at[x]] = Some(i);
+                down.push(at[x]);
+            }
         }
     }
-    for x in 1..trie.up.len() {
-        match (whole[trie.up[x]], whole[x]) {
-            (Some(a), Some(b)) => join(&mut parent, a, b),
-            (Some(a), None) => whole[x] = Some(a),
-            _ => {}
+    while let Some(x) = down.pop() {
+        let w = whole[x].expect("a node passed down has a type");
+        for &c in trie.kids[x].values() {
+            match whole[at[c]] {
+                Some(v) => join(&mut parent, v, w),
+                None => {
+                    whole[at[c]] = Some(w);
+                    down.push(at[c]);
+                }
+            }
         }
     }
     let mut first: BTreeMap<(usize, Key<'a>), usize> = BTreeMap::new();
     for (x, k, i) in points {
+        let x = at[x];
         let j = *first.entry((x, k)).or_insert(i);
         join(&mut parent, i, j);
         if let Some(w) = whole[x] {
@@ -2636,6 +2702,50 @@ mod tests {
             vec![13],
         ];
         assert_eq!(classes, expected);
+    }
+
+    /// The other two cases of the tradeoff at `overlaps`. A tuple part outside its tuple types,
+    /// `(int,) \ (1,)`, holds every one-tuple, so it is joined with `(1,)` although the two are
+    /// disjoint. A type met at two nodes inside one type, the `1` of `(1,) | #e((1,))`, merges
+    /// the two nodes, so `(2,)` and `#e((2,))` are joined although they are disjoint; `(3,)`
+    /// stays apart, and so do the classes of disjoint types under the merged node. The classes
+    /// do not depend on whether the two `1`s are one shared type or two equal ones. A recursive
+    /// type that holds itself as a first component merges a node with one below it.
+    #[test]
+    fn classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_type_met_twice() {
+        use super::super::rec::{Def, Expr, Group};
+        let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+        let one = |t: Type| Type::tuple(vec![t]);
+        let e = |t: Type| Type::atom_with("e", &one(t));
+        let negated = [one(lit(1)), &one(Type::int()) - &one(lit(1)), one(lit(2))];
+        let classes = overlaps(negated.iter().map(Type::p));
+        assert_eq!(classes, vec![vec![0, 1, 2]]);
+        let shared = lit(1);
+        for twice in [
+            &one(shared.clone()) | &e(shared.clone()),
+            &one(lit(1)) | &e(lit(1)),
+        ] {
+            let ts = [twice, one(lit(2)), e(lit(2)), one(lit(3)), e(lit(4))];
+            let classes = overlaps(ts.iter().map(Type::p));
+            assert_eq!(classes, vec![vec![0], vec![1, 2], vec![3], vec![4]]);
+        }
+        // `T = #nil | #cons((T, int))`.
+        let cons = Expr::Atom(
+            "cons".into(),
+            vec![Expr::Ref(0, vec![]), Expr::Type(Type::int())],
+        );
+        let def = Def {
+            name: "T".into(),
+            params: vec![],
+            body: Expr::Union(vec![Expr::Type(Type::atom("nil")), cons]),
+        };
+        let t = Group::new(vec![def])
+            .expect("a group")
+            .instance(vec![])
+            .remove(0);
+        let ts = [t, Type::atom("nil"), Type::atom("x"), lit(5)];
+        let classes = overlaps(ts.iter().map(Type::p));
+        assert_eq!(classes, vec![vec![0, 1], vec![2], vec![3]]);
     }
 
     /// `inverse` against a scan, and `residue_length` against a scan of the lengths from 1 on

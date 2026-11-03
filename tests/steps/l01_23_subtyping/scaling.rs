@@ -8,7 +8,7 @@
 //! a negated type disjoint from a piece is passed over.
 
 use zed_kernel::Value;
-use zed_kernel::types::{Type, Verdict};
+use zed_kernel::types::{Type, Universe, Verdict};
 use zed_tests::scaling;
 
 fn lit(i: usize) -> Type {
@@ -571,7 +571,7 @@ fn end_value(end: End, i: i64) -> Value {
     match end {
         End::Plain => Value::Int(i),
         End::OneTuple => one,
-        End::Payload => unreachable!("only plain and one-tuple ends are tested by value"),
+        End::Payload => Value::atom_with("e", vec![Value::Int(i)]),
     }
 }
 
@@ -612,9 +612,6 @@ fn pinwheels_of_payload_and_one_tuple_ends_agree_with_the_model() {
                 pinwheels(k as usize, false, end),
             );
             assert!((&open - &full).equiv(&middles), "{end:?}, k = {k}");
-            if matches!(end, End::Payload) {
-                continue;
-            }
             // Each pair of ends, of any two pinwheels, is in the open union exactly when the
             // model keeps it: only the middles of the full union are taken out.
             let ints = (0..k).flat_map(|i| (1..=3).map(move |j| 10 * i + j));
@@ -702,6 +699,146 @@ fn payload_and_one_tuple_pinwheels_scale() {
                     },
                 );
             }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// Ends that repeat the integer `b + 1` under a one-tuple and an atom payload: `(b + 1,)`, then
+/// `#e((b + 1, b + 5))` when `pair` and `#e((b + 1,))` when not, then `(b + 3,)`. When `shared`
+/// the two `b + 1` are one type, and when not two equal ones built apart.
+fn repeating_ends(b: i64, pair: bool, shared: bool) -> [Type; 3] {
+    let first = lit_i(b + 1);
+    let again = match shared {
+        true => first.clone(),
+        false => lit_i(b + 1),
+    };
+    let payload = match pair {
+        true => vec![again, lit_i(b + 5)],
+        false => vec![again],
+    };
+    [
+        Type::tuple(vec![first]),
+        Type::atom_with("e", &Type::tuple(payload)),
+        End::OneTuple.of(lit_i(b + 3)),
+    ]
+}
+
+/// The union of `k` pinwheels on [`repeating_ends`].
+fn repeating_pinwheels(k: usize, full: bool, pair: bool, shared: bool) -> Type {
+    Type::union_all((0..k as i64).map(|i| pinwheel(full, repeating_ends(10 * i, pair, shared))))
+}
+
+#[test]
+fn pinwheels_whose_ends_repeat_an_integer_agree_with_the_model() {
+    // A type met twice inside a cell, the `b + 1` of `(b + 1,)` and of `#e((b + 1,))`, held
+    // every value under the node of the second meeting when the two were one shared type, so
+    // all pinwheels fell in one class; two equal types built apart were walked apart. The two
+    // nodes are now merged, whichever way the type was built.
+    for pair in [false, true] {
+        for shared in [false, true] {
+            for k in [0, 1, 2, 3, 5] {
+                let ends: Vec<[Type; 3]> = (0..k)
+                    .map(|i| repeating_ends(10 * i, pair, shared))
+                    .collect();
+                check_against_model(&format!("pair {pair}, shared {shared}, k = {k}"), &ends);
+            }
+        }
+    }
+}
+
+#[test]
+fn pinwheels_whose_ends_repeat_an_integer_scale() {
+    // With the two `b + 1` one shared type: 662M, 9,051M and 36,294M instructions at k = 16,
+    // 64 and 128 for `#e((b + 1, b + 5))`; built apart, 145M, 598M and 1,235M.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            for (pair, shared) in [(false, true), (true, true), (true, false)] {
+                scaling::check(
+                    &format!("k pinwheels repeating an integer, pair {pair}, shared {shared}, empty, by k"),
+                    64,
+                    |k| {
+                        Type::forget_emptiness();
+                        let t = repeating_pinwheels(k, true, pair, shared);
+                        assert_eq!(t.verdict(), Verdict::Empty);
+                    },
+                );
+            }
+            scaling::check(
+                "k pinwheels repeating an integer, shared, with a middle, by k",
+                64,
+                |k| {
+                    Type::forget_emptiness();
+                    let t = repeating_pinwheels(k, false, false, true);
+                    assert_eq!(t.verdict(), Verdict::Inhabited);
+                },
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// The ends of `k` pinwheels of one-tuple ends, with the third end of the last one every tuple
+/// but the other ends: a tuple type outside any other, which holds every one-tuple outside them.
+fn negated_ends(k: usize) -> Vec<[Type; 3]> {
+    let mut ends: Vec<[Type; 3]> = (0..k as i64).map(|i| End::OneTuple.ends(10 * i)).collect();
+    let n = ends.len() * 3;
+    let others = Type::union_all(ends.iter().flatten().take(n.saturating_sub(1)).cloned());
+    if let Some(last) = ends.last_mut() {
+        last[2] = &Type::universe(Universe::Tuple) - &others;
+    }
+    ends
+}
+
+/// The ends of `k` pinwheels whose ends are pairs with one first component, `(0, b + j)`.
+fn first_component_ends(k: usize) -> Vec<[Type; 3]> {
+    let end = |b: i64| [1, 2, 3].map(|j| Type::tuple(vec![lit_i(0), lit_i(b + j)]));
+    (0..k as i64).map(|i| end(10 * i)).collect()
+}
+
+#[test]
+fn pinwheels_whose_ends_share_a_first_component_are_decided() {
+    // The tradeoff at `overlaps`: tuples are keyed by their first component, so all the ends
+    // `(0, b + j)` are in one class and the pinwheels are decided together.
+    for k in [1, 2, 4] {
+        check_against_model(
+            &format!("one first component, k = {k}"),
+            &first_component_ends(k),
+        );
+    }
+}
+
+#[test]
+fn pinwheels_with_an_end_outside_every_tuple_type_are_decided() {
+    for k in [1, 2, 4] {
+        check_against_model(&format!("an end outside, k = {k}"), &negated_ends(k));
+    }
+}
+
+#[test]
+fn pinwheels_joined_in_one_class_are_decided_at_quadratic_cost() {
+    // The tradeoff at `overlaps`: an end outside every tuple type holds every one-tuple, and
+    // ends that share a first component share its key, so all k pinwheels fall in one class
+    // and are decided together. Measured for the empty unions, order k^2: one end outside,
+    // 1,478M, 19,555M and 78,974M instructions at k = 16, 64 and 128 (with middles 63M, 391M
+    // and 803M); one first component, 1,170M, 15,893M and 62,927M. COMPLEXITY.md K36.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            scaling::check_order("k pinwheels, one end outside, empty, by k", 8, 2, |k| {
+                Type::forget_emptiness();
+                let t = Type::union_all(negated_ends(k).into_iter().map(|e| pinwheel(true, e)));
+                assert_eq!(t.verdict(), Verdict::Empty);
+            });
+            scaling::check_order("k pinwheels, one first component, empty, by k", 8, 2, |k| {
+                Type::forget_emptiness();
+                let ends = first_component_ends(k).into_iter();
+                let t = Type::union_all(ends.map(|e| pinwheel(true, e)));
+                assert_eq!(t.verdict(), Verdict::Empty);
+            });
         })
         .unwrap()
         .join()
