@@ -779,18 +779,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | OSP-diag | impl attempt 1 | 2026-11-03 02:23 | part 4 counts feature done: l01_37 checks 368 native runs leave 0 cells; negative control (owned inputs never dropped) caught with survivors by type and node; l |
-| OSP-order | verify attempt 1 | 2026-11-03 02:23 | tools/run_tests.sh 4 on e303b4e: 96 pieces, 0 failed, load 36.6-49.7 |
+| OSP-order | verify attempt 1 | 2026-11-03 02:23 | controls in wt/osp-order-ctl: unsorted successor lists fail 2 m0_05 tests (rotation, keyed declarative); quadratic ranks (count smaller keys) make all 3 order s |
 | S22a | impl attempt 1 | 2026-11-03 03:01 | started; reading brief, SYNTH_R1, S22a_BRIEF, verifier reports |
 | ST1 | verify attempt 6 (item ST) | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
 | ST2 | verify attempt 6 (item ST) | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
 | ST | verify attempt 6 | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
 | T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | started; reading brief, SYNTH_R1, S22a_BRIEF, verifier reports |
 | T14-cell-len:merge (orchestrator) | running | 2026-11-03 02:51 | lock released |
-| T14-occ:cost-probe | running | 2026-11-03 02:07 | orchestrator started a measurement of the Value 56->64 byte cost (a5c7f08 vs f09648f), logs wt/occ-cost-logs |
 | T6 | repair attempt 2 | 2026-11-03 00:01 | committed 1321097 6410fe9 a52c9aa (X13 fixes+tests, checker refusal messages, docs); rebasing on main |
 
-Merged into local main and not yet pushed (22 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (23 commits); the push follows one full test run on the merged tree:
 
+- 2374236 STATUS: in progress as of 2026-11-03 03:10
 - 092410d STATUS, plan_dag: merged items marked done; In progress and the unpushed list rewritten from the ledger
 - 0870948 XT-R: design R for S18: box stages replace the simplex; column quotient; UTVPI DAG potential
 - 1e8f357 T-zone: arm tests are closed over the functions they call before the preimage; integer names stay names in atom
