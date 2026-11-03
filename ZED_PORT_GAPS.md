@@ -1144,3 +1144,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `fmt::Write` sink that counts bytes, so `Display` and `Debug` give a leaf's length with nothing written | `words::Count`, `words::written` | Missing (no formatter trait) | A length function per printed kind, or printing into a counting port |
 | `String::try_reserve_exact` that keeps the reserved block and writes into it | `words::print` | Missing (no allocator query) | The runtime primitive above, returning the block |
 | A `HashMap` memo keyed by a sequence's address and a family's id, read only while the value is borrowed | `words::room_to_print` | Identity | Occurrence addresses or stable ids (T14-occ) |
+
+## Entries from BIT-kept-ends (`zedc/src/store/int.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `match` arm guarded by `if let … && let …` on a divisor that is a kept power of 2 and on the dividend's shift by its exponent (`Kept::shr`, `None` when no term has that power as a factor) | `Num::div_floor` | None | An `is` test and the shift before the `match`, falling through to it when either is absent |
+| A struct declared inside a function, `Part<'a>`, whose odd atoms borrow the exponents of the kept form | `Kept::trailing_zeros` | None | A record of the function's own module; the exponents are shared values, not borrows |

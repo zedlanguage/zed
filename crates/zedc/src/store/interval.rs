@@ -609,6 +609,15 @@ pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
     if xs.iter().any(IntervalSet::is_empty) {
         return IntervalSet::empty();
     }
+    // Complexity tradeoff: operands that are each one integer are given to the kernel as
+    // values, so a kept one is written out (`Value::from`), at the cost of its digits; the
+    // answer is exact. Why: the kernel's words take its own integers, which keep a product of
+    // prime powers but not a sum, and the digit-wise words need the digits. Trigger: a bit word
+    // all of whose operands are single values and one of them a kept value outside `i128`.
+    // Test: `l01_39a_bit_words::kept_ends::single_kept_operands_give_the_value`; COMPLEXITY.md
+    // S33. A complete solution would compute `shl`, `shr`, `bitNot`, `leadingZeros` and
+    // `trailingZeros` of kept single values by the rules below, which are exact on them, and
+    // the digit-wise words of a bare power of 2 from its exponent.
     let one = |s: &IntervalSet| match s.bounds() {
         Some((Fin(a), Fin(b))) if a == b => Some(Value::from(a)),
         _ => None,

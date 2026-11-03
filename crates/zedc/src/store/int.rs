@@ -1392,6 +1392,145 @@ impl Kept {
         // atoms, compared by approximation as roots are now.
         Num::from(self.expand()).root_big(k, up)
     }
+
+    /// The number of trailing zero binary digits, or `None` when a core holds a root, whose
+    /// digits are not known. The numerator is a sum of parts `2^v * u` with `u` odd: for a term
+    /// `c * core`, `v` is the trailing zeros of `c` plus those of each atom times its exponent,
+    /// and `u` the product of the odd parts; `d` is one more part. With `m` the least `v`, the
+    /// numerator over `2^m` is found modulo `2^j` from the residues of the odd parts (`modpow`),
+    /// for `j` = 64 and then twice as many until it is not 0 there; a part with `v - m >= j` is 0
+    /// modulo `2^j` and is not read, so no power of 2 past `2^j` is built. Less the trailing
+    /// zeros of `den`, which divides the numerator, that is the answer, exact. For a bare power
+    /// `b ** e` it is `e` times the trailing zeros of `b`, found at `j` = 64. The cost is
+    /// `O(n log e)` products of `j` bits for `n` terms and exponents of `log e` bits, with `j`
+    /// at most twice the trailing zeros of the numerator over `2^m`: the low bits in which its
+    /// parts cancel, not the bits of the value.
+    fn trailing_zeros(&self) -> Option<BigUint> {
+        /// A part `2^v * c * product(b ** e)` of the numerator, with `c` and each `b` odd.
+        struct Part<'a> {
+            v: BigUint,
+            c: BigInt,
+            odd: Vec<(BigUint, &'a BigUint)>,
+        }
+        let mut parts = Vec::with_capacity(self.terms.len() + 1);
+        for (c, core) in &self.terms {
+            let tc = c.trailing_zeros().expect("no coefficient is zero");
+            let mut v = BigUint::from(tc);
+            let mut odd = Vec::with_capacity(core.0.len());
+            for (a, e) in &core.0 {
+                let Atom::Int(b) = a else { return None };
+                let tb = b.trailing_zeros().expect("an atom is at least 2");
+                v += e * tb;
+                odd.push((b >> tb, e));
+            }
+            parts.push(Part { v, c: c >> tc, odd });
+        }
+        if let Some(td) = self.d.trailing_zeros() {
+            parts.push(Part {
+                v: BigUint::from(td),
+                c: &self.d >> td,
+                odd: Vec::new(),
+            });
+        }
+        let m = parts
+            .iter()
+            .map(|p| &p.v)
+            .min()
+            .expect("a kept value has a term")
+            .clone();
+        let den_zeros = self.den.trailing_zeros().expect("den is at least 1");
+        let mut j = 64u64;
+        loop {
+            let unit = BigUint::from(1u32) << j;
+            let mask = &unit - 1u32;
+            let modulus = BigInt::from(unit.clone());
+            let mut r = BigUint::ZERO;
+            for Part { v, c, odd } in &parts {
+                let s = u64::try_from(&(v - &m)).ok().filter(|&s| s < j);
+                let Some(s) = s else { continue };
+                let u = odd.iter().fold(
+                    Integer::mod_floor(c, &modulus).into_parts().1,
+                    |x, (b, e)| (x * b.modpow(e, &unit)) & &mask,
+                );
+                r = (r + (u << s)) & &mask;
+            }
+            if let Some(z) = r.trailing_zeros() {
+                return Some(m + z - den_zeros);
+            }
+            j *= 2;
+        }
+    }
+
+    /// The exponent `k` when the value is `2 ** k`.
+    fn pow2_exponent(&self) -> Option<&BigUint> {
+        match self.bare()?.int_power() {
+            Some((b, k)) if !self.negative && *b == BigUint::from(2u32) => Some(k),
+            _ => None,
+        }
+    }
+
+    /// `floor(self / 2^k)`, for `den == 1`, when a term has `2^k` as a factor of its coefficient
+    /// and its atom 2. Such a term over `2^k` is a term again, its exponent of 2 or its
+    /// coefficient lowered, or a part of `d` when no atom is left; the other terms and `d` make
+    /// `L`, and the answer is those terms plus `floor(L / 2^k)`, which is `floor(d / 2^k)` when
+    /// no other term is left, by a shift. `None` when `den > 1` or no term has `2^k` as a
+    /// factor. The cost is that of the terms, not of the value's digits.
+    fn shr(&self, k: &BigUint) -> Option<Num> {
+        if !self.den.is_one() {
+            return None;
+        }
+        let two = Atom::Int(BigUint::from(2u32));
+        let (mut high, mut low) = (Vec::new(), Vec::new());
+        let mut d_high = BigInt::ZERO;
+        for (c, core) in &self.terms {
+            // The atoms are in increasing order, so 2 is the first when it is one.
+            let f = match core.0.first() {
+                Some((a, e)) if *a == two => e.clone(),
+                _ => BigUint::ZERO,
+            };
+            let t = BigUint::from(c.trailing_zeros().expect("no coefficient is zero"));
+            if &f + &t < *k {
+                low.push((c.clone(), core.clone()));
+                continue;
+            }
+            let (c, atoms) = if f >= *k {
+                let mut atoms = core.0.clone();
+                let left = &f - k;
+                if left.is_zero() {
+                    atoms.remove(0);
+                } else {
+                    atoms[0].1 = left;
+                }
+                (c.clone(), atoms)
+            } else {
+                let s = u64::try_from(&(k - &f)).expect("at most the trailing zeros of c");
+                let rest = if f.is_zero() {
+                    &core.0[..]
+                } else {
+                    &core.0[1..]
+                };
+                (c >> s, rest.to_vec())
+            };
+            if atoms.is_empty() {
+                d_high += c;
+            } else {
+                high.push((c, Core(atoms)));
+            }
+        }
+        if high.is_empty() && d_high.is_zero() {
+            return None;
+        }
+        let rest = if low.is_empty() {
+            Num::from(floor_shr(&self.d, &BigInt::from(k.clone())))
+        } else {
+            Num::kept(low, self.d.clone(), BigUint::from(1u32)).div_floor(&Num::power(
+                false,
+                BigUint::from(2u32),
+                k.clone(),
+            ))
+        };
+        Some(&Num::kept(high, d_high, BigUint::from(1u32)) + &rest)
+    }
 }
 
 /// Whether `x`, above zero with integer atoms only, is a perfect `k`-th power. Each round
@@ -1681,31 +1820,85 @@ impl Num {
         }
     }
 
-    // Complexity tradeoff: `bits`, `trailing_zeros` and `pow2` write a kept value out, so their
-    // cost is that of its digits, as printing it is (`bitAnd(2 ** 10 ** 9, 1)` builds 10^9 bits);
-    // the answer is exact. Why: the digits of a kept sum of powers need its value to unit
-    // precision. Trigger: a bit word (`interval::bit_word`) whose operand's end is kept, outside
-    // `i128`. Test: none yet (ledger BIT-kept-ends); COMPLEXITY.md S33. A complete solution
-    // would read the digit count of a bare power from its exponent and of a sum from its
-    // approximation (`Approx`), widened until it is decided.
-
     /// The number of binary digits of `abs(self)`: the least `b >= 0` with `abs(self) < 2^b`.
+    /// A kept value is not written out ([`Num::kept_bits`]).
     pub fn bits(&self) -> Num {
-        match self.0 {
+        match &self.0 {
             Word::Small(v) => Num::from(i64::from(64 - v.unsigned_abs().leading_zeros())),
-            _ => Num::from(i128::from(self.big().bits())),
+            Word::Big(v) => Num::from(i128::from(v.bits())),
+            Word::Kept(k) => Num::from(self.kept_bits(k)),
         }
     }
 
-    /// The number of trailing zero binary digits of a value other than 0.
+    /// The bits of the kept value `self`, whose form is `k`, from its approximation at 64 bits
+    /// and then at twice as many. When the bounds `lo * 2^s` and `hi * 2^s` of `abs(self)`
+    /// have one bit count, that is the answer: so for a bare power of 2 at once, since its
+    /// approximation is exact, and for any other bare power `b ** e` once the precision passes
+    /// the bits of `e` and those on which `e * log2(b)` agrees with an integer. When the counts
+    /// are `l` and `l + 1`, as for `2 ** k - 1`, whose bounds lie on both sides of `2^k` at
+    /// every precision short of its digits, one comparison of `abs(self)` with `2^l` decides,
+    /// as the sign of a kept difference whose equal cores cancel. The answer is exact; the cost
+    /// is that of the approximations and of that comparison, not of the value's digits.
+    fn kept_bits(&self, k: &Kept) -> BigInt {
+        let mut bits = 64;
+        loop {
+            let Approx { lo, hi, shift } = k.approx(bits);
+            let (lo, hi) = if k.negative { (-hi, -lo) } else { (lo, hi) };
+            if lo.sign() == Sign::Plus {
+                let low = &shift + lo.bits();
+                let high = &shift + hi.bits();
+                if low == high {
+                    return high;
+                }
+                if high == &low + 1u32 {
+                    // abs(self) >= 2^(low - 1) and abs(self) < 2^high.
+                    let edge = Num::power(false, BigUint::from(2u32), low.magnitude().clone());
+                    let past = if k.negative {
+                        *self <= -&edge
+                    } else {
+                        *self >= edge
+                    };
+                    return if past { high } else { low };
+                }
+            }
+            bits *= 2;
+        }
+    }
+
+    /// The number of trailing zero binary digits of a value other than 0. A kept value with
+    /// integer cores is not written out ([`Kept::trailing_zeros`]).
     pub fn trailing_zeros(&self) -> Num {
-        match self.0 {
+        match &self.0 {
             Word::Small(v) => Num::from(i64::from(v.trailing_zeros())),
-            _ => Num::from(i128::from(self.big().trailing_zeros().unwrap_or(0))),
+            Word::Big(v) => Num::from(i128::from(v.trailing_zeros().unwrap_or(0))),
+            Word::Kept(k) => match k.trailing_zeros() {
+                Some(z) => Num::from(BigInt::from(z)),
+                // Complexity tradeoff: the trailing zeros of a kept value with a root among its
+                // cores are those of the value written out, at the cost of its digits; the
+                // answer is exact. Why: a floor root's low digits need the root to unit
+                // precision, and so the radicand's digits. Trigger: `trailingZeros`, or a bit
+                // word's rule reading one, on an end holding a kept root. Test:
+                // `l01_39a_bit_words::kept_ends::the_trailing_zeros_of_a_kept_root_are_those_written_out`;
+                // COMPLEXITY.md S33. A complete solution would keep the residue of a root modulo
+                // a power of 2 in its atom's memo, found from the radicand's residue by a 2-adic
+                // root where one exists.
+                None => Num::from(i128::from(
+                    self.big().trailing_zeros().expect("a kept value is not 0"),
+                )),
+            },
         }
     }
 
     /// `2 ** e` for `e >= 0`, kept as a power when it does not fit in `i128`.
+    // Complexity tradeoff: a kept `e` is written out, at the cost of its digits, since the
+    // exponents of a core are written out; the answer is exact, and `2 ** e` stays kept. Why:
+    // a power whose exponent is itself kept needs an atom with a kept exponent, whose
+    // approximation, residues and comparisons are not built. Trigger: `shl`, `bitNot`, `rotl`
+    // or `rotr` with a count or width outside `i128`, or `bitOr`, `bitXor` or `trailingZeros`
+    // on an operand of more than about `2^127` bits. Test:
+    // `l01_39a_bit_words::kept_ends::a_power_of_2_by_a_kept_exponent_stays_kept`; COMPLEXITY.md
+    // S33. A complete solution would keep `b ** x` for a kept `x` as an atom, approximated by
+    // `Approx::pow` on an approximation of `x`.
     pub fn pow2(e: &Num) -> Num {
         Num::power(false, BigUint::from(2u32), e.big().magnitude().clone())
     }
@@ -1896,18 +2089,29 @@ impl Num {
                     Num::from(-1)
                 };
             }
+            // A shift right (`interval::bit_word`'s `shr`) by a count of at least 127.
+            (Word::Kept(x), Word::Kept(y))
+                if let Some(k) = y.pow2_exponent()
+                    && let Some(q) = x.shr(k) =>
+            {
+                return q;
+            }
             _ => {}
         }
         // Complexity tradeoff: the quotient of a kept value by a kept value at most its size,
         // and of a kept value with a root among its cores by any value, is that of the values
-        // written out, at the cost of their digits; the answer is exact. Why: a quotient of two
+        // written out, at the cost of their digits; the answer is exact. By a power of 2, the
+        // terms that have it as a factor are divided in their form (`Kept::shr`), and only the
+        // other terms, when any is kept, are written out. Why: a quotient of two
         // sums of powers is not a sum of powers in general, and keeping it needs a new form
         // (a floor of a ratio) whose comparisons need its own approximation and residues; a
         // root has no residues without its digits. Trigger: `div` with a kept divisor no
         // larger than the dividend, or a dividend holding a kept root. Test:
         // `l01_24_refinement_lattices::ends::kept_forms_compute_as_their_values_written_out`
-        // (every pair of 156 kept values); COMPLEXITY.md S33. A complete solution would keep
-        // `floor(a / b)` as an atom, approximated as the quotient of the approximations.
+        // (every pair of 156 kept values) and, by a power of 2,
+        // `l01_39a_bit_words::kept_ends::a_shift_right_of_a_kept_end_keeps_its_form`;
+        // COMPLEXITY.md S33. A complete solution would keep `floor(a / b)` as an atom,
+        // approximated as the quotient of the approximations.
         self.big().div_floor(&d.big()).into()
     }
 
