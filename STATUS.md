@@ -930,7 +930,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | S22e-quad | verify attempt 2 | 2026-11-03 07:43 | run_tests.sh 2 on 02f907b: 98 pieces, 0 failed (load 57.7 to 91.2); l01_25 135 passed 1 ignored 84 s at load 91; running clippy and a random soundness probe nex |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | repair attempt 1 | 2026-11-03 04:26 | rebased on main 3626624 (STATUS rows kept both; check/mod.rs and elab.rs took the branch walks with main's Seq->Array and Op::Pow(Int) ported); builds; load 43. |
-| T2-types | verify attempt 2 | 2026-11-03 08:34 | fmt --check and clippy -D warnings pass on 48c6594; control (not committed): text loop finding made texts by linear scan fails the Tree text scaling 50.0x (limi |
 | T6-bound-load | verify attempt 2 | 2026-11-03 07:07 | done ok=true: run_tests.sh 2 on 59601e0: 98 pieces, 1 failed (l01_25 s22 pair, pre-existing in base); l01_23 94, l01_29 31, l01_22 24 pass; fmt, clippy clean; p |
 | T6-payload-pinwheel | verify attempt 2 | 2026-11-03 08:25 | launching run_tests.sh 4 and clippy on 5f76fa3 in background; load 16.65 32.72 48.96 |
 | TD-ends | merge attempt 1 | 2026-11-03 03:52 | start; merge lock held by UTVPI-NEAR:repair#3, waiting |
@@ -939,8 +938,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | returning ok=true: 942fd60 merges cleanly into main 40750ce, spec a628181 into zed cc889a2; non-blocking: no log port yet so @log(#off); drops no line (L7.3 own |
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 
-Merged into local main and not yet pushed (164 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (171 commits); the push follows one full test run on the merged tree:
 
+- 6fed5c4 T2-types: ZED_PORT_GAPS names the recursive-type naming in the text loop
+- 2f4bca6 T2-types: COMPLEXITY K39 and STATUS record the recursive-type names made in the text loop and the release measured on its own thread
+- 12a004c T2-types: a recursive type's name is a rope made as an item of the text loop's stack
+- 92010db T2-types: COMPLEXITY K39 records the control on main 21bd4f8 with the final deep_types
+- ab729fa T2-types: name a recursive type apart from the text loop; time each deep operation on inputs built before
+- 5c6f425 T2-types: drop and print deep types, terms and patterns without recursion
+- 41c4af1 plan_dag, STATUS: T6-ratlit done (tip 79d9f6d)
 - 79d9f6d T6-ratlit: rat literal types hash by residues, compare the exact value, and print the one literal meKr
 - 129accb STATUS: CANON-stable done (tip 7d5d668); its COMPLEXITY row is S32, since main's S31 is ST-arms-quad
 - 7d5d668 presburger canonical(): test Codex's 6-variable system under all 720 namings; colors as a vector; cite Cardon-Crochemore and Paige-Tarjan (CANON-stable repair)
