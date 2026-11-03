@@ -882,7 +882,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CANON-stable | impl attempt 1 | 2026-11-03 09:30 | docs committed (COMPLEXITY S31, STATUS, plan_dag row+note, ZED_PORT_GAPS); full suites running on branch and on main baseline (load 123.18) |
 | CAP-pow32 | verify attempt 1 | 2026-11-03 08:53 | clippy -D warnings and fmt clean on f6e2feb; suite (run_tests.sh 2, load ~90-105) running; reading Tx::joined: exact Int count stored per product node is O(d) b |
 | F44-memo | orchestrator attempt  | 2026-11-03 07:14 | REQUIREMENT for verify#2: (1) impl marked ledger item F44-forced fixed: confirm F44-forced's plan row and tests are covered by 1739add, or say what is missing;  |
-| HOLE-oneline | verify attempt 2 | 2026-11-03 07:14 | clippy -D warnings clean, fmt clean; check OK (149 parsed 0 failed), fences exit 0, cases 372 with 2 DIFF ((T,) types, not this item's), all 16 new ok; 10 lexer |
 | L1.17a | verify attempt 1 | 2026-11-03 07:14 | started; no earlier verify lines for this item |
 | LIN-probe | verify attempt 1 | 2026-11-03 07:30 | control worktree /home/luke/Work/wt/lin-probe-ctl at f57061a (detached) for k=32->256 measurement and the main-probe negative control |
 | LIVE3 | orchestrator attempt  | 2026-11-03 09:30 | REFERENCE (XR3 Codex report /home/luke/Work/wt/xt4/codex/R3_CODEX.md Q3, lines 122-224, and Q5 lines 280-284): a second design for the same method (bounded back |
@@ -901,8 +900,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | repair attempt 1 | 2026-11-03 06:34 | reproduced verifier: union k=256->2048 race 62.3x; units alone at k=256 GOR 546k, BFD 344k, Duong 4.54M; Duong 52.5M at 2048; per-site unit counts show ~14 unit |
 | WIDEN-WARN | verify attempt 2 | 2026-11-03 07:14 | diff read; probes via zedc run: nested mod 2**32 inside mod 2**64, unary - and mod 1 give no warning; ** , if and mod 1000 inside mod 2**64 warn; mod 2**65 warn |
 
-Merged into local main and not yet pushed (102 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (106 commits); the push follows one full test run on the merged tree:
 
+- 4f0cc81 HOLE-oneline: the holes of a """ string in a one-line hole are one-line too
+- cf3f8d1 HOLE-oneline: reject a line break in a hole of a one-line string
 - 66ca165 plan_dag: ST-arms-quad, R10-stack, ADDITIVE-desugar done (catch-up 88c51bb)
 - 66945e0 plan_dag, STATUS: ADDITIVE-desugar done (merged 9b9a33f, tip aa0e65c)
 - 79c77f0 STATUS: in progress as of 2026-11-03 10:45
