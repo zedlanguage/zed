@@ -174,7 +174,8 @@ fn potential(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // 404M at k = 16,384. To pass, Duong's search would need about 2.7 units per edge per scaling
     // step at k = 2,048, against about 14 now and about 1 for its pass over the edges alone; a
     // cut in this constant alone cannot reach that by this count; a near-linear search with a
-    // small constant is needed.
+    // small constant is needed (open: item UTVPI-union). Main before UTVPI-NEAR, Goldberg and
+    // Radzik alone, takes 53.3M to 2,993M there, 56.2 times: the same order, about 4 times cheaper.
     // The decisions agree, since every potential gives the same one (`odd_zero_cycle`). On
     // BAD-GOR alone, from k = 256 to 2,048, the race takes 26.8M to 209M instructions, 7.8
     // times, and Goldberg and Radzik alone 59.8 times. Tests: `bad_gor_scales`,

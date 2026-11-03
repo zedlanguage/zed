@@ -411,7 +411,7 @@ fn bad_gor_and_a_fan_are_decided() {
 }
 
 #[test]
-#[ignore = "fails: the race takes 60.6 times the work (COMPLEXITY.md C24)"]
+#[ignore = "fails: the race takes 60.6 times the work; open in UTVPI-union (COMPLEXITY.md C24)"]
 fn bad_gor_and_a_fan_scale() {
     // Measured on this branch, in instructions from k = 256 to k = 2,048: the race 201.9M to
     // 12,236M (60.6 times); Goldberg and Radzik's search alone 80.8M to 4,699M (58.2 times);
@@ -420,6 +420,8 @@ fn bad_gor_and_a_fan_scale() {
     // BF-Dijkstra 344k to 19.3M, Duong 3.72M to 43.1M, and Duong 404M at k = 16,384 (9.4 times
     // its count at 2,048). Both quadratic searches are cheaper than Duong's below k = 2,048, so
     // the race grows with them; it falls back to Duong's growth only past that size.
+    // Main before UTVPI-NEAR, Goldberg and Radzik alone, takes 53.3M to 2,993M (56.2 times). The
+    // fix is open in item UTVPI-union: a search near-linear in the worst case, small constant.
     let (small, large) = (
         bad_gor_and_fan(256, 0),
         bad_gor_and_fan(scaling::FACTOR * 256, 0),
