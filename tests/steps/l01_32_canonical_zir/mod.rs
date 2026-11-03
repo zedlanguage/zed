@@ -4,6 +4,7 @@
 //! rules terminate on random graphs, each step lowering the tuple of ranks.
 
 mod fuzz;
+mod scaling;
 mod stability;
 
 use zedc::zir::{Region, text};

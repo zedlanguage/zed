@@ -78,13 +78,16 @@ pub fn canonicalize(g: &Region) -> Region {
     g
 }
 
+/// Puts each edge and pattern of `g` in normal form, from a stack of the regions left to do:
+/// each is normalized alone, so the order does not matter.
 fn normalize(g: &mut Region) {
-    g.args.iter_mut().for_each(normal_edge);
-    for n in &mut g.nodes {
-        normal_shell(n);
-        n.regions
-            .iter_mut()
-            .for_each(|r| normalize(Arc::make_mut(r)));
+    let mut todo = vec![g];
+    while let Some(r) = todo.pop() {
+        r.args.iter_mut().for_each(normal_edge);
+        for n in &mut r.nodes {
+            normal_shell(n);
+            todo.extend(n.regions.iter_mut().map(Arc::make_mut));
+        }
     }
 }
 
@@ -119,18 +122,20 @@ fn normal_edge(e: &mut Edge) {
 
 /// Each written binder of `p` renamed to its level, the number of binders before it.
 fn rename_all(p: &mut Pattern, index: &mut usize) {
-    match p {
-        Pattern::Bind(name) => {
-            if level_of(name).is_none() {
-                *name = level_name(*index);
+    // A stack of the subpatterns left, the next on top, visits them in preorder.
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
+        match p {
+            Pattern::Bind(name) => {
+                if level_of(name).is_none() {
+                    *name = level_name(*index);
+                }
+                *index += 1;
             }
-            *index += 1;
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut().rev()),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().rev().map(|(_, q)| q)),
+            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
         }
-        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => {
-            ps.iter_mut().for_each(|q| rename_all(q, index))
-        }
-        Pattern::Fields(_, fs) => fs.iter_mut().for_each(|(_, q)| rename_all(q, index)),
-        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
     }
 }
 
@@ -182,12 +187,29 @@ pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> ContentAddress {
 
 /// The key of `g` from the bottom up: what [`region_key`] gives with every region's key.
 pub fn key(g: &Region) -> ContentAddress {
-    let inner: Vec<Vec<ContentAddress>> = g
-        .nodes
-        .iter()
-        .map(|n| n.regions.iter().map(|r| key(r)).collect())
-        .collect();
-    region_key(g, &inner)
+    // Each open region with the keys of its nodes' regions found so far, one list per node
+    // begun.
+    let mut open: Vec<(&Region, Vec<Vec<ContentAddress>>)> = vec![(g, Vec::new())];
+    loop {
+        let (r, inner) = open
+            .last_mut()
+            .expect("the loop returns when the root ends");
+        let r = *r;
+        if let Some(keys) = inner.last()
+            && let Some(sub) = r.nodes[inner.len() - 1].regions.get(keys.len())
+        {
+            open.push((sub, Vec::new()));
+        } else if inner.len() < r.nodes.len() {
+            inner.push(Vec::new());
+        } else {
+            let k = region_key(r, inner);
+            open.pop();
+            match open.last_mut() {
+                Some((_, up)) => up.last_mut().expect("a node is begun").push(k),
+                None => return k,
+            }
+        }
+    }
 }
 
 /// The content address of `g`.
@@ -212,99 +234,179 @@ fn def(v: &super::ValueEdge) -> Def {
 /// The pattern binders of `g` that still carry their written names.
 fn written(g: &Region) -> u64 {
     let mut n = 0;
-    for node in &g.nodes {
-        if let Op::Match(ps) = &node.op {
-            for p in ps {
-                binds(p, &mut |name| n += u64::from(level_of(name).is_none()));
+    let mut todo = vec![g];
+    while let Some(r) = todo.pop() {
+        for node in &r.nodes {
+            if let Op::Match(ps) = &node.op {
+                for p in ps {
+                    binds(p, &mut |name| n += u64::from(level_of(name).is_none()));
+                }
             }
-        }
-        for r in &node.regions {
-            n += written(r);
+            todo.extend(node.regions.iter().map(|r| &**r));
         }
     }
     n
 }
 
 /// The binder rule: the first written pattern binder in preorder renamed to its level, its
-/// written name a hint on the argument it binds.
+/// written name a hint on the argument it binds. Only the regions on the way down to its node
+/// are made unique.
 fn rename_first(g: &mut Region) -> bool {
-    for node in &mut g.nodes {
-        if let Op::Match(ps) = &mut node.op {
-            for (arm, p) in ps.iter_mut().enumerate() {
-                let mut index = 0;
-                if let Some(name) = rename_in(p, &mut index) {
-                    if let Edge::Value(v) = &mut Arc::make_mut(&mut node.regions[arm]).args[index] {
-                        v.facets.push(Facet {
-                            hint: true,
-                            kind: "binder".into(),
-                            value: Value::tuple(vec![
-                                Value::Int(index as i64),
-                                Value::Str(name.into()),
-                            ]),
-                        });
-                    }
-                    return true;
-                }
+    let Some((steps, k)) = first_written(g) else {
+        return false;
+    };
+    let mut r = g;
+    for (k, j) in steps {
+        r = Arc::make_mut(&mut r.nodes[k].regions[j]);
+    }
+    let node = &mut r.nodes[k];
+    let Op::Match(ps) = &mut node.op else {
+        unreachable!("first_written finds a match node")
+    };
+    for (arm, p) in ps.iter_mut().enumerate() {
+        let mut index = 0;
+        if let Some(name) = rename_in(p, &mut index) {
+            if let Edge::Value(v) = &mut Arc::make_mut(&mut node.regions[arm]).args[index] {
+                v.facets.push(Facet {
+                    hint: true,
+                    kind: "binder".into(),
+                    value: Value::tuple(vec![Value::Int(index as i64), Value::Str(name.into())]),
+                });
             }
-        }
-        if node
-            .regions
-            .iter_mut()
-            .any(|r| rename_first(Arc::make_mut(r)))
-        {
             return true;
         }
     }
-    false
+    unreachable!("first_written finds a written binder")
+}
+
+/// The place of the first node of `g`, in preorder, whose patterns hold a written binder: the
+/// node and region indices down to its region, and its index there.
+fn first_written(g: &Region) -> Option<(Vec<(usize, usize)>, usize)> {
+    let has_written = |p: &Pattern| {
+        let mut found = false;
+        binds(p, &mut |name| found |= level_of(name).is_none());
+        found
+    };
+    /// A region being searched: node `k` is next, or is being searched, its patterns already
+    /// read when `read` and its regions before `j` already searched.
+    struct Frame<'a> {
+        r: &'a Region,
+        k: usize,
+        j: usize,
+        read: bool,
+    }
+    let mut frames = vec![Frame {
+        r: g,
+        k: 0,
+        j: 0,
+        read: false,
+    }];
+    while let Some(top) = frames.last_mut() {
+        let Some(node) = top.r.nodes.get(top.k) else {
+            frames.pop();
+            if let Some(up) = frames.last_mut() {
+                up.j += 1;
+            }
+            continue;
+        };
+        if !top.read {
+            top.read = true;
+            if let Op::Match(ps) = &node.op
+                && ps.iter().any(has_written)
+            {
+                let k = top.k;
+                let steps = frames[..frames.len() - 1].iter().map(|f| (f.k, f.j));
+                return Some((steps.collect(), k));
+            }
+        }
+        if let Some(sub) = node.regions.get(top.j) {
+            frames.push(Frame {
+                r: sub,
+                k: 0,
+                j: 0,
+                read: false,
+            });
+        } else {
+            top.k += 1;
+            top.j = 0;
+            top.read = false;
+        }
+    }
+    None
 }
 
 /// Renames the first written binder of `p`, counting in `index` the binders before it, and
 /// returns its written name.
 fn rename_in(p: &mut Pattern, index: &mut usize) -> Option<std::sync::Arc<str>> {
-    match p {
-        Pattern::Bind(name) if level_of(name).is_none() => {
-            let written = name.clone();
-            *name = level_name(*index);
-            Some(written)
+    // A stack of the subpatterns left, the next on top, visits them in preorder.
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
+        match p {
+            Pattern::Bind(name) if level_of(name).is_none() => {
+                let written = name.clone();
+                *name = level_name(*index);
+                return Some(written);
+            }
+            Pattern::Bind(_) => *index += 1,
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut().rev()),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().rev().map(|(_, q)| q)),
+            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
         }
-        Pattern::Bind(_) => {
-            *index += 1;
-            None
-        }
-        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => {
-            ps.iter_mut().find_map(|q| rename_in(q, index))
-        }
-        Pattern::Fields(_, fs) => fs.iter_mut().find_map(|(_, q)| rename_in(q, index)),
-        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => None,
     }
+    None
 }
 
 /// Calls `f` on each binder name of `p`, in preorder.
 fn binds(p: &Pattern, f: &mut dyn FnMut(&str)) {
-    match p {
-        Pattern::Bind(name) => f(name),
-        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter().for_each(|q| binds(q, f)),
-        Pattern::Fields(_, fs) => fs.iter().for_each(|(_, q)| binds(q, f)),
-        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
+        match p {
+            Pattern::Bind(name) => f(name),
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, q)| q)),
+            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+        }
     }
+}
+
+/// What is left of a walk over the edges in preorder: a region, whose arguments come first,
+/// or a node, whose outputs come before its regions.
+enum Part<R, N> {
+    Region(R),
+    Node(N),
 }
 
 /// Calls `f` on each edge of `g`, in preorder.
 fn each_edge(g: &Region, f: &mut dyn FnMut(&Edge)) {
-    g.args.iter().for_each(&mut *f);
-    for node in &g.nodes {
-        node.outputs.iter().for_each(&mut *f);
-        node.regions.iter().for_each(|r| each_edge(r, f));
+    let mut todo = vec![Part::Region(g)];
+    while let Some(part) = todo.pop() {
+        match part {
+            Part::Region(r) => {
+                r.args.iter().for_each(&mut *f);
+                todo.extend(r.nodes.iter().rev().map(Part::Node));
+            }
+            Part::Node(n) => {
+                n.outputs.iter().for_each(&mut *f);
+                todo.extend(n.regions.iter().rev().map(|r| Part::Region(&**r)));
+            }
+        }
     }
 }
 
 /// Calls `f` on each edge of `g`, in preorder, mutably.
 fn each_edge_mut(g: &mut Region, f: &mut dyn FnMut(&mut Edge)) {
-    g.args.iter_mut().for_each(&mut *f);
-    for node in &mut g.nodes {
-        node.outputs.iter_mut().for_each(&mut *f);
-        node.regions
-            .iter_mut()
-            .for_each(|r| each_edge_mut(Arc::make_mut(r), f));
+    let mut todo = vec![Part::Region(g)];
+    while let Some(part) = todo.pop() {
+        match part {
+            Part::Region(r) => {
+                r.args.iter_mut().for_each(&mut *f);
+                todo.extend(r.nodes.iter_mut().rev().map(Part::Node));
+            }
+            Part::Node(n) => {
+                n.outputs.iter_mut().for_each(&mut *f);
+                let subs = n.regions.iter_mut().rev();
+                todo.extend(subs.map(|r| Part::Region(Arc::make_mut(r))));
+            }
+        }
     }
 }

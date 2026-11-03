@@ -5,7 +5,7 @@
 mod graphs;
 mod items;
 mod rejections;
-mod scaling;
+pub(crate) mod scaling;
 
 use zedc::zir::{Region, binary, text, validate};
 
