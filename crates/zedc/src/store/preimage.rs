@@ -2623,8 +2623,10 @@ impl<'t> Tx<'t> {
     // ---- Piecewise-affine summaries -----------------------------------------------------
 
     /// The value of the term as a piecewise-affine function of one input ([`Pa`]), or `None`
-    /// when it is not one, when it reads more than one input, or when a value on the input's
-    /// domain leaves `i64`. Keyed on the term alone, so an `if` chain whose arms read one
+    /// when it is not one or when it reads more than one input. A value may leave `i64` where
+    /// the term fails; the `if` that takes the term on fewer inputs checks the values it keeps
+    /// ([`Tx::pa_if`]), so the summary of an `if` lies in `i64` and one of `t + 1` over all of
+    /// `i64` is still a summary. Keyed on the term alone, so an `if` chain whose arms read one
     /// shared term is summarized once, whatever demands reach it.
     fn pa(&mut self, t: Tid, env: Eid) -> Option<Pa> {
         if self.run.void {
@@ -2720,6 +2722,9 @@ impl<'t> Tx<'t> {
             let tree = arm.to_treap(dom)?;
             for &(lo, hi) in set.pieces() {
                 if let Some(s) = slice_treap(tree.clone(), lo, hi)? {
+                    // A value the arm takes on these inputs leaves `i64`: the term fails there.
+                    fits(s.vals.0)?;
+                    fits(s.vals.1)?;
                     slices.push((lo, s));
                 }
             }
@@ -2810,10 +2815,12 @@ impl<'t> Tx<'t> {
     }
 }
 
-/// An integer term as a function of one input `var`, each value in `i64` (R1_GEMINI
-/// Thm 3.1: the value of a term built from one input by `if`s on that input, constants,
-/// negation, adding a constant and multiplying by one is affine on each of finitely many
-/// intervals of the input, cut at the domain's and the guards' ends).
+/// An integer term as a function of one input `var` (R1_GEMINI Thm 3.1: the value of a term
+/// built from one input by `if`s on that input, constants, negation, adding a constant and
+/// multiplying by one is affine on each of finitely many intervals of the input, cut at the
+/// domain's and the guards' ends). The coefficients lie in `i64` and the values in `i128`; a
+/// value outside `i64` is an input where the term fails, and [`Tx::pa_if`] gives up on an
+/// `if` that keeps one.
 #[derive(Clone)]
 enum Pa {
     /// The constant `c` everywhere.
@@ -2833,7 +2840,7 @@ impl Pa {
         }
     }
 
-    /// `mul * self + add`, or `None` when a value leaves `i64`.
+    /// `mul * self + add`, or `None` when a constant or a coefficient leaves `i64`.
     fn affine(&self, mul: i128, add: i128) -> Option<Pa> {
         match self {
             Pa::Const(c) => {
@@ -2855,7 +2862,7 @@ impl Pa {
         }
     }
 
-    /// The treap over `dom`, the domain of the input; `None` when a value leaves `i64`.
+    /// The treap over `dom`, the domain of the input.
     fn to_treap(&self, dom: &IntervalSet) -> Option<Tree> {
         let (a, b) = match self {
             Pa::Piecewise { root, .. } => return Some(root.clone()),
@@ -2924,9 +2931,9 @@ fn input(e: End) -> i128 {
     }
 }
 
-/// `(lo, hi)` mapped by `x -> mul * x + add`, in order, each in `i64`.
+/// `(lo, hi)` mapped by `x -> mul * x + add`, in order; `None` when a value leaves `i128`.
 fn map_vals((lo, hi): (i128, i128), (mul, add): (i128, i128)) -> Option<(i128, i128)> {
-    let f = |v: i128| fits(v.checked_mul(mul)?.checked_add(add)?);
+    let f = |v: i128| v.checked_mul(mul)?.checked_add(add);
     if mul >= 0 {
         Some((f(lo)?, f(hi)?))
     } else {
@@ -2957,9 +2964,9 @@ fn prio_of(lo: End, hi: End) -> u64 {
 }
 
 /// The node for the piece `lo..=hi` with value `a * x + b` over two subtrees with no tag
-/// above them; `None` when a value of the piece leaves `i64`.
+/// above them, its coefficients in `i64`.
 fn make_node(lo: End, hi: End, a: i128, b: i128, left: Tree, right: Tree) -> Option<Rc<PaNode>> {
-    let at = |x: End| fits(a.checked_mul(input(x))?.checked_add(b)?);
+    let at = |x: End| a.checked_mul(input(x))?.checked_add(b);
     let (u, v) = (at(lo)?, at(hi)?);
     let mut vals = (u.min(v), u.max(v));
     let mut span = (lo, hi);

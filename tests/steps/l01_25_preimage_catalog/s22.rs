@@ -106,6 +106,9 @@ fn bits(k: usize, lo: i64, hi: i64) -> Domains {
 ///
 /// - `probe`: else `t + 1`, `i` in `[-50, 50]`, `tk >= 0`; `live` the same with `i` in
 ///   `[-k, k]`, so that no demand merges with another;
+/// - `probe_all` and `probe_half`: the probe with `i` over all integers and over
+///   `[-100, inf)`, where `t + 1` leaves `i64` at `i = i64::MAX`;
+/// - `probe_wide`: the probe with `i` in `[-100, 2^62]`;
 /// - else arms `t + c_j` for `c_j` = `±1`, `j`, `±j`, `2^((j-1) mod 40)`;
 /// - roots `tk == 0`, `tk != 0`, `tk` in `[-3, 7]` (an integer demand) and the same as a
 ///   conjunction;
@@ -129,6 +132,12 @@ fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
     match name {
         "probe" => (ge0(adds(k, |_| 1)), narrow(), yes),
         "live" => (ge0(adds(k, |_| 1)), live(), yes),
+        "probe_all" => (ge0(adds(k, |_| 1)), over(&[("i", IntervalSet::top())]), yes),
+        "probe_wide" => (ge0(adds(k, |_| 1)), i_in(-100, 1 << 62), yes),
+        "probe_half" => {
+            let half = IntervalSet::range(End::Fin(-100), End::PosInf);
+            (ge0(adds(k, |_| 1)), over(&[("i", half)]), yes)
+        }
         "alt" => (ge0(adds(k, alt)), narrow(), yes),
         "alt_live" => (ge0(adds(k, alt)), live(), yes),
         "cj" => (ge0(adds(k, |j| j)), narrow(), yes),
@@ -297,13 +306,12 @@ fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     })
 }
 
-/// The cases compared, the differences found, each shown, and the cases where the transfer
-/// before gave a preimage the interpreter refutes and the new one does not.
+/// The cases compared, the differences found, each shown, and the cases whose inexact box is
+/// narrower than the one before and still sound.
 #[derive(Default)]
 struct Diffs {
     cases: usize,
     found: Vec<String>,
-    fixed: usize,
     narrower: usize,
 }
 
@@ -324,21 +332,11 @@ fn refuted(t: &Term, ds: &Domains, d: &Demand, domains: &Domains, exact: bool) -
 
 impl Diffs {
     /// Compares the preimage of `d` under `t` over `ds` with the one before. A difference
-    /// counts as fixed when the interpreter refutes the one before and not the new one: the
-    /// transfer before is falsely exact through `c - x` (plan_dag S22b). A difference counts as
-    /// narrower when only the box differs, both are inexact, and the new box is a sound subset
-    /// of the one before.
+    /// counts as narrower when only the box differs, both are inexact, and the new box is a
+    /// sound subset of the one before; every other difference is found.
     fn preimage(&mut self, what: &str, t: &Term, ds: &Domains, d: &Demand) {
         let (now, then) = (preimage(t, ds, d), before::preimage(t, ds, &old(d)));
         let (new, old) = (format!("{now:?}"), format!("{then:?}"));
-        if new != old
-            && refuted(t, ds, d, &then.domains, then.exact)
-            && !refuted(t, ds, d, &now.domains, now.exact)
-        {
-            self.cases += 1;
-            self.fixed += 1;
-            return;
-        }
         // Both inexact and alike but for the box, and the new box lies inside the one before
         // and holds every point the interpreter finds: the clip narrows a result the map2 cap
         // widened, so Lemma 4's equality does not hold there.
@@ -391,9 +389,9 @@ impl Diffs {
         }
     }
 
-    /// Panics, showing the first differences, when there are any, or when fewer than `least`
-    /// cases were compared.
-    fn none(self, least: usize) {
+    /// Panics, showing the first differences, when there are any, when fewer than `least`
+    /// cases were compared, or when the number of narrower boxes is not `narrower`.
+    fn none(self, least: usize, narrower: usize) {
         assert!(
             self.found.is_empty(),
             "{} of {} preimages differ from the transfer before:\n{}",
@@ -402,9 +400,9 @@ impl Diffs {
             self.found[..self.found.len().min(5)].join("\n")
         );
         assert!(self.cases >= least, "only {} cases compared", self.cases);
-        eprintln!(
-            "{} cases, {} where the transfer before is refuted, {} with a narrower inexact box",
-            self.cases, self.fixed, self.narrower
+        assert_eq!(
+            self.narrower, narrower,
+            "the number of narrower inexact boxes changed"
         );
     }
 }
@@ -526,7 +524,7 @@ fn chain_families(sets: &[(&str, &[usize])], least: usize) {
                 }
             }
         }
-        diffs.none(least);
+        diffs.none(least, 0);
     });
 }
 
@@ -537,6 +535,8 @@ fn chains_of_shared_terms_keep_their_preimages() {
         &[
             ("probe", &[256]),
             ("live", &[64, 128]),
+            ("probe_all", &[256]),
+            ("probe_half", &[256]),
             ("alt", &[256]),
             ("alt_live", &[64, 128]),
             ("eq0", &[256]),
@@ -600,7 +600,7 @@ fn chains_of_slow_families_keep_their_preimages() {
                 diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
             }
         }
-        diffs.none(83);
+        diffs.none(83, 0);
     });
 }
 
@@ -633,7 +633,7 @@ fn random_chains_of_shared_terms_keep_their_preimages() {
             let (t, d) = chain_demand(&mut rng, t);
             diffs.preimage("translations", &t, &ds, &d);
         }
-        diffs.none(4000);
+        diffs.none(4000, 0);
     });
 }
 
@@ -674,7 +674,7 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
 
 /// Every kind of guard and arm the summary reads, and some it does not: the cases `from..to`
 /// of one sequence, split in two tests so they run in parallel.
-fn random_guarded_chains(from: usize, to: usize) {
+fn random_guarded_chains(from: usize, to: usize, narrower: usize) {
     on_big_stack(|| {
         let mut diffs = Diffs::default();
         let mut rng = Rng::new(22);
@@ -694,20 +694,20 @@ fn random_guarded_chains(from: usize, to: usize) {
                 diffs.preimage("random chain", &t, &ds, &d);
             }
         }
-        diffs.none(to - from);
+        diffs.none(to - from, narrower);
     });
 }
 
 /// Random chains of every kind of guard, the first half.
 #[test]
 fn random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(0, 2000);
+    random_guarded_chains(0, 2000, 1);
 }
 
 /// Random chains of every kind of guard, the second half.
 #[test]
 fn more_random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(2000, 4000);
+    random_guarded_chains(2000, 4000, 0);
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
@@ -776,7 +776,7 @@ fn random_terms_keep_their_preimages() {
                 diffs.exact("exact", &t, &ds, &cs, &d);
             }
         }
-        diffs.none(6800);
+        diffs.none(6800, 0);
     });
 }
 
@@ -903,7 +903,7 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
                 );
             }
         }
-        diffs.none(4000);
+        diffs.none(4000, 0);
     });
 }
 
@@ -956,6 +956,28 @@ fn chain_probe_scales() {
 #[test]
 fn chain_live_scales() {
     scales("live", 256);
+}
+
+/// The probe with `i` over all integers: the arm `t + 1` leaves `i64` at `i = i64::MAX`,
+/// where the guard keeps `t`, so the summary checks only the values each arm keeps.
+#[test]
+fn chain_probe_all_scales() {
+    scales("probe_all", 256);
+}
+
+/// The probe with `i` over the half-line `[-100, inf)`.
+#[test]
+fn chain_probe_half_scales() {
+    scales("probe_half", 256);
+}
+
+/// The probe with `i` in `[-100, 2^62]`: an end of the domain plus an end of the demand met
+/// with the hull passes `i64::MAX`, so `Tx::fits` keeps the summary and the clip off and the
+/// transfer before runs, at about `k^2.8` (ledger S22-WIDE).
+#[test]
+#[ignore = "ledger S22-WIDE: the transfer before on a domain end beyond 2^62"]
+fn chain_probe_wide_scales() {
+    scales("probe_wide", 256);
 }
 
 #[test]
