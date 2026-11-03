@@ -437,6 +437,20 @@ impl Formula {
     }
 
     /// The conjunction, flattened, `true` dropped and `false` absorbing.
+    // Complexity tradeoff: a conjunction among `fs` is flattened into this one even when it is
+    // shared, so a shared conjunction is copied one level deep (`into_parts` clones its list of
+    // conjuncts, each conjunct an O(1) handle) at each place that holds it. No answer is given
+    // up; the cost is. Trigger: a `let`-bound conjunction of k constraints used inside a
+    // conjunction at each of d places costs O(d k) to build here, and its k constraints are
+    // then read at each place by the solver (`Parts::of`, `settle`, `pick`), O(d k) in all,
+    // quadratic in the size of the program when k is about d. Flattening is kept because the
+    // tightening below (one constraint per left-hand side), `Formula::either` and the base of
+    // `Parts` read the conjuncts at the top level. Test
+    // `l01_39_reduced_product::named_test::arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth`
+    // (ignored, fails: 1.18 to 59.0 G at d = 30 to 240), COMPLEXITY.md S31b, open in item
+    // ST-formula-wide. A complete solution keeps a shared conjunction as a node of its own, and
+    // lets `Parts` hold it as a shared chunk of the base, which `settle`, `pick`, `witness` and
+    // `project_parts` read once per model and once per base that already holds it.
     pub fn and(fs: Vec<Formula>) -> Formula {
         let mut flat = Vec::new();
         for f in fs {
@@ -481,6 +495,19 @@ impl Formula {
 
     /// The disjunction, flattened, `false` dropped and `true` absorbing, and `true` when two
     /// disjuncts are complements (`Formula::complementary`).
+    // Complexity tradeoff: a disjunction among `fs` is flattened into this one even when it is
+    // shared, so a shared disjunction is copied one level deep (`into_parts` clones its list of
+    // disjuncts, each disjunct an O(1) handle) at each place that holds it, and `Parts::of`
+    // then meets its disjuncts as disjuncts of each place, not as one shared node. No answer is
+    // given up; the cost is. Trigger: a `let`-bound disjunction of k constraints used as a
+    // disjunct of a disjunction at each of d places costs O(d k), quadratic in the size of the
+    // program when k is about d. Flattening is kept because `complementary` and `settle` read
+    // the disjuncts at the top level. Test
+    // `l01_39_reduced_product::named_test::arms_of_a_wide_named_disjunction_at_each_tier_take_time_near_linear_in_the_depth`
+    // (ignored, fails: 0.37 to 14.2 G at d = 30 to 240), COMPLEXITY.md S31b, open in item
+    // ST-formula-wide. A complete solution keeps a shared disjunction as a node of its own,
+    // made once by `Parts::of` and read by `settle` once per base, with `complementary` and the
+    // printed relations checked against the flattened form.
     pub fn or(fs: Vec<Formula>) -> Formula {
         let mut out = Vec::new();
         for f in fs {
@@ -631,7 +658,12 @@ impl Formula {
         }
     }
 
-    /// Each constraint, in order.
+    /// Each constraint, in order, the constraints of a part held in more than one place listed
+    /// at its first place alone ([`Formula::walk`]), so the list is at most the number of
+    /// distinct parts and not the size of the formula written out. A caller that needs each
+    /// place, for a count or a position, cannot use it. Its callers in the compiler read it as
+    /// a set (`atoms`) or as a conjunction (`unbounded`), which a repeated constraint does not
+    /// change; `conjuncts::Conjuncts::cons` passes it on, conjunct by conjunct.
     pub fn cons(&self) -> Vec<&Con> {
         let mut out = Vec::new();
         self.walk(&mut |c| out.push(c));
@@ -1620,15 +1652,27 @@ impl Drop for Parts {
 impl Parts {
     /// The parts of a formula in negation normal form. The disjuncts nested below are made on
     /// an explicit stack, each before the disjunct that holds it, so that a nest of any depth
-    /// is read without recursion (COMPLEXITY.md S27). A disjunction or a disjunct that the
-    /// formula holds in more than one place is made once and shared, as [`Rc`]s, at each
-    /// place (COMPLEXITY.md S31).
-    // Complexity tradeoff: a shared conjunction met as a conjunct is added to the base of each
-    // place that holds it, constraint by constraint, so its constraints cost once per place
-    // (`and` flattens a conjunction into the conjunction around it, so it has no node of its
-    // own to share). A shared disjunction or disjunct, the form a `let`-bound test takes at
-    // each level of a nest, is made once. Trigger: a `let`-bound conjunction of k constraints
-    // used at d places costs O(d k).
+    /// is read without recursion (COMPLEXITY.md S27). A disjunction that the formula holds as a
+    /// conjunct in more than one place, and a disjunct held in more than one place, are made
+    /// once and shared, as [`Rc`]s, at each place (COMPLEXITY.md S31).
+    // Complexity tradeoff: two shapes of shared part are still read once per place, not once.
+    // (1) A shared conjunction used as a conjunct: `Formula::and` has flattened it into the
+    // conjunction around it, so it has no node here, and its constraints are added to the base
+    // of each place, one by one. (2) A shared disjunction used as a disjunct: `Formula::or` has
+    // flattened it into the disjunction around it, so its disjuncts are entered as disjuncts of
+    // each place (each disjunct that is a node is made once, but the list is walked at each
+    // place). No answer is given up; the cost is. Trigger: a `let`-bound conjunction (1) or
+    // disjunction (2) of k constraints used at each of d places costs O(d k) here and in the
+    // solver after it, quadratic in the size of the program when k is about d. A shared
+    // disjunction used as a conjunct and a shared disjunct, the forms a `let`-bound test takes
+    // in `named_test`, are made once. Tests
+    // `l01_39_reduced_product::named_test::arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth`
+    // and `..._wide_named_disjunction_...` (both ignored and failing: 1.18 to 59.0 G and 0.37
+    // to 14.2 G at d = 30 to 240), COMPLEXITY.md S31b, open in item ST-formula-wide. A complete
+    // solution keeps a shared conjunction and a shared disjunction as nodes of their own in
+    // `Formula::and` and `Formula::or`, holds a shared conjunction here as a shared chunk of
+    // the base, and lets `settle`, `pick`, `witness` and `project_parts` read a chunk or a
+    // disjunction once per model and skip a chunk that the base already holds.
     fn of(f: Formula) -> Parts {
         /// A disjunction being entered: its key when shared, its disjuncts left and those made.
         type Entering = (Option<Id>, std::vec::IntoIter<Formula>, Vec<Rc<Parts>>);

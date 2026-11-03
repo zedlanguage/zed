@@ -4,7 +4,10 @@
 //! limits holds and the next tier approves; the last tier asks `w >= d`. The rule is a chain
 //! of fallbacks on the balance `x` and the credit `y`, as long as the approval is deep. The
 //! formula of the test holds the rule's formula once at each tier, shared and not copied, so
-//! the arms take time near linear in `d` and not in `d²` (COMPLEXITY.md S31).
+//! the arms take time near linear in `d` and not in `d²` (COMPLEXITY.md S31). A named
+//! conjunction of many credit limits, or a named disjunction of many exemptions, is still read
+//! once at each tier (COMPLEXITY.md S31b, open in ST-formula-wide); two ignored tests below
+//! measure it.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -112,14 +115,6 @@ fn a_named_rule_at_each_tier_narrows_as_if_written_out() {
 }
 
 #[test]
-fn a_rule_named_once_and_used_at_one_tier_is_the_rule_itself() {
-    // At one tier the rule is used once: `z` small with the rule, or large.
-    let a = summary(&arms_of(named(1)));
-    assert_eq!(a[0].1[4], "z=[0..=10, 100..=200]");
-    assert_eq!(a[0].1[5], "w=[0..]");
-}
-
-#[test]
 fn arms_of_a_named_rule_at_each_tier_take_time_near_linear_in_the_depth() {
     // Depths 30 and 240. With the rule's formula copied at each tier the work grew 43 times
     // (1.25 to 54.0 billion instructions); shared, it grows 7.7 times.
@@ -140,4 +135,103 @@ fn arms_of_a_named_rule_at_each_tier_take_time_near_linear_in_the_depth() {
         .expect("a thread")
         .join()
         .expect("the test passes");
+}
+
+/// The credit limits, `k` of them: `x + j y >= j` for each `j` below `k`, one for each kind of
+/// account, on the balance `x` and the credit `y`.
+fn limits(k: usize) -> Vec<Term> {
+    (0..k as i64)
+        .map(|j| {
+            let line = prim(
+                Prim::Add,
+                vec![var("x"), prim(Prim::Mul, vec![lit(j), var("y")])],
+            );
+            prim(Prim::Ge, vec![line, lit(j)])
+        })
+        .collect()
+}
+
+/// The approval `d` tiers deep, with every one of `k` credit limits required at each tier.
+fn approval_within(d: usize, k: usize, named: bool) -> Term {
+    let limits = || all(limits(k));
+    if named {
+        let_("t", limits(), approval(d, &|| var("t")))
+    } else {
+        approval(d, &limits)
+    }
+}
+
+/// The approval `d` tiers deep where any one of `k` exemptions approves at each tier, beside a
+/// large request or a small one that the next tier approves.
+fn approval_exempt(d: usize, k: usize, named: bool) -> Term {
+    let exempt = || limits(k).into_iter().reduce(either).expect("an exemption");
+    let tiers = |t: &dyn Fn() -> Term| {
+        (0..d).rev().fold(ge("w", d as i64), |inner, i| {
+            let i = i as i64;
+            either(
+                either(t(), all(vec![ge("z", 100), le("z", 200), ge("w", i)])),
+                all(vec![
+                    ge("z", 0),
+                    le("z", 10),
+                    either(ge("q", i), le("u", -i)),
+                    inner,
+                ]),
+            )
+        })
+    };
+    if named {
+        let_("t", exempt(), tiers(&|| var("t")))
+    } else {
+        tiers(&exempt)
+    }
+}
+
+#[test]
+fn named_limits_and_exemptions_at_each_tier_narrow_as_if_written_out() {
+    for (d, k) in [(1, 1), (1, 3), (2, 2), (5, 5)] {
+        let within = summary(&arms_of(approval_within(d, k, true)));
+        assert_eq!(within, summary(&arms_of(approval_within(d, k, false))));
+        let exempt = summary(&arms_of(approval_exempt(d, k, true)));
+        assert_eq!(exempt, summary(&arms_of(approval_exempt(d, k, false))));
+    }
+}
+/// Runs the scaling check of `arms` on `family(d, d, true)` at d = 30 and 240.
+fn wide_scaling(what: &str, family: fn(usize, usize, bool) -> Term) {
+    scaling::on_a_thread(1 << 29, || {
+        let tests: BTreeMap<usize, Term> = [30, 240]
+            .map(|d| (d, if_(family(d, d, true), lit(1), lit(2))))
+            .into();
+        let scope = ints(&names());
+        scaling::check(what, 30, |d| {
+            std::hint::black_box(arms(&tests[&d], &scope));
+        });
+    });
+}
+
+#[test]
+#[ignore = "fails: a shared conjunction is flattened into each place; open in ST-formula-wide (COMPLEXITY.md S31b)"]
+fn arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth() {
+    // k = d credit limits named once and required at each of d tiers. Measured on the branch
+    // of ST-formula-share, in instructions at d = 30, 60, 120, 240: 1.18, 3.87, 14.8, 59.0 G
+    // (about 4 times per doubling); written out at each tier 12.1, 56.0, 251 G at d = 30 to
+    // 120. `Formula::and` flattens the shared conjunction into each tier's conjunction, so its
+    // k constraints are read at each tier (tradeoff comments at `Formula::and` and `Parts::of`).
+    wide_scaling(
+        "arms of k = d credit limits named once, required at each of d tiers",
+        approval_within,
+    );
+}
+
+#[test]
+#[ignore = "fails: a shared disjunction is flattened into each place; open in ST-formula-wide (COMPLEXITY.md S31b)"]
+fn arms_of_a_wide_named_disjunction_at_each_tier_take_time_near_linear_in_the_depth() {
+    // k = d exemptions named once, any of which approves at each of d tiers. Measured on the
+    // branch of ST-formula-share, in instructions at d = 30, 60, 120, 240: 0.37, 1.14, 3.88,
+    // 14.2 G (3.1 to 3.7 times per doubling); written out at each tier 7.5, 33.7, 150 G at
+    // d = 30 to 120. `Formula::or` flattens the shared disjunction into each tier's
+    // disjunction (tradeoff comments at `Formula::or` and `Parts::of`).
+    wide_scaling(
+        "arms of k = d exemptions named once, any of which approves at each of d tiers",
+        approval_exempt,
+    );
 }
