@@ -963,7 +963,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIN-probe | merge attempt 1 | 2026-11-03 07:30 | lock released |
 | LIN-probe-refute | impl attempt 1 | 2026-11-03 11:15 | learn() + bounds propagation over a breadth-first tree of the parts: guards(8k,3k/4) 11.0x bytes at k=8,16,32 (old 31.0x,41.7x,50.8x); one learn, one settle tes |
 | LIVE3 | merge attempt 1 | 2026-11-03 09:30 | lock released |
-| PA-affine-i128 | repair attempt 1 | 2026-11-03 10:45 | tradeoff comments added at pa_if and invert_piece (probe confirmed s22::a_chain_that_leaves_i64_keeps_its_exact_preimage reaches pa_if, wide_constants::a_value_ |
 | S22e-wide | impl attempt 1 | 2026-11-03 11:28 | started; worktree wt/s22e-wide from c076719 |
 | ST-formula-share | impl attempt 1 | 2026-11-03 06:50 | negative control (not committed): let-bound formula deep-copied at each use (preimage Var) -> probe 1.13/3.58/12.59/46.92 G at d=30/60/120/240; named_test scali |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
@@ -978,8 +977,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UNITANNOT-L7 | merge attempt 1 | 2026-11-03 07:14 | lock released |
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 
-Merged into local main and not yet pushed (9 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (17 commits); the push follows one full test run on the merged tree:
 
+- 2a332a1d PA-affine-i128 repair: summary_preimage says it is meant for bounded domains
+- bb2587c9 PA-affine-i128 repair: the pa_if tradeoff comment cites the test that reaches it
+- eb0b3095 PA-affine-i128 repair: Complexity tradeoff comments where pa_if and invert_piece give up on a value past i64
+- af42c567 PA-affine-i128: the preimage summary keeps constants in i128; reach measures constants by value
 - 300bee36 AXIOMS-chain-string: the order chain compositions at String (< implies <=, < with <= and <= with < give <, and the > family); 117 axioms
 - bd36e1b8 L1.17a repair: order of two kinds borrows wide numbers; casts share digits; - and abs ask first; refusals name their test (match, fix, family leaves)
 - 0980d134 L1.17a repair: COMPLEXITY K30 repair 4, STATUS row, ZED_PORT_GAPS rows
