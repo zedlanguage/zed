@@ -49,7 +49,7 @@ fn pughs_example_is_decided_and_its_arm_is_unreachable() {
 fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
     // The rows hold at (x, y, z, w) = (4, 0, 1, 0), where they are 15, 1, 0 and 10, so `ok` can
     // hold; the refusal claims only that this is not decided, since every elimination would add
-    // terms and the box of the bounds and its point nearest zero settle nothing.
+    // terms and the box of the bounds and its five points settle nothing.
     let src = program(
         "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y \
          - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y \

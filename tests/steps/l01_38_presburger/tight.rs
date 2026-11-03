@@ -1,6 +1,6 @@
 //! The family on which the general simplex was above O(N log N) (COMPLEXITY.md, S18): rows of
 //! three terms that no elimination keeps, refused with Growth after one pass over their terms
-//! (the box of their bounds and its point nearest zero), at n and 8n.
+//! (the box of their bounds and its five points), at n and 8n.
 
 use zed_tests::instances::Rng;
 use zedc::store::presburger::{Con, Formula, Lin, Refusal};

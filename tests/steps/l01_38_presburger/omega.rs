@@ -118,7 +118,7 @@ fn each_cause_of_a_refusal_has_its_own_message() {
         assert_eq!(e.to_string(), format!("refused: {text}"));
     };
     // Every elimination of each variable adds terms, no row is below zero over the box of the
-    // bounds, and the point of that box nearest zero misses a row.
+    // bounds, and each of the five points of that box that the box stage tries misses a row.
     refused(
         Formula::and(vec![
             ge(&[("x", 4), ("w", -12), ("y", -10), ("z", -12)], 11),

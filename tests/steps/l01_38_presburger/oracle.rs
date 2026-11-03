@@ -125,13 +125,16 @@ fn small_coefficients_over_four_variables_match_enumeration() {
     });
     // Both answers occur, so neither check passes by never being asked; the refusals are
     // counted, not required to be absent, and each is a cause of its own. Option A (STATUS.md,
-    // L1.38): the counts are those measured with design R, which has no linear program. Before
-    // it more than 10 of these systems were shown empty; now 3 are, and the systems the
-    // program decided are refused with Growth. The counts measure how much is decided, not
-    // correctness, which `run` checks on every system against enumeration.
+    // L1.38): the counts are those measured with design R, which has no linear program, and
+    // the five points of its box stage (XT3). Before R more than 10 of these systems were
+    // shown empty; now 3 are, and the empty systems the program decided are refused with
+    // Growth. With only the point nearest zero the counts were (213, 3, 184); the four other
+    // points decide 42 more with a point, more than the 229 the linear program found. The
+    // counts measure how much is decided, not correctness, which `run` checks on every system
+    // against enumeration.
     assert_eq!(
         (t.sat, t.unsat, t.growth, t.shadows),
-        (213, 3, 184, 0),
+        (255, 3, 142, 0),
         "{t:?}"
     );
 }
@@ -200,15 +203,17 @@ fn corner_rows(rng: &mut Rng, n: usize, half: i64) -> Vec<Row> {
 
 #[test]
 fn rows_of_three_terms_tight_at_a_corner_match_enumeration() {
-    // No elimination of these rows is exact, so the box of the bounds and the point nearest
-    // zero in it decide, and a bound one too tight or a point not checked against every row
+    // No elimination of these rows is exact, so the box of the bounds and its five points
+    // decide, and a bound one too tight or a point not checked against every row
     // gives a wrong answer here. 12,000 systems; `run` fails at the first wrong answer.
     let t = run(0x38_3b, 12_000, 4, 3, |rng| corner_rows(rng, 4, 3));
-    // The counts measured with design R. Without the box test 5,074 are refused (control run
-    // once, STATUS.md, L1.38); the box shows most of the empty ones empty.
+    // The counts measured with design R and the five points of its box stage (XT3). Without
+    // the box test 5,074 are refused (control run once, STATUS.md, L1.38); the box shows most
+    // of the empty ones empty. With only the point nearest zero the counts were (2550, 9282,
+    // 168): the corners and midpoints find 36 more points.
     assert_eq!(
         (t.sat, t.unsat, t.growth, t.shadows),
-        (2550, 9282, 168, 0),
+        (2586, 9282, 132, 0),
         "{t:?}"
     );
     eprintln!("three terms: {t:?}");
@@ -388,10 +393,34 @@ fn named(rows: &[Row], half: i64, names: &[Arc<str>], order: &[usize]) -> Formul
     Formula::and(fs)
 }
 
+/// Calls `visit` with every permutation of `0..n`, by Heap's algorithm, and returns how many
+/// there were.
+fn each_permutation(n: usize, mut visit: impl FnMut(&[usize])) -> usize {
+    let mut perm: Vec<usize> = (0..n).collect();
+    visit(&perm);
+    let mut count = 1;
+    let mut c = vec![0; n];
+    let mut i = 1;
+    while i < n {
+        if c[i] < i {
+            perm.swap(if i % 2 == 0 { 0 } else { c[i] }, i);
+            visit(&perm);
+            count += 1;
+            c[i] += 1;
+            i = 1;
+        } else {
+            c[i] = 0;
+            i += 1;
+        }
+    }
+    count
+}
+
 /// Decides 3000 systems from `make` over `n` variables in the box `[-half, half]^n`, then each
-/// again 4 times with its variables renamed at random to names that sort in another order and
-/// its rows and bounds shuffled, and fails at the first answer that changes. The refusals, which
-/// are among the answers compared.
+/// again under every naming of its variables: `n` random names given to the variables in each
+/// of the `n!` orders, so that the names sort in every order, with the rows and bounds shuffled
+/// anew each time. Fails at the first answer that changes. Returns the refusals, which are
+/// among the answers compared.
 fn reorderings(seed: u64, n: usize, half: i64, make: impl Fn(&mut Rng) -> Vec<Row>) -> usize {
     let mut rng = Rng::new(seed);
     let plain: Vec<Arc<str>> = (0..n).map(|i| Arc::from(format!("v{i}"))).collect();
@@ -402,27 +431,32 @@ fn reorderings(seed: u64, n: usize, half: i64, make: impl Fn(&mut Rng) -> Vec<Ro
         let f = named(&rows, half, &plain, &(0..all).collect::<Vec<_>>());
         let a = decide(&f);
         refused += usize::from(a.is_err());
-        for _ in 0..4 {
-            let mut names: Vec<Arc<str>> = Vec::new();
-            while names.len() < n {
-                let prefix = rng.pick(&["q", "b", "zz", "a", "m"]);
-                let s: Arc<str> = Arc::from(format!("{prefix}{}", rng.below(1000)));
-                if !names.contains(&s) {
-                    names.push(s);
-                }
+        let mut drawn: Vec<Arc<str>> = Vec::new();
+        while drawn.len() < n {
+            let prefix = rng.pick(&["q", "b", "zz", "a", "m"]);
+            let s: Arc<str> = Arc::from(format!("{prefix}{}", rng.below(1000)));
+            if !drawn.contains(&s) {
+                drawn.push(s);
             }
+        }
+        let namings = each_permutation(n, |perm| {
+            let names: Vec<Arc<str>> = perm.iter().map(|&p| drawn[p].clone()).collect();
             let mut order: Vec<usize> = (0..all).collect();
             for i in (1..all).rev() {
                 order.swap(i, rng.below(i + 1));
             }
             let g = named(&rows, half, &names, &order);
             assert_eq!(a, decide(&g), "{f}\nrenamed and reordered: {g}");
-        }
+        });
+        assert_eq!(namings, (1..=n).product::<usize>());
     }
     refused
 }
 
-// 48,000 renamed and reordered systems in all, 12,000 of each family.
+// 168,000 renamed and reordered systems in all: 72,000 in each four-variable family, 18,000
+// over three variables and 6,000 over two. The four-variable families check that the five
+// points of the box stage, which are computed on the rows left after the eliminations, give no
+// answer that depends on the names (XT3 report, part E).
 
 #[test]
 fn small_coefficients_answer_the_same_under_any_names_and_order() {
@@ -478,40 +512,64 @@ const REGULAR: [[i64; 8]; 16] = [
     [0, -5, 0, 0, 0, 6, 0, 6],
 ];
 
-#[test]
-fn a_regular_system_answers_the_same_under_every_naming() {
-    // All 8! namings of the variables, in the box [-1, 1]^8, by Heap's algorithm. Before
-    // design R the answer changed with the names (cross-review xt, round 2); now every naming
-    // is refused with Growth, though the rows hold at (1, ..., 1).
-    let rows: Vec<Row> = REGULAR
+fn regular() -> Vec<Row> {
+    REGULAR
         .iter()
         .map(|c| Row {
             c: c.to_vec(),
             k: -1,
         })
-        .collect();
+        .collect()
+}
+
+#[test]
+fn a_regular_system_is_decided_under_every_naming() {
+    // All 8! namings of the variables, in the box [-1, 1]^8. Before design R the answer
+    // changed with the names (cross-review xt, round 2); with only the point nearest zero
+    // every naming was refused with Growth. The upper corner of the box, (1, ..., 1), holds
+    // every row, and every naming finds it.
+    let rows = regular();
     let all: Vec<usize> = (0..rows.len() + 16).collect();
-    let mut perm: Vec<usize> = (0..8).collect();
-    let answer = |perm: &[usize]| {
+    let count = each_permutation(8, |perm| {
         let names: Vec<Arc<str>> = perm.iter().map(|p| Arc::from(format!("v{p}"))).collect();
         let f = named(&rows, 1, &names, &all);
-        assert_eq!(decide(&f), Err(Refusal::Growth), "{f}");
-    };
-    answer(&perm);
-    let mut count = 1;
-    let mut c = [0usize; 8];
-    let mut i = 1;
-    while i < 8 {
-        if c[i] < i {
-            perm.swap(if i % 2 == 0 { 0 } else { c[i] }, i);
-            answer(&perm);
-            count += 1;
-            c[i] += 1;
-            i = 1;
-        } else {
-            c[i] = 0;
-            i += 1;
-        }
-    }
+        assert_eq!(decide(&f), Ok(true), "{f}");
+    });
     assert_eq!(count, 40_320);
+}
+
+/// The points of the box `[-1, 1]^8` that meet every row.
+fn points_of_the_unit_box(rows: &[Row]) -> Vec<Vec<i64>> {
+    (0..3i64.pow(8))
+        .map(|code| (0..8).map(|i| code / 3i64.pow(i) % 3 - 1).collect())
+        .filter(|p: &Vec<i64>| {
+            rows.iter()
+                .all(|r| r.c.iter().zip(p).map(|(c, v)| c * v).sum::<i64>() + r.k >= 0)
+        })
+        .collect()
+}
+
+#[test]
+fn a_system_whose_only_point_is_the_upper_corner_has_that_point() {
+    // In the box [-1, 1]^8 the regular rows hold at 38 points, each in {0, 1}^8. The rows
+    // `v[i] + v[i + 1] - v[i + 2] >= 1` around the cycle of 8 leave only (1, ..., 1): a 0 at
+    // `v[j]` needs `v[j + 1] = 0` by row `j - 1`, and then `v[j + 2] = -1` by row `j`. No one
+    // row moves a bound of the box, so the box stage sees all of [-1, 1]^8; the point nearest
+    // zero and the lower corner miss, the midpoints are the point nearest zero, and the upper
+    // corner is the one point of the five that holds.
+    let mut rows = regular();
+    let points = points_of_the_unit_box(&rows);
+    assert_eq!(points.len(), 38);
+    assert!(points.iter().flatten().all(|v| *v >= 0));
+    rows.extend((0..8).map(|i| {
+        let mut c = vec![0; 8];
+        c[i] = 1;
+        c[(i + 1) % 8] = 1;
+        c[(i + 2) % 8] = -1;
+        Row { c, k: -1 }
+    }));
+    assert_eq!(points_of_the_unit_box(&rows), [vec![1; 8]]);
+    let f = formula(&rows, 8, 1);
+    let m = satisfiable(&f).expect("answered").expect("a point");
+    assert!(f.holds(&m), "{m:?} fails {f}");
 }

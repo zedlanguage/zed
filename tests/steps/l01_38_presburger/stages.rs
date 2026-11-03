@@ -1,5 +1,5 @@
 //! The last stages of the Omega test after design R (STATUS.md, L1.38): the box of the bounds
-//! with its point nearest zero, the merging of proportional columns, and the potential of a
+//! with its five points, the merging of proportional columns, and the potential of a
 //! UTVPI graph, in topological order when it has no cycle and by Goldberg and Radzik's search
 //! when it has. Their corner cases, and the scaling of each at n and 8n: rows of three terms,
 //! the coefficients' bit size, columns seen only through two aggregates, a UTVPI hub with and
@@ -122,9 +122,9 @@ fn rows_whose_box_is_a_single_point_have_that_point() {
 fn a_variable_with_equal_bounds_is_answered_as_enumeration_answers_or_refused() {
     // `x0` fixed at each of -6..=6 and the others in [-2, 2]. The rows left are three-term rows
     // over (x1, x2, x3) that no elimination keeps; the answer is enumeration's or Growth. At 4
-    // the rows hold at (0, 1, 0), but the point of the box nearest zero misses the third row,
-    // so the answer is Growth: a refusal, which design R gives where the linear program before
-    // it found the point.
+    // the rows hold at (0, 1, 0), which the point of the box nearest zero misses on the third
+    // row; another of the five points of the box stage holds every row, so the answer is a
+    // point, as the linear program before design R found.
     let mut answered = Vec::new();
     for v in -6..=6 {
         let rows: Vec<(Vec<(usize, i64)>, i64)> = WIDE
@@ -147,7 +147,7 @@ fn a_variable_with_equal_bounds_is_answered_as_enumeration_answers_or_refused() 
         answered.push((v, got));
     }
     eprintln!("x0 fixed: {answered:?}");
-    assert_eq!(answered[10], (4, Err(Refusal::Growth)));
+    assert_eq!(answered[10], (4, Ok(true)));
 }
 
 #[test]
@@ -463,7 +463,8 @@ fn three_rows(m: usize) -> Formula {
 #[test]
 fn three_variables_in_many_rows_scale() {
     // The rows hold at (3, -2, 5), and design R refuses them: no elimination keeps them, and
-    // the box of their bounds has no point that meets every row (option A, STATUS.md, L1.38).
+    // none of the five points of the box of their bounds meets every row (option A, STATUS.md,
+    // L1.38).
     // The refusal costs time linear in the rows.
     decides(
         "three variables in many rows",

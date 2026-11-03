@@ -150,7 +150,7 @@ fn row(t: &[(usize, i64)], k: i64, shifted: bool) -> Formula {
 /// Three rows of three variables at each `i`, cyclically, shifted: the family on which Bland's
 /// rule alone took about 2^(0.7n) pivots. No elimination keeps the rows, so the answer is the
 /// refusal [`Refusal::Growth`], given once the box of the bounds shows no row empty and its
-/// point nearest zero misses a row.
+/// five points (nearest zero, the corners, the midpoints) each miss a row.
 fn sparse(n: usize) -> Formula {
     let mut r = Vec::new();
     for i in 0..n {

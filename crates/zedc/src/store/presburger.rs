@@ -33,8 +33,9 @@
 //! When every elimination left would add terms, the box test decides what it can, in one pass
 //! over the terms and with no linear program: each variable's bounds are tightened once by
 //! every row from the bounds its bound rows give ([`bounds`]); the rows are empty when one of
-//! them is below zero at every point of that box, have a point when the point of the box
-//! nearest zero holds every row, and are refused otherwise. At the first inexact elimination
+//! them is below zero at every point of that box, have a point when one of five points of the
+//! box holds every row (the point nearest zero, the lower and upper corners, and the two
+//! midpoints, [`box_point`]), and are refused otherwise. At the first inexact elimination
 //! the real shadow is tested once ([`relaxed_empty`]): real-shadow eliminations are taken
 //! while each adds no terms, and the box test ends it; empty, it shows the problem empty. From
 //! there on the dark shadow is solved, whose points are points of the problem. When it has
@@ -128,7 +129,8 @@ impl fmt::Display for Atom {
 pub enum Refusal {
     /// Every elimination of a variable would enlarge the system, which has three variables or
     /// more and is not of the form `±x ± y + k >= 0`; no row is below zero over the box its
-    /// bounds give its variables, and the point of that box nearest zero misses some row.
+    /// bounds give its variables, and each of the five points of that box that `box_point`
+    /// tries misses some row.
     Growth,
     /// The integer points could lie only in a splinter of a splinter: a gray shadow within a
     /// gray shadow, whose search is exponential in the variables.
@@ -1998,24 +2000,49 @@ fn box_empty(sys: &System) -> bool {
     bounds(sys).is_none_or(|(lo, hi)| box_empty_in(sys, &lo, &hi))
 }
 
-/// The point at which each variable takes the value nearest zero in the box `lo`, `hi`, if
-/// it holds every row. It depends on the rows alone.
+/// The value of one variable in one candidate point of the box stage, from its two bounds, or
+/// none where a bound it reads is missing.
+type Coordinate = fn(&Option<Int>, &Option<Int>) -> Option<Int>;
+
+/// The five candidate points of the box stage, one coordinate at a time: the value nearest
+/// zero ([`nearest_zero`], which also stands in wherever a bound is missing), the lower bound,
+/// the upper bound, and the midpoint of the bounds rounded down and rounded up.
+const CANDIDATES: [Coordinate; 5] = [
+    |_, _| None,
+    |lo, _| lo.clone(),
+    |_, hi| hi.clone(),
+    |lo, hi| Some((lo.as_ref()? + hi.as_ref()?).div_floor(&Int::from(2))),
+    |lo, hi| Some((&(lo.as_ref()? + hi.as_ref()?) + &Int::ONE).div_floor(&Int::from(2))),
+];
+
+/// The value nearest zero between the bounds `lo` and `hi`.
+fn nearest_zero(lo: &Option<Int>, hi: &Option<Int>) -> Int {
+    match (lo, hi) {
+        (Some(l), _) if l.is_positive() => l.clone(),
+        (_, Some(h)) if h.is_negative() => h.clone(),
+        _ => Int::ZERO,
+    }
+}
+
+/// The first of five points of the box `lo`, `hi` that holds every row: the point nearest
+/// zero, the lower corner, the upper corner, and the two midpoints, rounded down and rounded
+/// up ([`CANDIDATES`]), each taken variable by variable. Each costs one pass over the terms of
+/// the rows. They depend on the rows and the box alone, not on the names of the variables or
+/// the order of the rows.
 fn box_point(sys: &System, lo: &[Option<Int>], hi: &[Option<Int>]) -> Option<Vec<Int>> {
-    let v: Vec<Int> = lo
-        .iter()
-        .zip(hi)
-        .map(|b| match b {
-            (Some(l), _) if l.is_positive() => l.clone(),
-            (_, Some(h)) if h.is_negative() => h.clone(),
-            _ => Int::ZERO,
-        })
-        .collect();
-    let holds = sys.rows.iter().all(|(a, held)| {
-        !a.iter()
-            .fold(held.k.clone(), |s, (i, c)| &s + &(c * &v[*i]))
-            .is_negative()
-    });
-    holds.then_some(v)
+    CANDIDATES.iter().find_map(|at| {
+        let v: Vec<Int> = lo
+            .iter()
+            .zip(hi)
+            .map(|(l, h)| at(l, h).unwrap_or_else(|| nearest_zero(l, h)))
+            .collect();
+        let holds = sys.rows.iter().all(|(a, held)| {
+            !a.iter()
+                .fold(held.k.clone(), |s, (i, c)| &s + &(c * &v[*i]))
+                .is_negative()
+        });
+        holds.then_some(v)
+    })
 }
 
 /// The shadow row of the lower bound `a·x + l >= 0` and the upper bound `-b·x + u >= 0` on
@@ -2246,25 +2273,29 @@ impl Omega {
                 continue;
             }
             // Every elimination left adds terms. The rows are empty when the box of their
-            // bounds shows it, and have a point when the point of the box nearest zero holds
-            // them; otherwise the question is refused.
+            // bounds shows it, and have a point when one of the five points of the box that
+            // `box_point` tries holds them; otherwise the question is refused.
             //
             // Complexity tradeoff: a system that the box neither empties nor satisfies, once
             // no elimination is left that keeps the rows from growing, is given up: it gets
             // `Refusal::Growth` ("not decided", rejected at the function by `run.rs`
-            // `linear_questions`), though it may have a point or none. Why: an elimination
-            // that adds terms multiplies lower by upper bounds, so the rows can grow doubly
-            // exponentially in the variables eliminated (Fourier–Motzkin), and the dark and
-            // gray shadows of the full Omega test add an exponential search on top. Trigger:
+            // `linear_questions`), though it may have a point or none. Only five points of the
+            // box are tried (nearest zero, lower corner, upper corner, the two midpoints), so a
+            // system whose points all lie elsewhere in the box is refused. Why: an
+            // elimination that adds terms multiplies lower by upper bounds, so the rows can grow
+            // doubly exponentially in the variables eliminated (Fourier–Motzkin), and the dark
+            // and gray shadows of the full Omega test add an exponential search on top; trying
+            // every point of the box is exponential in the variables. Trigger:
             // three or more variables whose every elimination pairs more bounds than it
             // removes and whose rows are not all `±x ± y + k >= 0`; the size of the system plays
             // no part. Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
             // `l01_38_presburger::checker::a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`,
-            // `l01_38_presburger::scaling::the_shifted_sparse_family_scales`. COMPLEXITY.md
-            // rows S18 and Kept "Fourier–Motzkin pairs". A complete solution would run the
-            // growing eliminations of the full Omega test (or another complete Presburger
-            // procedure) and accept their exponential worst case, or find a structural class
-            // of growing systems decidable in O(n log n).
+            // `l01_38_presburger::scaling::the_shifted_sparse_family_scales`,
+            // `l01_38_presburger::stages::three_variables_in_many_rows_scale` (none of the
+            // five points holds). COMPLEXITY.md rows S18 and Kept "Fourier–Motzkin pairs". A
+            // complete solution would run the growing eliminations of the full Omega test (or
+            // another complete Presburger procedure) and accept their exponential worst case,
+            // or find a structural class of growing systems decidable in O(n log n).
             let Some((lo, hi)) = bounds(&self.sys) else {
                 return Leaf::Empty;
             };
