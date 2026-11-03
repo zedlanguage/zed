@@ -597,7 +597,7 @@ impl Resolver {
             ExprKind::Reduce { .. } => self.later(e.span, "a reduction `><`", "L3.2"),
             ExprKind::Read { .. } => self.later(e.span, "a metadata read `::`", "L3.2"),
             ExprKind::Section(_) => self.later(e.span, "an operator section", "L3.2"),
-            ExprKind::Seq(_) => self.later(e.span, "a sequence display", "L3.2"),
+            ExprKind::Array(_) => self.later(e.span, "an array display", "L3.2"),
             ExprKind::Set(_) => self.later(e.span, "a set display", "L3.2"),
             ExprKind::Map(_) => self.later(e.span, "a map display", "L3.2"),
             ExprKind::For { .. } => self.later(e.span, "a `for`", "L3.2"),
@@ -667,7 +667,7 @@ impl Resolver {
             TypeKind::Apply(..) => self.later(t.span, "an applied type", "L2.5"),
             TypeKind::AtomApply(..) => self.later(t.span, "an atom type with a payload", "L2.5"),
             TypeKind::Record(_) => self.later(t.span, "a record type", "L2.5"),
-            TypeKind::Seq(_) => self.later(t.span, "a family type `[T]`", "L3.2"),
+            TypeKind::Array(_) => self.later(t.span, "a family type `[T]`", "L3.2"),
         }
     }
 }

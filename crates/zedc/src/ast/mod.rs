@@ -184,8 +184,11 @@ pub enum ExprKind {
     },
     /// An operator section `(+)`: the binary operator as a function.
     Section(&'static str),
-    /// A sequence display `[a, b, c]`, its elements in written order.
-    Seq(Vec<Expr>),
+    /// An array display `[a, b, c]`, its elements in written order: the array
+    /// `{0 -> a, 1 -> b, 2 -> c}` of type `int[0..<3] -> T`, keyed by rank, each element's
+    /// rank its position (sec:grammar, `SeqExpr`). It is not a `Seq` (sec:order), whose keys
+    /// are origins.
+    Array(Vec<Expr>),
     /// A set display `{a, b}`, its elements in written order.
     Set(Vec<Expr>),
     /// A map display `{k -> v, …}`, its entries in written order. `{}` is the empty family,
@@ -700,7 +703,7 @@ impl<'a, 's> Builder<'a, 's> {
                 span: self.span(n),
             }),
             "SeqExpr" => Ok(Expr {
-                kind: ExprKind::Seq(
+                kind: ExprKind::Array(
                     kids.iter()
                         .map(|&k| self.node(k))
                         .collect::<Result<_, _>>()?,

@@ -1887,7 +1887,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             | ExprKind::Reduce { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
-            | ExprKind::Seq(_)
+            | ExprKind::Array(_)
             | ExprKind::Set(_)
             | ExprKind::Map(_)
             | ExprKind::For { .. } => unreachable!("resolve rejects the forms of layer L3"),
@@ -4514,7 +4514,7 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
             t.payloads.insert(a.as_str().into(), Some(vec![shape]));
             t
         }
-        TypeKind::Seq(_) => unreachable!("resolve rejects the forms of layer L3"),
+        TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
         TypeKind::Name(n) if leaves.contains_key(n.as_str()) => leaves[n.as_str()].clone(),
         TypeKind::Name(n) => match n.as_str() {
             "int" => Ty::carrier(Carrier::Int),

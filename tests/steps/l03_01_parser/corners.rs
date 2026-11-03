@@ -6,12 +6,12 @@ use super::check;
 #[test]
 fn empty_displays_and_ranges() {
     check(&[
-        ("f(x) = [];", "(def f (x) = (seq))"),
+        ("f(x) = [];", "(def f (x) = (array))"),
         ("f(x) = {};", "(def f (x) = (map))"),
         ("f(x) = 0..<0;", "(def f (x) = (..< 0 0))"),
         ("f(x) = (0..<0)::len;", "(def f (x) = (:: (..< 0 0) len))"),
         ("f(x) = { 1, };", "(def f (x) = (set 1))"),
-        ("f(x) = [1, ];", "(def f (x) = (seq 1))"),
+        ("f(x) = [1, ];", "(def f (x) = (array 1))"),
     ]);
 }
 
@@ -76,9 +76,9 @@ fn a_family_type_is_not_a_display() {
     check(&[
         (
             "f(x: [int]) = [int];",
-            "(def f ((x: (seq int))) = (seq int))",
+            "(def f ((x: (array int))) = (array int))",
         ),
-        ("f(x: [int]) = [];", "(def f ((x: (seq int))) = (seq))"),
+        ("f(x: [int]) = [];", "(def f ((x: (array int))) = (array))"),
     ]);
 }
 
@@ -107,7 +107,7 @@ fn a_for_nests_in_its_head_and_in_displays() {
         ),
         (
             "f(m) = [for x in m { x }];",
-            "(def f (m) = (seq (for (x) m (block (return x)))))",
+            "(def f (m) = (array (for (x) m (block (return x)))))",
         ),
         (
             "f(m) = for x in { 1, 2 } { x };",

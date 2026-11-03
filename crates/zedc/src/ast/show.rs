@@ -57,7 +57,7 @@ fn each<'a, T: 'a>(
 /// An s-expression: `(call f 1 (x: 2) ...)`, `(index m k)`, `(. p x)`, `(?. p x)`, `(+ a b)`,
 /// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`, `(record (x: 1))`,
 /// `(with p (= c.x 1))`, `(match x (-> p e) (-> q (where c) f))`; from layer L3 `(..< a b)`,
-/// `(.. a)`, `(in x s)`, `(not in x s)`, `(>< m op)`, `(:: xs len)`, `(section +)`, `(seq a b)`,
+/// `(.. a)`, `(in x s)`, `(not in x s)`, `(>< m op)`, `(:: xs len)`, `(section +)`, `(array a b)`,
 /// `(set a b)`, `(map (-> k v))`, and `(for (k v) m (where c) body)`; from layer L6 `(loop t body)`,
 /// `(break e)` and `(*. c m)`.
 fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
@@ -217,8 +217,8 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
             out.extend([Text("(:: "), at(of), Text(" "), Text(name), Text(")")]);
         }
         ExprKind::Section(op) => out.extend([Text("(section "), Text(op), Text(")")]),
-        ExprKind::Seq(es) => {
-            out.push(Text("(seq"));
+        ExprKind::Array(es) => {
+            out.push(Text("(array"));
             each(out, es, Show::Expr);
             out.push(Text(")"));
         }
@@ -498,7 +498,7 @@ fn function<'a>(func: &'a Function, out: &mut Vec<Show<'a>>) {
 }
 
 /// `int`, `#none`, `(tuple A B)`, `(| A B)`, `(& A B)`, `(\ A B)`, `(-> (A (x: B)) R)`,
-/// `(Tree T)`, `(#node (l: T))`, `(record (x: int))`, `(seq T)`.
+/// `(Tree T)`, `(#node (l: T))`, `(record (x: int))`, `(array T)`.
 fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
     let mut list = |head, ts: &'a [Type]| {
         out.push(Text(head));
@@ -550,7 +550,7 @@ fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
             type_params(params, " ", out);
             out.push(Text(")"));
         }
-        TypeKind::Seq(t) => out.extend([Text("(seq "), Show::Type(t), Text(")")]),
+        TypeKind::Array(t) => out.extend([Text("(array "), Show::Type(t), Text(")")]),
         TypeKind::Record(fields) => {
             out.push(Text("(record"));
             for (n, t) in fields {

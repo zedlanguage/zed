@@ -973,7 +973,7 @@ impl<'a> Elab<'a> {
             | ExprKind::Reduce { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
-            | ExprKind::Seq(_)
+            | ExprKind::Array(_)
             | ExprKind::Set(_)
             | ExprKind::Map(_)
             | ExprKind::For { .. } => unreachable!("resolve rejects the forms of layer L3"),
@@ -1743,7 +1743,7 @@ impl<'a> Elab<'a> {
             TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
-            TypeKind::Seq(_) => unreachable!("resolve rejects the forms of layer L3"),
+            TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
             TypeKind::Name(n) => match n.as_str() {
                 "int" => KType::int(),
                 "rat" => KType::rat(),

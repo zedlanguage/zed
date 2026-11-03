@@ -106,7 +106,7 @@ fn level(e: &Expr) -> u8 {
         | ExprKind::This
         | ExprKind::Match { .. }
         | ExprKind::Section(_)
-        | ExprKind::Seq(_)
+        | ExprKind::Array(_)
         | ExprKind::Set(_)
         | ExprKind::Map(_)
         // A `loop` has no head, so like a block it takes a suffix as written: `loop { … }.v`.
@@ -1313,7 +1313,7 @@ impl<'a> Formatter<'a> {
                 });
             }
             ExprKind::Section(op) => self.put(format!("({op})")),
-            ExprKind::Seq(items) => {
+            ExprKind::Array(items) => {
                 self.put("[");
                 then![stack;
                     Job::Exprs { exprs: items, min: ELSE, ind },
@@ -1471,7 +1471,7 @@ impl<'a> Formatter<'a> {
                 self.put(format!("#{name}("));
                 then![stack; Job::TypeParams(ps), put(")")];
             }
-            TypeKind::Seq(t) => {
+            TypeKind::Array(t) => {
                 self.put("[");
                 then![stack; Job::Ty { t, min: 0 }, put("]")];
             }

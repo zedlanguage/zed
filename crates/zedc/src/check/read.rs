@@ -36,7 +36,7 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
             TypeKind::Apply(..) | TypeKind::Record(_) => {
                 return Err(format!("`{text}` holds a form of layer L2"));
             }
-            TypeKind::Seq(_) => return Err(format!("`{text}` holds a form of layer L3")),
+            TypeKind::Array(_) => return Err(format!("`{text}` holds a form of layer L3")),
             TypeKind::Name(_) | TypeKind::Atom(_) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => stack.extend(ts),
             TypeKind::AtomApply(_, ps) => stack.extend(ps.iter().map(|p| &p.ty)),

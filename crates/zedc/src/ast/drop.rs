@@ -61,7 +61,7 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
             out.append(&mut positional);
             out.extend(named.into_iter().map(|(_, e)| e));
         }
-        ExprKind::Tuple(mut es) | ExprKind::Seq(mut es) | ExprKind::Set(mut es) => {
+        ExprKind::Tuple(mut es) | ExprKind::Array(mut es) | ExprKind::Set(mut es) => {
             out.append(&mut es)
         }
         ExprKind::Map(entries) => {
@@ -231,7 +231,7 @@ fn type_kids(kind: &mut TypeKind, out: &mut Vec<Type>) {
             out.extend(params.into_iter().map(|p| p.ty));
         }
         TypeKind::Record(fields) => out.extend(fields.into_iter().map(|(_, t)| t)),
-        TypeKind::Seq(t) => out.push(*t),
+        TypeKind::Array(t) => out.push(*t),
     }
 }
 

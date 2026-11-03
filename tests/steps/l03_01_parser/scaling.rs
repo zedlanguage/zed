@@ -1,6 +1,7 @@
 //! The forms of this step at the rule of low complexity (DESIGN.md Part G): building,
 //! formatting, refusing in name resolution and dropping a unit is linear in its size, for a
-//! display of `n` entries, a match of `n` range-pattern arms and a section nested `n` deep.
+//! display of `n` entries, a match of `n` range-pattern arms, a section nested `n` deep, and an
+//! array display of `n` elements or nested `n` deep.
 //! Each input is lexed and parsed before timing, so the work measured is this step's.
 
 use std::collections::HashMap;
@@ -86,4 +87,25 @@ fn deep(n: usize) -> String {
 #[test]
 fn a_section_nested_deep_scales() {
     linear("a section nested n deep", 1000, deep);
+}
+
+/// `f(x) = [[0, x], [1, x], …];`, an array display of `n` arrays of two elements (SEQ-desugar).
+fn array(n: usize) -> String {
+    let rows: Vec<String> = (0..n).map(|i| format!("[{i}, x]")).collect();
+    format!("f(x) = [{}];\n", rows.join(", "))
+}
+
+#[test]
+fn an_array_display_of_many_elements_scales() {
+    linear("an array display of n elements", 2000, array);
+}
+
+/// `f(x) = [[… [x] …]];`, an array display nested `n` deep (SEQ-desugar).
+fn nested(n: usize) -> String {
+    format!("f(x) = {}x{};\n", "[".repeat(n), "]".repeat(n))
+}
+
+#[test]
+fn an_array_display_nested_deep_scales() {
+    linear("an array display nested n deep", 1000, nested);
 }

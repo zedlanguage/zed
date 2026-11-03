@@ -40,7 +40,7 @@ fn each_form_names_the_step_that_compiles_it() {
         ),
         (
             "f(x) = [x];",
-            &["a sequence display is compiled from step L3.2 [[x]]"],
+            &["an array display is compiled from step L3.2 [[x]]"],
         ),
         (
             "f(x) = { x };",
@@ -74,7 +74,7 @@ fn each_form_names_the_step_that_compiles_it() {
             "f(x: [int]) = [x];",
             &[
                 "a family type `[T]` is compiled from step L3.2 [[int]]",
-                "a sequence display is compiled from step L3.2 [[x]]",
+                "an array display is compiled from step L3.2 [[x]]",
             ],
         ),
     ]);

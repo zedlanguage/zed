@@ -15,10 +15,10 @@ fn ranges_build_with_each_end() {
 }
 
 #[test]
-fn displays_build_as_sequences_sets_and_maps() {
+fn displays_build_as_arrays_sets_and_maps() {
     check(&[
-        ("f(x) = [1, 2, 3];", "(def f (x) = (seq 1 2 3))"),
-        ("f(x) = [[x]];", "(def f (x) = (seq (seq x)))"),
+        ("f(x) = [1, 2, 3];", "(def f (x) = (array 1 2 3))"),
+        ("f(x) = [[x]];", "(def f (x) = (array (array x)))"),
         ("f(x) = { 1, x };", "(def f (x) = (set 1 x))"),
         ("f(x) = { x };", "(def f (x) = (set x))"),
         (
@@ -114,7 +114,10 @@ fn range_patterns_and_family_types_build() {
             "f(c) = match c { \"a\"..=\"z\" -> 1, _ -> 0 };",
             "(def f (c) = (match c (-> (..= (str \"a\") (str \"z\")) 1) (-> _ 0)))",
         ),
-        ("f(x: [int]) = x;", "(def f ((x: (seq int))) = x)"),
-        ("f(x: [[int]]) = x;", "(def f ((x: (seq (seq int)))) = x)"),
+        ("f(x: [int]) = x;", "(def f ((x: (array int))) = x)"),
+        (
+            "f(x: [[int]]) = x;",
+            "(def f ((x: (array (array int)))) = x)",
+        ),
     ]);
 }
