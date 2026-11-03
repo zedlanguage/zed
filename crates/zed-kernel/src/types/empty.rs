@@ -381,7 +381,7 @@ struct Search {
     reps: BTreeMap<Type, Option<usize>>,
     /// The values shown, each once, by number.
     shown: Vec<Rep>,
-    members: BTreeMap<(usize, Type), bool>,
+    members: BTreeMap<(usize, Type), Option<bool>>,
     /// Each type read as the value type of a morphism.
     value_reads: BTreeSet<usize>,
     /// Types proved empty for good: a morphism with such a value type has no value. All other
@@ -490,9 +490,15 @@ enum Lengths {
 /// refused. The lengths of lists of integers whose length is not 0 modulo 2 or 3, nor 1 or 5
 /// modulo 6, are none: the even ones are 0 modulo 2, and the odd ones are 0, 1 or 2 modulo 3.
 fn residues_meet(all: &[(u64, u64)], none: &[(u64, u64)]) -> Lengths {
+    residue_classes(all, none).0
+}
+
+/// As `residues_meet`, with the classes whose lengths it found to hold one when it answers
+/// `Some`: `all`, or `all` and the class of the split that has one.
+fn residue_classes(all: &[(u64, u64)], none: &[(u64, u64)]) -> (Lengths, Vec<(u64, u64)>) {
     let first = shares(all, none);
     if first != Lengths::Refused {
-        return first;
+        return (first, all.to_vec());
     }
     let primes: BTreeSet<u64> = none
         .iter()
@@ -538,16 +544,19 @@ fn residues_meet(all: &[(u64, u64)], none: &[(u64, u64)]) -> Lengths {
             let l = shares(&split, none);
             split.pop();
             match l {
-                Lengths::Some => return Lengths::Some,
+                Lengths::Some => {
+                    split.push((q, b));
+                    return (Lengths::Some, split);
+                }
                 Lengths::None => {}
                 Lengths::Refused => all_none = false,
             }
         }
         if all_none {
-            return Lengths::None;
+            return (Lengths::None, Vec::new());
         }
     }
-    Lengths::Refused
+    (Lengths::Refused, Vec::new())
 }
 
 /// A length in the lengths of `all` and in none of `none`, sought by the method of conditional
@@ -555,9 +564,9 @@ fn residues_meet(all: &[(u64, u64)], none: &[(u64, u64)]) -> Lengths {
 /// for which the negated classes expected to hold the length are fewest, the residues not yet
 /// chosen taken as uniform among those `all` allows. When the shares sum to less than one a
 /// length is always found; otherwise one may be missed, and the caller checks it. The work is
-/// the residues tried times the classes times the primes, and the length is below the lcm of
-/// the periods; `None` when that lcm is above `u64`.
-fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> Option<u64> {
+/// the residues tried times the classes times the primes, and the length is at most the lcm of
+/// the periods, a number of as many digits as the periods have together.
+fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
     let power = |period: u64, r: u64| {
         prime_powers(period)
             .into_iter()
@@ -625,14 +634,17 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> Option<u64> {
         chosen.insert(r, d);
     }
     // The length below the lcm with the chosen residues, by the Chinese remainder theorem.
-    let (mut n, mut m) = (0i128, 1i128);
+    let (mut n, mut m) = (BigUint::ZERO, BigUint::from(1u32));
     for (&r, &d) in &chosen {
-        let q = i128::from(primes[&r].0);
-        let inv = i128::from(inverse((m % q) as u64, q as u64).unwrap_or(0));
-        n += m * ((i128::from(d) - n).rem_euclid(q) * inv % q);
-        m = m.checked_mul(q)?;
+        let q = primes[&r].0;
+        let below = |x: &BigUint| u64::try_from(x % q).expect("a residue is below q");
+        let inv = inverse(below(&m), q).unwrap_or(0);
+        let gap = (d % q + q - below(&n)) % q;
+        let step = u128::from(gap) * u128::from(inv) % u128::from(q);
+        n += &m * u64::try_from(step).expect("a residue is below q");
+        m *= q;
     }
-    u64::try_from(if n == 0 { m } else { n }).ok()
+    if n == BigUint::ZERO { m } else { n }
 }
 
 /// The rule by shares, by prime powers, so the lcm of the periods, exponential in them, is
@@ -714,74 +726,35 @@ fn inverse(a: u64, m: u64) -> Option<u64> {
     }
 }
 
-/// The lengths in all the classes `(period, at)` of `all`, as the least one and their period,
-/// by the Chinese remainder theorem: `None` when no length is in all of them, or when their
-/// period is above `u64`.
-fn crt(all: &[(u64, u64)]) -> Option<(u64, u64)> {
-    let (mut n, mut l) = (0u64, 1u64);
-    for &(p, at) in all {
-        let g = gcd(l, p);
-        let gap = i128::from(at % p) - i128::from(n % p);
-        if gap.rem_euclid(i128::from(g)) != 0 {
-            return None;
-        }
-        let s = p / g;
-        let k = (gap / i128::from(g)).rem_euclid(i128::from(s)) as u128
-            * u128::from(inverse(l / g % s, s)?)
-            % u128::from(s);
-        l = l.checked_mul(s)?;
-        n = u64::try_from(u128::from(n) + u128::from(l / s) * k).ok()?;
-    }
-    Some((n, l))
-}
-
-/// The least length from 1 in all the classes of `all` and in none of `none`, and not above
-/// `bound`. The lengths of `all` are `n0 + j * l` by `crt`; each class of `none` holds those
-/// whose step `j` is in one class modulo `p / gcd(l, p)`, found by the extended Euclidean
-/// algorithm. The steps are sieved in windows that double, so the work is the steps passed
-/// times one plus the sum of `1 / (p / gcd(l, p))` over `none`, plus the classes times the
-/// windows: no length below the result is tested class by class. `None` when no length is
-/// found up to `bound`, or above `u64`; with no bound the caller knows a length exists.
-fn least_length(all: &[(u64, u64)], none: &[(u64, u64)], bound: Option<u64>) -> Option<u64> {
-    let (n0, l) = crt(all)?;
-    // For each negated class meeting the lengths: the first step it holds, and its period.
-    let steps: Vec<(u64, u64)> = none
-        .iter()
-        .filter_map(|&(p, at)| {
-            let g = gcd(l, p);
-            let gap = i128::from(at % p) - i128::from(n0 % p);
-            if gap.rem_euclid(i128::from(g)) != 0 {
-                return None;
-            }
-            let s = p / g;
-            let j0 = (gap / i128::from(g)).rem_euclid(i128::from(s)) as u128
-                * u128::from(inverse(l / g % s, s).expect("l / g and s are coprime"))
-                % u128::from(s);
-            Some((j0 as u64, s))
-        })
-        .collect();
-    let first = u64::from(n0 == 0);
-    let (mut lo, mut hi) = (first, first + 1);
-    loop {
-        let start = n0.checked_add(lo.checked_mul(l)?)?;
-        if bound.is_some_and(|b| start > b) {
-            return None;
-        }
-        let mut held = vec![false; (hi - lo) as usize];
-        for &(j0, s) in &steps {
-            // The first step from `lo` equal to `j0` modulo `s`.
-            let mut j = lo + (j0 + s - lo % s) % s;
-            while j < hi {
-                held[(j - lo) as usize] = true;
-                j += s;
-            }
-        }
-        if let Some(i) = held.iter().position(|&h| !h) {
-            let n = n0.checked_add((lo + i as u64).checked_mul(l)?)?;
-            return bound.is_none_or(|b| n <= b).then_some(n);
-        }
-        (lo, hi) = (hi, hi.checked_mul(2)?);
-    }
+/// A length in all the classes of `all` and in none of `none`: the one `greedy_length` picks on
+/// the classes `residue_classes` found to hold one (on `all` when it refuses), checked against
+/// every class. The work is that of the two, polynomial in the classes; the length, up to the
+/// lcm of the periods and so exponential in them, is a number and no list of it is walked.
+fn residue_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> Option<BigUint> {
+    let fits = |n: &BigUint| {
+        all.iter().all(|&(p, at)| n % p == BigUint::from(at))
+            && none.iter().all(|&(p, at)| n % p != BigUint::from(at))
+    };
+    let (lengths, classes) = residue_classes(all, none);
+    let classes = if lengths == Lengths::Some {
+        classes
+    } else {
+        all.to_vec()
+    };
+    // Complexity tradeoff: the length is one choice by conditional expectations, not the least
+    // length, and when the shares of the negated classes sum to one or more (they meet, or a
+    // split on one prime was needed) the choice can fall in a negated class; then no length is
+    // given, and a list of the type is not shown, though the rule proves one exists. The type
+    // itself is still inhabited by the rule (`Search::decide`); a tuple or atom holding such a
+    // list can get no value, and its verdict is then `Refused(NoWitness)`. The least length,
+    // found by sieving the steps from 1 (the former `least_length`), costs the steps passed,
+    // up to the lcm of the periods, exponential in the number of cycles: the meet of
+    // `period(p, p - 1)` over the first nine primes took 31 s. Tests:
+    // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length` and
+    // `the_meet_of_prime_cycles_scales`; COMPLEXITY.md K34. A complete solution would search
+    // the residues modulo each prime power with backtracking, exponential in the primes in the
+    // worst case, since the covering problem for residues is NP-hard.
+    Some(greedy_length(&classes, none)).filter(fits)
 }
 
 /// One distinct type among the components a column's tuple types have, and those tuple types.
@@ -928,6 +901,15 @@ enum Rep {
     Tuple(Vec<usize>),
     /// An atom of this name, whose payload is this tuple.
     Atom(std::sync::Arc<str>, usize),
+    /// A list of `len` links, each a `link` atom holding the item numbered `item` and the rest,
+    /// ending in the atom `stop`. It is kept as its length, never built link by link: the
+    /// length of a meet of pure cycles can be exponential in the number of cycles.
+    List {
+        stop: std::sync::Arc<str>,
+        link: std::sync::Arc<str>,
+        item: usize,
+        len: BigUint,
+    },
     /// A closure; it may be recursive. Whether it is in a type is known only when that type
     /// holds all morphisms or none.
     Closure,
@@ -1667,34 +1649,88 @@ impl Search {
         })
     }
 
-    /// A list of `m`. When the rule says one exists, the shortest, by `least_length`. When the
-    /// rule refuses, the shortest not longer than the length `greedy_length` picks, if that one
-    /// fits; none found means only that. The list is built one link at a time, so the cost is
-    /// its length plus the work of `least_length`; none is built when the length is above
-    /// `u64`.
+    /// A list of `m`, of the length `residue_length` gives, kept as that length: the work is
+    /// that of the rule on residues, polynomial in the cycles, whatever the length.
     fn cycle_rep(&mut self, m: &Meet) -> Option<Rep> {
-        let fits = |n: u64| {
-            m.all.iter().all(|&(p, at)| n % p == at) && m.none.iter().all(|&(p, at)| n % p != at)
-        };
-        let n = match residues_meet(&m.all, &m.none) {
-            Lengths::Some => least_length(&m.all, &m.none, None)?,
-            Lengths::None => return None,
-            Lengths::Refused => {
-                let bound = greedy_length(&m.all, &m.none).filter(|&n| fits(n))?;
-                least_length(&m.all, &m.none, Some(bound))?
-            }
-        };
+        let len = residue_length(&m.all, &m.none)?;
         let item = self.rep(&m.item)?;
-        self.shown.push(Rep::Value(Value::atom(&m.stop)));
-        let mut rest = self.shown.len() - 1;
-        for _ in 1..n {
-            self.shown.push(Rep::Tuple(vec![item, rest]));
-            self.shown
-                .push(Rep::Atom(m.link.clone(), self.shown.len() - 1));
-            rest = self.shown.len() - 1;
+        Some(Rep::List {
+            stop: m.stop.clone(),
+            link: m.link.clone(),
+            item,
+            len,
+        })
+    }
+
+    /// Whether the list of `len` links of the item numbered `item`, ending in `stop`, is in
+    /// `u`; `None` when that is not known. The walk follows the rest type link by link; at a
+    /// meet of pure cycles of the same atoms the rule on residues answers at once, and a rest
+    /// type met again cuts the length left to its remainder modulo the steps between, so no
+    /// type is walked twice and the length is never walked.
+    fn list_member(
+        &mut self,
+        (stop, link, item): (&std::sync::Arc<str>, &std::sync::Arc<str>, usize),
+        len: &BigUint,
+        u: &Type,
+    ) -> Option<bool> {
+        let (mut x, mut left) = (u.clone(), len.clone());
+        let mut seen: BTreeMap<Type, BigUint> = BTreeMap::new();
+        loop {
+            if left == BigUint::ZERO {
+                return Some(x.contains(&Value::atom(stop)));
+            }
+            if let Some(m) = self.cycle_meet(&x)
+                && m.link == *link
+                && m.stop == *stop
+            {
+                let fits = m.all.iter().all(|&(p, at)| &left % p == BigUint::from(at))
+                    && m.none.iter().all(|&(p, at)| &left % p != BigUint::from(at));
+                return Some(fits && self.member(item, &m.item));
+            }
+            if let Some(before) = seen.insert(x.clone(), left.clone()) {
+                // `x` again after `before - left` links: the rest of each length is in `x`
+                // exactly when the rest that many links shorter is.
+                left %= before - &left;
+                seen.clear();
+                continue;
+            }
+            let p = x.p();
+            let Some(a) = p.atoms.names.get(link) else {
+                return Some(p.atoms.cofinite);
+            };
+            let f = a.payload.p().tuples.get(2);
+            if f.is_leaf() == Some(true) {
+                return Some(true);
+            }
+            // The rest types of the rows whose item type holds the item; the rest is in `x`
+            // exactly when it is in one of them.
+            let mut next: Option<Type> = None;
+            for row in f.union_rows()? {
+                if self.member(item, &row[0]) {
+                    match &next {
+                        None => next = Some(row[1].clone()),
+                        Some(y) if *y == row[1] => {}
+                        // Complexity tradeoff: two rest types to follow would make the walk a
+                        // set of types per link, and the sets met before one repeats can be
+                        // as many as the lcm of the cycles they pass through, exponential in
+                        // them; so the membership is not known and the list is not shown as a
+                        // value of this type (a value is sought elsewhere, or the verdict is
+                        // `Refused(NoWitness)`). The trigger is a union of list types whose
+                        // rows hold the same item and differ in the rest. Test:
+                        // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length`;
+                        // COMPLEXITY.md K34. A complete solution would give each type its set of
+                        // lengths as residues and combine them, which is the covering problem
+                        // for residues when a negation is met.
+                        Some(_) => return None,
+                    }
+                }
+            }
+            let Some(y) = next else {
+                return Some(false);
+            };
+            x = y;
+            left -= 1u32;
         }
-        self.shown.push(Rep::Tuple(vec![item, rest]));
-        Some(Rep::Atom(m.link.clone(), self.shown.len() - 1))
     }
 
     /// A value in `t`, if one is found: a scalar or bare atom of it, or a tuple or atom payload
@@ -1758,7 +1794,7 @@ impl Search {
         {
             return Some(Rep::Value(Value::atom(name)));
         }
-        // A list of pure cycles with no stop in it: its shortest list.
+        // A list of pure cycles with no stop in it: a list of it, kept as its length.
         if let Some(m) = self.cycle_meet(t) {
             return self.cycle_rep(&m);
         }
@@ -2008,8 +2044,15 @@ impl Search {
         (!empty && h.is_leaf() == Some(true)).then_some(g.r)
     }
 
-    /// Whether the tuple `vs` is in `f`.
+    /// Whether the tuple `vs` is in `f`; false when that is not known.
     fn holds(&mut self, vs: &[usize], f: &Part<Row>) -> bool {
+        self.holds_known(vs, f) == Some(true)
+    }
+
+    /// Whether the tuple `vs` is in `f`; `None` when the membership of a component in a tuple
+    /// type is not known, since `f` may hold that tuple type negated.
+    fn holds_known(&mut self, vs: &[usize], f: &Part<Row>) -> Option<bool> {
+        let outer = std::mem::take(&mut self.unsure);
         let mut fits = BTreeSet::new();
         for a in f.distinct_atoms() {
             if vs.iter().zip(a.iter()).all(|(v, y)| self.member(*v, y)) {
@@ -2017,13 +2060,23 @@ impl Search {
             }
         }
         let b = f.eval(&|a| fits.contains(a));
-        b && !std::mem::take(&mut self.unsure)
+        let unsure = std::mem::replace(&mut self.unsure, outer);
+        (!unsure).then_some(b)
     }
 
-    /// Whether the value numbered `v` is in `u`.
+    /// Whether the value numbered `v` is in `u`; false, with `unsure` set, when that is not
+    /// known.
     fn member(&mut self, v: usize, u: &Type) -> bool {
+        let known = self.member_known(v, u);
+        self.unsure |= known.is_none();
+        known == Some(true)
+    }
+
+    /// Whether the value numbered `v` is in `u`, or `None` when that is not known. What is not
+    /// known is kept as such, so a second test of the pair is not read as a sure "no".
+    fn member_known(&mut self, v: usize, u: &Type) -> Option<bool> {
         if let Rep::Value(x) = &self.shown[v] {
-            return u.contains(x);
+            return Some(u.contains(x));
         }
         let key = (v, u.clone());
         if let Some(b) = self.members.get(&key) {
@@ -2031,17 +2084,19 @@ impl Search {
         }
         let b = match self.shown[v].clone() {
             Rep::Value(_) => unreachable!("a value was read above"),
-            Rep::Closure => {
-                let b = u.p().morphisms.is_leaf();
-                self.unsure |= b.is_none();
-                b == Some(true)
-            }
-            Rep::Struct => u.p().structs,
-            Rep::Tuple(vs) => self.holds(&vs, &u.p().tuples.get(vs.len())),
+            Rep::Closure => u.p().morphisms.is_leaf(),
+            Rep::Struct => Some(u.p().structs),
+            Rep::Tuple(vs) => self.holds_known(&vs, &u.p().tuples.get(vs.len())),
             Rep::Atom(name, payload) => match u.p().atoms.names.get(&name) {
-                None => u.p().atoms.cofinite,
-                Some(a) => self.member(payload, &a.payload.clone()),
+                None => Some(u.p().atoms.cofinite),
+                Some(a) => self.member_known(payload, &a.payload.clone()),
             },
+            Rep::List {
+                stop,
+                link,
+                item,
+                len,
+            } => self.list_member((&stop, &link, item), &len, u),
         };
         self.members.insert(key, b);
         b
@@ -2270,11 +2325,13 @@ fn meet(a: &Morphism, b: &Morphism) -> Morphism {
 mod tests {
     use super::*;
 
-    /// `inverse`, `crt` and `least_length` against a scan of the lengths from 1, on every
-    /// choice of at most two classes of `all` and three of `none` with periods 1 to 6, from a
-    /// fixed sequence.
+    /// `inverse` against a scan, and `residue_length` against a scan of the lengths from 1 on
+    /// every choice of at most two classes of `all` and three of `none` with periods 1 to 6,
+    /// from a fixed sequence: a length it gives is in every class of `all` and in none of
+    /// `none`; it gives one whenever the shares of `none` sum to less than one; and it gives one
+    /// only when the scan finds one.
     #[test]
-    fn the_least_length_agrees_with_a_scan() {
+    fn the_residue_length_agrees_with_a_scan() {
         for m in 1..40u64 {
             for a in 0..m {
                 let found = inverse(a, m);
@@ -2289,6 +2346,7 @@ mod tests {
                 .wrapping_add(1442695040888963407);
             (seed >> 33) % below
         };
+        let (mut exists, mut given) = (0, 0);
         for _ in 0..20_000 {
             let (a, b) = (next(3), next(4));
             let mut classes: Vec<(u64, u64)> = (0..a + b)
@@ -2303,19 +2361,33 @@ mod tests {
                 all.iter().all(|&(p, at)| n % p == at) && none.iter().all(|&(p, at)| n % p != at)
             };
             // Every class repeats within the lcm of the periods, at most 60.
-            let scanned = (1..=120).find(|&n| fits(n));
-            let first = (0..60).find(|&n| all.iter().all(|&(p, at)| n % p == at));
-            assert_eq!(crt(&all).map(|c| c.0), first, "{all:?}");
-            assert_eq!(
-                least_length(&all, &none, Some(120)),
-                scanned,
-                "{all:?} {none:?}"
-            );
-            if let Some(n) = scanned {
-                assert_eq!(least_length(&all, &none, None), Some(n));
-                assert_eq!(least_length(&all, &none, Some(n - 1)), None);
+            let scanned = (1..=60).find(|&n| fits(n));
+            let found = residue_length(&all, &none);
+            if let Some(n) = &found {
+                let n = u64::try_from(n).expect("below the lcm");
+                assert!(n >= 1 && fits(n), "{all:?} {none:?}: {n}");
             }
+            assert!(found.is_none() || scanned.is_some(), "{all:?} {none:?}");
+            let sum: f64 = none
+                .iter()
+                .filter(|&&(p, at)| (1..=60).any(|n| fits_all(&all, n) && n % p == at))
+                .map(|&(p, _)| {
+                    let l = all.iter().fold(1, |l, &(q, _)| l / gcd(l, q) * q);
+                    gcd(l, p) as f64 / p as f64
+                })
+                .sum();
+            if sum < 1.0 && scanned.is_some() {
+                assert!(found.is_some(), "{all:?} {none:?}: shares {sum}");
+            }
+            exists += usize::from(scanned.is_some());
+            given += usize::from(found.is_some());
         }
+        // The choice misses a length only when the shares sum to one or more.
+        assert!(given * 10 >= exists * 9, "{given} of {exists}");
+    }
+
+    fn fits_all(all: &[(u64, u64)], n: u64) -> bool {
+        all.iter().all(|&(p, at)| n % p == at)
     }
 
     /// In `(a - b) | (b - a)` the diagram tests `b` on two nodes; the region gives each tuple

@@ -590,23 +590,14 @@ fn period(p: usize, k: usize) -> Type {
 }
 
 #[test]
-fn the_shortest_list_of_pure_cycles_is_built_in_its_length() {
+fn a_list_of_two_cycles_is_shown_in_the_size_of_its_type() {
     // The lists whose length is -1 modulo `n` and modulo `n + 1`: the shortest has `n * (n + 1)
-    // - 1` links. Its length is found by the Chinese remainder theorem and a sieve over the
-    // steps of the lcm, so the work is the links built, order `n^2`. Scanning each length from
-    // 1 in turn and testing every class against it is also within the order here, since the
-    // first class fails at most lengths; the negative control rescanned the steps from the
-    // first at each new one.
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            scaling::check_order("lengths -1 modulo n and n + 1, by n", 16, 2, |n| {
-                Type::forget_emptiness();
-                let t = &period(n, n - 1) & &period(n + 1, n);
-                assert_eq!(t.verdict(), zed_kernel::types::Verdict::Inhabited);
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // - 1` links, and `2n + 1` definitions write the type. The list shown is kept as a length
+    // the rule on residues picks, so the work is that of walking the two cycles, order `n`;
+    // building the list link by link was order `n^2`.
+    scaling::check("lengths -1 modulo n and n + 1, by n", 128, |n| {
+        Type::forget_emptiness();
+        let t = &period(n, n - 1) & &period(n + 1, n);
+        assert_eq!(t.verdict(), zed_kernel::types::Verdict::Inhabited);
+    });
 }

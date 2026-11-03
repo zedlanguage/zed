@@ -161,14 +161,90 @@ fn tuples_of_small_sets_are_decided_and_shown() {
 }
 
 #[test]
-fn the_shortest_list_of_a_period_is_built_in_linear_time() {
-    // The list of length `n - 1` is built one link at a time, and each link is checked once.
-    scaling::check("the shortest list of a period, by period", 64, |n| {
+fn a_list_of_a_period_is_shown_in_linear_time() {
+    // The list is kept as its length, `n - 1`; the work is the walk of the cycle of `n`
+    // definitions.
+    scaling::check("a list of a period, by period", 64, |n| {
         let t = Type::tuple(vec![period(n, n - 1), Type::int()]);
         assert_eq!(t.verdict(), Verdict::Inhabited);
     });
 }
 
+const PRIMES: [usize; 25] = [
+    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
+];
+
+/// The lists whose length is one less than a multiple of each of the first `k` primes: the meet
+/// of `k` cycles, `2 + 3 + 5 + ...` definitions. The shortest has as many links as the product
+/// of the primes less one, 6,469,693,229 for `k = 10`.
+fn prime_cycles(k: usize) -> Type {
+    PRIMES[..k]
+        .iter()
+        .fold(Type::top(), |t, &p| &t & &period(p, p - 1))
+}
+
+#[test]
+fn a_meet_of_cycles_is_shown_by_its_length() {
+    // A tax form that takes a list of entries whose count is one less than a multiple of each
+    // of the first ten primes. Building the shortest list one link at a time took 31 s at nine
+    // primes; the list is kept as its length, and each test of it against a type is the rule on
+    // residues.
+    let t = prime_cycles(10);
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited);
+    assert!(!t.is_empty());
+    assert!(!t.subtype(&Type::empty()));
+    // In a tuple, the list is a component of a value tested against each tuple type.
+    let pair = Type::tuple(vec![t.clone(), Type::int()]);
+    assert_eq!(pair.verdict(), Verdict::Inhabited);
+    // Every length is 2 modulo 3, so none is outside the lists of length 2 modulo 3.
+    let thirds = Type::tuple(vec![period(3, 2), Type::int()]);
+    assert_eq!((&pair - &thirds).verdict(), Verdict::Empty);
+    assert!(pair.subtype(&thirds));
+    // The lengths are 1 or 3 modulo 4, so the pairs with a list of length 3 modulo 4 leave
+    // those of length 1 modulo 4: a value is shown, with a length the rule picks for that class.
+    let fourths = Type::tuple(vec![period(4, 3), Type::int()]);
+    assert_eq!((&pair - &fourths).verdict(), Verdict::Inhabited);
+    assert!(!pair.subtype(&fourths));
+    // Every length is 1 modulo 2, so none is outside a union holding the lists of odd length.
+    let odd = &period(2, 1) | &period(3, 0);
+    let held = &pair - &Type::tuple(vec![odd, Type::int()]);
+    assert_eq!(held.verdict(), Verdict::Empty);
+    // A union of list types of one item and two rest types, which holds the lists of length 3
+    // modulo 4 and none of length 1 modulo 4: the walk of a list through it would follow both
+    // rests, so whether the list shown is in it is not known, and no value is shown. The
+    // search finds the type not empty, and the verdict is a refusal that says no value was
+    // built (the tradeoff in `Search::list_member`).
+    let other = &period(4, 3) | &period(3, 0);
+    let left = &pair - &Type::tuple(vec![other, Type::int()]);
+    assert_eq!(left.verdict(), Verdict::Refused(Refusal::NoWitness));
+    assert!(!left.is_empty());
+}
+
+#[test]
+fn the_meet_of_prime_cycles_scales() {
+    // Ten primes are 129 definitions, twenty-five are 1060, 8.2 times as many; the shortest
+    // lists have about 10^10 and 10^36 links.
+    let (small, large) = (prime_cycles(10), prime_cycles(25));
+    let defs = |k: usize| PRIMES[..k].iter().sum::<usize>();
+    assert_eq!((defs(10), defs(25)), (129, 1060));
+    let run = |t: &Type| {
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+        assert_eq!(
+            Type::tuple(vec![t.clone(), Type::int()]).verdict(),
+            Verdict::Inhabited
+        );
+    };
+    scaling::compare(
+        "a meet of cycles, the first 10 and 25 primes",
+        "the input has 8.2 times the definitions; for work of order n log n in them the rule \
+         of low complexity allows at most 24 times (DESIGN.md Part G)",
+        24.0,
+        || run(&small),
+        || run(&large),
+    );
+}
 #[test]
 fn the_residue_rule_agrees_with_listing_the_lengths() {
     // Lists in one class and in none of up to six others, with periods whose lcm is at most
