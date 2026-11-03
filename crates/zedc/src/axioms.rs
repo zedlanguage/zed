@@ -173,8 +173,13 @@ pub const AXIOMS: &[Axiom] = &[
     ax("==", String, Transitive),
     ax("!=", Int, Irreflexive),
     ax("!=", Int, Symmetric),
+    // `!=` at `f64` is only symmetric: `NaN != NaN` is true, so it is not irreflexive.
+    ax("!=", F64, Symmetric),
+    ax("!=", String, Irreflexive),
+    ax("!=", String, Symmetric),
     // The comparisons are the total order of values at every carrier but `f64`, where they are
     // IEEE 754 comparisons: a strict order, and `<=` only transitive, since a NaN compares false.
+    // Strings compare by code point, which is the byte order of their UTF-8 (sec:order).
     ax("<", Int, Irreflexive),
     ax("<", Int, Transitive),
     ax("<", F64, Irreflexive),
@@ -194,11 +199,17 @@ pub const AXIOMS: &[Axiom] = &[
     ax(">", Int, Transitive),
     ax(">", F64, Irreflexive),
     ax(">", F64, Transitive),
+    ax(">", String, Irreflexive),
+    ax(">", String, Transitive),
     ax(">=", Int, Reflexive),
     ax(">=", Int, Antisymmetric),
     ax(">=", Int, Transitive),
     ax(">=", Int, Total),
     ax(">=", F64, Transitive),
+    ax(">=", String, Reflexive),
+    ax(">=", String, Antisymmetric),
+    ax(">=", String, Transitive),
+    ax(">=", String, Total),
     // How `<` and `<=`, and `>` and `>=`, relate, which the compositions of an order chain read
     // (sec:verification). They hold at `f64` too: a comparison with a NaN is false, so when
     // the premises hold no operand is a NaN, and on the other floats the comparisons are an
