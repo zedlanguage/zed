@@ -927,8 +927,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | verify attempt 2 | 2026-11-03 06:34 | fmt rc=0, clippy -D warnings rc=0 on a18cf9e; diff read (negsssp.rs, utvpi.rs race, tests, docs); suite run_tests.sh 2 running; open from verify#1 not addressed |
 | XR3-synth | orchestrator attempt  | 2026-11-03 11:44 | owner: direct agent, started 11:43 |
 
-Merged into local main and not yet pushed (122 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (126 commits); the push follows one full test run on the merged tree:
 
+- f27e00a SEQ-desugar merge: check::widen (WIDEN-WARN) names ExprKind::Array, not Seq
+- 76ca195 SEQ-desugar: array displays and [T] are rank-keyed arrays, not Seq
+- 705cf33 STATUS: in progress as of 2026-11-03 11:57
 - 05ad41b fences: sync after the Glam and arXiv 1003.5954 spec merges; l01_07 snapshots re-accepted
 - 40750ce Merge branch 'wt/plan-arxiv1003'
 - 05a620d Merge branch 'wt/plan-glam'
