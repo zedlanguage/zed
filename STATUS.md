@@ -820,12 +820,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T6 | repair attempt 4 | 2026-11-03 00:01 | baseline after rebase on 42efeec: 2 failing pieces; l01_08 case count (T6 adds 3 cases, fixed to 353); l01_29 printed-types #ioError(_) fails identically on mai |
 | TD-ends | impl attempt 2 | 2026-11-03 03:52 | all targets build; Landmarks widened to Num (big literals and domain ends stay landmarks); omega test asserts exact 2^70 hull |
 | TD-refusals | impl attempt 2 | 2026-11-03 03:52 | resuming impl#1's uncommitted work (product.rs Refused/Warning, refused.rs tests; last edit 04:03; workflow resumed 04:06, no process in worktree) |
-| TD-tests | repair attempt 2 | 2026-11-03 03:52 | done: STATUS.md:221 back_at -> back_in, commit a6180b5 on wt/td-tests; docs only, no rerun; remaining back_at in STATUS is TD-docs row describing the rename (co |
 | TD-values | repair attempt 2 | 2026-11-03 03:52 | started; zed-impl main still e6900f7, wt/t6 bb1f8a7 not merged; per the 03:55 order nothing changed, returning ok=false (waits for T6) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (34 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (37 commits); the push follows one full test run on the merged tree:
 
+- d24cb25 STATUS: TD-tests row names back_in, where the fold and fix stops are
+- fc4686d TD-tests: preimage stops at fold, gen and fix; zed-native OptLevel and run_at, opt_level none tested against speed
 - 7d0993b OSP-drop: the drop error is a case of Row::WritesNothing; else defaults in if branches and a block's export count as named
 - 3645925 OSP-drop: _ binds no loose failure; an else default or a match names a dropped failure
 - 79008d6 STATUS: ST-deep-stack merged
