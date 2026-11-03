@@ -875,7 +875,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | F44-memo | impl attempt 1 | 2026-11-03 07:14 | T6 control (24ad3e4 + new harness): the_parts_scale passes; morphism is_empty 3.67M/28.6M/229.7M at c=16/128/1024 (7.8x, 8.0x); load 122 |
 | HOLE-oneline | repair attempt 1 | 2026-11-03 07:14 | fix: Inside::Str carries its hole's one_line; inner hole one_line = outer // !triple; l01_05 19/19 pass; 3 new grammar cases ok (372 cases, the 2 old DIFFs rema |
 | L1.17a | impl attempt 1 | 2026-11-03 07:14 | negative control (k += 64 in bound::cmp, n=2^18): 57.9x work at 8n (2.21e9 -> 1.28e11 instr), limit 24 -> FAILS as expected; real code at n=2^18 passes in 0.02  |
-| LIN-cross | verify attempt 1 | 2026-11-03 05:46 | fe5a233: fmt clean, clippy -D warnings rc=0, run_tests.sh 4: 98 pieces, 0 failed (load 78-132); l01_25 101 passed 2 ignored, l01_38 81 passed |
 | OSP-neglit | verify attempt 1 | 2026-11-03 07:14 | started |
 | R10-stack | impl attempt 1 | 2026-11-03 07:14 | fix in: zed_rt::Stack (RAM+swap MAP_NORESERVE stack, psm switch) used by zed_native::run_at; deep_calls tests pass (10k and 80k calls on 2 MiB thread), 150k-con |
 | S22b-rest | impl attempt 1 | 2026-11-03 07:22 | fix in: pa_prim reads c - u as affine(-1, c); clip_at reflects; jt_range_live 10.6x at 256->2048 (main 63.4x), l01_25 group 127 pass 0 fail, comparison with pre |
@@ -891,8 +890,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | run_tests.sh 4 cut by my outer timeout 900 at load ~100 (30 pieces ok, no summary); rerunning (load 68.77 88.48 95.69) |
 | WIDEN-WARN | impl attempt 1 | 2026-11-03 07:14 | scaling (pass alone, instructions, 1000 vs 8000): many warnings 16.1M->129.0M 8.01x, chain derivation 13.5M->108.6M 8.01x. Negative controls, not committed: bin |
 
-Merged into local main and not yet pushed (67 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (70 commits); the push follows one full test run on the merged tree:
 
+- 99987df LIN-cross: pick's repair reads each variable's bounds, not every guard on it
 - 5b78cbd plan_dag, STATUS: T6 merged
 - 9a413d5 T6 repair 7: no copies of shown values; exact overlaps keys for cofinite sets; TupleSplit and overlaps tradeoff comments
 - 80e69d5 T6 repair 6: tradeoff comments at every refusal site; Type::contains address key recorded as an exception; Bdd::apply without its unused limit
