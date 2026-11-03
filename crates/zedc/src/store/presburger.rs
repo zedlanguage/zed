@@ -1211,7 +1211,10 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                 // reaches it (cross at `k = 51`); `chain_cross_above_its_width_scales` (cross
                 // at 12 and 96, COMPLEXITY.md S22: 40.0 times the bytes with one propagation
                 // per disjunct, 10.1 times now) and
-                // `l01_38_presburger::probe::guards_beyond_the_inputs_scale` measure it.
+                // `l01_38_presburger::probe::guards_beyond_the_inputs_scale` measure it. A
+                // complete solution is a `settle` that returns, with each refutation, the
+                // constraints its proof used (a conflict explanation), so that one propagation
+                // removes every disjunct those constraints exclude.
                 let mut q = Parts {
                     cons: p.cons.clone(),
                     ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
