@@ -58,8 +58,7 @@ Law           = 'law' Name '(' Params ')' '=' Expr (';' | Proof)                
 
 Function      = Name '(' Params? ')' Result? Body                                  L1
 Method        = Name '.' Name ('(' Params? ')')? Result? Body                      L2
-Params        = PosParam % ',' (',' Param % ',')? ','?                             L1
-              | Param % ',' ','?                                                   L1
+Params        = (PosParam | Param) % ',' ','?                                      L1
 PosParam      = ~TupleParam                                                        L2
               | ~PositionalParam                                                   L1
 TupleParam    = '(' Target (',' Target)+ ','? ')' (':' Type)?                      L2
@@ -161,8 +160,7 @@ KeyPath       = KeyPath ('.' Name | '[' nest(Expr) ']')                         
               | Name                                                               L5
               | '[' nest(Expr) ']'                                                 L5
 FacetCall     = Name '(' nest(Args?) ')'                                           L7
-Args          = NamedArg % ',' (',' '...' | ','?)                                  L1
-              | PosArg % ',' (',' NamedArg % ',')? (',' '...' | ','?)              L1
+Args          = (NamedArg | PosArg) % ',' (',' '...' | ','?)                       L1
 NamedArg      = Name ':' Expr?                                                     L1
 PosArg        = ~SortArg                                                           L5
               | ~PlainArg                                                          L1

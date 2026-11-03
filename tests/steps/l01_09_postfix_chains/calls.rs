@@ -43,18 +43,31 @@ fn a_shorthand_argument_is_the_name_at_its_own_place() {
 }
 
 #[test]
-fn misordered_arguments_do_not_parse() {
-    // DESIGN.md: `greet(name: "Al")` and `greet(punct: "?", "Al")` are errors; the first is a
-    // type error (L1.16), the second a syntax error, as is `...` anywhere but last.
-    for text in [
-        "greet(punct: \"?\", \"Al\")",
-        "f(..., x: 1)",
-        "f(x: 1, ..., y: 2)",
-        "f(...)",
-    ] {
+fn misplaced_curry_marks_do_not_parse() {
+    // DESIGN.md: `...` anywhere but last is a syntax error.
+    for text in ["f(..., x: 1)", "f(x: 1, ..., y: 2)", "f(...)"] {
         let tokens = lex(text).unwrap();
         assert!(parse(text, &tokens, "Expr", TOP).is_err(), "{text}");
     }
+}
+
+#[test]
+fn a_positional_argument_after_a_named_one_parses_and_is_rejected_with_its_row() {
+    // DESIGN.md: `greet(name: "Al")` and `greet(punct: "?", "Al")` are errors; the first is a
+    // type error (L1.16), the second the row "Named argument before a positional one", placed
+    // at the positional argument.
+    let text = "greet(punct: \"?\", \"Al\")";
+    let tokens = lex(text).unwrap();
+    assert!(parse(text, &tokens, "Expr", TOP).is_ok());
+    let err = ast(text).unwrap_err();
+    assert_eq!(err.row, Some(zedc::rejection::Row::NamedBeforePositional));
+    assert_eq!(&text[err.span.start..err.span.end], "\"Al\"");
+    let notes: Vec<&str> = err
+        .notes
+        .iter()
+        .map(|n| &text[n.span.start..n.span.end])
+        .collect();
+    assert_eq!(notes, ["punct", text]);
 }
 
 #[test]

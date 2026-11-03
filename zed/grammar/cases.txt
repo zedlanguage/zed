@@ -224,16 +224,16 @@ Expr ::: f(1, x: 2, ...) ::: (f (( (1 , (x : 2) , ...) )))
 Expr ::: f(1, ...) ::: (f (( (1 , ...) )))
 Expr ::: f(1, 2, x: 3, y:) ::: (f (( (1 , 2 , (x : 3) , (y :)) )))
 Expr ::: f(asc a, x: 2) ::: (f (( ((asc a) , (x : 2)) )))
-Expr ::: f(x: 2, 1) ::: ERROR
-Expr ::: f(1, x: 2, 3) ::: ERROR
+Expr ::: f(x: 2, 1) ::: (f (( ((x : 2) , 1) )))
+Expr ::: f(1, x: 2, 3) ::: (f (( (1 , (x : 2) , 3) )))
 Expr ::: f(...) ::: ERROR
 Expr ::: f(x: 1, ..., y: 2) ::: ERROR
 Item ::: f(positional x, y = 2) = x + y; ::: (f ( ((positional x) , (y = 2)) ) (= (x + y) ;))
 Item ::: f(positional x: int = 0) = x; ::: (f ( (positional x : int = 0) ) (= x ;))
 Item ::: f((a, b), c) = a + b + c; ::: (f ( ((( a , b )) , c) ) (= ((a + b) + c) ;))
-Item ::: f(c, (a, b)) = a + b + c; ::: ERROR
+Item ::: f(c, (a, b)) = a + b + c; ::: (f ( (c , (( a , b ))) ) (= ((a + b) + c) ;))
 Item ::: f(positional (a, b)) = a + b; ::: ERROR
-Item ::: f(y, positional x) = x + y; ::: ERROR
+Item ::: f(y, positional x) = x + y; ::: (f ( (y , (positional x)) ) (= (x + y) ;))
 Item ::: f(_ x) = x; ::: ERROR
 Item ::: positional = 1; ::: ERROR
 Item ::: greet(positional name: String, punct = "!") = name ++ punct; ::: (greet ( ((positional name : String) , (punct = "!")) ) (= (name ++ punct) ;))

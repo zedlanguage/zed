@@ -91,3 +91,82 @@ a = label(city: \"Leeds\");    // ✗ the name is left out
 ";
     assert_eq!(checks(unit), ["2:5: ok"]);
 }
+
+/// A fee calculator called with its rate named before its positional base: the grammar takes
+/// either order, and the check names the row, the argument, the first named one and the call.
+#[test]
+fn a_positional_argument_after_a_named_one_names_its_row() {
+    let decl = "fee(positional base: int, rate: int) = base * rate;\n";
+    let unit = format!(
+        "{decl}f = fee(rate: 3, 5);    // ✗ Named argument before a positional one: 5 goes first\n"
+    );
+    assert_eq!(checks(&unit), ["2:18: ok"]);
+    let Err(why) = zedc::run::load(format!("{decl}f = fee(rate: 3, 5);\n").as_bytes()) else {
+        panic!("the call is accepted")
+    };
+    assert_eq!(
+        why,
+        "\
+2:18: a positional argument after the named argument `rate`: a call passes its positional \
+arguments first, then its named ones
+  [1] 2:9: the first named argument, `rate`
+      2 | f = fee(rate: 3, 5);
+        |         ^^^^
+  [2] 2:5: the call
+      2 | f = fee(rate: 3, 5);
+        |     ^^^^^^^^^^^^^^^"
+    );
+}
+
+/// The same rule for an annotation's arguments, and for a call that begins with positional
+/// arguments, then names one and passes another by position.
+#[test]
+fn an_annotation_argument_after_a_named_one_names_its_row() {
+    let unit = "@doc(lang: \"en\", \"a fee\")    // ✗ Named argument before a positional one: \
+                the text goes first\n\
+                fee(positional base: int) = base;\n";
+    assert_eq!(checks(unit), ["1:18: ok"]);
+    let decl = "fee(positional base: int, positional cap: int, rate: int) = base * rate;\n";
+    let unit = format!(
+        "{decl}f = fee(7, rate: 3, 5);    // ✗ Named argument before a positional one: 5 too\n"
+    );
+    assert_eq!(checks(&unit), ["2:21: ok"]);
+}
+
+/// A surcharge declared with its positional base after its named rate, and a lambda whose
+/// tuple parameter, positional without the keyword, follows a named one.
+#[test]
+fn a_positional_parameter_after_a_named_one_names_its_row() {
+    let unit = "surcharge(rate: int, positional base: int) = base * rate;    // ✗ `positional` \
+                parameter after a named one: base goes first\n";
+    assert_eq!(checks(unit), ["1:22: ok"]);
+    let lambda = "h = (rate, (a, b)) -> a * rate;    // ✗ `positional` parameter after a named \
+                  one: the tuple goes first\n";
+    assert_eq!(checks(lambda), ["1:12: ok"]);
+    let Err(why) = zedc::run::load(b"surcharge(rate: int, positional base: int) = base * rate;\n")
+    else {
+        panic!("the declaration is accepted")
+    };
+    assert_eq!(
+        why,
+        "\
+1:22: the positional parameter `base` comes after the named parameter `rate`: a declaration \
+lists its positional parameters first
+  [1] 1:11: the first named parameter, `rate`
+      1 | surcharge(rate: int, positional base: int) = base * rate;
+        |           ^^^^^^^^^
+  [2] 1:1: the declaration
+      1 | surcharge(rate: int, positional base: int) = base * rate;
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+    );
+}
+
+/// Positional items first, then named ones (named in any order), are accepted and run.
+#[test]
+fn positional_items_before_named_ones_are_accepted() {
+    let unit = "\
+fee(positional base: int, positional lo: int, rate: int, cap: int = 9) = base * rate + lo + cap;
+f(x) = fee(x, 1, rate: 3) + fee(x, 1, cap: 4, rate: 3) test { 2 -> 27 }
+";
+    assert_eq!(checks(unit), ["2:63: ok"]);
+}

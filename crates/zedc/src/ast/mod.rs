@@ -38,6 +38,7 @@ pub use types::{Param, Pattern, Type, TypeKind, TypeParam};
 
 use crate::lex::{Part, Span, Tok, Token};
 use crate::parse::{Tree, grammar};
+use crate::rejection::Row;
 
 /// An expression and its span.
 pub struct Expr {
@@ -801,7 +802,7 @@ impl<'a> Builder<'a> {
                 default: None,
                 span: self.span(*p),
             }],
-            [p, _] => self.params(*p)?,
+            [p, _] => self.params(*p, self.span(n))?,
             _ => unreachable!("Lambda = (Name | '(' Params? ')') '->' body"),
         };
         Ok(Expr {
@@ -847,7 +848,7 @@ impl<'a> Builder<'a> {
             "CallSuffix" => {
                 let (positional, named, curry) = match node.kids[..] {
                     [] => (Vec::new(), Vec::new(), false),
-                    [args] => self.args(args)?,
+                    [args] => self.args(args, span)?,
                     _ => unreachable!("CallSuffix = '(' Args? ')'"),
                 };
                 ExprKind::Call {
@@ -1131,15 +1132,44 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
+    /// The arguments of node `n`, an `Args`, of the call or annotation written at `call`. The
+    /// grammar takes them in any order; a positional one after a named one is the row "Named
+    /// argument before a positional one".
     #[allow(clippy::type_complexity)]
-    fn args(&mut self, n: usize) -> Result<(Vec<Expr>, Vec<(String, Expr)>, bool), Error> {
+    fn args(
+        &mut self,
+        n: usize,
+        call: Span,
+    ) -> Result<(Vec<Expr>, Vec<(String, Expr)>, bool), Error> {
         let node = &self.tree.nodes[n];
         let curry = self.word(node.end - 1) == "...";
         let (mut positional, mut named) = (Vec::new(), Vec::new());
         let mut seen: HashMap<&str, Span> = HashMap::new();
+        let mut first_named: Option<(&str, Span)> = None;
         for &k in &node.kids {
             let kids = self.kids(k);
-            match self.tree.name(k) {
+            let rule = self.tree.name(k);
+            if let (Some((word, at)), "PlainArg" | "SortArg") = (first_named, rule) {
+                return Err(Error {
+                    row: Some(Row::NamedBeforePositional),
+                    span: self.span(k),
+                    message: format!(
+                        "a positional argument after the named argument `{word}`: a call \
+                         passes its positional arguments first, then its named ones"
+                    ),
+                    notes: vec![
+                        Note {
+                            span: at,
+                            text: format!("the first named argument, `{word}`"),
+                        },
+                        Note {
+                            span: call,
+                            text: "the call".into(),
+                        },
+                    ],
+                });
+            }
+            match rule {
                 "PlainArg" => {
                     positional.push(self.node(kids[0])?);
                     continue;
@@ -1161,6 +1191,7 @@ impl<'a> Builder<'a> {
                 });
             }
             seen.insert(word, span);
+            first_named.get_or_insert((word, span));
             let value = match kids {
                 [_, v] => self.node(*v)?,
                 _ => self.node(kids[0])?,

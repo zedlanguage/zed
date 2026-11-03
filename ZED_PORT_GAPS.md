@@ -838,3 +838,4 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A thread-local `RefCell` that a test turns on and reads back, filled from inside `Display` | `ty::printed::{start, take, record}`, `hooks::COUNTED`, `zed_native::counted` | Mutation (gap 11), no global state | The printer and the run return what they record beside their result, and the test reads it there |
 | `BTreeMap` keyed by `(&'static str, Option<usize>)` to group the live cells | `Heap::survivors` | None | A family keyed by the pair, summed by a reduce |
 | A text-level pass over a printed type that tracks parenthesis depth and quotes to cut the `for` clauses | `read::clauses` | None | A fold over the characters with the stack of open groups as its state |
+| `<[String; 1]>::try_from(Vec)` to move the one item out, the vector given back otherwise | `Sig::text` | None | A list pattern of one item |

@@ -8,8 +8,9 @@
 use std::collections::HashMap;
 use std::mem;
 
-use super::{Builder, Built, Error, Expr, ExprKind, RangeEnd, Target};
+use super::{Builder, Built, Error, Expr, ExprKind, Note, RangeEnd, Target};
 use crate::lex::{Span, Tok};
+use crate::rejection::Row;
 
 /// A type expression and its span.
 pub struct Type {
@@ -327,9 +328,43 @@ impl Builder<'_> {
         })
     }
 
-    /// The parameters of node `n`, a `Params`.
-    pub(super) fn params(&mut self, n: usize) -> Result<Vec<Param>, Error> {
-        self.kids(n).iter().map(|&k| self.param(k)).collect()
+    /// The parameters of node `n`, a `Params`, of the declaration or lambda written at `decl`.
+    /// The grammar takes them in any order; a positional one after a named one is the row
+    /// "`positional` parameter after a named one".
+    pub(super) fn params(&mut self, n: usize, decl: Span) -> Result<Vec<Param>, Error> {
+        let mut out: Vec<Param> = Vec::with_capacity(self.kids(n).len());
+        let mut first_named: Option<usize> = None;
+        for &k in self.kids(n) {
+            let p = self.param(k)?;
+            match first_named {
+                Some(i) if p.positional => {
+                    let named = &out[i];
+                    return Err(Error {
+                        row: Some(Row::PositionalAfterNamed),
+                        span: p.span,
+                        message: format!(
+                            "the positional parameter `{}` comes after the named parameter \
+                             `{}`: a declaration lists its positional parameters first",
+                            p.name, named.name
+                        ),
+                        notes: vec![
+                            Note {
+                                span: named.span,
+                                text: format!("the first named parameter, `{}`", named.name),
+                            },
+                            Note {
+                                span: decl,
+                                text: "the declaration".into(),
+                            },
+                        ],
+                    });
+                }
+                None if !p.positional => first_named = Some(out.len()),
+                _ => {}
+            }
+            out.push(p);
+        }
+        Ok(out)
     }
 
     fn param(&mut self, n: usize) -> Result<Param, Error> {

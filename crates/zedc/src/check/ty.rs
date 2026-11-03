@@ -1096,9 +1096,9 @@ impl Sig {
                 format!("({}) -> {}", ps.join(", "), a.result)
             })
             .collect();
-        let mut out = match arrows.len() {
-            1 => arrows[0].clone(),
-            _ => {
+        let mut out = match <[String; 1]>::try_from(arrows) {
+            Ok([one]) => one,
+            Err(arrows) => {
                 let arrows: Vec<String> = arrows.iter().map(|a| format!("({a})")).collect();
                 arrows.join(" & ")
             }

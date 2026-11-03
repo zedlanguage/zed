@@ -381,7 +381,7 @@ impl Builder<'_> {
         };
         let (positional, named) = match node.kids[..] {
             [] => (Vec::new(), Vec::new()),
-            [args] => match self.args(args)? {
+            [args] => match self.args(args, self.span(n))? {
                 (_, _, true) => {
                     return Err(Error {
                         row: None,
@@ -662,7 +662,7 @@ impl Builder<'_> {
         let (mut params, mut ports) = (Vec::new(), None);
         for &k in &head[skip + 1..] {
             match self.tree.name(k) {
-                "Params" => params = self.params(k)?,
+                "Params" => params = self.params(k, self.span(n))?,
                 "Ports" => {
                     let mut list = Vec::new();
                     for &p in self.kids(k) {
