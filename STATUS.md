@@ -841,7 +841,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-ends | repair attempt 3 | 2026-11-03 03:52 | start: fix kept sum/difference of unrelated cores (int.rs:1326) and the 11 incomplete tradeoff comments |
 | UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | start: reading brief, XT3 report B2, utvpi.rs |
 
-Merged into local main and not yet pushed (43 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (44 commits); the push follows one full test run on the merged tree:
 
 - 7709581 S22b: c - x reflects each piece of the demand instead of the capped forward image
 - 70ff249 STATUS: S22d merged
