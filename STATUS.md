@@ -915,14 +915,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T6-payload-pinwheel | verify attempt 1 | 2026-11-03 08:25 | started; load 77.64 86.08 87.12 |
 | T6-ratlit | impl attempt 3 | 2026-11-03 05:01 | meKr print in place, l01_22 32 pass, fmt and clippy clean; scaling N=2^20 vs 2^23: 2,951,041 vs 2,949,632 instructions, 414 kB both; exponent of 200 vs 1600 dig |
 | TD-ends | repair attempt 5 | 2026-11-03 03:52 | squashed onto main 66945e0 as 4ba6b1d; main's S22 code, preimage_ref and tests ported to exact ends; running tests |
-| TD-values | verify attempt 1 | 2026-11-03 03:52 | suite (run_tests.sh 2) on 26ac522+main 1ab9e33: 99 pieces, 1 failed (l01_25 s22 random_terms, more_random_guarded_chains; known on main, S22-merge owns), l01_23 |
 | TEST-split | repair attempt 2 | 2026-11-03 07:56 | rebased on main 88c51bb as 0b5d7c1 (STATUS conflict, kept both); steps binary 1889 tests, 233 step pieces, selections identical to the full list, each once (old |
 | TYPE-forms | orchestrator attempt  | 2026-11-03 08:16 | LOAD REQUIREMENT (user, 09:57): the machine is at load 110 on 32 cores; target is about 32. From now on build with CARGO_BUILD_JOBS=4, run the suite as tools/ru |
 | UNITANNOT-L7 | repair attempt 1 | 2026-11-03 07:14 | run_tests.sh 2 on 52b6b67 (base 1ab9e33): 100 pieces, 2 failed: m0_01 step_index snapshot lacked l07_03 (mine, updated), l01_25 s22 random pair (known on main,  |
 | UTVPI-NEAR | repair attempt 2 | 2026-11-03 06:34 | start; per orchestrator split (UTVPI-union) measuring main on the union family k=256,2048; load 85.27 |
 
-Merged into local main and not yet pushed (114 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (115 commits); the push follows one full test run on the merged tree:
 
+- 9a66958 TD-values: each_value makes every inner type lazily, one maker per type, explicit stack
 - 404bae5 STATUS: in progress as of 2026-11-03 11:11
 - ba12343 STATUS: HULL3 done (tip c52cc3c)
 - c52cc3c HULL3: three live variables with a unit side decided by a 3-D shadow in O(m log m) (XT3 B4)
