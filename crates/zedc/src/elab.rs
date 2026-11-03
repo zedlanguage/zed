@@ -33,7 +33,7 @@ use crate::ast::{
     Error, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
     TypeKind,
 };
-use crate::check::{self, Fit, Info};
+use crate::check::{self, Fit, Info, Misfit};
 use crate::lex::Span;
 use crate::rejection::Row;
 use crate::resolve::{Kind, Ref, Resolution, prelude_layer};
@@ -259,14 +259,17 @@ fn elaborate_in(
     }
     out.tests = std::mem::take(&mut e.tests).into();
     out.warnings = warnings;
-    e.errors.extend(checked);
-    if e.errors.is_empty() {
+    // The checker's errors first, so that where both report one error, as for an argument
+    // that fills no parameter, the checker's, which carries its notes, is the one kept: the
+    // sort is stable.
+    let mut errors = checked;
+    errors.append(&mut e.errors);
+    if errors.is_empty() {
         Ok((out, e.marks.take()))
     } else {
-        e.errors
-            .sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
-        e.errors.dedup();
-        Err(e.errors)
+        errors.sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
+        errors.dedup_by(|a, b| (a.span, &a.message, a.row) == (b.span, &b.message, b.row));
+        Err(errors)
     }
 }
 
@@ -650,9 +653,10 @@ impl<'a> Elab<'a> {
         self.error_in(None, span, message)
     }
 
-    /// An error that is a case of the row `row` of the rejection table.
-    fn rejects<T>(&mut self, row: Row, span: Span, message: impl Into<String>) -> Option<T> {
-        self.error_in(Some(row), span, message)
+    /// The error of a call's argument that does not fill a parameter of `who`, as the checker
+    /// reports it too.
+    fn misfit<T>(&mut self, span: Span, misfit: Misfit, who: &str) -> Option<T> {
+        self.error_in(misfit.row(), span, misfit.message(who))
     }
 
     fn error_in<T>(

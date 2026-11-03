@@ -8,6 +8,7 @@ mod bounds;
 mod calls;
 mod docs;
 mod fits;
+mod named_calls;
 mod narrowing;
 mod random;
 mod scaling;

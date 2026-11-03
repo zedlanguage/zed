@@ -82,6 +82,71 @@ pub enum Fit {
     },
 }
 
+/// Why a call's arguments do not fill its function's parameters. The checker and
+/// elaboration both report these, each from its own pass over the arguments, with the
+/// message and row given here, so that the two agree on every call.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Misfit<'s> {
+    /// A receiver for a function of no parameters.
+    NoReceiver,
+    /// A positional argument after the parameters run out; the function takes this many.
+    TooMany(usize),
+    /// A positional argument for this named parameter.
+    Named(&'s str),
+    /// A named argument for this positional parameter.
+    Positional(&'s str),
+    /// A named argument of a name no parameter has.
+    NoParam(&'s str),
+    /// A named argument for a parameter already filled.
+    Supplied(&'s str),
+    /// A `...` call that leaves out this positional parameter.
+    CurriedPositional(&'s str),
+    /// A `...` call that leaves out no parameter.
+    NothingLeftOut,
+    /// A saturated call that leaves out this parameter, which has no default.
+    Missing(&'s str),
+    /// A call through a value that leaves out this parameter, whose default reads the other
+    /// parameters.
+    OpenDefault(&'s str),
+}
+
+impl Misfit<'_> {
+    /// The row of the rejection table the misfit is a case of, if any.
+    pub(crate) fn row(self) -> Option<Row> {
+        match self {
+            Misfit::NoReceiver | Misfit::TooMany(_) | Misfit::NoParam(_) | Misfit::Supplied(_) => {
+                None
+            }
+            Misfit::Named(_) | Misfit::Positional(_) => Some(Row::WrongForm),
+            Misfit::CurriedPositional(_) | Misfit::NothingLeftOut => Some(Row::NothingLeftOut),
+            Misfit::Missing(_) | Misfit::OpenDefault(_) => Some(Row::MissingArgument),
+        }
+    }
+
+    /// The message, for the function called `who`.
+    pub(crate) fn message(self, who: &str) -> String {
+        match self {
+            Misfit::NoReceiver => format!("`{who}` has no parameter for a receiver"),
+            Misfit::TooMany(n) => format!("too many arguments: `{who}` takes {n}"),
+            Misfit::Named(name) => format!("`{name}` of `{who}` is named: pass it as `{name}: …`"),
+            Misfit::Positional(name) => {
+                format!("`{name}` of `{who}` is positional: pass it by position")
+            }
+            Misfit::NoParam(name) => format!("`{who}` has no parameter `{name}`"),
+            Misfit::Supplied(name) => format!("`{name}` is already supplied"),
+            Misfit::CurriedPositional(name) => {
+                format!("`...` curries named parameters only; the positional `{name}` is left out")
+            }
+            Misfit::NothingLeftOut => "`...` leaves no named parameter out".into(),
+            Misfit::Missing(name) => format!("missing argument `{name}` of `{who}`"),
+            Misfit::OpenDefault(name) => format!(
+                "the default of `{name}` reads the function's other parameters, so only a call \
+                 of the declared function fills it: pass `{name}`"
+            ),
+        }
+    }
+}
+
 /// What the checker finds.
 #[derive(Clone, Debug, Default)]
 pub struct Info {

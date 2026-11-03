@@ -334,16 +334,14 @@ fn findings(text: &str) -> (Vec<String>, Vec<String>) {
 #[test]
 fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
     // A unit whose declarations use one another in both directions, with one type error.
-    // `total` and `loud` take the type `!_` with no message: the checker gives that type to
-    // every top-level value that calls a declared function (`t = bump(2)` alone does it too),
-    // a gap of the checker that this test only requires to be the same in every order.
+    // The calls pass each parameter by name, as its declaration says (sec:values_morphisms).
     let decls = [
         "area(w, h) = w * h;",
-        "total = area(3, 4) + bump(2);",
+        "total = area(w: 3, h: 4) + bump(x: 2);",
         "bump(x) = x + 1;",
         "bad(x) = x + \"a\" * 2;",
         "shout(s) = upper(s) ++ \"!\";",
-        "loud = shout(\"hi\") + 1;",
+        "loud = shout(s: \"hi\") ++ \"?\";",
         "half(x) = x / 2;",
     ];
     let text = |order: &[usize]| {
@@ -357,6 +355,12 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
     assert_eq!(want.1, ["`*` does not take (\"a\", 2) [\"a\" * 2]"]);
     assert!(want.0.contains(&"bump: (x: int) -> int".to_string()));
     assert!(want.0.contains(&"shout: (s: String) -> String".to_string()));
+    assert!(want.0.contains(&"total = int".to_string()), "{:?}", want.0);
+    assert!(
+        want.0.contains(&"loud = String".to_string()),
+        "{:?}",
+        want.0
+    );
     let mut moves: Vec<Vec<usize>> = vec![(0..n).rev().collect()];
     moves.extend((1..n).map(|r| (0..n).map(|v| (v + r) % n).collect()));
     for old in moves {

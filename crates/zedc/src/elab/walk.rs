@@ -866,10 +866,7 @@ impl<'a> Elab<'a> {
         if let Some(r) = receiver {
             if n == 0 {
                 let who = callee.who();
-                let t = self.error(
-                    call.span,
-                    format!("`{who}` has no parameter for a receiver"),
-                );
+                let t = self.misfit(call.span, Misfit::NoReceiver, &who);
                 m.give(t);
                 return;
             }
@@ -899,14 +896,10 @@ impl<'a> Elab<'a> {
         if let Some(a) = ff.call.positional.get(ff.pi) {
             let t = if ff.next >= n {
                 let who = ff.callee.who();
-                self.error(a.span, format!("too many arguments: `{who}` takes {n}"))
+                self.misfit(a.span, Misfit::TooMany(n), &who)
             } else if let (name, false) = ff.callee.param(ff.next) {
                 let who = ff.callee.who();
-                self.rejects(
-                    Row::WrongForm,
-                    a.span,
-                    format!("`{name}` of `{who}` is named: pass it as `{name}: …`"),
-                )
+                self.misfit(a.span, Misfit::Named(name), &who)
             } else {
                 ff.pending = ff.next;
                 ff.next += 1;
@@ -926,18 +919,15 @@ impl<'a> Elab<'a> {
             let t = match at.get(name.as_str()).copied() {
                 None => {
                     let who = ff.callee.who();
-                    self.error(a.span, format!("`{who}` has no parameter `{name}`"))
+                    self.misfit(a.span, Misfit::NoParam(name), &who)
                 }
                 Some(j) if ff.callee.param(j).1 => {
                     let who = ff.callee.who();
-                    self.rejects(
-                        Row::WrongForm,
-                        a.span,
-                        format!("`{name}` of `{who}` is positional: pass it by position"),
-                    )
+                    self.misfit(a.span, Misfit::Positional(name), &who)
                 }
                 Some(j) if ff.slots[j].is_some() => {
-                    self.error(a.span, format!("`{name}` is already supplied"))
+                    let who = ff.callee.who();
+                    self.misfit(a.span, Misfit::Supplied(name), &who)
                 }
                 Some(j) => {
                     ff.pending = j;
@@ -959,22 +949,14 @@ impl<'a> Elab<'a> {
         if ff.call.curry {
             if let Some(&j) = ff.missing.iter().find(|&&j| ff.callee.param(j).1) {
                 let name = ff.callee.param(j).0;
-                let t = self.rejects(
-                    Row::NothingLeftOut,
-                    span,
-                    format!(
-                        "`...` curries named parameters only; the positional `{name}` is left out"
-                    ),
-                );
+                let who = ff.callee.who();
+                let t = self.misfit(span, Misfit::CurriedPositional(name), &who);
                 m.give(t);
                 return;
             }
             if ff.missing.is_empty() {
-                let t = self.rejects(
-                    Row::NothingLeftOut,
-                    span,
-                    "`...` leaves no named parameter out",
-                );
+                let who = ff.callee.who();
+                let t = self.misfit(span, Misfit::NothingLeftOut, &who);
                 m.give(t);
                 return;
             }
@@ -1036,20 +1018,10 @@ impl<'a> Elab<'a> {
                     m.stack.push(Job::Expr(d));
                     return;
                 }
-                Some((_, _, false)) => self.rejects(
-                    Row::MissingArgument,
-                    ff.call.span,
-                    format!(
-                        "the default of `{}` reads the function's other parameters, so only a \
-                         call of the declared function fills it: pass `{}`",
-                        p.name, p.name
-                    ),
-                ),
-                None => self.rejects(
-                    Row::MissingArgument,
-                    ff.call.span,
-                    format!("missing argument `{}` of `{sig}`", p.name),
-                ),
+                Some((_, _, false)) => {
+                    self.misfit(ff.call.span, Misfit::OpenDefault(&p.name), &sig.to_string())
+                }
+                None => self.misfit(ff.call.span, Misfit::Missing(&p.name), &sig.to_string()),
             };
             m.give(t);
             return;
@@ -1081,11 +1053,7 @@ impl<'a> Elab<'a> {
         for &j in &ff.missing {
             if f.params[j].default.is_none() {
                 ok = false;
-                self.rejects::<()>(
-                    Row::MissingArgument,
-                    ff.call.span,
-                    format!("missing argument `{}` of `{fname}`", f.params[j].name),
-                );
+                self.misfit::<()>(ff.call.span, Misfit::Missing(&f.params[j].name), fname);
             }
         }
         if !ok {
