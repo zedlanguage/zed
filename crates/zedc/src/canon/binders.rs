@@ -44,91 +44,137 @@ fn count(t: &Term) -> u64 {
     n
 }
 
-/// Calls `f` on the name of every binder of `t`, in preorder.
+/// Calls `f` on the name of every binder of `t`, in preorder. The terms still to walk wait on a
+/// heap stack, so a deep term does not grow the thread's stack.
 fn each_binder(t: &Term, f: &mut impl FnMut(&str)) {
-    match t {
-        Term::Lam(params, body) => {
-            params.iter().for_each(|p| f(p));
-            each_binder(body, f);
-        }
-        Term::Let(x, e, body) => {
-            each_binder(e, f);
-            f(x);
-            each_binder(body, f);
-        }
-        Term::Match(e, arms) => {
-            each_binder(e, f);
-            for (p, arm) in arms {
-                pattern_binds(p).iter().for_each(|x| f(x));
-                each_binder(arm, f);
+    enum Job<'t> {
+        Term(&'t Term),
+        Name(&'t str),
+        Pattern(&'t Pattern),
+    }
+    let mut todo = vec![Job::Term(t)];
+    while let Some(job) = todo.pop() {
+        let t = match job {
+            Job::Name(x) => {
+                f(x);
+                continue;
+            }
+            Job::Pattern(p) => {
+                each_pattern(p, &mut |p| {
+                    if let Pattern::Bind(x) = p {
+                        f(x)
+                    }
+                });
+                continue;
+            }
+            Job::Term(t) => t,
+        };
+        match t {
+            Term::Lam(params, body) => {
+                params.iter().for_each(|p| f(p));
+                todo.push(Job::Term(body));
+            }
+            Term::Let(x, e, body)
+            | Term::Fam {
+                domain: e,
+                var: x,
+                body,
+            } => todo.extend([Job::Term(body), Job::Name(x), Job::Term(e)]),
+            Term::Match(e, arms) => {
+                for (p, arm) in arms.iter().rev() {
+                    todo.extend([Job::Term(arm), Job::Pattern(p)]);
+                }
+                todo.push(Job::Term(e));
+            }
+            Term::Fix {
+                init,
+                step,
+                this,
+                key,
+                kind: FixKind::Definedness,
+                ..
+            } => todo.extend([
+                Job::Term(step),
+                Job::Name(key),
+                Job::Name(this),
+                Job::Term(init),
+            ]),
+            _ => {
+                let start = todo.len();
+                each_child(t, |c| todo.push(Job::Term(c)));
+                todo[start..].reverse();
             }
         }
-        Term::Fam { domain, var, body } => {
-            each_binder(domain, f);
-            f(var);
-            each_binder(body, f);
+    }
+}
+
+/// Calls `f` on `p` and each pattern inside it, in preorder, keeping the patterns still to
+/// visit on a heap stack.
+fn each_pattern<'p>(p: &'p Pattern, f: &mut impl FnMut(&'p Pattern)) {
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
+        f(p);
+        match p {
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, p)| p)),
+            Pattern::Wild
+            | Pattern::Bind(_)
+            | Pattern::Lit(_)
+            | Pattern::AnyAtom
+            | Pattern::Is(_) => {}
         }
-        Term::Fix {
-            init,
-            step,
-            this,
-            key,
-            kind: FixKind::Definedness,
-            ..
-        } => {
-            each_binder(init, f);
-            f(this);
-            f(key);
-            each_binder(step, f);
-        }
-        _ => children(t).into_iter().for_each(|c| each_binder(c, f)),
     }
 }
 
 /// The names a pattern binds, left to right.
 pub fn pattern_binds(p: &Pattern) -> Vec<Arc<str>> {
-    fn go(p: &Pattern, out: &mut Vec<Arc<str>>) {
-        match p {
-            Pattern::Bind(x) => out.push(x.clone()),
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter().for_each(|p| go(p, out)),
-            Pattern::Fields(_, fs) => fs.iter().for_each(|(_, p)| go(p, out)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
-        }
-    }
     let mut out = Vec::new();
-    go(p, &mut out);
+    each_pattern(p, &mut |p| {
+        if let Pattern::Bind(x) = p {
+            out.push(x.clone())
+        }
+    });
     out
 }
 
 /// The subterms of a term that binds nothing, in order.
 fn children(t: &Term) -> Vec<&Term> {
+    let mut out = Vec::new();
+    each_child(t, |c| out.push(c));
+    out
+}
+
+/// Calls `f` on each subterm of a term that binds nothing, in order.
+fn each_child<'t>(t: &'t Term, mut f: impl FnMut(&'t Term)) {
     match t {
-        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => vec![],
-        Term::App(f, args) => std::iter::once(&**f).chain(args).collect(),
-        Term::Prim(_, args) => args.iter().collect(),
-        Term::If(c, a, b) => vec![c, a, b],
-        Term::Reindex { family, kf, vf, .. } => vec![family, kf, vf],
-        Term::Discard { family, sel } => vec![family, sel],
+        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
+        Term::App(g, args) => {
+            f(g);
+            args.iter().for_each(f);
+        }
+        Term::Prim(_, args) => args.iter().for_each(f),
+        Term::If(c, a, b) => [c, a, b].into_iter().for_each(|t| f(t)),
+        Term::Reindex { family, kf, vf, .. } => [family, kf, vf].into_iter().for_each(|t| f(t)),
+        Term::Discard { family, sel } => [family, sel].into_iter().for_each(|t| f(t)),
         Term::Fold {
             family,
             op,
             identity,
             ..
-        } => [family, op]
-            .into_iter()
-            .chain(identity)
-            .map(|t| &**t)
-            .collect(),
+        } => [family, op].into_iter().chain(identity).for_each(|t| f(t)),
         Term::Fix {
             init, step, kind, ..
-        } => match kind {
-            FixKind::Lattice { join } => vec![init, step, join],
-            FixKind::Definedness => vec![init, step],
-        },
+        } => {
+            f(init);
+            f(step);
+            if let FixKind::Lattice { join } = kind {
+                f(join);
+            }
+        }
         Term::Gen {
             init, step, guard, ..
-        } => vec![init, step, guard],
-        Term::Push(_, v) => vec![v],
+        } => [init, step, guard].into_iter().for_each(|t| f(t)),
+        Term::Push(_, v) => f(v),
         Term::Lam(..) | Term::Let(..) | Term::Match(..) | Term::Fam { .. } => {
             unreachable!("binding forms are handled by the caller")
         }
@@ -445,7 +491,7 @@ fn rename(t: &Term, old: &str, new: &Arc<str>) -> Term {
 /// written binder gets its level, and each variable the name of the binder it means. A binder
 /// already canonical keeps its name, as the rule leaves it. `O(t log t)` for a term of size `t`.
 pub fn canonical(t: &Term) -> Term {
-    Levels::default().term(t, 0)
+    Levels::default().term(t)
 }
 
 /// The names in scope during the walk: each written name to the new names of the binders of
@@ -455,117 +501,234 @@ struct Levels {
     scope: std::collections::BTreeMap<Arc<str>, Vec<Arc<str>>>,
 }
 
+/// A step of [`Levels::term`]'s walk, on its heap stack.
+enum Walk<'t> {
+    /// Rename `t`, `depth` binders deep, and put the result on the results.
+    Term(&'t Term, usize),
+    /// The binding term `t`, whose first child is on the results: bring its names into scope
+    /// and walk the scope.
+    Scope(&'t Term, usize),
+    /// The arm `arm` of a `match`, `depth` binders deep: bring the names of `p` into scope and
+    /// walk it.
+    Arm(&'t Pattern, &'t Term, usize),
+    /// The scope of the binding term `t` is on the results: take its names out of scope and
+    /// build it.
+    Close(&'t Term),
+    /// The arm of pattern `p`, which binds `names`, is on the results: take the names out of
+    /// scope and put the arm, its pattern renamed, on the arms.
+    CloseArm(&'t Pattern, Vec<Arc<str>>),
+    /// The scrutinee and the arms of the `match` `t` are on the results and the arms: build it.
+    Match(&'t Term),
+    /// The `k` children of `t`, which binds nothing, are on the results: build it.
+    Map(&'t Term, usize),
+}
+
 impl Levels {
-    /// The new names of `names`, bound together at levels `depth`, `depth + 1`, …, brought
-    /// into scope in order, so that a later name of the group shadows an earlier one.
-    fn bind(&mut self, names: &[Arc<str>], depth: usize) -> Vec<Arc<str>> {
-        let new: Vec<Arc<str>> = names
-            .iter()
-            .enumerate()
-            .map(|(i, x)| match level_of(x) {
+    /// Brings `names`, bound together at levels `depth`, `depth + 1`, …, into scope in order,
+    /// so that a later name of the group shadows an earlier one. A canonical name keeps its
+    /// name; a written one gets its level.
+    fn bind(&mut self, names: &[Arc<str>], depth: usize) {
+        for (i, x) in names.iter().enumerate() {
+            let new = match level_of(x) {
                 Some(_) => x.clone(),
                 None => level_name(depth + i),
-            })
-            .collect();
-        for (x, n) in names.iter().zip(&new) {
-            self.scope.entry(x.clone()).or_default().push(n.clone());
+            };
+            self.scope.entry(x.clone()).or_default().push(new);
         }
-        new
     }
 
-    /// Takes `names` out of scope again, in the reverse order.
-    fn unbind(&mut self, names: &[Arc<str>]) {
+    /// Takes `names` out of scope again, in the reverse order, and returns their new names in
+    /// order.
+    fn unbind(&mut self, names: &[Arc<str>]) -> Vec<Arc<str>> {
+        let mut new = Vec::with_capacity(names.len());
         for x in names.iter().rev() {
             let stack = self.scope.get_mut(x).expect("bound by `bind`");
-            stack.pop();
+            new.push(stack.pop().expect("bound by `bind`"));
             if stack.is_empty() {
                 self.scope.remove(x);
             }
         }
+        new.reverse();
+        new
     }
 
-    /// `body` with `names` in scope at levels from `depth`, and the new names.
-    fn under(&mut self, names: &[Arc<str>], depth: usize, body: &Term) -> (Vec<Arc<str>>, Term) {
-        let new = self.bind(names, depth);
-        let body = self.term(body, depth + names.len());
-        self.unbind(names);
-        (new, body)
-    }
-
-    fn term(&mut self, t: &Term, depth: usize) -> Term {
+    /// `t` renamed. The terms still to rename and the terms to build wait on heap stacks, so a
+    /// deep term does not grow the thread's stack; the walk visits the subterms in the order
+    /// of the recursion it replaces, so the names come out the same.
+    fn term(&mut self, t: &Term) -> Term {
         let arc = |t: Term| Arc::new(t);
-        match t {
-            Term::Var(x) => match self.scope.get(x).and_then(|s| s.last()) {
-                Some(n) => Term::Var(n.clone()),
-                None => t.clone(),
-            },
-            Term::Lam(params, body) => {
-                let (new, body) = self.under(params, depth, body);
-                Term::Lam(new, arc(body))
-            }
-            Term::Let(x, e, body) => {
-                let e = self.term(e, depth);
-                let (new, body) = self.under(std::slice::from_ref(x), depth, body);
-                Term::Let(new[0].clone(), arc(e), arc(body))
-            }
-            Term::Match(e, arms) => {
-                let e = self.term(e, depth);
-                let arms = arms
-                    .iter()
-                    .map(|(p, arm)| {
-                        let binds = pattern_binds(p);
-                        let (new, arm) = self.under(&binds, depth, arm);
-                        (set_binds(p, &mut new.iter()), arm)
-                    })
-                    .collect();
-                Term::Match(arc(e), arms)
-            }
-            Term::Fam { domain, var, body } => {
-                let domain = arc(self.term(domain, depth));
-                let (new, body) = self.under(std::slice::from_ref(var), depth, body);
-                Term::Fam {
-                    domain,
-                    var: new[0].clone(),
-                    body: arc(body),
+        let mut todo = vec![Walk::Term(t, 0)];
+        let mut done: Vec<Term> = Vec::new();
+        let mut arms: Vec<(Pattern, Term)> = Vec::new();
+        while let Some(w) = todo.pop() {
+            match w {
+                Walk::Term(t, depth) => match t {
+                    Term::Var(x) => done.push(match self.scope.get(x).and_then(|s| s.last()) {
+                        Some(n) => Term::Var(n.clone()),
+                        None => t.clone(),
+                    }),
+                    Term::Lit(_) | Term::PrimFn(_) | Term::Read(_) => done.push(t.clone()),
+                    Term::Lam(params, body) => {
+                        self.bind(params, depth);
+                        todo.push(Walk::Close(t));
+                        todo.push(Walk::Term(body, depth + params.len()));
+                    }
+                    Term::Let(_, e, _)
+                    | Term::Fam { domain: e, .. }
+                    | Term::Fix {
+                        init: e,
+                        kind: FixKind::Definedness,
+                        ..
+                    } => todo.extend([Walk::Scope(t, depth), Walk::Term(e, depth)]),
+                    Term::Match(e, ms) => {
+                        todo.push(Walk::Match(t));
+                        todo.extend(ms.iter().rev().map(|(p, arm)| Walk::Arm(p, arm, depth)));
+                        todo.push(Walk::Term(e, depth));
+                    }
+                    _ => {
+                        let at = todo.len();
+                        todo.push(Walk::Map(t, 0));
+                        each_child(t, |c| todo.push(Walk::Term(c, depth)));
+                        let k = todo.len() - at - 1;
+                        todo[at] = Walk::Map(t, k);
+                        todo[at + 1..].reverse();
+                    }
+                },
+                Walk::Scope(t, depth) => {
+                    let (n, body) = match t {
+                        Term::Let(x, _, body) | Term::Fam { var: x, body, .. } => {
+                            self.bind(std::slice::from_ref(x), depth);
+                            (1, body)
+                        }
+                        Term::Fix {
+                            this, key, step, ..
+                        } => {
+                            self.bind(&[this.clone(), key.clone()], depth);
+                            (2, step)
+                        }
+                        _ => unreachable!("only a binding term has a scope"),
+                    };
+                    todo.push(Walk::Close(t));
+                    todo.push(Walk::Term(body, depth + n));
+                }
+                Walk::Arm(p, arm, depth) => {
+                    let names = pattern_binds(p);
+                    self.bind(&names, depth);
+                    let inner = depth + names.len();
+                    todo.push(Walk::CloseArm(p, names));
+                    todo.push(Walk::Term(arm, inner));
+                }
+                Walk::Close(t) => {
+                    let body = arc(done.pop().expect("the scope"));
+                    let built = match t {
+                        Term::Lam(params, _) => Term::Lam(self.unbind(params), body),
+                        Term::Let(x, ..) => {
+                            let [new] = self.one(x);
+                            Term::Let(new, arc(done.pop().expect("the bound term")), body)
+                        }
+                        Term::Fam { var, .. } => {
+                            let [new] = self.one(var);
+                            Term::Fam {
+                                domain: arc(done.pop().expect("the domain")),
+                                var: new,
+                                body,
+                            }
+                        }
+                        Term::Fix { this, key, ev, .. } => {
+                            let [key] = self.one(key);
+                            let [this] = self.one(this);
+                            Term::Fix {
+                                init: arc(done.pop().expect("the domain")),
+                                step: body,
+                                this,
+                                key,
+                                kind: FixKind::Definedness,
+                                ev: ev.clone(),
+                            }
+                        }
+                        _ => unreachable!("only a binding term is closed"),
+                    };
+                    done.push(built);
+                }
+                Walk::CloseArm(p, names) => {
+                    let new = self.unbind(&names);
+                    let arm = done.pop().expect("the arm");
+                    arms.push((set_binds(p, &mut new.iter()), arm));
+                }
+                Walk::Match(t) => {
+                    let Term::Match(_, ms) = t else {
+                        unreachable!("a `match` is built from its arms")
+                    };
+                    let built = arms.split_off(arms.len() - ms.len());
+                    let e = arc(done.pop().expect("the scrutinee"));
+                    done.push(Term::Match(e, built));
+                }
+                Walk::Map(t, k) => {
+                    let mut kids = done.drain(done.len() - k..);
+                    let built = map_children(t, &mut |_| kids.next().expect("each child"));
+                    drop(kids);
+                    done.push(built);
                 }
             }
-            Term::Fix {
-                init,
-                step,
-                this,
-                key,
-                kind: FixKind::Definedness,
-                ev,
-            } => {
-                let init = arc(self.term(init, depth));
-                let (new, step) = self.under(&[this.clone(), key.clone()], depth, step);
-                Term::Fix {
-                    init,
-                    step: arc(step),
-                    this: new[0].clone(),
-                    key: new[1].clone(),
-                    kind: FixKind::Definedness,
-                    ev: ev.clone(),
-                }
-            }
-            _ => map_children(t, &mut |c| self.term(c, depth)),
         }
+        done.pop().expect("the renamed term")
+    }
+
+    /// Takes the one name `x` out of scope again, and returns its new name.
+    fn one(&mut self, x: &Arc<str>) -> [Arc<str>; 1] {
+        let stack = self.scope.get_mut(x).expect("bound by `bind`");
+        let new = stack.pop().expect("bound by `bind`");
+        if stack.is_empty() {
+            self.scope.remove(x);
+        }
+        [new]
     }
 }
 
-/// `p` with its binders, left to right, named by `names` in turn.
+/// `p` with its binders, left to right, named by `names` in turn. The patterns still to visit
+/// and to build wait on heap stacks.
 fn set_binds<'a>(p: &Pattern, names: &mut impl Iterator<Item = &'a Arc<str>>) -> Pattern {
-    let mut all = |ps: &[Pattern]| ps.iter().map(|p| set_binds(p, names)).collect();
-    match p {
-        Pattern::Bind(_) => Pattern::Bind(names.next().expect("one name per binder").clone()),
-        Pattern::Atom(name, ps) => Pattern::Atom(name.clone(), all(ps)),
-        Pattern::Tuple(ps) => Pattern::Tuple(all(ps)),
-        Pattern::Fields(name, fs) => Pattern::Fields(
-            name.clone(),
-            fs.iter()
-                .map(|(f, p)| (f.clone(), set_binds(p, names)))
-                .collect(),
-        ),
-        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => p.clone(),
+    enum Job<'p> {
+        Visit(&'p Pattern),
+        Build(&'p Pattern, usize),
     }
+    let mut todo = vec![Job::Visit(p)];
+    let mut done: Vec<Pattern> = Vec::new();
+    while let Some(job) = todo.pop() {
+        match job {
+            Job::Visit(p) => match p {
+                Pattern::Bind(_) => done.push(Pattern::Bind(
+                    names.next().expect("one name per binder").clone(),
+                )),
+                Pattern::Atom(_, ps) | Pattern::Tuple(ps) => {
+                    todo.push(Job::Build(p, ps.len()));
+                    todo.extend(ps.iter().rev().map(Job::Visit));
+                }
+                Pattern::Fields(_, fs) => {
+                    todo.push(Job::Build(p, fs.len()));
+                    todo.extend(fs.iter().rev().map(|(_, p)| Job::Visit(p)));
+                }
+                Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {
+                    done.push(p.clone())
+                }
+            },
+            Job::Build(p, k) => {
+                let mut kids = done.drain(done.len() - k..);
+                let built = match p {
+                    Pattern::Atom(name, _) => Pattern::Atom(name.clone(), kids.by_ref().collect()),
+                    Pattern::Tuple(_) => Pattern::Tuple(kids.by_ref().collect()),
+                    Pattern::Fields(name, fs) => Pattern::Fields(
+                        name.clone(),
+                        fs.iter()
+                            .map(|(f, _)| (f.clone(), kids.next().expect("each field")))
+                            .collect(),
+                    ),
+                    _ => unreachable!("only a pattern with parts is built"),
+                };
+                drop(kids);
+                done.push(built);
+            }
+        }
+    }
+    done.pop().expect("the renamed pattern")
 }

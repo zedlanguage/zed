@@ -72,6 +72,39 @@ impl Out<'_> {
     }
 
     fn value(&mut self, v: &Value) {
+        self.write(Job::Value(v));
+    }
+
+    fn term(&mut self, t: &Term) {
+        self.write(Job::Term(t));
+    }
+
+    /// Writes `root`. What a node writes after a node inside it waits on a heap stack, in the
+    /// reverse of the order it is written in, so a deep term or value does not grow the
+    /// thread's stack and the bytes come out as a recursive walk writes them.
+    fn write(&mut self, root: Job<'_>) {
+        let mut todo = vec![root];
+        while let Some(job) = todo.pop() {
+            match job {
+                Job::Tag(t) => self.tag(t),
+                Job::Word(n) => self.word(n),
+                Job::Str(s) => self.str(s),
+                Job::Evidence(ev) => self.evidence(ev),
+                Job::Value(v) => self.value_head(v, &mut todo),
+                Job::Pattern(p) => self.pattern_head(p, &mut todo),
+                Job::Term(t) => self.term_head(t, &mut todo),
+            }
+        }
+    }
+
+    /// Writes the length of `items`, and puts the items on `todo` to write next, in order.
+    fn seq<'t, T>(&mut self, items: &'t [T], job: fn(&'t T) -> Job<'t>, todo: &mut Vec<Job<'t>>) {
+        self.word(items.len() as u64);
+        todo.extend(items.iter().rev().map(job));
+    }
+
+    /// Writes the start of `v`, and puts what follows on `todo`.
+    fn value_head<'t>(&mut self, v: &'t Value, todo: &mut Vec<Job<'t>>) {
         match v {
             Value::Bool(b) => {
                 self.tag(0);
@@ -92,14 +125,14 @@ impl Out<'_> {
             Value::Atom(a) if a.fields.is_empty() => {
                 self.tag(4);
                 self.str(&a.name);
-                self.values(&a.args);
+                self.seq(&a.args, Job::Value, todo);
             }
             Value::Atom(a) => {
                 self.tag(10);
                 self.str(&a.name);
                 self.word(a.fields.len() as u64);
                 a.fields.iter().for_each(|f| self.str(f));
-                self.values(&a.args);
+                self.seq(&a.args, Job::Value, todo);
             }
             Value::Big(n) => {
                 self.tag(8);
@@ -112,44 +145,41 @@ impl Out<'_> {
             }
             Value::Tuple(vs) => {
                 self.tag(5);
-                self.values(vs);
+                self.seq(vs, Job::Value, todo);
             }
             Value::Path(vs) => {
                 self.tag(6);
-                self.values(vs);
+                self.seq(vs, Job::Value, todo);
             }
             Value::Family(f) => {
                 self.tag(7);
                 self.word(f.len() as u64);
+                let start = todo.len();
                 for (k, v) in f.iter() {
-                    self.value(k);
-                    self.value(v);
+                    todo.extend([Job::Value(k), Job::Value(v)]);
                 }
+                todo[start..].reverse();
             }
         }
     }
 
-    fn values(&mut self, vs: &[Value]) {
-        self.word(vs.len() as u64);
-        vs.iter().for_each(|v| self.value(v));
-    }
-
-    fn pattern(&mut self, p: &Pattern) {
+    /// Writes the start of `p`, and puts what follows on `todo`.
+    fn pattern_head<'t>(&mut self, p: &'t Pattern, todo: &mut Vec<Job<'t>>) {
         match p {
             Pattern::Wild => self.tag(0),
             Pattern::Bind(_) => self.tag(1),
             Pattern::Lit(v) => {
                 self.tag(2);
-                self.value(v);
+                todo.push(Job::Value(v));
             }
             Pattern::Atom(name, ps) => {
                 self.tag(3);
                 self.str(name);
-                self.patterns(ps);
+                self.seq(ps, Job::Pattern, todo);
             }
             Pattern::Tuple(ps) => {
                 self.tag(4);
-                self.patterns(ps);
+                self.seq(ps, Job::Pattern, todo);
             }
             Pattern::AnyAtom => self.tag(5),
             Pattern::Is(t) => {
@@ -160,17 +190,11 @@ impl Out<'_> {
                 self.tag(6);
                 self.str(name);
                 self.word(fs.len() as u64);
-                for (f, p) in fs {
-                    self.str(f);
-                    self.pattern(p);
+                for (f, p) in fs.iter().rev() {
+                    todo.extend([Job::Pattern(p), Job::Str(f)]);
                 }
             }
         }
-    }
-
-    fn patterns(&mut self, ps: &[Pattern]) {
-        self.word(ps.len() as u64);
-        ps.iter().for_each(|p| self.pattern(p));
     }
 
     /// An evidence record, its properties in name order, each with its grade.
@@ -189,16 +213,12 @@ impl Out<'_> {
         }
     }
 
-    fn terms(&mut self, ts: &[Term]) {
-        self.word(ts.len() as u64);
-        ts.iter().for_each(|t| self.term(t));
-    }
-
-    fn term(&mut self, t: &Term) {
+    /// Writes the start of `t`, and puts what follows on `todo`.
+    fn term_head<'t>(&mut self, t: &'t Term, todo: &mut Vec<Job<'t>>) {
         match t {
             Term::Lit(v) => {
                 self.tag(1);
-                self.value(v);
+                todo.push(Job::Value(v));
             }
             Term::Var(x) => match level_of(x) {
                 Some(level) => {
@@ -219,17 +239,17 @@ impl Out<'_> {
             Term::Lam(params, body) => {
                 self.tag(5);
                 self.word(params.len() as u64);
-                self.term(body);
+                todo.push(Job::Term(body));
             }
             Term::App(f, args) => {
                 self.tag(6);
-                self.term(f);
-                self.terms(args);
+                todo.extend(args.iter().rev().map(Job::Term));
+                todo.extend([Job::Word(args.len() as u64), Job::Term(f)]);
             }
             Term::Prim(p, args) => {
                 self.tag(7);
                 self.str(&format!("{p:?}"));
-                self.terms(args);
+                self.seq(args, Job::Term, todo);
             }
             Term::PrimFn(p) => {
                 self.tag(8);
@@ -237,28 +257,22 @@ impl Out<'_> {
             }
             Term::Let(_, e, body) => {
                 self.tag(9);
-                self.term(e);
-                self.term(body);
+                todo.extend([Job::Term(body), Job::Term(e)]);
             }
             Term::If(c, a, b) => {
                 self.tag(10);
-                self.term(c);
-                self.term(a);
-                self.term(b);
+                todo.extend([Job::Term(b), Job::Term(a), Job::Term(c)]);
             }
             Term::Match(e, arms) => {
                 self.tag(11);
-                self.term(e);
-                self.word(arms.len() as u64);
-                for (p, arm) in arms {
-                    self.pattern(p);
-                    self.term(arm);
+                for (p, arm) in arms.iter().rev() {
+                    todo.extend([Job::Term(arm), Job::Pattern(p)]);
                 }
+                todo.extend([Job::Word(arms.len() as u64), Job::Term(e)]);
             }
             Term::Fam { domain, body, .. } => {
                 self.tag(12);
-                self.term(domain);
-                self.term(body);
+                todo.extend([Job::Term(body), Job::Term(domain)]);
             }
             Term::Reindex {
                 family,
@@ -267,21 +281,15 @@ impl Out<'_> {
                 witness,
             } => {
                 self.tag(13);
-                self.term(family);
-                self.term(kf);
-                self.term(vf);
                 match witness {
-                    Witness::Residue => self.tag(0),
-                    Witness::Catalog(name) => {
-                        self.tag(1);
-                        self.str(name);
-                    }
+                    Witness::Residue => todo.push(Job::Tag(0)),
+                    Witness::Catalog(name) => todo.extend([Job::Str(name), Job::Tag(1)]),
                 }
+                todo.extend([Job::Term(vf), Job::Term(kf), Job::Term(family)]);
             }
             Term::Discard { family, sel } => {
                 self.tag(14);
-                self.term(family);
-                self.term(sel);
+                todo.extend([Job::Term(sel), Job::Term(family)]);
             }
             Term::Fold {
                 family,
@@ -291,17 +299,12 @@ impl Out<'_> {
                 ev,
             } => {
                 self.tag(15);
-                self.term(family);
-                self.term(op);
+                todo.extend([Job::Evidence(ev), Job::Word(*depth as u64)]);
                 match identity {
-                    None => self.tag(0),
-                    Some(i) => {
-                        self.tag(1);
-                        self.term(i);
-                    }
+                    None => todo.push(Job::Tag(0)),
+                    Some(i) => todo.extend([Job::Term(i), Job::Tag(1)]),
                 }
-                self.word(*depth as u64);
-                self.evidence(ev);
+                todo.extend([Job::Term(op), Job::Term(family)]);
             }
             Term::Fix {
                 init,
@@ -311,16 +314,12 @@ impl Out<'_> {
                 ..
             } => {
                 self.tag(16);
-                self.term(init);
-                self.term(step);
+                todo.push(Job::Evidence(ev));
                 match kind {
-                    FixKind::Lattice { join } => {
-                        self.tag(0);
-                        self.term(join);
-                    }
-                    FixKind::Definedness => self.tag(1),
+                    FixKind::Lattice { join } => todo.extend([Job::Term(join), Job::Tag(0)]),
+                    FixKind::Definedness => todo.push(Job::Tag(1)),
                 }
-                self.evidence(ev);
+                todo.extend([Job::Term(step), Job::Term(init)]);
             }
             Term::Gen {
                 init,
@@ -329,13 +328,16 @@ impl Out<'_> {
                 pos,
             } => {
                 self.tag(17);
-                self.term(init);
-                self.term(step);
-                self.term(guard);
-                self.tag(match pos {
+                let pos = match pos {
                     GuardPos::Before => 0,
                     GuardPos::After => 1,
-                });
+                };
+                todo.extend([
+                    Job::Tag(pos),
+                    Job::Term(guard),
+                    Job::Term(step),
+                    Job::Term(init),
+                ]);
             }
             Term::Read(port) => {
                 self.tag(18);
@@ -344,10 +346,22 @@ impl Out<'_> {
             Term::Push(port, v) => {
                 self.tag(19);
                 self.str(port);
-                self.term(v);
+                todo.push(Job::Term(v));
             }
         }
     }
+}
+
+/// A piece of the serialization still to write, on [`Out::write`]'s heap stack.
+#[derive(Clone, Copy)]
+enum Job<'t> {
+    Term(&'t Term),
+    Value(&'t Value),
+    Pattern(&'t Pattern),
+    Tag(u8),
+    Word(u64),
+    Str(&'t str),
+    Evidence(&'t Evidence),
 }
 
 /// The serialization of a definition in normal form.
