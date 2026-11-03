@@ -3,7 +3,7 @@
 //! default 2 MiB stack.
 //!
 //! The plan names each region by its path from the root, so a nest `d` deep holds paths of
-//! O(d²) bytes in all, and planning and running it are of order d² (COMPLEXITY.md F60; the
+//! O(d²) bytes in all, and planning and running it are of order d² (COMPLEXITY.md F62; the
 //! keys are T12-Z4's to change). The nests here are 8,000 deep, four times the depth at
 //! which the recursive planner and machine overflowed a 2 MiB stack, and not 100,000.
 

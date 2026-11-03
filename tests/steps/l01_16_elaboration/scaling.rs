@@ -456,7 +456,7 @@ fn blocks_nested_100000_deep_elaborate_on_a_2_mib_stack() {
 }
 
 // The checker, which elaboration runs first, costs about a million instructions for each `+`
-// and a third of that for each negation, branch or call (COMPLEXITY.md F60), so these shapes
+// and a third of that for each negation, branch or call (COMPLEXITY.md F62), so these shapes
 // elaborate 8,000 deep.
 
 #[test]
