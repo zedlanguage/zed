@@ -12,13 +12,23 @@
 //! with a payload are a cell whose parts are words, a closure a cell holding its captures, a
 //! string a cell holding a [`Rope`], and a big integer, a rational, a keypath and a family a
 //! cell holding the kernel value. A cell's count is the number of references to it; at 0 it
-//! is freed, its parts dropped, and a later use of it is an error.
+//! is freed, its parts dropped, and the next allocation takes it again. A cell's word carries
+//! the cell's generation, which each free advances, so a use of a word after its cell was
+//! freed is an error even when the cell holds another value by then.
+//!
+//! **The table.** An uncounted value is never freed, since no count says when its last word
+//! goes. So the table grows only with what a run reads, never with how often: the empty tuple
+//! and each bare atom have one entry, and the parts of an entry are entered once, together,
+//! the first time a match reads them, so matching a constant again adds nothing (COMPLEXITY.md
+//! R3, R6).
 
-use std::slice;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::{mem, slice};
 
 use zed_kernel::term::Pattern;
-use zed_kernel::value::{Atom, Value};
+use zed_kernel::types::Type;
+use zed_kernel::value::{Atom, Items, Value};
 
 use crate::rope::Rope;
 
@@ -39,7 +49,8 @@ impl Word {
     pub const FLOAT: i64 = 1;
     /// A boolean; the payload is 0 or 1.
     pub const BOOL: i64 = 2;
-    /// A heap cell; the payload is its index.
+    /// A heap cell; the payload is its index, and its generation in the bits above
+    /// [`INDEX_BITS`].
     pub const CELL: i64 = 3;
     /// An uncounted value; the payload is its index in the heap's table.
     pub const VAL: i64 = 4;
@@ -91,7 +102,44 @@ impl Word {
             _ => return None,
         })
     }
+
+    /// The word of entry `i` of the table.
+    fn val(i: usize) -> Word {
+        Word {
+            tag: Word::VAL,
+            bits: i as i64,
+        }
+    }
+
+    /// The word of cell `index` in generation `generation`.
+    fn cell(index: usize, generation: u32) -> Word {
+        Word {
+            tag: Word::CELL,
+            bits: index as i64 | i64::from(generation) << INDEX_BITS,
+        }
+    }
+
+    /// The index of the cell of cell word `self`.
+    fn index(self) -> usize {
+        (self.bits & INDEX_MASK) as usize
+    }
+
+    /// The generation of the cell of cell word `self`.
+    fn generation(self) -> u32 {
+        (self.bits as u64 >> INDEX_BITS) as u32
+    }
 }
+
+/// The bits of a cell word's payload that hold the cell's index; the rest hold its generation.
+/// 2^40 cells would take 64 TiB for the cells alone, so no heap reaches it.
+pub const INDEX_BITS: u32 = 40;
+
+/// The index bits of a cell word's payload.
+const INDEX_MASK: i64 = (1 << INDEX_BITS) - 1;
+
+/// The generations a cell goes through. A cell freed in its last generation is not taken
+/// again, so the generation of a word from any earlier one never matches the cell's again.
+const GENERATIONS: u32 = 1 << (64 - INDEX_BITS);
 
 /// What a cell holds.
 #[derive(Clone, Debug)]
@@ -140,12 +188,22 @@ impl Obj {
     }
 }
 
-/// A heap cell: its count, its contents until it is freed, and whether it was ever shared.
+/// A heap cell: its count, its generation, its contents until it is freed, and whether it was
+/// ever shared in this generation.
 #[derive(Debug)]
 struct Cell {
     count: u32,
+    generation: u32,
     obj: Option<Obj>,
     shared: bool,
+}
+
+/// An entry of the table: an uncounted value, and where the entries of its parts start once a
+/// match has read them.
+#[derive(Debug)]
+struct Entry {
+    value: Value,
+    parts: Option<usize>,
 }
 
 /// The counts of one run, the same measures as the counting machine of step L1.34 keeps,
@@ -168,11 +226,20 @@ pub struct Stats {
     pub copied: u64,
 }
 
-/// The structure of a data word, for matching.
-enum Parts {
-    Tuple(Vec<Word>),
-    Atom(Arc<str>, Arc<[Arc<str>]>, Vec<Word>),
-    Other,
+/// Where the parts of a tuple or an atom being matched are read: a live cell, or the entries
+/// of the parts of entry `entry` of the table, from `start`.
+#[derive(Clone, Copy)]
+enum Holder {
+    Cell(usize),
+    Table { entry: usize, start: usize },
+}
+
+/// A tuple or an atom a structural pattern reads: its atom's name and field names, none for a
+/// tuple; its number of parts; and where they are.
+struct Shape<'h> {
+    atom: Option<(&'h str, &'h [Arc<str>])>,
+    len: usize,
+    holder: Holder,
 }
 
 /// A tuple or an atom [`Heap::fresh`] has entered: its payload's atom, its parts still to make,
@@ -196,46 +263,17 @@ struct Reading {
 enum Subs<'p> {
     /// Positional: pattern `i` reads part `i`.
     Items(&'p [Pattern]),
-    /// Named: each pattern reads the part of its field in `fields`.
-    Fields(&'p [(Arc<str>, Pattern)], Arc<[Arc<str>]>),
+    /// Named: each pattern reads the part of its field among the atom's field names.
+    Fields(&'p [(Arc<str>, Pattern)]),
 }
 
-/// A tuple or atom pattern [`Heap::matches`] has entered, with the parts of the word it reads.
+/// A tuple or atom pattern [`Heap::matches`] has entered, with where the parts of the word it
+/// reads are.
 struct Matching<'p> {
     subs: Subs<'p>,
-    words: Vec<Word>,
+    holder: Holder,
     /// The next sub-pattern.
     next: usize,
-}
-
-/// What comes next in a [`Matching`].
-enum Next<'p> {
-    /// Sub-pattern on part `i`.
-    Part(usize, &'p Pattern, Word),
-    /// A named field the word does not have.
-    Missing,
-    /// Every sub-pattern has matched.
-    End,
-}
-
-impl<'p> Matching<'p> {
-    fn next(&mut self) -> Next<'p> {
-        let n = self.next;
-        self.next += 1;
-        match &self.subs {
-            Subs::Items(ps) => match ps.get(n) {
-                Some(q) => Next::Part(n, q, self.words[n]),
-                None => Next::End,
-            },
-            Subs::Fields(fs, fields) => match fs.get(n) {
-                Some((f, q)) => match fields.binary_search(f) {
-                    Ok(i) => Next::Part(i, q, self.words[i]),
-                    Err(_) => Next::Missing,
-                },
-                None => Next::End,
-            },
-        }
-    }
 }
 
 /// What reading one word against one pattern, without its sub-patterns, gives.
@@ -253,11 +291,12 @@ fn obj_in(cells: &[Cell], w: Word) -> Result<Option<&Obj>, String> {
     if w.tag != Word::CELL {
         return Ok(None);
     }
-    match &cells[w.bits as usize].obj {
-        Some(o) => Ok(Some(o)),
-        None => Err(format!(
+    let c = &cells[w.index()];
+    match &c.obj {
+        Some(o) if c.generation == w.generation() => Ok(Some(o)),
+        _ => Err(format!(
             "runtime: cell {} is used after it was freed",
-            w.bits
+            w.index()
         )),
     }
 }
@@ -266,12 +305,18 @@ fn obj_in(cells: &[Cell], w: Word) -> Result<Option<&Obj>, String> {
 #[derive(Debug, Default)]
 pub struct Heap {
     cells: Vec<Cell>,
-    vals: Vec<Value>,
+    /// The freed cells that can be taken again, the next on top.
+    free: Vec<usize>,
+    vals: Vec<Entry>,
+    /// The entry of the empty tuple and of each bare atom.
+    bare: BTreeMap<Value, usize>,
     /// The counts so far.
     pub stats: Stats,
     live: u64,
     /// The stack of words [`Heap::dec`] still has to drop, empty between calls.
     todo: Vec<Word>,
+    /// An error [`Heap::inc`] met, which it cannot return; the next [`Heap::dec`] returns it.
+    fault: Option<String>,
 }
 
 impl Heap {
@@ -285,37 +330,106 @@ impl Heap {
         self.live
     }
 
-    /// The word of `v`, uncounted: a scalar, or an entry of the table.
+    /// The cells the heap holds, live or free: what its memory for cells grows with.
+    pub fn cell_slots(&self) -> usize {
+        self.cells.len()
+    }
+
+    /// The entries of the table of uncounted values.
+    pub fn table_len(&self) -> usize {
+        self.vals.len()
+    }
+
+    /// The word of `v`, uncounted: a scalar, or an entry of the table. The empty tuple and a
+    /// bare atom made again are the entry they had.
     pub fn uncounted(&mut self, v: Value) -> Word {
         if let Some(w) = Word::scalar(&v) {
             return w;
         }
-        self.vals.push(v);
-        Word {
-            tag: Word::VAL,
-            bits: self.vals.len() as i64 - 1,
+        let bare = match &v {
+            Value::Tuple(xs) => xs.is_empty(),
+            Value::Atom(a) => a.args.is_empty(),
+            _ => false,
+        };
+        if bare {
+            if let Some(&i) = self.bare.get(&v) {
+                return Word::val(i);
+            }
+            self.bare.insert(v.clone(), self.vals.len());
         }
+        self.vals.push(Entry {
+            value: v,
+            parts: None,
+        });
+        Word::val(self.vals.len() - 1)
     }
 
     /// The uncounted value of word `w`, tagged [`Word::VAL`].
     pub fn value_ref(&self, w: Word) -> &Value {
-        &self.vals[w.bits as usize]
+        &self.vals[w.bits as usize].value
     }
 
-    /// A new cell holding `obj`, with count 1.
+    /// The word of entry `i` of the table: the scalar it holds, or the entry.
+    fn table_word(&self, i: usize) -> Word {
+        Word::scalar(&self.vals[i].value).unwrap_or(Word::val(i))
+    }
+
+    /// Where the entries of the parts of entry `i` start, entered together the first time.
+    fn table_parts(&mut self, i: usize) -> usize {
+        if let Some(start) = self.vals[i].parts {
+            return start;
+        }
+        // The table shares the parts with the entry, a count each.
+        let items = match &self.vals[i].value {
+            Value::Tuple(xs) => xs.clone(),
+            Value::Atom(a) => a.args.clone(),
+            _ => Items::default(),
+        };
+        let start = self.vals.len();
+        self.vals.extend(items.iter().map(|x| Entry {
+            value: x.clone(),
+            parts: None,
+        }));
+        self.vals[i].parts = Some(start);
+        start
+    }
+
+    /// A new cell holding `obj`, with count 1: a freed cell when there is one.
     pub fn alloc(&mut self, obj: Obj) -> Word {
-        self.cells.push(Cell {
-            count: 1,
-            obj: Some(obj),
-            shared: false,
-        });
         self.stats.allocations += 1;
         self.live += 1;
         self.stats.peak = self.stats.peak.max(self.live);
-        Word {
-            tag: Word::CELL,
-            bits: self.cells.len() as i64 - 1,
+        let i = match self.free.pop() {
+            Some(i) => {
+                let c = &mut self.cells[i];
+                (c.count, c.obj, c.shared) = (1, Some(obj), false);
+                i
+            }
+            None => {
+                self.cells.push(Cell {
+                    count: 1,
+                    generation: 0,
+                    obj: Some(obj),
+                    shared: false,
+                });
+                self.cells.len() - 1
+            }
+        };
+        Word::cell(i, self.cells[i].generation)
+    }
+
+    /// Frees cell `i`, whose count has reached 0: its contents, which it gives back, go, and
+    /// its generation advances.
+    fn free_cell(&mut self, i: usize) -> Obj {
+        let c = &mut self.cells[i];
+        let obj = c.obj.take().expect("a live cell holds its contents");
+        c.generation += 1;
+        if c.generation < GENERATIONS {
+            self.free.push(i);
         }
+        self.stats.frees += 1;
+        self.live -= 1;
+        obj
     }
 
     /// A fresh word for `v`, owned: its cells allocated, each part of a tuple or an atom its
@@ -389,10 +503,14 @@ impl Heap {
         })
     }
 
-    /// The kernel value of data word `w`; a string's rope is flattened.
+    /// The kernel value of data word `w`; a string's rope is flattened. A cell that more than
+    /// one reference holds can be met again on another path, so its value is kept the first
+    /// time and shared after: the walk reads each cell once, and the value shares its parts as
+    /// the cells do.
     pub fn value(&mut self, w: Word) -> Result<Value, String> {
         let mut stack = Vec::new();
-        let mut made = self.read(w, &mut stack)?;
+        let mut seen = HashMap::new();
+        let mut made = self.read(w, &mut stack, &seen)?;
         loop {
             let Some(top) = stack.last_mut() else {
                 return Ok(made.expect("an empty stack follows a finished value"));
@@ -400,35 +518,48 @@ impl Heap {
             top.parts.extend(made.take());
             let parts = self.obj(top.w)?.map_or(&[][..], Obj::parts);
             match parts.get(top.parts.len()) {
-                Some(&part) => made = self.read(part, &mut stack)?,
+                Some(&part) => made = self.read(part, &mut stack, &seen)?,
                 None => {
                     let r = stack.pop().expect("the stack has a top");
-                    made = Some(match self.obj(r.w)? {
+                    let v = match self.obj(r.w)? {
                         Some(Obj::Atom { name, fields, .. }) => Value::Atom(Atom {
                             name: name.clone(),
                             fields: fields.clone(),
                             args: r.parts.into(),
                         }),
                         _ => Value::Tuple(r.parts.into()),
-                    });
+                    };
+                    if self.cells[r.w.index()].count > 1 {
+                        seen.insert(r.w.index(), v.clone());
+                    }
+                    made = Some(v);
                 }
             }
         }
     }
 
-    /// The value of `w` when it has no parts to read; otherwise enters it on `stack`.
-    fn read(&mut self, w: Word, stack: &mut Vec<Reading>) -> Result<Option<Value>, String> {
+    /// The value of `w` when it has no parts to read or was read before (`seen`, by cell);
+    /// otherwise enters it on `stack`.
+    fn read(
+        &mut self,
+        w: Word,
+        stack: &mut Vec<Reading>,
+        seen: &HashMap<usize, Value>,
+    ) -> Result<Option<Value>, String> {
         Ok(Some(match w.tag {
             Word::INT => Value::Int(w.bits),
             Word::FLOAT => Value::float(f64::from_bits(w.bits as u64)),
             Word::BOOL => Value::Bool(w.bits != 0),
-            Word::VAL => self.vals[w.bits as usize].clone(),
+            Word::VAL => self.vals[w.bits as usize].value.clone(),
             Word::CELL => match obj_in(&self.cells, w)? {
                 Some(Obj::Str(r)) => Value::Str(r.flat(&mut self.stats.copied).into()),
-                Some(Obj::Tuple(_) | Obj::Atom { .. }) => {
+                Some(o @ (Obj::Tuple(_) | Obj::Atom { .. })) => {
+                    if let Some(v) = seen.get(&w.index()) {
+                        return Ok(Some(v.clone()));
+                    }
                     stack.push(Reading {
                         w,
-                        parts: Vec::new(),
+                        parts: Vec::with_capacity(o.parts().len()),
                     });
                     return Ok(None);
                 }
@@ -440,24 +571,50 @@ impl Heap {
         }))
     }
 
-    /// Adds a reference to `w`, when it is a cell.
+    /// Adds a reference to `w`, when it is a cell. An error, which this cannot return, is
+    /// kept, and the next [`Heap::dec`] returns it; [`Heap::try_inc`] returns it at once.
     pub fn inc(&mut self, w: Word) {
-        if w.tag != Word::CELL {
-            return;
+        if let Err(e) = self.try_inc(w) {
+            self.fault.get_or_insert(e);
         }
+    }
+
+    /// Adds a reference to `w`, when it is a cell: an error for a cell already freed, and for
+    /// one whose count is at the most it can hold.
+    pub fn try_inc(&mut self, w: Word) -> Result<(), String> {
+        if w.tag != Word::CELL {
+            return Ok(());
+        }
+        let c = &mut self.cells[w.index()];
+        if c.count == 0 || c.generation != w.generation() {
+            return Err(format!(
+                "runtime: cell {} is shared after it was freed",
+                w.index()
+            ));
+        }
+        c.count = c.count.checked_add(1).ok_or_else(|| {
+            format!(
+                "runtime: cell {} has {} references, the most a count holds",
+                w.index(),
+                u32::MAX
+            )
+        })?;
         self.stats.increments += 1;
-        let c = &mut self.cells[w.bits as usize];
-        c.count += 1;
         if c.count == 2 && !c.shared {
             c.shared = true;
             self.stats.shared += 1;
         }
+        Ok(())
     }
 
     /// Drops a reference to `w`, when it is a cell, freeing it and dropping its parts at 0.
     /// Work beyond the one count write happens only when a cell with parts is freed, and that
-    /// work is paid for by the parts' allocation.
+    /// work is paid for by the parts' allocation. An error a [`Heap::inc`] kept is returned
+    /// first, and nothing is dropped.
     pub fn dec(&mut self, w: Word) -> Result<(), String> {
+        if let Some(e) = self.fault.take() {
+            return Err(e);
+        }
         let Some(obj) = self.drop_ref(w)? else {
             return Ok(());
         };
@@ -466,7 +623,7 @@ impl Heap {
         }
         // The stack keeps its capacity across calls. An error ends the run, so that path
         // leaves `self.todo` empty and gives up only the capacity.
-        let mut todo = std::mem::take(&mut self.todo);
+        let mut todo = mem::take(&mut self.todo);
         // In reverse, so the parts are dropped first to last.
         todo.extend(obj.take_parts().into_iter().rev());
         while let Some(w) = todo.pop() {
@@ -485,21 +642,18 @@ impl Heap {
             return Ok(None);
         }
         self.stats.decrements += 1;
-        let c = &mut self.cells[w.bits as usize];
-        if c.count == 0 {
+        let c = &mut self.cells[w.index()];
+        if c.count == 0 || c.generation != w.generation() {
             return Err(format!(
                 "runtime: cell {} is dropped after it was freed",
-                w.bits
+                w.index()
             ));
         }
         c.count -= 1;
         if c.count > 0 {
             return Ok(None);
         }
-        let obj = c.obj.take().expect("a live cell holds its contents");
-        self.stats.frees += 1;
-        self.live -= 1;
-        Ok(Some(obj))
+        Ok(Some(self.free_cell(w.index())))
     }
 
     /// The fused release of step L1.34 of scrutinee `w`, keeping the parts at the paths
@@ -532,20 +686,27 @@ impl Heap {
             return Ok(());
         }
         self.obj(w)?;
-        let c = &mut self.cells[w.bits as usize];
+        let c = &mut self.cells[w.index()];
         if c.count == 1 {
             c.count = 0;
-            let obj = c.obj.take().expect("checked live");
-            self.stats.frees += 1;
-            self.live -= 1;
-            for (i, part) in obj.take_parts().into_iter().enumerate().rev() {
-                let sub = kept.iter().filter(|p| p[0] == i).map(|p| &p[1..]).collect();
-                todo.push((part, sub));
+            let parts = self.free_cell(w.index()).take_parts();
+            // Each kept path goes to the part it starts at, in one step.
+            let mut sub = vec![Vec::new(); parts.len()];
+            for p in kept {
+                let Some(s) = sub.get_mut(p[0]) else {
+                    return Err(format!(
+                        "runtime: a kept path reads part {} of a cell of {} parts",
+                        p[0],
+                        parts.len()
+                    ));
+                };
+                s.push(&p[1..]);
             }
+            todo.extend(parts.into_iter().zip(sub).rev());
         } else {
             for p in kept {
                 let part = self.at(w, p)?;
-                self.inc(part);
+                self.try_inc(part)?;
             }
             self.dec(w)?;
         }
@@ -575,28 +736,123 @@ impl Heap {
         }
     }
 
-    fn parts(&mut self, w: Word) -> Result<Parts, String> {
-        Ok(match w.tag {
-            Word::CELL => match self.obj(w)? {
-                Some(Obj::Tuple(xs)) => Parts::Tuple(xs.clone()),
-                Some(Obj::Atom { name, fields, args }) => {
-                    Parts::Atom(name.clone(), fields.clone(), args.clone())
+    /// The tuple or atom data word `w` is, for a structural pattern; `None` for any other word.
+    /// The parts of an entry of the table are entered the first time.
+    fn shape(&mut self, w: Word) -> Result<Option<Shape<'_>>, String> {
+        let (atom, len, holder) = match w.tag {
+            Word::CELL => {
+                let holder = Holder::Cell(w.index());
+                match obj_in(&self.cells, w)? {
+                    Some(Obj::Tuple(xs)) => (None, xs.len(), holder),
+                    Some(Obj::Atom { name, fields, args }) => {
+                        (Some((&**name, &**fields)), args.len(), holder)
+                    }
+                    _ => return Ok(None),
                 }
-                _ => Parts::Other,
-            },
-            Word::VAL => match self.vals[w.bits as usize].clone() {
-                Value::Tuple(xs) => {
-                    Parts::Tuple(xs.into_iter().map(|x| self.uncounted(x)).collect())
+            }
+            Word::VAL => {
+                let entry = w.bits as usize;
+                if !matches!(self.vals[entry].value, Value::Tuple(_) | Value::Atom(_)) {
+                    return Ok(None);
                 }
-                Value::Atom(a) => Parts::Atom(
-                    a.name,
-                    a.fields,
-                    a.args.into_iter().map(|x| self.uncounted(x)).collect(),
-                ),
-                _ => Parts::Other,
+                let start = self.table_parts(entry);
+                let holder = Holder::Table { entry, start };
+                match &self.vals[entry].value {
+                    Value::Tuple(xs) => (None, xs.len(), holder),
+                    Value::Atom(a) => (Some((&*a.name, &*a.fields)), a.args.len(), holder),
+                    _ => unreachable!("checked a tuple or an atom"),
+                }
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(Shape { atom, len, holder }))
+    }
+
+    /// Part `i` of the tuple or atom in `h`.
+    fn part(&self, h: Holder, i: usize) -> Word {
+        match h {
+            Holder::Cell(c) => {
+                let o = self.cells[c].obj.as_ref();
+                o.expect("a cell being matched is live").parts()[i]
+            }
+            Holder::Table { start, .. } => self.table_word(start + i),
+        }
+    }
+
+    /// The field names of the atom in `h`, sorted; empty for a tuple payload.
+    fn field_names(&self, h: Holder) -> &[Arc<str>] {
+        match h {
+            Holder::Cell(c) => match &self.cells[c].obj {
+                Some(Obj::Atom { fields, .. }) => fields,
+                _ => &[],
             },
-            _ => Parts::Other,
-        })
+            Holder::Table { entry, .. } => match &self.vals[entry].value {
+                Value::Atom(a) => &a.fields,
+                _ => &[],
+            },
+        }
+    }
+
+    /// Whether data word `w` equals `l`, read part by part against it, so the first difference
+    /// ends the reading: a word of another kind than `l` is told by its tag.
+    fn equals(&mut self, w: Word, l: &Value) -> Result<bool, String> {
+        let mut todo = Vec::new();
+        let (mut w, mut l) = (w, l);
+        loop {
+            let same = match w.tag {
+                Word::INT | Word::FLOAT | Word::BOOL => Word::scalar(l) == Some(w),
+                Word::VAL => self.vals[w.bits as usize].value == *l,
+                Word::CELL => match obj_in(&self.cells, w)? {
+                    Some(Obj::Str(r)) => match l {
+                        Value::Str(s) => {
+                            r.bytes() == s.len() && *r.flat(&mut self.stats.copied) == **s
+                        }
+                        _ => false,
+                    },
+                    Some(Obj::Data(v)) => v == l,
+                    Some(Obj::Tuple(xs)) => match l {
+                        Value::Tuple(ys) if ys.len() == xs.len() => {
+                            todo.extend(xs.iter().copied().zip(ys.iter()));
+                            true
+                        }
+                        _ => false,
+                    },
+                    Some(Obj::Atom { name, fields, args }) => match l {
+                        Value::Atom(a)
+                            if a.name == *name
+                                && a.fields == *fields
+                                && a.args.len() == args.len() =>
+                        {
+                            todo.extend(args.iter().copied().zip(a.args.iter()));
+                            true
+                        }
+                        _ => false,
+                    },
+                    Some(Obj::Clo { .. }) => return Err("runtime: a closure is not data".into()),
+                    None => unreachable!("obj_in checks the cell is live"),
+                },
+                t => return Err(format!("runtime: a word tagged {t} is not data")),
+            };
+            if !same {
+                return Ok(false);
+            }
+            match todo.pop() {
+                Some(next) => (w, l) = next,
+                None => return Ok(true),
+            }
+        }
+    }
+
+    /// Whether data word `w` is in `t`. A constant and a value the kernel holds are read in
+    /// place; a tuple or an atom in cells is made a value, which `t` reads whole.
+    fn is_in(&mut self, w: Word, t: &Type) -> Result<bool, String> {
+        if w.tag == Word::VAL {
+            return Ok(t.contains(&self.vals[w.bits as usize].value));
+        }
+        if let Some(Obj::Data(v)) = self.obj(w)? {
+            return Ok(t.contains(v));
+        }
+        Ok(t.contains(&self.value(w)?))
     }
 
     /// Whether `w` matches `p`, as the kernel matches a value: on success, `out` holds each
@@ -643,14 +899,28 @@ impl Heap {
                     }
                     at.pop();
                 }
-                match stack.last_mut().expect("a pattern is in progress").next() {
-                    Next::Part(i, q, x) => {
+                let m = stack.last_mut().expect("a pattern is in progress");
+                let k = m.next;
+                m.next += 1;
+                let next = match m.subs {
+                    Subs::Items(ps) => ps.get(k).map(|q| (k, q)),
+                    Subs::Fields(fs) => match fs.get(k) {
+                        Some((f, q)) => match self.field_names(m.holder).binary_search(f) {
+                            Ok(i) => Some((i, q)),
+                            // A named field the word does not have.
+                            Err(_) => return Ok(false),
+                        },
+                        None => None,
+                    },
+                };
+                match next {
+                    Some((i, q)) => {
+                        w = self.part(m.holder, i);
+                        p = q;
                         at.push(i);
-                        (p, w) = (q, x);
                         break;
                     }
-                    Next::Missing => return Ok(false),
-                    Next::End => {
+                    None => {
                         stack.pop();
                         ended = true;
                     }
@@ -679,10 +949,10 @@ impl Heap {
                 _ => Shallow::No,
             });
         }
-        let below = |subs, words| {
+        let below = |subs, holder| {
             Shallow::Below(Matching {
                 subs,
-                words,
+                holder,
                 next: 0,
             })
         };
@@ -692,28 +962,33 @@ impl Heap {
                 out.push((w, at.to_vec()));
                 Shallow::Yes
             }
-            Pattern::Lit(l) => yes(self.value(w)? == *l),
-            Pattern::AnyAtom => yes(matches!(self.parts(w)?, Parts::Atom(..))),
-            Pattern::Is(t) => {
-                let v = self.value(w)?;
-                yes(t.contains(&v))
-            }
-            Pattern::Atom(name, ps) => match self.parts(w)? {
-                Parts::Atom(n, fields, args)
-                    if n == *name && fields.is_empty() && ps.len() == args.len() =>
-                {
-                    below(Subs::Items(ps), args)
+            Pattern::Lit(l) => yes(self.equals(w, l)?),
+            Pattern::AnyAtom => yes(matches!(self.shape(w)?, Some(Shape { atom: Some(_), .. }))),
+            Pattern::Is(t) => yes(self.is_in(w, t)?),
+            Pattern::Atom(name, ps) => match self.shape(w)? {
+                Some(Shape {
+                    atom: Some((n, fields)),
+                    len,
+                    holder,
+                }) if n == &**name && fields.is_empty() && len == ps.len() => {
+                    below(Subs::Items(ps), holder)
                 }
                 _ => Shallow::No,
             },
-            Pattern::Fields(name, fs) => match self.parts(w)? {
-                Parts::Atom(n, fields, args) if n == *name && !fields.is_empty() => {
-                    below(Subs::Fields(fs, fields), args)
-                }
+            Pattern::Fields(name, fs) => match self.shape(w)? {
+                Some(Shape {
+                    atom: Some((n, fields)),
+                    holder,
+                    ..
+                }) if n == &**name && !fields.is_empty() => below(Subs::Fields(fs), holder),
                 _ => Shallow::No,
             },
-            Pattern::Tuple(ps) => match self.parts(w)? {
-                Parts::Tuple(xs) if xs.len() == ps.len() => below(Subs::Items(ps), xs),
+            Pattern::Tuple(ps) => match self.shape(w)? {
+                Some(Shape {
+                    atom: None,
+                    len,
+                    holder,
+                }) if len == ps.len() => below(Subs::Items(ps), holder),
                 _ => Shallow::No,
             },
         })
@@ -830,5 +1105,37 @@ mod tests {
         let q = Pattern::Atom("none".into(), vec![]);
         assert!(!h.matches(&q, w, &mut Vec::new(), &mut Vec::new()).unwrap());
         assert_eq!(h.stats.allocations, 0);
+    }
+
+    #[test]
+    fn a_count_at_its_most_is_an_error_and_inc_reports_it_at_the_next_dec() {
+        let mut h = Heap::new();
+        let w = h.alloc(Obj::Str(Rope::leaf("a".into())));
+        h.cells[0].count = u32::MAX;
+        let full = "runtime: cell 0 has 4294967295 references, the most a count holds";
+        assert_eq!(h.try_inc(w).unwrap_err(), full);
+        h.inc(w);
+        assert_eq!(h.dec(w).unwrap_err(), full);
+        assert_eq!(h.cells[0].count, u32::MAX);
+        h.dec(w).unwrap();
+        assert_eq!(h.cells[0].count, u32::MAX - 1);
+    }
+
+    #[test]
+    fn a_cell_freed_in_its_last_generation_is_not_taken_again() {
+        let mut h = Heap::new();
+        let w = h.alloc(Obj::Str(Rope::leaf("a".into())));
+        h.dec(w).unwrap();
+        let w = h.alloc(Obj::Str(Rope::leaf("b".into())));
+        assert_eq!((w.index(), w.generation()), (0, 1));
+        h.cells[0].generation = GENERATIONS - 1;
+        let last = Word::cell(0, GENERATIONS - 1);
+        h.dec(last).unwrap();
+        let next = h.alloc(Obj::Str(Rope::leaf("c".into())));
+        assert_eq!((next.index(), next.generation()), (1, 0));
+        assert_eq!(
+            h.dec(last).unwrap_err(),
+            "runtime: cell 0 is dropped after it was freed"
+        );
     }
 }

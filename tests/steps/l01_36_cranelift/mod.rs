@@ -9,6 +9,7 @@ mod constants;
 mod corpus;
 mod drops;
 mod ports;
+mod reuse;
 mod scalars;
 mod scaling;
 mod strings;

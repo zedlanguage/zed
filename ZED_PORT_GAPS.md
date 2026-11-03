@@ -684,3 +684,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `std::mem::replace` of the context field around a sub-transfer | `Tx::within`, `Tx::cached` | Mutation | The context passed as an argument and returned with the result |
 | `imbl::HashMap` scopes numbered once by `(scope, name, binding)` | `Tx::bind` | None | Zed's maps are values; the numbering is a map from that triple to a number, in a state receiver |
 | A trait with a default method, passed as `&mut dyn Search`, implemented by local structs (`First`, `Met`, `Any`) | `branch`, `witness`, `exact_search` | Interfaces (L10) | A record of two functions over a search state, the state returned with the result |
+
+## Entries from T14-heap (`zed-rt/src/heap.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A cell's index and generation packed into one `i64` by shifts and masks | `Word::cell`, `Word::index`, `Word::generation` | Bit operations | A pair of integers in the word, or the bit words of gap 4 |
+| A free list of cell indices, a `Vec` popped and pushed, beside the cells the heap mutates in place | `Heap::alloc`, `Heap::free_cell` | Mutation | A state receiver over the cells and the free list |
+| `BTreeMap<Value, usize>` that interns the empty tuple and bare atoms across calls | `Heap::uncounted` (`bare`) | Shared tables across pure calls | A map in the heap's state receiver |
+| `HashMap<usize, Value>` held for one call, the value of each shared cell by index | `Heap::value` | None | A map threaded through the walk |
+| `Option<String>` kept by `inc`, which cannot return an error, and taken by the next `dec` | `Heap::inc`, `Heap::dec` | Early exit | `inc` returns the error as a value |
+| An `enum` whose variants borrow the heap's cells or table (`Shape<'h>`) while a `match` reads them | `Heap::shape` | None | A value returned by the read |

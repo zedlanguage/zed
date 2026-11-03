@@ -1,12 +1,17 @@
 //! The counting machine and the native code against the size of the program (the rule of low
 //! complexity, DESIGN.md Part G): an atom of many named fields, many lookup ports,
 //! many constants, many lambdas and one value used many times each run in time near linear in
-//! their number (COMPLEXITY.md Z14).
+//! their number (COMPLEXITY.md Z14); so do the runtime heap's match of a deep constant, many
+//! matches of one, and the value of cells that share their parts (COMPLEXITY.md R3).
 
+use std::cell::RefCell;
+use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Value, World};
+use zed_rt::{Heap, Obj, Word};
+use zed_tests::deep::{in_tuple, nested};
 use zed_tests::scaling;
 use zedc::zir::memory;
 
@@ -393,4 +398,91 @@ fn a_decoder_of_many_cases_scales() {
 #[test]
 fn a_curried_function_of_many_parameters_scales() {
     check_depth("n nested lambdas, to an object file", 200, curried);
+}
+
+/// The runs one measured size can take: a warming run and five for each measurement.
+const RUNS: usize = 1 + 5 * scaling::TRIES;
+
+/// `make(m)` for each run at each of `n` and `8n`, built before any timing starts; `run` is timed
+/// on one of them per run, and each is dropped after the timing ends (COMPLEXITY.md R3).
+fn heap_scales<T>(what: &str, n: usize, make: impl Fn(usize) -> T, run: impl Fn(&mut T, usize)) {
+    let made = RefCell::new(
+        [n, scaling::FACTOR * n].map(|m| (m, (0..RUNS).map(|_| make(m)).collect::<Vec<_>>())),
+    );
+    let used = RefCell::new(Vec::new());
+    scaling::check_order(what, n, 1, |m| {
+        let mut x = {
+            let mut made = made.borrow_mut();
+            let at = made.iter_mut().find(|(k, _)| *k == m).unwrap();
+            at.1.pop().expect("a heap for each run")
+        };
+        run(&mut x, m);
+        used.borrow_mut().push(x);
+    });
+}
+
+/// A heap holding a shipping rate table `depth` deep as a constant, its word, and the pattern
+/// `(_, (_, … last))` that reads to its end, never dropped: a pattern drops by recursion.
+fn rate_table(depth: usize) -> (Heap, Word, ManuallyDrop<Pattern>) {
+    let mut h = Heap::new();
+    let w = h.uncounted(nested(in_tuple, depth, Value::Int(0)));
+    let p = (0..depth).fold(Pattern::Bind("last".into()), |p, _| {
+        Pattern::Tuple(vec![Pattern::Wild, p])
+    });
+    (h, w, ManuallyDrop::new(p))
+}
+
+/// Matches `p` against `w` and checks the end of the table is bound.
+fn read_to_the_end(h: &mut Heap, p: &Pattern, w: Word) {
+    let mut out = Vec::new();
+    assert!(h.matches(p, w, &mut Vec::new(), &mut out).unwrap());
+    assert_eq!(out[0].0, Word::int(0));
+}
+
+#[test]
+fn matching_a_deep_constant_scales() {
+    heap_scales(
+        "a match to the end of a constant n deep",
+        1000,
+        rate_table,
+        |(h, w, p), _| read_to_the_end(h, p, *w),
+    );
+}
+
+#[test]
+fn matching_one_constant_many_times_scales() {
+    heap_scales(
+        "n matches to the end of a constant 100 deep",
+        1000,
+        |_| rate_table(100),
+        |(h, w, p), n| {
+            for _ in 0..n {
+                read_to_the_end(h, p, *w);
+            }
+        },
+    );
+}
+
+/// A heap holding a summary paired with itself `depth` times: `depth + 1` cells, `2^depth`
+/// paths from the top.
+fn paired(depth: usize) -> (Heap, Word) {
+    let mut h = Heap::new();
+    let mut w = h.fresh(&Value::str("total 12"));
+    for _ in 0..depth {
+        h.inc(w);
+        w = h.alloc(Obj::Tuple(vec![w, w]));
+    }
+    (h, w)
+}
+
+#[test]
+fn reading_a_value_whose_parts_share_cells_scales() {
+    heap_scales(
+        "the value of n cells, each holding the one below twice",
+        1000,
+        paired,
+        |(h, w), _| {
+            std::hint::black_box(h.value(*w).unwrap());
+        },
+    );
 }
