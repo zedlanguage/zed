@@ -813,7 +813,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CAP-bits | verify attempt 1 | 2026-11-03 03:35 | started; no earlier verify lines found; reading diff 37dd1e5 vs main |
 | L25.8 | impl attempt 1 | 2026-11-03 03:49 | step tests l25_08_mutate 18/18 pass (examples, order, command, scaling n/8n) / load 40.58 43.48 35.70 |
 | L29-print | impl attempt 1 | 2026-11-03 04:06 | printer prints known payloads (#ioError(op: String, path: String, why: String)); reader reads #a(T, f: U); 7 checker sites that dropped payloads (Ty::set(t.loos |
-| OSP-drop | verify attempt 2 | 2026-11-03 03:39 | fmt, clippy -D warnings clean; probes (not committed): a ✗ mark naming the row passes the test runner (2:1 ok); _ = if c { lookup(1) else #notFound } else { loo |
 | S22a | impl attempt 1 | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
 | SEMIRING | orchestrator attempt  | 2026-11-03 04:11 | report saved; adopting best-first fix, SCC closure, nonlinear bound note; spec agent starting |
 | ST-arms-quad | repair attempt 1 | 2026-11-03 03:35 | start, continuing wt/st-arms at 31e6e2f |
@@ -825,8 +824,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-values | repair attempt 2 | 2026-11-03 03:52 | started; zed-impl main still e6900f7, wt/t6 bb1f8a7 not merged; per the 03:55 order nothing changed, returning ok=false (waits for T6) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (30 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (34 commits); the push follows one full test run on the merged tree:
 
+- 7d0993b OSP-drop: the drop error is a case of Row::WritesNothing; else defaults in if branches and a block's export count as named
+- 3645925 OSP-drop: _ binds no loose failure; an else default or a match names a dropped failure
 - 79008d6 STATUS: ST-deep-stack merged
 - b707823 ST-deep-stack: Formula walks, Drop, Clone, Eq, Ord, Hash and printing on explicit stacks
 - 8ce61e0 STATUS: in progress as of 2026-11-03 04:10
