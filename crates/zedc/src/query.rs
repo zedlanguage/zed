@@ -111,19 +111,21 @@ impl Db {
     }
 }
 
-/// The syntactic bytes of the definitions of the unit of `cones` that `roots` reach, in the unit's order,
-/// followed by the roots: what a term evaluated under the unit can read.
+/// The digests of the definitions of the unit of `cones` that `roots` reach, in the unit's
+/// order, followed by the roots' syntactic bytes: what a term evaluated under the unit can
+/// read. A definition's digest is of its syntax and is made once per unit, so the key of a
+/// row costs the size of its roots and the number of definitions they reach.
 pub fn cone(cones: &Cones<'_>, roots: &[&Term]) -> Vec<u8> {
     let mut out = Vec::new();
-    let mut put = |s: String| {
+    let mut put = |s: &[u8]| {
         out.extend_from_slice(&(s.len() as u64).to_le_bytes());
-        out.extend_from_slice(s.as_bytes());
+        out.extend_from_slice(s);
     };
-    for d in cones.defs(roots) {
-        put(format!("{}={:?}", d.kernel, d.term));
+    for i in cones.reach(roots) {
+        put(cones.digest(i));
     }
     for t in roots {
-        put(format!("{t:?}"));
+        put(format!("{t:?}").as_bytes());
     }
     out
 }

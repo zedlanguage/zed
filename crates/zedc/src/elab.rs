@@ -17,6 +17,7 @@
 //! word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
 //! belongs to a function at the unit's top level.
 
+use std::cell::OnceCell;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
@@ -39,8 +40,8 @@ pub struct Def {
     pub name: String,
     /// Its kernel name.
     pub kernel: Arc<str>,
-    /// Its value.
-    pub term: Term,
+    /// Its value, shared with the lets that close a term over it.
+    pub term: Arc<Term>,
     /// Whether it is bound by `=` to a value whose type, as the checker gives it, has no
     /// function component (step L1.37).
     pub first_order: bool,
@@ -66,8 +67,8 @@ pub struct Test {
 pub struct Unit {
     /// The definitions, each after those it uses.
     pub defs: Vec<Def>,
-    /// The test cases, in written order.
-    pub tests: Vec<Test>,
+    /// The test cases, in written order, shared with the unit once staged.
+    pub tests: Arc<[Test]>,
 }
 
 impl Unit {
@@ -85,12 +86,16 @@ impl Unit {
 }
 
 /// The definitions each term of a unit reaches, from an index of the unit made once: each
-/// kernel name's definition, and the names each definition reads, found when first needed. A
-/// term's cone then costs the definitions in it, not a pass over the unit.
+/// kernel name's definition, and the definitions each definition reads, found when first
+/// needed. A term's cone then costs the definitions in it, not a pass over the unit, and
+/// closing a term over its cone shares each definition's term rather than copying it.
 pub struct Cones<'u> {
     unit: &'u Unit,
-    by_kernel: BTreeMap<&'u str, usize>,
-    free: Vec<std::cell::OnceCell<BTreeSet<Arc<str>>>>,
+    by_kernel: HashMap<&'u str, usize>,
+    /// The positions of the definitions each definition reads.
+    reads: Vec<OnceCell<Vec<usize>>>,
+    /// Each definition's digest, for a query key.
+    digests: Vec<OnceCell<[u8; 32]>>,
 }
 
 impl<'u> Cones<'u> {
@@ -104,25 +109,28 @@ impl<'u> Cones<'u> {
                 .enumerate()
                 .map(|(i, d)| (&*d.kernel, i))
                 .collect(),
-            free: unit
-                .defs
-                .iter()
-                .map(|_| std::cell::OnceCell::new())
-                .collect(),
+            reads: unit.defs.iter().map(|_| OnceCell::new()).collect(),
+            digests: unit.defs.iter().map(|_| OnceCell::new()).collect(),
         }
+    }
+
+    /// The positions of the definitions of the names `t` reads.
+    fn positions(&self, t: &Term) -> impl Iterator<Item = usize> {
+        crate::stage::free(t)
+            .into_iter()
+            .filter_map(|x| self.by_kernel.get(&*x).copied())
     }
 
     /// The definitions `roots` read, and those they read in turn: their positions in the
     /// unit, in its order.
     pub fn reach(&self, roots: &[&Term]) -> Vec<usize> {
         let mut seen = BTreeSet::new();
-        let mut todo: Vec<Arc<str>> = roots.iter().flat_map(|t| crate::stage::free(t)).collect();
-        while let Some(x) = todo.pop() {
-            if let Some(&i) = self.by_kernel.get(&*x)
-                && seen.insert(i)
-            {
-                let free = self.free[i].get_or_init(|| crate::stage::free(&self.unit.defs[i].term));
-                todo.extend(free.iter().cloned());
+        let mut todo: Vec<usize> = roots.iter().flat_map(|t| self.positions(t)).collect();
+        while let Some(i) = todo.pop() {
+            if seen.insert(i) {
+                let reads =
+                    self.reads[i].get_or_init(|| self.positions(&self.unit.defs[i].term).collect());
+                todo.extend(reads);
             }
         }
         seen.into_iter().collect()
@@ -134,12 +142,21 @@ impl<'u> Cones<'u> {
         self.reach(roots).into_iter().map(move |i| &unit.defs[i])
     }
 
+    /// The BLAKE3 digest of the definition at position `i`: of its kernel name and its term
+    /// as `Debug` prints them, made once.
+    pub fn digest(&self, i: usize) -> &[u8; 32] {
+        self.digests[i].get_or_init(|| {
+            let d = &self.unit.defs[i];
+            *blake3::hash(format!("{}={:?}", d.kernel, d.term).as_bytes()).as_bytes()
+        })
+    }
+
     /// `body` under the definitions it reaches, each a let, in the unit's order: each after
-    /// those it uses, as in the unit.
+    /// those it uses, as in the unit. Each let shares its definition's term.
     pub fn close(&self, body: Term) -> Term {
         let defs: Vec<&Def> = self.defs(&[&body]).collect();
         defs.into_iter().rev().fold(body, |body, d| {
-            Term::Let(d.kernel.clone(), Arc::new(d.term.clone()), Arc::new(body))
+            Term::Let(d.kernel.clone(), d.term.clone(), Arc::new(body))
         })
     }
 }
@@ -149,7 +166,7 @@ pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
     let t = Tables::new(unit, res);
     let mut info = check::check_with(&t, unit);
     let checked = std::mem::take(&mut info.errors);
-    let mut e = Elab::new(t, info);
+    let mut e = Elab::new(t, &info);
     let mut out = Unit::default();
     if let Some((binds, _)) = e.scope(unit, true) {
         out.defs = binds
@@ -158,11 +175,11 @@ pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
                 first_order: e.info.tops.get(&name).is_some_and(|t| t.first_order()),
                 name,
                 kernel,
-                term,
+                term: Arc::new(term),
             })
             .collect();
     }
-    out.tests = std::mem::take(&mut e.tests);
+    out.tests = std::mem::take(&mut e.tests).into();
     e.errors.extend(checked);
     if e.errors.is_empty() {
         Ok(out)
@@ -192,8 +209,8 @@ struct Elab<'a> {
     t: Tables<'a>,
     /// Each binder's kernel name.
     names: Vec<Arc<str>>,
-    /// The checker's findings.
-    info: Info,
+    /// The checker's findings, which elaboration only reads.
+    info: &'a Info,
     /// The temporary each argument of a call that passes atoms is bound to, while the call is
     /// elaborated.
     passing: HashMap<Span, Arc<str>>,
@@ -384,7 +401,7 @@ fn in_tests(s: &Stmt, u: Span) -> bool {
 }
 
 impl<'a> Elab<'a> {
-    fn new(t: Tables<'a>, info: Info) -> Self {
+    fn new(t: Tables<'a>, info: &'a Info) -> Self {
         let res = t.res;
         let mut count: HashMap<&str, usize> = HashMap::new();
         for b in &res.binders {
@@ -456,29 +473,32 @@ impl<'a> Elab<'a> {
             self.passing.remove(&a.span);
         }
         let mut call = call?;
-        let mut lets: Vec<(Arc<str>, Term)> = lets
+        let lets: Vec<(Arc<str>, Term)> = lets
             .into_iter()
             .map(|(t, x)| x.map(|x| (t, x)))
             .collect::<Option<_>>()?;
         let v = |n: &Arc<str>| Term::Var(n.clone());
+        // Each argument's failure merged with those before it, each merge bound after the
+        // arguments.
+        let mut merges = Vec::new();
         let mut fail: Option<Arc<str>> = None;
-        for t in lets.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>() {
+        for (t, _) in &lets {
             fail = Some(match fail {
-                None => t,
+                None => t.clone(),
                 Some(f) => {
                     let g = self.temp();
                     let both = Term::Match(
                         Arc::new(v(&f)),
                         vec![
-                            (KPattern::AnyAtom, Term::Prim(Prim::Add, vec![v(&f), v(&t)])),
-                            (KPattern::Wild, v(&t)),
+                            (KPattern::AnyAtom, Term::Prim(Prim::Add, vec![v(&f), v(t)])),
+                            (KPattern::Wild, v(t)),
                         ],
                     );
                     let merged = Term::Match(
-                        Arc::new(v(&t)),
+                        Arc::new(v(t)),
                         vec![(KPattern::AnyAtom, both), (KPattern::Wild, v(&f))],
                     );
-                    lets.push((g.clone(), merged));
+                    merges.push((g.clone(), merged));
                     g
                 }
             });
@@ -489,9 +509,14 @@ impl<'a> Elab<'a> {
                 vec![(KPattern::AnyAtom, v(&f)), (KPattern::Wild, call)],
             );
         }
-        Some(lets.into_iter().rev().fold(call, |body, (t, x)| {
-            Term::Let(t, Arc::new(x), Arc::new(body))
-        }))
+        Some(
+            lets.into_iter()
+                .chain(merges)
+                .rev()
+                .fold(call, |body, (t, x)| {
+                    Term::Let(t, Arc::new(x), Arc::new(body))
+                }),
+        )
     }
 
     fn temp(&mut self) -> Arc<str> {
@@ -717,17 +742,18 @@ impl<'a> Elab<'a> {
         if let Some(t) = self.passing.get(&e.span) {
             return Some(Term::Var(t.clone()));
         }
-        if let Some(at) = self.info.passes.get(&e.span).cloned()
+        let info = self.info;
+        if let Some(at) = info.passes.get(&e.span)
             && self.guarding.insert(e.span)
         {
-            let r = self.passes(e, &at);
+            let r = self.passes(e, at);
             self.guarding.remove(&e.span);
             return r;
         }
-        if let Some(fit) = self.info.fits.get(&e.span).cloned() {
+        if let Some(fit) = info.fits.get(&e.span) {
             return self.fit(e, fit);
         }
-        if let Some(v) = self.info.adopt.get(&e.span) {
+        if let Some(v) = info.adopt.get(&e.span) {
             return Some(Term::Lit(v.clone()));
         }
         let lit = |v: Value| Some(Term::Lit(v));
@@ -954,7 +980,7 @@ impl<'a> Elab<'a> {
         curry: bool,
         span: Span,
     ) -> Option<Term> {
-        let Some(sig) = self.info.calls.get(&span).cloned() else {
+        let Some(sig) = self.info.calls.get(&span) else {
             if !named.is_empty() || curry {
                 return self.error(
                     span,
@@ -1100,11 +1126,11 @@ impl<'a> Elab<'a> {
     /// A function argument fitted to the function type its slot expects: a lambda whose
     /// parameters are in another order or carry defaults, or a declared function whose
     /// named parameters are in another order.
-    fn fit(&mut self, e: &'a Expr, fit: Fit) -> Option<Term> {
+    fn fit(&mut self, e: &'a Expr, fit: &Fit) -> Option<Term> {
         match (fit, &e.kind) {
             (Fit::Lambda { order, extra }, ExprKind::Lambda { params, body }) => {
                 let mut names = Vec::new();
-                for o in &order {
+                for o in order {
                     names.push(match o {
                         Some(i) => self.names[self.id(params[*i].span, &params[*i].name)].clone(),
                         None => self.temp(),

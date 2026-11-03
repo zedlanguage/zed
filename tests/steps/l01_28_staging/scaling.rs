@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use zed_tests::scaling::{self, FACTOR};
 use zedc::elab::Unit;
-use zedc::stage::passed;
+use zedc::stage::{Domain, Specializer, passed};
 
 use super::{out, staged};
 use crate::l01_16_elaboration::elab;
@@ -110,5 +110,32 @@ fn the_form_rule_on_many_nested_lets_calling_a_prelude_word_scales() {
         assert!(ends(&bound_to_param), "`len` is not `f`");
         let calls_param = Term::Lam(vec!["f".into()], Arc::new(call_f(lets(3))));
         assert!(!ends(&calls_param));
+    });
+}
+
+/// `n` functions `f{i}`, each called by a `z{i}` with its own literal.
+fn many_callees(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!("f{i}(x: int, y: int) = x * y + {i};\nz{i}(a: int) = f{i}(x: {i}, y: a);\n")
+        })
+        .collect()
+}
+
+#[test]
+fn splitting_many_functions_of_one_unit_scales() {
+    // Each split mixed the whole unit again to find the values its calls pass, so splitting
+    // each of `n` functions took `O(n²)`; the calls are now read from one mix.
+    let units: BTreeMap<usize, Unit> = [200, FACTOR * 200]
+        .into_iter()
+        .map(|n| (n, elab(&many_callees(n)).unwrap()))
+        .collect();
+    let d = Domain::Ints(Some(0), Some(1 << 20));
+    scaling::check_order("splitting n functions of a unit", 200, 1, |n| {
+        let mut s = Specializer::new(&units[&n]);
+        for i in 0..n {
+            let (lam, _) = s.split(&format!("f{i}"), 0, &d).unwrap();
+            assert!(matches!(lam, zed_kernel::Term::Lam(..)));
+        }
     });
 }

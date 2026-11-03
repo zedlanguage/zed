@@ -17,13 +17,14 @@
 //! a copy of the body mixed with the parameter known, and the general body stays as the last
 //! arm.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Term, Value, World};
 
-use crate::elab::Unit;
+use crate::elab::{Def, Unit};
 use crate::interp;
 
 /// When a term is evaluated.
@@ -307,7 +308,7 @@ pub fn mix(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
         .filter(|d| roots.contains(&d.name.as_str()))
         .map(|d| d.kernel.clone())
         .collect();
-    for t in &unit.tests {
+    for t in unit.tests.iter() {
         for term in std::iter::once(&t.check).chain(&t.args).chain([&t.want]) {
             demanded.extend(free(term));
         }
@@ -327,13 +328,18 @@ pub fn mix(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
             m.report.unread.push(d.name.clone());
             continue;
         }
-        let term = m.mix_top(&d.term);
-        if matches!(term, Term::Lit(_)) && term != d.term {
+        let term = Arc::new(m.mix_top(&d.term));
+        if matches!(*term, Term::Lit(_)) && term != d.term {
             m.report.built.push(d.name.clone());
         }
         let stage = m.known(&term);
         m.bind(d.kernel.clone(), stage, &term);
-        out.defs.push(crate::elab::Def { term, ..d.clone() });
+        out.defs.push(Def {
+            name: d.name.clone(),
+            kernel: d.kernel.clone(),
+            term,
+            first_order: d.first_order,
+        });
     }
     (out, m.report)
 }
@@ -385,108 +391,147 @@ pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
 /// its kernel name, in a definition once mixed, whose argument there is a literal, and each
 /// case of a test of `name` whose argument there is a literal.
 pub fn passed(unit: &Unit, name: &str, param: usize) -> BTreeSet<Value> {
-    let mut out = BTreeSet::new();
-    let Some(f) = unit.defs.iter().find(|d| d.name == name) else {
-        return out;
-    };
-    let roots: Vec<&str> = unit.defs.iter().map(|d| d.name.as_str()).collect();
-    let (mixed, _) = mix(unit, &roots);
-    for d in &mixed.defs {
-        calls(&d.term, &f.kernel, param, &mut out);
-    }
-    for t in unit.tests.iter().filter(|t| t.function == name) {
-        if let Some(Term::Lit(v)) = t.args.get(param) {
-            out.insert(v.clone());
-        }
-    }
-    out
-}
-
-/// Adds to `out` the literal argument `param` of each call of `f` in `t`.
-fn calls(t: &Term, f: &Arc<str>, param: usize, out: &mut BTreeSet<Value>) {
-    if let Term::App(g, args) = t
-        && matches!(&**g, Term::Var(n) if n == f)
-        && let Some(Term::Lit(v)) = args.get(param)
-    {
-        out.insert(v.clone());
-    }
-    match t {
-        Term::Lam(_, b) => calls(b, f, param, out),
-        Term::Let(_, e, b) => {
-            calls(e, f, param, out);
-            calls(b, f, param, out);
-        }
-        Term::Match(e, arms) => {
-            calls(e, f, param, out);
-            for (_, a) in arms {
-                calls(a, f, param, out);
-            }
-        }
-        Term::Fam { domain, body, .. } => {
-            calls(domain, f, param, out);
-            calls(body, f, param, out);
-        }
-        Term::Fix { init, step, .. } => {
-            calls(init, f, param, out);
-            calls(step, f, param, out);
-        }
-        _ => {
-            for c in children(t) {
-                calls(c, f, param, out);
-            }
-        }
-    }
+    Specializer::new(unit).passed(name, param)
 }
 
 /// The function `name` of `unit` split on its parameter `param` over the values of `d` its
 /// static calls pass ([`passed`]), each arm its body mixed with the parameter known, and the
 /// general body last; or why the Trick keeps it.
 pub fn split(unit: &Unit, name: &str, param: usize, d: &Domain) -> Result<(Term, Report), String> {
-    let at = unit
-        .defs
-        .iter()
-        .position(|d| d.name == name)
-        .ok_or_else(|| format!("no definition `{name}`"))?;
-    let Term::Lam(ps, body) = &unit.defs[at].term else {
-        return Err(format!("`{name}` is not a function"));
-    };
-    let p = ps
-        .get(param)
-        .ok_or_else(|| format!("`{name}` has no parameter {param}"))?
-        .clone();
-    let values = match trick(d, &passed(unit, name, param)) {
-        Choice::Split(vs) => vs,
-        Choice::Keep(why) => return Err(why),
-    };
-    let mut m = Mixer::default();
-    for d in &unit.defs[..at] {
-        let stage = m.stage(&d.term);
-        m.bind(d.kernel.clone(), stage, &d.term);
+    Specializer::new(unit).split(name, param, d)
+}
+
+/// What the Trick reads of a unit, gathered once for any number of splits: the literal
+/// arguments of the unit's calls once mixed, those of its tests' cases, and a mixer with
+/// every definition bound by its stage. Splitting `k` functions then costs one mix of the
+/// unit and `k` mixes of their bodies, where each split mixed the whole unit again.
+pub struct Specializer<'u> {
+    unit: &'u Unit,
+    /// The position of the first definition of each source name.
+    by_name: HashMap<&'u str, usize>,
+    /// The literal arguments of the calls of each kernel name, by parameter.
+    calls: HashMap<(Arc<str>, usize), BTreeSet<Value>>,
+    /// The literal arguments of the tests' cases of each source name, by parameter.
+    cases: HashMap<(&'u str, usize), BTreeSet<Value>>,
+    mixer: Mixer,
+}
+
+impl<'u> Specializer<'u> {
+    /// What the Trick reads of `unit`.
+    pub fn new(unit: &'u Unit) -> Self {
+        let mut by_name = HashMap::new();
+        for (i, d) in unit.defs.iter().enumerate() {
+            by_name.entry(d.name.as_str()).or_insert(i);
+        }
+        let roots: Vec<&str> = unit.defs.iter().map(|d| d.name.as_str()).collect();
+        let (mixed, _) = mix(unit, &roots);
+        let mut calls: HashMap<(Arc<str>, usize), BTreeSet<Value>> = HashMap::new();
+        let mut todo: Vec<&Term> = mixed.defs.iter().map(|d| &*d.term).collect();
+        while let Some(t) = todo.pop() {
+            if let Term::App(g, args) = t
+                && let Term::Var(f) = &**g
+            {
+                for (i, x) in args.iter().enumerate() {
+                    if let Term::Lit(v) = x {
+                        calls.entry((f.clone(), i)).or_default().insert(v.clone());
+                    }
+                }
+            }
+            match t {
+                Term::Lam(_, b) => todo.push(b),
+                Term::Let(_, e, b) => todo.extend([&**e, &**b]),
+                Term::Match(e, arms) => {
+                    todo.push(e);
+                    todo.extend(arms.iter().map(|(_, a)| a));
+                }
+                Term::Fam { domain, body, .. } => todo.extend([&**domain, &**body]),
+                Term::Fix { init, step, .. } => todo.extend([&**init, &**step]),
+                _ => todo.extend(children(t)),
+            }
+        }
+        let mut cases: HashMap<(&'u str, usize), BTreeSet<Value>> = HashMap::new();
+        for t in unit.tests.iter() {
+            for (i, x) in t.args.iter().enumerate() {
+                if let Term::Lit(v) = x {
+                    let key = (t.function.as_str(), i);
+                    cases.entry(key).or_default().insert(v.clone());
+                }
+            }
+        }
+        let mut mixer = Mixer::default();
+        for d in &unit.defs {
+            let stage = mixer.stage(&d.term);
+            mixer.bind(d.kernel.clone(), stage, &d.term);
+        }
+        Specializer {
+            unit,
+            by_name,
+            calls,
+            cases,
+            mixer,
+        }
     }
-    let n = m.scope.len();
-    for q in ps {
-        m.bind(q.clone(), Stage::Run, &Term::Var(q.clone()));
+
+    /// The values the static calls of `name` pass its parameter `param` ([`passed`]).
+    pub fn passed(&self, name: &str, param: usize) -> BTreeSet<Value> {
+        let Some(&at) = self.by_name.get(name) else {
+            return BTreeSet::new();
+        };
+        let kernel = self.unit.defs[at].kernel.clone();
+        let calls = self.calls.get(&(kernel, param)).into_iter().flatten();
+        let cases = self.cases.get(&(name, param)).into_iter().flatten();
+        calls.chain(cases).cloned().collect()
     }
-    let mut arms = Vec::new();
-    for v in values {
-        m.bind(p.clone(), Stage::Build, &Term::Lit(v.clone()));
-        arms.push((Pattern::Lit(v), m.mix_top(body)));
-        m.scope.pop();
+
+    /// The function `name` split on its parameter `param` ([`split`]). Every definition is
+    /// bound in the mixer, where the body of `name` was mixed under those before it alone;
+    /// the body reads only those, since each definition comes after those it uses and no two
+    /// share a kernel name.
+    pub fn split(
+        &mut self,
+        name: &str,
+        param: usize,
+        d: &Domain,
+    ) -> Result<(Term, Report), String> {
+        let at = *self
+            .by_name
+            .get(name)
+            .ok_or_else(|| format!("no definition `{name}`"))?;
+        let Term::Lam(ps, body) = &*self.unit.defs[at].term else {
+            return Err(format!("`{name}` is not a function"));
+        };
+        let p = ps
+            .get(param)
+            .ok_or_else(|| format!("`{name}` has no parameter {param}"))?
+            .clone();
+        let values = match trick(d, &self.passed(name, param)) {
+            Choice::Split(vs) => vs,
+            Choice::Keep(why) => return Err(why),
+        };
+        let m = &mut self.mixer;
+        let n = m.scope.len();
+        m.unknown(ps);
+        let mut arms = Vec::new();
+        for v in values {
+            m.bind(p.clone(), Stage::Build, &Arc::new(Term::Lit(v.clone())));
+            arms.push((Pattern::Lit(v), m.mix_top(body)));
+            m.scope.pop();
+        }
+        arms.push((Pattern::Wild, m.mix_top(body)));
+        m.scope.truncate(n);
+        let lam = Term::Lam(
+            ps.clone(),
+            Arc::new(Term::Match(Arc::new(Term::Var(p)), arms)),
+        );
+        Ok((lam, std::mem::take(&mut m.report)))
     }
-    arms.push((Pattern::Wild, m.mix_top(body)));
-    m.scope.truncate(n);
-    let lam = Term::Lam(
-        ps.clone(),
-        Arc::new(Term::Match(Arc::new(Term::Var(p)), arms)),
-    );
-    Ok((lam, m.report))
 }
 
 /// A name in scope: its term when it is build-stage, else nothing, and the names that term
 /// reads.
 struct Entry {
     name: Arc<str>,
-    known: Option<Term>,
+    known: Option<Arc<Term>>,
     reads: BTreeSet<Arc<str>>,
 }
 
@@ -499,8 +544,8 @@ struct Scope {
 }
 
 impl Scope {
-    fn push(&mut self, name: Arc<str>, known: Option<Term>) {
-        let reads = known.as_ref().map(free).unwrap_or_default();
+    fn push(&mut self, name: Arc<str>, known: Option<Arc<Term>>) {
+        let reads = known.as_deref().map(free).unwrap_or_default();
         self.by_name
             .entry(name.clone())
             .or_default()
@@ -528,7 +573,7 @@ impl Scope {
     }
 
     /// The innermost binding of `x`: `None` for a name the scope does not bind.
-    fn lookup(&self, x: &str) -> Option<&Option<Term>> {
+    fn lookup(&self, x: &str) -> Option<&Option<Arc<Term>>> {
         let i = *self.by_name.get(x)?.last()?;
         Some(&self.entries[i].known)
     }
@@ -594,19 +639,27 @@ impl Mins {
 /// A value of `Mins`: a name read that cannot be known at build, or a port read.
 const RUN: i64 = -1;
 
-/// The subterms of a term, in the order `mix` meets them, each with the names it is under.
-/// The join of a lattice recursion is marked, since a port it reads is not an effect of the
-/// recursion (`effects`).
-fn kids(t: &Term) -> Vec<(&Term, Vec<Arc<str>>, bool)> {
+/// The names a subterm is under.
+type Names<'t> = Cow<'t, [Arc<str>]>;
+
+/// The subterms of a term, in the order `mix` meets them, each with the names it is under,
+/// borrowed from the term where it holds them as a list. The join of a lattice recursion is
+/// marked, since a port it reads is not an effect of the recursion (`effects`).
+fn kids(t: &Term) -> Vec<(&Term, Names<'_>, bool)> {
+    let none = || Cow::Borrowed(&[][..]);
     match t {
-        Term::Lam(ps, b) => vec![(b, ps.clone(), false)],
-        Term::Let(x, e, b) => vec![(e, vec![], false), (b, vec![x.clone()], false)],
-        Term::Match(s, arms) => std::iter::once((&**s, vec![], false))
-            .chain(arms.iter().map(|(p, a)| (a, binds(p), false)))
+        Term::Lam(ps, b) => vec![(b, Cow::Borrowed(&ps[..]), false)],
+        Term::Let(x, e, b) => vec![
+            (e, none(), false),
+            (b, Cow::Borrowed(std::slice::from_ref(x)), false),
+        ],
+        Term::Match(s, arms) => std::iter::once((&**s, none(), false))
+            .chain(arms.iter().map(|(p, a)| (a, Cow::Owned(binds(p)), false)))
             .collect(),
-        Term::Fam { domain, var, body } => {
-            vec![(domain, vec![], false), (body, vec![var.clone()], false)]
-        }
+        Term::Fam { domain, var, body } => vec![
+            (domain, none(), false),
+            (body, Cow::Borrowed(std::slice::from_ref(var)), false),
+        ],
         Term::Fix {
             init,
             step,
@@ -615,8 +668,8 @@ fn kids(t: &Term) -> Vec<(&Term, Vec<Arc<str>>, bool)> {
             kind,
             ..
         } => {
-            let names = vec![this.clone(), key.clone()];
-            let mut out = vec![(&**init, vec![], false), (&**step, names.clone(), false)];
+            let names: Names<'_> = Cow::Owned(vec![this.clone(), key.clone()]);
+            let mut out = vec![(&**init, none(), false), (&**step, names.clone(), false)];
             if let zed_kernel::FixKind::Lattice { join } = kind {
                 out.push((join, names, true));
             }
@@ -624,7 +677,7 @@ fn kids(t: &Term) -> Vec<(&Term, Vec<Arc<str>>, bool)> {
         }
         _ => children(t)
             .into_iter()
-            .map(|c| (c, vec![], false))
+            .map(|c| (c, none(), false))
             .collect(),
     }
 }
@@ -689,11 +742,11 @@ impl Index {
             _ => {}
         }
         for (c, names, in_join) in kids(t) {
-            for x in &names {
+            for x in names.iter() {
                 bound.entry(x.clone()).or_default().push(at);
             }
             self.walk(c, scope, bound, join || in_join, values);
-            for x in &names {
+            for x in names.iter() {
                 let b = bound.get_mut(x).expect("pushed above");
                 b.pop();
                 if b.is_empty() {
@@ -748,7 +801,7 @@ struct Mixer {
 }
 
 impl Mixer {
-    fn bind(&mut self, name: Arc<str>, stage: Stage, t: &Term) {
+    fn bind(&mut self, name: Arc<str>, stage: Stage, t: &Arc<Term>) {
         let known = (stage == Stage::Build).then(|| t.clone());
         self.scope.push(name, known);
     }
@@ -769,7 +822,7 @@ impl Mixer {
         }
     }
 
-    fn lookup(&self, x: &str) -> Option<&Option<Term>> {
+    fn lookup(&self, x: &str) -> Option<&Option<Arc<Term>>> {
         self.scope.lookup(x)
     }
 
@@ -800,9 +853,9 @@ impl Mixer {
             let known = e.known.clone().expect("a build-stage entry");
             lets.push((e.name.clone(), known));
         }
-        let closed = lets.into_iter().fold(t.clone(), |body, (x, e)| {
-            Term::Let(x, Arc::new(e), Arc::new(body))
-        });
+        let closed = lets
+            .into_iter()
+            .fold(t.clone(), |body, (x, e)| Term::Let(x, e, Arc::new(body)));
         if !ends(&closed) {
             return Err("its form does not show that it ends".into());
         }
@@ -855,7 +908,7 @@ impl Mixer {
                     self.report.unread.push(x.to_string());
                     return self.mix(b, k[1]);
                 }
-                let e = self.mix(e, k[0]);
+                let e = a(self.mix(e, k[0]));
                 let stage = self.known(&e);
                 self.bind(x.clone(), stage, &e);
                 if stage == Stage::Build {
@@ -863,10 +916,10 @@ impl Mixer {
                 }
                 let body = self.mix(b, k[1]);
                 self.scope.pop();
-                if matches!(e, Term::Lit(_)) && !self.index.kept.contains_key(&at) {
+                if matches!(*e, Term::Lit(_)) && !self.index.kept.contains_key(&at) {
                     return body;
                 }
-                Term::Let(x.clone(), a(e), a(body))
+                Term::Let(x.clone(), e, a(body))
             }
             Term::If(c, x, y) => match self.mix(c, k[0]) {
                 Term::Lit(Value::Bool(true)) => self.mix(x, k[1]),

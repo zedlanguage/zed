@@ -319,3 +319,41 @@ fn searches_through_nested_functions_scale() {
         .join()
         .unwrap();
 }
+
+/// A function `f` of `n` terms, and a function `g` that calls it on one branch, with `n` rows
+/// that take the other.
+fn big_callee(n: usize) -> String {
+    let body: String = (0..n).map(|i| format!(" + x * {i}")).collect();
+    let rows: Vec<String> = (0..n).map(|i| format!("{i} -> {i}")).collect();
+    format!(
+        "f(positional x) = x{body};\n\
+         g(positional x) = if x >= 0 {{ x }} else {{ f(x) }} test {{ {} }}\n",
+        rows.join(", ")
+    )
+}
+
+#[test]
+fn rows_reaching_a_large_definition_scale() {
+    // Each row's key printed every definition it reaches and its run closed it over a copy of
+    // each, so `n` rows reaching a function of `n` terms took `O(n²)`; a definition's digest is
+    // now made once and its term shared. The front end's result for each size is made before
+    // timing, so that the rows alone are timed.
+    let t = std::thread::Builder::new().stack_size(1 << 29).spawn(|| {
+        let warm: BTreeMap<usize, (String, zedc::query::Db)> = [100, FACTOR * 100]
+            .into_iter()
+            .map(|n| {
+                let text = big_callee(n);
+                let mut db = zedc::query::Db::new();
+                db.front(&text);
+                (n, (text, db))
+            })
+            .collect();
+        zed_tests::scaling::check_order("n rows reaching a function of n terms", 100, 1, |n| {
+            let (text, db) = &warm[&n];
+            let got = zedc::testing::test_in(&mut db.clone(), text);
+            assert_eq!(got.len(), n);
+            assert!(got.iter().all(|o| o.failure.is_none()), "{:?}", got[0]);
+        })
+    });
+    t.unwrap().join().unwrap();
+}

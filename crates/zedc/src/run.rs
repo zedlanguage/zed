@@ -193,7 +193,7 @@ fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
     let defs: std::collections::HashMap<&str, &Term> = unit
         .defs
         .iter()
-        .map(|d| (d.name.as_str(), &d.term))
+        .map(|d| (d.name.as_str(), &*d.term))
         .collect();
     let cones = crate::elab::Cones::new(unit);
     let mut out = Vec::new();

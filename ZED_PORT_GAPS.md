@@ -652,3 +652,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Arc<[Value]>`, a shared slice with a reference count, and `Arc::default()` for the static empty slice | `Items`, `Atom::fields` | None | Zed values are shared already; the type is a plain tuple |
 | `Arc::strong_count` to tell a shared sequence from one held once, and `Arc::get_mut` to move the parts out of one held once | `Items::is_shared`, `Items::pair`, `Items::into_vec` | Identity, mutation | Removed: the runtime reuses a value held once, and the walks key their read sets by a hash-consed id |
 | Address of a shared slice (`Arc::as_ptr`, `Arc::ptr_eq`) as a key in a `HashSet` or `HashMap` held only while both values are borrowed | `deep::walk` (`read`), `deep::copy` (`copied`), `deep::all_leaves` (`read`) | Identity | A hash-consed id of the value, as for `Type::contains` |
+
+## Entries from T11-elab (`zedc/src/elab.rs`, `stage.rs`, `query.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Arc<Term>` and `Arc<[Test]>` held so that a let or a staged unit shares a term rather than copying it | `Def.term`, `Unit.tests`, `stage::Entry.known` | None | Zed shares values, so a field holds the term itself |
+| `OnceCell` per definition for its reads and its digest, filled when first needed through `&self` | `Cones::reads`, `Cones::digests` | Lazy cells (gap 3) | A map of the reads and digests made when the unit is indexed, or threaded through as a state receiver |
+| `Cow<'_, [Arc<str>]>` for a binder's names, borrowed from the term or built for a pattern | `stage::kids` | None | Zed shares lists, so each child carries the list itself |
+| `std::slice::from_ref` to see one name as a list of one | `stage::kids` | None | A list of one name |
+| A struct borrowing the checker's findings (`&'a Info`) for its lifetime | `Elab` | None | The findings passed as a value, which Zed shares |
+| `std::mem::take` of the mixer's report after each split | `Specializer::split` | Mutation | The split returns the report it built, and the mixer is a state receiver |

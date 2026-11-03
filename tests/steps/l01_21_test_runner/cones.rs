@@ -50,9 +50,9 @@ fn the_cone_is_the_definitions_a_scan_of_the_unit_reaches() {
         let unit = elab(&text).unwrap();
         let cones = Cones::new(&unit);
         for _ in 0..4 {
-            let root = unit.defs[rng.below(unit.defs.len())].term.clone();
-            let other = unit.defs[rng.below(unit.defs.len())].term.clone();
-            for roots in [vec![&root], vec![&root, &other], vec![]] {
+            let root: &Term = &unit.defs[rng.below(unit.defs.len())].term;
+            let other: &Term = &unit.defs[rng.below(unit.defs.len())].term;
+            for roots in [vec![root], vec![root, other], vec![]] {
                 assert_eq!(cones.reach(&roots), by_scan(&unit, &roots), "{text}");
             }
         }

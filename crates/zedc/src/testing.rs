@@ -113,7 +113,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
                 }
             }
             let main_def = unit.defs.iter().find(|d| d.name == "main");
-            for t in &unit.tests {
+            for t in unit.tests.iter() {
                 let (line, col) = lines.line_col(text.as_bytes(), t.span.start);
                 let case = &text[t.span.start..t.span.end];
                 let failure = match (&program, t.function.as_str()) {

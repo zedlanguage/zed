@@ -3,10 +3,11 @@
 //! what the function does.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Term, Value, World};
-use zedc::stage::{Choice, Domain, passed, split, trick};
+use zedc::stage::{Choice, Domain, Specializer, passed, split, trick};
 
 use crate::l01_16_elaboration::{elab, with_prelude};
 
@@ -89,7 +90,7 @@ fn a_split_function_computes_what_the_function_does() {
         .iter_mut()
         .find(|d| d.name == "price")
         .unwrap()
-        .term = lam;
+        .term = Arc::new(lam);
     for tier in ["gold", "basic"] {
         for n in [0, 3, -7] {
             let call = |unit: &zedc::elab::Unit| {
@@ -130,4 +131,52 @@ fn the_trick_keeps_a_function_on_an_infinite_domain() {
     let u = elab(PRICE).unwrap();
     let err = split(&u, "price", 1, &Domain::Ints(None, None)).unwrap_err();
     assert_eq!(err, "an unbounded integer domain is infinite");
+}
+
+#[test]
+fn one_specializer_splits_many_functions_as_each_split_alone_does() {
+    // A shop prices by tier and ships by zone; the build splits both through one reading of
+    // the unit, and each split matches one made from the unit afresh.
+    let src = "rate = 8;\n\
+        price(tier, n: int) = if tier == #gold { n * rate } else { n * (rate + 2) };\n\
+        ship(zone: int, kg: int) = if zone == 0 { kg } else { kg * zone + rate };\n\
+        order(m: int) = price(tier: #gold, n: m) + price(tier: #basic, n: m) + ship(zone: 0, kg: m) + ship(zone: 3, kg: m);\n";
+    let u = elab(src).unwrap();
+    let tiers = Domain::Type(&Type::atom("gold") | &Type::atom("basic"));
+    let zones = Domain::Ints(Some(0), Some(9));
+    let mut s = Specializer::new(&u);
+    assert_eq!(s.passed("ship", 0), ints(&[0, 3]));
+    assert_eq!(s.passed("ship", 0), passed(&u, "ship", 0));
+    assert_eq!(s.passed("nothing", 0), ints(&[]));
+    // Twice over, so a split leaves the specializer as it found it: its scope and report.
+    for _ in 0..2 {
+        for (name, d) in [("price", &tiers), ("ship", &zones)] {
+            let (lam, report) = s.split(name, 0, d).unwrap();
+            let (alone, alone_report) = split(&u, name, 0, d).unwrap();
+            assert_eq!(lam, alone, "{name}");
+            assert_eq!(report, alone_report, "{name}");
+        }
+    }
+    assert_eq!(
+        s.split("ship", 0, &zones).unwrap().0.to_string(),
+        "(zone, kg) -> match zone { 0 -> kg, 3 -> ((kg * 3) + 8), _ -> if (zone == 0) { kg } \
+         else { ((kg * zone) + 8) } }"
+    );
+    // Each refusal names its own cause.
+    assert_eq!(
+        s.split("nothing", 0, &zones).unwrap_err(),
+        "no definition `nothing`"
+    );
+    assert_eq!(
+        s.split("rate", 0, &zones).unwrap_err(),
+        "`rate` is not a function"
+    );
+    assert_eq!(
+        s.split("ship", 2, &zones).unwrap_err(),
+        "`ship` has no parameter 2"
+    );
+    assert_eq!(
+        s.split("ship", 1, &zones).unwrap_err(),
+        "no static call passes a value of the domain"
+    );
 }
