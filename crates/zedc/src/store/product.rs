@@ -149,9 +149,10 @@ impl Lattice for Type {
     /// of types and a test per member. Trigger: a widening at which `next` has a value in a
     /// base type part that `self` lacks. Test:
     /// `l01_39_reduced_product::controls::a_type_widens_to_its_whole_base_type`. No
-    /// COMPLEXITY.md row. A complete solution would widen to the written type literals of the
-    /// loop first (type landmarks, as intervals do with integer landmarks), at a cost of one
-    /// subtype test per landmark.
+    /// COMPLEXITY.md row. A complete solution would compute the loop's least fixpoint over
+    /// types, which is undecidable in general. A more precise widening, still not complete,
+    /// would stop first at the loop's written type literals (type landmarks, as intervals do
+    /// with integer landmarks), at a cost of one subtype test per landmark.
     fn widen(&self, next: &Self, _: &Landmarks) -> Self {
         let mut out = self | next;
         for p in parts() {
@@ -163,6 +164,16 @@ impl Lattice for Type {
     }
     /// `next` in each part that `self` holds whole, and `self` in the others: each part leaves
     /// the whole at most once and is then fixed, so every chain of narrowings is finite.
+    ///
+    /// Complexity tradeoff: in a part that `self` does not hold whole, a smaller `next` is not
+    /// taken, so `1 | 2` narrowed by `1` stays `1 | 2`. Why: types have infinite descending
+    /// chains (`int`, `int` without `0`, without `0` and `1`, …), so taking the meet at each
+    /// step need not end; with this rule each part changes at most once. Trigger: a part of
+    /// `self` that is neither empty nor the whole base type or universe part. Test:
+    /// `l01_39_reduced_product::controls::a_type_widens_to_its_whole_base_type` (its narrowing
+    /// cases). No COMPLEXITY.md row. A complete solution would compute the greatest fixpoint
+    /// below the widened type, which needs the loop's effect on its values solved exactly:
+    /// undecidable in general.
     fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
         parts().iter().fold(Type::empty(), |out, p| {
             let whole = p.subtype(self);

@@ -376,19 +376,6 @@ pub enum Choice {
 
 /// The Trick: split on the members of `d` among `passed` only when `d` is finite. A type is
 /// finite here when it lists its values no longer than it is written ([`Type::listed`]).
-///
-/// Complexity tradeoff: a domain that is not listed (an integer range, or a type whose
-/// values outnumber what is written) is not split, so the function keeps one general body
-/// and loses the specialization on the static values passed. Why: splitting makes one copy
-/// of the body per value, and a domain whose values are not bounded by its written size could
-/// make copies exponential in the bits written. Trigger: [`Type::listed`] answering `None`, or
-/// an unbounded integer domain; the rule is relative to the written type, not a constant.
-/// Tests: `l01_28_staging::trick::a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept`,
-/// `l01_28_staging::trick::the_trick_keeps_a_function_on_an_infinite_domain`,
-/// `l01_28_staging::scaling::splitting_many_functions_of_one_unit_scales`. No COMPLEXITY.md
-/// row (docs/thresholds.md replacement 7). A complete solution would split on the values
-/// actually passed whatever the domain (their number is bounded by the call sites), with a
-/// general body for the rest.
 pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
     let within: Vec<Value> = match d {
         Domain::Type(t) => {

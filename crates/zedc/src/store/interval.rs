@@ -398,6 +398,19 @@ impl IntervalSet {
     /// the last happens at most once on each side. So the endpoints of every element of a
     /// descending chain of narrowings lie in a finite set, and the chain is finite by the
     /// argument of [`IntervalSet::widen`].
+    ///
+    /// Complexity tradeoff: a finite end of `next` moves back out to the nearest end of `self`
+    /// or landmark on its side, so a tighter bound that a loop shows between landmarks is lost
+    /// (`0..=99` narrowed by `5..=50` stays `0..=99`). Why: interval sets have infinite
+    /// descending chains (`0..=99`, `0..=98`, …), so taking the meet at each step need not
+    /// end; with this rule a chain of narrowings has O(|K|) elements. Trigger: a finite end of
+    /// `next` with an end of `self` or a landmark beyond it on its side. Tests:
+    /// `m0_05_widening_and_iteration::widening::a_narrowing_keeps_old_ends_and_takes_a_bound_for_an_infinite_one`,
+    /// `m0_05_widening_and_iteration::widening::interval_narrowing_chains_stay_on_the_first_ends_and_the_landmarks`.
+    /// No COMPLEXITY.md row of its own (S13 measures the widening phase). A complete solution
+    /// would compute the greatest fixpoint below the widened one, which needs the loop's
+    /// recurrence solved exactly (acceleration): possible for affine loops only, undecidable
+    /// in general.
     pub fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
         let ends = self.finite_ends();
         let out = next

@@ -503,6 +503,17 @@ impl Lattice for Bounds {
     /// The union narrows as in module `interval`, and a side takes the symbolic bounds of
     /// `next` only while it has none: each side gains bounds at most once, so every chain of
     /// narrowings is finite.
+    ///
+    /// Complexity tradeoff: a side that already has symbolic bounds keeps them, so a tighter
+    /// symbolic bound that a later step shows (`..=n - 2` after `..=n - 1`) is not taken. Why:
+    /// symbolic bounds form infinite descending chains (`n`, `n - 1`, `n - 2`, …), so taking
+    /// `next`'s bounds at each step need not end; with this rule each side changes at most
+    /// once. Trigger: a side of `self` with at least one symbolic bound. Tests:
+    /// `l01_24_refinement_lattices::loops::a_counting_loop_keeps_its_symbolic_bound`,
+    /// `l01_24_refinement_lattices::loops::a_loop_counting_down_keeps_its_symbolic_bound`
+    /// (both reach their symbolic bound through this narrowing after the widening drops it).
+    /// No COMPLEXITY.md row. A complete solution would find the loop's invariants over the
+    /// symbols (polyhedra or acceleration of affine loops), at exponential cost in the symbols.
     fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
         let side =
             |s: &BTreeSet<_>, n: &BTreeSet<_>| if s.is_empty() { n.clone() } else { s.clone() };

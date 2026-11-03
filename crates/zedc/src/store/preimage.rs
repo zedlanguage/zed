@@ -116,6 +116,18 @@ pub enum StopKind {
     /// A call to a name that is not a lambda, or a free name that is not an input.
     Foreign(Arc<str>),
     /// A term the scalar catalog does not cover: families, folds, `fix`, patterns or ports.
+    ///
+    /// Complexity tradeoff (for `fix`, `gen` and `fold`; the other terms here are catalog
+    /// entries not yet written, with no cost reason): the transfer stops at the loop, which
+    /// it raises at the `_` arms of `back_at`, `back_prim` and `scan`; the term's answer is
+    /// the whole box (`Res::unknown`, necessary only), and the stop is reported. Why: reading
+    /// through a loop unfolds it once per iteration it may take, which need not end, as for
+    /// `StopKind::Recursion`; a fixpoint over the loop is the full analysis this transfer
+    /// avoids. Trigger: a `fix`, `gen` or `fold` term between the demand and an input. Test:
+    /// `l01_25_preimage_catalog::stops::a_term_outside_the_scalar_catalog_is_reported`
+    /// covers the stop through `sum` of a tuple; no test yet stops at `fix`, `gen` or `fold`.
+    /// No COMPLEXITY.md row. A complete solution would compute a fixpoint of the loop's
+    /// backward transfer with widening, as the forward iteration does for loops.
     Outside,
     /// A call of a lambda whose call is already being read.
     Recursion,
@@ -1417,8 +1429,9 @@ impl<'t> Tx<'t> {
     /// Complexity tradeoff: a union of boxes that is not a box is answered by its box hull,
     /// which holds points neither side has (necessary, not exact). Why: a union of boxes kept
     /// exactly grows with each `||` and branch, up to 2^k boxes for k of them, and every
-    /// later operation would pay for each box. Trigger: two boxes that differ in more than one
-    /// input, or whose union on one input is not one interval set. Test:
+    /// later operation would pay for each box. Trigger: two boxes that differ in two or more
+    /// inputs (a name held by one box only counts as a difference), with neither box within
+    /// the other. Test:
     /// `l01_25_preimage_catalog::scopes::a_union_of_boxes_is_exact_when_it_is_a_box`. No
     /// COMPLEXITY.md row. A complete solution would keep a list (or a decision diagram) of
     /// boxes, exponential in the disjunctions in the worst case.

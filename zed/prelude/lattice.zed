@@ -125,6 +125,21 @@ intervalWiden(positional old, positional new, positional marks) =
 // an end of old or a landmark; an infinite end of old takes a finite bound once,
 // so each side changes at most once from infinite and then only to points of a
 // finite set.
+//
+// Complexity tradeoff: a finite end of new moves back out to the nearest end of
+// old or landmark on its side, so a tighter bound that a loop shows between
+// landmarks is lost (0..=99 narrowed by 5..=50 stays 0..=99). Why: interval
+// sets have infinite descending chains (0..=99, 0..=98, ...), so taking the
+// meet at each step need not end; with this rule a chain of narrowings has
+// O(|K|) elements. Trigger: a finite end of new with an end of old or a
+// landmark beyond it on its side. Tests:
+// m0_05_widening_and_iteration::widening::a_narrowing_keeps_old_ends_and_takes_a_bound_for_an_infinite_one,
+// m0_05_widening_and_iteration::widening::interval_narrowing_chains_stay_on_the_first_ends_and_the_landmarks
+// (they test the Rust copy until this unit runs). No COMPLEXITY.md row of its
+// own (S13 measures the widening phase). A complete solution would compute the
+// greatest fixpoint below the widened one, which needs the loop's recurrence
+// solved exactly (acceleration): possible for affine loops only, undecidable in
+// general.
 intervalNarrow(positional old, positional new, positional marks) =
   moveEnds(new, targets(old, marks), false);
 
@@ -134,17 +149,6 @@ intervalNarrow(positional old, positional new, positional marks) =
 // one before), so the widening is the join. Descending chains are not (0 mod 2,
 // 0 mod 4, ...), so the narrowing takes new only from the top, or when new is
 // one value or none: it changes at most three times.
-//
-// Complexity tradeoff: a congruence below the top that new refines to a larger
-// modulus keeps the old one, so a loop that shows 0 mod 4 after 0 mod 2 keeps
-// 0 mod 2. Why: without this, a descending chain need not end. Trigger: a
-// narrowing from a class of modulus other than 1 to a class of a larger
-// modulus. Test:
-// m0_05_widening_and_iteration::widening::a_congruence_narrows_at_most_three_times.
-// No COMPLEXITY.md row. The limit of the chain is not computable in general; a
-// closer rule would accept a refinement whose modulus is among the program's
-// literals (a landmark rule, as the interval narrowing has), which keeps each
-// chain finite.
 
 gcd(positional a, positional b) = if b == 0 { a } else { gcd(b, a mod b) };
 
@@ -202,6 +206,16 @@ congruenceLattice = Lattice(
   narrow: (a, b, marks) -> congruenceNarrow(a, b),
 );
 
+// Complexity tradeoff: a congruence below the top that new refines to a larger
+// modulus keeps the old one, so a loop that shows 0 mod 4 after 0 mod 2 keeps
+// 0 mod 2. Why: without this, a descending chain need not end. Trigger: a
+// narrowing from a class of modulus other than 1 to a class of a larger
+// modulus. Test:
+// m0_05_widening_and_iteration::widening::a_congruence_narrows_at_most_three_times.
+// No COMPLEXITY.md row. The limit of the chain is not computable in general; a
+// closer rule would accept a refinement whose modulus is among the program's
+// literals (a landmark rule, as the interval narrowing has), which keeps each
+// chain finite.
 congruenceNarrow(positional old, positional new) =
   if old == congruence(1, 0) { new }
   else { match new { #bottom -> new, #class(modulus: m, residue: r) -> if m == 0 { new } else { old } } };
