@@ -685,6 +685,7 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
     let mut out = Unit {
         defs: Vec::new(),
         tests: unit.tests.clone(),
+        warnings: unit.warnings.clone(),
     };
     for d in &unit.defs {
         if !demanded.contains(&d.kernel) {

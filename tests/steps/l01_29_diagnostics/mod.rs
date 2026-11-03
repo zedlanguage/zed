@@ -11,6 +11,7 @@ mod printed;
 mod repairs;
 mod scaling;
 mod variants;
+mod widen;
 
 use zedc::run::load;
 

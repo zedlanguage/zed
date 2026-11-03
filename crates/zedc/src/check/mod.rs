@@ -31,6 +31,7 @@
 
 pub mod read;
 pub mod ty;
+pub mod widen;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;

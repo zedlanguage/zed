@@ -74,6 +74,9 @@ pub struct Unit {
     pub defs: Vec<Def>,
     /// The test cases, in written order, shared with the unit once staged.
     pub tests: Arc<[Test]>,
+    /// The warnings, which do not stop the build: each operation that widens a value past a
+    /// machine word (DESIGN.md sec:domains).
+    pub warnings: Arc<[Error]>,
 }
 
 impl Unit {
@@ -235,6 +238,7 @@ fn elaborate_in(
 ) -> Result<(Unit, Option<Vec<Mark>>), Vec<Error>> {
     let t = Tables::new(unit, res);
     let mut info = check::check_with(&t, unit);
+    let warnings = check::widen::warnings(&t, unit, &info.adopt);
     let checked = std::mem::take(&mut info.errors);
     let mut e = Elab::new(t, &info);
     e.marks = marks;
@@ -251,6 +255,7 @@ fn elaborate_in(
             .collect();
     }
     out.tests = std::mem::take(&mut e.tests).into();
+    out.warnings = warnings.into();
     e.errors.extend(checked);
     if e.errors.is_empty() {
         Ok((out, e.marks.take()))

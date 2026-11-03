@@ -49,6 +49,8 @@ pub struct Program {
     main: std::sync::OnceLock<Term>,
     inputs: Vec<(String, PortKind)>,
     outputs: Vec<String>,
+    /// The warnings, placed in the source: they do not stop the build.
+    warnings: Arc<[Diagnostic]>,
 }
 
 /// The outcome of one wave: the writes, by port in header order, and the inputs it read.
@@ -75,7 +77,10 @@ pub fn load(bytes: &[u8]) -> Result<Program, String> {
         let lines: Vec<String> = ds.iter().map(Diagnostic::to_string).collect();
         lines.join("\n")
     })?;
-    program(&stmts, unit)
+    let warnings = placed(&text, &source::Lines::new(text.as_bytes()), &unit.warnings);
+    let mut program = program(&stmts, unit)?;
+    program.warnings = warnings.into();
+    Ok(program)
 }
 
 /// A message of the compiler, at a line and column of the source, both counted from 1, with
@@ -164,16 +169,7 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
             row: None,
         }
     };
-    let all = |errors: Vec<ast::Error>| {
-        errors
-            .into_iter()
-            .map(|e| Diagnostic {
-                steps: e.notes.iter().map(|n| step(text, &lines, n)).collect(),
-                row: e.row,
-                ..at(e.span.start, e.message)
-            })
-            .collect::<Vec<_>>()
-    };
+    let all = |errors: Vec<ast::Error>| placed(text, &lines, &errors);
     let (tokens, docs) =
         lex::lex_with_docs(text).map_err(|e| vec![at(e.span.start, e.to_string())])?;
     let tree =
@@ -260,6 +256,23 @@ fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
     out
 }
 
+/// The errors `errors` of `text` as diagnostics, each placed with its steps.
+fn placed(text: &str, lines: &source::Lines, errors: &[ast::Error]) -> Vec<Diagnostic> {
+    errors
+        .iter()
+        .map(|e| {
+            let (line, col) = lines.line_col(text.as_bytes(), e.span.start);
+            Diagnostic {
+                line,
+                col,
+                steps: e.notes.iter().map(|n| step(text, lines, n)).collect(),
+                message: e.message.clone(),
+                row: e.row,
+            }
+        })
+        .collect()
+}
+
 /// The step a note is in `text`: its line and column, the source line, and the characters of
 /// the note's span on that line.
 fn step(text: &str, lines: &source::Lines, n: &ast::Note) -> Step {
@@ -322,6 +335,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, String> {
         main: std::sync::OnceLock::new(),
         inputs,
         outputs,
+        warnings: Arc::from([]),
     })
 }
 
@@ -329,6 +343,11 @@ impl Program {
     /// The input ports, in header order.
     pub fn inputs(&self) -> &[(String, PortKind)] {
         &self.inputs
+    }
+
+    /// The warnings, placed in the source, in order of place.
+    pub fn warnings(&self) -> &[Diagnostic] {
+        &self.warnings
     }
 
     /// The elaboration.
@@ -345,6 +364,7 @@ impl Program {
             main: std::sync::OnceLock::new(),
             inputs: self.inputs.clone(),
             outputs: self.outputs.clone(),
+            warnings: Arc::clone(&self.warnings),
         };
         (program, report)
     }
@@ -716,6 +736,9 @@ fn command_inner(
     }
     let bytes = std::fs::read(file).map_err(|e| (2, format!("{file}: {e}")))?;
     let program = load(&bytes).map_err(|e| (1, format!("{file}:{e}")))?;
+    for w in program.warnings() {
+        writeln!(stderr, "{file}:{w}").map_err(|e| (2, format!("standard error: {e}")))?;
+    }
     let known =
         |p: &String| program.inputs.iter().any(|(n, _)| n == p) || program.outputs.contains(p);
     if let Some(p) = binds.keys().find(|p| !known(p)) {
