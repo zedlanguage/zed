@@ -690,10 +690,30 @@ LR2 added 23 tests to `l01_08_parser`, so the steps binary has 985. `tools/run_t
 - L2.1: a display in body position (a lambda, `else` or arm body) without parentheses gets the parser's general "expected …" message, as the grammar's `(Block | !'{' Expr)` gives; the spec calls it a parse error whose repair is parentheses, and a message naming that repair is open. Two paths of one `with` clause where one is a prefix of the other (`c = …, c.x = …`) are accepted: the spec rejects only identical paths and does not state this case. The formatter prints `(p with { x = 1 }).x` with parentheses, since `.x` after the braces belongs to the `with`. A struct name used as a value or type before L2.4 is reported as not defined. The tests `l01_10`, `l01_11` and `l01_14` changed: a parenthesized display and a tuple parameter now build L2 forms, and the fences accept the refusal " is compiled from step L2.…". Four pins of `l01_29_diagnostics::variants` moved: those programs now parse past their struct or `type` line and stop at `-> int` (L10) or `match` (L2.2).
 ## In progress
 
-- A full read of DESIGN.md by six agents, one line range each, listing what would otherwise need
-  the author's input. Each item is to be resolved in the spec before the step it affects.
-- Postmortems of related languages, written to the session scratchpad. Their lessons may amend
-  the spec.
+Regenerated at each change of state from the work board (docs/plan_dag.md nodes and their running-log lines). Times are local.
+
+| item | stage | started | last event |
+|---|---|---|---|
+| L2.2 | impl attempt 1 | 2026-11-03 00:08 | started: parser for match/guards/type patterns, import @hash, @ annotations |
+| LR4 | impl attempt 1 | 2026-11-03 00:05 | start; reading brief, SYNTHESIS, sec:grammar |
+| ST1 | repair attempt 3 (item ST) | 2026-11-02 21:50 | start: fix quadratic reduce on one linked component (Scope::project collects whole component) |
+| ST2 | repair attempt 3 (item ST) | 2026-11-02 21:50 | start: fix quadratic reduce on one linked component (Scope::project collects whole component) |
+| T11-fix-rest | impl attempt 1 | 2026-11-03 00:06 | started |
+| T11-preimage | repair attempt 1 | 2026-11-02 23:25 | start: fix S20 auxiliary names printing whole subterm in preimage.rs |
+| T14-heap | impl attempt 1 | 2026-11-03 00:06 | start |
+| T14-hooks | impl attempt 1 | 2026-11-03 00:06 | started |
+| T14-provenance | verify attempt 2 | 2026-11-02 23:25 | started; reading diff main..24929b1 |
+| T6 | impl attempt 1 | 2026-11-03 00:01 | read split_bdw2 helpers and family generators; writing types/bes.rs port / load 18.93 34.15 36.18 |
+| XT | running | 2026-11-02 21:13 | cross-review xt round 2 (simplex on the tight family, Growth refusals): Claude, Codex and Gemini reviewers running in wt/xt2 |
+
+Merged into local main and not yet pushed (6 commits); the push follows one full test run on the merged tree:
+
+- c884798 T11-elab: terms shared in elaboration and staging
+- cb7ba9a STATUS: L2.1 done (merged)
+- 14ff528 L2.1: parser of structs, record displays, with clauses, methods, patterns, the tuple parameter and type declarations; resolution refuses each with its
+- 505567c T14-value: Tuple, Path and atom payloads share their parts (Arc<[Value]>); deep walks meet a shared part once
+- b43cd24 T14-low: free the JIT memory when a native compile fails (Drop guard, tested); jump-table dispatch; fewer copies in number_cmp, read_rat, apply, ty me
+- 4420380 plan: needs keep only code, measure and files-heavy edges; T11-fix split into T11-fix-store and T11-fix-rest; X14 added
 
 ## Open points
 
