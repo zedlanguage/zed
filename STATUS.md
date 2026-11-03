@@ -903,15 +903,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CAP-pow32 | repair attempt 1 | 2026-11-03 08:53 | start: replace exact Int factor count in Tx::joined with O(1) summary (u32 value if fits + parity) |
 | F44-memo | verify attempt 2 | 2026-11-03 07:14 | returning ok=false: (1) branch conflicts with SCALE-bytes (main 3fa1fdc) in tests/src/scaling.rs; alone() spawns a bare thread, so main's per-thread byte count  |
 | GLAM | running | 2026-11-03 11:10 |  |
-| HOLE-oneline | merge attempt 1 | 2026-11-03 07:14 | lock released |
 | L1.17a | repair attempt 1 | 2026-11-03 07:14 | start: fix room_to_print total, Rat::aligned room, plain-rational order, shared-tuple test |
 | LIN-probe | verify attempt 1 | 2026-11-03 07:30 | negative control (main ab26ea6 probe in ctl, not committed): chain_cross_dead_scales fails 242.9M -> 38.33G instr, 157.8x; repair a_chain_whose_point_is_at_an_e |
 | LIVE3 | orchestrator attempt  | 2026-11-03 09:30 | REFERENCE (XR3 Codex report /home/luke/Work/wt/xt4/codex/R3_CODEX.md Q3, lines 122-224, and Q5 lines 280-284): a second design for the same method (bounded back |
 | S22e-quad | repair attempt 1 | 2026-11-03 07:43 | early split now deferred when x's domain lies within two periods or a class reads a remainder guard alone; probes at load 84: min chain one period 1.87M..15.3M  |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | repair attempt 4 | 2026-11-03 04:26 | elab ty/pattern converted, committed; old elab overflows type 100k and patterns 10k (load 96.66) |
-| T2-types | repair attempt 3 | 2026-11-03 08:34 | fmt --check and clippy -D warnings pass on b3ec3c8; load 90.99 |
-| T6-bound-load | verify attempt 1 | 2026-11-03 07:07 | control worktree /home/luke/Work/wt/t6-bound-load-vctl (detached 86f1255) for a quadratic bound walk; fmt ok, clippy -D warnings rc=0; load 79.30 |
+| T2-types | repair attempt 3 | 2026-11-03 08:34 | control on main 21bd4f8 with b3ec3c8's deep_types.rs: all 9 deep and scaling tests abort (134 overflow x5, 139 SIGSEGV x4); rec-name test and text equivalence t |
+| T6-bound-load | verify attempt 1 | 2026-11-03 07:07 | negative control (not committed): quadratic bound walk (kernel_type over all written types per root) fails the_bound_walk_scales_linearly, 250: 1.56 s, 2000: 47 |
 | T6-payload-pinwheel | verify attempt 1 | 2026-11-03 08:25 | started; load 77.64 86.08 87.12 |
 | T6-ratlit | impl attempt 3 | 2026-11-03 05:01 | meKr print in place, l01_22 32 pass, fmt and clippy clean; scaling N=2^20 vs 2^23: 2,951,041 vs 2,949,632 instructions, 414 kB both; exponent of 200 vs 1600 dig |
 | TD-ends | repair attempt 5 | 2026-11-03 03:52 | squashed onto main 66945e0 as 4ba6b1d; main's S22 code, preimage_ref and tests ported to exact ends; running tests |
@@ -920,10 +919,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TYPE-forms | orchestrator attempt  | 2026-11-03 08:16 | LOAD REQUIREMENT (user, 09:57): the machine is at load 110 on 32 cores; target is about 32. From now on build with CARGO_BUILD_JOBS=4, run the suite as tools/ru |
 | UNITANNOT-L7 | repair attempt 1 | 2026-11-03 07:14 | run_tests.sh 2 on 52b6b67 (base 1ab9e33): 100 pieces, 2 failed: m0_01 step_index snapshot lacked l07_03 (mine, updated), l01_25 s22 random pair (known on main,  |
 | UTVPI-NEAR | repair attempt 2 | 2026-11-03 06:34 | start; per orchestrator split (UTVPI-union) measuring main on the union family k=256,2048; load 85.27 |
-| WIDEN-WARN | merge attempt 1 | 2026-11-03 07:14 | lock released |
 
-Merged into local main and not yet pushed (113 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (114 commits); the push follows one full test run on the merged tree:
 
+- 404bae5 STATUS: in progress as of 2026-11-03 11:11
 - ba12343 STATUS: HULL3 done (tip c52cc3c)
 - c52cc3c HULL3: three live variables with a unit side decided by a 3-D shadow in O(m log m) (XT3 B4)
 - 676d775 dagview: directNeeds does not follow a need back into a node on the stack, so a cycle of needs ends instead of exhausting the heap; override needs rep
