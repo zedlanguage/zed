@@ -112,7 +112,8 @@ fn bits(k: usize, lo: i64, hi: i64) -> Domains {
 ///   `[-k, k]`, so that no demand merges with another;
 /// - `probe_all` and `probe_half`: the probe with `i` over all integers and over
 ///   `[-100, inf)`, where `t + 1` leaves `i64` at `i = i64::MAX`;
-/// - `probe_wide`: the probe with `i` in `[-100, 2^62]`;
+/// - `probe_wide` and `probe_max`: the probe with `i` in `[-100, 2^62]` and in
+///   `[-100, i64::MAX]`;
 /// - else arms `t + c_j` for `c_j` = `±1`, `j`, `±j`, `2^((j-1) mod 40)`;
 /// - roots `tk == 0`, `tk != 0`, `tk` in `[-3, 7]` (an integer demand) and the same as a
 ///   conjunction;
@@ -141,6 +142,7 @@ fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
         "live" => (ge0(adds(k, |_| 1)), live(), yes),
         "probe_all" => (ge0(adds(k, |_| 1)), over(&[("i", IntervalSet::top())]), yes),
         "probe_wide" => (ge0(adds(k, |_| 1)), i_in(-100, 1 << 62), yes),
+        "probe_max" => (ge0(adds(k, |_| 1)), i_in(-100, i64::MAX), yes),
         "probe_half" => {
             let half = IntervalSet::range(End::of(-100), End::PosInf);
             (ge0(adds(k, |_| 1)), over(&[("i", half)]), yes)
@@ -1073,12 +1075,19 @@ fn chain_probe_half_scales() {
 }
 
 /// The probe with `i` in `[-100, 2^62]`: an end of the domain plus an end of the demand met
-/// with the hull passes `i64::MAX`, so `Tx::fits` keeps the summary and the clip off and the
-/// transfer before runs, at about `k^2.8` (ledger S22-WIDE).
+/// with the hull passes `i64::MAX`. Until S22-WIDE `Tx::fits` turned the summary and the clip
+/// off there and the transfer before ran, at about `k^2.8` (30 s at `k = 2048`); the summary
+/// now holds its values in `i128`, so the clip stays on.
 #[test]
-#[ignore = "ledger S22-WIDE: the transfer before on a domain end beyond 2^62"]
 fn chain_probe_wide_scales() {
     scales("probe_wide", 256);
+}
+
+/// The probe with `i` in `[-100, i64::MAX]`: the domain's end at the end of `i64`, which the
+/// summary read as an infinity until S22-WIDE, and so gave up on, leaving the transfer before.
+#[test]
+fn chain_probe_max_scales() {
+    scales("probe_max", 256);
 }
 
 #[test]

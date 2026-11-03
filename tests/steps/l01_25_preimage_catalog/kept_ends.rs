@@ -56,9 +56,10 @@ fn a_power_under_a_large_power_has_a_root_bound() {
 }
 
 /// `if i >= c { i } else { i + 100 }` with an end of the domain or of the demand past `i64`,
-/// where the piecewise-affine summary gives up and each arm is read by the catalog; the same
-/// chain on a domain unbounded on both sides, whose infinities must not be read as the ends of
-/// `i64`; and the chain inside `i64`, where the summary reads it. Every answer is exact.
+/// which the piecewise-affine summary reads since S22-WIDE (its ends lie in `i128`; before, it
+/// gave up and each arm was read by the catalog); the same chain on a domain unbounded on both
+/// sides, whose infinities must not be read as the ends of `i64`; and the chain inside `i64`.
+/// Every answer is exact.
 #[test]
 fn an_if_chain_over_ends_past_i64_is_read_arm_by_arm() {
     use num_bigint::BigInt;
@@ -99,8 +100,7 @@ fn an_if_chain_over_ends_past_i64_is_read_arm_by_arm() {
             IntervalSet::range(End::of(i64::MAX - 1), End::of(i64::MAX)),
             IntervalSet::of(i64::MAX - 1, i64::MAX),
         ),
-        // A domain unbounded on both sides, which the summary reads with the ends of `i64`
-        // standing for the infinities: the else arm `i - 100` runs down to minus infinity.
+        // A domain unbounded on both sides: the else arm `i - 100` runs down to minus infinity.
         (
             chain_by(&Num::from(5), -100),
             on(End::NegInf, End::PosInf),

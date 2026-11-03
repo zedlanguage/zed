@@ -5,10 +5,11 @@
 //! it takes for `u <= -3` lies in `i64`. Kernel integers are unbounded, so the interpreter is
 //! the oracle at the ends of `i64` too.
 //!
-//! The summary is read here directly (`summary_preimage`), over bounded domains: the transfer
-//! reads it only when no end it computes can pass `i64` (`Tx::fits`), which a constant near
-//! an end of `i64` never allows. The last tests are the case where that guard let a constant
-//! built as a product of literals through, and the summary read the end of `i64` that stands
+//! The summary is read here directly (`summary_preimage`), over bounded domains, and through
+//! `preimage`. Since S22-WIDE the summary holds its values in `i128` too, an infinite end of a
+//! piece as the limit of its line, and `preimage` reads it with no guard on the size of the
+//! ends (`Tx::fits`, removed). The last tests are the case where that guard let a constant
+//! built as a product of literals through, and the summary read the end of `i64` that stood
 //! for an infinite end of the domain as an input.
 
 use std::sync::Arc;
@@ -170,7 +171,8 @@ fn terms_with_constants_outside_i64_are_summarized_at_the_ends_of_i64() {
 
 /// The last value of the domain is `MIN` or `MAX` (`MAX - 1` for the doubled term, whose
 /// values are even offsets from `MIN`): the summary exists and inverts a demand beside that
-/// end. One input further a value leaves `i64`, and the summary is given up there.
+/// end. One input further a value leaves `i64`; since S22-WIDE the summary holds it in `i128` and
+/// is still read there, and the interpreter agrees with it on every input of the window.
 #[test]
 fn a_value_at_an_end_of_i64_is_kept() {
     let near_min = fin(&[(MIN + 1, MIN + 3)]);
@@ -197,7 +199,7 @@ fn a_value_at_an_end_of_i64_is_kept() {
     for (t, ds, z, (lo, hi), wider) in &cases {
         assert_eq!(summarized(t, ds, z, (-61, 61)), fin(&[(*lo, *hi)]), "{t}");
         assert_eq!(&summarized(t, ds, &IntervalSet::top(), (-61, 61)), &ds["u"]);
-        assert!(agrees(t, wider, z, (-61, 61)).is_none(), "{t}");
+        assert!(agrees(t, wider, z, (-61, 61)).is_some(), "{t}");
     }
 }
 
@@ -215,8 +217,8 @@ fn a_constant_at_an_end_of_i64_through_one_outside_it() {
             fin(&[(-3, -1)]),
             "{t}"
         );
-        // At `u = 1` both leave `i64`.
-        assert!(agrees(t, &over(-10, 1), &z, (-11, 11)).is_none(), "{t}");
+        // At `u = 1` both leave `i64`, which the summary holds in `i128` since S22-WIDE.
+        assert!(agrees(t, &over(-10, 1), &z, (-11, 11)).is_some(), "{t}");
     }
 }
 
@@ -282,7 +284,7 @@ fn wide(ps: &[(i128, i128)]) -> IntervalSet {
 }
 
 /// `if u <= -3 { MIN + 5 - u } else { u }` and `if u <= -3 { MIN - (u + 3) } else { u }` over
-/// every integer, with `MIN` written as a product of literals. `Tx::fits` measured how far the
+/// every integer, with `MIN` written as a product of literals. Before S22-WIDE, `Tx::fits` measured how far the
 /// term moves an end by its literals summed, about `2^33`, so it let the summary read the `if`,
 /// and the summary takes the end of `i64` as the input that stands for `u`'s infinite lower
 /// end: the first returned `u [..=MIN + 5, 0..=10]` as exact, though `u = MIN - 100` gives

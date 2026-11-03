@@ -194,12 +194,8 @@ fn preimage_of(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
 }
 
 /// The inputs on which the piecewise-affine summary of `term` ([`Pa`]) takes a value in `z`,
-/// read without the transfer around it (and without [`Tx::fits`], which turns the summary off
-/// for a term whose ends may pass `i64`), or `None` when the summary of `term` or its
-/// inversion is given up: for the tests that check where the summary exists and what it says.
-/// Meant for domains with finite ends strictly inside `i64`: an unbounded domain is read with an
-/// end of `i64` standing for its infinity, and without [`Tx::fits`] that end may be read as an
-/// input.
+/// read without the transfer around it, or `None` when the summary of `term` or its inversion
+/// is given up: for the tests that check where the summary exists and what it says.
 #[doc(hidden)]
 pub fn summary_preimage(term: &Term, inputs: &Domains, z: &IntervalSet) -> Option<Domains> {
     on_stack(|| {
@@ -983,7 +979,6 @@ struct Kept {
     constant: HashMap<At, Option<Value>>,
     mentions: HashMap<At, Option<bool>>,
     clip: HashMap<At, Option<IntervalSet>>,
-    reach: HashMap<At, i128>,
     by_class: HashMap<At, Option<ByClass>>,
 }
 
@@ -998,7 +993,6 @@ impl Run {
             constant: std::mem::take(&mut m.constant),
             mentions: std::mem::take(&mut m.mentions),
             clip: std::mem::take(&mut m.clip),
-            reach: std::mem::take(&mut m.reach),
             by_class: std::mem::take(&mut m.by_class),
         }
     }
@@ -1008,7 +1002,7 @@ impl Run {
         let m = &mut self.memo;
         (self.sums, self.fwds) = (k.sums, k.fwds);
         (m.fwd, m.constant, m.mentions) = (k.fwd, k.constant, k.mentions);
-        (m.clip, m.reach, m.by_class) = (k.clip, k.reach, k.by_class);
+        (m.clip, m.by_class) = (k.clip, k.by_class);
     }
 }
 
@@ -1159,9 +1153,6 @@ struct Memo {
     pa: HashMap<At, Option<Pa>>,
     /// The interval an integer demand on a term is met with before it is read ([`Tx::clip`]).
     clip: HashMap<At, Option<IntervalSet>>,
-    /// How far reading a term can move an end, which bounds where the summary and the clip
-    /// are read ([`Tx::reach`]).
-    reach: HashMap<At, i128>,
     /// The summaries of a term in every class of remainders of a split ([`Tx::by_class`]).
     by_class: HashMap<At, Option<ByClass>>,
     scan: HashSet<At>,
@@ -1195,8 +1186,6 @@ type Table<K, V> = fn(&mut Memo) -> &mut HashMap<K, V>;
 /// it is within.
 struct Cx {
     inputs: Sets,
-    /// The largest magnitude of a finite end of an input's domain.
-    widest: i128,
     /// The lowest place on the stack of lambdas being read whose lambda a call stopped at,
     /// since the result being computed began. A result is remembered only when that place is
     /// not below the stack's height when it began: otherwise it depends on where it was
@@ -1229,7 +1218,6 @@ impl<'t> Tx<'t> {
             run: Run::default(),
             cx: Cx {
                 inputs: Sets::new(),
-                widest: 0,
                 cut: usize::MAX,
             },
         }
@@ -1247,7 +1235,6 @@ impl<'t> Tx<'t> {
                 .iter()
                 .map(|(k, v)| (k.clone(), Rc::new(v.clone())))
                 .collect(),
-            widest: inputs.values().map(widest).max().unwrap_or(0),
             cut: usize::MAX,
         };
     }
@@ -1548,7 +1535,6 @@ impl<'t> Tx<'t> {
             e = self.bind(e, p, to);
         }
         let cx = Cx {
-            widest: inputs.values().map(|s| widest(s)).max().unwrap_or(0),
             inputs,
             cut: usize::MAX,
         };
@@ -2564,69 +2550,6 @@ impl<'t> Tx<'t> {
         }
     }
 
-    /// How far reading the term can move an end of a demand or of an input's domain: the
-    /// magnitudes of its integer literals summed, plus one at each primitive, through the
-    /// names it reads, and at least the magnitude of each constant part's value. `i128::MAX`
-    /// for a term holding a call of a lambda or a term the
-    /// summary and the clip do not read. Every end the transfer computes from an end `e`
-    /// while it reads the term lies within `|e| + reach` of zero.
-    fn reach(&mut self, t: Tid, env: Eid) -> i128 {
-        self.cached(|m| &mut m.reach, (t, env), |s| s.reach_at(t, env))
-    }
-
-    fn reach_at(&mut self, t: Tid, env: Eid) -> i128 {
-        match self.node(t) {
-            Node::Int(c) => i128::from(c).abs(),
-            Node::Bool(_) => 0,
-            Node::Var(x) => match self.lookup(env, x) {
-                Some((bt, be)) => self.reach(bt, be),
-                None => 0,
-            },
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                self.reach(b, inner)
-            }
-            Node::If(g, a, b) => {
-                let r = self.reach(g, env).max(self.reach(a, env));
-                r.max(self.reach(b, env))
-            }
-            Node::App(f, args) => match self.callee(f, env) {
-                Ok(Callee::Prim(p)) => {
-                    let c = self.terms.call(t, p, args);
-                    self.reach(c, env)
-                }
-                _ => i128::MAX,
-            },
-            Node::Prim(_, args) => {
-                let r = (0..args.len()).fold(1, |r: i128, i| {
-                    r.saturating_add(self.reach(self.arg(args, i), env))
-                });
-                // A constant moves an end by its value, which can be far above its literals
-                // summed: `-2147483648 * 4294967296` is `i64::MIN`. Counted by the sum alone,
-                // `i64::MIN + 5 - u` over every `u` passed [`Tx::fits`], and the summary read
-                // the end of `i64` that stands for `u`'s infinite end as a value
-                // (`l01_25_preimage_catalog::wide_constants`).
-                if r < i128::MAX
-                    && let Some(Value::Int(c)) = self.constant(t, env)
-                {
-                    return r.max(i128::from(c).abs());
-                }
-                r
-            }
-            _ => i128::MAX,
-        }
-    }
-
-    /// Whether the summary and the clip may read the term under the integer demand `z`: no
-    /// end the transfer computes from the ends of `z` and of the domains leaves `i64`, where
-    /// the summary's machine integers hold ([`in_i64`]). Both readings are exact, so the guard
-    /// changes the cost and never the result.
-    fn fits(&mut self, t: Tid, env: Eid, z: &IntervalSet) -> bool {
-        let r = self.reach(t, env);
-        let w = self.cx.widest.saturating_add(widest(z));
-        r.saturating_add(w) < i64::MAX as i128
-    }
-
     // ---- Backward transfer ------------------------------------------------------------
 
     fn back(&mut self, t: Tid, env: Eid, d: &Demand) -> Res {
@@ -2638,7 +2561,7 @@ impl<'t> Tx<'t> {
         // differ only outside them are one.
         let met;
         let d = match d {
-            Demand::Ints(z) if self.fits(t, env, z) => {
+            Demand::Ints(z) => {
                 let clip = self.clip(t, env);
                 match clip {
                     Some(f) => {
@@ -2704,7 +2627,6 @@ impl<'t> Tx<'t> {
             }
             Node::If(g, a, b) => {
                 if let Demand::Ints(z) = d
-                    && self.fits(t, env, z)
                     && let Some(r) = self.pa(t, env).and_then(|pa| self.invert_pa(&pa, z))
                 {
                     return r;
@@ -3066,10 +2988,9 @@ impl<'t> Tx<'t> {
     // ---- Piecewise-affine summaries -----------------------------------------------------
 
     /// The value of the term as a piecewise-affine function of one input ([`Pa`]), or `None`
-    /// when it is not one or when it reads more than one input. A value, a coefficient or a
-    /// constant may leave `i64`; the `if` that takes the term on fewer inputs checks the values it keeps
-    /// ([`Tx::pa_if`]), so the summary of an `if` lies in `i64` and one of `t + 1` over all of
-    /// `i64` is still a summary. Keyed on the term alone, so an `if` chain whose arms read one
+    /// when it is not one or when it reads more than one input. Its coefficients, constants
+    /// and values lie in `i128` ([`finite`]), and an infinite end of a piece is the limit of
+    /// its line there, so `t + 1` over all integers is a summary. Keyed on the term alone, so an `if` chain whose arms read one
     /// shared term is summarized once, whatever demands reach it.
     fn pa(&mut self, t: Tid, env: Eid) -> Option<Pa> {
         if self.run.void {
@@ -3171,24 +3092,11 @@ impl<'t> Tx<'t> {
             }
             let set = r.dom.get(var).map_or(&**dom, |s| &**s);
             let tree = arm.to_treap(dom)?;
-            if !in_i64(set) {
+            if !in_range(set) {
                 return None;
             }
             for (lo, hi) in set.pieces() {
                 if let Some(s) = slice_treap(tree.clone(), lo, hi)? {
-                    // Complexity tradeoff: when a value the kept arm takes on these inputs
-                    // leaves `i64`, the summary of this `if` is given up (`None`), and the `if`
-                    // is read arm by arm by the transfer before: exact, at the cost of the
-                    // per-arm transfer. Why: the treap's values are compared with the demand's
-                    // ends as machine integers, with the ends of `i64` standing for the
-                    // infinities, which keeps each treap operation O(1) per node; values of any
-                    // size would cost time in their bits at every node. Trigger: a value of a
-                    // kept arm outside `i64` on the inputs where the guard keeps that arm. Test:
-                    // `l01_25_preimage_catalog::s22::a_chain_that_leaves_i64_keeps_its_exact_preimage`
-                    // (`t_k` at `i = -24` from `k = 37`). COMPLEXITY.md S22. A complete solution
-                    // would hold the treap's values as `Num`.
-                    fits(s.vals.0)?;
-                    fits(s.vals.1)?;
                     slices.push((key(lo), s));
                 }
             }
@@ -3285,7 +3193,7 @@ impl<'t> Tx<'t> {
                 None => {
                     let name = self.name(x).clone();
                     let (lo, hi) = self.cx.inputs.get(&name)?.bounds()?;
-                    let x = input(lo).unsigned_abs().max(input(hi).unsigned_abs());
+                    let x = input(lo)?.unsigned_abs().max(input(hi)?.unsigned_abs());
                     let bound = Bound {
                         a: 1,
                         b: 0,
@@ -3436,7 +3344,7 @@ impl<'t> Tx<'t> {
             }
             Pa::Linear { var, .. } | Pa::Piecewise { var, .. } => (var, self.cx.inputs.get(var)?),
         };
-        if !in_i64(z) {
+        if !in_range(z) {
             return None;
         }
         let root = pa.to_treap(dom)?;
@@ -3460,10 +3368,10 @@ impl<'t> Tx<'t> {
 /// domain's and the guards' ends). The coefficients, constants and values lie in `i128`, every
 /// step checked there, so an affine step ([`Pa::affine`], [`apply_tag`]) is given up only when
 /// one leaves `i128`. Kernel integers are unbounded, so a value outside `i64` is a value of the
-/// term; the summary is read only where its values lie in `i64`: [`Tx::pa_if`] gives up on an
-/// `if` that keeps a value outside `i64`, and [`invert_piece`] on a piece that takes one. So
-/// `i64::MIN - (u + 3)` for `u <= -3` is summarized, although its constant `i64::MIN - 3` lies
-/// outside `i64`.
+/// term, and the summary reads it as one: `i64::MIN - (u + 3)` is summarized, although its
+/// constant `i64::MIN - 3` lies outside `i64`, and so is `u + 1` at `u = i64::MAX`. At an
+/// infinite end of the domain a piece takes the infinity its line tends to ([`value_at`]),
+/// never the value at an end of `i64`.
 #[derive(Clone)]
 enum Pa {
     /// The constant `c` everywhere.
@@ -3513,7 +3421,7 @@ impl Pa {
             Pa::Const(c) => (0, i128::from(*c)),
             Pa::Linear { a, b, .. } => (*a, *b),
         };
-        if !in_i64(dom) {
+        if !in_range(dom) {
             return None;
         }
         let mut root = None;
@@ -3746,38 +3654,64 @@ struct PaNode {
     right: Tree,
 }
 
-/// `x` when it lies in `i64`.
-fn fits(x: i128) -> Option<i128> {
-    i64::try_from(x).is_ok().then_some(x)
+/// The infinities among a summary's values ([`PaNode::vals`]): the value an affine piece with
+/// an infinite end tends to there. Every finite value lies strictly between them ([`finite`]).
+const NEG: i128 = i128::MIN;
+const POS: i128 = i128::MAX;
+
+/// `v` when it lies strictly between the infinities [`NEG`] and [`POS`].
+// Complexity tradeoff: a summary whose coefficient, constant or value leaves `i128` is given
+// up (`None` from [`value_at`], [`map_vals`], [`apply_tag`], [`Pa::affine`] and
+// [`invert_piece`]), and the `if` it was to summarize is read arm by arm by the transfer
+// before: exact, at the cost of the per-arm transfer, about `k^2.8` on an `if` chain of `k`
+// levels over a shared term. Why: the treap's coefficients, constants and values are `i128`,
+// which keeps each treap operation O(1) per node; numbers of any size would cost time in
+// their bits at every node and step. Trigger: a value of a kept arm, a coefficient or a
+// constant past about `2^127` in magnitude. Test:
+// `l01_25_preimage_catalog::wide_ends::values_past_i128_take_the_transfer_before`.
+// COMPLEXITY.md S22. A complete solution would hold the treap's numbers as `Num`.
+fn finite(v: i128) -> Option<i128> {
+    (NEG < v && v < POS).then_some(v)
 }
 
-/// Whether every finite end of `s` lies strictly inside `i64`, as the summary's ends must:
-/// the ends of `i64` stand for the infinities.
+/// The value `a * x + b` at the end `x` of a piece: at an infinite end, the infinity the line
+/// tends to there, or `b` when `a` is 0; `None` when a finite value leaves `i128`.
+fn value_at(x: &End, a: i128, b: i128) -> Option<i128> {
+    match x {
+        Fin(v) => finite(a.checked_mul(small(v))?.checked_add(b)?),
+        _ if a == 0 => finite(b),
+        NegInf if a > 0 => Some(NEG),
+        PosInf if a < 0 => Some(NEG),
+        _ => Some(POS),
+    }
+}
+
+/// Whether every finite end of `s` lies strictly between the infinities [`NEG`] and [`POS`],
+/// as the summary's ends must: they are compared as `i128` with the infinities as its ends.
 // Complexity tradeoff: the piecewise-affine summary of an `if` chain is given up when a
-// domain or a demand it reads has an end past `i64`, and the `if` is read as before S22a
-// (each arm by the catalog): exact, at the cost of the per-arm transfer. Why: the summary's
-// pieces, values and tags are machine integers, with the ends of `i64` standing for the
-// infinities, which keeps each treap operation O(1) per node; ends of any size would cost
-// time in their bits at every node. Trigger: an input domain, an arm's set or a demand with
-// a finite end outside `i64` or at one of its ends. Test:
-// `l01_25_preimage_catalog::kept_ends::an_if_chain_over_ends_past_i64_is_read_arm_by_arm`.
+// domain or a demand it reads has a finite end past `i128`, and the `if` is read as before
+// S22a (each arm by the catalog): exact, at the cost of the per-arm transfer, about `k^2.8`
+// on a chain of `k` levels over a shared term. Why: the summary's pieces, values and tags are
+// `i128`, which keeps each treap operation O(1) per node; ends of any size would cost time in
+// their bits at every node. Trigger: an input domain, an arm's set or a demand with a finite
+// end of magnitude about `2^127` or more. Test:
+// `l01_25_preimage_catalog::wide_ends::ends_past_i128_take_the_transfer_before`.
 // COMPLEXITY.md S33. A complete solution would hold the pieces' ends and values as `Num`.
-fn in_i64(s: &IntervalSet) -> bool {
+fn in_range(s: &IntervalSet) -> bool {
     s.pieces().iter().all(|(lo, hi)| {
-        [lo, hi].into_iter().all(
-            |e| !matches!(e, Fin(v) if v.to_i64().is_none_or(|w| w == i64::MIN || w == i64::MAX)),
-        )
+        [lo, hi]
+            .into_iter()
+            .all(|e| !matches!(e, Fin(v) if v.to_i128().and_then(finite).is_none()))
     })
 }
 
-/// A finite end that [`in_i64`] admitted.
+/// A finite end that [`in_range`] admitted.
 fn small(v: &Num) -> i128 {
-    v.to_i64()
-        .expect("the summary's ends lie in i64, checked by in_i64")
-        .into()
+    v.to_i128()
+        .expect("the summary's ends lie in i128, checked by in_range")
 }
 
-/// An end as a number: the infinities lie past every `i64`.
+/// An end as a number: the infinities lie past every finite end [`in_range`] admits.
 fn key(e: &End) -> i128 {
     match e {
         NegInf => i128::MIN,
@@ -3786,18 +3720,26 @@ fn key(e: &End) -> i128 {
     }
 }
 
-/// An end of an input's domain as an input: the infinities are the ends of `i64`.
-fn input(e: &End) -> i128 {
+/// An end of an input's domain as an input, for the bounds of [`ByClass`]: the infinities are
+/// the ends of `i64`, and `None` for a finite end outside `i64`.
+fn input(e: &End) -> Option<i128> {
     match e {
-        NegInf => i64::MIN.into(),
-        Fin(v) => small(v),
-        PosInf => i64::MAX.into(),
+        NegInf => Some(i64::MIN.into()),
+        Fin(v) => v.to_i64().map(i128::from),
+        PosInf => Some(i64::MAX.into()),
     }
 }
 
-/// `(lo, hi)` mapped by `x -> mul * x + add`, in order; `None` when a value leaves `i128`.
+/// `(lo, hi)` mapped by `x -> mul * x + add`, in order, for `mul` not 0: an infinity stays one
+/// of the same sign when `mul > 0` and becomes the other when `mul < 0`; `None` when a finite
+/// value leaves `i128`.
 fn map_vals((lo, hi): (i128, i128), (mul, add): (i128, i128)) -> Option<(i128, i128)> {
-    let f = |v: i128| v.checked_mul(mul)?.checked_add(add);
+    let f = |v: i128| match v {
+        NEG | POS if mul > 0 => Some(v),
+        NEG => Some(POS),
+        POS => Some(NEG),
+        _ => finite(v.checked_mul(mul)?.checked_add(add)?),
+    };
     if mul >= 0 {
         Some((f(lo)?, f(hi)?))
     } else {
@@ -3817,7 +3759,12 @@ fn prio_of(lo: &End, hi: &End) -> u64 {
     let code = |e: &End| -> u64 {
         match e {
             NegInf => 0,
-            Fin(v) => (small(v) as u64).wrapping_add(1) ^ 0x5555_5555_5555_5555,
+            Fin(v) => {
+                // The high word, 0 for every end in `i64`, so that those keep their codes.
+                let w = small(v);
+                let high = ((w >> 64) ^ (w >> 63)) as u64;
+                (w as u64).wrapping_add(1) ^ 0x5555_5555_5555_5555 ^ high.rotate_left(17)
+            }
             PosInf => u64::MAX,
         }
     };
@@ -3830,8 +3777,7 @@ fn prio_of(lo: &End, hi: &End) -> u64 {
 /// The node for the piece `lo..=hi` with value `a * x + b` over two subtrees with no tag
 /// above them; `None` when a value leaves `i128`.
 fn make_node(lo: End, hi: End, a: i128, b: i128, left: Tree, right: Tree) -> Option<Rc<PaNode>> {
-    let at = |x: &End| a.checked_mul(input(x))?.checked_add(b);
-    let (u, v) = (at(&lo)?, at(&hi)?);
+    let (u, v) = (value_at(&lo, a, b)?, value_at(&hi, a, b)?);
     let mut vals = (u.min(v), u.max(v));
     let mut span = (lo.clone(), hi.clone());
     let mut dense = true;
@@ -3907,7 +3853,8 @@ fn join_treap(left: Tree, right: Tree) -> Option<Tree> {
 }
 
 /// The inputs below `cut`, and the rest. A piece that holds `cut - 1` and `cut` is cut in
-/// two; both lie in `i64`, since `cut` is above the piece's lower end.
+/// two; both lie in `i128`, since `cut` is above the piece's lower end and at most its upper
+/// end, which [`in_range`] admitted.
 fn split_at(root: Tree, cut: i128) -> Option<(Tree, Tree)> {
     let Some(node) = root else {
         return Some((None, None));
@@ -3927,16 +3874,15 @@ fn split_at(root: Tree, cut: i128) -> Option<(Tree, Tree)> {
         let (rl, rr) = split_at(right, cut)?;
         Some((Some(make_node(lo, hi, a, b, left, rl)?), rr))
     } else {
-        let below = End::of(i64::try_from(cut - 1).ok()?);
-        let above = End::of(i64::try_from(cut).ok()?);
+        let (below, above) = (End::from(cut - 1), End::from(cut));
         let l = join_treap(left, Some(make_node(lo, below, a, b, None, None)?))?;
         let r = join_treap(Some(make_node(above, hi, a, b, None, None)?), right)?;
         Some((l, r))
     }
 }
 
-/// The pieces of `root` within `lo..=hi`, whose finite ends lie strictly inside `i64`
-/// ([`in_i64`]), so that a cut is never confused with an infinity.
+/// The pieces of `root` within `lo..=hi`, whose finite ends lie strictly between the
+/// infinities ([`in_range`]), so that a cut is never confused with an infinity.
 fn slice_treap(root: Tree, lo: &End, hi: &End) -> Option<Tree> {
     let root = match lo {
         Fin(v) => split_at(root, small(v))?.1,
@@ -3981,8 +3927,9 @@ fn invert_treap(
     invert_treap(&n.right, below, z, out)
 }
 
-/// Appends to `out` the inputs `x` in `lo..=hi` with `a * x + b` in `z`, each value of the
-/// piece lying in `i64`. Exact, so no end is rounded.
+/// Appends to `out` the inputs `x` in `lo..=hi` with `a * x + b` in `z`. Exact, so no end is
+/// rounded: an infinite end of the piece is a limit of the line, never an input, and an input
+/// found may lie outside `i64`.
 fn invert_piece(
     lo: &End,
     hi: &End,
@@ -3991,18 +3938,7 @@ fn invert_piece(
     z: &IntervalSet,
     out: &mut Vec<(End, End)>,
 ) -> Option<()> {
-    let (x0, x1) = (input(lo), input(hi));
-    // Complexity tradeoff: when a value of the piece at one of its ends leaves `i64`, the
-    // inversion gives up (`None`), and `invert_pa`'s caller reads the term by the transfer
-    // before: exact, at the cost of that transfer. Why: the values are met with the demand's
-    // ends as machine integers, with the ends of `i64` standing for the infinities, which keeps
-    // each piece O(1) plus the demand pieces it meets; values of any size would cost time in
-    // their bits. Trigger: a piece whose value `a * x + b` at an end `x` of its inputs lies
-    // outside `i64`. Test:
-    // `l01_25_preimage_catalog::wide_constants::a_value_at_an_end_of_i64_is_kept` (its `wider`
-    // domains). COMPLEXITY.md S22. A complete solution would hold the treap's values as `Num`.
-    let at = |x: i128| fits(a.checked_mul(x)?.checked_add(b)?);
-    let (u, v) = (at(x0)?, at(x1)?);
+    let (u, v) = (value_at(lo, a, b)?, value_at(hi, a, b)?);
     let (vlo, vhi) = (u.min(v), u.max(v));
     let zs = z.pieces();
     let start = zs.partition_point(|(_, zhi)| key(zhi) < vlo);
@@ -4010,36 +3946,39 @@ fn invert_piece(
         if key(zlo) > vhi {
             break;
         }
-        // The values met, both in `i64`. A coefficient may lie outside `i64`, so the
-        // differences with `b` are checked.
-        let (zl, zh) = (key(zlo).max(vlo), key(zhi).min(vhi));
-        let (xl, xh) = match a.signum() {
-            0 => (x0, x1),
-            1 => (
-                ceil_div(zl.checked_sub(b)?, a)?,
-                floor_div(zh.checked_sub(b)?, a),
-            ),
-            _ => {
-                let d = a.checked_neg()?;
-                (
-                    ceil_div(b.checked_sub(zh)?, d)?,
-                    floor_div(b.checked_sub(zl)?, d),
-                )
-            }
+        if a == 0 {
+            // The one value, `b`, lies in this piece of `z`.
+            out.push((lo.clone(), hi.clone()));
+            break;
+        }
+        // The inputs whose value lies in `zlo..=zhi`, where an infinite end of `z` bounds
+        // none. A coefficient may lie outside `i64`, so the differences with `b` are checked.
+        let (xl, xh) = if a > 0 {
+            (
+                solve(zlo, |zl| ceil_div(zl.checked_sub(b)?, a), NegInf)?,
+                solve(zhi, |zh| Some(floor_div(zh.checked_sub(b)?, a)), PosInf)?,
+            )
+        } else {
+            let d = a.checked_neg()?;
+            (
+                solve(zhi, |zh| ceil_div(b.checked_sub(zh)?, d), NegInf)?,
+                solve(zlo, |zl| Some(floor_div(b.checked_sub(zl)?, d)), PosInf)?,
+            )
         };
-        let (xl, xh) = (xl.max(x0), xh.min(x1));
+        let (xl, xh) = (xl.max(lo.clone()), xh.min(hi.clone()));
         if xl <= xh {
-            let end = |x: i128, e: &End, at: i128| {
-                if x == at {
-                    e.clone()
-                } else {
-                    Fin(Num::from(x))
-                }
-            };
-            out.push((end(xl, lo, x0), end(xh, hi, x1)));
+            out.push((xl, xh));
         }
     }
     Some(())
+}
+
+/// `f` of the finite end `e`, as an end, or `inf` when `e` is infinite.
+fn solve(e: &End, f: impl FnOnce(i128) -> Option<i128>, inf: End) -> Option<End> {
+    match e {
+        Fin(_) => f(key(e)).map(End::from),
+        _ => Some(inf),
+    }
 }
 
 /// `n / d` rounded down, for `d > 0`.
@@ -4832,17 +4771,4 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> 
             point[j] = 0;
         }
     }
-}
-
-/// The largest magnitude of a finite end of `z`, `i128::MAX` past it, or 0.
-fn widest(z: &IntervalSet) -> i128 {
-    z.pieces()
-        .iter()
-        .flat_map(|(lo, hi)| [lo, hi])
-        .filter_map(|e| match e {
-            Fin(v) => Some(v.to_i128().map_or(i128::MAX, |w| w.saturating_abs())),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0)
 }

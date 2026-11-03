@@ -195,9 +195,9 @@ fn times(fs: &[i64]) -> Term {
     it.fold(first, |a, b| Term::Prim(Prim::Mul, vec![a, b]))
 }
 
-/// `i64::MAX` and `i64::MIN` as products of small factors. The summary and the clip read a
-/// term only when the magnitudes of its literals summed stay within `i64` (`Tx::fits`), so a
-/// literal `i64::MAX` would turn them off.
+/// `i64::MAX` and `i64::MIN` as products of small factors. Until S22-WIDE the summary and the
+/// clip read a term only when the magnitudes of its literals summed stayed within `i64`
+/// (`Tx::fits`, since removed), so a literal `i64::MAX` turned them off.
 fn max_c() -> Term {
     times(&[49, 73, 127, 337, 92737, 649657])
 }
