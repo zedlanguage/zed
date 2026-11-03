@@ -54,7 +54,7 @@ Signature     : the type of a name with no definition, a foreign function (sec:f
 Expr          : ⟦Lambda⟧, ⟦Break⟧ or ⟦Expr12⟧
 Break         : ends the enclosing gen: the step's guard returns #break(⟦e⟧) and the loop's result is ⟦e⟧
 Lambda        : λ(params). ⟦body⟧, each parameter's kind taken from the expected function type (sec:power)
-Expr12        : the else tails applied left to right to ⟦Or⟧
+Expr12        : `a else b else c` is (a else b) else c: each else tail applies to the expression before it, left to right
 ElseTail      : `e else d` is match ⟦e⟧ { a -> ⟦d⟧ for each loose atom member a of e's type, x -> x }; `e else P -> d` is match ⟦e⟧ { P -> ⟦d⟧, x -> x }
 Or            : `a || b` is if(⟦a⟧, true, ⟦b⟧), left to right
 And           : `a && b` is if(⟦a⟧, ⟦b⟧, false), left to right
@@ -127,6 +127,7 @@ OutPattern    : the output keypath of an `into`, the key map of its reindex leve
 Level         : one output level: several sort keys are one rank level; `asc k` or `desc k` a rank level; `k >< op` a fold of the level k collapses
 SortKey       : a rank by the key, ascending or descending
 JoinTerm      : a join region (sec:joins): `&&` inner, `||` outer, `&& ?` left, `&& !` difference, `==` an equality assertion; a discard over the union of the operands' keyspaces
+AndJoin       : `a && b`, `a && ?b`, `a && !b`: inner, left, difference; a chain joins from the left, so `a && !b && !c` is (a && !b) && !c
 KeyTerm       : a key, or a parenthesized join term
 JoinExpr      : a parenthesized boolean expression in key position, which is a key and not a region
 Key           : a key expression over the source's level names; `_` the leaf value

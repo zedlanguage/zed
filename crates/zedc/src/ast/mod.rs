@@ -486,12 +486,13 @@ impl<'a> Builder<'a> {
         match self.tree.name(n) {
             "Expr" => self.node(kids[0]),
             "Lambda" => self.lambda(n),
+            // Left-recursive: `a else b else c` arrives as ((a else b) else c).
             "Expr12" => {
-                let mut e = self.node(kids[0])?;
-                for &t in &kids[1..] {
-                    e = self.else_tail(e, t)?;
-                }
-                Ok(e)
+                let [l, t] = kids[..] else {
+                    unreachable!("Expr12 = Expr12 ElseTail | ~Or")
+                };
+                let e = self.node(l)?;
+                self.else_tail(e, t)
             }
             "Or" | "And" | "Additive" | "Multiplicative" | "Equality" | "Compare" => {
                 // The operator is the token before the right operand.

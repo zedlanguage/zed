@@ -68,7 +68,7 @@ fn a_call_chain_reads_from_the_left() {
 
 #[test]
 fn a_name_leaves_no_node_on_the_rungs_of_the_ladder() {
-    assert_eq!(nodes("total", "Expr"), ["Expr", "Expr12", "Name"]);
+    assert_eq!(nodes("total", "Expr"), ["Expr", "Name"]);
 }
 
 #[test]

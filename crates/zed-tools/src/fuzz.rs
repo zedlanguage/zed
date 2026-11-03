@@ -62,6 +62,7 @@ fn nests(rule: &str) -> bool {
             | "TypeAnd"
             | "TypeOr"
             | "TypeDiff"
+            | "AndJoin"
     )
 }
 

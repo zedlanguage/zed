@@ -7,5 +7,6 @@ mod errors;
 mod grammar_scaling;
 mod grammar_shape;
 mod left_recursion;
+mod lr4_assoc;
 mod rings;
 mod scaling;

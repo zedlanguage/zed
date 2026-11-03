@@ -740,6 +740,15 @@ T14 reviewed the Rust against WRITING_GOOD_RUST.md and T11 audited it for copies
 COMPLEXITY.md R1 to R7 are in T14-hooks (R1, R2, R7), T14-heap (R3, R6) and T14-rope (R4, R5). T14-value also holds the O(n) read that wt/t2eval records as K21. T11 examined and left alone the eval Env and lower.rs Scope maps, `Uses`, region indices, the class union-find, the query memo, ropes and `mem::take` in check.
 
 
+## LR4: associativity audit
+
+LR4 (after LR2; LR3 was stopped by the author) audited every rule of sec:grammar for the
+direction it nests in; the table is `docs/grammar_assoc.md`. It converted `Expr12` (`else`
+chains) and the `&&` join chain (`AndJoin`) to left recursion and kept every other rule. It
+touches `crates/zedc/src/ast/mod.rs` (arm `"Expr12"`), which L2.1 also edits (`reduce_tail`
+near the same match): a merge of the two needs a look at that match, nothing more. DESIGN.md
+changes in sec:grammar (PEG and desugar) and in the sec:joins Planning bullet.
+
 ## Machine limits and tools
 
 The author installed the tools below on 2026-11-02. Each was run that day on a small input, and the versions are the ones reported. All tests stay under 60 s each and 112 GB in total. There are two test suites. The local suite, `tools/run_tests.sh`, needs only the Rust toolchain and the cores of the machine, and it is what CI runs: tests in `tests/steps/`. The full battery, `tools/run_tests.sh --full`, is the local suite plus `tests/full/<step>/`, each with a file `needs` listing its tools. It stops before any test and names what is missing, so nothing is skipped. `tools/fetch_test_deps.sh` fetches into `~/.cache/zed-test-deps`, with no root, what Fedora does not package: target sysroots, the official rustc for target builds, and Podman's test storage and image. Every test that uses a tool in this table goes in `tests/full/`, and a step with such tests runs `--full` before it merges. Plain `cargo test` does not build `tests/full/`; clippy in CI compiles it.

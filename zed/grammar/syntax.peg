@@ -99,7 +99,8 @@ Expr          = Lambda                                                          
               | Expr12                                                             L1
 Break         = 'break' Expr12                                                     L6
 Lambda        = (Name | '(' Params? ')') '->' (Block | !'{' Expr)                  L1
-Expr12        = Or ElseTail*                                                       L1
+Expr12        = Expr12 ElseTail                                                    L1
+              | ~Or                                                                L1
 ElseTail      = 'else' AtomPattern '->' (!HEAD Block | !'{' Or)                    L1
               | 'else' (!HEAD Block | !'{' Or)                                     L1
 Or            = Or '||' And                                                        L1
@@ -231,10 +232,12 @@ OutPattern    = Level ('->' Level)*                                             
 Level         = SortKey (',' SortKey)+ (',' &')')?                                 L8
               | ('asc' | 'desc')? JoinTerm ('><' Postfix Unordered?)?              L8
 SortKey       = ('asc' | 'desc') JoinTerm                                          L8
-JoinTerm      = KeyTerm ('&&' ('?' | '!')? KeyTerm)+                               L8
+JoinTerm      = ~AndJoin                                                           L8
               | KeyTerm ('||' KeyTerm)+                                            L8
               | KeyTerm '==' KeyTerm                                               L8
               | KeyTerm                                                            L8
+AndJoin       = AndJoin '&&' ('?' | '!')? KeyTerm                                  L8
+              | KeyTerm '&&' ('?' | '!')? KeyTerm                                  L8
 KeyTerm       = '(' nest(JoinTerm) ')' !KeyOp                                      L8
               | !('(' nest(JoinExpr) ')' !KeyOp) Key                               L8
 JoinExpr      = And ('||' And)+                                                    L8

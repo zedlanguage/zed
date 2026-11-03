@@ -703,3 +703,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A thread-local `RefCell<Option<State>>` borrowed once per hook and split into `&Tables` and `&mut Run` | `hooks::with`, `with_args` | Mutation | The run is a state receiver passed to each hook; the tables are an immutable value beside it |
 | `std::mem::take` of a buffer, used as a borrowed slice, then cleared and put back | `with_args`, `matched` (`outs`) | Mutation | A state receiver; the runtime reuses a list held once |
 | `Vec<Option<_>>` filled at first use, indexed by node or constant | `Run::shapes`, `Run::ropes` | Mutation | A map in the run's state, or the shape computed once at compile time for constant names |
+
+## Entries from LR4 (`zedc/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
+
+- No new gap. `Builder::make_expr`, arm `"Expr12"`, reads its two children with `let [l, t] = kids[..] else { unreachable!(..) }`, a slice pattern in a `let … else`; both are rows of the appendix (`let_else`, slice patterns) with the rewrite already listed: test the length, then index.
