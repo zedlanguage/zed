@@ -640,7 +640,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A generic `thread_local!` queue of parts to free, one per module, each an enum of the kinds of part | `deep::Queue`, `deep::free_in`, `Freed` in `types.rs`, `rec.rs`, `term.rs` | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `impl Drop` on a generic struct with a trait bound, freeing through a trait method (`Literal::free`) | `Branch<A>`, `bdd::Expr<A>` | None | Removed, with the first row |
-| A `thread_local!` record of the text being made, read by a recursive `show` that returns a placeholder for a missing text, and a drop guard that clears it on a panic | `Type::rope`, `make_rope`, `SHOWING`, `EndShowing`, `Rec::name_apart` (which sets the record aside while a name is made) | Mutation, global state | A fold over the types in postorder that passes the map of texts along |
+| A `thread_local!` record of the text being made, read by a recursive `show` that returns a placeholder for a missing text, and a drop guard that clears it on a panic | `Type::rope`, `make_rope`, `SHOWING`, `EndShowing`, `Rec::naming` (a recursive type's name, made as an item of the same loop) | Mutation, global state | A fold over the types in postorder that passes the map of texts along |
 | `OnceLock::set` from a loop outside the cell's own initializer | `make_rope` | Lazy cells (gap 3) | The map of texts from the row above |
 
 ## Entries from L2.1 (`zedc/src/ast/`, `format.rs`)
