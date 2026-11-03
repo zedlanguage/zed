@@ -33,7 +33,10 @@ pub mod read;
 pub mod ty;
 pub mod widen;
 
+mod walk;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::types::{Type as KType, Verdict};
@@ -112,7 +115,7 @@ pub(crate) fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     KType::forget_emptiness();
     let mut ck = Ck::new(t);
     ck.bounds();
-    ck.scope(unit, true);
+    ck.walk(unit);
     ck.finish();
     ck.info
         .errors
@@ -173,20 +176,6 @@ enum ArgSrc<'a> {
     Got(Box<Arg>),
 }
 
-/// The positional and named arguments of a call, as expressions.
-fn arg_srcs<'a>(
-    positional: &'a [Expr],
-    named: &'a [(String, Expr)],
-) -> (Vec<ArgSrc<'a>>, Vec<(String, ArgSrc<'a>)>) {
-    (
-        positional.iter().map(ArgSrc::Expr).collect(),
-        named
-            .iter()
-            .map(|(n, e)| (n.clone(), ArgSrc::Expr(e)))
-            .collect(),
-    )
-}
-
 /// Facts an `is` test makes: binders narrowed to a type, and the test.
 type Facts = Vec<(usize, Ty, Span)>;
 
@@ -205,13 +194,27 @@ enum Src<'a> {
 type Seen<'a> = (Ty, Src<'a>);
 
 /// Where a binder's type comes from: the text, what it says, the expression whose derivation
-/// continues it, and the origin it narrows.
-#[derive(Clone)]
+/// continues it, and the origin it narrows. A narrowing shares the origin it narrows, so
+/// narrowing a binder costs one origin however many tests already narrow it.
 struct Origin {
     span: Span,
     text: String,
     from: Option<Span>,
-    then: Option<Box<Origin>>,
+    then: Option<Rc<Origin>>,
+}
+
+/// A chain of narrowings is as long as the tests nest, so its origins are dropped in a loop,
+/// each one whose last holder this is.
+impl Drop for Origin {
+    fn drop(&mut self) {
+        let mut next = self.then.take();
+        while let Some(o) = next {
+            next = match Rc::try_unwrap(o) {
+                Ok(mut o) => o.then.take(),
+                Err(_) => None,
+            };
+        }
+    }
 }
 
 /// A class of values that must share one carrier: a node of the union-find forest of
@@ -262,7 +265,7 @@ struct Ck<'t, 'a> {
     /// a bit word or an exponent reads the name.
     facts: HashMap<usize, &'a Expr>,
     /// Where each binder's type comes from.
-    whence: HashMap<usize, Origin>,
+    whence: HashMap<usize, Rc<Origin>>,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
     /// The output ports declared `Lines`.
@@ -505,7 +508,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     continue;
                 }
             };
-            let mut o = self.whence.get(&id);
+            let mut o = self.whence.get(&id).map(|o| &**o);
             if o.is_none() {
                 let b = &self.t.res.binders[id];
                 next.push(note(b.span, format!("`{}` is bound here", b.name)));
@@ -525,144 +528,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn origin(&mut self, id: usize, span: Span, text: String, from: Option<Span>) {
         self.whence.insert(
             id,
-            Origin {
+            Rc::new(Origin {
                 span,
                 text,
                 from,
                 then: None,
-            },
+            }),
         );
     }
 
     fn id(&self, span: Span, name: &str) -> usize {
         self.t.id(span, name)
-    }
-
-    /// The statements of one scope, in the order elaboration binds them; the export's type.
-    fn scope(&mut self, stmts: &'a [Stmt], top: bool) -> Ty {
-        let mut export = None;
-        let mut items: Vec<&'a Stmt> = Vec::new();
-        for s in stmts {
-            match &s.kind {
-                StmtKind::Return(es) => export = Some(es),
-                _ => items.push(s),
-            }
-        }
-        let Ok(order) = self.t.order(&items) else {
-            return Ty::dynamic();
-        };
-        for i in order {
-            self.stmt(items[i]);
-        }
-        if top {
-            for s in &items {
-                if let StmtKind::Bind { targets, .. } = &s.kind
-                    && let [Target::Name(n)] = &targets[..]
-                    && let Some(ty) = self.env.get(&self.id(s.span, n))
-                {
-                    self.put(Undo::Top(n.clone(), Some(ty.clone())));
-                }
-            }
-            for s in &items {
-                if let StmtKind::Function(f) = &s.kind {
-                    self.tests(f, self.id(s.span, &f.name));
-                }
-            }
-        }
-        match export {
-            None => Ty::tuple(Vec::new()),
-            Some(es) if es.len() == 1 => self.expr(&es[0]),
-            Some(es) => Ty::tuple(es.iter().map(|e| self.expr(e)).collect()),
-        }
-    }
-
-    fn stmt(&mut self, s: &'a Stmt) {
-        match &s.kind {
-            StmtKind::Struct(_)
-            | StmtKind::Type(_)
-            | StmtKind::Method(_)
-            | StmtKind::Import(_)
-            | StmtKind::Annotated { .. } => {
-                unreachable!("resolve rejects the forms of layer L2")
-            }
-            StmtKind::Mutable(_)
-            | StmtKind::IndexedDef(_)
-            | StmtKind::While(_)
-            | StmtKind::Until(_)
-            | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
-            StmtKind::Bind { targets, value, .. } => {
-                let v = self.expr(value);
-                match &targets[..] {
-                    [Target::Name(n)] => {
-                        let id = self.id(s.span, n);
-                        let text = format!("`{n}` is defined as this expression, {v}");
-                        self.origin(id, value.span, text, Some(value.span));
-                        self.alias.insert(id, value.span);
-                        self.facts.insert(id, value);
-                        self.env.insert(id, v);
-                    }
-                    [Target::Wild] => {
-                        let dropped = self.unnamed_in(&v, value.span);
-                        self.discard(dropped, value, None, s.span)
-                    }
-                    _ => {
-                        let n = targets.len();
-                        // The atoms of the whole value reach every component, so they are
-                        // dropped only when no target names them.
-                        if targets.iter().all(|t| *t == Target::Wild) {
-                            let dropped = self.unnamed_in(&v, value.span);
-                            self.discard(dropped, value, None, s.span);
-                        }
-                        let items = match &value.kind {
-                            ExprKind::Tuple(items) if items.len() == n => Some(items),
-                            _ => None,
-                        };
-                        for (i, target) in targets.iter().enumerate() {
-                            let c = self.component(&v, i, n, value.span);
-                            match target {
-                                Target::Name(name) => {
-                                    let id = self.id(s.span, name);
-                                    let text = format!("`{name}` is component {i} of this, {c}");
-                                    self.origin(id, value.span, text, Some(value.span));
-                                    self.env.insert(id, c);
-                                }
-                                Target::Wild => {
-                                    let own = v
-                                        .tuples
-                                        .iter()
-                                        .filter(|cs| cs.len() == n)
-                                        .fold(Ty::empty(), |a, cs| a.union(&cs[i]));
-                                    // A component of a value that is not a tuple display is
-                                    // followed no further: each of its loose atoms is unnamed.
-                                    let (dropped, part) = match items {
-                                        Some(items) => {
-                                            (self.unnamed_in(&own, items[i].span), &items[i])
-                                        }
-                                        None => (own.loose(), value),
-                                    };
-                                    self.discard(dropped, part, Some(i), s.span);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            StmtKind::Function(f) => {
-                let id = self.id(s.span, &f.name);
-                let sig = self.infer(f, s.span);
-                let text = format!("`{}` is declared here, `{sig}`", f.name);
-                self.origin(id, s.span, text, None);
-                self.env.insert(id, Ty::func(sig.clone()));
-                self.put(Undo::Sig(id, Some(sig)));
-            }
-            StmtKind::Push { port, value } => {
-                let t = self.expr(value);
-                if self.lines_out.contains(port) {
-                    self.pushed(&t, value.span);
-                }
-            }
-            StmtKind::Return(_) => unreachable!("an export is not a binding"),
-        }
     }
 
     /// Component `i` of `v`, destructured into `n` names: of each tuple shape, with `v`'s
@@ -895,116 +771,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             out.push(Note { span: root, text });
         }
         out
-    }
-
-    /// The signature of a declared function. A parameter with neither a type nor a closed
-    /// default gets a class, which its uses narrow, the body checked once. When the function
-    /// ends, each class of its level takes its type; a class merged with one of a function
-    /// around it waits for that function.
-    fn infer(&mut self, f: &'a Function, span: Span) -> Arc<Sig> {
-        let params: Vec<SParam> = f
-            .params
-            .iter()
-            .enumerate()
-            .map(|(i, p)| SParam {
-                name: p.name.as_str().into(),
-                positional: p.positional,
-                default: p.default.as_ref().map(|d| {
-                    let closed = self.t.uses_in(d.span, &[]).is_empty();
-                    (self.id(span, &f.name), i, closed)
-                }),
-            })
-            .collect();
-        let ids: Vec<usize> = f.params.iter().map(|p| self.id(p.span, &p.name)).collect();
-        let mut given: Vec<Option<Ty>> = Vec::new();
-        for p in &f.params {
-            let t = self.param_type(p);
-            given.push(t);
-        }
-        if let Some(ports) = &f.ports {
-            for p in ports {
-                let id = self.id(p.span, &p.name);
-                let text = format!("`{}` is an output port", p.name);
-                if matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
-                    self.lines_out.insert(p.name.clone());
-                }
-                self.origin(id, p.span, text, None);
-                self.env.insert(id, Ty::dynamic());
-            }
-        }
-        self.level += 1;
-        let level = self.level;
-        if self.pending.len() <= level {
-            self.pending.push(Vec::new());
-        }
-        let mut tys = Vec::new();
-        for ((id, p), g) in ids.iter().zip(&f.params).zip(given) {
-            let (t, text) = match (&p.ty, g) {
-                (Some(a), Some(t)) if t == Ty::dynamic() => {
-                    let shown = declared_text(a).unwrap_or_else(|| self.show(&t));
-                    let text = format!(
-                        "`{}` is declared `{shown}`, whose values the checker does not track: \
-                         it takes `{}` as unknown, _",
-                        p.name, p.name
-                    );
-                    (t, text)
-                }
-                (Some(a), Some(t)) => {
-                    // A name is shown as written; any other type as the checker prints it.
-                    let shown = match &a.kind {
-                        TypeKind::Name(n) => n.clone(),
-                        _ => self.show(&t),
-                    };
-                    let text = format!("`{}` is declared `{shown}`", p.name);
-                    (t, text)
-                }
-                (None, Some(t)) => {
-                    let text = format!("`{}` is {t}, the carrier of its default", p.name);
-                    (t, text)
-                }
-                (_, None) => {
-                    let k = self.class();
-                    let text = format!("`{}` has no declared type; its uses give it ${k}", p.name);
-                    (Ty::var(format!("${k}").into()), text)
-                }
-            };
-            self.origin(*id, p.span, text, None);
-            self.env.insert(*id, t.clone());
-            tys.push(t);
-        }
-        // A default that reads the other parameters, at its parameter's type.
-        for (p, t) in f.params.iter().zip(&tys) {
-            let Some(d) = &p.default else {
-                continue;
-            };
-            if self.t.uses_in(d.span, &[]).is_empty() {
-                continue;
-            }
-            let what = format!("the default of `{}`", p.name);
-            match self.class_of_ty(t) {
-                Some(k) => {
-                    let dt = self.expr(d);
-                    if !self.flow(k, &dt, &what, d.span) {
-                        let shown = self.show(t);
-                        let mut notes = self.derive(&[d.span]);
-                        notes.extend(self.reasons(t));
-                        self.error_with(d.span, format!("{what} is {dt}, not {shown}"), notes);
-                    }
-                }
-                None => {
-                    let dt = self.expr_at(d, Some(t));
-                    if !dt.subtype(t) {
-                        let why = dt.refused(t);
-                        self.error(d.span, format!("{what} is {dt}, not {t}{why}"));
-                    }
-                }
-            }
-        }
-        let result = match &f.body.kind {
-            ExprKind::Block(stmts) if !f.equation => self.scope(stmts, false),
-            _ => self.expr(&f.body),
-        };
-        self.generalize(level, Sig::one(params, tys, result))
     }
 
     /// The signature `sig` of the function of `level`, which ends: each class of the level
@@ -1317,15 +1083,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 named,
                 curry,
             } => {
-                let positional: Vec<ArgSrc> = positional
-                    .iter()
-                    .map(|t| ArgSrc::Got(Box::new(Arg::of(b(t)))))
-                    .collect();
-                let named: Vec<(String, ArgSrc)> = named
-                    .iter()
-                    .map(|(m, t)| (m.to_string(), ArgSrc::Got(Box::new(Arg::of(b(t))))))
-                    .collect();
-                self.call_value(&on, what, None, &positional, &named, *curry, span)
+                let args = walk::Args {
+                    positional: positional
+                        .iter()
+                        .map(|t| ArgSrc::Got(Box::new(Arg::of(b(t)))))
+                        .collect(),
+                    named: named
+                        .iter()
+                        .map(|(m, t)| (m.to_string(), ArgSrc::Got(Box::new(Arg::of(b(t))))))
+                        .collect(),
+                };
+                self.call_found(&on, what, args, *curry, span)
             }
             NeedKind::Data(what) => {
                 self.data(&on, what, span);
@@ -1794,86 +1562,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
-    /// A parameter's declared type: its annotation, or its closed default's type with each
-    /// carrier widened to the whole carrier.
-    fn param_type(&mut self, p: &'a Param) -> Option<Ty> {
-        if let Some(t) = &p.ty {
-            return Some(denoted(t));
-        }
-        let d = p.default.as_ref()?;
-        if !self.t.uses_in(d.span, &[]).is_empty() {
-            return None;
-        }
-        let t = self.expr(d);
-        let mut out = Ty::empty();
-        for piece in t.pieces() {
-            out = out.union(&match piece.carrier() {
-                Some(c) => Ty::carrier(c),
-                None => piece.ty(),
-            });
-        }
-        Some(out)
-    }
-
-    /// The cases of `f`'s `test` tables, each checked as a call, its expected value adopting
-    /// as the right side of `==` does.
-    fn tests(&mut self, f: &'a Function, id: usize) {
-        let Some(sig) = self.info.sigs.get(&id).cloned() else {
-            return;
-        };
-        if f.ports.is_some() {
-            return;
-        }
-        for (input, expected) in &f.tests {
-            let args: Vec<&'a Expr> = match (&input.kind, f.params.len()) {
-                (_, 1) => vec![input],
-                (ExprKind::Tuple(items), n) if items.len() == n => items.iter().collect(),
-                _ => continue,
-            };
-            let args: Vec<Option<Arg>> =
-                args.into_iter().map(|a| Some(self.arg(a, None))).collect();
-            let (result, _) = self.apply(&format!("`{}`", f.name), &sig, args, false, input.span);
-            let want = self.arg(expected, None);
-            self.equal(&Arg::of(result), &want);
-        }
-    }
-
-    /// An argument: a numeric literal kept unadopted, a function in a slot of function type
-    /// fitted to it, else the expression's type.
-    fn arg(&mut self, e: &'a Expr, expected: Option<&Ty>) -> Arg {
-        if let Some(l) = literal(e) {
-            return Arg {
-                ty: lit_ty(&l.value, l.neg),
-                lit: Some(l),
-                at: Some(e.span),
-            };
-        }
-        Arg {
-            at: Some(e.span),
-            ..Arg::of(self.expr_at(e, expected))
-        }
-    }
-
-    /// `e`'s type where `expected` is wanted: a lambda or a declared function in a slot of
-    /// one function type is fitted to it, and a numeric literal adopts its one carrier.
-    fn expr_at(&mut self, e: &'a Expr, expected: Option<&Ty>) -> Ty {
-        let Some(want) = expected else {
-            return self.expr(e);
-        };
-        if let Some(sig) = only_fn(want) {
-            if let ExprKind::Lambda { params, body } = &e.kind {
-                return self.fit_lambda(params, body, &sig, e.span);
-            }
-            if let Some(id) = self.declared(e) {
-                return self.fit_declared(id, &sig, e.span);
-            }
-        }
-        if let (Some(l), Some(c)) = (literal(e), want.numeric_carrier()) {
-            return self.adopt_to(&l, c);
-        }
-        self.expr(e)
-    }
-
     /// The literal `l` adopting `c`, recorded; an error when it is not exactly a `c`.
     fn adopt_to(&mut self, l: &Lit, c: Carrier) -> Ty {
         match adopt(l, c) {
@@ -1890,211 +1578,48 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// `e`'s type, recorded for derivations.
-    fn expr(&mut self, e: &'a Expr) -> Ty {
-        let t = self.expr_of(e);
-        let src = match &e.kind {
-            ExprKind::Name(_) => match self.t.res.uses.get(&e.span) {
-                Some(Ref::Bound(ids)) if ids.len() == 1 => Src::Name(ids[0]),
-                _ => Src::Other(e),
-            },
-            ExprKind::Call { callee, .. } => match self.declared(callee) {
-                Some(id) => Src::Call(id, e),
-                None => Src::Other(e),
-            },
-            _ => Src::Other(e),
-        };
-        // Each set is kept as made, never tested for emptiness here: `is_empty` looks a type
-        // up in a memo ordered by contents, `O(n)` per comparison for a set of `n` atoms that
-        // shares a prefix with others, so a test per node of a chain would cost `O(n²)`.
-        let (u, made) = match self.unnamed_of(e, &t, &src) {
-            Some((u, made)) => (Some(u), made),
-            None => (None, None),
-        };
-        for (map, set) in [(&mut self.unnamed, u), (&mut self.made, made)] {
-            match set {
-                Some(set) => map.insert(e.span, set),
-                None => map.remove(&e.span),
-            };
-        }
-        self.seen.insert(e.span, (t.clone(), src));
-        t
-    }
-
-    fn expr_of(&mut self, e: &'a Expr) -> Ty {
-        if let Some(l) = literal(e) {
-            return match self.info.adopt.get(&l.span) {
-                Some(v) => lit_ty(v, l.neg),
-                None => lit_ty(&l.value, l.neg),
-            };
-        }
-        match &e.kind {
-            ExprKind::Record(_)
-            | ExprKind::With { .. }
-            | ExprKind::This
-            | ExprKind::Match { .. } => {
-                unreachable!("resolve rejects the forms of layer L2")
-            }
-            ExprKind::Range(..)
-            | ExprKind::In { .. }
-            | ExprKind::Reduce { .. }
-            | ExprKind::Read { .. }
-            | ExprKind::Section(_)
-            | ExprKind::Array(_)
-            | ExprKind::Set(_)
-            | ExprKind::Map(_)
-            | ExprKind::For { .. } => unreachable!("resolve rejects the forms of layer L3"),
-            ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
-                unreachable!("resolve rejects the forms of layer L6")
-            }
-            ExprKind::SortKey { .. } => unreachable!("resolve rejects the forms of layer L5"),
-            // A `rat` literal is decorated and keeps its carrier.
-            ExprKind::Rat(s) => Ty::lit(&Value::rat(
-                Rat::decimal(s).expect("the lexer's rat text is a decimal"),
-            )),
-            ExprKind::Int { .. } | ExprKind::Float(_) => Ty::empty(),
-            ExprKind::Bool(b) => Ty::lit(&Value::Bool(*b)),
-            ExprKind::Atom(a) => Ty::set(KType::atom(a)),
-            ExprKind::Str(parts) => {
-                let mut holes = Vec::new();
-                let mut text = String::new();
-                for p in parts {
-                    match p {
-                        StrPart::Text(t) => text.push_str(t),
-                        StrPart::Hole(h) => {
-                            let t = self.expr(h);
-                            self.data(&t, "interpolation", h.span);
-                            holes.push(t);
-                        }
-                    }
-                }
-                if holes.is_empty() {
-                    return Ty::lit(&Value::str(&text));
-                }
-                let mut out = Ty::carrier(Carrier::Str);
-                passed(&mut out, holes.iter());
-                out
-            }
-            ExprKind::Name(_) => self.name(e.span),
-            ExprKind::Unary(op, a) => {
-                let x = self.arg(a, None);
-                let sig = op_sig(op);
-                self.apply(&format!("`{op}`"), &sig, vec![Some(x)], true, e.span)
-                    .0
-            }
-            ExprKind::Binary(op, a, b) => self.binary(op, a, b, e.span),
-            ExprKind::Call {
-                callee,
-                positional,
-                named,
-                curry,
-            } => self.call(callee, positional, named, *curry, e.span),
-            ExprKind::Index(of, k) => self.index(of, k, e.span),
-            ExprKind::Tuple(items) => Ty::tuple(
-                items
-                    .iter()
-                    .map(|i| {
-                        let t = self.expr(i);
-                        self.data(&t, "a tuple", i.span);
-                        t
-                    })
-                    .collect(),
-            ),
-            ExprKind::Lambda { params, body } => self.lambda(params, body),
-            ExprKind::Is { of, .. } => {
-                self.expr(of);
-                Ty::carrier(Carrier::Bool)
-            }
-            ExprKind::Else {
-                of,
-                pattern,
-                default,
-            } => {
-                let v = self.expr(of);
-                if let (Some(ids), Some(p)) = (self.t.res.patterns.get(&e.span), pattern) {
-                    let mut next = ids.start;
-                    self.bind_pattern(p, &v, &mut next);
-                }
-                let d = self.expr(default);
-                match pattern {
-                    None => v.without_loose().union(&d),
-                    Some(Pattern::Atom {
-                        name,
-                        fields,
-                        items,
-                        ..
-                    }) if fields.is_empty() && items.is_empty() => {
-                        // A bare pattern matches the atom with any payload or none.
-                        let mut rest = v.diff(&Ty::set(any_payload(name)));
-                        rest.payloads.remove(name.as_str());
-                        rest.union(&d)
-                    }
-                    Some(_) => v.union(&d),
-                }
-            }
-            ExprKind::Block(stmts) => self.scope(stmts, false),
-            ExprKind::If {
-                cond,
-                then,
-                otherwise,
-            } => {
-                let (c, yes, no) = self.cond(cond);
-                let mut out = self.passing(&c, "the condition of `if`", cond.span);
-                let what = "the condition of `if`";
-                for p in c.pieces() {
-                    let ok = match self.class_of(&p) {
-                        Some(k) => self.restrict(k, Carrier::Bool.bit(), what, cond.span),
-                        None => p.is_atoms() || p.carrier() == Some(Carrier::Bool),
-                    };
-                    if !ok {
-                        let shown = self.show(&c);
-                        let mut notes = self.derive(&[cond.span]);
-                        notes.extend(self.reasons(&c));
-                        self.error_with(cond.span, format!("{what} is {shown}, not bool"), notes);
-                        break;
-                    }
-                }
-                let a = self.under(&yes, then);
-                let b = self.under(&no, otherwise);
-                out = out.union(&a).union(&b);
-                out
-            }
-            ExprKind::Member { of, name, safe } => {
-                self.member(of, name, *safe, e.span, &[], &[], false, e.span)
-            }
-        }
-    }
-
     /// Binds the names of the pattern `p`, matched on a value of `v`, from the binder `next`
     /// on, in the order the resolver gave them: each to what the payloads of `v`'s atoms of
     /// the pattern's name hold there.
-    fn bind_pattern(&mut self, p: &Pattern, v: &Ty, next: &mut usize) {
-        let Pattern::Atom {
-            name,
-            fields,
-            items,
-            span,
-        } = p
-        else {
-            unreachable!("resolve rejects the forms of layer L2")
+    ///
+    /// The patterns nest as deep as the text, so the walk keeps its own stack: each pattern
+    /// being matched, its atom, the type it is matched on (`None` for `v`), and its next slot.
+    fn bind_pattern(&mut self, p: &Pattern, v: &Ty, mut next: usize) {
+        let atom_of = |p: &Pattern| -> Arc<str> {
+            let Pattern::Atom { name, .. } = p else {
+                unreachable!("resolve rejects the forms of layer L2")
+            };
+            name.as_str().into()
         };
-        let atom: Arc<str> = name.as_str().into();
-        let slots = fields
-            .iter()
-            .map(|(f, sub)| (Slot::Field(f.as_str().into()), sub.as_ref()))
-            .chain(
-                items
-                    .iter()
-                    .enumerate()
-                    .map(|(i, sub)| (Slot::Item(i), Some(sub))),
-            );
-        for (slot, sub) in slots {
-            let t = self.payload(v, &atom, &slot, *span);
+        let mut stack: Vec<(&Pattern, Arc<str>, Option<Ty>, usize)> =
+            vec![(p, atom_of(p), None, 0)];
+        while let Some((p, atom, on, i)) = stack.last_mut() {
+            let Pattern::Atom {
+                fields,
+                items,
+                span,
+                ..
+            } = *p
+            else {
+                unreachable!("resolve rejects the forms of layer L2")
+            };
+            let (slot, sub) = match fields.get(*i) {
+                Some((f, sub)) => (Slot::Field(f.as_str().into()), sub.as_ref()),
+                None => match items.get(*i - fields.len()) {
+                    Some(sub) => (Slot::Item(*i - fields.len()), Some(sub)),
+                    None => {
+                        stack.pop();
+                        continue;
+                    }
+                },
+            };
+            *i += 1;
+            let t = self.payload(on.as_ref().unwrap_or(v), atom, &slot, *span);
             match sub {
-                Some(sub) => self.bind_pattern(sub, &t, next),
+                Some(sub) => stack.push((sub, atom_of(sub), Some(t), 0)),
                 None => {
-                    self.env.insert(*next, t);
-                    *next += 1;
+                    self.env.insert(next, t);
+                    next += 1;
                 }
             }
         }
@@ -2142,16 +1667,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         t.loose_ty()
     }
 
-    /// `e` checked with the binders of `facts` narrowed.
-    fn under(&mut self, facts: &Facts, e: &'a Expr) -> Ty {
-        let saved = self.narrow(facts);
-        let out = self.expr(e);
-        self.widen(saved);
-        out
-    }
-
     /// Narrows the binders of `facts`, each origin now the test; gives what to restore.
-    fn narrow(&mut self, facts: &Facts) -> Vec<(usize, Option<Ty>, Option<Origin>)> {
+    fn narrow(&mut self, facts: &Facts) -> walk::Saved {
         facts
             .iter()
             .map(|(b, t, test)| {
@@ -2161,16 +1678,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                     span: *test,
                     text: format!("`{name}` is narrowed to {t} where this test decides"),
                     from: None,
-                    then: old.clone().map(Box::new),
+                    then: old.clone(),
                 };
-                self.whence.insert(*b, o);
+                self.whence.insert(*b, Rc::new(o));
                 (*b, self.env.insert(*b, t.clone()), old)
             })
             .collect()
     }
 
     /// Restores what [`Self::narrow`] changed.
-    fn widen(&mut self, saved: Vec<(usize, Option<Ty>, Option<Origin>)>) {
+    fn widen(&mut self, saved: walk::Saved) {
         for (b, old, o) in saved.into_iter().rev() {
             match old {
                 Some(t) => self.env.insert(b, t),
@@ -2180,112 +1697,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(o) => self.whence.insert(b, o),
                 None => self.whence.remove(&b),
             };
-        }
-    }
-
-    /// A condition's type and the facts it makes when it holds and when it does not.
-    fn cond(&mut self, e: &'a Expr) -> (Ty, Facts, Facts) {
-        match &e.kind {
-            ExprKind::Is { of, ty, negated } => {
-                let v = self.expr(of);
-                let t = denoted(ty);
-                let b = match (&of.kind, self.t.res.uses.get(&of.span)) {
-                    (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => ids[0],
-                    _ => return (Ty::carrier(Carrier::Bool), Vec::new(), Vec::new()),
-                };
-                let (yes, no) = (vec![(b, v.meet(&t), e.span)], vec![(b, v.diff(&t), e.span)]);
-                let bool_ = Ty::carrier(Carrier::Bool);
-                match negated {
-                    false => (bool_, yes, no),
-                    true => (bool_, no, yes),
-                }
-            }
-            ExprKind::Unary("!", a) => {
-                let (t, yes, no) = self.cond(a);
-                let sig = op_sig("!");
-                let t = self
-                    .apply("`!`", &sig, vec![Some(Arg::of(t))], true, e.span)
-                    .0;
-                (t, no, yes)
-            }
-            ExprKind::Binary(op @ ("&&" | "||"), a, b) => {
-                let (ta, ya, na) = self.cond(a);
-                let first = if *op == "&&" { &ya } else { &na };
-                let saved = self.narrow(first);
-                let (tb, yb, nb) = self.cond(b);
-                self.widen(saved);
-                let sig = op_sig("&&");
-                let t = self
-                    .apply(
-                        &format!("`{op}`"),
-                        &sig,
-                        vec![Some(Arg::of(ta)), Some(Arg::of(tb))],
-                        true,
-                        e.span,
-                    )
-                    .0;
-                if *op == "&&" {
-                    (t, [ya, yb].concat(), Vec::new())
-                } else {
-                    (t, Vec::new(), [na, nb].concat())
-                }
-            }
-            _ => (self.expr(e), Vec::new(), Vec::new()),
-        }
-    }
-
-    fn binary(&mut self, op: &'static str, a: &'a Expr, b: &'a Expr, span: Span) -> Ty {
-        match op {
-            "&&" | "||" => {
-                let (ta, ya, na) = self.cond(a);
-                let first = if op == "&&" { ya } else { na };
-                let tb = self.under(&first, b);
-                let sig = op_sig("&&");
-                self.apply(
-                    &format!("`{op}`"),
-                    &sig,
-                    vec![Some(Arg::of(ta)), Some(Arg::of(tb))],
-                    true,
-                    span,
-                )
-                .0
-            }
-            "==" | "!=" => {
-                let (x, y) = (self.arg(a, None), self.arg(b, None));
-                self.data(&x.ty, &format!("`{op}`"), span);
-                self.data(&y.ty, &format!("`{op}`"), span);
-                self.equal(&x, &y);
-                Ty::carrier(Carrier::Bool)
-            }
-            "<" | "<=" | ">" | ">=" => {
-                let (x, y) = (self.arg(a, None), self.arg(b, None));
-                self.compare(op, x, y, span)
-            }
-            _ => {
-                let (x, y) = (self.arg(a, None), self.arg(b, None));
-                // A divisor whose type holds no zero cannot fail with `#divByZero`.
-                let nonzero = matches!(op, "/" | "div" | "mod")
-                    && !y.ty.contains(&Value::Int(0))
-                    && !y.ty.contains(&Value::rat(Rat::int(0.into())));
-                let carried = [&x.ty, &y.ty]
-                    .iter()
-                    .any(|t| t.atoms().contains(&Value::atom("divByZero")));
-                if op == "**" {
-                    self.exponent(&x, &y, b, span);
-                }
-                let sig = op_sig(op);
-                let r = self.apply(&format!("`{op}`"), &sig, vec![Some(x), Some(y)], true, span);
-                if op == "*" {
-                    // `*` and `/` take the same (f64, f64) and (rat, rat), and only `*` takes
-                    // (int, int): `/` is defined where the product holds no `int`.
-                    let quotient = !r.0.set.is_empty() && (&r.0.set & &KType::int()).is_empty();
-                    *self.info.quotients.entry(span).or_insert(quotient) &= quotient;
-                }
-                match nonzero && !carried {
-                    true => r.0.diff(&Ty::set(KType::atom("divByZero"))),
-                    false => r.0,
-                }
-            }
         }
     }
 
@@ -2501,153 +1912,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    fn call(
-        &mut self,
-        callee: &'a Expr,
-        positional: &'a [Expr],
-        named: &'a [(String, Expr)],
-        curry: bool,
-        span: Span,
-    ) -> Ty {
-        if let ExprKind::Member { of, name, safe } = &callee.kind {
-            return self.member(of, name, *safe, callee.span, positional, named, curry, span);
-        }
-        if let ExprKind::Atom(name) = &callee.kind {
-            let items = positional.iter().map(|a| self.expr(a)).collect();
-            let fields = named
-                .iter()
-                .map(|(n, a)| (Arc::from(n.as_str()), self.expr(a)))
-                .collect();
-            let mut t = Ty::set(KType::atom_with(name, &KType::top()));
-            t.payloads
-                .insert(name.as_str().into(), Some(vec![Shape { items, fields }]));
-            return t;
-        }
-        if let Some(id) = self.declared(callee) {
-            let sig = match self.env.get(&id) {
-                Some(t) => only_fn(t),
-                None => None,
-            };
-            let from = self.info.errors.len();
-            let out = match &sig {
-                Some(sig) => {
-                    let (p, n) = arg_srcs(positional, named);
-                    let what = self.t.funcs[&id].name.clone();
-                    self.call_sig(sig, true, None, &p, &n, curry, span, &what)
-                }
-                None => Ty::dynamic(),
-            };
-            if let (Some(o), Some(sig)) = (self.whence.get(&id).cloned(), sig) {
-                let text = format!("`{}` is declared here, `{sig}`", self.t.funcs[&id].name);
-                self.also(from, Note { span: o.span, text });
-            }
-            return out;
-        }
-        let f = self.expr(callee);
-        let what = match &callee.kind {
-            ExprKind::Name(n) => n.clone(),
-            _ => "this value".into(),
-        };
-        if let (ExprKind::Name(w), Some(Ref::Prelude(_))) =
-            (&callee.kind, self.t.res.uses.get(&callee.span))
-        {
-            if let Some(p) = bit_prim(w) {
-                return self.bits(w, p, None, positional, named, curry, span);
-            }
-            if named.is_empty() && !curry && positional.len() == 1 {
-                return self.word(w, positional, None, span);
-            }
-            for a in positional.iter().chain(named.iter().map(|(_, a)| a)) {
-                self.expr(a);
-            }
-            // Elaboration reports named arguments and `...`.
-            if named.is_empty() && !curry {
-                self.error(span, format!("`{w}` takes one argument"));
-            }
-            return Ty::empty();
-        }
-        let (p, n) = arg_srcs(positional, named);
-        self.call_value(&f, &what, None, &p, &n, curry, span)
-    }
-
-    /// A prelude word applied to one argument, the receiver or the only positional one.
-    fn word(&mut self, w: &str, positional: &'a [Expr], receiver: Option<Arg>, span: Span) -> Ty {
-        let x = match receiver {
-            Some(r) => r,
-            None => self.arg(&positional[0], None),
-        };
-        if w == "sum" {
-            return self.sum(x.ty, span);
-        }
-        if w == "String" {
-            self.data(&x.ty, "`String`", span);
-        }
-        let sig = word_sig(w);
-        self.apply(&format!("`{w}`"), &sig, vec![Some(x)], true, span)
-            .0
-    }
-
-    /// A call of the bit word `w`, the primitive `p` (step L1.39a): its arguments placed by
-    /// the word's parameters, every one positional but `width`, then each operand checked
-    /// against its domain, and the call applied with atoms passing. The signature is recorded
-    /// at the call, so elaboration places named arguments and reports a call that does not fit
-    /// it.
-    #[allow(clippy::too_many_arguments)]
-    fn bits(
-        &mut self,
-        w: &str,
-        p: Prim,
-        receiver: Option<(Arg, &'a Expr)>,
-        positional: &'a [Expr],
-        named: &'a [(String, Expr)],
-        curry: bool,
-        span: Span,
-    ) -> Ty {
-        let sig = bit_sig(p);
-        self.put(Undo::Call(span, Some(sig.clone())));
-        if curry {
-            let (ps, ns) = arg_srcs(positional, named);
-            return self.call_sig(&sig, true, receiver.map(|r| r.0), &ps, &ns, true, span, w);
-        }
-        let want = &sig.arrows[0].params;
-        let mut slots: Vec<Option<(Arg, &'a Expr)>> = vec![None; sig.params.len()];
-        let mut fits = true;
-        let mut next = 0;
-        if let Some(r) = receiver {
-            slots[0] = Some(r);
-            next = 1;
-        }
-        for e in positional {
-            let a = self.arg(e, want.get(next));
-            match sig.params.get(next) {
-                Some(q) if q.positional => slots[next] = Some((a, e)),
-                _ => fits = false,
-            }
-            next += 1;
-        }
-        for (name, e) in named {
-            let j = sig.params.iter().position(|q| *q.name == **name);
-            let a = self.arg(e, j.map(|j| &want[j]));
-            match j {
-                Some(j) if !sig.params[j].positional && slots[j].is_none() => {
-                    slots[j] = Some((a, e))
-                }
-                _ => fits = false,
-            }
-        }
-        let Some(slots) = slots
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .filter(|_| fits)
-        else {
-            // Elaboration reports the call against the recorded signature.
-            return Ty::empty();
-        };
-        self.bit_domains(w, p, &slots, span);
-        let args = slots.into_iter().map(|(a, _)| Some(a)).collect();
-        self.apply(&format!("`{w}`"), &sig, args, true, span).0
-    }
-
     /// Checks each operand of the bit word `w` against its domain (DESIGN.md sec:domains):
     /// `int[0..]` for every one but the `x` of `shl` and `shr`, and `int[0..<2 ** width]` for the
     /// `x` of a word with a width. An operand is rejected when its int part is not shown to lie
@@ -2754,7 +2018,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             shown,
         })
     }
-
     /// `sum` of a tuple: its components added in turn, `0` for the empty tuple; atoms pass.
     fn sum(&mut self, t: Ty, span: Span) -> Ty {
         let mut out = self.passing(&t, "`sum`", span);
@@ -2794,183 +2057,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         out
-    }
-
-    /// A call through a value: each function its type holds, applied; an atom passes.
-    #[allow(clippy::too_many_arguments)]
-    fn call_value(
-        &mut self,
-        f: &Ty,
-        what: &str,
-        receiver: Option<Arg>,
-        positional: &[ArgSrc<'a>],
-        named: &[(String, ArgSrc<'a>)],
-        curry: bool,
-        span: Span,
-    ) -> Ty {
-        let mut out = self.passing(f, "a call", span);
-        let mut checked = false;
-        // A class's calls are recorded with the arguments' types, found once.
-        let found;
-        let (positional, named) = match f.pieces().iter().any(|p| self.class_of(p).is_some()) {
-            true => {
-                let mut got = |a: &ArgSrc<'a>| match a {
-                    ArgSrc::Expr(e) => ArgSrc::Got(Box::new(self.arg(e, None))),
-                    ArgSrc::Got(x) => ArgSrc::Got(x.clone()),
-                };
-                let p: Vec<ArgSrc<'a>> = positional.iter().map(&mut got).collect();
-                let n: Vec<(String, ArgSrc<'a>)> =
-                    named.iter().map(|(m, a)| (m.clone(), got(a))).collect();
-                found = (p, n);
-                (&found.0[..], &found.1[..])
-            }
-            false => (positional, named),
-        };
-        let ty_of = |a: &ArgSrc| match a {
-            ArgSrc::Got(x) => x.ty.clone(),
-            ArgSrc::Expr(_) => unreachable!("found above"),
-        };
-        if let Some(s) = f.fns.first()
-            && f.fns.iter().all(|g| g.same_kinds(s))
-        {
-            self.put(Undo::Call(span, Some(s.clone())));
-        }
-        for p in f.pieces() {
-            match p {
-                Piece::Fn(sig) => {
-                    checked = true;
-                    let r = self.call_sig(
-                        &sig,
-                        false,
-                        receiver.clone(),
-                        positional,
-                        named,
-                        curry,
-                        span,
-                        what,
-                    );
-                    out = out.union(&r);
-                }
-                Piece::Var(_) if let Some(k) = self.class_of(&p) => {
-                    checked = true;
-                    let kind = NeedKind::Call {
-                        what: what.into(),
-                        positional: receiver
-                            .iter()
-                            .map(|x| x.ty.clone())
-                            .chain(positional.iter().map(ty_of))
-                            .collect(),
-                        named: named
-                            .iter()
-                            .map(|(m, a)| (m.as_str().into(), ty_of(a)))
-                            .collect(),
-                        curry,
-                    };
-                    out = out.union(&self.need(k, kind, true, span));
-                }
-                Piece::Dyn => self.any(&format!("a call of `{what}`"), span),
-                Piece::Var(_) => out = out.union(&Ty::dynamic()),
-                p if p.is_atoms() => {}
-                p => {
-                    self.error(span, format!("`{what}` is {}, not a function", p.ty()));
-                }
-            }
-        }
-        if !checked {
-            for a in positional.iter().chain(named.iter().map(|(_, a)| a)) {
-                if let ArgSrc::Expr(e) = a {
-                    self.expr(e);
-                }
-            }
-        }
-        out
-    }
-
-    /// A call of a function of signature `sig`; `declared` when it is the declared function
-    /// itself, whose defaults every call can fill, and not a value of its type, which fills
-    /// only closed ones. A call whose arguments do not fit gives the unknown; elaboration
-    /// reports it when the call is of the declared function or of one recorded signature, and
-    /// this check otherwise.
-    #[allow(clippy::too_many_arguments)]
-    fn call_sig(
-        &mut self,
-        sig: &Sig,
-        declared: bool,
-        receiver: Option<Arg>,
-        positional: &[ArgSrc<'a>],
-        named: &[(String, ArgSrc<'a>)],
-        curry: bool,
-        span: Span,
-        what: &str,
-    ) -> Ty {
-        let n = sig.params.len();
-        let mut slots: Vec<Option<&ArgSrc<'a>>> = vec![None; n];
-        let mut next = 0;
-        let has_receiver = receiver.is_some();
-        if has_receiver {
-            if n == 0 {
-                return self.unfit(sig, declared, positional, named, span, what);
-            }
-            next = 1;
-        }
-        for a in positional {
-            match sig.params.get(next) {
-                Some(p) if p.positional || !declared && sig.params.iter().all(|p| p.positional) => {
-                    slots[next] = Some(a);
-                    next += 1;
-                }
-                _ => return self.unfit(sig, declared, positional, named, span, what),
-            }
-        }
-        // Each parameter's index by name, the first where a name repeats.
-        let at: HashMap<&str, usize> = sig
-            .params
-            .iter()
-            .enumerate()
-            .rev()
-            .map(|(j, p)| (&*p.name, j))
-            .collect();
-        for (name, a) in named {
-            match at.get(&**name).copied() {
-                Some(j)
-                    if !sig.params[j].positional
-                        && slots[j].is_none()
-                        && !(has_receiver && j == 0) =>
-                {
-                    slots[j] = Some(a)
-                }
-                _ => return self.unfit(sig, declared, positional, named, span, what),
-            }
-        }
-        let missing: Vec<usize> = (0..n)
-            .filter(|&j| slots[j].is_none() && !(has_receiver && j == 0))
-            .collect();
-        if curry {
-            if missing.is_empty() || missing.iter().any(|&j| sig.params[j].positional) {
-                return self.unfit(sig, declared, positional, named, span, what);
-            }
-        } else if missing
-            .iter()
-            .any(|&j| !matches!(sig.params[j].default, Some((_, _, closed)) if declared || closed))
-        {
-            return self.unfit(sig, declared, positional, named, span, what);
-        }
-        let mut args: Vec<Option<Arg>> = Vec::new();
-        for (j, s) in slots.iter().enumerate() {
-            args.push(match s {
-                _ if has_receiver && j == 0 => receiver.clone(),
-                Some(ArgSrc::Expr(a)) => {
-                    let want = Ty::union_all(sig.arrows.iter().map(|ar| &ar.params[j]));
-                    Some(self.arg(a, Some(&want)))
-                }
-                Some(ArgSrc::Got(x)) => Some(Arg::clone(x)),
-                None => None,
-            });
-        }
-        if curry {
-            return self.partial(sig, args, &missing, false, what, span);
-        }
-        self.apply(&format!("`{what}`"), sig, args, false, span).0
     }
 
     /// `sig`, named `what`, applied at `span` to `args`, which leave out the parameters
@@ -3040,119 +2126,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         Ty::func(Arc::new(rest.replace(&binds)))
     }
 
-    /// A call whose arguments do not fit `sig`: the unknown, and an error when elaboration does
-    /// not check the call, which it does for the declared function and a recorded signature.
-    fn unfit(
-        &mut self,
-        sig: &Sig,
-        declared: bool,
-        positional: &[ArgSrc<'a>],
-        named: &[(String, ArgSrc<'a>)],
-        span: Span,
-        what: &str,
-    ) -> Ty {
-        let all = || positional.iter().chain(named.iter().map(|(_, a)| a));
-        let found = all().any(|a| matches!(a, ArgSrc::Got(_)));
-        if !declared && (found || !self.info.calls.contains_key(&span)) {
-            for a in all() {
-                if let ArgSrc::Expr(e) = a {
-                    self.expr(e);
-                }
-            }
-            self.error(
-                span,
-                format!("`{what}` does not take these arguments: it is `{sig}`"),
-            );
-        }
-        Ty::empty()
-    }
-
-    /// `x.f(args)` and `x?.f(args)`: the call `f(x, args)`; `?.` passes `x`'s atoms around it.
-    #[allow(clippy::too_many_arguments)]
-    fn member(
-        &mut self,
-        of: &'a Expr,
-        name: &str,
-        safe: bool,
-        member: Span,
-        positional: &'a [Expr],
-        named: &'a [(String, Expr)],
-        curry: bool,
-        span: Span,
-    ) -> Ty {
-        let mut x = self.arg(of, None);
-        let atoms = x.ty.loose_ty();
-        if safe {
-            x = Arg::of(x.ty.without_loose());
-        }
-        let out = match self.t.res.uses.get(&member) {
-            Some(Ref::Bound(ids)) if ids.len() == 1 => {
-                let id = ids[0];
-                let f = self.env.get(&id).cloned().unwrap_or_else(Ty::dynamic);
-                if self.t.funcs.contains_key(&id) {
-                    match only_fn(&f) {
-                        Some(sig) => {
-                            let (p, n) = arg_srcs(positional, named);
-                            self.call_sig(&sig, true, Some(x), &p, &n, curry, span, name)
-                        }
-                        None => Ty::dynamic(),
-                    }
-                } else {
-                    let (p, n) = arg_srcs(positional, named);
-                    self.call_value(&f, name, Some(x), &p, &n, curry, span)
-                }
-            }
-            Some(Ref::Bound(_)) => Ty::empty(),
-            _ => match crate::resolve::prelude_layer(name) {
-                Some(1) if let Some(p) = bit_prim(name) => {
-                    self.bits(name, p, Some((x, of)), positional, named, curry, span)
-                }
-                Some(1) if positional.is_empty() && named.is_empty() && !curry => {
-                    self.word(name, &[], Some(x), span)
-                }
-                _ => Ty::dynamic(),
-            },
-        };
-        match safe {
-            true => out.union(&atoms),
-            false => out,
-        }
-    }
-
-    /// `f[k]` on a declared function is a section; `t[i]` with a literal `i` the tuple's
-    /// component; else an application.
-    fn index(&mut self, of: &'a Expr, k: &'a Expr, span: Span) -> Ty {
-        if let Some(id) = self.declared(of) {
-            let Some(sig) = self.env.get(&id).and_then(only_fn) else {
-                self.expr(k);
-                return Ty::dynamic();
-            };
-            // Elaboration rejects a section of a function of no parameters.
-            let n = sig.params.len();
-            if n == 0 {
-                self.expr(k);
-                return Ty::empty();
-            }
-            let want = Ty::union_all(sig.arrows.iter().map(|a| &a.params[0]));
-            let mut args = vec![None; n];
-            args[0] = Some(self.arg(k, Some(&want)));
-            let what = self.t.funcs[&id].name.clone();
-            let missing: Vec<usize> = (1..n).collect();
-            return self.partial(&sig, args, &missing, true, &what, span);
-        }
-        let v = self.expr(of);
-        let ExprKind::Int { .. } = &k.kind else {
-            let x = self.arg(k, None);
-            return self.at_key(&v, x, span);
-        };
-        let i = match literal(k).map(|l| l.value) {
-            Some(Value::Int(i)) => i,
-            _ => return Ty::dynamic(),
-        };
-        let x = self.arg(k, None);
-        self.at_index(&v, usize::try_from(i).ok(), x, span)
-    }
-
     /// `v[x]` with `x` no literal: an application of each function `v` may be.
     fn at_key(&mut self, v: &Ty, x: Arg, span: Span) -> Ty {
         let mut out = self.passing(v, "a call", span);
@@ -3213,146 +2186,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         out
-    }
-
-    /// A lambda with no expected type: its parameters positional, typed by their
-    /// annotations; one without is generic, as a declared function's.
-    fn lambda(&mut self, params: &'a [Param], body: &'a Expr) -> Ty {
-        self.level += 1;
-        let level = self.level;
-        if self.pending.len() <= level {
-            self.pending.push(Vec::new());
-        }
-        let mut tys = Vec::new();
-        for p in params {
-            let t = match &p.ty {
-                Some(t) => denoted(t),
-                None => Ty::var(format!("${}", self.class()).into()),
-            };
-            let id = self.id(p.span, &p.name);
-            self.env.insert(id, t.clone());
-            tys.push(t);
-        }
-        let result = self.body(body, None);
-        let names = params
-            .iter()
-            .map(|p| SParam {
-                name: p.name.as_str().into(),
-                positional: true,
-                default: None,
-            })
-            .collect();
-        Ty::func(self.generalize(level, Sig::one(names, tys, result)))
-    }
-
-    fn body(&mut self, body: &'a Expr, want: Option<&Ty>) -> Ty {
-        match &body.kind {
-            ExprKind::Block(stmts) => self.scope(stmts, false),
-            _ => self.expr_at(body, want),
-        }
-    }
-
-    /// A lambda in a slot of the function type `e`: its first parameters take `e`'s
-    /// positional ones, in order, and the rest `e`'s named ones by name; a parameter `e`
-    /// does not pass needs a default.
-    fn fit_lambda(&mut self, params: &'a [Param], body: &'a Expr, e: &Arc<Sig>, span: Span) -> Ty {
-        let pos: Vec<usize> = (0..e.params.len())
-            .filter(|&j| e.params[j].positional)
-            .collect();
-        let mut order: Vec<Option<usize>> = vec![None; e.params.len()];
-        let mut extra = Vec::new();
-        if params.len() < pos.len() {
-            self.rejects(
-                Row::ParameterKinds,
-                span,
-                format!(
-                    "the lambda takes {} parameter{}, and `{e}` passes {} by position",
-                    params.len(),
-                    if params.len() == 1 { "" } else { "s" },
-                    pos.len()
-                ),
-            );
-            return Ty::func(e.clone());
-        }
-        for (i, p) in params.iter().enumerate() {
-            if i < pos.len() {
-                order[pos[i]] = Some(i);
-                continue;
-            }
-            match e
-                .params
-                .iter()
-                .position(|q| !q.positional && *q.name == *p.name)
-            {
-                Some(j) if order[j].is_none() => order[j] = Some(i),
-                _ if p.default.is_some() => extra.push(i),
-                _ => {
-                    let free: Vec<String> = (0..e.params.len())
-                        .filter(|&j| !e.params[j].positional && order[j].is_none())
-                        .map(|j| format!("`{}`", e.params[j].name))
-                        .collect();
-                    let fix = match free.first() {
-                        Some(f) => format!(": rename it {f}"),
-                        None => String::new(),
-                    };
-                    self.rejects(
-                        Row::ParameterKinds,
-                        p.span,
-                        format!(
-                            "the lambda's parameter `{}` is not a parameter of `{e}`{fix}",
-                            p.name
-                        ),
-                    );
-                    return Ty::func(e.clone());
-                }
-            }
-        }
-        for arrow in &e.arrows {
-            for (j, o) in order.iter().enumerate() {
-                if let Some(i) = o {
-                    let p = &params[*i];
-                    let mut t = arrow.params[j].clone();
-                    if let Some(a) = &p.ty {
-                        let a = denoted(a);
-                        if !t.subtype(&a) {
-                            let why = t.refused(&a);
-                            self.error(
-                                p.span,
-                                format!(
-                                    "the lambda's parameter `{}` is {a}, and `{e}` passes {t}{why}",
-                                    p.name
-                                ),
-                            );
-                        }
-                        t = a;
-                    }
-                    let id = self.id(p.span, &p.name);
-                    self.env.insert(id, t);
-                }
-            }
-            for &i in &extra {
-                let p = &params[i];
-                let t = self.expr(p.default.as_ref().expect("a default"));
-                let id = self.id(p.span, &p.name);
-                self.env.insert(id, t);
-            }
-            let r = self.body(body, Some(&arrow.result));
-            if !r.subtype(&arrow.result) {
-                let why = r.refused(&arrow.result);
-                self.error(
-                    body.span,
-                    format!(
-                        "the lambda returns {r}, and `{e}` returns {}{why}",
-                        arrow.result
-                    ),
-                );
-            }
-        }
-        let identity = extra.is_empty() && order.iter().enumerate().all(|(j, o)| *o == Some(j));
-        if !identity {
-            self.put(Undo::Fit(span, Some(Fit::Lambda { order, extra })));
-        }
-        Ty::func(e.clone())
     }
 
     /// A declared function in a slot of the function type `e`: the same number of positional

@@ -718,7 +718,7 @@ impl Resolver {
                 lower,
                 upper,
                 result,
-            } => [lower, upper, result].into_iter().for_each(|t| self.ty(t)),
+            } => todo.extend([result, upper, lower].map(|t| Task::Ty(t))),
             TypeKind::Apply(..) => self.later(t.span, "an applied type", "L2.5"),
             TypeKind::AtomApply(..) => self.later(t.span, "an atom type with a payload", "L2.5"),
             TypeKind::Record(_) => self.later(t.span, "a record type", "L2.5"),

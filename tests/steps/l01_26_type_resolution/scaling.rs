@@ -179,3 +179,66 @@ fn the_union_of_many_atoms_with_payloads_scales() {
         assert_eq!(u.payloads["e"].as_ref().map(Vec::len), Some(n));
     });
 }
+
+/// Checks each program of `shapes` on a 2 MiB stack, `n` deep and `8n` deep, and checks the
+/// time is linear. The checker recursed once per level of nesting, and overflowed this stack
+/// at 1,000 deep (sums, blocks, negations, calls) or below 4,000 (`else if` chains).
+fn checks_deep(shapes: &[&str], n: usize) {
+    use zed_tests::deep::{on_small_stack, program, statements};
+    on_small_stack(|| {
+        for &shape in shapes {
+            let small = statements(&program(shape, n).text);
+            let large = statements(&program(shape, 8 * n).text);
+            let small_res = zedc::resolve::resolve(&small).unwrap();
+            let large_res = zedc::resolve::resolve(&large).unwrap();
+            scaling::check_order(&format!("checking {shape}"), n, 1, |k| {
+                let (stmts, res) = if k == n {
+                    (&small, &small_res)
+                } else {
+                    (&large, &large_res)
+                };
+                let info = zedc::check::check(stmts, res);
+                assert!(info.errors.is_empty(), "{shape}: {:?}", info.errors);
+            });
+        }
+    });
+}
+
+#[test]
+fn blocks_nested_100000_deep_check_on_a_2_mib_stack() {
+    checks_deep(&["nested blocks"], 12_500);
+}
+
+// The shapes below cost about a million instructions for each `+` and a third of that for each
+// negation, branch or call, in the kernel's type algebra (`Type::new`, `Type::zip`, `Lits`),
+// before and after the walk moved to a heap stack, so 100,000 deep would take minutes. They
+// are checked 8,000 deep, eight times past the depth that overflowed.
+
+#[test]
+fn sums_8000_deep_check_on_a_2_mib_stack() {
+    checks_deep(&["a left-nested sum", "a sum nested in parentheses"], 1_000);
+}
+
+#[test]
+fn long_bodies_and_else_if_chains_8000_deep_check_on_a_2_mib_stack() {
+    checks_deep(
+        &["a long sum in a function's body", "an `else if` chain"],
+        1_000,
+    );
+}
+
+#[test]
+fn negations_and_calls_8000_deep_check_on_a_2_mib_stack() {
+    checks_deep(&["nested negations", "nested calls"], 1_000);
+}
+
+#[test]
+fn lambdas_nested_1000_deep_check_on_a_2_mib_stack() {
+    // The walk keeps no frame of the thread's stack per lambda; `Ty::replace` and
+    // `Sig::replace` still recurse on the nesting of the type, and overflow this stack near
+    // 4,000. The time is quadratic, from the deep clones of `Ty` (both open).
+    use zed_tests::deep::{on_small_stack, program, statements};
+    let stmts = statements(&program("nested lambdas", 1_000).text);
+    let res = zedc::resolve::resolve(&stmts).unwrap();
+    on_small_stack(|| assert!(zedc::check::check(&stmts, &res).errors.is_empty()));
+}
