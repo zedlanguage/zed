@@ -9,7 +9,7 @@
 use std::cell::Cell;
 
 use zed_tests::scaling;
-use zedc::store::interval::{End, IntervalSet};
+use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::iterate::{Equations, order, phase1};
 use zedc::store::lattice::Landmarks;
 use zedc::store::wto::{Element, VertexKey};
@@ -48,12 +48,12 @@ impl Equations<IntervalSet> for Nest {
         self.evals.set(self.evals.get() + 1);
         // The bound: 3 for the outermost loop, else three times the loop around it.
         let bound = if k == 0 {
-            End::Fin(3)
+            End::of(3)
         } else {
             match cells[k - 1].bounds().map(|(_, hi)| hi) {
                 None => return IntervalSet::empty(),
-                Some(End::Fin(hi)) => End::from_i128(3 * hi as i128),
-                Some(e) => e,
+                Some(End::Fin(hi)) => End::Fin(&Num::from(3) * hi),
+                Some(e) => e.clone(),
             }
         };
         let step = cells[k]
@@ -141,7 +141,7 @@ impl Equations<IntervalSet> for Counter {
         let step = cells[0]
             .meet(&IntervalSet::range(
                 End::NegInf,
-                End::Fin(10 * self.marks - 1),
+                End::of(10 * self.marks - 1),
             ))
             .lift1(|(lo, hi)| vec![(lo.succ(), hi.succ())]);
         IntervalSet::single(0).join(&step)
@@ -195,7 +195,7 @@ impl Equations<IntervalSet> for Beside {
         }
         self.evals.set(self.evals.get() + 1);
         let step = cells[0]
-            .meet(&IntervalSet::range(End::NegInf, End::Fin(self.bound - 1)))
+            .meet(&IntervalSet::range(End::NegInf, End::of(self.bound - 1)))
             .lift1(|(lo, hi)| vec![(lo.succ(), hi.succ())]);
         IntervalSet::single(0).join(&step)
     }

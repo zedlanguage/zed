@@ -146,9 +146,9 @@ fn domain(rng: &mut Rng) -> IntervalSet {
     let lo = rng.int(-15, 10);
     let hi = lo + rng.int(0, 20);
     match rng.below(5) {
-        0 | 1 => IntervalSet::range(End::Fin(lo), End::Fin(hi)),
-        2 => IntervalSet::range(End::Fin(lo), End::PosInf),
-        3 => IntervalSet::range(End::NegInf, End::Fin(hi)),
+        0 | 1 => IntervalSet::range(End::of(lo), End::of(hi)),
+        2 => IntervalSet::range(End::of(lo), End::PosInf),
+        3 => IntervalSet::range(End::NegInf, End::of(hi)),
         _ => IntervalSet::top(),
     }
 }
@@ -156,10 +156,10 @@ fn domain(rng: &mut Rng) -> IntervalSet {
 /// Random domains of `x` and `y`; one case in two is a listed box: `x` listed, its values
 /// apart from one another, and `y` one value.
 pub(super) fn domains(rng: &mut Rng) -> Domains {
-    let point = |v: i64| IntervalSet::from_pieces(vec![(End::Fin(v), End::Fin(v))]);
+    let point = |v: i64| IntervalSet::from_pieces(vec![(End::of(v), End::of(v))]);
     let (x, y) = if rng.below(2) == 0 {
         let lo = rng.int(-15, 10);
-        let xs = (0..rng.int(1, 8)).map(|k| (End::Fin(lo + 2 * k), End::Fin(lo + 2 * k)));
+        let xs = (0..rng.int(1, 8)).map(|k| (End::of(lo + 2 * k), End::of(lo + 2 * k)));
         (
             IntervalSet::from_pieces(xs.collect()),
             point(rng.int(-15, 15)),
@@ -181,12 +181,12 @@ pub(super) fn int_demand(rng: &mut Rng) -> Demand {
         let lo_end = if rng.below(5) == 0 {
             End::NegInf
         } else {
-            End::Fin(lo)
+            End::of(lo)
         };
         let hi_end = if rng.below(5) == 0 {
             End::PosInf
         } else {
-            End::Fin(lo + rng.int(0, 15))
+            End::of(lo + rng.int(0, 15))
         };
         pieces.push((lo_end, hi_end));
     }
@@ -286,7 +286,7 @@ fn a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between() {
             (0..rng.int(1, 3))
                 .map(|_| {
                     let lo = rng.int(-2, m + 1);
-                    (End::Fin(lo), End::Fin(lo + rng.int(0, 2)))
+                    (End::of(lo), End::of(lo + rng.int(0, 2)))
                 })
                 .collect(),
         );
@@ -296,7 +296,7 @@ fn a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between() {
         let body = prim(Prim::Mod, vec![Term::Var("i".into()), lit(c)]);
         let ds: Domains = [(
             Arc::<str>::from("i"),
-            IntervalSet::range(End::Fin(lo), End::Fin(hi)),
+            IntervalSet::range(End::of(lo), End::of(hi)),
         )]
         .into_iter()
         .collect();
@@ -306,7 +306,7 @@ fn a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between() {
         if p.enumerated {
             continue;
         }
-        let rem = z.meet(&IntervalSet::range(End::Fin(0), End::Fin(m - 1)));
+        let rem = z.meet(&IntervalSet::range(End::of(0), End::of(m - 1)));
         let pieces = p.domains["i"].pieces().len();
         assert!(
             p.exact || pieces <= 2 * rem.pieces().len() + 1,

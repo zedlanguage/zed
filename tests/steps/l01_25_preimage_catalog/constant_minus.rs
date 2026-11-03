@@ -33,7 +33,7 @@ fn pieces(ps: &[(End, End)]) -> IntervalSet {
 fn fin(ps: &[(i64, i64)]) -> IntervalSet {
     pieces(
         &ps.iter()
-            .map(|&(a, b)| (End::Fin(a), End::Fin(b)))
+            .map(|&(a, b)| (End::of(a), End::of(b)))
             .collect::<Vec<_>>(),
     )
 }
@@ -109,9 +109,9 @@ fn every_piece_of_the_demand_is_kept() {
 /// Rays, every integer, one point and the empty demand.
 #[test]
 fn rays_points_and_the_empty_demand() {
-    let ray_down = pieces(&[(End::NegInf, End::Fin(-3)), (End::Fin(4), End::Fin(6))]);
+    let ray_down = pieces(&[(End::NegInf, End::of(-3)), (End::of(4), End::of(6))]);
     assert_eq!(reflected(5, &any_x(), ray_down), "x [-1..=1, 8..]; exact");
-    let ray_up = pieces(&[(End::Fin(-2), End::Fin(-2)), (End::Fin(10), End::PosInf)]);
+    let ray_up = pieces(&[(End::of(-2), End::of(-2)), (End::of(10), End::PosInf)]);
     assert_eq!(reflected(5, &any_x(), ray_up), "x [..=-5, 7..=7]; exact");
     assert_eq!(reflected(5, &any_x(), IntervalSet::top()), "x [..]; exact");
     assert_eq!(reflected(5, &any_x(), fin(&[(0, 0)])), "x [5..=5]; exact");
@@ -148,11 +148,11 @@ fn the_ends_of_i64() {
     assert_eq!(shown(&p), "x [-2..=0]; exact");
     // MAX - x in [MIN, -1] for x >= MAX + 1, past `i64`: the lower end is rounded down to
     // MAX, whose ray holds every integer beyond it, and the box is not exact.
-    let p = at(max, pieces(&[(End::NegInf, End::Fin(-1))]));
+    let p = at(max, pieces(&[(End::NegInf, End::of(-1))]));
     assert_eq!(shown(&p), "x [9223372036854775807..]; necessary");
     // MIN - x for z a ray down to MIN: x >= 0 at the top end.
-    let p = at(min, pieces(&[(End::NegInf, End::Fin(min))]));
-    assert_eq!(p.domains["x"], pieces(&[(End::Fin(0), End::PosInf)]));
+    let p = at(min, pieces(&[(End::NegInf, End::of(min))]));
+    assert_eq!(p.domains["x"], pieces(&[(End::of(0), End::PosInf)]));
 }
 
 /// A demand of `n` pieces on each side of zero: `n - 3 - x` keeps `2n` pieces, so the

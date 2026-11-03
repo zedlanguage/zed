@@ -36,20 +36,28 @@ impl Out<'_> {
         self.bytes.extend_from_slice(s.as_bytes());
     }
 
-    fn end(&mut self, e: End) {
+    /// An endpoint: an integer in `i64` is a word, as an `int` value is; one past it is its
+    /// decimal text under a tag of its own, as a `Value::Big` is.
+    fn end(&mut self, e: &End) {
         match e {
             End::NegInf => self.tag(0),
-            End::Fin(v) => {
-                self.tag(1);
-                self.word(v as u64);
-            }
+            End::Fin(v) => match v.to_i64() {
+                Some(v) => {
+                    self.tag(1);
+                    self.word(v as u64);
+                }
+                None => {
+                    self.tag(3);
+                    self.str(&v.to_string());
+                }
+            },
             End::PosInf => self.tag(2),
         }
     }
 
     fn domain(&mut self, d: &Domain) {
         self.word(d.ints.pieces().len() as u64);
-        for &(lo, hi) in d.ints.pieces() {
+        for (lo, hi) in d.ints.pieces() {
             self.end(lo);
             self.end(hi);
         }

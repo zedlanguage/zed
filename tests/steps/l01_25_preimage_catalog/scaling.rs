@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
-use zedc::store::interval::{End::Fin, IntervalSet};
+use zedc::store::interval::{End, IntervalSet};
 use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage, relations};
 
 use super::{doms, shown};
@@ -280,7 +280,7 @@ fn many_inputs(k: usize) -> Domains {
         .map(|j| {
             (
                 format!("x{j}").into(),
-                IntervalSet::range(Fin(-50), Fin(5000)),
+                IntervalSet::range(End::of(-50), End::of(5000)),
             )
         })
         .collect()

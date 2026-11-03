@@ -49,8 +49,8 @@ use crate::rejection::Row;
 use crate::resolve::{Ref, Resolution};
 use crate::store::int::Int;
 use crate::store::interval::{
-    End::{Fin, NegInf, PosInf},
-    IntervalSet, bit_word,
+    End::{self, Fin, NegInf, PosInf},
+    IntervalSet, Num, bit_word,
 };
 use crate::store::revision::{Op, forward};
 
@@ -2302,7 +2302,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let at_least_zero = self
             .known(e)
             .ints
-            .is_subset(&IntervalSet::range(Fin(0), PosInf))
+            .is_subset(&IntervalSet::range(End::of(0), PosInf))
             || listed.is_some_and(|vs| {
                 vs.iter().all(|v| {
                     v.surface_cmp(&zero)
@@ -2656,7 +2656,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn bit_domains(&mut self, w: &str, p: Prim, slots: &[(Arg, &'a Expr)], span: Span) {
         let names = zed_kernel::bits::params(p);
         let shift = matches!(p, Prim::Shl | Prim::Shr);
-        let nonneg = IntervalSet::range(Fin(0), PosInf);
+        let nonneg = IntervalSet::range(End::of(0), PosInf);
         let ranges: Vec<Option<IntRange>> =
             slots.iter().map(|(a, e)| self.int_range(a, e)).collect();
         let mut fine = true;
@@ -2734,9 +2734,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let values = match listed {
             Some(vs) => {
                 let piece = |v: &Value| match v {
-                    Value::Int(n) => (Fin(*n), Fin(*n)),
-                    Value::Big(n) if n.is_negative() => (NegInf, Fin(i64::MIN)),
-                    _ => (Fin(i64::MAX), PosInf),
+                    Value::Int(n) => (End::of(*n), End::of(*n)),
+                    Value::Big(n) => (Fin(Num::from(&**n)), Fin(Num::from(&**n))),
+                    _ => (NegInf, PosInf),
                 };
                 ints = ints.meet(&IntervalSet::from_pieces(vs.iter().map(piece).collect()));
                 Some(vs)
@@ -4702,8 +4702,8 @@ impl IntRange {
         }
         let (lo, hi) = self.ints.bounds()?;
         match (side, lo, hi) {
-            (std::cmp::Ordering::Greater, _, Fin(h)) => Some(Value::Int(h)),
-            (std::cmp::Ordering::Less, Fin(l), _) => Some(Value::Int(l)),
+            (std::cmp::Ordering::Greater, _, Fin(h)) => Some(Value::from(h)),
+            (std::cmp::Ordering::Less, Fin(l), _) => Some(Value::from(l)),
             _ => None,
         }
     }
@@ -4726,13 +4726,11 @@ impl Known {
         }
     }
 
-    /// The int `v`: a value past `i64` is read as the end of the interval on its side, as the
-    /// interval domain reads it.
+    /// The int `v`, exact at any size.
     fn of(v: Value) -> Self {
         let ints = match &v {
             Value::Int(n) => IntervalSet::single(*n),
-            Value::Big(n) if n.is_negative() => IntervalSet::range(NegInf, Fin(i64::MIN)),
-            Value::Big(_) => IntervalSet::range(Fin(i64::MAX), PosInf),
+            Value::Big(n) => IntervalSet::point(Num::from(&**n)),
             _ => return Known::top(),
         };
         Known {
@@ -4851,7 +4849,7 @@ impl<'a> Ck<'_, 'a> {
             let v = eval(&Term::Prim(p, args.into_iter().map(Term::Lit).collect())).ok()?;
             matches!(v, Value::Int(_) | Value::Big(_)).then(|| Known::of(v))
         };
-        let nonnegative = IntervalSet::range(Fin(0), PosInf);
+        let nonnegative = IntervalSet::range(End::of(0), PosInf);
         match &e.kind {
             ExprKind::Int { radix, digits } => {
                 let digits: String = digits.chars().filter(|&c| c != '_').collect();
@@ -4876,7 +4874,7 @@ impl<'a> Ck<'_, 'a> {
                     return fold(Prim::Pow, vec![x.clone(), n.clone()]).unwrap_or_else(Known::top);
                 }
                 let ints = match n.ints.bounds() {
-                    Some((Fin(lo), Fin(hi))) if lo == hi && lo >= 0 => {
+                    Some((Fin(lo), Fin(hi))) if lo == hi && lo.signum() >= 0 => {
                         forward(&Op::Pow(Int::from(lo).into()), &x.ints, &x.ints)
                     }
                     _ if x.ints.is_subset(&nonnegative) && n.ints.is_subset(&nonnegative) => {

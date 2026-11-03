@@ -49,7 +49,7 @@ use super::cell::{Cell, Entry, Premise, Premises};
 use super::conjuncts::{self, BlockId, Conjuncts, Uses};
 use super::hull::Hull;
 use super::int::Int;
-use super::interval::{End, IntervalSet};
+use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
 use super::preimage::{Classes, Demand, Domains, Point, preimage, relations, witness};
 use super::presburger::{self, Atom, Con, Formula, Lin, Rel};
@@ -331,7 +331,7 @@ impl Product {
                 let ints = IntervalSet::from_pieces(
                     kept.iter()
                         .filter_map(|v| match v {
-                            Value::Int(n) => Some((End::Fin(*n), End::Fin(*n))),
+                            Value::Int(n) => Some((End::of(*n), End::of(*n))),
                             _ => None,
                         })
                         .collect(),
@@ -365,20 +365,24 @@ impl Product {
                         .collect(),
                 ),
                 None => {
-                    let most = 2 * x.pieces().len() as i128;
-                    let size = x.pieces().iter().try_fold(0i128, |n, p| match p {
-                        (End::Fin(a), End::Fin(b)) => Some(n + (*b as i128 - *a as i128) + 1),
+                    let most = Num::from(2 * x.pieces().len() as i128);
+                    let size = x.pieces().iter().try_fold(Num::ZERO, |n, p| match p {
+                        (End::Fin(a), End::Fin(b)) => Some(&(&n + &(b - a)) + &Num::ONE),
                         _ => None,
                     });
-                    size.filter(|&n| n <= most).map(|_| {
-                        x.pieces()
-                            .iter()
-                            .flat_map(|p| match *p {
-                                (End::Fin(a), End::Fin(b)) => a..=b,
-                                _ => unreachable!("every piece is finite"),
-                            })
-                            .map(Value::Int)
-                            .collect()
+                    size.filter(|n| *n <= most).map(|_| {
+                        let mut out = Vec::new();
+                        for p in x.pieces() {
+                            let (End::Fin(a), End::Fin(b)) = p else {
+                                unreachable!("every piece is finite")
+                            };
+                            let mut v = a.clone();
+                            while v <= *b {
+                                out.push(Value::from(&v));
+                                v = &v + &Num::ONE;
+                            }
+                        }
+                        out
                     })
                 }
             };
@@ -405,7 +409,7 @@ impl Product {
             let ints = IntervalSet::from_pieces(
                 vs.iter()
                     .filter_map(|v| match v {
-                        Value::Int(n) => Some((End::Fin(*n), End::Fin(*n))),
+                        Value::Int(n) => Some((End::of(*n), End::of(*n))),
                         _ => None,
                     })
                     .collect(),
@@ -2062,7 +2066,7 @@ impl Scope {
                         .collect();
                     if kept.len() < vs.len() {
                         let x = IntervalSet::from_pieces(
-                            kept.iter().map(|&v| (End::Fin(v), End::Fin(v))).collect(),
+                            kept.iter().map(|&v| (End::of(v), End::of(v))).collect(),
                         );
                         let p = self.names.get_mut(n).expect("a name in scope");
                         let prem = p.premises();
@@ -2124,7 +2128,7 @@ impl Scope {
             let holds = |w: &Point| {
                 open.iter().all(|n| {
                     w.get(n)
-                        .is_some_and(|&v| self.get(n).contains(&Value::Int(v)))
+                        .is_some_and(|v| self.get(n).contains(&Value::from(v)))
                 })
             };
             if self.exactly.get(&key).is_some_and(holds) {

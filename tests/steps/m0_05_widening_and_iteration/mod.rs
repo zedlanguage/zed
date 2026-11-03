@@ -20,7 +20,7 @@ use std::collections::BTreeSet;
 
 use zed_tests::instances::Rng;
 use zedc::address::ContentAddress;
-use zedc::store::interval::{End, IntervalSet};
+use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::iterate::Equations;
 use zedc::store::lattice::Landmarks;
 use zedc::store::wto::VertexKey;
@@ -189,8 +189,8 @@ impl System {
 fn random_filter(rng: &mut Rng) -> IntervalSet {
     match rng.below(4) {
         0 => IntervalSet::top(),
-        1 => IntervalSet::range(End::NegInf, End::Fin(rng.int(-3, 8))),
-        2 => IntervalSet::range(End::Fin(rng.int(-8, 3)), End::PosInf),
+        1 => IntervalSet::range(End::NegInf, End::of(rng.int(-3, 8))),
+        2 => IntervalSet::range(End::of(rng.int(-8, 3)), End::PosInf),
         _ => {
             let lo = rng.int(-6, 4);
             IntervalSet::of(lo, lo + rng.int(0, 6))
@@ -226,10 +226,10 @@ impl Equations<IntervalSet> for System {
         let sets = [&self.init[v]]
             .into_iter()
             .chain(self.terms[v].iter().map(|t| &t.filter));
-        let ends = sets.flat_map(|s| s.pieces().iter().flat_map(|&(lo, hi)| [lo, hi]));
+        let ends = sets.flat_map(|s| s.pieces().iter().flat_map(|(lo, hi)| [lo, hi]));
         Landmarks::of(
             ends.filter_map(|e| match e {
-                End::Fin(v) => Some(v),
+                End::Fin(v) => Some(v.clone()),
                 _ => None,
             }),
             [],
@@ -237,10 +237,10 @@ impl Equations<IntervalSet> for System {
     }
 }
 
-fn shift(e: End, by: i64) -> End {
+fn shift(e: &End, by: i64) -> End {
     match e {
-        End::Fin(v) => End::from_i128(v as i128 + by as i128),
-        e => e,
+        End::Fin(v) => End::Fin(v + &Num::from(by)),
+        e => e.clone(),
     }
 }
 
@@ -253,8 +253,8 @@ fn is_post_fixpoint(eq: &System, cells: &[IntervalSet]) -> bool {
 /// `[lo, hi]` with `None` for an infinite end, for readable expectations.
 fn iv(lo: Option<i64>, hi: Option<i64>) -> IntervalSet {
     IntervalSet::range(
-        lo.map_or(End::NegInf, End::Fin),
-        hi.map_or(End::PosInf, End::Fin),
+        lo.map_or(End::NegInf, End::of),
+        hi.map_or(End::PosInf, End::of),
     )
 }
 

@@ -27,6 +27,8 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `PIECE_LIMIT` 8 | store/interval.rs | removed (3, 3c): an image or preimage with more pieces was merged and marked necessary |
 | `FINITE_SET_LIMIT` 64 | store/lattice.rs | removed (3c): an interval or type with more members was not listed |
 | `WIDENING_DELAY` 3 | store/iterate.rs | removed (3): which changes of a loop head were joins and which widenings |
+| `i64` interval ends | store/interval.rs `End::from_i128`, presburger.rs `hull_from`, affine.rs `Bounds::offset` | removed (10): an end past `i64` was rounded out to `i64::MAX` or `i64::MIN`, a hull bound past it was dropped, an offset past it dropped the bound, and a preimage through such an end was not claimed exact |
+| `i64` congruence classes | store/lattice.rs `Congruence` (modulus `u64`, residue `i64`), canon/domain.rs `least_class`, store/revision.rs; also `Affine::times` and the `u32` exponent of `Op::Pow` | open (TD-cong): a class whose modulus or residue is past `i64` makes the congruence the top, or leaves it unchanged; a product of an affine form past `i64` is not formed |
 | `HEAD_ITERATIONS` 64 | store/iterate.rs | removed (3): a component was set to the top |
 | `NARROWING_ROUNDS` 64 | store/iterate.rs | removed (3): phase 2 stopped with the values it had |
 | `REDUCTION_ROUNDS` 16 | store/product.rs | removed (3) |
@@ -621,8 +623,52 @@ with shared subdiagrams named would bound it by the nodes, and is not built.
 | Decide exactly where tuple parts share no component, keep operands otherwise | not built | 4 | a structural rule, but answers "may have a value" for the rest, as the budget did |
 | Keep the budgets | the old behavior | 0 | constants whose crossing changes the answer |
 
+### 10. Interval ends (replaces the `i64` end rule) — done
+
+An interval end was an `i64`. A sum, product or offset past it was rounded outward by the
+end's role, so `i64::MAX` stood for every integer from there up, and a preimage built
+through such an end was not claimed exact; `hull_from` searched for a bound within `i64`
+only and answered "no bound" past it; `Bounds::offset` dropped a bound it moved past `i64`.
+
+Now an end is `End::Fin(Num)` (`store/int.rs`): one machine word while the value fits in
+`i64`, a big integer past it, and a value in `i64` has one form, so a big result back in
+range is a word again. A value outside `i128` built from a power is kept as
+`(c * core + d) / den`, where the core is a power `b^e` or a power of a floor root of a kept
+power, so the bound of `x ** 100000000`, of `x ** 100000000 + 1` and the cube root of
+`2 ** 100000000` are built and compared in time polynomial in the bits of the coefficients,
+the base and the exponents, not in their 10^8 bits. Sums with values that are not kept or
+share the core, products with values that are not kept, `div`, `mod` and gcd by them, powers
+and roots keep the form; the cases that write a value out are listed in COMPLEXITY.md S33.
+Equality goes by value, since a written out value and a kept value may be equal: values of
+one core are compared by the exact sign of a linear form in the core, two powers by their
+bases and exponents, a root against the power it came from without its digits, and others
+by their leading bits at doubling precision, which ends at the latest when both are exact;
+values outside `i64` hash by their sign. Every operation on ends is exact at any size. `hull_from` decides
+unboundedness by the recession cone of the relation and finds a finite bound by doubling
+then bisection over unbounded integers, outward from a point of the relation: O(log d)
+questions for a bound at distance d, each on integers of O(log d) bits.
+`Affine::plus` and `Bounds::offset` are exact. The canonical serialization writes a big end
+as its decimal text under a tag of its own (3), as a `Value::Big` is written.
+
+Cost: an operation on two one-word ends is a 128-bit add or multiply and a check that the
+result fits; past `i64` it costs what the digits cost. Tests:
+`l01_24_refinement_lattices::ends` (the four ends next to the range, sums, products and
+offsets crossing it both ways, a bound of `2^200`), `scaling::ends_in_one_word_scale_linearly`
+and `scaling::ends_of_2_to_the_200_scale_linearly`. Negative control, not committed: with
+every `Num` add, subtract, multiply and negate taken through the big integer, the one-word
+scaling work rose 1.35 times at `n` = 200 and 1.46 times at 1600 (2196148 to 2970266 and
+13492726 to 19691847 instructions); the work at `2^200` did not change.
+
+Kept powers: `ends::the_bound_of_a_large_power_is_built_and_compared_without_its_digits`
+(`x ** 10^8` for x in 2..=3, forward, backward and comparisons, in under a second),
+`ends::kept_powers_order_and_hash_as_their_values_written_out` (400 random powers and
+neighbors against `BigInt`) and `scaling::power_bounds_scale_with_the_bits_of_the_exponent`
+(k = 10^6 to 8 * 10^6: 94863 to 101568 instructions, 1.1 times, limit 3). Negative control,
+not committed: with powers written out, 983387946 to 20434712863 instructions (20.8
+times), and the 10^8 test ran past 60 s.
+
 ## Order
 
-1 first (it is the one that grew exponentially), then 2, 3, 5, 4, 7, 6, 8, 9. Each is a
+1 first (it is the one that grew exponentially), then 2, 3, 5, 4, 7, 6, 8, 9, 10. Each is a
 step with its own tests, the old threshold's tests rewritten to the new rule, and a
 scaling test.

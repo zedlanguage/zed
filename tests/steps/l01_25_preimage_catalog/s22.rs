@@ -46,11 +46,7 @@ fn ints(lo: i64, hi: i64) -> Demand {
 }
 
 fn pieces(ps: &[(i64, i64)]) -> IntervalSet {
-    IntervalSet::from_pieces(
-        ps.iter()
-            .map(|&(a, b)| (End::Fin(a), End::Fin(b)))
-            .collect(),
-    )
+    IntervalSet::from_pieces(ps.iter().map(|&(a, b)| (End::of(a), End::of(b))).collect())
 }
 
 /// The domains `name: set`.
@@ -146,7 +142,7 @@ fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
         "probe_all" => (ge0(adds(k, |_| 1)), over(&[("i", IntervalSet::top())]), yes),
         "probe_wide" => (ge0(adds(k, |_| 1)), i_in(-100, 1 << 62), yes),
         "probe_half" => {
-            let half = IntervalSet::range(End::Fin(-100), End::PosInf);
+            let half = IntervalSet::range(End::of(-100), End::PosInf);
             (ge0(adds(k, |_| 1)), over(&[("i", half)]), yes)
         }
         "alt" => (ge0(adds(k, alt)), narrow(), yes),
@@ -394,7 +390,7 @@ impl Diffs {
         let inside = |s: &IntervalSet, o: &IntervalSet| {
             s.pieces()
                 .iter()
-                .all(|&(lo, hi)| o.pieces().iter().any(|&(l, h)| l <= lo && hi <= h))
+                .all(|(lo, hi)| o.pieces().iter().any(|(l, h)| l <= lo && hi <= h))
         };
         if new != old
             && !now.exact
@@ -504,14 +500,14 @@ impl Diffs {
 fn chain_domain(rng: &mut Rng) -> IntervalSet {
     match rng.below(6) {
         0 => IntervalSet::top(),
-        1 => IntervalSet::range(End::Fin(rng.int(-20, 5)), End::PosInf),
-        2 => IntervalSet::range(End::NegInf, End::Fin(rng.int(-5, 20))),
+        1 => IntervalSet::range(End::of(rng.int(-20, 5)), End::PosInf),
+        2 => IntervalSet::range(End::NegInf, End::of(rng.int(-5, 20))),
         _ => {
             let mut lo = rng.int(-25, -5);
             let mut ps = Vec::new();
             for _ in 0..rng.int(1, 3) {
                 let hi = lo + rng.int(0, 12);
-                ps.push((End::Fin(lo), End::Fin(hi)));
+                ps.push((End::of(lo), End::of(hi)));
                 lo = hi + rng.int(2, 6);
             }
             IntervalSet::from_pieces(ps)
@@ -578,14 +574,8 @@ fn chain_demand(rng: &mut Rng, t: Term) -> (Term, Demand) {
     match rng.below(10) {
         0 => (t, ints(a, a)),
         1 => (t, ints(a, a + rng.int(0, 15))),
-        2 => (
-            t,
-            Demand::Ints(IntervalSet::range(End::NegInf, End::Fin(a))),
-        ),
-        3 => (
-            t,
-            Demand::Ints(IntervalSet::range(End::Fin(a), End::PosInf)),
-        ),
+        2 => (t, Demand::Ints(IntervalSet::range(End::NegInf, End::of(a)))),
+        3 => (t, Demand::Ints(IntervalSet::range(End::of(a), End::PosInf))),
         4 => (t, Demand::Ints(pieces(&[(a, a + 1), (a + 5, a + 6)]))),
         5 => (cmp(Prim::Ge), Demand::Bool(b)),
         6 => (cmp(Prim::Lt), Demand::Bool(b)),
@@ -760,7 +750,7 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
         Arc::new(prim(Prim::Mul, int(2), x.clone())),
         Arc::new(prim(Prim::Add, x.clone(), x)),
     );
-    let ds = over(&[("i", IntervalSet::range(End::NegInf, End::Fin(12)))]);
+    let ds = over(&[("i", IntervalSet::range(End::NegInf, End::of(12)))]);
     let d = Demand::Ints(pieces(&[(-30, -29), (6, 10)]));
     let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
     assert!(!now.exact && !then.exact);
@@ -891,7 +881,8 @@ fn random_terms_keep_their_preimages() {
 /// inside a chain, reflections under several demands, products, and empty demands.
 #[test]
 fn ends_of_i64_and_other_corners_keep_their_preimages() {
-    use End::{Fin, NegInf, PosInf};
+    use End::{NegInf, PosInf};
+    let fin = End::of;
     const MIN: i64 = i64::MIN;
     const MAX: i64 = i64::MAX;
     on_big_stack(|| {
@@ -900,11 +891,11 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
         let doms = [(-2, 2), (MIN, MIN + 3), (MAX - 3, MAX), (MIN, MAX)];
         let demands = [
             Demand::Ints(IntervalSet::single(0)),
-            Demand::Ints(IntervalSet::range(Fin(MAX - 1), PosInf)),
-            Demand::Ints(IntervalSet::range(NegInf, Fin(MIN + 1))),
+            Demand::Ints(IntervalSet::range(fin(MAX - 1), PosInf)),
+            Demand::Ints(IntervalSet::range(NegInf, fin(MIN + 1))),
             Demand::Ints(IntervalSet::from_pieces(vec![
-                (NegInf, Fin(MIN + 2)),
-                (Fin(MAX - 2), PosInf),
+                (NegInf, fin(MIN + 2)),
+                (fin(MAX - 2), PosInf),
             ])),
         ];
         let guards: [fn(i64) -> Term; 3] = [
@@ -1690,7 +1681,7 @@ fn remainder_chains_of_every_shape_match_the_interpreter() {
 /// listing the box; they are now exact and empty without listing it (`enumerated` false).
 #[test]
 fn remainder_chains_outside_the_shared_summary_keep_their_preimages() {
-    use End::{Fin, NegInf, PosInf};
+    use End::{NegInf, PosInf};
     const MIN: i64 = i64::MIN;
     const MAX: i64 = i64::MAX;
     on_big_stack(|| {
@@ -1719,8 +1710,8 @@ fn remainder_chains_outside_the_shared_summary_keep_their_preimages() {
             ),
         ];
         let top = IntervalSet::range(NegInf, PosInf);
-        let high = IntervalSet::range(Fin(MAX - 40), Fin(MAX));
-        let low = IntervalSet::range(Fin(MIN), Fin(MIN + 40));
+        let high = IntervalSet::range(End::of(MAX - 40), End::of(MAX));
+        let low = IntervalSet::range(End::of(MIN), End::of(MIN + 40));
         let mut ends: Vec<i64> = (0..=40).flat_map(|d| [MIN + d, MAX - d]).collect();
         ends.extend(-70..=70);
         for (what, (t, d)) in cases {

@@ -815,7 +815,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `usize::checked_add` of two byte counts, refused past `usize::MAX` | `Text::join` | Machine integers | With `int` counts the sum never wraps; the refusal stays as an `if` comparing the sum with the largest length the runtime can address |
-| `i64::try_from` of a count, with a big integer when it does not fit | `words::word` (`Len`), `hooks::node` (`Len`), `store::cell::Cell::literal` (a string's length; past `i64` the ray from `i64::MAX` up) | Machine integers | Vanishes: `len` returns an `int` |
+| `i64::try_from` of a count, with a big integer when it does not fit | `words::word` (`Len`), `hooks::node` (`Len`), `store::cell::Cell::literal` (a string's length; past `i64` its exact value as a big integer) | Machine integers | Vanishes: `len` returns an `int` |
 
 ## Entries from L6.1 (`zedc/src/ast/`, `format.rs`, `resolve.rs`)
 
@@ -1086,3 +1086,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A persistent segment tree in `Rc` nodes over class indices, each leaf range holding a `Pa`, with a lazy affine tag pushed down on a splice | `ByClass`, `Cls`, `cls_affine`, `cls_halves`, `cls_splice` | Identity (gap 1) | A Zed tree value, as the treap of S22a: a splice makes new nodes along `O(log n)` paths and shares the rest |
 | The memo tables a run computes without reading its class moved out with `std::mem::take` and moved back for the next class | `Kept`, `Run::keep`, `Run::restore` | Mutation | The tables are a value passed from one class's run to the next and returned with each result |
 | `u128` saturating multiply and add to bound values and coefficients over every class against `i64::MAX` | `Bound::holds`, `ByClass::affine` | Machine integers | Zed's `int` is unbounded; the check compares with the `i64` limit directly and needs no saturation |
+
+## Entries from TD-ends (`zedc/src/store/int.rs`, `interval.rs`, `affine.rs`, `presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Num`, an enum of one `i64` word or a boxed `BigInt`, normalized so a value that fits is always the word; arithmetic on `&Num` widens to `i128` and back | `store::int::Num`, `interval::End::Fin` | Machine integers | Vanishes: an end is an `int`, which the runtime already holds as a word or a big integer |
+| `Num`'s third form, a value outside `i128` kept as boxed `(sum of c_i * core_i + d) / den`, each core a product of powers of integers and of floor roots of kept values (`Word::Kept`), with `PartialEq`, `Ord` and `Hash` written by value (hash by value inside `i128`, by sign outside it; consistent, since a value inside `i128` has one form and equal values outside it have one sign) since a kept value and a written out `BigInt` may be equal; ordering by signed interval approximations at doubling precision, terms collected by core and folded by base | `store::int::{Kept, Atom, Core, Approx, collect, fold, balance, approx_cmp, root_approx, root_power_cmp, least_root, OddPart, odd_root_mod_pow2, coprime_base, exponents_over, strip, is_perfect_power}` | Zed's `int` has no kept form | Needs kept values in the runtime's integers (ledger CAP-bits proposes a kept power for `zed-kernel` num), or a Zed record of the terms and cores with these comparisons written in Zed |
+| The approximation of a kept root held in an `Arc<Mutex<Option<(u64, Approx)>>>` beside the root, shared by every copy of the atom, refined through `&self` and left out of the atom's order and equality (`Memo`) | `store::int::{Memo, Atom::approx}` | Lazy cells (gap 3) | A memo of root approximations keyed by the root's form, kept by the runtime, or the approximation passed along with the value |
+| `Int`, the same with an `i128` word, for the Presburger solver | `store::int::Int`, `presburger.rs` | Machine integers | Vanishes: an `int` |
+| `BigInt` from `num-bigint` behind both | `store::int` | External crate | Goes with `num-bigint` (see the external crates above) |
+| `u64` residues multiplied in `u128` and reduced (`pow_mod`), and big integers reduced modulo a power of 2 by a bit mask (`odd_root_mod_pow2`, `pow_mod_pow2`, `inverse_mod_pow2`) | `store::int::{pow_mod, odd_root_mod_pow2, pow_mod_pow2, inverse_mod_pow2}` | Machine integers; bit operations on `int` | `int` products and `%` (the runtime keeps them in a word while they fit), and a mask as `x % 2 ** k` unless Zed gains bit operations on `int` |

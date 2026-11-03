@@ -323,7 +323,12 @@ fn a_loop_takes_the_landmarks_of_the_loops_inside_it_only() {
                 [m - 1, m, m + 1]
             })
             .collect();
-        let got: Vec<i64> = scopes.of(k).ints().iter().copied().collect();
+        let got: Vec<i64> = scopes
+            .of(k)
+            .ints()
+            .iter()
+            .map(|v| v.to_i64().unwrap())
+            .collect();
         assert_eq!(got, want, "cell {k}");
     }
 }

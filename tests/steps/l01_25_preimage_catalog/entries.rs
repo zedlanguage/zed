@@ -234,12 +234,42 @@ fn bounds_past_i64_keep_the_box() {
         ),
         "x [1..=1]; exact"
     );
-    // Not exact: whether a point is cut is not decided, but none is.
+    // `x * 2^64` is past `i64` at `x = 1` and is computed exactly, in both directions.
+    for src in [
+        format!("ok(x) = x * {b} * 4 > {b};\n"),
+        format!("ok(x) = -x * {b} * 4 < -{b};\n"),
+    ] {
+        assert_eq!(
+            holds(&src, &[("x", Some(0), Some(1))]),
+            "x [1..=1]; exact",
+            "{src}"
+        );
+    }
+    // Exact arithmetic, and still not exact: at `x = 0` the points with `y > 0` fail, so the
+    // points that hold are not a box, and the box that holds them is the whole box.
     let src = format!("ok(x, y) = x * {b} * 4 - y >= 0;\n");
-    assert!(
-        holds(&src, &xy).starts_with("x [0..=1]; y [-2..=2]"),
+    assert_eq!(
+        holds(&src, &xy),
+        "x [0..=1]; y [-2..=2]; necessary",
         "{src}"
     );
+}
+
+/// A literal of 2^200 in the source is an end like any other: the sums against it are exact.
+#[test]
+fn a_literal_of_2_to_the_200_is_an_exact_end() {
+    let p = num_bigint::BigInt::from(1) << 200;
+    for src in [
+        format!("ok(x) = x + {p} > {p};\n"),
+        format!("ok(x) = x - {p} > -{p};\n"),
+        format!("ok(x) = {p} * x >= {p};\n"),
+    ] {
+        assert_eq!(
+            holds(&src, &[("x", Some(-1), Some(1))]),
+            "x [1..=1]; exact",
+            "{src}"
+        );
+    }
 }
 
 #[test]

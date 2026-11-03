@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use zed_tests::{instances::Rng, scaling};
-use zedc::store::interval::{End, IntervalSet};
+use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
     Atom, Con, Entailment, Formula, Lin, Refusal, Relation, entails, project, satisfiable,
 };
@@ -95,13 +95,19 @@ fn a_model_may_hold_values_past_128_bits() {
 }
 
 #[test]
-fn a_bound_past_i64_is_searched_within_i64() {
-    // One value, 2^70: a point past the 64-bit range still gives a set holding it.
+fn a_bound_past_i64_is_exact() {
+    // `2^70 <= x <= 2^70 + 5`: both ends lie past the 64-bit range, and the hull is exact.
     let v = 1i128 << 70;
     let f = Formula::and(vec![ge(&[("x", 1)], -v), ge(&[("x", -1)], v + 5)]);
     let hull = project(&f, &sym("x")).unwrap();
-    assert_eq!(hull.bounds().map(|(_, hi)| hi), Some(End::PosInf));
-    assert_ne!(hull, IntervalSet::empty());
+    assert_eq!(
+        hull,
+        IntervalSet::range(End::Fin(Num::from(v)), End::Fin(Num::from(v + 5)))
+    );
+    assert_eq!(
+        hull.to_string(),
+        "[1180591620717411303424..=1180591620717411303429]"
+    );
 }
 
 /// `a != b`, as a disjunction.

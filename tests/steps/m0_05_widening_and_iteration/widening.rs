@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
-use zedc::store::interval::{End, IntervalSet};
+use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::lattice::{Card, Congruence, FiniteSet, Landmarks, Lattice};
 
 use super::iv;
@@ -15,7 +15,7 @@ fn random_set(rng: &mut Rng) -> IntervalSet {
     let pieces = (0..rng.below(13))
         .map(|_| {
             let lo = rng.int(-50, 50);
-            (End::Fin(lo), End::Fin(lo + rng.int(0, 6)))
+            (End::of(lo), End::of(lo + rng.int(0, 6)))
         })
         .collect();
     IntervalSet::from_pieces(pieces)
@@ -81,12 +81,12 @@ fn random_marks(rng: &mut Rng) -> Landmarks {
 }
 
 /// The finite endpoints of `x`.
-fn ends(x: &IntervalSet) -> BTreeSet<i64> {
+fn ends(x: &IntervalSet) -> BTreeSet<Num> {
     x.pieces()
         .iter()
-        .flat_map(|&(lo, hi)| [lo, hi])
+        .flat_map(|(lo, hi)| [lo, hi])
         .filter_map(|e| match e {
-            End::Fin(v) => Some(v),
+            End::Fin(v) => Some(v.clone()),
             _ => None,
         })
         .collect()
@@ -107,7 +107,7 @@ fn interval_widening_chains_stay_on_the_first_ends_and_the_landmarks() {
             &marks,
             usize::MAX,
         );
-        let k: BTreeSet<i64> = ends(&first).union(marks.ints()).copied().collect();
+        let k: BTreeSet<Num> = ends(&first).union(marks.ints()).cloned().collect();
         assert!(
             c.len() <= 2 * k.len() + 3,
             "{} elements, |K| = {}",
@@ -136,7 +136,7 @@ fn interval_narrowing_chains_stay_on_the_first_ends_and_the_landmarks() {
             &marks,
             usize::MAX,
         );
-        let k: BTreeSet<i64> = ends(&first).union(marks.ints()).copied().collect();
+        let k: BTreeSet<Num> = ends(&first).union(marks.ints()).cloned().collect();
         assert!(
             c.len() <= 2 * k.len() + 5,
             "{} elements, |K| = {}",
@@ -287,22 +287,22 @@ fn a_finite_set_widens_to_the_top_at_a_member_the_program_does_not_write() {
 fn a_growing_buffer_length_widens_to_unbounded_and_stays_nonnegative() {
     // A buffer that grows: a new upper bound on its length widens to unbounded at once when
     // no landmark is above it.
-    let len = Card::range(End::Fin(0), End::Fin(1));
+    let len = Card::range(End::of(0), End::of(1));
     let none = Landmarks::none();
-    let grown = len.widen(&len.join(&Card::range(End::Fin(2), End::Fin(2))), &none);
-    assert_eq!(grown, Card::range(End::Fin(0), End::PosInf));
+    let grown = len.widen(&len.join(&Card::range(End::of(2), End::of(2))), &none);
+    assert_eq!(grown, Card::range(End::of(0), End::PosInf));
     // A length that shrinks below its old minimum widens to 0, not -inf.
-    let shrunk = Card::range(End::Fin(3), End::Fin(5));
+    let shrunk = Card::range(End::of(3), End::of(5));
     assert_eq!(
-        shrunk.widen(&shrunk.join(&Card::range(End::Fin(1), End::Fin(1))), &none),
-        Card::range(End::Fin(0), End::Fin(5))
+        shrunk.widen(&shrunk.join(&Card::range(End::of(1), End::of(1))), &none),
+        Card::range(End::of(0), End::of(5))
     );
     let mut rng = Rng::new(0xca);
     for _ in 0..RANDOM_INSTANCES {
         chain(
             || {
                 let a = rng.int(0, 40);
-                Card::range(End::Fin(a), End::Fin(a + rng.int(0, 3)))
+                Card::range(End::of(a), End::of(a + rng.int(0, 3)))
             },
             &none,
             4,

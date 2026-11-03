@@ -71,7 +71,7 @@ fn one_set_of_integers_has_one_normal_form() {
     // An even count of at least 2 is not an even count from 0.
     let even = |lo| {
         dom(
-            IntervalSet::range(End::Fin(lo), End::PosInf),
+            IntervalSet::range(End::of(lo), End::PosInf),
             Congruence::new(2, 0),
             FiniteSet::Top,
         )
@@ -88,7 +88,7 @@ fn random(rng: &mut Rng) -> Domain {
         if rng.below(5) == 0 {
             inf
         } else {
-            End::Fin(rng.int(-20, 20))
+            End::of(rng.int(-20, 20))
         }
     };
     let pieces = (0..rng.below(4))

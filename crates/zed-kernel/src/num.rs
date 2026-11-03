@@ -144,6 +144,12 @@ impl Rat {
         self.num.is_negative()
     }
 
+    /// The integer it is as a coefficient and its prime powers, `coeff * prod p^e`, each `e`
+    /// positive. It must be an integer.
+    pub fn integer_factors(&self) -> (&BigInt, &[(u64, BigInt)]) {
+        (&self.num, &self.pows)
+    }
+
     /// Whether it is an integer.
     pub fn is_integer(&self) -> bool {
         self.den.is_one() && self.pows.iter().all(|(_, e)| !e.is_negative())

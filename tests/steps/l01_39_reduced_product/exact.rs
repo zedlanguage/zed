@@ -132,11 +132,13 @@ fn a_witness_still_within_the_bounds_is_kept() {
     let s = written(within(&[("n", 0, 30)], true), &[t]);
     let w = s.exactly.values().next().cloned().expect("a witness");
     // Narrowing to a range that keeps the witness keeps it; one that drops it finds another.
-    let v = w["n"];
+    let v = w["n"].to_i64().expect("a witness in 0..=30");
     let keep = s.assume(&prim(Prim::Ge, vec![var("n"), lit(v)]), true, &none());
     assert_eq!(keep.exactly.values().next(), Some(&w));
     let drop = s.assume(&prim(Prim::Gt, vec![var("n"), lit(v)]), true, &none());
     assert!(!drop.bottom);
-    let w2 = drop.exactly.values().next().expect("a witness")["n"];
+    let w2 = drop.exactly.values().next().expect("a witness")["n"]
+        .to_i64()
+        .expect("a witness in 0..=30");
     assert!(w2 > v && (w2 * w2) % 10 == 9, "{w2}");
 }

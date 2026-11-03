@@ -5,137 +5,108 @@
 //! missing between two pieces, so that every set has exactly one representation and equality
 //! of elements is equality of sets. The empty list is the empty set, the bottom of the lattice.
 //! Meet and join are exact.
+//!
+//! An end is an unbounded integer ([`Num`]): one machine word while it fits in `i64`, a
+//! `BigInt` past it. No end is rounded or dropped at any magnitude, since `int` is unbounded.
 
-use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::Neg;
 
 use zed_kernel::{Prim, Value};
 
+pub use super::int::Num;
 use super::lattice::Landmarks;
 
-thread_local! {
-    static ROUNDED: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whether an end past `i64` was rounded outward on this thread since the last call. A set
-/// built from a rounded end holds every integer it should, but may hold more: an end of
-/// `i64::MAX` stands for every integer from there up, so `i64::MAX` and `i64::MAX + 1` are not
-/// told apart. A transfer that claims its result is exact checks this first.
-pub fn rounded() -> bool {
-    ROUNDED.replace(false)
-}
-
-/// Sets the flag [`rounded`] reads, to restore it after a computation whose rounding does not
-/// bear on the result being built.
-pub fn set_rounded(r: bool) {
-    ROUNDED.set(r);
-}
-
 /// An endpoint: an integer or one of the two infinities.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum End {
     /// Below every integer.
     NegInf,
     /// An integer.
-    Fin(i64),
+    Fin(Num),
     /// Above every integer.
     PosInf,
 }
 
 use End::{Fin, NegInf, PosInf};
 
+impl From<i64> for End {
+    fn from(v: i64) -> End {
+        Fin(Num::from(v))
+    }
+}
+
+impl From<i128> for End {
+    fn from(v: i128) -> End {
+        Fin(Num::from(v))
+    }
+}
+
 impl End {
-    /// The endpoint for an exact result `x`, which may lie outside `i64`. A value that does not
-    /// fit is replaced by the infinity on its side: this widens an interval it bounds above
-    /// past `i64::MAX`, or below past `i64::MIN`; for the other two cases see [`End::lower`]
-    /// and [`End::upper`].
-    ///
-    /// Complexity tradeoff: ends are `i64`, so a bound past it is given up and read as the
-    /// infinity on its side (or rounded outward, [`rounded`]); the set is wider, never wrong.
-    /// Why: machine integers make each endpoint operation O(1), where unbounded integers cost
-    /// time in their bits. Trigger: an endpoint whose magnitude exceeds `i64`. Tests:
-    /// `l01_25_preimage_catalog::entries::bounds_past_i64_keep_the_box`,
-    /// `l01_38_presburger::omega::a_bound_past_i64_is_searched_within_i64`. COMPLEXITY.md
-    /// row C7. This switches behavior at a magnitude, so it violates the no-thresholds rule; to
-    /// be replaced. A complete solution would make `End::Fin` hold an unbounded integer
-    /// (`store::int`).
-    pub fn from_i128(x: i128) -> End {
-        match i64::try_from(x) {
-            Ok(v) => Fin(v),
-            Err(_) => {
-                ROUNDED.set(true);
-                if x < 0 { NegInf } else { PosInf }
-            }
-        }
+    /// The integer `v`.
+    pub fn of(v: i64) -> End {
+        Fin(Num::from(v))
     }
 
-    /// `x` as the lower end of an interval, rounded down. A set holds an integer past `i64`
-    /// when it is unbounded on that side, so a lower end past `i64::MAX` is `i64::MAX`, whose
-    /// interval holds every integer beyond it; the infinity would empty the interval.
-    pub fn lower(x: i128) -> End {
-        if x > i64::MAX as i128 {
-            ROUNDED.set(true);
-            Fin(i64::MAX)
-        } else {
-            End::from_i128(x)
-        }
-    }
-
-    /// `x` as the upper end of an interval, rounded up: [`End::lower`] mirrored.
-    pub fn upper(x: i128) -> End {
-        if x < i64::MIN as i128 {
-            ROUNDED.set(true);
-            Fin(i64::MIN)
-        } else {
-            End::from_i128(x)
-        }
-    }
-
-    /// `-self` as the lower end of an interval. [`End::neg`] gives the upper end.
-    pub fn neg_lower(self) -> End {
+    /// The integer, when the end is finite and fits in `i64`.
+    pub fn to_i64(&self) -> Option<i64> {
         match self {
-            Fin(v) => End::lower(-(v as i128)),
-            e => e.neg(),
+            Fin(v) => v.to_i64(),
+            _ => None,
         }
     }
 
     /// The next integer up; the infinities are fixed.
-    pub fn succ(self) -> End {
+    pub fn succ(&self) -> End {
         match self {
-            Fin(v) => End::from_i128(v as i128 + 1),
-            e => e,
+            Fin(v) => Fin(v + &Num::ONE),
+            e => e.clone(),
+        }
+    }
+
+    /// Whether `self <= other.succ()`, without expanding a kept power ([`Num::at_most_succ`]).
+    pub fn at_most_succ(&self, other: &End) -> bool {
+        match (self, other) {
+            (Fin(a), Fin(b)) => a.at_most_succ(b),
+            _ => *self <= other.succ(),
         }
     }
 
     /// The next integer down; the infinities are fixed.
-    pub fn pred(self) -> End {
+    pub fn pred(&self) -> End {
         match self {
-            Fin(v) => End::from_i128(v as i128 - 1),
-            e => e,
+            Fin(v) => Fin(v - &Num::ONE),
+            e => e.clone(),
         }
     }
 
     /// The sign: -1, 0 or 1.
-    pub fn signum(self) -> i8 {
+    pub fn signum(&self) -> i8 {
         match self {
             NegInf => -1,
             PosInf => 1,
-            Fin(v) => v.signum() as i8,
+            Fin(v) => v.signum(),
         }
     }
 }
 
-impl Neg for End {
+impl Neg for &End {
     type Output = End;
     /// The negation, which swaps the infinities.
     fn neg(self) -> End {
         match self {
             NegInf => PosInf,
             PosInf => NegInf,
-            Fin(v) => End::from_i128(-(v as i128)),
+            Fin(v) => Fin(-v),
         }
+    }
+}
+
+impl Neg for End {
+    type Output = End;
+    fn neg(self) -> End {
+        -&self
     }
 }
 
@@ -173,27 +144,28 @@ impl IntervalSet {
 
     /// The one integer `v`.
     pub fn single(v: i64) -> Self {
-        IntervalSet::range(Fin(v), Fin(v))
+        IntervalSet::range(End::of(v), End::of(v))
+    }
+
+    /// The one integer `v`, of any size.
+    pub fn point(v: Num) -> Self {
+        IntervalSet::range(Fin(v.clone()), Fin(v))
     }
 
     /// The integers from `lo` to `hi`, both finite and included.
     pub fn of(lo: i64, hi: i64) -> Self {
-        IntervalSet::range(Fin(lo), Fin(hi))
+        IntervalSet::range(End::of(lo), End::of(hi))
     }
 
     /// The union of the given pieces, in any order, overlapping or not. A piece whose lower
     /// endpoint is above its upper one, or which has an infinite endpoint on the wrong side, is
     /// empty and is dropped.
     pub fn from_pieces(mut pieces: Vec<(End, End)>) -> Self {
-        pieces.retain(|&(lo, hi)| lo <= hi && lo != PosInf && hi != NegInf);
+        pieces.retain(|(lo, hi)| lo <= hi && *lo != PosInf && *hi != NegInf);
         pieces.sort();
         let mut out: Vec<(End, End)> = Vec::with_capacity(pieces.len());
         for (lo, hi) in pieces {
-            match out.last_mut() {
-                // Overlapping or adjacent: no integer lies between, so the pieces are one.
-                Some(last) if lo <= last.1.succ() => last.1 = last.1.max(hi),
-                _ => out.push((lo, hi)),
-            }
+            push_merged(&mut out, lo, hi);
         }
         IntervalSet { pieces: out }
     }
@@ -203,28 +175,38 @@ impl IntervalSet {
         &self.pieces
     }
 
+    /// The pieces, in increasing order, taken by value.
+    pub fn into_pieces(self) -> Vec<(End, End)> {
+        self.pieces
+    }
+
     /// Whether the set is empty.
     pub fn is_empty(&self) -> bool {
         self.pieces.is_empty()
     }
 
     /// The least and the greatest endpoint, or `None` for the empty set.
-    pub fn bounds(&self) -> Option<(End, End)> {
-        Some((self.pieces.first()?.0, self.pieces.last()?.1))
+    pub fn bounds(&self) -> Option<(&End, &End)> {
+        Some((&self.pieces.first()?.0, &self.pieces.last()?.1))
     }
 
     /// The smallest single interval containing the set.
     pub fn hull(&self) -> Self {
         match self.bounds() {
-            Some((lo, hi)) => IntervalSet::range(lo, hi),
+            Some((lo, hi)) => IntervalSet::range(lo.clone(), hi.clone()),
             None => IntervalSet::empty(),
         }
     }
 
     /// Whether `v` is a member, by binary search of the pieces.
     pub fn contains(&self, v: i64) -> bool {
-        let below = self.pieces.partition_point(|&(lo, _)| lo <= Fin(v));
-        below > 0 && Fin(v) <= self.pieces[below - 1].1
+        self.contains_end(&End::of(v))
+    }
+
+    /// Whether the finite end `v` is a member, by binary search of the pieces.
+    pub fn contains_end(&self, v: &End) -> bool {
+        let below = self.pieces.partition_point(|(lo, _)| lo <= v);
+        below > 0 && *v <= self.pieces[below - 1].1
     }
 
     /// The finite endpoints, each with whether it is a lower one; the infinities are left out.
@@ -232,7 +214,7 @@ impl IntervalSet {
     pub fn finite_endpoints(&self) -> usize {
         self.pieces
             .iter()
-            .map(|&(lo, hi)| usize::from(lo != NegInf) + usize::from(hi != PosInf))
+            .map(|(lo, hi)| usize::from(*lo != NegInf) + usize::from(*hi != PosInf))
             .sum()
     }
 
@@ -244,15 +226,12 @@ impl IntervalSet {
         while i < a.len() || j < b.len() {
             let next = if j == b.len() || (i < a.len() && a[i] <= b[j]) {
                 i += 1;
-                a[i - 1]
+                &a[i - 1]
             } else {
                 j += 1;
-                b[j - 1]
+                &b[j - 1]
             };
-            match out.last_mut() {
-                Some(last) if next.0 <= last.1.succ() => last.1 = last.1.max(next.1),
-                _ => out.push(next),
-            }
+            push_merged(&mut out, next.0.clone(), next.1.clone());
         }
         IntervalSet { pieces: out }
     }
@@ -262,10 +241,10 @@ impl IntervalSet {
         let (mut i, mut j) = (0, 0);
         let mut out = Vec::new();
         while i < self.pieces.len() && j < other.pieces.len() {
-            let (a, b) = (self.pieces[i], other.pieces[j]);
-            let (lo, hi) = (a.0.max(b.0), a.1.min(b.1));
+            let (a, b) = (&self.pieces[i], &other.pieces[j]);
+            let (lo, hi) = ((&a.0).max(&b.0), (&a.1).min(&b.1));
             if lo <= hi {
-                out.push((lo, hi));
+                out.push((lo.clone(), hi.clone()));
             }
             if a.1 < b.1 { i += 1 } else { j += 1 }
         }
@@ -291,35 +270,40 @@ impl IntervalSet {
         }
         // The pieces as a list linked by index, so that a merge is O(1), and the gaps in a
         // heap, smallest first and the lower pair on a tie; a gap whose pieces have changed
-        // since it was pushed is skipped when it comes up.
+        // since it was pushed is skipped when it comes up. A piece's lower end never changes,
+        // so the heap holds the index of the right piece, not its end.
         let mut pieces = self.pieces.clone();
         let mut next: Vec<usize> = (1..=n).collect();
         let mut alive = vec![true; n];
-        let gap = |left: (End, End), right: (End, End)| match (left.1, right.0) {
-            (Fin(hi), Fin(lo)) => lo as i128 - hi as i128,
+        let gap = |left: &(End, End), right: &(End, End)| match (&left.1, &right.0) {
+            (Fin(hi), Fin(lo)) => lo - hi,
             _ => unreachable!("only the outer endpoints are infinite"),
         };
-        let mut heap: BinaryHeap<Reverse<(i128, usize, End)>> = (0..n - 1)
-            .map(|i| Reverse((gap(pieces[i], pieces[i + 1]), i, pieces[i + 1].0)))
+        let mut heap: BinaryHeap<Reverse<(Num, usize, usize)>> = (0..n - 1)
+            .map(|i| Reverse((gap(&pieces[i], &pieces[i + 1]), i, i + 1)))
             .collect();
         let mut count = n;
         while count > limit {
-            let Reverse((_, at, right_lo)) = heap.pop().expect("a gap for each pair");
+            let Reverse((_, at, right_was)) = heap.pop().expect("a gap for each pair");
             let right = next[at];
-            if !alive[at] || right >= n || pieces[right].0 != right_lo {
+            if !alive[at] || right >= n || right != right_was {
                 continue;
             }
-            pieces[at].1 = pieces[right].1;
+            pieces[at].1 = std::mem::replace(&mut pieces[right].1, NegInf);
             alive[right] = false;
             next[at] = next[right];
             if next[at] < n {
                 let r = next[at];
-                heap.push(Reverse((gap(pieces[at], pieces[r]), at, pieces[r].0)));
+                heap.push(Reverse((gap(&pieces[at], &pieces[r]), at, r)));
             }
             count -= 1;
         }
         IntervalSet {
-            pieces: (0..n).filter(|&i| alive[i]).map(|i| pieces[i]).collect(),
+            pieces: pieces
+                .into_iter()
+                .zip(alive)
+                .filter_map(|(p, a)| a.then_some(p))
+                .collect(),
         }
     }
 
@@ -357,14 +341,14 @@ impl IntervalSet {
         let out = next
             .pieces
             .iter()
-            .map(|&(lo, hi)| {
+            .map(|(lo, hi)| {
                 let lo = match lo {
                     Fin(v) => below(&ends, marks, v).map_or(NegInf, Fin),
-                    e => e,
+                    e => e.clone(),
                 };
                 let hi = match hi {
                     Fin(v) => above(&ends, marks, v).map_or(PosInf, Fin),
-                    e => e,
+                    e => e.clone(),
                 };
                 (lo, hi)
             })
@@ -376,18 +360,17 @@ impl IntervalSet {
     /// moves out to the nearest landmark on its side, or to infinity when there is none. Its
     /// ends lie in a finite set, so there are finitely many results for one set of landmarks.
     pub fn snap(&self, marks: &Landmarks) -> Self {
-        let t = marks.ints();
         let out = self
             .pieces
             .iter()
-            .map(|&(lo, hi)| {
+            .map(|(lo, hi)| {
                 let lo = match lo {
-                    Fin(v) => t.range(..=v).next_back().map_or(NegInf, |&m| Fin(m)),
-                    e => e,
+                    Fin(v) => landmark_below(marks, v).map_or(NegInf, Fin),
+                    e => e.clone(),
                 };
                 let hi = match hi {
-                    Fin(v) => t.range(v..).next().map_or(PosInf, |&m| Fin(m)),
-                    e => e,
+                    Fin(v) => landmark_above(marks, v).map_or(PosInf, Fin),
+                    e => e.clone(),
                 };
                 (lo, hi)
             })
@@ -424,14 +407,14 @@ impl IntervalSet {
         let out = next
             .pieces
             .iter()
-            .map(|&(lo, hi)| {
+            .map(|(lo, hi)| {
                 let lo = match lo {
-                    Fin(v) => Fin(below(&ends, marks, v).unwrap_or(v)),
-                    e => e,
+                    Fin(v) => Fin(below(&ends, marks, v).unwrap_or_else(|| v.clone())),
+                    e => e.clone(),
                 };
                 let hi = match hi {
-                    Fin(v) => Fin(above(&ends, marks, v).unwrap_or(v)),
-                    e => e,
+                    Fin(v) => Fin(above(&ends, marks, v).unwrap_or_else(|| v.clone())),
+                    e => e.clone(),
                 };
                 (lo, hi)
             })
@@ -441,10 +424,10 @@ impl IntervalSet {
 
     /// The finite endpoints of `self`, of either role, in order (the pieces are disjoint and
     /// sorted).
-    fn finite_ends(&self) -> Vec<i64> {
+    fn finite_ends(&self) -> Vec<&Num> {
         self.pieces
             .iter()
-            .flat_map(|&(lo, hi)| [lo, hi])
+            .flat_map(|(lo, hi)| [lo, hi])
             .filter_map(|e| match e {
                 Fin(v) => Some(v),
                 _ => None,
@@ -454,26 +437,21 @@ impl IntervalSet {
 
     /// The set of `-x` for each member `x`.
     pub fn neg(&self) -> Self {
-        IntervalSet::from_pieces(
-            self.pieces
-                .iter()
-                .map(|&(lo, hi)| (hi.neg_lower(), lo.neg()))
-                .collect(),
-        )
+        IntervalSet::from_pieces(self.pieces.iter().map(|(lo, hi)| (-hi, -lo)).collect())
     }
 
     /// The image of each piece under `f`, joined.
-    pub fn lift1(&self, f: impl Fn((End, End)) -> Vec<(End, End)>) -> Self {
-        IntervalSet::from_pieces(self.pieces.iter().flat_map(|&a| f(a)).collect())
+    pub fn lift1(&self, f: impl Fn(&(End, End)) -> Vec<(End, End)>) -> Self {
+        IntervalSet::from_pieces(self.pieces.iter().flat_map(f).collect())
     }
 
     /// The pieces split at zero into negative, zero and positive parts, so that each part has
     /// one sign (step M0.5's sign-conditioned tonicity). The parts are listed, not merged.
     pub fn sign_parts(&self) -> Vec<(End, End)> {
         [
-            IntervalSet::range(NegInf, Fin(-1)),
+            IntervalSet::range(NegInf, End::of(-1)),
             IntervalSet::single(0),
-            IntervalSet::range(Fin(1), PosInf),
+            IntervalSet::range(End::of(1), PosInf),
         ]
         .iter()
         .flat_map(|part| self.meet(part).pieces)
@@ -499,7 +477,7 @@ impl fmt::Display for IntervalSet {
     /// `[]` for the empty set and `[..]` for every integer.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
-        for (i, &(lo, hi)) in self.pieces.iter().enumerate() {
+        for (i, (lo, hi)) in self.pieces.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
@@ -515,44 +493,65 @@ impl fmt::Display for IntervalSet {
     }
 }
 
+/// Appends the piece `lo..=hi` to `out`, whose pieces are sorted and end at or before `lo`'s
+/// piece starts, merging it into the last piece when the two overlap or touch.
+fn push_merged(out: &mut Vec<(End, End)>, lo: End, hi: End) {
+    match out.last_mut() {
+        // Overlapping or adjacent: no integer lies between, so the pieces are one.
+        Some(last) if lo.at_most_succ(&last.1) => {
+            if hi > last.1 {
+                last.1 = hi;
+            }
+        }
+        _ => out.push((lo, hi)),
+    }
+}
+
+/// The greatest landmark at or below `v`.
+fn landmark_below(marks: &Landmarks, v: &Num) -> Option<Num> {
+    marks.ints().range(..=v).next_back().cloned()
+}
+
+/// The least landmark at or above `v`: [`landmark_below`] mirrored.
+fn landmark_above(marks: &Landmarks, v: &Num) -> Option<Num> {
+    marks.ints().range(v..).next().cloned()
+}
+
 /// The greatest of `ends` and the landmarks at or below `v`: where a lower end moves. Two
 /// searches, so a widening costs time logarithmic in the landmarks, not linear.
-fn below(ends: &[i64], marks: &Landmarks, v: i64) -> Option<i64> {
+fn below(ends: &[&Num], marks: &Landmarks, v: &Num) -> Option<Num> {
     let e = ends[..ends.partition_point(|&t| t <= v)].last().copied();
-    let m = marks.ints().range(..=v).next_back().copied();
-    e.max(m)
+    let m = landmark_below(marks, v);
+    match (e, m) {
+        (Some(a), Some(b)) => Some(a.max(&b).clone()),
+        (Some(a), None) => Some(a.clone()),
+        (None, b) => b,
+    }
 }
 
 /// The least of `ends` and the landmarks at or above `v`: where an upper end moves.
-fn above(ends: &[i64], marks: &Landmarks, v: i64) -> Option<i64> {
+fn above(ends: &[&Num], marks: &Landmarks, v: &Num) -> Option<Num> {
     let e = ends.get(ends.partition_point(|&t| t < v)).copied();
-    let m = marks.ints().range(v..).next().copied();
+    let m = landmark_above(marks, v);
     match (e, m) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
+        (Some(a), Some(b)) => Some(a.min(&b).clone()),
+        (Some(a), None) => Some(a.clone()),
+        (None, b) => b,
     }
 }
 
 /// The binary digits of a non-negative `n`: the least `b` with `n < 2^b`.
-fn digits(n: i64) -> i64 {
-    i64::from(64 - n.leading_zeros())
+fn digits(n: &Num) -> Num {
+    n.bits()
 }
 
-/// `2^e` for `e >= 0`, held at `2^100` for a larger `e`. Every bound built from it is an `i64`
-/// plus or minus `2^e`, so past `2^100` it is past `i64` either way and rounds to the same end
-/// ([`End::lower`], [`End::upper`]) as the exact power would.
-fn pow2(e: i64) -> i128 {
-    1i128 << e.clamp(0, 100)
-}
-
-/// `x * 2^k`, `k >= 0`, held past `i64` in the same way as [`pow2`]: `|x| <= 2^63`, so with `k`
-/// held at 64 the product fits an `i128`, and a nonzero product past `2^64` is past `i64`.
-fn shifted(x: i64, k: i64) -> i128 {
-    i128::from(x) * (1i128 << k.clamp(0, 64))
+/// `2^e - 1` for `e >= 0`: the largest value of `e` binary digits.
+fn ones(e: &Num) -> Num {
+    &Num::pow2(e) - &Num::ONE
 }
 
 /// The finite value of an end known to be finite.
-fn fin(e: End) -> i64 {
+fn fin(e: &End) -> &Num {
     match e {
         Fin(v) => v,
         _ => unreachable!("a bound of a non-negative operand is finite below"),
@@ -564,7 +563,7 @@ fn fin(e: End) -> i64 {
 /// tuple of members on which `p` is defined. Each operand is first met with its domain,
 /// `int[0..]` for every one but the `x` of `shl` and `shr`, and the `x` of a word with a width
 /// with `int[0..<2 ** w]` for the largest `w`; an operand left empty gives the empty set, and
-/// operands that are each one integer give the word's value.
+/// operands that are each one integer give the word's value. Every end is exact at any size.
 ///
 /// `bitAnd` lies in `0..=min(hi_a, hi_b)`, `bitOr` and `bitXor` below the least power of two
 /// above the larger upper bound (`bitOr` from the larger lower bound), `bitNot` in
@@ -572,8 +571,9 @@ fn fin(e: End) -> i64 {
 /// member), `leadingZeros` in `w - digits(x)` over the corners, `trailingZeros` in `w` when `x`
 /// is 0 and in `0..digits(hi_x)` otherwise, and `rotl` and `rotr` below `2^w`, 0 exactly when
 /// `x` is. `shl` and `shr` are the product and the floor quotient by `2^k`, monotone in `x` and,
-/// on each sign of `x`, in `k`, so each sign part of each piece of `x` maps by its corners.
-/// `f64Bits` is in `int[0..<2 ** 64]`, read as `int[0..]` since its upper end is past `i64`.
+/// on each sign of `x`, in `k`, so each sign part of each piece of `x` maps by its corners; a
+/// shift right by at least the digits of `x` gives 0 or -1, so `k` is read up to those digits.
+/// `f64Bits` is in `int[0..<2 ** 64]`.
 ///
 /// Complexity tradeoff: every operand but the `x` of `shl` and `shr` is read by its hull, and
 /// the result is at most two intervals, so a hole in an operand is not carried through and the
@@ -585,9 +585,9 @@ fn fin(e: End) -> i64 {
 /// `l01_39a_bit_words::transfer`. A complete solution would add the known-bits domain of step
 /// L1.40a, which carries the digits fixed in every member. COMPLEXITY.md row C25.
 pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
-    let nonneg = IntervalSet::range(Fin(0), PosInf);
+    let nonneg = IntervalSet::range(End::of(0), PosInf);
     if p == Prim::F64Bits {
-        return nonneg;
+        return IntervalSet::range(End::of(0), Fin(ones(&Num::from(64))));
     }
     let shift = matches!(p, Prim::Shl | Prim::Shr);
     let mut xs: Vec<IntervalSet> = args
@@ -602,150 +602,164 @@ pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
         p,
         Prim::BitNot | Prim::LeadingZeros | Prim::TrailingZeros | Prim::Rotl | Prim::Rotr
     );
-    if width
-        && let Some((_, Fin(wh))) = xs.last().and_then(IntervalSet::bounds)
-        && let Ok(top) = i64::try_from(pow2(wh) - 1)
-    {
-        xs[0] = xs[0].meet(&IntervalSet::of(0, top));
+    if width && let Some((_, Fin(wh))) = xs.last().and_then(IntervalSet::bounds) {
+        let within = IntervalSet::range(End::of(0), Fin(ones(wh)));
+        xs[0] = xs[0].meet(&within);
     }
     if xs.iter().any(IntervalSet::is_empty) {
         return IntervalSet::empty();
     }
     let one = |s: &IntervalSet| match s.bounds() {
-        Some((Fin(a), Fin(b))) if a == b => Some(Value::Int(a)),
+        Some((Fin(a), Fin(b))) if a == b => Some(Value::from(a)),
         _ => None,
     };
     if let Some(vs) = xs.iter().map(one).collect::<Option<Vec<Value>>>() {
         match zed_kernel::bits::word(p, &vs) {
             Ok(Value::Int(v)) => return IntervalSet::single(v),
+            Ok(Value::Big(v)) => return IntervalSet::point(Num::from(&*v)),
             Err(zed_kernel::KernelError::Type(_)) => return IntervalSet::empty(),
-            // A result past `i64`, or one the system could not build: the rules below.
+            // A value the system could not build: the rules below.
             _ => {}
         }
     }
     let b = |i: usize| xs[i].bounds().expect("not empty");
-    let mask = |h: End| match h {
-        Fin(v) => End::upper(pow2(digits(v)) - 1),
-        e => e,
+    let mask = |h: &End| match h {
+        Fin(v) => Fin(ones(&digits(v))),
+        e => e.clone(),
     };
     let (x_lo, x_hi) = b(0);
     match p {
-        Prim::BitAnd => IntervalSet::range(Fin(0), x_hi.min(b(1).1)),
-        Prim::BitOr => IntervalSet::range(x_lo.max(b(1).0), mask(x_hi.max(b(1).1))),
-        Prim::BitXor => IntervalSet::range(Fin(0), mask(x_hi.max(b(1).1))),
+        Prim::BitAnd => IntervalSet::range(End::of(0), x_hi.min(b(1).1).clone()),
+        Prim::BitOr => IntervalSet::range(x_lo.max(b(1).0).clone(), mask(x_hi.max(b(1).1))),
+        Prim::BitXor => IntervalSet::range(End::of(0), mask(x_hi.max(b(1).1))),
         Prim::PopCount => IntervalSet::range(
-            Fin(i64::from(fin(x_lo) > 0)),
+            End::of(i64::from(fin(x_lo).signum() > 0)),
             match x_hi {
                 Fin(v) => Fin(digits(v)),
-                e => e,
+                e => e.clone(),
             },
         ),
         Prim::BitNot => {
             let (w_lo, w_hi) = b(1);
             let lo = match x_hi {
-                Fin(x) => End::lower((pow2(fin(w_lo)) - 1 - i128::from(x)).max(0)),
-                _ => Fin(0),
+                Fin(x) => Fin((&ones(fin(w_lo)) - x).max(Num::ZERO)),
+                _ => End::of(0),
             };
             let hi = match w_hi {
-                Fin(w) => End::upper(pow2(w) - 1 - i128::from(fin(x_lo))),
-                e => e,
+                Fin(w) => Fin(&ones(w) - fin(x_lo)),
+                e => e.clone(),
             };
             IntervalSet::range(lo, hi)
         }
         Prim::LeadingZeros => {
             let (w_lo, w_hi) = b(1);
             let lo = match x_hi {
-                Fin(x) => Fin((fin(w_lo) - digits(x)).max(0)),
-                _ => Fin(0),
+                Fin(x) => Fin((fin(w_lo) - &digits(x)).max(Num::ZERO)),
+                _ => End::of(0),
             };
             let hi = match w_hi {
-                Fin(w) => Fin(w - digits(fin(x_lo))),
-                e => e,
+                Fin(w) => Fin(w - &digits(fin(x_lo))),
+                e => e.clone(),
             };
             IntervalSet::range(lo, hi)
         }
         Prim::TrailingZeros => {
             let (w_lo, w_hi) = b(1);
             let mut pieces = Vec::new();
-            if fin(x_lo) == 0 {
-                pieces.push((w_lo, w_hi));
+            if fin(x_lo).is_zero() {
+                pieces.push((w_lo.clone(), w_hi.clone()));
             }
-            let positive = xs[0].meet(&IntervalSet::range(Fin(1), PosInf));
+            let positive = xs[0].meet(&IntervalSet::range(End::of(1), PosInf));
             match positive.bounds() {
                 Some((Fin(a), Fin(z))) if a == z => {
-                    let t = Fin(i64::from(a.trailing_zeros()));
-                    pieces.push((t, t));
+                    let t = Fin(a.trailing_zeros());
+                    pieces.push((t.clone(), t));
                 }
-                Some((_, Fin(z))) => pieces.push((Fin(0), Fin(digits(z) - 1).min(w_hi))),
-                Some((_, hi)) => pieces.push((Fin(0), hi.min(w_hi))),
+                Some((_, Fin(z))) => {
+                    pieces.push((End::of(0), Fin(&digits(z) - &Num::ONE).min(w_hi.clone())))
+                }
+                Some((_, hi)) => pieces.push((End::of(0), hi.clone().min(w_hi.clone()))),
                 None => {}
             }
             IntervalSet::from_pieces(pieces)
         }
         Prim::Rotl | Prim::Rotr => {
-            if x_hi == Fin(0) {
+            if *x_hi == End::of(0) {
                 return IntervalSet::single(0);
             }
             let hi = match b(2).1 {
-                Fin(w) => End::upper(pow2(w) - 1),
-                e => e,
+                Fin(w) => Fin(ones(w)),
+                e => e.clone(),
             };
-            IntervalSet::range(Fin(i64::from(fin(x_lo) > 0)), hi)
+            IntervalSet::range(End::of(i64::from(fin(x_lo).signum() > 0)), hi)
         }
         Prim::Shl => {
             let (k_lo, k_hi) = b(1);
-            let k_lo = fin(k_lo);
-            xs[0].clone().lift1(|piece| {
-                IntervalSet::from_pieces(vec![piece])
+            let k_lo = Num::pow2(fin(k_lo));
+            let k_hi = match k_hi {
+                Fin(k) => Some(Num::pow2(k)),
+                _ => None,
+            };
+            xs[0].lift1(|piece| {
+                IntervalSet::from_pieces(vec![piece.clone()])
                     .sign_parts()
                     .into_iter()
                     .map(|(lo, hi)| match lo.signum() {
-                        0 => (Fin(0), Fin(0)),
+                        0 => (End::of(0), End::of(0)),
                         1 => (
-                            End::lower(shifted(fin(lo), k_lo)),
-                            match (hi, k_hi) {
-                                (Fin(h), Fin(k)) => End::upper(shifted(h, k)),
+                            Fin(fin(&lo) * &k_lo),
+                            match (&hi, &k_hi) {
+                                (Fin(h), Some(k)) => Fin(h * k),
                                 _ => PosInf,
                             },
                         ),
                         _ => (
-                            match (lo, k_hi) {
-                                (Fin(l), Fin(k)) => End::lower(shifted(l, k)),
+                            match (&lo, &k_hi) {
+                                (Fin(l), Some(k)) => Fin(l * k),
                                 _ => NegInf,
                             },
-                            End::upper(shifted(fin(hi), k_lo)),
+                            Fin(fin(&hi) * &k_lo),
                         ),
                     })
                     .collect()
             })
         }
         _ => {
-            // `shr`: an arithmetic shift by more than 63 places is the shift by 63.
+            // `shr`: the floor quotient by `2^k`; a shift by at least the digits of `x` gives
+            // 0 or -1, as the shift by those digits does, so `k` is read up to them.
             let (k_lo, k_hi) = b(1);
-            let k_lo = fin(k_lo).min(63);
-            let k_hi = match k_hi {
-                Fin(k) => k.min(63),
-                _ => 63,
+            let shr = |x: &Num, k: Option<&Num>| -> Num {
+                let d = digits(x);
+                let k = match k {
+                    Some(k) if *k < d => k,
+                    _ => &d,
+                };
+                x.div_floor(&Num::pow2(k))
             };
-            xs[0].clone().lift1(|piece| {
-                IntervalSet::from_pieces(vec![piece])
+            let k_lo = fin(k_lo);
+            let k_hi = match k_hi {
+                Fin(k) => Some(k),
+                _ => None,
+            };
+            xs[0].lift1(|piece| {
+                IntervalSet::from_pieces(vec![piece.clone()])
                     .sign_parts()
                     .into_iter()
                     .map(|(lo, hi)| match lo.signum() {
-                        0 => (Fin(0), Fin(0)),
+                        0 => (End::of(0), End::of(0)),
                         1 => (
-                            Fin(fin(lo) >> k_hi),
-                            match hi {
-                                Fin(h) => Fin(h >> k_lo),
-                                e => e,
+                            Fin(shr(fin(&lo), k_hi)),
+                            match &hi {
+                                Fin(h) => Fin(shr(h, Some(k_lo))),
+                                e => e.clone(),
                             },
                         ),
                         _ => (
-                            match lo {
-                                Fin(l) => Fin(l >> k_lo),
-                                e => e,
+                            match &lo {
+                                Fin(l) => Fin(shr(l, Some(k_lo))),
+                                e => e.clone(),
                             },
-                            Fin(fin(hi) >> k_hi),
+                            Fin(shr(fin(&hi), k_hi)),
                         ),
                     })
                     .collect()
@@ -759,24 +773,32 @@ mod tests {
     use super::*;
 
     fn set(pieces: &[(i64, i64)]) -> IntervalSet {
-        IntervalSet::from_pieces(pieces.iter().map(|&(a, b)| (Fin(a), Fin(b))).collect())
+        IntervalSet::from_pieces(
+            pieces
+                .iter()
+                .map(|&(a, b)| (End::of(a), End::of(b)))
+                .collect(),
+        )
     }
 
     #[test]
     fn normalization_merges_overlapping_and_adjacent_pieces() {
         assert_eq!(set(&[(5, 7), (0, 2), (3, 3)]), set(&[(0, 3), (5, 7)]));
-        assert_eq!(set(&[(0, 2), (1, 9)]).pieces(), &[(Fin(0), Fin(9))]);
+        assert_eq!(set(&[(0, 2), (1, 9)]).pieces(), &[(End::of(0), End::of(9))]);
         assert!(set(&[(3, 2)]).is_empty());
-        assert_eq!(IntervalSet::range(Fin(i64::MAX), PosInf).pieces().len(), 1);
+        assert_eq!(
+            IntervalSet::range(End::of(i64::MAX), PosInf).pieces().len(),
+            1
+        );
     }
 
     #[test]
     fn display_uses_the_type_syntax() {
         assert_eq!(set(&[(0, 4)]).to_string(), "[0..=4]");
-        assert_eq!(IntervalSet::range(Fin(0), PosInf).to_string(), "[0..]");
+        assert_eq!(IntervalSet::range(End::of(0), PosInf).to_string(), "[0..]");
         assert_eq!(IntervalSet::top().to_string(), "[..]");
         assert_eq!(
-            IntervalSet::from_pieces(vec![(NegInf, Fin(-1)), (Fin(1), PosInf)]).to_string(),
+            IntervalSet::from_pieces(vec![(NegInf, End::of(-1)), (End::of(1), PosInf)]).to_string(),
             "[..=-1, 1..]"
         );
         assert_eq!(IntervalSet::empty().to_string(), "[]");
@@ -791,7 +813,7 @@ mod tests {
                 IntervalSet::from_pieces(
                     (0..6)
                         .filter(|i| mask & (1 << i) != 0)
-                        .map(|i| (Fin(i), Fin(i)))
+                        .map(|i| (End::of(i), End::of(i)))
                         .collect(),
                 )
             })
@@ -820,11 +842,11 @@ mod tests {
         let a = set(&[(0, 2)]);
         assert_eq!(
             a.widen(&set(&[(0, 3)]), &none),
-            IntervalSet::range(Fin(0), PosInf)
+            IntervalSet::range(End::of(0), PosInf)
         );
         assert_eq!(
             a.widen(&set(&[(-1, 2)]), &none),
-            IntervalSet::range(NegInf, Fin(2))
+            IntervalSet::range(NegInf, End::of(2))
         );
         assert_eq!(a.widen(&a, &none), a);
         assert_eq!(IntervalSet::empty().widen(&a, &none), a);

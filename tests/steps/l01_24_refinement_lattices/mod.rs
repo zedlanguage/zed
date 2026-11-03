@@ -9,6 +9,7 @@
 
 mod bounds;
 mod cell;
+mod ends;
 mod float;
 mod loops;
 mod scaling;
@@ -61,17 +62,14 @@ fn random_bounds(rng: &mut Rng) -> Bounds {
     }
     let ints = match rng.below(4) {
         0 => IntervalSet::top(),
-        1 => IntervalSet::range(End::Fin(rng.int(-10, 4)), End::PosInf),
-        2 => IntervalSet::range(End::NegInf, End::Fin(rng.int(-4, 10))),
+        1 => IntervalSet::range(End::of(rng.int(-10, 4)), End::PosInf),
+        2 => IntervalSet::range(End::NegInf, End::of(rng.int(-4, 10))),
         _ => {
             let lo = rng.int(-12, 6);
             let mid = lo + rng.int(0, 6);
             IntervalSet::from_pieces(vec![
-                (End::Fin(lo), End::Fin(mid)),
-                (
-                    End::Fin(mid + rng.int(2, 4)),
-                    End::Fin(mid + rng.int(4, 12)),
-                ),
+                (End::of(lo), End::of(mid)),
+                (End::of(mid + rng.int(2, 4)), End::of(mid + rng.int(4, 12))),
             ])
         }
     };
@@ -82,8 +80,8 @@ fn random_bounds(rng: &mut Rng) -> Bounds {
             .map(|_| Bound {
                 affine: affine(rng.pick(&terms), rng.int(-3, 3)),
                 floor: match rng.below(3) {
-                    0 => End::Fin(rng.int(-6, 6)),
-                    _ => none,
+                    0 => End::of(rng.int(-6, 6)),
+                    _ => none.clone(),
                 },
             })
             .collect::<Vec<_>>()

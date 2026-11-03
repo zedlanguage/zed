@@ -70,7 +70,7 @@ use std::sync::Arc;
 use zed_kernel::{Evaluator, Prim, Term, Value, World, eval, on_stack};
 
 use super::int::Int;
-use super::interval::{self, End, IntervalSet};
+use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Congruence, Landmarks, Lattice};
 use super::presburger::{self, Con, Formula, Lin, Refusal, Relation};
 use super::revision::{self, Exponent, Op, Tonicity, reduce_congruence};
@@ -90,18 +90,11 @@ pub enum Demand {
 }
 
 impl Demand {
-    /// Whether `v` meets the demand. An integer outside `i64` lies in the set when the set is
-    /// unbounded on its side.
+    /// Whether `v` meets the demand, exact at any magnitude.
     pub fn holds(&self, v: &Value) -> bool {
         match (self, v) {
             (Demand::Ints(z), Value::Int(n)) => z.contains(*n),
-            (Demand::Ints(z), Value::Big(_)) => {
-                let positive = v > &Value::Int(0);
-                match z.bounds() {
-                    Some((lo, hi)) => (positive && hi == PosInf) || (!positive && lo == NegInf),
-                    None => false,
-                }
-            }
+            (Demand::Ints(z), Value::Big(n)) => z.contains_end(&Fin(Num::from(&**n))),
             (Demand::Bool(w), Value::Bool(b)) => w == b,
             _ => false,
         }
@@ -247,12 +240,10 @@ fn preimage_in(
     }
 
     tx.start(inputs, marks.clone());
-    interval::rounded();
     let r = tx.back(root, ROOT, demand);
     let mut r = Whole {
         dom: tx.whole(&r),
-        // An exact backward transfer through a rounded end may keep points that fail.
-        exact: r.exact && !interval::rounded(),
+        exact: r.exact,
     };
     let mut stops = std::mem::take(&mut tx.run.stops);
     let mut enumerated = false;
@@ -271,14 +262,12 @@ fn preimage_in(
         r = Whole { dom, exact: true };
     }
     let (mut relation, mut refusal) = (None, None);
-    interval::rounded();
     if !r.exact
         && !is_empty(&r.dom)
         && let Some((rel, found)) = linear(tx, root, &r.dom, demand)
     {
         match found {
             Ok((dom, exact, why)) => {
-                let exact = exact && !interval::rounded();
                 r = Whole { dom, exact };
                 relation = (!exact).then_some(rel);
                 refusal = why;
@@ -395,7 +384,7 @@ fn split_classes(
     // ([`mod_pre`]).
     if early
         && let Some((Fin(lo), Fin(hi))) = dom[&name].bounds()
-        && i128::from(hi).div_euclid(m) <= i128::from(lo).div_euclid(m) + 1
+        && hi.div_euclid(&Num::from(m)) <= &lo.div_euclid(&Num::from(m)) + &Num::ONE
     {
         *deferred = true;
         return None;
@@ -413,14 +402,13 @@ fn split_classes(
         tx.run.residue = Some(Residue {
             x,
             m,
-            class: IntervalSet::range(End::from_i128(w[0]), End::from_i128(w[1] - 1)),
+            class: IntervalSet::range(End::from(w[0]), End::from(w[1] - 1)),
             index,
             cuts: cuts.clone(),
             alone: false,
         });
-        interval::rounded();
         let r = tx.back(root, ROOT, demand);
-        let exact = r.exact && !interval::rounded() && tx.run.stops.is_empty();
+        let exact = r.exact && tx.run.stops.is_empty();
         let Residue { class, alone, .. } = tx.run.residue.take().expect("the class was set above");
         if early && alone {
             *deferred = true;
@@ -449,8 +437,8 @@ fn split_classes(
     let common = common.expect("at least two classes");
     let mut pieces = common.pieces().to_vec();
     for (s, class) in &classes {
-        for &(lo, hi) in common.complement_in(s).pieces() {
-            let (own, exact) = mod_pre(class, c, &IntervalSet::range(lo, hi));
+        for (lo, hi) in common.complement_in(s).pieces() {
+            let (own, exact) = mod_pre(class, c, &IntervalSet::range(lo.clone(), hi.clone()));
             if !exact {
                 return None;
             }
@@ -777,7 +765,7 @@ struct Terms<'t> {
     name_ids: HashMap<Arc<str>, Name>,
     made: HashMap<Made, Tid>,
     /// The integer literals of the given terms, each term counted once.
-    ints: Vec<i64>,
+    ints: Vec<Num>,
 }
 
 impl<'t> Terms<'t> {
@@ -802,11 +790,16 @@ impl<'t> Terms<'t> {
         while let Some((t, id)) = todo.pop() {
             let node = match t {
                 Term::Lit(Value::Int(n)) => {
-                    self.ints.push(*n);
+                    self.ints.push(Num::from(*n));
                     Node::Int(*n)
                 }
                 Term::Lit(Value::Bool(b)) => Node::Bool(*b),
-                Term::Lit(v) => Node::Lit(v),
+                Term::Lit(v) => {
+                    if let Value::Big(n) = v {
+                        self.ints.push(Num::from(&**n));
+                    }
+                    Node::Lit(v)
+                }
                 Term::Var(x) => Node::Var(self.name(x)),
                 Term::PrimFn(p) => Node::PrimFn(*p),
                 Term::Lam(ps, b) => {
@@ -1248,12 +1241,12 @@ impl<'t> Tx<'t> {
     /// literals, the ends of the input domains and of the demand, each with its neighbors. A
     /// finite set, so a lambda has finitely many summaries.
     fn landmarks(&self, inputs: &Domains, demand: &Demand) -> Landmarks {
-        let ends = |s: &IntervalSet| -> Vec<i64> {
+        let ends = |s: &IntervalSet| -> Vec<Num> {
             s.pieces()
                 .iter()
-                .flat_map(|&(a, b)| [a, b])
+                .flat_map(|(a, b)| [a, b])
                 .filter_map(|e| match e {
-                    Fin(v) => Some(v),
+                    Fin(v) => Some(v.clone()),
                     _ => None,
                 })
                 .collect()
@@ -1262,7 +1255,7 @@ impl<'t> Tx<'t> {
             Demand::Ints(z) => ends(z),
             Demand::Bool(_) => Vec::new(),
         };
-        let ints = (self.terms.ints.iter().copied())
+        let ints = (self.terms.ints.iter().cloned())
             .chain(inputs.values().flat_map(ends))
             .chain(demanded);
         Landmarks::of(ints, [])
@@ -2381,6 +2374,7 @@ impl<'t> Tx<'t> {
     fn fwd_at(&mut self, t: Tid, env: Eid) -> Fwd {
         match self.node(t) {
             Node::Int(n) => Fwd::int(IntervalSet::single(n)),
+            Node::Lit(Value::Big(n)) => Fwd::int(IntervalSet::point(Num::from(&**n))),
             Node::Bool(b) => Fwd::bools(b, !b),
             Node::Lit(Value::Atom(_)) => Fwd {
                 fails: true,
@@ -2527,20 +2521,9 @@ impl<'t> Tx<'t> {
     /// result under an integer demand `z` is its result under `z` met with the interval:
     /// an input, a literal, a name bound to such a term, a constant added to or subtracted
     /// from one, a choice between two of them, and their `min` or `max`. `None` for any other
-    /// term, and for a hull whose computation rounds an end; the rounding flag is left as it
-    /// was.
+    /// term.
     fn clip(&mut self, t: Tid, env: Eid) -> Option<IntervalSet> {
-        self.cached(
-            |m| &mut m.clip,
-            (t, env),
-            |s| {
-                let before = interval::rounded();
-                interval::set_rounded(false);
-                let hull = s.clip_at(t, env).filter(|_| !interval::rounded());
-                interval::set_rounded(before);
-                hull
-            },
-        )
+        self.cached(|m| &mut m.clip, (t, env), |s| s.clip_at(t, env))
     }
 
     fn clip_at(&mut self, t: Tid, env: Eid) -> Option<IntervalSet> {
@@ -2579,10 +2562,16 @@ impl<'t> Tx<'t> {
             // `min` and `max` are monotone in each operand, so their hull is the operator on
             // the operands' ends.
             Node::Prim(p @ (Prim::Min | Prim::Max), args) if args.len() == 2 => {
-                let (la, ha) = self.clip(self.arg(args, 0), env)?.bounds()?;
-                let (lb, hb) = self.clip(self.arg(args, 1), env)?.bounds()?;
+                let (ca, cb) = (
+                    self.clip(self.arg(args, 0), env)?,
+                    self.clip(self.arg(args, 1), env)?,
+                );
+                let ((la, ha), (lb, hb)) = (ca.bounds()?, cb.bounds()?);
                 let pick = if p == Prim::Min { End::min } else { End::max };
-                Some(IntervalSet::range(pick(la, lb), pick(ha, hb)))
+                Some(IntervalSet::range(
+                    pick(la.clone(), lb.clone()),
+                    pick(ha.clone(), hb.clone()),
+                ))
             }
             _ => None,
         }
@@ -2628,9 +2617,9 @@ impl<'t> Tx<'t> {
     }
 
     /// Whether the summary and the clip may read the term under the integer demand `z`: no
-    /// end the transfer computes from the ends of `z` and of the domains leaves `i64`. The
-    /// transfer they replace would then round no end, and the result is the one it gives,
-    /// rounding flag included.
+    /// end the transfer computes from the ends of `z` and of the domains leaves `i64`, where
+    /// the summary's machine integers hold ([`in_i64`]). Both readings are exact, so the guard
+    /// changes the cost and never the result.
     fn fits(&mut self, t: Tid, env: Eid, z: &IntervalSet) -> bool {
         let r = self.reach(t, env);
         let w = self.cx.widest.saturating_add(widest(z));
@@ -2994,8 +2983,8 @@ impl<'t> Tx<'t> {
                 let (Some((flo, fhi)), Some((lo, hi))) = (f.bounds(), zf.bounds()) else {
                     return Res::none();
                 };
-                let up = IntervalSet::range(lo, fhi).is_subset(z);
-                let down = IntervalSet::range(flo, hi).is_subset(z);
+                let up = IntervalSet::range(lo.clone(), fhi.clone()).is_subset(z);
+                let down = IntervalSet::range(flo.clone(), hi.clone()).is_subset(z);
                 // min ≥ lo: both are; max ≤ hi: both are. The other rays: either is. When
                 // the demand holds the whole forward range, both rays apply; the upward one is
                 // taken.
@@ -3003,9 +2992,9 @@ impl<'t> Tx<'t> {
                 let either = (p == Min && down && !up) || (p == Max && up);
                 if both || either {
                     let r = if up {
-                        IntervalSet::range(lo, PosInf)
+                        IntervalSet::range(lo.clone(), PosInf)
                     } else {
-                        IntervalSet::range(NegInf, hi)
+                        IntervalSet::range(NegInf, hi.clone())
                     };
                     let ra = self.back_at(a, env, &ints(r.clone()));
                     let rb = self.back_at(b, env, &ints(r));
@@ -3181,12 +3170,15 @@ impl<'t> Tx<'t> {
             }
             let set = r.dom.get(var).map_or(&**dom, |s| &**s);
             let tree = arm.to_treap(dom)?;
-            for &(lo, hi) in set.pieces() {
+            if !in_i64(set) {
+                return None;
+            }
+            for (lo, hi) in set.pieces() {
                 if let Some(s) = slice_treap(tree.clone(), lo, hi)? {
                     // A value the arm takes on these inputs leaves `i64`: the term fails there.
                     fits(s.vals.0)?;
                     fits(s.vals.1)?;
-                    slices.push((lo, s));
+                    slices.push((key(lo), s));
                 }
             }
         }
@@ -3400,13 +3392,15 @@ impl<'t> Tx<'t> {
         if res.x != x || res.m != c.unsigned_abs() as i128 {
             return None;
         }
-        let within = IntervalSet::range(Fin(0), End::from_i128(res.m - 1));
+        let within = IntervalSet::range(End::of(0), End::from(res.m - 1));
         let mut yes = Vec::new();
-        for &(lo, hi) in z.meet(&within).pieces() {
+        for (lo, hi) in z.meet(&within).pieces() {
             let (Fin(lo), Fin(hi)) = (lo, hi) else {
                 return None;
             };
-            let (lo, hi) = (i128::from(lo), i128::from(hi));
+            let (Some(lo), Some(hi)) = (lo.to_i128(), hi.to_i128()) else {
+                return None;
+            };
             let i = res.cuts.partition_point(|&e| e <= lo) - 1;
             let j = res.cuts.partition_point(|&e| e <= hi) - 1;
             // The cuts hold the ends of every such test's set ([`Tx::residue_cuts`]).
@@ -3431,14 +3425,13 @@ impl<'t> Tx<'t> {
             }
             Pa::Linear { var, .. } | Pa::Piecewise { var, .. } => (var, self.cx.inputs.get(var)?),
         };
+        if !in_i64(z) {
+            return None;
+        }
         let root = pa.to_treap(dom)?;
         let mut pieces = Vec::new();
         invert_treap(&root, (1, 0), z, &mut pieces)?;
-        // The pieces are exact; merging two that meet at `i64::MAX` would raise the rounding
-        // flag for an end it does not round.
-        let before = interval::rounded();
         let met = IntervalSet::from_pieces(pieces).meet(dom);
-        interval::set_rounded(before);
         if met.is_empty() {
             return Some(Res::none());
         }
@@ -3504,9 +3497,15 @@ impl Pa {
             Pa::Const(c) => (0, i128::from(*c)),
             Pa::Linear { a, b, .. } => (*a, *b),
         };
+        if !in_i64(dom) {
+            return None;
+        }
         let mut root = None;
-        for &(lo, hi) in dom.pieces() {
-            root = join_treap(root, Some(make_node(lo, hi, a, b, None, None)?))?;
+        for (lo, hi) in dom.pieces() {
+            root = join_treap(
+                root,
+                Some(make_node(lo.clone(), hi.clone(), a, b, None, None)?),
+            )?;
         }
         Some(root)
     }
@@ -3736,20 +3735,46 @@ fn fits(x: i128) -> Option<i128> {
     i64::try_from(x).is_ok().then_some(x)
 }
 
+/// Whether every finite end of `s` lies strictly inside `i64`, as the summary's ends must:
+/// the ends of `i64` stand for the infinities.
+// Complexity tradeoff: the piecewise-affine summary of an `if` chain is given up when a
+// domain or a demand it reads has an end past `i64`, and the `if` is read as before S22a
+// (each arm by the catalog): exact, at the cost of the per-arm transfer. Why: the summary's
+// pieces, values and tags are machine integers, with the ends of `i64` standing for the
+// infinities, which keeps each treap operation O(1) per node; ends of any size would cost
+// time in their bits at every node. Trigger: an input domain, an arm's set or a demand with
+// a finite end outside `i64` or at one of its ends. Test:
+// `l01_25_preimage_catalog::kept_ends::an_if_chain_over_ends_past_i64_is_read_arm_by_arm`.
+// COMPLEXITY.md S33. A complete solution would hold the pieces' ends and values as `Num`.
+fn in_i64(s: &IntervalSet) -> bool {
+    s.pieces().iter().all(|(lo, hi)| {
+        [lo, hi].into_iter().all(
+            |e| !matches!(e, Fin(v) if v.to_i64().is_none_or(|w| w == i64::MIN || w == i64::MAX)),
+        )
+    })
+}
+
+/// A finite end that [`in_i64`] admitted.
+fn small(v: &Num) -> i128 {
+    v.to_i64()
+        .expect("the summary's ends lie in i64, checked by in_i64")
+        .into()
+}
+
 /// An end as a number: the infinities lie past every `i64`.
-fn key(e: End) -> i128 {
+fn key(e: &End) -> i128 {
     match e {
         NegInf => i128::MIN,
-        Fin(v) => v.into(),
+        Fin(v) => small(v),
         PosInf => i128::MAX,
     }
 }
 
 /// An end of an input's domain as an input: the infinities are the ends of `i64`.
-fn input(e: End) -> i128 {
+fn input(e: &End) -> i128 {
     match e {
         NegInf => i64::MIN.into(),
-        Fin(v) => v.into(),
+        Fin(v) => small(v),
         PosInf => i64::MAX.into(),
     }
 }
@@ -3772,11 +3797,11 @@ fn compose(inner: (i128, i128), outer: (i128, i128)) -> Option<(i128, i128)> {
 }
 
 /// A deterministic splitmix64 priority from the piece's ends.
-fn prio_of(lo: End, hi: End) -> u64 {
-    let code = |e: End| -> u64 {
+fn prio_of(lo: &End, hi: &End) -> u64 {
+    let code = |e: &End| -> u64 {
         match e {
             NegInf => 0,
-            Fin(v) => (v as u64).wrapping_add(1) ^ 0x5555_5555_5555_5555,
+            Fin(v) => (small(v) as u64).wrapping_add(1) ^ 0x5555_5555_5555_5555,
             PosInf => u64::MAX,
         }
     };
@@ -3789,23 +3814,23 @@ fn prio_of(lo: End, hi: End) -> u64 {
 /// The node for the piece `lo..=hi` with value `a * x + b` over two subtrees with no tag
 /// above them, its coefficients in `i64`.
 fn make_node(lo: End, hi: End, a: i128, b: i128, left: Tree, right: Tree) -> Option<Rc<PaNode>> {
-    let at = |x: End| a.checked_mul(input(x))?.checked_add(b);
-    let (u, v) = (at(lo)?, at(hi)?);
+    let at = |x: &End| a.checked_mul(input(x))?.checked_add(b);
+    let (u, v) = (at(&lo)?, at(&hi)?);
     let mut vals = (u.min(v), u.max(v));
-    let mut span = (lo, hi);
+    let mut span = (lo.clone(), hi.clone());
     let mut dense = true;
-    let next =
-        |x: End, y: End| matches!((x, y), (Fin(x), Fin(y)) if i128::from(x) + 1 == i128::from(y));
+    let next = |x: &End, y: &End| matches!((x, y), (Fin(x), Fin(y)) if small(x) + 1 == small(y));
     if let Some(l) = &left {
         vals = (vals.0.min(l.vals.0), vals.1.max(l.vals.1));
-        span.0 = l.span.0;
-        dense &= l.dense && next(l.span.1, lo);
+        span.0 = l.span.0.clone();
+        dense &= l.dense && next(&l.span.1, &lo);
     }
     if let Some(r) = &right {
         vals = (vals.0.min(r.vals.0), vals.1.max(r.vals.1));
-        span.1 = r.span.1;
-        dense &= r.dense && next(hi, r.span.0);
+        span.1 = r.span.1.clone();
+        dense &= r.dense && next(&hi, &r.span.0);
     }
+    let prio = prio_of(&lo, &hi);
     Some(Rc::new(PaNode {
         lo,
         hi,
@@ -3814,7 +3839,7 @@ fn make_node(lo: End, hi: End, a: i128, b: i128, left: Tree, right: Tree) -> Opt
         span,
         vals,
         dense,
-        prio: prio_of(lo, hi),
+        prio,
         tag: (1, 0),
         left,
         right,
@@ -3832,9 +3857,7 @@ fn apply_tag(node: &Rc<PaNode>, f: (i128, i128)) -> Option<Rc<PaNode>> {
         b: fits(node.b.checked_mul(mul)?.checked_add(add)?)?,
         vals: map_vals(node.vals, f)?,
         tag: compose(node.tag, f)?,
-        left: node.left.clone(),
-        right: node.right.clone(),
-        ..**node
+        ..(**node).clone()
     }))
 }
 
@@ -3856,11 +3879,11 @@ fn join_treap(left: Tree, right: Tree) -> Option<Tree> {
             if l.prio >= r.prio {
                 let (ll, lr) = push_down(&l)?;
                 let nr = join_treap(lr, Some(r))?;
-                make_node(l.lo, l.hi, l.a, l.b, ll, nr).map(Some)
+                make_node(l.lo.clone(), l.hi.clone(), l.a, l.b, ll, nr).map(Some)
             } else {
                 let (rl, rr) = push_down(&r)?;
                 let nl = join_treap(Some(l), rl)?;
-                make_node(r.lo, r.hi, r.a, r.b, nl, rr).map(Some)
+                make_node(r.lo.clone(), r.hi.clone(), r.a, r.b, nl, rr).map(Some)
             }
         }
     }
@@ -3872,38 +3895,38 @@ fn split_at(root: Tree, cut: i128) -> Option<(Tree, Tree)> {
     let Some(node) = root else {
         return Some((None, None));
     };
-    if cut <= key(node.span.0) {
+    if cut <= key(&node.span.0) {
         return Some((None, Some(node)));
     }
-    if cut > key(node.span.1) {
+    if cut > key(&node.span.1) {
         return Some((Some(node), None));
     }
     let (left, right) = push_down(&node)?;
-    let (lo, hi, a, b) = (node.lo, node.hi, node.a, node.b);
-    if cut <= key(lo) {
+    let (lo, hi, a, b) = (node.lo.clone(), node.hi.clone(), node.a, node.b);
+    if cut <= key(&lo) {
         let (ll, lr) = split_at(left, cut)?;
         Some((ll, Some(make_node(lo, hi, a, b, lr, right)?)))
-    } else if cut > key(hi) {
+    } else if cut > key(&hi) {
         let (rl, rr) = split_at(right, cut)?;
         Some((Some(make_node(lo, hi, a, b, left, rl)?), rr))
     } else {
-        let below = Fin(i64::try_from(cut - 1).ok()?);
-        let above = Fin(i64::try_from(cut).ok()?);
+        let below = End::of(i64::try_from(cut - 1).ok()?);
+        let above = End::of(i64::try_from(cut).ok()?);
         let l = join_treap(left, Some(make_node(lo, below, a, b, None, None)?))?;
         let r = join_treap(Some(make_node(above, hi, a, b, None, None)?), right)?;
         Some((l, r))
     }
 }
 
-/// The pieces of `root` within `lo..=hi`. The ends of `i64` stand for the infinities, so
-/// no cut is made past them.
-fn slice_treap(root: Tree, lo: End, hi: End) -> Option<Tree> {
+/// The pieces of `root` within `lo..=hi`, whose finite ends lie strictly inside `i64`
+/// ([`in_i64`]), so that a cut is never confused with an infinity.
+fn slice_treap(root: Tree, lo: &End, hi: &End) -> Option<Tree> {
     let root = match lo {
-        Fin(v) if v > i64::MIN => split_at(root, v.into())?.1,
+        Fin(v) => split_at(root, small(v))?.1,
         _ => root,
     };
     match hi {
-        Fin(v) if v < i64::MAX => Some(split_at(root, i128::from(v) + 1)?.0),
+        Fin(v) => Some(split_at(root, small(v) + 1)?.0),
         _ => Some(root),
     }
 }
@@ -3923,29 +3946,29 @@ fn invert_treap(
     };
     let (lo, hi) = map_vals(n.vals, f)?;
     let zs = z.pieces();
-    let i = zs.partition_point(|&(_, zhi)| key(zhi) < lo);
-    let Some(&(zlo, zhi)) = zs.get(i) else {
+    let i = zs.partition_point(|(_, zhi)| key(zhi) < lo);
+    let Some((zlo, zhi)) = zs.get(i) else {
         return Some(());
     };
     if key(zlo) > hi {
         return Some(());
     }
     if n.dense && key(zlo) <= lo && hi <= key(zhi) {
-        out.push(n.span);
+        out.push(n.span.clone());
         return Some(());
     }
     let below = compose(n.tag, f)?;
     invert_treap(&n.left, below, z, out)?;
     let (a, b) = compose((n.a, n.b), f)?;
-    invert_piece(n.lo, n.hi, a, b, z, out)?;
+    invert_piece(&n.lo, &n.hi, a, b, z, out)?;
     invert_treap(&n.right, below, z, out)
 }
 
 /// Appends to `out` the inputs `x` in `lo..=hi` with `a * x + b` in `z`, each value of the
 /// piece lying in `i64`. Exact, so no end is rounded.
 fn invert_piece(
-    lo: End,
-    hi: End,
+    lo: &End,
+    hi: &End,
     a: i128,
     b: i128,
     z: &IntervalSet,
@@ -3956,8 +3979,8 @@ fn invert_piece(
     let (u, v) = (at(x0)?, at(x1)?);
     let (vlo, vhi) = (u.min(v), u.max(v));
     let zs = z.pieces();
-    let start = zs.partition_point(|&(_, zhi)| key(zhi) < vlo);
-    for &(zlo, zhi) in &zs[start..] {
+    let start = zs.partition_point(|(_, zhi)| key(zhi) < vlo);
+    for (zlo, zhi) in &zs[start..] {
         if key(zlo) > vhi {
             break;
         }
@@ -3970,7 +3993,13 @@ fn invert_piece(
         };
         let (xl, xh) = (xl.max(x0), xh.min(x1));
         if xl <= xh {
-            let end = |x: i128, e: End, at: i128| if x == at { e } else { Fin(x as i64) };
+            let end = |x: i128, e: &End, at: i128| {
+                if x == at {
+                    e.clone()
+                } else {
+                    Fin(Num::from(x))
+                }
+            };
             out.push((end(xl, lo, x0), end(xh, hi, x1)));
         }
     }
@@ -4022,7 +4051,9 @@ fn compare(p: Prim, a: &IntervalSet, b: &IntervalSet) -> Fwd {
     let (Some((alo, ahi)), Some((blo, bhi))) = (a.bounds(), b.bounds()) else {
         return Fwd::bools(false, false);
     };
-    let one = |x: &IntervalSet| x.bounds().filter(|(l, h)| l == h);
+    fn one(x: &IntervalSet) -> Option<(&End, &End)> {
+        x.bounds().filter(|(l, h)| l == h)
+    }
     let (t, f) = match p {
         Prim::Lt => (alo < bhi, ahi >= blo),
         Prim::Le => (alo <= bhi, ahi > blo),
@@ -4062,53 +4093,45 @@ fn mirror(p: Prim) -> Prim {
 
 /// The integers `x` with `x p c`.
 fn ray(p: Prim, c: i64) -> IntervalSet {
-    let c = c as i128;
-    let (lower, upper) = (End::lower, End::upper);
+    let c = Num::from(c);
+    let fin = |d: i64| Fin(&c + &Num::from(d));
     match p {
-        Prim::Lt => IntervalSet::range(NegInf, upper(c - 1)),
-        Prim::Le => IntervalSet::range(NegInf, upper(c)),
-        Prim::Gt => IntervalSet::range(lower(c + 1), PosInf),
-        Prim::Ge => IntervalSet::range(lower(c), PosInf),
-        Prim::Eq => IntervalSet::range(lower(c), upper(c)),
-        _ => IntervalSet::single(c as i64).complement_in(&IntervalSet::top()),
+        Prim::Lt => IntervalSet::range(NegInf, fin(-1)),
+        Prim::Le => IntervalSet::range(NegInf, fin(0)),
+        Prim::Gt => IntervalSet::range(fin(1), PosInf),
+        Prim::Ge => IntervalSet::range(fin(0), PosInf),
+        Prim::Eq => IntervalSet::range(fin(0), fin(0)),
+        _ => IntervalSet::from_pieces(vec![(NegInf, fin(-1)), (fin(1), PosInf)]),
     }
 }
 
-/// Each piece of `z` moved up by `c`.
+/// Each piece of `z` moved up by `c`, exact.
 fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
-    let m = |e: End, end: fn(i128) -> End| match e {
-        Fin(v) => end(v as i128 + c),
-        e => e,
+    let c = Num::from(c);
+    let m = |e: &End| match e {
+        Fin(v) => Fin(v + &c),
+        e => e.clone(),
     };
-    IntervalSet::from_pieces(
-        z.pieces()
-            .iter()
-            .map(|&(lo, hi)| (m(lo, End::lower), m(hi, End::upper)))
-            .collect(),
-    )
+    IntervalSet::from_pieces(z.pieces().iter().map(|(lo, hi)| (m(lo), m(hi))).collect())
 }
 
 /// The integers `c - v` for each member `v` of `z`: the integers `x` with `c - x` in `z`, each
-/// piece reflected and moved by `c`, in one step in `i128` so that only an end past `i64` is
-/// rounded (negating first would round the end `-i64::MIN`). The pieces stay apart and the
+/// piece reflected and moved by `c`, exact at any magnitude. The pieces stay apart and the
 /// result is exact; the forward image of `{c} - z` would cap the pieces of each sign region
 /// (`revision::map2`) and merge the pieces it moves across zero (plan item S22b). The clip
-/// reads `c - x` by it too: on its one interval the forward image gave the same set but raised
-/// the rounding flag at a split point past `i64` (plan item S22b-rest).
+/// reads `c - x` by it too (plan item S22b-rest).
 fn reflect(z: &IntervalSet, c: i128) -> IntervalSet {
-    let lower = |e: End| match e {
-        Fin(v) => End::lower(c - v as i128),
-        _ => NegInf,
-    };
-    let upper = |e: End| match e {
-        Fin(v) => End::upper(c - v as i128),
-        _ => PosInf,
+    let c = Num::from(c);
+    let m = |e: &End| match e {
+        Fin(v) => Fin(&c - v),
+        NegInf => PosInf,
+        PosInf => NegInf,
     };
     IntervalSet::from_pieces(
         z.pieces()
             .iter()
             .rev()
-            .map(|&(lo, hi)| (lower(hi), upper(lo)))
+            .map(|(lo, hi)| (m(hi), m(lo)))
             .collect(),
     )
 }
@@ -4122,26 +4145,24 @@ fn times_pre(z: &IntervalSet, c: i64) -> IntervalSet {
             IntervalSet::empty()
         };
     }
-    let c = c as i128;
+    let d = Num::from(c);
     // ceil and floor of v / c, at an endpoint.
-    let q = |e: End, up: bool| match e {
+    let q = |e: &End, up: bool| match e {
         Fin(v) => {
-            let (v, d) = if c < 0 {
-                (-(v as i128), -c)
+            let f = v.div_floor(&d);
+            Fin(if up && !v.mod_floor(&d).is_zero() {
+                &f + &Num::ONE
             } else {
-                (v as i128, c)
-            };
-            let f = v.div_euclid(d);
-            let f = if up && f * d != v { f + 1 } else { f };
-            if up { End::lower(f) } else { End::upper(f) }
+                f
+            })
         }
         e if c < 0 => -e,
-        e => e,
+        e => e.clone(),
     };
     IntervalSet::from_pieces(
         z.pieces()
             .iter()
-            .map(|&(lo, hi)| {
+            .map(|(lo, hi)| {
                 if c > 0 {
                     (q(lo, true), q(hi, false))
                 } else {
@@ -4158,21 +4179,21 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     if c == 0 {
         return IntervalSet::empty();
     }
-    let (c, m) = (c as i128, (c as i128).abs());
-    let lower = |e: End| match e {
-        Fin(q) => End::lower(q as i128 * c),
+    let (d, top) = (Num::from(c), Num::from(c.unsigned_abs() as i128 - 1));
+    let lower = |e: &End| match e {
+        Fin(q) => Fin(q * &d),
         e if c < 0 => -e,
-        e => e,
+        e => e.clone(),
     };
-    let upper = |e: End| match e {
-        Fin(q) => End::upper(q as i128 * c + m - 1),
+    let upper = |e: &End| match e {
+        Fin(q) => Fin(&(q * &d) + &top),
         e if c < 0 => -e,
-        e => e,
+        e => e.clone(),
     };
     IntervalSet::from_pieces(
         z.pieces()
             .iter()
-            .map(|&(lo, hi)| {
+            .map(|(lo, hi)| {
                 if c > 0 {
                     (lower(lo), upper(hi))
                 } else {
@@ -4183,8 +4204,6 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     )
 }
 
-/// The members of `within` with `x mod c` in `z`, Euclidean, and whether that is all of them
-/// and no more. The first and last periods `within` meets are listed exactly and the periods
 /// between them are one piece, so the set has at most `2 * p + 1` pieces for `p` pieces of
 /// remainders, and it is exact when there is no period between them. An unbounded `within`
 /// is kept whole unless every remainder is demanded.
@@ -4200,58 +4219,56 @@ fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> (IntervalSet, bool)
     if c == 0 {
         return (IntervalSet::empty(), true);
     }
-    let m = c.unsigned_abs() as i128;
-    let rem = z.meet(&IntervalSet::range(Fin(0), End::from_i128(m - 1)));
+    let m = Num::from(c.unsigned_abs() as i128);
+    let all = IntervalSet::range(End::of(0), Fin(&m - &Num::ONE));
+    let rem = z.meet(&all);
     if rem.is_empty() {
         return (IntervalSet::empty(), true);
     }
-    if rem == IntervalSet::range(Fin(0), End::from_i128(m - 1)) {
+    if rem == all {
         return (within.clone(), true);
     }
     let Some((Fin(lo), Fin(hi))) = within.bounds() else {
         return (within.clone(), false);
     };
-    let (k0, k1) = ((lo as i128).div_euclid(m), (hi as i128).div_euclid(m));
-    let period = |k: i128| {
+    let (k0, k1) = (lo.div_floor(&m), hi.div_floor(&m));
+    let period = |k: &Num| {
+        let base = k * &m;
         rem.pieces()
             .iter()
-            .filter_map(|&(a, b)| match (a, b) {
-                (Fin(a), Fin(b)) => Some((
-                    End::from_i128(k * m + a as i128),
-                    End::from_i128(k * m + b as i128),
-                )),
+            .filter_map(|(a, b)| match (a, b) {
+                (Fin(a), Fin(b)) => Some((Fin(&base + a), Fin(&base + b))),
                 _ => None,
             })
             .collect::<Vec<_>>()
     };
-    let mut pieces = period(k0);
-    if k1 > k0 + 1 {
+    let mut pieces = period(&k0);
+    let next = &k0 + &Num::ONE;
+    if k1 > next {
         let Some((Fin(a), Fin(b))) = rem.bounds() else {
             unreachable!("the remainders lie in 0..m")
         };
-        pieces.push((
-            End::from_i128((k0 + 1) * m + a as i128),
-            End::from_i128((k1 - 1) * m + b as i128),
-        ));
+        let last = &k1 - &Num::ONE;
+        pieces.push((Fin(&(&next * &m) + a), Fin(&(&last * &m) + b)));
     }
     if k1 > k0 {
-        pieces.extend(period(k1));
+        pieces.extend(period(&k1));
     }
     let s = IntervalSet::from_pieces(pieces).meet(within);
-    (s, k1 <= k0 + 1)
+    (s, k1 <= next)
 }
 
 /// The integers `x` with `min(x, c)` (or `max`) in `z`.
 fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
     let at_c = if p == Prim::Min {
-        IntervalSet::range(Fin(c), PosInf)
+        IntervalSet::range(End::of(c), PosInf)
     } else {
-        IntervalSet::range(NegInf, Fin(c))
+        IntervalSet::range(NegInf, End::of(c))
     };
     let below = if p == Prim::Min {
-        IntervalSet::range(NegInf, Fin(c))
+        IntervalSet::range(NegInf, End::of(c))
     } else {
-        IntervalSet::range(Fin(c), PosInf)
+        IntervalSet::range(End::of(c), PosInf)
     };
     let own = z.meet(&below);
     if z.contains(c) { own.join(&at_c) } else { own }
@@ -4274,12 +4291,17 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
 /// COMPLEXITY.md row C18 (thresholds.md replacement 8). A complete solution is `@exact`
 /// ([`exact_preimage`]), branch and prune over the box, at a cost in its points.
 fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
-    let mut axes: Vec<(Arc<str>, Vec<i64>)> = Vec::new();
+    let mut axes: Vec<(Arc<str>, Vec<Num>)> = Vec::new();
     for (k, s) in dom {
         let mut vs = Vec::new();
-        for &(lo, hi) in s.pieces() {
+        for (lo, hi) in s.pieces() {
             match (lo, hi) {
-                (Fin(lo), Fin(hi)) if hi as i128 - lo as i128 <= 1 => vs.extend(lo..=hi),
+                (Fin(lo), Fin(hi)) if (hi - lo) <= Num::ONE => {
+                    vs.push(lo.clone());
+                    if hi != lo {
+                        vs.push(hi.clone());
+                    }
+                }
                 _ => return None,
             }
         }
@@ -4350,7 +4372,7 @@ pub fn exact_preimage(
 }
 
 /// A point of the inputs, each input within its class, at which the term meets the demand.
-pub type Point = BTreeMap<Arc<str>, i64>;
+pub type Point = BTreeMap<Arc<str>, Num>;
 
 /// A point of `inputs`, each input within its class, at which `term` meets `demand`:
 /// `Some(Some(point))`, or `Some(None)` when there is none. The search of [`exact_preimage`]
@@ -4377,7 +4399,7 @@ pub fn witness(
     let lowest = |b: &Domains| -> Point {
         b.iter()
             .map(|(k, s)| match s.bounds() {
-                Some((Fin(lo), _)) => (k.clone(), lo),
+                Some((Fin(lo), _)) => (k.clone(), lo.clone()),
                 _ => unreachable!("a searched box is bounded"),
             })
             .collect()
@@ -4543,7 +4565,7 @@ fn branch(
                 let Some((Fin(v), _)) = s.bounds() else {
                     unreachable!("a point is finite")
                 };
-                t = Term::Let(k.clone(), Arc::new(Term::Lit(Value::Int(v))), Arc::new(t));
+                t = Term::Let(k.clone(), Arc::new(Term::Lit(Value::from(v))), Arc::new(t));
             }
             let v = Evaluator::new(World::new()).run(&t).ok()?;
             if demand.holds(&v) && search.all(&b) {
@@ -4557,12 +4579,12 @@ fn branch(
                 Some((Fin(lo), Fin(hi))) if lo < hi => Some((k, lo, hi)),
                 _ => None,
             })
-            .max_by_key(|(_, lo, hi)| *hi as i128 - *lo as i128)
+            .max_by_key(|(_, lo, hi)| *hi - *lo)
             .expect("a box of more than one point has an input of more than one value");
-        let mid = (lo as i128 + (hi as i128 - lo as i128) / 2) as i64;
+        let mid = lo + &(hi - lo).div_floor(&Num::from(2i64));
         for half in [
-            IntervalSet::range(Fin(mid + 1), PosInf),
-            IntervalSet::range(NegInf, Fin(mid)),
+            IntervalSet::range(Fin(&mid + &Num::ONE), PosInf),
+            IntervalSet::range(NegInf, Fin(mid.clone())),
         ] {
             let mut h = b.clone();
             h.insert(k.clone(), b[k].meet(&half));
@@ -4714,8 +4736,8 @@ fn is_point(s: &IntervalSet) -> bool {
 }
 
 /// The enumeration of [`enumerate`] over `axes`, each point evaluated in turn.
-fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> Option<Whole> {
-    let mut met: Vec<Vec<i64>> = vec![Vec::new(); axes.len()];
+fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> Option<Whole> {
+    let mut met: Vec<Vec<&Num>> = vec![Vec::new(); axes.len()];
     let mut count: u64 = 0;
     let mut point = vec![0usize; axes.len()];
     loop {
@@ -4723,7 +4745,7 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> 
         for ((k, vs), &i) in axes.iter().zip(&point).rev() {
             t = Term::Let(
                 k.clone(),
-                Arc::new(Term::Lit(Value::Int(vs[i]))),
+                Arc::new(Term::Lit(Value::from(&vs[i]))),
                 Arc::new(t),
             );
         }
@@ -4731,7 +4753,7 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> 
         if demand.holds(&v) {
             count += 1;
             for (j, &i) in point.iter().enumerate() {
-                met[j].push(axes[j].1[i]);
+                met[j].push(&axes[j].1[i]);
             }
         }
         // The next point, the last axis fastest.
@@ -4745,7 +4767,9 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> 
                         (
                             k.clone(),
                             IntervalSet::from_pieces(
-                                vs.iter().map(|&v| (Fin(v), Fin(v))).collect(),
+                                vs.iter()
+                                    .map(|&v| (Fin(v.clone()), Fin(v.clone())))
+                                    .collect(),
                             ),
                         )
                     })
@@ -4774,13 +4798,13 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> 
     }
 }
 
-/// The largest magnitude of a finite end of `z`, or 0.
+/// The largest magnitude of a finite end of `z`, `i128::MAX` past it, or 0.
 fn widest(z: &IntervalSet) -> i128 {
     z.pieces()
         .iter()
-        .flat_map(|&(lo, hi)| [lo, hi])
+        .flat_map(|(lo, hi)| [lo, hi])
         .filter_map(|e| match e {
-            Fin(v) => Some(i128::from(v).abs()),
+            Fin(v) => Some(v.to_i128().map_or(i128::MAX, |w| w.saturating_abs())),
             _ => None,
         })
         .max()

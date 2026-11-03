@@ -1,4 +1,10 @@
 # A type's order and equality read only its parts and node ids, never the lazily filled
 # body of a recursive node (zed-kernel src/types.rs). A string's order and equality read its
-# text, which the lazily written-out copy of a join does not change (src/text.rs).
-ignore-interior-mutability = ["zed_kernel::types::Type", "zed_kernel::text::Text"]
+# text, which the lazily written-out copy of a join does not change (src/text.rs). A kept
+# root's order and equality read its radicand and index, never the approximation kept beside
+# it (zedc src/store/int.rs, `Memo`).
+ignore-interior-mutability = [
+  "zed_kernel::types::Type",
+  "zed_kernel::text::Text",
+  "zedc::store::int::Memo",
+]

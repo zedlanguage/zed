@@ -12,13 +12,12 @@
 //! checker's copy.
 
 use std::cmp::Ordering;
-use std::ops::Neg;
 use std::sync::Arc;
 
 use zed_kernel::num::Rat;
 
 use super::int::Int;
-use super::interval::{End, IntervalSet};
+use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Congruence, FiniteSet, Lattice};
 use End::{Fin, NegInf, PosInf};
 
@@ -35,8 +34,7 @@ pub enum Op {
     Mul,
     /// `x ** k` for a constant `k >= 0` of any size. Every entry reads `k` in O(1) time
     /// whatever its size: whether it is 0, its parity, and its value only when it fits in
-    /// `u32`, since a base other than 0, 1 and -1 raised past 127 leaves `i128`, so the
-    /// endpoint is then infinite whatever the exponent ([`checked_pow`]).
+    /// `u32`; an endpoint is exact for such a `k`, and bounded outward past it ([`pow_end`]).
     Pow(Exponent),
     /// `x div y`, Euclidean: the remainder is in `0..abs(y)`.
     Div,
@@ -163,71 +161,70 @@ enum Dir {
     Up,
 }
 
-/// `op` at two endpoints, rounded outward in `dir` where the result is not an integer or not
-/// defined by a limit, such as `inf - inf`.
-fn at(op: &Op, a: End, b: End, dir: Dir) -> End {
+/// `op` at two endpoints, rounded outward in `dir` where the result is not defined by a
+/// limit, such as `inf - inf`. Finite results are exact at any magnitude.
+fn at(op: &Op, a: &End, b: &End, dir: Dir) -> End {
     let outward = if dir == Dir::Down { NegInf } else { PosInf };
-    let end = |x: i128| {
-        if dir == Dir::Down {
-            End::lower(x)
-        } else {
-            End::upper(x)
-        }
-    };
     let inf = |sign: i8| match sign.cmp(&0) {
         Ordering::Less => NegInf,
         Ordering::Greater => PosInf,
-        Ordering::Equal => Fin(0),
+        Ordering::Equal => End::of(0),
     };
     match (op, a, b) {
-        (Op::Add, Fin(x), Fin(y)) => end(x as i128 + y as i128),
+        (Op::Add, Fin(x), Fin(y)) => Fin(x + y),
         (Op::Add, NegInf, PosInf) | (Op::Add, PosInf, NegInf) => outward,
-        (Op::Add, Fin(_), e) | (Op::Add, e, _) => e,
-        (Op::Sub, Fin(x), Fin(y)) => end(x as i128 - y as i128),
-        (Op::Sub, _, _) => at(&Op::Add, a, b.neg(), dir),
-        (Op::Neg, Fin(x), _) => end(-(x as i128)),
-        (Op::Neg, _, _) => a.neg(),
-        (Op::Mul, Fin(x), Fin(y)) => end(x as i128 * y as i128),
+        (Op::Add, Fin(_), e) | (Op::Add, e, _) => e.clone(),
+        (Op::Sub, Fin(x), Fin(y)) => Fin(x - y),
+        (Op::Sub, _, _) => at(&Op::Add, a, &-b, dir),
+        (Op::Neg, _, _) => -a,
+        (Op::Mul, Fin(x), Fin(y)) => Fin(x * y),
         // 0 times an unbounded operand: every product with a finite member is 0.
         (Op::Mul, _, _) => inf(a.signum() * b.signum()),
-        (Op::Pow(k), Fin(x), _) => checked_pow(x as i128, k)
-            .map(end)
-            .unwrap_or(inf(if k.is_odd() { x.signum() as i8 } else { 1 })),
-        (Op::Pow(k), _, _) if k.is_zero() => Fin(1),
+        (Op::Pow(k), Fin(x), _) => pow_end(x, k, dir),
+        (Op::Pow(k), _, _) if k.is_zero() => End::of(1),
         (Op::Pow(k), e, _) => {
             if k.is_odd() {
-                e
+                e.clone()
             } else {
                 PosInf
             }
         }
-        (Op::Abs, Fin(x), _) => end((x as i128).abs()),
+        (Op::Abs, Fin(x), _) => Fin(x.abs()),
         (Op::Abs, _, _) => {
             if a.signum() < 0 {
-                a.neg()
+                -a
             } else {
-                a
+                a.clone()
             }
         }
-        (Op::Min, _, _) => a.min(b),
-        (Op::Max, _, _) => a.max(b),
-        (Op::Div, Fin(x), Fin(y)) if y != 0 => Fin(x.div_euclid(y)),
+        (Op::Min, _, _) => a.min(b).clone(),
+        (Op::Max, _, _) => a.max(b).clone(),
+        (Op::Div, Fin(x), Fin(y)) if !y.is_zero() => Fin(x.div_euclid(y)),
         // A finite numerator over an unbounded divisor: the limit of the Euclidean quotient.
-        (Op::Div, Fin(x), _) if b != Fin(0) => match (x >= 0, b.signum() > 0) {
-            (true, _) => Fin(0),
-            (false, true) => Fin(-1),
-            (false, false) => Fin(1),
+        (Op::Div, Fin(x), _) if b.signum() != 0 => match (x.signum() >= 0, b.signum() > 0) {
+            (true, _) => End::of(0),
+            (false, true) => End::of(-1),
+            (false, false) => End::of(1),
         },
-        (Op::Div, _, Fin(y)) if y != 0 => inf(a.signum() * y.signum() as i8),
+        (Op::Div, _, Fin(y)) if !y.is_zero() => inf(a.signum() * y.signum()),
         _ => outward,
+    }
+}
+
+/// The endpoint of a piece where a result of tonicity `t` is least, and where it is
+/// greatest.
+fn pick(t: Tonicity, p: &(End, End)) -> (&End, &End) {
+    match t {
+        Tonicity::Down => (&p.1, &p.0),
+        _ => (&p.0, &p.1),
     }
 }
 
 /// The image of the box of two pieces, each of one sign, under an operator monotone or
 /// antitone in each argument there: the interval between two corners.
-fn corners(op: &Op, a: (End, End), b: (End, End)) -> (End, End) {
-    let dir = |arg: usize, own: (End, End), other: (End, End)| -> Tonicity {
-        let nonneg = |p: (End, End)| p.0 >= Fin(0);
+fn corners(op: &Op, a: &(End, End), b: &(End, End)) -> (End, End) {
+    let dir = |arg: usize, own: &(End, End), other: &(End, End)| -> Tonicity {
+        let nonneg = |p: &(End, End)| p.0.signum() >= 0;
         match tonicity(op, arg) {
             Tonicity::UpWhereOtherNonneg if nonneg(other) => Tonicity::Up,
             Tonicity::UpWhereOtherNonneg => Tonicity::Down,
@@ -238,16 +235,12 @@ fn corners(op: &Op, a: (End, End), b: (End, End)) -> (End, End) {
             t => t,
         }
     };
-    // The endpoint of a piece where the result is least, and where it is greatest.
-    let pick = |t: Tonicity, p: (End, End)| match t {
-        Tonicity::Down => (p.1, p.0),
-        _ => (p.0, p.1),
-    };
+    let zero = End::of(0);
     let (alo, ahi) = pick(dir(0, a, b), a);
     let (blo, bhi) = if arity(op) == 2 {
         pick(dir(1, b, a), b)
     } else {
-        (Fin(0), Fin(0))
+        (&zero, &zero)
     };
     (at(op, alo, blo, Dir::Down), at(op, ahi, bhi, Dir::Up))
 }
@@ -257,7 +250,7 @@ fn corners(op: &Op, a: (End, End), b: (End, End)) -> (End, End) {
 /// each operand is one interval.
 pub fn forward(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
     let (xs, ys) = (x.sign_parts(), y.sign_parts());
-    let one = [(Fin(0), Fin(0))];
+    let one = [(End::of(0), End::of(0))];
     match op {
         Op::Mod => map2(&xs, y.pieces(), forward_mod),
         Op::Div => {
@@ -271,62 +264,44 @@ pub fn forward(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
 
 /// `x mod y` for one piece of each: `0..abs(y)`, or the piece of `x` itself shifted when one
 /// constant divisor maps it without wrapping.
-fn forward_mod(a: (End, End), b: (End, End)) -> Vec<(End, End)> {
-    if b == (Fin(0), Fin(0)) {
+fn forward_mod(a: &(End, End), b: &(End, End)) -> Vec<(End, End)> {
+    if b.0.signum() == 0 && b.1.signum() == 0 {
         return Vec::new();
     }
-    if let (Fin(lo), Fin(hi), Fin(c)) = (a.0, a.1, b.0)
+    if let (Fin(lo), Fin(hi), Fin(c)) = (&a.0, &a.1, &b.0)
         && b.0 == b.1
-        && (hi as i128 - lo as i128) < c.unsigned_abs() as i128
+        && (hi - lo) < c.abs()
         && lo.rem_euclid(c) <= hi.rem_euclid(c)
     {
         return vec![(Fin(lo.rem_euclid(c)), Fin(hi.rem_euclid(c)))];
     }
     // The remainder is below the largest abs(y), and for x >= 0 at most x.
-    let top = match b.0.neg().max(b.1) {
-        Fin(m) => Fin(m - 1),
+    let top = match (-&b.0).max(b.1.clone()) {
+        Fin(m) => Fin(&m - &Num::ONE),
         e => e,
     };
-    let top = if a.0 >= Fin(0) { top.min(a.1) } else { top };
-    vec![(Fin(0), top)]
+    let top = if a.0.signum() >= 0 {
+        top.min(a.1.clone())
+    } else {
+        top
+    };
+    vec![(End::of(0), top)]
 }
 
 impl IntervalSet {
-    /// The members of `within` that are not members of `self`.
-    ///
-    /// Kernel integers are unbounded, so a set that ends at `i64::MAX` misses the integers
-    /// past it. When `within` holds them (it is unbounded above), that gap is kept, rounded
-    /// outward to begin at `i64::MAX` ([`End::lower`], which marks the result as rounded);
-    /// `i64::MIN` likewise. Without it, `x != i64::MAX` was read as `x <= i64::MAX - 1`, and
-    /// the preimage of `y + (i64::MAX - 3) == i64::MAX` being false lost every `y` above 3.
-    // Complexity tradeoff: the gap past an end of `i64` is rounded outward to hold that end,
-    // so the complement of `{i64::MAX}` in every integer is every integer, marked rounded,
-    // and a preimage read through it is necessary, not exact, unless a later stage (the
-    // forward pass or the linear relation) confirms it. Why: ends are `i64` (COMPLEXITY.md
-    // C7), which keeps each end operation O(1); unbounded ends cost time in their bits. Trigger:
-    // a set with a piece ending at `i64::MAX` (or starting at `i64::MIN`) complemented in a set
-    // unbounded on that side. Tests: `l01_25_preimage_catalog::overflow`,
-    // `l01_39_reduced_product::spec::a_negated_equality_with_i64_max_keeps_the_integers_past_it`.
-    // A complete solution would make `End::Fin` hold an unbounded integer (`store::int`).
+    /// The members of `within` that are not members of `self`. Ends are exact at any
+    /// magnitude, so the complement of `{i64::MAX}` keeps every integer past it: the preimage
+    /// of `y + (i64::MAX - 3) == i64::MAX` being false keeps every `y` above 3.
     pub fn complement_in(&self, within: &IntervalSet) -> IntervalSet {
-        let Some((wlo, whi)) = within.bounds() else {
-            return IntervalSet::empty();
-        };
         let mut gaps = Vec::new();
         let mut from = NegInf;
-        for &(lo, hi) in self.pieces() {
-            if let Fin(v) = lo
-                && (v > i64::MIN || wlo == NegInf)
-            {
-                gaps.push((from, End::upper(v as i128 - 1)));
+        for (lo, hi) in self.pieces() {
+            let prev = std::mem::replace(&mut from, hi.succ());
+            if prev == NegInf || prev <= *lo {
+                gaps.push((prev, lo.pred()));
             }
-            from = match hi {
-                Fin(v) if v < i64::MAX || whi == PosInf => End::lower(v as i128 + 1),
-                Fin(_) => return IntervalSet::from_pieces(gaps).meet(within),
-                e => e,
-            };
         }
-        if from != PosInf {
+        if self.pieces().last().is_none_or(|p| p.1 != PosInf) {
             gaps.push((from, PosInf));
         }
         IntervalSet::from_pieces(gaps).meet(within)
@@ -334,10 +309,10 @@ impl IntervalSet {
 }
 
 /// The sign region of a part: negative, zero or positive.
-fn region(p: (End, End)) -> usize {
-    if p.1 < Fin(0) {
+fn region(p: &(End, End)) -> usize {
+    if p.1.signum() < 0 {
         0
-    } else if p.0 > Fin(0) {
+    } else if p.0.signum() > 0 {
         2
     } else {
         1
@@ -348,7 +323,7 @@ fn region(p: (End, End)) -> usize {
 fn regions(parts: &[(End, End)]) -> [Vec<(End, End)>; 3] {
     let mut out: [Vec<(End, End)>; 3] = Default::default();
     for p in IntervalSet::from_pieces(parts.to_vec()).sign_parts() {
-        out[region(p)].push(p);
+        out[region(&p)].push(p);
     }
     out
 }
@@ -374,7 +349,7 @@ fn regions(parts: &[(End, End)]) -> [Vec<(End, End)>; 3] {
 fn map2(
     a: &[(End, End)],
     b: &[(End, End)],
-    f: impl Fn((End, End), (End, End)) -> Vec<(End, End)>,
+    f: impl Fn(&(End, End), &(End, End)) -> Vec<(End, End)>,
 ) -> IntervalSet {
     let (ra, rb) = (regions(a), regions(b));
     let most = ra.iter().chain(&rb).map(Vec::len).max().unwrap_or(0);
@@ -390,36 +365,30 @@ fn map2(
     };
     let image = IntervalSet::from_pieces(
         pa.iter()
-            .flat_map(|&p| pb.iter().flat_map(|&q| f(p, q)).collect::<Vec<_>>())
+            .flat_map(|p| pb.iter().flat_map(|q| f(p, q)).collect::<Vec<_>>())
             .collect(),
     );
     IntervalSet::from_pieces(
         regions(image.pieces())
-            .iter()
-            .flat_map(|ps| {
-                let capped = IntervalSet::from_pieces(ps.clone()).cap(most.max(1));
-                capped.pieces().to_vec()
-            })
+            .into_iter()
+            .flat_map(|ps| IntervalSet::from_pieces(ps).cap(most.max(1)).into_pieces())
             .collect(),
     )
 }
 
 /// The real quotient `z / y` at two endpoints, rounded outward in `dir`.
-fn quotient(z: End, y: End, dir: Dir) -> End {
+fn quotient(z: &End, y: &End, dir: Dir) -> End {
     match (z, y) {
-        (Fin(n), Fin(d)) if d != 0 => {
-            let (q, r) = (n.div_euclid(d), n.rem_euclid(d));
-            // Euclidean division rounds toward -inf for d > 0 and toward +inf for d < 0.
-            let floor = if r != 0 && d < 0 { q - 1 } else { q };
-            let exact = r == 0;
+        (Fin(n), Fin(d)) if !d.is_zero() => {
+            let floor = n.div_floor(d);
             match dir {
-                Dir::Down => Fin(floor),
-                Dir::Up => Fin(if exact { floor } else { floor + 1 }),
+                Dir::Up if !n.mod_floor(d).is_zero() => Fin(&floor + &Num::ONE),
+                _ => Fin(floor),
             }
         }
-        (Fin(_), _) if y != Fin(0) => Fin(0),
-        (_, Fin(d)) if d != 0 => {
-            if z.signum() * d.signum() as i8 > 0 {
+        (Fin(_), _) if y.signum() != 0 => End::of(0),
+        (_, Fin(d)) if !d.is_zero() => {
+            if z.signum() * d.signum() > 0 {
                 PosInf
             } else {
                 NegInf
@@ -458,18 +427,22 @@ pub fn backward(
             } else {
                 let nonzero = IntervalSet::single(0).complement_in(other).sign_parts();
                 map2(&z.sign_parts(), &nonzero, |zp, yp| {
-                    let corner = |zz: End, yy: End, d| quotient(zz, yy, d);
                     // z / y over a box of one sign in each: monotone in each argument, so
                     // its extremes are among the four corners.
-                    let qs = [(zp.0, yp.0), (zp.0, yp.1), (zp.1, yp.0), (zp.1, yp.1)];
+                    let qs = [
+                        (&zp.0, &yp.0),
+                        (&zp.0, &yp.1),
+                        (&zp.1, &yp.0),
+                        (&zp.1, &yp.1),
+                    ];
                     let lo = qs
                         .iter()
-                        .map(|&(a, b)| corner(a, b, Dir::Down))
+                        .map(|&(a, b)| quotient(a, b, Dir::Down))
                         .min()
                         .unwrap();
                     let hi = qs
                         .iter()
-                        .map(|&(a, b)| corner(a, b, Dir::Up))
+                        .map(|&(a, b)| quotient(a, b, Dir::Up))
                         .max()
                         .unwrap();
                     vec![(lo, hi)]
@@ -479,31 +452,33 @@ pub fn backward(
         (Op::Pow(k), _) if k.is_zero() => IntervalSet::top(),
         (Op::Pow(k), _) => z.lift1(|(lo, hi)| roots(k, lo, hi)),
         (Op::Abs, _) => z.lift1(|(lo, hi)| {
-            let lo = lo.max(Fin(0));
-            vec![(hi.neg_lower(), lo.neg()), (lo, hi)]
+            let lo = lo.clone().max(End::of(0));
+            vec![(-hi, -&lo), (lo, hi.clone())]
         }),
         (Op::Min, _) => match (z.bounds(), other.bounds()) {
             (Some((_, zhi)), Some((olo, _))) if olo > zhi => z.clone(),
-            (Some((zlo, _)), _) => IntervalSet::range(zlo, PosInf),
+            (Some((zlo, _)), _) => IntervalSet::range(zlo.clone(), PosInf),
             (None, _) => IntervalSet::empty(),
         },
         (Op::Max, _) => match (z.bounds(), other.bounds()) {
             (Some((zlo, _)), Some((_, ohi))) if ohi < zlo => z.clone(),
-            (Some((_, zhi)), _) => IntervalSet::range(NegInf, zhi),
+            (Some((_, zhi)), _) => IntervalSet::range(NegInf, zhi.clone()),
             (None, _) => IntervalSet::empty(),
         },
         // x = q * y + r with q in z and r in 0..abs(y).
         (Op::Div, 0) => {
-            let largest = forward(&Op::Abs, y, y).bounds().map_or(Fin(0), |b| b.1);
-            let rest = IntervalSet::range(Fin(0), largest.pred());
+            let largest = forward(&Op::Abs, y, y)
+                .bounds()
+                .map_or(End::of(0), |b| b.1.clone());
+            let rest = IntervalSet::range(End::of(0), largest.pred());
             forward(&Op::Add, &forward(&Op::Mul, z, y), &rest)
         }
         // A remainder r needs abs(y) > r.
         (Op::Mod, 1) => match z.bounds() {
-            Some((Fin(r), _)) if r >= 0 => IntervalSet::from_pieces(vec![
-                (NegInf, End::from_i128(-(r as i128) - 1)),
-                (End::lower(r as i128 + 1), PosInf),
-            ]),
+            Some((Fin(r), _)) if r.signum() >= 0 => {
+                let past = r + &Num::ONE;
+                IntervalSet::from_pieces(vec![(NegInf, Fin(-&past)), (Fin(past), PosInf)])
+            }
             Some(_) => IntervalSet::top(),
             None => IntervalSet::empty(),
         },
@@ -513,71 +488,83 @@ pub fn backward(
 }
 
 /// The members of `x` with `x ** k` in `lo..=hi`, for `k >= 1`, as at most two pieces.
-fn roots(k: &Exponent, lo: End, hi: End) -> Vec<(End, End)> {
-    // The largest r >= 0 with r ** k <= v, for v >= 0.
-    let floor_root = |v: End| -> End {
+fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
+    // The largest r >= 0 with r ** k <= v, for v >= 0, or a greater bound for a `k` past `u32`.
+    let floor_root = |v: &End| -> End {
         let Fin(v) = v else { return PosInf };
-        let (mut a, mut b) = (0i128, (v as i128).max(1) + 1);
-        while b - a > 1 {
-            let m = (a + b) / 2;
-            match checked_pow(m, k) {
-                Some(p) if p <= v as i128 => a = m,
-                _ => b = m,
-            }
-        }
-        Fin(a as i64)
+        Fin(match k.to_u32() {
+            Some(k) => v.floor_root(k),
+            // Complexity tradeoff: see `pow_end`. `r ** k` exceeds `v` for every `r >= 2`
+            // while `v < 2 ** u32::MAX`, so the root is then exact (0 or 1); past that the
+            // bound is the root for `u32::MAX`, which is at least the root for `k`.
+            None if *v <= Num::ONE => v.clone(),
+            None if *v < Num::from(2).pow(u32::MAX) => Num::ONE,
+            None => v.floor_root(u32::MAX),
+        })
     };
-    // The least r >= 0 with r ** k >= v, for v >= 0.
-    let ceil_root = |v: End| -> End {
-        match floor_root(v) {
-            Fin(r)
-                if checked_pow(r as i128, k)
-                    == Some(match v {
-                        Fin(v) => v as i128,
-                        _ => 0,
-                    }) =>
-            {
-                Fin(r)
-            }
-            Fin(r) => Fin(r + 1),
-            e => e,
-        }
+    // The least r >= 0 with r ** k >= v, for v >= 0, or a smaller bound for a `k` past `u32`.
+    let ceil_root = |v: &End| -> End {
+        let Fin(v) = v else { return PosInf };
+        Fin(match k.to_u32() {
+            Some(k) => v.ceil_root(k),
+            // Complexity tradeoff: see `pow_end`. The root is `v` for `v <= 1` and at least 2
+            // past it.
+            None => v.clone().min(Num::from(2)),
+        })
     };
     if k.is_odd() {
         // Odd powers are increasing, and odd about 0.
-        let up = |v: End| {
-            if v >= Fin(0) {
+        let up = |v: &End| {
+            if v.signum() >= 0 {
                 floor_root(v)
             } else {
-                ceil_root(v.neg()).neg()
+                -ceil_root(&-v)
             }
         };
-        let down = |v: End| {
-            if v >= Fin(0) {
+        let down = |v: &End| {
+            if v.signum() >= 0 {
                 ceil_root(v)
             } else {
-                floor_root(v.neg()).neg()
+                -floor_root(&-v)
             }
         };
         return vec![(down(lo), up(hi))];
     }
-    if hi < Fin(0) {
+    if hi.signum() < 0 {
         return Vec::new();
     }
-    let (r_lo, r_hi) = (ceil_root(lo.max(Fin(0))), floor_root(hi));
-    vec![(r_hi.neg_lower(), r_lo.neg()), (r_lo, r_hi)]
+    let (r_lo, r_hi) = (ceil_root(&lo.clone().max(End::of(0))), floor_root(hi));
+    vec![(-&r_hi, -&r_lo), (r_lo, r_hi)]
 }
 
-/// `x ** k` when it fits in `i128`, in O(1) time for a `k >= 0` of any size: 0, 1 and -1 by
-/// whether `k` is 0 and its parity, and any other base by `i128::checked_pow` (at most 32
-/// squarings), which overflows for every `k` above 127, so a `k` past `u32` overflows without
-/// being read further.
-fn checked_pow(x: i128, k: &Exponent) -> Option<i128> {
-    match x {
-        0 => Some(if k.is_zero() { 1 } else { 0 }),
-        1 => Some(1),
-        -1 => Some(if k.is_odd() { -1 } else { 1 }),
-        _ => x.checked_pow(k.to_u32()?),
+/// `x ** k` at a finite end `x`, rounded outward in `dir`: exact when `k` fits in `u32` and for
+/// the bases 0, 1 and -1, and past `u32` bounded by `2 ** u32::MAX` on the side toward 0.
+///
+/// Complexity tradeoff: for `k > u32::MAX` and `abs(x) >= 2` the end is not exact: the side
+/// away from 0 is infinite and the side toward 0 is `2 ** u32::MAX` with the result's sign.
+/// Why: `Exponent::Past` holds only the parity of a count of factors (an exact count costs `d`
+/// bits per name at squaring depth `d`), and `Exponent::Big` holds the kernel's unbuilt prime
+/// powers, which cost their digits to build (`10 ** 10 ** 9`, 3.3·10^9 bits). Trigger: an
+/// exponent past `u32::MAX` on a base other than -1, 0 and 1. Test:
+/// `l01_25_preimage_catalog::powers::an_exponent_of_any_size_is_read_by_its_parity`;
+/// COMPLEXITY.md S30b. A complete solution would keep the exponent of a kept power as a kept
+/// value, so `x ** k` is held exactly for any `k`.
+fn pow_end(x: &Num, k: &Exponent, dir: Dir) -> End {
+    if let Some(k) = k.to_u32() {
+        return Fin(x.pow(k));
+    }
+    match x.to_i64() {
+        Some(0) => return End::of(0),
+        Some(1) => return End::of(1),
+        Some(-1) => return End::of(if k.is_odd() { -1 } else { 1 }),
+        _ => {}
+    }
+    let least = Num::from(2).pow(u32::MAX);
+    match (x.signum() < 0 && k.is_odd(), dir) {
+        (false, Dir::Down) => Fin(least),
+        (false, Dir::Up) => PosInf,
+        (true, Dir::Down) => NegInf,
+        (true, Dir::Up) => Fin(-&least),
     }
 }
 
@@ -591,22 +578,28 @@ pub fn reduce_congruence(x: &IntervalSet, c: &Congruence) -> (IntervalSet, Congr
     let x = match modulus {
         0 => x.meet(&IntervalSet::single(residue)),
         1 => x.clone(),
-        m => x.lift1(|(lo, hi)| {
-            let m = m as i128;
-            let up = |e: End| match e {
-                Fin(v) => End::lower(v as i128 + (residue as i128 - v as i128).rem_euclid(m)),
-                e => e,
-            };
-            let down = |e: End| match e {
-                Fin(v) => End::upper(v as i128 - (v as i128 - residue as i128).rem_euclid(m)),
-                e => e,
-            };
-            vec![(up(lo), down(hi))]
-        }),
+        m => {
+            let (m, residue) = (Num::from(m as i128), Num::from(residue));
+            x.lift1(|(lo, hi)| {
+                let up = |e: &End| match e {
+                    Fin(v) => Fin(v + &(&residue - v).rem_euclid(&m)),
+                    e => e.clone(),
+                };
+                let down = |e: &End| match e {
+                    Fin(v) => Fin(v - &(v - &residue).rem_euclid(&m)),
+                    e => e.clone(),
+                };
+                vec![(up(lo), down(hi))]
+            })
+        }
     };
+    // A congruence's residue is an `i64`, so a single value past it leaves the class as it is.
     let c = match x.bounds() {
         None => Congruence::Bottom,
-        Some((Fin(a), Fin(b))) if a == b => c.meet(&Congruence::single(a)),
+        Some((Fin(a), Fin(b))) if a == b => match a.to_i64() {
+            Some(a) => c.meet(&Congruence::single(a)),
+            None => *c,
+        },
         Some(_) => *c,
     };
     (x, c)
@@ -622,7 +615,8 @@ pub fn reduce_finite(x: &IntervalSet, s: &FiniteSet<i64>) -> (IntervalSet, Finit
             let FiniteSet::Set(k) = &kept else {
                 unreachable!()
             };
-            let points = IntervalSet::from_pieces(k.iter().map(|&v| (Fin(v), Fin(v))).collect());
+            let points =
+                IntervalSet::from_pieces(k.iter().map(|&v| (End::of(v), End::of(v))).collect());
             (x.meet(&points), kept)
         }
     }
@@ -637,14 +631,14 @@ mod tests {
     /// Every interval with endpoints in -4..=4 or infinite, and some unions.
     fn operands() -> Vec<IntervalSet> {
         let ends: Vec<End> = std::iter::once(NegInf)
-            .chain((-4..=4).map(Fin))
+            .chain((-4..=4).map(End::of))
             .chain(std::iter::once(PosInf))
             .collect();
         let mut out = vec![IntervalSet::empty()];
-        for &lo in &ends {
-            for &hi in &ends {
-                if lo <= hi && lo != PosInf && hi != NegInf {
-                    out.push(IntervalSet::range(lo, hi));
+        for lo in &ends {
+            for hi in &ends {
+                if lo <= hi && *lo != PosInf && *hi != NegInf {
+                    out.push(IntervalSet::range(lo.clone(), hi.clone()));
                 }
             }
         }
@@ -800,10 +794,13 @@ mod tests {
                             assert!(x2.contains(v) && c2.contains(v), "{x} {c:?} lost {v}");
                         }
                     }
-                    for &(lo, hi) in x2.pieces() {
+                    for (lo, hi) in x2.pieces() {
                         for e in [lo, hi] {
                             if let Fin(v) = e {
-                                assert!(c.contains(v), "{x} {c:?}: endpoint {v} of {x2}");
+                                assert!(
+                                    c.contains(v.to_i64().unwrap()),
+                                    "{x} {c:?}: endpoint {v} of {x2}"
+                                );
                             }
                         }
                     }
@@ -814,8 +811,10 @@ mod tests {
             let FiniteSet::Set(kept) = s2 else { panic!() };
             assert_eq!(members(&x2), kept.into_iter().collect::<Vec<_>>());
         }
-        let (x, _) =
-            reduce_congruence(&IntervalSet::range(NegInf, Fin(-4)), &Congruence::new(3, 1));
-        assert_eq!(x, IntervalSet::range(NegInf, Fin(-5)));
+        let (x, _) = reduce_congruence(
+            &IntervalSet::range(NegInf, End::of(-4)),
+            &Congruence::new(3, 1),
+        );
+        assert_eq!(x, IntervalSet::range(NegInf, End::of(-5)));
     }
 }

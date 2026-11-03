@@ -6,19 +6,15 @@
 use zed_kernel::{Prim, Value};
 use zed_tests::instances::Rng;
 use zedc::store::interval::{
-    End::{Fin, NegInf, PosInf},
-    IntervalSet, bit_word,
+    End::{self, Fin, NegInf, PosInf},
+    IntervalSet, Num, bit_word,
 };
 
-/// Whether the value `v` lies in `s`. A value past `i64` lies in a set unbounded on its side.
+/// Whether the value `v` lies in `s`, at any size.
 fn holds(s: &IntervalSet, v: &Value) -> bool {
     match v {
         Value::Int(n) => s.contains(*n),
-        Value::Big(n) => match s.bounds() {
-            Some((lo, _)) if n.is_negative() => lo == NegInf,
-            Some((_, hi)) => hi == PosInf,
-            None => false,
-        },
+        Value::Big(n) => s.contains_end(&Fin(Num::from(&**n))),
         _ => false,
     }
 }
@@ -39,8 +35,16 @@ fn set(rng: &mut Rng) -> IntervalSet {
     for _ in 0..1 + rng.below(2) {
         let a = end(rng, 0);
         let b = a.saturating_add(rng.int(0, 40));
-        let lo = if rng.below(10) == 0 { NegInf } else { Fin(a) };
-        let hi = if rng.below(10) == 0 { PosInf } else { Fin(b) };
+        let lo = if rng.below(10) == 0 {
+            NegInf
+        } else {
+            End::of(a)
+        };
+        let hi = if rng.below(10) == 0 {
+            PosInf
+        } else {
+            End::of(b)
+        };
         pieces.push((lo, hi));
     }
     IntervalSet::from_pieces(pieces)
@@ -48,16 +52,17 @@ fn set(rng: &mut Rng) -> IntervalSet {
 
 /// A random member of the non-empty `s`, near one of its ends or inside a piece.
 fn member(rng: &mut Rng, s: &IntervalSet) -> i64 {
-    let (lo, hi) = s.pieces()[rng.below(s.pieces().len())];
+    let (lo, hi) = &s.pieces()[rng.below(s.pieces().len())];
+    let (lo, hi) = (lo.to_i64(), hi.to_i64());
     let lo = match lo {
-        Fin(v) => v,
+        Some(v) => v,
         _ => match hi {
-            Fin(h) => h.saturating_sub(rng.int(0, 1 << 20)),
+            Some(h) => h.saturating_sub(rng.int(0, 1 << 20)),
             _ => rng.int(-100, 100),
         },
     };
     let hi = match hi {
-        Fin(v) => v,
+        Some(v) => v,
         _ => lo.saturating_add(rng.int(0, 1 << 20)),
     };
     let span = (hi as i128 - lo as i128) as u128;
@@ -146,7 +151,7 @@ fn a_shift_inside_and_outside_i32() {
 
 #[test]
 fn masking_a_non_negative_int_with_255() {
-    let x = IntervalSet::range(Fin(0), PosInf);
+    let x = IntervalSet::range(End::of(0), PosInf);
     let out = bit_word(Prim::BitAnd, &[x, IntervalSet::single(255)]);
     assert_eq!(out, IntervalSet::of(0, 255));
     assert_eq!(out.to_string(), "[0..=255]");
@@ -155,7 +160,7 @@ fn masking_a_non_negative_int_with_255() {
 #[test]
 fn the_rules_on_ranges() {
     let r = |lo: i64, hi: i64| IntervalSet::of(lo, hi);
-    let from = |lo: i64| IntervalSet::range(Fin(lo), PosInf);
+    let from = |lo: i64| IntervalSet::range(End::of(lo), PosInf);
     assert_eq!(bit_word(Prim::BitOr, &[r(4, 9), r(0, 3)]), r(4, 15));
     assert_eq!(bit_word(Prim::BitXor, &[r(0, 16), r(0, 3)]), r(0, 31));
     assert_eq!(bit_word(Prim::PopCount, &[r(1, 255)]), r(1, 8));
@@ -174,9 +179,9 @@ fn the_rules_on_ranges() {
     assert_eq!(
         bit_word(Prim::Shl, &[r(-3, 3), r(1, 2)]),
         IntervalSet::from_pieces(vec![
-            (Fin(-12), Fin(-2)),
-            (Fin(0), Fin(0)),
-            (Fin(2), Fin(12))
+            (End::of(-12), End::of(-2)),
+            (End::of(0), End::of(0)),
+            (End::of(2), End::of(12))
         ])
     );
     assert_eq!(bit_word(Prim::Shr, &[r(-8, 8), r(1, 2)]), r(-4, 4));
@@ -186,10 +191,16 @@ fn the_rules_on_ranges() {
     assert_eq!(bit_word(Prim::Shr, &[r(5, 5), from(0)]), r(0, 5));
     assert_eq!(
         bit_word(Prim::Shl, &[r(1, 1), from(0)]),
-        IntervalSet::range(Fin(1), PosInf)
+        IntervalSet::range(End::of(1), PosInf)
     );
-    assert_eq!(bit_word(Prim::F64Bits, &[all]), from(0));
-    // A product past `i64` is rounded outward.
+    assert_eq!(
+        bit_word(Prim::F64Bits, &[all]),
+        IntervalSet::range(End::of(0), End::from((1i128 << 64) - 1))
+    );
+    // A product past `i64` is exact.
     let past = bit_word(Prim::Shl, &[r(1, 1), r(70, 80)]);
-    assert_eq!(past.bounds(), Some((Fin(i64::MAX), PosInf)));
+    assert_eq!(
+        past,
+        IntervalSet::range(End::from(1i128 << 70), End::from(1i128 << 80))
+    );
 }

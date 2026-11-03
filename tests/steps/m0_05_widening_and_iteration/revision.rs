@@ -167,17 +167,17 @@ fn an_aligned_index_moves_its_bounds_to_the_alignment() {
 /// -3..=3 or infinite, the empty set, and a two-piece union.
 fn operands() -> Vec<IntervalSet> {
     let ends: Vec<End> = std::iter::once(End::NegInf)
-        .chain((-3..=3).map(End::Fin))
+        .chain((-3..=3).map(End::of))
         .chain(std::iter::once(End::PosInf))
         .collect();
     let mut out = vec![
         IntervalSet::empty(),
         IntervalSet::of(-3, -2).join(&IntervalSet::of(2, 3)),
     ];
-    for &lo in &ends {
-        for &hi in &ends {
-            if lo <= hi && lo != End::PosInf && hi != End::NegInf {
-                out.push(IntervalSet::range(lo, hi));
+    for lo in &ends {
+        for hi in &ends {
+            if lo <= hi && *lo != End::PosInf && *hi != End::NegInf {
+                out.push(IntervalSet::range(lo.clone(), hi.clone()));
             }
         }
     }

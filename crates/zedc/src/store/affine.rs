@@ -20,7 +20,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use super::interval::{End, IntervalSet};
+use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Landmarks, Lattice};
 
 /// A symbol an affine bound names: a name in scope or its length, `n` or `a::len`. The store
@@ -34,8 +34,8 @@ pub struct Affine {
     /// The symbols and their coefficients. Bounds are compared by this first, so the bounds
     /// with one set of terms are neighbors in a `BTreeSet`.
     pub terms: BTreeMap<Sym, i64>,
-    /// The constant.
-    pub constant: i64,
+    /// The constant, exact at any magnitude.
+    pub constant: Num,
 }
 
 impl Affine {
@@ -43,7 +43,7 @@ impl Affine {
     pub fn constant(c: i64) -> Affine {
         Affine {
             terms: BTreeMap::new(),
-            constant: c,
+            constant: Num::from(c),
         }
     }
 
@@ -51,19 +51,20 @@ impl Affine {
     pub fn sym(s: &str) -> Affine {
         Affine {
             terms: BTreeMap::from([(Sym(s.into()), 1)]),
-            constant: 0,
+            constant: Num::ZERO,
         }
     }
 
-    /// `self + c`, or `None` past the 64-bit range.
-    pub fn plus(&self, c: i64) -> Option<Affine> {
-        Some(Affine {
+    /// `self + c`.
+    pub fn plus(&self, c: i64) -> Affine {
+        Affine {
             terms: self.terms.clone(),
-            constant: self.constant.checked_add(c)?,
-        })
+            constant: &self.constant + &Num::from(c),
+        }
     }
 
-    /// `k · self`, or `None` past the 64-bit range.
+    /// `k · self`, or `None` when a coefficient leaves the 64-bit range (the constant is
+    /// exact).
     pub fn times(&self, k: i64) -> Option<Affine> {
         if k == 0 {
             return Some(Affine::constant(0));
@@ -74,17 +75,15 @@ impl Affine {
         }
         Some(Affine {
             terms,
-            constant: self.constant.checked_mul(k)?,
+            constant: &self.constant * &Num::from(k),
         })
     }
 
-    /// The value at the given symbol values, or `None` past the 128-bit range.
-    pub fn eval(&self, at: &impl Fn(&Sym) -> i64) -> Option<i128> {
-        self.terms
-            .iter()
-            .try_fold(self.constant as i128, |v, (s, c)| {
-                v.checked_add((*c as i128).checked_mul(at(s) as i128)?)
-            })
+    /// The value at the given symbol values, exact.
+    pub fn eval(&self, at: &impl Fn(&Sym) -> i64) -> Num {
+        self.terms.iter().fold(self.constant.clone(), |v, (s, c)| {
+            &v + &Num::from(*c as i128 * at(s) as i128)
+        })
     }
 
     /// Whether the bound has no symbol.
@@ -108,11 +107,12 @@ impl fmt::Display for Affine {
             }
             write!(f, "{}", s.0)?;
         }
-        match (self.terms.is_empty(), self.constant) {
-            (true, c) => write!(f, "{c}"),
+        let c = &self.constant;
+        match (self.terms.is_empty(), c.signum()) {
+            (true, _) => write!(f, "{c}"),
             (false, 0) => Ok(()),
-            (false, c) if c < 0 => write!(f, " - {}", c.unsigned_abs()),
-            (false, c) => write!(f, " + {c}"),
+            (false, -1) => write!(f, " - {}", c.abs()),
+            (false, _) => write!(f, " + {c}"),
         }
     }
 }
@@ -144,7 +144,7 @@ impl Side {
     }
 
     /// The looser of two ends: the smaller for a lower bound, the larger for an upper.
-    fn looser_end(self, a: End, b: End) -> End {
+    fn looser_end<'a>(self, a: &'a End, b: &'a End) -> &'a End {
         match self {
             Side::Lower => a.min(b),
             Side::Upper => a.max(b),
@@ -152,7 +152,7 @@ impl Side {
     }
 
     /// The looser of two constants.
-    fn looser(self, a: i64, b: i64) -> i64 {
+    fn looser<'a>(self, a: &'a Num, b: &'a Num) -> &'a Num {
         match self {
             Side::Lower => a.min(b),
             Side::Upper => a.max(b),
@@ -160,8 +160,8 @@ impl Side {
     }
 
     /// The end of the interval hull on this side.
-    fn hull_end(self, ints: &IntervalSet) -> End {
-        let (lo, hi) = ints.bounds().unwrap_or((End::PosInf, End::NegInf));
+    fn hull_end(self, ints: &IntervalSet) -> &End {
+        let (lo, hi) = ints.bounds().unwrap_or((&End::PosInf, &End::NegInf));
         match self {
             Side::Lower => lo,
             Side::Upper => hi,
@@ -184,22 +184,22 @@ pub struct Bound {
 }
 
 impl Bound {
-    /// The bound's value at the given symbol values, or `None` past the 128-bit range.
-    fn eval(&self, side: Side, at: &impl Fn(&Sym) -> i64) -> Option<i128> {
-        let a = self.affine.eval(at)?;
-        Some(match (side, self.floor) {
-            (_, End::Fin(c)) if side == Side::Lower => a.min(c as i128),
-            (_, End::Fin(c)) => a.max(c as i128),
+    /// The bound's value at the given symbol values, exact.
+    fn eval(&self, side: Side, at: &impl Fn(&Sym) -> i64) -> Num {
+        let a = self.affine.eval(at);
+        match (side, &self.floor) {
+            (Side::Lower, End::Fin(c)) => a.min(c.clone()),
+            (Side::Upper, End::Fin(c)) => a.max(c.clone()),
             _ => a,
-        })
+        }
     }
 
     /// Whether `self` is at least as tight as `other` for every symbol value: the same terms,
     /// and a constant and a floor each at least as tight.
     fn implies(&self, side: Side, other: &Bound) -> bool {
         self.affine.terms == other.affine.terms
-            && side.looser(self.affine.constant, other.affine.constant) == other.affine.constant
-            && side.looser_end(self.floor, other.floor) == other.floor
+            && *side.looser(&self.affine.constant, &other.affine.constant) == other.affine.constant
+            && *side.looser_end(&self.floor, &other.floor) == other.floor
     }
 
     /// The bound both `self` and `other` imply, when they have the same terms.
@@ -207,23 +207,25 @@ impl Bound {
         (self.affine.terms == other.affine.terms).then(|| Bound {
             affine: Affine {
                 terms: self.affine.terms.clone(),
-                constant: side.looser(self.affine.constant, other.affine.constant),
+                constant: side
+                    .looser(&self.affine.constant, &other.affine.constant)
+                    .clone(),
             },
-            floor: side.looser_end(self.floor, other.floor),
+            floor: side.looser_end(&self.floor, &other.floor).clone(),
         })
     }
 
     /// The bound `self` and the number `end` both imply.
-    fn loosen_end(&self, side: Side, end: End) -> Option<Bound> {
-        let floor = side.looser_end(self.floor, end);
-        (floor != side.vacuous()).then(|| Bound {
+    fn loosen_end(&self, side: Side, end: &End) -> Option<Bound> {
+        let floor = side.looser_end(&self.floor, end);
+        (*floor != side.vacuous()).then(|| Bound {
             affine: self.affine.clone(),
-            floor,
+            floor: floor.clone(),
         })
     }
 
     fn fmt_on(&self, side: Side) -> String {
-        match (self.floor, side) {
+        match (&self.floor, side) {
             (End::Fin(c), Side::Lower) => format!("min({c}, {})", self.affine),
             (End::Fin(c), Side::Upper) => format!("max({c}, {})", self.affine),
             _ => self.affine.to_string(),
@@ -314,7 +316,9 @@ impl Bounds {
     /// already there implies it, and drops each bound already there that it implies.
     fn add(&mut self, side: Side, b: Bound) {
         if b.affine.is_constant() {
-            let c = side.looser_end(End::Fin(b.affine.constant), b.floor);
+            let c = side
+                .looser_end(&End::Fin(b.affine.constant), &b.floor)
+                .clone();
             let half = match side {
                 Side::Lower => IntervalSet::range(c, End::PosInf),
                 Side::Upper => IntervalSet::range(End::NegInf, c),
@@ -341,9 +345,12 @@ impl Bounds {
     /// the same terms and no floor.
     fn normal(mut self) -> Bounds {
         for side in [Side::Lower, Side::Upper] {
+            let set = match side {
+                Side::Lower => &mut self.lower,
+                Side::Upper => &mut self.upper,
+            };
             let end = side.hull_end(&self.ints);
-            self.side_mut(side)
-                .retain(|b| side.looser_end(b.floor, end) != b.floor);
+            set.retain(|b| *side.looser_end(&b.floor, end) != b.floor);
         }
         let crossed = self.lower.iter().any(|l| {
             same_terms(&self.upper, &l.affine.terms).any(|u| {
@@ -361,44 +368,30 @@ impl Bounds {
 
     /// Whether `v` is in the element at the given symbol values.
     pub fn contains(&self, v: i64, at: &impl Fn(&Sym) -> i64) -> bool {
-        let x = v as i128;
+        let x = Num::from(v);
         self.ints.contains(v)
-            && self
-                .lower
-                .iter()
-                .all(|l| l.eval(Side::Lower, at).is_some_and(|b| b <= x))
-            && self
-                .upper
-                .iter()
-                .all(|u| u.eval(Side::Upper, at).is_some_and(|b| x <= b))
+            && self.lower.iter().all(|l| l.eval(Side::Lower, at) <= x)
+            && self.upper.iter().all(|u| x <= u.eval(Side::Upper, at))
     }
 
-    /// The element shifted by `c`: `x + c` for each member `x`. A bound past the 64-bit range is
-    /// dropped, which only widens the element.
-    ///
-    /// Complexity tradeoff: the dropped bound is the `i64` end rule of `interval::End`; it
-    /// switches behavior at a magnitude, so it violates the no-thresholds rule; to be replaced.
-    /// The reasons, test and complete solution are at `End::from_i128`. Test:
-    /// `l01_24_refinement_lattices::bounds::an_offset_moves_every_member`. COMPLEXITY.md row C10.
+    /// The element shifted by `c`: `x + c` for each member `x`, exact at any magnitude.
     pub fn offset(&self, c: i64) -> Bounds {
-        let shift = |s: &BTreeSet<Bound>, end: fn(i128) -> End| {
+        let c = Num::from(c);
+        let shift = |s: &BTreeSet<Bound>| {
             s.iter()
-                .filter_map(|b| {
-                    Some(Bound {
-                        affine: b.affine.plus(c)?,
-                        floor: shift_end(b.floor, c, end),
-                    })
+                .map(|b| Bound {
+                    affine: Affine {
+                        terms: b.affine.terms.clone(),
+                        constant: &b.affine.constant + &c,
+                    },
+                    floor: shift_end(&b.floor, &c),
                 })
                 .collect::<Vec<_>>()
         };
         let ints = self
             .ints
-            .lift1(|(lo, hi)| vec![(shift_end(lo, c, End::lower), shift_end(hi, c, End::upper))]);
-        Bounds::from_bounds(
-            ints,
-            shift(&self.lower, End::lower),
-            shift(&self.upper, End::upper),
-        )
+            .lift1(|(lo, hi)| vec![(shift_end(lo, &c), shift_end(hi, &c))]);
+        Bounds::from_bounds(ints, shift(&self.lower), shift(&self.upper))
     }
 
     /// The bounds on one side that every member of `a` or of `b` is within: for each pair with
@@ -424,26 +417,35 @@ impl Bounds {
 
 /// The bounds of `set` with the given terms, which are neighbors since a bound is ordered by
 /// its terms first: a range of the set, not a scan of it, so the operations on bounds over
-/// many symbols are `O(k log k)` and not `O(k²)` (DESIGN.md Part G).
+/// many symbols are `O(k log k)` and not `O(k²)` (DESIGN.md Part G). A constant has no least
+/// value, so the range starts at the first bound with these terms, found by walking down from
+/// a probe with constant 0: `O(log n + k)` for `k` bounds with these terms.
 fn same_terms<'a>(
     set: &'a BTreeSet<Bound>,
-    terms: &BTreeMap<Sym, i64>,
+    terms: &'a BTreeMap<Sym, i64>,
 ) -> impl Iterator<Item = &'a Bound> {
-    let at = |constant, floor| Bound {
+    let probe = Bound {
         affine: Affine {
             terms: terms.clone(),
-            constant,
+            constant: Num::ZERO,
         },
-        floor,
+        floor: End::NegInf,
     };
-    set.range(at(i64::MIN, End::NegInf)..=at(i64::MAX, End::PosInf))
+    let first = set
+        .range(..&probe)
+        .rev()
+        .take_while(|b| b.affine.terms == *terms)
+        .last()
+        .unwrap_or(&probe);
+    set.range(first..)
+        .take_while(move |b| b.affine.terms == *terms)
 }
 
-/// `e + c`, rounded by `end` as a lower or an upper end.
-fn shift_end(e: End, c: i64, end: fn(i128) -> End) -> End {
+/// `e + c`, exact.
+fn shift_end(e: &End, c: &Num) -> End {
     match e {
-        End::Fin(v) => end(v as i128 + c as i128),
-        e => e,
+        End::Fin(v) => End::Fin(v + c),
+        e => e.clone(),
     }
 }
 
@@ -540,7 +542,7 @@ impl Lattice for Bounds {
         let implied = |side: Side| {
             other.bounds(side).iter().all(|t| {
                 same_terms(self.bounds(side), &t.affine.terms).any(|m| m.implies(side, t))
-                    || side.looser_end(t.floor, side.hull_end(&self.ints)) == t.floor
+                    || *side.looser_end(&t.floor, side.hull_end(&self.ints)) == t.floor
             })
         };
         *self == Bounds::bottom()
@@ -557,13 +559,13 @@ impl fmt::Display for Bounds {
             return write!(f, "{}", self.ints);
         }
         let (lo, hi) = match self.ints.pieces() {
-            [(lo, hi)] => (*lo, *hi),
+            [(lo, hi)] => (lo, hi),
             _ => {
                 write!(f, "{} & ", self.ints)?;
-                (End::NegInf, End::PosInf)
+                (&End::NegInf, &End::PosInf)
             }
         };
-        let end = |side: Side, num: End| {
+        let end = |side: Side, num: &End| {
             let mut items: Vec<String> = Vec::new();
             if let End::Fin(v) = num {
                 items.push(v.to_string());

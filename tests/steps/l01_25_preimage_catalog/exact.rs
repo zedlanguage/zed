@@ -81,7 +81,7 @@ fn a_witness_is_the_first_point_found_or_none() {
     let found = w(Some(0), Some(1_000_000_000_000_000), &none)
         .expect("decided")
         .expect("a point");
-    let x = found["x"];
+    let x = found["x"].to_i64().expect("a point within the box");
     assert!(
         (x * x) % 10 == 9 && (0..=1_000_000_000_000_000).contains(&x),
         "{x}"
@@ -107,8 +107,9 @@ fn the_classes_alone_decide_a_box_of_any_size() {
     assert_eq!(
         witness(&yes, &d, &five, &t)
             .expect("decided")
-            .expect("a point")["x"],
-        5
+            .expect("a point")["x"]
+            .to_i64(),
+        Some(5)
     );
     let took = zed_tests::scaling::cpu_time() - t0;
     assert!(took.as_secs() < 1, "took {took:?}");

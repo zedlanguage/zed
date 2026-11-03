@@ -3,7 +3,7 @@
 //! `MAX + 1`, an integer that differs from `MAX`; the preimage must keep such inputs.
 
 use zed_kernel::{Prim, Term, Value};
-use zedc::store::interval::{self, End, IntervalSet};
+use zedc::store::interval::{End, IntervalSet};
 use zedc::store::preimage::{Demand, Domains, preimage};
 
 use super::{check, doms, shown};
@@ -97,35 +97,37 @@ fn an_arm_or_a_second_input_past_max() {
     );
 }
 
-/// The complement keeps the integers past an end of `i64` only when the set it is taken in
-/// holds them, and marks the result as rounded then.
+/// The complement keeps the integers past an end of `i64` exactly when the set it is taken in
+/// holds them.
 #[test]
 fn the_complement_at_the_ends_of_i64() {
-    use End::{Fin, NegInf, PosInf};
-    interval::rounded();
+    use End::{NegInf, PosInf};
+    let at = |v: i128| End::from(v);
     let top = IntervalSet::top();
     let max = IntervalSet::single(MAX);
-    assert_eq!(max.complement_in(&top), top);
-    assert!(interval::rounded());
+    assert_eq!(
+        max.complement_in(&top),
+        IntervalSet::from_pieces(vec![
+            (NegInf, at(MAX as i128 - 1)),
+            (at(MAX as i128 + 1), PosInf)
+        ])
+    );
     assert_eq!(
         max.complement_in(&IntervalSet::of(0, MAX)),
         IntervalSet::of(0, MAX - 1)
     );
-    assert!(!interval::rounded());
-    let low = IntervalSet::range(Fin(MIN), Fin(5));
+    let low = IntervalSet::range(End::of(MIN), End::of(5));
     assert_eq!(
         low.complement_in(&top),
-        IntervalSet::from_pieces(vec![(NegInf, Fin(MIN)), (Fin(6), PosInf)])
+        IntervalSet::from_pieces(vec![(NegInf, at(MIN as i128 - 1)), (at(6), PosInf)])
     );
-    assert!(interval::rounded());
     assert_eq!(
         low.complement_in(&IntervalSet::of(MIN, 9)),
         IntervalSet::of(6, 9)
     );
-    assert!(!interval::rounded());
     assert_eq!(
         IntervalSet::of(1, 2).complement_in(&IntervalSet::of(0, 4)),
-        IntervalSet::from_pieces(vec![(Fin(0), Fin(0)), (Fin(3), Fin(4))])
+        IntervalSet::from_pieces(vec![(at(0), at(0)), (at(3), at(4))])
     );
 }
 
@@ -133,8 +135,8 @@ fn the_complement_at_the_ends_of_i64() {
 /// except a wide gap in the middle.
 fn spread(n: usize) -> IntervalSet {
     let n = n as i64;
-    let low = (0..n / 2).map(|i| (End::Fin(MIN + 2 * i), End::Fin(MIN + 2 * i)));
-    let high = (0..n - n / 2).map(|i| (End::Fin(MAX - 2 * i), End::Fin(MAX - 2 * i)));
+    let low = (0..n / 2).map(|i| (End::of(MIN + 2 * i), End::of(MIN + 2 * i)));
+    let high = (0..n - n / 2).map(|i| (End::of(MAX - 2 * i), End::of(MAX - 2 * i)));
     IntervalSet::from_pieces(low.chain(high).collect())
 }
 

@@ -154,7 +154,7 @@ fn check_projection(claimed: &[IntervalSet], t: &Term, names: &[Arc<str>]) -> Re
         .zip(projections(&points, names.len()))
     {
         let hull = match want.bounds() {
-            Some((lo, hi)) => IntervalSet::range(lo, hi),
+            Some((lo, hi)) => IntervalSet::range(lo.clone(), hi.clone()),
             None => IntervalSet::empty(),
         };
         if !want.is_subset(c) {

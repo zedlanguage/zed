@@ -103,10 +103,10 @@ impl Equations<Bounds> for System {
         let bounds = [&self.init[v]]
             .into_iter()
             .chain(self.terms[v].iter().map(|t| &t.guard));
-        let ends = bounds.flat_map(|b| b.concrete().pieces().iter().flat_map(|&(lo, hi)| [lo, hi]));
+        let ends = bounds.flat_map(|b| b.concrete().pieces().iter().flat_map(|(lo, hi)| [lo, hi]));
         Landmarks::of(
             ends.filter_map(|e| match e {
-                End::Fin(v) => Some(v),
+                End::Fin(v) => Some(v.clone()),
                 _ => None,
             }),
             [],
@@ -125,7 +125,7 @@ fn num(c: i64) -> Bounds {
 /// `for i in 0..<n`: `i = 0 ⊔ (i ⊓ [..=n - 1]) + 1`, and the index the body sees,
 /// `j = i ⊓ [..=n - 1]`.
 fn counting_up() -> System {
-    let below_n = Bounds::range(None, n().plus(-1));
+    let below_n = Bounds::range(None, Some(n().plus(-1)));
     System::new(
         vec![num(0), Bounds::bottom()],
         vec![
@@ -157,7 +157,10 @@ fn a_counting_loop_keeps_its_symbolic_bound() {
 fn a_loop_counting_down_keeps_its_symbolic_bound() {
     // `i = n - 1; while i >= 1 { i = i - 1 }`, and the index the body sees.
     let s = System::new(
-        vec![Bounds::range(n().plus(-1), n().plus(-1)), Bounds::bottom()],
+        vec![
+            Bounds::range(Some(n().plus(-1)), Some(n().plus(-1))),
+            Bounds::bottom(),
+        ],
         vec![
             vec![Term {
                 from: 0,

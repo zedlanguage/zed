@@ -12,6 +12,7 @@
 mod constant_minus;
 mod entries;
 mod exact;
+mod kept_ends;
 mod overflow;
 mod powers;
 mod random;
@@ -55,7 +56,7 @@ pub(crate) fn function(src: &str) -> (Vec<Arc<str>>, Term) {
 pub(crate) fn doms(ds: &[(&str, Option<i64>, Option<i64>)]) -> Domains {
     ds.iter()
         .map(|&(n, lo, hi)| {
-            let e = |v: Option<i64>, inf| v.map_or(inf, End::Fin);
+            let e = |v: Option<i64>, inf| v.map_or(inf, End::of);
             (
                 n.into(),
                 IntervalSet::range(e(lo, End::NegInf), e(hi, End::PosInf)),
@@ -68,7 +69,7 @@ pub(crate) fn doms(ds: &[(&str, Option<i64>, Option<i64>)]) -> Domains {
 pub(crate) fn listed(ds: &[(&str, &[i64])]) -> Domains {
     ds.iter()
         .map(|&(n, vs)| {
-            let pieces = vs.iter().map(|&v| (End::Fin(v), End::Fin(v))).collect();
+            let pieces = vs.iter().map(|&v| (End::of(v), End::of(v))).collect();
             (n.into(), IntervalSet::from_pieces(pieces))
         })
         .collect()

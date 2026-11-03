@@ -84,6 +84,16 @@ fn an_offset_moves_every_member() {
                 );
             }
         }
+        // Past `i64` in either direction and back: every end and bound is exact, so the
+        // element comes back unchanged.
+        let far = a.offset(i64::MAX);
+        assert_eq!(far.offset(-i64::MAX), a, "{a} moved by i64::MAX is {far}");
+        let below = a.offset(i64::MIN);
+        assert_eq!(
+            below.offset(i64::MAX).offset(1),
+            a,
+            "{a} moved by i64::MIN is {below}"
+        );
     }
 }
 
@@ -115,7 +125,10 @@ fn bounds_print_in_the_type_syntax() {
     let n = || Affine::sym("n");
     let zero = || Affine::constant(0);
     let cases = [
-        (Bounds::range(Some(zero()), n().plus(-1)), "[0..=n - 1]"),
+        (
+            Bounds::range(Some(zero()), Some(n().plus(-1))),
+            "[0..=n - 1]",
+        ),
         (Bounds::range(Some(n()), None), "[n..]"),
         (Bounds::range(None, n().times(2)), "[..=2 * n]"),
         (
@@ -129,21 +142,18 @@ fn bounds_print_in_the_type_syntax() {
         ),
         (
             Bounds::from_bounds(
-                IntervalSet::range(End::Fin(0), End::PosInf),
+                IntervalSet::range(End::of(0), End::PosInf),
                 [],
                 [Bound {
                     affine: n(),
-                    floor: End::Fin(0),
+                    floor: End::of(0),
                 }],
             ),
             "[0..=max(0, n)]",
         ),
         (
             Bounds::new(
-                IntervalSet::from_pieces(vec![
-                    (End::Fin(0), End::Fin(3)),
-                    (End::Fin(5), End::PosInf),
-                ]),
+                IntervalSet::from_pieces(vec![(End::of(0), End::of(3)), (End::of(5), End::PosInf)]),
                 [],
                 [n()],
             ),
@@ -160,7 +170,7 @@ fn bounds_print_in_the_type_syntax() {
 fn a_bound_crossing_its_opposite_is_empty() {
     // `int[n..=n - 1]` has no member whatever `n` is.
     let n = Affine::sym("n");
-    let b = Bounds::range(Some(n.clone()), n.plus(-1));
+    let b = Bounds::range(Some(n.clone()), Some(n.plus(-1)));
     assert_eq!(b, Bounds::bottom());
     // `int[n..=m]` is empty only when `n > m`, so it stays.
     let c = Bounds::range(Some(n), Some(Affine::sym("m")));
@@ -171,7 +181,7 @@ fn a_bound_crossing_its_opposite_is_empty() {
 #[test]
 fn a_tighter_bound_with_the_same_terms_replaces_the_looser() {
     let n = Affine::sym("n");
-    let b = Bounds::range(None, Some(n.clone())).meet(&Bounds::range(None, n.plus(-2)));
+    let b = Bounds::range(None, Some(n.clone())).meet(&Bounds::range(None, Some(n.plus(-2))));
     assert_eq!(b.to_string(), "[..=n - 2]");
     // A bound the union already implies is dropped: `max(5, n)` when every member is at most 3.
     let c = Bounds::from_bounds(
@@ -179,7 +189,7 @@ fn a_tighter_bound_with_the_same_terms_replaces_the_looser() {
         [],
         [Bound {
             affine: n,
-            floor: End::Fin(5),
+            floor: End::of(5),
         }],
     );
     assert_eq!(c, Bounds::ints(IntervalSet::of(0, 3)));

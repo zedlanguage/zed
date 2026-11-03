@@ -148,8 +148,8 @@ fn every_value_that_reaches_an_arm_is_in_its_scope() {
             .filter(|a| {
                 a.reachable()
                     && a.scope.get("x").ints().bounds().is_some_and(|(lo, hi)| {
-                        lo != zedc::store::interval::End::NegInf
-                            || hi != zedc::store::interval::End::PosInf
+                        *lo != zedc::store::interval::End::NegInf
+                            || *hi != zedc::store::interval::End::PosInf
                     })
             })
             .count();

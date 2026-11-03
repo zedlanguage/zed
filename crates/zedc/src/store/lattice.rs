@@ -10,7 +10,7 @@ use std::fmt;
 
 use zed_kernel::Value;
 
-use super::interval::{End, IntervalSet};
+use super::interval::{End, IntervalSet, Num};
 
 /// The values written in a program, at which a widening stops a bound and a narrowing stops a
 /// descent (step M0.5): each integer literal and each declared bound `k`, as `k - 1`, `k` and
@@ -19,7 +19,7 @@ use super::interval::{End, IntervalSet};
 /// landmarks of its loop only (`iterate::Scopes`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Landmarks {
-    ints: BTreeSet<i64>,
+    ints: BTreeSet<Num>,
     values: BTreeSet<Value>,
 }
 
@@ -31,7 +31,7 @@ impl Landmarks {
 
     /// The landmarks of the given integer literals and other values.
     pub fn of(
-        ints: impl IntoIterator<Item = i64>,
+        ints: impl IntoIterator<Item = impl Into<Num>>,
         values: impl IntoIterator<Item = Value>,
     ) -> Self {
         let mut out = Landmarks {
@@ -39,23 +39,20 @@ impl Landmarks {
             ..Landmarks::default()
         };
         for k in ints {
-            out.ints.extend(
-                [k.checked_sub(1), Some(k), k.checked_add(1)]
-                    .into_iter()
-                    .flatten(),
-            );
+            let k: Num = k.into();
+            out.ints.extend([&k - &Num::ONE, &k + &Num::ONE, k]);
         }
         out
     }
 
     /// Adds the landmarks of `other`.
     pub fn extend(&mut self, other: &Landmarks) {
-        self.ints.extend(&other.ints);
+        self.ints.extend(other.ints.iter().cloned());
         self.values.extend(other.values.iter().cloned());
     }
 
     /// The integer landmarks, in order.
-    pub fn ints(&self) -> &BTreeSet<i64> {
+    pub fn ints(&self) -> &BTreeSet<Num> {
         &self.ints
     }
 
@@ -73,14 +70,15 @@ pub trait Mark {
 
 impl Mark for i64 {
     fn marked(&self, marks: &Landmarks) -> bool {
-        marks.ints.contains(self)
+        marks.ints.contains(&Num::from(*self))
     }
 }
 
 impl Mark for Value {
     fn marked(&self, marks: &Landmarks) -> bool {
         match self {
-            Value::Int(n) => marks.ints.contains(n),
+            Value::Int(n) => marks.ints.contains(&Num::from(*n)),
+            Value::Big(n) => marks.ints.contains(&Num::from(&**n)),
             v => marks.values.contains(v),
         }
     }
@@ -400,7 +398,7 @@ impl Lattice for Card {
         Card(IntervalSet::empty())
     }
     fn top() -> Self {
-        Card(IntervalSet::range(End::Fin(0), End::PosInf))
+        Card(IntervalSet::range(End::of(0), End::PosInf))
     }
     fn join(&self, other: &Self) -> Self {
         Card(self.0.join(&other.0).hull())
@@ -489,16 +487,19 @@ mod tests {
 
     #[test]
     fn a_cardinality_never_goes_below_zero() {
-        let c = Card::range(Fin(2), Fin(3));
+        let c = Card::range(End::of(2), End::of(3));
         let none = Landmarks::none();
         assert_eq!(
-            c.widen(&Card::range(Fin(1), Fin(3)), &none),
-            Card::range(Fin(0), Fin(3))
+            c.widen(&Card::range(End::of(1), End::of(3)), &none),
+            Card::range(End::of(0), End::of(3))
         );
         assert_eq!(
-            c.widen(&Card::range(Fin(2), Fin(4)), &none),
-            Card::range(Fin(2), PosInf)
+            c.widen(&Card::range(End::of(2), End::of(4)), &none),
+            Card::range(End::of(2), PosInf)
         );
-        assert_eq!(Card::range(NegInf, Fin(1)), Card::range(Fin(0), Fin(1)));
+        assert_eq!(
+            Card::range(NegInf, End::of(1)),
+            Card::range(End::of(0), End::of(1))
+        );
     }
 }

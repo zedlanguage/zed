@@ -92,7 +92,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use imbl::OrdSet;
 
 use super::int::Int;
-use super::interval::{End, IntervalSet};
+use super::interval::{End, IntervalSet, Num};
 use super::linear::Term;
 use super::{hull3, twovar, utvpi};
 
@@ -3379,8 +3379,6 @@ fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
 /// holds every value; one of 60 is wider than the hull). COMPLEXITY.md rows S7 and S16. A
 /// complete solution would project each combination of disjuncts, or a decision diagram over
 /// the disjuncts, at a cost exponential in the worst case.
-///
-/// The `i64` bound (see [`hull_from`]) violates the no-thresholds rule; to be replaced.
 pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
     project_each(f, std::slice::from_ref(sym))?.0.remove(0)
 }
@@ -3697,37 +3695,38 @@ fn tighten(f: &Formula, sym: &Atom, set: IntervalSet) -> Result<IntervalSet, Ref
             Ok(false)
         )
     };
+    let (one, two) = (Int::ONE, Int::from(2));
     // The least `v` in `lo..=hi` with no proof that `f` has no point where `sym <= v`, and the
     // greatest with none where `sym >= v`.
-    let (mut a, mut b) = (i128::from(lo), i128::from(hi));
+    let (mut a, mut b) = (Int::from(lo), Int::from(hi));
     while a < b {
-        let mid = a + (b - a).div_euclid(2);
-        if none(Con::ge(&Lin::constant(mid), &x)) {
-            a = mid + 1
+        let mid = &a + &(&b - &a).div_floor(&two);
+        if none(Con::ge(&Lin::constant(mid.clone()), &x)) {
+            a = &mid + &one
         } else {
             b = mid
         }
     }
     let new_lo = a;
-    if none(Con::ge(&Lin::constant(new_lo), &x)) {
+    if none(Con::ge(&Lin::constant(new_lo.clone()), &x)) {
         return Ok(IntervalSet::empty());
     }
-    let (mut a, mut b) = (new_lo, i128::from(hi));
+    let (mut a, mut b) = (new_lo.clone(), Int::from(hi));
     while a < b {
-        let mid = b - (b - a).div_euclid(2);
-        if none(Con::ge(&x, &Lin::constant(mid))) {
-            b = mid - 1
+        let mid = &b - &(&b - &a).div_floor(&two);
+        if none(Con::ge(&x, &Lin::constant(mid.clone()))) {
+            b = &mid - &one
         } else {
             a = mid
         }
     }
     Ok(set.meet(&IntervalSet::range(
-        End::from_i128(new_lo),
-        End::from_i128(a),
+        End::Fin(Num::from(&new_lo)),
+        End::Fin(Num::from(&a)),
     )))
 }
 
-/// The least and greatest values of a symbol over a conjunction.
+/// The least and greatest values of a symbol over a formula.
 fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
     match satisfiable(c)? {
         Some(m) => hull_from(c, sym, &m),
@@ -3735,70 +3734,163 @@ fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
     }
 }
 
-/// [`hull`] given a point `m` of the conjunction, found by the monotone questions "is there a
-/// point with the symbol at most `v`" and "at least `v`". Each bound is searched outward
-/// from the point's value with steps that double, then by bisection, so it takes O(log d)
-/// questions for a bound at distance d, and one when the symbol is unbounded that way.
-///
-/// Complexity tradeoff: the search covers `i64` only, so a bound past it is answered as no
-/// bound (the set is wider, never wrong). Why: interval ends are machine integers
-/// (`interval::End::Fin(i64)`), whose arithmetic costs O(1) where unbounded integers cost
-/// time in their length. Trigger: a bound whose magnitude exceeds `i64`. Tests:
-/// `l01_38_presburger::omega::a_bound_past_i64_is_searched_within_i64`,
-/// `l01_38_presburger::omega::a_model_may_hold_values_past_128_bits`. COMPLEXITY.md row C1.
-/// This switches behavior at a magnitude, so it violates the no-thresholds rule; to be
-/// replaced. A complete solution would keep interval ends as unbounded integers
-/// (`store::int`), at a cost in their bits.
+/// [`hull`] given a point `m` of the formula. A side with no bound is found by one question,
+/// [`unbounded`]. A bound is then found by the monotone questions "is there a point with the
+/// symbol at most `v`" and "at least `v`", searched outward from the point's value with steps
+/// that double, then by bisection, so it takes O(log d) questions for a bound at distance d,
+/// each on integers of O(log d) bits. Every bound is exact at any magnitude.
 fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal> {
     let x = Lin::atom(sym.clone());
-    let (min, max) = (i128::from(i64::MIN), i128::from(i64::MAX));
-    // The point's value, within the range the search covers.
-    let at = m.get(sym).map_or(0, |v| {
-        let past = if v.is_negative() { min } else { max };
-        v.to_i128().unwrap_or(past).clamp(min, max)
-    });
+    let at = m.get(sym).cloned().unwrap_or(Int::ZERO);
     let with = |con: Con| -> Result<bool, Refusal> {
         decide(&Formula::and(vec![c.clone(), Formula::Con(con)]))
     };
-    let below = |v: i128| with(Con::ge(&Lin::constant(v), &x));
-    let above = |v: i128| with(Con::ge(&x, &Lin::constant(v)));
+    let below = |v: &Int| with(Con::ge(&Lin::constant(v.clone()), &x));
+    let above = |v: &Int| with(Con::ge(&x, &Lin::constant(v.clone())));
     // The last value of the monotone `holds` that is true, moving from `start` (true) by
-    // `dir` toward `end` (false).
-    let edge = |holds: &dyn Fn(i128) -> Result<bool, Refusal>,
-                start: i128,
-                end: i128,
-                dir: i128|
-     -> Result<i128, Refusal> {
-        let (mut good, mut step) = (start, 1i128);
+    // `dir`; `holds` is false far enough that way, since the side is bounded.
+    let edge = |holds: &dyn Fn(&Int) -> Result<bool, Refusal>,
+                start: &Int,
+                dir: &Int|
+     -> Result<Int, Refusal> {
+        let (mut good, mut step) = (start.clone(), Int::ONE);
         let bad = loop {
-            let next = good + dir * step;
-            if (next - end) * dir >= 0 {
-                break end;
-            }
-            if !holds(next)? {
+            let next = &good + &(dir * &step);
+            if !holds(&next)? {
                 break next;
             }
             good = next;
-            step *= 2;
+            step = &step + &step;
         };
         let (mut good, mut bad) = (good, bad);
-        while (bad - good).abs() > 1 {
-            let mid = good + (bad - good) / 2;
-            if holds(mid)? { good = mid } else { bad = mid }
+        let two = Int::from(2);
+        while (&bad - &good).abs() > Int::ONE {
+            let mid = &good + &(&bad - &good).div_floor(&two);
+            if holds(&mid)? { good = mid } else { bad = mid }
         }
         Ok(good)
     };
-    let lo = if below(min)? {
+    let lo = if unbounded(c, sym, -1)? {
         End::NegInf
     } else {
-        End::from_i128(edge(&below, at, min, -1)?)
+        End::Fin(Num::from(&edge(&below, &at, &Int::from(-1))?))
     };
-    let hi = if above(max)? {
+    let hi = if unbounded(c, sym, 1)? {
         End::PosInf
     } else {
-        End::from_i128(edge(&above, at, max, 1)?)
+        End::Fin(Num::from(&edge(&above, &at, &Int::ONE)?))
     };
     Ok(IntervalSet::range(lo, hi))
+}
+
+/// Whether `sym` takes arbitrarily large values (`dir` 1) or arbitrarily small ones (`dir`
+/// -1) over the integer points of `c`, which has one. In negation normal form `c` is an
+/// and-or tree of constraints, so its integer points are the union, over its terms in
+/// disjunctive form, of the integer points of each term's polyhedron `P`. When `P` has an
+/// integer point, the hull of its integer points has the recession cone of `P` (Meyer 1974),
+/// so `sym` is unbounded over them exactly when some ray `r` with `A·r >= 0` and `E·r == 0`
+/// for `P`'s rows `A·z + a >= 0` and `E·z + e == 0` has `dir · r_sym > 0`, and then one with
+/// `dir · r_sym >= 1` in integers, the cone being rational. The question is one formula: each
+/// constraint is replaced by itself and its row without the constant over a copy of the atoms
+/// (fresh auxiliary variables), which keeps the tree, so its terms are the pairs of a term's
+/// polyhedron and its cone. With no disjunction the point is known, and the cone alone is
+/// asked. Its size is twice that of `c`.
+fn unbounded(c: &Formula, sym: &Atom, dir: i64) -> Result<bool, Refusal> {
+    let f = nnf(c, true);
+    let atoms = f.atoms();
+    let first = atoms
+        .iter()
+        .filter_map(|a| match a {
+            Atom::Aux(n) => Some(n + 1),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    let ray: BTreeMap<&Atom, Atom> = atoms
+        .iter()
+        .zip(first..)
+        .map(|(a, n)| (a, Atom::Aux(n)))
+        .collect();
+    let cone = |con: &Con| Con {
+        lin: Lin {
+            terms: con
+                .lin
+                .terms
+                .iter()
+                .map(|(a, k)| (ray[a].clone(), k.clone()))
+                .collect(),
+            constant: Int::ZERO,
+        },
+        rel: con.rel,
+    };
+    let has_or = |g: &Formula| -> bool {
+        let mut stack = vec![g];
+        while let Some(g) = stack.pop() {
+            match g {
+                Formula::Or(_) => return true,
+                Formula::And(gs) => stack.extend(gs),
+                _ => {}
+            }
+        }
+        false
+    };
+    // A symbol no constraint mentions takes every value.
+    let Some(r) = ray.get(sym) else {
+        return Ok(true);
+    };
+    let r = Lin::atom(r.clone());
+    let away = Formula::Con(Con::ge(&r.times(dir), &Lin::constant(1)));
+    let body = if has_or(&f) {
+        paired(&f, &cone)
+    } else {
+        Formula::and(f.cons().iter().map(|con| Formula::Con(cone(con))).collect())
+    };
+    decide(&Formula::and(vec![body, away]))
+}
+
+/// `f`, in negation normal form, with each constraint `k` replaced by `k && cone(k)`. The tree
+/// is walked with an explicit stack, children in order.
+fn paired(f: &Formula, cone: &dyn Fn(&Con) -> Con) -> Formula {
+    enum Step<'a> {
+        Enter(&'a Formula),
+        Close { or: bool, n: usize },
+    }
+    let mut todo = vec![Step::Enter(f)];
+    let mut done: Vec<Formula> = Vec::new();
+    while let Some(s) = todo.pop() {
+        match s {
+            Step::Enter(Formula::Con(k)) => done.push(Formula::and(vec![
+                Formula::Con(k.clone()),
+                Formula::Con(cone(k)),
+            ])),
+            Step::Enter(Formula::And(gs)) => {
+                todo.push(Step::Close {
+                    or: false,
+                    n: gs.len(),
+                });
+                todo.extend(gs.iter().rev().map(Step::Enter));
+            }
+            Step::Enter(Formula::Or(gs)) => {
+                todo.push(Step::Close {
+                    or: true,
+                    n: gs.len(),
+                });
+                todo.extend(gs.iter().rev().map(Step::Enter));
+            }
+            Step::Enter(Formula::Not(_)) => {
+                unreachable!("a formula in negation normal form has no negation")
+            }
+            Step::Close { or, n } => {
+                let gs = done.split_off(done.len() - n);
+                done.push(if or {
+                    Formula::or(gs)
+                } else {
+                    Formula::and(gs)
+                });
+            }
+        }
+    }
+    done.pop().expect("one formula for the root")
 }
 
 /// The set `s` of a symbol as a formula: the disjunction of its pieces.
@@ -3809,7 +3901,7 @@ pub fn member(sym: &Atom, s: &IntervalSet) -> Formula {
 /// The values of the term `l` in the set `s`, as a formula.
 pub fn within(l: &Lin, s: &IntervalSet) -> Formula {
     let mut pieces = Vec::new();
-    for &(lo, hi) in s.pieces() {
+    for (lo, hi) in s.pieces() {
         let mut both = Vec::new();
         if let End::Fin(v) = lo {
             both.push(Formula::Con(Con::ge(l, &Lin::constant(v))));

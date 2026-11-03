@@ -144,8 +144,8 @@ fn a_power_reads_as_one_whatever_its_demand_on_the_value() {
     // `i * … * i` in `[0..=1]`, 100 factors, as the demand on the product's value.
     let ds = doms(&[("i", Some(-50), Some(50))]);
     let z = Demand::Ints(IntervalSet::range(
-        zedc::store::interval::End::Fin(0),
-        zedc::store::interval::End::Fin(1),
+        zedc::store::interval::End::of(0),
+        zedc::store::interval::End::of(1),
     ));
     let written = preimage(&product(&var("i"), 100), &ds, &z);
     assert_eq!(written, preimage(&power(&var("i"), 100), &ds, &z));

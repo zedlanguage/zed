@@ -7,7 +7,7 @@ use zed_kernel::{Text, Value};
 use zedc::store::affine::{Affine, Bounds};
 use zedc::store::cell::{Cell, Entry, Premise, Premises, Store};
 use zedc::store::float::{FloatClass, Kind, Width};
-use zedc::store::interval::{End, IntervalSet};
+use zedc::store::interval::{IntervalSet, Num};
 use zedc::store::lattice::{FiniteSet, Landmarks, Lattice};
 
 /// The fact at node `n` with no keypath.
@@ -31,13 +31,13 @@ fn a_meet_adds_its_premises_only_when_it_narrows() {
     let n = Affine::sym("n");
     let mut e = Entry::new(Bounds::top());
     assert!(e.meet(
-        &Bounds::range(Some(Affine::constant(0)), n.plus(-1)),
+        &Bounds::range(Some(Affine::constant(0)), Some(n.plus(-1))),
         &because(1)
     ));
     assert!(e.meet(&Bounds::range(None, Some(Affine::constant(9))), &because(2)));
     // `n + 4` with the same terms is looser than `n - 1`, so the test changes nothing and the
     // element does not rest on it.
-    assert!(!e.meet(&Bounds::range(None, n.plus(4)), &because(3)));
+    assert!(!e.meet(&Bounds::range(None, Some(n.plus(4))), &because(3)));
     assert_eq!(e.element.to_string(), "[0..=min(9, n - 1)]");
     assert_eq!(
         e.premises,
@@ -81,7 +81,11 @@ fn a_widening_past_the_join_is_a_premise_and_not_proof_grade() {
     // does not.
     let b = Entry::new(FiniteSet::of([Value::str("b")]));
     let mut s = Entry::new(FiniteSet::of([Value::str("a")]));
-    assert!(s.widen(&b, &head, &Landmarks::of([], [Value::str("b")])));
+    assert!(s.widen(
+        &b,
+        &head,
+        &Landmarks::of(std::iter::empty::<i64>(), [Value::str("b")])
+    ));
     assert_eq!(s.element, FiniteSet::of([Value::str("a"), Value::str("b")]));
     assert!(s.proof_grade());
     let mut t = Entry::new(FiniteSet::of([Value::str("a")]));
@@ -115,21 +119,24 @@ fn doubled(k: u32) -> Value {
 
 #[test]
 #[cfg(target_pointer_width = "64")]
-fn a_string_too_long_for_an_i64_has_a_length_from_i64_max_up() {
+fn a_string_too_long_for_an_i64_has_its_exact_length() {
     // A buffer filled by doubling a block: up to 2^62 characters the length is exact.
     let s62 = Cell::literal(&doubled(62));
     assert_eq!(
         s62.length.element,
         Bounds::ints(IntervalSet::single(1 << 62))
     );
-    // 2^63 characters is one past `i64::MAX`, where `len` is a big integer. The length is the
-    // ray from `i64::MAX` up, which holds it; a wrapped cast gave `[i64::MIN]`, negative.
+    // 2^63 characters is one past `i64::MAX`, where `len` is a big integer, and the length is
+    // that one integer; a wrapped cast gave `[i64::MIN]`, negative.
     let s63 = Cell::literal(&doubled(63));
     assert_eq!(
         s63.length.element,
-        Bounds::ints(IntervalSet::range(End::Fin(i64::MAX), End::PosInf))
+        Bounds::ints(IntervalSet::point(Num::from(1i128 << 63)))
     );
-    assert_eq!(s63.length.element.to_string(), "[9223372036854775807..]");
+    assert_eq!(
+        s63.length.element.to_string(),
+        "[9223372036854775808..=9223372036854775808]"
+    );
 }
 
 #[test]
