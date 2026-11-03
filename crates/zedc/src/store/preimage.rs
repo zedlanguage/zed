@@ -2562,10 +2562,7 @@ impl<'t> Tx<'t> {
                 let c = if p == Add { -(c as i128) } else { c as i128 };
                 self.back_at(a, env, &ints(shift(z, c)))
             }
-            (Sub, Some(c), _) => {
-                let r = revision::forward(Op::Sub, &IntervalSet::single(c), z);
-                self.back_at(b, env, &ints(r))
-            }
+            (Sub, Some(c), _) => self.back_at(b, env, &ints(reflect(z, c as i128))),
             (Mul, Some(c), _) => self.back_at(b, env, &ints(times_pre(z, c))),
             (Mul, _, Some(c)) => self.back_at(a, env, &ints(times_pre(z, c))),
             (IntDiv, _, Some(c)) => self.back_at(a, env, &ints(div_pre(z, c))),
@@ -3302,6 +3299,29 @@ fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
         z.pieces()
             .iter()
             .map(|&(lo, hi)| (m(lo, End::lower), m(hi, End::upper)))
+            .collect(),
+    )
+}
+
+/// The integers `c - v` for each member `v` of `z`: the integers `x` with `c - x` in `z`, each
+/// piece reflected and moved by `c`, in one step in `i128` so that only an end past `i64` is
+/// rounded (negating first would round the end `-i64::MIN`). The pieces stay apart and the
+/// result is exact; the forward image of `{c} - z` would cap the pieces of each sign region
+/// (`revision::map2`) and merge the pieces it moves across zero (plan item S22b).
+fn reflect(z: &IntervalSet, c: i128) -> IntervalSet {
+    let lower = |e: End| match e {
+        Fin(v) => End::lower(c - v as i128),
+        _ => NegInf,
+    };
+    let upper = |e: End| match e {
+        Fin(v) => End::upper(c - v as i128),
+        _ => PosInf,
+    };
+    IntervalSet::from_pieces(
+        z.pieces()
+            .iter()
+            .rev()
+            .map(|&(lo, hi)| (lower(hi), upper(lo)))
             .collect(),
     )
 }

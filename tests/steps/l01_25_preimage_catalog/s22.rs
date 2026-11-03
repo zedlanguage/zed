@@ -5,7 +5,11 @@
 //! enumeration, stops, relation and refusal), with the transfer as it was before
 //! (`zedc::store::preimage_ref`, main at fdf7918: the 397f1c9 transfer with later changes);
 //! the one difference allowed is an inexact box made narrower and still sound
-//! (`meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened`). The scaling
+//! (`meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened`);
+//! and, since plan item S22b, a box of `c - x` that the transfer before merged across zero
+//! (`constant_minus.rs`), whose pieces are now kept: the new result is checked by the
+//! interpreter, lies inside the one before, and is exact wherever the one before was. Each test
+//! states how many cases of each kind it finds. The scaling
 //! tests then check that the chains cost `O(n log n)`.
 
 use std::sync::Arc;
@@ -323,6 +327,7 @@ struct Diffs {
     cases: usize,
     found: Vec<String>,
     narrower: usize,
+    reflected: usize,
 }
 
 /// Whether the interpreter refutes `domains` as the preimage of `d` under `t` over `ds` on
@@ -374,6 +379,21 @@ impl Diffs {
             self.narrower += 1;
             return;
         }
+        // Plan item S22b: the transfer before took `c - x` as the forward image of `{c} - z`,
+        // whose cap merged pieces moved across zero, so its box may be wider, and may be marked
+        // exact while holding points that fail. The new result holds every point that meets
+        // the demand, holds no point that fails when it is exact, lies inside the one before,
+        // and is exact wherever the one before was.
+        if new != old
+            && (now.exact || !then.exact)
+            && now.domains.keys().eq(then.domains.keys())
+            && now.domains.iter().all(|(n, s)| inside(s, &then.domains[n]))
+            && !refuted(t, ds, d, &now.domains, now.exact)
+        {
+            self.cases += 1;
+            self.reflected += 1;
+            return;
+        }
         self.note(what, t, ds, d, new, old);
     }
 
@@ -399,9 +419,15 @@ impl Diffs {
         }
     }
 
-    /// Panics, showing the first differences, when there are any, when fewer than `least`
-    /// cases were compared, or when the number of narrower boxes is not `narrower`.
+    /// [`Diffs::none_but`] with no box of `c - x` changed.
     fn none(self, least: usize, narrower: usize) {
+        self.none_but(least, narrower, 0)
+    }
+
+    /// Panics, showing the first differences, when there are any, when fewer than `least`
+    /// cases were compared, when the number of narrower boxes is not `narrower`, or when the
+    /// number of boxes of `c - x` that S22b changed is not `reflected`.
+    fn none_but(self, least: usize, narrower: usize, reflected: usize) {
         assert!(
             self.found.is_empty(),
             "{} of {} preimages differ from the transfer before:\n{}",
@@ -413,6 +439,10 @@ impl Diffs {
         assert_eq!(
             self.narrower, narrower,
             "the number of narrower inexact boxes changed"
+        );
+        assert_eq!(
+            self.reflected, reflected,
+            "the number of boxes of `c - x` changed by S22b differs"
         );
     }
 }
@@ -684,7 +714,7 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
 
 /// Every kind of guard and arm the summary reads, and some it does not: the cases `from..to`
 /// of one sequence, split in two tests so they run in parallel.
-fn random_guarded_chains(from: usize, to: usize, narrower: usize) {
+fn random_guarded_chains(from: usize, to: usize, narrower: usize, reflected: usize) {
     on_big_stack(|| {
         let mut diffs = Diffs::default();
         let mut rng = Rng::new(22);
@@ -704,20 +734,20 @@ fn random_guarded_chains(from: usize, to: usize, narrower: usize) {
                 diffs.preimage("random chain", &t, &ds, &d);
             }
         }
-        diffs.none(to - from, narrower);
+        diffs.none_but(to - from, narrower, reflected);
     });
 }
 
 /// Random chains of every kind of guard, the first half.
 #[test]
 fn random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(0, 2000, 1);
+    random_guarded_chains(0, 2000, 2, 6);
 }
 
 /// Random chains of every kind of guard, the second half.
 #[test]
 fn more_random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(2000, 4000, 0);
+    random_guarded_chains(2000, 4000, 0, 7);
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
@@ -786,7 +816,7 @@ fn random_terms_keep_their_preimages() {
                 diffs.exact("exact", &t, &ds, &cs, &d);
             }
         }
-        diffs.none(6800, 0);
+        diffs.none_but(6800, 0, 1);
     });
 }
 
@@ -913,7 +943,7 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
                 );
             }
         }
-        diffs.none(4000, 0);
+        diffs.none_but(4000, 0, 2);
     });
 }
 

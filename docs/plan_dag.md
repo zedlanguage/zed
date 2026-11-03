@@ -63,7 +63,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 2 | HULL3 | XT3 B4: three live variables with a unit side decided exactly by 3-D halfspace intersection, O(m log m), and `twovar` | L | no | BOX-5pt | `crates/zedc/src/store/hull3.rs`, `crates/zedc/src/store/presburger.rs` |
 | 2 | XR3 | Cross-review xt round 3, scoped: P2-unsat (rational emptiness of the 18 systems without an LP), P3 (naming invariance: proof or counterexample), P4(b) (general three variables, the live = 3 dispatch) | M | yes | BOX-5pt | |
 | 3 | HULL3-GEN | XT3 B5: general three variables by Clarkson sampling with a Lenstra/Eisenbrand base case, as XR3 decides | L | yes | XR3 | `crates/zedc/src/store/presburger.rs` |
-| 2 | S22b | `c - x` is falsely exact through the `map2` piece cap (`revision.rs:266-303`): the transfer before claims an exact box the interpreter refutes; fix by `shift(negate(z), c)` | S | no | S22a | `crates/zedc/src/store/revision.rs`, `crates/zedc/src/store/preimage.rs` |
+| 2 | S22b | Done: `c - x` is falsely exact through the `map2` piece cap (`revision.rs:266-303`): the transfer before claims an exact box the interpreter refutes; fix by `shift(negate(z), c)` | S | no | S22a | `crates/zedc/src/store/revision.rs`, `crates/zedc/src/store/preimage.rs` |
 | 2 | S22c | `y + (MAX - 3) == MAX` is unsound by overflow in the backward transfer | S | no | S22a | `crates/zedc/src/store/preimage.rs`, `crates/zedc/src/store/revision.rs` |
 | 2 | S22d | Done: The `3t - 1` chain takes over 60 s at k = 37 | M | no | S22a | `crates/zedc/src/store/preimage.rs` |
 | 2 | S22e | The mod-7 guard family is exponential in the chain length, in the transfer before and after S22a | M | no | S22a | `crates/zedc/src/store/preimage.rs` |
