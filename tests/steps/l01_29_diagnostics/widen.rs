@@ -352,6 +352,8 @@ fn pass_scales(what: &str, unit: fn(usize) -> String, count: fn(usize, &[zedc::a
     });
 }
 
+/// n warnings in a unit of O(n) nodes: the derivations share one mark vector, so a pass that
+/// allocated a fresh one per warning would allocate O(n²) bytes, which this test counts.
 #[test]
 fn many_warnings_scale() {
     assert_eq!(messages(&many_squares(3)).len(), 3);

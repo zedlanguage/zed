@@ -77,8 +77,9 @@ pub struct Unit {
     /// The test cases, in written order, shared with the unit once staged.
     pub tests: Arc<[Test]>,
     /// The warnings, which do not stop the build: each operation that widens a value past a
-    /// machine word (DESIGN.md sec:domains).
-    pub warnings: Arc<[Error]>,
+    /// machine word (DESIGN.md sec:domains). [`crate::run::load`] moves them into the
+    /// program, placed in the source, and leaves this empty.
+    pub warnings: Vec<Error>,
 }
 
 impl Unit {
@@ -257,7 +258,7 @@ fn elaborate_in(
             .collect();
     }
     out.tests = std::mem::take(&mut e.tests).into();
-    out.warnings = warnings.into();
+    out.warnings = warnings;
     e.errors.extend(checked);
     if e.errors.is_empty() {
         Ok((out, e.marks.take()))

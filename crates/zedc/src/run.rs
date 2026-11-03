@@ -73,11 +73,15 @@ pub struct Record {
 /// The program in `bytes`, or its errors, one per line as `line:col: why`.
 pub fn load(bytes: &[u8]) -> Result<Program, String> {
     let text = source::load(bytes).map_err(|e| e.to_string())?;
-    let (stmts, unit) = compile(&text).map_err(|ds| {
+    let (stmts, mut unit) = compile(&text).map_err(|ds| {
         let lines: Vec<String> = ds.iter().map(Diagnostic::to_string).collect();
         lines.join("\n")
     })?;
-    let warnings = placed(&text, &source::Lines::new(text.as_bytes()), &unit.warnings);
+    let warnings = placed(
+        &text,
+        &source::Lines::new(text.as_bytes()),
+        std::mem::take(&mut unit.warnings),
+    );
     let mut program = program(&stmts, unit)?;
     program.warnings = warnings.into();
     Ok(program)
@@ -169,7 +173,7 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
             row: None,
         }
     };
-    let all = |errors: Vec<ast::Error>| placed(text, &lines, &errors);
+    let all = |errors: Vec<ast::Error>| placed(text, &lines, errors);
     let (tokens, docs) =
         lex::lex_with_docs(text).map_err(|e| vec![at(e.span.start, e.to_string())])?;
     let tree =
@@ -257,16 +261,16 @@ fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
 }
 
 /// The errors `errors` of `text` as diagnostics, each placed with its steps.
-fn placed(text: &str, lines: &source::Lines, errors: &[ast::Error]) -> Vec<Diagnostic> {
+fn placed(text: &str, lines: &source::Lines, errors: Vec<ast::Error>) -> Vec<Diagnostic> {
     errors
-        .iter()
+        .into_iter()
         .map(|e| {
             let (line, col) = lines.line_col(text.as_bytes(), e.span.start);
             Diagnostic {
                 line,
                 col,
-                steps: e.notes.iter().map(|n| step(text, lines, n)).collect(),
-                message: e.message.clone(),
+                steps: e.notes.into_iter().map(|n| step(text, lines, n)).collect(),
+                message: e.message,
                 row: e.row,
             }
         })
@@ -275,7 +279,7 @@ fn placed(text: &str, lines: &source::Lines, errors: &[ast::Error]) -> Vec<Diagn
 
 /// The step a note is in `text`: its line and column, the source line, and the characters of
 /// the note's span on that line.
-fn step(text: &str, lines: &source::Lines, n: &ast::Note) -> Step {
+fn step(text: &str, lines: &source::Lines, n: ast::Note) -> Step {
     let (line, col) = lines.line_col(text.as_bytes(), n.span.start);
     let begin = lines.line_start(n.span.start).0;
     let end = text[n.span.start..]
@@ -287,7 +291,7 @@ fn step(text: &str, lines: &source::Lines, n: &ast::Note) -> Step {
     Step {
         line,
         col,
-        text: n.text.clone(),
+        text: n.text,
         source: text[begin..end].to_string(),
         width: width.max(1),
     }

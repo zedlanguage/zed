@@ -16,16 +16,8 @@
 //! derivation of each operand's interval from its literals and bindings, and the repair.
 //! It does not stop the build.
 //!
-//! Complexity tradeoff (COMPLEXITY.md C-WIDEN): intervals come from the syntax, with no narrowing by a test, so a
-//! value a test bounds is any `int` here and its operations are not reported, and an
-//! interval is taken without regard to how operands are related, so `x - x` is as wide as
-//! `x + x` and may be reported though it is 0. Why: narrowing by a test needs the facts that
-//! hold on each path, and relating operands such as `x - x` needs a relational domain over
-//! the names in scope, whose cost per operation grows with the number of names (and is
-//! exponential in the worst case for Presburger formulas), where an interval costs O(1). A
-//! complete solution is the Presburger store's forward transfer over the definition graph,
-//! which narrows by tests and relates operands; it replaces this walk at step L1.40b. Tests: `l01_29_diagnostics::widen::a_parameter_is_not_bounded_and_does_not_warn`,
-//! `a_difference_of_a_value_with_itself_is_read_as_a_range`.
+//! The intervals come from the syntax alone, with no narrowing by a test and no relation
+//! between operands: see the complexity tradeoff at `Walk::compute`.
 //!
 //! Each node is evaluated once, in an order that puts each binding before its uses (an
 //! explicit-stack depth-first search with a state per node), so the walk is linear in the
@@ -500,6 +492,24 @@ impl<'t, 'a> Walk<'t, 'a> {
 
     /// Node `i`'s interval from its dependencies' values `v`, and, when its operands are in
     /// the word and its result is not, what the result is within `i128`, if known.
+    // Complexity tradeoff: an interval here comes from the operands' intervals alone, with
+    // no narrowing by a test and no relation between operands. What is given up: a value
+    // that only a test or a caller bounds (a parameter, a call, a name narrowed by `if`) is
+    // any `int` (`Kind::Name(None)`, `Kind::Top`), so an operation on it gets no warning
+    // even when it does cross the word; and operands that are one value or related values
+    // are taken as independent, so `x - x` with `x` in `int[lo..=hi]` gets
+    // `int[lo - hi..=hi - lo]` and is warned of when that leaves the word, though the value
+    // is 0. Why: narrowing by a test needs the facts that hold on each path, and relating
+    // operands needs a relational domain over the names in scope, whose cost per operation
+    // grows with the number of names (exponential in the worst case for Presburger
+    // formulas), where an interval costs O(1) per node and the whole walk O(N). Triggered by
+    // an operation on a parameter, call result or test-bounded name, or by an operation
+    // whose operands share a name. Tests:
+    // `l01_29_diagnostics::widen::a_parameter_is_not_bounded_and_does_not_warn`,
+    // `l01_29_diagnostics::widen::a_difference_of_a_value_with_itself_is_read_as_a_range`.
+    // COMPLEXITY.md row C-WIDEN. A complete solution is the Presburger store's forward
+    // transfer over the definition graph, which narrows by tests and relates operands; it
+    // replaces this walk at step L1.40b.
     fn compute(&self, i: u32, v: impl Fn(u32) -> Option<Word>) -> Result<Option<Word>, Crossed> {
         let n = &self.nodes[i as usize];
         let (a, b) = (n.first, n.first + 1);
