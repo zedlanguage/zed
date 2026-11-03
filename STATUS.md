@@ -255,7 +255,12 @@ LR2 added 23 tests to `l01_08_parser`, so the steps binary has 985. `tools/run_t
   status of `layer` (Dart dropped it), a crash exits 1 (Dart 255), `check` reads fences from its
   spec argument (Dart from the package root), and `fuzz` computes depths by Knuth's generalization
   of Dijkstra's algorithm (Dart ran a fixed 60 passes). `sync` no longer copies `cases.txt` and
-  `leftrec.txt`.
+  `leftrec.txt`. A spec with fewer than three `peg` fences is refused by every tool; Dart read the third lazily,
+  so `ring`, `cases`, `layer`, `fuzz` and `audit` ran without it, and `check` crashed. A failure Dart
+  crashed on (exit status 255 with a stack trace) is a one-line message here. After the rebase on
+  T2-parse the comparison was repeated on the spec and 12 changed specs, `sync` and `progress`
+  included: identical but for these points, the `progress` and `sync` header lines that name the
+  tool, and `sync` also copying `lexical.peg` and `desugar.txt`.
 - The references against Dart: 3982 runs agree on the first rewrite and 1011 random runs on the
   second, with these exceptions, none of them a different answer. Reference 16 on a tick near 1e20
   hit the timeout of the comparison on one side, so that point was not compared. On a cycle, 15 and 27 give an
