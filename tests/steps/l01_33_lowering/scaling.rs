@@ -162,17 +162,12 @@ fn lowering_lambdas_bound_by_nested_lets_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 32)
         .spawn(|| {
-            // Instructions only until ZIR-validate-bytes: `zir::validate` formats an O(depth)
-            // path string at every node, so its bytes grow as n² (32.6 times at 8n); the
-            // fix is on branch wt/t2-mid (T2-mid).
-            scaling::check_instructions_only(
-                "lowering let-bound lambdas nested n deep",
-                500,
-                1,
-                |d| {
-                    lower(&lets_of_lambdas(d)).unwrap();
-                },
-            );
+            // `zir::validate`, which `lower` ends with, keeps one path buffer and copies it
+            // only into an error, so its bytes grow with n and not n·depth (COMPLEXITY.md Z17).
+            let (small, large) = (lets_of_lambdas(500), lets_of_lambdas(500 * scaling::FACTOR));
+            scaling::check("lowering let-bound lambdas nested n deep", 500, |d| {
+                lower(if d == 500 { &small } else { &large }).unwrap();
+            });
             let t = lets_of_lambdas(3);
             let back = raise(&lower(&t).unwrap()).unwrap();
             let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
@@ -340,12 +335,12 @@ fn a_name_read_at_every_depth_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 30)
         .spawn(|| {
-            // Instructions only until ZIR-validate-bytes: `zir::validate` formats an O(depth)
-            // path string at every node, so its bytes grow as n² (40.3 times at 8n); the
-            // fix is on branch wt/t2-mid (T2-mid).
-            scaling::check_instructions_only("lowering n nested reads of one name", 500, 1, |d| {
-                lower(&prices(d)).unwrap();
-            })
+            // `zir::validate`, which `lower` ends with, keeps one path buffer and copies it
+            // only into an error, so its bytes grow with n and not n·depth (COMPLEXITY.md Z17).
+            let (small, large) = (prices(500), prices(500 * scaling::FACTOR));
+            scaling::check("lowering n nested reads of one name", 500, |d| {
+                lower(if d == 500 { &small } else { &large }).unwrap();
+            });
         })
         .unwrap()
         .join()
