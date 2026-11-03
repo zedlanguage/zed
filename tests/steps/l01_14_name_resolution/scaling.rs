@@ -121,18 +121,11 @@ fn using_many_overloads_scales() {
     );
 }
 
-/// The statements of `text`, built before any timing.
-fn statements(text: &str) -> Vec<zedc::ast::Stmt> {
-    let tokens = zedc::lex::lex_fence(text).unwrap();
-    let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
-    zedc::ast::unit(text, &tokens, &tree).unwrap()
-}
-
 /// Resolves each program of `shapes` on a 2 MiB stack, 100,000 deep and 12,500 deep, and checks
 /// the time is linear. Resolution recursed once per level of nesting, and overflowed this stack
 /// near 10,000.
 fn resolves_deep(shapes: &[&str]) {
-    use zed_tests::deep::{on_small_stack, program};
+    use zed_tests::deep::{on_small_stack, program, statements};
     let n = 12_500;
     let deep = 8 * n;
     on_small_stack(|| {

@@ -188,3 +188,11 @@ pub fn program(shape: &str, n: usize) -> Program {
     let i = all.iter().position(|p| p.shape == shape);
     all.swap_remove(i.unwrap_or_else(|| panic!("no deep program of shape {shape}")))
 }
+
+/// The statements of `text`, lexed, parsed and built, for a test to build before it times a
+/// later pass.
+pub fn statements(text: &str) -> Vec<zedc::ast::Stmt> {
+    let tokens = zedc::lex::lex_fence(text).unwrap();
+    let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
+    zedc::ast::unit(text, &tokens, &tree).unwrap()
+}

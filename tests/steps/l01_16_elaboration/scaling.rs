@@ -386,3 +386,42 @@ fn ordering_many_uses_of_many_overloads_scales() {
         assert_eq!(order[k], k);
     });
 }
+
+/// Orders the top-level statements of each program of `shapes` on a 2 MiB stack, 100,000 deep
+/// and 12,500 deep, and checks the time is linear. Finding the function declarations inside
+/// the statements recursed once per level of nesting, and overflowed this stack near 20,000.
+fn ordered_deep(shapes: &[&str]) {
+    use zed_tests::deep::{on_small_stack, program, statements};
+    let n = 12_500;
+    let deep = 8 * n;
+    on_small_stack(|| {
+        for &shape in shapes {
+            let small = statements(&program(shape, n).text);
+            let large = statements(&program(shape, deep).text);
+            let small_res = resolve(&small).unwrap();
+            let large_res = resolve(&large).unwrap();
+            zed_tests::scaling::check_order(&format!("ordering {shape}"), n, 1, |k| {
+                let (stmts, res) = match k == n {
+                    true => (&small, &small_res),
+                    false => (&large, &large_res),
+                };
+                let order = zedc::elab::top_order(stmts, res).unwrap();
+                assert_eq!(order.len(), stmts.len());
+            });
+        }
+    });
+}
+
+#[test]
+fn sums_calls_and_long_bodies_100000_deep_are_ordered_on_a_2_mib_stack() {
+    ordered_deep(&[
+        "a left-nested sum",
+        "nested calls",
+        "a long sum in a function's body",
+    ]);
+}
+
+#[test]
+fn blocks_and_tuples_nested_100000_deep_are_ordered_on_a_2_mib_stack() {
+    ordered_deep(&["nested blocks", "nested tuples"]);
+}

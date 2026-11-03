@@ -334,6 +334,62 @@ struct Elab<'a> {
     marks: Option<Vec<Mark>>,
 }
 
+/// A part of the unit still to visit while [`Tables`] collects the declarations and written
+/// types.
+enum Collect<'a> {
+    Stmt(&'a Stmt),
+    Expr(&'a Expr),
+    Type(&'a Type),
+}
+
+/// Puts each parameter's written type and default on `todo`, in the order of the text.
+fn collect_params<'a>(params: &'a [Param], todo: &mut Vec<Collect<'a>>) {
+    for p in params {
+        todo.extend(p.ty.as_ref().map(Collect::Type));
+        todo.extend(p.default.as_ref().map(Collect::Expr));
+    }
+}
+
+/// Puts the parts `e` holds on `todo`, in the order of the text.
+fn collect_expr<'a>(e: &'a Expr, todo: &mut Vec<Collect<'a>>) {
+    let expr = |e: &'a Expr| Collect::Expr(e);
+    match &e.kind {
+        ExprKind::Block(stmts) => todo.extend(stmts.iter().map(Collect::Stmt)),
+        ExprKind::Str(parts) => todo.extend(parts.iter().filter_map(|p| match p {
+            StrPart::Hole(h) => Some(expr(h)),
+            _ => None,
+        })),
+        ExprKind::Unary(_, a) | ExprKind::Member { of: a, .. } => todo.push(expr(a)),
+        ExprKind::Is { of, ty, .. } => todo.extend([expr(of), Collect::Type(ty)]),
+        ExprKind::Binary(_, a, b)
+        | ExprKind::Index(a, b)
+        | ExprKind::Else {
+            of: a, default: b, ..
+        } => todo.extend([expr(a), expr(b)]),
+        ExprKind::Call {
+            callee,
+            positional,
+            named,
+            ..
+        } => {
+            todo.push(expr(callee));
+            todo.extend(positional.iter().map(expr));
+            todo.extend(named.iter().map(|(_, a)| expr(a)));
+        }
+        ExprKind::Tuple(items) => todo.extend(items.iter().map(expr)),
+        ExprKind::Lambda { params, body } => {
+            collect_params(params, todo);
+            todo.push(expr(body));
+        }
+        ExprKind::If {
+            cond,
+            then,
+            otherwise,
+        } => todo.extend([expr(cond), expr(then), expr(otherwise)]),
+        _ => {}
+    }
+}
+
 impl<'a> Tables<'a> {
     pub(crate) fn new(unit: &'a [Stmt], res: &'a Resolution) -> Self {
         let ids = res
@@ -372,96 +428,50 @@ impl<'a> Tables<'a> {
     }
 
     /// Records every function declaration and written type of `stmts` and of the blocks
-    /// inside them.
+    /// inside them. The walk keeps the parts still to visit on a heap stack, so a deeply nested
+    /// expression does not grow the thread's stack. Each part's children go on the stack in
+    /// reverse, so the parts are met in the order of the text, the order of `written`.
     fn collect_functions(&mut self, stmts: &'a [Stmt]) {
-        for s in stmts {
-            match &s.kind {
-                StmtKind::Function(f) => {
-                    if let Some(&id) = self.ids.get(&(s.span, f.name.as_str())) {
-                        self.funcs.insert(id, f);
-                    }
-                    self.collect_params(&f.params);
-                    self.collect_in(&f.body);
-                    for (a, b) in &f.tests {
-                        self.collect_in(a);
-                        self.collect_in(b);
-                    }
-                }
-                StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => {
-                    self.collect_in(value)
-                }
-                StmtKind::Return(es) => es.iter().for_each(|e| self.collect_in(e)),
-                StmtKind::Struct(_)
-                | StmtKind::Type(_)
-                | StmtKind::Method(_)
-                | StmtKind::Import(_)
-                | StmtKind::Annotated { .. }
-                | StmtKind::Mutable(_)
-                | StmtKind::IndexedDef(_)
-                | StmtKind::While(_)
-                | StmtKind::Until(_)
-                | StmtKind::Expr(_) => {}
+        let mut todo: Vec<Collect<'a>> = stmts.iter().rev().map(Collect::Stmt).collect();
+        while let Some(c) = todo.pop() {
+            let at = todo.len();
+            match c {
+                Collect::Type(t) => self.written.push(t),
+                Collect::Stmt(s) => self.collect_stmt(s, &mut todo),
+                Collect::Expr(e) => collect_expr(e, &mut todo),
             }
+            todo[at..].reverse();
         }
     }
 
-    fn collect_params(&mut self, params: &'a [Param]) {
-        for p in params {
-            if let Some(t) = &p.ty {
-                self.written.push(t);
-            }
-            if let Some(d) = &p.default {
-                self.collect_in(d);
-            }
-        }
-    }
-
-    fn collect_in(&mut self, e: &'a Expr) {
-        match &e.kind {
-            ExprKind::Block(stmts) => self.collect_functions(stmts),
-            ExprKind::Str(parts) => parts.iter().for_each(|p| {
-                if let StrPart::Hole(h) = p {
-                    self.collect_in(h)
+    /// Records the function declaration `s` if it is one and puts the parts it holds on
+    /// `todo`, in the order of the text.
+    fn collect_stmt(&mut self, s: &'a Stmt, todo: &mut Vec<Collect<'a>>) {
+        match &s.kind {
+            StmtKind::Function(f) => {
+                if let Some(&id) = self.ids.get(&(s.span, f.name.as_str())) {
+                    self.funcs.insert(id, f);
                 }
-            }),
-            ExprKind::Unary(_, a) | ExprKind::Member { of: a, .. } => self.collect_in(a),
-            ExprKind::Is { of, ty, .. } => {
-                self.collect_in(of);
-                self.written.push(ty);
+                collect_params(&f.params, todo);
+                todo.push(Collect::Expr(&f.body));
+                for (a, b) in &f.tests {
+                    todo.extend([Collect::Expr(a), Collect::Expr(b)]);
+                }
             }
-            ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
-                self.collect_in(a);
-                self.collect_in(b);
+            StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => {
+                todo.push(Collect::Expr(value))
             }
-            ExprKind::Call {
-                callee,
-                positional,
-                named,
-                ..
-            } => {
-                self.collect_in(callee);
-                positional.iter().for_each(|a| self.collect_in(a));
-                named.iter().for_each(|(_, a)| self.collect_in(a));
-            }
-            ExprKind::Tuple(items) => items.iter().for_each(|i| self.collect_in(i)),
-            ExprKind::Lambda { params, body } => {
-                self.collect_params(params);
-                self.collect_in(body);
-            }
-            ExprKind::Else { of, default, .. } => {
-                self.collect_in(of);
-                self.collect_in(default);
-            }
-            ExprKind::If {
-                cond,
-                then,
-                otherwise,
-            } => {
-                self.collect_in(cond);
-                self.collect_in(then);
-                self.collect_in(otherwise);
-            }
-            _ => {}
+            StmtKind::Return(es) => todo.extend(es.iter().map(Collect::Expr)),
+            StmtKind::Struct(_)
+            | StmtKind::Type(_)
+            | StmtKind::Method(_)
+            | StmtKind::Import(_)
+            | StmtKind::Annotated { .. }
+            | StmtKind::Mutable(_)
+            | StmtKind::IndexedDef(_)
+            | StmtKind::While(_)
+            | StmtKind::Until(_)
+            | StmtKind::Expr(_) => {}
         }
     }
 
