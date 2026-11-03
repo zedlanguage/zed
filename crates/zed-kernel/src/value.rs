@@ -75,16 +75,18 @@ impl fmt::Debug for F64 {
 pub struct Atom {
     /// The name, without the leading `#`.
     pub name: Arc<str>,
-    /// The field names of a struct payload, sorted; empty for a tuple payload.
-    pub fields: Vec<Arc<str>>,
+    /// The field names of a struct payload, sorted; empty for a tuple payload. Shared, so a
+    /// copy of the atom is O(1).
+    pub fields: Arc<[Arc<str>]>,
     /// The payload's values, one per field of a struct payload; empty for a bare atom.
     pub args: Items,
 }
 
-/// The values inside a tuple, a keypath or a payload. It owns its drop, copy, comparison and
+/// The values inside a tuple, a keypath or a payload, shared: a copy is a reference count, so
+/// reading a variable that holds a tuple of any size is O(1). It owns its drop, comparison and
 /// `Debug` form so that each runs on the heap, whatever the depth (see [`crate::deep`]).
-#[derive(Default)]
-pub struct Items(Vec<Value>);
+#[derive(Clone, Default)]
+pub struct Items(Arc<[Value]>);
 
 impl Items {
     /// The values, in order.
@@ -92,9 +94,40 @@ impl Items {
         &self.0
     }
 
-    /// The values, as a vector.
+    /// Whether `self` and `other` are one shared sequence, so equal without reading them.
+    pub(crate) fn ptr_eq(&self, other: &Items) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// The address of the sequence, which identifies it while it is borrowed.
+    pub(crate) fn addr(&self) -> usize {
+        Arc::as_ptr(&self.0).cast::<Value>().addr()
+    }
+
+    /// Whether another holder shares the sequence, so a walk of a value can meet it twice. A
+    /// sequence held once is reached by one path only, through its one holder.
+    pub(crate) fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.0) > 1
+    }
+
+    /// The addresses of `a` and `b` when a walk over both can meet the pair again: when
+    /// either is shared. Empty sequences are read at once.
+    pub(crate) fn pair(a: &Items, b: &Items) -> Option<deep::Pair> {
+        let again = (a.is_shared() || b.is_shared()) && !(a.is_empty() && b.is_empty());
+        again.then(|| (a.addr(), b.addr()))
+    }
+
+    /// The values, as a vector: moved out when this is their only holder, and each copied by
+    /// a reference count otherwise.
     pub fn into_vec(mut self) -> Vec<Value> {
-        mem::take(&mut self.0)
+        match Arc::get_mut(&mut self.0) {
+            // A placeholder takes each value's place; what is left is a slice of scalars.
+            Some(only) => only
+                .iter_mut()
+                .map(|v| mem::replace(v, Value::Bool(false)))
+                .collect(),
+            None => self.0.to_vec(),
+        }
     }
 }
 
@@ -108,13 +141,17 @@ impl Deref for Items {
 
 impl From<Vec<Value>> for Items {
     fn from(values: Vec<Value>) -> Self {
-        Items(values)
+        // The empty slice is one static allocation; `Arc::from` would allocate per call.
+        match values.is_empty() {
+            true => Items::default(),
+            false => Items(values.into()),
+        }
     }
 }
 
 impl FromIterator<Value> for Items {
     fn from_iter<I: IntoIterator<Item = Value>>(values: I) -> Self {
-        Items(values.into_iter().collect())
+        Items::from(values.into_iter().collect::<Vec<_>>())
     }
 }
 
@@ -136,12 +173,6 @@ impl<'a> IntoIterator for &'a Items {
     }
 }
 
-impl Clone for Items {
-    fn clone(&self) -> Self {
-        Items(deep::copy(&self.0, Value::clone))
-    }
-}
-
 impl Drop for Items {
     fn drop(&mut self) {
         if !self.0.is_empty() {
@@ -152,7 +183,7 @@ impl Drop for Items {
 
 impl PartialEq for Items {
     fn eq(&self, other: &Self) -> bool {
-        deep::items_eq(&self.0, &other.0)
+        deep::items_eq(self, other)
     }
 }
 
@@ -160,7 +191,7 @@ impl Eq for Items {}
 
 impl Ord for Items {
     fn cmp(&self, other: &Self) -> Ordering {
-        deep::items_cmp(&self.0, &other.0)
+        deep::items_cmp(self, other)
     }
 }
 
@@ -221,7 +252,7 @@ impl Value {
     pub fn atom(name: &str) -> Self {
         Value::Atom(Atom {
             name: name.into(),
-            fields: Vec::new(),
+            fields: Arc::default(),
             args: Items::default(),
         })
     }
@@ -230,7 +261,7 @@ impl Value {
     pub fn atom_with(name: &str, args: Vec<Value>) -> Self {
         Value::Atom(Atom {
             name: name.into(),
-            fields: Vec::new(),
+            fields: Arc::default(),
             args: args.into(),
         })
     }
@@ -243,10 +274,10 @@ impl Value {
         if fields.windows(2).any(|w| w[0].0 == w[1].0) {
             return None;
         }
-        let (fields, args): (_, Vec<Value>) = fields.into_iter().unzip();
+        let (fields, args): (Vec<Arc<str>>, Vec<Value>) = fields.into_iter().unzip();
         Some(Value::Atom(Atom {
             name: name.into(),
-            fields,
+            fields: fields.into(),
             args: args.into(),
         }))
     }
@@ -315,11 +346,13 @@ impl Value {
         }
     }
 
-    /// The value as a key (sec:type_resolution, "Equality and order corner rules"): `-0.0` becomes `0.0` at any depth, since `0.0 == -0.0`
-    /// makes the two zeros one key, which then holds the same bits whichever zero arrived
-    /// first. NaN is already one value.
+    /// The value as a key (sec:type_resolution, "Equality and order corner rules"): `-0.0`
+    /// becomes `0.0` at any depth, since `0.0 == -0.0` makes the two zeros one key, which then
+    /// holds the same bits whichever zero arrived first. NaN is already one value. A value that
+    /// is its own key is shared, not copied.
     pub fn key(&self) -> Value {
         match self {
+            Value::Tuple(_) | Value::Path(_) | Value::Atom(_) if self.is_key() => self.clone(),
             Value::Tuple(_) | Value::Path(_) | Value::Atom(_) => {
                 let mut one = deep::copy(slice::from_ref(self), key_leaf);
                 one.pop().expect("a copy of one value holds one value")

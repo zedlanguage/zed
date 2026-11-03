@@ -17,6 +17,7 @@ use zed_tests::scaling::check_order;
 
 mod deep;
 mod scaling;
+mod shared;
 
 #[test]
 fn word_count_groups_then_folds() {

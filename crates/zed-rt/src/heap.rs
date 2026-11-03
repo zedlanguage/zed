@@ -105,7 +105,7 @@ pub enum Obj {
         /// The atom's name.
         name: Arc<str>,
         /// The field names of a struct payload, sorted; empty for a tuple payload.
-        fields: Vec<Arc<str>>,
+        fields: Arc<[Arc<str>]>,
         /// The payload.
         args: Vec<Word>,
     },
@@ -171,7 +171,7 @@ pub struct Stats {
 /// The structure of a data word, for matching.
 enum Parts {
     Tuple(Vec<Word>),
-    Atom(Arc<str>, Vec<Arc<str>>, Vec<Word>),
+    Atom(Arc<str>, Arc<[Arc<str>]>, Vec<Word>),
     Other,
 }
 
@@ -197,7 +197,7 @@ enum Subs<'p> {
     /// Positional: pattern `i` reads part `i`.
     Items(&'p [Pattern]),
     /// Named: each pattern reads the part of its field in `fields`.
-    Fields(&'p [(Arc<str>, Pattern)], Vec<Arc<str>>),
+    Fields(&'p [(Arc<str>, Pattern)], Arc<[Arc<str>]>),
 }
 
 /// A tuple or atom pattern [`Heap::matches`] has entered, with the parts of the word it reads.

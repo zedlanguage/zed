@@ -600,7 +600,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `thread_local!` list of parts waiting to be freed, and a flag for the walk that holds it | `deep::free`, `FREEING`, `PARTS` | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `thread_local!` queue of families to compare, because `==` is called from inside `imbl` where no stack of ours reaches | `deep::settle`, `COMPARING`, `PAIRS` | Mutation, global state | Zed's map comparison takes the element test as a function, so the queue is a state receiver or goes away |
-| `impl Drop` on a newtype, with `mem::take` of its `Vec` | `Items`, `Family` | None | Removed, with the first row |
+| `impl Drop` on a newtype, with `mem::take` of its `Arc` or map | `Items`, `Family` | None | Removed, with the first row |
 | `slice::Iter` held in a stack frame, a borrow into the value being walked | `walk`, `Copying`, `all_leaves` | None | An index into a shared tuple |
 | `Cow<'_, Value>`, a key borrowed unless it needs a copy | `as_key` in `eval.rs` | None | Zed shares values, so a function returns the key or its normalized copy with no borrow |
 | `RefCell` to collect from inside a `Fn` closure that `Expr::eval` calls | `Type::contains` | Mutation | The closure returns what it needs, as a value |
@@ -637,3 +637,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `#[expect(lint, reason = ...)]` | `zed_native::run`, `Jit::drop`, test `Counted` | Attributes | None needed: Zed has no lint attributes |
 | Cranelift `Switch` (a jump table over block indices) | `codegen::dispatch` | Foreign library | The code generator's own `match` lowering |
 | `AtomicUsize` counters shared through `Arc` with a memory provider trait object | test `a_failed_compile_frees_the_jit_memory` | Mutation | Test harness only: the provider returns its counts as a value |
+
+## Entries from T14-value (`zed-kernel/src/value.rs`, `deep.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Arc<[Value]>`, a shared slice with a reference count, and `Arc::default()` for the static empty slice | `Items`, `Atom::fields` | None | Zed values are shared already; the type is a plain tuple |
+| `Arc::strong_count` to tell a shared sequence from one held once, and `Arc::get_mut` to move the parts out of one held once | `Items::is_shared`, `Items::pair`, `Items::into_vec` | Identity, mutation | Removed: the runtime reuses a value held once, and the walks key their read sets by a hash-consed id |
+| Address of a shared slice (`Arc::as_ptr`, `Arc::ptr_eq`) as a key in a `HashSet` or `HashMap` held only while both values are borrowed | `deep::walk` (`read`), `deep::copy` (`copied`), `deep::all_leaves` (`read`) | Identity | A hash-consed id of the value, as for `Type::contains` |

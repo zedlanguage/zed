@@ -255,3 +255,50 @@ fn the_origin_of_a_failure_is_found_at_the_bottom_of_a_value() {
         }
     });
 }
+
+/// `v(0) = bottom`, `v(i + 1) = (v(i), v(i))`: `depth` levels, each part shared in two places,
+/// so the value has `depth` nodes and `2^depth` paths, as `x = (x, x)` repeated builds it.
+fn doubled(depth: usize, bottom: Value) -> Value {
+    (0..depth).fold(bottom, |v, _| Value::tuple(vec![v.clone(), v]))
+}
+
+#[test]
+fn a_value_shared_a_million_levels_deep_is_compared_keyed_and_freed() {
+    // Each walk keeps the pairs of shared parts it has read, so each costs O(depth), not
+    // O(2^depth), on two such values built apart.
+    on_main_sized_stack(|| {
+        let depth = DEPTHS[1];
+        let one = doubled(depth, Value::Int(1));
+        let same = doubled(depth, Value::Int(1));
+        let two = doubled(depth, Value::Int(2));
+        assert!(one == same);
+        assert!(one != two);
+        assert_eq!(one.cmp(&two), Ordering::Less);
+        assert!(one.surface_eq(&same));
+        assert_eq!(one.surface_cmp(&two), Some(Ordering::Less));
+        assert!(one.is_key());
+        assert!(one.key() == same);
+        let negative = doubled(depth, Value::float(-0.0));
+        assert!(!negative.is_key());
+        assert!(negative.key() == doubled(depth, Value::float(0.0)));
+        drop((one, same, two, negative));
+    });
+}
+
+#[test]
+fn a_list_whose_every_tail_is_held_elsewhere_is_freed_from_either_end() {
+    on_main_sized_stack(|| {
+        let depth = DEPTHS[1];
+        let mut tails = Vec::with_capacity(depth);
+        let list = (0..depth).fold(Value::Int(0), |rest, k| {
+            tails.push(rest.clone());
+            in_tuple(rest, k)
+        });
+        // The list goes first: each tail is still held, so nothing below the top is freed.
+        drop(list);
+        // The shortest tail first, then the longest first: each frees one level at a time.
+        let longest = tails.split_off(depth / 2);
+        drop(tails);
+        drop(longest.into_iter().rev().collect::<Vec<_>>());
+    });
+}

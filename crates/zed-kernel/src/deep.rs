@@ -4,9 +4,11 @@
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::mem;
 use std::slice;
+use std::sync::Arc;
 
 use imbl::OrdMap;
 use imbl::ordmap::Iter;
@@ -15,11 +17,15 @@ use imbl::shared_ptr::DefaultSharedPtr;
 use crate::family::Family;
 use crate::value::{Atom, Items, Value};
 
+/// The addresses of two shared sequences under comparison. A walk keeps a pair only while it
+/// borrows both values, so no address can be freed and reused while the pair is held.
+pub(crate) type Pair = (usize, usize);
+
 /// A part of a value whose owner is being dropped. A family's map is freed whole: the map's own
 /// nodes nest only as deep as its height, and the values inside it land here in turn.
 #[expect(dead_code, reason = "a part is held only to be dropped")]
 pub(crate) enum Part {
-    Items(Vec<Value>),
+    Items(Arc<[Value]>),
     Map(OrdMap<Value, Value>),
 }
 
@@ -52,7 +58,7 @@ pub(crate) fn free(part: Part) {
 }
 
 /// Which relation a walk over two values computes.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Relation {
     /// The total order of [`Ord`].
     Total,
@@ -67,7 +73,14 @@ enum Relation {
 
 /// The two sequences of entries under comparison at one depth.
 enum Level<'a> {
-    Items(slice::Iter<'a, Value>, slice::Iter<'a, Value>, Relation),
+    /// The two sequences, and the pair of their addresses when either is shared, so a pair
+    /// met again through the sharing is not read again.
+    Items(
+        slice::Iter<'a, Value>,
+        slice::Iter<'a, Value>,
+        Relation,
+        Option<Pair>,
+    ),
     /// On the heap: a map iterator is many times the size of a slice iterator, and tuples
     /// are the common level.
     Maps(Box<MapLevel<'a>>),
@@ -94,10 +107,13 @@ enum Step<'a> {
     Done,
 }
 
-fn items<'a>(a: &'a [Value], b: &'a [Value], r: Relation) -> Step<'a> {
+fn items<'a>(a: &'a Items, b: &'a Items, r: Relation) -> Step<'a> {
     match r {
+        // One shared sequence is bitwise equal to itself; the IEEE 754 relations read it,
+        // since a NaN inside is not equal to itself.
+        Relation::Identity | Relation::Total if a.ptr_eq(b) => Step::Same,
         Relation::Identity | Relation::SurfaceEq if a.len() != b.len() => Step::Ends(None),
-        _ => Step::Enter(Level::Items(a.iter(), b.iter(), r)),
+        _ => Step::Enter(Level::Items(a.iter(), b.iter(), r, Items::pair(a, b))),
     }
 }
 
@@ -168,7 +184,7 @@ fn side<'a>(a: bool, b: bool) -> Step<'a> {
 /// Takes the next entry of `level`.
 fn advance<'a>(level: &mut Level<'a>) -> Step<'a> {
     match level {
-        Level::Items(a, b, r) => match (a.next(), b.next()) {
+        Level::Items(a, b, r, _) => match (a.next(), b.next()) {
             (Some(x), Some(y)) => step(x, y, *r),
             (x, y) => side(x.is_some(), y.is_some()),
         },
@@ -190,7 +206,9 @@ fn advance<'a>(level: &mut Level<'a>) -> Step<'a> {
 
 /// Runs a walk from its first step to the first difference. `None` is an unordered pair; a walk
 /// that ends without one gives `Some(Equal)`. A flat value needs no heap: the stack holds only
-/// the levels above the one in hand.
+/// the levels above the one in hand. Shared tuples make a value a DAG, so a pair of shared
+/// sequences read to its end is kept, and met again it is the same without a second reading:
+/// the walk is O(distinct pairs), not O(paths).
 fn walk(first: Step<'_>) -> Option<Ordering> {
     let mut level = match first {
         Step::Same | Step::Done => return Some(Ordering::Equal),
@@ -198,15 +216,22 @@ fn walk(first: Step<'_>) -> Option<Ordering> {
         Step::Enter(level) => level,
     };
     let mut above = Vec::new();
+    let mut read = HashSet::new();
     loop {
         match advance(&mut level) {
             Step::Same => {}
             Step::Ends(o) => return o,
+            Step::Enter(Level::Items(.., r, Some(pair))) if read.contains(&(pair, r)) => {}
             Step::Enter(inner) => above.push(mem::replace(&mut level, inner)),
-            Step::Done => match above.pop() {
-                Some(outer) => level = outer,
-                None => return Some(Ordering::Equal),
-            },
+            Step::Done => {
+                if let Level::Items(.., r, Some(pair)) = level {
+                    read.insert((pair, r));
+                }
+                match above.pop() {
+                    Some(outer) => level = outer,
+                    None => return Some(Ordering::Equal),
+                }
+            }
         }
     }
 }
@@ -231,7 +256,7 @@ fn settle(same: bool) -> bool {
 }
 
 /// Whether two sequences of values are the same.
-pub(crate) fn items_eq(a: &[Value], b: &[Value]) -> bool {
+pub(crate) fn items_eq(a: &Items, b: &Items) -> bool {
     settle(walk(items(a, b, Relation::Identity)) == Some(Ordering::Equal))
 }
 
@@ -241,7 +266,7 @@ pub(crate) fn families_eq(a: &Family, b: &Family) -> bool {
 }
 
 /// The total order on two sequences of values.
-pub(crate) fn items_cmp(a: &[Value], b: &[Value]) -> Ordering {
+pub(crate) fn items_cmp(a: &Items, b: &Items) -> Ordering {
     walk(items(a, b, Relation::Total)).expect("the total order orders every pair")
 }
 
@@ -272,45 +297,52 @@ enum Shape<'a> {
     Atom(&'a Atom),
 }
 
-/// A sequence of values being copied.
-struct Copying<'a> {
-    left: slice::Iter<'a, Value>,
-    done: Vec<Value>,
-    shape: Shape<'a>,
-}
-
-impl<'a> Copying<'a> {
-    fn new(from: &'a [Value], shape: Shape<'a>) -> Self {
-        Copying {
-            left: from.iter(),
-            done: Vec::with_capacity(from.len()),
-            shape,
-        }
-    }
-
-    fn into_value(self) -> Value {
-        match self.shape {
-            Shape::Tuple => Value::Tuple(self.done.into()),
-            Shape::Path => Value::Path(self.done.into()),
+impl Shape<'_> {
+    fn wrap(&self, items: Items) -> Value {
+        match self {
+            Shape::Tuple => Value::Tuple(items),
+            Shape::Path => Value::Path(items),
             Shape::Atom(a) => Value::Atom(Atom {
                 name: a.name.clone(),
                 fields: a.fields.clone(),
-                args: self.done.into(),
+                args: items,
             }),
         }
     }
 }
 
+/// A sequence of values being copied.
+struct Copying<'a> {
+    left: slice::Iter<'a, Value>,
+    done: Vec<Value>,
+    shape: Shape<'a>,
+    /// The address of the sequence copied, when it is shared and so can be met again.
+    shared: Option<usize>,
+}
+
+impl<'a> Copying<'a> {
+    fn new(from: &'a [Value], shape: Shape<'a>, shared: Option<usize>) -> Self {
+        Copying {
+            left: from.iter(),
+            done: Vec::with_capacity(from.len()),
+            shape,
+            shared,
+        }
+    }
+}
+
 /// Copies `from`, tuples, keypaths and atoms' payloads to any depth, and every other value
-/// through `leaf`.
+/// through `leaf`. A shared sequence is copied once, and its copy is shared in the same places,
+/// so the copy of a DAG is a DAG of the same size.
 pub(crate) fn copy(from: &[Value], leaf: fn(&Value) -> Value) -> Vec<Value> {
-    let mut level = Copying::new(from, Shape::Tuple);
+    let mut level = Copying::new(from, Shape::Tuple, None);
     let mut above = Vec::new();
+    let mut copied: HashMap<usize, Items> = HashMap::new();
     loop {
-        let inner = match level.left.next() {
-            Some(Value::Tuple(xs)) => Copying::new(xs, Shape::Tuple),
-            Some(Value::Path(xs)) => Copying::new(xs, Shape::Path),
-            Some(Value::Atom(a)) => Copying::new(&a.args, Shape::Atom(a)),
+        let (xs, shape) = match level.left.next() {
+            Some(Value::Tuple(xs)) => (xs, Shape::Tuple),
+            Some(Value::Path(xs)) => (xs, Shape::Path),
+            Some(Value::Atom(a)) => (&a.args, Shape::Atom(a)),
             Some(v) => {
                 level.done.push(leaf(v));
                 continue;
@@ -318,21 +350,30 @@ pub(crate) fn copy(from: &[Value], leaf: fn(&Value) -> Value) -> Vec<Value> {
             None => match above.pop() {
                 Some(outer) => {
                     let inner = mem::replace(&mut level, outer);
-                    level.done.push(inner.into_value());
+                    let items = Items::from(inner.done);
+                    if let Some(at) = inner.shared {
+                        copied.insert(at, items.clone());
+                    }
+                    level.done.push(inner.shape.wrap(items));
                     continue;
                 }
                 None => return level.done,
             },
         };
-        above.push(mem::replace(&mut level, inner));
+        let shared = xs.is_shared().then(|| xs.addr());
+        match shared.and_then(|at| copied.get(&at)) {
+            Some(items) => level.done.push(shape.wrap(items.clone())),
+            None => above.push(mem::replace(&mut level, Copying::new(xs, shape, shared))),
+        }
     }
 }
 
 /// Whether `test` holds of every value in `from`, tuples, keypaths and atoms' payloads read to
-/// any depth, stopping at the first that fails.
+/// any depth, stopping at the first that fails. A shared sequence is read once.
 pub(crate) fn all_leaves(from: &[Value], test: fn(&Value) -> bool) -> bool {
     let mut level = from.iter();
     let mut above = Vec::new();
+    let mut read = HashSet::new();
     loop {
         let inner = match level.next() {
             Some(Value::Tuple(xs) | Value::Path(xs)) => xs,
@@ -347,6 +388,9 @@ pub(crate) fn all_leaves(from: &[Value], test: fn(&Value) -> bool) -> bool {
                 None => return true,
             },
         };
+        if inner.is_shared() && !read.insert(inner.addr()) {
+            continue;
+        }
         above.push(mem::replace(&mut level, inner.iter()));
     }
 }
