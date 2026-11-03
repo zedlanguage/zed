@@ -93,8 +93,8 @@ fn a_rising_chain_scales() {
 }
 
 // A cost quadratic with a small constant stays below the limit at the sizes above and shows at
-// these. Controls, each a patch to `crates/zedc/src/store/presburger.rs`, run on all six tests;
-// COMPLEXITY.md, S18, has what each gave.
+// these. Controls, each a patch to `crates/zedc/src/store/presburger.rs`, to run on all six
+// tests:
 //
 // Rows rescanned, in `System::take`, in place of `std::mem::take(&mut self.vars[j].rows)`:
 //     let held = |a: &Coefs| a.binary_search_by_key(&j, |t| t.0).is_ok();
@@ -109,11 +109,13 @@ fn a_rising_chain_scales() {
 // of `System::eliminate`:
 //     drop(self.rows.iter().map(|(a, r)| (a.to_vec(), r.k.clone())).collect::<Vec<_>>());
 //
-// Variables rescanned, in `System::best`: `self.exact.iter().rev().last()` for
-// `self.exact.first()` and `self.inexact.iter().rev().last()` for `self.inexact.first()`.
+// Variables rescanned, in `System::exact_step` and `System::inexact_step`:
+// `self.exact.iter().rev().last()` for `self.exact.first()` and
+// `self.inexact.iter().rev().last()` for `self.inexact.first()`.
 //
-// The real shadow tested at every inexact step, in `Omega::run`: `if inexact` for
-// `if inexact && !dark`.
+// The real shadow tested at every inexact elimination rather than at the first only, in
+// `Omega::run`: `if true {` for `if !self.tested {`, so that `relaxed_empty` runs before each
+// dark elimination.
 
 #[test]
 fn a_long_chain_with_a_point_scales() {
