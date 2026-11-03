@@ -30,14 +30,18 @@ export interface LedgerEntry {
   at?: string;
   ts?: string;
   note?: string;
-  commit?: string;
+  // A line with state "note", or with no state, says only this.
+  what?: string;
+  commit?: unknown;
+  // A merge of several commits lists them all, in this repository or in the spec repository.
+  commits?: unknown;
   // As in an override: what an item outside the plan needs, and what needs it.
   needs?: string[];
   feeds?: string[];
 }
 
 export interface Override {
-  state?: "done" | "active" | "unstarted";
+  state?: "done" | "active" | "unstarted" | "waiting" | "blocked";
   note?: string;
   title?: string;
   started?: string;
@@ -53,7 +57,8 @@ export interface Sub {
   text: string;
 }
 
-export type NodeState = "unstarted" | "active" | "done";
+// Waiting and blocked nodes are never ready; a dropped node counts as met for the nodes that need it.
+export type NodeState = "unstarted" | "active" | "done" | "waiting" | "blocked" | "dropped";
 
 export interface ViewNode {
   id: string;
@@ -65,7 +70,7 @@ export interface ViewNode {
   needs: string[];
   planned: boolean;
   state: NodeState;
-  ready: boolean; // unstarted, and everything it needs is merged
+  ready: boolean; // unstarted, and everything it needs is merged or dropped
   pushed: boolean; // done, and on origin/main as far as the ledger tells
   awaitingBatch: boolean;
   startedAt: number | null;
@@ -140,6 +145,29 @@ export function parseLedger(text: string): LedgerEntry[] {
     }
   }
   return out;
+}
+
+// The commits a ledger line names, from `commit` and from `commits`. Agents write a hash, a list,
+// "a+b", "zed:a b", or an object keyed by repository, so every hash-shaped word in them counts.
+export function ledgerCommits(e: LedgerEntry): string[] {
+  const out = new Set<string>();
+  const pending: unknown[] = [e.commit, e.commits];
+  for (let i = 0; i < pending.length; i++) {
+    const v = pending[i];
+    if (typeof v === "string") for (const m of v.matchAll(/(?<![0-9a-z])[0-9a-f]{7,40}(?![0-9a-z])/g)) out.add(m[0]);
+    else if (typeof v === "object" && v !== null) pending.push(...Object.values(v));
+  }
+  return [...out];
+}
+
+// A line with state "note", or with no state, does not change the node's state.
+const stateless = (e: LedgerEntry) => typeof e.state !== "string" || e.state === "note";
+
+// An override's state is read from `state`; one written as `status` is ignored, and said so.
+export function overrideWarnings(overrides: Record<string, Override>): string[] {
+  return Object.entries(overrides)
+    .filter(([, ov]) => typeof ov === "object" && ov !== null && "status" in ov)
+    .map(([id]) => `override ${id} uses "status", which is ignored; write "state"`);
 }
 
 // "T2-eval-repair" is T2-eval, "lr2" is LR2, and the XV-* checks are parts of XE2.
@@ -237,20 +265,24 @@ export function buildNodes(inp: Inputs): ViewNode[] {
   const states = new Map<string, NodeState>();
   for (const r of rows) {
     const ov = inp.overrides[r.id]?.state;
-    const last = ledger.get(r.id)?.at(-1);
+    const last = ledger.get(r.id)?.findLast((e) => !stateless(e));
+    const ls = last?.state;
     const lines = logs.get(r.id) ?? [];
     let s: NodeState = "unstarted";
     if (ov) s = ov;
     else if (r.title.startsWith("Done:")) s = "done";
     // Only a merge or the orchestrator finishes a node: an impl, repair, verify or probe agent's
     // "done" means its own attempt ended, and the item may still be rejected and repaired.
-    else if ((last?.state === "fixed" || last?.state === "done") && !/:(impl|repair|verify|probe)#/.test(last.by ?? last.agent ?? "")) s = "done";
-    else if (last?.state === "fixed" || last?.state === "done") s = "active";
-    else if (last?.state === "fixing") s = "active";
-    else if (last?.state === "abandoned") s = "unstarted";
-    // An item the ledger lists as waiting is not active, whatever the log says about it.
-    else if (last?.state === "open" || last?.state === "queued") s = "unstarted";
-    else if (last?.state === "running" || last?.state === "started" || last?.state === "active") s = "active";
+    else if ((ls === "fixed" || ls === "done") && !/:(impl|repair|verify|probe)#/.test(last!.by ?? last!.agent ?? "")) s = "done";
+    else if (ls === "fixed" || ls === "done" || ls === "verified") s = "active";
+    else if (ls === "merged") s = "done";
+    else if (ls === "dropped") s = "dropped";
+    else if (ls === "waiting" || ls === "deferred") s = "waiting";
+    else if (ls === "fixing" || ls === "drafting") s = "active";
+    else if (ls === "abandoned") s = "unstarted";
+    // An item the ledger lists as open is not active, whatever the log says about it.
+    else if (ls === "open" || ls === "queued") s = "unstarted";
+    else if (ls === "running" || ls === "started" || ls === "active") s = "active";
     else if (lines.some((l) => l.entry.role === "merge" && /\bon main\b|merged/.test(l.entry.text))) s = "done";
     else if (lines.length > 0) s = "active";
     states.set(r.id, s);
@@ -288,11 +320,11 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     }
 
     const last = lines.at(-1)?.entry;
-    const note = inp.overrides[r.id]?.note ?? lastLedger?.note ?? "";
+    const note = inp.overrides[r.id]?.note ?? lastLedger?.note ?? (lastLedger && stateless(lastLedger) ? lastLedger.what : undefined) ?? "";
     // A "done" line after the batch test names no commit; the merge's "fixed" line before it does.
-    const commit = state === "done" ? ledgerLines.findLast((e) => e.commit)?.commit : undefined;
-    const noCommit = state === "done" && !commit;
-    const onOrigin = commit ? inp.onOrigin(commit) : noCommit;
+    const commitLine = state === "done" ? ledgerLines.findLast((e) => ledgerCommits(e).length > 0) : undefined;
+    const commits = commitLine ? ledgerCommits(commitLine) : [];
+    const onOrigin = commits.length > 0 ? commits.every((c) => inp.onOrigin(c)) : state === "done";
     return {
       id: r.id,
       level: r.level,
@@ -303,7 +335,7 @@ export function buildNodes(inp: Inputs): ViewNode[] {
       needs: r.needs,
       planned: planned.has(r.id),
       state,
-      ready: state === "unstarted" && r.needs.every((n) => states.get(n) === "done"),
+      ready: state === "unstarted" && r.needs.every((n) => states.get(n) === "done" || states.get(n) === "dropped"),
       pushed: state === "done" && onOrigin,
       awaitingBatch: state === "done" && !onOrigin,
       startedAt,

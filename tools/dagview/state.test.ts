@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildNodes, directNeeds, parseLedger, parseLog, parsePlan, resolveId, shortLabel } from "./state.ts";
+import { buildNodes, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, resolveId, shortLabel } from "./state.ts";
 
 const plan = `# Plan
 ## Items by level
@@ -68,7 +68,7 @@ const by = (nodes: ReturnType<typeof buildNodes>) => new Map(nodes.map((n) => [n
 test("states follow the ledger, then the log, and readiness follows needs", () => {
   const nodes = by(buildNodes(inputs(
     "2026-11-02 10:00:00 | B:impl#1 | start\n",
-    '{"id":"A","state":"fixed","commit":"c1"}\n{"id":"LR2","state":"fixing"}\n{"id":"LR2","state":"fixed","commit":"c2"}\n',
+    '{"id":"A","state":"fixed","commit":"c111111"}\n{"id":"LR2","state":"fixing"}\n{"id":"LR2","state":"fixed","commit":"c222222"}\n',
   )));
   assert.equal(nodes.get("A")!.state, "done");
   assert.equal(nodes.get("LR2")!.state, "done");
@@ -79,15 +79,15 @@ test("states follow the ledger, then the log, and readiness follows needs", () =
 });
 
 test("a merged commit not on origin is done but not pushed", () => {
-  const n = by(buildNodes(inputs("", '{"id":"A","state":"fixed","commit":"c1"}\n', () => false))).get("A")!;
+  const n = by(buildNodes(inputs("", '{"id":"A","state":"fixed","commit":"c111111"}\n', () => false))).get("A")!;
   assert.equal(n.state, "done");
   assert.equal(n.pushed, false);
   assert.equal(n.awaitingBatch, true);
 });
 
 test("a done line after the batch test keeps the fixed line's commit, and git says pushed", () => {
-  const led = '{"id":"A","state":"fixed","commit":"c1","note":"awaiting batch test"}\n{"id":"A","state":"done","note":"pushed"}\n';
-  const n = by(buildNodes(inputs("2026-11-02 10:00:00 | A:merge#1 | lock taken\n", led, (c) => c === "c1"))).get("A")!;
+  const led = '{"id":"A","state":"fixed","commit":"c111111","note":"awaiting batch test"}\n{"id":"A","state":"done","note":"pushed"}\n';
+  const n = by(buildNodes(inputs("2026-11-02 10:00:00 | A:merge#1 | lock taken\n", led, (c) => c === "c111111"))).get("A")!;
   assert.equal(n.state, "done");
   assert.equal(n.pushed, true);
   assert.equal(n.note, "pushed");
@@ -96,21 +96,21 @@ test("a done line after the batch test keeps the fixed line's commit, and git sa
 });
 
 test("a ledger time in ISO form with a zone counts", () => {
-  const led = '{"id":"A","state":"fixed","commit":"c1","started":"2026-11-02T10:00:00Z"}\n';
+  const led = '{"id":"A","state":"fixed","commit":"c111111","started":"2026-11-02T10:00:00Z"}\n';
   assert.equal(by(buildNodes(inputs("", led))).get("A")!.startedAt, Date.parse("2026-11-02T10:00:00Z"));
 });
 
 test("a repair after a fixed line makes the node active again", () => {
-  const led = '{"id":"A","state":"fixed","commit":"c1"}\n{"id":"A","state":"fixing"}\n';
+  const led = '{"id":"A","state":"fixed","commit":"c111111"}\n{"id":"A","state":"fixing"}\n';
   assert.equal(by(buildNodes(inputs("", led))).get("A")!.state, "active");
 });
 
 test("a done line from a repair or verify agent does not finish the node; a merge's does", () => {
-  const rep = '{"id":"A","state":"done","by":"A:repair#2","commit":"c1"}\n';
+  const rep = '{"id":"A","state":"done","by":"A:repair#2","commit":"c111111"}\n';
   assert.equal(by(buildNodes(inputs("", rep))).get("A")!.state, "active");
   const imp = '{"id":"A","status":"done","state":"fixed","agent":"A:impl#1"}\n';
   assert.equal(by(buildNodes(inputs("", imp))).get("A")!.state, "active");
-  const mer = rep + '{"id":"A","state":"fixed","by":"A:merge#1","commit":"c2"}\n';
+  const mer = rep + '{"id":"A","state":"fixed","by":"A:merge#1","commit":"c222222"}\n';
   assert.equal(by(buildNodes(inputs("", mer))).get("A")!.state, "done");
 });
 
@@ -225,4 +225,72 @@ test("an item the ledger lists as open stays unstarted though the log mentions i
   const log = "2026-11-02 10:00:01 | A:orchestrator | waits for B\n";
   const led = '{"id":"A","state":"open","needs":["B"]}\n';
   assert.equal(by(buildNodes(inputs(log, led))).get("A")!.state, "unstarted");
+});
+
+test("a waiting or deferred item is never ready, though everything it needs is done", () => {
+  const met = '{"id":"A","state":"fixed"}\n{"id":"LR2","state":"fixed"}\n';
+  for (const st of ["waiting", "deferred"]) {
+    const b = by(buildNodes(inputs("2026-11-02 10:00:00 | B:impl#1 | start\n", met + `{"id":"B","state":"${st}"}\n`))).get("B")!;
+    assert.equal(b.state, "waiting");
+    assert.equal(b.ready, false);
+  }
+});
+
+test("a waiting or blocked override is never ready", () => {
+  for (const st of ["waiting", "blocked"] as const) {
+    const inp = { ...inputs("", '{"id":"A","state":"fixed"}\n{"id":"LR2","state":"fixed"}\n'), overrides: { B: { state: st } } };
+    const b = by(buildNodes(inp)).get("B")!;
+    assert.equal(b.state, st);
+    assert.equal(b.ready, false);
+  }
+});
+
+test("a dropped item counts as met for the items that need it", () => {
+  const nodes = by(buildNodes(inputs("", '{"id":"A","state":"dropped"}\n{"id":"LR2","state":"fixed"}\n')));
+  assert.equal(nodes.get("A")!.state, "dropped");
+  assert.equal(nodes.get("A")!.ready, false);
+  assert.equal(nodes.get("A")!.pushed, false);
+  assert.equal(nodes.get("B")!.ready, true);
+});
+
+test("merged is done, and verified, drafting and a probe's done are active", () => {
+  const st = (led: string) => by(buildNodes(inputs("", led))).get("A")!.state;
+  assert.equal(st('{"id":"A","state":"merged","commit":"c111111"}\n'), "done");
+  assert.equal(st('{"id":"A","state":"verified"}\n'), "active");
+  assert.equal(st('{"id":"A","state":"drafting"}\n'), "active");
+  assert.equal(st('{"id":"A","state":"done","by":"A:probe#1"}\n'), "active");
+  assert.equal(st('{"id":"A","state":"done","by":"orchestrator"}\n'), "done");
+  assert.equal(st('{"id":"A","state":"done","by":"A:merge#1"}\n'), "done");
+});
+
+test("a note line, or a line with no state, keeps the state and gives the note", () => {
+  const led = '{"id":"A","state":"fixed","commit":"c111111"}\n{"id":"A","state":"note","what":"checked by hand"}\n';
+  const a = by(buildNodes(inputs("", led))).get("A")!;
+  assert.equal(a.state, "done");
+  assert.equal(a.note, "checked by hand");
+  const bare = by(buildNodes(inputs("", '{"id":"A","state":"running"}\n{"id":"A","what":"half way"}\n'))).get("A")!;
+  assert.equal(bare.state, "active");
+  assert.equal(bare.note, "half way");
+});
+
+test("a line's commits list counts, and the node is pushed only when all of them are", () => {
+  assert.deepEqual(ledgerCommits({ id: "A", state: "fixed", commit: "c111111", commits: ["c111111", "c222222"] }), ["c111111", "c222222"]);
+  // The shapes agents have written in the ledger.
+  assert.deepEqual(
+    ledgerCommits({ id: "A", state: "fixed", commit: ["c333333", "zed:c444444"], commits: "c555555+c666666, report (zed)" }).sort(),
+    ["c333333", "c444444", "c555555", "c666666"],
+  );
+  assert.deepEqual(ledgerCommits({ id: "A", state: "fixed", commit: { zed: "c777777", "zed-impl": "abcdef0" } }), ["c777777", "abcdef0"]);
+  assert.deepEqual(ledgerCommits({ id: "A", state: "fixed", commit: null, commits: [1] }), []);
+  const led = '{"id":"A","state":"fixed","commits":["c111111","c222222"]}\n';
+  const all = by(buildNodes(inputs("", led, () => true))).get("A")!;
+  assert.equal(all.pushed, true);
+  const some = by(buildNodes(inputs("", led, (c) => c === "c111111"))).get("A")!;
+  assert.equal(some.pushed, false);
+  assert.equal(some.awaitingBatch, true);
+});
+
+test("an override written with status is named in the warnings", () => {
+  const ov = { A: { state: "done" }, B: { status: "done" }, C: "not an object" } as unknown as Record<string, never>;
+  assert.deepEqual(overrideWarnings(ov), ['override B uses "status", which is ignored; write "state"']);
 });

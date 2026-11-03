@@ -10,12 +10,14 @@ import { createServer } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { buildNodes, directNeeds, parseLedger, parseLog, parsePlan, resolveId } from "./state.ts";
+import { buildNodes, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, resolveId } from "./state.ts";
 import type { Override } from "./state.ts";
 
 const here = import.meta.dirname;
 const repo = process.env.DAGVIEW_REPO ?? resolve(here, "../..");
 const work = process.env.DAGVIEW_WT ?? resolve(repo, "../wt");
+// Ledger lines also name commits of the spec repository.
+const spec = process.env.DAGVIEW_SPEC ?? resolve(repo, "../zed");
 const port = Number(process.env.PORT ?? 4317);
 const run = promisify(execFile);
 
@@ -28,8 +30,12 @@ async function text(path: string): Promise<string> {
 }
 
 async function git(...args: string[]): Promise<string | null> {
+  return gitIn(repo, ...args);
+}
+
+async function gitIn(dir: string, ...args: string[]): Promise<string | null> {
   try {
-    return (await run("git", ["-C", repo, ...args])).stdout.trim();
+    return (await run("git", ["-C", dir, ...args])).stdout.trim();
   } catch {
     return null;
   }
@@ -46,7 +52,12 @@ async function originCommits(commits: string[], origin: string): Promise<void> {
     commits
       .filter((c) => !onOriginMemo.has(c))
       .map(async (c) => {
-        if ((await git("merge-base", "--is-ancestor", c, "origin/main")) !== null) onOriginMemo.add(c);
+        for (const dir of [repo, spec]) {
+          if ((await gitIn(dir, "merge-base", "--is-ancestor", c, "origin/main")) !== null) {
+            onOriginMemo.add(c);
+            break;
+          }
+        }
       }),
   );
 }
@@ -71,7 +82,7 @@ async function state() {
   } catch {
     // No file, or one being written: the next poll reads it.
   }
-  await originCommits(ledger.flatMap((e) => (e.commit ? [e.commit] : [])), origin ?? "");
+  await originCommits(ledger.flatMap(ledgerCommits), origin ?? "");
   const now = Date.now();
   const nodes = buildNodes({
     plan: parsePlan(plan),
@@ -87,6 +98,7 @@ async function state() {
     nodes,
     direct: Object.fromEntries(direct),
     log: log.slice(-60).reverse(),
+    warnings: overrideWarnings(overrides),
     machine: {
       load: loadavg.split(" ").slice(0, 3).join(" "),
       lock: lock.trim(),

@@ -49,6 +49,9 @@ button:hover { border-color: var(--lit); }
 .chip.active { background: var(--active-bg); border-color: var(--active-line); }
 .chip.ready { background: var(--ready-bg); border-color: var(--ready-line); }
 .chip.unstarted { background: var(--wait-bg); border-color: var(--wait-line); }
+.chip.waiting, .chip.blocked, .chip.dropped { background: var(--wait-bg); border-color: var(--wait-line); border-style: dotted; }
+.chip.blocked { border-color: var(--bad); }
+.chip.dropped { opacity: .5; }
 
 main {
   position: relative; overflow: hidden; cursor: grab; touch-action: none;
@@ -66,6 +69,9 @@ svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: no
   transition: left .4s, top .4s, width .4s, height .4s; cursor: pointer;
 }
 .node.unstarted { background: var(--wait-bg); border-color: var(--wait-line); }
+.node.waiting, .node.blocked, .node.dropped { background: var(--wait-bg); border-color: var(--wait-line); border-style: dotted; }
+.node.blocked { border-color: var(--bad); }
+.node.dropped { opacity: .5; }
 .node.ready { background: var(--ready-bg); border-color: var(--ready-line); }
 .node.done { background: var(--done-bg); border-color: var(--done-line); }
 .node.awaiting { border-style: dashed; }

@@ -7,14 +7,14 @@ declare const dagre: any;
 interface Sub { name: string; role: string; lastAt: number; text: string }
 interface Node {
   id: string; level: number; title: string; short: string; size: string; hard: boolean;
-  needs: string[]; planned: boolean; state: "unstarted" | "active" | "done"; ready: boolean;
+  needs: string[]; planned: boolean; state: "unstarted" | "active" | "done" | "waiting" | "blocked" | "dropped"; ready: boolean;
   pushed: boolean; awaitingBatch: boolean; startedAt: number | null; lastAt: number | null;
   runtimeMs: number | null; retries: number; rejections: number; role: string; attempt: string;
   lastText: string; logLines: number; lastTests: string; subs: Sub[]; note: string;
 }
 interface LogLine { at: number; time: string; label: string; text: string }
 interface State {
-  now: number; nodes: Node[]; direct: Record<string, string[]>; log: LogLine[];
+  now: number; nodes: Node[]; direct: Record<string, string[]>; log: LogLine[]; warnings: string[];
   machine: { load: string; lock: string; origin: string | null; main: string | null; ahead: number };
 }
 interface Point { x: number; y: number }
@@ -59,7 +59,8 @@ function button(label: string, help: string, act: () => void): HTMLButtonElement
 const legend = el("div", "legend");
 for (const [cls, label] of [
   ["done", "● completed"], ["done awaiting", "● completed, not pushed"], ["active", "◐ in progress"],
-  ["ready", "○ ready to start"], ["unstarted", "○ waiting"],
+  ["ready", "○ ready to start"], ["unstarted", "○ waiting"], ["waiting", "◌ deferred"], ["blocked", "◌ blocked"],
+  ["dropped", "✕ dropped"],
 ]) legend.append(el("span", `chip ${cls}`, label));
 top.append(title, counts, search, tools, machine, legend);
 
@@ -233,7 +234,7 @@ function layout(s: State): void {
     path.setAttribute("d", d);
     path.dataset.from = e.v;
     path.dataset.to = e.w;
-    path.setAttribute("class", stateOf.get(e.v) === "done" ? "edge met" : "edge");
+    path.setAttribute("class", stateOf.get(e.v) === "done" || stateOf.get(e.v) === "dropped" ? "edge met" : "edge");
     svg.append(path);
   }
   highlight();
@@ -347,9 +348,16 @@ function render(s: State): void {
   stat(counts, "completed", `${done} / ${total}`);
   stat(counts, "in progress", String(active.length));
   stat(counts, "ready", String(ready));
-  stat(counts, "waiting", String(total - done - active.length - ready));
+  const held = s.nodes.filter((n) => n.state === "waiting" || n.state === "blocked").length;
+  const dropped = s.nodes.filter((n) => n.state === "dropped").length;
+  stat(counts, "waiting", String(total - done - active.length - ready - held - dropped));
+  stat(counts, "deferred", String(held));
+  stat(counts, "dropped", String(dropped));
   stat(counts, "not pushed", String(s.nodes.filter((n) => n.awaitingBatch).length));
   stat(counts, "retries", String(s.nodes.reduce((a, n) => a + n.retries, 0)));
+  // An older server sends no warnings.
+  const warnings = s.warnings ?? [];
+  if (warnings.length > 0) stat(counts, "override warnings", String(warnings.length), "warn").title = warnings.join("\n");
   machine.replaceChildren();
   stat(machine, "load", s.machine.load);
   stat(machine, "merge lock", s.machine.lock || "free");
@@ -375,7 +383,8 @@ async function showDetail(id: string): Promise<void> {
   if (selected !== id) return;
   detail.replaceChildren(el("h2", "", n.id), el("p", "", n.title));
   const facts = el("div", "stats");
-  stat(facts, "state", n.state === "active" ? "in progress" : n.state === "done" ? "completed" : n.ready ? "ready" : "waiting");
+  const named: Record<string, string> = { active: "in progress", done: "completed", waiting: "deferred", blocked: "blocked", dropped: "dropped" };
+  stat(facts, "state", named[n.state] ?? (n.ready ? "ready" : "waiting"));
   stat(facts, "runtime", duration(n.runtimeMs));
   stat(facts, "retries", String(n.retries));
   stat(facts, "rejected", String(n.rejections));
