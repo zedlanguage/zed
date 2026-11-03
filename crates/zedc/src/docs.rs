@@ -53,6 +53,7 @@ fn attach(tokens: &[Token], next: usize, span: Span, res: &Resolution, out: &mut
         span,
         message: message.into(),
         notes: Vec::new(),
+        row: None,
     });
 }
 
@@ -92,6 +93,7 @@ fn links(text: &str, span: Span, names: &HashSet<&str>, out: &mut Vec<Error>) {
                              this unit and no prelude word or type is `{name}`"
                         ),
                         notes: Vec::new(),
+                        row: None,
                     });
                 }
                 i = name_end;

@@ -805,15 +805,19 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| OSP-diag | impl attempt 1 | 2026-11-03 02:23 | part 4 counts feature done: l01_37 checks 368 native runs leave 0 cells; negative control (owned inputs never dropped) caught with survivors by type and node; l |
 | S22a | impl attempt 1 | 2026-11-03 03:01 | Pa (treap with subtree value range and gap flag, no size switch) and clip integrated in preimage.rs; building |
 | T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | Pa (treap with subtree value range and gap flag, no size switch) and clip integrated in preimage.rs; building |
 | T6 | repair attempt 3 | 2026-11-03 00:01 | start: rebase wt/t6 (62c6877) and wt/t6-spec (5cd9de6) on main, then items (a)-(i) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (12 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (17 commits); the push follows one full test run on the merged tree:
 
-- STATUS, plan_dag: ST (ST1, ST2) merged and marked done (this commit)
+- STATUS, plan_dag, docs.rs: OSP-diag merged and marked done; OSP-lit doc errors carry no rejection row (this commit)
+- abf477c OSP-diag repair: rows for a positional item after a named one; full test removes its directory
+- 4d82672 OSP-diag: rejection rows on diagnostics, zedc test exit codes, printed types read back, runtime counts
+- ed87e4c plan_dag: OSP-drop and T6-kinds (author decisions, 2026-11-03)
+- 03d3d41 docs/wip: delete the stopped Z8/Z9 patch (author decision, 2026-11-03)
+- 1687495 STATUS, plan_dag: ST (ST1, ST2) merged and marked done
 - 4993072 ST repair 6: the complement lookup of Formula::or holds constraints only
 - 5ecfcdb ST repair 5: complementary disjuncts are true; a block of names splits in place
 - f395817 ST repair 4: joins replace a block's conjuncts in place; a && b on names apart never wider than a then b
