@@ -419,7 +419,8 @@ fn each_permutation(n: usize, mut visit: impl FnMut(&[usize])) -> usize {
 /// Decides 3000 systems from `make` over `n` variables in the box `[-half, half]^n`, then each
 /// again under every naming of its variables: `n` random names given to the variables in each
 /// of the `n!` orders, so that the names sort in every order, with the rows and bounds shuffled
-/// anew each time. Fails at the first answer that changes. Returns the refusals, which are
+/// anew each time; when `n! < 4` the orders are run again, so each system is shuffled at least
+/// four times. Fails at the first answer that changes. Returns the refusals, which are
 /// among the answers compared.
 fn reorderings(seed: u64, n: usize, half: i64, make: impl Fn(&mut Rng) -> Vec<Row>) -> usize {
     let mut rng = Rng::new(seed);
@@ -439,22 +440,26 @@ fn reorderings(seed: u64, n: usize, half: i64, make: impl Fn(&mut Rng) -> Vec<Ro
                 drawn.push(s);
             }
         }
-        let namings = each_permutation(n, |perm| {
-            let names: Vec<Arc<str>> = perm.iter().map(|&p| drawn[p].clone()).collect();
-            let mut order: Vec<usize> = (0..all).collect();
-            for i in (1..all).rev() {
-                order.swap(i, rng.below(i + 1));
-            }
-            let g = named(&rows, half, &names, &order);
-            assert_eq!(a, decide(&g), "{f}\nrenamed and reordered: {g}");
-        });
-        assert_eq!(namings, (1..=n).product::<usize>());
+        // At least four row orders per system: the namings run again until four have run.
+        let all_namings = (1..=n).product::<usize>();
+        for _ in 0..4usize.div_ceil(all_namings) {
+            let namings = each_permutation(n, |perm| {
+                let names: Vec<Arc<str>> = perm.iter().map(|&p| drawn[p].clone()).collect();
+                let mut order: Vec<usize> = (0..all).collect();
+                for i in (1..all).rev() {
+                    order.swap(i, rng.below(i + 1));
+                }
+                let g = named(&rows, half, &names, &order);
+                assert_eq!(a, decide(&g), "{f}\nrenamed and reordered: {g}");
+            });
+            assert_eq!(namings, all_namings);
+        }
     }
     refused
 }
 
-// 168,000 renamed and reordered systems in all: 72,000 in each four-variable family, 18,000
-// over three variables and 6,000 over two. The four-variable families check that the five
+// 174,000 renamed and reordered systems in all: 72,000 in each four-variable family, 18,000
+// over three variables and 12,000 over two (each of the two namings twice). The four-variable families check that the five
 // points of the box stage, which are computed on the rows left after the eliminations, give no
 // answer that depends on the names (XT3 report, part E).
 

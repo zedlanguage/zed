@@ -757,13 +757,20 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   upper corner (the regular rows plus `v[i] + v[i + 1] - v[i + 2] >= 1` around the cycle;
   the regular rows alone hold at 38 points there, not one as the item's brief said), and the
   naming tests in `oracle.rs` now decide each system under all n! orders of its names (24
-  for the two four-variable families, 168,000 systems in all): no answer depends on the
+  for the two four-variable families; since repair 1 the two namings of the two-variable
+  family run twice, so every system gets at least four row orders: 174,000 systems in
+  all): no answer depends on the
   names, so the doubt in part E of the XT3 report is not borne out on these families.
   Scaling: three variables in many rows, 64 → 512 rows, 9.0 times the work (1.88M → 16.9M
   instructions, Growth). Negative controls, run once and not committed: with only the point
   nearest zero 5 L1.38 tests fail (the four above and the upper-corner test); with only the
   point nearest zero and the lower corner the upper-corner test fails; recomputing the bounds
   once per row in `box_point` makes the scaling test fail at 50.6 times the work.
+  Repair 1: in that family every point misses within the first two rows, so a second
+  scaling test,
+  `a_box_point_held_by_many_rows_scales` (three variables in [-10, 10], 256 → 2,048 rows
+  holding at the upper corner, Ok(true) after a pass over every row), measures 9.0 times the
+  work (8.86M → 79.3M); a row check that re-reads rows 0..=j at row j fails it at 44.5.
 - LR1: the failures of the last, failed expansion stay in `far` and `expected`. That pass reaches the operator a flat `*` loop stops at, so it records what the loop records; dropping them would lose operators from the messages. docs/plan_dag.md's wording says the opposite and its aim, unchanged messages, is met: with `Additive` and `Multiplicative` made left-recursive in a trial copy, `errors.rs` passed, and 3 of the 323 bracketing cases differed, each a flat chain now nested to the left. On that trial copy a parse took the same time per token as the flat rules (5.2 µs). The real grammar with no left recursion is no slower than before LR1 (3.8 to 5.1 µs per token against 4.1 to 5.2 µs, under load).
 - LR1, for LR2: as in the paper, `E = E '+' E | N` gives a right-associative tree, so a rung must use the form `E = E '+' T | T`. A loop written in a left-recursive rule before a token that fails is walked again at each growth, so such a prefix must be a rule of its own (COMPLEXITY.md F35). A left-recursive cycle of two or more rules under a long list makes the same quadratic walk at each growth at the list's own token, so each rung must be directly left-recursive. The first alternative that matches ends a growth: with `Sum = Attempt | Sum '+' INT` and `Attempt = Sum 'q'`, a match of `Attempt` is kept on the next growth, so `Sum '+' INT` is not tried after it (a case in `leftrec.txt`).
 - LR1: an entry that reads no seed is no longer matched again, which changes one thing: a rule first matched inside `!` keeps no failures, so a later read of its entry records none, as in a parser with no left recursion. As first built, a growth at that token re-recorded them. On random grammars 0.06% of error reports lost expected items or moved `far` back, never forward, and trees did not change; with no `!` in the grammars, 6.24 million comparisons showed no difference. The real grammar parses in the same time as before (4.4 to 5.9 µs per token against 4.4 to 5.7 µs, alternating runs under load).

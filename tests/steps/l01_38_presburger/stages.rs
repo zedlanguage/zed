@@ -473,3 +473,31 @@ fn three_variables_in_many_rows_scale() {
         three_rows,
     );
 }
+
+/// Three variables in `[-10, 10]` and `m` rows `c·x + k >= 0` with coefficients up to a
+/// million, each holding at the upper corner (10, 10, 10) with slack up to `10·Σ|c|`, so that
+/// the rows are spread over the box and one of the five points holds them all.
+fn rows_held_in_a_box(m: usize) -> Formula {
+    let mut g = Rng::new(0x3_5555);
+    let mut r: Vec<Formula> = (0..3).flat_map(|i| within(i, -10, 10)).collect();
+    for _ in 0..m {
+        let c = [0, 1, 2].map(|_| g.int(-1_000_000, 1_000_000));
+        let reach: i64 = c.iter().map(|c| 10 * c.abs()).sum();
+        let at: i64 = c.iter().map(|c| 10 * c).sum();
+        let t = [(0usize, c[0]), (1, c[1]), (2, c[2])];
+        r.push(ge(&t, g.int(0, reach) - at));
+    }
+    Formula::and(r)
+}
+
+#[test]
+fn a_box_point_held_by_many_rows_scales() {
+    // No elimination keeps these rows, so the box stage answers, and a point holds every row:
+    // the stage reads each row once for each point it tries, which is linear in the rows.
+    decides(
+        "a box point held by many rows",
+        256,
+        Ok(true),
+        rows_held_in_a_box,
+    );
+}
