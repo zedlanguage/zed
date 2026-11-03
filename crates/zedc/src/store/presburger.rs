@@ -1144,10 +1144,14 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                 // propagation of all the parts, so `r` disjuncts that propagation removes cost
                 // `r` propagations of the whole formula, and failed-literal probing stays
                 // polynomial, not `O(n log n)`, when `r` grows with `n` (`cross` from `k = 51`
-                // to `99`, the `k - 50` guards no input meets: COMPLEXITY.md S22). Keeping the
-                // results identical needs the same proof of each removal; a removal proved
-                // once for several disjuncts would need a propagation that reports which
-                // disjuncts it refutes, which `settle` does not.
+                // to `99`, the `k - 50` guards no input meets: COMPLEXITY.md S22). Tests:
+                // `l01_25_preimage_catalog::s22::chains_on_two_inputs_keep_their_boxes`
+                // reaches it (cross at `k = 51`), and `chain_cross_above_its_width_scales`
+                // (cross at 12 and 96, `#[ignore]`, ledger LIN-probe-refute: 256 times) measures it.
+                // Keeping the results identical needs the same proof of each removal; a
+                // removal proved once for several disjuncts would need a propagation that
+                // reports which disjuncts it refutes, which `settle` does not, or undoable
+                // (trail-based) propagation so a test costs only what it touches.
                 let mut q = Parts {
                     cons: p.cons.clone(),
                     ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),

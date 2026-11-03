@@ -1455,6 +1455,15 @@ fn chain_cross_within_its_width_scales() {
     scales("cross", 6);
 }
 
+/// `cross` from `k = 12` to `96`: at 96 the `k - 50 = 46` guards `j > 50` that no input meets
+/// are each refuted by one full propagation in `probe` (its `// Complexity tradeoff:`), about
+/// `k (k - 50)` settles in all (2.0 G instructions at `k = 52`, 15.1 G at 72, 52.8 G at 96).
+#[test]
+#[ignore = "ledger LIN-probe-refute: probe refutes each disjunct no point holds with its own propagation"]
+fn chain_cross_above_its_width_scales() {
+    scales("cross", 12);
+}
+
 /// `cross_dead` (`cross` with its inputs two narrower than the chain is long) has its only
 /// point outside the demand at an end, `i = k - 2` and `m = 2 - k`. The greedy search over
 /// disjunctions keeps `i` where the first solution put it and fails, and the failed-literal
