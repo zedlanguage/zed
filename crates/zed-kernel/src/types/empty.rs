@@ -1855,18 +1855,19 @@ impl Search {
         if p.bools != 0 {
             return Some(self.show(Rep::Value(Value::Bool(p.bools & 1 == 0))));
         }
-        type Fresh = Option<fn(i64) -> Value>;
+        // A cofinite set of a carrier holds one of the first values not listed in it.
+        type Fresh = fn(i64) -> Value;
         let fresh: [(&Lits, Fresh); 4] = [
-            (&p.ints, Some(Value::Int)),
-            (&p.strings, Some(|i| Value::str(&i.to_string()))),
-            (&p.rats, None),
-            (&p.floats, None),
+            (&p.ints, Value::Int),
+            (&p.strings, |i| Value::str(&i.to_string())),
+            (&p.rats, |i| Value::rat(crate::Rat::int(i.into()))),
+            (&p.floats, |i| Value::float(i as f64)),
         ];
         for (l, make) in fresh {
-            let v = match (l.cofinite, make) {
-                (false, _) => l.values.iter().next().cloned(),
-                (true, Some(make)) => (0..).map(make).find(|v| !l.values.contains(v)),
-                (true, None) => None,
+            let v = if l.cofinite {
+                (0..).map(make).find(|v| !l.values.contains(v))
+            } else {
+                l.values.iter().next().cloned()
             };
             if let Some(v) = v {
                 return Some(self.show(Rep::Value(v)));

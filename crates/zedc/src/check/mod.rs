@@ -36,7 +36,7 @@ pub mod widen;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use zed_kernel::types::Type as KType;
+use zed_kernel::types::{Type as KType, Verdict};
 use zed_kernel::{Prim, Rat, Term, Value, eval};
 
 use crate::ast::{
@@ -4161,15 +4161,27 @@ pub fn declared_text(a: &Type) -> Option<String> {
 }
 
 /// When an application of the arrows `arrows` of `sig` to arguments of the types `args` was
-/// rejected: the cause of the first check of an argument against an arrow's parameter that
-/// was refused, which the rejection may rest on, and nothing if every check was decided. On
-/// the error path only: arrows times arguments checks.
+/// rejected: the cause of a refused check of an argument against the parameter of an arrow
+/// that no argument rejects by a decided check, since only there the rejection rests on the
+/// refusal; nothing if every arrow is rejected by a decided check. On the error path only:
+/// arrows times arguments checks.
 fn refused_among(sig: &Sig, arrows: &[usize], args: &[Option<Ty>]) -> String {
     arrows
         .iter()
-        .flat_map(|&j| args.iter().zip(&sig.arrows[j].params))
-        .filter_map(|(a, q)| a.as_ref().map(|a| a.refused(q)))
-        .find(|w| !w.is_empty())
+        .find_map(|&j| {
+            let mut cause = None;
+            for (a, q) in args.iter().zip(&sig.arrows[j].params) {
+                match a.as_ref().map(|a| a.verdict(q)) {
+                    Some(Verdict::Inhabited) => return None,
+                    Some(Verdict::Refused(r)) => {
+                        cause.get_or_insert(r);
+                    }
+                    _ => {}
+                }
+            }
+            cause
+        })
+        .map(|r| format!(" (not decided: {})", r.message()))
         .unwrap_or_default()
 }
 

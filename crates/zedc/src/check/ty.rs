@@ -740,17 +740,27 @@ impl Ty {
         self.sub(other, &mut b) && b.is_empty()
     }
 
+    /// The kernel's verdict on `self <: other`, on what of `self` is outside `other`: `Empty`
+    /// when it holds, `Inhabited` when a value outside was built. On kernel types, or on the
+    /// scalar sets when either holds a function, variable or unknown; `Empty` when `other` is
+    /// the unknown.
+    pub fn verdict(&self, other: &Ty) -> Verdict {
+        if other.dynamic {
+            return Verdict::Empty;
+        }
+        match (self.kernel(), other.kernel()) {
+            (Some(a), Some(b)) => a.subtype_verdict(&b),
+            _ => self.set.subtype_verdict(&other.set),
+        }
+    }
+
     /// When `self <: other` failed: the clause that says why it was not decided, if the check of
     /// its kernel types (its scalar sets, when either holds a function, variable or unknown)
     /// was refused, and nothing if it was decided. A refusal claims nothing about the types,
     /// so a message that reads as a counterexample would be wrong.
     pub fn refused(&self, other: &Ty) -> String {
-        let verdict = match (self.kernel(), other.kernel()) {
-            (Some(a), Some(b)) => a.subtype_verdict(&b),
-            _ => self.set.subtype_verdict(&other.set),
-        };
-        match verdict {
-            Verdict::Refused(r) if !other.dynamic => format!(" (not decided: {})", r.message()),
+        match self.verdict(other) {
+            Verdict::Refused(r) => format!(" (not decided: {})", r.message()),
             _ => String::new(),
         }
     }

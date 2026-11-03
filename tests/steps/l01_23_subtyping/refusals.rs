@@ -439,3 +439,40 @@ fn a_literal_argument_and_a_need_result_name_no_cause_when_decided() {
         "2:10: `f` gives \"s\" here, which is not int"
     );
 }
+
+#[test]
+fn a_cofinite_set_of_rationals_or_floats_has_a_value() {
+    // Each carrier's cofinite set shows a value outside the ones it lists, so a number of one
+    // kind is decided not to be of another: `f64 <: rat` failed with `NoWitness` before.
+    let zero_r = Type::lit(&Value::rat(zed_kernel::Rat::int(0.into()))).unwrap();
+    let zero_f = Type::lit(&Value::float(0.0)).unwrap();
+    for (a, b) in [
+        (Type::f64(), Type::int()),
+        (Type::f64(), Type::rat()),
+        (Type::rat(), Type::int()),
+        (Type::rat(), Type::f64()),
+        (Type::rat(), zero_r.clone()),
+        (Type::f64(), zero_f.clone()),
+        (&Type::rat() - &zero_r, Type::f64()),
+        (&Type::f64() - &zero_f, Type::rat()),
+    ] {
+        Type::forget_emptiness();
+        assert_eq!(a.subtype_verdict(&b), Verdict::Inhabited, "{a} <: {b}");
+    }
+}
+
+#[test]
+fn an_overload_rejected_by_a_decided_check_names_no_cause() {
+    // The first argument's check is refused against every arrow, but the second is decided not
+    // to be of any arrow's parameter, so the rejection rests on no refusal.
+    for op in ["+", "*"] {
+        Type::forget_emptiness();
+        let errors = operator_errors(op, &[Ty::set(box_cover()), Ty::set(Type::bool())]);
+        let first = errors.first().unwrap_or_else(|| panic!("`{op}` took it"));
+        assert!(
+            first.starts_with(&format!("`{op}` does not take (")),
+            "{first}"
+        );
+        assert!(!first.contains("not decided"), "{first}");
+    }
+}
