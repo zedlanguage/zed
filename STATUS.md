@@ -880,30 +880,31 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | BIT-words | orchestrator attempt  | 2026-11-03 07:14 | NOTE for repair#1: main is now 88c51bb; rebase onto it. The new lazy Ck::known must not recurse on expression depth: T2-mid (still in repair) tests binders 100, |
 | CANON-stable | impl attempt 1 | 2026-11-03 09:30 | docs committed (COMPLEXITY S31, STATUS, plan_dag row+note, ZED_PORT_GAPS); full suites running on branch and on main baseline (load 123.18) |
 | CAP-pow32 | verify attempt 1 | 2026-11-03 08:53 | clippy -D warnings and fmt clean on f6e2feb; suite (run_tests.sh 2, load ~90-105) running; reading Tx::joined: exact Int count stored per product node is O(d) b |
-| F44-forced | running | 2026-11-03 08:09 |  |
 | F44-memo | orchestrator attempt  | 2026-11-03 07:14 | REQUIREMENT for verify#2: (1) impl marked ledger item F44-forced fixed: confirm F44-forced's plan row and tests are covered by 1739add, or say what is missing;  |
 | HOLE-oneline | verify attempt 2 | 2026-11-03 07:14 | clippy -D warnings clean, fmt clean; check OK (149 parsed 0 failed), fences exit 0, cases 372 with 2 DIFF ((T,) types, not this item's), all 16 new ok; 10 lexer |
 | L1.17a | verify attempt 1 | 2026-11-03 07:14 | started; no earlier verify lines for this item |
 | LIN-probe | verify attempt 1 | 2026-11-03 07:30 | control worktree /home/luke/Work/wt/lin-probe-ctl at f57061a (detached) for k=32->256 measurement and the main-probe negative control |
 | LIVE3 | orchestrator attempt  | 2026-11-03 09:30 | REFERENCE (XR3 Codex report /home/luke/Work/wt/xt4/codex/R3_CODEX.md Q3, lines 122-224, and Q5 lines 280-284): a second design for the same method (bounded back |
-| R10-stack | merge attempt 1 | 2026-11-03 07:14 | lock released |
 | S22e-quad | verify attempt 1 | 2026-11-03 07:43 | control worktree wt/s22e-quad-ctl removed; probe code kept at /home/luke/Work/wt/s22e-quad-verify-probe.diff (65 lines) for the repair |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | orchestrator attempt  | 2026-11-03 04:26 | MERGE NOTE: main is now 88c51bb (catch-up). Rebase onto it. COMPLEXITY F60 is OSP-neglit's and F61 is AXIOMS-fmt's: renumber T2-mid's F60 to F62 and update STAT |
-| T2-types | repair attempt 2 | 2026-11-03 08:34 | start; continuing wt/t2-types from 3caae19 |
-| T6-bound-load | impl attempt 1 | 2026-11-03 07:07 | 86f1255: per-arrow refused cause, kernel cofinite rat/float witness; full suite started, load 91.18 |
+| T2-types | repair attempt 2 | 2026-11-03 08:34 | following orchestrator SCOPE 10:45: repair defects in the done part only; rebased on main 79c77f0 cleanly as 5f3df7e; load 86.47 |
+| T6-bound-load | verify attempt 1 | 2026-11-03 07:07 | started |
 | T6-payload-pinwheel | impl attempt 2 | 2026-11-03 08:25 | negative control (fold unions restored, not committed): OneTuple with middle k64->512 156.3M->3930.3M instr, 25.1x > 24, test fails; fixed: Payload empty 1319-> |
 | T6-ratlit | impl attempt 3 | 2026-11-03 05:01 | meKr print in place, l01_22 32 pass, fmt and clippy clean; scaling N=2^20 vs 2^23: 2,951,041 vs 2,949,632 instructions, 414 kB both; exponent of 200 vs 1600 dig |
 | TD-ends | repair attempt 5 | 2026-11-03 03:52 | least_root now 2-adic root per odd prime + residue filters: Num::from(2^n+3).pow(3) 1.4/2.2/4.4/9.7/89 ms at n=4096/8192/16384/32768/262144 (was 69 s at 32768); |
 | TD-values | verify attempt 1 | 2026-11-03 03:52 | 26ac522 on main 1ab9e33: fmt clean, clippy -D warnings clean; suite running (run_tests.sh 2), load 94.64 |
-| TEST-split | repair attempt 2 | 2026-11-03 07:56 | start; load 77.54 79.97 89.47 |
+| TEST-split | repair attempt 2 | 2026-11-03 07:56 | rebased on main 88c51bb as 0b5d7c1 (STATUS conflict, kept both); steps binary 1889 tests, 233 step pieces, selections identical to the full list, each once (old |
 | TYPE-forms | orchestrator attempt  | 2026-11-03 08:16 | LOAD REQUIREMENT (user, 09:57): the machine is at load 110 on 32 cores; target is about 32. From now on build with CARGO_BUILD_JOBS=4, run the suite as tools/ru |
 | UNITANNOT-L7 | repair attempt 1 | 2026-11-03 07:14 | suite build failed: link of the steps test binary had undefined references inside its own codegen units (stale incremental state left by the killed run); remove |
 | UTVPI-NEAR | repair attempt 1 | 2026-11-03 06:34 | reproduced verifier: union k=256->2048 race 62.3x; units alone at k=256 GOR 546k, BFD 344k, Duong 4.54M; Duong 52.5M at 2048; per-site unit counts show ~14 unit |
 | WIDEN-WARN | verify attempt 2 | 2026-11-03 07:14 | diff read; probes via zedc run: nested mod 2**32 inside mod 2**64, unary - and mod 1 give no warning; ** , if and mod 1000 inside mod 2**64 warn; mod 2**65 warn |
 
-Merged into local main and not yet pushed (99 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (102 commits); the push follows one full test run on the merged tree:
 
+- 66ca165 plan_dag: ST-arms-quad, R10-stack, ADDITIVE-desugar done (catch-up 88c51bb)
+- 66945e0 plan_dag, STATUS: ADDITIVE-desugar done (merged 9b9a33f, tip aa0e65c)
+- 79c77f0 STATUS: in progress as of 2026-11-03 10:45
 - e7a6a6c STATUS: AXIOMS-gaps merged (064a9fa, tip d5b232e)
 - 88c51bb catch-up: cargo fmt
 - fa57422 Merge branch 'wt/st-arms' (ST-arms-quad, tip cd363ae) into wt/catchup
