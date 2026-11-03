@@ -661,7 +661,8 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A hand-written `PartialEq` comparing region pairs from a `Vec<(&Region, &Region)>`, skipping a pair that is one shared region (`Arc::ptr_eq`) | `zir::Region` | Identity | Structural equality, which the runtime gives without recursion; the shared-pair shortcut becomes a hash-consed id |
 | One `String` path buffer for a walk, cut back to a stored length (`String::truncate`) when the walk leaves a region | `zir::validate`, `zir::text::print` | Mutation | The path passed down as a value, or a list of path parts prepended and dropped |
 | A job machine (`Job<'t>`) whose frames borrow the input term for the walk's lifetime (`&'t Term`, `Cow<'t, [Arc<str>]>`), with stacks of values, sources and built regions that a frame drains the last `k` of; a `Closure<'t>` borrows a let-bound lambda's body from the input | `zir::lower::Lower::term` | Mutation | A state receiver holding the stacks; Zed shares terms, so a frame holds the term itself |
-| A stack of walks (`Vec<UseWalk<'t>>`), each with its own counts of bound names and its own stack of visits: a walk waits at a lambda whose body's uses are not yet known while that body is walked | `zir::lower::body_uses` | Mutation | A state receiver over a list of walks; the memo of bodies as a map in the receiver |
+| A stack of walks (`Vec<UseWalk<'t>>`), each with its own counts of bound names and its own stack of visits: a walk waits at a lambda whose body's uses are not yet known while that body is walked | `zir::lower::body_uses` | Mutation | A state receiver over a list of walks; the memo of bodies as a map in the receiver, keyed by occurrence id |
+| Occurrence ids of a term's subterms from one walk (`Places`: the parts of occurrence `i` are `first[i]`, `first[i] + 1`, …), carried beside each borrowed subterm (`At`) through the lowering's jobs; a `debug_assert!` with `std::ptr::eq` checks that a part given is the part numbered | `zir::lower::Places`, `Places::part` | Identity (gap 1) | The numbering is a fold over the term into a list; the check compares by structure or is dropped, since Zed has no address |
 | A raising machine (`Raising<'g>`) of region and node frames on a `Vec`, each holding the terms raised so far and a mark into the shared list of binder names | `zir::lower::raise_from` | Mutation | A state receiver holding the frames and the names |
 | A stack of running regions in the counting machine, and a work list of `Part<'p>` (`Drop(Option<usize>)`, `Keep(Option<usize>, Vec<&'p [usize]>)`) borrowing kept paths from the plan | `zir::memory::Machine::region`, `release`, `dec`, `tree` | Mutation | A state receiver holding the regions and the work list; paths shared, not borrowed |
 | Open values, patterns and types on a `Vec` while a graph is read or written, each frame counting the parts it has | `zir::text`, `zir::binary` | Mutation | A fold over the parts with a list of open frames in the receiver |
@@ -727,7 +728,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `Arc<[Value]>`, a shared slice with a reference count, and `Arc::default()` for the static empty slice | `Items`, `Atom::fields` | None | Zed values are shared already; the type is a plain tuple |
 | `Arc::strong_count` to tell a shared sequence from one held once, and `Arc::get_mut` to move the parts out of one held once | `Items::is_shared`, `Items::pair`, `Items::into_vec` | Identity, mutation | Removed: the runtime reuses a value held once, and the walks key their read sets by a hash-consed id |
-| Address of a shared slice (`Arc::as_ptr`, `Arc::ptr_eq`) as a key in a `HashSet` or `HashMap` held only while both values are borrowed | `deep::walk` (`read`), `deep::copy` (`copied`), `deep::all_leaves` (`read`) | Identity | A hash-consed id of the value, as for `Type::contains` |
+| The id a sequence carries (`Items::id`, drawn by `fresh_id`, shared by copies) as a key in a `HashSet` or `HashMap`, since ADDR-keys | `deep::walk` (`read`), `deep::copy` (`copied`), `deep::all_leaves` (`read`) | Identity (gap 1) | A runtime that gives each shared value an id, or the content digest of gap 1 |
 
 ## Entries from T11-elab (`zedc/src/elab.rs`, `stage.rs`, `query.rs`)
 
@@ -830,9 +831,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A global `AtomicU64` handing out blocks of ids to a thread-local `Cell` counter, so that each new family gets a fresh id (lists had one too until T14-occ-id) | `fresh_id` in `family.rs`; `Family::made_from`, `Family::extend` | Identity (gap 1), mutation | A content digest as a field (gap 1), or an id counter threaded as state through the machine |
+| A global `AtomicU64` handing out blocks of ids to a thread-local `Cell` counter, so that each new family gets a fresh id (lists had one until T14-occ-id and again since ADDR-keys, with field lists) | `fresh_id` in `family.rs`; `Family::made_from`, `Family::extend` | Identity (gap 1), mutation | A content digest as a field (gap 1), or an id counter threaded as state through the machine |
 | `imbl::OrdMap::diff`, which skips subtrees two maps share | `Held::base`, `short_diff` | Identity (gap 1) | A diff that compares entries; it costs the size of the smaller map rather than the change, unless the runtime gives `==` a shortcut on shared nodes |
-| `HashMap` keyed by family ids and by the address of a list (`Items::addr`) while the facts are borrowed, filled during the pass | `Held::{sets, seen, done, made}` | Identity, mutation | A state receiver over a map keyed by family ids and list digests (gap 1) |
+| `HashMap` keyed by family ids and by the id of a list (`Items::id`, since ADDR-keys), filled during the pass | `Held::{sets, seen, done, made}` | Identity, mutation | A state receiver over a map keyed by family ids and list digests (gap 1) |
 | A persistent cons list in `Arc` with a cached hash and depth, whose `Eq` first tests `Arc::ptr_eq` | `Position::{child, eq}` | Identity (gap 1) | A list of child indices with the hash as a field; `==` compares the hashes, then the indices |
 | `Drop` that unlinks a long cons list in a loop, so that dropping it does not recurse | `Position::drop` | No destructors | The runtime frees long lists without recursion (step L6.13) |
 
@@ -1038,7 +1039,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A list kept as its length, a `num_bigint::BigUint`, with `%` and `-` on it in the walk | `empty::Rep::List`, `residue_length`, `greedy_length`, `Search::list_member` | None | Zed's `int` is unbounded; the length is a plain `int` and the list a record of it |
 | A `BTreeMap<Type, BigUint>` of the rest types met, cleared in place after the length left is cut to its remainder modulo the steps between | `empty::Search::list_member` | Mutation | A loop whose state (type, length left, persistent map of types met) is passed to the next round, the map replaced by an empty one after the cut |
 | `Option<Option<KType>>` filled on first use inside an `all` closure (`get_or_insert_with`), so the kernel type of the target is built only when some piece needs it | `zedc` `check/ty.rs` `Ty::sub` | Laziness, mutation | A lazy local bound before the fold, forced on first use |
-| Address of a shared slice (`xs.as_ptr().addr()`) with its length as the memo key of one membership test, held while the value is borrowed and never iterated | `types::Type::contains` | Identity | A hash-consed id of the value, as for `deep::walk`; the recorded exception at `Type::contains` |
+| The id of a sequence (`Items::id`) with a type as the memo key of one membership test, never iterated (ADDR-keys) | `types::Type::contains` | Identity (gap 1) | A runtime that gives each shared value an id, as for `deep::walk`, or the content digest of gap 1 |
 
 ## Entries from OSP-neglit (`zedc/src/ast/neglit.rs`)
 
@@ -1166,7 +1167,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `rustix::process::setrlimit(Resource::As, …)` in a test child process | `tests/.../memory_check.rs` | Missing (process limits) | A test-harness facility, not the language |
 | A `fmt::Write` sink that counts bytes, so `Display` and `Debug` give a leaf's length with nothing written | `words::Count`, `words::written` | Missing (no formatter trait) | A length function per printed kind, or printing into a counting port |
 | `String::try_reserve_exact` that keeps the reserved block and writes into it | `words::print` | Missing (no allocator query) | The runtime primitive above, returning the block |
-| A `HashMap` memo keyed by a sequence's address and a family's id, read only while the value is borrowed | `words::room_to_print` | Identity | Occurrence addresses or stable ids (T14-occ) |
+| A `HashMap` memo keyed by a sequence's id and a family's id, and a map keyed by a field list's id (`Fields::id`) and its length (ADDR-keys) | `words::room_to_print` | Identity (gap 1) | Stable ids from the runtime, as for `deep::walk` |
 
 ## Entries from BIT-kept-ends (`zedc/src/store/int.rs`)
 
