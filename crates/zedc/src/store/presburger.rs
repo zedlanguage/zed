@@ -252,12 +252,24 @@ impl Lin {
         Some(out)
     }
 
-    /// The value at `values`, each atom absent from it zero.
+    /// The value at `values`, each atom absent from it zero and each product atom read as the
+    /// product of its symbols' values.
     fn eval(&self, values: &Model) -> Int {
+        let sym = |s: &Arc<str>| {
+            values
+                .get(&Atom::Sym(s.clone()))
+                .cloned()
+                .unwrap_or(Int::ZERO)
+        };
         let mut v = self.constant.clone();
         for (a, c) in &self.terms {
-            if let Some(x) = values.get(a) {
-                v = &v + &(c * x);
+            match a {
+                Atom::Product(x, y) => v = &v + &(c * &(&sym(x) * &sym(y))),
+                _ => {
+                    if let Some(x) = values.get(a) {
+                        v = &v + &(c * x);
+                    }
+                }
             }
         }
         v
@@ -600,18 +612,13 @@ impl Formula {
 
     /// Whether the formula holds at `values`; an absent atom is zero, and a product atom is
     /// read as the product of its symbols' values.
+    /// Each product is read where it is met, so a disjunct that is decided by its first part is
+    /// not walked through.
     pub fn holds(&self, values: &Model) -> bool {
-        let mut vs = values.clone();
-        for a in self.atoms() {
-            if let Atom::Product(x, y) = &a {
-                let v = |s: &Arc<str>| values.get(&Atom::Sym(s.clone())).unwrap_or(&Int::ZERO);
-                vs.insert(a.clone(), v(x) * v(y));
-            }
-        }
-        self.holds_as(&vs)
+        self.holds_as(values)
     }
 
-    /// Whether the formula holds at `values`, each atom read as its value there.
+    /// [`Formula::holds`].
     fn holds_as(&self, vs: &Model) -> bool {
         match self {
             Formula::Con(c) => {
@@ -981,6 +988,24 @@ impl Parts {
             Formula::Or(gs) => self.ors.push(gs),
             Formula::Not(_) => unreachable!("a formula in negation normal form"),
         }
+    }
+
+    /// The parts of `f`, in negation normal form already, sorted at the top as [`nnf`] would
+    /// sort them; below the top they are sorted by the [`nnf`] that made them.
+    fn of_nnf(mut f: Formula) -> Parts {
+        if let Formula::And(gs) | Formula::Or(gs) = &mut f {
+            gs.sort();
+        }
+        let mut p = Parts::default();
+        p.add(f);
+        p
+    }
+
+    /// The formula the parts make.
+    fn to_formula(&self) -> Formula {
+        let cons = self.cons.iter().map(|c| Formula::Con(c.clone()));
+        let ors = self.ors.iter().map(|ds| Formula::Or(ds.clone()));
+        Formula::and(cons.chain(ors).collect())
     }
 }
 
@@ -2518,16 +2543,27 @@ pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
 /// that a symbol whose hull is refused leaves the others projected. With them, the causes for
 /// which a disjunction was left out, which leaves each hull wider but sound.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    let none = || {
-        (
-            syms.iter().map(|_| Ok(IntervalSet::empty())).collect(),
-            Vec::new(),
-        )
-    };
+    match propagate(f)? {
+        Some(p) => project_parts(p, syms, Some(f)),
+        None => Ok(no_points(syms)),
+    }
+}
+
+/// [`project_each`]'s answer for a formula with no point.
+fn no_points(syms: &[Atom]) -> Each {
+    (
+        syms.iter().map(|_| Ok(IntervalSet::empty())).collect(),
+        Vec::new(),
+    )
+}
+
+/// [`project_each`] of the settled parts `p` of a formula, which is `whole` when it is given.
+/// A disjunct is projected from the parts of it and the base groups it touches, moved, not
+/// copied, and not brought to negation normal form again, so that a chain of disjunctions
+/// nested to depth `d` costs each disjunct once, not once for each level above it.
+fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result<Each, Refusal> {
+    let none = || no_points(syms);
     let mut skipped: Vec<Refusal> = Vec::new();
-    let Some(mut p) = propagate(f)? else {
-        return Ok(none());
-    };
     if p.ors.len() > 1 && pick(&p).is_err() {
         let Some(q) = probe(p)? else {
             return Ok(none());
@@ -2542,7 +2578,12 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     // own group, and a disjunct is projected with the groups its atoms touch, onto the symbols
     // in them, the others keeping the base's hull. A projection then costs the groups each
     // disjunct touches, not the whole base for each disjunct and each symbol.
+    // With two disjunctions or more, the hulls are tightened over the whole formula; below the
+    // top it is rebuilt from the parts, which costs no more than a tightening.
+    let rebuilt = (whole.is_none() && p.ors.len() > 1).then(|| p.to_formula());
+    let whole = whole.or(rebuilt.as_ref());
     let ors = std::mem::take(&mut p.ors);
+    let n_ors = ors.len();
     let linked = Linked::of(std::mem::take(&mut p.cons));
     let bases: HashMap<usize, Formula> = (0..linked.held.len())
         .filter(|r| !linked.held[*r].is_empty())
@@ -2571,7 +2612,7 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
         .iter()
         .map(|s| hull_from(base_of(group(s).expect("a symbol's group")), s, &model))
         .collect();
-    for ds in &ors {
+    for ds in ors {
         // For each symbol, the join of its projections over the satisfiable disjuncts that
         // touch it (`None` once one is refused), and how many touch it; a satisfiable disjunct
         // that does not touch it gives the base's hull, which leaves it as it is.
@@ -2582,14 +2623,22 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
             roots.sort_unstable();
             roots.dedup();
             let mut fs: Vec<Formula> = roots.iter().map(|r| base_of(*r).clone()).collect();
-            fs.push(d.clone());
+            fs.push(d);
             let fd = Formula::and(fs);
             let ks: Vec<usize> = roots
                 .iter()
                 .flat_map(|r| syms_of.get(r).into_iter().flatten().copied())
                 .collect();
             let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
-            let rs = match project_each(&fd, &sub) {
+            // A disjunct that touches no symbol is decided as a whole, so it is kept for that.
+            // Complexity tradeoff: that copy, and `d.atoms()` above, walk the disjunct at each
+            // level, O(d²) over a chain nested `d` deep; small beside the rest (COMPLEXITY S26).
+            let kept = ks.is_empty().then(|| fd.clone());
+            let projected = settle(Parts::of_nnf(fd)).and_then(|p| match p {
+                Some(p) => project_parts(p, &sub, None),
+                None => Ok(no_points(&sub)),
+            });
+            let rs = match projected {
                 Ok((rs, more)) => {
                     skipped.extend(more);
                     rs
@@ -2600,10 +2649,9 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
                     break;
                 }
             };
-            let has_point = if ks.is_empty() {
-                !matches!(decide(&fd), Ok(false))
-            } else {
-                rs.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()))
+            let has_point = match &kept {
+                Some(fd) => !matches!(decide(fd), Ok(false)),
+                None => rs.iter().any(|r| !matches!(r, Ok(s) if s.is_empty())),
             };
             if !has_point {
                 continue;
@@ -2635,7 +2683,7 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
             }
         }
     }
-    if ors.len() > 1 {
+    if let Some(f) = whole.filter(|_| n_ors > 1) {
         for (o, sym) in out.iter_mut().zip(syms) {
             if let Ok(s) = o {
                 *o = tighten(f, sym, s.clone());
