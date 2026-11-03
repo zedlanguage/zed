@@ -18,9 +18,9 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::family::Family;
+use crate::family::{Family, Id};
 use crate::term::{FixKind, Term};
-use crate::value::{Id, Items, Value};
+use crate::value::{Items, Value};
 
 /// The position of a node in a term: the child index taken at each node on the way down from
 /// the root, in the order of [`child`]; the root's position is empty. A position is read from
@@ -349,10 +349,18 @@ impl Provenance {
 /// difference of the two; in other sets the number means nothing.
 type Found<'a> = OrdMap<&'a Value, u32>;
 
-/// A sequence or a family, named by its id.
+/// A non-empty sequence, named by its address ([`Items::addr`]), or a family, named by its id.
+///
+/// The address names the sequence for one [`Held`] only, which lives inside one call of
+/// [`Provenance::origins`]: every value it walks is borrowed (`&'a`) from the facts for that
+/// whole call, so no sequence it meets is freed while it runs and no address is taken by another
+/// sequence; two sequences with one address are copies of one shared sequence, so equal. An
+/// address is only tested for equality, as a key of `sets` and `seen`, which are never iterated:
+/// no order and nothing in the result depends on its value, and the origins come out in fact
+/// order. The empty sequence, one static allocation, is never entered or looked up.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Part {
-    Items(Id),
+    Items(usize),
     Family(Id),
 }
 
@@ -370,8 +378,8 @@ enum Task<'a> {
 
 /// The failures of `members` that values hold: that a value is, has as a member of an
 /// `#errs`, or holds in a tuple, a family or a payload. A value shares its tuples and families
-/// with other values, so the set of each is found once, keyed by its id, and a walk over a
-/// value is `O(distinct parts)`, not `O(paths)`.
+/// with other values, so the set of each is found once, keyed by its address or id, and a walk
+/// over a value is `O(distinct parts)`, not `O(paths)`.
 struct Held<'m, 'a> {
     members: &'m BTreeSet<&'a Value>,
     sets: HashMap<Part, Found<'a>>,
@@ -392,7 +400,7 @@ impl<'a> Held<'_, 'a> {
                 Task::Enter(v) => self.enter(v, &mut todo),
                 Task::Items(xs) => {
                     let s = xs.iter().fold(Found::new(), |s, x| join(&s, &self.read(x)));
-                    self.sets.insert(Part::Items(xs.id()), s);
+                    self.sets.insert(Part::Items(xs.addr()), s);
                 }
                 Task::Family(f, base) => {
                     let s = self.family(f, base);
@@ -433,7 +441,7 @@ impl<'a> Held<'_, 'a> {
     }
 
     fn enter_items(&mut self, xs: &'a Items, todo: &mut Vec<Task<'a>>) {
-        if !xs.is_empty() && self.seen.insert(Part::Items(xs.id())) {
+        if !xs.is_empty() && self.seen.insert(Part::Items(xs.addr())) {
             todo.push(Task::Items(xs));
             todo.extend(xs.iter().map(Task::Enter));
         }
@@ -493,7 +501,7 @@ impl<'a> Held<'_, 'a> {
     fn read(&self, v: &'a Value) -> Found<'a> {
         let items = |xs: &Items| match xs.is_empty() {
             true => Found::new(),
-            false => self.sets[&Part::Items(xs.id())].clone(),
+            false => self.sets[&Part::Items(xs.addr())].clone(),
         };
         let mut s = match v {
             Value::Atom(a) => items(&a.args),

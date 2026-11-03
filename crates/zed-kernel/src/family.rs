@@ -6,10 +6,12 @@
 //! every keypath has exactly one writer, and an outer key over an empty level has no keypath,
 //! so it is dropped.
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::mem;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use imbl::OrdMap;
 use imbl::ordmap::Iter;
@@ -17,10 +19,38 @@ use imbl::shared_ptr::DefaultSharedPtr;
 
 use crate::deep::{self, Part};
 use crate::error::KernelError;
-use crate::value::{Id, Value, fresh_id};
+use crate::value::Value;
 
 /// The keys from a family's top level down to one of its leaves.
 pub type Keypath = Vec<Value>;
+
+/// The number that names one family as it was built, so that provenance can find a family's
+/// failures from those of the family it was made from. Copies share it; a family changed in
+/// place takes a new one. Ids are drawn once each and never reused, and a walk only tests them
+/// for equality: what it finds does not depend on their values. The empty family has id 0.
+pub(crate) type Id = u64;
+
+/// The ids a thread draws from, a block at a time, so that threads building families do not
+/// share one counter.
+const BLOCK: Id = 1 << 16;
+static BLOCKS: AtomicU64 = AtomicU64::new(1);
+thread_local! {
+    /// The next id of this thread's block, and the end of the block.
+    static NEXT: Cell<(Id, Id)> = const { Cell::new((0, 0)) };
+}
+
+/// A new id. Block 0 is never drawn, so no family built non-empty has id 0.
+fn fresh_id() -> Id {
+    NEXT.with(|next| {
+        let (mut id, mut end) = next.get();
+        if id == end {
+            id = BLOCKS.fetch_add(1, AtomicOrdering::Relaxed) * BLOCK;
+            end = id + BLOCK;
+        }
+        next.set((id + 1, end));
+        id
+    })
+}
 
 /// A finite family. No level of a family is empty except a whole family that has no entries.
 /// Its entries sit in a persistent map: a copy of a family costs O(1) whatever its size, and

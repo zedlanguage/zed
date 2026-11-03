@@ -7,14 +7,12 @@
 //! on values is the ties of that order: the bitwise identity that keys and the law catalog
 //! read. The language's `==` is [`Value::surface_eq`], which differs only at floats.
 
-use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fmt;
 use std::mem;
 use std::ops::Deref;
 use std::slice;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -87,49 +85,13 @@ pub struct Atom {
 /// The values inside a tuple, a keypath or a payload, shared: a copy is a reference count, so
 /// reading a variable that holds a tuple of any size is O(1). It owns its drop, comparison and
 /// `Debug` form so that each runs on the heap, whatever the depth (see [`crate::deep`]).
-///
-/// The second field is the sequence's [`Id`]: a copy keeps it, and no other sequence has it.
 #[derive(Clone, Default)]
-pub struct Items(Arc<[Value]>, Id);
-
-/// The number that names one sequence or one family as it was built, so that a walk of a value
-/// can tell the parts it has met before from equal parts built apart. Copies share it; a family
-/// changed in place takes a new one. Ids are drawn once each and never reused, and a walk only
-/// tests them for equality: what it finds does not depend on their values. Empty values have
-/// id 0.
-pub(crate) type Id = u64;
-
-/// The ids a thread draws from, a block at a time, so that threads building values do not share
-/// one counter.
-const BLOCK: Id = 1 << 16;
-static BLOCKS: AtomicU64 = AtomicU64::new(1);
-thread_local! {
-    /// The next id of this thread's block, and the end of the block.
-    static NEXT: Cell<(Id, Id)> = const { Cell::new((0, 0)) };
-}
-
-/// A new id. Block 0 is never drawn, so no value built non-empty has id 0.
-pub(crate) fn fresh_id() -> Id {
-    NEXT.with(|next| {
-        let (mut id, mut end) = next.get();
-        if id == end {
-            id = BLOCKS.fetch_add(1, AtomicOrdering::Relaxed) * BLOCK;
-            end = id + BLOCK;
-        }
-        next.set((id + 1, end));
-        id
-    })
-}
+pub struct Items(Arc<[Value]>);
 
 impl Items {
     /// The values, in order.
     pub fn as_slice(&self) -> &[Value] {
         &self.0
-    }
-
-    /// The sequence's id.
-    pub(crate) fn id(&self) -> Id {
-        self.1
     }
 
     /// Whether `self` and `other` are one shared sequence, so equal without reading them.
@@ -182,7 +144,7 @@ impl From<Vec<Value>> for Items {
         // The empty slice is one static allocation; `Arc::from` would allocate per call.
         match values.is_empty() {
             true => Items::default(),
-            false => Items(values.into(), fresh_id()),
+            false => Items(values.into()),
         }
     }
 }
@@ -565,6 +527,14 @@ impl From<Family> for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_value_is_56_bytes() {
+        // Each value of every tuple, list and family costs this much; an id in `Items` made it
+        // 64 and cost 13 to 27% more peak memory on runs without provenance (COMPLEXITY.md K25).
+        assert_eq!(size_of::<Value>(), 56);
+        assert_eq!(size_of::<Items>(), 16);
+    }
 
     #[test]
     fn signed_zeros_differ_and_nans_are_one_value() {

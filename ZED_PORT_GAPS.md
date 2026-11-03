@@ -765,9 +765,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A global `AtomicU64` handing out blocks of ids to a thread-local `Cell` counter, so that each new list or family gets a fresh id | `fresh_id` in `value.rs`; `Items::from`, `Family::made_from`, `Family::extend` | Identity (gap 1), mutation | A content digest as a field (gap 1), or an id counter threaded as state through the machine |
+| A global `AtomicU64` handing out blocks of ids to a thread-local `Cell` counter, so that each new family gets a fresh id (lists had one too until T14-occ-id) | `fresh_id` in `family.rs`; `Family::made_from`, `Family::extend` | Identity (gap 1), mutation | A content digest as a field (gap 1), or an id counter threaded as state through the machine |
 | `imbl::OrdMap::diff`, which skips subtrees two maps share | `Held::base`, `short_diff` | Identity (gap 1) | A diff that compares entries; it costs the size of the smaller map rather than the change, unless the runtime gives `==` a shortcut on shared nodes |
-| `HashMap` keyed by list and family ids, filled during the pass | `Held::{sets, seen, done, made}` | Identity, mutation | A state receiver over a map keyed by the ids above |
+| `HashMap` keyed by family ids and by the address of a list (`Items::addr`) while the facts are borrowed, filled during the pass | `Held::{sets, seen, done, made}` | Identity, mutation | A state receiver over a map keyed by family ids and list digests (gap 1) |
 | A persistent cons list in `Arc` with a cached hash and depth, whose `Eq` first tests `Arc::ptr_eq` | `Position::{child, eq}` | Identity (gap 1) | A list of child indices with the hash as a field; `==` compares the hashes, then the indices |
 | `Drop` that unlinks a long cons list in a loop, so that dropping it does not recurse | `Position::drop` | No destructors | The runtime frees long lists without recursion (step L6.13) |
 
