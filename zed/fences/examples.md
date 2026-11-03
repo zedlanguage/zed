@@ -989,8 +989,8 @@ struct Account { bal: rat }
 type Tx = #deposit(id: AccountId, amt: rat) | #withdraw(id: AccountId, amt: rat);
 edits: (Tx) -> AccountId ->? Edit(Account);
 edits(positional tx) = match tx {
-  #deposit(id:, amt:)  -> { id -> #update(a -> a with { bal = a.bal + amt }) },
-  #withdraw(id:, amt:) -> { id -> #update(a -> a with { bal = a.bal - amt }) },
+  #deposit(id:, amt:)  -> ({ id -> #update(a -> a with { bal = a.bal + amt }) }),
+  #withdraw(id:, amt:) -> ({ id -> #update(a -> a with { bal = a.bal - amt }) }),
 };
 book = loop t {
   accts' = accts.patch(edits(txs[t])) with accts = opening;

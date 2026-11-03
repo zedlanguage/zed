@@ -53,14 +53,20 @@ fn a_display_in_body_position_is_parenthesized() {
             "swap = p -> ({ x: p.y, y: p.x });",
             "(= (swap) (fn (p) (record (x: (. p y)) (y: (. p x)))))",
         ),
-        ("swap = p -> { x: p.y, y: p.x };", "syntax"),
         ("d = r else ({ x: 0 });", "(= (d) (else r (record (x: 0))))"),
-        ("d = r else { x: 0 };", "syntax"),
         (
             "v = if c { { x: 1 } } else { { x: 2 } };",
             "(= (v) (if c (block (return (record (x: 1)))) (block (return (record (x: 2))))))",
         ),
     ]);
+    // Unparenthesized, each is rejected as a display in body position (sec:diagnostics).
+    for text in ["swap = p -> { x: p.y, y: p.x };", "d = r else { x: 0 };"] {
+        let got = super::sx(text);
+        assert!(
+            got.starts_with("error: a record display in body position:"),
+            "{text}: {got}"
+        );
+    }
 }
 
 #[test]

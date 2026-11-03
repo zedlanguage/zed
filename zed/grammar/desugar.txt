@@ -101,7 +101,7 @@ ArrayExpr     : the array {0 -> ⟦e0⟧, …, n−1 -> ⟦en−1⟧} of type in
 HoleExpr      : a hole, reported, whose term is #hole
 Literal       : the literal value; a float literal rounds once to the nearest double
 BinOp         : the operator's primitive as a function; `&&` and `||` are λ(a, b). ⟦a && b⟧ and λ(a, b). ⟦a || b⟧
-Block         : its bindings as lets in dependency order (statement order has no meaning), over the final expression or the return tuple
+Block         : its bindings as lets in dependency order (statement order has no meaning), over the final expression or the return tuple; its `Display` alternative, a display in body position, is rejected after parsing (sec:diagnostics)
 Display       : `{ n: e, … }` is the record {#n -> ⟦e⟧, …}, `n:` alone is `n: n`; `{}` the empty family; `{ k -> v, … }` the family of those entries, a repeated key being a collision; `{ k, … }` the set of those keys
 Entry         : one entry of a display
 If            : if(⟦c⟧, ⟦a⟧, ⟦b⟧)

@@ -60,6 +60,7 @@ rows! {
         "Remap output name that names a source level and resolves to a value in scope",
     MethodOnValue => "Method declared on a value",
     PrefixMinus => "Prefix `-` on a numeric literal's postfix chain",
+    DisplayInBody => "Display in body position",
     NamedBeforePositional => "Named argument before a positional one",
     PositionalAfterNamed => "`positional` parameter after a named one",
     WrongForm => "Argument in the wrong form",

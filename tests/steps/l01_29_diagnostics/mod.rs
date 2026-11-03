@@ -4,6 +4,7 @@
 //! the checker discharges.
 
 mod batch;
+mod body_display;
 mod derivations;
 mod layout;
 mod neglit;

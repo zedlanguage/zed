@@ -25,6 +25,7 @@ Capitalized free name used once in a signature and nowhere in the body
 Remap output name that names a source level and resolves to a value in scope
 Method declared on a value
 Prefix `-` on a numeric literal's postfix chain
+Display in body position
 Named argument before a positional one
 `positional` parameter after a named one
 Argument in the wrong form

@@ -1201,3 +1201,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `libc::mmap` of a `PROT_NONE` reservation, `mprotect` of pieces of it, `munmap` in `Drop` | test `placement::FarApart` | System calls, no destructors | Test harness only: a foreign call to map memory and a scope that unmaps it |
 | `unsafe impl Send` for a struct holding a raw pointer to memory it alone owns | test `placement::FarApart` | Foreign library | Inside the `@ffi` binding, which owns the mapping as a handle |
 | `Box<dyn JITMemoryProvider + Send>` passed in to choose where the JIT puts code | `zed_native::run_in` | Foreign library | A parameter of the `@ffi` binding to the code generator |
+
+## Entries from BODY-display (`zedc/src/ast/body.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `OnceCell<Vec<usize>>` of each node's parent, filled on the first rejection through `&self` by one walk from the root | `Builder::parents`, `Builder::body_of` | Lazy cells (gap 3) | The parent passed down while building, or the map made in one pass before building and threaded through as a state receiver |

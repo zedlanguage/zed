@@ -21,6 +21,7 @@
 //! `with` clauses and expression statements. A primed name `x'` is one token, so it is a name
 //! like any other here. A form of a later layer is an error naming that layer.
 
+mod body;
 mod drop;
 mod neglit;
 mod show;
@@ -484,6 +485,8 @@ struct Builder<'a, 's: 'a> {
     front: usize,
     /// The names written in the source other than after a `.`, listed on first use.
     bare: &'a neglit::Bare<'s>,
+    /// The parent of each node of the tree, listed on the first rejection that names one.
+    parents: std::cell::OnceCell<Vec<usize>>,
 }
 
 impl<'a, 's> Builder<'a, 's> {
@@ -515,6 +518,7 @@ impl<'a, 's> Builder<'a, 's> {
             place: Vec::new(),
             front: 0,
             bare,
+            parents: std::cell::OnceCell::new(),
         }
     }
 
@@ -759,7 +763,7 @@ impl<'a, 's> Builder<'a, 's> {
                 ),
                 span: self.span(n),
             }),
-            "Block" => self.block(n),
+            "Block" => self.body_block(n),
             "If" => Ok(Expr {
                 kind: ExprKind::If {
                     cond: Box::new(self.node(kids[0])?),

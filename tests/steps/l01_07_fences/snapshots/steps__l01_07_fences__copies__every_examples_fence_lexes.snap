@@ -589,8 +589,8 @@ expression: "golden_tokens(\"examples.md\")"
   3 | «type» Tx = #deposit ( id : AccountId , amt : rat ) | #withdraw ( id : AccountId , amt : rat ) ;
   4 | edits : ( Tx ) -> AccountId ->? Edit ( Account ) ;
   5 | edits ( «positional» tx ) = «match» tx {
-  6 | #deposit ( id : , amt : ) -> { id -> #update ( a -> a «with» { bal = a . bal + amt } ) } ,
-  7 | #withdraw ( id : , amt : ) -> { id -> #update ( a -> a «with» { bal = a . bal - amt } ) } ,
+  6 | #deposit ( id : , amt : ) -> ( { id -> #update ( a -> a «with» { bal = a . bal + amt } ) } ) ,
+  7 | #withdraw ( id : , amt : ) -> ( { id -> #update ( a -> a «with» { bal = a . bal - amt } ) } ) ,
   8 | } ;
   9 | book = «loop» t {
  10 | accts' = accts . patch ( edits ( txs [ t ] ) ) «with» accts = opening ;

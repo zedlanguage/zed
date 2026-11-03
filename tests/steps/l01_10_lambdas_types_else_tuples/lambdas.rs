@@ -33,8 +33,9 @@ fn a_brace_after_the_arrow_is_a_block() {
         ("x -> { x }", "(fn (x) (block (return x)))"),
         // A record display after the arrow is parenthesized (step L2.1).
         ("p -> ({ x: p.x })", "(fn (p) (record (x: (. p x))))"),
-        ("p -> { x: p.x }", "syntax"),
     ]);
+    // Unparenthesized, it is rejected as a display in body position (sec:diagnostics).
+    assert!(super::sx("p -> { x: p.x }").starts_with("error: a record display in body position:"));
 }
 
 #[test]

@@ -123,10 +123,17 @@ Type ::: () ::: ( )
 Type ::: () -> () ::: (( ) -> ( ))
 Type ::: (s: Lines) -> () ::: ((( s : Lines )) -> ( ))
 Item ::: p[k] <- v; ::: (p [ k ] <- v ;)
-# a brace after a fallback's else or an arrow is a block, never a display
+# a brace after a fallback's else or an arrow is a block, never a display; `Block`'s `Display`
+# alternative reads a display there only so that the tree builder rejects it (row "Display in
+# body position"), as it rejects a block whose one content is a lambda, `{ k -> v }`
 Expr ::: parse(s) else { 0 } ::: ((parse (( s ))) (else ({ 0 })))
-Expr ::: x else { 1, 2 } ::: ERROR
-Expr ::: x -> { x, y } ::: ERROR
+Expr ::: x else { 1, 2 } ::: (x (else ({ 1 , 2 })))
+Expr ::: x -> { x, y } ::: (x -> ({ x , y }))
+Expr ::: x else { k: 1 } ::: (x (else ({ k : 1 })))
+Expr ::: x -> { "a" -> 1 } ::: (x -> ({ ("a" -> 1) }))
+Expr ::: x -> { k -> 1 } ::: (x -> ({ (k -> 1) }))
+Expr ::: if c { 1, 2 } else { 3 } ::: (if c ({ 1 , 2 }) else ({ 3 }))
+Expr@2 ::: x else { 1, 2 } ::: ERROR
 Expr ::: x else ({ 1, 2 }) ::: (x (else (( ({ 1 , 2 }) ))))
 Item ::: f(x: int) -> (k: K) -> V = g(x); ::: (f ( (x : int) ) (-> ((( k : K )) -> V)) (= (g (( x ))) ;))
 # as, into, and a value with apply to the whole arithmetic expression to their left
