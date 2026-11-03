@@ -30,7 +30,7 @@
 use std::collections::VecDeque;
 
 use super::int::Int;
-use super::simplex::Term;
+use super::linear::Term;
 
 /// Whether the rows, each of one or two terms with unit coefficients, over `n` variables, have
 /// no integer point.

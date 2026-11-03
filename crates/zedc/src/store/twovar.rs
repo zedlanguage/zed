@@ -15,7 +15,7 @@
 //! bisection on the counts of the prefixes of a range with points.
 
 use super::int::Int;
-use super::simplex::{Q, Term};
+use super::linear::{Q, Term};
 
 /// The line `(p·x + q) / r`, with `r` above zero.
 #[derive(Clone)]

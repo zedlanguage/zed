@@ -84,7 +84,7 @@ use std::sync::Arc;
 
 use super::int::Int;
 use super::interval::{End, IntervalSet};
-use super::simplex::Term;
+use super::linear::Term;
 use super::{twovar, utvpi};
 
 mod deep;
