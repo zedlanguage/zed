@@ -396,8 +396,11 @@ impl fmt::Display for Con {
     }
 }
 
-/// A quantifier-free formula over linear constraints.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+/// A quantifier-free formula over linear constraints. Two formulas are compared as the
+/// derived order would compare them, but a formula compared with itself is equal at once:
+/// a lookup of a conjunct in the maps keyed by formulas finds the very formula it holds, and
+/// would otherwise walk the whole of it, a cost of its size per lookup (COMPLEXITY.md S26).
+#[derive(Clone, Debug)]
 pub enum Formula {
     /// A constraint.
     Con(Con),
@@ -407,6 +410,66 @@ pub enum Formula {
     And(Vec<Formula>),
     /// Disjunction; empty is `false`.
     Or(Vec<Formula>),
+}
+
+impl Formula {
+    /// The place of the variant in the derived order.
+    fn rank(&self) -> u8 {
+        match self {
+            Formula::Con(_) => 0,
+            Formula::Not(_) => 1,
+            Formula::And(_) => 2,
+            Formula::Or(_) => 3,
+        }
+    }
+}
+
+impl Ord for Formula {
+    fn cmp(&self, other: &Formula) -> Ordering {
+        if std::ptr::eq(self, other) {
+            return Ordering::Equal;
+        }
+        match (self, other) {
+            (Formula::Con(a), Formula::Con(b)) => a.cmp(b),
+            (Formula::Not(a), Formula::Not(b)) => a.cmp(b),
+            (Formula::And(a), Formula::And(b)) | (Formula::Or(a), Formula::Or(b)) => a.cmp(b),
+            _ => self.rank().cmp(&other.rank()),
+        }
+    }
+}
+
+impl PartialOrd for Formula {
+    fn partial_cmp(&self, other: &Formula) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Formula {
+    fn eq(&self, other: &Formula) -> bool {
+        if std::ptr::eq(self, other) {
+            return true;
+        }
+        match (self, other) {
+            (Formula::Con(a), Formula::Con(b)) => a == b,
+            (Formula::Not(a), Formula::Not(b)) => a == b,
+            (Formula::And(a), Formula::And(b)) | (Formula::Or(a), Formula::Or(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Formula {}
+
+/// Hashed by structure, so formulas that `==` finds equal hash alike.
+impl std::hash::Hash for Formula {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.rank().hash(state);
+        match self {
+            Formula::Con(c) => c.hash(state),
+            Formula::Not(f) => f.hash(state),
+            Formula::And(fs) | Formula::Or(fs) => fs.hash(state),
+        }
+    }
 }
 
 impl Formula {

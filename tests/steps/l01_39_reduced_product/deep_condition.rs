@@ -334,6 +334,105 @@ fn arms_of_a_chain_of_accounts_take_time_near_linear_in_its_depth() {
     });
 }
 
+/// Panics when `run` at `8n` does more than `8 ln(8n) / ln(n)` times its work at `n`, the
+/// ratio work of order `n log n` has. The rule's limit of 24 times does not tell `n log n`
+/// from a small `n²` term at these sizes.
+fn within_n_log_n(what: &str, n: usize, run: impl Fn(usize)) {
+    let limit = 8.0 * (8.0 * n as f64).ln() / (n as f64).ln();
+    scaling::compare(
+        &format!("{what}: sizes {n} and {}", 8 * n),
+        &format!("work of order n log n does at most {limit:.2} times the work"),
+        limit,
+        || run(n),
+        || run(8 * n),
+    );
+}
+
+#[test]
+fn arms_of_a_long_chain_of_accounts_take_time_within_n_log_n() {
+    // A lookup of a conjunct in the relation's maps finds the very formula it holds; compared
+    // in full, the nest below the level, each lookup cost the depth: 0.85 and 13.19 G
+    // instructions at d = 240 and 1920, 15.5 times. Now 0.76 and 7.84 G, 10.2 times.
+    on_a_deep_stack(|| {
+        let cases: BTreeMap<usize, (Term, Scope)> = [240, 1920]
+            .map(|d| {
+                (
+                    d,
+                    (if_(accounts(d), lit(1), lit(2)), ints(&account_names(d))),
+                )
+            })
+            .into();
+        within_n_log_n("arms of a chain of accounts d deep", 240, |d| {
+            let (t, scope) = &cases[&d];
+            std::hint::black_box(arms(t, scope));
+        });
+    });
+}
+
+/// [`accounts_paired`] nested `d` deep, each level's choice on its own symbol `qi`, around
+/// `x <= 0 && y >= 1 || x >= 10 && y <= -1`.
+fn paired_chain(d: usize) -> Term {
+    let ge = |n: &str, v| cmp(Prim::Ge, n, v);
+    let le = |n: &str, v| cmp(Prim::Le, n, v);
+    let base = either(
+        all(vec![le("x", 0), ge("y", 1)]),
+        all(vec![ge("x", 10), le("y", -1)]),
+    );
+    let level = |inner, q: &str| {
+        let first = either(
+            all(vec![ge(q, 0), inner]),
+            all(vec![le(q, -1), ge("x", 3), le("x", 4)]),
+        );
+        let second = either(all(vec![ge("y", 1), ge("x", 5)]), le(q, -1));
+        all(vec![ge("x", 0), le("x", 10), first, second])
+    };
+    let nest = (0..d).fold(base, |inner, i| level(inner, &format!("q{i}")));
+    either(all(vec![ge("x", 100), le("x", 200)]), nest)
+}
+
+/// The names `x`, `y`, `q0, …, q(d-1)` of [`paired_chain`].
+fn paired_names(d: usize) -> Vec<Arc<str>> {
+    let qs = (0..d).map(|i| Arc::from(format!("q{i}")));
+    ["x".into(), "y".into()].into_iter().chain(qs).collect()
+}
+
+#[test]
+fn a_chain_of_paired_choices_keeps_only_the_small_choice() {
+    // At each level `qi >= 0` needs `y >= 1` and `x >= 5`, which the level below allows only
+    // at `3 <= x <= 4` or, at the bottom, at `x <= 0` or `y <= -1`; so every level takes
+    // `qi <= -1` and `3 <= x <= 4`.
+    for d in [1, 2, 20, 200] {
+        let a = arms(
+            &if_(paired_chain(d), lit(1), lit(2)),
+            &ints(&paired_names(d)),
+        );
+        let get = |k: usize, n: &str| a[k].scope.get(n).ints().to_string();
+        assert_eq!(get(0, "x"), "[3..=4, 100..=200]", "d = {d}");
+        assert_eq!(get(1, "x"), "[..=99, 201..]", "d = {d}");
+    }
+}
+
+#[test]
+fn arms_of_a_chain_of_paired_choices_take_time_within_n_log_n() {
+    // Most cases of a level fail. Each failed case emptied every name in scope, the depth
+    // of them: 1.45 and 22.16 G instructions at d = 120 and 960, 15.2 times. A failed case
+    // is dropped, so now only a scope that is shown is emptied: 1.31 and 11.56 G, 8.8 times.
+    on_a_deep_stack(|| {
+        let cases: BTreeMap<usize, (Term, Scope)> = [120, 960]
+            .map(|d| {
+                (
+                    d,
+                    (if_(paired_chain(d), lit(1), lit(2)), ints(&paired_names(d))),
+                )
+            })
+            .into();
+        within_n_log_n("arms of a chain of paired choices d deep", 120, |d| {
+            let (t, scope) = &cases[&d];
+            std::hint::black_box(arms(t, scope));
+        });
+    });
+}
+
 #[test]
 fn arms_of_a_capped_test_take_time_near_linear_in_its_depth() {
     // Two disjunctions and a hull with two finite bounds at each level, the case a level

@@ -1194,7 +1194,7 @@ impl Scope {
                             s.narrow_node(tree, k, v == p, prem);
                         }
                     }
-                    s.reduce();
+                    s.reduce_case();
                     match heavy {
                         Some((k, p)) => work.push((s, k, v == p)),
                         None => out.push(s),
@@ -1203,15 +1203,15 @@ impl Scope {
                 Kind::If([c, a, b]) => {
                     let mut t = s.clone();
                     t.narrow_node(tree, c.0, c.1, prem);
-                    t.reduce();
+                    t.reduce_case();
                     work.push((t, a.0, v == a.1));
                     s.narrow_node(tree, c.0, !c.1, prem);
-                    s.reduce();
+                    s.reduce_case();
                     work.push((s, b.0, v == b.1));
                 }
                 Kind::Lit(_) | Kind::Atom => {
                     s.narrow_node(tree, n, v, prem);
-                    s.reduce();
+                    s.reduce_case();
                     out.push(s);
                 }
             }
@@ -1387,6 +1387,14 @@ impl Scope {
     /// congruence and so its hulls end at members of each class.
     pub fn reduce(&mut self) {
         self.reduce_with(false);
+        self.empty_if_bottom();
+    }
+
+    /// [`Scope::reduce`] for a case of a test, which is joined or dropped and not shown: a
+    /// case that no state reaches keeps its names as they were, with `bottom` set, since
+    /// emptying each name costs the names in scope, once for each case that fails.
+    fn reduce_case(&mut self) {
+        self.reduce_with(false);
     }
 
     /// [`Scope::reduce`] with every tree of blocks projected as a whole, for the test that
@@ -1394,6 +1402,18 @@ impl Scope {
     #[doc(hidden)]
     pub fn reduce_whole(&mut self) {
         self.reduce_with(true);
+        self.empty_if_bottom();
+    }
+
+    /// Empties every name of a scope no state reaches, as a scope that is shown has them.
+    fn empty_if_bottom(&mut self) {
+        if self.bottom {
+            self.names = self
+                .names
+                .keys()
+                .map(|n| (n.clone(), Product::bottom()))
+                .collect();
+        }
     }
 
     fn reduce_with(&mut self, whole: bool) {
@@ -1449,11 +1469,6 @@ impl Scope {
         }
         if self.bottom || empty(&self.names, &last) {
             self.bottom = true;
-            self.names = self
-                .names
-                .keys()
-                .map(|n| (n.clone(), Product::bottom()))
-                .collect();
         } else {
             self.reduced.0 = last;
         }
@@ -2243,7 +2258,7 @@ fn join_cases(mut cases: Vec<Scope>) -> Scope {
                 Some(r) => {
                     let mut j = l.join(&r);
                     if !last {
-                        j.reduce();
+                        j.reduce_case();
                     }
                     j
                 }
