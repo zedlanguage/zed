@@ -14,9 +14,10 @@
 //! moves to the end of the statement. One blank line is kept where the source had one or more
 //! between two statements, or before the comments that end a block.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use crate::ast::{Expr, ExprKind, Param, Stmt, StmtKind, Target, Type, TypeKind, TypeParam};
+use crate::ast::{Expr, ExprKind, Param, Port, Stmt, StmtKind, Target, Type, TypeKind, TypeParam};
 use crate::lex::{self, Span, Token};
 use crate::parse::{TOP, parse};
 use crate::{ast, source};
@@ -25,15 +26,22 @@ use crate::{ast, source};
 /// comments of `text` kept.
 pub fn format(text: &str, tokens: &[Token], unit: &[Stmt]) -> String {
     let comments = lex::comments(text, tokens);
-    let mut f = Formatter {
+    let f = Formatter {
         text,
         comments: comments.into_iter().map(|c| (c.start, c)).collect(),
+        pieces: Vec::new(),
+        breaks: 0,
     };
-    let whole = Span {
+    let region = Span {
         start: 0,
         end: text.len(),
     };
-    f.stmts(unit, whole, 0, true).into_string()
+    f.run(Job::Stmts {
+        stmts: unit,
+        region,
+        ind: 0,
+        bare: true,
+    })
 }
 
 /// The source file `bytes` in the formatter's layout, or why it could not be read, at its
@@ -90,33 +98,39 @@ fn binary_level(op: &str) -> u8 {
 
 /// Whether `e`'s text starts with a block, which a lambda's body or an `else` default that is
 /// not itself a block may not.
-fn starts_with_block(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Block(_) => true,
-        ExprKind::Binary(_, of, _)
-        | ExprKind::Call { callee: of, .. }
-        | ExprKind::Index(of, _)
-        | ExprKind::Member { of, .. }
-        | ExprKind::Is { of, .. }
-        | ExprKind::Else { of, .. } => starts_with_block(of),
-        _ => false,
+fn starts_with_block(mut e: &Expr) -> bool {
+    loop {
+        match &e.kind {
+            ExprKind::Block(_) => return true,
+            ExprKind::Binary(_, of, _)
+            | ExprKind::Call { callee: of, .. }
+            | ExprKind::Index(of, _)
+            | ExprKind::Member { of, .. }
+            | ExprKind::Is { of, .. }
+            | ExprKind::Else { of, .. } => e = of,
+            _ => return false,
+        }
     }
 }
 
 /// Whether `e`, as an `if` condition, holds a block outside any bracket, which the grammar's
 /// `HEAD` forbids there, since the condition's `{` opens the branch.
 fn head_unsafe(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Block(_) => true,
-        ExprKind::Else { of, default, .. } => head_unsafe(of) || head_unsafe(default),
-        ExprKind::Binary(_, a, b) => head_unsafe(a) || head_unsafe(b),
-        ExprKind::Unary(_, a)
-        | ExprKind::Is { of: a, .. }
-        | ExprKind::Call { callee: a, .. }
-        | ExprKind::Index(a, _)
-        | ExprKind::Member { of: a, .. } => head_unsafe(a),
-        _ => false,
+    let mut stack = vec![e];
+    while let Some(e) = stack.pop() {
+        match &e.kind {
+            ExprKind::Block(_) => return true,
+            ExprKind::Else { of, default, .. } => stack.extend([&**of, &**default]),
+            ExprKind::Binary(_, a, b) => stack.extend([&**a, &**b]),
+            ExprKind::Unary(_, a)
+            | ExprKind::Is { of: a, .. }
+            | ExprKind::Call { callee: a, .. }
+            | ExprKind::Index(a, _)
+            | ExprKind::Member { of: a, .. } => stack.push(a),
+            _ => {}
+        }
     }
+    false
 }
 
 /// Where a block stands: a block as an operand must open with a statement, a branch (of an
@@ -132,21 +146,127 @@ struct Formatter<'a> {
     text: &'a str,
     /// The comments not yet written, by their first byte.
     comments: BTreeMap<usize, Span>,
+    /// The text so far. Each level adds only its own text, so writing a nest of depth `d` is
+    /// linear in the output.
+    pieces: Vec<Cow<'a, str>>,
+    /// How many of `pieces` hold a line break.
+    breaks: usize,
 }
 
 /// A statement with the comments it keeps, and whether a blank line precedes it.
-struct Entry<'s> {
-    stmt: &'s Stmt,
+struct Entry<'a> {
+    stmt: &'a Stmt,
     blank: bool,
     leading: Vec<Span>,
     trailing: Vec<Span>,
+}
+
+/// Work left to write, in order from the top of the stack: nesting costs heap, not thread stack.
+enum Job<'a> {
+    /// Text.
+    Put(Cow<'a, str>),
+    /// The lines of `stmts`, which stand in `region` of the text, at indentation `ind`, each
+    /// line ending in a newline. With `bare`, an export of one value is a trailing expression.
+    Stmts {
+        stmts: &'a [Stmt],
+        region: Span,
+        ind: usize,
+        bare: bool,
+    },
+    /// One of those lines: `first` says it is the first.
+    Line {
+        entry: Entry<'a>,
+        first: bool,
+        ind: usize,
+        bare: bool,
+    },
+    /// The comments after a statement written at `ind`, and its newline.
+    After {
+        span: Span,
+        trailing: Vec<Span>,
+        ind: usize,
+    },
+    /// The comments that end a `region` after byte `prev`; `any` says a statement came before.
+    Rest {
+        prev: usize,
+        region: Span,
+        ind: usize,
+        any: bool,
+    },
+    /// The text of a statement, which starts at indentation `ind`.
+    Stmt { s: &'a Stmt, ind: usize, bare: bool },
+    /// The text of `e` in a position that takes forms of level `min` and above.
+    Expr { e: &'a Expr, min: u8, ind: usize },
+    /// The text of `e`, with no parentheses for its level.
+    Raw { e: &'a Expr, ind: usize },
+    /// The operand of a call, index or member: a number literal is parenthesized, so that its
+    /// `.` is not read as a decimal point.
+    Postfix { of: &'a Expr, ind: usize },
+    /// A lambda's body or an `else` default: a block, or an expression of level `min` that
+    /// does not start with a block.
+    Branch { e: &'a Expr, min: u8, ind: usize },
+    /// The block `e`, standing at `place`, its first line at indentation `ind`.
+    Block {
+        e: &'a Expr,
+        ind: usize,
+        place: Place,
+    },
+    /// The end of a block of one statement, which began at piece `mark`, written when `breaks`
+    /// line breaks had been.
+    BlockEnd {
+        mark: usize,
+        breaks: usize,
+        ind: usize,
+    },
+    /// `exprs`, each at level `min`, with `, ` between.
+    Exprs {
+        exprs: &'a [Expr],
+        min: u8,
+        ind: usize,
+    },
+    /// Named arguments, with `, ` between; `comma` says one goes before the first.
+    Named {
+        args: &'a [(String, Expr)],
+        comma: bool,
+        ind: usize,
+    },
+    /// `test` cases, with `, ` between.
+    Cases {
+        cases: &'a [(Expr, Expr)],
+        ind: usize,
+    },
+    /// Parameters, with `, ` between.
+    Params { params: &'a [Param], ind: usize },
+    /// Output ports, with `, ` between.
+    Ports(&'a [Port]),
+    /// The type `t` in a position that takes levels `min` and above.
+    Ty { t: &'a Type, min: u8 },
+    /// `types`, each at level `min`, with `sep` between.
+    Types {
+        types: &'a [Type],
+        min: u8,
+        sep: &'static str,
+    },
+    /// Parameters of a function type, with `, ` between.
+    TypeParams(&'a [TypeParam]),
+}
+
+/// Pushes jobs to run in the order written.
+macro_rules! then {
+    ($stack:expr; $($job:expr),* $(,)?) => {
+        $stack.extend([$($job),*].into_iter().rev())
+    };
 }
 
 fn indent(n: usize) -> String {
     "  ".repeat(n)
 }
 
-impl Formatter<'_> {
+fn put<'a>(s: impl Into<Cow<'a, str>>) -> Job<'a> {
+    Job::Put(s.into())
+}
+
+impl<'a> Formatter<'a> {
     /// The comments not yet written that start in `from..to`, now marked written.
     fn take(&mut self, from: usize, to: usize) -> Vec<Span> {
         if from >= to {
@@ -178,9 +298,245 @@ impl Formatter<'_> {
         span.start < span.end && self.comments.range(span.start..span.end).next().is_some()
     }
 
-    /// The lines of `stmts`, which stand in `region` of the text, at indentation `ind`, each
-    /// line ending in a newline. With `bare`, an export of one value is a trailing expression.
-    fn stmts(&mut self, stmts: &[Stmt], region: Span, ind: usize, bare: bool) -> Doc {
+    fn put(&mut self, s: impl Into<Cow<'a, str>>) {
+        let s = s.into();
+        self.breaks += usize::from(s.contains('\n'));
+        self.pieces.push(s);
+    }
+
+    /// Runs `job` and all that it leaves, and returns the text.
+    fn run(mut self, job: Job<'a>) -> String {
+        let mut stack = vec![job];
+        while let Some(job) = stack.pop() {
+            self.step(job, &mut stack);
+        }
+        self.pieces.concat()
+    }
+
+    fn step(&mut self, job: Job<'a>, stack: &mut Vec<Job<'a>>) {
+        match job {
+            Job::Put(s) => self.put(s),
+            Job::Stmts {
+                stmts,
+                region,
+                ind,
+                bare,
+            } => self.stmts(stmts, region, ind, bare, stack),
+            Job::Line {
+                entry,
+                first,
+                ind,
+                bare,
+            } => {
+                let pad = indent(ind);
+                if entry.blank && !first {
+                    self.put("\n");
+                }
+                for c in entry.leading {
+                    self.put(format!("{pad}{}\n", &self.text[c.start..c.end]));
+                }
+                self.put(pad);
+                let (s, trailing) = (entry.stmt, entry.trailing);
+                then![stack;
+                    Job::Stmt { s, ind, bare },
+                    Job::After { span: s.span, trailing, ind },
+                ];
+            }
+            Job::After {
+                span,
+                trailing,
+                ind,
+            } => {
+                let pad = indent(ind);
+                let mut tail = self.take(span.start, span.end);
+                tail.extend(trailing);
+                let mut after_line_comment = false;
+                for c in tail {
+                    let body = &self.text[c.start..c.end];
+                    self.put(if after_line_comment {
+                        format!("\n{pad}{body}")
+                    } else {
+                        format!(" {body}")
+                    });
+                    after_line_comment = body.starts_with("//");
+                }
+                self.put("\n");
+            }
+            Job::Rest {
+                prev,
+                region,
+                ind,
+                any,
+            } => {
+                let pad = indent(ind);
+                let rest = self.take(prev, region.end);
+                if let Some(c) = rest.first()
+                    && any
+                    && self.text[prev..c.start].matches('\n').count() > 1
+                {
+                    self.put("\n");
+                }
+                for c in rest {
+                    self.put(format!("{pad}{}\n", &self.text[c.start..c.end]));
+                }
+            }
+            Job::Stmt { s, ind, bare } => self.stmt(s, ind, bare, stack),
+            Job::Expr { e, min, ind } => {
+                if level(e) < min {
+                    self.put("(");
+                    stack.push(put(")"));
+                }
+                self.raw(e, ind, stack);
+            }
+            Job::Raw { e, ind } => self.raw(e, ind, stack),
+            Job::Postfix { of, ind } => match of.kind {
+                ExprKind::Int { .. } | ExprKind::Float(_) | ExprKind::Rat(_) => {
+                    self.put("(");
+                    stack.push(put(")"));
+                    self.raw(of, ind, stack);
+                }
+                _ => stack.push(Job::Expr {
+                    e: of,
+                    min: POSTFIX,
+                    ind,
+                }),
+            },
+            Job::Branch { e, min, ind } => match e.kind {
+                ExprKind::Block(_) => self.block(e, ind, Place::Branch, stack),
+                _ if starts_with_block(e) && level(e) >= min => {
+                    self.put("(");
+                    stack.push(put(")"));
+                    self.raw(e, ind, stack);
+                }
+                _ => stack.push(Job::Expr { e, min, ind }),
+            },
+            Job::Block { e, ind, place } => self.block(e, ind, place, stack),
+            Job::BlockEnd { mark, breaks, ind } => {
+                // With no line break, the block is on its own line, which no indentation enters;
+                // otherwise its statement is on a line of its own.
+                if self.breaks == breaks {
+                    self.pieces[mark] = "{ ".into();
+                    self.put(" }");
+                } else {
+                    self.pieces[mark] = format!("{{\n{}", indent(ind + 1)).into();
+                    self.put(format!("\n{}}}", indent(ind)));
+                }
+            }
+            Job::Exprs { exprs, min, ind } => {
+                if let Some((e, rest)) = exprs.split_first() {
+                    if !rest.is_empty() {
+                        then![stack;
+                            put(", "),
+                            Job::Exprs { exprs: rest, min, ind },
+                        ];
+                    }
+                    stack.push(Job::Expr { e, min, ind });
+                }
+            }
+            Job::Named { args, comma, ind } => {
+                if let Some(((n, v), rest)) = args.split_first() {
+                    if comma {
+                        self.put(", ");
+                    }
+                    stack.push(Job::Named {
+                        args: rest,
+                        comma: true,
+                        ind,
+                    });
+                    match &v.kind {
+                        ExprKind::Name(m) if m == n => self.put(format!("{n}:")),
+                        _ => {
+                            self.put(format!("{n}: "));
+                            stack.push(Job::Expr {
+                                e: v,
+                                min: LAMBDA,
+                                ind,
+                            });
+                        }
+                    }
+                }
+            }
+            Job::Cases { cases, ind } => {
+                if let Some(((a, b), rest)) = cases.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(", "), Job::Cases { cases: rest, ind }];
+                    }
+                    then![stack;
+                        Job::Expr { e: a, min: ELSE, ind },
+                        put(" -> "),
+                        Job::Expr { e: b, min: ELSE, ind },
+                    ];
+                }
+            }
+            Job::Params { params, ind } => {
+                if let Some((p, rest)) = params.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(", "), Job::Params { params: rest, ind }];
+                    }
+                    if p.positional {
+                        self.put("positional ");
+                    }
+                    self.put(p.name.as_str());
+                    if let Some(e) = &p.default {
+                        then![stack;
+                            put(" = "),
+                            Job::Expr { e, min: LAMBDA, ind },
+                        ];
+                    }
+                    if let Some(t) = &p.ty {
+                        then![stack; put(": "), Job::Ty { t, min: 0 }];
+                    }
+                }
+            }
+            Job::Ports(ports) => {
+                if let Some((p, rest)) = ports.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(", "), Job::Ports(rest)];
+                    }
+                    self.put(format!("{}: ", p.name));
+                    stack.push(Job::Ty { t: &p.ty, min: 0 });
+                }
+            }
+            Job::Ty { t, min } => {
+                if type_level(t) < min {
+                    self.put("(");
+                    stack.push(put(")"));
+                }
+                self.ty(t, stack);
+            }
+            Job::Types { types, min, sep } => {
+                if let Some((t, rest)) = types.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(sep), Job::Types { types: rest, min, sep }];
+                    }
+                    stack.push(Job::Ty { t, min });
+                }
+            }
+            Job::TypeParams(params) => {
+                if let Some((p, rest)) = params.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(", "), Job::TypeParams(rest)];
+                    }
+                    match &p.name {
+                        Some(n) if p.positional => self.put(format!("positional {n}: ")),
+                        Some(n) => self.put(format!("{n}: ")),
+                        None => {}
+                    }
+                    stack.push(Job::Ty { t: &p.ty, min: 0 });
+                }
+            }
+        }
+    }
+
+    /// Finds the comments and blank lines of `stmts` and leaves its lines to write.
+    fn stmts(
+        &mut self,
+        stmts: &'a [Stmt],
+        region: Span,
+        ind: usize,
+        bare: bool,
+        stack: &mut Vec<Job<'a>>,
+    ) {
         // The comments and blank lines are found in source order, where the export may not be
         // last.
         let mut in_order: Vec<&Stmt> = stmts.iter().collect();
@@ -205,48 +561,35 @@ impl Formatter<'_> {
             .into_iter()
             .partition(|e| matches!(e.stmt.kind, StmtKind::Return(_)));
         entries.extend(exports);
-        let pad = indent(ind);
-        let mut out: Vec<Doc> = Vec::new();
-        for (i, e) in entries.into_iter().enumerate() {
-            if e.blank && i > 0 {
-                out.push("\n".into());
-            }
-            for c in e.leading {
-                out.push(format!("{pad}{}\n", &self.text[c.start..c.end]).into());
-            }
-            out.push(pad.as_str().into());
-            out.push(self.stmt(e.stmt, ind, bare));
-            let mut tail = self.take(e.stmt.span.start, e.stmt.span.end);
-            tail.extend(e.trailing);
-            let mut after_line_comment = false;
-            for c in tail {
-                let body = &self.text[c.start..c.end];
-                out.push(if after_line_comment {
-                    format!("\n{pad}{body}").into()
-                } else {
-                    format!(" {body}").into()
-                });
-                after_line_comment = body.starts_with("//");
-            }
-            out.push("\n".into());
+        stack.push(Job::Rest {
+            prev,
+            region,
+            ind,
+            any: !entries.is_empty(),
+        });
+        for (i, entry) in entries.into_iter().enumerate().rev() {
+            stack.push(Job::Line {
+                entry,
+                first: i == 0,
+                ind,
+                bare,
+            });
         }
-        let rest = self.take(prev, region.end);
-        if let Some(c) = rest.first()
-            && !out.is_empty()
-            && self.text[prev..c.start].matches('\n').count() > 1
-        {
-            out.push("\n".into());
-        }
-        for c in rest {
-            out.push(format!("{pad}{}\n", &self.text[c.start..c.end]).into());
-        }
-        Doc::cat(out)
     }
 
-    /// The text of `s`, which starts at indentation `ind`.
-    fn stmt(&mut self, s: &Stmt, ind: usize, bare: bool) -> Doc {
+    fn stmt(&mut self, s: &'a Stmt, ind: usize, bare: bool, stack: &mut Vec<Job<'a>>) {
+        let exprs = |exprs| Job::Exprs {
+            exprs,
+            min: LAMBDA,
+            ind,
+        };
+        let value = |e| Job::Expr {
+            e,
+            min: LAMBDA,
+            ind,
+        };
         match &s.kind {
-            StmtKind::Bind { targets, value } => {
+            StmtKind::Bind { targets, value: v } => {
                 let ts: Vec<&str> = targets
                     .iter()
                     .map(|t| match t {
@@ -254,87 +597,63 @@ impl Formatter<'_> {
                         Target::Wild => "_",
                     })
                     .collect();
-                cat![ts.join(", "), " = ", self.expr(value, LAMBDA, ind), ";"]
+                self.put(ts.join(", "));
+                self.put(" = ");
+                then![stack; value(v), put(";")];
             }
-            StmtKind::Return(es) if bare && es.len() == 1 => self.expr(&es[0], LAMBDA, ind),
+            StmtKind::Return(es) if bare && es.len() == 1 => stack.push(value(&es[0])),
             StmtKind::Return(es) => {
-                let es: Vec<Doc> = es.iter().map(|e| self.expr(e, LAMBDA, ind)).collect();
-                cat!["return ", Doc::join(es, ", "), ";"]
+                self.put("return ");
+                then![stack; exprs(es), put(";")];
             }
-            StmtKind::Push { port, value } => {
-                cat![format!("{port} <- "), self.expr(value, LAMBDA, ind), ";"]
+            StmtKind::Push { port, value: v } => {
+                self.put(format!("{port} <- "));
+                then![stack; value(v), put(";")];
             }
             StmtKind::Function(f) => {
-                let mut out = vec![cat![
-                    format!("{}(", f.name),
-                    self.params(&f.params, ind),
-                    ")"
-                ]];
+                self.put(format!("{}(", f.name));
+                let mut jobs = vec![
+                    Job::Params {
+                        params: &f.params,
+                        ind,
+                    },
+                    put(")"),
+                ];
                 if let Some(ports) = &f.ports {
-                    let ps: Vec<Doc> = ports
-                        .iter()
-                        .map(|p| cat![format!("{}: ", p.name), ty(&p.ty, 0)])
-                        .collect();
-                    out.push(cat![" -> (", Doc::join(ps, ", "), ")"]);
+                    jobs.extend([put(" -> ("), Job::Ports(ports), put(")")]);
                 }
                 if f.equation {
-                    out.push(cat![" = ", self.expr(&f.body, LAMBDA, ind)]);
+                    jobs.extend([put(" = "), value(&f.body)]);
                     if f.tests.is_empty() {
-                        out.push(";".into());
+                        jobs.push(put(";"));
                     }
                 } else {
-                    out.push(cat![" ", self.block(&f.body, ind, Place::Body)]);
-                }
-                if !f.tests.is_empty() {
-                    let cases: Vec<Doc> = f
-                        .tests
-                        .iter()
-                        .map(|(a, b)| {
-                            cat![self.expr(a, ELSE, ind), " -> ", self.expr(b, ELSE, ind)]
-                        })
-                        .collect();
-                    out.push(cat![
-                        format!("\n{}test {{ ", indent(ind + 1)),
-                        Doc::join(cases, ", "),
-                        " }"
+                    jobs.extend([
+                        put(" "),
+                        Job::Block {
+                            e: &f.body,
+                            ind,
+                            place: Place::Body,
+                        },
                     ]);
                 }
-                Doc::cat(out)
+                if !f.tests.is_empty() {
+                    jobs.extend([
+                        put(format!("\n{}test {{ ", indent(ind + 1))),
+                        Job::Cases {
+                            cases: &f.tests,
+                            ind,
+                        },
+                        put(" }"),
+                    ]);
+                }
+                stack.extend(jobs.into_iter().rev());
             }
         }
     }
 
-    fn params(&mut self, params: &[Param], ind: usize) -> Doc {
-        let ps: Vec<Doc> = params.iter().map(|p| self.param(p, ind)).collect();
-        Doc::join(ps, ", ")
-    }
-
-    fn param(&mut self, p: &Param, ind: usize) -> Doc {
-        let mut out: Vec<Doc> = Vec::new();
-        if p.positional {
-            out.push("positional ".into());
-        }
-        out.push(p.name.as_str().into());
-        if let Some(t) = &p.ty {
-            out.push(cat![": ", ty(t, 0)]);
-        }
-        if let Some(d) = &p.default {
-            out.push(cat![" = ", self.expr(d, LAMBDA, ind)]);
-        }
-        Doc::cat(out)
-    }
-
-    /// The text of `e` in a position that takes forms of level `min` and above.
-    fn expr(&mut self, e: &Expr, min: u8, ind: usize) -> Doc {
-        let text = self.raw(e, ind);
-        if level(e) < min {
-            cat!["(", text, ")"]
-        } else {
-            text
-        }
-    }
-
-    fn raw(&mut self, e: &Expr, ind: usize) -> Doc {
+    fn raw(&mut self, e: &'a Expr, ind: usize, stack: &mut Vec<Job<'a>>) {
+        let at = |e, min| Job::Expr { e, min, ind };
         match &e.kind {
             ExprKind::Int { .. } | ExprKind::Float(_) | ExprKind::Rat(_) | ExprKind::Str(_) => {
                 // A grouped literal's span holds its parentheses; a literal never starts with `(`.
@@ -342,14 +661,20 @@ impl Formatter<'_> {
                 while let Some(inner) = t.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
                     t = inner.trim();
                 }
-                t.into()
+                self.put(t);
             }
-            ExprKind::Bool(b) => b.to_string().into(),
-            ExprKind::Atom(a) => format!("#{a}").into(),
-            ExprKind::Name(n) => n.as_str().into(),
+            ExprKind::Bool(b) => self.put(b.to_string()),
+            ExprKind::Atom(a) => self.put(format!("#{a}")),
+            ExprKind::Name(n) => self.put(n.as_str()),
             ExprKind::Unary(op, x) => match x.kind {
-                ExprKind::Unary(..) => cat![format!("{op}("), self.raw(x, ind), ")"],
-                _ => cat![op.to_string(), self.expr(x, PREFIX, ind)],
+                ExprKind::Unary(..) => {
+                    self.put(format!("{op}("));
+                    then![stack; Job::Raw { e: x, ind }, put(")")];
+                }
+                _ => {
+                    self.put(*op);
+                    stack.push(at(x, PREFIX));
+                }
             },
             ExprKind::Binary(op, a, b) => {
                 let l = binary_level(op);
@@ -358,8 +683,7 @@ impl Formatter<'_> {
                     EQUALITY | RELATION => (l + 1, l + 1),
                     _ => (l, l + 1),
                 };
-                let a = self.expr(a, lmin, ind);
-                cat![a, format!(" {op} "), self.expr(b, rmin, ind)]
+                then![stack; at(a, lmin), put(format!(" {op} ")), at(b, rmin)];
             }
             ExprKind::Call {
                 callee,
@@ -367,107 +691,107 @@ impl Formatter<'_> {
                 named,
                 curry,
             } => {
-                let mut args: Vec<Doc> = positional
-                    .iter()
-                    .map(|a| self.expr(a, LAMBDA, ind))
-                    .collect();
-                for (n, v) in named {
-                    args.push(match &v.kind {
-                        ExprKind::Name(m) if m == n => format!("{n}:").into(),
-                        _ => cat![format!("{n}: "), self.expr(v, LAMBDA, ind)],
-                    });
-                }
-                if *curry {
-                    args.push("...".into());
-                }
-                cat![
-                    self.postfix_of(callee, ind),
-                    "(",
-                    Doc::join(args, ", "),
-                    ")"
-                ]
+                let comma = !positional.is_empty();
+                let dots = match (curry, comma || !named.is_empty()) {
+                    (true, true) => ", ...",
+                    (true, false) => "...",
+                    (false, _) => "",
+                };
+                then![stack;
+                    Job::Postfix { of: callee, ind },
+                    put("("),
+                    Job::Exprs { exprs: positional, min: LAMBDA, ind },
+                    Job::Named { args: named, comma, ind },
+                    put(dots),
+                    put(")"),
+                ];
             }
             ExprKind::Index(of, k) => {
-                let of = self.postfix_of(of, ind);
-                cat![of, "[", self.expr(k, LAMBDA, ind), "]"]
+                then![stack;
+                    Job::Postfix { of, ind },
+                    put("["),
+                    at(k, LAMBDA),
+                    put("]"),
+                ];
             }
             ExprKind::Member { of, name, safe } => {
                 let dot = if *safe { "?." } else { "." };
-                cat![self.postfix_of(of, ind), format!("{dot}{name}")]
+                then![stack; Job::Postfix { of, ind }, put(format!("{dot}{name}"))];
             }
             ExprKind::Tuple(items) => {
-                let items: Vec<Doc> = items.iter().map(|i| self.expr(i, LAMBDA, ind)).collect();
-                cat!["(", Doc::join(items, ", "), ")"]
+                self.put("(");
+                then![stack;
+                    Job::Exprs { exprs: items, min: LAMBDA, ind },
+                    put(")"),
+                ];
             }
             ExprKind::Lambda { params, body } => {
-                let head = match &params[..] {
+                stack.push(Job::Branch {
+                    e: body,
+                    min: LAMBDA,
+                    ind,
+                });
+                stack.push(put(" -> "));
+                match &params[..] {
                     [p] if !p.positional && p.ty.is_none() && p.default.is_none() => {
-                        p.name.as_str().into()
+                        self.put(p.name.as_str());
                     }
-                    _ => cat!["(", self.params(params, ind), ")"],
-                };
-                cat![head, " -> ", self.tail(body, LAMBDA, ind)]
+                    _ => {
+                        self.put("(");
+                        then![stack; Job::Params { params, ind }, put(")")];
+                    }
+                }
             }
             ExprKind::Is { of, ty: t, negated } => {
                 let not = if *negated { "not " } else { "" };
-                cat![self.expr(of, ADDITIVE, ind), format!(" is {not}"), ty(t, 1)]
+                then![stack;
+                    at(of, ADDITIVE),
+                    put(format!(" is {not}")),
+                    Job::Ty { t, min: 1 },
+                ];
             }
             ExprKind::Else {
                 of,
                 pattern,
                 default,
             } => {
-                let of = self.expr(of, ELSE, ind);
                 let pat = pattern
                     .as_ref()
                     .map_or(String::new(), |p| format!("{p} -> "));
-                cat![of, format!(" else {pat}"), self.tail(default, OR, ind)]
+                then![stack;
+                    at(of, ELSE),
+                    put(format!(" else {pat}")),
+                    Job::Branch { e: default, min: OR, ind },
+                ];
             }
-            ExprKind::Block(_) => self.block(e, ind, Place::Operand),
+            ExprKind::Block(_) => self.block(e, ind, Place::Operand, stack),
             ExprKind::If {
                 cond,
                 then,
                 otherwise,
             } => {
-                let c = self.expr(cond, ELSE, ind);
-                let c = if head_unsafe(cond) {
-                    cat!["(", c, ")"]
-                } else {
-                    c
-                };
-                let then = self.block(then, ind, Place::Branch);
                 let otherwise = match otherwise.kind {
-                    ExprKind::If { .. } => self.raw(otherwise, ind),
-                    _ => self.block(otherwise, ind, Place::Branch),
+                    ExprKind::If { .. } => Job::Raw { e: otherwise, ind },
+                    _ => Job::Block {
+                        e: otherwise,
+                        ind,
+                        place: Place::Branch,
+                    },
                 };
-                cat!["if ", c, " ", then, " else ", otherwise]
+                let unsafe_head = head_unsafe(cond);
+                then![stack;
+                    at(cond, ELSE),
+                    put(if unsafe_head { ") " } else { " " }),
+                    Job::Block { e: then, ind, place: Place::Branch },
+                    put(" else "),
+                    otherwise,
+                ];
+                self.put(if unsafe_head { "if (" } else { "if " });
             }
         }
     }
 
-    /// The operand of a call, index or member: a number literal is parenthesized, so that its
-    /// `.` is not read as a decimal point.
-    fn postfix_of(&mut self, of: &Expr, ind: usize) -> Doc {
-        match of.kind {
-            ExprKind::Int { .. } | ExprKind::Float(_) | ExprKind::Rat(_) => {
-                cat!["(", self.raw(of, ind), ")"]
-            }
-            _ => self.expr(of, POSTFIX, ind),
-        }
-    }
-
-    /// A lambda's body or an `else` default: a block, or an expression of level `min` that
-    /// does not start with a block.
-    fn tail(&mut self, e: &Expr, min: u8, ind: usize) -> Doc {
-        match e.kind {
-            ExprKind::Block(_) => self.block(e, ind, Place::Branch),
-            _ if starts_with_block(e) && level(e) >= min => cat!["(", self.raw(e, ind), ")"],
-            _ => self.expr(e, min, ind),
-        }
-    }
-
-    /// The block `e`, standing at `place`, its first line at indentation `ind`.
-    fn block(&mut self, e: &Expr, ind: usize, place: Place) -> Doc {
+    fn block(&mut self, e: &'a Expr, ind: usize, place: Place, stack: &mut Vec<Job<'a>>) {
         let ExprKind::Block(stmts) = &e.kind else {
             unreachable!("a block")
         };
@@ -477,97 +801,82 @@ impl Formatter<'_> {
             && matches!(s.kind, StmtKind::Return(_))
             && !self.has_comment(e.span)
         {
-            // With no comment inside, the block is this one statement: on the block's line when
-            // its text has no line break, which no indentation then enters, and on a line of
-            // its own otherwise. Rendering it once keeps nested blocks linear in their depth.
-            let line = self.stmt(s, ind + 1, bare);
-            return if line.has_newline() {
-                cat![
-                    format!("{{\n{}", indent(ind + 1)),
-                    line,
-                    format!("\n{}}}", indent(ind))
-                ]
-            } else {
-                cat!["{ ", line, " }"]
-            };
+            // With no comment inside, the block is this one statement. Its opening is known
+            // only when the statement is written, so a piece is kept for it.
+            let mark = self.pieces.len();
+            self.pieces.push(Cow::Borrowed(""));
+            let breaks = self.breaks;
+            stack.push(Job::BlockEnd { mark, breaks, ind });
+            stack.push(Job::Stmt {
+                s,
+                ind: ind + 1,
+                bare,
+            });
+            return;
         }
         if stmts.is_empty() && !self.has_comment(e.span) {
-            return "{ }".into();
+            self.put("{ }");
+            return;
         }
-        let inside = Span {
+        let region = Span {
             start: e.span.start + 1,
             end: e.span.end - 1,
         };
-        let lines = self.stmts(stmts, inside, ind + 1, bare);
-        cat!["{\n", lines, format!("{}}}", indent(ind))]
-    }
-}
-
-/// Text built by concatenation without copying: a string, or parts in order with whether any
-/// holds a line break. Each level of the tree adds only its own text, so rendering a nest of
-/// depth `d` is linear in the output, where joining strings copied each level's text into its
-/// parent, `O(n·d)`.
-enum Doc {
-    Leaf(String),
-    Cat(Vec<Doc>, bool),
-}
-
-/// The concatenation of the parts, each converted with `Doc::from`.
-macro_rules! cat {
-    ($($p:expr),* $(,)?) => { Doc::cat(vec![$(Doc::from($p)),*]) };
-}
-use cat;
-
-impl Doc {
-    fn cat(parts: Vec<Doc>) -> Doc {
-        let newline = parts.iter().any(Doc::has_newline);
-        Doc::Cat(parts, newline)
+        self.put("{\n");
+        then![stack;
+            Job::Stmts { stmts, region, ind: ind + 1, bare },
+            put(format!("{}}}", indent(ind))),
+        ];
     }
 
-    fn join(parts: Vec<Doc>, sep: &str) -> Doc {
-        let mut out = Vec::with_capacity(2 * parts.len());
-        for (i, p) in parts.into_iter().enumerate() {
-            if i > 0 {
-                out.push(sep.into());
+    fn ty(&mut self, t: &'a Type, stack: &mut Vec<Job<'a>>) {
+        let list = |types, min, sep| Job::Types { types, min, sep };
+        match &t.kind {
+            TypeKind::Name(n) => self.put(n.as_str()),
+            TypeKind::Atom(a) => self.put(format!("#{a}")),
+            TypeKind::Tuple(ts) => {
+                self.put("(");
+                then![stack; list(ts, 0, ", "), put(")")];
             }
-            out.push(p);
-        }
-        Doc::cat(out)
-    }
-
-    fn has_newline(&self) -> bool {
-        match self {
-            Doc::Leaf(s) => s.contains('\n'),
-            Doc::Cat(_, newline) => *newline,
-        }
-    }
-
-    /// The text, written without recursion, so the depth of the tree needs no stack.
-    fn into_string(self) -> String {
-        let mut out = String::new();
-        let mut stack = vec![vec![self].into_iter()];
-        while let Some(top) = stack.last_mut() {
-            match top.next() {
-                Some(Doc::Leaf(s)) => out += &s,
-                Some(Doc::Cat(parts, _)) => stack.push(parts.into_iter()),
-                None => {
-                    stack.pop();
+            TypeKind::Union(ts) => stack.push(list(ts, 2, " | ")),
+            TypeKind::And(ts) => stack.push(list(ts, 3, " & ")),
+            TypeKind::Diff(a, b) => {
+                let min = match a.kind {
+                    TypeKind::Diff(..) => 1,
+                    _ => 3,
+                };
+                then![stack;
+                    Job::Ty { t: a, min },
+                    put(" \\ "),
+                    Job::Ty { t: b, min: 3 },
+                ];
+            }
+            TypeKind::Arrow {
+                params,
+                partial,
+                result,
+            } => {
+                let arrow = if *partial { " ->? " } else { " -> " };
+                then![stack; put(arrow), Job::Ty { t: result, min: 0 }];
+                match &params[..] {
+                    [
+                        TypeParam {
+                            name: None, ty: p, ..
+                        },
+                    ] => match p.kind {
+                        TypeKind::Tuple(_) => {
+                            self.put("(");
+                            then![stack; Job::Ty { t: p, min: 0 }, put(")")];
+                        }
+                        _ => stack.push(Job::Ty { t: p, min: 1 }),
+                    },
+                    ps => {
+                        self.put("(");
+                        then![stack; Job::TypeParams(ps), put(")")];
+                    }
                 }
             }
         }
-        out
-    }
-}
-
-impl From<String> for Doc {
-    fn from(s: String) -> Doc {
-        Doc::Leaf(s)
-    }
-}
-
-impl From<&str> for Doc {
-    fn from(s: &str) -> Doc {
-        Doc::Leaf(s.to_string())
     }
 }
 
@@ -578,62 +887,5 @@ fn type_level(t: &Type) -> u8 {
         TypeKind::Union(_) | TypeKind::Diff(..) => 1,
         TypeKind::And(_) => 2,
         _ => 5,
-    }
-}
-
-/// The text of the type `t` in a position that takes levels `min` and above.
-fn ty(t: &Type, min: u8) -> Doc {
-    let join = |ts: &[Type], min: u8, sep: &str| {
-        let ts: Vec<Doc> = ts.iter().map(|t| ty(t, min)).collect();
-        Doc::join(ts, sep)
-    };
-    let text = match &t.kind {
-        TypeKind::Name(n) => n.as_str().into(),
-        TypeKind::Atom(a) => format!("#{a}").into(),
-        TypeKind::Tuple(ts) => cat!["(", join(ts, 0, ", "), ")"],
-        TypeKind::Union(ts) => join(ts, 2, " | "),
-        TypeKind::And(ts) => join(ts, 3, " & "),
-        TypeKind::Diff(a, b) => {
-            let a = match a.kind {
-                TypeKind::Diff(..) => ty(a, 1),
-                _ => ty(a, 3),
-            };
-            cat![a, " \\ ", ty(b, 3)]
-        }
-        TypeKind::Arrow {
-            params,
-            partial,
-            result,
-        } => {
-            let params = match &params[..] {
-                [
-                    TypeParam {
-                        name: None, ty: p, ..
-                    },
-                ] => match p.kind {
-                    TypeKind::Tuple(_) => cat!["(", ty(p, 0), ")"],
-                    _ => ty(p, 1),
-                },
-                ps => {
-                    let ps: Vec<Doc> = ps.iter().map(type_param).collect();
-                    cat!["(", Doc::join(ps, ", "), ")"]
-                }
-            };
-            let arrow = if *partial { " ->? " } else { " -> " };
-            cat![params, arrow, ty(result, 0)]
-        }
-    };
-    if type_level(t) < min {
-        cat!["(", text, ")"]
-    } else {
-        text
-    }
-}
-
-fn type_param(p: &TypeParam) -> Doc {
-    match &p.name {
-        Some(n) if p.positional => cat![format!("positional {n}: "), ty(&p.ty, 0)],
-        Some(n) => cat![format!("{n}: "), ty(&p.ty, 0)],
-        None => ty(&p.ty, 0),
     }
 }

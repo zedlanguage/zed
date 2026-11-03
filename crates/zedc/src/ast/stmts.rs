@@ -1,13 +1,11 @@
 //! Statements and blocks (step L1.11): bindings with their targets, and `return`; and
 //! declarations (step L1.12): functions with their `test` tables, and the push `p <- e`.
 
-use std::fmt;
-
-use super::{Builder, Error, Expr, ExprKind, Note, Param, Type};
+use super::{Builder, Built, Error, Expr, ExprKind, Note, Param, Type};
 use crate::lex::Span;
 
 /// A statement and its span.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Stmt {
     /// What it is.
     pub kind: StmtKind,
@@ -16,7 +14,7 @@ pub struct Stmt {
 }
 
 /// The kinds of statement.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum StmtKind {
     /// `a = e;`, or `a, b = e;` destructuring a tuple.
     Bind {
@@ -39,7 +37,7 @@ pub enum StmtKind {
 }
 
 /// A function: `f(params) = e;` or `f(params) { … }`, either followed by `test` tables.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Function {
     /// Its name.
     pub name: String,
@@ -57,7 +55,7 @@ pub struct Function {
 }
 
 /// An output port of a function's header: `stdout: Lines`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Port {
     /// Its name.
     pub name: String,
@@ -77,11 +75,10 @@ pub enum Target {
 }
 
 impl Builder<'_> {
-    /// The block of node `n`, a `Block`: its statements, of which at most one is a `return`,
-    /// and exactly one when `export_needed`, as for a block that is an expression. The export
-    /// is stored last, where the formatter writes it (step L1.13); the order of the others is
-    /// kept.
-    pub(super) fn block(&self, n: usize, export_needed: bool) -> Result<Expr, Error> {
+    /// The block of node `n`, a `Block`: its statements, of which at most one is a `return`.
+    /// The export is stored last, where the formatter writes it (step L1.13); the order of the
+    /// others is kept. Whether it must export is for what takes it (`Builder::node`).
+    pub(super) fn block(&mut self, n: usize) -> Result<Expr, Error> {
         let mut stmts = Vec::new();
         let mut export: Option<Span> = None;
         for &k in self.kids(n) {
@@ -116,23 +113,24 @@ impl Builder<'_> {
             let export = stmts.remove(i);
             stmts.push(export);
         }
-        let span = self.span(n);
-        if export_needed && export.is_none() {
-            return Err(Error {
-                span,
-                message: "this block exports nothing: end it with an expression or `return e;`"
-                    .into(),
-                notes: Vec::new(),
-            });
-        }
         Ok(Expr {
             kind: ExprKind::Block(stmts),
-            span,
+            span: self.span(n),
         })
     }
 
-    /// The statement of node `n`, an `Item`.
-    pub(super) fn item(&self, n: usize) -> Result<Stmt, Error> {
+    /// The statement node `n`, an `Item`, built to.
+    pub(super) fn item(&mut self, n: usize) -> Result<Stmt, Error> {
+        match self.take(n) {
+            Some(Ok(Built::Stmt(s))) => Ok(*s),
+            Some(Err(e)) => Err(e),
+            Some(Ok(Built::Expr(_) | Built::Type(_) | Built::Pattern(_))) | None => {
+                Err(self.later(n))
+            }
+        }
+    }
+
+    pub(super) fn make_item(&mut self, n: usize) -> Result<Stmt, Error> {
         let d = self.kids(n)[0];
         let kids = self.kids(d);
         let kind = match self.tree.name(d) {
@@ -168,7 +166,7 @@ impl Builder<'_> {
     }
 
     /// The function of node `n`, a `Function`.
-    fn function(&self, n: usize) -> Result<Function, Error> {
+    fn function(&mut self, n: usize) -> Result<Function, Error> {
         let kids = self.kids(n);
         let (&body, head) = kids.split_last().expect("Function ends in its body");
         let (mut params, mut ports) = (Vec::new(), None);
@@ -176,20 +174,16 @@ impl Builder<'_> {
             match self.tree.name(k) {
                 "Params" => params = self.params(k)?,
                 "Ports" => {
-                    let port = |p: &usize| {
-                        let pk = self.kids(*p);
-                        Ok(Port {
+                    let mut list = Vec::new();
+                    for &p in self.kids(k) {
+                        let pk = self.kids(p);
+                        list.push(Port {
                             name: self.word(self.tree.nodes[pk[0]].start).into(),
                             ty: self.ty(pk[1])?,
-                            span: self.span(*p),
-                        })
-                    };
-                    ports = Some(
-                        self.kids(k)
-                            .iter()
-                            .map(port)
-                            .collect::<Result<_, Error>>()?,
-                    );
+                            span: self.span(p),
+                        });
+                    }
+                    ports = Some(list);
                 }
                 _ => return Err(self.later(k)),
             }
@@ -199,7 +193,7 @@ impl Builder<'_> {
         let body = if equation {
             self.node(first)?
         } else {
-            self.block(first, false)?
+            self.body(first)?
         };
         let mut tests = Vec::new();
         for &t in trailers {
@@ -219,53 +213,5 @@ impl Builder<'_> {
             body,
             tests,
         })
-    }
-}
-
-/// `(= (a b) e)`, `(= (_) e)`, `(return a b)`, `(<- p e)`, and a function
-/// `(def f (x (y: int)) (-> (stdout: Lines)) = e (test (a b) …))`, the `=` for an equation.
-impl fmt::Display for Stmt {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            StmtKind::Bind { targets, value } => {
-                let ts: Vec<&str> = targets
-                    .iter()
-                    .map(|t| match t {
-                        Target::Name(n) => n.as_str(),
-                        Target::Wild => "_",
-                    })
-                    .collect();
-                write!(f, "(= ({}) {value})", ts.join(" "))
-            }
-            StmtKind::Return(es) => {
-                f.write_str("(return")?;
-                for e in es {
-                    write!(f, " {e}")?;
-                }
-                f.write_str(")")
-            }
-            StmtKind::Push { port, value } => write!(f, "(<- {port} {value})"),
-            StmtKind::Function(func) => {
-                write!(f, "(def {} (", func.name)?;
-                super::spaced(f, &func.params)?;
-                f.write_str(")")?;
-                if let Some(ports) = &func.ports {
-                    f.write_str(" (->")?;
-                    for p in ports {
-                        write!(f, " ({}: {})", p.name, p.ty)?;
-                    }
-                    f.write_str(")")?;
-                }
-                write!(f, " {}{}", if func.equation { "= " } else { "" }, func.body)?;
-                if !func.tests.is_empty() {
-                    f.write_str(" (test")?;
-                    for (a, b) in &func.tests {
-                        write!(f, " ({a} {b})")?;
-                    }
-                    f.write_str(")")?;
-                }
-                f.write_str(")")
-            }
-        }
     }
 }

@@ -1,4 +1,4 @@
-//! Tokens as text, for golden snapshots: a keyword in `«»`, an integer with its base, a string
+//! Tokens as text, for expected output: a keyword in `«»`, an integer with its base, a string
 //! as its parts.
 
 use zedc::lex::{Part, Tok, Token};
@@ -16,13 +16,13 @@ pub fn render_lines(text: &str, tokens: &[Token]) -> String {
     let mut start = 0;
     for (k, line) in text.split('\n').enumerate() {
         let end = start + line.len() + 1;
-        let on: Vec<Token> = tokens
+        let on: Vec<String> = tokens
             .iter()
             .filter(|t| (start..end).contains(&t.span.start))
-            .cloned()
+            .map(|t| one(&t.tok))
             .collect();
         if !on.is_empty() {
-            out.push(format!("{:>3} | {}", k + 1, render(&on)));
+            out.push(format!("{:>3} | {}", k + 1, on.join(" ")));
         }
         start = end;
     }

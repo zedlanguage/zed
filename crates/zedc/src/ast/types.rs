@@ -1,13 +1,12 @@
 //! Type expressions, parameter lists and atom patterns (step L1.10): what an `is` test, a
 //! lambda's parameters and an `else` pattern are written with.
 
-use std::fmt;
+use std::mem;
 
-use super::{Builder, Error, Expr};
+use super::{Builder, Built, Error, Expr};
 use crate::lex::{Span, Tok};
 
 /// A type expression and its span.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Type {
     /// What it is.
     pub kind: TypeKind,
@@ -16,7 +15,7 @@ pub struct Type {
 }
 
 /// The kinds of type expression.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum TypeKind {
     /// A type name, its unit path included (`geometry.Point`).
     Name(String),
@@ -42,7 +41,7 @@ pub enum TypeKind {
 }
 
 /// A parameter of a function type: `int`, `x: int` or `positional x: int`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct TypeParam {
     /// Its name, which documents it, if written.
     pub name: Option<String>,
@@ -53,7 +52,7 @@ pub struct TypeParam {
 }
 
 /// A parameter of a lambda or a declaration.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Param {
     /// Its name.
     pub name: String,
@@ -68,7 +67,6 @@ pub struct Param {
 }
 
 /// A pattern. At L1 the only patterns are atom patterns, which `else` takes.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pattern {
     /// `#name`, `#name(f: p, g:)` or `#name(p, q)`.
     Atom {
@@ -84,15 +82,29 @@ pub enum Pattern {
 }
 
 impl Builder<'_> {
+    /// The type node `n` built to.
+    pub(super) fn ty(&mut self, n: usize) -> Result<Type, Error> {
+        match self.take(n) {
+            Some(Ok(Built::Type(t))) => Ok(t),
+            Some(Err(e)) => Err(e),
+            Some(Ok(Built::Expr(_) | Built::Pattern(_) | Built::Stmt(_))) | None => {
+                Err(self.later(n))
+            }
+        }
+    }
+
     /// The type of node `n`, of a rule from `Type` down to `TypePrimary`.
-    pub(super) fn ty(&self, n: usize) -> Result<Type, Error> {
+    pub(super) fn make_type(&mut self, n: usize) -> Result<Type, Error> {
         let kids = self.kids(n);
         let node = &self.tree.nodes[n];
         let span = self.span(n);
         let kind = match self.tree.name(n) {
             "Type" if kids.len() == 1 => return self.ty(kids[0]),
             "Type" => return Err(self.later(kids[1])),
-            "TypePostfix" => return Err(self.later(self.kids(self.spine(n).1[0])[1])),
+            "TypePostfix" if self.tree.nodes[kids[0]].rule == node.rule => {
+                return self.ty(kids[0]);
+            }
+            "TypePostfix" => return Err(self.later(kids[1])),
             "Arrow" if self.tree.name(kids[0]) == "ArrowParams" => {
                 let params = self.arrow_params(kids[0])?;
                 self.arrow(params, kids[0], kids[1])?
@@ -107,20 +119,16 @@ impl Builder<'_> {
                 self.arrow(vec![param], kids[0], kids[1])?
             }
             "TypeDiff" => {
-                let (base, links) = self.spine(n);
-                let mut t = self.ty(base)?;
-                for l in links {
-                    let r = self.ty(self.kids(l)[1])?;
-                    let span = Span {
-                        start: t.span.start,
-                        end: r.span.end,
-                    };
-                    t = Type {
-                        kind: TypeKind::Diff(Box::new(t), Box::new(r)),
-                        span,
-                    };
-                }
-                return Ok(t);
+                let t = self.ty(kids[0])?;
+                let r = self.ty(kids[1])?;
+                let span = Span {
+                    start: t.span.start,
+                    end: r.span.end,
+                };
+                return Ok(Type {
+                    kind: TypeKind::Diff(Box::new(t), Box::new(r)),
+                    span,
+                });
             }
             "TypeOr" => TypeKind::Union(self.operands(n)?),
             "TypeAnd" => TypeKind::And(self.operands(n)?),
@@ -139,32 +147,39 @@ impl Builder<'_> {
             }
             "TupleType" => TypeKind::Tuple(self.types(kids)?),
             "GroupType" => {
-                return Ok(Type {
-                    span,
-                    ..self.ty(kids[0])?
-                });
+                let mut t = self.ty(kids[0])?;
+                t.span = span;
+                return Ok(t);
             }
-            _ => return Err(self.later(n)),
+            _ => unreachable!("make builds only these rules as types"),
         };
         Ok(Type { kind, span })
     }
 
-    /// The operands of the left-recursive chain of node `n`, in written order.
-    fn operands(&self, n: usize) -> Result<Vec<Type>, Error> {
-        let (base, links) = self.spine(n);
-        let mut ts = vec![self.ty(base)?];
-        for l in links {
-            ts.push(self.ty(self.kids(l)[1])?);
-        }
+    /// The operands of the left-recursive chain of node `n`, in written order: the list of the
+    /// shorter chain below it, which it takes over, and one more.
+    fn operands(&mut self, n: usize) -> Result<Vec<Type>, Error> {
+        let kids = self.kids(n);
+        let first = self.ty(kids[0])?;
+        let mut ts = if self.tree.nodes[kids[0]].rule == self.tree.nodes[n].rule {
+            let mut first = first;
+            match &mut first.kind {
+                TypeKind::Union(ts) | TypeKind::And(ts) => mem::take(ts),
+                _ => unreachable!("a chain builds to its list"),
+            }
+        } else {
+            vec![first]
+        };
+        ts.push(self.ty(kids[1])?);
         Ok(ts)
     }
 
-    fn types(&self, kids: &[usize]) -> Result<Vec<Type>, Error> {
+    fn types(&mut self, kids: &[usize]) -> Result<Vec<Type>, Error> {
         kids.iter().map(|&k| self.ty(k)).collect()
     }
 
     /// The arrow from `params`, written at node `p`, to the type of node `r`.
-    fn arrow(&self, params: Vec<TypeParam>, p: usize, r: usize) -> Result<TypeKind, Error> {
+    fn arrow(&mut self, params: Vec<TypeParam>, p: usize, r: usize) -> Result<TypeKind, Error> {
         let partial = self.word(self.tree.nodes[p].end) == "->?";
         Ok(TypeKind::Arrow {
             params,
@@ -173,7 +188,7 @@ impl Builder<'_> {
         })
     }
 
-    fn arrow_params(&self, n: usize) -> Result<Vec<TypeParam>, Error> {
+    fn arrow_params(&mut self, n: usize) -> Result<Vec<TypeParam>, Error> {
         let node = &self.tree.nodes[n];
         match node.kids[..] {
             [] => Ok(Vec::new()),
@@ -189,7 +204,7 @@ impl Builder<'_> {
         }
     }
 
-    fn type_param(&self, n: usize) -> Result<TypeParam, Error> {
+    fn type_param(&mut self, n: usize) -> Result<TypeParam, Error> {
         let node = &self.tree.nodes[n];
         Ok(match node.kids[..] {
             [name, ty] => TypeParam {
@@ -207,11 +222,11 @@ impl Builder<'_> {
     }
 
     /// The parameters of node `n`, a `Params`.
-    pub(super) fn params(&self, n: usize) -> Result<Vec<Param>, Error> {
+    pub(super) fn params(&mut self, n: usize) -> Result<Vec<Param>, Error> {
         self.kids(n).iter().map(|&k| self.param(k)).collect()
     }
 
-    fn param(&self, n: usize) -> Result<Param, Error> {
+    fn param(&mut self, n: usize) -> Result<Param, Error> {
         let node = &self.tree.nodes[n];
         if self.tree.name(n) == "TupleParam" {
             return Err(self.later(n));
@@ -233,123 +248,37 @@ impl Builder<'_> {
         Ok(p)
     }
 
-    /// The pattern of node `n`.
-    pub(super) fn pattern(&self, n: usize) -> Result<Pattern, Error> {
+    /// The pattern node `n` built to.
+    pub(super) fn pattern(&mut self, n: usize) -> Result<Pattern, Error> {
+        match self.take(n) {
+            Some(Ok(Built::Pattern(p))) => Ok(p),
+            Some(Err(e)) => Err(e),
+            Some(Ok(Built::Expr(_) | Built::Type(_) | Built::Stmt(_))) | None => Err(self.later(n)),
+        }
+    }
+
+    /// The pattern of node `n`, an `AtomPattern`.
+    pub(super) fn make_pattern(&mut self, n: usize) -> Result<Pattern, Error> {
         let node = &self.tree.nodes[n];
-        match self.tree.name(n) {
-            "AtomPattern" => {
-                let Tok::Atom(name) = &self.tokens[node.start].tok else {
-                    unreachable!("AtomPattern = ATOM …")
-                };
-                let (mut fields, mut items) = (Vec::new(), Vec::new());
-                for &k in &node.kids {
-                    if self.tree.name(k) == "FieldPat" {
-                        let kids = self.kids(k);
-                        let field = self.word(self.tree.nodes[kids[0]].start).to_string();
-                        let p = kids.get(1).map(|&p| self.pattern(p)).transpose()?;
-                        fields.push((field, p));
-                    } else {
-                        items.push(self.pattern(k)?);
-                    }
-                }
-                Ok(Pattern::Atom {
-                    name: name.clone(),
-                    fields,
-                    items,
-                    span: self.span(n),
-                })
-            }
-            _ => Err(self.later(n)),
-        }
-    }
-}
-
-/// `int`, `#none`, `(tuple A B)`, `(| A B)`, `(& A B)`, `(\ A B)`, `(-> (A (x: B)) R)`.
-impl fmt::Display for Type {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let list = |f: &mut fmt::Formatter<'_>, head: &str, ts: &[Type]| {
-            write!(f, "({head}")?;
-            for t in ts {
-                write!(f, " {t}")?;
-            }
-            f.write_str(")")
+        let Tok::Atom(name) = &self.tokens[node.start].tok else {
+            unreachable!("AtomPattern = ATOM …")
         };
-        match &self.kind {
-            TypeKind::Name(n) => f.write_str(n),
-            TypeKind::Atom(a) => write!(f, "#{a}"),
-            TypeKind::Tuple(ts) => list(f, "tuple", ts),
-            TypeKind::Union(ts) => list(f, "|", ts),
-            TypeKind::And(ts) => list(f, "&", ts),
-            TypeKind::Diff(a, b) => write!(f, "(\\ {a} {b})"),
-            TypeKind::Arrow {
-                params,
-                partial,
-                result,
-            } => {
-                write!(f, "({} (", if *partial { "->?" } else { "->" })?;
-                for (i, p) in params.iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(" ")?;
-                    }
-                    match (&p.name, p.positional) {
-                        (Some(n), true) => write!(f, "(positional {n}: {})", p.ty)?,
-                        (Some(n), false) => write!(f, "({n}: {})", p.ty)?,
-                        (None, _) => write!(f, "{}", p.ty)?,
-                    }
-                }
-                write!(f, ") {result})")
+        let (mut fields, mut items) = (Vec::new(), Vec::new());
+        for &k in &node.kids {
+            if self.tree.name(k) == "FieldPat" {
+                let kids = self.kids(k);
+                let field = self.word(self.tree.nodes[kids[0]].start).to_string();
+                let p = kids.get(1).map(|&p| self.pattern(p)).transpose()?;
+                fields.push((field, p));
+            } else {
+                items.push(self.pattern(k)?);
             }
         }
-    }
-}
-
-/// `x`, or `(positional x: int = 0)` with what is written.
-impl fmt::Display for Param {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.positional && self.ty.is_none() && self.default.is_none() {
-            return f.write_str(&self.name);
-        }
-        f.write_str("(")?;
-        if self.positional {
-            f.write_str("positional ")?;
-        }
-        f.write_str(&self.name)?;
-        if let Some(t) = &self.ty {
-            write!(f, ": {t}")?;
-        }
-        if let Some(d) = &self.default {
-            write!(f, " = {d}")?;
-        }
-        f.write_str(")")
-    }
-}
-
-/// `#name`, `#name(f: p, g:)`, `#name(p, q)`.
-impl fmt::Display for Pattern {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Pattern::Atom {
-            name,
+        Ok(Pattern::Atom {
+            name: name.clone(),
             fields,
             items,
-            ..
-        } = self;
-        write!(f, "#{name}")?;
-        if fields.is_empty() && items.is_empty() {
-            return Ok(());
-        }
-        f.write_str("(")?;
-        let mut sep = "";
-        for (n, p) in fields {
-            match p {
-                Some(p) => write!(f, "{sep}{n}: {p}")?,
-                None => write!(f, "{sep}{n}:")?,
-            }
-            sep = ", ";
-        }
-        for p in items {
-            write!(f, "{sep}{p}")?;
-            sep = ", ";
-        }
-        f.write_str(")")
+            span: self.span(n),
+        })
     }
 }

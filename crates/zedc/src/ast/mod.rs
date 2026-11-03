@@ -13,20 +13,22 @@
 //! A unit is its declarations and statements. A form of a later layer is an error naming that
 //! layer.
 
+mod drop;
+mod show;
 mod stmts;
 mod types;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::sync::OnceLock;
 
 pub use stmts::{Function, Port, Stmt, StmtKind, Target};
 pub use types::{Param, Pattern, Type, TypeKind, TypeParam};
 
 use crate::lex::{Part, Span, Tok, Token};
-use crate::parse::Tree;
+use crate::parse::{Tree, grammar};
 
 /// An expression and its span.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Expr {
     /// What it is.
     pub kind: ExprKind,
@@ -35,7 +37,7 @@ pub struct Expr {
 }
 
 /// The kinds of expression.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ExprKind {
     /// An integer: its base and digits.
     Int {
@@ -127,7 +129,7 @@ pub enum ExprKind {
 }
 
 /// A part of a string expression.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum StrPart {
     /// Text.
     Text(String),
@@ -168,47 +170,125 @@ pub fn build(text: &str, tokens: &[Token], tree: &Tree) -> Result<Expr, Error> {
 
 /// The expression of node `n` of `tree`, a node of a rule from `Expr` down to `Primary`.
 pub fn expr(text: &str, tokens: &[Token], tree: &Tree, n: usize) -> Result<Expr, Error> {
-    builder(text, tokens, tree).node(n)
+    with_holes(text, tokens, tree, |b| {
+        b.fill(n);
+        b.node(n)
+    })
 }
 
 /// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, in written order. A
 /// unit's top level exports its declarations, so `return` there is an error.
 pub fn unit(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Error> {
-    let b = builder(text, tokens, tree);
-    let items = b.kids(tree.root).iter().map(|&k| b.item(k));
-    items
-        .map(|s| match s? {
-            Stmt {
-                kind: StmtKind::Return(_),
-                span,
-            } => Err(Error {
-                span,
-                message: "`return` exports from a block; a unit's top level has none".into(),
-                notes: Vec::new(),
-            }),
-            s => Ok(s),
-        })
-        .collect()
+    with_holes(text, tokens, tree, |b| {
+        b.fill(tree.root);
+        let kids = b.kids(tree.root);
+        let mut out = Vec::with_capacity(kids.len());
+        for &k in kids {
+            let s = b.item(k)?;
+            if let StmtKind::Return(_) = s.kind {
+                return Err(Error {
+                    span: s.span,
+                    message: "`return` exports from a block; a unit's top level has none".into(),
+                    notes: Vec::new(),
+                });
+            }
+            out.push(s);
+        }
+        Ok(out)
+    })
 }
 
-fn builder<'a>(text: &'a str, tokens: &'a [Token], tree: &'a Tree) -> Builder<'a> {
-    let mut holes = Vec::new();
-    let mut count = 0;
-    for t in tokens {
-        holes.push(count);
-        if let Tok::Str(parts) = &t.tok {
-            count += parts
-                .iter()
-                .filter(|p| matches!(p, Part::Hole { .. }))
-                .count();
-        }
-    }
-    Builder {
-        text,
+/// What `top` makes with a builder of `tree`, the expressions of every string hole, at any
+/// depth of nesting, built first. The holes are listed outermost first, the holes of each
+/// tree together, and built from the end of the list, so each finds its own holes done.
+fn with_holes<'t, R>(
+    text: &str,
+    tokens: &'t [Token],
+    tree: &'t Tree,
+    top: impl FnOnce(&mut Builder<'_>) -> R,
+) -> R {
+    let mut list = vec![Level {
         tokens,
         tree,
-        holes,
+        first: 0,
+    }];
+    let mut i = 0;
+    while let Some(&Level { tokens, tree, .. }) = list.get(i) {
+        let first = list.len();
+        list[i].first = first;
+        let holes = tokens.iter().flat_map(|t| match &t.tok {
+            Tok::Str(parts) => &parts[..],
+            _ => &[],
+        });
+        let holes = holes.filter_map(|p| match p {
+            Part::Hole { tokens, .. } => Some(&tokens[..]),
+            Part::Text(_) => None,
+        });
+        for (tokens, tree) in holes.zip(&tree.holes) {
+            list.push(Level {
+                tokens,
+                tree,
+                first: 0,
+            });
+        }
+        i += 1;
     }
+    let mut done: Vec<Option<Result<Expr, Error>>> = Vec::new();
+    done.resize_with(list.len(), || None);
+    for (i, l) in list.iter().enumerate().skip(1).rev() {
+        let mut b = Builder::new(text, l, &mut done);
+        b.fill(l.tree.root);
+        let e = b.node(l.tree.root);
+        done[i] = Some(e);
+    }
+    top(&mut Builder::new(text, &list[0], &mut done))
+}
+
+/// A tree to build from: a text's, or a string hole's.
+struct Level<'t> {
+    tokens: &'t [Token],
+    tree: &'t Tree,
+    /// Where its own holes start in the list of all holes.
+    first: usize,
+}
+
+/// What a node of a parse tree builds to.
+enum Built {
+    Expr(Expr),
+    Type(Type),
+    Pattern(Pattern),
+    Stmt(Box<Stmt>),
+}
+
+/// What the nodes of a rule build to.
+#[derive(Clone, Copy)]
+enum Form {
+    Expr,
+    Type,
+    Pattern,
+    Item,
+    /// Nothing of its own: its parent reads it.
+    Part,
+}
+
+/// The form of each rule of the grammar, by its index.
+fn forms() -> &'static [Form] {
+    static FORMS: OnceLock<Vec<Form>> = OnceLock::new();
+    FORMS.get_or_init(|| {
+        let form = |name: &str| match name {
+            "Expr" | "Lambda" | "Expr12" | "Or" | "And" | "Additive" | "Multiplicative"
+            | "Equality" | "Compare" | "IsTest" | "Reduce" | "Range" | "Prefix" | "Power"
+            | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If" | "Literal" => {
+                Form::Expr
+            }
+            "Type" | "TypePostfix" | "Arrow" | "TypeDiff" | "TypeOr" | "TypeAnd" | "TypeName"
+            | "AtomType" | "TupleType" | "GroupType" => Form::Type,
+            "AtomPattern" => Form::Pattern,
+            "Item" => Form::Item,
+            _ => Form::Part,
+        };
+        grammar().rules.iter().map(|r| form(&r.name)).collect()
+    })
 }
 
 struct Builder<'a> {
@@ -217,9 +297,88 @@ struct Builder<'a> {
     tree: &'a Tree,
     /// For each token, the index in `tree.holes` of its first hole.
     holes: Vec<usize>,
+    /// The built holes of every level, and where this level's start.
+    done: &'a mut [Option<Result<Expr, Error>>],
+    first: usize,
+    /// What the nodes built to, until their parents take them: those after `front` in the walk
+    /// of `fill`, the latest at the front. What is taken leaves from the back, so this holds
+    /// about one width of the tree, and the depth of a tree costs no stack. An error is a
+    /// result like any other: the parent takes its children in written order, so the first
+    /// error is the first in written order.
+    live: VecDeque<Option<Result<Built, Error>>>,
+    /// Where in the walk of `fill` each node is, and where the walk has reached.
+    place: Vec<usize>,
+    front: usize,
 }
 
-impl Builder<'_> {
+impl<'a> Builder<'a> {
+    fn new(
+        text: &'a str,
+        level: &Level<'a>,
+        done: &'a mut [Option<Result<Expr, Error>>],
+    ) -> Builder<'a> {
+        let mut holes = Vec::with_capacity(level.tokens.len());
+        let mut count = 0;
+        for t in level.tokens {
+            holes.push(count);
+            if let Tok::Str(parts) = &t.tok {
+                count += parts
+                    .iter()
+                    .filter(|p| matches!(p, Part::Hole { .. }))
+                    .count();
+            }
+        }
+        Builder {
+            text,
+            tokens: level.tokens,
+            tree: level.tree,
+            holes,
+            done,
+            first: level.first,
+            live: VecDeque::new(),
+            place: Vec::new(),
+            front: 0,
+        }
+    }
+
+    /// Builds `n` and every node below it. A breadth-first walk from `n` lists each node after
+    /// its parent, and no node has two parents, so the list read backward has each node after
+    /// its children. Only nodes of the tree are visited, not the alternatives the parser left.
+    fn fill(&mut self, n: usize) {
+        let tree = self.tree;
+        let mut order = vec![n];
+        let mut i = 0;
+        while let Some(&k) = order.get(i) {
+            order.extend_from_slice(&tree.nodes[k].kids);
+            i += 1;
+        }
+        self.place.resize(tree.nodes.len(), 0);
+        for (i, &k) in order.iter().enumerate() {
+            self.place[k] = i;
+        }
+        self.front = order.len();
+        let forms = forms();
+        for (i, &k) in order.iter().enumerate().rev() {
+            let built = self.make(forms[tree.nodes[k].rule], k);
+            self.live.push_front(built);
+            self.front = i;
+            while let Some(None) = self.live.back() {
+                self.live.pop_back();
+            }
+        }
+    }
+
+    /// What node `n`, whose rule makes a `form`, builds to.
+    fn make(&mut self, form: Form, n: usize) -> Option<Result<Built, Error>> {
+        Some(match form {
+            Form::Expr => self.make_expr(n).map(Built::Expr),
+            Form::Type => self.make_type(n).map(Built::Type),
+            Form::Pattern => self.make_pattern(n).map(Built::Pattern),
+            Form::Item => self.make_item(n).map(|s| Built::Stmt(Box::new(s))),
+            Form::Part => return None,
+        })
+    }
+
     fn span(&self, n: usize) -> Span {
         let node = &self.tree.nodes[n];
         Span {
@@ -228,12 +387,12 @@ impl Builder<'_> {
         }
     }
 
-    fn word(&self, i: usize) -> &str {
+    fn word(&self, i: usize) -> &'a str {
         let s = self.tokens[i].span;
         &self.text[s.start..s.end]
     }
 
-    fn kids(&self, n: usize) -> &[usize] {
+    fn kids(&self, n: usize) -> &'a [usize] {
         &self.tree.nodes[n].kids
     }
 
@@ -250,7 +409,51 @@ impl Builder<'_> {
         }
     }
 
-    fn node(&self, n: usize) -> Result<Expr, Error> {
+    /// The expression node `n` built to.
+    fn node(&mut self, n: usize) -> Result<Expr, Error> {
+        let e = self.body(n)?;
+        if let ExprKind::Block(stmts) = &e.kind
+            && self.tree.name(n) == "Block"
+            && !matches!(
+                stmts.last(),
+                Some(Stmt {
+                    kind: StmtKind::Return(_),
+                    ..
+                })
+            )
+        {
+            return Err(Error {
+                span: e.span,
+                message: "this block exports nothing: end it with an expression or `return e;`"
+                    .into(),
+                notes: Vec::new(),
+            });
+        }
+        Ok(e)
+    }
+
+    /// What node `n` built to.
+    pub(super) fn take(&mut self, n: usize) -> Option<Result<Built, Error>> {
+        let i = self.place[n].checked_sub(self.front)?;
+        self.live.get_mut(i)?.take()
+    }
+
+    /// The expression node `n` built to, which may be a block that exports nothing.
+    fn body(&mut self, n: usize) -> Result<Expr, Error> {
+        match self.take(n) {
+            Some(Ok(Built::Expr(e))) => Ok(e),
+            Some(Err(e)) => Err(e),
+            None if self.tree.name(n) == "Name" => Ok(Expr {
+                kind: ExprKind::Name(self.word(self.tree.nodes[n].start).into()),
+                span: self.span(n),
+            }),
+            Some(Ok(Built::Type(_) | Built::Pattern(_) | Built::Stmt(_))) | None => {
+                Err(self.later(n))
+            }
+        }
+    }
+
+    fn make_expr(&mut self, n: usize) -> Result<Expr, Error> {
         let kids = self.kids(n);
         match self.tree.name(n) {
             "Expr" => self.node(kids[0]),
@@ -262,7 +465,11 @@ impl Builder<'_> {
                 }
                 Ok(e)
             }
-            "Or" | "And" | "Additive" | "Multiplicative" | "Equality" | "Compare" => self.fold(n),
+            "Or" | "And" | "Additive" | "Multiplicative" | "Equality" | "Compare" => {
+                // The operator is the token before the right operand.
+                let op = self.op(self.tree.nodes[kids[1]].start - 1);
+                self.binary(op, kids[0], kids[1])
+            }
             "IsTest" => {
                 let of = self.node(kids[0])?;
                 let is = self.tree.nodes[kids[0]].end;
@@ -280,8 +487,10 @@ impl Builder<'_> {
                     span,
                 })
             }
-            "Reduce" => Err(self.later(self.kids(self.spine(n).1[0])[1])),
-            "Range" => Err(self.later(kids[1])),
+            "Reduce" if self.tree.nodes[kids[0]].rule == self.tree.nodes[n].rule => {
+                self.body(kids[0])
+            }
+            "Reduce" | "Range" => Err(self.later(kids[1])),
             "Prefix" => {
                 let op = self.op(self.tree.nodes[n].start);
                 let e = self.node(kids[0])?;
@@ -292,12 +501,8 @@ impl Builder<'_> {
             }
             "Power" => self.binary("**", kids[0], kids[1]),
             "Postfix" => {
-                let (base, links) = self.spine(n);
-                let mut e = self.node(base)?;
-                for l in links {
-                    e = self.suffix(e, self.kids(l)[1])?;
-                }
-                Ok(e)
+                let e = self.node(kids[0])?;
+                self.suffix(e, kids[1])
             }
             "AtomExpr" => {
                 let i = self.tree.nodes[n].start;
@@ -309,10 +514,11 @@ impl Builder<'_> {
                     span: self.span(n),
                 })
             }
-            "Group" => Ok(Expr {
-                span: self.span(n),
-                ..self.node(kids[0])?
-            }),
+            "Group" => {
+                let mut e = self.node(kids[0])?;
+                e.span = self.span(n);
+                Ok(e)
+            }
             "TupleExpr" => Ok(Expr {
                 kind: ExprKind::Tuple(
                     kids.iter()
@@ -321,7 +527,7 @@ impl Builder<'_> {
                 ),
                 span: self.span(n),
             }),
-            "Block" => self.block(n, true),
+            "Block" => self.block(n),
             "If" => Ok(Expr {
                 kind: ExprKind::If {
                     cond: Box::new(self.node(kids[0])?),
@@ -330,27 +536,9 @@ impl Builder<'_> {
                 },
                 span: self.span(n),
             }),
-            "Name" => Ok(Expr {
-                kind: ExprKind::Name(self.word(self.tree.nodes[n].start).into()),
-                span: self.span(n),
-            }),
             "Literal" => self.literal(n),
-            _ => Err(self.later(n)),
+            _ => unreachable!("make builds only these rules as expressions"),
         }
-    }
-
-    /// The left spine of node `n`, of a left-recursive rule `R = R … | …`: the first child
-    /// below the last node of rule `R`, and those nodes from the innermost out.
-    fn spine(&self, n: usize) -> (usize, Vec<usize>) {
-        let rule = self.tree.nodes[n].rule;
-        let mut links = vec![n];
-        let mut base = self.kids(n)[0];
-        while self.tree.nodes[base].rule == rule {
-            links.push(base);
-            base = self.kids(base)[0];
-        }
-        links.reverse();
-        (base, links)
     }
 
     /// The operator token at `i`, as the lexer's static text.
@@ -361,7 +549,7 @@ impl Builder<'_> {
         }
     }
 
-    fn binary(&self, op: &'static str, l: usize, r: usize) -> Result<Expr, Error> {
+    fn binary(&mut self, op: &'static str, l: usize, r: usize) -> Result<Expr, Error> {
         let (a, b) = (self.node(l)?, self.node(r)?);
         let span = Span {
             start: a.span.start,
@@ -373,28 +561,8 @@ impl Builder<'_> {
         })
     }
 
-    /// A left-associative chain; each operator is the token before its right operand.
-    fn fold(&self, n: usize) -> Result<Expr, Error> {
-        let (base, links) = self.spine(n);
-        let mut e = self.node(base)?;
-        for l in links {
-            let k = self.kids(l)[1];
-            let op = self.op(self.tree.nodes[k].start - 1);
-            let r = self.node(k)?;
-            let span = Span {
-                start: e.span.start,
-                end: r.span.end,
-            };
-            e = Expr {
-                kind: ExprKind::Binary(op, Box::new(e), Box::new(r)),
-                span,
-            };
-        }
-        Ok(e)
-    }
-
     /// A lambda: `Name '->' body` or `'(' Params? ')' '->' body`.
-    fn lambda(&self, n: usize) -> Result<Expr, Error> {
+    fn lambda(&mut self, n: usize) -> Result<Expr, Error> {
         let kids = self.kids(n);
         let body = *kids.last().expect("Lambda ends in its body");
         let params = match kids {
@@ -419,7 +587,7 @@ impl Builder<'_> {
     }
 
     /// `of` followed by the `ElseTail` node `t`.
-    fn else_tail(&self, of: Expr, t: usize) -> Result<Expr, Error> {
+    fn else_tail(&mut self, of: Expr, t: usize) -> Result<Expr, Error> {
         let kids = self.kids(t);
         let (pattern, default) = match kids {
             [p, d] => (Some(self.pattern(*p)?), self.node(*d)?),
@@ -440,7 +608,7 @@ impl Builder<'_> {
         })
     }
 
-    fn suffix(&self, of: Expr, s: usize) -> Result<Expr, Error> {
+    fn suffix(&mut self, of: Expr, s: usize) -> Result<Expr, Error> {
         let node = &self.tree.nodes[s];
         let span = Span {
             start: of.span.start,
@@ -474,11 +642,11 @@ impl Builder<'_> {
     }
 
     #[allow(clippy::type_complexity)]
-    fn args(&self, n: usize) -> Result<(Vec<Expr>, Vec<(String, Expr)>, bool), Error> {
+    fn args(&mut self, n: usize) -> Result<(Vec<Expr>, Vec<(String, Expr)>, bool), Error> {
         let node = &self.tree.nodes[n];
         let curry = self.word(node.end - 1) == "...";
         let (mut positional, mut named) = (Vec::new(), Vec::new());
-        let mut seen: HashMap<String, Span> = HashMap::new();
+        let mut seen: HashMap<&str, Span> = HashMap::new();
         for &k in &node.kids {
             let kids = self.kids(k);
             match self.tree.name(k) {
@@ -489,13 +657,11 @@ impl Builder<'_> {
                 "SortArg" => return Err(self.later(k)),
                 _ => {}
             }
-            let name = self.node(kids[0])?;
-            let ExprKind::Name(word) = &name.kind else {
-                unreachable!("NamedArg = Name ':' Expr?")
-            };
+            let span = self.span(kids[0]);
+            let word = self.word(self.tree.nodes[kids[0]].start);
             if let Some(first) = seen.get(word) {
                 return Err(Error {
-                    span: name.span,
+                    span,
                     message: format!("the argument `{word}` is named twice"),
                     notes: vec![Note {
                         span: *first,
@@ -503,17 +669,17 @@ impl Builder<'_> {
                     }],
                 });
             }
-            seen.insert(word.clone(), name.span);
+            seen.insert(word, span);
             let value = match kids {
                 [_, v] => self.node(*v)?,
-                _ => name.clone(),
+                _ => self.node(kids[0])?,
             };
-            named.push((word.clone(), value));
+            named.push((word.to_string(), value));
         }
         Ok((positional, named, curry))
     }
 
-    fn literal(&self, n: usize) -> Result<Expr, Error> {
+    fn literal(&mut self, n: usize) -> Result<Expr, Error> {
         let i = self.tree.nodes[n].start;
         let kind = match &self.tokens[i].tok {
             Tok::Int { radix, digits } => ExprKind::Int {
@@ -524,15 +690,15 @@ impl Builder<'_> {
             Tok::Rat(s) => ExprKind::Rat(s.clone()),
             Tok::Keyword(k) => ExprKind::Bool(*k == "true"),
             Tok::Str(parts) => {
-                let mut out = Vec::new();
-                let mut hole = self.holes[i];
+                let mut out = Vec::with_capacity(parts.len());
+                let mut hole = self.first + self.holes[i];
                 for p in parts {
                     out.push(match p {
                         Part::Text(t) => StrPart::Text(t.clone()),
-                        Part::Hole { tokens, .. } => {
-                            let tree = &self.tree.holes[hole];
+                        Part::Hole { .. } => {
+                            let e = self.done[hole].take();
                             hole += 1;
-                            StrPart::Hole(build(self.text, tokens, tree)?)
+                            StrPart::Hole(e.expect("a hole's expression is taken once")?)
                         }
                     });
                 }
@@ -544,107 +710,5 @@ impl Builder<'_> {
             kind,
             span: self.span(n),
         })
-    }
-}
-
-/// Writes `xs` with a space between each two, each straight into `f`.
-fn spaced<T: fmt::Display>(f: &mut fmt::Formatter<'_>, xs: &[T]) -> fmt::Result {
-    let mut sep = "";
-    for x in xs {
-        write!(f, "{sep}{x}")?;
-        sep = " ";
-    }
-    Ok(())
-}
-
-/// An s-expression: `(call f 1 (x: 2) ...)`, `(index m k)`, `(. p x)`, `(?. p x)`, `(+ a b)`,
-/// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`.
-impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            ExprKind::Int { radix, digits } => {
-                let prefix = match radix {
-                    2 => "0b",
-                    8 => "0o",
-                    16 => "0x",
-                    _ => "",
-                };
-                write!(f, "{prefix}{digits}")
-            }
-            ExprKind::Float(s) => f.write_str(s),
-            ExprKind::Rat(s) => write!(f, "{s}r"),
-            ExprKind::Str(parts) => {
-                f.write_str("(str")?;
-                for p in parts {
-                    match p {
-                        StrPart::Text(t) => write!(f, " {t:?}")?,
-                        StrPart::Hole(e) => write!(f, " {e}")?,
-                    }
-                }
-                f.write_str(")")
-            }
-            ExprKind::Bool(b) => write!(f, "{b}"),
-            ExprKind::Atom(a) => write!(f, "#{a}"),
-            ExprKind::Name(n) => f.write_str(n),
-            ExprKind::Unary(op, e) => write!(f, "({op} {e})"),
-            ExprKind::Binary(op, a, b) => write!(f, "({op} {a} {b})"),
-            ExprKind::Call {
-                callee,
-                positional,
-                named,
-                curry,
-            } => {
-                write!(f, "(call {callee}")?;
-                for a in positional {
-                    write!(f, " {a}")?;
-                }
-                for (n, a) in named {
-                    write!(f, " ({n}: {a})")?;
-                }
-                if *curry {
-                    f.write_str(" ...")?;
-                }
-                f.write_str(")")
-            }
-            ExprKind::Index(e, k) => write!(f, "(index {e} {k})"),
-            ExprKind::If {
-                cond,
-                then,
-                otherwise,
-            } => write!(f, "(if {cond} {then} {otherwise})"),
-            ExprKind::Block(stmts) => {
-                f.write_str("(block")?;
-                for s in stmts {
-                    write!(f, " {s}")?;
-                }
-                f.write_str(")")
-            }
-            ExprKind::Tuple(es) => {
-                f.write_str("(tuple")?;
-                for e in es {
-                    write!(f, " {e}")?;
-                }
-                f.write_str(")")
-            }
-            ExprKind::Lambda { params, body } => {
-                f.write_str("(fn (")?;
-                spaced(f, params)?;
-                write!(f, ") {body})")
-            }
-            ExprKind::Is { of, ty, negated } => {
-                write!(f, "(is {}{of} {ty})", if *negated { "not " } else { "" })
-            }
-            ExprKind::Else {
-                of,
-                pattern,
-                default,
-            } => match pattern {
-                Some(p) => write!(f, "(else {of} {p} {default})"),
-                None => write!(f, "(else {of} {default})"),
-            },
-            ExprKind::Member { of, name, safe } => {
-                write!(f, "({} {of} {name})", if *safe { "?." } else { "." })
-            }
-        }
     }
 }

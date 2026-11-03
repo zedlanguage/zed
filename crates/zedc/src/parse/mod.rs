@@ -18,6 +18,7 @@ mod grammar;
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::mem;
 use std::sync::OnceLock;
 
 pub use grammar::{Alt, Expr, Grammar, Kind, Rule};
@@ -55,7 +56,7 @@ pub struct Node {
 }
 
 /// A parse tree: its nodes, the root's index, and the trees of the string holes in its tokens.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Tree {
     /// The nodes; a node's children come before it.
     pub nodes: Vec<Node>,
@@ -63,6 +64,16 @@ pub struct Tree {
     pub root: usize,
     /// The tree of each `${…}` hole, in the order of the tokens, each parsed as an `Expr`.
     pub holes: Vec<Tree>,
+}
+
+/// Holes nest as deep as the source does: each is moved to a work list before its parent goes.
+impl Drop for Tree {
+    fn drop(&mut self) {
+        let mut stack = mem::take(&mut self.holes);
+        while let Some(mut t) = stack.pop() {
+            stack.append(&mut t.holes);
+        }
+    }
 }
 
 impl Tree {
@@ -119,7 +130,15 @@ pub fn parse_with(
     parse_to(g, text, tokens, start, ring, end)
 }
 
+/// A tree whose holes are being parsed: those left, each with the span of its `}`.
+struct Open<'t> {
+    tree: Tree,
+    holes: std::vec::IntoIter<(&'t [Token], Span)>,
+}
+
 /// Parses as `parse` does; `end` is the span reported for an error at the end of `tokens`.
+/// Holes nest, so the open trees are on a stack. An error stops the parse at the first failure
+/// in the order of the text, each tree before its holes.
 fn parse_to(
     g: &Grammar,
     text: &str,
@@ -129,6 +148,32 @@ fn parse_to(
     end: Span,
 ) -> Result<Tree, Error> {
     let start = g.rule(start).unwrap_or_else(|| panic!("no rule {start}"));
+    let mut stack = vec![parse_one(g, text, tokens, start, ring, end)?];
+    let hole = g.rule("Expr");
+    loop {
+        let top = stack.last_mut().expect("the outermost tree returns");
+        if let Some((tokens, close)) = top.holes.next() {
+            let hole = hole.expect("the grammar has a rule `Expr` for a string's holes");
+            stack.push(parse_one(g, text, tokens, hole, ring, close)?);
+            continue;
+        }
+        let done = stack.pop().expect("the top was read above").tree;
+        match stack.last_mut() {
+            Some(parent) => parent.tree.holes.push(done),
+            None => return Ok(done),
+        }
+    }
+}
+
+/// Parses `tokens` as rule `start`, its holes left for `parse_to`.
+fn parse_one<'t>(
+    g: &Grammar,
+    text: &str,
+    tokens: &'t [Token],
+    start: usize,
+    ring: u32,
+    end: Span,
+) -> Result<Open<'t>, Error> {
     let mut toks: Vec<(Kind, &str)> = tokens
         .iter()
         .map(|t| (kind(&t.tok), &text[t.span.start..t.span.end]))
@@ -144,11 +189,12 @@ fn parse_to(
         open: vec![0; toks.len() + 1],
         low: u32::MAX,
         nodes: Vec::new(),
+        kids: Vec::new(),
         far: 0,
         expected: BTreeSet::new(),
+        saved: Vec::new(),
     };
-    let mut kids = Vec::new();
-    let matched = match p.rule(start, 0, false, &mut kids) {
+    let matched = match p.run(start) {
         Some(e) if e == toks.len() => Some(e),
         Some(e) if e + 1 == toks.len() => Some(e),
         Some(e) => {
@@ -172,15 +218,18 @@ fn parse_to(
                         start: span.end - 1,
                         end: span.end,
                     };
-                    holes.push(parse_to(g, text, tokens, "Expr", ring, close)?);
+                    holes.push((tokens.as_slice(), close));
                 }
             }
         }
     }
-    Ok(Tree {
-        nodes: p.nodes,
-        root: kids[0],
-        holes,
+    Ok(Open {
+        tree: Tree {
+            nodes: p.nodes,
+            root: p.kids[0],
+            holes: Vec::new(),
+        },
+        holes: holes.into_iter(),
     })
 }
 
@@ -223,6 +272,57 @@ struct Entry {
     version: usize,
 }
 
+/// An open expression with work left once its operand has matched or failed. The operand's
+/// result goes to the frame on top of the stack, so nesting costs heap and not thread stack.
+#[derive(Clone, Copy)]
+enum Frame<'a> {
+    /// The alternatives of rule `r` at `pos`. `next` is the first not yet tried, `base` is the
+    /// height of the kids stack below this match's kids, and `caller` is the `low` of the match
+    /// this one began in.
+    Rule {
+        r: usize,
+        pos: usize,
+        head: bool,
+        next: usize,
+        base: usize,
+        caller: u32,
+    },
+    /// The items of a sequence not yet matched.
+    Seq {
+        rest: &'a [Expr],
+        head: bool,
+        mark: usize,
+    },
+    /// The branches of a choice not yet tried, the last excluded: it runs with no frame.
+    Choice {
+        rest: &'a [Expr],
+        pos: usize,
+        head: bool,
+    },
+    /// A `*` or `+` at `at`. An iteration that matches nothing ends the loop, kept only if it is
+    /// the first; `some` says an iteration was kept, and `star` says none need be.
+    Loop {
+        x: &'a Expr,
+        at: usize,
+        mark: usize,
+        some: bool,
+        star: bool,
+        head: bool,
+    },
+    Opt {
+        pos: usize,
+    },
+    And {
+        pos: usize,
+        mark: usize,
+    },
+    /// A `!`, whose saved failures are on `Parser::saved`.
+    Not {
+        pos: usize,
+        mark: usize,
+    },
+}
+
 struct Parser<'a> {
     g: &'a Grammar,
     ring: u32,
@@ -239,11 +339,15 @@ struct Parser<'a> {
     /// below every rule, so it marks every rule on the path, at every token.
     low: u32,
     nodes: Vec<Node>,
+    /// The kids of every open match, innermost on top.
+    kids: Vec<usize>,
     far: usize,
     expected: BTreeSet<String>,
+    /// `far` and `expected` as each open `!` found them.
+    saved: Vec<(usize, BTreeSet<String>)>,
 }
 
-impl Parser<'_> {
+impl<'a> Parser<'a> {
     fn fail(&mut self, pos: usize, what: String) -> Option<usize> {
         if pos > self.far {
             self.far = pos;
@@ -255,11 +359,18 @@ impl Parser<'_> {
         None
     }
 
-    /// Matches rule `r` at `pos`, pushing its node onto `kids`.
-    fn rule(&mut self, r: usize, pos: usize, head: bool, kids: &mut Vec<usize>) -> Option<usize> {
-        let key = (r, pos, head);
+    /// Calls rule `r` at `pos`. A result known here is returned, with the node pushed onto
+    /// `kids`. Otherwise this opens a [`Frame::Rule`] and returns `None`, which that frame reads
+    /// as "try your next alternative".
+    fn call(
+        &mut self,
+        r: usize,
+        pos: usize,
+        head: bool,
+        stack: &mut Vec<Frame<'a>>,
+    ) -> Option<usize> {
         let now = self.versions[pos];
-        let entry = self.memo.entry(key).or_default();
+        let entry = self.memo.entry((r, pos, head)).or_default();
         let res = match entry.best {
             _ if entry.in_path => {
                 // Left recursion: the first time, this call fails, which seeds the growth.
@@ -279,142 +390,250 @@ impl Parser<'_> {
             _ => {
                 entry.in_path = true;
                 entry.depth = self.open[pos] + 1;
-                self.grow(key)
+                self.open[pos] += 1;
+                stack.push(Frame::Rule {
+                    r,
+                    pos,
+                    head,
+                    next: 0,
+                    base: self.kids.len(),
+                    caller: std::mem::replace(&mut self.low, u32::MAX),
+                });
+                return None;
             }
         };
         let (end, node) = res?;
-        kids.push(node);
+        self.kids.push(node);
         Some(end)
     }
 
-    /// Matches the rule of `key`, and while it is left-recursive there and its match gets
-    /// longer, matches it again over that match. A match is never replaced by a shorter one.
-    /// When this returns, this rule's own seed is finished, so its own reads do not mark the
-    /// entry. Any other read does, for good, since `best` may keep what that read gave. A
-    /// marked entry marks every rule on the path, at earlier tokens too, since each of them
-    /// may keep what it read from this one.
-    fn grow(&mut self, key: (usize, usize, bool)) -> Res {
-        let (r, pos, head) = key;
-        self.open[pos] += 1;
-        let caller = std::mem::replace(&mut self.low, u32::MAX);
-        loop {
-            let res = self.alternatives(r, pos, head);
-            let entry = self.memo.get_mut(&key).expect("`rule` made this entry");
-            let end = |res: Res| res.map(|(end, _)| end);
-            let longer = entry.best.is_none_or(|best| end(res) > end(best));
-            if longer {
-                entry.best = Some(res);
-            }
-            if !longer || !entry.left_rec {
-                entry.in_path = false;
-                entry.version = self.versions[pos];
-                entry.reads_seed |= self.low < entry.depth;
-                self.open[pos] = entry.depth - 1;
-                self.low = if entry.reads_seed { 0 } else { caller };
-                return entry.best.flatten();
-            }
-            self.versions[pos] += 1;
+    /// Records a finished pass over the alternatives of the rule of `key`. While it is
+    /// left-recursive there and its match gets longer, this returns `None`: match it again over
+    /// that match. A match is never replaced by a shorter one. Otherwise it returns the rule's
+    /// result. Then this rule's own seed is finished, so its own reads do not mark the entry.
+    /// Any other read does, for good, since `best` may keep what that read gave. A marked entry
+    /// marks every rule on the path, at earlier tokens too, since each of them may keep what it
+    /// read from this one.
+    fn grown(&mut self, key: (usize, usize, bool), res: Res, caller: u32) -> Option<Res> {
+        let pos = key.1;
+        let entry = self.memo.get_mut(&key).expect("`call` made this entry");
+        let end = |res: Res| res.map(|(end, _)| end);
+        let longer = entry.best.is_none_or(|best| end(res) > end(best));
+        if longer {
+            entry.best = Some(res);
         }
-    }
-
-    /// The first alternative of rule `r` that matches at `pos`, as a node.
-    fn alternatives(&mut self, r: usize, pos: usize, head: bool) -> Res {
-        let g = self.g;
-        for (i, alt) in g.rules[r].alts.iter().enumerate() {
-            if alt.layer > self.ring {
-                continue;
-            }
-            let mut sub = Vec::new();
-            if let Some(end) = self.m(&alt.expr, pos, head, &mut sub) {
-                if alt.pass {
-                    return Some((end, sub[0]));
-                }
-                self.nodes.push(Node {
-                    rule: r,
-                    alt: i,
-                    start: pos,
-                    end,
-                    kids: sub,
-                });
-                return Some((end, self.nodes.len() - 1));
-            }
+        if !longer || !entry.left_rec {
+            entry.in_path = false;
+            entry.version = self.versions[pos];
+            entry.reads_seed |= self.low < entry.depth;
+            self.open[pos] = entry.depth - 1;
+            self.low = if entry.reads_seed { 0 } else { caller };
+            return Some(entry.best.flatten());
         }
+        self.versions[pos] += 1;
         None
     }
 
-    fn m(&mut self, e: &Expr, pos: usize, head: bool, kids: &mut Vec<usize>) -> Option<usize> {
-        match e {
-            Expr::Lit(s) => {
-                let (k, text) = self.toks[pos];
-                if matches!(k, Kind::Keyword | Kind::Op | Kind::Ident) && text == s {
-                    Some(pos + 1)
-                } else {
-                    self.fail(pos, format!("'{s}'"))
-                }
-            }
-            Expr::Rule(r) => self.rule(*r, pos, head, kids),
-            Expr::Kind(k) => {
-                if self.toks[pos].0 == *k {
-                    Some(pos + 1)
-                } else {
-                    self.fail(pos, k.name().into())
-                }
-            }
-            Expr::Head => head.then_some(pos),
-            Expr::Seq(items) => {
-                let mark = kids.len();
-                let mut at = pos;
-                for x in items {
-                    match self.m(x, at, head, kids) {
-                        Some(e) => at = e,
-                        None => {
-                            kids.truncate(mark);
-                            return None;
-                        }
-                    }
-                }
-                Some(at)
-            }
-            Expr::Choice(alts) => alts.iter().find_map(|x| self.m(x, pos, head, kids)),
-            Expr::Star(x) | Expr::Plus(x) => {
-                // An iteration that matches nothing ends the loop, kept only if it is the first.
-                let (mut at, mut n) = (pos, 0);
-                loop {
-                    let mark = kids.len();
-                    match self.m(x, at, head, kids) {
-                        Some(e) if e == at && n > 0 => {
-                            kids.truncate(mark);
-                            break;
-                        }
-                        Some(e) => {
-                            n += 1;
-                            if e == at {
-                                break;
+    /// Matches rule `start` at the first token, leaving its node on `kids`. Each turn gives the
+    /// result in `done` to the top frame, until a frame names an expression to match; matching
+    /// that gives the next result, or opens a frame and starts on its first operand.
+    fn run(&mut self, start: usize) -> Option<usize> {
+        let g = self.g;
+        let mut stack = Vec::new();
+        let mut done = self.call(start, 0, false, &mut stack);
+        loop {
+            let (mut e, pos, mut head) = loop {
+                let Some(top) = stack.last_mut() else {
+                    return done;
+                };
+                match top {
+                    Frame::Rule {
+                        r,
+                        pos,
+                        head,
+                        next,
+                        base,
+                        caller,
+                    } => {
+                        let res = match done {
+                            Some(end) => {
+                                let (i, alt) = (*next - 1, &g.rules[*r].alts[*next - 1]);
+                                let node = if alt.pass {
+                                    self.kids[*base]
+                                } else {
+                                    self.nodes.push(Node {
+                                        rule: *r,
+                                        alt: i,
+                                        start: *pos,
+                                        end,
+                                        kids: self.kids[*base..].to_vec(),
+                                    });
+                                    self.nodes.len() - 1
+                                };
+                                self.kids.truncate(*base);
+                                Some((end, node))
                             }
-                            at = e;
+                            None => {
+                                self.kids.truncate(*base);
+                                let ring = self.ring;
+                                let alts = &g.rules[*r].alts[*next..];
+                                if let Some(i) = alts.iter().position(|a| a.layer <= ring) {
+                                    *next += i + 1;
+                                    break (&alts[i].expr, *pos, *head);
+                                }
+                                None
+                            }
+                        };
+                        let key = (*r, *pos, *head);
+                        match self.grown(key, res, *caller) {
+                            Some(res) => {
+                                stack.pop();
+                                done = res.map(|(end, node)| {
+                                    self.kids.push(node);
+                                    end
+                                });
+                            }
+                            None => {
+                                *next = 0;
+                                done = None;
+                            }
                         }
-                        None => break,
+                    }
+                    Frame::Seq { rest, head, mark } => match (done, rest.split_first()) {
+                        (None, _) => {
+                            self.kids.truncate(*mark);
+                            stack.pop();
+                        }
+                        (Some(_), None) => {
+                            stack.pop();
+                        }
+                        (Some(at), Some((x, more))) => {
+                            *rest = more;
+                            break (x, at, *head);
+                        }
+                    },
+                    Frame::Choice { rest, pos, head } => {
+                        if done.is_some() {
+                            stack.pop();
+                        } else {
+                            let (pos, head) = (*pos, *head);
+                            let (x, more) = rest.split_first().expect("a branch is left");
+                            *rest = more;
+                            if more.is_empty() {
+                                stack.pop();
+                            }
+                            break (x, pos, head);
+                        }
+                    }
+                    Frame::Loop {
+                        x,
+                        at,
+                        mark,
+                        some,
+                        star,
+                        head,
+                    } => {
+                        match done {
+                            Some(end) if end == *at && *some => self.kids.truncate(*mark),
+                            Some(end) if end == *at => *some = true,
+                            Some(end) => {
+                                *some = true;
+                                *at = end;
+                                *mark = self.kids.len();
+                                break (*x, end, *head);
+                            }
+                            None => {}
+                        }
+                        done = (*some || *star).then_some(*at);
+                        stack.pop();
+                    }
+                    Frame::Opt { pos } => {
+                        done = Some(done.unwrap_or(*pos));
+                        stack.pop();
+                    }
+                    Frame::And { pos, mark } => {
+                        self.kids.truncate(*mark);
+                        done = done.map(|_| *pos);
+                        stack.pop();
+                    }
+                    Frame::Not { pos, mark } => {
+                        self.kids.truncate(*mark);
+                        (self.far, self.expected) = self.saved.pop().expect("saved by `!`");
+                        done = done.is_none().then_some(*pos);
+                        stack.pop();
                     }
                 }
-                (n > 0 || matches!(e, Expr::Star(_))).then_some(at)
-            }
-            Expr::Opt(x) => Some(self.m(x, pos, head, kids).unwrap_or(pos)),
-            Expr::And(x) => {
-                let mark = kids.len();
-                let hit = self.m(x, pos, head, kids).is_some();
-                kids.truncate(mark);
-                hit.then_some(pos)
-            }
-            Expr::Not(x) => {
-                let (far, expected) = (self.far, self.expected.clone());
-                let mark = kids.len();
-                let hit = self.m(x, pos, head, kids).is_some();
-                kids.truncate(mark);
-                (self.far, self.expected) = (far, expected);
-                (!hit).then_some(pos)
-            }
-            Expr::SetHead(x) => self.m(x, pos, true, kids),
-            Expr::ClearHead(x) => self.m(x, pos, false, kids),
+            };
+            done = loop {
+                match e {
+                    Expr::Lit(s) => {
+                        let (k, text) = self.toks[pos];
+                        break if matches!(k, Kind::Keyword | Kind::Op | Kind::Ident) && text == s {
+                            Some(pos + 1)
+                        } else {
+                            self.fail(pos, format!("'{s}'"))
+                        };
+                    }
+                    Expr::Rule(r) => break self.call(*r, pos, head, &mut stack),
+                    Expr::Kind(k) => {
+                        break if self.toks[pos].0 == *k {
+                            Some(pos + 1)
+                        } else {
+                            self.fail(pos, k.name().into())
+                        };
+                    }
+                    Expr::Head => break head.then_some(pos),
+                    Expr::Seq(items) => {
+                        let Some((x, rest)) = items.split_first() else {
+                            break Some(pos);
+                        };
+                        let mark = self.kids.len();
+                        stack.push(Frame::Seq { rest, head, mark });
+                        e = x;
+                    }
+                    Expr::Choice(alts) => {
+                        let (x, rest) = alts.split_first().expect("a choice has branches");
+                        if !rest.is_empty() {
+                            stack.push(Frame::Choice { rest, pos, head });
+                        }
+                        e = x;
+                    }
+                    Expr::Star(x) | Expr::Plus(x) => {
+                        stack.push(Frame::Loop {
+                            x,
+                            at: pos,
+                            mark: self.kids.len(),
+                            some: false,
+                            star: matches!(e, Expr::Star(_)),
+                            head,
+                        });
+                        e = x;
+                    }
+                    Expr::Opt(x) => {
+                        stack.push(Frame::Opt { pos });
+                        e = x;
+                    }
+                    Expr::And(x) => {
+                        let mark = self.kids.len();
+                        stack.push(Frame::And { pos, mark });
+                        e = x;
+                    }
+                    Expr::Not(x) => {
+                        self.saved.push((self.far, self.expected.clone()));
+                        let mark = self.kids.len();
+                        stack.push(Frame::Not { pos, mark });
+                        e = x;
+                    }
+                    Expr::SetHead(x) => {
+                        head = true;
+                        e = x;
+                    }
+                    Expr::ClearHead(x) => {
+                        head = false;
+                        e = x;
+                    }
+                }
+            };
         }
     }
 }

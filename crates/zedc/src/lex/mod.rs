@@ -14,7 +14,7 @@ use std::fmt;
 
 pub use name::is_single_script;
 pub use punct::{KEYWORDS, OPERATORS};
-use string::Holes;
+use string::{Holes, Reading, Stop};
 
 /// A byte range of the loaded text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -26,7 +26,7 @@ pub struct Span {
 }
 
 /// A token's kind and the value it carries.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Tok {
     /// A name, with its trailing `'` when it has one (`x'`).
     Name(String),
@@ -65,7 +65,6 @@ pub struct Doc {
 }
 
 /// A part of a string literal.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Part {
     /// Text, with its escapes decoded and, in a `"""` string, its indentation stripped.
     Text(String),
@@ -79,7 +78,7 @@ pub enum Part {
 }
 
 /// A token and its span.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Token {
     /// The kind.
     pub tok: Tok,
@@ -175,26 +174,74 @@ pub fn comments(text: &str, tokens: &[Token]) -> Vec<Span> {
     out
 }
 
+/// A string whose hole is being lexed: the text and tokens around the string, and the hole.
+struct Level<'t> {
+    text: &'t str,
+    out: Vec<Token>,
+    string: Reading,
+    open: usize,
+}
+
 /// The tokens of `text` from byte `pos` to its end, with spans in `text`, and its doc
-/// comments pushed onto `docs`; with `elisions`, `…` is a name. `holes` holds what is known of
-/// the holes of the whole text this is part of.
-fn lex_from(
-    text: &str,
+/// comments pushed onto `docs`; with `elisions`, `…` is a name. A hole is lexed as text of its
+/// own ending at its `}`, with neither doc comments nor elisions; holes nest, so the strings
+/// around the current text are on a stack.
+fn lex_from<'t>(
+    mut text: &'t str,
     mut pos: usize,
     docs: &mut Vec<Doc>,
     elisions: bool,
     holes: &mut Holes,
 ) -> Result<Vec<Token>, Error> {
     let mut out = Vec::new();
-    while let Some(c) = text[pos..].chars().next() {
+    let mut levels: Vec<Level<'t>> = Vec::new();
+    let mut reading: Option<Reading> = None;
+    loop {
+        if let Some(mut string) = reading.take() {
+            match string.next(text, holes)? {
+                Stop::Closed(end) => {
+                    let start = string.start();
+                    out.push(Token {
+                        tok: string.finish(text)?,
+                        span: Span { start, end },
+                    });
+                    pos = end;
+                }
+                Stop::Hole(open, end) => {
+                    levels.push(Level {
+                        text,
+                        out: std::mem::take(&mut out),
+                        string,
+                        open,
+                    });
+                    text = &text[..end];
+                    pos = open + 2;
+                }
+            }
+            continue;
+        }
+        let Some(c) = text[pos..].chars().next() else {
+            let Some(mut level) = levels.pop() else {
+                return Ok(out);
+            };
+            let tokens = std::mem::replace(&mut out, level.out);
+            level.string.hole(tokens, level.open, text.len());
+            text = level.text;
+            reading = Some(level.string);
+            continue;
+        };
         let start = pos;
+        let top = levels.is_empty();
         let tok = if matches!(c, ' ' | '\t' | '\r' | '\n') {
             pos += 1;
             None
         } else if let Some(end) = comment::comment(text, pos) {
             pos = end?;
             let body = &text[start..pos];
-            if let Some(doc) = body.strip_prefix("///").filter(|d| !d.starts_with('/')) {
+            if let Some(doc) = body
+                .strip_prefix("///")
+                .filter(|d| top && !d.starts_with('/'))
+            {
                 docs.push(Doc {
                     text: doc.strip_prefix(' ').unwrap_or(doc).into(),
                     span: Span { start, end: pos },
@@ -205,10 +252,9 @@ fn lex_from(
             let (end, tok) = number?;
             pos = end;
             Some(tok)
-        } else if let Some(string) = string::string(text, pos, holes) {
-            let (end, tok) = string?;
-            pos = end;
-            Some(tok)
+        } else if c == '"' {
+            reading = Some(Reading::new(text, pos));
+            None
         } else if let Some(end) = matches!(c, '#' | '@')
             .then(|| name::name(text, pos + 1))
             .flatten()
@@ -231,7 +277,7 @@ fn lex_from(
         } else if let Some(end) = name::wildcard(text, pos) {
             pos = end;
             Some(Tok::Wildcard)
-        } else if elisions && c == '…' {
+        } else if elisions && top && c == '…' {
             pos += c.len_utf8();
             Some(Tok::Name(c.into()))
         } else if let Some(op) = punct::operator(text, pos) {
@@ -254,7 +300,6 @@ fn lex_from(
             });
         }
     }
-    Ok(out)
 }
 
 /// The name from `start` to `end` of `text`, if its characters are of one script.
@@ -269,3 +314,114 @@ fn checked(text: &str, start: usize, end: usize) -> Result<String, Error> {
         })
     }
 }
+
+impl Drop for Part {
+    /// Frees nested holes from a stack: each level of a string's holes would be a level of the
+    /// thread's stack otherwise.
+    fn drop(&mut self) {
+        let mut stack = Vec::new();
+        take_tokens(self, &mut stack);
+        while let Some(tokens) = stack.pop() {
+            for token in tokens {
+                if let Tok::Str(mut parts) = token.tok {
+                    for part in &mut parts {
+                        take_tokens(part, &mut stack);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Moves the tokens of `part`, a hole, onto `stack`.
+fn take_tokens(part: &mut Part, stack: &mut Vec<Vec<Token>>) {
+    if let Part::Hole { tokens, .. } = part {
+        stack.push(std::mem::take(tokens));
+    }
+}
+
+impl fmt::Debug for Part {
+    /// The output of `#[derive(Debug)]`, from a stack, since holes nest.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum Show<'a> {
+            Put(&'static str),
+            Span(Span),
+            Part(&'a Part),
+            Tokens(&'a [Token]),
+            Parts(&'a [Part]),
+        }
+        let mut stack = vec![Show::Part(self)];
+        while let Some(show) = stack.pop() {
+            match show {
+                Show::Put(s) => f.write_str(s)?,
+                Show::Span(s) => write!(f, "{s:?}")?,
+                Show::Part(Part::Text(s)) => write!(f, "Text({s:?})")?,
+                Show::Part(Part::Hole { tokens, span }) => {
+                    f.write_str("Hole { tokens: [")?;
+                    stack.extend([Show::Put(" }"), Show::Span(*span)]);
+                    stack.extend([Show::Put("], span: "), Show::Tokens(tokens)]);
+                }
+                Show::Tokens([]) | Show::Parts([]) => {}
+                Show::Tokens([first, rest @ ..]) => {
+                    if !rest.is_empty() {
+                        stack.extend([Show::Tokens(rest), Show::Put(", ")]);
+                    }
+                    let Tok::Str(parts) = &first.tok else {
+                        write!(f, "{first:?}")?;
+                        continue;
+                    };
+                    f.write_str("Token { tok: Str([")?;
+                    stack.extend([Show::Put(" }"), Show::Span(first.span)]);
+                    stack.extend([Show::Put("]), span: "), Show::Parts(parts)]);
+                }
+                Show::Parts([first, rest @ ..]) => {
+                    if !rest.is_empty() {
+                        stack.extend([Show::Parts(rest), Show::Put(", ")]);
+                    }
+                    stack.push(Show::Part(first));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PartialEq for Part {
+    /// Compares nested holes from a stack.
+    fn eq(&self, other: &Part) -> bool {
+        let mut stack = vec![(self, other)];
+        while let Some(pair) = stack.pop() {
+            let (a, b, x, y) = match pair {
+                (Part::Text(a), Part::Text(b)) if a == b => continue,
+                (Part::Hole { tokens: a, span: x }, Part::Hole { tokens: b, span: y }) => {
+                    (a, b, x, y)
+                }
+                (Part::Text(_) | Part::Hole { .. }, Part::Text(_) | Part::Hole { .. }) => {
+                    return false;
+                }
+            };
+            if x != y || a.len() != b.len() {
+                return false;
+            }
+            for (a, b) in a.iter().zip(b) {
+                if a.span != b.span {
+                    return false;
+                }
+                match (&a.tok, &b.tok) {
+                    (Tok::Str(p), Tok::Str(q)) if p.len() == q.len() => {
+                        stack.extend(p.iter().zip(q));
+                    }
+                    // At most one is a string, or their lengths differ: this does not nest.
+                    (p, q) => {
+                        if p != q {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
+impl Eq for Part {}

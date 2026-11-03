@@ -47,8 +47,8 @@ fn every_operator_lexes_alone_and_the_longest_wins() {
         assert_eq!(
             lex(op)
                 .unwrap()
-                .iter()
-                .map(|t| t.tok.clone())
+                .into_iter()
+                .map(|t| t.tok)
                 .collect::<Vec<_>>(),
             [Tok::Op(op)],
             "{op}"

@@ -100,10 +100,11 @@ fn a_wildcard_target_binds_nothing() {
     let text = "p -> { _, hi = p.bounds; hi }";
     let tokens = zedc::lex::lex(text).unwrap();
     let tree = zedc::parse::parse(text, &tokens, "Expr", zedc::parse::TOP).unwrap();
-    let ExprKind::Lambda { body, .. } = zedc::ast::build(text, &tokens, &tree).unwrap().kind else {
+    let e = zedc::ast::build(text, &tokens, &tree).unwrap();
+    let ExprKind::Lambda { body, .. } = &e.kind else {
         panic!("a lambda");
     };
-    let ExprKind::Block(stmts) = body.kind else {
+    let ExprKind::Block(stmts) = &body.kind else {
         panic!("a block");
     };
     let StmtKind::Bind { targets, .. } = &stmts[0].kind else {

@@ -130,14 +130,13 @@ fn a_mark_is_refused_outside_the_top_of_its_alternative() {
 }
 
 /// Each tree below has one nesting per operator, so neither the parser nor the builder may
-/// recurse on the length of a chain. The syntax tree is leaked because `Drop` of a deep `Expr`
-/// still recurses (plan item T2-parse).
+/// recurse on the length of a chain, nor may `Drop`.
 #[test]
 fn a_chain_of_a_million_operators_builds() {
     let text = "1 + ".repeat(1_000_000) + "2";
     let tokens = lex(&text).unwrap();
     let parsed = parse(&text, &tokens, "Expr", TOP).unwrap();
-    std::mem::forget(build(&text, &tokens, &parsed).unwrap());
+    build(&text, &tokens, &parsed).unwrap();
 }
 
 #[test]
@@ -145,5 +144,5 @@ fn a_chain_of_a_million_members_builds() {
     let text = "a".to_string() + &".b".repeat(1_000_000);
     let tokens = lex(&text).unwrap();
     let parsed = parse(&text, &tokens, "Expr", TOP).unwrap();
-    std::mem::forget(build(&text, &tokens, &parsed).unwrap());
+    build(&text, &tokens, &parsed).unwrap();
 }

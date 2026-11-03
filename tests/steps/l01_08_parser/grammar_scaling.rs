@@ -44,7 +44,7 @@ fn a_long_sum_builds_in_linear_time() {
         .collect();
     check("the syntax tree of a sum of n terms", 4_000, |m| {
         let (text, tokens) = &inputs[&m];
-        std::mem::forget(build(text, tokens, &trees[&m]).unwrap());
+        build(text, tokens, &trees[&m]).unwrap();
     });
 }
 
@@ -85,20 +85,12 @@ fn a_call_with_many_arguments_is_linear() {
 }
 
 /// `Primary` reads `&('{' Item)` before a block, so the statements of a block in a block are
-/// read by the lookahead and by the block, once each. The parser recurses on nesting, so this
-/// runs on a thread of its own with a large stack.
+/// read by the lookahead and by the block, once each.
 #[test]
 fn nested_blocks_are_linear() {
-    std::thread::Builder::new()
-        .stack_size(1 << 30)
-        .spawn(|| {
-            scales("n nested blocks", 500, "Expr", |n| {
-                format!("x -> {}1{}", "{ y = ".repeat(n), "; y }".repeat(n))
-            })
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    scales("n nested blocks", 2_000, "Expr", |n| {
+        format!("x -> {}1{}", "{ y = ".repeat(n), "; y }".repeat(n))
+    });
 }
 
 #[test]

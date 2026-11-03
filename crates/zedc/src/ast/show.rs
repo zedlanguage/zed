@@ -1,0 +1,360 @@
+//! The s-expression text of the syntax tree. Nesting costs heap, not thread stack: a job writes
+//! its text or pushes what it is made of, and a tree of any depth prints.
+
+use std::fmt;
+
+use super::{Expr, ExprKind, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type, TypeKind};
+
+/// What is left to write.
+enum Show<'a> {
+    Text(&'a str),
+    Quoted(&'a str),
+    Expr(&'a Expr),
+    Stmt(&'a Stmt),
+    Type(&'a Type),
+    Param(&'a Param),
+    Pattern(&'a Pattern),
+}
+
+use Show::Text;
+
+/// Writes `first` and all it is made of. Each job pushes its parts in written order, and they
+/// are turned around to run in that order.
+fn write(f: &mut fmt::Formatter<'_>, first: Show<'_>) -> fmt::Result {
+    let mut stack = vec![first];
+    while let Some(job) = stack.pop() {
+        let mark = stack.len();
+        match job {
+            Text(s) => f.write_str(s)?,
+            Show::Quoted(s) => write!(f, "{s:?}")?,
+            Show::Expr(e) => expr(e, &mut stack),
+            Show::Stmt(s) => stmt(s, &mut stack),
+            Show::Type(t) => ty(t, &mut stack),
+            Show::Param(p) => param(p, &mut stack),
+            Show::Pattern(p) => pattern(p, &mut stack),
+        }
+        stack[mark..].reverse();
+    }
+    Ok(())
+}
+
+/// Pushes each part after a space.
+fn each<'a, T: 'a>(
+    out: &mut Vec<Show<'a>>,
+    items: impl IntoIterator<Item = &'a T>,
+    show: impl Fn(&'a T) -> Show<'a>,
+) {
+    for x in items {
+        out.extend([Text(" "), show(x)]);
+    }
+}
+
+/// An s-expression: `(call f 1 (x: 2) ...)`, `(index m k)`, `(. p x)`, `(?. p x)`, `(+ a b)`,
+/// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`.
+fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
+    let at = |e: &'a Expr| Show::Expr(e);
+    match &e.kind {
+        ExprKind::Int { radix, digits } => {
+            let prefix = match radix {
+                2 => "0b",
+                8 => "0o",
+                16 => "0x",
+                _ => "",
+            };
+            out.extend([Text(prefix), Text(digits)]);
+        }
+        ExprKind::Float(s) => out.push(Text(s)),
+        ExprKind::Rat(s) => out.extend([Text(s), Text("r")]),
+        ExprKind::Str(parts) => {
+            out.push(Text("(str"));
+            each(out, parts, |p| match p {
+                StrPart::Text(t) => Show::Quoted(t),
+                StrPart::Hole(e) => Show::Expr(e),
+            });
+            out.push(Text(")"));
+        }
+        ExprKind::Bool(b) => out.push(Text(if *b { "true" } else { "false" })),
+        ExprKind::Atom(a) => out.extend([Text("#"), Text(a)]),
+        ExprKind::Name(n) => out.push(Text(n)),
+        ExprKind::Unary(op, e) => out.extend([Text("("), Text(op), Text(" "), at(e), Text(")")]),
+        ExprKind::Binary(op, a, b) => out.extend([
+            Text("("),
+            Text(op),
+            Text(" "),
+            at(a),
+            Text(" "),
+            at(b),
+            Text(")"),
+        ]),
+        ExprKind::Call {
+            callee,
+            positional,
+            named,
+            curry,
+        } => {
+            out.extend([Text("(call "), at(callee)]);
+            each(out, positional, Show::Expr);
+            for (n, a) in named {
+                out.extend([Text(" ("), Text(n), Text(": "), Show::Expr(a), Text(")")]);
+            }
+            out.push(Text(if *curry { " ...)" } else { ")" }));
+        }
+        ExprKind::Index(e, k) => {
+            out.extend([Text("(index "), at(e), Text(" "), at(k), Text(")")]);
+        }
+        ExprKind::If {
+            cond,
+            then,
+            otherwise,
+        } => out.extend([
+            Text("(if "),
+            at(cond),
+            Text(" "),
+            at(then),
+            Text(" "),
+            at(otherwise),
+            Text(")"),
+        ]),
+        ExprKind::Block(stmts) => {
+            out.push(Text("(block"));
+            each(out, stmts, Show::Stmt);
+            out.push(Text(")"));
+        }
+        ExprKind::Tuple(es) => {
+            out.push(Text("(tuple"));
+            each(out, es, Show::Expr);
+            out.push(Text(")"));
+        }
+        ExprKind::Lambda { params, body } => {
+            out.push(Text("(fn ("));
+            params_spaced(params, out);
+            out.extend([Text(") "), at(body), Text(")")]);
+        }
+        ExprKind::Is { of, ty, negated } => out.extend([
+            Text(if *negated { "(is not " } else { "(is " }),
+            at(of),
+            Text(" "),
+            Show::Type(ty),
+            Text(")"),
+        ]),
+        ExprKind::Else {
+            of,
+            pattern,
+            default,
+        } => {
+            out.extend([Text("(else "), at(of), Text(" ")]);
+            if let Some(p) = pattern {
+                out.extend([Show::Pattern(p), Text(" ")]);
+            }
+            out.extend([at(default), Text(")")]);
+        }
+        ExprKind::Member { of, name, safe } => out.extend([
+            Text(if *safe { "(?. " } else { "(. " }),
+            at(of),
+            Text(" "),
+            Text(name),
+            Text(")"),
+        ]),
+    }
+}
+
+fn params_spaced<'a>(params: &'a [Param], out: &mut Vec<Show<'a>>) {
+    let mut sep = "";
+    for p in params {
+        out.extend([Text(sep), Show::Param(p)]);
+        sep = " ";
+    }
+}
+
+/// `(= (a b) e)`, `(= (_) e)`, `(return a b)`, `(<- p e)`, and a function
+/// `(def f (x (y: int)) (-> (stdout: Lines)) = e (test (a b) …))`, the `=` for an equation.
+fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
+    match &s.kind {
+        StmtKind::Bind { targets, value } => {
+            out.push(Text("(= ("));
+            let mut sep = "";
+            for t in targets {
+                out.extend([
+                    Text(sep),
+                    Text(match t {
+                        Target::Name(n) => n,
+                        Target::Wild => "_",
+                    }),
+                ]);
+                sep = " ";
+            }
+            out.extend([Text(") "), Show::Expr(value), Text(")")]);
+        }
+        StmtKind::Return(es) => {
+            out.push(Text("(return"));
+            each(out, es, Show::Expr);
+            out.push(Text(")"));
+        }
+        StmtKind::Push { port, value } => out.extend([
+            Text("(<- "),
+            Text(port),
+            Text(" "),
+            Show::Expr(value),
+            Text(")"),
+        ]),
+        StmtKind::Function(func) => {
+            out.extend([Text("(def "), Text(&func.name), Text(" (")]);
+            params_spaced(&func.params, out);
+            out.push(Text(")"));
+            if let Some(ports) = &func.ports {
+                out.push(Text(" (->"));
+                for p in ports {
+                    out.extend([
+                        Text(" ("),
+                        Text(&p.name),
+                        Text(": "),
+                        Show::Type(&p.ty),
+                        Text(")"),
+                    ]);
+                }
+                out.push(Text(")"));
+            }
+            out.extend([
+                Text(if func.equation { " = " } else { " " }),
+                Show::Expr(&func.body),
+            ]);
+            if !func.tests.is_empty() {
+                out.push(Text(" (test"));
+                for (a, b) in &func.tests {
+                    out.extend([
+                        Text(" ("),
+                        Show::Expr(a),
+                        Text(" "),
+                        Show::Expr(b),
+                        Text(")"),
+                    ]);
+                }
+                out.push(Text(")"));
+            }
+            out.push(Text(")"));
+        }
+    }
+}
+
+/// `int`, `#none`, `(tuple A B)`, `(| A B)`, `(& A B)`, `(\ A B)`, `(-> (A (x: B)) R)`.
+fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
+    let mut list = |head, ts: &'a [Type]| {
+        out.push(Text(head));
+        each(out, ts, Show::Type);
+        out.push(Text(")"));
+    };
+    match &t.kind {
+        TypeKind::Name(n) => out.push(Text(n)),
+        TypeKind::Atom(a) => out.extend([Text("#"), Text(a)]),
+        TypeKind::Tuple(ts) => list("(tuple", ts),
+        TypeKind::Union(ts) => list("(|", ts),
+        TypeKind::And(ts) => list("(&", ts),
+        TypeKind::Diff(a, b) => out.extend([
+            Text("(\\ "),
+            Show::Type(a),
+            Text(" "),
+            Show::Type(b),
+            Text(")"),
+        ]),
+        TypeKind::Arrow {
+            params,
+            partial,
+            result,
+        } => {
+            out.push(Text(if *partial { "(->? (" } else { "(-> (" }));
+            let mut sep = "";
+            for p in params {
+                out.push(Text(sep));
+                sep = " ";
+                match (&p.name, p.positional) {
+                    (Some(n), true) => out.extend([
+                        Text("(positional "),
+                        Text(n),
+                        Text(": "),
+                        Show::Type(&p.ty),
+                        Text(")"),
+                    ]),
+                    (Some(n), false) => {
+                        out.extend([Text("("), Text(n), Text(": "), Show::Type(&p.ty), Text(")")])
+                    }
+                    (None, _) => out.push(Show::Type(&p.ty)),
+                }
+            }
+            out.extend([Text(") "), Show::Type(result), Text(")")]);
+        }
+    }
+}
+
+/// `x`, or `(positional x: int = 0)` with what is written.
+fn param<'a>(p: &'a Param, out: &mut Vec<Show<'a>>) {
+    if !p.positional && p.ty.is_none() && p.default.is_none() {
+        out.push(Text(&p.name));
+        return;
+    }
+    out.push(Text("("));
+    if p.positional {
+        out.push(Text("positional "));
+    }
+    out.push(Text(&p.name));
+    if let Some(t) = &p.ty {
+        out.extend([Text(": "), Show::Type(t)]);
+    }
+    if let Some(d) = &p.default {
+        out.extend([Text(" = "), Show::Expr(d)]);
+    }
+    out.push(Text(")"));
+}
+
+/// `#name`, `#name(f: p, g:)`, `#name(p, q)`.
+fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
+    let Pattern::Atom {
+        name,
+        fields,
+        items,
+        ..
+    } = p;
+    out.extend([Text("#"), Text(name)]);
+    if fields.is_empty() && items.is_empty() {
+        return;
+    }
+    out.push(Text("("));
+    let mut sep = "";
+    for (n, p) in fields {
+        out.extend([Text(sep), Text(n)]);
+        match p {
+            Some(p) => out.extend([Text(": "), Show::Pattern(p)]),
+            None => out.push(Text(":")),
+        }
+        sep = ", ";
+    }
+    for p in items {
+        out.extend([Text(sep), Show::Pattern(p)]);
+        sep = ", ";
+    }
+    out.push(Text(")"));
+}
+
+macro_rules! shown {
+    ($($t:ident)*) => {
+        $(impl fmt::Display for $t {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write(f, Show::$t(self))
+            }
+        })*
+    };
+}
+
+shown!(Expr Stmt Type Param Pattern);
+
+/// The same text as `Display`: a derived `Debug` would recurse.
+macro_rules! debug_as_shown {
+    ($($t:ident)*) => {
+        $(impl fmt::Debug for $t {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::Display::fmt(self, f)
+            }
+        })*
+    };
+}
+
+debug_as_shown!(Expr Type Pattern);

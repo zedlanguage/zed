@@ -606,3 +606,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `RefCell` to collect from inside a `Fn` closure that `Expr::eval` calls | `Type::contains` | Mutation | The closure returns what it needs, as a value |
 | Raw pointers as map keys, `*const Node` and `*const Value` | `Type::contains` | Identity | Keyed by a hash-consed id of the type and the position in the value |
 | Hardware counter opened with `perf_event_open` through `perf-event2`, and the thread CPU clock through `rustix` | `zed_tests::scaling::Meter`, `cpu_time` | Foreign library | Test harness only, so a Zed port needs it only if the tests move to Zed: an `@ffi` signature over the two system calls (L7.4) |
+
+## Entries from T2-parse (`zedc/src/parse/mod.rs`, `ast/`, `format.rs`, `lex/`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Vec` of `Copy` frames as an explicit stack, popped and pushed in a loop | `Parser` machine, `Formatter::run`, `ast::show` | Mutation | A state receiver, as for the evaluator's machine |
+| `impl Drop` with a work list, on enums and structs | `ast/drop.rs`, `parse::Tree`, `lex::Part` | None | Removed: the runtime frees values, and must free a deep chain without recursion itself |
+| `VecDeque` with `push_front`, `pop_back` and `get_mut`, slots taken in place by `Option::take` | `Builder::fill`, `Builder::take` | Mutation | A map keyed by position, or a state receiver over a list |
+| `Cow<str>` for pieces of output, some borrowed from the source | `Formatter::pieces` | None | Zed shares strings, so a piece is a plain `String` |
+| `macro_rules!` for repeated statements in a `match` | `then!`, `shown!`, `debug_as_shown!` | Macros | A function |
+| `OnceLock` for a table computed once | `ast::forms` | Global state | A constant, or a value passed in |
