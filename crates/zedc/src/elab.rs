@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use imbl::Vector;
 
+use zed_kernel::num::{LiteralRounding, literal_f64, show_f64};
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Term, Value};
 
@@ -876,7 +877,24 @@ impl<'a> Elab<'a> {
             }
             ExprKind::Float(s) => {
                 let s: String = s.chars().filter(|&c| c != '_').collect();
-                lit(Value::float(s.parse().expect("the lexer's float text")))
+                match literal_f64(&s) {
+                    Ok(x) => lit(Value::float(x)),
+                    Err(LiteralRounding::Infinite) => self.error(
+                        e.span,
+                        format!(
+                            "`{s}` rounds to infinity as an f64; the largest f64 is {}",
+                            show_f64(f64::MAX)
+                        ),
+                    ),
+                    Err(LiteralRounding::Zero) => self.error(
+                        e.span,
+                        format!(
+                            "`{s}` is not zero but rounds to zero as an f64; the least positive \
+                             f64 is {}",
+                            show_f64(f64::from_bits(1))
+                        ),
+                    ),
+                }
             }
             ExprKind::Rat(s) => match Rat::decimal(s) {
                 Some(r) => lit(Value::rat(r)),
@@ -953,6 +971,16 @@ impl<'a> Elab<'a> {
             } => {
                 let (v, d) = (self.expr(of), self.expr(default));
                 let pat = match pattern {
+                    // A bare pattern matches the atom with any payload or none, as the
+                    // checker's narrowing removes it (DESIGN.md L1.27).
+                    Some(Pattern::Atom {
+                        name,
+                        fields,
+                        items,
+                        ..
+                    }) if fields.is_empty() && items.is_empty() => {
+                        Some(Some(KPattern::Is(check::any_payload(name))))
+                    }
                     Some(p) => self.pattern(p).map(Some),
                     None => Some(None),
                 };

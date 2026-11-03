@@ -83,3 +83,14 @@ fn golden_malformed_strings() {
         .collect();
     insta::assert_snapshot!(out.join("\n"));
 }
+
+#[test]
+fn an_unknown_escape_is_a_lexical_error_that_lists_the_escapes() {
+    let text = r#"greeting = "C:\quarterly\report";"#;
+    let e = lex(text).unwrap_err();
+    assert_eq!(&text[e.span.start..e.span.end], r"\q");
+    assert_eq!(
+        e.to_string(),
+        r#"malformed string: no such escape; the escapes are \n \t \r \0 \\ \" \$ \u{…}"#
+    );
+}

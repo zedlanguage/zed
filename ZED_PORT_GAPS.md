@@ -787,3 +787,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `match *self.kids(k) { [name, set] => …, [e] => … }`, slice patterns on a dereferenced slice | `Builder` index keys | Slice patterns | Test the length, then index (the appendix's row for slice patterns) |
 | A `HashSet<&str>` borrowed from the statements, so each indexed family is bound once | `Resolver::declare` | Borrowed keys | A set of names; strings are values, so no borrow is needed |
 | `unreachable!` arms for the L6 forms that resolution refuses | `elab.rs`, `check/mod.rs` | Partial match | As for L2.1 and L3.1: a total match whose L6 arm returns the refusal, or a narrower type from resolution |
+
+## Entries from OSP-lit (`zedc/src/docs.rs`, `zed-kernel/src/num.rs`, `zedc/src/run.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `slice::partition_point` with a closure, a binary search over the token list | `docs::check` | None | A binary search over a sequence by a predicate, from the L3 library |
+| `Option<(usize, Span)>` matched as `Some((n, span)) if *n == next` through `&mut`, then extended in place | `docs::check` | Mutation | A fold over the doc comments whose state is the open block, returned with each step |
+| `str::parse::<f64>()` and `str::parse::<f32>()`, correctly rounded by the standard library | `num::literal_f64`, `num::literal_f32` | Missing primitive | A prelude cast `f64(text)` that rounds to nearest with ties to even, as `num::literal_f64` does |
+| A sink typed `FnMut(&str, &str) -> Result<(), (String, String)>` for the path and reason of a failed write | `run::commit` | Mutation | A function returning the acknowledgment atom `#ioError(op:, path:, why:)` directly |

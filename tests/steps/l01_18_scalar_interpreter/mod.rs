@@ -5,6 +5,7 @@
 mod casts;
 mod failures;
 mod floats;
+mod literals;
 mod scaling;
 mod words;
 

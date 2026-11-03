@@ -33,13 +33,13 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
        2 |   n = int(stdin[1]) else 0;
          |       ^^^^^^^^^^^^^^^^^^^^
   [7]  2:7: this `else` gives int
-  [8]  2:7: this call of `int` gives int | #invalid | #ioError | #notFound
+  [8]  2:7: this call of `int` gives int | #invalid | #ioError(_) | #notFound
        2 |   n = int(stdin[1]) else 0;
          |       ^^^^^^^^^^^^^
-  [9]  2:11: this expression gives String | #ioError | #notFound
+  [9]  2:11: this expression gives String | #ioError(_) | #notFound
        2 |   n = int(stdin[1]) else 0;
          |           ^^^^^^^^
-  [10] 2:11: `stdin` is ((int) -> String | #ioError | #notFound) here
+  [10] 2:11: `stdin` is ((int) -> String | #ioError(_) | #notFound) here
        2 |   n = int(stdin[1]) else 0;
          |           ^^^^^
   [11] 1:6: `stdin` is declared `Lines`

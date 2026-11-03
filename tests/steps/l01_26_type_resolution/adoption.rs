@@ -84,3 +84,36 @@ fn a_body_keeps_the_arrows_with_the_fewest_adoptions() {
         ["`f` does not take (1.5) [1.5]"]
     );
 }
+
+#[test]
+fn a_float_literal_at_rat_is_its_exact_decimal() {
+    assert_eq!(
+        value("price(positional p: rat) = p;\nx = price(0.1);\n", "x"),
+        "1r/10r"
+    );
+    assert_eq!(value("x = 1r + 0.1;\n", "x"), "11r/10r");
+    // Exact at rat, so neither rounds: beyond the f64 range is no error here.
+    assert_eq!(
+        adopted("x = 1r + 1e-400;\n"),
+        [Value::rat(zed_kernel::Rat::decimal("1e-400").unwrap())]
+    );
+    assert_eq!(type_errors("x = 1r + 1e400;\n"), Vec::<String>::new());
+}
+
+#[test]
+fn a_float_literal_at_f64_rounds_and_an_integer_literal_does_not() {
+    // `0.1` has no exact f64; a float literal rounds to the nearest.
+    assert_eq!(
+        value("f(positional x: f64) = x;\ny = f(0.1);\n", "y"),
+        "0.1"
+    );
+    // An integer literal adopts exactly or not at all: 2^53 + 1 has no f64.
+    assert_eq!(
+        type_errors("f(positional x: f64) = x;\ny = f(9007199254740993);\n"),
+        ["`9007199254740993` is not an f64 [9007199254740993]"]
+    );
+    assert_eq!(
+        value("f(positional x: f64) = x;\ny = f(9007199254740992);\n", "y"),
+        "9007199254740992.0"
+    );
+}

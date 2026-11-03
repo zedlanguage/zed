@@ -266,6 +266,17 @@ impl Value {
         })
     }
 
+    /// `#ioError(op:, path:, why:)`: a failed read or write of a port, its operation (`read`
+    /// or `write`), its path and the operating system's reason (DESIGN.md sec:ports).
+    pub fn io_error(op: &str, path: &str, why: &str) -> Self {
+        // The fields in name order, as `atom_named` sorts them.
+        Value::Atom(Atom {
+            name: "ioError".into(),
+            fields: vec![Arc::from("op"), "path".into(), "why".into()].into(),
+            args: vec![Value::str(op), Value::str(path), Value::str(why)].into(),
+        })
+    }
+
     /// An atom with a struct payload, such as `#err(code: 3)`, its fields in any order;
     /// `None` when a name repeats.
     pub fn atom_named(name: &str, fields: Vec<(Arc<str>, Value)>) -> Option<Self> {

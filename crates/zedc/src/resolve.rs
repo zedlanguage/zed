@@ -73,6 +73,11 @@ pub struct Resolution {
     pub uses: BTreeMap<Span, Ref>,
     /// The binders of each `else` pattern, by the `else`'s text: a range of `binders`.
     pub patterns: BTreeMap<Span, Range<usize>>,
+    /// Where each declaration statement starts, in every scope: a binding, a function, a
+    /// struct, a type, a method, an import, a `mutable`, a piece of an indexed definition, or an
+    /// annotated one. A doc comment attaches to the declaration that follows it (DESIGN.md
+    /// sec:grammar, comments).
+    pub decls: HashSet<usize>,
 }
 
 /// The value words of the prelude, each with the layer it belongs to (DESIGN.md, "Defined
@@ -133,6 +138,11 @@ pub fn prelude_layer(name: &str) -> Option<u32> {
         .iter()
         .find(|(w, _)| *w == name)
         .map(|&(_, layer)| layer)
+}
+
+/// Whether `name` is a prelude value word of any layer or a prelude type name.
+pub fn is_prelude_name(name: &str) -> bool {
+    prelude_layer(name).is_some() || TYPES.contains(&name)
 }
 
 /// The annotations, each with the layer it belongs to (DESIGN.md, "Defined words by layer").
@@ -330,6 +340,16 @@ impl Resolver {
     fn stmts(&mut self, stmts: &[Stmt]) {
         let mut families = HashSet::new();
         for s in stmts {
+            if !matches!(
+                s.kind,
+                StmtKind::Return(_)
+                    | StmtKind::Push { .. }
+                    | StmtKind::While(_)
+                    | StmtKind::Until(_)
+                    | StmtKind::Expr(_)
+            ) {
+                self.out.decls.insert(s.span.start);
+            }
             self.declare(s, false, &mut families);
         }
         stmts.iter().for_each(|s| self.stmt(s));

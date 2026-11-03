@@ -218,6 +218,55 @@ pub fn show_f64(x: f64) -> String {
     format!("{sign}{body}")
 }
 
+/// Why a float literal has no value at a binary float carrier (DESIGN.md sec:domains).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LiteralRounding {
+    /// It rounds to infinity: it is beyond the largest finite float.
+    Infinite,
+    /// Its digits are not all zero, but it rounds to zero: it is below half the least
+    /// subnormal.
+    Zero,
+}
+
+/// The float literal `text` at `f64`: decimal digits with an optional fraction and exponent,
+/// no sign and no `_`, as the lexer keeps it (`0.1`, `1e9`, `2.5E-3`). It is correctly
+/// rounded, to nearest with ties to even, by the standard library's reading, which costs time
+/// linear in the text; it is an error when that rounds to infinity, or to zero while some
+/// digit before the exponent is not `0`, so `0e999` is zero and `1e-400` is an error.
+pub fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
+    rounded(text, text.parse::<f64>().ok(), f64::is_infinite, |x| {
+        x == 0.0
+    })
+}
+
+/// The float literal `text` at `f32`, by the rule of [`literal_f64`]: `1e39` rounds to
+/// infinity and `1e-46` to zero.
+pub fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
+    rounded(text, text.parse::<f32>().ok(), f32::is_infinite, |x| {
+        x == 0.0
+    })
+}
+
+fn rounded<F>(
+    text: &str,
+    read: Option<F>,
+    infinite: fn(F) -> bool,
+    zero: fn(F) -> bool,
+) -> Result<F, LiteralRounding>
+where
+    F: Copy,
+{
+    let x = read.expect("the lexer's float text reads as a float");
+    let digits = text.split(['e', 'E']).next().unwrap_or(text);
+    if infinite(x) {
+        Err(LiteralRounding::Infinite)
+    } else if zero(x) && digits.bytes().any(|b| matches!(b, b'1'..=b'9')) {
+        Err(LiteralRounding::Zero)
+    } else {
+        Ok(x)
+    }
+}
+
 /// The float equal to `r`, when there is one.
 pub(crate) fn exact_f64(r: &Rat) -> Option<f64> {
     // A double is m * 2^k with |m| < 2^53, so its denominator is a power of two.

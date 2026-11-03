@@ -1,4 +1,5 @@
-//! `Files` ports: `fs[path]` is `String | #ioError | #notFound`, and each path is read from
+//! `Files` ports: `fs[path]` is `String | #ioError(op:, path:, why:) | #notFound`, and each path
+//! is read from the world at most once per wave.| #ioError | #notFound`, and each path is read from
 //! the world at most once per wave.
 
 use std::collections::BTreeMap;
@@ -44,7 +45,10 @@ fn a_file_that_is_not_utf8_is_an_io_error() {
     let v = zedc::run::Disk
         .get(&Value::str(bin.to_str().unwrap()))
         .unwrap();
-    assert_eq!(v, Value::atom("ioError"));
+    assert_eq!(
+        v,
+        Value::io_error("read", bin.to_str().unwrap(), "the file is not UTF-8")
+    );
     assert_eq!(
         zedc::run::Disk.get(&Value::Int(3)),
         Err("a path is a String, not 3".to_string())
@@ -100,4 +104,53 @@ fn ports_are_lines_or_files_at_l1() {
         e.as_deref(),
         Some("a program declares one `main` function; this one declares 0")
     );
+}
+
+#[test]
+fn a_failed_read_says_what_failed_where_and_why() {
+    // A directory is no file: reading it fails with the operating system's reason.
+    let d = dir("failed-read");
+    let src = format!(
+        "main(fs: Files) -> (stdout: Lines) {{\n  \
+         stdout <- (fs[\"{}\"] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\") \
+         else \"missing\";\n}}\n",
+        d.display()
+    );
+    let out = run("failed-read", &src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout),
+        (
+            0,
+            format!("read {}: Is a directory (os error 21)\n", d.display())
+        )
+    );
+    assert_eq!(
+        zedc::run::Disk.get(&Value::str(d.to_str().unwrap())),
+        Ok(Value::io_error(
+            "read",
+            d.to_str().unwrap(),
+            "Is a directory (os error 21)"
+        ))
+    );
+    // A bare `#ioError` still matches it, by the atom alone.
+    let src = format!(
+        "main(fs: Files) -> (stdout: Lines) {{\n  \
+         stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
+        d.display()
+    );
+    assert_eq!(run("failed-read", &src, "", &[]).stdout, "unreadable\n");
+}
+
+#[test]
+fn a_bare_io_error_pattern_narrows_the_payload_away() {
+    // After `else #ioError -> …` and `else #notFound -> …` only a `String` is left, so the
+    // push type-checks.
+    let src = "main(fs: Files) -> (stdout: Lines) {\n  \
+               stdout <- (fs[\"app.conf\"] else #ioError -> \"unreadable\") \
+               else #notFound -> \"missing\";\n}\n";
+    assert!(load(src.as_bytes()).is_ok());
+    let src = "main(fs: Files) -> (stdout: Lines) {\n  \
+               stdout <- fs[\"app.conf\"] else #notFound -> \"missing\";\n}\n";
+    let e = load(src.as_bytes()).err().unwrap();
+    assert!(e.contains("#ioError(_)"), "{e}");
 }

@@ -5,6 +5,7 @@
 
 mod adoption;
 mod calls;
+mod docs;
 mod fits;
 mod narrowing;
 mod random;

@@ -51,7 +51,12 @@ fn a_record_round_trips_any_bytes() {
         Value::str("x\n\ny"),
     );
     files.insert(Value::str("gone.txt"), Value::atom("notFound"));
-    files.insert(Value::str("locked"), Value::atom("ioError"));
+    files.insert(
+        Value::str("locked"),
+        Value::io_error("read", "locked", "Permission denied (os error 13)"),
+    );
+    // A record written before `#ioError` had its payload holds a bare one.
+    files.insert(Value::str("old"), Value::atom("ioError"));
     let mut lines = BTreeMap::new();
     lines.insert("stdin".to_string(), b"\xff 12 34\n\n".to_vec());
     let record = Record {

@@ -32,7 +32,11 @@ fn lines_split_as_the_interpreter_splits_them() {
     let all = strings(alphabet, 6);
     assert_eq!(all.len(), 19531);
     for s in &all {
-        assert_eq!(zed_rt::ports::lines(s), split_lines(s), "{s:?}");
+        assert_eq!(
+            zed_rt::ports::lines("stdin", s),
+            split_lines("stdin", s),
+            "{s:?}"
+        );
     }
 }
 

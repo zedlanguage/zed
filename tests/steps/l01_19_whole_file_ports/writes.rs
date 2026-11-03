@@ -94,7 +94,7 @@ fn the_first_failed_write_aborts_the_rest() {
     let acks = commit(&writes, |port, _| {
         done.push(port.to_string());
         if port == "stdout" {
-            Err("disk full".into())
+            Err(("stdout".into(), "disk full".into()))
         } else {
             Ok(())
         }
@@ -105,7 +105,10 @@ fn the_first_failed_write_aborts_the_rest() {
         acks,
         [
             ("audit".to_string(), Value::atom("ok").to_string()),
-            ("stdout".to_string(), "#ioError(\"disk full\")".to_string()),
+            (
+                "stdout".to_string(),
+                "#ioError(op: \"write\", path: \"stdout\", why: \"disk full\")".to_string()
+            ),
         ]
     );
     // Through the command, a failed write exits 1 and names the port.
@@ -119,7 +122,7 @@ fn the_first_failed_write_aborts_the_rest() {
     assert_eq!(out.status, 1);
     assert!(
         out.stderr
-            .starts_with("writing port `log2` failed: #ioError(\"/nonexistent-dir-l01-19/x.txt: "),
+            .starts_with("writing port `log2` failed: #ioError(op: \"write\", path: \"/nonexistent-dir-l01-19/x.txt\", why: \"No such file or directory (os error 2)\")"),
         "{}",
         out.stderr
     );

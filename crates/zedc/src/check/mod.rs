@@ -1642,7 +1642,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         items,
                         ..
                     }) if fields.is_empty() && items.is_empty() => {
-                        v.diff(&Ty::set(KType::atom(name))).union(&d)
+                        // A bare pattern matches the atom with any payload or none.
+                        let mut rest = v.diff(&Ty::set(any_payload(name)));
+                        rest.payloads.remove(name.as_str());
+                        rest.union(&d)
                     }
                     Some(_) => v.union(&d),
                 }
@@ -4009,21 +4012,42 @@ fn interval(e: &Expr) -> IntervalSet {
     }
 }
 
+/// The atom `#name` with any payload or none: what a bare pattern `#name` matches.
+pub(crate) fn any_payload(name: &str) -> KType {
+    KType::union_all([KType::atom(name), KType::atom_with(name, &KType::top())])
+}
+
+/// `#ioError(op: String, path: String, why: String)`: a failed read or write, its operation,
+/// its path and the operating system's reason.
+fn io_error() -> Ty {
+    let fields = ["op", "path", "why"]
+        .into_iter()
+        .map(|f| (Arc::from(f), Ty::carrier(Carrier::Str)))
+        .collect();
+    let mut t = Ty::set(KType::atom_with("ioError", &KType::top()));
+    t.payloads.insert(
+        "ioError".into(),
+        Some(vec![Shape {
+            items: Vec::new(),
+            fields,
+        }]),
+    );
+    t
+}
+
 /// The type of a port of `main` (L1.19): a `Lines` input is the family of its lines by number
-/// from 1, each a `String` or `#ioError`, and a `Files` input answers a path with its text,
-/// `#notFound` or `#ioError`; a lookup outside the family's keys is `#notFound`.
+/// from 1, each a `String` or `#ioError(op:, path:, why:)`, and a `Files` input answers a path
+/// with its text, `#notFound` or `#ioError(op:, path:, why:)`; a lookup outside the family's
+/// keys is `#notFound`.
 fn port(lines: bool) -> Ty {
-    let fails = |names: &[&str]| {
-        names.iter().fold(Ty::carrier(Carrier::Str), |t, n| {
-            t.union(&Ty::set(KType::atom(n)))
-        })
-    };
     let key = if lines { Carrier::Int } else { Carrier::Str };
     Ty::func(Arc::new(Sig {
         params: positional(1),
         arrows: vec![Arrow {
             params: vec![Ty::carrier(key)],
-            result: fails(&["ioError", "notFound"]),
+            result: Ty::carrier(Carrier::Str)
+                .union(&io_error())
+                .union(&Ty::set(KType::atom("notFound"))),
         }],
         bounds: BTreeMap::new(),
         data: lines,

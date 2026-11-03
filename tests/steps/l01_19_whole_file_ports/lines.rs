@@ -9,7 +9,7 @@ use super::run;
 #[test]
 fn a_family_of_lines_is_written_one_line_per_entry() {
     let cat = |input: &[u8]| {
-        String::from_utf8(join_lines("stdout", &split_lines(input)).unwrap()).unwrap()
+        String::from_utf8(join_lines("stdout", &split_lines("stdin", input)).unwrap()).unwrap()
     };
     assert_eq!(cat(b"first\nsecond\n"), "first\nsecond\n");
     // A last line without `\n` is still a line, and is written with one.
@@ -22,7 +22,7 @@ fn a_family_of_lines_is_written_one_line_per_entry() {
     let out = run("cat", src, "first\n", &[]);
     assert_eq!(out.status, 1);
     assert!(
-        out.stderr.contains("a `Lines` port takes a `String` or a family of strings, not ((int) -> String | #ioError | #notFound)"),
+        out.stderr.contains("a `Lines` port takes a `String` or a family of strings, not ((int) -> String | #ioError(_) | #notFound)"),
         "{}",
         out.stderr
     );
@@ -35,7 +35,7 @@ fn lines_are_numbered_from_one_and_crlf_is_one_line_end() {
     let out = run("numbers", src, "name: Ada\r\nrole: admin\r\n", &[]);
     assert_eq!(out.stdout, "name: Ada|role: admin|none\n");
     assert_eq!(
-        split_lines(b"a\r\n\nb").to_string(),
+        split_lines("stdin", b"a\r\n\nb").to_string(),
         "{1 -> \"a\", 2 -> \"\", 3 -> \"b\"}",
         "an empty line in the middle is kept"
     );
@@ -43,12 +43,15 @@ fn lines_are_numbered_from_one_and_crlf_is_one_line_end() {
 
 #[test]
 fn a_line_that_is_not_utf8_is_an_io_error_at_its_key() {
-    let lines = split_lines(b"ok\n\xff\xfe\nfine\n");
+    let lines = split_lines("stdin", b"ok\n\xff\xfe\nfine\n");
     let Value::Family(f) = &lines else {
         panic!("{lines}")
     };
     assert_eq!(f.get(&Value::Int(1)), Some(&Value::str("ok")));
-    assert_eq!(f.get(&Value::Int(2)), Some(&Value::atom("ioError")));
+    assert_eq!(
+        f.get(&Value::Int(2)),
+        Some(&Value::io_error("read", "stdin", "line 2 is not UTF-8"))
+    );
     assert_eq!(f.get(&Value::Int(3)), Some(&Value::str("fine")));
 }
 

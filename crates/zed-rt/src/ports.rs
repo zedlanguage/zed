@@ -4,10 +4,10 @@
 
 use zed_kernel::{Family, Value};
 
-/// The lines of `bytes`, keyed from 1: a line ends at `\n`, which a last line may lack; a
-/// `\r` before the `\n` is not part of the line; a line that is not UTF-8 is a bare
-/// `#ioError`.
-pub fn lines(bytes: &[u8]) -> Value {
+/// The lines of `bytes`, the input of port `port`, keyed from 1: a line ends at `\n`, which a
+/// last line may lack; a `\r` before the `\n` is not part of the line; a line that is not
+/// UTF-8 is `#ioError(op: "read", path: port, why: "line N is not UTF-8")`.
+pub fn lines(port: &str, bytes: &[u8]) -> Value {
     let mut out = Vec::new();
     let mut start = 0;
     while start < bytes.len() {
@@ -21,7 +21,11 @@ pub fn lines(bytes: &[u8]) -> Value {
         }
         let v = match std::str::from_utf8(line) {
             Ok(s) => Value::str(s),
-            Err(_) => Value::atom("ioError"),
+            Err(_) => Value::io_error(
+                "read",
+                port,
+                &format!("line {} is not UTF-8", out.len() + 1),
+            ),
         };
         out.push((Value::Int(out.len() as i64 + 1), v));
         start = end + 1;
@@ -55,7 +59,7 @@ mod tests {
 
     #[test]
     fn lines_split_as_the_interpreter_does() {
-        let f = |b: &[u8]| match lines(b) {
+        let f = |b: &[u8]| match lines("stdin", b) {
             Value::Family(f) => f.leaves().into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
             _ => unreachable!(),
         };
@@ -66,7 +70,13 @@ mod tests {
             f(b"a\n\nb\n"),
             vec![Value::str("a"), Value::str(""), Value::str("b")]
         );
-        assert_eq!(f(b"\xff\n"), vec![Value::atom("ioError")]);
+        assert_eq!(
+            f(b"ok\n\xff\n"),
+            vec![
+                Value::str("ok"),
+                Value::io_error("read", "stdin", "line 2 is not UTF-8")
+            ]
+        );
         assert_eq!(write("o", &Value::str("x")).unwrap(), b"x\n");
         assert!(write("o", &Value::Int(1)).is_err());
     }

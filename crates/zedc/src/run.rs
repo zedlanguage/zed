@@ -2,11 +2,11 @@
 //! input is read once, whole, the wave runs, and each output is written once, at the end.
 //!
 //! An input `Lines` port is the family of its lines, keyed by line number from 1; a `Files`
-//! port is a lookup, `Path ->? String | #ioError`, answered by the world at each path read and
+//! port is a lookup, `Path ->? String | #ioError(op:, path:, why:)`, answered by the world at each path read and
 //! kept, so the wave sees one value per path. An output `Lines` port takes one whole-value
 //! push, a `String` (one line) or a family of them (one line per entry, in key order); keyed
 //! and multi-site pushes arrive at layer L7. The writes are buffered and committed when the
-//! wave ends, each with its acknowledgment, `#ok` or `#ioError(why)`; the program has no name
+//! wave ends, each with its acknowledgment, `#ok` or `#ioError(op:, path:, why:)`; the program has no name
 //! for the acknowledgment, so a failed write takes the default policy and aborts the wave.
 //!
 //! A [`Record`] holds every input the wave read, so [`Program::replay`] runs it again without
@@ -21,7 +21,7 @@ use zed_kernel::{Evaluator, Family, Lookup, Provenance, Term, Value, World};
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::{Unit, elaborate};
 use crate::parse::{TOP, parse};
-use crate::{interp, lex, resolve, source, stage};
+use crate::{docs, interp, lex, resolve, source, stage};
 
 /// The kinds of input port `main` declares at L1.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -170,12 +170,23 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
             })
             .collect::<Vec<_>>()
     };
-    let tokens = lex::lex(text).map_err(|e| vec![at(e.span.start, e.to_string())])?;
+    let (tokens, docs) =
+        lex::lex_with_docs(text).map_err(|e| vec![at(e.span.start, e.to_string())])?;
     let tree =
         parse(text, &tokens, "Unit", TOP).map_err(|e| vec![at(e.span.start, e.to_string())])?;
     let stmts = ast::unit(text, &tokens, &tree).map_err(|e| all(vec![e]))?;
     let res = resolve::resolve(&stmts).map_err(all)?;
-    let unit = elaborate(&stmts, &res).map_err(all)?;
+    // Doc comments are checked after parsing; their errors join elaboration's.
+    let mut errors = docs::check(text, &tokens, &docs, &res);
+    let unit = match elaborate(&stmts, &res) {
+        Ok(unit) if errors.is_empty() => unit,
+        Ok(_) => return Err(all(errors)),
+        Err(es) => {
+            errors.extend(es);
+            errors.sort_by_key(|e| e.span);
+            return Err(all(errors));
+        }
+    };
     let refused = linear_questions(&stmts, &unit);
     if !refused.is_empty() {
         return Err(all(refused));
@@ -374,7 +385,7 @@ impl Program {
                     let Some(bytes) = lines.get(name) else {
                         return Err(format!("no input for port `{name}`"));
                     };
-                    world = world.input(name, split_lines(bytes));
+                    world = world.input(name, split_lines(name, bytes));
                     record.lines.insert(name.clone(), bytes.clone());
                 }
                 PortKind::Files => world = world.source(name, files(name)),
@@ -427,18 +438,18 @@ impl Program {
 }
 
 /// Commits `writes` in order through `sink`, giving each write's acknowledgment, `#ok` or
-/// `#ioError(why)`. The first failure aborts the wave, as the default policy does, so no
-/// later port is written.
+/// `#ioError(op: "write", path:, why:)` from the path and reason `sink` fails with. The first
+/// failure aborts the wave, as the default policy does, so no later port is written.
 pub fn commit(
     writes: &[(String, Vec<u8>)],
-    mut sink: impl FnMut(&str, &[u8]) -> Result<(), String>,
+    mut sink: impl FnMut(&str, &[u8]) -> Result<(), (String, String)>,
 ) -> Vec<(String, Value)> {
     let mut acks = Vec::new();
     for (port, bytes) in writes {
         match sink(port, bytes) {
             Ok(()) => acks.push((port.clone(), Value::atom("ok"))),
-            Err(why) => {
-                acks.push((port.clone(), io_error(&why)));
+            Err((path, why)) => {
+                acks.push((port.clone(), Value::io_error("write", &path, &why)));
                 break;
             }
         }
@@ -446,15 +457,11 @@ pub fn commit(
     acks
 }
 
-/// `#ioError(why)`.
-fn io_error(why: &str) -> Value {
-    Value::atom_with("ioError", vec![Value::str(why)])
-}
-
-/// The lines of `bytes`, keyed from 1. A line ends at `\n`, a `\r` before it is dropped,
-/// and a last line needs no `\n`; a line that is not UTF-8 is `#ioError`, bare, as a failed
-/// read of a `Files` port is (`LineNo -> String | #ioError`).
-pub fn split_lines(bytes: &[u8]) -> Value {
+/// The lines of `bytes`, the input of `Lines` port `port`, keyed from 1. A line ends at `\n`,
+/// a `\r` before it is dropped, and a last line needs no `\n`; a line that is not UTF-8 is
+/// `#ioError(op: "read", path: port, why:)`, its path the port's name, since standard input
+/// has no path.
+pub fn split_lines(port: &str, bytes: &[u8]) -> Value {
     let mut parts: Vec<&[u8]> = bytes.split(|b| *b == b'\n').collect();
     if parts.last().is_some_and(|l| l.is_empty()) {
         parts.pop();
@@ -463,7 +470,7 @@ pub fn split_lines(bytes: &[u8]) -> Value {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         let v = match std::str::from_utf8(line) {
             Ok(s) => Value::str(s),
-            Err(_) => Value::atom("ioError"),
+            Err(_) => Value::io_error("read", port, &not_utf8(i + 1)),
         };
         (Value::Int(i as i64 + 1), v)
     });
@@ -499,12 +506,18 @@ impl Lookup for Disk {
         Ok(match std::fs::read(&**path) {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(s) => Value::str(&s),
-                Err(_) => Value::atom("ioError"),
+                Err(_) => Value::io_error("read", path, "the file is not UTF-8"),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Value::atom("notFound"),
-            Err(_) => Value::atom("ioError"),
+            Err(e) => Value::io_error("read", path, &e.to_string()),
         })
     }
+}
+
+/// Why line `n` of a `Lines` input is `#ioError`. The port runtime (`zed_rt::ports`) gives
+/// the same text.
+fn not_utf8(n: usize) -> String {
+    format!("line {n} is not UTF-8")
 }
 
 /// A `Files` port answered from a [`Record`].
@@ -526,7 +539,9 @@ impl Record {
     /// The record as bytes. After a first line `zed record 1`, each entry is a line of words,
     /// its kind and the lengths of its fields, then the fields' bytes and a `\n`:
     /// `lines P B` (port, bytes), `text P K B` (port, path, contents), and `missing P K` and
-    /// `error P K` (port, path) for a read that gave `#notFound` or `#ioError`.
+    /// `error P K O W` (port, path, operation, reason) for a read that gave `#notFound` or
+    /// `#ioError(op: O, path: K, why: W)`. An `error P K` entry, as a record written before the
+    /// payload has it, reads back as a bare `#ioError`.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = MAGIC.as_bytes().to_vec();
         let mut entry = |kind: &str, fields: &[&[u8]]| {
@@ -549,7 +564,19 @@ impl Record {
                 match v {
                     Value::Str(s) => entry("text", &[p, k, s.as_bytes()]),
                     Value::Atom(a) if a.name.as_ref() == "notFound" => entry("missing", &[p, k]),
-                    Value::Atom(a) if a.name.as_ref() == "ioError" => entry("error", &[p, k]),
+                    Value::Atom(a) if a.name.as_ref() == "ioError" => {
+                        let field = |f: &str| match a.fields.binary_search_by(|x| (**x).cmp(f)) {
+                            Ok(i) => match &a.args[i] {
+                                Value::Str(s) => Some(s.as_bytes()),
+                                _ => None,
+                            },
+                            Err(_) => None,
+                        };
+                        match (field("op"), field("why")) {
+                            (Some(o), Some(w)) => entry("error", &[p, k, o, w]),
+                            _ => entry("error", &[p, k]),
+                        }
+                    }
                     v => unreachable!("a file read gives a String or an atom, not {v}"),
                 }
             }
@@ -586,6 +613,7 @@ impl Record {
                         ("text", [b]) => Value::str(&text(b)?),
                         ("missing", []) => Value::atom("notFound"),
                         ("error", []) => Value::atom("ioError"),
+                        ("error", [o, w]) => Value::io_error(&text(o)?, &text(k)?, &text(w)?),
                         _ => return Err(bad()),
                     };
                     let reads = record.files.entry(text(p)?).or_default();
@@ -708,9 +736,13 @@ fn command_inner(
         std::fs::write(out, wave.record.to_bytes()).map_err(|e| (1, format!("{out}: {e}")))?;
     }
     let acks = commit(&wave.writes, |port, bytes| match binds.get(port) {
-        Some(path) => std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}")),
-        None if port == "stdout" => stdout.write_all(bytes).map_err(|e| e.to_string()),
-        None => stderr.write_all(bytes).map_err(|e| e.to_string()),
+        Some(path) => std::fs::write(path, bytes).map_err(|e| (path.clone(), e.to_string())),
+        None if port == "stdout" => stdout
+            .write_all(bytes)
+            .map_err(|e| ("stdout".into(), e.to_string())),
+        None => stderr
+            .write_all(bytes)
+            .map_err(|e| ("stderr".into(), e.to_string())),
     });
     for (port, ack) in acks {
         if let Value::Atom(a) = &ack
