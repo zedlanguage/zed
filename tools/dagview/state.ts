@@ -236,22 +236,24 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     if (!planned.has(id) && !bookkeeping(id)) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
   }
   // Edges come from the overrides and from ledger lines, so an agent adds them by appending.
-  // An override's needs replace the needs of the item's own ledger lines, so a wrong one can be corrected.
+  // An override's needs replace what the ledger says the item needs: the needs of its own ledger
+  // lines and the feeds into it of other items' ledger lines, so a wrong one of either can be corrected.
   const corrected = (id: string) => Array.isArray(inp.overrides[id]?.needs);
-  const edges: [string, { needs?: string[]; feeds?: string[] }][] = [
-    ...Object.entries(inp.overrides),
+  const edges: [string, { needs?: string[]; feeds?: string[] }, boolean][] = [
+    ...Object.entries(inp.overrides).map(([id, ov]): [string, Override, boolean] => [id, ov, false]),
     ...[...ledger].flatMap(([id, es]) =>
-      es.map((e): [string, LedgerEntry] => [id, corrected(id) ? { ...e, needs: undefined } : e]),
+      es.map((e): [string, LedgerEntry, boolean] => [id, corrected(id) ? { ...e, needs: undefined } : e, true]),
     ),
   ];
   const own = new Map<string, string[]>();
   const fed = new Map<string, string[]>();
   // An agent may write a bare string; only a list of ids is read.
   const list = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
-  for (const [id, ov] of edges) {
+  for (const [id, ov, fromLedger] of edges) {
     if (!own.has(id)) own.set(id, []);
     own.get(id)!.push(...list(ov.needs));
     for (const f of list(ov.feeds)) {
+      if (fromLedger && corrected(f)) continue;
       if (!fed.has(f)) fed.set(f, []);
       fed.get(f)!.push(id);
     }

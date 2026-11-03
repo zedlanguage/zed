@@ -185,6 +185,16 @@ test("override needs replace the needs of the item's own ledger lines, not its f
   assert.ok(nodes.get("B")!.needs.includes("X"));
 });
 
+test("override needs also replace the ledger feeds of other items into it, but not override feeds", () => {
+  const inp = inputs("", '{"id":"X","state":"open","feeds":["Y"]}\n{"id":"Y","state":"done"}\n');
+  inp.overrides = { Y: { needs: [] }, W: { feeds: ["Y"] } };
+  const nodes = by(buildNodes(inp));
+  assert.equal(nodes.get("Y")!.needs.includes("X"), false);
+  assert.ok(nodes.get("Y")!.needs.includes("W"));
+  inp.overrides = { W: { feeds: ["Y"] } };
+  assert.ok(by(buildNodes(inp)).get("Y")!.needs.includes("X"));
+});
+
 test("a label with no attempt is a line of its item, and bookkeeping draws no box", () => {
   const [a, b] = parseLog(
     "2026-11-02 10:00:00 | B:code-sweep | finder done\n2026-11-02 10:00:01 | T14-cell-len:merge (orchestrator) | merged\n",
