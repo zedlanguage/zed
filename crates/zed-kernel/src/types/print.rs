@@ -654,7 +654,7 @@ fn lits(items: &mut Vec<Text>, name: &str, l: &Lits) {
     let each = || {
         l.values
             .iter()
-            .map(|v| Text::word(v.to_string(), Class::Prim))
+            .map(|v| Text::word(super::lit_text(v), Class::Prim))
     };
     match (l.cofinite, l.values.is_empty()) {
         (true, true) => items.push(Text::word(name, Class::Prim)),

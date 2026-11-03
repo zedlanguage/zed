@@ -27,7 +27,6 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use num_bigint::BigInt;
 use zed_kernel::family::Family;
 use zed_kernel::num::Rat;
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Prim, Witness};
@@ -1144,14 +1143,19 @@ fn number(t: &str) -> Option<Value> {
         _ => {}
     }
     if t.contains('r') {
-        let mut parts = t.split('/');
-        let big = |s: Option<&str>| -> Option<BigInt> { s?.strip_suffix('r')?.parse().ok() };
-        let num = big(parts.next())?;
-        let den = match parts.next() {
-            Some(d) => big(Some(d))?,
-            None => BigInt::from(1),
+        // A side is digits, or digits and an exponent as a type prints them (`1e400000r`),
+        // read as a decimal literal so the power is kept and not built.
+        let side = |s: &str| -> Option<Rat> {
+            let s = s.strip_suffix('r')?;
+            if s.contains('.') {
+                return None;
+            }
+            Rat::decimal(s)
         };
-        return Rat::new(num, den).map(Value::rat);
+        return match t.split_once('/') {
+            Some((n, d)) => side(n)?.div(&side(d)?).map(Value::rat),
+            None => side(t).map(Value::rat),
+        };
     }
     if t.contains(['.', 'e']) {
         return t.parse().ok().map(Value::float);

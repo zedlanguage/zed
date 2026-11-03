@@ -38,6 +38,7 @@ use std::ops::{BitAnd, BitOr, Not, Sub};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use crate::num::Rat;
 use crate::value::Value;
 use bdd::{Form, Part};
 
@@ -103,12 +104,29 @@ enum Member<'v> {
     Tuple(Type, &'v [Value]),
 }
 
-/// A hash of a literal: equal literals print alike.
+/// A hash of a literal: equal literals hash alike. A big integer or a `rat` hashes its
+/// residues ([`Rat::residues`]), so a literal such as `1e400000r` costs its own length here,
+/// not its digits.
 fn scalar(v: &Value) -> u64 {
+    let exact = |tag: u64, r: &Rat| {
+        let (neg, n, d) = r.residues();
+        mix(mix(mix(tag, u64::from(neg)), n), d)
+    };
     match v {
         Value::Int(i) => mix(1, *i as u64),
         Value::Str(s) => mix(2, bytes(s.as_bytes())),
+        Value::Big(r) => exact(4, r),
+        Value::Rat(r) => exact(5, r),
         other => mix(3, bytes(other.to_string().as_bytes())),
+    }
+}
+
+/// A literal as a type prints it: a `rat` in canonical form ([`Rat::literal_text`]), so its
+/// text costs the literal's length; any other as the value prints.
+pub(crate) fn lit_text(v: &Value) -> String {
+    match v {
+        Value::Rat(r) => r.literal_text(),
+        other => other.to_string(),
     }
 }
 
@@ -1388,7 +1406,7 @@ impl Type {
             match (l.cofinite, l.values.is_empty()) {
                 (true, true) => items.push(rope![name]),
                 (true, false) => items.push(rope![format!("(\\ {name} {})", spaced(&l.values))]),
-                (false, _) => items.extend(l.values.iter().map(|v| rope![v.to_string()])),
+                (false, _) => items.extend(l.values.iter().map(|v| rope![lit_text(v)])),
             }
         }
         let atom = |name: &str, part: &AtomPart| {
@@ -1445,10 +1463,7 @@ fn union(mut items: Vec<Rope>) -> Rope {
 }
 
 fn spaced(vs: &OrdSet<Value>) -> String {
-    vs.iter()
-        .map(Value::to_string)
-        .collect::<Vec<_>>()
-        .join(" ")
+    vs.iter().map(lit_text).collect::<Vec<_>>().join(" ")
 }
 
 /// The items of a tuple part. With `rest`, it is every tuple outside its complement's items.

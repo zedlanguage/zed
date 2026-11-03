@@ -232,6 +232,88 @@ impl Rat {
         digits(self.den.magnitude(), pows.collect())
     }
 
+    /// The value's residues, the same for every form of it: whether it is negative, and
+    /// `|N| mod M` and `D mod M` for the value `N/D` in lowest terms, `M = 2^61 - 1`. The
+    /// form `num/den * prod p^e` is in lowest terms as it stands, since `num/den` is reduced,
+    /// no listed prime divides either, and each prime lies on one side, so `N` and `D` are the
+    /// same whatever powers a form lists; each `p^e` is reduced by Fermat's little theorem,
+    /// so the cost is the size of the coefficients and exponents, never of the value.
+    pub fn residues(&self) -> (bool, u64, u64) {
+        let side = |coef: &BigInt, sign: Sign| {
+            let mut r = (coef.magnitude() % MERSENNE_61)
+                .to_u64()
+                .expect("a residue below 2^61");
+            for (p, e) in self.pows.iter().filter(|(_, e)| e.sign() == sign) {
+                r = mul_mod(r, pow_mod(*p, e.magnitude()));
+            }
+            r
+        };
+        (
+            self.is_negative(),
+            side(&self.num, Sign::Plus),
+            side(&self.den, Sign::Minus),
+        )
+    }
+
+    /// Its text as a literal type writes it: when it is a decimal, `m * 10^K` with `m` an
+    /// integer not divisible by 10, as the one literal `meKr` (`1e400000r`, `5e-1r`, `-25e9r`,
+    /// `7r`), which is the form the type syntax has (`SignedLit` in DESIGN.md sec:grammar).
+    /// Equal values print alike whatever form they hold. Of a value read from a decimal literal
+    /// `d e k`, `m` is `d` less its trailing zeros, so the text is no longer than the literal
+    /// and the power of 10 is never built.
+    pub fn literal_text(&self) -> String {
+        if self.is_zero() {
+            return "0r".to_string();
+        }
+        let sign = if self.is_negative() { "-" } else { "" };
+        // The signed exponents of 2 and 5 in the value, and the coefficients without them.
+        let (mut num, mut den) = (self.num.abs(), self.den.clone());
+        let [two, five] = [2, 5].map(|p| match self.pows.binary_search_by_key(&p, |(q, _)| *q) {
+            Ok(i) => self.pows[i].1.clone(),
+            Err(_) => {
+                let (up, n) = valuation(std::mem::take(&mut num), p);
+                let (down, d) = valuation(std::mem::take(&mut den), p);
+                (num, den) = (n, d);
+                BigInt::from(up) - BigInt::from(down)
+            }
+        });
+        let others = |sign: Sign| -> Vec<(u64, BigUint)> {
+            self.pows
+                .iter()
+                .filter(|(p, e)| *p != 2 && *p != 5 && e.sign() == sign)
+                .map(|(p, e)| (*p, e.magnitude().clone()))
+                .collect()
+        };
+        let below = others(Sign::Minus);
+        // Complexity tradeoff: the part `m` that is not a power of 10, and every number that is
+        // not a decimal, is built and written in full, at a cost proportional to its digits,
+        // since the type syntax has no power to write it with. Of a literal, `m` is the
+        // literal's digits; only a computed constant such as `2r ** 400000`, `1r / 2r ** 400000`
+        // or `1r / 3r` has an `m` beyond its source, and printing its type then costs the
+        // digits of `m`, the size of the output. A number that is not a decimal has no literal
+        // and prints as the quotient `nr/dr`, which the type syntax cannot write. Nothing is
+        // refused. Tested by `a_computed_power_prints_its_digits` (COMPLEXITY.md K30). A
+        // complete solution would give types a written power and quotient, such as
+        // `2r ** 400000` and `1r / 3r`, and print the kept powers as they are.
+        if !den.is_one() || !below.is_empty() {
+            return self.to_string();
+        }
+        let tens = (&two).min(&five).clone();
+        let mut pows = others(Sign::Plus);
+        pows.extend([(2, &two - &tens), (5, &five - &tens)].map(|(p, e)| {
+            (
+                p,
+                e.to_biguint()
+                    .expect("an exponent less its least is not negative"),
+            )
+        }));
+        let m = (num * built(&pows)).to_string();
+        match tens.is_zero() {
+            true => format!("{sign}{m}r"),
+            false => format!("{sign}{m}e{tens}r"),
+        }
+    }
+
     /// `a + b`, or [`TooLarge`] when the system refuses the memory for the part of the
     /// operands it builds.
     pub fn add(&self, b: &Rat) -> Result<Rat, TooLarge> {
@@ -567,6 +649,41 @@ impl Rat {
             }
         })
     }
+}
+
+/// The Mersenne prime `2^61 - 1`, the modulus of [`Rat::residues`].
+const MERSENNE_61: u64 = (1 << 61) - 1;
+
+/// `a * b mod 2^61 - 1`, for `a` and `b` below it.
+fn mul_mod(a: u64, b: u64) -> u64 {
+    let x = u128::from(a) * u128::from(b);
+    let m = u128::from(MERSENNE_61);
+    // `2^61 = 1 (mod M)`, so the high part adds to the low part; one subtraction ends it.
+    let r = (x & m) + (x >> 61);
+    let r = if r >= m { r - m } else { r };
+    u64::try_from(r).expect("a residue below 2^61")
+}
+
+/// `p^e mod 2^61 - 1`, by squaring after reducing `e` modulo `M - 1` (Fermat), so the cost
+/// is the length of `e` and 61 squarings. `p` is prime, so `p mod M` is zero only for
+/// `p = M`, whose powers are 0 for `e > 0`.
+fn pow_mod(p: u64, e: &BigUint) -> u64 {
+    let base = p % MERSENNE_61;
+    if base == 0 {
+        return u64::from(e.is_zero());
+    }
+    let mut k = (e % (MERSENNE_61 - 1))
+        .to_u64()
+        .expect("an exponent below 2^61");
+    let (mut b, mut r) = (base, 1);
+    while k > 0 {
+        if k & 1 == 1 {
+            r = mul_mod(r, b);
+        }
+        b = mul_mod(b, b);
+        k >>= 1;
+    }
+    r
 }
 
 /// `num / den` reduced, with `den` positive.

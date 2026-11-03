@@ -1062,3 +1062,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A struct of dense `Vec<usize>` and `Vec<Vec<usize>>` arrays written by index in a loop (color, position in class, counts, the stack of refining colors), and the `placed` and `taken` marks of the breadth-first order | `presburger::Refine`, `presburger::canonical` | Mutation (gap 11) | A state receiver whose arrays are reused in place by provable last use (L6.13); a copy per write would make the O((n+m) log n) refinement quadratic |
 | `Vec::swap_remove` with the moved element's position fixed by hand, and `mem::take` of a scratch vector | `Refine::split`, `Refine::run` | Mutation (gap 11) | The same writes as a `patch` on the threaded state |
+
+## Entries from T6-ratlit (`zed-kernel/src/num.rs`, `types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `u128` product reduced modulo the Mersenne prime `2^61 - 1` by a mask and a shift | `num::mul_mod` | Bit operations (gap 4) | `(a * b) mod (2 ** 61 - 1)` on `int`, the operands' ranges `int[0..<2 ** 61]` letting the plan use two words |
+| `[2, 5].map` with a closure that splits each prime off two captured coefficients through `std::mem::take` and reassigns them | `Rat::literal_text` | Mutation | A fold over the two primes with the coefficients as its state |

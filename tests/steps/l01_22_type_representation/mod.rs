@@ -6,5 +6,6 @@
 mod forms;
 mod is;
 mod laws;
+mod rat_literals;
 mod scaling;
 mod surface;
