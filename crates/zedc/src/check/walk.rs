@@ -2223,7 +2223,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let why = r.refused(result);
                     self.error(
                         s.body.span,
-                        format!("the lambda returns {r}, and `{}` returns {result}{why}", s.e),
+                        format!(
+                            "the lambda returns {r}, and `{}` returns {result}{why}",
+                            s.e
+                        ),
                     );
                 }
                 s.a += 1;
