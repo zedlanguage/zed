@@ -105,6 +105,15 @@ test("a repair after a fixed line makes the node active again", () => {
   assert.equal(by(buildNodes(inputs("", led))).get("A")!.state, "active");
 });
 
+test("a done line from a repair or verify agent does not finish the node; a merge's does", () => {
+  const rep = '{"id":"A","state":"done","by":"A:repair#2","commit":"c1"}\n';
+  assert.equal(by(buildNodes(inputs("", rep))).get("A")!.state, "active");
+  const imp = '{"id":"A","status":"done","state":"fixed","agent":"A:impl#1"}\n';
+  assert.equal(by(buildNodes(inputs("", imp))).get("A")!.state, "active");
+  const mer = rep + '{"id":"A","state":"fixed","by":"A:merge#1","commit":"c2"}\n';
+  assert.equal(by(buildNodes(inputs("", mer))).get("A")!.state, "done");
+});
+
 test("retries, rejections, runtime and last tests come from the log", () => {
   const n = by(buildNodes(inputs(
     "2026-11-02 10:00:00 | A:impl#1 | start\n" +

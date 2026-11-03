@@ -24,6 +24,7 @@ export interface LedgerEntry {
   id: string;
   state: string;
   by?: string;
+  agent?: string;
   started?: string;
   note?: string;
   commit?: string;
@@ -202,7 +203,10 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     let s: NodeState = "unstarted";
     if (ov) s = ov;
     else if (r.title.startsWith("Done:")) s = "done";
-    else if (last?.state === "fixed" || last?.state === "done") s = "done";
+    // Only a merge or the orchestrator finishes a node: an impl, repair, verify or probe agent's
+    // "done" means its own attempt ended, and the item may still be rejected and repaired.
+    else if ((last?.state === "fixed" || last?.state === "done") && !/:(impl|repair|verify|probe)#/.test(last.by ?? last.agent ?? "")) s = "done";
+    else if (last?.state === "fixed" || last?.state === "done") s = "active";
     else if (last?.state === "fixing") s = "active";
     else if (last?.state === "abandoned") s = "unstarted";
     else if (lines.some((l) => l.entry.role === "merge" && /\bon main\b|merged/.test(l.entry.text))) s = "done";
