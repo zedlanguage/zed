@@ -1239,6 +1239,18 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// does not follow joined it, every literal adopting it; a type variable if it may take
     /// any value; its carrier if one; a type variable bounded by its carriers if several;
     /// else the unknown.
+    ///
+    /// Complexity tradeoff: a class that a literal joined takes one carrier, the first of int,
+    /// f64 and rat, so a function such as `f(x) = x * 2` takes int only, and a call at f64 is
+    /// rejected ("`f` does not take (1.5)") though the body would check there. Why: the body
+    /// elaborates once; keeping each carrier a literal may adopt would elaborate the body once
+    /// per combination of carriers over its classes, 3^k for k such classes. Trigger: a
+    /// parameter's class joined by a literal that does not follow another operand's carrier.
+    /// Test: `l01_26_type_resolution::adoption::a_body_keeps_the_arrows_with_the_fewest_adoptions`.
+    /// COMPLEXITY.md Kept row "undeclared parameters (check), `apply`"; docs/thresholds.md
+    /// replacement 1. A complete solution would give the class a type variable bounded by its
+    /// numeric carriers and elaborate the literal at each carrier the calls use (one
+    /// elaboration per carrier used, not per combination).
     fn resolve(&mut self, r: usize) {
         let (mask, lits) = (self.classes[r].mask, self.classes[r].lits.clone());
         let numeric = [Carrier::Int, Carrier::F64, Carrier::Rat]

@@ -269,6 +269,18 @@ fn regions(parts: &[(End, End)]) -> [Vec<(End, End)>; 3] {
 /// capped to the most pieces either operand has in one region, so no chain of operators
 /// multiplies piece counts (the rule of low complexity, Part G). With one operand of one
 /// piece, nothing is merged before the image is taken.
+///
+/// Complexity tradeoff: the merged pieces fill the gaps between them, so the image can hold
+/// values no pair of operand values gives (a set of k pieces times a set of m pieces keeps at
+/// most k + m pairs, not k·m). Why: the exact image has up to k·m pieces, and a chain of n
+/// operators up to k^n. Trigger: two operands of more than one piece each, or an image with
+/// more pieces in a sign region than either operand has there; the limits are relative to
+/// the operands, never constants. Tests:
+/// `l01_24_refinement_lattices::scaling::a_chain_of_operators_keeps_to_its_operands_pieces`,
+/// `l01_24_refinement_lattices::scaling::an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region`,
+/// `l01_24_refinement_lattices::scaling::the_interval_operations_scale`. COMPLEXITY.md rows S4
+/// and S14. A complete solution would keep the image as a symbolic set (the operation applied
+/// to the operands) and list its pieces only on demand, at a cost in k·m when asked.
 fn map2(
     a: &[(End, End)],
     b: &[(End, End)],

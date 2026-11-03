@@ -375,6 +375,11 @@ impl Bounds {
 
     /// The element shifted by `c`: `x + c` for each member `x`. A bound past the 64-bit range is
     /// dropped, which only widens the element.
+    ///
+    /// Complexity tradeoff: the dropped bound is the `i64` end rule of `interval::End`; it
+    /// switches behavior at a magnitude, so it violates the no-thresholds rule; to be replaced.
+    /// The reasons, test and complete solution are at `End::from_i128`. Test:
+    /// `l01_24_refinement_lattices::bounds::an_offset_moves_every_member`. No COMPLEXITY.md row.
     pub fn offset(&self, c: i64) -> Bounds {
         let shift = |s: &BTreeSet<Bound>, end: fn(i128) -> End| {
             s.iter()
@@ -476,6 +481,15 @@ impl Lattice for Bounds {
     /// The union widens as in module `interval`, and a symbolic bound of `next` is kept only
     /// when `self` has it. So the bounds of a chain of widenings only shrink, and the chain is
     /// finite.
+    ///
+    /// Complexity tradeoff: a symbolic bound that appears during the loop is dropped, so only
+    /// bounds the loop's entry already had survive widening (narrowing may add them back once
+    /// per side). Why: symbolic bounds form infinite ascending chains (`n`, `n + 1`, …), so
+    /// keeping new ones would not end. Trigger: a bound of `next` that `self` lacks. Tests:
+    /// `l01_24_refinement_lattices::bounds::widening_chains_are_finite`,
+    /// `l01_24_refinement_lattices::loops::a_counting_loop_keeps_its_symbolic_bound`. No
+    /// COMPLEXITY.md row. A complete solution would find loop invariants over the symbols
+    /// (polyhedra or acceleration of affine loops), at exponential cost in the symbols.
     fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
         if *self == Bounds::bottom() {
             return next.clone();
@@ -500,6 +514,17 @@ impl Lattice for Bounds {
     }
     /// Sound and not complete: each bound of `other` must be implied by a bound of `self` with
     /// the same terms, or by the end of `self`'s union.
+    ///
+    /// Complexity tradeoff: bounds with different terms are never compared, so `leq` can
+    /// answer false where the element is below (`int[..=n]` is not shown below `int[..=n + m]`
+    /// even when `m >= 0` is known), and an iteration may then take one more step or widen
+    /// where it need not. Why: comparing affine bounds with different terms is an entailment
+    /// between linear facts on the symbols, a Presburger question (see `presburger`), where
+    /// this check costs time linear in the bounds. Trigger: bounds of `other` whose terms no
+    /// bound of `self` has. Test:
+    /// `l01_24_refinement_lattices::bounds::the_order_is_sound_and_holds_of_meets_and_joins`.
+    /// No COMPLEXITY.md row. A complete solution would ask `presburger::entails` under the
+    /// premises on the symbols, with its refusals.
     fn leq(&self, other: &Self) -> bool {
         let implied = |side: Side| {
             other.bounds(side).iter().all(|t| {

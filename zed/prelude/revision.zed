@@ -13,6 +13,20 @@
 // sign region of the image is capped to the most pieces either operand has in
 // one region: a chain of operators never grows piece counts, and no constant
 // bounds them.
+//
+// Complexity tradeoff: the merged pieces fill the gaps between them, so the
+// image can hold values no pair of operand values gives (k pieces times m
+// pieces keeps at most k + m pairs, not k * m). Why: the exact image has up to
+// k * m pieces, and a chain of n operators up to k^n. Trigger: two operands of
+// more than one piece each, or an image with more pieces in a sign region than
+// either operand has there; the limits are relative to the operands, never
+// constants. Tests:
+// l01_24_refinement_lattices::scaling::a_chain_of_operators_keeps_to_its_operands_pieces,
+// l01_24_refinement_lattices::scaling::an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region,
+// l01_24_refinement_lattices::scaling::the_interval_operations_scale.
+// COMPLEXITY.md rows S4 and S14. A complete solution would keep the image as a
+// symbolic set (the operation applied to the operands) and list its pieces
+// only on demand, at a cost in k * m when asked.
 
 // How z = op(x, y) moves with argument `arg` (0 for x, 1 for y) when the other
 // argument is held fixed.

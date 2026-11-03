@@ -71,7 +71,8 @@
 //!
 //! A refused question leaves the relation unused, which is sound: the written constraint is
 //! kept, and [`Entailment::Refused`] carries the cause. No compiler path calls [`entails`] yet,
-//! and a refusal met in narrowing is kept with the scope and reported by the checker. Every
+//! and a refusal met in narrowing is kept in `product::Scope::refusals`, which nothing reads
+//! yet, so it widens the scope with no report from there (docs/reviews/tradeoffs.md). Every
 //! integer, written or derived, is unbounded.
 
 use std::cmp::Ordering;
@@ -790,6 +791,18 @@ fn local_repair(
 
 /// A point of `p`, taking for each disjunction in turn the first disjunct that meets the
 /// constraints taken so far, or a refusal when none does.
+///
+/// Complexity tradeoff: the choice of a disjunct is never undone, so a formula whose point
+/// needs an earlier disjunction decided another way gets `Refusal::Disjuncts` ("not decided")
+/// here; `probe` then removes the disjuncts it shows empty, and what is still refused stays
+/// refused. Why: finding a point of a conjunction of disjunctions of linear rows is
+/// NP-complete (graph 3-coloring is such a formula: one disjunction of three colors per
+/// node, one row per edge), so a search that backtracks is exponential in the disjunctions.
+/// Trigger: two or more disjunctions whose disjuncts conflict through shared variables,
+/// whatever the size. Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`
+/// (four tasks in three slots), `l01_38_presburger::omega::a_disjunct_refused_by_the_solver_is_reported_by_its_own_cause`.
+/// COMPLEXITY.md rows S16 and S18. A complete solution would backtrack over the disjuncts
+/// (DPLL(T) with learned conflicts), exponential in the worst case.
 fn pick(p: &Parts) -> Result<Model, Refusal> {
     let mut model = solve(&p.cons, true)?.ok_or(Refusal::Disjuncts)?;
     let mut acc = Linked::of(p.cons.clone());
@@ -1403,6 +1416,18 @@ fn search(vars: usize, base: &[(Row, Rel)], want: bool) -> Result<Option<Vec<Int
             match child.run() {
                 Leaf::Point(v) => return Ok(Some(v)),
                 Leaf::Empty if !child.gap => {}
+                // Complexity tradeoff: a splinter whose own elimination leaves a gray shadow
+                // (a splinter of a splinter) is not searched; the question gets
+                // `Refusal::Shadows` ("not decided") even when a point lies there. Why: each
+                // level of splinters multiplies the searches by the bounds of one side and
+                // their coefficients, so nested splinters cost time exponential in the
+                // variables. Trigger: an inexact elimination inside a splinter, which needs
+                // coefficients other than ±1 on both sides of a variable at two levels.
+                // Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
+                // `l01_38_presburger::checker::a_question_whose_point_lies_past_one_splinter_is_rejected`,
+                // `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`. COMPLEXITY.md
+                // row S18. A complete solution would recurse into nested splinters as Pugh's
+                // Omega test does, at a cost exponential in the depth of the nesting.
                 Leaf::Empty => return Err(Refusal::Shadows),
                 Leaf::Refused(r) => return Err(r),
             }
@@ -2241,6 +2266,23 @@ impl Omega {
             // Every elimination left adds terms. The rows are empty when the box of their
             // bounds shows it, and have a point when the point of the box nearest zero holds
             // them; otherwise the question is refused.
+            //
+            // Complexity tradeoff: a system that the box neither empties nor satisfies, once
+            // no elimination is left that keeps the rows from growing, is given up: it gets
+            // `Refusal::Growth` ("not decided", rejected at the function by `run.rs`
+            // `linear_questions`), though it may have a point or none. Why: an elimination
+            // that adds terms multiplies lower by upper bounds, so the rows can grow doubly
+            // exponentially in the variables eliminated (Fourier–Motzkin), and the dark and
+            // gray shadows of the full Omega test add an exponential search on top. Trigger:
+            // three or more variables whose every elimination pairs more bounds than it
+            // removes and whose rows are not all `±x ± y + k >= 0`; the size of the system plays
+            // no part. Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
+            // `l01_38_presburger::checker::a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`,
+            // `l01_38_presburger::scaling::the_shifted_sparse_family_scales`. COMPLEXITY.md
+            // rows S18 and Kept "Fourier–Motzkin pairs". A complete solution would run the
+            // growing eliminations of the full Omega test (or another complete Presburger
+            // procedure) and accept their exponential worst case, or find a structural class
+            // of growing systems decidable in O(n log n).
             let Some((lo, hi)) = bounds(&self.sys) else {
                 return Leaf::Empty;
             };
@@ -2506,6 +2548,19 @@ fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
 /// The values of a symbol over the formula's points, as a union of intervals (see the module
 /// note): exact when one disjunction is left, a set holding them otherwise. A bound past `i64`
 /// is read as no bound.
+///
+/// Complexity tradeoff: with two or more disjunctions the answer is the meet of each
+/// disjunction's union of projections, with its two ends moved in by [`tighten`]; the gaps
+/// that only a combination of disjuncts shows are given up, so the set can hold values no
+/// point takes. Why: the exact projection is the union over every combination of one disjunct
+/// per disjunction, which is exponential in the disjunctions. Trigger: more than one
+/// disjunction left after propagation. Test:
+/// `l01_38_presburger::random::random_tests_agree_with_the_interpreter` (every projection
+/// holds every value; one of 60 is wider than the hull). COMPLEXITY.md rows S7 and S16. A
+/// complete solution would project each combination of disjuncts, or a decision diagram over
+/// the disjuncts, at a cost exponential in the worst case.
+///
+/// The `i64` bound (see [`hull_from`]) violates the no-thresholds rule; to be replaced.
 pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
     project_each(f, std::slice::from_ref(sym))?.0.remove(0)
 }
@@ -2703,6 +2758,16 @@ fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
 /// point with the symbol at most `v`" and "at least `v`". Each bound is searched outward
 /// from the point's value with steps that double, then by bisection, so it takes O(log d)
 /// questions for a bound at distance d, and one when the symbol is unbounded that way.
+///
+/// Complexity tradeoff: the search covers `i64` only, so a bound past it is answered as no
+/// bound (the set is wider, never wrong). Why: interval ends are machine integers
+/// (`interval::End::Fin(i64)`), whose arithmetic costs O(1) where unbounded integers cost
+/// time in their length. Trigger: a bound whose magnitude exceeds `i64`. Tests:
+/// `l01_38_presburger::omega::a_bound_past_i64_is_searched_within_i64`,
+/// `l01_38_presburger::omega::a_model_may_hold_values_past_128_bits`. No COMPLEXITY.md row.
+/// This switches behavior at a magnitude, so it violates the no-thresholds rule; to be
+/// replaced. A complete solution would keep interval ends as unbounded integers
+/// (`store::int`), at a cost in their bits.
 fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal> {
     let x = Lin::atom(sym.clone());
     let (min, max) = (i128::from(i64::MIN), i128::from(i64::MAX));
@@ -2857,6 +2922,17 @@ fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Ref
 
 /// For each product the formulas mention, the products in pairs of the premises on its two
 /// factors, each `>= 0`.
+///
+/// Complexity tradeoff: a product of two variables is an opaque atom, bounded only by these
+/// products of pairs of linear premises; a goal that needs any other nonlinear reasoning is
+/// `Entailment::NotProved`. Why: entailment over integer polynomials is undecidable
+/// (Hilbert's tenth problem), and over the reals it costs time doubly exponential in the
+/// variables (cylindrical algebraic decomposition). Trigger: a product atom in the premises
+/// or the goal. Test:
+/// `l01_38_presburger::entailment::a_product_is_bounded_only_through_the_premises_on_its_factors`.
+/// No COMPLEXITY.md row. No complete solution exists for integers; a stronger sound one would
+/// add higher-degree products of premises (Positivstellensatz certificates), at a cost
+/// polynomial of growing degree.
 fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusal> {
     let mut wanted = BTreeSet::new();
     for f in [&premises.body, &goal.body] {

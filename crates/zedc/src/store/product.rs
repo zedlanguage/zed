@@ -141,6 +141,17 @@ impl Lattice for Type {
     /// The join, and the whole of each base type, and of the rest of each universe, in which
     /// `next` has a value `self` has not. Each such part is taken at most once, so every
     /// chain of widenings is finite.
+    ///
+    /// Complexity tradeoff: a type that grows within a base type (more literals, more tuple
+    /// shapes) jumps to the whole base type, so a loop's type keeps none of the members it
+    /// gained. Why: types do not satisfy the ascending chain condition (`#a | #b | …` grows
+    /// forever), so the fixpoint needs a widening; keeping members would need a landmark set
+    /// of types and a test per member. Trigger: a widening at which `next` has a value in a
+    /// base type part that `self` lacks. Test:
+    /// `l01_39_reduced_product::controls::a_type_widens_to_its_whole_base_type`. No
+    /// COMPLEXITY.md row. A complete solution would widen to the written type literals of the
+    /// loop first (type landmarks, as intervals do with integer landmarks), at a cost of one
+    /// subtype test per landmark.
     fn widen(&self, next: &Self, _: &Landmarks) -> Self {
         let mut out = self | next;
         for p in parts() {
@@ -325,6 +336,16 @@ impl Product {
             // The type's integers narrowed to the interval, listed only when the list is no
             // longer than what is listed from: the type's own integer literals, or an interval
             // with no more members than its two endpoints a piece.
+            //
+            // Complexity tradeoff: an interval with more members than that is not listed, so
+            // the type keeps all of `int` there and loses what listing would carry into it.
+            // Why: listing an interval costs time and space in its members, which can be
+            // exponential in the bits written. Trigger: a finite interval set whose members
+            // exceed twice its pieces, a measure relative to the written endpoints and not a
+            // constant. Test:
+            // `l01_39_reduced_product::controls::a_listed_set_is_enumerated_and_a_range_is_not`.
+            // No COMPLEXITY.md row. A complete solution would let the type language hold
+            // integer ranges, so that the interval enters the type without listing.
             let x = self.ints().clone();
             let vs: Option<Vec<Value>> = match (&self.ty.element & &int).listed() {
                 Some(vs) => Some(
@@ -447,6 +468,14 @@ pub struct Scope {
     pub exactly: imbl::OrdMap<Vec<String>, Point>,
     /// The causes for which the integer solver left a question undecided while this scope was
     /// narrowed or projected; each one leaves the scope sound but wider than it could be.
+    ///
+    /// Complexity tradeoff: a refused question (`presburger::Refusal`, whose costs and
+    /// triggers are documented where each is raised) leaves the relation's narrowing out, so
+    /// the scope is wider. Only the join of two scopes reads this set, to unite it, so the
+    /// widening is silent: no warning names it (a flaw, docs/reviews/tradeoffs.md). Test: no
+    /// test yet.
+    /// COMPLEXITY.md row S18 for the solver. A complete solution would decide every question
+    /// (see `presburger`), or at least report this set as a warning at the scope.
     pub refusals: imbl::OrdSet<presburger::Refusal>,
     /// Each name a `let` of the walk bound, with the order of its binding and, for a function,
     /// its lambda: a test that calls a function is closed over it before its preimage is taken
@@ -1773,6 +1802,19 @@ impl Scope {
     /// constraints that are new, mention a name that has changed, or have left the enumerated
     /// ones since the last enumeration are looked at, found by the persistent maps'
     /// difference: whether a constraint is due depends on these alone.
+    ///
+    /// Complexity tradeoff: a constraint is enumerated only when at most one of its names is
+    /// open, its form shows that it ends (`stage::ends`), and the name's members are listed
+    /// ([`listed`]); any other constraint narrows nothing here. Why: enumerating k open names
+    /// costs the product of their members, exponential in k, and a constraint whose ending is
+    /// not shown may not end at all (deciding that is the halting problem). Trigger: two or
+    /// more open names, a constraint that calls itself or loops, or a range not listed. Tests:
+    /// `l01_39_reduced_product::controls::enumeration_keeps_the_members_a_written_constraint_holds_at`,
+    /// `l01_39_reduced_product::controls::a_listed_set_is_enumerated_and_a_range_is_not`. No
+    /// COMPLEXITY.md row. A complete solution would enumerate the product of the open names
+    /// (`@exact` does, by branch and prune), at a cost exponential in the open names, and a
+    /// termination proof stronger than the form of the term (size-change termination,
+    /// PSPACE-complete in the call graph).
     fn enumerate(&mut self) {
         if self.exact {
             self.enumerate_exactly();

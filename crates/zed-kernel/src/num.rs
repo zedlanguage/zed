@@ -16,6 +16,16 @@ use num_traits::{One, Signed, Zero};
 /// The largest integer the evaluator builds, in bits: beyond it an operation is
 /// [`KernelError::Overflow`](crate::KernelError::Overflow), a limit of the evaluator's memory
 /// and not of the language.
+///
+/// Complexity tradeoff: an integer or rational past `2^20` bits is given up with
+/// `KernelError::Overflow`, though the language's `Int` is unbounded. Why: an operation such
+/// as `x ** e` builds a result whose size is exponential in the bits of `e`, so one short
+/// expression could take all memory and time. Trigger: a result (or, for a power, a predicted
+/// result) of more than `MAX_BITS` bits. Test:
+/// `m0_09_kernel_evaluator::a_power_by_a_huge_exponent`. No COMPLEXITY.md row. This switches
+/// behavior at a constant size, so it violates the no-thresholds rule; to be replaced (ledger
+/// item CAP-bits). A complete solution would build any result that fits in the memory
+/// available and report the allocation failure as such, or keep huge powers symbolic.
 pub const MAX_BITS: u64 = 1 << 20;
 
 /// A rational number, reduced, with a positive denominator.

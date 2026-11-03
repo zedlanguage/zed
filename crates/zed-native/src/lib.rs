@@ -49,6 +49,12 @@ fn isa(pic: bool) -> Result<Arc<dyn cranelift_codegen::isa::TargetIsa>, String> 
     // Cranelift's e-graph optimizer and its backtracking register allocator take time growing
     // faster than the size of a function (n^1.6 and n^1.4 measured); with neither, each pass is
     // linear (COMPLEXITY.md Z15).
+    //
+    // Complexity tradeoff: the code Cranelift emits is unoptimized and keeps more values on
+    // the stack, so it runs slower; every input still compiles. Why: the costs above. Trigger:
+    // every function. Test: no test yet. COMPLEXITY.md row Z15. A complete solution is the
+    // ZIR e-graph optimizer (DESIGN.md L23) before Cranelift, with a linear-time register
+    // allocator.
     set(&mut flags, "opt_level", "none")?;
     set(&mut flags, "regalloc_algorithm", "single_pass")?;
     set(&mut flags, "is_pic", if pic { "true" } else { "false" })?;

@@ -150,6 +150,18 @@ fn children(t: &Term) -> Vec<&Term> {
 /// only in its body, so such calls nest no deeper than the term; a call through a parameter
 /// or a pattern variable, as in `w(w)`, is not shown to end. Free names are prelude words,
 /// which are primitives. Each subterm is read once.
+///
+/// Complexity tradeoff: a term that ends but whose form does not show it (recursion, `fix`,
+/// `gen`, a call through a parameter) is treated as possibly not ending: the build stage
+/// leaves it to run time ("its form does not show that it ends"), and enumeration and `@exact`
+/// skip it. Why: whether a term ends is undecidable, and running it under a step count would
+/// switch behavior at a size. Trigger: any of those forms in the term or in a function it
+/// calls. Tests:
+/// `l01_28_staging::mix::a_term_whose_form_does_not_show_it_ends_is_left_to_run`,
+/// `l01_28_staging::mix::a_term_whose_form_shows_it_ends_is_built_with_no_fuel`. No
+/// COMPLEXITY.md row (docs/thresholds.md replacement 6). A complete solution cannot exist; a
+/// stronger sound one would add a termination proof by decreasing measures (size-change
+/// termination, PSPACE-complete in the call graph).
 pub fn ends(t: &Term) -> bool {
     ends_in(t, &mut Around::default())
 }
@@ -364,6 +376,19 @@ pub enum Choice {
 
 /// The Trick: split on the members of `d` among `passed` only when `d` is finite. A type is
 /// finite here when it lists its values no longer than it is written ([`Type::listed`]).
+///
+/// Complexity tradeoff: a domain that is not listed (an integer range, or a type whose
+/// values outnumber what is written) is not split, so the function keeps one general body
+/// and loses the specialization on the static values passed. Why: splitting makes one copy
+/// of the body per value, and a domain whose values are not bounded by its written size could
+/// make copies exponential in the bits written. Trigger: [`Type::listed`] answering `None`, or
+/// an unbounded integer domain; the rule is relative to the written type, not a constant.
+/// Tests: `l01_28_staging::trick::a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept`,
+/// `l01_28_staging::trick::the_trick_keeps_a_function_on_an_infinite_domain`,
+/// `l01_28_staging::scaling::splitting_many_functions_of_one_unit_scales`. No COMPLEXITY.md
+/// row (docs/thresholds.md replacement 7). A complete solution would split on the values
+/// actually passed whatever the domain (their number is bounded by the call sites), with a
+/// general body for the rest.
 pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
     let within: Vec<Value> = match d {
         Domain::Type(t) => {

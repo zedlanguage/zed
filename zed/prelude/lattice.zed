@@ -106,6 +106,18 @@ moveEnds(positional xs, positional ts, positional widen) = mergeTouching(xs.map(
 // old ∇ new, for new the join, which contains old. Every finite end of a chain
 // lies in K, the first element's ends and the landmarks, so a chain has at most
 // 2|K| + 2 elements, at any number of pieces. The bottom widens to new.
+//
+// Complexity tradeoff: an end that grows past the old ends and the landmarks
+// goes to the next landmark or to infinity, so a loop's bound that no literal
+// names is lost (a growing buffer length gets 0..). Why: the lattice has
+// infinite ascending chains, so a fixpoint without widening need not be
+// reached; with it a head is evaluated O(|K|) times. Trigger: a loop whose
+// bound is not among the program's integer literals plus or minus one. Tests:
+// m0_05_widening_and_iteration::widening::a_moved_endpoint_goes_to_the_next_landmark_or_infinity,
+// m0_05_widening_and_iteration::widening::interval_widening_chains_stay_on_the_first_ends_and_the_landmarks.
+// COMPLEXITY.md row S13. A complete solution would solve the loop's recurrence
+// exactly (acceleration), which is possible for affine loops only and
+// undecidable in general.
 intervalWiden(positional old, positional new, positional marks) =
   if old::len == 0 || new == old { new } else { moveEnds(new, targets(old, marks), true) };
 
@@ -122,6 +134,17 @@ intervalNarrow(positional old, positional new, positional marks) =
 // one before), so the widening is the join. Descending chains are not (0 mod 2,
 // 0 mod 4, ...), so the narrowing takes new only from the top, or when new is
 // one value or none: it changes at most three times.
+//
+// Complexity tradeoff: a congruence below the top that new refines to a larger
+// modulus keeps the old one, so a loop that shows 0 mod 4 after 0 mod 2 keeps
+// 0 mod 2. Why: without this, a descending chain need not end. Trigger: a
+// narrowing from a class of modulus other than 1 to a class of a larger
+// modulus. Test:
+// m0_05_widening_and_iteration::widening::a_congruence_narrows_at_most_three_times.
+// No COMPLEXITY.md row. The limit of the chain is not computable in general; a
+// closer rule would accept a refinement whose modulus is among the program's
+// literals (a landmark rule, as the interval narrowing has), which keeps each
+// chain finite.
 
 gcd(positional a, positional b) = if b == 0 { a } else { gcd(b, a mod b) };
 
@@ -187,6 +210,15 @@ congruenceNarrow(positional old, positional new) =
 
 // The join when every member it adds is a landmark, else #top: the members of
 // a chain are the first element's and landmarks. The bottom widens to new.
+//
+// Complexity tradeoff: a set that gains a member the program does not write
+// goes to #top, so all members are lost, even when the loop adds only finitely
+// many. Why: finite sets form infinite ascending chains, so a fixpoint needs a
+// widening; with this one a chain rises at most once per landmark. Trigger: a
+// widening whose join adds a value that is not a landmark. Test:
+// m0_05_widening_and_iteration::widening::a_finite_set_widens_to_the_top_at_a_member_the_program_does_not_write.
+// COMPLEXITY.md row S13. A complete solution would need the loop's exact set
+// of values, which is undecidable in general.
 finiteSetWiden(positional old, positional new, positional marks) =
   if old == [] { new }
   else if old == #top || new == #top { #top }

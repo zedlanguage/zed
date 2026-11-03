@@ -43,6 +43,16 @@ impl End {
     /// fit is replaced by the infinity on its side: this widens an interval it bounds above
     /// past `i64::MAX`, or below past `i64::MIN`; for the other two cases see [`End::lower`]
     /// and [`End::upper`].
+    ///
+    /// Complexity tradeoff: ends are `i64`, so a bound past it is given up and read as the
+    /// infinity on its side (or rounded outward, [`rounded`]); the set is wider, never wrong.
+    /// Why: machine integers make each endpoint operation O(1), where unbounded integers cost
+    /// time in their bits. Trigger: an endpoint whose magnitude exceeds `i64`. Tests:
+    /// `l01_25_preimage_catalog::entries::bounds_past_i64_keep_the_box`,
+    /// `l01_38_presburger::omega::a_bound_past_i64_is_searched_within_i64`. No COMPLEXITY.md
+    /// row. This switches behavior at a magnitude, so it violates the no-thresholds rule; to
+    /// be replaced. A complete solution would make `End::Fin` hold an unbounded integer
+    /// (`store::int`).
     pub fn from_i128(x: i128) -> End {
         match i64::try_from(x) {
             Ok(v) => Fin(v),
@@ -318,6 +328,19 @@ impl IntervalSet {
     /// `K` is a union of some of the `2|K| + 1` parts into which `K` cuts the line (its points
     /// and the gaps between them), so the chain has at most `2|K| + 2` elements. No count of
     /// pieces or of steps enters. The bottom widens to `next` unchanged.
+    ///
+    /// Complexity tradeoff: an end that grows past the old ends and the landmarks goes to the
+    /// next landmark or to infinity, so a loop's bound that no literal names is lost (a
+    /// growing buffer length gets `0..`). Why: the lattice has infinite
+    /// ascending chains, so a fixpoint without widening need not be reached; with it a head is
+    /// evaluated O(|K|) times. Trigger: a loop whose bound is not among the program's integer
+    /// literals plus or minus one. Tests:
+    /// `m0_05_widening_and_iteration::widening::a_moved_endpoint_goes_to_the_next_landmark_or_infinity`,
+    /// `m0_05_widening_and_iteration::widening::interval_widening_chains_stay_on_the_first_ends_and_the_landmarks`.
+    /// COMPLEXITY.md row S13. Narrowing ([`IntervalSet::narrow`]) and the symbolic bounds
+    /// (`affine`) recover part of what is lost. A complete solution would solve the loop's
+    /// recurrence exactly (acceleration), which is possible for affine loops only and
+    /// undecidable in general.
     pub fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
         if self.is_empty() || next == self {
             return next.clone();

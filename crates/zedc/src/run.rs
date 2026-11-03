@@ -203,6 +203,17 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
 /// whether it can fail. A question the solver refuses is a rejection at the function, with
 /// its cause and the constraints (DESIGN.md "Diagnostics"); a decided question rejects nothing,
 /// since a test that never holds is an unreachable arm (step L1.39).
+///
+/// Complexity tradeoff: a function whose question the solver refuses is rejected, though the
+/// program may be correct; the message is "whether `f` can hold is not decided: <cause>". Why:
+/// the solver decides only the fragment it can decide without exponential search (the
+/// causes, their costs and their triggers are at `presburger::Refusal`'s raise sites:
+/// Growth in `Omega::run`, Shadows in `search`, Disjuncts in `pick`). Tests:
+/// `l01_38_presburger::checker::a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`,
+/// `l01_38_presburger::checker::a_question_whose_point_lies_past_one_splinter_is_rejected`,
+/// `l01_38_presburger::checker::the_linear_questions_of_a_unit_scale`. COMPLEXITY.md row S18.
+/// A complete solution would need a complete Presburger procedure, exponential in the worst
+/// case, or would accept the function with a warning in place of the rejection.
 fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
     use crate::store::{preimage, presburger};
     let defs: std::collections::HashMap<&str, &Term> = unit

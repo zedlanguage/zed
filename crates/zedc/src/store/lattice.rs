@@ -292,6 +292,15 @@ impl Lattice for Congruence {
     /// A descending chain can multiply the modulus without end (`0 mod 2`, `0 mod 4`, ...), so
     /// the narrowing takes `next` only from the top, or when `next` is one value or none: a
     /// chain of narrowings changes at most three times.
+    ///
+    /// Complexity tradeoff: a congruence below the top that `next` refines to a larger modulus
+    /// keeps the old one, so a loop that shows `0 mod 4` after `0 mod 2` keeps `0 mod 2`.
+    /// Why: without this, a descending chain need not end. Trigger: a narrowing from a class of
+    /// modulus other than 1 to a class of a larger modulus. Test:
+    /// `m0_05_widening_and_iteration::widening::a_congruence_narrows_at_most_three_times`. No
+    /// COMPLEXITY.md row. The limit of the chain is not computable in general; a closer rule
+    /// would accept a refinement whose modulus is among the program's literals (a landmark
+    /// rule, as the interval narrowing has), which keeps each chain finite.
     fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
         match next {
             _ if *self == Congruence::top() => *next,
@@ -341,6 +350,15 @@ impl<T: Ord + Clone + fmt::Debug + Mark> Lattice for FiniteSet<T> {
     /// The join when every member it adds is a landmark, else the top; the bottom widens to
     /// `next`. The members of a chain are the first element's and landmarks, so it rises
     /// finitely often.
+    ///
+    /// Complexity tradeoff: a set that gains a member the program does not write goes to the
+    /// top, so all members are lost, even when the loop adds only finitely many. Why: finite
+    /// sets form infinite ascending chains, so a fixpoint needs a widening; with this one a
+    /// chain rises at most once per landmark. Trigger: a widening whose join adds a value
+    /// that is not a landmark. Test:
+    /// `m0_05_widening_and_iteration::widening::a_finite_set_widens_to_the_top_at_a_member_the_program_does_not_write`.
+    /// COMPLEXITY.md row S13. A complete solution would need the loop's exact set of values,
+    /// which is undecidable in general.
     fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
         if *self == FiniteSet::bottom() {
             return next.clone();

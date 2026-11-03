@@ -612,6 +612,16 @@ impl Type {
     /// type with more values, an infinite part, a payload, a struct or a function, and for a
     /// tuple type one of whose tuple types, met with the tuple types taken on the paths to it,
     /// has more than `cap` rows before the diagram's other tuple types are taken into account.
+    ///
+    /// Complexity tradeoff: past `cap` values the list is given up (`None`), so a caller learns
+    /// nothing about a type with more values. Why: a tuple type's values are the product of
+    /// its components', exponential in the components. Trigger: more than `cap` values, or a
+    /// path with more than `cap` rows. Test:
+    /// `l01_23_subtyping::scaling::listing_values_past_the_cap_stops_early`. No COMPLEXITY.md
+    /// row. The cap is a size given by the caller, so this switches behavior at a size and
+    /// violates the no-thresholds rule; to be replaced. Only tests call it; [`Type::listed`]
+    /// is the structural rule. A complete solution is that rule (list when the list is no
+    /// longer than the type), or a lazy enumeration of the values.
     pub fn values(&self, cap: usize) -> Option<Vec<Value>> {
         self.list(cap, true)
     }
@@ -619,6 +629,17 @@ impl Type {
     /// Every value of `self` when the list is no longer than the type: as [`Type::values`],
     /// except that a tuple path is listed only when its rows are no more than the values its
     /// components list, so listing never multiplies what the type writes.
+    ///
+    /// Complexity tradeoff: a type whose values outnumber what it writes (a tuple of `n`
+    /// literals by `n` literals has `n²` values) is not listed (`None`), so its users (the
+    /// Trick in `zedc::stage`, the type facet in `zedc::store::product`) treat it as not
+    /// finite. Why: the values of a tuple type are the product of its components', exponential
+    /// in the components. Trigger: a tuple path whose rows exceed the values its components
+    /// list; the measure is the written type, not a constant. Tests:
+    /// `l01_23_subtyping::scaling::listing_a_diagram_with_exponentially_many_paths_scales`,
+    /// `l01_28_staging::trick::a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept`.
+    /// No COMPLEXITY.md row. A complete solution would list lazily, paying only for the values
+    /// a caller reads.
     pub fn listed(&self) -> Option<Vec<Value>> {
         self.list(usize::MAX, false)
     }

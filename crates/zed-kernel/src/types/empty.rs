@@ -26,6 +26,16 @@
 //! proves empty counts as inhabited: a subtyping check then fails, and the error names the
 //! types, so the program states the case split itself (DESIGN.md L1.23).
 //!
+//! Complexity tradeoff: what is given up, why and the trigger are the paragraph above: a
+//! part that only a split of the box in two or more components at once proves empty counts as
+//! inhabited (a subtyping check fails; the representative search of `no_morphism` likewise
+//! answers "none found", never "empty"). Test:
+//! `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key` (four pigeons in three
+//! holes, empty and not proved so). COMPLEXITY.md rows K1 and K2, and the Kept row
+//! "emptiness and subtyping of tuple and morphism parts", which still calls the check exact.
+//! A complete solution would split the box in every component (a DPLL search over the tuple
+//! types, exponential in them), or hand the part to a SAT solver.
+//!
 //! The check is coinductive: a type met again while its own emptiness is being decided is
 //! assumed empty. Values are finite, so a type whose every value would contain a smaller value
 //! of the same type is empty, which is the answer the assumption gives; contractive, regular
