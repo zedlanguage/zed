@@ -203,3 +203,37 @@ fn terms_100000_deep_are_staged_on_a_2_mib_stack() {
         }
     });
 }
+
+/// `main` with `n` bindings, each the square of a machine-word integer, so each is warned.
+fn squares(n: usize) -> String {
+    let mut s = String::from("main(stdin: Lines) -> (stdout: Lines) {\n");
+    for i in 0..n {
+        s += &format!("  a{i} = {} * 3037000500;\n", 3037000500 + i);
+    }
+    s += "  stdout <- String(0);\n}\n";
+    s
+}
+
+#[test]
+fn mixing_a_unit_does_not_copy_its_warnings() {
+    // The mixed unit copied the unit's warnings, which nothing reads from it, so mixing a unit
+    // of `n` warnings allocated their bytes again. Now it allocates what the same unit with
+    // no warnings does.
+    let n = 1000;
+    let with = elab(&squares(n)).unwrap();
+    assert_eq!(with.warnings.len(), n);
+    let without = Unit {
+        defs: with.defs.clone(),
+        tests: with.tests.clone(),
+        warnings: Vec::new(),
+    };
+    let bytes = |u: &Unit| {
+        let start = zed_alloc_count::allocated();
+        let (mixed, _) = mix(u, &["main"]);
+        assert!(mixed.warnings.is_empty());
+        zed_alloc_count::allocated() - start
+    };
+    // The first mix in the process may allocate some state once; it is left out.
+    bytes(&without);
+    assert_eq!(bytes(&with), bytes(&without));
+}

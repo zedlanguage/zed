@@ -178,3 +178,14 @@ fn a_write_of_a_constant_is_left_to_run() {
     assert_eq!(out(&s, "x\n"), "ab\n");
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
 }
+
+#[test]
+fn a_staged_program_keeps_the_warnings_of_its_source() {
+    // The square of a machine-word integer may not fit in a machine word, so it is warned.
+    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  \
+        area = 3037000500 * 3037000500;\n  \
+        stdout <- String(area);\n}\n";
+    let (p, s, _) = staged(src);
+    assert_eq!(p.warnings().len(), 1);
+    assert_eq!(s.warnings(), p.warnings());
+}

@@ -663,7 +663,8 @@ pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
 }
 
 /// `unit` with its demanded build-stage terms evaluated, keeping the definitions `roots`
-/// and the tests read.
+/// and the tests read. The result has no warnings: they are the elaborator's, and
+/// [`crate::run::Program::stage`] shares the program's placed warnings instead.
 pub fn mix(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
     let (out, m) = mix_keeping(unit, roots);
     (out, m.report)
@@ -716,7 +717,7 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
     let mut out = Unit {
         defs: Vec::new(),
         tests: unit.tests.clone(),
-        warnings: unit.warnings.clone(),
+        warnings: Vec::new(),
     };
     for d in &unit.defs {
         if !demanded.contains(&d.kernel) {
