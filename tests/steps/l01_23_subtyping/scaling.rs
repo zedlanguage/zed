@@ -8,7 +8,7 @@
 //! a negated type disjoint from a piece is passed over.
 
 use zed_kernel::Value;
-use zed_kernel::types::Type;
+use zed_kernel::types::{Type, Verdict};
 use zed_tests::scaling;
 
 fn lit(i: usize) -> Type {
@@ -486,11 +486,9 @@ fn a_key_past_many_excluded_tuples_is_found_and_scales() {
         },
     );
 }
-
-/// The pinwheel on `b + 1`, `b + 2` and `third`: the square of them less four boxes around its
-/// middle `(b + 2, b + 2)`, and less the middle too when `full`, which makes it empty.
-fn pinwheel(b: i64, full: bool, third: Type) -> Type {
-    let ends = [lit_i(b + 1), lit_i(b + 2), third];
+/// The pinwheel on `ends`: the square of them less four boxes around its middle
+/// `(ends[1], ends[1])`, and less the middle too when `full`, which makes it empty.
+fn pinwheel(full: bool, ends: [Type; 3]) -> Type {
     let set = |m: u8| Type::union_all((0..3).filter(|i| m >> i & 1 == 1).map(|i| ends[i].clone()));
     let boxes: &[[u8; 2]] = match full {
         false => &[[3, 1], [4, 3], [6, 4], [1, 6]],
@@ -509,19 +507,205 @@ fn lit_i(i: i64) -> Type {
     Type::lit(&Value::Int(i)).unwrap()
 }
 
-/// The union of `k` pinwheels on disjoint integers.
-fn pinwheels(k: usize, full: bool) -> Type {
-    Type::union_all((0..k as i64).map(|i| pinwheel(10 * i, full, lit_i(10 * i + 3))))
+/// What the ends of a pinwheel are: the integer `i` itself, the atom `#e((i,))` or the
+/// one-tuple `(i,)`.
+#[derive(Clone, Copy, Debug)]
+enum End {
+    Plain,
+    Payload,
+    OneTuple,
 }
 
-/// [`pinwheels`] with the third end of the last pinwheel cofinite: its own integer and every
-/// integer no pinwheel uses.
-fn cofinite_pinwheels(k: usize, full: bool) -> Type {
+impl End {
+    const ALL: [End; 3] = [End::Plain, End::Payload, End::OneTuple];
+
+    /// The end made of `t`, a type of integers.
+    fn of(self, t: Type) -> Type {
+        match self {
+            End::Plain => t,
+            End::Payload => Type::atom_with("e", &Type::tuple(vec![t])),
+            End::OneTuple => Type::tuple(vec![t]),
+        }
+    }
+
+    fn ends(self, b: i64) -> [Type; 3] {
+        [1, 2, 3].map(|j| self.of(lit_i(b + j)))
+    }
+}
+
+/// The union of `k` pinwheels on disjoint integers, with ends of kind `end`.
+fn pinwheels(k: usize, full: bool, end: End) -> Type {
+    Type::union_all((0..k as i64).map(|i| pinwheel(full, end.ends(10 * i))))
+}
+
+/// [`pinwheels`] with the third end of the last pinwheel cofinite: made of its own integer and
+/// every integer no pinwheel uses.
+fn cofinite_pinwheels(k: usize, full: bool, end: End) -> Type {
     let k = k as i64;
     let used = Type::union_all((0..k).flat_map(|i| (1..=3).map(move |j| lit_i(10 * i + j))));
-    let third = &(&Type::int() - &used) | &lit_i(10 * (k - 1) + 3);
-    let others = (0..k - 1).map(|i| pinwheel(10 * i, full, lit_i(10 * i + 3)));
-    Type::union_all(others.chain([pinwheel(10 * (k - 1), full, third)]))
+    let [a, b, _] = end.ends(10 * (k - 1));
+    let third = end.of(&(&Type::int() - &used) | &lit_i(10 * (k - 1) + 3));
+    let others = (0..k - 1).map(|i| pinwheel(full, end.ends(10 * i)));
+    Type::union_all(others.chain([pinwheel(full, [a, b, third])]))
+}
+
+/// The pinwheel on `ends` as the model writes it: the union of the pairs of ends that no box
+/// holds. The ends are disjoint, so this is the pinwheel exactly.
+fn pinwheel_model(full: bool, ends: &[Type; 3]) -> Type {
+    let boxes: &[[u8; 2]] = match full {
+        false => &[[3, 1], [4, 3], [6, 4], [1, 6]],
+        true => &[[3, 1], [4, 3], [6, 4], [1, 6], [2, 2]],
+    };
+    let pairs = (0..3).flat_map(|a| (0..3).map(move |b| (a, b)));
+    let kept = pairs.filter(|&(a, b)| {
+        !boxes
+            .iter()
+            .any(|m| m[0] >> a & 1 == 1 && m[1] >> b & 1 == 1)
+    });
+    Type::union_all(kept.map(|(a, b)| Type::tuple(vec![ends[a].clone(), ends[b].clone()])))
+}
+
+/// The value of the end of kind `end` made of the integer `i`.
+fn end_value(end: End, i: i64) -> Value {
+    let one = Value::Tuple(vec![Value::Int(i)].into_iter().collect());
+    match end {
+        End::Plain => Value::Int(i),
+        End::OneTuple => one,
+        End::Payload => unreachable!("only plain and one-tuple ends are tested by value"),
+    }
+}
+
+/// Checks the union of the pinwheels on `ends` against the model, `full` and not.
+fn check_against_model(what: &str, ends: &[[Type; 3]]) {
+    for full in [true, false] {
+        let t = Type::union_all(ends.iter().map(|e| pinwheel(full, e.clone())));
+        let model = Type::union_all(ends.iter().map(|e| pinwheel_model(full, e)));
+        let want = match full || ends.is_empty() {
+            true => Verdict::Empty,
+            false => Verdict::Inhabited,
+        };
+        assert_eq!(t.verdict(), want, "{what}, full = {full}");
+        assert_eq!(
+            t.is_empty(),
+            want == Verdict::Empty,
+            "{what}, full = {full}"
+        );
+        assert!(t.equiv(&model), "{what}, full = {full}");
+    }
+}
+
+#[test]
+fn pinwheels_of_payload_and_one_tuple_ends_agree_with_the_model() {
+    // An empty union of pinwheels whose ends are atom payloads or one-tuples was refused: the
+    // settled form of a tuple part, which may hold more than the part, was read as showing a
+    // tuple in it, and all atoms of one name and all tuples of one length fell in one class.
+    for end in End::ALL {
+        for k in [0, 1, 2, 3, 5] {
+            let ends: Vec<[Type; 3]> = (0..k).map(|i| end.ends(10 * i)).collect();
+            check_against_model(&format!("{end:?}, k = {k}"), &ends);
+            let middles = Type::union_all((0..k).map(|i| {
+                let m = end.of(lit_i(10 * i + 2));
+                Type::tuple(vec![m.clone(), m])
+            }));
+            let (full, open) = (
+                pinwheels(k as usize, true, end),
+                pinwheels(k as usize, false, end),
+            );
+            assert!((&open - &full).equiv(&middles), "{end:?}, k = {k}");
+            if matches!(end, End::Payload) {
+                continue;
+            }
+            // Each pair of ends, of any two pinwheels, is in the open union exactly when the
+            // model keeps it: only the middles of the full union are taken out.
+            let ints = (0..k).flat_map(|i| (1..=3).map(move |j| 10 * i + j));
+            for a in ints.clone() {
+                for b in ints.clone() {
+                    let v =
+                        Value::Tuple([end_value(end, a), end_value(end, b)].into_iter().collect());
+                    let same = a / 10 == b / 10;
+                    let (x, y) = ((a % 10 - 1) as u8, (b % 10 - 1) as u8);
+                    let boxed = [[3u8, 1], [4, 3], [6, 4], [1, 6]]
+                        .iter()
+                        .any(|m| m[0] >> x & 1 == 1 && m[1] >> y & 1 == 1);
+                    let want = same && !boxed;
+                    assert_eq!(open.contains(&v), want, "{end:?}, k = {k}, ({a}, {b})");
+                    assert!(!full.contains(&v), "{end:?}, k = {k}, ({a}, {b})");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn pinwheels_of_nested_payloads_and_cofinite_ends_are_decided() {
+    // A payload of a payload: `#e((#e((i,)),))`.
+    let nested = |b: i64| [1, 2, 3].map(|j| End::Payload.of(End::Payload.of(lit_i(b + j))));
+    for k in [0, 1, 3] {
+        let ends: Vec<[Type; 3]> = (0..k).map(|i| nested(10 * i)).collect();
+        check_against_model(&format!("nested payloads, k = {k}"), &ends);
+    }
+    // Ends of different kinds in one union, each pinwheel of one kind.
+    let mixed: Vec<[Type; 3]> = (0..6)
+        .map(|i| End::ALL[i % 3].ends(10 * i as i64))
+        .collect();
+    check_against_model("mixed kinds", &mixed);
+    // One pinwheel whose ends are of different kinds.
+    check_against_model(
+        "kinds within a pinwheel",
+        &[[
+            End::Plain.of(lit_i(1)),
+            End::Payload.of(lit_i(2)),
+            End::OneTuple.of(lit_i(3)),
+        ]],
+    );
+    // The cofinite end with payload and one-tuple ends.
+    for end in End::ALL {
+        for k in [1, 2, 4] {
+            let full = cofinite_pinwheels(k, true, end);
+            let open = cofinite_pinwheels(k, false, end);
+            assert_eq!(full.verdict(), Verdict::Empty, "{end:?}, k = {k}");
+            assert_eq!(open.verdict(), Verdict::Inhabited, "{end:?}, k = {k}");
+            let middles = Type::union_all((0..k as i64).map(|i| {
+                let m = end.of(lit_i(10 * i + 2));
+                Type::tuple(vec![m.clone(), m])
+            }));
+            assert!((&open - &full).equiv(&middles), "{end:?}, k = {k}");
+        }
+    }
+}
+
+#[test]
+fn payload_and_one_tuple_pinwheels_scale() {
+    // Each value sought in a class of pinwheels was sought on a box holding half of all the
+    // ends in the split component, and each test of a cell against it cost that half. Each
+    // piece now holds only its own class. The union of the classes was built one class at a
+    // time, which is quadratic in the nodes of the diagram: with one-tuple ends and a middle,
+    // 25.1 times the work from k = 64 to 512. It is built by halves.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            for end in [End::Payload, End::OneTuple] {
+                scaling::check(
+                    &format!("k pinwheels of {end:?} ends, empty, by k"),
+                    64,
+                    |k| {
+                        Type::forget_emptiness();
+                        assert_eq!(pinwheels(k, true, end).verdict(), Verdict::Empty);
+                    },
+                );
+                scaling::check(
+                    &format!("k pinwheels of {end:?} ends with a middle, by k"),
+                    64,
+                    |k| {
+                        Type::forget_emptiness();
+                        assert_eq!(pinwheels(k, false, end).verdict(), Verdict::Inhabited);
+                    },
+                );
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]
@@ -535,7 +719,7 @@ fn a_union_of_disjoint_pinwheels_is_decided_piece_by_piece() {
         .spawn(|| {
             scaling::check("k disjoint pinwheels, empty, by k", 64, |k| {
                 Type::forget_emptiness();
-                assert!(pinwheels(k, true).is_empty());
+                assert!(pinwheels(k, true, End::Plain).is_empty());
             });
             // A cofinite type lists the integers it leaves out. When any cofinite cell joined
             // its whole universe, all k pinwheels fell in one class: 62.6 times the work from
@@ -546,12 +730,12 @@ fn a_union_of_disjoint_pinwheels_is_decided_piece_by_piece() {
                 64,
                 |k| {
                     Type::forget_emptiness();
-                    assert!(cofinite_pinwheels(k, true).is_empty());
+                    assert!(cofinite_pinwheels(k, true, End::Plain).is_empty());
                 },
             );
             scaling::check("k disjoint pinwheels with a middle, by k", 64, |k| {
                 Type::forget_emptiness();
-                let t = pinwheels(k, false);
+                let t = pinwheels(k, false, End::Plain);
                 assert!(!t.is_empty());
                 assert_eq!(t.verdict(), zed_kernel::types::Verdict::Inhabited);
             });
@@ -564,7 +748,10 @@ fn a_union_of_disjoint_pinwheels_is_decided_piece_by_piece() {
 #[test]
 fn a_union_of_disjoint_pinwheels_is_decided() {
     for k in [1, 2, 3, 5] {
-        let (full, open) = (pinwheels(k, true), pinwheels(k, false));
+        let (full, open) = (
+            pinwheels(k, true, End::Plain),
+            pinwheels(k, false, End::Plain),
+        );
         assert_eq!(full.verdict(), zed_kernel::types::Verdict::Empty, "k = {k}");
         assert_eq!(
             open.verdict(),

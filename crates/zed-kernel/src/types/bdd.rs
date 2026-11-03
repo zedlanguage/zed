@@ -401,11 +401,11 @@ impl<A: Literal> Bdd<A> {
     }
 
     /// Whether `f` holds of every atom, each node visited once.
-    pub(super) fn atoms(&self, f: &mut impl FnMut(&A) -> bool) -> bool {
-        fn go<A: Literal>(
-            b: &Bdd<A>,
+    pub(super) fn atoms<'a>(&'a self, f: &mut impl FnMut(&'a A) -> bool) -> bool {
+        fn go<'a, A: Literal>(
+            b: &'a Bdd<A>,
             seen: &mut HashSet<u64>,
-            f: &mut impl FnMut(&A) -> bool,
+            f: &mut impl FnMut(&'a A) -> bool,
         ) -> bool {
             let Bdd::Node(n) = b else {
                 return true;
@@ -1234,11 +1234,11 @@ impl<A: Literal> Part<A> {
     }
 
     /// Whether `f` holds of every atom, each node and expression visited once.
-    pub(super) fn atoms(&self, f: &mut impl FnMut(&A) -> bool) -> bool {
-        fn go<A: Literal>(
-            p: &Part<A>,
+    pub(super) fn atoms<'a>(&'a self, f: &mut impl FnMut(&'a A) -> bool) -> bool {
+        fn go<'a, A: Literal>(
+            p: &'a Part<A>,
             seen: &mut HashSet<u64>,
-            f: &mut impl FnMut(&A) -> bool,
+            f: &mut impl FnMut(&'a A) -> bool,
         ) -> bool {
             let e = match p {
                 Part::Bdd(b) => return b.atoms(f),
