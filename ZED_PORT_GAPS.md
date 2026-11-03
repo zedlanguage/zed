@@ -770,3 +770,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `HashMap` keyed by list and family ids, filled during the pass | `Held::{sets, seen, done, made}` | Identity, mutation | A state receiver over a map keyed by the ids above |
 | A persistent cons list in `Arc` with a cached hash and depth, whose `Eq` first tests `Arc::ptr_eq` | `Position::{child, eq}` | Identity (gap 1) | A list of child indices with the hash as a field; `==` compares the hashes, then the indices |
 | `Drop` that unlinks a long cons list in a loop, so that dropping it does not recurse | `Position::drop` | No destructors | The runtime frees long lists without recursion (step L6.13) |
+
+## Entries from T14-rope-len (`zed-kernel/src/text.rs`, `zed-kernel/src/words.rs`, `zed-native/src/hooks.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `usize::checked_add` of two byte counts, refused past `usize::MAX` | `Text::join` | Machine integers | With `int` counts the sum never wraps; the refusal stays as an `if` comparing the sum with the largest length the runtime can address |
+| `i64::try_from` of a count, with a big integer when it does not fit | `words::word` (`Len`), `hooks::node` (`Len`) | Machine integers | Vanishes: `len` returns an `int` |
