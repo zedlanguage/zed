@@ -264,3 +264,94 @@ fn an_even_number_that_is_odd_is_empty() {
     a.reduce();
     assert!(a.bottom, "{a}");
 }
+
+/// `let h = (y) -> 2 * y + 1 in if h(x) >= k { k } else if h(x) >= k - 1 { k - 1 } … else { 0 }`:
+/// an `else if` chain of `k` tests, each read through the function it calls.
+fn helper_chain(k: usize) -> Term {
+    let call = || Term::App(arc(var("h")), vec![var("x")]);
+    let chain = (1..=k).fold(int(0), |t, i| {
+        Term::If(
+            arc(prim(Prim::Ge, call(), int(i as i64))),
+            arc(int(i as i64)),
+            arc(t),
+        )
+    });
+    let h = Term::Lam(
+        vec!["y".into()],
+        arc(prim(Prim::Add, prim(Prim::Mul, int(2), var("y")), int(1))),
+    );
+    Term::Let("h".into(), arc(h), arc(chain))
+}
+
+/// `let h0 = (y) -> y + 1 in let h1 = (y) -> h0(y) + 1 in let h2 = (y) -> h1(y) + h0(y) in …
+/// if hk(x) >= 0 { 1 } else { 2 }`: one test read through `k + 1` functions, each calling the
+/// two before it, so a function is reached along many paths.
+fn nested_helpers(k: usize) -> Term {
+    let name = |i: usize| -> std::sync::Arc<str> { format!("h{i}").into() };
+    let call = |f: std::sync::Arc<str>, a: Term| Term::App(arc(Term::Var(f)), vec![a]);
+    let mut t = Term::If(
+        arc(prim(Prim::Ge, call(name(k), var("x")), int(0))),
+        arc(int(1)),
+        arc(int(2)),
+    );
+    for i in (0..=k).rev() {
+        let body = match i {
+            0 => prim(Prim::Add, var("y"), int(1)),
+            1 => prim(Prim::Add, call(name(0), var("y")), int(1)),
+            _ => prim(
+                Prim::Add,
+                call(name(i - 1), var("y")),
+                call(name(i - 2), var("y")),
+            ),
+        };
+        let f = Term::Lam(vec!["y".into()], arc(body));
+        t = Term::Let(name(i), arc(f), arc(t));
+    }
+    t
+}
+
+#[test]
+fn tests_read_through_the_functions_they_call_scale() {
+    let x = ints(&["x".into()]);
+    // `h(x) >= 4` and below it `h(x) < 4`, `h(x) >= 3`: the test of 3 is reached where
+    // `2x + 1` is 3, that of 2 never, since `2x + 1` is odd.
+    let a = super::arms(&helper_chain(4), &x);
+    let reach: Vec<bool> = a.iter().map(|a| a.reachable()).collect();
+    assert_eq!(
+        reach,
+        [true, true, true, true, false, true, true, true],
+        "{a:#?}"
+    );
+    // `h5(x)` is `8x + 13`, so the true arm holds `x >= -1`.
+    let a = super::arms(&nested_helpers(5), &x);
+    assert_eq!(a[0].scope.get("x").ints().to_string(), "[-1..]");
+    assert_eq!(a[1].scope.get("x").ints().to_string(), "[..=-2]");
+    // The terms, built before the timing; walking their arms is timed. Each test closes over
+    // the functions it reaches, each once however many paths reach it, so both are linear.
+    let chains: BTreeMap<usize, Term> = [64, 512]
+        .into_iter()
+        .map(|k| (k, helper_chain(k)))
+        .collect();
+    scaling::check_order(
+        "an `else if` chain of k tests, each calling a function",
+        64,
+        1,
+        |k| {
+            super::arms(&chains[&k], &x);
+        },
+    );
+    // The preimage still recurses on the depth of the term (item T2-mid), so the chain stays
+    // within what a test thread's stack holds.
+    let nests: BTreeMap<usize, Term> = [32, 256]
+        .into_iter()
+        .map(|k| (k, nested_helpers(k)))
+        .collect();
+    scaling::check_order(
+        "one test through k functions, each calling the two before it",
+        32,
+        1,
+        |k| {
+            super::arms(&nests[&k], &x);
+        },
+    );
+}

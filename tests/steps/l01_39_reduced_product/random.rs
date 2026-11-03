@@ -159,3 +159,151 @@ fn every_value_that_reaches_an_arm_is_in_its_scope() {
     assert!(unreachable > 40, "{unreachable} unreachable arms");
     assert!(narrowed > 100, "{narrowed} narrowed arms");
 }
+
+/// The same shape with `z`'s term as a function `h` of `x` and `y` that the last test calls,
+/// and that function:
+///
+/// ```text
+/// h = (x, y) -> <integer term over x, y>;
+/// if <test> { if <test> { 1 } else { 2 } } else { if h(x, y) > c { 3 } else { 4 } }
+/// ```
+fn helper_body(s: &Shape) -> (Term, Term, Term) {
+    let h = Term::Lam(vec!["x".into(), "y".into()], Arc::new(s.z.clone()));
+    let last = Term::Prim(
+        Prim::Gt,
+        vec![
+            Term::App(Arc::new(var("h")), vec![var("x"), var("y")]),
+            lit(s.c),
+        ],
+    );
+    let body = if_(
+        s.outer.clone(),
+        if_(s.inner.clone(), lit(1), lit(2)),
+        if_(last.clone(), lit(3), lit(4)),
+    );
+    let body = Term::Let("h".into(), Arc::new(h.clone()), Arc::new(body));
+    (body, last, h)
+}
+
+/// The path condition of each of the six arms, in the walk's order.
+fn paths(s: &Shape, last: &Term) -> Vec<Term> {
+    let not = |t: &Term| Term::Prim(Prim::Not, vec![t.clone()]);
+    let and = |a: Term, b: Term| Term::Prim(Prim::And, vec![a, b]);
+    vec![
+        s.outer.clone(),
+        and(s.outer.clone(), s.inner.clone()),
+        and(s.outer.clone(), not(&s.inner)),
+        not(&s.outer),
+        and(not(&s.outer), last.clone()),
+        and(not(&s.outer), not(last)),
+    ]
+}
+
+/// The atomic tests a scope is narrowed by when `t` gives `outcome`, each with the outcome it
+/// must give, as `Scope::assume` takes them apart; `false` when `t` is a disjunction of cases,
+/// whose scope is the join of theirs.
+fn forced(t: &Term, outcome: bool, out: &mut Vec<(Term, bool)>) -> bool {
+    match t {
+        Term::Prim(Prim::Not, a) => forced(&a[0], !outcome, out),
+        Term::Prim(p @ (Prim::And | Prim::Or), a) if (*p == Prim::And) == outcome => {
+            forced(&a[0], outcome, out) && forced(&a[1], outcome, out)
+        }
+        Term::Prim(Prim::And | Prim::Or, _) | Term::If(..) => false,
+        _ => {
+            out.push((t.clone(), outcome));
+            true
+        }
+    }
+}
+
+/// For each arm with its path condition, closed under the body's binding `name = value`:
+/// wherever the path's preimage is exact and the scope is exact, the preimage is empty
+/// exactly when the arm is unreachable. The scope is exact when the path is a conjunction of
+/// atomic tests and each has an exact preimage on its own: each is then a box, and the scope
+/// meets their boxes. A test that reads a value bound by `let` is read through that name's
+/// product, not its term, so it is not exact; a test that calls a function is read through
+/// the call. The number of arms compared, or the first that disagrees.
+fn agree(arms: &[Arm], paths: &[Term], name: &str, value: &Term) -> Result<usize, String> {
+    use zedc::store::interval::IntervalSet;
+    use zedc::store::preimage::{Demand, preimage};
+    let doms = [
+        ("x".into(), IntervalSet::top()),
+        ("y".into(), IntervalSet::top()),
+    ]
+    .into();
+    let closed = |t: &Term| Term::Let(name.into(), Arc::new(value.clone()), Arc::new(t.clone()));
+    let exact =
+        |t: &Term, o: bool| on_stack(|| preimage(&closed(t), &doms, &Demand::Bool(o))).exact;
+    let function = matches!(value, Term::Lam(..));
+    let mut compared = 0;
+    for (a, p) in arms.iter().zip(paths) {
+        let mut atoms = Vec::new();
+        let scope_exact = forced(p, true, &mut atoms)
+            && atoms
+                .iter()
+                .all(|(t, o)| (function || !zedc::stage::free(t).contains(name)) && exact(t, *o));
+        let pre = on_stack(|| preimage(&closed(p), &doms, &Demand::Bool(true)));
+        if !scope_exact || !pre.exact {
+            continue;
+        }
+        compared += 1;
+        let empty = pre.domains.values().any(IntervalSet::is_empty);
+        if empty == a.reachable() {
+            return Err(format!(
+                "path {p}: the exact preimage is {}, but the arm's scope is\n{}",
+                if empty { "empty" } else { "not empty" },
+                a.scope
+            ));
+        }
+    }
+    Ok(compared)
+}
+
+#[test]
+fn the_closed_path_condition_and_the_scope_agree_on_emptiness() {
+    let mut rng = Rng::new(0x1_39_33);
+    let (mut compared, mut through) = (0, 0);
+    for _ in 0..300 {
+        let s = Shape::random(&mut rng);
+        compared += agree(&s.arms(), &paths(&s, &s.last()), "z", &s.z)
+            .unwrap_or_else(|e| panic!("{s:?}: {e}"));
+        let (body, last, h) = helper_body(&s);
+        let arms = zedc::store::product::arms(&body, &ints(&["x".into(), "y".into()]));
+        compared +=
+            agree(&arms, &paths(&s, &last), "h", &h).unwrap_or_else(|e| panic!("{s:?}: {e}"));
+        through += usize::from(arms[3].reachable() && !arms[4].reachable());
+    }
+    // The comparison ran, and some arms are unreachable only through what `h` returns.
+    assert!(compared > 500, "{compared} arms compared");
+    assert!(through > 10, "{through} arms unreachable through `h`");
+}
+
+/// `if y >= abs(-3 * y) { if y == (x - x) mod -3 { 1 } else { 2 } } else { 3 }`: the outer test
+/// leaves `y` the one value 0, and `(x - x) mod -3` is 0, so the arm `2` is unreachable. The
+/// inner test is read with `y` as a name of the interval `[0..=0]`; with 0 put in its place,
+/// the preimage reads `x` only through `x - x`, which intervals do not cancel, and keeps the
+/// arm (found by the cross-check above).
+#[test]
+fn a_name_of_one_integer_value_is_read_through_its_interval() {
+    let (x, y) = (var("x"), var("y"));
+    let outer = Term::Prim(
+        Prim::Ge,
+        vec![
+            y.clone(),
+            Term::Prim(
+                Prim::Abs,
+                vec![Term::Prim(Prim::Mul, vec![lit(-3), y.clone()])],
+            ),
+        ],
+    );
+    let zero = Term::Prim(
+        Prim::Mod,
+        vec![Term::Prim(Prim::Sub, vec![x.clone(), x]), lit(-3)],
+    );
+    let inner = Term::Prim(Prim::Eq, vec![y, zero]);
+    let body = if_(outer, if_(inner, lit(1), lit(2)), lit(3));
+    let a = zedc::store::product::arms(&body, &ints(&["x".into(), "y".into()]));
+    assert_eq!(a.len(), 4);
+    assert_eq!(a[0].scope.get("y").ints().to_string(), "[0..=0]");
+    assert!(a[1].reachable() && !a[2].reachable(), "{:#?}", a);
+}

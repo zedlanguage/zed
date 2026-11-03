@@ -10,6 +10,7 @@
 
 mod controls;
 mod exact;
+mod helpers;
 mod hull;
 mod random;
 mod scaling;

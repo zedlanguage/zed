@@ -796,3 +796,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Option<(usize, Span)>` matched as `Some((n, span)) if *n == next` through `&mut`, then extended in place | `docs::check` | Mutation | A fold over the doc comments whose state is the open block, returned with each step |
 | `str::parse::<f64>()` and `str::parse::<f32>()`, correctly rounded by the standard library | `num::literal_f64`, `num::literal_f32` | Missing primitive | A prelude cast `f64(text)` that rounds to nearest with ties to even, as `num::literal_f64` does |
 | A sink typed `FnMut(&str, &str) -> Result<(), (String, String)>` for the path and reason of a failed write | `run::commit` | Mutation | A function returning the acknowledgment atom `#ioError(op:, path:, why:)` directly |
+
+## Entries from T-zone (`zedc/src/store/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `imbl::OrdMap` of bindings, cloned into each arm's scope and shared by structure | `Scope::{bind, unbind, join, close}` | None | A Zed map is a value; cloning is sharing |
+| A `u64` counter in the scope that orders bindings | `Scope::bind` | Mutation | The scope is passed and returned, with the counter as a field |
+| A worklist `Vec` with a visited `BTreeSet`, then a sort by order and a right fold into nested `Term::Let` | `Scope::close` | None | A `fold` over the worklist with a set in its state, then `sort` and a fold |
+| `matches!(**e, Term::Lam(..))` on an `Arc<Term>`, and `Option::then` | `Scope::bind` | None | A pattern test `is Lam` |

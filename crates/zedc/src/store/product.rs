@@ -441,6 +441,21 @@ pub struct Scope {
     /// The causes for which the integer solver left a question undecided while this scope was
     /// narrowed or projected; each one leaves the scope sound but wider than it could be.
     pub refusals: BTreeSet<presburger::Refusal>,
+    /// Each name a `let` of the walk bound, with the order of its binding and, for a function,
+    /// its lambda: a test that calls a function is closed over it before its preimage is taken
+    /// ([`Scope::close`]). Shared between the scopes of a walk's arms, not copied.
+    bindings: imbl::OrdMap<Arc<str>, Binding>,
+    /// The order the next binding gets.
+    clock: u64,
+}
+
+/// A name's `let` binding in a [`Scope`].
+#[derive(Clone, PartialEq, Debug)]
+struct Binding {
+    /// The order of the binding: a binding made later has a larger one.
+    order: u64,
+    /// The lambda the name is bound to, when it is one.
+    function: Option<Arc<Term>>,
 }
 
 /// The intervals and classes of a part's names when it was last projected.
@@ -681,6 +696,8 @@ impl Scope {
             exact,
             exactly: BTreeMap::new(),
             refusals: BTreeSet::new(),
+            bindings: imbl::OrdMap::new(),
+            clock: 0,
         };
         s.reduce();
         s
@@ -690,8 +707,9 @@ impl Scope {
     /// forgotten first: the relation is weakened to say nothing of it and the written
     /// constraints on it go, since they hold of the value it shadows. Nothing else in the
     /// scope then mentions `x`, so `p`'s own reductions are the whole reduction, and the
-    /// scope is not copied unless `x` shadows a name or `p` is empty.
-    pub fn bind(&mut self, x: &Arc<str>, mut p: Product) -> Unbind {
+    /// scope is not copied unless `x` shadows a name or `p` is empty. `e` is the bound term,
+    /// kept when it is a lambda, so that a test calling `x` is read through the call.
+    pub fn bind(&mut self, x: &Arc<str>, mut p: Product, e: &Arc<Term>) -> Unbind {
         loop {
             let before = p.clone();
             p.reduce_domains();
@@ -700,8 +718,14 @@ impl Scope {
                 break;
             }
         }
+        let binding = Binding {
+            order: self.clock,
+            function: matches!(**e, Term::Lam(..)).then(|| e.clone()),
+        };
+        self.clock += 1;
         if !self.bottom && !p.is_empty() && !self.names.contains_key(x) {
             self.names.insert(x.clone(), p);
+            self.bindings.insert(x.clone(), binding);
             return Unbind::Fresh(x.clone());
         }
         let saved = Unbind::Saved(Box::new(self.clone()));
@@ -710,6 +734,7 @@ impl Scope {
         }
         self.relation = self.relation.forget(x);
         self.written.retain(|_, (_, free)| !free.contains(x));
+        self.bindings.insert(x.clone(), binding);
         self.names.insert(x.clone(), p);
         if self.names[x].is_empty() {
             self.bottom = true;
@@ -725,6 +750,7 @@ impl Scope {
         match u {
             Unbind::Fresh(x) => {
                 self.names.remove(&x);
+                self.bindings.remove(&x);
             }
             Unbind::Saved(s) => *self = *s,
         }
@@ -748,6 +774,46 @@ impl Scope {
                 Some((n.clone(), v.clone()))
             })
             .collect()
+    }
+
+    /// `test` under the functions in scope it calls, and those they call in turn, each a `let`
+    /// in the order of its binding, so that the preimage reads through the calls (DESIGN.md
+    /// step L1.25); `None` when it calls none. A function that reads a name bound at or after
+    /// its own binding, itself included, would read another binding here, so it is left
+    /// unbound and the transfer stops at its call. The cost is the functions reached and
+    /// their terms' sizes, each visited once.
+    fn close(&self, test: &Term) -> Option<Term> {
+        let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
+        let mut todo: Vec<Arc<str>> = stage::free(test).into_iter().collect();
+        let mut reached: Vec<(u64, &Arc<str>, &Arc<Term>)> = Vec::new();
+        while let Some(n) = todo.pop() {
+            if !seen.insert(n.clone()) {
+                continue;
+            }
+            let Some((name, b)) = self.bindings.get_key_value(&n) else {
+                continue;
+            };
+            let Some(f) = &b.function else { continue };
+            let reads = stage::free(f);
+            let later = |m: &Arc<str>| self.bindings.get(m).is_some_and(|c| c.order >= b.order);
+            if reads.iter().any(later) {
+                continue;
+            }
+            reached.push((b.order, name, f));
+            todo.extend(reads);
+        }
+        if reached.is_empty() {
+            return None;
+        }
+        reached.sort_unstable_by_key(|r| r.0);
+        Some(
+            reached
+                .into_iter()
+                .rev()
+                .fold(test.clone(), |body, (_, n, f)| {
+                    Term::Let(n.clone(), f.clone(), Arc::new(body))
+                }),
+        )
     }
 
     /// The product of `name`; the top for a name not in scope.
@@ -862,6 +928,10 @@ impl Scope {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             refusals: self.refusals.union(&other.refusals).copied().collect(),
+            // Both sides narrow one scope, which bound the names; neither binds one the other
+            // does not.
+            bindings: self.bindings.clone(),
+            clock: self.clock.max(other.clock),
             names,
         }
     }
@@ -947,7 +1017,18 @@ impl Scope {
 
     /// Narrows by one atomic test.
     fn atom(&mut self, test: &Term, outcome: bool, prem: &Premises) {
-        let statics = self.statics_of(&stage::free(test));
+        let closed = self.close(test);
+        let test = closed.as_ref().unwrap_or(test);
+        // An integer name keeps its place: its interval holds its one value, and the
+        // preimage reads the name where substituting it would leave terms it cannot cancel.
+        let int = Type::int();
+        let free = stage::free(test);
+        let statics = self.statics_of(free.iter().filter(|n| {
+            !self
+                .names
+                .get(*n)
+                .is_some_and(|p| p.ty.element.subtype(&int))
+        }));
         let t = substitute(test, &statics);
         // A bare name of bool type.
         if let Term::Var(x) = &t
@@ -987,7 +1068,6 @@ impl Scope {
                 }
             }
         }
-        let int = Type::int();
         let free = stage::free(&t);
         let inputs: Vec<Arc<str>> = free
             .iter()
@@ -1525,7 +1605,7 @@ fn forward_in(e: &Term, scope: &mut Scope) -> Product {
         Term::Var(x) => return scope.get(x),
         Term::Let(x, v, b) => {
             let p = forward_in(v, scope);
-            let u = scope.bind(x, p);
+            let u = scope.bind(x, p, v);
             let out = forward_in(b, scope);
             scope.unbind(u);
             return out;
@@ -1653,7 +1733,7 @@ fn walk(t: &Term, scope: &mut Scope, out: &mut Vec<Arm>, count: &mut u32) {
         Term::Let(x, e, b) => {
             walk(e, scope, out, count);
             let p = forward(e, scope);
-            let u = scope.bind(x, p);
+            let u = scope.bind(x, p, e);
             walk(b, scope, out, count);
             scope.unbind(u);
         }
