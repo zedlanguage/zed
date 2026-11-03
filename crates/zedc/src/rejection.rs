@@ -38,10 +38,12 @@ rows! {
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
     FoldWithNone => "`.fold` on a type that has none",
+    MapOutsideValues => "`.map` at a parameter outside the value positions",
     KeyOutsideBound => "Key outside the permission bound",
     UndischargedRegion => "Undischarged region assertion",
     OverlappingArrows => "Cross-unit overlapping incomparable arrows",
     AmbiguousImport => "Ambiguous imported name",
+    NeedInCallerScope => "Need met only by an arrow in the caller's scope",
     MemberTwice =>
         "Two members of one name with different declarations in a struct or interface body",
     PathLeavesPackage =>

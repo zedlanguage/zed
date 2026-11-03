@@ -403,14 +403,22 @@ expression: "golden_tokens(\"examples.md\")"
  17 | inorder ( «positional» t : Tree ) -> [ int ] {
  18 | «match» t { #leaf -> [ ] , Node ( l : , v : , r : ) -> inorder ( l ) ++ [ v ] ++ inorder ( r ) }
  19 | }
-== EXAMPLES.md:686 L10
+== EXAMPLES.md:686 L15
+  2 | «type» PTree ( A ) = #leaf ( A ) | #fork ( l : PTree ( A ) , r : PTree ( A ) ) ;
+  3 | count ( «positional» t : PTree ( _ ) ) = t . fold ( n -> «match» n { #fork ( l : , r : ) -> l + r , _ -> 1₍10₎ } ) ;
+  4 | labels ( «positional» t : PTree ( int ) ) = t . map ( A : x -> str["n" ${x}] ) ;
+  5 | «law» mapId ( t : PTree ( int ) ) = t . map ( A : x -> x ) == t ;
+  6 | «law» mapCompose ( t : PTree ( int ) ) = t . map ( A : x -> x + 1₍10₎ ) . map ( A : x -> 2₍10₎ * x ) == t . map ( A : x -> 2₍10₎ * ( x + 1₍10₎ ) ) ;
+  7 | «law» mapCount ( t : PTree ( int ) ) = count ( t . map ( A : x -> - x ) ) == count ( t ) ;
+  8 | checked ( «positional» t : PTree ( String ) ) = t . map ( A : s -> int ( s ) ) . allOk ;
+== EXAMPLES.md:699 L10
   2 | edges : Id ->? [ Id ] = { 1₍10₎ -> [ 2₍10₎ , 3₍10₎ ] , 2₍10₎ -> [ 4₍10₎ ] , 3₍10₎ -> [ 4₍10₎ ] , 4₍10₎ -> [ ] } ;
   3 | succ ( «positional» s ) = s . flatMap ( n -> edges [ n ] «else» [ ] ) . image ;
   4 | reach = «loop» {
   5 | r' = r . union ( succ ( r ) ) «with» r = { start } ;
   6 | «until» r' == r ;
   7 | } ;
-== EXAMPLES.md:696 L16
+== EXAMPLES.md:709 L16
   6 | «type» Dist = int [ 0₍10₎ .. ] | #inf ;
   7 | addD ( «positional» d : Dist , «positional» w : int [ 0₍10₎ .. ] ) -> Dist { «if» d «is» #inf { #inf } «else» { d + w } }
   8 | @associative @commutative @idempotent
@@ -420,41 +428,41 @@ expression: "golden_tokens(\"examples.md\")"
  12 | «with» d = «for» v «in» nodes { «if» v == start { 0₍10₎ } «else» { #inf } } ;
  13 | «until» d' == d ;
  14 | } ;
-== EXAMPLES.md:719 L5
+== EXAMPLES.md:732 L5
   2 | head ( «positional» xs ) = xs [ 0₍10₎ ] ;
   3 | swap ( p ) { a , b = p ; ( b , a ) }
   4 | «type» Stack ( T ) = [ T ] ;
   5 | push ( s : Stack ( T ) , x : T ) = s ++ [ x ] ;
   6 | top ( s : Stack ( T ) ) = s . last ;
-== EXAMPLES.md:728 L10
+== EXAMPLES.md:741 L10
   2 | «interface» Named { name : String }
   3 | greet ( «positional» n : Named ) = str["Hi, " ${n . name}] ;
   4 | «struct» User { name : String , id : int }
   5 | «struct» Cat { name : String }
   6 | g1 = greet ( User ( name : str["Al"] , id : 1₍10₎ ) ) ;
   7 | g2 = greet ( Cat ( name : str["Tom"] ) ) ;
-== EXAMPLES.md:738 L10
+== EXAMPLES.md:751 L10
   2 | «interface» HasArea { area : f64 }
   3 | describe ( «positional» s : HasArea ) = str["area " ${s . area}] ;
   4 | d = describe ( Circle ( c : origin , r : 1.0f ) ) ;
-== EXAMPLES.md:745 L2
+== EXAMPLES.md:758 L2
   2 | «type» Pair ( A , B ) = { fst : A , snd : B } ;
-== EXAMPLES.md:750 L22
+== EXAMPLES.md:763 L22
   2 | «interface» Eq ( T ) { eq : ( T , T ) -> bool , «law» eqRefl ( a : T ) = eq ( a , a ) }
   3 | «interface» Ord ( T ) { «import» Eq ( T ) , le : ( T , T ) -> bool , «law» leRefl ( a : T ) = le ( a , a ) }
   4 | «interface» Hashable ( T ) { «import» Eq ( T ) , hash : ( T ) -> int }
   5 | «interface» OrdHash ( T ) { «import» Ord ( T ) , «import» Hashable ( T ) }
-== EXAMPLES.md:762 L2
+== EXAMPLES.md:775 L2
   2 | «struct» Point { x : f64 , y : f64 }
   3 | «local» sq ( «positional» v ) = v * v ;
   4 | dist ( «positional» a : Point , «positional» b : Point ) = ( sq ( a . x - b . x ) + sq ( a . y - b . y ) ) . sqrt ;
-== EXAMPLES.md:769 L2
+== EXAMPLES.md:782 L2
   2 | «import» geometry . shapes . { Point , dist } ;
   5 | far = dist ( Point ( x : 0.0f , y : 0.0f ) , Point ( x : 3.0f , y : 4.0f ) ) ;
-== EXAMPLES.md:781 L3
+== EXAMPLES.md:794 L3
   2 | text = fs [ str["notes.txt"] ] «else» str[] ;
   3 | texts = files . map ( f -> fs [ f ] ) ;
-== EXAMPLES.md:787 L21
+== EXAMPLES.md:800 L21
   2 | orders : OrderId ->? { total : rat , note : String | #none }
   3 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
   4 | n = orders [ id ] ?. note ;
@@ -462,54 +470,54 @@ expression: "golden_tokens(\"examples.md\")"
   6 | orders' = orders . patch ( toEdits ( reqs [ t ] ) ) ;
   7 | «while» t «in» reqs :: domain ;
   8 | } ;
-== EXAMPLES.md:798 L21
+== EXAMPLES.md:811 L21
   2 | orders «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
-== EXAMPLES.md:803 L21
+== EXAMPLES.md:816 L21
   2 | orders «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["../shared/orders.sql"] ) ) ) ;
-== EXAMPLES.md:808 L21
+== EXAMPLES.md:821 L21
   2 | cache : String ->? [ byte ] «with» store ( kv ( endpoint ) ) ;
   3 | config : String ->? String «with» store ( file ( str["app.cfg"] , KeyVal ) ) ;
-== EXAMPLES.md:814 L21
+== EXAMPLES.md:827 L21
   2 | cache : String ->? [ byte ] «with» store ( kv ( endpoint ) ) «with» timeout ( 200₍10₎ «with» units ( str["ms"] ) ) ;
   3 | hit = cache [ key ] «else» fetch ( key ) ;
-== EXAMPLES.md:820 L7
+== EXAMPLES.md:833 L7
   2 | main ( args : [ String ] , env : String ->? String , clock : Stream ( Instant ) ) -> ( stdout : Lines , exit : int ) { … }
   3 | page = http . get ( url ) ;
-== EXAMPLES.md:830 L5
+== EXAMPLES.md:843 L5
   2 | sessions = events . chunkBy ( e -> e . userId ) ;
   3 | report = sessions . map ( s -> summarize ( s ) ) ;
   4 | bigOnes = events . where ( e -> e . size > 1000000₍10₎ ) ;
-== EXAMPLES.md:837 L5
+== EXAMPLES.md:850 L5
   3 | merged = a . tag ( #a ) ++ b . tag ( #b ) ;
-== EXAMPLES.md:843 L10
+== EXAMPLES.md:856 L10
   2 | expand ( «positional» n : int ) -> [ int ] { «emit» n ; «emit» n * 10₍10₎ ; }
   3 | out = xs . flatMap ( expand ) ;
-== EXAMPLES.md:849 L7
+== EXAMPLES.md:862 L7
   2 | main ( req : Stream ( Query ) ) -> ( resp : Stream ( Answer ) ) {
   3 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
   4 | }
-== EXAMPLES.md:856 L12
+== EXAMPLES.md:869 L12
   2 | perMinute = events . window ( 60₍10₎ «with» units ( str["s"] ) ) . map ( w -> w . count ) ;
-== EXAMPLES.md:863 L18
+== EXAMPLES.md:876 L18
   2 | double ( «positional» x ) = x * 2₍10₎ «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
   3 | clamp ( «positional» v , «positional» lo , «positional» hi ) -> int { «if» v < lo { lo } «else» «if» v > hi { hi } «else» { v } }
   4 | «test» { ( 5₍10₎ , 0₍10₎ , 8₍10₎ ) -> 5₍10₎ , ( - 1₍10₎ , 0₍10₎ , 8₍10₎ ) -> 0₍10₎ , ( 9₍10₎ , 0₍10₎ , 8₍10₎ ) -> 8₍10₎ }
   5 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> String { … }
   6 | @associative @commutative combine ( «positional» a , «positional» b ) = … ;
   7 | @memoized report = logs . map ( rowCost ) . sum ;
-== EXAMPLES.md:873 L16
+== EXAMPLES.md:886 L16
   2 | «struct» Moments { n : int , sum : rat , sumSq : rat }
   3 | moment ( «positional» x : rat ) = Moments ( n : 1₍10₎ , sum : x , sumSq : x * x ) ;
   4 | @associative @commutative combine ( «positional» a : Moments , «positional» b : Moments ) = Moments ( n : a . n + b . n , sum : a . sum + b . sum , sumSq : a . sumSq + b . sumSq ) ;
   5 | m = xs . map ( moment ) >< combine «else» Moments ( n : 0₍10₎ , sum : 0r , sumSq : 0r ) ;
   6 | mean = m . sum / rat ( m . n ) ;
   7 | variance = m . sumSq / rat ( m . n ) - mean * mean ;
-== EXAMPLES.md:885 L15
+== EXAMPLES.md:898 L15
   2 | @ensure scaledOdd ( x : int [ 0₍10₎ ..= 100₍10₎ ] ) = ( x * 2₍10₎ + 1₍10₎ ) . refine ( v -> v < 100₍10₎ ) ;
   3 | @ensure odd ( «positional» x ) = ( x * 2₍10₎ + 1₍10₎ ) . refine ( v -> v < 100₍10₎ ) ;
   4 | a = odd ( 12₍10₎ ) ;
   5 | b = odd ( 60₍10₎ ) ;
-== EXAMPLES.md:893 L15
+== EXAMPLES.md:906 L15
   2 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
   3 | «law» clampInRange ( v : int , lo : int , hi : int where lo <= hi ) = clamp ( v , lo , hi ) «in» lo ..= hi ;
   4 | «law» nextCycles ( c : Color ) = next ( next ( next ( c ) ) ) == c ;
@@ -517,7 +525,7 @@ expression: "golden_tokens(\"examples.md\")"
   6 | «law» mirrorKeepsSize ( t : Tree ) = size ( mirror ( t ) ) == size ( t )
   7 | «proof» { byInduction ( t ) }
   9 | «law» sortIdempotent ( xs : [ int ] ) = xs . sort ( «asc» x -> x ) . sort ( «asc» x -> x ) == xs . sort ( «asc» x -> x ) ;
-== EXAMPLES.md:905 L15
+== EXAMPLES.md:918 L15
   2 | amt ( «positional» t : int ) = withdrawals [ t ] «else» 0₍10₎ ;
   3 | account = «loop» t {
   4 | @invariant ( balance >= 0₍10₎ ) balance' = «if» amt ( t ) <= balance { balance - amt ( t ) } «else» { balance } «with» balance = 0₍10₎ ;
@@ -529,7 +537,7 @@ expression: "golden_tokens(\"examples.md\")"
  11 | advance ( «positional» l : Lamp , «positional» c : Cmd ) = «if» c == #fault { #red } «else» { «match» l { #green -> #yellow , #yellow -> #red , #red -> #green } } ;
  12 | reachable = «loop» { R' = R . union ( R . flatMap ( l -> [ advance ( l , #tick ) , advance ( l , #fault ) ] ) . image ) «with» R = { #red } ; } ;
  13 | «law» faultStops ( l : Lamp ) = ( l «in» reachable . R ) . implies ( advance ( l , #fault ) == #red ) ;
-== EXAMPLES.md:925 L20
+== EXAMPLES.md:938 L20
   2 | «type» Port = int [ 1₍10₎ ..= 65535₍10₎ ] ;
   3 | «type» Name = String [ len 1₍10₎ ..= 80₍10₎ ] ;
   4 | «type» Small ( K , V ) = ( K -> V ) [ card <= 10₍10₎ ] ;
@@ -538,11 +546,11 @@ expression: "golden_tokens(\"examples.md\")"
   7 | q : Port = 70000₍10₎ ;
   8 | n = int ( input ) ;
   9 | p2 = n ?. refine ( v -> v «in» 1₍10₎ ..= 65535₍10₎ ) ;
-== EXAMPLES.md:937 L10
+== EXAMPLES.md:950 L10
   2 | grid : int [ 0₍10₎ ..< w ] -> int [ 0₍10₎ ..< h ] -> Cell = … ;
   3 | cell = grid [ x ] [ y ] ;
   4 | all = «for» x -> y -> _ «in» grid { grid [ x ] [ y ] } ;
-== EXAMPLES.md:946 L13
+== EXAMPLES.md:959 L13
   2 | v = 3.0f «with» units ( str["m/s"] ) ;
   3 | t = 2.0f «with» units ( str["s"] ) ;
   4 | d = v * t ;
@@ -550,22 +558,22 @@ expression: "golden_tokens(\"examples.md\")"
   6 | u = d :: units ;
   7 | exec : ( Db , String «with» taint ( #clean ) ) -> Rows | #sqlError
   8 | q = exec ( db , str["select …"] ++ userInput ) ;
-== EXAMPLES.md:959 L12
+== EXAMPLES.md:972 L12
   2 | half ( «positional» x : int «with» parity ( #even ) ) = x «div» 2₍10₎ ;
   3 | g ( n : int «with» parity ( #odd ) ) = half ( n + n ) ;
   4 | k ( n : int «with» parity ( #odd ) , m : int ) = half ( n * m ) ;
   5 | seven = 7₍10₎ «with» parity ( #odd ) ;
-== EXAMPLES.md:969 L15
+== EXAMPLES.md:982 L15
   2 | squares = ( 0₍10₎ ..< 256₍10₎ ) . map ( i -> i * i ) ;
   3 | @ensure line = format ( str["{} scored {}"] , [ name , score ] ) ;
   4 | @ensure oops = format ( str["{} scored {}"] , [ name ] ) ;
-== EXAMPLES.md:980 L20
+== EXAMPLES.md:993 L20
   2 | «struct» KeyVal «grammar» { key : Ident str[":"] value : Json }
   3 | «struct» JsonObj «grammar» { str["{"] entries : KeyVal sep str[","] str["}"] }
   4 | «type» Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null ;
   5 | cfg = Json . parse ( bytes ) ;
   6 | out = cfg ?. serialize ;
-== EXAMPLES.md:989 L20
+== EXAMPLES.md:1002 L20
   2 | «struct» Sum «grammar» { terms : Prod sep str["+"] }
   3 | «struct» Prod «grammar» { factors : Atom sep str["*"] }
   4 | «struct» Paren «grammar» { str["("] inner : Sum str[")"] }
@@ -576,7 +584,7 @@ expression: "golden_tokens(\"examples.md\")"
   9 | Paren . eval = inner . eval ;
  10 | Number . eval = int ( «this» ) «else» 0₍10₎ ;
  11 | value = Sum . parse ( str["2*(3+4)"] ) ?. eval ;
-== EXAMPLES.md:1005 L7
+== EXAMPLES.md:1018 L7
   2 | «struct» Account { bal : rat }
   3 | «type» Tx = #deposit ( id : AccountId , amt : rat ) | #withdraw ( id : AccountId , amt : rat ) ;
   4 | edits : ( Tx ) -> AccountId ->? Edit ( Account ) ;
@@ -589,12 +597,12 @@ expression: "golden_tokens(\"examples.md\")"
  11 | «while» t «in» txs :: domain ;
  12 | } ;
  13 | closing = book . accts ;
-== EXAMPLES.md:1021 L6
+== EXAMPLES.md:1034 L6
   2 | «type» Light = #green | #yellow | #red ;
   3 | next ( «positional» l : Light ) = «match» l { #green -> #yellow , #yellow -> #red , #red -> #green } ;
   4 | lights = «loop» t { l' = next ( l ) «with» l = #red ; «until» t == 10₍10₎ ; } ;
   5 | trace = lights :: frames . map ( f -> f . l ) ;
-== EXAMPLES.md:1029 L10
+== EXAMPLES.md:1042 L10
   2 | alive ( «positional» cells , «positional» p ) -> bool {
   3 | x , y = p ;
   4 | ns = «for» d «in» [ ( - 1₍10₎ , - 1₍10₎ ) , ( - 1₍10₎ , 0₍10₎ ) , ( - 1₍10₎ , 1₍10₎ ) , ( 0₍10₎ , - 1₍10₎ ) , ( 0₍10₎ , 1₍10₎ ) , ( 1₍10₎ , - 1₍10₎ ) , ( 1₍10₎ , 0₍10₎ ) , ( 1₍10₎ , 1₍10₎ ) ] {
@@ -608,12 +616,12 @@ expression: "golden_tokens(\"examples.md\")"
  12 | cells' = «for» p -> _ «in» cells { alive ( cells , p ) } «with» cells = seed ;
  13 | «until» t == 100₍10₎ ;
  14 | } ;
-== EXAMPLES.md:1046 L5
+== EXAMPLES.md:1059 L5
   2 | «struct» Req { path : String , status : int , ms : int }
   3 | byPath = reqs . group ( r -> r . path ) ;
   4 | errRate = byPath . map ( rs -> f64 ( rs . where ( r -> r . status >= 500₍10₎ ) . count ) / f64 ( rs :: card ) ) ;
   5 | slowest = byPath . map ( rs -> rs . map ( r -> r . ms ) . max ) . maxBy ( m -> m ) ;
-== EXAMPLES.md:1054 L21
+== EXAMPLES.md:1067 L21
   2 | «struct» Todo { title : String , done : bool }
   3 | todos : TodoId ->? Todo «with» store ( kv ( endpoint ) ) ;
   4 | main ( cmds : Stream ( Cmd ) ) -> ( out : Lines ) {
@@ -623,22 +631,22 @@ expression: "golden_tokens(\"examples.md\")"
   8 | } ;
   9 | out <- run :: frames . map ( f -> str[${f . todos :: card} " items"] ) ;
  10 | }
-== EXAMPLES.md:1069 L7
+== EXAMPLES.md:1082 L7
   2 | hist : int ->? int «with» reducer ( ( + ) ) ;
   3 | «for» s «in» words { hist [ s . len ] <- 1₍10₎ ; } ;
   4 | histB = words . group ( s -> s . len ) . count ;
   5 | cdf [ i «in» 0₍10₎ ..= maxLen ] = cdf [ i - 1₍10₎ ] + ( hist [ i ] «else» 0₍10₎ ) «with» cdf [ - 1₍10₎ ] = 0₍10₎ ;
   6 | d [ i ] [ j ] = «if» a [ i ] == b [ j ] { d [ i - 1₍10₎ ] [ j - 1₍10₎ ] } «else» { 1₍10₎ + min ( d [ i - 1₍10₎ ] [ j ] , d [ i ] [ j - 1₍10₎ ] , d [ i - 1₍10₎ ] [ j - 1₍10₎ ] ) }
   7 | «with» d [ - 1₍10₎ ] [ j «in» - 1₍10₎ ..< b :: len ] = j + 1₍10₎ , d [ i «in» 0₍10₎ .. ] [ - 1₍10₎ ] = i + 1₍10₎ ;
-== EXAMPLES.md:1079 L8
+== EXAMPLES.md:1092 L8
   2 | byVal = xs «as» ( i -> v ) «into» ( v -> i -> _ ) ;
   3 | pairs = «for» i -> v «in» xs where ( target - v ) «in» byVal :: domain { ( i , byVal [ target - v ] . where ( j -> j != i ) ) } ;
-== EXAMPLES.md:1085 L3
+== EXAMPLES.md:1098 L3
   2 | isPrime ( «positional» k ) = k >= 2₍10₎ && ( 2₍10₎ ..< k ) . where ( d -> ( d * d ) <= k && ( k «mod» d ) == 0₍10₎ ) . count == 0₍10₎ ;
   3 | primes = ( 2₍10₎ ..= n ) . where ( isPrime ) ;
-== EXAMPLES.md:1091 L5
+== EXAMPLES.md:1104 L5
   2 | rle = xs . chunkBy ( x -> x ) . map ( c -> ( c . first , c . count ) ) ;
-== EXAMPLES.md:1096 L10
+== EXAMPLES.md:1109 L10
   2 | bsearch ( xs : [ int ] , t : int ) -> int | #none {
   3 | go ( «positional» lo , «positional» hi ) -> int | #none {
   4 | «if» lo > hi { #none }
@@ -652,15 +660,15 @@ expression: "golden_tokens(\"examples.md\")"
  12 | }
  13 | go ( 0₍10₎ , xs :: len - 1₍10₎ )
  14 | }
-== EXAMPLES.md:1113 L5
+== EXAMPLES.md:1126 L5
   2 | lowerBound ( «positional» xs : [ int ] , «positional» t : int ) = ( 0₍10₎ ..< xs :: len ) . where ( i -> xs [ i ] >= t ) . first ;
   3 | find ( xs : [ int ] , t : int ) = «match» lowerBound ( xs , t ) { #none -> #none , i -> «if» xs [ i ] == t { i } «else» { #none } } ;
-== EXAMPLES.md:1119 L10
+== EXAMPLES.md:1132 L10
   2 | «type» Mat ( n , m ) = int [ 0₍10₎ ..< n ] -> int [ 0₍10₎ ..< m ] -> f64 ;
   3 | ab = ( a , b ) «into» ( r -> k -> c >< ( + ) -> a [ r ] [ c ] * b [ c ] [ k ] ) ;
   4 | at = a «as» ( r -> c -> v ) «into» ( c -> r -> v ) ;
   5 | eye = «for» i «in» 0₍10₎ ..< n { «for» j «in» 0₍10₎ ..< n { «if» i == j { 1.0f } «else» { 0.0f } } } ;
-== EXAMPLES.md:1127 L6
+== EXAMPLES.md:1140 L6
   3 | order = ( 0₍10₎ ..< xs :: len ) . sort ( «asc» i -> rnd [ i ] ) ;
   4 | shuffled = order . map ( i -> xs [ i ] ) ;
   5 | sample = shuffled . slice ( 0₍10₎ , k ) ;
