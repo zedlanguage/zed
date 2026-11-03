@@ -695,3 +695,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `HashMap<usize, Value>` held for one call, the value of each shared cell by index | `Heap::value` | None | A map threaded through the walk |
 | `Option<String>` kept by `inc`, which cannot return an error, and taken by the next `dec` | `Heap::inc`, `Heap::dec` | Early exit | `inc` returns the error as a value |
 | An `enum` whose variants borrow the heap's cells or table (`Shape<'h>`) while a `match` reads them | `Heap::shape` | None | A value returned by the read |
+
+## Entries from T14-hooks (`zed-native/src/hooks.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A thread-local `RefCell<Option<State>>` borrowed once per hook and split into `&Tables` and `&mut Run` | `hooks::with`, `with_args` | Mutation | The run is a state receiver passed to each hook; the tables are an immutable value beside it |
+| `std::mem::take` of a buffer, used as a borrowed slice, then cleared and put back | `with_args`, `matched` (`outs`) | Mutation | A state receiver; the runtime reuses a list held once |
+| `Vec<Option<_>>` filled at first use, indexed by node or constant | `Run::shapes`, `Run::ropes` | Mutation | A map in the run's state, or the shape computed once at compile time for constant names |

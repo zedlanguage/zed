@@ -175,8 +175,12 @@ fn one_value_used_many_times_scales() {
 
 /// `t` run by the counting machine and natively: both values and both counts agree.
 fn counted(t: &Term) -> String {
+    counted_in(t, World::new())
+}
+
+/// [`counted`], with the ports of `w`.
+pub(super) fn counted_in(t: &Term, w: World) -> String {
     let (g, p) = planned(t);
-    let w = World::new();
     let (v, s) =
         memory::run(&g, &p, &mut Evaluator::new(w.clone())).unwrap_or_else(|e| panic!("{t}: {e}"));
     let o = zed_native::run(&g, &p, &mut Evaluator::new(w)).unwrap_or_else(|e| panic!("{t}: {e}"));
@@ -484,5 +488,79 @@ fn reading_a_value_whose_parts_share_cells_scales() {
         |(h, w), _| {
             std::hint::black_box(h.value(*w).unwrap());
         },
+    );
+}
+
+/// `#cons(n-1, #cons(…, #cons(0, #nil)))`: a list of `n` atoms, each built on the one before.
+fn list(n: usize) -> Term {
+    (0..n).fold(lit(Value::atom("nil")), |rest, i| {
+        prim(
+            Prim::Atom,
+            vec![
+                lit("cons"),
+                lit(Value::tuple(Vec::new())),
+                lit(i as i64),
+                rest,
+            ],
+        )
+    })
+}
+
+/// A world whose input port `x` holds `("s0", "s1", …)`, `n` strings; a read makes them
+/// `n + 1` cells.
+pub(super) fn strings(n: usize) -> World {
+    let mut w = World::new();
+    let xs = (0..n).map(|i| Value::str(&format!("s{i}"))).collect();
+    w.inputs.insert("x".into(), Value::tuple(xs));
+    w
+}
+
+/// `x = read x; f = (y) -> match (x, y) { (a, b) -> b }; (f(0), f(1), …, f(n-1))`: `n`
+/// matches, each binding the tuple `x` to `a`, which the arm does not use.
+pub(super) fn unused(n: usize) -> Term {
+    let p = Pattern::Tuple(vec![Pattern::Bind("a".into()), Pattern::Bind("b".into())]);
+    let s = prim(Prim::Tuple, vec![var("x"), var("y")]);
+    let f = lam(&["y"], Term::Match(Arc::new(s), vec![(p, var("b"))]));
+    let calls = (0..n).map(|i| app(var("f"), vec![lit(i as i64)])).collect();
+    let_(
+        "x",
+        Term::Read("x".into()),
+        let_("f", f, prim(Prim::Tuple, calls)),
+    )
+}
+
+/// The native run of `make` in `world` at `n` and `8n`, planned before the timing, against
+/// the counting machine's value and counts at `n`.
+fn check_run(what: &str, n: usize, make: fn(usize) -> Term, world: fn(usize) -> World) {
+    on_big_stack(|| {
+        assert!(!counted_in(&make(n), world(n)).is_empty());
+        let at = |m: usize| planned(&make(m));
+        let (small, large) = (at(n), at(8 * n));
+        scaling::check(what, n, |m| {
+            let (g, p) = if m == n { &small } else { &large };
+            let o = zed_native::run(g, p, &mut Evaluator::new(world(m))).unwrap();
+            std::hint::black_box(o);
+        });
+    });
+}
+
+/// Each atom is made from its words, with no call to the kernel, which took the whole list
+/// built so far as its payload (COMPLEXITY.md R2).
+#[test]
+fn a_list_of_many_atoms_scales() {
+    check_run("a list of n atoms, built natively", 500, list, |_| {
+        World::new()
+    });
+}
+
+/// A binder the arm does not use is not copied out of the scrutinee (COMPLEXITY.md R7). The
+/// tuple holds `64n` strings, so the copy would outweigh the `n` calls.
+#[test]
+fn many_matches_with_an_unused_binder_scale() {
+    check_run(
+        "n matches, each binding a tuple of 64n cells unused",
+        50,
+        unused,
+        |n| strings(64 * n),
     );
 }

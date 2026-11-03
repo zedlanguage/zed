@@ -8,6 +8,7 @@ mod checks;
 mod constants;
 mod corpus;
 mod drops;
+mod hooks;
 mod ports;
 mod reuse;
 mod scalars;

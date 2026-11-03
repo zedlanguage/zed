@@ -759,12 +759,13 @@ impl<'g> Machine<'g, '_> {
                 let arm = match &ins[0] {
                     Mv::Data(Value::Bool(b), _) => Ok(usize::from(!b)),
                     c => {
+                        let mut lets = Lets::default();
                         let t = Term::If(
-                            Arc::new(self.term(c, &mut Lets::default())?),
+                            Arc::new(self.term(c, &mut lets)?),
                             Arc::new(Term::Lit(Value::Int(0))),
                             Arc::new(Term::Lit(Value::Int(1))),
                         );
-                        match self.ev.run(&t).map_err(|e| e.to_string())? {
+                        match self.ev.run(&wrap(lets, t)).map_err(|e| e.to_string())? {
                             Value::Int(i) => Ok(i as usize),
                             v => Err(v),
                         }

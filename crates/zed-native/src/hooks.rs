@@ -7,7 +7,7 @@
 //! into generated code, so the slot is never borrowed twice.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use zed_kernel::{Evaluator, KernelError, Pattern, Prim, Term, Value};
@@ -22,17 +22,39 @@ use crate::tables::{NodeInfo, Tables};
 /// A match's binders: each word, and its path in the scrutinee when native matching found it.
 type Binders = Vec<(Word, Option<Vec<usize>>)>;
 
-/// The state of one native run.
+/// The kernel's decision on a match: the arm and the tuple `(arm, binders…)` it gives, or the
+/// failure value.
+type Decision = Result<(usize, Vec<Value>), Value>;
+
+/// A native run: the program's tables, read by every hook, and the state the hooks change.
 pub(crate) struct State {
+    t: Arc<Tables>,
+    pub run: Run,
+}
+
+/// The state of one native run that the hooks change.
+pub(crate) struct Run {
     pub heap: Heap,
     pub ev: Evaluator,
-    pub t: Arc<Tables>,
+    /// The words passed by `rt_arg` for the next hook; the buffer is kept between hooks.
     args: Vec<Word>,
     outs: Vec<Word>,
     pending: Word,
     pub err: Option<String>,
     entries: Vec<i64>,
     pub kernel_calls: u64,
+    /// For each atom node, the shape last made from constant name and field words.
+    shapes: Vec<Option<(Word, Word, Shape)>>,
+    /// The rope of each string constant, made at its first use.
+    ropes: Vec<Option<Rope>>,
+}
+
+/// An atom's name, its field names sorted, and for each field the payload input it holds.
+#[derive(Clone)]
+struct Shape {
+    name: Arc<str>,
+    fields: Arc<[Arc<str>]>,
+    order: Arc<[usize]>,
 }
 
 impl State {
@@ -42,17 +64,19 @@ impl State {
             let w = heap.uncounted(v.clone());
             debug_assert_eq!(w.bits as usize, i);
         }
-        State {
+        let run = Run {
             heap,
             ev,
-            entries: vec![0; t.lambdas.len()],
-            t,
             args: Vec::new(),
             outs: Vec::new(),
             pending: Word::err(),
             err: None,
+            entries: vec![0; t.lambdas.len()],
             kernel_calls: 0,
-        }
+            shapes: vec![None; t.nodes.len()],
+            ropes: vec![None; t.consts.len()],
+        };
+        State { t, run }
     }
 }
 
@@ -70,19 +94,34 @@ pub(crate) fn remove() -> State {
     STATE.with(|c| c.borrow_mut().take().expect("a run is installed"))
 }
 
-fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    STATE.with(|c| f(c.borrow_mut().as_mut().expect("a run is installed")))
+fn with<R>(f: impl FnOnce(&Tables, &mut Run) -> R) -> R {
+    STATE.with(|c| {
+        let mut slot = c.borrow_mut();
+        let s = slot.as_mut().expect("a run is installed");
+        f(&s.t, &mut s.run)
+    })
+}
+
+/// Runs `f` on the words `rt_arg` passed, then empties the buffer and keeps it.
+fn with_args<R>(f: impl FnOnce(&Tables, &mut Run, &[Word]) -> R) -> R {
+    with(|t, s| {
+        let mut ins = std::mem::take(&mut s.args);
+        let r = f(t, s, &ins);
+        ins.clear();
+        s.args = ins;
+        r
+    })
 }
 
 /// `r`'s word, or the error word with the message recorded.
-fn word(s: &mut State, r: Result<Word, String>) -> Word {
+fn word(s: &mut Run, r: Result<Word, String>) -> Word {
     r.unwrap_or_else(|e| {
         s.err.get_or_insert(e);
         Word::err()
     })
 }
 
-fn code(s: &mut State, r: Result<i64, String>) -> i64 {
+fn code(s: &mut Run, r: Result<i64, String>) -> i64 {
     r.unwrap_or_else(|e| {
         s.err.get_or_insert(e);
         -1
@@ -126,23 +165,22 @@ pub(crate) fn addresses() -> Vec<*const u8> {
 }
 
 extern "C" fn rt_arg(tag: i64, bits: i64) {
-    with(|s| s.args.push(Word { tag, bits }));
+    with(|_, s| s.args.push(Word { tag, bits }));
 }
 
 extern "C" fn rt_node(id: i64) -> Word {
-    with(|s| {
-        let ins = std::mem::take(&mut s.args);
-        let r = node(s, id as usize, ins);
+    with_args(|t, s, ins| {
+        let r = node(t, s, id as usize, ins);
         word(s, r)
     })
 }
 
 extern "C" fn rt_inc(tag: i64, bits: i64) {
-    with(|s| s.heap.inc(Word { tag, bits }));
+    with(|_, s| s.heap.inc(Word { tag, bits }));
 }
 
 extern "C" fn rt_dec(tag: i64, bits: i64) {
-    with(|s| {
+    with(|_, s| {
         if let Err(e) = s.heap.dec(Word { tag, bits }) {
             s.err.get_or_insert(e);
         }
@@ -150,15 +188,15 @@ extern "C" fn rt_dec(tag: i64, bits: i64) {
 }
 
 extern "C" fn rt_cap(tag: i64, bits: i64, i: i64) -> Word {
-    with(|s| {
+    with(|_, s| {
         let r = s.heap.capture(Word { tag, bits }, i as usize);
         word(s, r)
     })
 }
 
 extern "C" fn rt_callable(tag: i64, bits: i64, nargs: i64) -> i64 {
-    with(|s| match s.heap.obj(Word { tag, bits }) {
-        Ok(Some(Obj::Clo { lambda, .. })) if s.t.lambdas[*lambda].params == nargs as usize => {
+    with(|t, s| match s.heap.obj(Word { tag, bits }) {
+        Ok(Some(Obj::Clo { lambda, .. })) if t.lambdas[*lambda].params == nargs as usize => {
             *lambda as i64 + 1
         }
         _ => 0,
@@ -166,40 +204,38 @@ extern "C" fn rt_callable(tag: i64, bits: i64, nargs: i64) -> i64 {
 }
 
 extern "C" fn rt_entry(lambda: i64) -> i64 {
-    with(|s| s.entries[lambda as usize])
+    with(|_, s| s.entries[lambda as usize])
 }
 
 extern "C" fn rt_register(lambda: i64, address: i64) {
-    with(|s| s.entries[lambda as usize] = address);
+    with(|_, s| s.entries[lambda as usize] = address);
 }
 
 extern "C" fn rt_branch(id: i64) -> i64 {
-    with(|s| {
-        let ins = std::mem::take(&mut s.args);
-        let r = branch(s, id as usize, ins);
+    with_args(|t, s, ins| {
+        let r = branch(t, s, id as usize, ins);
         code(s, r)
     })
 }
 
 extern "C" fn rt_match(id: i64) -> i64 {
-    with(|s| {
-        let ins = std::mem::take(&mut s.args);
-        let r = matched(s, id as usize, ins);
+    with_args(|t, s, ins| {
+        let r = matched(t, s, id as usize, ins);
         code(s, r)
     })
 }
 
 extern "C" fn rt_out(k: i64) -> Word {
-    with(|s| s.outs[k as usize])
+    with(|_, s| s.outs[k as usize])
 }
 
 extern "C" fn rt_pending() -> Word {
-    with(|s| s.pending)
+    with(|_, s| s.pending)
 }
 
 extern "C" fn rt_error(id: i64) -> Word {
-    with(|s| {
-        let e = s.t.nodes[id as usize].error.clone();
+    with(|t, s| {
+        let e = t.nodes[id as usize].error.clone();
         word(
             s,
             Err(e.unwrap_or_else(|| "native: an error with no message".into())),
@@ -207,18 +243,45 @@ extern "C" fn rt_error(id: i64) -> Word {
     })
 }
 
-/// Whether `w` is data: not a function and not a port's state.
-fn data(s: &State, w: Word) -> Result<bool, String> {
-    Ok(w.tag != Word::STATE && !s.heap.is_function(w)?)
+/// Whether every word of `ins` is data: not a function and not a port's state.
+fn all_data(s: &Run, ins: &[Word]) -> Result<bool, String> {
+    for w in ins {
+        if w.tag == Word::STATE || s.heap.is_function(*w)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether `w` names one value for the whole run: a scalar or a constant. A cell or another
+/// uncounted value may be freed and its index used again.
+fn stable(t: &Tables, w: Word) -> bool {
+    match w.tag {
+        Word::CELL => false,
+        Word::VAL => (w.bits as usize) < t.consts.len(),
+        _ => true,
+    }
 }
 
 /// The rope of string word `w`, when it is one.
-fn rope(s: &State, w: Word) -> Result<Option<Rope>, String> {
+fn rope(t: &Tables, s: &mut Run, w: Word) -> Result<Option<Rope>, String> {
     Ok(match w.tag {
         Word::CELL => match s.heap.obj(w)? {
             Some(Obj::Str(r)) => Some(r.clone()),
             _ => None,
         },
+        Word::VAL if stable(t, w) => {
+            let at = w.bits as usize;
+            match (&s.ropes[at], &t.consts[at]) {
+                (Some(r), _) => Some(r.clone()),
+                (None, Value::Str(x)) => {
+                    let r = Rope::leaf(x.clone().into());
+                    s.ropes[at] = Some(r.clone());
+                    Some(r)
+                }
+                (None, _) => None,
+            }
+        }
         Word::VAL => match s.heap.value_ref(w) {
             Value::Str(x) => Some(Rope::leaf(x.clone().into())),
             _ => None,
@@ -227,47 +290,69 @@ fn rope(s: &State, w: Word) -> Result<Option<Rope>, String> {
     })
 }
 
+/// The shape of atom node `id` on `ins`, `[name, field names, payload…]`, or `None` when the
+/// kernel refuses it. A shape made from stable words is kept for the node's next run.
+fn shape(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Option<Shape>, String> {
+    let key = (ins[0], ins[1]);
+    if let Some((a, b, sh)) = &s.shapes[id]
+        && (*a, *b) == key
+    {
+        return Ok(Some(sh.clone()));
+    }
+    let (Value::Str(name), Value::Tuple(names)) = (s.heap.value(ins[0])?, s.heap.value(ins[1])?)
+    else {
+        return Ok(None);
+    };
+    let n = ins.len() - 2;
+    let (fields, order): (Vec<Arc<str>>, Vec<usize>) = match names.is_empty() {
+        true => (Vec::new(), (0..n).collect()),
+        false if names.len() != n => return Ok(None),
+        false => {
+            let mut named = Vec::with_capacity(n);
+            for (i, x) in names.iter().enumerate() {
+                let Value::Str(x) = x else { return Ok(None) };
+                named.push((Arc::<str>::from(x.clone()), i));
+            }
+            // The kernel's order, and its refusal of a repeated name (`Value::atom_named`).
+            named.sort_by(|a, b| a.0.cmp(&b.0));
+            if named.windows(2).any(|w| w[0].0 == w[1].0) {
+                return Ok(None);
+            }
+            named.into_iter().unzip()
+        }
+    };
+    let sh = Shape {
+        name: name.into(),
+        fields: fields.into(),
+        order: order.into(),
+    };
+    if stable(t, key.0) && stable(t, key.1) {
+        s.shapes[id] = Some((key.0, key.1, sh.clone()));
+    }
+    Ok(Some(sh))
+}
+
 /// Runs node `id` on `ins` as the counting machine does; returns its first output, owned.
-fn node(s: &mut State, id: usize, ins: Vec<Word>) -> Result<Word, String> {
-    let t = s.t.clone();
+fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String> {
     let ni = &t.nodes[id];
-    let all_data = ins
-        .iter()
-        .map(|w| data(s, *w))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .all(|d| d);
     match &ni.node().op {
-        Op::Prim(Prim::Tuple) if all_data && !ins.is_empty() => Ok(s.heap.alloc(Obj::Tuple(ins))),
-        Op::Prim(Prim::Atom) if all_data => {
-            let v = kernel(s, ni, &ins)?;
-            let names = match s.heap.value(ins[1])? {
-                Value::Tuple(ns) => ns,
-                _ => Default::default(),
-            };
-            match v {
-                Value::Atom(a) if !a.args.is_empty() && a.args.len() + 2 == ins.len() => {
-                    let at: BTreeMap<&Value, usize> =
-                        names.iter().enumerate().map(|(i, n)| (n, i)).collect();
-                    let args = (0..a.args.len())
-                        .map(|i| {
-                            let from = match names.is_empty() {
-                                true => i,
-                                false => at[&Value::Str(a.fields[i].clone().into())],
-                            };
-                            ins[2 + from]
-                        })
-                        .collect();
-                    Ok(s.heap.alloc(Obj::Atom {
-                        name: a.name,
-                        fields: a.fields,
-                        args,
-                    }))
+        Op::Prim(Prim::Tuple) if !ins.is_empty() && all_data(s, ins)? => {
+            Ok(s.heap.alloc(Obj::Tuple(ins.to_vec())))
+        }
+        // The atom is made from its words, as the kernel would make it: the payload moves
+        // into the cell, and the name and field names are borrowed.
+        Op::Prim(Prim::Atom) if ins.len() >= 2 && all_data(s, ins)? => {
+            match shape(t, s, id, ins)? {
+                None => slow(t, s, ni, ins),
+                Some(sh) if ins.len() == 2 => {
+                    consume(s, ni, ins)?;
+                    Ok(s.heap.fresh(&Value::atom(&sh.name)))
                 }
-                v => {
-                    consume(s, ni, &ins)?;
-                    Ok(s.heap.fresh(&v))
-                }
+                Some(sh) => Ok(s.heap.alloc(Obj::Atom {
+                    args: sh.order.iter().map(|&i| ins[2 + i]).collect(),
+                    name: sh.name,
+                    fields: sh.fields,
+                })),
             }
         }
         Op::Prim(Prim::TupleGet) => {
@@ -278,27 +363,29 @@ fn node(s: &mut State, id: usize, ins: Vec<Word>) -> Result<Word, String> {
                 s.heap.inc(kid);
                 return Ok(kid);
             }
-            let v = kernel(s, ni, &ins)?;
+            let v = kernel(t, s, ni, ins)?;
             Ok(s.heap.fresh(&v))
         }
-        Op::Prim(Prim::Concat) if ins.len() == 2 => match (rope(s, ins[0])?, rope(s, ins[1])?) {
-            (Some(a), Some(b)) => {
-                let r = Rope::cat(&a, &b);
-                consume(s, ni, &ins)?;
-                Ok(s.heap.alloc(Obj::Str(r)))
+        Op::Prim(Prim::Concat) if ins.len() == 2 => {
+            match (rope(t, s, ins[0])?, rope(t, s, ins[1])?) {
+                (Some(a), Some(b)) => {
+                    let r = Rope::cat(&a, &b);
+                    consume(s, ni, ins)?;
+                    Ok(s.heap.alloc(Obj::Str(r)))
+                }
+                _ => slow(t, s, ni, ins),
             }
-            _ => slow(s, ni, &ins),
-        },
-        Op::Prim(Prim::Len) if ins.len() == 1 => match rope(s, ins[0])? {
+        }
+        Op::Prim(Prim::Len) if ins.len() == 1 => match rope(t, s, ins[0])? {
             Some(r) => {
-                consume(s, ni, &ins)?;
+                consume(s, ni, ins)?;
                 Ok(Word::int(r.chars() as i64))
             }
-            None => slow(s, ni, &ins),
+            None => slow(t, s, ni, ins),
         },
         Op::Lambda => Ok(s.heap.alloc(Obj::Clo {
             lambda: ni.lambda.expect("a lambda's index"),
-            caps: ins,
+            caps: ins.to_vec(),
         })),
         Op::Read(p) => match s.ev.world.inputs.get(&**p) {
             Some(v) => {
@@ -314,19 +401,19 @@ fn node(s: &mut State, id: usize, ins: Vec<Word>) -> Result<Word, String> {
                 Err(v.map_or_else(|e| e.to_string(), |_| "a read".into()))
             }
         },
-        _ => slow(s, ni, &ins),
+        _ => slow(t, s, ni, ins),
     }
 }
 
 /// The kernel runs the node, the owned inputs are dropped, and the value is allocated.
-fn slow(s: &mut State, ni: &NodeInfo, ins: &[Word]) -> Result<Word, String> {
-    let v = kernel(s, ni, ins)?;
+fn slow(t: &Tables, s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<Word, String> {
+    let v = kernel(t, s, ni, ins)?;
     consume(s, ni, ins)?;
     Ok(s.heap.fresh(&v))
 }
 
 /// Drops each input the node takes owned.
-fn consume(s: &mut State, ni: &NodeInfo, ins: &[Word]) -> Result<(), String> {
+fn consume(s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<(), String> {
     for (j, w) in ins.iter().enumerate() {
         if ni.modes[j] == Mode::Owned {
             s.heap.dec(*w)?;
@@ -336,27 +423,27 @@ fn consume(s: &mut State, ni: &NodeInfo, ins: &[Word]) -> Result<(), String> {
 }
 
 /// The value the kernel gives node `ni` run alone on `ins`.
-fn kernel(s: &mut State, ni: &NodeInfo, ins: &[Word]) -> Result<Value, String> {
+fn kernel(t: &Tables, s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<Value, String> {
     let mut lets = Lets::default();
-    let mut terms = Vec::new();
+    let mut terms = Vec::with_capacity(ins.len());
     for w in ins {
-        terms.push(term(s, *w, &mut lets)?);
+        terms.push(term(t, s, *w, &mut lets)?);
     }
-    let t = raise_node(ni.node(), &terms)?;
-    run(s, &wrap(lets, t))
+    let q = raise_node(ni.node(), &terms)?;
+    run(s, &wrap(lets, q))
 }
 
-fn run(s: &mut State, t: &Term) -> Result<Value, String> {
+fn run(s: &mut Run, q: &Term) -> Result<Value, String> {
     s.kernel_calls += 1;
-    s.ev.run(t).map_err(|e| e.to_string())
+    s.ev.run(q).map_err(|e| e.to_string())
 }
 
 /// The kernel term for word `w`; a lookup port is read once, by a `let` in `lets`.
-fn term(s: &mut State, w: Word, lets: &mut Lets) -> Result<Term, String> {
+fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, String> {
     // Closures capture closures as deep as a program builds them, so the closures in progress
     // are on a stack, each with the terms of its captures so far.
     let mut stack: Vec<(Word, Vec<Term>)> = Vec::new();
-    let mut made = term_of(s, w, lets, &mut stack)?;
+    let mut made = term_of(t, s, w, lets, &mut stack)?;
     loop {
         let Some((clo, terms)) = stack.last_mut() else {
             return Ok(made.expect("an empty stack follows a finished term"));
@@ -366,9 +453,9 @@ fn term(s: &mut State, w: Word, lets: &mut Lets) -> Result<Term, String> {
             unreachable!("only closures are entered")
         };
         match caps.get(terms.len()) {
-            Some(&c) => made = term_of(s, c, lets, &mut stack)?,
+            Some(&c) => made = term_of(t, s, c, lets, &mut stack)?,
             None => {
-                let node = s.t.nodes[s.t.lambdas[*lambda].node].node();
+                let node = t.nodes[t.lambdas[*lambda].node].node();
                 made = Some(raise_node(node, terms)?);
                 stack.pop();
             }
@@ -378,16 +465,17 @@ fn term(s: &mut State, w: Word, lets: &mut Lets) -> Result<Term, String> {
 
 /// The term of `w` when it is not a closure; a closure is entered on `stack`.
 fn term_of(
-    s: &mut State,
+    t: &Tables,
+    s: &mut Run,
     w: Word,
     lets: &mut Lets,
     stack: &mut Vec<(Word, Vec<Term>)>,
 ) -> Result<Option<Term>, String> {
     Ok(Some(match w.tag {
-        Word::PRIM => Term::PrimFn(s.t.prims[w.bits as usize]),
+        Word::PRIM => Term::PrimFn(t.prims[w.bits as usize]),
         Word::STATE => Term::Lit(Value::tuple(Vec::new())),
         Word::SOURCE => {
-            let p = s.t.ports[w.bits as usize].clone();
+            let p = t.ports[w.bits as usize].clone();
             if lets.seen.insert(p.clone()) {
                 lets.order.push(p.clone());
             }
@@ -421,7 +509,7 @@ struct Lets {
 
 /// An `if` or `match` whose decision is failure value `v`: the owned inputs are dropped and
 /// the value is pending as the node's result.
-fn failed(s: &mut State, ni: &NodeInfo, ins: &[Word], v: Value) -> Result<(), String> {
+fn failed(s: &mut Run, ni: &NodeInfo, ins: &[Word], v: Value) -> Result<(), String> {
     consume(s, ni, ins)?;
     s.pending = s.heap.fresh(&v);
     Ok(())
@@ -429,22 +517,23 @@ fn failed(s: &mut State, ni: &NodeInfo, ins: &[Word], v: Value) -> Result<(), St
 
 /// An `if` whose condition is not a boolean word: the kernel decides. Returns the arm, or 2
 /// for a failure.
-fn branch(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
-    let t = s.t.clone();
+fn branch(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, String> {
     let ni = &t.nodes[id];
     if ins[0].tag == Word::BOOL {
         return Ok(i64::from(ins[0].bits == 0));
     }
-    let c = term(s, ins[0], &mut Lets::default())?;
+    // A lookup port as the condition is read by a `let`, as in every other kernel term.
+    let mut lets = Lets::default();
+    let c = term(t, s, ins[0], &mut lets)?;
     let q = Term::If(
         Arc::new(c),
         Arc::new(Term::Lit(Value::Int(0))),
         Arc::new(Term::Lit(Value::Int(1))),
     );
-    match run(s, &q)? {
+    match run(s, &wrap(lets, q))? {
         Value::Int(i) => Ok(i),
         v => {
-            failed(s, ni, &ins, v)?;
+            failed(s, ni, ins, v)?;
             Ok(2)
         }
     }
@@ -452,8 +541,7 @@ fn branch(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
 
 /// A `match`: the arm whose pattern the scrutinee matches first, its binders in the output
 /// buffer, the scrutinee released as the plan says; or the number of arms for a failure.
-fn matched(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
-    let t = s.t.clone();
+fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, String> {
     let ni = &t.nodes[id];
     let Op::Match(ps) = &ni.node().op else {
         unreachable!("a match node")
@@ -472,7 +560,7 @@ fn matched(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
     }
     let (i, binders): (usize, Binders) = match found {
         Some(f) => f,
-        None => match kernel_match(s, ps, scrut)? {
+        None => match kernel_match(t, s, ps, scrut)? {
             Ok((i, vals)) => {
                 if !function {
                     return Err(format!(
@@ -480,29 +568,32 @@ fn matched(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
                         t.path(id)
                     ));
                 }
-                let binders = vals.into_iter().map(|v| (s.heap.uncounted(v), None));
+                // The first value is the arm's index.
+                let vals = vals.into_iter().skip(1);
+                let binders = vals.map(|v| (s.heap.uncounted(v), None));
                 (i, binders.collect())
             }
             Err(v) => {
-                failed(s, ni, &ins, v)?;
+                failed(s, ni, ins, v)?;
                 return Ok(ps.len() as i64);
             }
         },
     };
     let arm = &ni.arms[i];
-    let mut words = Vec::new();
+    let mut words = std::mem::take(&mut s.outs);
+    words.clear();
     if ni.modes[0] == Mode::Owned {
         let kept: Vec<usize> = (0..binders.len())
             .filter(|b| arm[*b] == Mode::Owned)
             .collect();
-        // A binder the arm borrows holds no reference once the scrutinee is released, so it
-        // is detached first: the machine gives it no cell.
+        // With the scrutinee owned, the plan owns every binder the arm uses, so a borrowed
+        // binder is one the arm never reads. Its word would point into the released
+        // scrutinee; the machine gives it no cell, and the arm gets the error word instead.
         for (b, (w, _)) in binders.iter().enumerate() {
             if arm[b] == Mode::Owned || w.tag != Word::CELL {
                 words.push(*w);
             } else {
-                let v = s.heap.value(*w)?;
-                words.push(s.heap.uncounted(v));
+                words.push(Word::err());
             }
         }
         let kept_paths: Vec<&[usize]> = kept
@@ -532,16 +623,11 @@ fn matched(s: &mut State, id: usize, ins: Vec<Word>) -> Result<i64, String> {
     Ok(i as i64)
 }
 
-/// The kernel's decision on a scrutinee native matching does not decide: the arm and its
-/// binders' values, or the failure value.
-#[allow(clippy::type_complexity)]
-fn kernel_match(
-    s: &mut State,
-    ps: &[Pattern],
-    scrut: Word,
-) -> Result<Result<(usize, Vec<Value>), Value>, String> {
+/// The kernel's decision on a scrutinee native matching does not decide: the arm and the
+/// values `(arm, binders…)`, or the failure value.
+fn kernel_match(t: &Tables, s: &mut Run, ps: &[Pattern], scrut: Word) -> Result<Decision, String> {
     let mut lets = Lets::default();
-    let st = term(s, scrut, &mut lets)?;
+    let st = term(t, s, scrut, &mut lets)?;
     let mut arms = Vec::new();
     for (i, p) in ps.iter().enumerate() {
         let mut p = p.clone();
@@ -557,14 +643,10 @@ fn kernel_match(
     }
     let q = wrap(lets, Term::Match(Arc::new(st), arms));
     Ok(match run(s, &q)? {
-        Value::Tuple(xs) if matches!(xs.first(), Some(Value::Int(i)) if (*i as usize) < ps.len()) =>
-        {
-            let mut xs = xs.into_vec();
-            let Value::Int(i) = xs.remove(0) else {
-                unreachable!("checked above")
-            };
-            Ok((i as usize, xs))
-        }
+        Value::Tuple(xs) => match xs.first() {
+            Some(&Value::Int(i)) if (i as usize) < ps.len() => Ok((i as usize, xs.into_vec())),
+            _ => Err(Value::Tuple(xs)),
+        },
         v => Err(v),
     })
 }
@@ -583,7 +665,7 @@ fn rename(p: &mut Pattern, f: &mut dyn FnMut() -> Arc<str>) {
 }
 
 /// The program's result: its value, after the result is dropped and no cell is left live.
-pub(crate) fn finish(s: &mut State, w: Word) -> Result<Value, String> {
+pub(crate) fn finish(s: &mut Run, w: Word) -> Result<Value, String> {
     if let Some(e) = s.err.take() {
         return Err(e);
     }
@@ -631,13 +713,13 @@ mod tests {
         let mut s = State::new(Arc::new(t), Evaluator::new(World::new()));
         let mut w = Word::int(7);
         for _ in 0..DEPTH {
-            w = s.heap.alloc(Obj::Clo {
+            w = s.run.heap.alloc(Obj::Clo {
                 lambda: inner,
                 caps: vec![w],
             });
         }
         // The kernel's terms drop by recursion, so this one is left to the end of the process.
-        let made = ManuallyDrop::new(term(&mut s, w, &mut Lets::default()).unwrap());
+        let made = ManuallyDrop::new(term(&s.t, &mut s.run, w, &mut Lets::default()).unwrap());
         let (mut at, mut depth) = (&*made, 0);
         while let Term::Lam(_, body) = at {
             (at, depth) = (&**body, depth + 1);

@@ -98,13 +98,13 @@ pub fn run(g: &Arc<Region>, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, 
     let root: extern "C" fn() -> Word = unsafe { std::mem::transmute(code) };
     let w = root();
     let mut s = hooks::remove();
-    let r = hooks::finish(&mut s, w);
-    *ev = s.ev;
+    let r = hooks::finish(&mut s.run, w);
+    *ev = s.run.ev;
     drop(m);
     Ok(Outcome {
         value: r?,
-        stats: s.heap.stats,
-        kernel_calls: s.kernel_calls,
+        stats: s.run.heap.stats,
+        kernel_calls: s.run.kernel_calls,
     })
 }
 
