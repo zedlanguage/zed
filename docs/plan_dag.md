@@ -1,6 +1,6 @@
 # Plan DAG
 
-This file lists the remaining work on Zed and the order it must run in. It has 292 items, 1167 edges and 69 levels (0 to 68). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
+This file lists the remaining work on Zed and the order it must run in. It has 293 items, 1172 edges and 69 levels (0 to 68). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
 
 **Needs relaxed on 2026-11-02.** Items now run in parallel in their own worktrees, and a merge resolves a small overlap in a file. So the `needs` column keeps only three kinds of edge: code (one item uses or changes code the other writes), measure (one item measures code the other changes) and files-heavy (both rewrite the same functions). Edges of the other kinds were dropped: files-light (the same file, different functions), order (a preferred order with no technical cause), docs (one item only reads the other's text) and none (no reason found). Of the 1134 edges classified, 907 were code, 109 measure, 13 files-heavy, 52 files-light, 35 order, 3 docs and 15 none. Where the reviewer of the classification disagreed, its judgment was used. T11-fix was split into T11-fix-store and T11-fix-rest, X14 was added, and edges found missing were added after reading the cited code.
 
@@ -320,7 +320,8 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 66 | L33.1 | Libraries in Zed after the sec:libraries list, in list order, each written from a comparison of its implementations and tested exhaustively | XL | no | L32.5, L31.5 | `zed/lib/ (new)`, `DESIGN.md` |
 | 66 | L34.12 | L34 end-of-layer test: L34.1 to L34.11 on every corpus sketch, natively and in the browser; drag, edit and sweep times recorded | M | no | L34.1, L34.2, L34.3, L34.4, L34.5, L34.6, L34.7, L34.8, L34.9, L34.10, L34.11 | `tests/steps/main.rs`, `tests/steps/l34_12_layer_test/ (new)` |
 | 67 | L33.2 | Survey of the major libraries of C++, Rust, Java, JavaScript, C#, Go, R, Julia, Haskell and Swift; the capabilities Zed lacks, added to the list | L | no | L33.1 | `DESIGN.md`, `docs/library-survey.md (new)` |
-| 68 | L33.3 | L33 end-of-layer test: each library passes its exhaustive tests and agrees with its original except for recorded defects | M | no | L33.1, L33.2 | `tests/steps/main.rs`, `tests/steps/l33_03_layer_test/ (new)` |
+| 67 | L33.3 | Mathematics library: study of Lean's Mathlib, `zed/lib/math` written from it, the Mathlib benchmark with proof lines recorded beside Lean's | XL | yes | L33.1, L15.9, L17.2, L22.10 | `zed/lib/math/ (new)`, `DESIGN.md`, `docs/mathlib-study.md (new)`, `tests/steps/l33_03_math_library/ (new)` |
+| 68 | L33.4 | L33 end-of-layer test: each library passes its exhaustive tests and agrees with its original except for recorded defects; the Mathlib benchmark recorded | M | no | L33.1, L33.2, L33.3 | `tests/steps/main.rs`, `tests/steps/l33_04_layer_test/ (new)` |
 
 ## File conflicts at the same level
 
@@ -1078,7 +1079,8 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **L32.5.** L32.1 to L32.4: the layer's work.
 - **L33.1.** L32.5 and L31.5: placed last, once Zed and its standard library are complete. *Note:* Added 2026-11-03 at the author's request. Adds no form. Each library is written as L2.11 writes the standard library: from a comparison of implementations, with a test for each defect found.
 - **L33.2.** L33.1: the Python list done first, as the author ordered.
-- **L33.3.** L33.1 and L33.2: the layer's work.
+- **L33.3.** L33.1: library rules; L15.9, L17.2, L22.10: the proof features it uses. *Note:* Added at the author's request after the 2026-11-03 proofs study. Hard: normalizers and linear arithmetic over ordered fields are decision procedures proved sound once.
+- **L33.4.** L33.1, L33.2 and L33.3: the layer's work.
 - **L34.1.** L7.3: the replay harness, which records edits beside the other inputs. L7.6: the memo cache and cutoff that stop recomputation at unchanged nodes. L30.4: pinned inputs and recomputation in the editor. L32.2: the sketch model, whose live edits this step gives a meaning. *Note:* Added 2026-11-03 from the Bret Victor study (wt/victor/REPORT.md). Adds no form to the language.
 - **L34.2.** L34.1: a drag step is an edit of the literal. L30.4: recomputation of the cone. L30.5: pinned values. L19.2: binding times, so the literal is a run-time input during the drag and static after. *Note:* The Victor study's weakest claim is here: a literal edit gives its definition a new content address, and if memo keys include that address every dependent is invalidated, not only the literal's cone. Check against the memo keys of L7.6, L7.7 and L30.4 before writing this step.
 - **L34.3.** L34.4: steps of a value drawn as `Picture`s at once. L30.4: pinned inputs of a step. L7.3: the precise-mode log the test compares with. *Note:* The DESIGN number L34.3 is below L34.4, which it needs; the numbers follow the study's order.

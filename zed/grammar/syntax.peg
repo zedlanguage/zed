@@ -51,10 +51,10 @@ Field         = 'import' Path                                                   
 TypeDecl      = 'type' Name TypeParams? '=' Type ';'                               L2
 TypeParams    = '(' Name % ',' ','? ')'                                            L2
 Interface     = 'interface' Name TypeParams? '{' (Member % ',' ','?)? '}'          L10
-Member        = 'law' Name '(' Params ')' '=' Expr                                 L22
+Member        = 'law' Name '(' Params? ')' '=' Expr                                L22
               | 'import' Path '(' nest(Type % ',' ','?) ')'                        L22
               | Field                                                              L10
-Law           = 'law' Name '(' Params ')' '=' Expr (';' | Proof)                   L15
+Law           = 'law' Name '(' Params? ')' '=' Expr (';' | Proof)                  L15
 
 Function      = Name '(' Params? ')' Result? Body                                  L1
 Method        = Name '.' Name ('(' Params? ')')? Result? Body                      L2
@@ -193,7 +193,7 @@ Literal       = INT | FLOAT | RAT | STRING | 'true' | 'false'                   
 BinOp         = '+' | '-' | '*' | '/' | '**' | '++' | 'div' | 'mod' | '&&' | '||' | '==' | '!=' | '<=' | '<' | '>=' | '>'   L3
 
 Block         = '{' nest(Item* Expr?) '}'                                          L1
-Display       = '{' nest((Name ':' Expr12?) % ',' ','?) '}'                          L2
+Display       = '{' nest((Name ':' (Lambda | Expr12)?) % ',' ','?) '}'               L2
               | '{' '}'                                                            L3
               | '{' nest(Entry % ',' ','?) '}'                                     L3
 Entry         = Expr12 '->' Expr12                                                 L3
