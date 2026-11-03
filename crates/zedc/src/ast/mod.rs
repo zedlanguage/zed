@@ -186,7 +186,7 @@ pub enum ExprKind {
     Section(&'static str),
     /// An array display `[a, b, c]`, its elements in written order: the array
     /// `{0 -> a, 1 -> b, 2 -> c}` of type `int[0..<3] -> T`, keyed by rank, each element's
-    /// rank its position (sec:grammar, `SeqExpr`). It is not a `Seq` (sec:order), whose keys
+    /// rank its position (sec:grammar, `ArrayExpr`). It is not a `Seq` (sec:order), whose keys
     /// are origins.
     Array(Vec<Expr>),
     /// A set display `{a, b}`, its elements in written order.
@@ -450,11 +450,11 @@ fn forms() -> &'static [Form] {
             "Expr" | "Lambda" | "Expr12" | "Or" | "And" | "Additive" | "Multiplicative"
             | "Equality" | "Compare" | "IsTest" | "Reduce" | "Range" | "Prefix" | "Power"
             | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If" | "Literal"
-            | "Display" | "This" | "Match" | "InTest" | "OpFunction" | "SeqExpr" | "For"
+            | "Display" | "This" | "Match" | "InTest" | "OpFunction" | "ArrayExpr" | "For"
             | "Loop" | "Break" => Form::Expr,
             "Type" | "TypePostfix" | "Arrow" | "TypeDiff" | "TypeOr" | "TypeAnd" | "TypeName"
             | "AtomType" | "TupleType" | "GroupType" | "TypeApply" | "AtomApply" | "RecordType"
-            | "SeqType" => Form::Type,
+            | "RankArrayType" => Form::Type,
             "AtomPattern" | "CtorPat" | "NamePat" | "WildPat" | "TuplePat" | "IsPat"
             | "SignedLit" | "RangePat" => Form::Pattern,
             "Item" => Form::Item,
@@ -702,7 +702,7 @@ impl<'a, 's> Builder<'a, 's> {
                 kind: ExprKind::Section(self.op(self.tree.nodes[n].start + 1)),
                 span: self.span(n),
             }),
-            "SeqExpr" => Ok(Expr {
+            "ArrayExpr" => Ok(Expr {
                 kind: ExprKind::Array(
                     kids.iter()
                         .map(|&k| self.node(k))

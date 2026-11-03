@@ -62,7 +62,7 @@ pub enum TypeKind {
     /// A record type `{x: int, y: f64}`, its fields in written order.
     Record(Vec<(String, Type)>),
     /// The family type `[T]`, the array type `int[0..<_] -> T`: a `T` at each rank of a
-    /// domain `0..<n` the type leaves open (sec:grammar, `SeqType`). It is not `Seq(T)`
+    /// domain `0..<n` the type leaves open (sec:grammar, `RankArrayType`). It is not `Seq(T)`
     /// (sec:order), whose keys are origins.
     Array(Box<Type>),
 }
@@ -268,7 +268,7 @@ impl Builder<'_, '_> {
                 }
                 TypeKind::Record(fields)
             }
-            "SeqType" => TypeKind::Array(Box::new(self.ty(kids[0])?)),
+            "RankArrayType" => TypeKind::Array(Box::new(self.ty(kids[0])?)),
             "GroupType" => {
                 let mut t = self.ty(kids[0])?;
                 t.span = span;

@@ -1,6 +1,6 @@
 //! The array display `[a, b, c]` and the family type `[T]` (item SEQ-desugar). They are arrays
 //! keyed by rank, `{0 -> a, 1 -> b, 2 -> c}` of type `int[0..<3] -> T` and `int[0..<_] -> T`
-//! (sec:grammar, rules `SeqExpr` and `SeqType`), not the `Seq` of sec:order, whose keys are
+//! (sec:grammar, rules `ArrayExpr` and `RankArrayType`), not the `Seq` of sec:order, whose keys are
 //! origins. The tree keeps the elements in written order, which is their rank order; the
 //! desugaring rules copied from the spec say so.
 
@@ -23,14 +23,14 @@ fn rule(rule: &str) -> String {
 
 #[test]
 fn the_desugaring_rules_read_rank_keyed_arrays() {
-    let display = rule("SeqExpr");
+    let display = rule("ArrayExpr");
     assert!(
         display.contains("{0 -> ⟦e0⟧, …, n−1 -> ⟦en−1⟧}")
             && display.contains("int[0..<n] -> T")
             && display.contains("keyed by rank"),
         "{display}"
     );
-    let ty = rule("SeqType");
+    let ty = rule("RankArrayType");
     assert!(ty.contains("int[0..<_] -> T"), "{ty}");
     for text in [display, ty] {
         assert!(!text.contains("Seq"), "an array is no Seq: {text}");

@@ -97,7 +97,7 @@ This          : the receiver, or the family a definedness fix defines
 OpFunction    : the primitive as a function
 Group         : ⟦e⟧
 TupleExpr     : the primitive tuple
-SeqExpr       : the array {0 -> ⟦e0⟧, …, n−1 -> ⟦en−1⟧} of type int[0..<n] -> T, keyed by rank (sec:type_notation)
+ArrayExpr     : the array {0 -> ⟦e0⟧, …, n−1 -> ⟦en−1⟧} of type int[0..<n] -> T, keyed by rank (sec:type_notation)
 HoleExpr      : a hole, reported, whose term is #hole
 Literal       : the literal value; a float literal rounds once to the nearest double
 BinOp         : the operator's primitive as a function; `&&` and `||` are λ(a, b). ⟦a && b⟧ and λ(a, b). ⟦a || b⟧
@@ -155,7 +155,7 @@ TypeName      : a named type
 AtomApply     : an atom type with its payload; `#a(..)` the atom with any payload, `#a()` the atom whose payload is the empty tuple
 AtomType      : an atom type; `#_` every atom
 ArrayType     : a shaped array
-SeqType       : the array type int[0..<_] -> T (sec:type_notation)
+RankArrayType : the array type int[0..<_] -> T (sec:type_notation)
 TupleType     : a tuple type; `()` is the type of the empty tuple, `(T,)` the one-tuple, `(..)` every tuple
 FieldType     : the type T; Name names its value in T's `where` predicate (sec:domains)
 GroupType     : the type T
