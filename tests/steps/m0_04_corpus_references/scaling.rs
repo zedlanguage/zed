@@ -1,7 +1,7 @@
 //! How the reference programs scale with their input. Each input is built before timing, at n
 //! and 8n. Most are linear up to a sort or a tree lookup; the ones that are not name why at their
-//! test: the power is what the problem forces, such as a full table in the output or a pair read
-//! once, not the algorithm of the corpus program.
+//! test: the power is what the problem forces, such as a full table in the output, not the
+//! algorithm of the corpus program. Reference 14 is the one exception, named at its test.
 
 use std::fmt::Write;
 use std::fs;
@@ -157,7 +157,6 @@ fn balanced_brackets_of_a_deep_line() {
     });
 }
 
-/// The node count comes from the largest id on an edge, so the input is sized by it.
 #[test]
 fn union_find_over_a_long_chain() {
     scales("union find", "13", 4000, 1, |n| {
@@ -165,8 +164,22 @@ fn union_find_over_a_long_chain() {
     });
 }
 
-/// Any pair of points may decide a merge, so all n(n-1)/2 distances are read. The nearest cluster
-/// is kept by key, so the merges cost no more than that.
+/// Memory and time follow the edges and queries, not the node numbers, which here are about
+/// 10^13 times the input's length.
+#[test]
+fn union_find_over_few_edges_among_huge_node_numbers() {
+    const STEP: usize = 10_000_000_000_000;
+    scales("union find huge numbers", "13", 4000, 1, |n| {
+        lines(n, |i| format!("{} {}", i * STEP, (i + 1) * STEP))
+            + &lines(n, |i| format!("? 0 {}", i * STEP))
+    });
+}
+
+/// This reference reads all n(n-1)/2 distances, and keeping each cluster's nearest by key makes the
+/// merges cost no more than that. The problem does not force n²: the points are in the plane, so
+/// single linkage to k clusters follows the Euclidean minimum spanning tree, O(n log n) by a
+/// Delaunay or relative neighborhood graph. That form is plan node P14-MST, which needs a
+/// cross-review round.
 #[test]
 fn clustering_is_quadratic_in_the_number_of_points() {
     scales("clustering", "14", 200, 2, |n| {

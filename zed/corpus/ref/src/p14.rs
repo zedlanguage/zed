@@ -44,7 +44,9 @@ impl Distances {
     }
 }
 
-/// The squared distance of every pair of `pts`.
+/// The squared distance of every pair of `pts`. The plane does not force these n²: single linkage
+/// to k clusters follows the Euclidean minimum spanning tree, O(n log n) by a Delaunay or relative
+/// neighborhood graph (plan node P14-MST).
 fn squared_distances(pts: &[Vec<BigInt>]) -> Result<Vec<BigInt>, String> {
     let mut cells = Vec::with_capacity(pts.len() * pts.len().saturating_sub(1) / 2);
     for (i, p) in pts.iter().enumerate() {

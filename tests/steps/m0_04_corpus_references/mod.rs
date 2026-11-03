@@ -75,6 +75,10 @@ fn floats_print_as_the_compiler_prints_them() {
         (1e-6, "0.000001"),
         (123.456, "123.456"),
         (2.5e-5, "0.000025"),
+        // The value is exactly 1666666666666669.25: .2 and .3 both read back and are equally near,
+        // and the larger magnitude is printed.
+        (6666666666666677.0 / 4.0, "1666666666666669.3"),
+        (-6666666666666677.0 / 4.0, "-1666666666666669.3"),
     ];
     for (x, want) in cases {
         assert_eq!(zedrt::fmt_float(x), want);
@@ -275,6 +279,126 @@ fn balanced_brackets_of_a_line_with_other_characters() {
         (out.as_str(), result),
         ("unbalanced 1 (a)()\nunbalanced 0 \n", Ok(()))
     );
+}
+
+#[test]
+fn a_two_node_edge_with_a_huge_number_counts_the_nodes_between() {
+    let (out, result) = on_text("13", "uf_huge", "10000000000000 1\n");
+    assert_eq!(result, Ok(()));
+    assert_eq!(out, "components 10000000000000\n");
+}
+
+#[test]
+fn node_numbers_may_be_larger_than_any_machine_word() {
+    let big = "1000000000000000000000000000000";
+    let input = format!("{big} 1\n? {big} 1\n? {big} 0\n");
+    let (out, result) = on_text("13", "uf_word", &input);
+    assert_eq!(result, Ok(()));
+    let want = format!("{big} 1 yes\n{big} 0 no\ncomponents {big}\n");
+    assert_eq!(out, want);
+}
+
+/// Between and above the numbers on the edges, a node is alone without being stored.
+#[test]
+fn nodes_on_no_edge_are_alone_among_huge_numbers() {
+    let input = "10000000000000 1\n\
+                 ? 5 6\n? 5 5\n? 5 1\n\
+                 ? 20000000000000 20000000000000\n? 20000000000000 1\n";
+    let (out, result) = on_text("13", "uf_alone", input);
+    assert_eq!(result, Ok(()));
+    let want = "5 6 no\n5 5 yes\n5 1 no\n\
+                20000000000000 20000000000000 yes\n20000000000000 1 no\n\
+                components 10000000000000\n";
+    assert_eq!(out, want);
+}
+
+/// The node count is 10^13 + 1, so -1 is the largest node, -10^13 is node 1 and -(10^13 + 1) is
+/// node 0.
+#[test]
+fn a_negative_node_counts_from_the_end_of_a_huge_range() {
+    let input = "10000000000000 1\n\
+                 ? -1 1\n? -10000000000000 1\n? -10000000000001 0\n? -2 1\n";
+    let (out, result) = on_text("13", "uf_negative", input);
+    assert_eq!(result, Ok(()));
+    let want = "-1 1 yes\n-10000000000000 1 yes\n-10000000000001 0 yes\n-2 1 no\n\
+                components 10000000000000\n";
+    assert_eq!(out, want);
+}
+
+#[test]
+fn a_negative_node_below_the_range_is_an_error() {
+    let input = "10000000000000 1\n? 1 1\n? -10000000000002 1\n";
+    let (out, result) = on_text("13", "uf_below", input);
+    assert_eq!(out, "1 1 yes\n");
+    assert_eq!(result, Err("node -10000000000002 is out of range".into()));
+    let (out, result) = on_text("13", "uf_edge", "-5 1\n? 0 0\n");
+    assert_eq!(out, "");
+    assert_eq!(result, Err("node -5 is out of range".into()));
+}
+
+#[test]
+fn a_negative_node_on_an_edge_names_the_same_node_as_its_positive() {
+    let (out, result) = on_text("13", "uf_same", "-1 3\n? 3 3\n");
+    assert_eq!(result, Ok(()));
+    assert_eq!(out, "3 3 yes\ncomponents 4\n");
+}
+
+#[test]
+fn no_edges_mean_no_nodes_in_range() {
+    let (out, result) = on_text("13", "uf_empty", "? 2 2\n? 2 3\n");
+    assert_eq!(result, Ok(()));
+    assert_eq!(out, "2 2 yes\n2 3 no\ncomponents 0\n");
+    let (out, result) = on_text("13", "uf_empty_negative", "? -1 2\n");
+    assert_eq!(out, "");
+    assert_eq!(result, Err("node -1 is out of range".into()));
+}
+
+/// A table of a label per node, relabeled at each edge, on small graphs of a fixed random sequence.
+#[test]
+fn union_find_agrees_with_a_table_of_labels_on_small_graphs() {
+    let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut next = |below: u64| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 33) % below
+    };
+    for round in 0..500 {
+        let span = 1 + next(12);
+        let lines = (0..1 + next(8)).map(|_| {
+            let (a, b) = (next(span) as i64, next(span) as i64);
+            (a, b)
+        });
+        let edges: Vec<(i64, i64)> = lines.collect();
+        let count = 1 + edges.iter().map(|e| e.0.max(e.1)).max().expect("an edge");
+        let mut label: Vec<i64> = (0..count).collect();
+        // A loop on the largest node fixes the count, whatever form the other edges take.
+        let mut input = format!("{0} {0}\n", count - 1);
+        for &(a, b) in &edges {
+            // Half of the edges name a node by its negative form.
+            let shown = if next(2) == 0 { a } else { a - count };
+            input += &format!("{shown} {b}\n");
+            let (from, to) = (label[a as usize], label[b as usize]);
+            label
+                .iter_mut()
+                .filter(|l| **l == from)
+                .for_each(|l| *l = to);
+        }
+        let mut want = String::new();
+        for _ in 0..4 {
+            let (a, b) = (next(span + 2) as i64, next(span + 2) as i64);
+            input += &format!("? {a} {b}\n");
+            let same = a == b || a < count && b < count && label[a as usize] == label[b as usize];
+            want += &format!("{a} {b} {}\n", if same { "yes" } else { "no" });
+        }
+        let mut roots = label.clone();
+        roots.sort_unstable();
+        roots.dedup();
+        want += &format!("components {}\n", roots.len());
+        let (out, result) = on_text("13", "uf_table", &input);
+        assert_eq!(result, Ok(()), "round {round}: {input}");
+        assert_eq!(out, want, "round {round}: {input}");
+    }
 }
 
 #[test]

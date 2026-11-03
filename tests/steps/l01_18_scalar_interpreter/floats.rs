@@ -29,6 +29,21 @@ fn fixed_notation_runs_from_one_millionth_to_below_ten_to_the_21() {
 }
 
 #[test]
+fn of_two_equally_near_shortest_forms_the_larger_magnitude_prints() {
+    // The double is exactly 1666666666666669.25; .2 and .3 both read back to it.
+    assert_eq!(x("String(1666666666666669.25)"), "\"1666666666666669.3\"");
+    assert_eq!(x("String(-1666666666666669.25)"), "\"-1666666666666669.3\"");
+    assert_eq!(
+        x("f64(\"1666666666666669.3\") == 1666666666666669.25"),
+        "true"
+    );
+    assert_eq!(
+        x("f64(\"1666666666666669.2\") == 1666666666666669.25"),
+        "true"
+    );
+}
+
+#[test]
 fn infinities_and_nan_have_names() {
     assert_eq!(x("String(1.0 / 0.0)"), "\"inf\"");
     assert_eq!(x("String(-1.0 / 0.0)"), "\"-inf\"");
