@@ -220,10 +220,16 @@ fn preimage_in(
     let mut stops = std::mem::take(&mut tx.run.stops);
     let mut enumerated = false;
     if !r.exact && !is_empty(&r.dom) {
-        tx.start(&r.dom, marks);
+        tx.start(&r.dom, marks.clone());
         if tx.fwd(root, ROOT).meets(demand) {
             r.exact = true;
         }
+    }
+    if !r.exact
+        && !is_empty(&r.dom)
+        && let Some(dom) = split_residues(tx, root, &r.dom, demand, &marks)
+    {
+        r = Whole { dom, exact: true };
     }
     let (mut relation, mut refusal) = (None, None);
     interval::rounded();
@@ -260,6 +266,97 @@ fn preimage_in(
         relation,
         refusal,
     }
+}
+
+/// The preimage within `dom` by classes of remainders, or `None` when it is not found exact.
+/// The terms compare `x mod m` with constants for one input `x` and one modulus `m`; the
+/// constants cut `[0, m)` into classes in which each such comparison is true throughout or
+/// false throughout, so a backward transfer restricted to one class reads the comparisons
+/// exactly ([`Tx::back_arith`]). The preimage is the union over the classes `R` of the
+/// transfer's set `S_R` for `x` within `R`: the members of every `S_R`, and the members of
+/// each `S_R` outside that common part whose remainder is in `R`. The other inputs must
+/// have the same sets in every class whose set is not empty, so that the union is a box.
+///
+/// Complexity tradeoff: the split runs one backward transfer per class, `O(G n log n)` for `G`
+/// classes, and `G` is at most `2d + 1` for `d` distinct constants compared, so terms that
+/// compare `x mod m` with `d` growing with the term take `O(d n log n)`, up to `O(n^2 log n)`.
+/// The split is not tried when the terms compare remainders of two inputs or two moduli, and
+/// it is given up when a class's transfer is not exact, when two classes narrow another input
+/// differently, or when a stretch of `x` where some classes keep their points and others do
+/// not spans more than two periods of `m`; those inputs get the linear stage's answer, as
+/// before. Why: the classes of two pairs combine as a product, `G1 * G2` transfers; boxes
+/// that differ in two inputs have a union that is not a box (row C14); and a mixed stretch
+/// over many periods is a set of pieces in the stretch's width divided by `m` (row C17).
+/// Trigger: a guard `x mod m == c` for `d` distinct `c` (the cost); two remainders compared;
+/// another input narrowed by class; a class set ending more than a period away from
+/// another's. Test: `l01_25_preimage_catalog::s22::chain_mod7_scales`,
+/// `l01_25_preimage_catalog::s22::remainders_many_classes_cost_one_transfer_each` and
+/// `l01_25_preimage_catalog::s22::a_split_by_remainders_is_given_up_where_it_cannot_be_exact`.
+/// COMPLEXITY.md row S22e. A complete solution would hold the congruence facet in the
+/// backward transfer's sets (`x mod m` in a set of classes beside the interval), so that one
+/// transfer carries every class at once.
+fn split_residues(
+    tx: &mut Tx<'_>,
+    root: Tid,
+    dom: &Domains,
+    demand: &Demand,
+    marks: &Landmarks,
+) -> Option<Domains> {
+    let (x, c, cuts) = tx.residue_cuts(dom)?;
+    let m = c.unsigned_abs() as i128;
+    let name = tx.name(x).clone();
+    let mut common: Option<IntervalSet> = None;
+    let mut rest: Option<Domains> = None;
+    let mut classes = Vec::with_capacity(cuts.len() - 1);
+    for w in cuts.windows(2) {
+        tx.start(dom, marks.clone());
+        tx.run.residue = Some(Residue {
+            x,
+            m,
+            class: IntervalSet::range(End::from_i128(w[0]), End::from_i128(w[1] - 1)),
+        });
+        interval::rounded();
+        let r = tx.back(root, ROOT, demand);
+        let exact = r.exact && !interval::rounded() && tx.run.stops.is_empty();
+        let Residue { class, .. } = tx.run.residue.take().expect("the class was set above");
+        if !exact {
+            return None;
+        }
+        let mut d = tx.whole(&r);
+        let s = d.remove(&name).expect("the split input is an input");
+        if !s.is_empty() {
+            match &rest {
+                Some(o) if *o != d => return None,
+                Some(_) => {}
+                None => rest = Some(d),
+            }
+        }
+        common = Some(match common {
+            Some(c) => c.meet(&s),
+            None => s.clone(),
+        });
+        classes.push((s, class));
+    }
+    let common = common.expect("at least two classes");
+    let mut pieces = common.pieces().to_vec();
+    for (s, class) in &classes {
+        for &(lo, hi) in common.complement_in(s).pieces() {
+            let (own, exact) = mod_pre(class, c, &IntervalSet::range(lo, hi));
+            if !exact {
+                return None;
+            }
+            pieces.extend_from_slice(own.pieces());
+        }
+    }
+    let Some(mut rest) = rest else {
+        return Some(
+            dom.keys()
+                .map(|k| (k.clone(), IntervalSet::empty()))
+                .collect(),
+        );
+    };
+    rest.insert(name, IntervalSet::from_pieces(pieces));
+    Some(rest)
 }
 
 /// The relations the linear-relation domain states for `terms`, tests over the free names
@@ -696,6 +793,16 @@ struct Run {
     /// Whether an input's domain is empty, so that no point exists.
     void: bool,
     memo: Memo,
+    /// The class of remainders the run is restricted to, by [`split_residues`].
+    residue: Option<Residue>,
+}
+
+/// A class of remainders: the run reads only the points whose input `x` has `x mod m` in
+/// `class`, a set within `[0, m)`.
+struct Residue {
+    x: Name,
+    m: i128,
+    class: IntervalSet,
 }
 
 fn is_empty(d: &Domains) -> bool {
@@ -978,6 +1085,55 @@ impl<'t> Tx<'t> {
 
     fn lookup(&self, env: Eid, x: Name) -> Option<At> {
         self.scopes[env as usize].get(&x).copied()
+    }
+
+    /// The input `x` and modulus `c` of the remainders `x mod c` the terms compare with
+    /// constants, and the ends of the classes those constants cut `[0, |c|)` into, from `0` to
+    /// `|c|`: `None` unless one input and one modulus are compared, in two or more classes.
+    /// The time is that of the terms' nodes, and the sorting of the ends.
+    fn residue_cuts(&self, inputs: &Domains) -> Option<(Name, i64, Vec<i128>)> {
+        let mut found = None;
+        let mut cuts = Vec::new();
+        for t in 0..self.terms.nodes.len() as Tid {
+            let Node::Prim(Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Eq | Prim::Ne, args) =
+                self.node(t)
+            else {
+                continue;
+            };
+            if args.len() != 2 {
+                continue;
+            }
+            let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+            for (r, v) in [(a, b), (b, a)] {
+                let (Node::Prim(Prim::Mod, margs), Node::Int(v)) = (self.node(r), self.node(v))
+                else {
+                    continue;
+                };
+                if margs.len() != 2 {
+                    continue;
+                }
+                let (Node::Var(x), Node::Int(c)) =
+                    (self.node(self.arg(margs, 0)), self.node(self.arg(margs, 1)))
+                else {
+                    continue;
+                };
+                if c == 0 || !inputs.contains_key(self.name(x)) {
+                    continue;
+                }
+                // `x mod c` and `x mod -c` are the same remainder.
+                let m = c.unsigned_abs() as i128;
+                let (fx, fc) = *found.get_or_insert((x, c));
+                if (fx, fc.unsigned_abs() as i128) != (x, m) {
+                    return None;
+                }
+                cuts.extend([v as i128, v as i128 + 1].map(|e| e.clamp(0, m)));
+            }
+        }
+        let (x, c) = found?;
+        cuts.extend([0, c.unsigned_abs() as i128]);
+        cuts.sort_unstable();
+        cuts.dedup();
+        (cuts.len() > 2).then_some((x, c, cuts))
     }
 
     /// The scope `env` with `x` bound to `to`, made once for each scope and binding.
@@ -2567,6 +2723,23 @@ impl<'t> Tx<'t> {
             (Mul, _, Some(c)) => self.back_at(a, env, &ints(times_pre(z, c))),
             (IntDiv, _, Some(c)) => self.back_at(a, env, &ints(div_pre(z, c))),
             (Mod, _, Some(c)) => {
+                // Within the run's class of remainders of the input `a`, every point is in `z`
+                // or none is.
+                let m = c.unsigned_abs() as i128;
+                let class = match self.node(a) {
+                    Node::Var(x) if self.lookup(env, x).is_none() => self
+                        .run
+                        .residue
+                        .as_ref()
+                        .filter(|r| r.x == x && r.m == m)
+                        .map(|r| (r.class.is_subset(z), r.class.meet(z).is_empty())),
+                    _ => None,
+                };
+                match class {
+                    Some((true, _)) => return self.back_at(a, env, &ints(IntervalSet::top())),
+                    Some((_, true)) => return Res::none(),
+                    _ => {}
+                }
                 let fa = self.fwd(a, env).ints;
                 let (s, exact) = mod_pre(z, c, &fa);
                 let mut r = self.back_at(a, env, &ints(s));

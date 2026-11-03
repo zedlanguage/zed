@@ -4,13 +4,14 @@
 //! may change an exact preimage, so each one here is compared, whole (domains, exactness,
 //! enumeration, stops, relation and refusal), with the transfer as it was before
 //! (`zedc::store::preimage_ref`, main at fdf7918: the 397f1c9 transfer with later changes);
-//! the one difference allowed is an inexact box made narrower and still sound
-//! (`meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened`);
-//! and, since plan item S22b, a box of `c - x` that the transfer before merged across zero
-//! (`constant_minus.rs`), whose pieces are now kept: the new result is checked by the
-//! interpreter, lies inside the one before, and is exact wherever the one before was. Each test
-//! states how many cases of each kind it finds. The scaling
-//! tests then check that the chains cost `O(n log n)`.
+//! the differences allowed, each counted, are an inexact box made narrower and still sound
+//! (`meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened`); since plan item
+//! S22b, a box of `c - x` that the transfer before merged across zero (`constant_minus.rs`),
+//! whose pieces are now kept: the new result is checked by the interpreter, lies inside the one
+//! before, and is exact wherever the one before was; and a preimage found exact by classes of
+//! remainders (COMPLEXITY.md S22e) that was inexact, refused or listed before, checked against
+//! the interpreter. Each test states how many cases of each kind it finds. The scaling tests
+//! then check that the chains cost `O(n log n)`.
 
 use std::sync::Arc;
 
@@ -320,14 +321,16 @@ fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     })
 }
 
-/// The cases compared, the differences found, each shown, and the cases whose inexact box is
-/// narrower than the one before and still sound.
+/// The cases compared, the differences found, each shown, the cases whose inexact box is
+/// narrower than the one before and still sound, and the cases found exact by classes of
+/// remainders (COMPLEXITY.md S22e) that the transfer before left inexact, refused or listed.
 #[derive(Default)]
 struct Diffs {
     cases: usize,
     found: Vec<String>,
     narrower: usize,
     reflected: usize,
+    exact: usize,
 }
 
 /// Whether the interpreter refutes `domains` as the preimage of `d` under `t` over `ds` on
@@ -379,6 +382,27 @@ impl Diffs {
             self.narrower += 1;
             return;
         }
+        // Found exact by classes of remainders, with no relation, refusal or listing: the box
+        // equals the one before when that was exact, lies inside it otherwise, and the
+        // interpreter finds no point that meets the demand outside it or fails it inside.
+        if new != old
+            && now.exact
+            && !now.enumerated
+            && now.relation.is_none()
+            && now.refusal.is_none()
+            && format!("{:?}", now.stops) == format!("{:?}", then.stops)
+            && now.domains.keys().eq(then.domains.keys())
+            && if then.exact {
+                now.domains == then.domains
+            } else {
+                now.domains.iter().all(|(n, s)| inside(s, &then.domains[n]))
+            }
+            && !refuted(t, ds, d, &now.domains, true)
+        {
+            self.cases += 1;
+            self.exact += 1;
+            return;
+        }
         // Plan item S22b: the transfer before took `c - x` as the forward image of `{c} - z`,
         // whose cap merged pieces moved across zero, so its box may be wider, and may be marked
         // exact while holding points that fail. The new result holds every point that meets
@@ -419,15 +443,17 @@ impl Diffs {
         }
     }
 
-    /// [`Diffs::none_but`] with no box of `c - x` changed.
+    /// [`Diffs::none_but`] with no box of `c - x` changed and none found exact by classes of
+    /// remainders.
     fn none(self, least: usize, narrower: usize) {
-        self.none_but(least, narrower, 0)
+        self.none_but(least, narrower, 0, 0)
     }
 
     /// Panics, showing the first differences, when there are any, when fewer than `least`
-    /// cases were compared, when the number of narrower boxes is not `narrower`, or when the
-    /// number of boxes of `c - x` that S22b changed is not `reflected`.
-    fn none_but(self, least: usize, narrower: usize, reflected: usize) {
+    /// cases were compared, when the number of narrower boxes is not `narrower`, when the
+    /// number of boxes of `c - x` that S22b changed is not `reflected`, or when the number of
+    /// boxes found exact by classes of remainders is not `exact`.
+    fn none_but(self, least: usize, narrower: usize, reflected: usize, exact: usize) {
         assert!(
             self.found.is_empty(),
             "{} of {} preimages differ from the transfer before:\n{}",
@@ -443,6 +469,10 @@ impl Diffs {
         assert_eq!(
             self.reflected, reflected,
             "the number of boxes of `c - x` changed by S22b differs"
+        );
+        assert_eq!(
+            self.exact, exact,
+            "the number of boxes found exact by classes of remainders changed"
         );
     }
 }
@@ -640,7 +670,7 @@ fn chains_of_slow_families_keep_their_preimages() {
                 diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
             }
         }
-        diffs.none(83, 0);
+        diffs.none_but(83, 0, 0, 7);
     });
 }
 
@@ -714,7 +744,7 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
 
 /// Every kind of guard and arm the summary reads, and some it does not: the cases `from..to`
 /// of one sequence, split in two tests so they run in parallel.
-fn random_guarded_chains(from: usize, to: usize, narrower: usize, reflected: usize) {
+fn random_guarded_chains(from: usize, to: usize, narrower: usize, reflected: usize, exact: usize) {
     on_big_stack(|| {
         let mut diffs = Diffs::default();
         let mut rng = Rng::new(22);
@@ -734,20 +764,20 @@ fn random_guarded_chains(from: usize, to: usize, narrower: usize, reflected: usi
                 diffs.preimage("random chain", &t, &ds, &d);
             }
         }
-        diffs.none_but(to - from, narrower, reflected);
+        diffs.none_but(to - from, narrower, reflected, exact);
     });
 }
 
 /// Random chains of every kind of guard, the first half.
 #[test]
 fn random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(0, 2000, 2, 6);
+    random_guarded_chains(0, 2000, 2, 6, 39);
 }
 
 /// Random chains of every kind of guard, the second half.
 #[test]
 fn more_random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(2000, 4000, 0, 7);
+    random_guarded_chains(2000, 4000, 0, 7, 54);
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
@@ -816,7 +846,7 @@ fn random_terms_keep_their_preimages() {
                 diffs.exact("exact", &t, &ds, &cs, &d);
             }
         }
-        diffs.none_but(6800, 0, 1);
+        diffs.none_but(6800, 0, 1, 0);
     });
 }
 
@@ -943,7 +973,7 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
                 );
             }
         }
-        diffs.none_but(4000, 0, 2);
+        diffs.none_but(4000, 0, 2, 0);
     });
 }
 
@@ -1180,4 +1210,144 @@ fn chain_t3_gaps_scales() {
 #[test]
 fn chain_t3_gaps_five_no_scales() {
     scales("t3_gaps_five_no", 256);
+}
+
+/// COMPLEXITY.md S22e. The chain `mod7`, of eleven guards `i mod 7 == j mod 7` with else arm
+/// `t + 1`: each remainder of `i` keeps `t` at one guard in seven, so `t11 = i + 9` for
+/// `i mod 7` in 1..4 and `i + 10` otherwise, and `t11 >= 0` holds exactly on `[-9, 50]`. The
+/// guard's preimage over `[-50, 50]` spans more than two periods of 7, so the remainder alone
+/// is not read exactly (row C17); the transfer reads it class by class of remainders, and
+/// finds the preimage exact, with no relation and no refusal.
+#[test]
+fn a_chain_of_guards_on_remainders_is_read_class_by_class() {
+    on_big_stack(|| {
+        let (t, ds, d) = family("mod7", 11);
+        let p = preimage(&t, &ds, &d);
+        assert!(p.exact && !p.enumerated, "{p:?}");
+        assert!(p.relation.is_none() && p.refusal.is_none() && p.stops.is_empty());
+        assert_eq!(p.domains["i"], IntervalSet::of(-9, 50));
+        check(&t, &ds, &d, &p, (-60, 60));
+    });
+}
+
+/// `t = i + 1` where `keep` holds and `i` elsewhere, asked `t` in `[3, 30]`.
+fn by_remainder(keep: Term) -> (Term, Demand) {
+    let i = || var("i");
+    let t = Term::If(
+        Arc::new(keep),
+        Arc::new(prim(Prim::Add, i(), int(1))),
+        Arc::new(i()),
+    );
+    (t, ints(3, 30))
+}
+
+/// The classes cut by ordered comparisons, by `!=`, by a negative modulus and by constants
+/// outside `[0, m)`, and over a domain unbounded on both sides: each preimage is exact and
+/// agrees with the interpreter. Over all integers the preimage is `[3, 30]` with `2` added
+/// where `i mod m` keeps and `30` dropped there.
+#[test]
+fn remainders_compared_every_way_are_read_exactly() {
+    let r = |m: i64| prim(Prim::Mod, var("i"), int(m));
+    let cases = [
+        prim(Prim::Lt, r(5), int(2)),
+        prim(Prim::Ge, r(5), int(3)),
+        prim(Prim::Ne, r(5), int(4)),
+        prim(Prim::Gt, int(3), r(5)),
+        prim(Prim::Le, int(2), r(-5)),
+        Term::Prim(
+            Prim::And,
+            vec![prim(Prim::Ge, r(6), int(-3)), prim(Prim::Le, r(6), int(9))],
+        ),
+        Term::Prim(
+            Prim::Or,
+            vec![prim(Prim::Eq, r(4), int(1)), prim(Prim::Eq, r(4), int(3))],
+        ),
+    ];
+    for keep in cases {
+        for ds in [
+            i_in(-40, 40),
+            over(&[("i", IntervalSet::top())]),
+            over(&[("i", pieces(&[(-40, -20), (5, 33)]))]),
+        ] {
+            let (t, d) = by_remainder(keep.clone());
+            let p = preimage(&t, &ds, &d);
+            assert!(p.exact, "{t} over {ds:?}: {p:?}");
+            check(&t, &ds, &d, &p, (-60, 60));
+        }
+    }
+}
+
+/// Where the split cannot be exact it is given up, and the preimage is the one before: two
+/// inputs' remainders compared; another input narrowed differently by class (the union of
+/// boxes is not a box); and a stretch where one class keeps its points and another does not
+/// that spans many periods.
+#[test]
+fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
+    let i = || var("i");
+    let j = || var("j");
+    let two = over(&[
+        ("i", IntervalSet::of(-30, 30)),
+        ("j", IntervalSet::of(-30, 30)),
+    ]);
+    let both = Term::If(
+        Arc::new(prim(
+            Prim::Eq,
+            prim(Prim::Mod, i(), int(3)),
+            prim(Prim::Mod, j(), int(3)),
+        )),
+        Arc::new(i()),
+        Arc::new(j()),
+    );
+    let other = Term::If(
+        Arc::new(prim(Prim::Eq, prim(Prim::Mod, i(), int(3)), int(0))),
+        Arc::new(j()),
+        Arc::new(prim(Prim::Add, j(), int(1))),
+    );
+    let wide = Term::If(
+        Arc::new(prim(Prim::Eq, prim(Prim::Mod, i(), int(2)), int(0))),
+        Arc::new(i()),
+        Arc::new(int(0)),
+    );
+    for (t, ds, d) in [
+        (both, two.clone(), ints(0, 10)),
+        (other, two, ints(0, 10)),
+        (wide, i_in(-1000, 1000), ints(10, 2000)),
+    ] {
+        let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
+        assert_eq!(format!("{now:?}"), format!("{then:?}"), "{t}");
+        check(&t, &ds, &d, &now, (-60, 60));
+    }
+}
+
+#[test]
+fn chain_mod7_scales() {
+    scales("mod7", 256);
+}
+
+/// The chain of `k` guards `i mod 1024 == j`, else `t + 1`, over `i` in `[-5000, 5000]`, asked
+/// `tk >= 0`.
+fn many_remainders(k: usize) -> (Term, Domains, Demand) {
+    let g = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(1024)), int(j));
+    let t = chain(k, var("i"), g, plus(|_| 1));
+    (
+        prim(Prim::Ge, t, int(0)),
+        i_in(-5000, 5000),
+        Demand::Bool(true),
+    )
+}
+
+/// COMPLEXITY.md S22e, the cost of the split: `k` distinct remainders compared cut `2k + 1`
+/// classes, and the transfer runs once in each. `tk` is `i + k - 1` where `i mod 1024` is in
+/// `1..=k` and `i + k` elsewhere, so the preimage is `[-k, 5000]`.
+#[test]
+fn remainders_many_classes_cost_one_transfer_each() {
+    on_big_stack(|| {
+        for k in [1, 2, 7, 40] {
+            let (t, ds, d) = many_remainders(k);
+            let p = preimage(&t, &ds, &d);
+            assert!(p.exact && p.refusal.is_none(), "{p:?}");
+            assert_eq!(p.domains["i"], IntervalSet::of(-(k as i64), 5000));
+            check(&t, &ds, &d, &p, (-60, 60));
+        }
+    });
 }
