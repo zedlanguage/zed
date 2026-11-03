@@ -1,6 +1,6 @@
 # Plan DAG
 
-This file lists the remaining work on Zed and the order it must run in. It has 375 items, 1346 edges and 71 levels (0 to 70). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
+This file lists the remaining work on Zed and the order it must run in. It has 376 items, 1347 edges and 71 levels (0 to 70). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
 
 **Needs relaxed on 2026-11-02.** Items now run in parallel in their own worktrees, and a merge resolves a small overlap in a file. So the `needs` column keeps only three kinds of edge: code (one item uses or changes code the other writes), measure (one item measures code the other changes) and files-heavy (both rewrite the same functions). Edges of the other kinds were dropped: files-light (the same file, different functions), order (a preferred order with no technical cause), docs (one item only reads the other's text) and none (no reason found). Of the 1134 edges classified, 907 were code, 109 measure, 13 files-heavy, 52 files-light, 35 order, 3 docs and 15 none. Where the reviewer of the classification disagreed, its judgment was used. T11-fix was split into T11-fix-store and T11-fix-rest, X14 was added, and edges found missing were added after reading the cited code.
 
