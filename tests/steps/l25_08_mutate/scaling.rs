@@ -90,3 +90,38 @@ fn running_the_mutants_of_n_functions_each_with_a_row_scales() {
         },
     );
 }
+
+/// One definition with `n` additions in a chain and a row that checks its sum: `3n` mutants
+/// (each `+` by `-`, each `1` by `0` and by `2`), each of which copies, remixes and runs the
+/// whole definition, so the run is of order n².
+fn chain_with_row(n: usize) -> String {
+    format!(
+        "f(positional x) = x{} test {{ 0 -> {n} }}\n",
+        " + 1".repeat(n)
+    )
+}
+
+#[test]
+fn running_the_mutants_of_a_chain_of_n_additions_scales() {
+    // The front end elaborates a chain by recursion, as deep as the chain: a main thread's stack.
+    on_main_sized_stack(running_a_chain);
+}
+
+fn running_a_chain() {
+    let cache = Warm::default();
+    // n mutants, each O(n) to build, remix and run: order 2.
+    scaling::check_order(
+        "running the mutants of a chain of n additions",
+        100,
+        2,
+        |n| {
+            let (text, mut db) = warm(&cache, n, chain_with_row);
+            let front = db.front(&text);
+            let (stmts, unit) = front.as_ref().as_ref().unwrap();
+            let found = mutate::run(&text, stmts, unit, &run::direct).unwrap();
+            assert_eq!(found.len(), 3 * n);
+            // Each mutant changes the sum, and the row detects it.
+            assert!(found.iter().all(|(_, v)| *v == Verdict::Detected));
+        },
+    );
+}

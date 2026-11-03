@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use zed_kernel::provenance::{Position, child, with_child};
+use zed_kernel::provenance::{Position, child, child_mut};
 use zed_kernel::{Prim, Rat, Term, Value};
 
 use crate::ast::{Stmt, StmtKind};
@@ -256,23 +256,19 @@ fn sites(
     Ok(())
 }
 
-/// `term` with the node at `at` replaced as `to` says. It copies the nodes on the path to
-/// `at`, and shares or copies the rest as [`with_child`] does.
+/// `term` with the node at `at` replaced as `to` says: one copy of `term`, O(its size, the
+/// order of the remix that follows), then the node changed in place. The copy shares what
+/// `term` holds behind an `Arc` until the path to `at` reaches it ([`child_mut`]).
 pub fn apply(term: &Term, at: &Position, to: &Change) -> Term {
-    let path = at.path();
-    let mut nodes = Vec::with_capacity(path.len() + 1);
-    nodes.push(term);
-    for &i in &path {
-        let up = nodes.last().expect("the root is pushed");
-        nodes.push(child(up, i).expect("a mutant's position is in its definition"));
+    let mut out = term.clone();
+    let mut node = &mut out;
+    for i in at.path() {
+        node = child_mut(node, i).expect("a mutant's position is in its definition");
     }
-    let mut out = match (nodes.pop().expect("the root is pushed"), to) {
-        (Term::Prim(_, args), Change::Op(p)) => Term::Prim(*p, args.clone()),
-        (Term::Lit(_), Change::Int(v)) => Term::Lit(v.clone()),
+    match (node, to) {
+        (Term::Prim(p, _), Change::Op(q)) => *p = *q,
+        (Term::Lit(v), Change::Int(w)) => *v = w.clone(),
         _ => unreachable!("a mutant replaces an operator by one, a constant by one"),
-    };
-    for (up, &i) in nodes.into_iter().zip(&path).rev() {
-        out = with_child(up, i, out).expect("child `i` exists");
     }
     out
 }

@@ -644,150 +644,49 @@ pub fn child<'a>(t: &'a Term, i: u32) -> Option<&'a Term> {
     }
 }
 
-/// `t` with child `i`, in the order of [`child`], replaced by `c`; the other children are
-/// shared where `t` holds them behind an `Arc`, and cloned where it holds them inline. `None`
-/// when `t` has no child `i`.
-pub fn with_child(t: &Term, i: u32, c: Term) -> Option<Term> {
+/// Child `i` of `t`, in the order of [`child`], to change in place. A child behind an `Arc`
+/// that other terms share is first copied (`Arc::make_mut`): that one node, with the children
+/// it holds inline; its `Arc` children stay shared. `None` when `t` has no child `i`.
+pub fn child_mut(t: &mut Term, i: u32) -> Option<&mut Term> {
     let i = i as usize;
-    let a = Arc::new;
-    // The `Arc` children of `t`, in order, with child `i` replaced.
-    let swap = |ts: &[&Arc<Term>], c: Term| -> Option<Vec<Arc<Term>>> {
-        let mut out: Vec<Arc<Term>> = ts.iter().map(|&t| t.clone()).collect();
-        *out.get_mut(i)? = a(c);
-        Some(out)
-    };
-    Some(match t {
-        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => return None,
-        Term::Lam(ps, body) => {
-            let [body] = swap(&[body], c)?.try_into().ok()?;
-            Term::Lam(ps.clone(), body)
-        }
-        Term::App(f, args) => {
-            if i == 0 {
-                Term::App(a(c), args.clone())
-            } else {
-                let mut args = args.clone();
-                *args.get_mut(i - 1)? = c;
-                Term::App(f.clone(), args)
-            }
-        }
-        Term::Prim(p, args) => {
-            let mut args = args.clone();
-            *args.get_mut(i)? = c;
-            Term::Prim(*p, args)
-        }
-        Term::Let(x, e, body) => {
-            let [e, body] = swap(&[e, body], c)?.try_into().ok()?;
-            Term::Let(x.clone(), e, body)
-        }
-        Term::If(c0, x, y) => {
-            let [c0, x, y] = swap(&[c0, x, y], c)?.try_into().ok()?;
-            Term::If(c0, x, y)
-        }
-        Term::Match(s, arms) => {
-            if i == 0 {
-                Term::Match(a(c), arms.clone())
-            } else {
-                let mut arms = arms.clone();
-                arms.get_mut(i - 1)?.1 = c;
-                Term::Match(s.clone(), arms)
-            }
-        }
-        Term::Fam { domain, var, body } => {
-            let [domain, body] = swap(&[domain, body], c)?.try_into().ok()?;
-            Term::Fam {
-                domain,
-                var: var.clone(),
-                body,
-            }
-        }
-        Term::Reindex {
-            family,
-            kf,
-            vf,
-            witness,
-        } => {
-            let [family, kf, vf] = swap(&[family, kf, vf], c)?.try_into().ok()?;
-            Term::Reindex {
-                family,
-                kf,
-                vf,
-                witness: witness.clone(),
-            }
-        }
-        Term::Discard { family, sel } => {
-            let [family, sel] = swap(&[family, sel], c)?.try_into().ok()?;
-            Term::Discard { family, sel }
-        }
+    fn pick<const N: usize>(ts: [&mut Arc<Term>; N], i: usize) -> Option<&mut Term> {
+        ts.into_iter().nth(i).map(Arc::make_mut)
+    }
+    match t {
+        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => None,
+        Term::Lam(_, body) => pick([body], i),
+        Term::App(f, args) => match i {
+            0 => Some(Arc::make_mut(f)),
+            _ => args.get_mut(i - 1),
+        },
+        Term::Prim(_, args) => args.get_mut(i),
+        Term::Let(_, e, body) => pick([e, body], i),
+        Term::If(c, a, b) => pick([c, a, b], i),
+        Term::Match(s, arms) => match i {
+            0 => Some(Arc::make_mut(s)),
+            _ => arms.get_mut(i - 1).map(|(_, b)| b),
+        },
+        Term::Fam { domain, body, .. } => pick([domain, body], i),
+        Term::Reindex { family, kf, vf, .. } => pick([family, kf, vf], i),
+        Term::Discard { family, sel } => pick([family, sel], i),
         Term::Fold {
             family,
             op,
             identity,
-            depth,
-            ev,
-        } => {
-            let (family, op, identity) = match identity {
-                Some(id) => {
-                    let [f, o, id] = swap(&[family, op, id], c)?.try_into().ok()?;
-                    (f, o, Some(id))
-                }
-                None => {
-                    let [f, o] = swap(&[family, op], c)?.try_into().ok()?;
-                    (f, o, None)
-                }
-            };
-            Term::Fold {
-                family,
-                op,
-                identity,
-                depth: *depth,
-                ev: ev.clone(),
-            }
-        }
+            ..
+        } => match identity {
+            Some(id) => pick([family, op, id], i),
+            None => pick([family, op], i),
+        },
         Term::Fix {
-            init,
-            step,
-            this,
-            key,
-            kind,
-            ev,
-        } => {
-            let (init, step, kind) = match kind {
-                FixKind::Lattice { join } => {
-                    let [init, step, join] = swap(&[init, step, join], c)?.try_into().ok()?;
-                    (init, step, FixKind::Lattice { join })
-                }
-                FixKind::Definedness => {
-                    let [init, step] = swap(&[init, step], c)?.try_into().ok()?;
-                    (init, step, FixKind::Definedness)
-                }
-            };
-            Term::Fix {
-                init,
-                step,
-                this: this.clone(),
-                key: key.clone(),
-                kind,
-                ev: ev.clone(),
-            }
-        }
+            init, step, kind, ..
+        } => match kind {
+            FixKind::Lattice { join } => pick([init, step, join], i),
+            FixKind::Definedness => pick([init, step], i),
+        },
         Term::Gen {
-            init,
-            step,
-            guard,
-            pos,
-        } => {
-            let [init, step, guard] = swap(&[init, step, guard], c)?.try_into().ok()?;
-            Term::Gen {
-                init,
-                step,
-                guard,
-                pos: *pos,
-            }
-        }
-        Term::Push(port, v) => {
-            let [v] = swap(&[v], c)?.try_into().ok()?;
-            Term::Push(port.clone(), v)
-        }
-    })
+            init, step, guard, ..
+        } => pick([init, step, guard], i),
+        Term::Push(_, v) => pick([v], i),
+    }
 }
