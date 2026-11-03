@@ -819,18 +819,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| OSP-drop2 | verify attempt 1 | 2026-11-03 04:27 | probe: _ = apply(lookup, 1) and _ = first((lookup(1), 2)) (value int / #notFound, no else) accepted on branch, rejected on main a155283: generic call result's a |
-| S22a | repair attempt 2 | 2026-11-03 03:01 | cause of cross exponential found: enumerate() called stage::ends (tree walk of the shared term, 2^k) before its O(1) box test; reordered: cross k=22 1.01 s -> 0 |
-| ST-arms-quad | verify attempt 2 | 2026-11-03 03:35 | started on af39546 (base 03d3d41); no earlier verify lines for af39546; load 36.14 32.87 37.69 |
-| T11-S22 | repair attempt 2 (item S22a) | 2026-11-03 03:01 | cause of cross exponential found: enumerate() called stage::ends (tree walk of the shared term, 2^k) before its O(1) box test; reordered: cross k=22 1.01 s -> 0 |
-| T2-mid | impl attempt 1 | 2026-11-03 04:27 | elab Tables collect on explicit stack committed; deep tests l01_16 pass, old code overflows; shallow +1.7%; load 27.42 |
-| T6 | verify attempt 1 | 2026-11-03 00:01 | run_tests.sh 4 on wt/t6 b9a5ca4: 97 pieces, 0 failed, rc=0, max piece 29.4 s, load 33.6-50.1 |
+| ENDS-dag | orchestrator attempt  | 2026-11-03 05:46 | started: plan-runner wf_380ce798-c70 |
+| OSP-drop2 | verify attempt 2 | 2026-11-03 04:27 | start (verify#1 results read; checking 4e274dc) |
+| PLUG-study | research attempt 1 | 2026-11-03 05:45 | milestone: probe ran (reduced product interval x congruence on unchanged iterate::solve: int[1..=99] 1 mod 2; evals 3002 at n=1000, 24002 at n=8000); worktree a |
+| S22a | verify attempt 1 | 2026-11-03 03:01 | neg controls in ctl (not committed): Pa off -> chain_alt_scales 37.7x FAIL (probe, conj pass via clip); Pa and clip off -> probe 58.7x, conj 58.1x, cross 58.5x  |
+| ST-arms-quad | repair attempt 2 | 2026-11-03 03:35 | cause of verifier probe 'moving' cubic: settle flattened one forced level per round and kept each repeated bound, so d rounds x d disjuncts x O(d) solves; fix:  |
+| T11-S22 | verify attempt 1 (item S22a) | 2026-11-03 03:01 | neg controls in ctl (not committed): Pa off -> chain_alt_scales 37.7x FAIL (probe, conj pass via clip); Pa and clip off -> probe 58.7x, conj 58.1x, cross 58.5x  |
+| T2-mid | orchestrator attempt  | 2026-11-03 04:27 | brief extended: rebase on main, l01_29 passes there |
+| T6 | repair attempt 6 | 2026-11-03 00:01 | rebased wt/t6 on main 7073be1 (both commits squashed first; T6's K30 renamed K37, CAP-bits owns K30) and wt/t6-spec on zed 1025886; fences resynced, l01_07/l01_ |
 | TD-ends | repair attempt 2 | 2026-11-03 03:52 | reproduced on c664182 at load 28-40: x**k+1 forward 17 ms/349 ms/15.5 s at k=1e6/8e6/1e8; preimage x**1e8+1>=50 14.7 s (0.7 ms without +1); x**4<=2**1e8 3.0 s;  |
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#3 in progress) |
-| XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
+| XT3 | orchestrator attempt  | 2026-11-03 06:01 | started now: research agent (own attempt) on the four open problems; it had been marked started at 03:08 with nothing running |
 
-Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (1 commits); the push follows one full test run on the merged tree:
 
+- 7073be1 STATUS: in progress as of 2026-11-03 05:42
 
 ## Open points
 
