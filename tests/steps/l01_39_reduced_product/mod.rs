@@ -16,6 +16,7 @@ mod finite_from_type;
 mod helpers;
 mod hull;
 mod linked;
+mod named_test;
 mod nests;
 mod random;
 mod refused;

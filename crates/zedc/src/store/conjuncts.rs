@@ -133,7 +133,7 @@ impl Conjuncts {
         if gs.len() == 1 {
             gs.pop().expect("one")
         } else {
-            Formula::And(gs)
+            Formula::And(Arc::new(gs))
         }
     }
 

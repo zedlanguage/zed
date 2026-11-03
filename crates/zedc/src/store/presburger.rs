@@ -97,6 +97,7 @@ use super::linear::{Q, Term};
 use super::{hull3, live3, twovar, utvpi};
 
 mod deep;
+use deep::Id;
 
 /// A variable of a relation.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -405,31 +406,34 @@ impl fmt::Display for Con {
     }
 }
 
-/// A quantifier-free formula over linear constraints. Drop, copy, compare, hash and show do
-/// not recurse on its depth (`deep`). Two formulas are compared as the derived order would
-/// compare them, but a formula compared with itself is equal at once: a lookup of a conjunct
-/// in the maps keyed by formulas finds the very formula it holds, and would otherwise walk the
-/// whole of it, a cost of its size per lookup (COMPLEXITY.md S31).
+/// A quantifier-free formula over linear constraints. Each compound node holds its parts
+/// behind an [`Arc`], so a copy costs O(1) and shares them, and a part may be held by many
+/// parents: the formula of a `let`-bound test is held once at each use (COMPLEXITY.md S31).
+/// Every pass over a formula reads a shared part once per call (`deep`), so its cost is the
+/// number of distinct parts. Drop, compare, hash and show do not recurse on its depth. Two
+/// formulas are compared as the derived order would compare their trees written out, but a
+/// part compared with itself is equal at once: a lookup of a conjunct in the maps keyed by
+/// formulas finds the very formula it holds, and would otherwise walk the whole of it.
 pub enum Formula {
     /// A constraint.
     Con(Con),
     /// Negation.
-    Not(Box<Formula>),
+    Not(Arc<Formula>),
     /// Conjunction; empty is `true`.
-    And(Vec<Formula>),
+    And(Arc<Vec<Formula>>),
     /// Disjunction; empty is `false`.
-    Or(Vec<Formula>),
+    Or(Arc<Vec<Formula>>),
 }
 
 impl Formula {
     /// `true`.
     pub fn top() -> Formula {
-        Formula::And(Vec::new())
+        Formula::And(Arc::new(Vec::new()))
     }
 
     /// `false`.
     pub fn bottom() -> Formula {
-        Formula::Or(Vec::new())
+        Formula::Or(Arc::new(Vec::new()))
     }
 
     /// The conjunction, flattened, `true` dropped and `false` absorbing.
@@ -471,7 +475,7 @@ impl Formula {
         if out.len() == 1 {
             out.pop().expect("one")
         } else {
-            Formula::And(out)
+            Formula::And(Arc::new(out))
         }
     }
 
@@ -492,7 +496,7 @@ impl Formula {
         if out.len() == 1 {
             out.pop().expect("one")
         } else {
-            Formula::Or(out)
+            Formula::Or(Arc::new(out))
         }
     }
 
@@ -623,7 +627,7 @@ impl Formula {
             Formula::Not(_) => f.into_negated().expect("a negation"),
             Formula::And(ref gs) if gs.is_empty() => Formula::bottom(),
             Formula::Or(ref gs) if gs.is_empty() => Formula::top(),
-            g => Formula::Not(Box::new(g)),
+            g => Formula::Not(Arc::new(g)),
         }
     }
 
@@ -1616,16 +1620,28 @@ impl Drop for Parts {
 impl Parts {
     /// The parts of a formula in negation normal form. The disjuncts nested below are made on
     /// an explicit stack, each before the disjunct that holds it, so that a nest of any depth
-    /// is read without recursion (COMPLEXITY.md S27).
+    /// is read without recursion (COMPLEXITY.md S27). A disjunction or a disjunct that the
+    /// formula holds in more than one place is made once and shared, as [`Rc`]s, at each
+    /// place (COMPLEXITY.md S31).
+    // Complexity tradeoff: a shared conjunction met as a conjunct is added to the base of each
+    // place that holds it, constraint by constraint, so its constraints cost once per place
+    // (`and` flattens a conjunction into the conjunction around it, so it has no node of its
+    // own to share). A shared disjunction or disjunct, the form a `let`-bound test takes at
+    // each level of a nest, is made once. Trigger: a `let`-bound conjunction of k constraints
+    // used at d places costs O(d k).
     fn of(f: Formula) -> Parts {
-        /// A part being made: its disjunctions not yet entered, last first, and the disjunction
-        /// being entered, as its disjuncts left and those made.
+        /// A disjunction being entered: its key when shared, its disjuncts left and those made.
+        type Entering = (Option<Id>, std::vec::IntoIter<Formula>, Vec<Rc<Parts>>);
+        /// A part being made: its disjunctions not yet entered, last first, the disjunction
+        /// being entered, as its key when shared, its disjuncts left and those made, and the
+        /// part's own key when shared.
         struct Frame {
             p: Parts,
-            todo: Vec<Vec<Formula>>,
-            arms: Option<(std::vec::IntoIter<Formula>, Vec<Rc<Parts>>)>,
+            todo: Vec<Formula>,
+            arms: Option<Entering>,
+            id: Option<Id>,
         }
-        fn open(f: Formula) -> Frame {
+        fn open(f: Formula, id: Option<Id>) -> Frame {
             let mut p = Parts::default();
             let mut todo = Vec::new();
             let mut stack = vec![f];
@@ -1633,8 +1649,10 @@ impl Parts {
                 match &mut g {
                     Formula::Con(c) => p.cons.push(Con::take(c)),
                     // Reversed, so the conjuncts are added in order.
-                    Formula::And(gs) => stack.extend(mem::take(gs).into_iter().rev()),
-                    Formula::Or(gs) => todo.push(mem::take(gs)),
+                    Formula::And(_) => {
+                        stack.extend(g.into_parts().expect("a conjunction").into_iter().rev())
+                    }
+                    Formula::Or(_) => todo.push(g),
                     Formula::Not(_) => unreachable!("a formula in negation normal form"),
                 }
             }
@@ -1643,31 +1661,54 @@ impl Parts {
                 p,
                 todo,
                 arms: None,
+                id,
             }
         }
-        let mut stack = vec![open(f)];
-        let mut made: Option<Parts> = None;
+        // The disjunctions and the disjuncts already made that are held in more than one place.
+        let mut ors: HashMap<Id, Vec<Rc<Parts>>> = HashMap::new();
+        let mut arms: HashMap<Id, Rc<Parts>> = HashMap::new();
+        let mut stack = vec![open(f, None)];
+        let mut made: Option<Rc<Parts>> = None;
         while let Some(top) = stack.last_mut() {
-            if let (Some(q), Some((_, done))) = (made.take(), &mut top.arms) {
-                done.push(Rc::new(q));
+            if let (Some(q), Some((_, _, done))) = (made.take(), &mut top.arms) {
+                done.push(q);
             }
-            if let Some((left, done)) = &mut top.arms {
+            if let Some((_, left, done)) = &mut top.arms {
                 if let Some(g) = left.next() {
-                    stack.push(open(g));
+                    match Id::of(&g) {
+                        Some(id) => match arms.get(&id) {
+                            Some(q) => done.push(Rc::clone(q)),
+                            None => stack.push(open(g, Some(id))),
+                        },
+                        None => stack.push(open(g, None)),
+                    }
                     continue;
                 }
-                top.p.ors.push(mem::take(done));
-                top.arms = None;
+                let (id, _, done) = top.arms.take().expect("the disjunction entered");
+                if let Some(id) = id {
+                    ors.insert(id, done.clone());
+                }
+                top.p.ors.push(done);
             }
-            if let Some(ds) = top.todo.pop() {
-                top.arms = Some((ds.into_iter(), Vec::new()));
+            if let Some(g) = top.todo.pop() {
+                let id = Id::of(&g);
+                if let Some(ds) = id.as_ref().and_then(|id| ors.get(id)) {
+                    top.p.ors.push(ds.clone());
+                    continue;
+                }
+                let ds = g.into_parts().expect("a disjunction");
+                top.arms = Some((id, ds.into_iter(), Vec::new()));
                 continue;
             }
-            let p = stack.pop().expect("the top frame").p;
+            let Frame { p, id, .. } = stack.pop().expect("the top frame");
             if stack.is_empty() {
                 return p;
             }
-            made = Some(p);
+            let q = Rc::new(p);
+            if let Some(id) = id {
+                arms.insert(id, Rc::clone(&q));
+            }
+            made = Some(q);
         }
         unreachable!("the root returns")
     }
@@ -1826,7 +1867,10 @@ fn nnf(f: &Formula, sign: bool) -> Formula {
                     }
                 }
             };
-            if let Formula::And(gs) | Formula::Or(gs) = &mut out {
+            // A node held elsewhere is a part passed through whole, already sorted.
+            if let Formula::And(gs) | Formula::Or(gs) = &mut out
+                && let Some(gs) = Arc::get_mut(gs)
+            {
                 gs.sort();
             }
             out
@@ -4376,12 +4420,16 @@ fn unbounded(c: &Formula, sym: &Atom, dir: i64) -> Result<bool, Refusal> {
         },
         rel: con.rel,
     };
+    // A shared conjunction is entered once.
     let has_or = |g: &Formula| -> bool {
+        let mut seen = std::collections::HashSet::new();
         let mut stack = vec![g];
         while let Some(g) = stack.pop() {
             match g {
                 Formula::Or(_) => return true,
-                Formula::And(gs) => stack.extend(gs),
+                Formula::And(gs) if Id::of(g).is_none_or(|id| seen.insert(id)) => {
+                    stack.extend(gs.iter())
+                }
                 _ => {}
             }
         }
@@ -4394,56 +4442,12 @@ fn unbounded(c: &Formula, sym: &Atom, dir: i64) -> Result<bool, Refusal> {
     let r = Lin::atom(r.clone());
     let away = Formula::Con(Con::ge(&r.times(dir), &Lin::constant(1)));
     let body = if has_or(&f) {
-        paired(&f, &cone)
+        // Each constraint `k` replaced by `k && cone(k)`.
+        f.map_cons(&|k| Formula::and(vec![Formula::Con(k.clone()), Formula::Con(cone(k))]))
     } else {
         Formula::and(f.cons().iter().map(|con| Formula::Con(cone(con))).collect())
     };
     decide(&Formula::and(vec![body, away]))
-}
-
-/// `f`, in negation normal form, with each constraint `k` replaced by `k && cone(k)`. The tree
-/// is walked with an explicit stack, children in order.
-fn paired(f: &Formula, cone: &dyn Fn(&Con) -> Con) -> Formula {
-    enum Step<'a> {
-        Enter(&'a Formula),
-        Close { or: bool, n: usize },
-    }
-    let mut todo = vec![Step::Enter(f)];
-    let mut done: Vec<Formula> = Vec::new();
-    while let Some(s) = todo.pop() {
-        match s {
-            Step::Enter(Formula::Con(k)) => done.push(Formula::and(vec![
-                Formula::Con(k.clone()),
-                Formula::Con(cone(k)),
-            ])),
-            Step::Enter(Formula::And(gs)) => {
-                todo.push(Step::Close {
-                    or: false,
-                    n: gs.len(),
-                });
-                todo.extend(gs.iter().rev().map(Step::Enter));
-            }
-            Step::Enter(Formula::Or(gs)) => {
-                todo.push(Step::Close {
-                    or: true,
-                    n: gs.len(),
-                });
-                todo.extend(gs.iter().rev().map(Step::Enter));
-            }
-            Step::Enter(Formula::Not(_)) => {
-                unreachable!("a formula in negation normal form has no negation")
-            }
-            Step::Close { or, n } => {
-                let gs = done.split_off(done.len() - n);
-                done.push(if or {
-                    Formula::or(gs)
-                } else {
-                    Formula::and(gs)
-                });
-            }
-        }
-    }
-    done.pop().expect("one formula for the root")
 }
 
 /// The set `s` of a symbol as a formula: the disjunction of its pieces.

@@ -115,7 +115,10 @@ fn small_formulas_print_compare_and_hash_as_before() {
     assert_eq!(Formula::top().to_string(), "true");
     assert_eq!(Formula::bottom().to_string(), "false");
     assert_eq!(
-        format!("{:?}", Formula::Not(Box::new(Formula::Or(vec![])))),
+        format!(
+            "{:?}",
+            Formula::Not(Arc::new(Formula::Or(Arc::new(vec![]))))
+        ),
         "Not(Or([]))"
     );
     assert_eq!(
@@ -134,10 +137,10 @@ fn small_formulas_print_compare_and_hash_as_before() {
         b.clone(),
         not_a.clone(),
         Formula::top(),
-        Formula::And(vec![a.clone()]),
-        Formula::And(vec![a.clone(), b.clone()]),
-        Formula::And(vec![b.clone()]),
-        Formula::And(vec![not_a.clone()]),
+        Formula::And(Arc::new(vec![a.clone()])),
+        Formula::And(Arc::new(vec![a.clone(), b.clone()])),
+        Formula::And(Arc::new(vec![b.clone()])),
+        Formula::And(Arc::new(vec![not_a.clone()])),
         Formula::bottom(),
         either.clone(),
     ];

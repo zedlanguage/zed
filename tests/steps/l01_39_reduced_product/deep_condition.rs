@@ -71,8 +71,8 @@ fn a_constant_test_leaves_one_arm_unreachable() {
 
 #[test]
 fn a_tier_named_once_and_asked_twice_narrows_as_if_written_out() {
-    // `let t = <chain> in t && (t || x >= 5)` is `t` itself: the shared test is translated
-    // once more when asked the second time, and the arms are those of the chain written out.
+    // `let t = <chain> in t && (t || x >= 5)` is `t` itself: the named test is translated
+    // once, its formula held at both uses, and the arms are those of the chain written out.
     let shared = let_(
         "t",
         fallbacks(20),

@@ -916,8 +916,18 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `impl Drop` with a work list on the enum `Formula`, so a value nested 100,000 deep is freed without recursion | `presburger/deep.rs` | None | Removed: the runtime frees values, and must free a deep chain without recursion itself (as for T2-parse's row) |
 | Moving parts out of a value whose type has `Drop` by `mem::take` and `mem::replace` through `&mut` (`into_parts`, `into_negated`, `Con::take`), since Rust forbids moving fields out of such a value by a pattern | `Formula::and`, `or`, `negate`, `Parts::of`, `Conjuncts::and_held` | Workaround | A pattern that binds the parts; with no `Drop` in Zed the workaround goes |
-| Hand-written `Clone`, `PartialEq`, `Ord`, `Hash`, `Debug` and `Display` over explicit stacks, giving what the derived forms give | `presburger/deep.rs` | Missing | Structural equality, order, hashing and printing are the runtime's, which must not recurse on depth |
-| A generic post-order fold with a context passed down, results kept on one `Vec` and split off per node | `Formula::fold`, used by `map_cons`, `forget`, `holds_as`, `nnf` and `Clone` | None | A recursive function, once the machine keeps frames on the heap; or a state receiver over a list |
+| Hand-written `Clone`, `PartialEq`, `Ord`, `Hash`, `Debug` and `Display` over explicit stacks, giving what the derived forms give (since ST-formula-share `Clone` is one `Arc::clone`) | `presburger/deep.rs` | Missing | Structural equality, order, hashing and printing are the runtime's, which must not recurse on depth |
+| A generic post-order fold with a context passed down, results kept on one `Vec` and split off per node | `Formula::fold`, used by `map_cons`, `forget`, `nnf` and `Hash` (since ST-formula-share `holds_as` and `Clone` no longer use it) | None | A recursive function, once the machine keeps frames on the heap; or a state receiver over a list |
+
+## Entries from ST-formula-share (`zedc/src/store/presburger.rs`, `presburger/deep.rs`, `preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Arc` children on the enum `Formula` (`Not(Arc<Formula>)`, `And` and `Or` of `Arc<Vec<Formula>>`), so a clone is O(1) and a part held in several places is one node; `Arc` and not `Rc` because `Formula` must be `Send` | `presburger.rs`, `presburger/deep.rs`, `conjuncts.rs`, tests | None | Zed shares values, so a part is one value however many places hold it |
+| `Arc::strong_count` to tell a node held in several places from one held once, and `Arc::get_mut` to move parts out of, or sort in place, a node held once, copying one level otherwise | `Formula::is_shared`, `into_parts`, `into_negated`, `take_kids`, `Drop`, `nnf` | Mutation (gap 11) | The runtime's own reference counts reuse a value held once; the code builds new values |
+| `deep::Id`, an owned clone of a node whose `Eq` and `Hash` are the `Arc` address (`Arc::as_ptr`), as the key of the memos that read a shared node once | `Formula::fold`, `holds_as`, `walk`, `Ord`, `Parts::of`, `unbounded` | Shared tables across pure calls (gap 2) | A memo keyed by the value's identity, if the runtime gives one; otherwise by hash-consing the formula |
+| A `u64` hash folded bottom up per node with `DefaultHasher`, then written once, so a formula hashes alike however its parts are shared | `impl Hash for Formula` | None | The runtime's structural hash, which must read a shared value once |
+| `Rc<Parts>` memo tables (`HashMap<Id, Vec<Rc<Parts>>>` for disjunctions and `HashMap<Id, Rc<Parts>>` for disjuncts) filled while the frames of an explicit stack are made | `Parts::of` | Mutation (gap 11) | A fold over the formula with the tables in its state |
 
 ## Entries from OSP-drop (`zedc/src/check/mod.rs`)
 

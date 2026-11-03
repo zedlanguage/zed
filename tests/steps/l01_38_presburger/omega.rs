@@ -382,9 +382,9 @@ fn shuffled(f: &Formula, rng: &mut Rng) -> Formula {
     };
     match f {
         Formula::Con(_) => f.clone(),
-        Formula::Not(g) => Formula::Not(Box::new(turned(std::slice::from_ref(&**g)).remove(0))),
-        Formula::And(gs) => Formula::And(turned(gs)),
-        Formula::Or(gs) => Formula::Or(turned(gs)),
+        Formula::Not(g) => Formula::Not(Arc::new(turned(std::slice::from_ref(&**g)).remove(0))),
+        Formula::And(gs) => Formula::And(Arc::new(turned(gs))),
+        Formula::Or(gs) => Formula::Or(Arc::new(turned(gs))),
     }
 }
 

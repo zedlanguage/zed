@@ -499,8 +499,6 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         m.formula.clear();
         m.lin_calls.clear();
         m.formula_calls.clear();
-        m.asked.clear();
-        m.asked_calls.clear();
         m.log.clear();
         let first = tr.defs.len();
         let body = tx.formula(&mut tr, root, ROOT)?;
@@ -1174,9 +1172,6 @@ struct Memo {
     /// arguments translate alike translate alike, however they are reached.
     lin_calls: HashMap<CallKey, Option<Lin>>,
     formula_calls: HashMap<CallKey, Option<Formula>>,
-    /// The keys of `formula` and `formula_calls` asked for once and not kept ([`Tx::shared`]).
-    asked: HashSet<At>,
-    asked_calls: HashSet<CallKey>,
     /// The translation entries in the order they were made, which a translation that is
     /// undone removes.
     log: Vec<Logged>,
@@ -1687,32 +1682,6 @@ impl<'t> Tx<'t> {
             self.run.memo.log.push(logged(k));
         }
         v
-    }
-
-    /// [`Tx::translated`] for a formula, kept only from the second time it is asked for. A
-    /// formula is a tree, so keeping a copy of the formula of every term would copy each part
-    /// once for each term above it: the formula's size times its depth. The first time, the
-    /// formula is built and only the key is noted; the second time it is built again and kept;
-    /// later times copy it. So a term is translated at most twice, and each copy is of a part
-    /// that the formula being built holds again. The auxiliary variables are made in
-    /// [`Tx::lin`], whose terms are kept the first time, so the second translation names them
-    /// as the first did.
-    fn shared<K: Hash + Eq + Clone>(
-        &mut self,
-        table: Table<K, Option<Formula>>,
-        asked: fn(&mut Memo) -> &mut HashSet<K>,
-        k: K,
-        logged: impl FnOnce(K) -> Logged,
-        f: impl FnOnce(&mut Self) -> Option<Formula>,
-    ) -> Option<Formula> {
-        // A term asked for twice is translated twice, a constant factor, so that a deep
-        // formula is not copied once for each level above each part.
-        if table(&mut self.run.memo).contains_key(&k)
-            || !asked(&mut self.run.memo).insert(k.clone())
-        {
-            return self.translated(table, k, logged, f);
-        }
-        f(self)
     }
 
     /// Removes the translation's entries made after the first `mark`.
@@ -2274,9 +2243,8 @@ impl<'t> Tx<'t> {
 
     /// The formula a test states over the inputs.
     fn formula(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Formula> {
-        self.shared(
+        self.translated(
             |m| &mut m.formula,
-            |m| &mut m.asked,
             (t, env),
             Logged::Formula,
             |s| s.formula_at(tr, t, env),
@@ -2310,9 +2278,8 @@ impl<'t> Tx<'t> {
                         })
                     };
                     match self.call_key(tr, body, lam, args, env) {
-                        Some(k) => self.shared(
+                        Some(k) => self.translated(
                             |m| &mut m.formula_calls,
-                            |m| &mut m.asked_calls,
                             k,
                             Logged::FormulaCall,
                             |s| read(s, tr),
