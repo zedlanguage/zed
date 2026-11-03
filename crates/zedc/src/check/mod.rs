@@ -245,6 +245,14 @@ struct Ck<'t, 'a> {
     log: Vec<Undo>,
     /// Each expression's type, by its span, as last found.
     seen: HashMap<Span, Seen<'a>>,
+    /// Each expression's loose atoms that reach its value unnamed, by its span, as last
+    /// found: a superset of those no `else` default on their path writes. No entry is none.
+    unnamed: HashMap<Span, KType>,
+    /// The loose atoms each expression makes itself, of those it may give unnamed: where a
+    /// dropped failure enters. No entry is none.
+    made: HashMap<Span, KType>,
+    /// The binders of `name = e`, each with the span of `e`, whose unnamed atoms it keeps.
+    alias: HashMap<usize, Span>,
     /// Where each binder's type comes from.
     whence: HashMap<usize, Origin>,
     /// Whether a repair is being tried, so its errors offer none.
@@ -292,6 +300,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             info: Info::default(),
             log: Vec::new(),
             seen: HashMap::new(),
+            unnamed: HashMap::new(),
+            made: HashMap::new(),
+            alias: HashMap::new(),
             whence: HashMap::new(),
             trying: false,
             lines_out: HashSet::new(),
@@ -407,6 +418,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                             .collect(),
                         ExprKind::Tuple(items) => items.iter().collect(),
                         ExprKind::Index(of, _) => vec![of],
+                        ExprKind::Block(stmts) => stmts
+                            .iter()
+                            .filter_map(|s| match &s.kind {
+                                StmtKind::Return(es) if es.len() == 1 => Some(&es[0]),
+                                _ => None,
+                            })
+                            .collect(),
                         _ => Vec::new(),
                     };
                     let what = match &e.kind {
@@ -415,6 +433,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                         ExprKind::Else { .. } => "this `else`".into(),
                         ExprKind::If { .. } => "this `if`".into(),
+                        ExprKind::Block(_) => "this block".into(),
                         ExprKind::Call { callee, .. } => match &callee.kind {
                             ExprKind::Name(n) => format!("this call of `{n}`"),
                             _ => "this call".into(),
@@ -530,15 +549,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let id = self.id(s.span, n);
                         let text = format!("`{n}` is defined as this expression, {v}");
                         self.origin(id, value.span, text, Some(value.span));
+                        self.alias.insert(id, value.span);
                         self.env.insert(id, v);
                     }
-                    [Target::Wild] => self.discard(&v, value, None, s.span),
+                    [Target::Wild] => {
+                        let dropped = self.unnamed_in(&v, value.span);
+                        self.discard(dropped, value, None, s.span)
+                    }
                     _ => {
                         let n = targets.len();
                         // The atoms of the whole value reach every component, so they are
                         // dropped only when no target names them.
                         if targets.iter().all(|t| *t == Target::Wild) {
-                            self.discard(&Ty::set(v.loose()), value, None, s.span);
+                            let dropped = self.unnamed_in(&v, value.span);
+                            self.discard(dropped, value, None, s.span);
                         }
                         let items = match &value.kind {
                             ExprKind::Tuple(items) if items.len() == n => Some(items),
@@ -559,8 +583,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         .iter()
                                         .filter(|cs| cs.len() == n)
                                         .fold(Ty::empty(), |a, cs| a.union(&cs[i]));
-                                    let part = items.map_or(value, |items| &items[i]);
-                                    self.discard(&own, part, Some(i), s.span);
+                                    // A component of a value that is not a tuple display is
+                                    // followed no further: each of its loose atoms is unnamed.
+                                    let (dropped, part) = match items {
+                                        Some(items) => {
+                                            (self.unnamed_in(&own, items[i].span), &items[i])
+                                        }
+                                        None => (own.loose(), value),
+                                    };
+                                    self.discard(dropped, part, Some(i), s.span);
                                 }
                             }
                         }
@@ -612,12 +643,97 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
-    /// `_` bound to `v`, the value of `e`, or its component `i`, in the binding at `span`
-    /// (DESIGN.md sec:tour_methods): `_` drops a loose failure only where the text names it,
-    /// as the default an `else` writes, so any other loose atom of `v` is an error. The error
-    /// names the atoms, where each enters the value, the derivation, and the repairs.
-    fn discard(&mut self, v: &Ty, e: &'a Expr, i: Option<usize>, span: Span) {
-        let dropped = v.dropped(&named_defaults(e));
+    /// The loose atoms of `v`, a value of the expression at `span`, that reach it unnamed.
+    /// One intersection, in `O(s log l)` for the smaller set's `s` atoms.
+    fn unnamed_in(&self, v: &Ty, span: Span) -> KType {
+        match self.unnamed.get(&span) {
+            Some(u) => &v.loose() & u,
+            None => KType::empty(),
+        }
+    }
+
+    /// The loose atoms that may reach the value of `e`, of type `t`, unnamed, and those of
+    /// them that `e` itself makes (DESIGN.md sec:tour_methods): a failure is named only by
+    /// the `else` whose default writes it on the path it flows on, never by an atom of the
+    /// same name elsewhere. An `if` passes on each branch's, a block its export's, a name
+    /// bound by `name = e` that of `e`. An operator or a call of a declared function passes
+    /// on its parts' and makes the atoms its signature's results hold, and `#errs`; any
+    /// other expression makes all its loose atoms. The set may hold more atoms than the
+    /// value's type, where a part's failure stops there (`==` gives a `bool`); `_` keeps
+    /// only those of the type it binds, so the extra atoms can only reject, never accept.
+    ///
+    /// Each part was recorded before `e`, and only unions and intersections with a set of
+    /// the signature's size are taken, each in `O(s log l)` for the smaller set's `s` atoms,
+    /// so a chain of `n` failures costs `O(n log² n)`; a difference would complement the
+    /// larger set (COMPLEXITY.md F21).
+    fn unnamed_of(&self, e: &Expr, t: &Ty, src: &Src<'_>) -> Option<(KType, Option<KType>)> {
+        let loose = t.loose();
+        // Complexity tradeoff: `loose` is compared with the empty type as written, which
+        // orders by digest in `O(1)`, not tested with `is_empty`, whose memo is ordered by
+        // contents: `passed` tests the operand's atoms, an equal set built apart, and each such
+        // lookup compares the two in full, `O(n²)` on a chain of `n` failures (COMPLEXITY.md
+        // F32). It gives up the atoms sets that are empty but written otherwise, an atom whose
+        // payload type is empty but not reduced; those keep their parts' atoms, which can only
+        // reject.
+        if loose == KType::empty() {
+            return None;
+        }
+        let u = |s: Span| self.unnamed.get(&s).cloned().unwrap_or_else(KType::empty);
+        let union = |spans: Vec<Span>| spans.into_iter().fold(KType::empty(), |a, s| &a | &u(s));
+        let made = |sigs: &[Arrow]| {
+            let atoms = sigs
+                .iter()
+                .fold(errs(), |a, arrow| &a | &arrow.result.loose());
+            let own = &loose & &atoms;
+            (&union(flows(e)) | &own, Some(own))
+        };
+        Some(match (&e.kind, src) {
+            (
+                ExprKind::Else {
+                    of,
+                    pattern,
+                    default,
+                },
+                _,
+            ) => {
+                let d = if named_default(default) {
+                    KType::empty()
+                } else {
+                    u(default.span)
+                };
+                let kept = match pattern {
+                    // The plain form strips every loose atom of its value.
+                    None => KType::empty(),
+                    Some(Pattern::Atom {
+                        name,
+                        fields,
+                        items,
+                        ..
+                    }) if fields.is_empty() && items.is_empty() => &u(of.span) - &any_payload(name),
+                    Some(_) => u(of.span),
+                };
+                (&kept | &d, None)
+            }
+            (ExprKind::If { .. } | ExprKind::Block(_), _) => (union(flows(e)), None),
+            (ExprKind::Unary(op, _) | ExprKind::Binary(op, _, _), _) => made(&op_sig(op).arrows),
+            (_, Src::Call(id, _)) => match self.env.get(id).and_then(only_fn) {
+                Some(sig) => made(&sig.arrows),
+                None => (loose.clone(), Some(loose)),
+            },
+            (_, Src::Name(id)) => match self.alias.get(id) {
+                Some(&value) if self.seen.contains_key(&value) => (u(value), None),
+                _ => (loose.clone(), Some(loose)),
+            },
+            _ => (loose.clone(), Some(loose)),
+        })
+    }
+
+    /// `_` bound to a value of `e`, or its component `i`, in the binding at `span`, where
+    /// `dropped` is the loose atoms that reach it unnamed (DESIGN.md sec:tour_methods): `_`
+    /// drops a loose failure only where the text names it, as the default an `else` on its
+    /// path writes, so any of `dropped` is an error. The error names the atoms, where each
+    /// enters the value, the derivation, and the repairs.
+    fn discard(&mut self, dropped: KType, e: &'a Expr, i: Option<usize>, span: Span) {
         if dropped.is_empty() {
             return;
         }
@@ -643,58 +759,69 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Where the atoms of `wanted` enter the value at `root`: a note at each expression, or
-    /// at the origin of each name, whose loose atoms hold some of `wanted` that its parts'
-    /// do not. The walk descends only into parts that hold some of `wanted`, visits each
-    /// expression once, and keeps its own stack, since a chain of definitions can be as long
-    /// as the program; atoms it places nowhere enter at `root`. Each step costs set
-    /// operations on the types it meets, as the derivation that follows prints them.
+    /// at the origin of each name, that makes some of them (`unnamed_of`), reached from
+    /// `root` along parts that pass some atom on unnamed. A pattern `else` passes on what it
+    /// does not handle. The walk visits each expression once and keeps its own stack, since
+    /// a chain of definitions can be as long as the program; atoms it places nowhere enter
+    /// at `root`. Each step intersects with the atoms the expression makes, a set of its
+    /// signature's size, so the walk costs `O(m log n)` for the `m` expressions it visits.
     fn entries(&self, root: Span, wanted: &KType) -> Vec<Note> {
         let mut out = Vec::new();
         let mut left = wanted.clone();
         let mut visited = HashSet::new();
-        let mut stack = vec![root];
-        while let Some(span) = stack.pop() {
-            if !visited.insert(span) {
+        let mut stack = vec![(root, wanted.clone())];
+        while let Some((span, want)) = stack.pop() {
+            if !visited.insert(span) || !self.unnamed.contains_key(&span) {
                 continue;
             }
-            let Some((ty, src)) = self.seen.get(&span) else {
+            let Some((_, src)) = self.seen.get(&span) else {
                 continue;
             };
-            let here = &ty.loose() & wanted;
-            if here.is_empty() {
-                continue;
-            }
-            // The parts the atoms may come from, and where they enter if none holds them.
-            let (parts, site) = match src {
-                Src::Name(id) => {
-                    let mut parts = Vec::new();
-                    let mut o = self.whence.get(id);
-                    let site = o.map_or(self.t.res.binders[*id].span, |o| o.span);
-                    while let Some(origin) = o {
-                        parts.extend(origin.from);
-                        o = origin.then.as_deref();
-                    }
-                    (parts, site)
+            let site = match src {
+                Src::Name(id) => self
+                    .whence
+                    .get(id)
+                    .map_or(self.t.res.binders[*id].span, |o| o.span),
+                _ => span,
+            };
+            if let Some(own) = self.made.get(&span) {
+                let new = &(own & &want) & &left;
+                if !new.is_empty() {
+                    left = &left - &new;
+                    let text = format!("the loose failure {} enters here", Ty::set(new));
+                    out.push(Note { span: site, text });
                 }
-                Src::Call(_, e) | Src::Other(e) => (sources(e), span),
+            }
+            let parts: Vec<(Span, KType)> = match src {
+                Src::Name(id) => self
+                    .alias
+                    .get(id)
+                    .map(|&v| (v, want.clone()))
+                    .into_iter()
+                    .collect(),
+                Src::Call(_, e) | Src::Other(e) => match &e.kind {
+                    ExprKind::Else {
+                        of,
+                        pattern:
+                            Some(Pattern::Atom {
+                                name,
+                                fields,
+                                items,
+                                ..
+                            }),
+                        default,
+                    } if fields.is_empty() && items.is_empty() => {
+                        let mut parts = vec![(of.span, &want - &any_payload(name))];
+                        if !named_default(default) {
+                            parts.push((default.span, want.clone()));
+                        }
+                        parts
+                    }
+                    _ => flows(e).into_iter().map(|p| (p, want.clone())).collect(),
+                },
             };
-            let mut from = KType::empty();
             // Pushed reversed, so the parts are visited in written order.
-            for p in parts.into_iter().rev() {
-                if let Some((t, _)) = self.seen.get(&p) {
-                    let l = &t.loose() & wanted;
-                    if !l.is_empty() {
-                        from = &from | &l;
-                        stack.push(p);
-                    }
-                }
-            }
-            let new = &(&here - &from) & &left;
-            if !new.is_empty() {
-                left = &left - &new;
-                let text = format!("the loose failure {} enters here", Ty::set(new));
-                out.push(Note { span: site, text });
-            }
+            stack.extend(parts.into_iter().rev());
         }
         if !left.is_empty() {
             let text = format!("the loose failure {} enters here", Ty::set(left));
@@ -1691,6 +1818,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             _ => Src::Other(e),
         };
+        // Each set is kept as made, never tested for emptiness here: `is_empty` looks a type
+        // up in a memo ordered by contents, `O(n)` per comparison for a set of `n` atoms that
+        // shares a prefix with others, so a test per node of a chain would cost `O(n²)`.
+        let (u, made) = match self.unnamed_of(e, &t, &src) {
+            Some((u, made)) => (Some(u), made),
+            None => (None, None),
+        };
+        for (map, set) in [(&mut self.unnamed, u), (&mut self.made, made)] {
+            match set {
+                Some(set) => map.insert(e.span, set),
+                None => map.remove(&e.span),
+            };
+        }
         self.seen.insert(e.span, (t.clone(), src));
         t
     }
@@ -3896,49 +4036,21 @@ impl Ck<'_, '_> {
     }
 }
 
-/// The atoms that the `else` defaults of `e` write as atom literals, `#ok` or `#ok(…)`, each
-/// with any payload: the loose failures the text names, which `_` may drop. It reads each
-/// `else` that `e` is or passes its value through unchanged, as an `if` branch or a block's
-/// export (the If and Block parts of `sources`), and those its values and defaults are, on
-/// its own stack.
-fn named_defaults(e: &Expr) -> KType {
-    let mut out = KType::empty();
-    let mut stack = vec![e];
-    while let Some(e) = stack.pop() {
-        let (of, default) = match &e.kind {
-            ExprKind::Else { of, default, .. } => (of, default),
-            ExprKind::If {
-                then, otherwise, ..
-            } => {
-                stack.push(otherwise);
-                stack.push(then);
-                continue;
-            }
-            ExprKind::Block(stmts) => {
-                stack.extend(stmts.iter().filter_map(|s| match &s.kind {
-                    StmtKind::Return(es) if es.len() == 1 => Some(&es[0]),
-                    _ => None,
-                }));
-                continue;
-            }
-            _ => continue,
-        };
-        stack.push(of);
-        match &default.kind {
-            ExprKind::Atom(a) => out = &out | &any_payload(a),
-            ExprKind::Call { callee, .. } if let ExprKind::Atom(a) = &callee.kind => {
-                out = &out | &any_payload(a)
-            }
-            _ => stack.push(default),
-        }
+/// Whether `d`, an `else` default, writes an atom literal, `#ok` or `#ok(…)`: the loose
+/// failure the text names, which `_` may drop.
+fn named_default(d: &Expr) -> bool {
+    match &d.kind {
+        ExprKind::Atom(_) => true,
+        ExprKind::Call { callee, .. } => matches!(callee.kind, ExprKind::Atom(_)),
+        _ => false,
     }
-    out
 }
 
-/// The parts of `e` whose loose atoms `e` passes on: the operands, the arguments, the
-/// branches, a block's export, what an `else` keeps of its value and its default. A tuple's
+/// The parts of `e` whose loose atoms `e` passes on: the operands, the arguments, an index's
+/// value and key, the condition and branches of an `if`, a block's export, what an `else`
+/// keeps of its value, and its default unless that is an atom the `else` names. A tuple's
 /// components are not among them, since an atom in a component is not one of the tuple's.
-fn sources(e: &Expr) -> Vec<Span> {
+fn flows(e: &Expr) -> Vec<Span> {
     match &e.kind {
         ExprKind::Unary(_, a) => vec![a.span],
         ExprKind::Binary(_, a, b) => vec![a.span, b.span],
@@ -3949,17 +4061,28 @@ fn sources(e: &Expr) -> Vec<Span> {
             .chain(named.iter().map(|(_, a)| a))
             .map(|a| a.span)
             .collect(),
-        ExprKind::Index(of, _) | ExprKind::Member { of, .. } => vec![of.span],
-        // The plain form strips every loose atom of its value.
+        ExprKind::Index(of, k) => vec![of.span, k.span],
+        ExprKind::Member { of, .. } => vec![of.span],
         ExprKind::Else {
-            pattern: None,
+            of,
+            pattern,
             default,
-            ..
-        } => vec![default.span],
-        ExprKind::Else { of, default, .. } => vec![of.span, default.span],
+        } => {
+            // The plain form strips every loose atom of its value.
+            let mut out = match pattern {
+                None => Vec::new(),
+                Some(_) => vec![of.span],
+            };
+            if !named_default(default) {
+                out.push(default.span);
+            }
+            out
+        }
         ExprKind::If {
-            then, otherwise, ..
-        } => vec![then.span, otherwise.span],
+            cond,
+            then,
+            otherwise,
+        } => vec![cond.span, then.span, otherwise.span],
         ExprKind::Block(stmts) => stmts
             .iter()
             .filter_map(|s| match &s.kind {

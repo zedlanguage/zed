@@ -106,3 +106,50 @@ fn a_dropped_failure_found_through_a_long_chain_of_names_scales() {
         assert!(errors[0].notes[0].text.ends_with("enters here"));
     })
 }
+
+/// `_ = if c > 0 { lookup(0) else #ok } else if c > 1 { … } … else { lookup(n){last} };` in a
+/// function of `c`: `n` branches, each with its own default, and a last one that ends in
+/// `last`.
+fn defaulted_branches(n: usize, last: &str) -> String {
+    let mut t = String::from("lookup(positional k: int) = if k > 0 { k } else { #notFound };\n");
+    let arms: Vec<String> = (0..n)
+        .map(|i| format!("if c > {i} {{ lookup({i}) else #ok }}"))
+        .collect();
+    t.push_str(&format!(
+        "f(positional c: int) = {{\n  _ = {} else {{ lookup({n}){last} }};\n  0\n}};\n",
+        arms.join(" else ")
+    ));
+    t
+}
+
+#[test]
+fn a_chain_of_many_defaulted_branches_scales() {
+    // Each branch is checked on its own: the defaults of the others name nothing in it. The
+    // `if` nests once per `else if`, so the chain runs on a large stack.
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(1 << 29)
+            .spawn_scoped(s, || {
+                for (what, last, errors) in [
+                    ("an `if` of n branches, each with a default", " else #ok", 0),
+                    ("an `if` of n branches, the last without a default", "", 1),
+                ] {
+                    let units: BTreeMap<usize, Ready> = [500, FACTOR * 500]
+                        .into_iter()
+                        .map(|n| (n, ready(&defaulted_branches(n, last))))
+                        .collect();
+                    scaling::check_order(what, 500, 1, |n| {
+                        let u = &units[&n];
+                        let found = check(&u.stmts, &u.res).errors;
+                        assert_eq!(found.len(), errors, "{found:?}");
+                        if let Some(e) = found.first() {
+                            assert_eq!(e.notes[0].text, "the loose failure #notFound enters here");
+                        }
+                    });
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    })
+}

@@ -859,7 +859,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | An explicit stack with a visited `HashSet<Span>`, both mutated while walking back from the bound value to where each dropped atom enters | `Ck::entries` | Mutation (gap 11) | A fold over the worklist with the visited set in its state |
-| An explicit stack over nested `else` nodes, with an `if let` guard in a match arm to tell an atom default from any other | `named_defaults` | None | A loop over the `else` chain, and a nested `match` on the default in place of the guard |
+| An explicit stack over nested `else` nodes, with an `if let` guard in a match arm to tell an atom default from any other | `named_defaults` (removed by OSP-drop2) | None | A loop over the `else` chain, and a nested `match` on the default in place of the guard |
 | `Src::Call` holding a borrowed `&'a Expr` beside the function id, so the walk can reach the call's arguments | `Src`, `Ck::entries` | None | The call node itself as the source, a shared value |
 
 ## Entries from TD-refusals (`zedc/src/store/product.rs`)
@@ -900,3 +900,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `.expect` on a marked constant's integer and on a position inside its definition | `mutate::sites`, `mutate::apply` | Abort (gap 8) | As gap 8 |
 | `text.as_bytes()` scanned for the operator after a span, skipping blanks, parentheses and `//` comments | `mutate::operator_at` | Bytes (gap 5) | A fold over the text's characters from the span's end |
 | `Option<(usize, &Arc<Term>)>` passed down to replace one definition while closing a term | `testing::Swap`, `Cones::close_with`, `testing::row`, `testing::wave` | None | An optional pair argument |
+
+## Entries from OSP-drop2 (`zedc/src/check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Two `HashMap<Span, KType>` fields of `Ck` (`unnamed`, `made`) and a `HashMap<usize, Span>` (`alias`), written as each expression is checked and read by later ones | `Ck::expr`, `Ck::unnamed_of`, `Ck::entries` | Mutation (gap 11) | Maps threaded through the checker's state, as `seen` would be |
+| A loop over an array of `(&mut HashMap, Option<KType>)` pairs, to insert or remove one entry in each of two maps | `Ck::expr` | None | Two calls of one helper, or a fold over the pairs |
+| Closures that borrow `self` immutably (`u`, `union`, `made`) inside one method | `Ck::unnamed_of` | None | Local functions taking the maps as arguments |

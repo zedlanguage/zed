@@ -6,6 +6,7 @@
 //! makes them loose, and an operator they select no arrow of rejects them.
 
 mod discard;
+mod discard_paths;
 mod families;
 mod loose;
 mod scaling;
