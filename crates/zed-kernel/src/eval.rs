@@ -1277,16 +1277,17 @@ impl<'t> Machine<'_, 't> {
             return type_err(format!("{p:?} takes {n} arguments, given {}", args.len()));
         }
         // `f[k]` on the family a definedness fix is building.
-        if p == Prim::Get
-            && let V::Partial(part) = &args[0]
-        {
-            let V::Data(k) = &args[1] else {
+        if p == Prim::Get && matches!(args[0], V::Partial(_)) {
+            let Ok([V::Partial(part), k]) = <[V<'t>; 2]>::try_from(args) else {
+                unreachable!("`Get` takes two arguments, the first matched above")
+            };
+            let V::Data(k) = k else {
                 return type_err("a key must be data");
             };
             if let Value::Atom(_) = k {
-                return give(k.clone());
+                return give(k);
             }
-            let k = as_key(k);
+            let k = as_key(&k);
             let fix = &part.of;
             let found = match fix.defined.borrow().get(&*k) {
                 Some((v, r)) if *r < part.round => Some(v.clone()),
@@ -1309,22 +1310,23 @@ impl<'t> Machine<'_, 't> {
             };
         }
         // `fs[k]` on a lookup port: the world answers once, and the answer is kept.
-        if matches!(p, Prim::Get | Prim::TupleGet)
-            && let V::Source(port) = &args[0]
-        {
-            self.ev.check_impure(port)?;
-            let V::Data(k) = &args[1] else {
+        if matches!(p, Prim::Get | Prim::TupleGet) && matches!(args[0], V::Source(_)) {
+            let Ok([V::Source(port), k]) = <[V<'t>; 2]>::try_from(args) else {
+                unreachable!("`Get` and `TupleGet` take two arguments, the first matched above")
+            };
+            self.ev.check_impure(&port)?;
+            let V::Data(k) = k else {
                 return type_err("a key must be data");
             };
             if let Value::Atom(_) = k {
-                return give(k.clone());
+                return give(k);
             }
-            let k = as_key(k);
+            let k = as_key(&k);
             let world = &mut self.ev.world;
-            if let Some(v) = world.reads.get(&**port).and_then(|r| r.get(&*k)) {
+            if let Some(v) = world.reads.get(&*port).and_then(|r| r.get(&*k)) {
                 return give(v.clone());
             }
-            let v = world.sources[&**port]
+            let v = world.sources[&*port]
                 .get(&k)
                 .map_err(|why| KernelError::Port(port.to_string(), why))?;
             let reads = world.reads.entry(port.to_string()).or_default();

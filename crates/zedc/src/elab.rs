@@ -20,7 +20,10 @@
 use std::cell::OnceCell;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+
+use imbl::Vector;
 
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Term, Value};
@@ -201,9 +204,38 @@ pub(crate) struct Tables<'a> {
     pub(crate) ids: HashMap<(Span, &'a str), usize>,
     /// Each function binder's declaration.
     pub(crate) funcs: HashMap<usize, &'a Function>,
-    /// The uses of each binder, in the order of the text.
-    uses_of: Vec<Vec<Span>>,
+    /// The uses of the unit's binders, grouped by the list of binders each may name (one
+    /// binder, or the arrows of an overload set), each use once, in the order of the text: `U`
+    /// uses of a set of `K` arrows are `U + K` entries, not `U·K`.
+    uses: Vec<Uses>,
+    /// The groups of `uses` naming each binder.
+    groups_of: Vec<Vec<usize>>,
 }
+
+/// The uses of one list of binders.
+struct Uses {
+    binders: Vector<usize>,
+    at: Vec<Span>,
+}
+
+/// A list of binders as a key: hashed by its first binder and length, compared by sharing
+/// first and by content only when not shared. Each use of an overload set shares the set's
+/// list (`Ref::Bound`), so finding a use's group costs `O(1)`.
+struct ListKey<'a>(&'a Vector<usize>);
+
+impl Hash for ListKey<'_> {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        (self.0.front(), self.0.len()).hash(h)
+    }
+}
+
+impl PartialEq for ListKey<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(other.0) || self.0 == other.0
+    }
+}
+
+impl Eq for ListKey<'_> {}
 
 struct Elab<'a> {
     t: Tables<'a>,
@@ -232,19 +264,29 @@ impl<'a> Tables<'a> {
             .enumerate()
             .map(|(i, b)| ((b.span, b.name.as_str()), i))
             .collect();
-        let mut uses_of = vec![Vec::new(); res.binders.len()];
+        let mut uses: Vec<Uses> = Vec::new();
+        let mut groups_of = vec![Vec::new(); res.binders.len()];
+        let mut group: HashMap<ListKey, usize> = HashMap::new();
         for (u, r) in &res.uses {
-            if let Ref::Bound(ids) = r {
+            let Ref::Bound(ids) = r else { continue };
+            let g = *group.entry(ListKey(ids)).or_insert_with(|| {
                 for &b in ids {
-                    uses_of[b].push(*u);
+                    groups_of[b].push(uses.len());
                 }
-            }
+                uses.push(Uses {
+                    binders: ids.clone(),
+                    at: Vec::new(),
+                });
+                uses.len() - 1
+            });
+            uses[g].at.push(*u);
         }
         let mut t = Tables {
             res,
             ids,
             funcs: HashMap::new(),
-            uses_of,
+            uses,
+            groups_of,
         };
         t.collect_functions(unit);
         t
@@ -375,11 +417,34 @@ impl<'a> Tables<'a> {
     /// function's `test` tables aside; else the statements of one cycle. Each use of a
     /// binder of the scope is placed in its statement by a binary search, so the order
     /// reads the uses of the scope's own binders only, not those of the scopes inside it.
+    /// A use of an overload set waits on one join node, which waits on the set's statements,
+    /// so `U` uses of `K` overloads make `U + K` dependencies, not `U·K`.
     pub(crate) fn order(&self, items: &[&'a Stmt]) -> Result<Vec<usize>, Vec<usize>> {
+        let bound: Vec<(usize, usize)> = (items.iter().enumerate())
+            .flat_map(|(i, s)| self.binders_of(s).into_iter().map(move |b| (b, i)))
+            .collect();
+        let item_of: HashMap<usize, usize> = bound.iter().copied().collect();
         let mut deps: Vec<Vec<usize>> = vec![Vec::new(); items.len()];
-        for (i, s) in items.iter().enumerate() {
-            for b in self.binders_of(s) {
-                for u in &self.uses_of[b] {
+        let mut seen: HashSet<usize> = HashSet::new();
+        for &(b, _) in &bound {
+            for &g in &self.groups_of[b] {
+                if !seen.insert(g) {
+                    continue;
+                }
+                let group = &self.uses[g];
+                let mut named: Vec<usize> = (group.binders.iter())
+                    .filter_map(|b| item_of.get(b).copied())
+                    .collect();
+                named.sort_unstable();
+                named.dedup();
+                let on = match named[..] {
+                    [one] => one,
+                    _ => {
+                        deps.push(named);
+                        deps.len() - 1
+                    }
+                };
+                for u in &group.at {
                     let k = items.partition_point(|s| s.span.start <= u.start);
                     let Some(user) = k.checked_sub(1) else {
                         continue;
@@ -388,7 +453,7 @@ impl<'a> Tables<'a> {
                     if u.end > at.span.end || in_tests(at, *u) {
                         continue;
                     }
-                    deps[user].push(i);
+                    deps[user].push(on);
                 }
             }
         }
@@ -396,7 +461,7 @@ impl<'a> Tables<'a> {
             d.sort_unstable();
             d.dedup();
         }
-        topo(&deps)
+        topo_joined(&deps, items.len())
     }
 }
 
@@ -1592,11 +1657,68 @@ fn what(s: &Stmt) -> String {
     }
 }
 
+/// The order the top-level statements of `unit` other than its export are bound in, as
+/// indices among them; else the statements of one cycle. For tests of the dependency order.
+#[doc(hidden)]
+pub fn top_order(unit: &[Stmt], res: &Resolution) -> Result<Vec<usize>, Vec<usize>> {
+    let items: Vec<&Stmt> = (unit.iter())
+        .filter(|s| !matches!(s.kind, StmtKind::Return(_)))
+        .collect();
+    Tables::new(unit, res).order(&items)
+}
+
 /// An order of `0..deps.len()` with each item after its dependencies, ties by index; else the
 /// items of one cycle, in order along it. The ready items wait in a heap, smallest first, each
 /// counting the dependencies it still waits on, so the order takes `O((n + e) log n)`.
 #[doc(hidden)]
 pub fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
+    let (order, done) = place(deps, deps.len());
+    if order.len() < deps.len() {
+        // Every item left waits on another left: walk to the first in each list.
+        return Err(cycle(&done, |i| {
+            *(deps[i].iter())
+                .find(|&&d| !done[d])
+                .expect("a dependency left")
+        }));
+    }
+    Ok(order)
+}
+
+/// [`topo`] of the items `0..items` of a graph whose nodes from `items` on are joins, each
+/// waiting on the items of its list: an item waiting on a join waits on each of them. The
+/// order is that of the graph with each join's items written into each list naming the join,
+/// at the cost of the graph as given; the cycle, of an unfinished order, walks to the least
+/// item left of each list, a join's items included.
+#[doc(hidden)]
+pub fn topo_joined(deps: &[Vec<usize>], items: usize) -> Result<Vec<usize>, Vec<usize>> {
+    let (order, done) = place(deps, items);
+    if order.len() < items {
+        // A join's least item left is found once; the walk reads each list once, since it
+        // stops at the first item it meets again.
+        let mut least: HashMap<usize, usize> = HashMap::new();
+        return Err(cycle(&done, |i| {
+            (deps[i].iter())
+                .filter(|&&d| !done[d])
+                .map(|&d| match d < items {
+                    true => d,
+                    false => *least.entry(d).or_insert_with(|| {
+                        *(deps[d].iter())
+                            .filter(|&&e| !done[e])
+                            .min()
+                            .expect("a join not passed has an item left")
+                    }),
+                })
+                .min()
+                .expect("a dependency left")
+        }));
+    }
+    Ok(order)
+}
+
+/// The items of `0..items` placed in order, and which nodes are placed or passed. A join is
+/// passed once its last item is placed, before the next item is taken, so the items ready at
+/// each step are those of the graph without joins.
+fn place(deps: &[Vec<usize>], items: usize) -> (Vec<usize>, Vec<bool>) {
     let n = deps.len();
     let mut waits: Vec<usize> = deps.iter().map(Vec::len).collect();
     let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -1606,33 +1728,45 @@ pub fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
         }
     }
     let mut ready: BinaryHeap<Reverse<usize>> =
-        (0..n).filter(|&i| waits[i] == 0).map(Reverse).collect();
+        (0..items).filter(|&i| waits[i] == 0).map(Reverse).collect();
+    let mut passed: Vec<usize> = (items..n).filter(|&j| waits[j] == 0).collect();
     let mut done = vec![false; n];
-    let mut order = Vec::with_capacity(n);
-    while let Some(Reverse(i)) = ready.pop() {
+    let mut order = Vec::with_capacity(items);
+    loop {
+        let i = match passed.pop() {
+            Some(j) => j,
+            None => match ready.pop() {
+                Some(Reverse(i)) => {
+                    order.push(i);
+                    i
+                }
+                None => break,
+            },
+        };
         done[i] = true;
-        order.push(i);
         for &u in &users[i] {
             waits[u] -= 1;
             if waits[u] == 0 {
-                ready.push(Reverse(u));
+                match u < items {
+                    true => ready.push(Reverse(u)),
+                    false => passed.push(u),
+                }
             }
         }
     }
-    if order.len() < n {
-        // Every item left waits on another left; walk until one repeats.
-        let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut path = Vec::new();
-        let mut i = (0..n).find(|&i| !done[i]).expect("an item left");
-        while !seen.contains_key(&i) {
-            seen.insert(i, path.len());
-            path.push(i);
-            i = *deps[i]
-                .iter()
-                .find(|&&d| !done[d])
-                .expect("a dependency left");
-        }
-        return Err(path.split_off(seen[&i]));
+    (order, done)
+}
+
+/// The cycle reached from the first item left by `next`, which gives the item left that an
+/// item left waits on.
+fn cycle(done: &[bool], mut next: impl FnMut(usize) -> usize) -> Vec<usize> {
+    let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut path = Vec::new();
+    let mut i = (0..done.len()).find(|&i| !done[i]).expect("an item left");
+    while !seen.contains_key(&i) {
+        seen.insert(i, path.len());
+        path.push(i);
+        i = next(i);
     }
-    Ok(order)
+    path.split_off(seen[&i])
 }

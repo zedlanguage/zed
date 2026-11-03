@@ -357,3 +357,32 @@ fn rows_reaching_a_large_definition_scale() {
     });
     t.unwrap().join().unwrap();
 }
+
+#[test]
+fn ordering_many_uses_of_many_overloads_scales() {
+    // Each use of an overloaded name was recorded once for each overload, and each statement
+    // using it waited on each overload directly, so `k` uses of `k` overloads made `k²`
+    // entries and dependencies.
+    let built = |k: usize| {
+        let text = crate::l01_14_name_resolution::scaling::overloads(k)
+            + "g = ("
+            + &vec!["f"; k].join(", ")
+            + ");\n";
+        let tokens = lex_fence(&text).unwrap();
+        let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
+        let stmts = unit(&text, &tokens, &tree).unwrap();
+        let res = resolve(&stmts).unwrap();
+        (stmts, res)
+    };
+    // The statements and their resolution are built before the timing, so only the tables of
+    // uses and the order are measured.
+    let n = 1000;
+    let (small, large) = (built(n), built(FACTOR * n));
+    zed_tests::scaling::check("k uses of k overloads, ordered", n, |k| {
+        let (stmts, res) = if k == n { &small } else { &large };
+        let order = zedc::elab::top_order(stmts, res).unwrap();
+        // `g` comes after every overload.
+        assert_eq!(order.len(), k + 1);
+        assert_eq!(order[k], k);
+    });
+}

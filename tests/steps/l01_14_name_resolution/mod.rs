@@ -4,7 +4,7 @@
 
 mod fences;
 mod order;
-mod scaling;
+pub(crate) mod scaling;
 mod scopes;
 
 use zedc::ast::unit;

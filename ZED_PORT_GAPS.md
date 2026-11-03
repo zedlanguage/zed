@@ -734,3 +734,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Cow<'_, [Term]>`, inputs moved into a term when owned and copied when borrowed | `zir::lower::node_term` | None | Zed shares lists, so the term holds the inputs |
 | A pair of slices read as one list (`args.0` then `args.1`) | `zir::lower::raise_region` | None | `++` of two shared lists, or the index split the same way |
 | A cursor (`next: usize`) into a sorted `Box<[Value]>` held in an `Rc`, and `binary_search` for membership | `eval::Pull`, `Definedness::domain` | Mutation | A fold over the domain's keys, and a sorted set's membership |
+
+## Entries from T11-uses-of (`zedc/src/elab.rs`, `zed-kernel/src/eval.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A hash key over a shared list (`ListKey`) hashed by its first element and length, compared by `Vector::ptr_eq` before its content, so a use finds its group in O(1) | `elab::Tables::new` | Identity (gap 1) | Number each overload set when `resolve` makes it and record the number in the use, so the group is found by an integer key |
+| `<[V; 2]>::try_from(Vec)` to move both arguments out of the argument list after its length is checked | `eval::Machine::prim` | None | A tuple or list pattern of two items |
+| Join nodes numbered after the items in one `Vec<Vec<usize>>`, told apart by `index < items` | `elab::topo_joined`, `elab::place` | None | A sum type of item and join for each node, or the same numbering |

@@ -18,7 +18,7 @@ fn nested(n: usize) -> String {
 
 /// `k` overloads of `f`, at most 8^5: five parameters, each with no written type or one of
 /// the seven types of L1, so no two have the same parameter types.
-fn overloads(k: usize) -> String {
+pub(crate) fn overloads(k: usize) -> String {
     const TYPES: [&str; 8] = [
         "", ": int", ": rat", ": f64", ": bool", ": String", ": Lines", ": Files",
     ];

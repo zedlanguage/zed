@@ -4,6 +4,7 @@
 
 mod calls;
 mod errors;
+mod order;
 mod programs;
 mod scaling;
 
