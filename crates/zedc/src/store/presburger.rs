@@ -436,7 +436,8 @@ impl Formula {
         }
     }
 
-    /// The disjunction, flattened, `false` dropped and `true` absorbing.
+    /// The disjunction, flattened, `false` dropped and `true` absorbing, and `true` when two
+    /// disjuncts are complements (`Formula::complementary`).
     pub fn or(fs: Vec<Formula>) -> Formula {
         let mut out = Vec::new();
         for f in fs {
@@ -446,11 +447,48 @@ impl Formula {
                 g => out.push(g),
             }
         }
+        if Formula::complementary(&out) {
+            return Formula::top();
+        }
         if out.len() == 1 {
             out.pop().expect("one")
         } else {
             Formula::Or(out)
         }
+    }
+
+    /// Whether two of `fs` are each other's complements, so that their disjunction is `true`:
+    /// `g` and `!g`, or `t >= 0` and `s >= 0` with `t + s` a constant of at least `-1`, since
+    /// at an integer point `t <= -1` makes `s >= 0`. Each disjunct is looked up once by its
+    /// content, so the check costs the size of `fs`.
+    fn complementary(fs: &[Formula]) -> bool {
+        if fs.len() < 2 {
+            return false;
+        }
+        let mut ge: HashMap<&BTreeMap<Atom, Int>, &Int> = HashMap::new();
+        let mut whole: std::collections::HashSet<&Formula> = std::collections::HashSet::new();
+        for f in fs {
+            whole.insert(f);
+            if let Formula::Con(c) = f
+                && c.rel == Rel::Ge
+            {
+                // Of two disjuncts on one term, the weaker, the larger constant, decides.
+                let k = ge.entry(&c.lin.terms).or_insert(&c.lin.constant);
+                if c.lin.constant > **k {
+                    *k = &c.lin.constant;
+                }
+            }
+        }
+        fs.iter().any(|f| match f {
+            Formula::Not(g) => whole.contains(&**g),
+            Formula::Con(c) if c.rel == Rel::Ge => {
+                let neg: BTreeMap<Atom, Int> =
+                    c.lin.terms.iter().map(|(a, k)| (a.clone(), -k)).collect();
+                ge.get(&neg)
+                    .is_some_and(|k| &c.lin.constant + *k >= Int::from(-1i64))
+            }
+            _ => false,
+        })
     }
 
     /// The disjunction of `a` and `b` with the conjuncts they share taken out of it, so that

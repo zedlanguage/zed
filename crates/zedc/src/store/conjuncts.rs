@@ -342,9 +342,11 @@ pub type BlockId = u64;
 /// merged into one, the smaller blocks' conjuncts moved into the largest (so a conjunct is
 /// moved O(log n) times): with the persistent maps, O(log² n) amortized per conjunct. A
 /// removed conjunct that is a block alone and shares at most one name with the rest is
-/// unlinked in O(log n); any other removal rebuilds the blocks of the conjuncts linked to it,
-/// in time near their number. The blocks do not depend on the order the conjuncts came in;
-/// the roots and the numbers do, and nothing reads them but this forest.
+/// unlinked in O(log n); a removal from a block of names whose other conjuncts still link all
+/// its names places those conjuncts again, in time near the block (`Blocks::split`); any
+/// other removal rebuilds the blocks of the conjuncts linked to it, in time near their number.
+/// The blocks do not depend on the order the conjuncts came in; the roots and the numbers do,
+/// and nothing reads them but this forest.
 #[derive(Clone, Debug, Default)]
 pub struct Blocks {
     /// The next number for a block or a name.
@@ -678,7 +680,7 @@ impl Blocks {
                 .filter(|n| self.syms.of(n).next().is_some())
                 .collect();
             if !(alone && apart && kept.len() <= 1) {
-                rebuild = true;
+                rebuild = !self.split(b, g);
                 continue;
             }
             for a in &atoms {
@@ -702,6 +704,144 @@ impl Blocks {
         if rebuild {
             self.rebuild(gs);
         }
+    }
+
+    /// Removes `g`, already out of `syms`, from its block `b` by placing the block's other
+    /// conjuncts again, in time near the block's size, when that keeps the tree whole: every
+    /// atom of the block is a name, and the other conjuncts link every name of the block that
+    /// some conjunct still mentions. Removing `b` from the tree leaves one piece per name of
+    /// it, all in one tree of the union-find, which cannot split; the pieces of the names `b`
+    /// is the parent of are rooted at those names, so linking a piece to the rest reroots it
+    /// within the block's nodes only. Whether it did; if not, nothing is changed.
+    fn split(&mut self, b: BlockId, g: &Arc<Formula>) -> bool {
+        let Some(ms) = self.members.get(&b) else {
+            return false;
+        };
+        let rest: Vec<(Arc<Formula>, Vec<Arc<str>>)> = ms
+            .iter()
+            .filter(|h| *h != g)
+            .map(|h| {
+                let names = h.atoms().into_iter().filter_map(|a| match a {
+                    Atom::Sym(n) => Some(n),
+                    _ => None,
+                });
+                (h.clone(), names.collect())
+            })
+            .collect();
+        if rest.is_empty() {
+            return false;
+        }
+        if ms
+            .iter()
+            .any(|h| h.atoms().iter().any(|a| !matches!(a, Atom::Sym(_))))
+        {
+            return false;
+        }
+        // The names of the block, each with its place in a union-find over them.
+        let mut index: BTreeMap<Arc<str>, usize> = BTreeMap::new();
+        for h in ms.iter() {
+            for n in names(h) {
+                let i = index.len();
+                index.entry(n).or_insert(i);
+            }
+        }
+        let mut parent: Vec<usize> = (0..index.len()).collect();
+        fn root(parent: &mut [usize], mut x: usize) -> usize {
+            while parent[x] != x {
+                parent[x] = parent[parent[x]];
+                x = parent[x];
+            }
+            x
+        }
+        let mut used = vec![false; index.len()];
+        for (_, ns) in &rest {
+            let first = index[&ns[0]];
+            for n in ns {
+                let i = index[n];
+                used[i] = true;
+                let (ra, rb) = (root(&mut parent, first), root(&mut parent, i));
+                parent[ra] = rb;
+            }
+        }
+        let mut whole = None;
+        for (n, &i) in &index {
+            let still = self.syms.of(n).next().is_some();
+            if !still {
+                continue;
+            }
+            let r = root(&mut parent, i);
+            if !used[i] || whole.is_some_and(|w| w != r) {
+                return false;
+            }
+            whole = Some(r);
+        }
+        // The tree stays whole: take `b` out and place its other conjuncts again.
+        let top = self.up.remove(&b);
+        self.members.remove(&b);
+        for (h, _) in &rest {
+            self.of.remove(h);
+        }
+        self.of.remove(g);
+        // The local pieces: each kept name of the block and each new block, with the piece
+        // that holds `top`, which hangs from the rest of the tree, never rerooted.
+        let mut piece: BTreeMap<BlockId, BlockId> = BTreeMap::new();
+        let mut count: BTreeMap<BlockId, usize> = BTreeMap::new();
+        let mut removed = 1usize;
+        for n in index.keys() {
+            let Some(&id) = self.name.get(n) else {
+                continue;
+            };
+            if self.syms.of(n).next().is_none() {
+                self.name.remove(n);
+                self.up.remove(&id);
+                removed += 1;
+                continue;
+            }
+            if self.up.get(&id) == Some(&b) {
+                self.up.remove(&id);
+            }
+            count.insert(id, if Some(id) == top { usize::MAX } else { 1 });
+        }
+        fn find(piece: &BTreeMap<BlockId, BlockId>, mut x: BlockId) -> BlockId {
+            while let Some(&p) = piece.get(&x) {
+                x = p;
+            }
+            x
+        }
+        let any = *self.name.get(&rest[0].1[0]).expect("a kept name");
+        for (h, ns) in &rest {
+            let nb = self.fresh();
+            self.members.insert(nb, OrdSet::unit(h.clone()));
+            self.of.insert(h.clone(), nb);
+            self.union(nb, any);
+            count.insert(nb, 1);
+            for n in ns {
+                let id = self.name[n];
+                let cur = self.of[h];
+                let (pc, pi) = (find(&piece, cur), find(&piece, id));
+                if pc == pi {
+                    self.unite(cur, id);
+                    continue;
+                }
+                // Reroot the smaller piece at its node and hang it from the other's.
+                let (sc, si) = (count[&pc], count[&pi]);
+                let ((x, px), (y, py)) = if sc <= si {
+                    ((cur, pc), (id, pi))
+                } else {
+                    ((id, pi), (cur, pc))
+                };
+                self.reroot(x);
+                self.up.insert(x, y);
+                piece.insert(px, py);
+                let s = count[&px].saturating_add(count[&py]);
+                count.insert(py, s);
+            }
+        }
+        // The tree lost `b` and the names no conjunct mentions, and gained the new blocks.
+        let r = self.find(any);
+        let s = self.tree_size(r) + rest.len();
+        self.size.insert(r, s.saturating_sub(removed).max(1));
+        true
     }
 
     /// Builds again the blocks of the conjuncts linked to one of `gs`, which are removed.

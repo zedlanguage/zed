@@ -352,3 +352,118 @@ fn if_statements_joined_on_a_chain_keep_the_chain() {
     assert!(!s.bottom, "{s}");
     assert_eq!(s.names["x20"].ints().to_string(), "[..=999999980]", "{s}");
 }
+
+/// The constraint `a - b - c >= 0` as a formula.
+fn diff(a: &str, b: &str, c: i64) -> Formula {
+    let at = |n: &str| Lin::atom(Atom::Sym(n.into()));
+    Formula::Con(Con::ge(&at(a).minus(&at(b)), &Lin::constant(c)))
+}
+
+#[test]
+fn a_disjunction_of_a_constraint_and_its_complement_is_true() {
+    // x - y >= 3 || x - y <= 2 holds at every integer point; x - y >= 3 || x - y <= 1 does
+    // not (x - y = 2), nor does x - y >= 3 || y - z >= 0, so both are kept as written.
+    let le = |a: &str, b: &str, c: i64| Formula::negate(diff(a, b, c + 1));
+    let below = Formula::Con(Con::ge(
+        &Lin::constant(2),
+        &Lin::atom(Atom::Sym("x".into())).minus(&Lin::atom(Atom::Sym("y".into()))),
+    ));
+    assert_eq!(Formula::or(vec![diff("x", "y", 3), below]), Formula::top());
+    assert_eq!(
+        Formula::or(vec![diff("x", "y", 3), le("x", "y", 2)]),
+        Formula::top()
+    );
+    assert_eq!(
+        Formula::or(vec![diff("x", "y", 3), diff("z", "w", 0), le("x", "y", 2)]),
+        Formula::top()
+    );
+    let gap = Formula::Con(Con::ge(
+        &Lin::constant(1),
+        &Lin::atom(Atom::Sym("x".into())).minus(&Lin::atom(Atom::Sym("y".into()))),
+    ));
+    let kept = Formula::or(vec![diff("x", "y", 3), gap.clone()]);
+    assert_eq!(kept, Formula::Or(vec![diff("x", "y", 3), gap]));
+    let apart = Formula::or(vec![diff("x", "y", 3), diff("y", "z", 0)]);
+    assert_eq!(
+        apart,
+        Formula::Or(vec![diff("x", "y", 3), diff("y", "z", 0)])
+    );
+    // Twice the same constraint is not its own complement.
+    assert_eq!(
+        Formula::or(vec![diff("x", "y", 0), diff("x", "y", 0)]),
+        Formula::Or(vec![diff("x", "y", 0), diff("x", "y", 0)])
+    );
+}
+
+#[test]
+fn an_if_on_a_chain_whose_arms_cover_every_value_leaves_no_disjunction() {
+    // x_i - x_{i+1} >= 1 along the chain, then `if x_i - x_{i+2} >= 3`: the arms differ in
+    // that test and its complement, so the join is the chain again and nothing more.
+    let p = Premises::new();
+    let (s, chain) = shape("chain", 8);
+    let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let n = named(9, "x");
+    let r = (0..7).fold(s.clone(), |s, i| {
+        let t = ge(&n[i], &n[i + 2], 3);
+        let mut j = s.assume(&t, true, &p).join(&s.assume(&t, false, &p));
+        j.reduce();
+        j
+    });
+    assert_eq!(r.relation.set(), s.relation.set(), "{r}");
+}
+
+#[test]
+fn a_join_whose_arms_leave_a_gap_keeps_the_disjunction() {
+    // The chain gives x0 - x2 >= 2. One arm has x0 - x2 >= 4 and the other x0 - x2 <= 2: the
+    // join leaves out x0 - x2 == 3.
+    let p = Premises::new();
+    let (s, chain) = shape("chain", 2);
+    let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let mut j =
+        s.assume(&ge("x0", "x2", 4), true, &p)
+            .join(&s.assume(&ge("x2", "x0", -2), true, &p));
+    j.reduce();
+    let point = |x0: i64, x1: i64, x2: i64| -> BTreeMap<Arc<str>, Value> {
+        [("x0", x0), ("x1", x1), ("x2", x2)]
+            .into_iter()
+            .map(|(n, v)| (n.into(), Value::Int(v)))
+            .collect()
+    };
+    assert!(j.contains(&point(4, 1, 0)), "{j}");
+    assert!(j.contains(&point(2, 1, 0)), "{j}");
+    assert!(!j.contains(&point(3, 1, 0)), "{j}");
+    assert!(
+        j.relation
+            .set()
+            .iter()
+            .any(|g| matches!(**g, Formula::Or(_))),
+        "{j}"
+    );
+}
+
+#[test]
+fn if_statements_on_skip_links_of_a_chain_take_time_near_their_number() {
+    // The chain, then for each i an `if x_i - x_{i+2} >= 3` whose two arms are joined. The
+    // test and its complement made a disjunction `true` at every point that each later test
+    // split into cases, about k^4 in all; and removing the test's conjunct from the cycle it
+    // closed with x_{i+1} built the blocks of the whole chain again, k^2 (COMPLEXITY.md S20).
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [50, 400]
+        .into_iter()
+        .map(|k| {
+            let (s, chain) = shape("chain", k);
+            let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+            let n = named(k + 1, "x");
+            let tests = (0..k - 1).map(|i| ge(&n[i], &n[i + 2], 3)).collect();
+            (k, (s, tests))
+        })
+        .collect();
+    scaling::check_order("if statements on skip links of a chain", 50, 1, |k| {
+        let (s, tests) = &built[&k];
+        tests.iter().fold(s.clone(), |s, t| {
+            let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
+            j.reduce();
+            j
+        });
+    });
+}
