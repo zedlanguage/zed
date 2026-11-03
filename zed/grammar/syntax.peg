@@ -2,12 +2,12 @@ Unit          = Item* END                                                       
 Name          = IDENT                                                              L1
 
 Item          = Annotated                                                          L2
-              | UnitAnnot                                                          L15
+              | UnitAnnot                                                          L7
               | Decl                                                               L1
 Annotated     = Annot+ Decl                                                        L2
               | ANNOT+ Decl                                                        L2
               | (Annot &ANNOT)* ANNOT Decl                                         L2
-UnitAnnot     = Annot ';'                                                          L15
+UnitAnnot     = Annot ';'                                                          L7
 Annot         = ANNOT ('(' nest(Args?) ')')?                                       L2
 
 Decl          = ~Local                                                             L2
@@ -245,10 +245,12 @@ JoinExpr      = And ('||' And)+                                                 
 Key           = WILD | Additive                                                    L8
 KeyOp         = '(' | '[' | '.' | '?.' | '*.' | '::' | '**' | '*' | '/' | 'div' | 'mod' | '+' | '-' | '++'   L8
 
-Type          = Arrow TypeFacet* TypeWhere?                                        L1
+Type          = Arrow TypeFacet* TypeWhere? TypeBounds?                            L1
 TypeFacet     = 'with' FacetCall                                                   L7
 TypeWhere     = 'where' Expr12                                                     L10
+TypeBounds    = 'for' (Name 'in' TypeUnion) % ','                                  L1
 Arrow         = ArrowParams ('->' | '->?') Arrow                                   L1
+              | TypeUnion '..' TypeUnion '->' Arrow                                L1
               | TypeUnion ('->' | '->?') Arrow                                     L1
               | ~TypeUnion                                                         L1
 ArrowParams   = '(' ')'                                                            L1
@@ -292,14 +294,18 @@ LitType       = SignedLit                                                       
 TypeApply     = Path '(' nest(TypeParam % ',' ','?) ')'                            L2
 TypeName      = Path                                                               L1
 AtomApply     = ATOM '(' nest(TypeParam % ',' ','?) ')'                            L2
+              | ATOM '(' nest('..'?) ')'                                           L2
 AtomType      = ATOM                                                               L1
+              | '#_'                                                               L1
 ArrayType     = '[' nest(Type ';' ShapeDim % ',' ','?) ']'                          L14
 SeqType       = '[' nest(Type) ']'                                                 L3
 TupleType     = '(' ')'                                                            L1
-              | '(' nest(Type (',' Type)+ ','?) ')'                                L1
+              | '(' nest(Type ',' (Type % ',' ','?)?) ')'                          L1
+              | '(' nest('..') ')'                                                 L1
 FieldType     = '(' nest(Name ':' Type) ')'                                        L10
 GroupType     = '(' nest(Type) ')'                                                 L1
 RecordType    = '{' nest((Name ':' Type) % ',' ','?) '}'                             L2
+              | '{' nest('..') '}'                                                 L2
 SetType       = '{' nest(SignedLit % ',' ','?) '}'                                 L10
 InferType     = WILD                                                               L10
 HoleType      = '?'                                                                L15

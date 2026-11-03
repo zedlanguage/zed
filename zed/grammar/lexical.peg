@@ -12,11 +12,15 @@ Integer       = '0x' Hex ('_'? Hex)* | '0o' [0-7] ('_'? [0-7])* | '0b' [01] ('_'
 Hex           = [0-9a-fA-F]                                                        L1
 Decimal       = [0-9] ('_'? [0-9])*                                                L1
 
-String        = '"""' (!'"""' Char)* '"""' | '"' (!'"' !'\n' Char)* '"'            L1
+String        = '"""' (!'"""' Char)* '"""' | '"' (!'"' !'\n' Char1)* '"'           L1
+String1       = '"""' (!'"""' !'\n' Char1)* '"""' | '"' (!'"' !'\n' Char1)* '"'    L1
 Char          = Escape | Hole | !('\\' | '${') ANY                                 L1
+Char1         = Escape | &('${' HoleText1 '}') Hole | !('\\' | '${') ANY           L1
 Escape        = '\\' ([ntr0\\"$] | 'u{' Hex+ '}')                                  L1
 Hole          = '${' HoleText '}'                                                  L1
 HoleText      = (String | Comment | '{' HoleText '}' | !'}' ANY)*                  L1
+HoleText1     = (String1 | '//' (!'\n' ANY)* | BlockComment1 | '{' HoleText1 '}' | !'}' !'\n' ANY)*   L1
+BlockComment1 = '/*' (BlockComment1 | !'*/' !'\n' ANY)* '*/'                       L1
 
 AtomLit       = '#' Name                                                           L1
 AnnotLit      = '@' Name                                                           L1
@@ -25,4 +29,4 @@ KeywordWord   = 'struct' | 'type' | 'interface' | 'grammar' | 'matching' | 'impo
 Wildcard      = '_' !XID_CONTINUE                                                  L1
 Ident         = Name                                                               L1
 Name          = (XID_START | '_' &XID_CONTINUE) XID_CONTINUE* "'"?                 L1
-Operator      = '->?' | '->' | '...' | '..<' | '..=' | '..' | '?.' | '*.' | '**' | '++' | '<-' | '<=' | '>=' | '><' | '==' | '!=' | '&&' | '||' | '::' | [+\-*/<>=!&|\\:,;.?()\[\]{}]   L1
+Operator      = '->?' | '->' | '...' | '..<' | '..=' | '..' | '?.' | '*.' | '**' | '++' | '<-' | '<=' | '>=' | '><' | '==' | '!=' | '&&' | '||' | '::' | '#_' | [+\-*/<>=!&|\\:,;.?()\[\]{}]   L1

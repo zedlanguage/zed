@@ -46,7 +46,7 @@ fn malformed_annotations() {
         ("@log(\nf(x) = x;", "syntax"),
         (
             "@log;\nf(x) = x;",
-            "error: this form (UnitAnnot) is built from layer L15",
+            "error: this form (UnitAnnot) is built from layer L7",
         ),
         ("x = @log 1;", "syntax"),
     ]);

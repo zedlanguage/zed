@@ -13,4 +13,4 @@ expression: out
 "p = Point(x: 1 y: 2);"
   line 1, at "y": expected '!=' or '&&' or '(' or ')' or '*' or '**' or '*.' or '+' or '++' or ',' or '-' or '.' or '..' or '..<' or '..=' or '/' or '::' or '<' or '<=' or '==' or '>' or '><' or '>=' or '?.' or '[' or 'as' or 'div' or 'else' or 'in' or 'into' or 'is' or 'mod' or 'not' or 'with' or '||'
 "type Bound = int | #unbounded\nlimit: Bound = 10;"
-  line 2, at "limit": expected '&' or '(' or '->' or '->?' or ';' or '[' or 'matching' or 'where' or 'with' or '|'
+  line 2, at "limit": expected '&' or '(' or '->' or '->?' or '..' or ';' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'
