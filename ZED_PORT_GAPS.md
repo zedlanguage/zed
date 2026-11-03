@@ -1060,5 +1060,5 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A struct of dense `Vec<usize>` and `Vec<Vec<usize>>` arrays written by index in a loop (color, position in class, counts, the stack of refining colors) | `presburger::Refine` | Mutation (gap 11) | A state receiver whose arrays are reused in place by provable last use (L6.13); a copy per write would make the O((n+m) log n) refinement quadratic |
+| A struct of dense `Vec<usize>` and `Vec<Vec<usize>>` arrays written by index in a loop (color, position in class, counts, the stack of refining colors), and the `placed` and `taken` marks of the breadth-first order | `presburger::Refine`, `presburger::canonical` | Mutation (gap 11) | A state receiver whose arrays are reused in place by provable last use (L6.13); a copy per write would make the O((n+m) log n) refinement quadratic |
 | `Vec::swap_remove` with the moved element's position fixed by hand, and `mem::take` of a scratch vector | `Refine::split`, `Refine::run` | Mutation (gap 11) | The same writes as a `patch` on the threaded state |
