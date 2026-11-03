@@ -164,9 +164,13 @@ fn lowering_lambdas_bound_by_nested_lets_scales() {
         .spawn(|| {
             // `zir::validate`, which `lower` ends with, keeps one path buffer and copies it
             // only into an error, so its bytes grow with n and not n·depth (COMPLEXITY.md Z17).
-            let (small, large) = (lets_of_lambdas(500), lets_of_lambdas(500 * scaling::FACTOR));
-            scaling::check("lowering let-bound lambdas nested n deep", 500, |d| {
-                lower(if d == 500 { &small } else { &large }).unwrap();
+            // At depth 500 one copy of the path per node still passed; at 4000 it fails.
+            let (small, large) = (
+                lets_of_lambdas(4000),
+                lets_of_lambdas(4000 * scaling::FACTOR),
+            );
+            scaling::check("lowering let-bound lambdas nested n deep", 4000, |d| {
+                lower(if d == 4000 { &small } else { &large }).unwrap();
             });
             let t = lets_of_lambdas(3);
             let back = raise(&lower(&t).unwrap()).unwrap();
@@ -337,9 +341,10 @@ fn a_name_read_at_every_depth_scales() {
         .spawn(|| {
             // `zir::validate`, which `lower` ends with, keeps one path buffer and copies it
             // only into an error, so its bytes grow with n and not n·depth (COMPLEXITY.md Z17).
-            let (small, large) = (prices(500), prices(500 * scaling::FACTOR));
-            scaling::check("lowering n nested reads of one name", 500, |d| {
-                lower(if d == 500 { &small } else { &large }).unwrap();
+            // At depth 500 one copy of the path per node still passed; at 4000 it fails.
+            let (small, large) = (prices(4000), prices(4000 * scaling::FACTOR));
+            scaling::check("lowering n nested reads of one name", 4000, |d| {
+                lower(if d == 4000 { &small } else { &large }).unwrap();
             });
         })
         .unwrap()
