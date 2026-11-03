@@ -918,8 +918,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UNITANNOT-L7 | repair attempt 1 | 2026-11-03 07:14 | suite build failed: link of the steps test binary had undefined references inside its own codegen units (stale incremental state left by the killed run); remove |
 | UTVPI-NEAR | repair attempt 1 | 2026-11-03 06:34 | reproduced verifier: union k=256->2048 race 62.3x; units alone at k=256 GOR 546k, BFD 344k, Duong 4.54M; Duong 52.5M at 2048; per-site unit counts show ~14 unit |
 
-Merged into local main and not yet pushed (110 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (113 commits); the push follows one full test run on the merged tree:
 
+- c52cc3c HULL3: three live variables with a unit side decided by a 3-D shadow in O(m log m) (XT3 B4)
 - 34e6088 WIDEN-WARN: the sort key form of main (AXIOMS-fmt) is a later-layer form in check::widen
 - 1132193 WIDEN-WARN: only +, -, *, unary - and literals wrap under mod 2 ** k
 - 2df3b8d WIDEN-WARN: warn when widening crosses a machine word
