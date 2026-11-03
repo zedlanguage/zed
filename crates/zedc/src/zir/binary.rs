@@ -85,18 +85,35 @@ impl W {
         }
     }
 
-    fn region(&mut self, r: &Region) {
-        self.tag(index(&KINDS, &r.kind));
-        self.many(&r.args, Self::edge);
-        self.many(&r.nodes, Self::node);
-        self.many(&r.results, Self::src);
-    }
-
-    fn node(&mut self, n: &Node) {
-        self.op(&n.op);
-        self.many(&n.inputs, Self::src);
-        self.many(&n.outputs, Self::edge);
-        self.many(&n.regions, |e, r| e.region(r));
+    /// Writes the graph rooted at `root` from a stack of what is left to write, in the order a
+    /// recursive writer would: a region's kind, arguments and nodes, each node with its regions,
+    /// and then the region's results.
+    fn region(&mut self, root: &Region) {
+        enum Job<'a> {
+            Region(&'a Region),
+            Node(&'a Node),
+            Results(&'a [Src]),
+        }
+        let mut jobs = vec![Job::Region(root)];
+        while let Some(job) = jobs.pop() {
+            match job {
+                Job::Region(r) => {
+                    self.tag(index(&KINDS, &r.kind));
+                    self.many(&r.args, Self::edge);
+                    self.n(r.nodes.len() as u64);
+                    jobs.push(Job::Results(&r.results));
+                    jobs.extend(r.nodes.iter().rev().map(Job::Node));
+                }
+                Job::Node(n) => {
+                    self.op(&n.op);
+                    self.many(&n.inputs, Self::src);
+                    self.many(&n.outputs, Self::edge);
+                    self.n(n.regions.len() as u64);
+                    jobs.extend(n.regions.iter().rev().map(|r| Job::Region(r)));
+                }
+                Job::Results(rs) => self.many(rs, Self::src),
+            }
+        }
     }
 
     fn edge(&mut self, e: &Edge) {
@@ -303,6 +320,13 @@ pub fn decode(bytes: &[u8]) -> Result<Region, String> {
     Ok(root)
 }
 
+/// A region or node whose parts are being read, with the number of nodes or regions still
+/// to read.
+enum Open {
+    Region(Region, usize),
+    Node(Node, usize),
+}
+
 struct R<'a> {
     b: &'a [u8],
     i: usize,
@@ -374,23 +398,66 @@ impl<'a> R<'a> {
         (0..n).map(|_| f(self)).collect()
     }
 
+    /// Reads the graph rooted here, from a stack of the regions and nodes begun and not yet
+    /// ended, in the order [`W::region`] writes it.
     fn region(&mut self) -> Result<Region, String> {
-        let kind = KINDS[self.tag(4, "a region kind")? as usize];
-        Ok(Region {
-            kind,
-            args: self.many(Self::edge)?,
-            nodes: self.many(Self::node)?,
-            results: self.many(Self::src)?,
-        })
+        let mut open = vec![self.region_head()?];
+        loop {
+            let top = open
+                .last_mut()
+                .expect("the loop returns when the root ends");
+            match top {
+                Open::Region(_, left) if *left > 0 => {
+                    *left -= 1;
+                    let n = Node {
+                        op: self.op()?,
+                        inputs: self.many(Self::src)?,
+                        outputs: self.many(Self::edge)?,
+                        regions: Vec::new(),
+                    };
+                    let left = self.len()?;
+                    open.push(Open::Node(n, left));
+                }
+                Open::Node(_, left) if *left > 0 => {
+                    *left -= 1;
+                    open.push(self.region_head()?);
+                }
+                Open::Region(r, _) => {
+                    r.results = self.many(Self::src)?;
+                    let Some(Open::Region(r, _)) = open.pop() else {
+                        unreachable!("the top is this region")
+                    };
+                    match open.last_mut() {
+                        Some(Open::Node(n, _)) => n.regions.push(Arc::new(r)),
+                        Some(Open::Region(..)) => unreachable!("a region lies in a node"),
+                        None => return Ok(r),
+                    }
+                }
+                Open::Node(..) => {
+                    let Some(Open::Node(n, _)) = open.pop() else {
+                        unreachable!("the top is this node")
+                    };
+                    match open.last_mut() {
+                        Some(Open::Region(r, _)) => r.nodes.push(n),
+                        _ => unreachable!("a node lies in a region"),
+                    }
+                }
+            }
+        }
     }
 
-    fn node(&mut self) -> Result<Node, String> {
-        Ok(Node {
-            op: self.op()?,
-            inputs: self.many(Self::src)?,
-            outputs: self.many(Self::edge)?,
-            regions: self.many(|d| d.region().map(Arc::new))?,
-        })
+    /// The kind, arguments and number of nodes of a region, which opens it.
+    fn region_head(&mut self) -> Result<Open, String> {
+        let kind = KINDS[self.tag(4, "a region kind")? as usize];
+        let args = self.many(Self::edge)?;
+        let left = self.len()?;
+        let r = Region {
+            kind,
+            args,
+            nodes: Vec::new(),
+            results: Vec::new(),
+        };
+        Ok(Open::Region(r, left))
     }
 
     fn edge(&mut self) -> Result<Edge, String> {
