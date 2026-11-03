@@ -4,10 +4,9 @@
 
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
-use std::process::Command;
 use std::sync::Arc;
 
-use zed_kernel::term::build::{app, lit, prim};
+use zed_kernel::term::build::{app, lam, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Text, Value, World};
 use zed_rt::{Heap, Obj, Word};
 use zed_tests::deep::{SHAPES, in_atom, in_named_atom, in_tuple, nested};
@@ -386,26 +385,25 @@ fn releasing_a_deep_value_scales() {
     });
 }
 
-/// Set in the process that runs the program of the test below.
-const BIG_FRAME: &str = "ZED_TEST_BIG_FRAME";
-
-/// A frame larger than the stack ends the run at the stack's guard page and writes nothing past
-/// it. Generated code keeps a frame's words on the machine stack, so such a run still ends.
+/// A function of 150,000 concatenations, `(x -> (x ++ "0", x ++ "1", …))("a")`, whose results are
+/// all live until the tuple is built, as a generated report's lines are. Each result has a slot of
+/// 16 bytes in the frame, so the frame is larger than the 2 MiB stack of a test thread: before
+/// generated code had a stack of its own (COMPLEXITY.md R10), the run stopped at that stack's
+/// guard page. 100,000 concatenations make a frame close to 2 MiB, which overflowed the stack of
+/// a test thread but fitted that of a fresh thread, so the test takes half as many again.
 #[test]
-fn a_frame_larger_than_the_stack_stops_at_the_guard_page() {
-    if std::env::var_os(BIG_FRAME).is_some() {
-        let lines = (0..100_000).map(|i| prim(Prim::Concat, vec![lit("a"), lit(i as i64)]));
-        let t = prim(Prim::Tuple, lines.collect());
-        let g = Arc::new(lower(&t).unwrap());
-        let _ = zed_native::run(&g, &plan(&g, true), &mut Evaluator::new(World::new()));
-        return;
-    }
-    let name = "a_frame_larger_than_the_stack_stops_at_the_guard_page";
-    let run = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", name, "--nocapture"])
-        .env(BIG_FRAME, "1")
-        .output()
-        .unwrap();
-    let said = String::from_utf8_lossy(&run.stderr);
-    assert!(said.contains("has overflowed its stack"), "{run:?}");
+fn a_function_of_150000_concatenations_runs_on_the_stack_of_a_test_thread() {
+    let lines =
+        (0..150_000).map(|i| prim(Prim::Concat, vec![var("x"), lit(i.to_string().as_str())]));
+    let t = app(
+        lam(&["x"], prim(Prim::Tuple, lines.collect())),
+        vec![lit("a")],
+    );
+    let want = Evaluator::new(World::new()).run(&t).unwrap();
+    let g = Arc::new(lower(&t).unwrap());
+    let got = zed_native::run(&g, &plan(&g, true), &mut Evaluator::new(World::new())).unwrap();
+    assert!(
+        got.value == want,
+        "the native value differs from the kernel's"
+    );
 }

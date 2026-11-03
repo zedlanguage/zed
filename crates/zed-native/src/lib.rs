@@ -21,7 +21,7 @@ use zedc::zir::Region;
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{Plan, plan};
 
-use zed_rt::{Stats, Word};
+use zed_rt::{Stack, Stats, Word};
 
 use crate::tables::Tables;
 
@@ -127,6 +127,10 @@ pub fn run_at(
     m.0.finalize_definitions()
         .map_err(|e| format!("native: {e}"))?;
     let code = m.0.get_finalized_function(f.root);
+    // Generated code recurses on the machine stack once per Zed call and keeps a function's
+    // words in its frame, so it runs on a stack as large as memory (COMPLEXITY.md R10), mapped
+    // before the run's state is installed so that a failure leaves nothing to undo.
+    let stack = Stack::new()?;
     let taken = std::mem::replace(ev, Evaluator::new(World::new()));
     hooks::install(hooks::State::new(t, taken));
     // SAFETY: `code` is `zed_root`, which the generator defines with no parameters and two
@@ -136,7 +140,8 @@ pub fn run_at(
         reason = "calling generated code needs a function pointer from it"
     )]
     let root: extern "C" fn() -> Word = unsafe { std::mem::transmute(code) };
-    let w = root();
+    let w = stack.run(|| root());
+    drop(stack);
     let mut s = hooks::remove();
     let r = hooks::finish(&s.t, &mut s.run, w);
     *ev = s.run.ev;

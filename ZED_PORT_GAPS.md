@@ -933,3 +933,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | An explicit stack `Vec<(&Term, bool)>` read in post-order, results pushed to a `Vec` by number | `Reader::read`, `each_part` | Mutation | A fold over a worklist list with the map from part to result as its state |
 | An arena of trie nodes (`Vec<SetNode>`) with a hash table from node to number (hash-consing) and a memo `HashMap<(Set, Set), Set>` of unions, all filled through `&mut self` | `Sets::make`, `Sets::union` | Shared memo (gap 2), Mutation | A state receiver holding the arena, the table and the memo, returned with each set made; or sets made identical by the content digest of gap 1 |
 | `u32::leading_zeros` and bit masks to find the highest differing bit of two names | `Sets::join`, `above` | Bit operations (gap 4) | As gap 4 |
+
+## Entries from R10-stack (`zed-rt/src/stack.rs`, `zed-native/src/lib.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `libc::mmap` with `MAP_NORESERVE` and `mprotect` of a guard page, sized by `libc::sysinfo`; `munmap` in `Drop` | `Stack::new`, `Drop for Stack` | System calls, no destructors | Stays in the Rust runtime (L6.13); a Zed runtime needs a foreign call to map memory and a scope that unmaps it |
+| `psm::on_stack`, switching the machine stack for one call | `Stack::run` | Stack switching | Stays in the runtime; a Zed program has no access to the machine stack |
+| `catch_unwind` on the new stack and `resume_unwind` on the old one | `Stack::run` | Early exit (gap 12) | Errors are values in Zed; the runtime returns the run's error across the switch |
+| A raw pointer `*mut c_void` to the mapping | `Stack::base` | Identity (gap 1) | An address held by the runtime, not by Zed code |
