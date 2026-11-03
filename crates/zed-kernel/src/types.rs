@@ -655,33 +655,62 @@ impl Type {
         self.finite_order().is_some()
     }
 
-    /// The integers of `self`, when they are a finite set of literals.
+    /// The integers of `self`, when they are a finite set of literals. Its users: the checker's
+    /// test that the exponent of `x ** n` is at least 0 (`zedc::check`, `exponent`) and the
+    /// type facet of a product cell (`zedc::store::product`).
     pub fn ints_listed(&self) -> Option<Vec<Value>> {
         let p = self.p();
         (!p.ints.cofinite).then(|| p.ints.values.iter().cloned().collect())
     }
 
     /// Each value of `self` once, when `self` is [`Type::finite`]: its scalars and bare atoms,
-    /// then its tuples, length by length and box by box. The types inside the boxes are listed
-    /// in full first; `self`'s own tuples are made one at a time, so a caller pays per value it
-    /// takes. Between two values the iterator can try every tuple of a box that the type does
+    /// then its tuples, length by length and box by box, the last component of a box fastest.
+    /// Every type inside the boxes is made lazily too, one value at a time when a box first
+    /// reads it, and each value is kept for the other boxes that read it, so no type is listed
+    /// further than the values taken need: the first value of `t(d)`, `t(i + 1) = (t(i),
+    /// t(i))`, reads one value of each of its `d + 1` types, although `t(d - 1)` has `2^(2^(d -
+    /// 1))`. Between two values the iterator can try every tuple of a box that the type does
     /// not hold, which can be exponential in the type's size: listing the values of a tuple
-    /// type in time polynomial in their number would decide satisfiability.
+    /// type in time polynomial in their number would decide satisfiability. Its user is the
+    /// type facet of a product cell (`zedc::store::product`).
     pub fn each_value(&self) -> Option<Values> {
-        let mut order = self.finite_order()?;
-        let (top, boxes) = order.pop().expect("`self` is last in its own order");
-        let (mut lists, mut index) = (Vec::new(), HashMap::new());
-        for (t, boxes) in order {
-            let mut each = Values::new(t, boxes, lists, index);
-            let vs: Vec<Value> = each.by_ref().collect();
-            (lists, index) = (
-                std::mem::take(&mut each.lists),
-                std::mem::take(&mut each.index),
-            );
-            index.insert(each.ty, lists.len());
-            lists.push(vs);
-        }
-        Some(Values::new(top, boxes, lists, index))
+        let (types, boxes): (Vec<Type>, Vec<Vec<Row>>) = self.finite_order()?.into_iter().unzip();
+        let index: HashMap<&Type, usize> = types.iter().enumerate().map(|(i, t)| (t, i)).collect();
+        // A type is looked up once per box, never per value: two equal types built apart
+        // compare by their contents.
+        let boxes: Vec<Vec<(Vec<usize>, Row)>> = boxes
+            .into_iter()
+            .map(|boxes| {
+                boxes
+                    .into_iter()
+                    .map(|r| (r.iter().map(|c| index[c]).collect(), r))
+                    .collect()
+            })
+            .collect();
+        // The rows the diagrams test a tuple against, each with the maker of each of its
+        // types that has one, so that a tuple's check reads only the components made by
+        // another type.
+        let rows: Vec<BTreeMap<Row, Vec<Option<usize>>>> = types
+            .iter()
+            .map(|t| {
+                let mut rows = BTreeMap::new();
+                for part in t.p().tuples.lens.values() {
+                    part.atoms(&mut |r: &Row| {
+                        let makers = r.iter().map(|c| index.get(c).copied()).collect();
+                        rows.insert(r.clone(), makers);
+                        true
+                    });
+                }
+                rows
+            })
+            .collect();
+        drop(index);
+        let makers = types
+            .into_iter()
+            .zip(boxes.into_iter().zip(rows))
+            .map(|(t, (boxes, rows))| Maker::new(t, boxes, rows))
+            .collect();
+        Some(Values { makers, given: 0 })
     }
 
     /// The types `self`'s values are built from, each with its boxes and after the types in
@@ -1490,52 +1519,188 @@ fn clauses<A: bdd::Literal>(
 
 /// The values of a finite type, one at a time, from [`Type::each_value`].
 pub struct Values {
-    ty: Type,
-    scalars: std::vec::IntoIter<Value>,
-    boxes: std::vec::IntoIter<Row>,
-    /// The box being listed: its row, the list of each of its components, and the position in
-    /// each list; `None` between boxes.
-    at: Option<(Row, Vec<usize>, Vec<usize>)>,
-    /// The values of the types inside the boxes, and the list of each type. A type is looked
-    /// up once per box, never per value: two equal types built apart compare by their contents.
-    lists: Vec<Vec<Value>>,
-    index: HashMap<Type, usize>,
-    /// The tuples given so far, since two boxes can share a tuple.
-    sent: BTreeSet<Value>,
+    /// One maker per type the values are built from, each after the types in its boxes, the
+    /// listed type last.
+    makers: Vec<Maker>,
+    /// How many values of the listed type have been given.
+    given: usize,
 }
 
-impl Values {
+/// The values of one type of a [`Values`], made one at a time on demand and kept, since every
+/// box that reads the type reads them by position.
+struct Maker {
+    ty: Type,
+    /// Each box with the maker of each of its components.
+    boxes: Vec<(Vec<usize>, Row)>,
+    /// The rows of the type's diagrams, each with the maker of each of its types, if any.
+    rows: BTreeMap<Row, Vec<Option<usize>>>,
+    /// The box being listed.
+    next: usize,
+    at: At,
+    /// The values made so far: the scalars and bare atoms, then the tuples.
+    made: Vec<Value>,
+    /// Whether every value has been made.
+    done: bool,
+}
+
+/// Where a [`Maker`] is in its box.
+enum At {
+    /// Before the box: its components are not yet known to have a value.
+    Start,
+    /// At a position, one per component, whose values are all made.
+    Tuple(Vec<usize>),
+    /// Past a position, before moving to the next one.
+    Past(Vec<usize>),
+}
+
+/// A value a maker waits for: the maker and the position.
+type Need = (usize, usize);
+
+impl Maker {
     fn new(
         ty: Type,
-        boxes: Vec<Row>,
-        lists: Vec<Vec<Value>>,
-        index: HashMap<Type, usize>,
-    ) -> Values {
+        boxes: Vec<(Vec<usize>, Row)>,
+        rows: BTreeMap<Row, Vec<Option<usize>>>,
+    ) -> Maker {
         let p = ty.p();
-        let mut scalars: Vec<Value> = [false, true]
+        let mut made: Vec<Value> = [false, true]
             .into_iter()
             .filter(|&b| p.bools & (1 << u8::from(b)) != 0)
             .map(Value::Bool)
             .collect();
         for lits in [&p.ints, &p.rats, &p.floats, &p.strings] {
-            scalars.extend(lits.values.iter().cloned());
+            made.extend(lits.values.iter().cloned());
         }
-        scalars.extend(
+        made.extend(
             p.atoms
                 .names
                 .iter()
                 .filter(|(_, a)| a.bare)
                 .map(|(name, _)| Value::atom(name)),
         );
-        Values {
+        Maker {
             ty,
-            scalars: scalars.into_iter(),
-            boxes: boxes.into_iter(),
-            at: None,
-            lists,
-            index,
-            sent: BTreeSet::new(),
+            boxes,
+            rows,
+            next: 0,
+            at: At::Start,
+            made,
+            done: false,
         }
+    }
+
+    /// Whether the value at `pos` is made (`Ok(true)`) or will never be (`Ok(false)`); `Err`
+    /// when it must be made first.
+    fn has(&self, me: usize, pos: usize) -> Result<bool, Need> {
+        match (self.made.len() > pos, self.done) {
+            (true, _) => Ok(true),
+            (false, true) => Ok(false),
+            (false, false) => Err((me, pos)),
+        }
+    }
+
+    /// One step of the maker `me` of `makers`: it enters a box, makes the tuple at its
+    /// position, or moves past it, or says which value of a component it needs first, before
+    /// changing anything. The components' makers come before `me`.
+    fn step(makers: &mut [Maker], me: usize) -> Result<(), Need> {
+        let (below, rest) = makers.split_at_mut(me);
+        let m = &mut rest[0];
+        match std::mem::replace(&mut m.at, At::Start) {
+            At::Start => {
+                let Some((cols, _)) = m.boxes.get(m.next) else {
+                    m.done = true;
+                    return Ok(());
+                };
+                for &c in cols {
+                    if !below[c].has(c, 0)? {
+                        // A component with no value: the box has no tuple.
+                        m.next += 1;
+                        return Ok(());
+                    }
+                }
+                m.at = At::Tuple(vec![0; cols.len()]);
+            }
+            At::Tuple(pos) => {
+                let (cols, row) = &m.boxes[m.next];
+                let v: Vec<Value> = cols
+                    .iter()
+                    .zip(&pos)
+                    .map(|(&c, &i)| below[c].made[i].clone())
+                    .collect();
+                // A component's value is in the type that made it, so only a row whose type
+                // differs there reads the value: a value deep in shared parts is not walked
+                // again at each level that holds it.
+                let within = |r: &Row, cs: &[usize]| {
+                    r.iter()
+                        .zip(cs)
+                        .zip(cols.iter().zip(&v))
+                        .all(|((t, &c), (&made_by, x))| c == made_by || t.contains(x))
+                };
+                let fits = |r: &Row| {
+                    let makers = m
+                        .rows
+                        .get(r)
+                        .expect("every row of the diagram is collected");
+                    r.iter()
+                        .zip(makers)
+                        .zip(cols.iter().zip(&v))
+                        .all(|((t, &by), (&c, x))| by == Some(c) || t.contains(x))
+                };
+                let holds = m.ty.p().tuples.lens[&row.len()].eval(&fits);
+                // A tuple is given by the first box that has it. Within one box the positions
+                // give distinct tuples, since each maker gives each value once.
+                let earlier = m.boxes[..m.next]
+                    .iter()
+                    .any(|(cs, r)| r.len() == row.len() && within(r, cs));
+                m.at = At::Past(pos);
+                if holds && !earlier {
+                    m.made.push(Value::tuple(v));
+                }
+            }
+            At::Past(mut pos) => {
+                let cols = &m.boxes[m.next].0;
+                // The next position, the last component fastest; past the last, the next box.
+                for k in (0..pos.len()).rev() {
+                    match below[cols[k]].has(cols[k], pos[k] + 1) {
+                        Ok(true) => {
+                            pos[k] += 1;
+                            pos[k + 1..].fill(0);
+                            m.at = At::Tuple(pos);
+                            return Ok(());
+                        }
+                        Ok(false) => {}
+                        Err(need) => {
+                            m.at = At::Past(pos);
+                            return Err(need);
+                        }
+                    }
+                }
+                m.next += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Values {
+    /// Whether the value at `pos` of the maker `me` is made, after making what it needs. A
+    /// maker waits only for makers before it, so the stack holds at most one entry per type
+    /// and the nesting depth of the type is not the depth of the Rust stack.
+    fn fill(&mut self, me: usize, pos: usize) -> bool {
+        let mut stack: Vec<Need> = vec![(me, pos)];
+        while let Some(&(m, p)) = stack.last() {
+            match self.makers[m].has(m, p) {
+                Ok(_) => {
+                    stack.pop();
+                }
+                Err(_) => {
+                    if let Err(need) = Maker::step(&mut self.makers, m) {
+                        stack.push(need);
+                    }
+                }
+            }
+        }
+        self.makers[me].made.len() > pos
     }
 }
 
@@ -1543,44 +1708,11 @@ impl Iterator for Values {
     type Item = Value;
 
     fn next(&mut self) -> Option<Value> {
-        if let Some(v) = self.scalars.next() {
-            return Some(v);
+        let top = self.makers.len() - 1;
+        if !self.fill(top, self.given) {
+            return None;
         }
-        loop {
-            let Some((row, cols, pos)) = &mut self.at else {
-                let row = self.boxes.next()?;
-                let cols: Vec<usize> = row.iter().map(|c| self.index[c]).collect();
-                if cols.iter().all(|&c| !self.lists[c].is_empty()) {
-                    let n = cols.len();
-                    self.at = Some((row, cols, vec![0; n]));
-                }
-                continue;
-            };
-            let v: Vec<Value> = cols
-                .iter()
-                .zip(pos.iter())
-                .map(|(&c, &i)| self.lists[c][i].clone())
-                .collect();
-            // The next position, the last component fastest; past the last, the next box.
-            let more = (0..pos.len()).rev().any(|k| {
-                pos[k] += 1;
-                if pos[k] < self.lists[cols[k]].len() {
-                    return true;
-                }
-                pos[k] = 0;
-                false
-            });
-            let fits = |t: &Row| t.iter().zip(&v).all(|(t, x)| t.contains(x));
-            let holds = self.ty.p().tuples.lens[&row.len()].eval(&fits);
-            if !more {
-                self.at = None;
-            }
-            if holds {
-                let v = Value::tuple(v);
-                if self.sent.insert(v.clone()) {
-                    return Some(v);
-                }
-            }
-        }
+        self.given += 1;
+        Some(self.makers[top].made[self.given - 1].clone())
     }
 }

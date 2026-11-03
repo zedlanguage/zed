@@ -137,3 +137,69 @@ fn finiteness_scales_with_the_types_not_the_values() {
         assert_eq!(squares[&n].each_value().map(|v| v.count()), Some(n * n));
     });
 }
+
+/// The first value of `doubling(d)`: the pair of the first value of `doubling(d - 1)` with
+/// itself, down to `0`. Checked along its first components, since its tree has `2^d` leaves.
+fn assert_first_value(v: &Value, d: usize) {
+    let mut at = v;
+    for level in (1..=d).rev() {
+        let Value::Tuple(items) = at else {
+            panic!("level {level} of the first value of t({d}) is not a pair: {at}");
+        };
+        assert_eq!(items.len(), 2, "level {level} of the first value of t({d})");
+        at = &items[0];
+    }
+    assert_eq!(*at, Value::Int(0), "the first value of t({d}) ends in 0");
+}
+
+#[test]
+fn the_first_value_of_a_deep_doubling_type_is_made_without_listing_inner_types() {
+    // `doubling(6)` has 2^64 values and its components 2^32 each; `doubling(48)` has
+    // 2^(2^48). The first value reads one value of each of the `d + 1` types, so both come
+    // at once; listing an inner type in full first does not end.
+    for d in [6, 48] {
+        let t = doubling(d);
+        let mut each = t.each_value().expect("a doubling type is finite");
+        let first = each.next().expect("a doubling type has a value");
+        assert_first_value(&first, d);
+        assert!(t.contains(&first), "t({d}) holds its first value");
+        // The next values differ in the last component first.
+        let more: Vec<Value> = each.take(9).collect();
+        assert_eq!(more.len(), 9, "t({d}) gives ten values");
+        let distinct: BTreeSet<&Value> = more.iter().chain([&first]).collect();
+        assert_eq!(distinct.len(), 10, "t({d}) gives each value once");
+        assert!(
+            more.iter().all(|v| t.contains(v)),
+            "t({d}) holds its values"
+        );
+    }
+    // At a small depth the first values are the start of the full list, in its order.
+    let t = doubling(2);
+    let all: Vec<Value> = t.each_value().expect("finite").collect();
+    assert_eq!(all.len(), 16);
+    let firsts: Vec<Value> = t.each_value().expect("finite").take(5).collect();
+    assert_eq!(firsts, all[..5]);
+}
+
+#[test]
+fn taking_k_values_costs_k_times_the_depth() {
+    // Each value of every type is made once and kept for the pairs that read it, so taking
+    // `k` values of `doubling(d)` makes about `k` values at each depth; a value is checked
+    // against its row without walking the parts the types below it made.
+    let take = |t: &Type, k: usize| {
+        assert_eq!(t.each_value().expect("finite").take(k).count(), k);
+    };
+    let t = doubling(48);
+    scaling::check(
+        "taking the first k values of doubling(48), by k",
+        500,
+        |k| take(&t, k),
+    );
+    let built: std::collections::HashMap<usize, Type> =
+        [12, 96].into_iter().map(|d| (d, doubling(d))).collect();
+    scaling::check(
+        "taking the first 500 values of doubling(d), by d",
+        12,
+        |d| take(&built[&d], 500),
+    );
+}

@@ -1012,3 +1012,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A `match` arm guarded by `if let` on the comment that starts at the position, and `if … && let Some(nl) = …` testing a flag and binding the first line break | `hole_end` | None | An `is` test before the `match`, and an `if` on the flag around a `match` on the break |
 | `slice::partition_point` over the sorted line-break positions, the first break in a range | `Holes::first_break` | None | A binary search over a sequence by a predicate, from the L3 library (as `docs::check`) |
+
+## Entries from TD-values (`zed-kernel/src/types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A resumable generator per type as an explicit state machine (`At::Start`, `Tuple`, `Past`) whose step returns `Err((maker, position))` for a value it needs first, driven by an explicit stack | `types::Values::fill`, `Maker::step` | Laziness, mutation | A `gen` per type over the makers' lists, or the same loop as a state receiver holding every maker's list and position |
+| `split_at_mut` of the makers, so a maker grows its own list while it reads the lists of the makers before it | `types::Maker::step` | Mutation | The step returns the new value and state, and the loop puts them in the persistent list of makers |
+| `std::mem::replace` of the maker's state with `At::Start`, put back on the path that waits | `types::Maker::step` | Mutation | The step returns the next state as a value |

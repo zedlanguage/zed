@@ -215,7 +215,7 @@ reduction lists. Each former use is bounded by its own inputs instead.
   when they number at most two a piece, so the list is no longer than the interval; a type's
   own integer literals are filtered by the interval at any count, since the type already
   writes them; and a type known finite (`Type::finite`) gives its values one at a time
-  (`Type::each_value`, T6), with no size rule: the earlier rule that a tuple's rows be no
+  (`Type::each_value`, T6; its inner types made one value at a time too, TD-values), with no size rule: the earlier rule that a tuple's rows be no
   more than its components' values changed the answer with the size and is removed.
   The enumeration's kept values are no longer capped, since they were already listed.
 
