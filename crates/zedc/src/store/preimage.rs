@@ -61,7 +61,6 @@
 //! which can have as many pieces as the box has points; it asks [`witness`] for one point
 //! that meets the demand, and the same search stops at the first.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
@@ -2757,20 +2756,18 @@ pub fn witness(
             Some(_) => None,
         };
     }
+    /// The search for a point: the lowest point of the first box that meets the demand.
+    struct First<F>(Option<Point>, F);
+    impl<F: Fn(&Domains) -> Point> Search for First<F> {
+        fn all(&mut self, b: &Domains) -> bool {
+            self.0 = Some((self.1)(b));
+            true
+        }
+    }
     on_stack(|| {
-        let mut found = None;
-        branch(
-            term,
-            dom,
-            classes,
-            demand,
-            &|_: &Domains| false,
-            &mut |b: &Domains| {
-                found = Some(lowest(b));
-                true
-            },
-        )?;
-        Some(found)
+        let mut first = First(None, lowest);
+        branch(term, dom, classes, demand, &mut first)?;
+        Some(first.0)
     })
 }
 
@@ -2795,27 +2792,27 @@ fn exact_search(
     {
         return None;
     }
-    let met = RefCell::new(
-        dom.keys()
-            .map(|k| (k.clone(), IntervalSet::empty()))
-            .collect::<Domains>(),
-    );
-    branch(
-        term,
-        dom,
-        classes,
-        demand,
-        &|b| b.iter().all(|(k, s)| s.is_subset(&met.borrow()[k])),
-        &mut |b| {
+    /// The search for every point: the projections of the boxes met so far, each input's
+    /// the join of its parts; a box within them adds nothing.
+    struct Met(Domains);
+    impl Search for Met {
+        fn skip(&self, b: &Domains) -> bool {
+            b.iter().all(|(k, s)| s.is_subset(&self.0[k]))
+        }
+        fn all(&mut self, b: &Domains) -> bool {
             for (k, s) in b {
-                let mut m = met.borrow_mut();
-                let joined = m[k].join(s);
-                m.insert(k.clone(), joined);
+                let joined = self.0[k].join(s);
+                self.0.insert(k.clone(), joined);
             }
             false
-        },
-    )?;
-    let met = met.into_inner();
+        }
+    }
+    let mut met = Met(dom
+        .keys()
+        .map(|k| (k.clone(), IntervalSet::empty()))
+        .collect());
+    branch(term, dom, classes, demand, &mut met)?;
+    let met = met.0;
     let several = met.values().filter(|s| !is_point(s)).count();
     if met.values().any(IntervalSet::is_empty) || several <= 1 {
         return Some((met, true));
@@ -2824,35 +2821,46 @@ fn exact_search(
         Demand::Bool(b) => Demand::Bool(!b),
         Demand::Ints(z) => Demand::Ints(z.complement_in(&IntervalSet::top())),
     };
-    let found = branch(
-        term,
-        met.clone(),
-        classes,
-        &fails,
-        &|_: &Domains| false,
-        &mut |_: &Domains| true,
-    )?;
+    /// The search for any point.
+    struct Any;
+    impl Search for Any {
+        fn all(&mut self, _: &Domains) -> bool {
+            true
+        }
+    }
+    let found = branch(term, met.clone(), classes, &fails, &mut Any)?;
     Some((met, !found))
 }
 
-/// Branch and prune over `root`: each box not `skip`ped is narrowed by [`preimage_in`] and
-/// its inputs' classes, and dropped when empty, given to `all` when every point meets
+/// What a search of [`branch`] does with the boxes: which it skips, and what it takes from each
+/// box whose every point meets the demand.
+trait Search {
+    /// Whether `b` adds nothing to what the search has found.
+    fn skip(&self, _b: &Domains) -> bool {
+        false
+    }
+
+    /// Takes `b`, whose every point meets the demand; `true` stops the search.
+    fn all(&mut self, b: &Domains) -> bool;
+}
+
+/// Branch and prune over `root`: each box not skipped by `search` is narrowed by [`preimage_in`] and
+/// its inputs' classes, and dropped when empty, given to `search` when every point meets
 /// `demand`, and otherwise halved on its widest input; a single point is evaluated. Every box
-/// is smaller than the one it was split from, so the search ends. `Some(true)` when `all`
+/// is smaller than the one it was split from, so the search ends. `Some(true)` when `search`
 /// stopped it, `None` when a point cannot be run.
 fn branch(
     term: &Term,
     root: Domains,
     classes: &Classes,
     demand: &Demand,
-    skip: &dyn Fn(&Domains) -> bool,
-    all: &mut dyn FnMut(&Domains) -> bool,
+    search: &mut dyn Search,
 ) -> Option<bool> {
     // The classes hold for the whole search, so their arithmetic is read once: it can decide
     // the term on every point of the box, as `x * x mod 10 == 9` with `x` in `5 mod 10`.
     match classes_decide(term, classes, demand) {
         Some(false) => return Some(false),
-        Some(true) => return Some(all(&root)),
+        Some(true) => return Some(search.all(&root)),
         None => {}
     }
     // The term is numbered once for the whole search; each box is a run of its own.
@@ -2860,7 +2868,7 @@ fn branch(
     let top = tx.terms.add(term);
     let mut boxes = vec![root];
     while let Some(b) = boxes.pop() {
-        if skip(&b) {
+        if search.skip(&b) {
             continue;
         }
         let b = if b.values().all(is_point) {
@@ -2875,7 +2883,7 @@ fn branch(
                 continue;
             };
             if r.exact {
-                if all(&n) {
+                if search.all(&n) {
                     return Some(true);
                 }
                 continue;
@@ -2891,7 +2899,7 @@ fn branch(
                 t = Term::Let(k.clone(), Arc::new(Term::Lit(Value::Int(v))), Arc::new(t));
             }
             let v = Evaluator::new(World::new()).run(&t).ok()?;
-            if demand.holds(&v) && all(&b) {
+            if demand.holds(&v) && search.all(&b) {
                 return Some(true);
             }
             continue;

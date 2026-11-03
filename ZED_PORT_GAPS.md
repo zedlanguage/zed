@@ -683,3 +683,4 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `fn(&mut Memo) -> &mut HashMap<K, V>` choosing the table a generic memo helper fills | `Tx::cached`, `Tx::translated` | None | A function over the memo record returning the updated record |
 | `std::mem::replace` of the context field around a sub-transfer | `Tx::within`, `Tx::cached` | Mutation | The context passed as an argument and returned with the result |
 | `imbl::HashMap` scopes numbered once by `(scope, name, binding)` | `Tx::bind` | None | Zed's maps are values; the numbering is a map from that triple to a number, in a state receiver |
+| A trait with a default method, passed as `&mut dyn Search`, implemented by local structs (`First`, `Met`, `Any`) | `branch`, `witness`, `exact_search` | Interfaces (L10) | A record of two functions over a search state, the state returned with the result |
