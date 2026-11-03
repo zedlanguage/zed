@@ -3102,10 +3102,7 @@ fn close(t: &Ty, sig: &Sig) -> Ty {
         .bounds
         .iter()
         .filter(|(v, _)| !own.contains(v))
-        .map(|(v, &m)| {
-            let carriers: Vec<Ty> = Carrier::of_mask(m).map(Ty::carrier).collect();
-            (v.clone(), Ty::union_all(&carriers))
-        })
+        .map(|(v, &m)| (v.clone(), Ty::of_mask(m)))
         .collect();
     let binds: Binds = own
         .order

@@ -534,3 +534,51 @@ fn a_bounded_variable_in_a_parameter_that_is_a_function_is_checked_at_each_carri
         assert_eq!(type_errors(&text).len(), n, "{q}: {:?}", type_errors(&text));
     }
 }
+
+/// Functions whose bounded variable no parameter holds: no argument fixes its carrier, so
+/// each returns a value of some carrier of the bound.
+const R: &str = "r(g: () -> T for T in int | f64) = g();\n\
+                 r2(g: (x: T) -> U for T in int, U in int | f64) = 0;\n\
+                 r3(g: (x: T) -> U for T in int, U in int) = 0;\n";
+
+#[test]
+fn a_function_whose_bounded_variable_is_only_in_its_result_passes_as_itself() {
+    let cases = [
+        // The value has exactly the expected type.
+        ("k(f: () -> T for T in int | f64) = r(g: f);\n", 0),
+        (
+            "k(f: (x: T) -> U for T in int, U in int | f64) = r2(g: f);\n",
+            0,
+        ),
+        // A narrower function: int is within int | f64.
+        ("k(f: (x: int) -> int) = r2(g: f);\n", 0),
+        ("k(f: () -> int) = r(g: f);\n", 0),
+        ("k(f: () -> T for T in f64) = r(g: f);\n", 0),
+        ("y = r(g: () -> 1);\n", 0),
+        ("y = r(g: () -> 1.5);\n", 0),
+        // A result outside the bound, and a bound wider than the expected one.
+        ("k(f: () -> String) = r(g: f);\n", 1),
+        ("y = r(g: () -> \"s\");\n", 1),
+        ("k(f: () -> T for T in int | rat) = r(g: f);\n", 1),
+        (
+            "k(f: (x: T) -> U for T in int, U in int | f64) = r3(g: f);\n",
+            1,
+        ),
+    ];
+    for (k, n) in cases {
+        let text = format!("{R}{k}");
+        assert_eq!(type_errors(&text).len(), n, "{k}: {:?}", type_errors(&text));
+    }
+    let text = format!("{R}y = r(g: () -> 1);\n");
+    assert_eq!(value(&text, "y"), "1");
+}
+
+#[test]
+fn a_lambda_outside_a_result_only_bound_names_the_whole_bound() {
+    let errors = type_errors(&format!("{R}y = r(g: () -> \"s\");\n"));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("the lambda returns \"s\"") && errors[0].contains("returns int | f64"),
+        "{errors:?}"
+    );
+}

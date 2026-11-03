@@ -482,6 +482,15 @@ impl Ty {
         Ty::set(c.ty())
     }
 
+    /// The values a variable bounded by the mask `m` may stand for when nothing fixes its
+    /// carrier: those of each carrier of `m`, and any value with [`OTHER`].
+    pub fn of_mask(m: u8) -> Ty {
+        if m & OTHER != 0 {
+            return Ty::dynamic();
+        }
+        Ty::set(Carrier::of_mask(m).fold(KType::empty(), |s, c| &s | &c.ty()))
+    }
+
     /// The type of a scalar literal.
     pub fn lit(v: &Value) -> Ty {
         Ty::set(KType::lit(v).expect("a scalar literal"))
@@ -1078,9 +1087,11 @@ pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
 }
 
 /// [`fits_sig`] inside the expected function types whose bounded variables `rigid` holds.
-/// `q`'s own bounded variables join them: the caller of a function of type `q` picks one
-/// carrier of each bound, so `s` must take every carrier of it. Each is renamed apart first,
-/// since `s` may use the same name for a variable of its own.
+/// `q`'s own bounded variables that a parameter holds join them: the caller of a function of
+/// type `q` picks one carrier of each bound, so `s` must take every carrier of it. Each is
+/// renamed apart first, since `s` may use the same name for a variable of its own. A bounded
+/// variable no parameter holds, of `q` or of `s`, is fixed by no argument, so it stands for
+/// any carrier of its bound, as at a call ([`Sig::unheld`]).
 fn fits_in(s: &Sig, q: &Sig, rigid: &mut Rigid) -> bool {
     if !s.needs.is_empty() {
         return s == q;
@@ -1093,13 +1104,22 @@ fn fits_in(s: &Sig, q: &Sig, rigid: &mut Rigid) -> bool {
     if !same_params {
         return false;
     }
+    let held = q.held();
     let mut renamed = Binds::new();
     for (v, &m) in q.bounds.iter().filter(|(v, _)| q.own.contains(*v)) {
-        // A quote is in no name a program writes, and the count keeps nested renamings apart.
-        let w: Arc<str> = format!("{v}'{}", rigid.len()).into();
-        rigid.insert(w.clone(), m);
-        renamed.insert(v.clone(), Ty::var(w));
+        let t = match held.contains(v) {
+            true => {
+                // A quote is in no name a program writes, and the count keeps nested
+                // renamings apart.
+                let w: Arc<str> = format!("{v}'{}", rigid.len()).into();
+                rigid.insert(w.clone(), m);
+                Ty::var(w)
+            }
+            false => Ty::of_mask(m),
+        };
+        renamed.insert(v.clone(), t);
     }
+    let s_unheld = s.unheld();
     let renamed_q;
     let q = match renamed.is_empty() {
         true => q,
@@ -1134,7 +1154,12 @@ fn fits_in(s: &Sig, q: &Sig, rigid: &mut Rigid) -> bool {
                 })
                 && {
                     let mut rb = Binds::new();
-                    sa.result.subst(&b).sub_in(&qa.result, &mut rb, rigid) && rb.is_empty()
+                    // `s_unheld` binds to carriers only, so the order of the two is free.
+                    sa.result
+                        .subst(&s_unheld)
+                        .subst(&b)
+                        .sub_in(&qa.result, &mut rb, rigid)
+                        && rb.is_empty()
                 }
         })
     });
@@ -1145,6 +1170,26 @@ fn fits_in(s: &Sig, q: &Sig, rigid: &mut Rigid) -> bool {
 }
 
 impl Sig {
+    /// The variables its parameters hold, at any depth, on any arrow.
+    pub fn held(&self) -> Vars {
+        let mut out = Vars::default();
+        for a in &self.arrows {
+            a.params.iter().for_each(|p| p.vars_in(&mut out));
+        }
+        out
+    }
+
+    /// Its own bounded variables no parameter holds, each bound to [`Ty::of_mask`] of its
+    /// bound: no argument fixes its carrier, so a call returns a value of some carrier of it.
+    pub fn unheld(&self) -> Binds {
+        let held = self.held();
+        self.bounds
+            .iter()
+            .filter(|(v, _)| self.own.contains(*v) && !held.contains(v))
+            .map(|(v, &m)| (v.clone(), Ty::of_mask(m)))
+            .collect()
+    }
+
     /// One arrow over `params` and `result`, with no bounded variable.
     pub fn one(params: Vec<SParam>, tys: Vec<Ty>, result: Ty) -> Sig {
         Sig {

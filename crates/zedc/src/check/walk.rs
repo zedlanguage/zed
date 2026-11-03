@@ -365,6 +365,8 @@ pub(super) struct FitF<'a> {
     params: &'a [Param],
     body: &'a Expr,
     e: Arc<Sig>,
+    /// Each bounded variable of `e` that no parameter holds, bound to its whole bound.
+    unheld: Binds,
     span: Span,
     order: Vec<Option<usize>>,
     extra: Vec<usize>,
@@ -2200,10 +2202,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
+        // A bounded variable of `e` no parameter holds is fixed by no argument: the lambda may
+        // return any carrier of its bound.
+        let unheld = e.unheld();
         let s = FitF {
             params,
             body,
             e,
+            unheld,
             span,
             order,
             extra,
@@ -2229,15 +2235,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Some(FitWait::Body) => {
                 let r = m.take_ty();
-                let result = &s.e.arrows[s.a].result;
-                if !r.subtype(result) {
-                    let why = r.refused(result);
+                let want = s.e.arrows[s.a].result.subst(&s.unheld);
+                if !r.subtype(&want) {
+                    let why = r.refused(&want);
                     self.error(
                         s.body.span,
-                        format!(
-                            "the lambda returns {r}, and `{}` returns {result}{why}",
-                            s.e
-                        ),
+                        format!("the lambda returns {r}, and `{}` returns {want}{why}", s.e),
                     );
                 }
                 s.a += 1;
@@ -2280,7 +2283,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.k(Frame::FitLambda(s));
                 return m.job(Job::Expr(d));
             }
-            let want = Want::of(&arrow.result);
+            let want = Want::of(&arrow.result.subst(&s.unheld));
             let body = s.body;
             s.waiting = Some(FitWait::Body);
             m.k(Frame::FitLambda(s));
