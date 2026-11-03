@@ -123,3 +123,73 @@ fn an_empty_input_leaves_no_point() {
     let p = preimage(&Term::Lit(Value::Bool(true)), &ds, &Demand::Bool(true));
     assert!(!p.domains["i"].is_empty() && p.domains["j"].is_empty() && p.exact);
 }
+
+/// One call, read in two scopes that bind its function to different operators: what the
+/// call stands for is fixed by the scope as well as the call.
+#[test]
+fn a_call_of_an_operator_reads_the_operator_of_its_scope() {
+    // `apply = (op) -> op(i, 2); apply((+)) >= 5 && apply((*)) >= 10`
+    let app = Term::App(Arc::new(var("op")), vec![var("i"), int(2)]);
+    let with = |p| Term::App(Arc::new(var("apply")), vec![Term::PrimFn(p)]);
+    let t = bind(
+        "apply",
+        lam("op", app),
+        prim(
+            Prim::And,
+            prim(Prim::Ge, with(Prim::Add), int(5)),
+            prim(Prim::Ge, with(Prim::Mul), int(10)),
+        ),
+    );
+    assert_eq!(
+        holds(&t, &[("i", Some(-50), Some(50))]),
+        "i [5..=50]; exact"
+    );
+}
+
+/// One function called on two arguments: each call has its own summary.
+#[test]
+fn one_function_called_twice_is_summarized_for_each_argument() {
+    // `next = (x) -> x + 1; next(i) >= 0 && next(0 - i) >= 0`
+    let t = bind(
+        "next",
+        lam("x", prim(Prim::Add, var("x"), int(1))),
+        prim(
+            Prim::And,
+            at_least_of(call("next", var("i")), 0),
+            at_least_of(call("next", prim(Prim::Sub, int(0), var("i"))), 0),
+        ),
+    );
+    assert_eq!(
+        holds(&t, &[("i", Some(-50), Some(50))]),
+        "i [-1..=1]; exact"
+    );
+}
+
+/// A product of two equal factors written out twice, not shared, is read as a square.
+#[test]
+fn equal_factors_written_twice_are_read_as_a_square() {
+    // `(i + 1) * (i + 1) <= 9`
+    let f = || prim(Prim::Add, var("i"), int(1));
+    let t = prim(Prim::Le, prim(Prim::Mul, f(), f()), int(9));
+    assert_eq!(
+        holds(&t, &[("i", Some(-50), Some(50))]),
+        "i [-4..=2]; exact"
+    );
+}
+
+/// A term that holds one part twice, by one shared value, as a program's term does after a
+/// shared subexpression is bound once.
+#[test]
+fn a_shared_part_is_read_as_the_same_term() {
+    // `if (i >= 3) { s } else { s }` with `s = i * 2 >= 4`, one shared term.
+    let s = Arc::new(prim(Prim::Ge, prim(Prim::Mul, var("i"), int(2)), int(4)));
+    let t = Term::If(Arc::new(at_least("i", 3)), s.clone(), s);
+    assert_eq!(
+        holds(&t, &[("i", Some(-50), Some(50))]),
+        "i [2..=50]; exact"
+    );
+}
+
+fn at_least_of(t: Term, n: i64) -> Term {
+    prim(Prim::Ge, t, int(n))
+}

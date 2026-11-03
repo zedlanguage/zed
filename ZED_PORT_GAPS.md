@@ -102,6 +102,8 @@ three ways, all confirmed:
 - **Memo keys.** `key` (`zedc/store/preimage.rs:572`) casts a term and a scope to addresses, and
   every memo of `Memo` (line 580 on) is keyed by the pair. Two equal terms at different places
   are deliberately different keys.
+  T11-preimage removed this from `preimage.rs`: its memos are keyed by numbers a transfer gives
+  its terms and scopes (see the T11-preimage entries below).
 - **Equality shortcuts.** `Arc::ptr_eq` or `Rc::ptr_eq`, 6 sites: `Text::eq`
   (`zed-kernel/text.rs:136`), `Type::cmp` (`zed-kernel/types.rs:45`), `Row::cmp`
   (`types.rs:253`), `Premises::extend` and `Premises::eq` (`zedc/store/cell.rs:90`, `:152`),
@@ -670,3 +672,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `BTreeMap::pop_last` as a worklist taken in descending key order, each step adding entries at smaller keys | `Provenance::origins` | Key range queries (gap 9), mutation | `.last` and a `patch` removing that key on an ordered map, in a state receiver; or a fold over the fact indices from `i` down to 0, which visits facts the pass would skip |
 | `BTreeMap::entry(k).or_insert_with` as a memo filled during the pass | `Provenance::origins` | Mutation | A state receiver over a map, or the members each fact holds computed for all facts before the pass |
+
+## Entries from T11-preimage (`zedc/src/store/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Terms numbered in an arena (`Vec` of nodes with `u32` children), filled by an explicit stack | `Terms::add` | Mutation | A state receiver over a map from number to node, or the content digest of gap 1, which makes the numbering unneeded |
+| Raw pointer `*const Term` as the key of the visited set while the arena is filled | `Terms::id` | Identity | Keyed by the content digest of gap 1; the address lives only during the walk and is never a memo key |
+| `std::mem::discriminant` of `Prim` as part of a hash key, since `Prim` has no `Hash` | `Made::Call` | None | `Prim` is an enumeration, so its value is the key |
+| `fn(&mut Memo) -> &mut HashMap<K, V>` choosing the table a generic memo helper fills | `Tx::cached`, `Tx::translated` | None | A function over the memo record returning the updated record |
+| `std::mem::replace` of the context field around a sub-transfer | `Tx::within`, `Tx::cached` | Mutation | The context passed as an argument and returned with the result |
+| `imbl::HashMap` scopes numbered once by `(scope, name, binding)` | `Tx::bind` | None | Zed's maps are values; the numbering is a map from that triple to a number, in a state receiver |

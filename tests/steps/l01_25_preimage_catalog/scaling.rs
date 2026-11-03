@@ -291,8 +291,13 @@ fn many_inputs(k: usize) -> Domains {
 /// 6 and 48 did not show a growth of `n^1.8` that sizes 48 and 384 do. The stack is what the
 /// recursion of the transfer needs until T2-mid; the terms are built before the timing.
 fn long(what: &'static str, make: fn(usize) -> Term, ds: fn(usize) -> Domains) {
+    long_at(what, 48, make, ds)
+}
+
+/// [`long`] at sizes `n` and `8n`.
+fn long_at(what: &'static str, n: usize, make: fn(usize) -> Term, ds: fn(usize) -> Domains) {
     let measure = move || {
-        let (n, large) = (48, 48 * scaling::FACTOR);
+        let large = n * scaling::FACTOR;
         let (a, b) = ((make(n), ds(n)), (make(large), ds(large)));
         scaling::check(what, n, |k| {
             let (t, d) = if k == n { &a } else { &b };
@@ -346,4 +351,43 @@ fn long_tests_of_many_inputs() {
         tests_of_many_inputs,
         many_inputs,
     );
+}
+
+/// `y = i + 1 + … + 1; y * y + … + y * y >= 0`, with `k` ones and `k` products: each product
+/// is read as a square, and its two factors are found to be one term by its number, not by
+/// comparing the `k` parts of `y`. The comparison of parts took `k` steps for each product before
+/// the terms were numbered: 39.9 times the work at sizes 256 and 2048, 8.5 times now.
+fn squares_of_one_name(k: usize) -> Term {
+    let y = (0..k).fold(var("i"), |a, _| prim(Prim::Add, a, int(1)));
+    let sq = || prim(Prim::Mul, var("y"), var("y"));
+    let sum = (1..k).fold(sq(), |a, _| prim(Prim::Add, a, sq()));
+    Term::Let(
+        "y".into(),
+        Arc::new(y),
+        Arc::new(prim(Prim::Ge, sum, int(0))),
+    )
+}
+
+/// `t0 = i >= 0; tj = if (i >= j) { t(j-1) } else { t(j-1) }`, both arms one shared term: a
+/// term of `k` distinct parts and `2^k` paths, which is numbered in time of its parts.
+fn shared_arms(k: usize) -> Term {
+    (1..=k as i64).fold(prim(Prim::Ge, var("i"), int(0)), |t, j| {
+        let t = Arc::new(t);
+        Term::If(Arc::new(prim(Prim::Ge, var("i"), int(j))), t.clone(), t)
+    })
+}
+
+#[test]
+fn long_squares_of_one_name() {
+    long_at(
+        "squares of one long name, each read as a power",
+        256,
+        squares_of_one_name,
+        one,
+    );
+}
+
+#[test]
+fn long_shared_arms() {
+    long("branches whose arms are one shared term", shared_arms, one);
 }
