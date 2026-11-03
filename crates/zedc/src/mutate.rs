@@ -22,6 +22,7 @@
 
 use std::sync::Arc;
 
+use zed_kernel::num::TooLarge;
 use zed_kernel::provenance::{Position, child, child_mut};
 use zed_kernel::{Prim, Rat, Term, Value};
 
@@ -116,19 +117,26 @@ fn neighbors(p: Prim, quotient: bool) -> &'static [Prim] {
 }
 
 /// The neighbors `n - 1` and `n + 1` of the integer literal `n`, at the carrier it adopted:
-/// `int`, `rat` or `f64`.
-fn beside(n: &Value) -> [Value; 2] {
+/// `int`, `rat` or `f64`; an error when the system refuses the memory to build one.
+fn beside(n: &Value) -> Result<[Value; 2], String> {
+    let exact = |r: &Rat| -> Result<[Rat; 2], String> {
+        let one = Rat::int(1.into());
+        let refused = |e: TooLarge| {
+            format!(
+                "a neighbor of the integer literal {n} needs {} bits, and the system refused the memory to build it",
+                e.bits
+            )
+        };
+        Ok([r.sub(&one).map_err(refused)?, r.add(&one).map_err(refused)?])
+    };
     match n {
-        Value::Rat(r) => {
-            let one = Rat::int(1.into());
-            [Value::rat(r.sub(&one)), Value::rat(r.add(&one))]
-        }
-        Value::Float(x) => [Value::float(x.get() - 1.0), Value::float(x.get() + 1.0)],
+        Value::Rat(r) => Ok(exact(r)?.map(Value::rat)),
+        Value::Float(x) => Ok([Value::float(x.get() - 1.0), Value::float(x.get() + 1.0)]),
         _ => {
             let n = n
-                .as_bigint()
+                .as_integer()
                 .expect("an integer literal is an int, a rat or an f64");
-            [Value::int(&n - 1), Value::int(&n + 1)]
+            Ok(exact(&n)?.map(Value::integer))
         }
     }
 }
@@ -222,7 +230,7 @@ fn sites(
                     stack.push((&ms[0], &us[0], at.child(0)));
                 }
                 (Term::Prim(Prim::Neg, ms), Term::Lit(v)) if matches!(&ms[0], Term::Lit(w) if w == v) => {
-                    for to in beside(v) {
+                    for to in beside(v)? {
                         out.push(Mutant {
                             def,
                             at: at.clone(),

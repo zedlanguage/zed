@@ -820,7 +820,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | IDLANG-spec | orchestrator attempt  | 2026-11-03 05:20 | brief written; launching spec agent |
-| L25.8 | repair attempt 2 | 2026-11-03 03:49 | apply now clones the definition once and changes the node in place (child_mut, Arc::make_mut); new test running_the_mutants_of_a_chain_of_n_additions_scales (or |
 | OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | per-path unnamed-atom map in checker written (Else/If/Block/alias/call-own); tests in discard_paths.rs; building steps (load 41.74) |
 | S22a | impl attempt 1 | 2026-11-03 03:01 | neg controls (load ~45): off-by-one Pa cut in slice_treap -> 15 of 89 l01_25 tests fail, twice; clip hull 1 too narrow -> 34 of 89 fail, twice; both reverted |
 | ST-arms-quad | repair attempt 2 | 2026-11-03 03:35 | reproduced on 904eeab (load 43): distinct nest 0.60G/2.01G/7.09G instr at d=60/120/240 (3.3x,3.5x per 2x); two-choice nest with cap x<=2d 0.38G/1.30G/4.93G at d |
@@ -831,8 +830,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (4 commits, with this STATUS commit; spec commits c58d3d1, 1542e46, c825507 in local zed main); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (10 commits, with this STATUS commit; spec commits c58d3d1, 1542e46, c825507 in local zed main); the push follows one full test run on the merged tree:
 
+- 76c39f1 L25.8: COMPLEXITY F58 per-mutant cost O(size of the definition), chain test and control numbers; STATUS test count; ZED_PORT_GAPS entry for child_mut
+- 6a193f5 L25.8: a mutant is one copy of its definition changed in place (child_mut), not a rebuild along its path that copied each inline child; scaling test on the mutants of one chain
+- e247420 L25.8: *->/ by the product's type, integer literal mutants at their adopted carrier, a row per function in the running scaling test, tradeoff comment names its test and trigger
+- 90d762f L25.8: COMPLEXITY F56, STATUS, ZED_PORT_GAPS; step-unit counts and usage line in other steps' tests
+- 3ca608e L25.8: zedc test --mutate
 - 01fda12 CAP-bits repair 2: String of a number asks for the memory of its digits; a refusal is NumberTooLarge
 - e3b51e9 CAP-bits repair: exact div and mod build nothing; a refused build is NumberTooLarge, not an abort
 - 2bf39d2 CAP-bits: exact numbers without a size limit
