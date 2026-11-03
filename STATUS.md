@@ -825,23 +825,28 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BOX-5pt | impl attempt 1 | 2026-11-03 06:34 | five-point box_point in; L1.38 74 pass, 4 fail exactly as XT3 B3 predicted: oracle 255/3/142, corner 2586/9282/132, REGULAR Ok(true), stages x0=4 Ok(true) (load |
-| DESIGN-audit | orchestrator attempt  | 2026-11-03 06:08 | started: workflow wf_5753dfe3-b04 (11 auditors, 11 verifiers); zed wt/t6-spec merged as 83770d9 |
-| LIN-cross | impl attempt 1 | 2026-11-03 05:46 | started |
-| S22b | impl attempt 1 | 2026-11-03 06:39 | started |
-| S22c | impl attempt 1 | 2026-11-03 06:39 | started |
-| S22d | impl attempt 1 | 2026-11-03 06:39 | started: 3t - 1 chain over 60 s at k = 37 |
+| BOX-5pt | verify attempt 1 | 2026-11-03 06:34 | run_tests.sh 4 on 97cbd72: 98 pieces, 0 failed, l01_38 79 pass in 49.0 s (load 63-80); control: box_point row scan made quadratic still passes three_variables_i |
+| DESIGN-audit | plan attempt  | 2026-11-03 06:08 | start: schedule audit findings B and new DESIGN steps in zed-impl plan_dag, STATUS, COMPLEXITY, ZED_PORT_GAPS; worktree wt/audit-plan |
+| LIN-cross | impl attempt 1 | 2026-11-03 05:46 | cause found: pick()'s local_repair lists every one-atom constraint on the shared input i (guards i >= j), so each of the 2k disjunctions costs k (local sizes 89 |
+| S22b | verify attempt 1 | 2026-11-03 06:39 | fmt and clippy -D warnings clean; full suite started (load 46.40) |
+| S22c | impl attempt 1 | 2026-11-03 06:39 | scaling (instructions, load ~70): complement 1024->8192 7.6x, preimage of y+1+..+1 != MAX 64->512 7.0x; negative control (quadratic complement_in, temporary) 61 |
+| S22d | impl attempt 1 | 2026-11-03 06:39 | negative control (old preimage.rs, not committed): chain_t3_gaps_scales and a_chain_that_leaves_i64_keeps_its_exact_preimage killed at 60 s; t3_gaps_five_no sca |
 | S22e | impl attempt 1 | 2026-11-03 06:39 | started; worktree /home/luke/Work/wt/s22e on main ea2e48f |
-| ST-arms-quad | verify attempt 3 | 2026-11-03 03:16 | precision probe P2 (top: 100<=x<=200 // (0<=x<=10 && (q>=0 && (x<=0&&y>=1 // x>=10&&y<=-1) // q<=-1&&3<=x<=4) && (y>=1&&x>=5 // q<=-1))): then-arm x at 873f1a8  |
+| ST-arms-quad | repair attempt 4 | 2026-11-03 03:16 | parts_tested counter + test (<= 48 per level at d=60,480; heavy 40, moving 24): stamp disabled gives heavy 516/d at 60 and 3876/d at 480, test fails; summary cu |
 | T11-S22 | merge attempt 1 (item S22a) | 2026-11-03 03:01 | lock released |
-| T2-mid | repair attempt 1 | 2026-11-03 04:26 | checker pass: fmt and clippy clean; full suite 98 pieces, 0 failed (baseline 98/0), load 36.2 to 45.2 |
-| T6 | repair attempt 6 | 2026-11-03 00:01 | rebased wt/t6 on main 7073be1 (both commits squashed first; T6's K30 renamed K37, CAP-bits owns K30) and wt/t6-spec on zed 1025886; fences resynced, l01_07/l01_ |
+| T2-mid | repair attempt 2 | 2026-11-03 04:26 | full suite on rebased branch (base 56c2064, resolve/elab tables/canon/stage/check walk): 98 pieces, 0 failed |
+| T6 | repair attempt 7 | 2026-11-03 00:01 | rebased wt/t6 onto main 56c2064 (now 24ad3e4); STATUS/ZED_PORT_GAPS conflicts kept both sides; fence-copy commit dropped as main already has the merged spec cop |
 | TD-ends | repair attempt 3 | 2026-11-03 03:52 | start: fix kept sum/difference of unrelated cores (int.rs:1326) and the 11 incomplete tradeoff comments |
+| UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | start: reading brief, XT3 report B2, utvpi.rs |
 
 Merged into local main and not yet pushed (35 commits); the push follows one full test run on the merged tree:
 
+- 6f5fa07 STATUS: ENDS-dag merged
 - 1248aba ENDS-dag: stage::ends reads each shared part once
+- a779147 STATUS, plan_dag: UTVPI-GOR merged
 - 7c1a6fe UTVPI-GOR: Goldberg-Radzik potential search for cyclic UTVPI graphs
+- 56c2064 STATUS: XT3 out of In progress
+- 1821842 STATUS: in progress as of 2026-11-03 06:41
 - 3fab318 plan_dag, STATUS: XT3 done; add UTVPI-GOR, BOX-5pt, UTVPI-NEAR, HULL3, XR3, HULL3-GEN with edges
 - ea2e48f STATUS: S22a merged
 - 217bb0a S22a repair 1: Pa keeps values in i128 and checks each kept slice; probe over all integers and a half-line scale; comparison asserts exact narrower co
