@@ -1197,8 +1197,15 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                 // does not report which disjuncts its proof covers, and an undoable
                 // (trail-based) propagation does not help, since on a chain each refutation's
                 // own propagation runs through the whole chain. Each refuted disjunct also
-                // costs [`learn`] one propagation of bounds and at most one more `settle`, at
-                // most twice the work before. Trigger: disjuncts without a point whose proofs
+                // costs [`learn`]: for each bound of one atom it writes, an exponential and a
+                // binary search over the `m` bounds the other disjuncts write on that atom, up
+                // to about `2 log2 m + 1` tests, each one [`bounds_refute`] (one propagation
+                // of bounds, `O(n log n)`) and, when that does not refute, one `settle`. The
+                // search usually ends on a bound that has a point, and that test always costs
+                // a `settle`. So when no learned bound removes a later disjunct, `r` refuted
+                // disjuncts cost up to `O(r log m)` settles, not `r` (verifier's counters:
+                // `guards_beyond_the_inputs_scale` 5 calls of `learn` and 16 settles in them,
+                // cross 2 and 2). Trigger: disjuncts without a point whose proofs
                 // differ by more than a bound of one atom. Tests:
                 // `l01_25_preimage_catalog::s22::chains_on_two_inputs_keep_their_boxes`
                 // reaches it (cross at `k = 51`); `chain_cross_above_its_width_scales` (cross
