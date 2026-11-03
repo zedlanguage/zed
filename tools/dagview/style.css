@@ -50,7 +50,10 @@ button:hover { border-color: var(--lit); }
 .chip.ready { background: var(--ready-bg); border-color: var(--ready-line); }
 .chip.unstarted { background: var(--wait-bg); border-color: var(--wait-line); }
 
-main { position: relative; overflow: hidden; cursor: grab; touch-action: none; }
+main {
+  position: relative; overflow: hidden; cursor: grab; touch-action: none;
+  -webkit-user-select: none; user-select: none;
+}
 main:active { cursor: grabbing; }
 .world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
