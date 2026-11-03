@@ -9,6 +9,7 @@ mod blocks;
 mod formatting;
 mod later;
 mod methods;
+mod name_values;
 mod patterns;
 mod scaling;
 mod structs;

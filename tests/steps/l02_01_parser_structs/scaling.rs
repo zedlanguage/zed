@@ -88,3 +88,26 @@ fn chain(n: usize) -> String {
 fn a_chain_of_updates_scales() {
     linear("a chain of n updates and an update of n paths", 1000, chain);
 }
+
+/// `w = { f0: v0, f1: v1, … };`, `n` fields whose values are bare names, and a display whose one
+/// value is a chain of `n` operands joined by `&&` and one of `n` operands joined by `else`.
+fn named(n: usize) -> String {
+    let given: Vec<String> = (0..n).map(|i| format!("f{i}: v{i}")).collect();
+    let and: Vec<String> = (0..n).map(|i| format!("b{i}")).collect();
+    let or_else: Vec<String> = (0..n).map(|i| format!("e{i}")).collect();
+    format!(
+        "w = {{ {} }};\nj = {{ a: {} }};\nk = {{ a: {} }};\n",
+        given.join(", "),
+        and.join(" && "),
+        or_else.join(" else ")
+    )
+}
+
+#[test]
+fn a_display_of_named_values_and_long_chains_scales() {
+    linear(
+        "a display of n bare-name values, and chains of n operands of && and else",
+        1000,
+        named,
+    );
+}

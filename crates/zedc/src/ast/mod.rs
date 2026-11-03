@@ -769,7 +769,9 @@ impl<'a> Builder<'a> {
         let mut fields: Vec<(String, Expr)> = Vec::new();
         let mut seen = HashMap::new();
         for &k in self.kids(n) {
-            if self.tree.name(k) == "Name" {
+            // A field's name is the kid a `:` follows. Its rule name does not tell: a value that
+            // is a bare name arrives as a `Name` node too, since `Expr12 = ~Or` passes it up.
+            if self.word(self.tree.nodes[k].end) == ":" {
                 let name = self.word(self.tree.nodes[k].start);
                 self.once(&mut seen, name, k, "field", "given")?;
                 // Until a value follows, the field is the variable of its name.
