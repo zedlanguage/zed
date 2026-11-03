@@ -921,7 +921,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | BIT-words | merge attempt 1 | 2026-11-03 07:14 | lock released |
 | CAP-pow32 | merge attempt 1 | 2026-11-03 08:53 | lock released |
 | CATCHUP-cross | repair attempt 1 | 2026-11-03 11:18 | suite on b0811c3+fix: 119 pieces, 0 failed (load 47-74) |
-| F44-memo | repair attempt 5 | 2026-11-03 07:14 | done: suite 119 pieces, 3 failed (2 deep_scaling zero-byte refusals fixed in bc30039: deep_scaling 9/9 and m0_09 98/98 pass; l01_25 chain_cross = main); fmt, cl |
 | GLAM-spec | impl attempt 1 | 2026-11-03 11:10 | done: zed wt/spec-glam cd724c9, zed-impl wt/plan-glam ac63f8a; check/cases/fences/sync --check exit 0; 10 plan rows (5 items incl. SPECULATE, 5 step rows); ledg |
 | L1.17a | repair attempt 2 | 2026-11-03 07:14 | also found: Collision reported instead of a refused leaf equality (prim error now yields to the refusal), and unary - and abs copied wide numbers unasked (now R |
 | LIN-probe | merge attempt 1 | 2026-11-03 07:30 | lock released |
@@ -934,8 +933,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | returning ok=true: 942fd60 merges cleanly into main 40750ce, spec a628181 into zed cc889a2; non-blocking: no log port yet so @log(#off); drops no line (L7.3 own |
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 
-Merged into local main and not yet pushed (185 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (192 commits); the push follows one full test run on the merged tree:
 
+- STATUS, plan_dag: F44-memo done (tip 456873c)
+- 456873c F44-memo: deep_types scales_at holds its inputs and outputs in a Mutex, since each run is on a thread of its own
+- c4b9a0b F44-memo: record the known gap of the zero-byte refusal: a run that starts a bare thread allocates in starting it
+- 5c39bbe F44-memo: deep_scaling copy and key runs allocate nothing, so their bytes are not compared
+- 5e32f5d F44-memo: each scaling run on a fresh thread, so per-thread memos start empty
 - STATUS, plan_dag: TD-ends done (tip f02641a)
 - f02641a TD-ends repair 6: exact expectations, wide-base sizes past BZ, l01_39 nest stack
 - d4894aa TD-ends: exact interval ends of any size (repairs 1-5, squashed onto main)
