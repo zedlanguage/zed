@@ -643,7 +643,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `thread_local!` record of the text being made, read by a recursive `show` that returns a placeholder for a missing text, and a drop guard that clears it on a panic | `Type::rope`, `make_rope`, `SHOWING`, `EndShowing`, `Rec::naming` (a recursive type's name, made as an item of the same loop) | Mutation, global state | A fold over the types in postorder that passes the map of texts along |
 | `OnceLock::set` from a loop outside the cell's own initializer | `make_rope` | Lazy cells (gap 3) | The map of texts from the row above |
 
-## Entries from T2-mid (`zedc/src/resolve.rs`, `elab.rs`, `canon/`, `stage.rs`, `check/`, `zed-kernel/src/term.rs`)
+## Entries from T2-mid (`zedc/src/resolve.rs`, `elab.rs`, `canon/`, `stage.rs`, `check/`, `zir/`, `zed-kernel/src/term.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -654,6 +654,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A machine of `Job`s and `Frame`s on a `Vec`, each frame taking its child's result from one register (`Ret`, read by `take_ty`, `take_arg`, `take_cond`, `take_sig`), large frames boxed to keep the enum small | `check::walk` | Mutation | A state receiver holding the list and the register; a sum type of frames, with no boxing |
 | `Rc<Origin>` chains with an `impl Drop` that unwraps each link by `Rc::try_unwrap` in a loop | `check::Origin` | Identity, mutation | Removed: the runtime shares and frees values, and must free a long chain without recursion itself |
 | The `check::walk` machine again, with a list frame (`SeqF`) that runs a list of expressions and stops at the first failure when asked, as `collect::<Option<_>>` does; a call frame (`FillF`) holding an `Option<HashMap<&str, usize>>` built at the first named argument (`get_or_insert_with`) | `elab::walk` | Mutation | A state receiver holding the list and the register; a fold over the arguments that stops on the first failure; the name map as a lazily built value |
+| `impl Drop for Region` that moves each node's regions out with `mem::take` and frees each region held once (`Arc::into_inner`) from a `Vec`, so no drop recurses | `zir::Region` | Mutation, identity | Removed: the runtime frees values, and must free a deep graph without recursion itself |
+| A hand-written `PartialEq` comparing region pairs from a `Vec<(&Region, &Region)>`, skipping a pair that is one shared region (`Arc::ptr_eq`) | `zir::Region` | Identity | Structural equality, which the runtime gives without recursion; the shared-pair shortcut becomes a hash-consed id |
+| One `String` path buffer for a walk, cut back to a stored length (`String::truncate`) when the walk leaves a region | `zir::validate`, `zir::text::print` | Mutation | The path passed down as a value, or a list of path parts prepended and dropped |
+| A job machine (`Job<'t>`) whose frames borrow the input term for the walk's lifetime (`&'t Term`, `Cow<'t, [Arc<str>]>`), with stacks of values, sources and built regions that a frame drains the last `k` of; a `Closure<'t>` borrows a let-bound lambda's body from the input | `zir::lower::Lower::term` | Mutation | A state receiver holding the stacks; Zed shares terms, so a frame holds the term itself |
+| A stack of walks (`Vec<UseWalk<'t>>`), each with its own counts of bound names and its own stack of visits: a walk waits at a lambda whose body's uses are not yet known while that body is walked | `zir::lower::body_uses` | Mutation | A state receiver over a list of walks; the memo of bodies as a map in the receiver |
+| A raising machine (`Raising<'g>`) of region and node frames on a `Vec`, each holding the terms raised so far and a mark into the shared list of binder names | `zir::lower::raise_from` | Mutation | A state receiver holding the frames and the names |
 
 ## Entries from L2.1 (`zedc/src/ast/`, `format.rs`)
 
