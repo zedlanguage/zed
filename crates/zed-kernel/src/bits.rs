@@ -85,7 +85,7 @@ pub fn word(p: Prim, args: &[Value]) -> Result<Value, KernelError> {
             )));
         }
     };
-    domain(p, &ns, args)?;
+    domain(p, &ns)?;
     big(p, &ns).map_err(|e| KernelError::NumberTooLarge {
         op: name(p),
         bits: e.bits,
@@ -93,15 +93,18 @@ pub fn word(p: Prim, args: &[Value]) -> Result<Value, KernelError> {
 }
 
 fn shown(args: &[Value]) -> String {
-    let parts: Vec<String> = args.iter().map(Value::to_string).collect();
+    let parts: Vec<String> = args
+        .iter()
+        .map(|v| format!("`{}`", v.kind_type()))
+        .collect();
     parts.join(", ")
 }
 
-/// A type error for an operand outside its domain: which parameter, what it needs, and the
-/// value it was given.
-fn outside(p: Prim, param: &str, needs: &str, v: &Value) -> KernelError {
+/// A type error for an operand outside its domain: which parameter, what it needs, and where
+/// the value it was given lies, not the value, which may be too large to print.
+fn outside(p: Prim, param: &str, needs: &str, is: &str) -> KernelError {
     KernelError::Type(format!(
-        "`{}` needs `{param}` in {needs}, and it is {v}",
+        "`{}` needs `{param}` in {needs}, and it is {is}",
         name(p)
     ))
 }
@@ -127,11 +130,11 @@ pub fn has_width(p: Prim) -> bool {
 
 /// Checks the domain of each operand: every one non-negative but the `x` of `shl` and `shr`,
 /// and the `x` of a word with a width below `2^w`.
-fn domain(p: Prim, ns: &[Cow<'_, Rat>], args: &[Value]) -> Result<(), KernelError> {
+fn domain(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<(), KernelError> {
     let shift = matches!(p, Prim::Shl | Prim::Shr);
     for (i, (n, param)) in ns.iter().zip(params(p)).enumerate() {
         if n.is_negative() && !(shift && i == 0) {
-            return Err(outside(p, param, "int[0..]", &args[i]));
+            return Err(outside(p, param, "int[0..]", "negative"));
         }
     }
     if has_width(p) {
@@ -142,7 +145,12 @@ fn domain(p: Prim, ns: &[Cow<'_, Rat>], args: &[Value]) -> Result<(), KernelErro
             bits: e.bits,
         })?;
         if *ns[0] >= bound {
-            return Err(outside(p, "x", "int[0..<2 ** width]", &args[0]));
+            return Err(outside(
+                p,
+                "x",
+                "int[0..<2 ** width]",
+                "at least 2 ** width",
+            ));
         }
     }
     Ok(())
@@ -183,7 +191,7 @@ fn small(p: Prim, args: &[Value]) -> Result<Option<Value>, KernelError> {
     let shift = matches!(p, Prim::Shl | Prim::Shr);
     for (i, param) in params(p).iter().enumerate() {
         if v[i] < 0 && !(shift && i == 0) {
-            return Err(outside(p, param, "int[0..]", &args[i]));
+            return Err(outside(p, param, "int[0..]", "negative"));
         }
     }
     // The number of binary digits of a non-negative `x`.
@@ -191,7 +199,12 @@ fn small(p: Prim, args: &[Value]) -> Result<Option<Value>, KernelError> {
     if has_width(p) {
         let w = v[args.len() - 1];
         if digits(v[0]) > w {
-            return Err(outside(p, "x", "int[0..<2 ** width]", &args[0]));
+            return Err(outside(
+                p,
+                "x",
+                "int[0..<2 ** width]",
+                "at least 2 ** width",
+            ));
         }
     }
     let [x, y, z] = v;

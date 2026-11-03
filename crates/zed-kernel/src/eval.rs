@@ -479,7 +479,10 @@ fn data(v: V<'_>) -> R<Value> {
 fn family(v: Value) -> R<Family> {
     match v {
         Value::Family(f) => Ok(f),
-        other => type_err(format!("expected a family, found {other}")),
+        other => type_err(format!(
+            "expected a family, found a value of type `{}`",
+            other.kind_type()
+        )),
     }
 }
 
@@ -1142,7 +1145,7 @@ impl<'t> Machine<'_, 't> {
                 Value::Bool(true) => Ok(Step::Eval(a, self.ev.child(at, 1), env)),
                 Value::Bool(false) => Ok(Step::Eval(b, self.ev.child(at, 2), env)),
                 atom @ Value::Atom(_) => give(atom),
-                other => type_err(format!("`if` on {other}")),
+                other => type_err(format!("`if` on a value of type `{}`", other.kind_type())),
             },
             Wait::Match { arms, at, env } => {
                 let fact = self.ev.last_fact();
@@ -1167,7 +1170,10 @@ impl<'t> Machine<'_, 't> {
                     }
                 }
                 match v {
-                    V::Data(v) => type_err(format!("no arm matches {v}")),
+                    V::Data(v) => type_err(format!(
+                        "no arm matches a value of type `{}`",
+                        v.kind_type()
+                    )),
                     _ => type_err("no arm matches the function"),
                 }
             }
@@ -1273,7 +1279,10 @@ impl<'t> Machine<'_, 't> {
                         st.frames.push(end);
                         gen_end(*st)
                     }
-                    V::Data(other) => type_err(format!("a gen guard returned {other}")),
+                    V::Data(other) => type_err(format!(
+                        "a gen guard returned a value of type `{}`",
+                        other.kind_type()
+                    )),
                     _ => type_err("a gen guard returned a function"),
                 }
             }
@@ -1318,7 +1327,10 @@ impl<'t> Machine<'_, 't> {
             }
             V::Partial(_) | V::Source(_) => type_err("a family is read with `[]`, not called"),
             V::Data(Value::Atom(a)) => Ok(Step::Give(V::Data(Value::Atom(a.clone())))),
-            V::Data(other) => type_err(format!("{other} is not a function")),
+            V::Data(other) => type_err(format!(
+                "a value of type `{}` is not a function",
+                other.kind_type()
+            )),
         }
     }
 
@@ -1493,7 +1505,12 @@ impl<'t> Machine<'_, 't> {
             Value::Atom(a) if &*a.name == "boundary" && a.args.is_empty() => {
                 top.out.push((vec![k.clone()], k))
             }
-            other => return type_err(format!("a discard selector returned {other}")),
+            other => {
+                return type_err(format!(
+                    "a discard selector returned a value of type `{}`",
+                    other.kind_type()
+                ));
+            }
         }
         self.ev.leave(1);
         st.prefix.pop();
@@ -2114,7 +2131,10 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         _ => {}
     }
     let ty = |vals: &[Value]| {
-        let shown: Vec<String> = vals.iter().map(|v| v.to_string()).collect();
+        let shown: Vec<String> = vals
+            .iter()
+            .map(|v| format!("`{}`", v.kind_type()))
+            .collect();
         Err(KernelError::Type(format!(
             "{p:?} applied to {}",
             shown.join(", ")

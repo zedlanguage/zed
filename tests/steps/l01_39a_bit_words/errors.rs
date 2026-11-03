@@ -132,19 +132,19 @@ fn the_kernel_rejects_values_outside_the_domain() {
     };
     assert_eq!(
         err(Prim::BitAnd, &[-1, 1]),
-        "`bitAnd` needs `a` in int[0..], and it is -1"
+        "`bitAnd` needs `a` in int[0..], and it is negative"
     );
     assert_eq!(
         err(Prim::BitNot, &[8, 3]),
-        "`bitNot` needs `x` in int[0..<2 ** width], and it is 8"
+        "`bitNot` needs `x` in int[0..<2 ** width], and it is at least 2 ** width"
     );
     assert_eq!(
         err(Prim::Rotl, &[1, -1, 3]),
-        "`rotl` needs `k` in int[0..], and it is -1"
+        "`rotl` needs `k` in int[0..], and it is negative"
     );
     assert_eq!(
         err(Prim::Shr, &[1, -1]),
-        "`shr` needs `k` in int[0..], and it is -1"
+        "`shr` needs `k` in int[0..], and it is negative"
     );
 }
 

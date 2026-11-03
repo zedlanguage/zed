@@ -518,6 +518,24 @@ impl Value {
         }
     }
 
+    /// The type of every value of this one's kind, as a program writes it (DESIGN.md L1.40d):
+    /// `int` for an integer of either width, `#a` for a bare atom and `#a(..)` for one with a
+    /// payload, `(..)` for a tuple or a keypath, `_ ->? _` for a family. A type error names
+    /// this, not the value, which may be too large to print; its cost is the atom's name.
+    pub fn kind_type(&self) -> String {
+        match self {
+            Value::Bool(_) => "bool".into(),
+            Value::Int(_) | Value::Big(_) => "int".into(),
+            Value::Rat(_) => "rat".into(),
+            Value::Float(_) => "f64".into(),
+            Value::Str(_) => "String".into(),
+            Value::Atom(a) if a.args.is_empty() => format!("#{}", a.name),
+            Value::Atom(a) => format!("#{}(..)", a.name),
+            Value::Tuple(_) | Value::Path(_) => "(..)".into(),
+            Value::Family(_) => "_ ->? _".into(),
+        }
+    }
+
     /// The number's exact place on the extended line. A wide number is borrowed, not copied:
     /// a copy would be built without asking the system for the memory.
     pub(crate) fn exact(&self) -> Exact<'_> {

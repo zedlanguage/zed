@@ -185,7 +185,7 @@ fn a_boundary_verdict_keeps_the_key_as_a_set_leaf() {
     let bad = lam(&["p", "v"], lit(3));
     assert_eq!(
         eval(&discard(lit(stock()), bad)).unwrap_err(),
-        KernelError::Type("a discard selector returned 3".into())
+        KernelError::Type("a discard selector returned a value of type `int`".into())
     );
 }
 
@@ -594,22 +594,25 @@ fn a_port_inside_a_pure_region_is_rejected() {
 fn ill_typed_terms_are_reported() {
     for (t, msg) in [
         (var("x"), "unbound variable `x`"),
-        (app(lit(3), vec![]), "3 is not a function"),
+        (
+            app(lit(3), vec![]),
+            "a value of type `int` is not a function",
+        ),
         (
             app(lam(&["x"], var("x")), vec![]),
             "a function of 1 parameters called with 0 arguments",
         ),
-        (if_(lit(1), lit(2), lit(3)), "`if` on 1"),
+        (if_(lit(1), lit(2), lit(3)), "`if` on a value of type `int`"),
         (lam(&["x"], var("x")), "the program's result is a function"),
         (
             Term::Match(rc(lit(5)), vec![(Pattern::Lit(Value::Int(4)), lit(0))]),
-            "no arm matches 5",
+            "no arm matches a value of type `int`",
         ),
         (
             prim(Prim::Neg, vec![lit(1), lit(2)]),
             "Neg takes 1 arguments, given 2",
         ),
-        (prim(Prim::Not, vec![lit(1)]), "Not applied to 1"),
+        (prim(Prim::Not, vec![lit(1)]), "Not applied to `int`"),
     ] {
         assert_eq!(eval(&t).unwrap_err(), KernelError::Type(msg.into()));
     }
@@ -809,11 +812,11 @@ fn a_step_or_guard_of_the_wrong_kind_is_reported() {
                 guard: rc(lam(&["f"], lit(3))),
                 pos: GuardPos::Before,
             },
-            "a gen guard returned 3",
+            "a gen guard returned a value of type `int`",
         ),
         (
             fold(lit(3), Term::PrimFn(Prim::Add), None),
-            "expected a family, found 3",
+            "expected a family, found a value of type `int`",
         ),
         (
             if_(id.clone(), lit(1), lit(2)),

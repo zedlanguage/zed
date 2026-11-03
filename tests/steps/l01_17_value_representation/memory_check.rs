@@ -25,15 +25,19 @@ const MARGIN: u64 = 64 << 20;
 
 /// The width, in bits, of the operands in the child: 128 MiB, twice [`MARGIN`], so building
 /// any of them again is refused.
-const WIDE: u64 = 1 << 30;
+pub(super) const WIDE: u64 = 1 << 30;
 
 /// In the parent, runs the test `name` of this module again in a child process and returns
 /// `false` once it has passed there; in the child, returns `true`.
 fn in_child(name: &str) -> bool {
+    in_child_at(module_path!(), name)
+}
+
+/// [`in_child`] for the test `name` of the module `module`.
+pub(super) fn in_child_at(module: &str, name: &str) -> bool {
     if std::env::var_os(CHILD).is_some() {
         return true;
     }
-    let module = module_path!();
     let module = module.strip_prefix("steps::").unwrap_or(module);
     let full = format!("{module}::{name}");
     let out = Command::new(std::env::current_exe().expect("the test binary has a path"))
@@ -55,7 +59,7 @@ fn in_child(name: &str) -> bool {
 
 /// Lowers this process's address-space limit to what it uses now plus [`MARGIN`], and checks
 /// that a request of twice the margin is then refused.
-fn lower_limit() {
+pub(super) fn lower_limit() {
     let status = std::fs::read_to_string("/proc/self/status").expect("Linux has /proc");
     let kib: u64 = status
         .lines()

@@ -1229,3 +1229,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `retain` over the tuple shapes whose closure also pushes, into a `rest: Vec<KType>` it borrows mutably, the part of a shape that the kind-wide part holds in part | `Ty::diff` | Mutation (gap 11) | A fold over the shapes whose state is the kept shapes and the parts for the set |
 | A loop over both orders of the two sides that writes `out.set` and pushes to `met` in place | `Ty::meet` | Mutation (gap 11) | A fold over the shapes with the set and the kept shapes in its state, kept in place by provable last use (L6.13) |
 | `Option<&'static str>` for a parse error's message, pointing at a constant | `parse::Error.message`, `parse::DOTS` | None | A `String` constant; values are shared |
+
+## Entries from WIDE-copies (`zed-kernel/src/num.rs`, `value.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A closure `signed(x, y)` choosing `x - y` or `x + y` by a captured `bool`, so one body serves `add` and `sub` | `Rat::sum` | None | A local function of the flag, or the operator passed as a value |
+| `BigUint::iter_u64_digits().rev()` folded into a `u128` remainder | `num::rem` | Missing (no word view of an `int`) | A runtime primitive giving an `int`'s words, or `mod` by a word as a primitive |
+| `BigUint::from_slice` of a block of `u64` words split into reversed `u32` pairs | `num::rem` | Missing (no word view of an `int`) | The same primitive, building an `int` from a slice of its words |
+| `Result<bool, TooLarge>` with `?` through `divides_by`, `magnitude_order` and `exact_div` | `Rat::divides_by`, `Rat::div_euclid`, `Rat::rem_euclid` | Early exit (gap 12) | A failure value returned and matched at each call |

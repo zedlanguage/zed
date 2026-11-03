@@ -358,20 +358,56 @@ impl Rat {
     /// `a + b`, or [`TooLarge`] when the system refuses the memory for the part of the
     /// operands it builds.
     pub fn add(&self, b: &Rat) -> Result<Rat, TooLarge> {
+        self.sum(b, false)
+    }
+
+    /// `a - b`, by the rule of [`Rat::add`]. `b` is read with its sign flipped, not negated
+    /// into a copy, so `1 - x` builds only the difference.
+    pub fn sub(&self, b: &Rat) -> Result<Rat, TooLarge> {
+        self.sum(b, true)
+    }
+
+    /// `a + b`, or `a - b` when `minus`.
+    fn sum(&self, b: &Rat, minus: bool) -> Result<Rat, TooLarge> {
+        let signed = |x: BigInt, y: BigInt| match minus {
+            true => x - y,
+            false => x + y,
+        };
         if self.is_plain() && b.is_plain() {
             if self.den.is_one() && b.den.is_one() {
-                return Ok(Rat::int(&self.num + &b.num));
+                // num-bigint builds the result once, at most one bit wider than the wider
+                // operand.
+                room(BigUint::from(self.num.bits().max(b.num.bits()) + 1))?;
+                return Ok(Rat::int(match minus {
+                    true => &self.num - &b.num,
+                    false => &self.num + &b.num,
+                }));
             }
-            return Ok(
-                Rat::new(&self.num * &b.den + &b.num * &self.den, &self.den * &b.den)
-                    .expect("den > 0"),
-            );
+            // Complexity tradeoff: the memory asked for a sum of two plain rationals is eight
+            // times the unreduced result's width, a bound on the two cross products, their sum
+            // and the reduction by the gcd, whose peak was measured at two to four times that
+            // width; so a sum near an eighth of the free memory is refused though it would
+            // fit, and none aborts. Tested by `a_wide_rational_difference_is_refused_when_
+            // memory_is_short` (COMPLEXITY.md K30). A complete solution would ask each
+            // allocation of the reduction for its own memory, which needs a reduction written
+            // here rather than num-bigint's.
+            let n = (self.num.bits() + b.den.bits()).max(b.num.bits() + self.den.bits()) + 1;
+            let d = self.den.bits() + b.den.bits();
+            room(BigUint::from(n + d) << 3u32)?;
+            return Ok(Rat::new(
+                signed(&self.num * &b.den, &b.num * &self.den),
+                &self.den * &b.den,
+            )
+            .expect("den > 0"));
         }
         if self.is_zero() {
-            return Ok(b.clone());
+            return match minus {
+                true => b.try_neg(),
+                false => b.try_copy(),
+            };
         }
         if b.is_zero() {
-            return Ok(self.clone());
+            return self.try_copy();
         }
         // The common powers `g`, each prime at the lesser exponent, factor out; the rest of
         // each operand is built, at the cost of its size.
@@ -402,15 +438,10 @@ impl Rat {
         let ra = &a.num * built(&rest_a);
         let rb = &b.num * built(&rest_b);
         Ok(Rat::build(
-            ra * &b.den + rb * &a.den,
+            signed(ra * &b.den, rb * &a.den),
             &a.den * &b.den,
             common,
         ))
-    }
-
-    /// `a - b`, by the rule of [`Rat::add`].
-    pub fn sub(&self, b: &Rat) -> Result<Rat, TooLarge> {
-        self.add(&b.neg())
     }
 
     /// `a * b`.
@@ -457,6 +488,12 @@ impl Rat {
     pub fn try_neg(&self) -> Result<Rat, TooLarge> {
         room(BigUint::from(self.num.bits() + self.den.bits()))?;
         Ok(self.neg())
+    }
+
+    /// A copy, or [`TooLarge`] when the system refuses the memory for its coefficients.
+    fn try_copy(&self) -> Result<Rat, TooLarge> {
+        room(BigUint::from(self.num.bits() + self.den.bits()))?;
+        Ok(self.clone())
     }
 
     /// `|a|`.
@@ -529,13 +566,14 @@ impl Rat {
     /// compared to more bits than the system gives memory for.
     pub fn rem_euclid(&self, m: &Rat) -> Result<Rat, TooLarge> {
         if self.is_plain() && m.is_plain() {
-            return Ok(Rat::int(Euclid::rem_euclid(&self.num, &m.num)));
+            let r = rem(self.num.magnitude(), m.num.magnitude())?;
+            return euclid(r, self.is_negative(), m.num.magnitude());
         }
-        if self.divides_by(m) {
+        if self.divides_by(m)? {
             return Ok(Rat::int(BigInt::zero()));
         }
-        if !self.is_negative() && self.try_cmp(&m.abs())? == Ordering::Less {
-            return Ok(self.clone());
+        if !self.is_negative() && self.magnitude_order(m, true)? == Ordering::Less {
+            return self.try_copy();
         }
         self.rem_built(m)
     }
@@ -552,17 +590,12 @@ impl Rat {
         // `kept_powers_agree_with_the_built_value` (COMPLEXITY.md K30). A complete solution
         // would keep a residue modulo a kept power unbuilt, as `p^a mod p^b` is, which needs
         // modular arithmetic on the kept forms.
-        let m = m.to_integer()?.magnitude().clone();
-        let mut r = self.num.magnitude() % &m;
+        let (_, m) = m.to_integer()?.into_parts();
+        let mut r = rem(self.num.magnitude(), &m)?;
         for (p, e) in self.pows.iter() {
             r = r * BigUint::from(*p).modpow(e.magnitude(), &m) % &m;
         }
-        let r = BigInt::from(r);
-        Ok(if self.is_negative() && !r.is_zero() {
-            Rat::int(BigInt::from(m) - r)
-        } else {
-            Rat::int(r)
-        })
+        euclid(r, self.is_negative(), &m)
     }
 
     /// The Euclidean quotient of two integers; `m` is not zero. An exact division keeps the
@@ -571,13 +604,25 @@ impl Rat {
     /// above the powers it shares with the remainder, by the rule of [`Rat::add`].
     pub fn div_euclid(&self, m: &Rat) -> Result<Rat, TooLarge> {
         if self.is_plain() && m.is_plain() {
+            // Complexity tradeoff: the memory asked for is the quotient's width for a divisor
+            // of one word, which num-bigint divides into a single copy of the dividend, and
+            // four times the dividend's width for a wider divisor, the peak of num-bigint's
+            // long division and Burnikel-Ziegler division as measured (two to four times); so
+            // a quotient by a wide divisor near a quarter of the free memory is refused though
+            // it might fit, and none aborts. Tested by `dividing_a_wide_number_is_refused_
+            // when_memory_is_short` (COMPLEXITY.md K30). A complete solution would divide here
+            // and ask for each block of the quotient as it is written.
+            let a = BigUint::from(self.num.bits());
+            room(match m.num.magnitude().to_u64() {
+                Some(_) => a,
+                None => a << 2u32,
+            })?;
             return Ok(Rat::int(Euclid::div_euclid(&self.num, &m.num)));
         }
-        let q = self.div(m).expect("the divisor is not zero");
-        if q.is_integer() {
-            return Ok(q);
+        if self.divides_by(m)? {
+            return self.exact_div(m);
         }
-        if self.abs().try_cmp(&m.abs())? == Ordering::Less {
+        if self.magnitude_order(m, true)? == Ordering::Less {
             // `0 <= a < |m|` gives `0`; `-|m| < a < 0` gives `-1` toward a positive `m`.
             let q = match (self.is_negative(), m.is_negative()) {
                 (false, _) => 0,
@@ -597,13 +642,32 @@ impl Rat {
         // would keep the floor of a quotient of kept powers unbuilt, which needs the same
         // modular arithmetic on kept forms as `rem_built`.
         let r = self.rem_built(m)?;
-        Ok(self.sub(&r)?.div(m).expect("the divisor is not zero"))
+        self.sub(&r)?.exact_div(m)
     }
 
-    /// Whether the integer `m` divides this integer: their quotient is an integer, found by
-    /// subtracting exponents.
-    fn divides_by(&self, m: &Rat) -> bool {
-        self.div(m).expect("the divisor is not zero").is_integer()
+    /// Whether the integer `m` divides this integer, with no quotient built: once both are
+    /// aligned to the primes either lists, each exponent of `m` is at most this one's and `m`'s
+    /// coefficient divides this one's ([`rem`]). [`TooLarge`] when aligning copies a
+    /// coefficient, or the remainder needs more memory, than the system gives.
+    fn divides_by(&self, m: &Rat) -> Result<bool, TooLarge> {
+        if self.is_zero() {
+            return Ok(true);
+        }
+        let a = self.aligned(&m.pows, true)?;
+        let b = m.aligned(&self.pows, true)?;
+        if zip_pows(&a.pows, &b.pows).any(|(_, x, y)| y > x) {
+            return Ok(false);
+        }
+        Ok(rem(a.num.magnitude(), b.num.magnitude())?.is_zero())
+    }
+
+    /// `a / m` for an `m` that divides this integer, or [`TooLarge`] when the system refuses
+    /// the memory for it: the two products the quotient is built from and their reduction,
+    /// eight times the widths of the four coefficients, as for a sum of plain rationals.
+    fn exact_div(&self, m: &Rat) -> Result<Rat, TooLarge> {
+        let bits = self.num.bits() + self.den.bits() + m.num.bits() + m.den.bits();
+        room(BigUint::from(bits) << 3u32)?;
+        Ok(self.div(m).expect("the divisor is not zero"))
     }
 
     /// The same number, with each prime of `others` moved out of `num` and `den` too. When one
@@ -952,6 +1016,55 @@ fn divides(m: &BigUint, p: u64) -> bool {
     }
 }
 
+/// `a mod m` for an `m` that is not zero, read from the top of `a` with no copy of it, so its
+/// memory is that of `m` whatever the size of `a`. A one-word `m` folds the words of `a` into
+/// a two-word remainder; a wider `m` folds blocks of as many words as `m` has, each step
+/// dividing a number of twice `m`'s length by `m`. [`TooLarge`] when the system refuses the
+/// memory for a step: num-bigint's division of it peaks at four times its dividend
+/// (measured), so eight times `m`'s width.
+fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
+    if let Some(w) = m.to_u64() {
+        let w = u128::from(w);
+        let r = a
+            .iter_u64_digits()
+            .rev()
+            .fold(0u128, |r, d| ((r << 64) | u128::from(d)) % w);
+        return Ok(BigUint::from(r));
+    }
+    room(BigUint::from(m.bits()) << 3u32)?;
+    let len = m.iter_u64_digits().len();
+    let mut words = a.iter_u64_digits().rev();
+    let mut left = words.len();
+    let mut take = match left % len {
+        0 => len,
+        k => k,
+    };
+    let mut block: Vec<u32> = Vec::with_capacity(2 * len);
+    let mut r = BigUint::zero();
+    while left > 0 {
+        block.clear();
+        for d in words.by_ref().take(take) {
+            // Highest word first, so reversing the block gives the low half-word first.
+            block.extend([(d >> 32) as u32, d as u32]);
+        }
+        block.reverse();
+        r = &((r << (64 * take)) + BigUint::from_slice(&block)) % m;
+        left -= take;
+        take = len;
+    }
+    Ok(r)
+}
+
+/// The Euclidean remainder from `r = |a| mod |m|`: `r` itself, or `|m| - r` for a negative
+/// `a` and a nonzero `r`, built after asking for `m`'s width.
+fn euclid(r: BigUint, negative: bool, m: &BigUint) -> Result<Rat, TooLarge> {
+    if !negative || r.is_zero() {
+        return Ok(Rat::int(BigInt::from(r)));
+    }
+    room(BigUint::from(m.bits()))?;
+    Ok(Rat::int(BigInt::from(m - r)))
+}
+
 /// `x * y`, borrowed when one is 1; when `check`, [`TooLarge`] if the system refuses the memory
 /// for the product.
 fn times<'a>(x: &'a BigUint, y: &'a BigUint, check: bool) -> Result<Cow<'a, BigUint>, TooLarge> {
@@ -1065,24 +1178,30 @@ impl Rat {
     /// The order by value; when `check`, [`TooLarge`] as for [`Rat::try_cmp`], and otherwise
     /// the build is not checked.
     fn order(&self, other: &Rat, check: bool) -> Result<Ordering, TooLarge> {
-        if self.is_plain() && other.is_plain() {
-            if self.den.is_one() && other.den.is_one() {
-                return Ok(self.num.cmp(&other.num));
-            }
-            let sign = self.num.sign().cmp(&other.num.sign());
-            if sign != Ordering::Equal || self.is_zero() {
-                return Ok(sign);
-            }
-            let n = times(self.num.magnitude(), other.den.magnitude(), check)?;
-            let d = times(other.num.magnitude(), self.den.magnitude(), check)?;
-            return Ok(match self.is_negative() {
-                true => d.cmp(&n),
-                false => n.cmp(&d),
-            });
+        if self.is_plain() && other.is_plain() && self.den.is_one() && other.den.is_one() {
+            return Ok(self.num.cmp(&other.num));
         }
         let sign = self.num.sign().cmp(&other.num.sign());
         if sign != Ordering::Equal || self.is_zero() {
             return Ok(sign);
+        }
+        let o = self.magnitude_order(other, check)?;
+        Ok(match self.is_negative() {
+            true => o.reverse(),
+            false => o,
+        })
+    }
+
+    /// The order of `|self|` and `|other|`, read from the coefficients' magnitudes with no
+    /// copy of either; when `check`, [`TooLarge`] as for [`Rat::try_cmp`].
+    fn magnitude_order(&self, other: &Rat, check: bool) -> Result<Ordering, TooLarge> {
+        if self.is_zero() || other.is_zero() {
+            return Ok(other.is_zero().cmp(&self.is_zero()));
+        }
+        if self.is_plain() && other.is_plain() {
+            let n = times(self.num.magnitude(), other.den.magnitude(), check)?;
+            let d = times(other.num.magnitude(), self.den.magnitude(), check)?;
+            return Ok(n.cmp(&d));
         }
         // With both coprime to every listed prime, the two are equal exactly when their
         // coefficients and exponents are, and otherwise one side holds a prime the other lacks.
@@ -1097,7 +1216,7 @@ impl Rat {
                 .map(|(p, e)| (*p, e.magnitude().clone()))
                 .collect()
         };
-        let o = match f.is_empty() {
+        Ok(match f.is_empty() {
             true => n.cmp(&d),
             false => {
                 let up = Product {
@@ -1110,10 +1229,6 @@ impl Rat {
                 };
                 bound::cmp(&up, &down, check)?
             }
-        };
-        Ok(match self.is_negative() {
-            true => o.reverse(),
-            false => o,
         })
     }
 

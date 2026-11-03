@@ -6,6 +6,7 @@
 
 mod atoms;
 mod equality;
+mod in_place;
 mod memory_check;
 mod numbers;
 mod order;

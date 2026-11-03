@@ -116,7 +116,10 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
 }
 
 fn type_err(p: Prim, x: &Value) -> Result<Value, KernelError> {
-    Err(KernelError::Type(format!("{p:?} applied to {x}")))
+    Err(KernelError::Type(format!(
+        "{p:?} applied to `{}`",
+        x.kind_type()
+    )))
 }
 
 /// A part of a value that more than one holder can share, read once by [`room_to_print`].
