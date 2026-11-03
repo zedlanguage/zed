@@ -168,6 +168,9 @@ pub const AXIOMS: &[Axiom] = &[
     ax("==", Int, Transitive),
     ax("==", F64, Symmetric),
     ax("==", F64, Transitive),
+    ax("==", Bool, Reflexive),
+    ax("==", Bool, Symmetric),
+    ax("==", Bool, Transitive),
     ax("==", String, Reflexive),
     ax("==", String, Symmetric),
     ax("==", String, Transitive),
@@ -175,6 +178,8 @@ pub const AXIOMS: &[Axiom] = &[
     ax("!=", Int, Symmetric),
     // `!=` at `f64` is only symmetric: `NaN != NaN` is true, so it is not irreflexive.
     ax("!=", F64, Symmetric),
+    ax("!=", Bool, Irreflexive),
+    ax("!=", Bool, Symmetric),
     ax("!=", String, Irreflexive),
     ax("!=", String, Symmetric),
     // The comparisons are the total order of values at every carrier but `f64`, where they are

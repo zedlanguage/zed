@@ -265,7 +265,7 @@ fn every_axiom_holds_on_the_harness_instances() {
             Err(why) => panic!("{} at {:?}: {:?} fails on {why}", a.op, a.carrier, a.law),
         }
     }
-    assert_eq!(AXIOMS.len(), 106);
+    assert_eq!(AXIOMS.len(), 111);
     assert!(total > 50_000, "{total} instances");
 }
 
@@ -299,6 +299,8 @@ fn a_false_claim_of_each_kind_is_refuted() {
         claim("<=", F64, Law::Composes(">=", "<=")), // 0.0 <= 2.0 >= 1.0 but not 2.0 <= 1.0
         claim("!=", F64, Law::Irreflexive),  // NaN != NaN
         claim("!=", F64, Law::Transitive),   // 0.0 != 1.0 != 0.0 but not 0.0 != 0.0
+        claim("!=", Bool, Law::Transitive),  // true != false != true but not true != true
+        claim("==", Bool, Law::Irreflexive), // true == true
         claim(">=", String, Law::Implies(">")), // "a" >= "a" but not "a" > "a"
         claim(">", String, Law::Total),      // neither "a" > "a"
     ];
@@ -487,4 +489,35 @@ fn strings_compare_by_code_point() {
         }
     }
     assert!(n > 9_000, "{n} instances");
+}
+
+/// `==` is an equivalence and `!=` irreflexive and symmetric at every carrier but `f64`, where a
+/// NaN makes both only symmetric (DESIGN M0.11): the table has exactly those laws of the two at
+/// each carrier. At `bool` the evaluator's `==` and `!=` are the truth tables of equality and
+/// exclusive or, on all four pairs.
+#[test]
+fn equality_has_its_laws_at_every_carrier() {
+    use zedc::axioms::of;
+    let laws = |op: &str, c: Carrier| of(op, c).copied().collect::<Vec<Law>>();
+    for c in [Carrier::Int, Carrier::Bool, Carrier::String] {
+        assert_eq!(
+            laws("==", c),
+            [Law::Reflexive, Law::Symmetric, Law::Transitive],
+            "== at {c:?}"
+        );
+        assert_eq!(
+            laws("!=", c),
+            [Law::Irreflexive, Law::Symmetric],
+            "!= at {c:?}"
+        );
+    }
+    assert_eq!(laws("==", Carrier::F64), [Law::Symmetric, Law::Transitive]);
+    assert_eq!(laws("!=", Carrier::F64), [Law::Symmetric]);
+    for x in [false, true] {
+        for y in [false, true] {
+            let (a, b) = (Value::Bool(x), Value::Bool(y));
+            assert_eq!(holds("==", &[&a, &b]), x == y, "{x} == {y}");
+            assert_eq!(holds("!=", &[&a, &b]), x ^ y, "{x} != {y}");
+        }
+    }
 }

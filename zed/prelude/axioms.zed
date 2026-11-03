@@ -78,6 +78,9 @@ axioms = [
   Axiom(op: "==", carrier: #int, property: #transitive),
   Axiom(op: "==", carrier: #f64, property: #symmetric),
   Axiom(op: "==", carrier: #f64, property: #transitive),
+  Axiom(op: "==", carrier: #bool, property: #reflexive),
+  Axiom(op: "==", carrier: #bool, property: #symmetric),
+  Axiom(op: "==", carrier: #bool, property: #transitive),
   Axiom(op: "==", carrier: #string, property: #reflexive),
   Axiom(op: "==", carrier: #string, property: #symmetric),
   Axiom(op: "==", carrier: #string, property: #transitive),
@@ -85,6 +88,8 @@ axioms = [
   Axiom(op: "!=", carrier: #int, property: #symmetric),
   // `!=` at `f64` is only symmetric: `NaN != NaN` is true, so it is not irreflexive.
   Axiom(op: "!=", carrier: #f64, property: #symmetric),
+  Axiom(op: "!=", carrier: #bool, property: #irreflexive),
+  Axiom(op: "!=", carrier: #bool, property: #symmetric),
   Axiom(op: "!=", carrier: #string, property: #irreflexive),
   Axiom(op: "!=", carrier: #string, property: #symmetric),
   // The comparisons are the total order of values at every carrier but `f64`, where they are
