@@ -928,7 +928,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIN-probe | merge attempt 1 | 2026-11-03 07:30 | lock released |
 | LIVE3 | verify attempt 1 | 2026-11-03 09:30 | full run tools/run_tests.sh 2 on 8db4217: 98 pieces, 1 failed (l01_25: s22 random_terms and more_random_guarded_chains, the two the implementer names as failing |
 | S22-cross-scaling | orchestrator attempt  | 2026-11-03 11:23 | owner: CATCHUP-cross direct agent, bisecting |
-| S22e-quad | verify attempt 2 | 2026-11-03 07:43 | run_tests.sh 2 on 02f907b: 98 pieces, 0 failed (load 57.7 to 91.2); l01_25 135 passed 1 ignored 84 s at load 91; running clippy and a random soundness probe nex |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | repair attempt 1 | 2026-11-03 04:26 | rebased on main 3626624 (STATUS rows kept both; check/mod.rs and elab.rs took the branch walks with main's Seq->Array and Op::Pow(Int) ported); builds; load 43. |
 | T6-bound-load | verify attempt 2 | 2026-11-03 07:07 | done ok=true: run_tests.sh 2 on 59601e0: 98 pieces, 1 failed (l01_25 s22 pair, pre-existing in base); l01_23 94, l01_29 31, l01_22 24 pass; fmt, clippy clean; p |
@@ -939,8 +938,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | returning ok=true: 942fd60 merges cleanly into main 40750ce, spec a628181 into zed cc889a2; non-blocking: no log port yet so @log(#off); drops no line (L7.3 own |
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 
-Merged into local main and not yet pushed (171 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (174 commits); the push follows one full test run on the merged tree:
 
+- 1f2e9e0 S22e-quad repair 1: the split before the first transfer is given up where the transfer reads the guards
+- 9ecb4f0 S22e-quad: classes of remainders share one reading of the guard chain, O(k log k)
+- 1d94b82 plan_dag, STATUS: T2-types done (tip 6fed5c4)
 - 6fed5c4 T2-types: ZED_PORT_GAPS names the recursive-type naming in the text loop
 - 2f4bca6 T2-types: COMPLEXITY K39 and STATUS record the recursive-type names made in the text loop and the release measured on its own thread
 - 12a004c T2-types: a recursive type's name is a rope made as an item of the text loop's stack
