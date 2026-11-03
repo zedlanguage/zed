@@ -30,7 +30,7 @@ use zed_kernel::provenance::FactAddress;
 
 use super::affine::{Affine, Bounds};
 use super::float::FloatClass;
-use super::interval::IntervalSet;
+use super::interval::{End, IntervalSet};
 use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
 
 /// What an element rests on.
@@ -282,8 +282,13 @@ impl Cell {
             }
             Value::Float(x) => c.float.element = FloatClass::of(x.get()),
             Value::Str(s) => {
-                let n = s.char_count() as i64;
-                c.length.element = Bounds::ints(IntervalSet::single(n));
+                c.length.element = Bounds::ints(match i64::try_from(s.char_count()) {
+                    Ok(n) => IntervalSet::single(n),
+                    // A string doubled 63 times holds more than `i64::MAX` characters, and `len`
+                    // is then a big integer. The interval domain keeps an integer past `i64` as
+                    // the ray from `i64::MAX` up ([`End::lower`]).
+                    Err(_) => IntervalSet::range(End::Fin(i64::MAX), End::PosInf),
+                });
             }
             _ => {}
         }

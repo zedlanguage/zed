@@ -776,4 +776,4 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `usize::checked_add` of two byte counts, refused past `usize::MAX` | `Text::join` | Machine integers | With `int` counts the sum never wraps; the refusal stays as an `if` comparing the sum with the largest length the runtime can address |
-| `i64::try_from` of a count, with a big integer when it does not fit | `words::word` (`Len`), `hooks::node` (`Len`) | Machine integers | Vanishes: `len` returns an `int` |
+| `i64::try_from` of a count, with a big integer when it does not fit | `words::word` (`Len`), `hooks::node` (`Len`), `store::cell::Cell::literal` (a string's length; past `i64` the ray from `i64::MAX` up) | Machine integers | Vanishes: `len` returns an `int` |
