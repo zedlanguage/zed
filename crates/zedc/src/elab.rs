@@ -1802,8 +1802,8 @@ impl<'a> Elab<'a> {
 /// A name of a port denotes no type: it is an error in `ports`, and the type is `None`. With
 /// `bounds`, each `L .. U -> V` whose guarantee `L` is not within its permission `U` is an
 /// error there, with the cause when that check was refused; the checker passes it once for
-/// each written type of a program (`Ck::written`), so every way a program is checked runs this
-/// check, and runs it once. One pass over the type.
+/// each written type of a program (the list `Tables::written`, walked by `Ck::bounds`), so
+/// every way a program is checked runs this check, and runs it once. One pass over the type.
 pub(crate) fn kernel_type(
     t: &Type,
     ports: &mut Vec<(Span, String)>,

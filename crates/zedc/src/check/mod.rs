@@ -4007,6 +4007,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .collect();
                 let pieces: Vec<Option<Ty>> =
                     path.iter().map(|p| p.as_ref().map(Piece::ty)).collect();
+                let pieces: Vec<Option<&Ty>> = pieces.iter().map(Option::as_ref).collect();
                 let why = refused_among(sig, &kept, &pieces);
                 format!("{what} does not take ({}){why}", shown.join(", "))
             };
@@ -4127,9 +4128,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return Ok(None);
             }
             // No arrow met an argument, which may rest on a refused check that it is empty.
-            let tys: Vec<Option<Ty>> = args
+            let tys: Vec<Option<&Ty>> = args
                 .iter()
-                .map(|a| a.as_ref().filter(|a| a.lit.is_none()).map(|a| a.ty.clone()))
+                .map(|a| a.as_ref().filter(|a| a.lit.is_none()).map(|a| &a.ty))
                 .collect();
             let all: Vec<usize> = (0..sig.arrows.len()).collect();
             let why = refused_among(sig, &all, &tys);
@@ -4151,8 +4152,6 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 }
 
-/// The type of the one-parameter word `sig` applied to `t`, its atoms passing through; none
-/// when a piece of `t` fits no arrow, an unknown one fitting only an arrow that takes any.
 /// The written type `a` as the kernel prints it, which parses back as itself: how a message
 /// shows a declared type the checker does not track. `None` for a type that holds a port,
 /// which has no kernel type.
@@ -4165,7 +4164,7 @@ pub fn declared_text(a: &Type) -> Option<String> {
 /// that no argument rejects by a decided check, since only there the rejection rests on the
 /// refusal; nothing if every arrow is rejected by a decided check. On the error path only:
 /// arrows times arguments checks.
-fn refused_among(sig: &Sig, arrows: &[usize], args: &[Option<Ty>]) -> String {
+fn refused_among(sig: &Sig, arrows: &[usize], args: &[Option<&Ty>]) -> String {
     arrows
         .iter()
         .find_map(|&j| {
@@ -4185,6 +4184,8 @@ fn refused_among(sig: &Sig, arrows: &[usize], args: &[Option<Ty>]) -> String {
         .unwrap_or_default()
 }
 
+/// The type of the one-parameter word `sig` applied to `t`, its atoms passing through; none
+/// when a piece of `t` fits no arrow, an unknown one fitting only an arrow that takes any.
 fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
     let mut out = t.loose_ty();
     for p in t.without_loose().pieces() {

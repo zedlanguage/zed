@@ -100,8 +100,8 @@ fn a_parameter_whose_morphism_bound_check_was_refused_says_why() {
     );
 }
 
-/// The walk is linear in the written types: `n` and `8n` parameters, each with a nested
-/// bounded type, cost at most about 8 times as much (16 with noise).
+/// The walk is linear in the written types: loading a program of `n` and of `8n` parameters,
+/// each with a nested bounded type, does work of order n, counted in instructions.
 #[test]
 fn the_bound_walk_scales_linearly() {
     let program = |n: usize| {
@@ -110,13 +110,9 @@ fn the_bound_walk_scales_linearly() {
             .collect();
         format!("f({}) = 0;\nmain() = 0;\n", params.join(", "))
     };
-    let time = |n: usize| {
-        let src = program(n);
-        let start = std::time::Instant::now();
-        assert!(zedc::run::load(src.as_bytes()).is_ok());
-        start.elapsed().as_secs_f64()
-    };
-    time(50);
-    let (a, b) = (time(250), time(2000));
-    assert!(b < 16.0 * a + 0.05, "250: {a:.4}s, 2000: {b:.4}s");
+    let programs: std::collections::HashMap<usize, String> =
+        [250, 2000].into_iter().map(|n| (n, program(n))).collect();
+    zed_tests::scaling::check_order("bound walk through load", 250, 1, |n| {
+        assert!(zedc::run::load(programs[&n].as_bytes()).is_ok());
+    });
 }
