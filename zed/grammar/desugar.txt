@@ -71,7 +71,7 @@ ReduceTail    : `F >< op` is fold(⟦F⟧, ⟦op⟧, ev) with the evidence the c
 Unordered     : the fold's evidence permits any grouping and order (sec:reduction)
 Range         : `a ..< b`, `a ..= b` and `a ..` are the domains {a, …, b−1}, {a, …, b} and {a, a+1, …}, built by the primitive range; an unbounded domain is read only by generators that stop
 RangeTail     : the upper end of a range, exclusive, inclusive or absent
-Additive      : the primitives add and sub; `++` joins strings, and on Seq is the right operand reindexed by rank + count(⟦a⟧) unioned with ⟦a⟧ (L5)
+Additive      : the primitives add and sub; `++` on String and on rank keys is the offset concatenation, the right operand reindexed by rank + count(⟦a⟧) unioned with ⟦a⟧; on Seq (L5) it is the union of the operands, which keep their origin keys, the right operand ordered after the left (sec:order), and operands whose keys overlap are a collision
 Multiplicative: the primitives mul, div, intDiv and mod
 Prefix        : the primitives neg and not
 Power         : the primitive pow, right-associative
@@ -97,7 +97,7 @@ This          : the receiver, or the family a definedness fix defines
 OpFunction    : the primitive as a function
 Group         : ⟦e⟧
 TupleExpr     : the primitive tuple
-SeqExpr       : the Seq {0 -> ⟦e0⟧, …}
+SeqExpr       : the array {0 -> ⟦e0⟧, …, n−1 -> ⟦en−1⟧} of type int[0..<n] -> T, keyed by rank (sec:type_notation)
 HoleExpr      : a hole, reported, whose term is #hole
 Literal       : the literal value; a float literal rounds once to the nearest double
 BinOp         : the operator's primitive as a function; `&&` and `||` are λ(a, b). ⟦a && b⟧ and λ(a, b). ⟦a || b⟧
@@ -132,10 +132,11 @@ KeyTerm       : a key, or a parenthesized join term
 JoinExpr      : a parenthesized boolean expression in key position, which is a key and not a region
 Key           : a key expression over the source's level names; `_` the leaf value
 KeyOp         : a lookahead only; no term
-Type          : the set-theoretic type its arrow denotes (sec:type_language), with the facets attached and the `where` refinement applied
+Type          : the set-theoretic type its arrow denotes (sec:type_language), with the facets attached, the `where` refinement applied and the type variables bounded
 TypeFacet     : a facet attached to the type (sec:facets)
 TypeWhere     : the refinement of the type to the values where the predicate holds
-Arrow         : a function type, its parameters' kinds recorded; `->?` a partial family type, whose reads may be #notFound
+TypeBounds    : bounds each named type variable of the type to the union of carriers after its `in` (step L1.26)
+Arrow         : a function type, its parameters' kinds recorded; `->?` a partial family type, whose reads may be #notFound; `L .. U -> V` a morphism type with guarantee `L` and permission `U`
 ArrowParams   : the parameter list of a function type
 TypeParam     : a parameter type, positional or named
 TypeUnion     : the union or difference of its alternative
@@ -151,16 +152,16 @@ TypePrimary   : the type of its alternative
 LitType       : the singleton type of the literal
 TypeApply     : a type application
 TypeName      : a named type
-AtomApply     : an atom type with its payload
-AtomType      : an atom type
+AtomApply     : an atom type with its payload; `#a(..)` the atom with any payload, `#a()` the atom whose payload is the empty tuple
+AtomType      : an atom type; `#_` every atom
 ArrayType     : a shaped array
-SeqType       : Seq(T)
-TupleType     : a tuple type; `()` is the type of the empty tuple
-FieldType     : a one-field tuple
+SeqType       : the array type int[0..<_] -> T (sec:type_notation)
+TupleType     : a tuple type; `()` is the type of the empty tuple, `(T,)` the one-tuple, `(..)` every tuple
+FieldType     : the type T; Name names its value in T's `where` predicate (sec:domains)
 GroupType     : the type T
-RecordType    : a record type
+RecordType    : a record type; `{..}` every struct, the struct type that guarantees no field
 SetType       : the singleton types of the literals, as one union
-InferType     : a type to infer
+InferType     : the type `_` of every value (sec:type_language)
 HoleType      : a hole
 ShapeDim      : one dimension of a shaped array, a size with an optional name
 GrammarBlock  : a grammar, elaborated to the parser and printer it defines, its rule recursion a fix (sec:tour_grammar)

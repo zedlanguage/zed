@@ -126,7 +126,11 @@ impl WordTable {
             .map_err(|_| format!("a table row with no layer: {l}"))?;
         for (col, cell) in [c1, c2, c3].into_iter().enumerate() {
             for w in spans(cell) {
-                if UNCOUNTED.contains(&w) || w.starts_with("with ") {
+                // A named argument (`nodes:`) is read with its call, which the row names, and a
+                // call (`target(…)`) refers to a word its own row counts.
+                let argument = w.strip_suffix(':').is_some_and(is_word);
+                let call = w.strip_suffix("(…)").is_some_and(is_word);
+                if UNCOUNTED.contains(&w) || w.starts_with("with ") || argument || call {
                     continue;
                 }
                 let (map, word) = if w.starts_with('@') {
@@ -540,4 +544,25 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
         .filter(|a| *a != "-v")
         .collect();
     report(&spec, rest.iter().any(|a| a == "-v"), &files, out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WordTable;
+
+    /// A named argument such as `nodes:` is read with its call, and a call such as `target(…)`
+    /// refers to a word another row counts, so a row names both without counting them; any
+    /// other span that is not a word is still refused.
+    #[test]
+    fn argument_names_are_not_counted() {
+        let mut t = WordTable::default();
+        t.read_row("| L27 | — | `recovery` | the target values `#gpu` and `#cluster`; the size `nodes:` of `target(…)` and `@require` |")
+            .unwrap();
+        assert_eq!(t.facets.get("recovery"), Some(&27));
+        assert_eq!(t.atoms.get("#cluster"), Some(&27));
+        assert!(!t.forms.contains_key("nodes") && !t.forms.contains_key("nodes:"));
+        assert!(!t.forms.contains_key("target") && !t.forms.contains_key("target(…)"));
+        assert!(t.read_row("| L27 | — | — | `a b` |").is_err());
+        assert!(t.read_row("| L27 | — | — | `:` |").is_err());
+    }
 }
