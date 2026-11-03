@@ -819,7 +819,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| IDLANG-spec+NONCOMM | merge attempt  | 2026-11-03 05:34 | lock released; zed-impl 2c33435, zed 1025886 |
 | OSP-drop2 | verify attempt 1 | 2026-11-03 04:27 | probe: _ = apply(lookup, 1) and _ = first((lookup(1), 2)) (value int / #notFound, no else) accepted on branch, rejected on main a155283: generic call result's a |
 | S22a | repair attempt 2 | 2026-11-03 03:01 | cause of cross exponential found: enumerate() called stage::ends (tree walk of the shared term, 2^k) before its O(1) box test; reordered: cross k=22 1.01 s -> 0 |
 | ST-arms-quad | verify attempt 2 | 2026-11-03 03:35 | started on af39546 (base 03d3d41); no earlier verify lines for af39546; load 36.14 32.87 37.69 |
@@ -827,11 +826,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T2-mid | impl attempt 1 | 2026-11-03 04:27 | elab Tables collect on explicit stack committed; deep tests l01_16 pass, old code overflows; shallow +1.7%; load 27.42 |
 | T6 | repair attempt 3 | 2026-11-03 00:01 | build test controls (not committed, reverted): Group::new scanning every kept definition by name 23.5x (passes, limit 24); comparing bodies did not end in 300 s |
 | TD-ends | repair attempt 2 | 2026-11-03 03:52 | reproduced on c664182 at load 28-40: x**k+1 forward 17 ms/349 ms/15.5 s at k=1e6/8e6/1e8; preimage x**1e8+1>=50 14.7 s (0.7 ms without +1); x**4<=2**1e8 3.0 s;  |
-| TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
+| TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#3 in progress) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (14 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (15 commits); the push follows one full test run on the merged tree:
 
+- 8306657 STATUS: in progress as of 2026-11-03 05:38
 - 2c33435 Merge branch 'wt/plan-noncomm'
 - a155283 Merge branch 'wt/plan-idlang'
 - f824074 fences: NonCommRing fence and line shifts from the DESIGN edit
