@@ -5,6 +5,7 @@
 mod graphs;
 mod items;
 mod rejections;
+mod scaling;
 
 use zedc::zir::{Region, binary, text, validate};
 

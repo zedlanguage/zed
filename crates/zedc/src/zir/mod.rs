@@ -53,6 +53,8 @@ pub mod memory;
 pub mod text;
 
 use std::collections::HashMap;
+use std::fmt::Write;
+use std::mem;
 use std::sync::Arc;
 
 use zed_kernel::term::{Evidence, GuardPos, Pattern, Prim, Witness};
@@ -207,8 +209,9 @@ pub struct Node {
     pub regions: Vec<Arc<Region>>,
 }
 
-/// A region.
-#[derive(Clone, PartialEq, Debug)]
+/// A region. Its drop and its comparison keep their own stack on the heap, so a graph's depth
+/// is limited by the machine's memory alone.
+#[derive(Clone, Debug)]
 pub struct Region {
     /// The kind.
     pub kind: RegionKind,
@@ -220,14 +223,68 @@ pub struct Region {
     pub results: Vec<Src>,
 }
 
-/// The number of names pattern `p` binds, in preorder.
-pub fn binds(p: &Pattern) -> usize {
-    match p {
-        Pattern::Bind(_) => 1,
-        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter().map(binds).sum(),
-        Pattern::Fields(_, fs) => fs.iter().map(|(_, p)| binds(p)).sum(),
-        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => 0,
+impl Drop for Region {
+    /// Frees the regions below this one in a loop: each uniquely held region is emptied of its
+    /// nodes' regions before it is freed, so no drop reaches below the next level.
+    fn drop(&mut self) {
+        let mut below: Vec<Arc<Region>> = self
+            .nodes
+            .iter_mut()
+            .flat_map(|n| mem::take(&mut n.regions))
+            .collect();
+        while let Some(r) = below.pop() {
+            if let Some(mut r) = Arc::into_inner(r) {
+                below.extend(r.nodes.iter_mut().flat_map(|n| mem::take(&mut n.regions)));
+            }
+        }
     }
+}
+
+impl PartialEq for Region {
+    /// Compares two graphs level by level, from a stack of region pairs; a pair of regions
+    /// shared by both sides is equal without being read.
+    fn eq(&self, other: &Region) -> bool {
+        let mut pairs: Vec<(&Region, &Region)> = vec![(self, other)];
+        while let Some((a, b)) = pairs.pop() {
+            if a.kind != b.kind
+                || a.args != b.args
+                || a.results != b.results
+                || a.nodes.len() != b.nodes.len()
+            {
+                return false;
+            }
+            for (m, n) in a.nodes.iter().zip(&b.nodes) {
+                if m.op != n.op
+                    || m.inputs != n.inputs
+                    || m.outputs != n.outputs
+                    || m.regions.len() != n.regions.len()
+                {
+                    return false;
+                }
+                let subs = m.regions.iter().zip(&n.regions);
+                pairs.extend(
+                    subs.filter(|(x, y)| !Arc::ptr_eq(x, y))
+                        .map(|(x, y)| (&**x, &**y)),
+                );
+            }
+        }
+        true
+    }
+}
+
+/// The number of names pattern `p` binds.
+pub fn binds(p: &Pattern) -> usize {
+    let mut count = 0;
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
+        match p {
+            Pattern::Bind(_) => count += 1,
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter().map(|(_, p)| p)),
+            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+        }
+    }
+    count
 }
 
 impl Region {
@@ -384,13 +441,163 @@ pub fn kind_name(k: RegionKind) -> &'static str {
 
 /// Checks the structure of the graph rooted at `root`. The error names the node or region at
 /// fault by its path in the text form (`r.2/0.1`) and says what is wrong.
+///
+/// The walk keeps one frame per open region on the heap, and one path buffer that grows by a
+/// step on the way down and shrinks on the way up, so a check costs O(size) at any depth and a
+/// path is copied only into an error.
 pub fn validate(root: &Region) -> Result<(), String> {
-    region(root, "r", false, false)
+    let mut path = String::from("r");
+    enter(root, &path, false)?;
+    let mut stack = vec![Visit::new(root, false, path.len())];
+    while let Some(top) = stack.last_mut() {
+        let r = top.r;
+        if let Some((s, at)) = &top.open {
+            let n = &r.nodes[top.k];
+            let j = top.j;
+            if j == n.regions.len() {
+                path.truncate(top.base);
+                top.open = None;
+                top.k += 1;
+                continue;
+            }
+            path.truncate(*at);
+            write!(path, "/{j}").expect("writing to a String does not fail");
+            let sub = &*n.regions[j];
+            before(r, n, s, j, &path)?;
+            enter(sub, &path, matches!(n.op, Op::Lambda))?;
+            let in_certificate = top.in_certificate || matches!(n.op, Op::Derived(_));
+            stack.push(Visit::new(sub, in_certificate, path.len()));
+        } else if top.k < r.nodes.len() {
+            let (k, n) = (top.k, &r.nodes[top.k]);
+            let base = &path[..top.base];
+            for (i, src) in n.inputs.iter().enumerate() {
+                source(r, src, k, base).map_err(|e| format!("{base}.{k}: input {i}: {e}"))?;
+                top.count(src);
+            }
+            write!(path, ".{k}").expect("writing to a String does not fail");
+            let s = node(r, n, &path, top.in_certificate)?;
+            top.j = 0;
+            top.open = Some((s, path.len()));
+        } else {
+            let done = stack.pop().expect("the loop holds the top frame");
+            path.truncate(done.base);
+            let sub = done.r;
+            done.close(&path)?;
+            if let Some(up) = stack.last_mut() {
+                let (s, _) = up
+                    .open
+                    .as_ref()
+                    .expect("a child frame has an open node above it");
+                after(&up.r.nodes[up.k], s, sub, &path)?;
+                up.j += 1;
+            }
+        }
+    }
+    Ok(())
 }
 
-/// `of_lambda` when `r` is the region of a `lambda` node, whose state arguments are the ports
-/// its body uses.
-fn region(r: &Region, path: &str, in_certificate: bool, of_lambda: bool) -> Result<(), String> {
+/// A state edge of a region, by where it starts: argument `i` is `(None, i)`, and output `p`
+/// of node `n` is `(Some(n), p)`.
+type Use = (Option<usize>, usize);
+
+/// The text form of a state edge of the region at `path`.
+fn use_name((n, p): Use, path: &str) -> String {
+    match n {
+        None => format!("{path}^{p}"),
+        Some(n) => format!("{path}.{n}^{p}"),
+    }
+}
+
+/// A region the walk of [`validate`] is inside.
+struct Visit<'a> {
+    r: &'a Region,
+    in_certificate: bool,
+    /// The length of the region's path in the walk's buffer.
+    base: usize,
+    /// The node being checked or next to be checked.
+    k: usize,
+    /// While node `k`'s regions are walked: its shape and the length of its path.
+    open: Option<(Shape, usize)>,
+    /// The next region of node `k` to walk.
+    j: usize,
+    /// How many times each state edge of the region is used.
+    uses: HashMap<Use, usize>,
+    /// The state edges in order of first use.
+    order: Vec<Use>,
+}
+
+impl<'a> Visit<'a> {
+    fn new(r: &'a Region, in_certificate: bool, base: usize) -> Visit<'a> {
+        Visit {
+            r,
+            in_certificate,
+            base,
+            k: 0,
+            open: None,
+            j: 0,
+            uses: HashMap::new(),
+            order: Vec::new(),
+        }
+    }
+
+    /// Counts a use of `src` when it is a state edge.
+    fn count(&mut self, src: &Src) {
+        let key = match *src {
+            Src::Arg(i) => (None, i),
+            Src::Out(n, p) => (Some(n), p),
+            Src::Const(_) => return,
+        };
+        if self.r.edge(src).is_state() {
+            let n = self.uses.entry(key).or_default();
+            if *n == 0 {
+                self.order.push(key);
+            }
+            *n += 1;
+        }
+    }
+
+    /// Checks the region's results, and that each state edge is used exactly once, after its
+    /// nodes. `path` is the region's.
+    fn close(mut self, path: &str) -> Result<(), String> {
+        let r = self.r;
+        for (i, src) in r.results.iter().enumerate() {
+            source(r, src, r.nodes.len(), path).map_err(|e| format!("{path}: result {i}: {e}"))?;
+            self.count(src);
+        }
+        if let Some((key, n)) = self
+            .order
+            .iter()
+            .map(|m| (*m, self.uses[m]))
+            .find(|(_, n)| *n > 1)
+        {
+            return Err(format!(
+                "{}: a state edge is used {n} times, and each is used exactly once",
+                use_name(key, path)
+            ));
+        }
+        let args = r.args.iter().enumerate().map(|(i, a)| ((None, i), a));
+        let outs = r.nodes.iter().enumerate().flat_map(|(k, n)| {
+            n.outputs
+                .iter()
+                .enumerate()
+                .map(move |(p, e)| ((Some(k), p), e))
+        });
+        if let Some((key, _)) = args
+            .chain(outs)
+            .find(|(key, e)| e.is_state() && !self.uses.contains_key(key))
+        {
+            return Err(format!(
+                "{}: a state edge is never used, and each is used exactly once",
+                use_name(key, path)
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Checks the arguments of region `r` at `path` on entry. `of_lambda` when `r` is the region
+/// of a `lambda` node, whose state arguments are the ports its body uses.
+fn enter(r: &Region, path: &str, of_lambda: bool) -> Result<(), String> {
     if !matches!(r.kind, RegionKind::Match | RegionKind::Port)
         && !of_lambda
         && let Some(i) = r.args.iter().position(Edge::is_state)
@@ -423,53 +630,6 @@ fn region(r: &Region, path: &str, in_certificate: bool, of_lambda: bool) -> Resu
             ));
         }
     }
-    // How many times each state edge of the region is used, and the edges in order of first use.
-    let mut uses: HashMap<String, usize> = HashMap::new();
-    let mut order: Vec<String> = Vec::new();
-    let mut count = |r: &Region, src: &Src, name: String| {
-        if r.edge(src).is_state() {
-            let n = uses.entry(name.clone()).or_default();
-            if *n == 0 {
-                order.push(name);
-            }
-            *n += 1;
-        }
-    };
-    for (k, n) in r.nodes.iter().enumerate() {
-        let at = format!("{path}.{k}");
-        for (i, src) in n.inputs.iter().enumerate() {
-            source(r, src, k, path).map_err(|e| format!("{at}: input {i}: {e}"))?;
-            count(r, src, src_name(src, path));
-        }
-        node(r, n, &at, in_certificate)?;
-    }
-    for (i, src) in r.results.iter().enumerate() {
-        source(r, src, r.nodes.len(), path).map_err(|e| format!("{path}: result {i}: {e}"))?;
-        count(r, src, src_name(src, path));
-    }
-    if let Some((name, n)) = order.iter().map(|m| (m, uses[m])).find(|(_, n)| *n > 1) {
-        return Err(format!(
-            "{name}: a state edge is used {n} times, and each is used exactly once"
-        ));
-    }
-    let mut made: Vec<String> = Vec::new();
-    for (i, a) in r.args.iter().enumerate() {
-        if a.is_state() {
-            made.push(format!("{path}^{i}"));
-        }
-    }
-    for (k, n) in r.nodes.iter().enumerate() {
-        for (p, e) in n.outputs.iter().enumerate() {
-            if e.is_state() {
-                made.push(format!("{path}.{k}^{p}"));
-            }
-        }
-    }
-    if let Some(name) = made.iter().find(|m| !uses.contains_key(*m)) {
-        return Err(format!(
-            "{name}: a state edge is never used, and each is used exactly once"
-        ));
-    }
     Ok(())
 }
 
@@ -486,15 +646,6 @@ fn written(n: usize) -> String {
     match n {
         1 => "1 is".into(),
         n => format!("{n} are"),
-    }
-}
-
-/// The text form of `src` in the region at `path`.
-fn src_name(src: &Src, path: &str) -> String {
-    match src {
-        Src::Arg(i) => format!("{path}^{i}"),
-        Src::Out(n, p) => format!("{path}.{n}^{p}"),
-        Src::Const(v) => v.to_string(),
     }
 }
 
@@ -517,7 +668,8 @@ fn source(r: &Region, src: &Src, before: usize, path: &str) -> Result<(), String
     }
 }
 
-fn node(r: &Region, n: &Node, at: &str, in_certificate: bool) -> Result<(), String> {
+/// Checks node `n` of region `r` at `at`, before its regions, and returns its shape.
+fn node(r: &Region, n: &Node, at: &str, in_certificate: bool) -> Result<Shape, String> {
     let name = title(&n.op);
     if in_certificate && matches!(n.op, Op::Derived(_)) {
         return Err(format!(
@@ -550,68 +702,73 @@ fn node(r: &Region, n: &Node, at: &str, in_certificate: bool) -> Result<(), Stri
         ));
     }
     edges(r, n, at)?;
+    Ok(s)
+}
+
+/// Checks region `j` of node `n` of region `r`, at `sp`, against the node before the walk
+/// enters it.
+fn before(r: &Region, n: &Node, s: &Shape, j: usize, sp: &str) -> Result<(), String> {
+    let name = title(&n.op);
+    let sub = &n.regions[j];
+    let (kind, lead, results) = s.regions[j];
     let captures = &n.inputs[s.fixed..];
-    for (j, (sub, &(kind, lead, results))) in n.regions.iter().zip(&s.regions).enumerate() {
-        let sp = format!("{at}/{j}");
-        if sub.kind != kind {
+    if sub.kind != kind {
+        return Err(format!(
+            "{sp}: region {j} of `{name}` must be a {} region, and is written `{}`",
+            kind_name(kind),
+            kind_name(sub.kind)
+        ));
+    }
+    if sub.args.len() != lead + captures.len() {
+        let why = match &n.op {
+            Op::Match(ps) => format!(
+                " (the pattern `{}` binds {})",
+                text::pattern(&ps[j]),
+                several(lead, "name")
+            ),
+            _ => String::new(),
+        };
+        return Err(format!(
+            "{sp}: the region takes {} from the node{why} and {}, {} in all, and has {}",
+            several(lead, "argument"),
+            several(captures.len(), "capture"),
+            lead + captures.len(),
+            sub.args.len()
+        ));
+    }
+    for (i, c) in captures.iter().enumerate() {
+        let (want, got) = (r.edge(c), &sub.args[lead + i]);
+        if want != *got {
             return Err(format!(
-                "{sp}: region {j} of `{name}` must be a {} region, and is written `{}`",
-                kind_name(kind),
-                kind_name(sub.kind)
+                "{sp}^{}: capture {i} is {}, and the argument is {}",
+                lead + i,
+                text::edge(&want),
+                text::edge(got)
             ));
         }
-        if sub.args.len() != lead + captures.len() {
-            let why = match &n.op {
-                Op::Match(ps) => format!(
-                    " (the pattern `{}` binds {})",
-                    text::pattern(&ps[j]),
-                    several(lead, "name")
-                ),
-                _ => String::new(),
-            };
-            return Err(format!(
-                "{sp}: the region takes {} from the node{why} and {}, {} in all, and has {}",
-                several(lead, "argument"),
-                several(captures.len(), "capture"),
-                lead + captures.len(),
-                sub.args.len()
-            ));
-        }
-        for (i, c) in captures.iter().enumerate() {
-            let (want, got) = (r.edge(c), &sub.args[lead + i]);
-            if want != *got {
+    }
+    if sub.results.len() != results {
+        return Err(format!(
+            "{sp}: the region must have {}, and {} written",
+            several(results, "result"),
+            written(sub.results.len())
+        ));
+    }
+    Ok(())
+}
+
+/// Checks region `sub` of node `n`, at `sp`, against the node's outputs after the
+/// walk leaves it: a region's results stand for the node's outputs, kind for kind.
+fn after(n: &Node, s: &Shape, sub: &Region, sp: &str) -> Result<(), String> {
+    if s.outputs.is_none() {
+        for (i, (res, out)) in sub.results.iter().zip(&n.outputs).enumerate() {
+            let got = sub.edge(res);
+            if got.is_state() != out.is_state() || (out.is_state() && got != *out) {
                 return Err(format!(
-                    "{sp}^{}: capture {i} is {}, and the argument is {}",
-                    lead + i,
-                    text::edge(&want),
-                    text::edge(got)
+                    "{sp}: result {i} is {}, and output {i} is {}",
+                    text::edge(&got),
+                    text::edge(out)
                 ));
-            }
-        }
-        if sub.results.len() != results {
-            return Err(format!(
-                "{sp}: the region must have {}, and {} written",
-                several(results, "result"),
-                written(sub.results.len())
-            ));
-        }
-        region(
-            sub,
-            &sp,
-            in_certificate || matches!(n.op, Op::Derived(_)),
-            matches!(n.op, Op::Lambda),
-        )?;
-        // A region's results stand for the node's outputs, kind for kind.
-        if s.outputs.is_none() {
-            for (i, (res, out)) in sub.results.iter().zip(&n.outputs).enumerate() {
-                let got = sub.edge(res);
-                if got.is_state() != out.is_state() || (out.is_state() && got != *out) {
-                    return Err(format!(
-                        "{sp}: result {i} is {}, and output {i} is {}",
-                        text::edge(&got),
-                        text::edge(out)
-                    ));
-                }
             }
         }
     }
