@@ -1164,3 +1164,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `HashMap<&str, Vec<usize>>` of the argument positions of each bounded variable, keyed by borrowed names and emptied by `remove` as each variable is read | `check::Checker::apply_one` | Mutation | A persistent map folded over the arguments, looked up per variable |
 | A flag on each open function type, set while its parameters are read, so a use records whether a parameter holds its variable (`Sig::held`) | `check::Denote::{open_params, close_params}` | Mutation | Each denotation returns, with the bounds of its uses, the set of those in parameters, merged at each function type |
 | A comparison context whose maps of rigid variables and of functions met are filled as each comparison of function types opens and emptied by a list of the names it made as it closes (`Cx::fresh`, `Cx::forget`), and a counter of names made | `check::ty::Cx`, `fits_in` | Mutation | The maps passed down as persistent map arguments, so closing needs no undo; the counter is a state receiver, or the depth and position of the comparison as the name |
+
+## Entries from LIN-probe-refute (`zedc/src/store/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The breadth-first order of the parts built from a `seen: Vec<bool>` written by index, an `order` queue read through a moving `head` index, and a `done: BTreeSet<&Atom>` of atoms whose parts were queued | `bounds_refute` | Mutation (gap 11) | A fold over the queue with `seen`, `order` and `done` in its state, kept in place by provable last use (L6.13); a copy per write would make the O(n log n) reading quadratic |
+| An `AtomBounds` map passed by `&mut` through `narrow`, `narrow_ge`, `narrow_or` and `narrow_to`, with the reading stopped at the first part left without a point by a short-circuiting `.all` | `bounds_refute`, `narrow`, `narrow_ge`, `narrow_or`, `narrow_to` | Mutation (gap 11), early exit (gap 12) | Each function returns the new map or nothing, and the reading is a fold that stops on nothing |
+| `enum Unit<'a>`, a constraint or a disjunction borrowed from the formula | `Unit`, `bounds_refute` | None | Values are shared in Zed; the borrow goes and `Unit` is a union of the two |
+| The implied bounds `implied: Near` kept across the rounds of `probe` and passed as `&mut Near` to `learn`, which adds the bounds it proves | `probe`, `learn` | Mutation (gap 11) | `learn` returns the bounds it adds, and the loop of `probe` carries `implied` in its state |
