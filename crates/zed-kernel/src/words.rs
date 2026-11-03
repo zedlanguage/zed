@@ -6,10 +6,12 @@
 //! `#invalid` when the source is not a `T` at all: a string that does not read as one, or a
 //! float that is infinite or NaN cast to an exact kind.
 
+use std::collections::HashSet;
+
 use num_bigint::BigInt;
 
 use crate::KernelError;
-use crate::num::{Exact, Rat, exact_f64, show_f64};
+use crate::num::{Exact, Rat, TooLarge, exact_f64, show_f64};
 use crate::term::Prim;
 use crate::value::Value;
 
@@ -30,7 +32,16 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                 });
             }
         },
-        (Prim::Show, _) => Value::str(&x.to_string()),
+        // A tuple, keypath, atom or family prints each number inside it.
+        (Prim::Show, _) => match room_to_print(x) {
+            Ok(()) => Value::str(&x.to_string()),
+            Err(e) => {
+                return Err(KernelError::NumberTooLarge {
+                    op: "String",
+                    bits: e.bits,
+                });
+            }
+        },
         (Prim::CastInt, Value::Str(s)) => match read_int(s) {
             Some(n) => Value::int(n),
             None => invalid(),
@@ -48,18 +59,33 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             if x.number_kind().is_none() {
                 return type_err(p, x);
             }
-            let r = match x.exact() {
-                Exact::Finite(r) => r,
-                _ if p == Prim::CastF64 => return Ok(x.clone()),
-                _ => return Ok(invalid()),
+            // A wide number is read where it is held, not copied: its copy would be built without
+            // asking the system for the memory.
+            let held;
+            let r = match x {
+                Value::Big(n) | Value::Rat(n) => &**n,
+                _ => match x.exact() {
+                    Exact::Finite(r) => {
+                        held = r;
+                        &held
+                    }
+                    _ if p == Prim::CastF64 => return Ok(x.clone()),
+                    _ => return Ok(invalid()),
+                },
             };
             match p {
-                Prim::CastInt if r.is_integer() => Value::integer(r),
+                Prim::CastInt if r.is_integer() => Value::integer(r.clone()),
                 Prim::CastInt => inexact(),
-                Prim::CastRat => Value::rat(r),
-                _ => match exact_f64(&r) {
-                    Some(f) => Value::float(f),
-                    None => inexact(),
+                Prim::CastRat => Value::rat(r.clone()),
+                _ => match exact_f64(r) {
+                    Ok(Some(f)) => Value::float(f),
+                    Ok(None) => inexact(),
+                    Err(e) => {
+                        return Err(KernelError::RoundTooLarge {
+                            to: "f64",
+                            bits: e.bits,
+                        });
+                    }
                 },
             }
         }
@@ -86,6 +112,45 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
 
 fn type_err(p: Prim, x: &Value) -> Result<Value, KernelError> {
     Err(KernelError::Type(format!("{p:?} applied to {x}")))
+}
+
+/// A part of a value that more than one holder can share, read once by [`room_to_print`].
+#[derive(PartialEq, Eq, Hash)]
+enum Shared {
+    Items(usize),
+    Family(crate::family::Id),
+}
+
+/// `Ok` when the system gives the memory to write each number inside `v`, asked one number at
+/// a time by [`Rat::text_room`], since printing builds each number's digits and frees them
+/// before the next; else [`TooLarge`] for the first refused, before anything is written. A
+/// shared sequence and a family, whose copies keep its id, are read once, so the walk costs
+/// the distinct parts of `v`, not the paths to them.
+fn room_to_print(v: &Value) -> Result<(), TooLarge> {
+    let mut todo = vec![v];
+    let mut seen = HashSet::new();
+    let mut first = |s: Shared| seen.insert(s);
+    while let Some(v) = todo.pop() {
+        let items = match v {
+            Value::Big(n) | Value::Rat(n) => {
+                n.text_room()?;
+                continue;
+            }
+            Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_) => continue,
+            Value::Family(f) => {
+                if first(Shared::Family(f.id())) {
+                    todo.extend(f.iter().flat_map(|(k, w)| [k, w]));
+                }
+                continue;
+            }
+            Value::Tuple(items) | Value::Path(items) => items,
+            Value::Atom(a) => &a.args,
+        };
+        if !items.is_shared() || first(Shared::Items(items.addr())) {
+            todo.extend(items.as_slice());
+        }
+    }
+    Ok(())
 }
 
 /// An optional `-` and decimal digits.

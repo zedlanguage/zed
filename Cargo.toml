@@ -29,7 +29,7 @@ zed-corpus-ref = { path = "zed/corpus/ref" }
 zed-tools = { path = "crates/zed-tools" }
 zed-alloc-count = { path = "crates/zed-alloc-count" }
 insta = "1.49.0"
-rustix = { version = "1.1.6", features = ["time"] }
+rustix = { version = "1.1.6", features = ["time", "process"] }
 perf-event2 = "0.7.4"
 stacker = "0.1.25"
 

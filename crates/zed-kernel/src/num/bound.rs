@@ -6,17 +6,19 @@
 //! larger `k` only makes it tighter. A power `p^e` is bounded by squaring, `2 log e` products
 //! of `k`-bit numbers, so `10^(10^9)` costs about 60 products and not its billion digits.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, Pow, ToPrimitive, Zero};
 
-use super::LiteralRounding;
+use super::{LiteralRounding, TooLarge, room};
 
-/// `coef * prod p^e`, every exponent positive.
-pub(super) struct Product {
-    pub(super) coef: BigUint,
+/// `coef * prod p^e`, every exponent positive; the coefficient is borrowed from the number it
+/// bounds where it can be, so a wide one is not copied.
+pub(super) struct Product<'a> {
+    pub(super) coef: Cow<'a, BigUint>,
     pub(super) pows: Vec<(u64, BigUint)>,
 }
 
@@ -31,6 +33,25 @@ impl Bound {
         Bound {
             m,
             e: BigInt::zero(),
+        }
+    }
+
+    /// `m` kept to `k` bits, rounded toward zero or away from it, reading only the bits kept
+    /// and the lowest nonzero one: a wide coefficient is not copied in full at each precision.
+    fn of(m: &BigUint, k: u64, up: bool) -> Bound {
+        let bits = m.bits();
+        if bits <= k {
+            return Bound::exact(m.clone());
+        }
+        let drop = bits - k;
+        let inexact = m.trailing_zeros().expect("a bound is positive") < drop;
+        let mut kept = m >> drop;
+        if up && inexact {
+            kept += 1u32;
+        }
+        Bound {
+            m: kept,
+            e: BigInt::from(drop),
         }
     }
 
@@ -110,7 +131,7 @@ impl Bound {
     }
 }
 
-impl Product {
+impl Product<'_> {
     /// More than the number of bits of the product: what building it costs.
     fn bits(&self) -> BigUint {
         let mut b = BigUint::from(self.coef.bits());
@@ -122,7 +143,7 @@ impl Product {
 
     /// The product itself.
     fn materialize(&self) -> BigUint {
-        let mut out = self.coef.clone();
+        let mut out = self.coef.clone().into_owned();
         for (p, e) in &self.pows {
             out *= Pow::pow(BigUint::from(*p), e);
         }
@@ -136,7 +157,7 @@ impl Product {
 
     /// A lower bound, or an upper one when `up`, kept to `k` bits.
     fn bound(&self, k: u64, up: bool) -> Bound {
-        let mut b = Bound::exact(self.coef.clone()).round(k, up);
+        let mut b = Bound::of(&self.coef, k, up);
         for (p, e) in &self.pows {
             let base = Bound::exact(BigUint::from(*p));
             let mut power = Bound::exact(BigUint::one());
@@ -154,12 +175,14 @@ impl Product {
 
 /// The first precision tried: a power `p^e` loses about `log2 e` bits to rounding, so this
 /// leaves 64 good bits.
-fn start(n: &Product, d: &Product) -> u64 {
+fn start(n: &Product<'_>, d: &Product<'_>) -> u64 {
     64 + n.exp_bits().max(d.exp_bits())
 }
 
-/// The order of two positive products.
-pub(super) fn cmp(n: &Product, d: &Product) -> Ordering {
+/// The order of two positive products. When `check`, the system is asked for the memory of
+/// each precision before it is tried, `8k` bits for what a round holds at once (four `k`-bit
+/// bounds and the `2k`-bit product of two, with room to spare), and for the two products in full before they are built; [`TooLarge`] when it refuses.
+pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>, check: bool) -> Result<Ordering, TooLarge> {
     let cost = n.bits() + d.bits();
     let mut k = start(n, d);
     loop {
@@ -173,15 +196,21 @@ pub(super) fn cmp(n: &Product, d: &Product) -> Ordering {
         // `|log N - log D|` from below by Baker's theorem on linear forms in logarithms and
         // stop at the precision it names, which is polynomial in the exponents' bits.
         if BigUint::from(k) >= cost {
-            return n.materialize().cmp(&d.materialize());
+            if check {
+                room(cost)?;
+            }
+            return Ok(n.materialize().cmp(&d.materialize()));
+        }
+        if check {
+            room(BigUint::from(k) << 3u32)?;
         }
         let (nl, nu) = (n.bound(k, false), n.bound(k, true));
         let (dl, du) = (d.bound(k, false), d.bound(k, true));
         if nl.cmp(&du) == Ordering::Greater {
-            return Ordering::Greater;
+            return Ok(Ordering::Greater);
         }
         if nu.cmp(&dl) == Ordering::Less {
-            return Ordering::Less;
+            return Ok(Ordering::Less);
         }
         k *= 2;
     }
@@ -255,10 +284,14 @@ impl Quotient {
 
 /// `n / d` rounded to `f`, to nearest with ties to even, as a significand `m` and the exponent
 /// `t` of its leading place, so the float is `m * 2^(t - prec + 1)`. `is` tests exactly whether
-/// `n / d * 2^s` is the integer `w`, which only a near-tie needs.
+/// `n / d * 2^s` is the integer `w`, which only a near-tie needs. The system is asked for the
+/// memory of each precision before it is tried, `16k` bits for what a round holds at once (at
+/// most `12k`: four `k`-bit bounds, a dividend of up to `3k` bits, the copy the division makes of
+/// it, and a `2k`-bit quotient), and for `n` and `d` in full before they are built;
+/// [`LiteralRounding::TooLarge`] when it refuses.
 pub(super) fn round(
-    n: &Product,
-    d: &Product,
+    n: &Product<'_>,
+    d: &Product<'_>,
     f: &Format,
     is: &dyn Fn(&BigInt, &BigUint) -> bool,
 ) -> Result<(u64, i64), LiteralRounding> {
@@ -271,11 +304,13 @@ pub(super) fn round(
         // by `projection_matches_the_standard_reading` (COMPLEXITY.md K30). A complete solution
         // would stop at a precision from a lower bound on the distance to the boundary.
         let q = if BigUint::from(k) >= cost {
+            room(cost.clone()).map_err(LiteralRounding::TooLarge)?;
             Quotient::Exact {
                 n: n.materialize(),
                 d: d.materialize(),
             }
         } else {
+            room(BigUint::from(k) << 4u32).map_err(LiteralRounding::TooLarge)?;
             let (nl, nu) = (n.bound(k, false), n.bound(k, true));
             let (dl, du) = (d.bound(k, false), d.bound(k, true));
             Quotient::Bounds {

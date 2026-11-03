@@ -499,6 +499,17 @@ fn number_cmp(a: &Value, b: &Value) -> Ordering {
     }
 }
 
+/// Whether two numbers are the same: of one kind and one value, two floats bitwise. Two exact
+/// numbers are compared by their normal forms, which builds nothing ([`Rat`]'s `==`).
+pub(crate) fn number_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Big(x), Value::Big(y)) | (Value::Rat(x), Value::Rat(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => x.cmp(y) == Ordering::Equal,
+        _ => false,
+    }
+}
+
 impl Ord for Value {
     fn cmp(&self, other: &Self) -> Ordering {
         deep::cmp(self, other)
@@ -521,6 +532,7 @@ impl PartialEq for Value {
             (Family(a), Family(b)) => a == b,
             (Tuple(a), Tuple(b)) | (Path(a), Path(b)) => a == b,
             (Atom(a), Atom(b)) => a == b,
+            _ if self.kind() == 2 && other.kind() == 2 => number_eq(self, other),
             _ => self.scalar_cmp(other) == Ordering::Equal,
         }
     }

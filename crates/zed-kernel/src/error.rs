@@ -47,6 +47,31 @@ pub enum KernelError {
         /// At most this many bits: the size of the number to build.
         bits: num_bigint::BigUint,
     },
+    /// Two numbers agree in so many leading bits that ordering them, for `<`, `<=`, `>`,
+    /// `>=`, `min` or `max`, needs bounds of up to `bits` bits, or the two in full, and the
+    /// system refused the memory for it.
+    OrderTooLarge {
+        /// The operator.
+        op: &'static str,
+        /// At most this many bits: the size of the widest bound or number to build.
+        bits: num_bigint::BigUint,
+    },
+    /// Two numbers among a family's keys, or a key looked up and one in the family, agree in
+    /// so many leading bits that placing them in key order needs up to `bits` bits, and the
+    /// system refused the memory for it.
+    KeyOrderTooLarge {
+        /// At most this many bits: the size of the widest bound or number to build.
+        bits: num_bigint::BigUint,
+    },
+    /// A number lies so near a rounding boundary of a float that telling which side it is on
+    /// needs bounds of up to `bits` bits, or the number in full, and the system refused the
+    /// memory for it.
+    RoundTooLarge {
+        /// The float it is rounded to, as the cast is written: `f64`.
+        to: &'static str,
+        /// At most this many bits: the size of the widest bound or number to build.
+        bits: num_bigint::BigUint,
+    },
     /// `++` of two strings whose lengths in bytes add up past `usize::MAX`, the most a length
     /// holds: the joined string's length is not representable, whatever memory there is.
     StringTooLong {
@@ -91,6 +116,27 @@ impl fmt::Display for KernelError {
                 "`{op}` must build a number of up to {bits} bits in full, and the system \
                  refused the memory for it; the number is exact and has no size limit, but this \
                  machine cannot hold its digits"
+            ),
+            KernelError::OrderTooLarge { op, bits } => write!(
+                f,
+                "`{op}` must compare two numbers that agree in their leading digits, which \
+                 needs up to {bits} bits of each, and the system refused the memory for it; \
+                 the numbers are exact and have no size limit, but this machine cannot hold \
+                 enough of their digits to order them"
+            ),
+            KernelError::KeyOrderTooLarge { bits } => write!(
+                f,
+                "two numbers placed in a family's key order agree in their leading digits, \
+                 which needs up to {bits} bits of each to order them, and the system refused \
+                 the memory for it; the numbers are exact and have no size limit, but this \
+                 machine cannot hold enough of their digits to order them"
+            ),
+            KernelError::RoundTooLarge { to, bits } => write!(
+                f,
+                "`{to}` must round a number that lies near a rounding boundary, which needs up \
+                 to {bits} bits of it, and the system refused the memory for it; the number \
+                 is exact and has no size limit, but this machine cannot hold enough of its \
+                 digits to round it"
             ),
             KernelError::StringTooLong { left, right } => write!(
                 f,

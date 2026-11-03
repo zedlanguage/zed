@@ -361,12 +361,16 @@ impl Evaluator {
             t.facts.clear();
             marks = (t.calls.len(), t.keys.len());
         }
+        // The order of numbers inside family keys and comparisons asks the system for the
+        // memory of its bounds while the run lives.
+        let watch = crate::num::Watch::start();
         let out = Machine {
             ev: self,
             frames: Vec::new(),
             drops: Rc::default(),
         }
         .run(term);
+        drop(watch);
         if let Some(t) = &mut self.trace {
             // A run that stopped with an error left the regions it was inside.
             t.calls.truncate(marks.0);
@@ -720,7 +724,10 @@ impl<'t> Machine<'_, 't> {
                     step = self.demand(fix, k);
                     continue;
                 }
-                Ok(Step::Give(v)) => Ok(v),
+                Ok(Step::Give(v)) => match crate::num::refused() {
+                    None => Ok(v),
+                    Some(e) => Err(KernelError::KeyOrderTooLarge { bits: e.bits }.into()),
+                },
                 Err(stop) => Err(stop),
             };
             step = match self.frames.pop() {
@@ -1389,7 +1396,11 @@ impl<'t> Machine<'_, 't> {
             let atoms = vals.iter().filter(|v| matches!(v, Value::Atom(_)));
             return give(Value::merge_failures(atoms));
         }
-        give(prim_data(p, vals)?)
+        let out = prim_data(p, vals)?;
+        if let Some(e) = crate::num::refused() {
+            return Err(order_too_large(p, e).into());
+        }
+        give(out)
     }
 
     /// Evaluates the entry at the next key, or makes the family.
@@ -2044,6 +2055,21 @@ fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
         _ => "**",
     };
     KernelError::NumberTooLarge { op, bits: e.bits }
+}
+
+/// The error of a primitive during which a comparison of two numbers was refused its memory:
+/// an order operator's own, or a key order's for a primitive that reads a family.
+fn order_too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
+    let op = match p {
+        Prim::Lt => "<",
+        Prim::Le => "<=",
+        Prim::Gt => ">",
+        Prim::Ge => ">=",
+        Prim::Min => "min",
+        Prim::Max => "max",
+        _ => return KernelError::KeyOrderTooLarge { bits: e.bits },
+    };
+    KernelError::OrderTooLarge { op, bits: e.bits }
 }
 
 /// A primitive on data none of which is an atom.

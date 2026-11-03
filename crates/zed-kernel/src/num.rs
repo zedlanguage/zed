@@ -19,6 +19,8 @@
 mod bound;
 mod factor;
 
+use std::borrow::Cow;
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -483,8 +485,8 @@ impl Rat {
     /// The Euclidean remainder of two integers, in `0 ..< |m|`; `m` is not zero. An exact
     /// division gives `0` and a dividend in `0 ..< |m|` gives itself, without building either;
     /// otherwise a power of a prime is reduced by modular exponentiation, so `10 ** 10 ** 9 mod
-    /// 7` builds no large number. [`TooLarge`] when the divisor is built and the system
-    /// refuses the memory for it.
+    /// 7` builds no large number. [`TooLarge`] when the divisor is built, or the two are
+    /// compared to more bits than the system gives memory for.
     pub fn rem_euclid(&self, m: &Rat) -> Result<Rat, TooLarge> {
         if self.is_plain() && m.is_plain() {
             return Ok(Rat::int(Euclid::rem_euclid(&self.num, &m.num)));
@@ -492,7 +494,7 @@ impl Rat {
         if self.divides_by(m) {
             return Ok(Rat::int(BigInt::zero()));
         }
-        if !self.is_negative() && *self < m.abs() {
+        if !self.is_negative() && self.try_cmp(&m.abs())? == Ordering::Less {
             return Ok(self.clone());
         }
         self.rem_built(m)
@@ -535,7 +537,7 @@ impl Rat {
         if q.is_integer() {
             return Ok(q);
         }
-        if self.abs() < m.abs() {
+        if self.abs().try_cmp(&m.abs())? == Ordering::Less {
             // `0 <= a < |m|` gives `0`; `-|m| < a < 0` gives `-1` toward a positive `m`.
             let q = match (self.is_negative(), m.is_negative()) {
                 (false, _) => 0,
@@ -567,10 +569,7 @@ impl Rat {
     /// The same number, with each prime of `others` moved out of `num` and `den` too.
     fn aligned(&self, others: &[(u64, BigInt)]) -> std::borrow::Cow<'_, Rat> {
         let listed = |p: u64| self.pows.binary_search_by_key(&p, |(q, _)| *q).is_ok();
-        let divides = |p: u64| {
-            let p = BigInt::from(p);
-            (&self.num % &p).is_zero() || (&self.den % &p).is_zero()
-        };
+        let divides = |p: u64| divides(self.num.magnitude(), p) || divides(self.den.magnitude(), p);
         let new: Vec<u64> = others
             .iter()
             .map(|(p, _)| *p)
@@ -582,13 +581,13 @@ impl Rat {
         let mut pows = self.pows.to_vec();
         pows.extend(new.into_iter().map(|p| (p, BigInt::zero())));
         pows.sort_unstable_by_key(|(p, _)| *p);
-        std::borrow::Cow::Owned(Rat::extract(self.num.clone(), self.den.clone(), pows))
+        Cow::Owned(Rat::extract(self.num.clone(), self.den.clone(), pows))
     }
 
     /// `|self|` as the quotient of two products of positive powers.
-    fn split(&self) -> (Product, Product) {
-        let side = |coef: &BigInt, sign: Sign| Product {
-            coef: coef.magnitude().clone(),
+    fn split<'a>(&'a self) -> (Product<'a>, Product<'a>) {
+        let side = |coef: &'a BigInt, sign: Sign| Product {
+            coef: Cow::Borrowed(coef.magnitude()),
             pows: self
                 .pows
                 .iter()
@@ -606,16 +605,21 @@ impl Rat {
             return Ok(None);
         }
         let (n, d) = self.split();
-        let size = self.abs();
+        // `|self| * 2^s == w` is read as `self == ±w * 2^-s`: the side built is the small one.
         let is = |s: &BigInt, w: &BigUint| {
-            size.mul(&Rat::two_pow(s.clone())) == Rat::int(BigInt::from(w.clone()))
+            let w = Rat::int(BigInt::from(w.clone())).mul(&Rat::two_pow(-s));
+            match self.is_negative() {
+                true => *self == w.neg(),
+                false => *self == w,
+            }
         };
         let (m, t) = bound::round(&n, &d, f, &is)?;
         Ok(Some((self.is_negative(), m, t)))
     }
 
     /// The nearest `f64`, ties to even: correctly rounded from the exact value, without
-    /// building it. [`LiteralRounding`] when it rounds to infinity, or to zero while not zero.
+    /// building it. [`LiteralRounding`] when it rounds to infinity, or to zero while not zero,
+    /// or when the system refuses the memory to tell which way it rounds.
     pub fn to_f64(&self) -> Result<f64, LiteralRounding> {
         let f = Format {
             prec: 53,
@@ -828,6 +832,37 @@ fn room(bits: BigUint) -> Result<(), TooLarge> {
     }
 }
 
+/// Whether `p` divides `m`, read one word at a time with no quotient built, so a wide `m` costs
+/// no memory.
+fn divides(m: &BigUint, p: u64) -> bool {
+    match u32::try_from(p) {
+        Ok(q) => (m % q).is_zero(),
+        Err(_) => {
+            let p = u128::from(p);
+            let r = m
+                .iter_u64_digits()
+                .rev()
+                .fold(0u128, |r, d| ((r << 64) | u128::from(d)) % p);
+            r == 0
+        }
+    }
+}
+
+/// `x * y`, borrowed when one is 1; when `check`, [`TooLarge`] if the system refuses the memory
+/// for the product.
+fn times<'a>(x: &'a BigUint, y: &'a BigUint, check: bool) -> Result<Cow<'a, BigUint>, TooLarge> {
+    if y.is_one() {
+        return Ok(Cow::Borrowed(x));
+    }
+    if x.is_one() {
+        return Ok(Cow::Borrowed(y));
+    }
+    if check {
+        room(BigUint::from(x.bits() + y.bits()))?;
+    }
+    Ok(Cow::Owned(x * y))
+}
+
 /// Whether the allocator gives `bits` bits at once, asked and freed at once.
 fn given(bits: &BigUint) -> bool {
     let words = (bits + 63u32) >> 6u32;
@@ -862,51 +897,136 @@ fn digits(coef: &BigUint, pows: Vec<(u64, BigUint)>) -> String {
     out
 }
 
-impl PartialEq for Rat {
-    fn eq(&self, other: &Self) -> bool {
-        if self.is_plain() && other.is_plain() {
-            return self.num == other.num && self.den == other.den;
+thread_local! {
+    /// Whether an evaluator run on this thread watches the comparisons made through [`Ord`],
+    /// which cannot return an error, for a refused build ([`Watch`]).
+    static WATCHED: Cell<bool> = const { Cell::new(false) };
+    /// The first comparison in the watched run whose build the system refused.
+    static REFUSED: Cell<Option<TooLarge>> = const { Cell::new(None) };
+}
+
+/// While it lives, an [`Ord`] comparison of two numbers on this thread asks the system for the
+/// memory of its bounds, as [`Rat::try_cmp`] does, and records the first refusal for
+/// [`refused`] instead of building. A run makes one and reads the record after each step;
+/// dropping it restores the watch it replaced, so a run nested in another keeps its own.
+pub(crate) struct Watch {
+    was: bool,
+    outer: Option<TooLarge>,
+}
+
+impl Watch {
+    pub(crate) fn start() -> Watch {
+        Watch {
+            was: WATCHED.replace(true),
+            outer: REFUSED.take(),
         }
-        self.cmp(other) == Ordering::Equal
     }
 }
 
-impl Eq for Rat {}
+impl Drop for Watch {
+    fn drop(&mut self) {
+        WATCHED.set(self.was);
+        REFUSED.set(self.outer.take());
+    }
+}
 
-impl Ord for Rat {
-    fn cmp(&self, other: &Self) -> Ordering {
+/// The first comparison refused since the last call, under a [`Watch`].
+pub(crate) fn refused() -> Option<TooLarge> {
+    REFUSED.take()
+}
+
+impl Rat {
+    /// The order of the two by value, or [`TooLarge`] when they agree in so many leading bits
+    /// that the system refuses the memory to tell them apart: each doubling of the precision
+    /// of the bounds ([`bound`]) asks for it first, as does building the two in full.
+    pub fn try_cmp(&self, other: &Rat) -> Result<Ordering, TooLarge> {
+        self.order(other, true)
+    }
+
+    /// The order by value; when `check`, [`TooLarge`] as for [`Rat::try_cmp`], and otherwise
+    /// the build is not checked.
+    fn order(&self, other: &Rat, check: bool) -> Result<Ordering, TooLarge> {
         if self.is_plain() && other.is_plain() {
             if self.den.is_one() && other.den.is_one() {
-                return self.num.cmp(&other.num);
+                return Ok(self.num.cmp(&other.num));
             }
-            return (&self.num * &other.den).cmp(&(&other.num * &self.den));
+            return Ok((&self.num * &other.den).cmp(&(&other.num * &self.den)));
         }
         let sign = self.num.sign().cmp(&other.num.sign());
         if sign != Ordering::Equal || self.is_zero() {
-            return sign;
+            return Ok(sign);
         }
         // With both coprime to every listed prime, the two are equal exactly when their
         // coefficients and exponents are, and otherwise one side holds a prime the other lacks.
         let a = self.aligned(&other.pows);
         let b = other.aligned(&self.pows);
-        let n = a.num.magnitude() * b.den.magnitude();
-        let d = b.num.magnitude() * a.den.magnitude();
+        let n = times(a.num.magnitude(), b.den.magnitude(), check)?;
+        let d = times(b.num.magnitude(), a.den.magnitude(), check)?;
         let f = merge(&a.pows, &b.pows, |x, y| x - y);
-        let side = |coef: BigUint, sign: Sign| Product {
-            coef,
-            pows: f
-                .iter()
+        let pows = |sign: Sign| {
+            f.iter()
                 .filter(|(_, e)| e.sign() == sign)
                 .map(|(p, e)| (*p, e.magnitude().clone()))
-                .collect(),
+                .collect()
         };
         let o = match f.is_empty() {
             true => n.cmp(&d),
-            false => bound::cmp(&side(n, Sign::Plus), &side(d, Sign::Minus)),
+            false => {
+                let up = Product {
+                    pows: pows(Sign::Plus),
+                    coef: n,
+                };
+                let down = Product {
+                    pows: pows(Sign::Minus),
+                    coef: d,
+                };
+                bound::cmp(&up, &down, check)?
+            }
         };
-        match self.is_negative() {
+        Ok(match self.is_negative() {
             true => o.reverse(),
             false => o,
+        })
+    }
+
+    /// An order on the normal forms, for a pair whose order by value was refused: total, and
+    /// building nothing, but not the order by value.
+    fn form_cmp(&self, other: &Rat) -> Ordering {
+        (&self.num, &self.den, &self.pows).cmp(&(&other.num, &other.den, &other.pows))
+    }
+}
+
+/// Equal exactly when the values are. Both sides are aligned to every prime either lists, and
+/// then the two are equal exactly when their coefficients and exponents are, by unique
+/// factorization, so equality builds nothing.
+impl PartialEq for Rat {
+    fn eq(&self, other: &Self) -> bool {
+        if self.is_plain() && other.is_plain() {
+            return self.num == other.num && self.den == other.den;
+        }
+        if self.num.sign() != other.num.sign() {
+            return false;
+        }
+        let a = self.aligned(&other.pows);
+        let b = other.aligned(&self.pows);
+        a.num == b.num && a.den == b.den && a.pows == b.pows
+    }
+}
+
+impl Eq for Rat {}
+
+/// The order by value. Under a [`Watch`], a pair the system refuses the memory to order is
+/// recorded for [`refused`] and given the order of their normal forms, and the run stops at
+/// its next step; with no watch, the build is not checked.
+impl Ord for Rat {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.order(other, WATCHED.get()) {
+            Ok(o) => o,
+            Err(e) => {
+                let first = REFUSED.take().unwrap_or(e);
+                REFUSED.set(Some(first));
+                self.form_cmp(other)
+            }
         }
     }
 }
@@ -1011,13 +1131,17 @@ pub fn show_f64(x: f64) -> String {
     format!("{sign}{body}")
 }
 
-/// Why a float literal has no value at a binary float carrier (DESIGN.md sec:domains).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Why a float literal has no value at a binary float carrier (DESIGN.md sec:domains), or why
+/// a number could not be rounded to one.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LiteralRounding {
     /// It rounds to infinity: it is beyond the largest finite float.
     Infinite,
     /// It is not zero, but it rounds to zero: it is below half the least subnormal.
     Zero,
+    /// It lies so near a rounding boundary that telling which side it is on needs more
+    /// memory than the system gives.
+    TooLarge(TooLarge),
 }
 
 /// The float literal `text` at `f64`: decimal digits with an optional fraction and exponent,
@@ -1039,18 +1163,23 @@ pub fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
         .to_f32()
 }
 
-/// The float equal to `r`, when there is one.
-pub(crate) fn exact_f64(r: &Rat) -> Option<f64> {
+/// The float equal to `r`, when there is one; [`TooLarge`] when rounding `r` was refused the
+/// memory it needs.
+pub(crate) fn exact_f64(r: &Rat) -> Result<Option<f64>, TooLarge> {
     // A double is m * 2^k, so its denominator is a power of two.
     let den = r.den.magnitude();
     let dyadic = den.trailing_zeros().unwrap_or(0) + 1 == den.bits()
         && r.pows.iter().all(|(p, e)| *p == 2 || e.is_positive());
     if !dyadic {
-        return None;
+        return Ok(None);
     }
-    let x = r.to_f64().ok()?;
-    match Exact::float(x) {
+    let x = match r.to_f64() {
+        Ok(x) => x,
+        Err(LiteralRounding::TooLarge(e)) => return Err(e),
+        Err(LiteralRounding::Infinite | LiteralRounding::Zero) => return Ok(None),
+    };
+    Ok(match Exact::float(x) {
         Exact::Finite(f) => (f == *r).then_some(x),
         Exact::NegInf | Exact::PosInf | Exact::NaN => None,
-    }
+    })
 }

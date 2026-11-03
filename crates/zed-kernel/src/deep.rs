@@ -192,6 +192,16 @@ fn step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
                 o => Step::Ends(o),
             }
         }
+        // Two numbers are equal by their normal forms, which builds nothing; only the order
+        // reads bounds on their values.
+        (_, _, Relation::Identity | Relation::SurfaceEq)
+            if a.number_kind().is_some() && b.number_kind().is_some() =>
+        {
+            match crate::value::number_eq(a, b) {
+                true => Step::Same,
+                false => Step::Ends(None),
+            }
+        }
         (Value::Tuple(x), Value::Tuple(y), _) => items(x, y, r),
         (_, _, Relation::SurfaceOrder) => match a.cmp(b) {
             Ordering::Equal => Step::Same,

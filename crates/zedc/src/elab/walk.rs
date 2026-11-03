@@ -564,6 +564,15 @@ impl<'a> Elab<'a> {
                             show_f64(f64::from_bits(1))
                         ),
                     ),
+                    Err(LiteralRounding::TooLarge(t)) => self.error(
+                        e.span,
+                        format!(
+                            "`{s}` lies so near a rounding boundary of f64 that telling which \
+                             side it is on needs up to {} bits of it, and the system refused \
+                             the memory for it; write fewer digits",
+                            t.bits
+                        ),
+                    ),
                 }
             }
             ExprKind::Rat(s) => lit(Value::rat(
