@@ -41,6 +41,7 @@ l01_36_cranelift
 l01_37_oracle
 l01_38_presburger
 l01_39_reduced_product
+l01_39a_bit_words
 l02_01_parser_structs
 l02_02_parser_match_imports
 l03_01_parser

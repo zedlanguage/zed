@@ -99,6 +99,30 @@ pub enum Prim {
     Trim,
     /// `sum(t)`, the `+` of a tuple's components, `0` for the empty tuple.
     Sum,
+    /// `bitAnd(a, b)`: the binary digits of two non-negative ints, and-ed (step L1.39a).
+    BitAnd,
+    /// `bitOr(a, b)`, or-ed.
+    BitOr,
+    /// `bitXor(a, b)`, exclusive-or-ed.
+    BitXor,
+    /// `bitNot(x, width: w)`: `2^w - 1 - x`, for `x` in `0 ..< 2^w`.
+    BitNot,
+    /// `shl(x, k)`: `x * 2^k`, for any int `x` and `k >= 0`.
+    Shl,
+    /// `shr(x, k)`: `x div 2^k`, Euclidean, for any int `x` and `k >= 0`.
+    Shr,
+    /// `popCount(x)`: the number of one digits of `x >= 0`.
+    PopCount,
+    /// `leadingZeros(x, width: w)`: `w` minus the number of binary digits of `x`.
+    LeadingZeros,
+    /// `trailingZeros(x, width: w)`: the zero digits below the lowest one digit; `w` for 0.
+    TrailingZeros,
+    /// `rotl(x, k, width: w)`: the `w` low digits of `x` rotated `k` places toward the high.
+    Rotl,
+    /// `rotr(x, k, width: w)`: rotated toward the low digits.
+    Rotr,
+    /// `f64Bits(x)`: the IEEE 754 binary64 encoding of a float, an int in `0 ..< 2^64`.
+    F64Bits,
 }
 
 impl Prim {
@@ -107,7 +131,8 @@ impl Prim {
         use Prim::*;
         match self {
             Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | Abs | Len
-            | Lower | Upper | Trim | Sum => Some(1),
+            | Lower | Upper | Trim | Sum | PopCount | F64Bits => Some(1),
+            Rotl | Rotr => Some(3),
             Path | Tuple | Atom => None,
             _ => Some(2),
         }

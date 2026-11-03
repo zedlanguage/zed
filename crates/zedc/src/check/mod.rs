@@ -49,8 +49,8 @@ use crate::rejection::Row;
 use crate::resolve::{Ref, Resolution};
 use crate::store::int::Int;
 use crate::store::interval::{
-    End::{Fin, PosInf},
-    IntervalSet,
+    End::{Fin, NegInf, PosInf},
+    IntervalSet, bit_word,
 };
 use crate::store::revision::{Op, forward};
 
@@ -255,6 +255,10 @@ struct Ck<'t, 'a> {
     made: HashMap<Span, KType>,
     /// The binders of `name = e`, each with the span of `e`, whose unnamed atoms it keeps.
     alias: HashMap<usize, Span>,
+    /// What the text of each expression shows of its `int` value, by its span.
+    known: HashMap<Span, Known>,
+    /// What the text bound to each binder `name = e` shows of its `int` value.
+    facts: HashMap<usize, Known>,
     /// Where each binder's type comes from.
     whence: HashMap<usize, Origin>,
     /// Whether a repair is being tried, so its errors offer none.
@@ -305,6 +309,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             unnamed: HashMap::new(),
             made: HashMap::new(),
             alias: HashMap::new(),
+            known: HashMap::new(),
+            facts: HashMap::new(),
             whence: HashMap::new(),
             trying: false,
             lines_out: HashSet::new(),
@@ -552,6 +558,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let text = format!("`{n}` is defined as this expression, {v}");
                         self.origin(id, value.span, text, Some(value.span));
                         self.alias.insert(id, value.span);
+                        let k = self.known(value);
+                        self.facts.insert(id, k);
                         self.env.insert(id, v);
                     }
                     [Target::Wild] => {
@@ -2239,7 +2247,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `x ** n` on an `int` `x` needs `n : int[0..]`, decided from the interval of `n`'s
     /// expression or the listed `int` values of its type. A class's values are not known here.
-    fn exponent(&mut self, x: &Arg, n: &Arg, e: &Expr, span: Span) {
+    fn exponent(&mut self, x: &Arg, n: &Arg, e: &'a Expr, span: Span) {
         let int = KType::int();
         let ns = &n.ty.set & &int;
         if (&x.ty.set & &int).is_empty() || ns.is_empty() {
@@ -2247,7 +2255,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let zero = Value::Int(0);
         let listed = ns.ints_listed();
-        let at_least_zero = interval(e).is_subset(&IntervalSet::range(Fin(0), PosInf))
+        let at_least_zero = self
+            .known(e)
+            .ints
+            .is_subset(&IntervalSet::range(Fin(0), PosInf))
             || listed.is_some_and(|vs| {
                 vs.iter().all(|v| {
                     v.surface_cmp(&zero)
@@ -2496,6 +2507,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let (ExprKind::Name(w), Some(Ref::Prelude(_))) =
             (&callee.kind, self.t.res.uses.get(&callee.span))
         {
+            if let Some(p) = bit_prim(w) {
+                return self.bits(w, p, None, positional, named, curry, span);
+            }
             if named.is_empty() && !curry && positional.len() == 1 {
                 return self.word(w, positional, None, span);
             }
@@ -2527,6 +2541,174 @@ impl<'t, 'a> Ck<'t, 'a> {
         let sig = word_sig(w);
         self.apply(&format!("`{w}`"), &sig, vec![Some(x)], true, span)
             .0
+    }
+
+    /// A call of the bit word `w`, the primitive `p` (step L1.39a): its arguments placed by
+    /// the word's parameters, every one positional but `width`, then each operand checked
+    /// against its domain, and the call applied with atoms passing. The signature is recorded
+    /// at the call, so elaboration places named arguments and reports a call that does not fit
+    /// it.
+    #[allow(clippy::too_many_arguments)]
+    fn bits(
+        &mut self,
+        w: &str,
+        p: Prim,
+        receiver: Option<(Arg, &'a Expr)>,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        curry: bool,
+        span: Span,
+    ) -> Ty {
+        let sig = bit_sig(p);
+        self.put(Undo::Call(span, Some(sig.clone())));
+        if curry {
+            let (ps, ns) = arg_srcs(positional, named);
+            return self.call_sig(&sig, true, receiver.map(|r| r.0), &ps, &ns, true, span, w);
+        }
+        let want = &sig.arrows[0].params;
+        let mut slots: Vec<Option<(Arg, &'a Expr)>> = vec![None; sig.params.len()];
+        let mut fits = true;
+        let mut next = 0;
+        if let Some(r) = receiver {
+            slots[0] = Some(r);
+            next = 1;
+        }
+        for e in positional {
+            let a = self.arg(e, want.get(next));
+            match sig.params.get(next) {
+                Some(q) if q.positional => slots[next] = Some((a, e)),
+                _ => fits = false,
+            }
+            next += 1;
+        }
+        for (name, e) in named {
+            let j = sig.params.iter().position(|q| *q.name == **name);
+            let a = self.arg(e, j.map(|j| &want[j]));
+            match j {
+                Some(j) if !sig.params[j].positional && slots[j].is_none() => {
+                    slots[j] = Some((a, e))
+                }
+                _ => fits = false,
+            }
+        }
+        let Some(slots) = slots
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .filter(|_| fits)
+        else {
+            // Elaboration reports the call against the recorded signature.
+            return Ty::empty();
+        };
+        self.bit_domains(w, p, &slots, span);
+        let args = slots.into_iter().map(|(a, _)| Some(a)).collect();
+        self.apply(&format!("`{w}`"), &sig, args, true, span).0
+    }
+
+    /// Checks each operand of the bit word `w` against its domain (DESIGN.md sec:domains):
+    /// `int[0..]` for every one but the `x` of `shl` and `shr`, and `int[0..<2 ** width]` for the
+    /// `x` of a word with a width. An operand is rejected when its int part is not shown to lie
+    /// in the domain, from its listed values or the interval of its expression, as `**`'s
+    /// exponent is.
+    fn bit_domains(&mut self, w: &str, p: Prim, slots: &[(Arg, &'a Expr)], span: Span) {
+        let names = zed_kernel::bits::params(p);
+        let shift = matches!(p, Prim::Shl | Prim::Shr);
+        let nonneg = IntervalSet::range(Fin(0), PosInf);
+        let ranges: Vec<Option<IntRange>> =
+            slots.iter().map(|(a, e)| self.int_range(a, e)).collect();
+        let mut fine = true;
+        for (i, (((a, e), r), name)) in slots.iter().zip(&ranges).zip(names).enumerate() {
+            let Some(r) = r else { continue };
+            if shift && i == 0 || r.ints.is_subset(&nonneg) {
+                continue;
+            }
+            fine = false;
+            let at = a.at.unwrap_or(e.span);
+            let shown = &r.shown;
+            let mut notes = vec![Note {
+                span: at,
+                text: format!("`{name}` is this operand, {shown}"),
+            }];
+            self.derive_into(&[at], &mut notes);
+            self.error_with(
+                span,
+                format!("`{w}` takes `{name}` in int[0..], and this `{name}` is {shown}"),
+                notes,
+            );
+        }
+        if !fine || !zed_kernel::bits::has_width(p) {
+            return;
+        }
+        let ((x, xe), (wa, we)) = (&slots[0], &slots[slots.len() - 1]);
+        let (Some(rx), Some(rw)) = (&ranges[0], &ranges[slots.len() - 1]) else {
+            return;
+        };
+        // `x` lies below `2 ** width` when its largest value does below the smallest width.
+        let (hi, lo) = (
+            rx.extreme(std::cmp::Ordering::Greater),
+            rw.extreme(std::cmp::Ordering::Less),
+        );
+        let below = hi
+            .zip(lo)
+            .is_some_and(|(h, l)| zed_kernel::bits::below_two_pow(&h, &l));
+        if !below {
+            let (sx, sw) = (&rx.shown, &rw.shown);
+            let (ax, aw) = (x.at.unwrap_or(xe.span), wa.at.unwrap_or(we.span));
+            let mut notes = vec![
+                Note {
+                    span: ax,
+                    text: format!("`x` is this operand, {sx}"),
+                },
+                Note {
+                    span: aw,
+                    text: format!("`width` is this operand, {sw}"),
+                },
+            ];
+            self.derive_into(&[ax, aw], &mut notes);
+            self.error_with(
+                span,
+                format!(
+                    "`{w}` takes `x` in int[0..<2 ** width], and this `x` is {sx} with `width` {sw}"
+                ),
+                notes,
+            );
+        }
+    }
+
+    /// The integers an argument may be, when its type has an int part: an interval holding them,
+    /// the values themselves when its type lists them or its text shows its value, and how to
+    /// show them. The interval is what the text shows (see [`Known`]), met with the listed
+    /// values, a value past `i64` read as the end of the interval on its side.
+    fn int_range(&mut self, a: &Arg, e: &'a Expr) -> Option<IntRange> {
+        let ns = &a.ty.set & &KType::int();
+        if ns.is_empty() {
+            return None;
+        }
+        let k = self.known(e);
+        let mut ints = k.ints;
+        let listed = ns.ints_listed();
+        let shown_as_type = listed.is_some();
+        let values = match listed {
+            Some(vs) => {
+                let piece = |v: &Value| match v {
+                    Value::Int(n) => (Fin(*n), Fin(*n)),
+                    Value::Big(n) if n.is_negative() => (NegInf, Fin(i64::MIN)),
+                    _ => (Fin(i64::MAX), PosInf),
+                };
+                ints = ints.meet(&IntervalSet::from_pieces(vs.iter().map(piece).collect()));
+                Some(vs)
+            }
+            None => k.value.map(|v| vec![v]),
+        };
+        let shown = match &values {
+            _ if shown_as_type || ints == IntervalSet::top() => self.show(&Ty::set(ns)),
+            Some(vs) => vs[0].to_string(),
+            None => format!("int{ints}"),
+        };
+        Some(IntRange {
+            ints,
+            values,
+            shown,
+        })
     }
 
     /// `sum` of a tuple: its components added in turn, `0` for the empty tuple; atoms pass.
@@ -2878,6 +3060,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Some(Ref::Bound(_)) => Ty::empty(),
             _ => match crate::resolve::prelude_layer(name) {
+                Some(1) if let Some(p) = bit_prim(name) => {
+                    self.bits(name, p, Some((x, of)), positional, named, curry, span)
+                }
                 Some(1) if positional.is_empty() && named.is_empty() && !curry => {
                     self.word(name, &[], Some(x), span)
                 }
@@ -4343,42 +4528,272 @@ fn word_sig(w: &str) -> Arc<Sig> {
     })
 }
 
-/// An interval holding every `int` value of `e`: from its literals and integer operators, and
-/// any `int` for anything else.
-fn interval(e: &Expr) -> IntervalSet {
-    let op = |o: &str| match o {
-        "+" => Some(Op::Add),
-        "-" => Some(Op::Sub),
-        "*" => Some(Op::Mul),
-        "div" => Some(Op::Div),
-        "mod" => Some(Op::Mod),
-        _ => None,
+/// The primitive of the bit word `w`, if it is one (step L1.39a).
+fn bit_prim(w: &str) -> Option<Prim> {
+    crate::interp::prim(w).filter(|&p| zed_kernel::bits::is_bit_word(p))
+}
+
+/// A bit word's signature: its parameters, every one positional but `width`, each an `int` but
+/// the `x` of `f64Bits`, an `f64`, and an `int` result.
+fn bit_sig(p: Prim) -> Arc<Sig> {
+    let names = zed_kernel::bits::params(p);
+    let from = match p {
+        Prim::F64Bits => Carrier::F64,
+        _ => Carrier::Int,
     };
-    let nonnegative = IntervalSet::range(Fin(0), PosInf);
-    match &e.kind {
-        ExprKind::Int { radix, digits } => {
-            let digits: String = digits.chars().filter(|&c| c != '_').collect();
-            match i64::from_str_radix(&digits, *radix) {
-                Ok(v) => IntervalSet::single(v),
-                Err(_) => IntervalSet::top(),
-            }
+    Arc::new(Sig {
+        params: names
+            .iter()
+            .map(|&n| SParam {
+                name: n.into(),
+                positional: n != "width",
+                default: None,
+            })
+            .collect(),
+        arrows: vec![Arrow {
+            params: vec![Ty::carrier(from); names.len()],
+            result: Ty::carrier(Carrier::Int),
+        }],
+        bounds: BTreeMap::new(),
+        data: false,
+        needs: Vec::new(),
+        own: BTreeSet::new(),
+    })
+}
+
+/// The operands of a call of a bit word `p` in parameter order, the receiver first, or `None`
+/// when they do not fit its parameters.
+fn bit_operands<'e>(
+    p: Prim,
+    receiver: Option<&'e Expr>,
+    positional: &'e [Expr],
+    named: &'e [(String, Expr)],
+) -> Option<Vec<&'e Expr>> {
+    let names = zed_kernel::bits::params(p);
+    let mut slots: Vec<Option<&Expr>> = receiver.into_iter().map(Some).collect();
+    slots.extend(positional.iter().map(Some));
+    let positional_count = names.iter().filter(|&&n| n != "width").count();
+    if slots.len() > positional_count {
+        return None;
+    }
+    slots.resize(names.len(), None);
+    for (name, e) in named {
+        let j = names.iter().position(|n| n == name && *n == "width")?;
+        if slots[j].replace(e).is_some() {
+            return None;
         }
-        ExprKind::Unary("-", a) => interval(a).neg(),
-        ExprKind::Binary("**", a, b) => {
-            let (x, n) = (interval(a), interval(b));
-            match n.bounds() {
-                Some((Fin(lo), Fin(hi))) if lo == hi && lo >= 0 => {
-                    forward(&Op::Pow(Int::from(lo).into()), &x, &x)
+    }
+    slots.into_iter().collect()
+}
+
+/// The integers an operand may be (see `Ck::int_range`).
+struct IntRange {
+    /// An interval holding them.
+    ints: IntervalSet,
+    /// The values themselves, when its type lists them or its text shows its value.
+    values: Option<Vec<Value>>,
+    /// How a message shows them.
+    shown: String,
+}
+
+impl IntRange {
+    /// The largest value, for `Greater`, or the smallest, for `Less`: from the values when
+    /// they are known, else the interval's finite end on that side.
+    fn extreme(&self, side: std::cmp::Ordering) -> Option<Value> {
+        if let Some(vs) = &self.values {
+            return vs
+                .iter()
+                .try_fold(None::<&Value>, |best, v| match best {
+                    Some(b) => Some(Some(match v.surface_cmp(b)? == side {
+                        true => v,
+                        false => b,
+                    })),
+                    None => Some(Some(v)),
+                })?
+                .cloned();
+        }
+        let (lo, hi) = self.ints.bounds()?;
+        match (side, lo, hi) {
+            (std::cmp::Ordering::Greater, _, Fin(h)) => Some(Value::Int(h)),
+            (std::cmp::Ordering::Less, Fin(l), _) => Some(Value::Int(l)),
+            _ => None,
+        }
+    }
+}
+
+/// What the text of an expression shows of its `int` value: an interval holding it and, for an
+/// expression built from int literals, the names bound to such expressions, the integer
+/// operators and the bit words, the value itself.
+#[derive(Clone)]
+struct Known {
+    ints: IntervalSet,
+    value: Option<Value>,
+}
+
+impl Known {
+    fn top() -> Self {
+        Known {
+            ints: IntervalSet::top(),
+            value: None,
+        }
+    }
+
+    /// The int `v`: a value past `i64` is read as the end of the interval on its side, as the
+    /// interval domain reads it.
+    fn of(v: Value) -> Self {
+        let ints = match &v {
+            Value::Int(n) => IntervalSet::single(*n),
+            Value::Big(n) if n.is_negative() => IntervalSet::range(NegInf, Fin(i64::MIN)),
+            Value::Big(_) => IntervalSet::range(Fin(i64::MAX), PosInf),
+            _ => return Known::top(),
+        };
+        Known {
+            ints,
+            value: Some(v),
+        }
+    }
+}
+
+impl<'a> Ck<'_, 'a> {
+    /// What the text of `e` shows of its `int` value (see [`Known`]), from its literals, the
+    /// names it uses, its integer operators and its calls of the bit words; any `int` for
+    /// anything else. Each expression is read once, by its span, so a nest of `n` operators
+    /// costs O(n).
+    ///
+    /// Complexity tradeoff: the text is read, not the reduced product's cell, so an int that
+    /// only a test narrows (`if n >= 0 { popCount(n) }`) or that comes from input is read as any
+    /// int, and a bit word on it is rejected. Why: the checker runs before the store's
+    /// iteration, and asking the store at each call would run a fixpoint per call; reading the
+    /// text is O(1) per node. Trigger: an operand whose sign or width only a test, a parameter
+    /// or a component of a tuple shows. Test:
+    /// `l01_39a_bit_words::errors::an_operand_not_shown_in_its_domain_is_rejected`. COMPLEXITY.md
+    /// row C26.
+    fn known(&mut self, e: &'a Expr) -> Known {
+        if let Some(k) = self.known.get(&e.span) {
+            return k.clone();
+        }
+        let k = self.known_uncached(e);
+        self.known.insert(e.span, k.clone());
+        k
+    }
+
+    fn known_uncached(&mut self, e: &'a Expr) -> Known {
+        let op = |o: &str| match o {
+            "+" => Some((Op::Add, Prim::Add)),
+            "-" => Some((Op::Sub, Prim::Sub)),
+            "*" => Some((Op::Mul, Prim::Mul)),
+            "div" => Some((Op::Div, Prim::IntDiv)),
+            "mod" => Some((Op::Mod, Prim::Mod)),
+            _ => None,
+        };
+        let fold = |p: Prim, args: Vec<Value>| -> Option<Known> {
+            let v = eval(&Term::Prim(p, args.into_iter().map(Term::Lit).collect())).ok()?;
+            matches!(v, Value::Int(_) | Value::Big(_)).then(|| Known::of(v))
+        };
+        let nonnegative = IntervalSet::range(Fin(0), PosInf);
+        match &e.kind {
+            ExprKind::Int { radix, digits } => {
+                let digits: String = digits.chars().filter(|&c| c != '_').collect();
+                Value::int_text(&digits, *radix).map_or_else(Known::top, Known::of)
+            }
+            ExprKind::Name(_) => match self.t.res.uses.get(&e.span) {
+                Some(Ref::Bound(ids)) if ids.len() == 1 => {
+                    self.facts.get(&ids[0]).cloned().unwrap_or_else(Known::top)
                 }
-                _ if x.is_subset(&nonnegative) && n.is_subset(&nonnegative) => nonnegative,
-                _ => IntervalSet::top(),
+                _ => Known::top(),
+            },
+            ExprKind::Unary("-", a) => {
+                let a = self.known(a);
+                match a.value {
+                    Some(v) => fold(Prim::Neg, vec![v]).unwrap_or_else(Known::top),
+                    None => Known {
+                        ints: a.ints.neg(),
+                        value: None,
+                    },
+                }
             }
+            ExprKind::Binary("**", a, b) => {
+                let (x, n) = (self.known(a), self.known(b));
+                if let (Some(x), Some(n)) = (&x.value, &n.value) {
+                    return fold(Prim::Pow, vec![x.clone(), n.clone()]).unwrap_or_else(Known::top);
+                }
+                let ints = match n.ints.bounds() {
+                    Some((Fin(lo), Fin(hi))) if lo == hi && lo >= 0 => {
+                        forward(&Op::Pow(Int::from(lo).into()), &x.ints, &x.ints)
+                    }
+                    _ if x.ints.is_subset(&nonnegative) && n.ints.is_subset(&nonnegative) => {
+                        nonnegative
+                    }
+                    _ => IntervalSet::top(),
+                };
+                Known { ints, value: None }
+            }
+            ExprKind::Binary(o, a, b) => match op(o) {
+                Some((o, p)) => {
+                    let (a, b) = (self.known(a), self.known(b));
+                    if let (Some(x), Some(y)) = (&a.value, &b.value) {
+                        return fold(p, vec![x.clone(), y.clone()]).unwrap_or_else(Known::top);
+                    }
+                    Known {
+                        ints: forward(&o, &a.ints, &b.ints),
+                        value: None,
+                    }
+                }
+                None => Known::top(),
+            },
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+            } => {
+                let uses = &self.t.res.uses;
+                let (p, receiver) = match &callee.kind {
+                    ExprKind::Name(w)
+                        if matches!(uses.get(&callee.span), Some(Ref::Prelude(_))) =>
+                    {
+                        (bit_prim(w), None)
+                    }
+                    ExprKind::Member {
+                        of,
+                        name,
+                        safe: false,
+                    } if !matches!(uses.get(&callee.span), Some(Ref::Bound(_)))
+                        && crate::resolve::prelude_layer(name) == Some(1) =>
+                    {
+                        (bit_prim(name), Some(&**of))
+                    }
+                    _ => (None, None),
+                };
+                let Some((p, es)) =
+                    p.and_then(|p| Some((p, bit_operands(p, receiver, positional, named)?)))
+                else {
+                    return Known::top();
+                };
+                let ks: Vec<Known> = es.into_iter().map(|a| self.known(a)).collect();
+                if let Some(vs) = ks
+                    .iter()
+                    .map(|k| k.value.clone())
+                    .collect::<Option<Vec<_>>>()
+                {
+                    // A constant call outside its domain is rejected at the call; its value
+                    // is then none.
+                    return match zed_kernel::bits::word(p, &vs) {
+                        Ok(v) => Known::of(v),
+                        Err(_) => Known {
+                            ints: IntervalSet::empty(),
+                            value: None,
+                        },
+                    };
+                }
+                let xs: Vec<IntervalSet> = ks.into_iter().map(|k| k.ints).collect();
+                Known {
+                    ints: bit_word(p, &xs),
+                    value: None,
+                }
+            }
+            _ => Known::top(),
         }
-        ExprKind::Binary(o, a, b) => match op(o) {
-            Some(o) => forward(&o, &interval(a), &interval(b)),
-            None => IntervalSet::top(),
-        },
-        _ => IntervalSet::top(),
     }
 }
 

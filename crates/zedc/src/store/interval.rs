@@ -11,6 +11,8 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::ops::Neg;
 
+use zed_kernel::{Prim, Value};
+
 use super::lattice::Landmarks;
 
 thread_local! {
@@ -528,6 +530,227 @@ fn above(ends: &[i64], marks: &Landmarks, v: i64) -> Option<i64> {
     match (e, m) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
+    }
+}
+
+/// The binary digits of a non-negative `n`: the least `b` with `n < 2^b`.
+fn digits(n: i64) -> i64 {
+    i64::from(64 - n.leading_zeros())
+}
+
+/// `2^e` for `e >= 0`, held at `2^100` for a larger `e`. Every bound built from it is an `i64`
+/// plus or minus `2^e`, so past `2^100` it is past `i64` either way and rounds to the same end
+/// ([`End::lower`], [`End::upper`]) as the exact power would.
+fn pow2(e: i64) -> i128 {
+    1i128 << e.clamp(0, 100)
+}
+
+/// `x * 2^k`, `k >= 0`, held past `i64` in the same way as [`pow2`]: `|x| <= 2^63`, so with `k`
+/// held at 64 the product fits an `i128`, and a nonzero product past `2^64` is past `i64`.
+fn shifted(x: i64, k: i64) -> i128 {
+    i128::from(x) * (1i128 << k.clamp(0, 64))
+}
+
+/// The finite value of an end known to be finite.
+fn fin(e: End) -> i64 {
+    match e {
+        Fin(v) => v,
+        _ => unreachable!("a bound of a non-negative operand is finite below"),
+    }
+}
+
+/// Forward transfer of a bit word (step L1.39a, DESIGN.md sec:domains) on the intervals of its
+/// int operands, in parameter order with the width last: a set holding `p(args)` for every
+/// tuple of members on which `p` is defined. Each operand is first met with its domain,
+/// `int[0..]` for every one but the `x` of `shl` and `shr`, and the `x` of a word with a width
+/// with `int[0..<2 ** w]` for the largest `w`; an operand left empty gives the empty set, and
+/// operands that are each one integer give the word's value.
+///
+/// `bitAnd` lies in `0..=min(hi_a, hi_b)`, `bitOr` and `bitXor` below the least power of two
+/// above the larger upper bound (`bitOr` from the larger lower bound), `bitNot` in
+/// `2^w - 1 - x` over the corners, `popCount` in `0..=digits(hi_x)` (from 1 when 0 is not a
+/// member), `leadingZeros` in `w - digits(x)` over the corners, `trailingZeros` in `w` when `x`
+/// is 0 and in `0..digits(hi_x)` otherwise, and `rotl` and `rotr` below `2^w`, 0 exactly when
+/// `x` is. `shl` and `shr` are the product and the floor quotient by `2^k`, monotone in `x` and,
+/// on each sign of `x`, in `k`, so each sign part of each piece of `x` maps by its corners.
+/// `f64Bits` is in `int[0..<2 ** 64]`, read as `int[0..]` since its upper end is past `i64`.
+///
+/// Complexity tradeoff: every operand but the `x` of `shl` and `shr` is read by its hull, and
+/// the result is at most two intervals, so a hole in an operand is not carried through and the
+/// digit-wise words are bounded by their operands' digits, not by the digits they share. Why:
+/// these words are not monotone, so an exact image of unions of pieces is a search over the
+/// pieces' digits, and the hull rule is O(1) per word; `shl` and `shr` are monotone on each
+/// sign and keep their `x` pieces at O(pieces). Trigger: an operand of more than one piece,
+/// or of more than one value for `bitAnd`, `bitOr` and `bitXor`. Tests:
+/// `l01_39a_bit_words::transfer`. A complete solution would add the known-bits domain of step
+/// L1.40a, which carries the digits fixed in every member. COMPLEXITY.md row C25.
+pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
+    let nonneg = IntervalSet::range(Fin(0), PosInf);
+    if p == Prim::F64Bits {
+        return nonneg;
+    }
+    let shift = matches!(p, Prim::Shl | Prim::Shr);
+    let mut xs: Vec<IntervalSet> = args
+        .iter()
+        .enumerate()
+        .map(|(i, a)| match shift && i == 0 {
+            true => a.clone(),
+            false => a.meet(&nonneg),
+        })
+        .collect();
+    let width = matches!(
+        p,
+        Prim::BitNot | Prim::LeadingZeros | Prim::TrailingZeros | Prim::Rotl | Prim::Rotr
+    );
+    if width
+        && let Some((_, Fin(wh))) = xs.last().and_then(IntervalSet::bounds)
+        && let Ok(top) = i64::try_from(pow2(wh) - 1)
+    {
+        xs[0] = xs[0].meet(&IntervalSet::of(0, top));
+    }
+    if xs.iter().any(IntervalSet::is_empty) {
+        return IntervalSet::empty();
+    }
+    let one = |s: &IntervalSet| match s.bounds() {
+        Some((Fin(a), Fin(b))) if a == b => Some(Value::Int(a)),
+        _ => None,
+    };
+    if let Some(vs) = xs.iter().map(one).collect::<Option<Vec<Value>>>() {
+        match zed_kernel::bits::word(p, &vs) {
+            Ok(Value::Int(v)) => return IntervalSet::single(v),
+            Err(zed_kernel::KernelError::Type(_)) => return IntervalSet::empty(),
+            // A result past `i64`, or one the system could not build: the rules below.
+            _ => {}
+        }
+    }
+    let b = |i: usize| xs[i].bounds().expect("not empty");
+    let mask = |h: End| match h {
+        Fin(v) => End::upper(pow2(digits(v)) - 1),
+        e => e,
+    };
+    let (x_lo, x_hi) = b(0);
+    match p {
+        Prim::BitAnd => IntervalSet::range(Fin(0), x_hi.min(b(1).1)),
+        Prim::BitOr => IntervalSet::range(x_lo.max(b(1).0), mask(x_hi.max(b(1).1))),
+        Prim::BitXor => IntervalSet::range(Fin(0), mask(x_hi.max(b(1).1))),
+        Prim::PopCount => IntervalSet::range(
+            Fin(i64::from(fin(x_lo) > 0)),
+            match x_hi {
+                Fin(v) => Fin(digits(v)),
+                e => e,
+            },
+        ),
+        Prim::BitNot => {
+            let (w_lo, w_hi) = b(1);
+            let lo = match x_hi {
+                Fin(x) => End::lower((pow2(fin(w_lo)) - 1 - i128::from(x)).max(0)),
+                _ => Fin(0),
+            };
+            let hi = match w_hi {
+                Fin(w) => End::upper(pow2(w) - 1 - i128::from(fin(x_lo))),
+                e => e,
+            };
+            IntervalSet::range(lo, hi)
+        }
+        Prim::LeadingZeros => {
+            let (w_lo, w_hi) = b(1);
+            let lo = match x_hi {
+                Fin(x) => Fin((fin(w_lo) - digits(x)).max(0)),
+                _ => Fin(0),
+            };
+            let hi = match w_hi {
+                Fin(w) => Fin(w - digits(fin(x_lo))),
+                e => e,
+            };
+            IntervalSet::range(lo, hi)
+        }
+        Prim::TrailingZeros => {
+            let (w_lo, w_hi) = b(1);
+            let mut pieces = Vec::new();
+            if fin(x_lo) == 0 {
+                pieces.push((w_lo, w_hi));
+            }
+            let positive = xs[0].meet(&IntervalSet::range(Fin(1), PosInf));
+            match positive.bounds() {
+                Some((Fin(a), Fin(z))) if a == z => {
+                    let t = Fin(i64::from(a.trailing_zeros()));
+                    pieces.push((t, t));
+                }
+                Some((_, Fin(z))) => pieces.push((Fin(0), Fin(digits(z) - 1).min(w_hi))),
+                Some((_, hi)) => pieces.push((Fin(0), hi.min(w_hi))),
+                None => {}
+            }
+            IntervalSet::from_pieces(pieces)
+        }
+        Prim::Rotl | Prim::Rotr => {
+            if x_hi == Fin(0) {
+                return IntervalSet::single(0);
+            }
+            let hi = match b(2).1 {
+                Fin(w) => End::upper(pow2(w) - 1),
+                e => e,
+            };
+            IntervalSet::range(Fin(i64::from(fin(x_lo) > 0)), hi)
+        }
+        Prim::Shl => {
+            let (k_lo, k_hi) = b(1);
+            let k_lo = fin(k_lo);
+            xs[0].clone().lift1(|piece| {
+                IntervalSet::from_pieces(vec![piece])
+                    .sign_parts()
+                    .into_iter()
+                    .map(|(lo, hi)| match lo.signum() {
+                        0 => (Fin(0), Fin(0)),
+                        1 => (
+                            End::lower(shifted(fin(lo), k_lo)),
+                            match (hi, k_hi) {
+                                (Fin(h), Fin(k)) => End::upper(shifted(h, k)),
+                                _ => PosInf,
+                            },
+                        ),
+                        _ => (
+                            match (lo, k_hi) {
+                                (Fin(l), Fin(k)) => End::lower(shifted(l, k)),
+                                _ => NegInf,
+                            },
+                            End::upper(shifted(fin(hi), k_lo)),
+                        ),
+                    })
+                    .collect()
+            })
+        }
+        _ => {
+            // `shr`: an arithmetic shift by more than 63 places is the shift by 63.
+            let (k_lo, k_hi) = b(1);
+            let k_lo = fin(k_lo).min(63);
+            let k_hi = match k_hi {
+                Fin(k) => k.min(63),
+                _ => 63,
+            };
+            xs[0].clone().lift1(|piece| {
+                IntervalSet::from_pieces(vec![piece])
+                    .sign_parts()
+                    .into_iter()
+                    .map(|(lo, hi)| match lo.signum() {
+                        0 => (Fin(0), Fin(0)),
+                        1 => (
+                            Fin(fin(lo) >> k_hi),
+                            match hi {
+                                Fin(h) => Fin(h >> k_lo),
+                                e => e,
+                            },
+                        ),
+                        _ => (
+                            match lo {
+                                Fin(l) => Fin(l >> k_lo),
+                                e => e,
+                            },
+                            Fin(fin(hi) >> k_hi),
+                        ),
+                    })
+                    .collect()
+            })
+        }
     }
 }
 

@@ -20,6 +20,18 @@ const WORDS: &[(&str, Prim)] = &[
     ("upper", Prim::Upper),
     ("trim", Prim::Trim),
     ("sum", Prim::Sum),
+    ("bitAnd", Prim::BitAnd),
+    ("bitOr", Prim::BitOr),
+    ("bitXor", Prim::BitXor),
+    ("bitNot", Prim::BitNot),
+    ("shl", Prim::Shl),
+    ("shr", Prim::Shr),
+    ("popCount", Prim::PopCount),
+    ("leadingZeros", Prim::LeadingZeros),
+    ("trailingZeros", Prim::TrailingZeros),
+    ("rotl", Prim::Rotl),
+    ("rotr", Prim::Rotr),
+    ("f64Bits", Prim::F64Bits),
 ];
 
 /// Whether `name` is a prelude word.

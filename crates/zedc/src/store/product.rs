@@ -2589,6 +2589,20 @@ fn forward_prim(op: Prim, args: &[Term], scope: &mut Scope) -> Product {
         p.ty.element = Type::int();
         p.cell.ints.element = Bounds::ints(revision::forward(&op, xs[0].ints(), &y));
         p.reduce_domains();
+    } else if zed_kernel::bits::is_bit_word(op)
+        && op.arity() == Some(xs.len())
+        && xs.iter().all(|x| {
+            let want = match op {
+                Prim::F64Bits => Type::f64(),
+                _ => Type::int(),
+            };
+            x.ty.element.subtype(&want)
+        })
+    {
+        let ints: Vec<IntervalSet> = xs.iter().map(|x| x.ints().clone()).collect();
+        p.ty.element = Type::int();
+        p.cell.ints.element = Bounds::ints(super::interval::bit_word(op, &ints));
+        p.reduce_domains();
     }
     p
 }

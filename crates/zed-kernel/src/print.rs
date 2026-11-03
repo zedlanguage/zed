@@ -104,6 +104,18 @@ fn name(p: Prim) -> &'static str {
         Upper => "upper",
         Trim => "trim",
         Sum => "sum",
+        BitAnd => "bitAnd",
+        BitOr => "bitOr",
+        BitXor => "bitXor",
+        BitNot => "bitNot",
+        Shl => "shl",
+        Shr => "shr",
+        PopCount => "popCount",
+        LeadingZeros => "leadingZeros",
+        TrailingZeros => "trailingZeros",
+        Rotl => "rotl",
+        Rotr => "rotr",
+        F64Bits => "f64Bits",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),

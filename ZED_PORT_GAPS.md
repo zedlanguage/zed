@@ -21,7 +21,7 @@ the form it has may not meet the cost the compiler needs:
 | 1 | Identity: address-keyed memos, pointer equality, cached digests | 33 | missing | S.3, S.4 | Content digest as a field; `==` shortcut in the runtime |
 | 2 | Shared memo and intern tables across pure calls | 52 | workaround | S.3 | Digests from gap 1; state receivers for the rest |
 | 3 | Lazy once-only cells and tied recursive types | 27 | workaround | S.3 | Table of definitions keyed by id |
-| 4 | Bit operations, float bits | up to 192 | missing | S.2, S.3 | Specify the bit words at L1 |
+| 4 | Bit operations, float bits | up to 192 | built (L1.39a) | S.2, S.3 | The bit words at L1, built by step L1.39a |
 | 5 | Bytes: spans, binary files, hashing input | 95 | missing | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
 | 6 | Command line, computed output paths, exit status | 9 | missing | S.5 | `Args` port, `Files` writes, an exit value |
 | 7 | Scalar to and from code point | 18 | missing | S.2 | Two L1 words |
@@ -169,7 +169,18 @@ with its parts in an indexed definition `parts[id] = …`, evaluated on demand (
 an indexed definition. Cost: inferred O(1) per read if the definedness table is stored, to be
 measured at S.3.
 
-### Gap 4. Bit operations (missing)
+### Gap 4. Bit operations (built)
+
+Built by step L1.39a (ledger item BIT-words): `bitAnd bitOr bitXor bitNot shl shr popCount
+leadingZeros trailingZeros rotl rotr f64Bits` are kernel primitives (`zed_kernel::bits`, `Prim`)
+on the unbounded `int`, prelude words of layer L1 with each parameter positional but `width`,
+with forward transfer on intervals (`store::interval::bit_word`, COMPLEXITY.md row C25). A
+negative operand, or an `x` wider than its width, is a type error at the call with its
+derivation; the checker decides it from the operand's text and listed values (row C26), so an
+int that only a test narrows is rejected, as `**`'s exponent is. Shift counts are never masked.
+What remains for S.2 and S.3: the representation point and `mix` below; `i32` and other
+domain-typed ints are L10, so `w: i32 = shl(1, 31)` is decided by the store's transfer, not yet
+by the checker. The text below is the audit's, kept as found.
 
 Confirmed: line 612 defines `shl(x, k)`: `k : int[0..]`, value `x · 2^k` on the unbounded `int`,
 with a width enforced where one is written. Line 729 uses `bitAnd`, `bitOr`, `bitXor` and `shl`,

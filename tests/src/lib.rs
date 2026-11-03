@@ -31,8 +31,9 @@ pub fn steps_dir() -> PathBuf {
 }
 
 /// Whether `name` is a well-formed step-folder name: a stage (`m0`, `l01`…`l29`, or `s` for
-/// the self-hosting row), the two-digit step number within the stage, and a short lowercase
-/// description, joined by underscores (`l01_07_fences`).
+/// the self-hosting row), the two-digit step number within the stage, with the one lowercase
+/// letter of a step DESIGN.md inserts after it (`L1.39a`), and a short lowercase description,
+/// joined by underscores (`l01_07_fences`, `l01_39a_bit_words`).
 pub fn is_step_name(name: &str) -> bool {
     let mut parts = name.splitn(3, '_');
     let (Some(stage), Some(step), Some(desc)) = (parts.next(), parts.next(), parts.next()) else {
@@ -45,7 +46,12 @@ pub fn is_step_name(name: &str) -> bool {
             && stage[1..]
                 .parse::<u8>()
                 .is_ok_and(|n| (1..=29).contains(&n)));
-    let step_ok = step.len() == 2 && step.parse::<u8>().is_ok_and(|n| n >= 1);
+    let digits = step
+        .strip_suffix(|c: char| c.is_ascii_lowercase())
+        .unwrap_or(step);
+    let step_ok = digits.len() == 2
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && digits.parse::<u8>().is_ok_and(|n| n >= 1);
     let desc_ok = !desc.is_empty()
         && !desc.starts_with('_')
         && !desc.ends_with('_')
@@ -65,6 +71,7 @@ mod tests {
         assert!(is_step_name("l01_07_fences"));
         assert!(is_step_name("l29_03_lowering_in_zed"));
         assert!(is_step_name("s_01_stage1"));
+        assert!(is_step_name("l01_39a_bit_words"));
     }
 
     #[test]
@@ -79,6 +86,10 @@ mod tests {
             "l01_07_",          // empty description
             "l01_07_Fences",    // uppercase
             "x01_07_fences",    // unknown stage
+            "l01_39ab_two",     // two letters after the step
+            "l01_39A_upper",    // uppercase letter after the step
+            "l01_00a_zero",     // steps count from 1
+            "l01_3a_short",     // step not two digits
         ] {
             assert!(!is_step_name(bad), "{bad} was accepted");
         }

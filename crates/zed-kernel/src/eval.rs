@@ -2177,6 +2177,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             | Prim::Trim,
             [x],
         ) => crate::words::word(p, x)?,
+        _ if crate::bits::is_bit_word(p) => crate::bits::word(p, &vals)?,
         (Prim::Sum, [Value::Tuple(items)]) => {
             if items.iter().any(|v| matches!(v, Value::Atom(_))) {
                 return Ok(Value::merge_failures(
