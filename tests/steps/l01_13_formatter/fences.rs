@@ -51,7 +51,9 @@ fn every_corpus_program_that_builds_formats_to_a_fixed_point() {
     // does not need; 15-spreadsheet.zed, 24-weighted-pick.zed and 28-precedence-climbing.zed
     // write a `while` guard after the step, where the formatter writes it first. From the
     // AXIOMS-fmt fix, which builds `asc` and `desc` keys, 22-top-k.zed builds; it aligns a `=` and
-    // writes a block of two statements on one line.
+    // writes a block of two statements on one line. From the CORPUS-parse fix, which wrote its
+    // empty family `#bad -> ({})`, 19-bank-ledger.zed builds; it breaks an `if` chain by hand,
+    // aligns `=` and writes a `while` guard after the step.
     differ.sort();
     assert_eq!(
         differ,
@@ -69,6 +71,7 @@ fn every_corpus_program_that_builds_formats_to_a_fixed_point() {
             "13-union-find.zed",
             "15-spreadsheet.zed",
             "17-sensor-pipeline.zed",
+            "19-bank-ledger.zed",
             "22-top-k.zed",
             "23-join-zoo.zed",
             "24-weighted-pick.zed",

@@ -3,6 +3,7 @@
 //! but the trailing expression, which is the block's `return`.
 
 mod blocks;
+mod empty_family;
 mod fences;
 mod returns;
 

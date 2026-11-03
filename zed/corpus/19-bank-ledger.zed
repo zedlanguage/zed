@@ -24,10 +24,10 @@ parse(positional l) = {
 };
 
 edits(positional tx, positional t) = match tx {
-  #open(id:) -> { id -> #insert(0) },
-  #deposit(id:, amt:) -> { id -> #update(b -> b + amt) },
-  #withdraw(id:, amt:) -> { id -> #update(b -> if b is int && amt > b { #insufficient(tx: t, short: amt - b) } else { b - amt }) },
-  #bad -> {},
+  #open(id:) -> ({ id -> #insert(0) }),
+  #deposit(id:, amt:) -> ({ id -> #update(b -> b + amt) }),
+  #withdraw(id:, amt:) -> ({ id -> #update(b -> if b is int && amt > b { #insufficient(tx: t, short: amt - b) } else { b - amt }) }),
+  #bad -> ({}),
 };
 
 show(positional id, positional v) = match v {

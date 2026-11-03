@@ -600,11 +600,20 @@ impl<'a, 's> Builder<'a, 's> {
                 })
             )
         {
+            // Only a brace in body position, after `->`, `else`, or an `if` or `for` head, makes
+            // an empty block; elsewhere `{}` is the empty family (sec:lexical), which is what a
+            // writer of `{}` there most likely meant.
+            let message = if stmts.is_empty() {
+                "this `{}` is an empty block, which exports nothing: a brace after `->`, `else`, or the \
+                 head of an `if` or a `for` is a block; the empty family there is `{ {} }`, or \
+                 `({})` after `->` or a fallback's `else`"
+            } else {
+                "this block exports nothing: end it with an expression or `return e;`"
+            };
             return Err(Error {
                 row: None,
                 span: e.span,
-                message: "this block exports nothing: end it with an expression or `return e;`"
-                    .into(),
+                message: message.into(),
                 notes: Vec::new(),
             });
         }
