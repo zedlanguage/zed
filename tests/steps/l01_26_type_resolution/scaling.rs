@@ -252,8 +252,10 @@ fn bit_words(n: usize) -> String {
 fn bit_words_8000_deep_check_on_a_2_mib_stack() {
     // A bit word's arguments are checked from the walk's frame `Bits`, so the nesting keeps
     // no frame of the thread's stack per call. Checked by a recursive call per argument, this
-    // overflowed the stack below 1,000 deep. A call costs about 150 us in the kernel's type
-    // algebra, as the calls above do, so 100,000 deep would take most of a minute.
+    // overflowed the stack below 1,000 deep. 1,000,000 deep does not fit the 60 s limit of a
+    // test: measured at 100,000 deep (linear from 12,500), parsing takes 10 s and checking
+    // 16 s, about 100 us and 160 us a call, the checker's in the kernel's type algebra as for
+    // the calls above; 1,000,000 deep would take about 100 s to parse and 160 s to check.
     use zed_tests::deep::{on_small_stack, statements};
     let n = 1_000;
     let small = statements(&bit_words(n));
