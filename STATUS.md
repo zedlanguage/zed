@@ -971,23 +971,19 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ADDR-keys | impl attempt 1 | 2026-11-03 15:48 | started |
-| CHK-cost | impl attempt 1 | 2026-11-03 15:48 | probe (check only, instructions) at load 28: flat tuples 102k/node linear; nested tuples 4.1M/10.6M/31.8M/106M per node at n=50..400 (~n^2.7); nested lambdas 33 |
-| CHK-lambda | running | 2026-11-03 06:31 |  |
-| CHK-node-cost | running | 2026-11-03 06:31 |  |
-| CHK-tuple | running | 2026-11-03 06:31 |  |
-| ELAB-namedarg | impl attempt 1 | 2026-11-03 15:38 | reproduced: checker gave no error for dbl(3) with dbl(x) named (and 5 other binding errors: kind both ways, unknown name, already supplied, missing, curry), ela |
-| ISSUE1-else-atoms | impl attempt 1 | 2026-11-03 16:04 | start; worktree wt/issue1-else-atoms on main b0a733ff; load 39.69 36.78 32.63 |
-| LOWER-addr | running | 2026-11-03 13:55 |  |
-| MSG-operand-print | running | 2026-11-03 12:51 |  |
-| PLAN-audit-apply | impl attempt 1 | 2026-11-03 15:54 | S22-more-random-fail refuted on main b0a733ff: more_random_guarded (28.3 s), random_guarded (30.2 s), chains_of_growing_constants (17.7 s), random_terms (2.6 s) |
+| ADDR-keys | verify attempt 1 | 2026-11-03 15:48 | started (load 51.02) |
+| BUGCLASS-hunt | research attempt 1 | 2026-11-03 16:14 | started (workflow wf_65aea058-632, labels find:* and verify:*) |
+| CHK-cost | impl attempt 1 | 2026-11-03 15:48 | kernel Type::split + scalar is_empty fast path: + 570k->187k/node, neg 74k, calls 82k, lines 270k, lambdas 734k |
+| ELAB-namedarg | impl attempt 1 | 2026-11-03 15:38 | suite 330 pieces, 1 failed (m0_05 order test called named params positionally, relied on the !_ gap; calls fixed, now 44/44), load 31-56; negative control (chec |
+| ISSUE1-else-atoms | impl attempt 1 | 2026-11-03 16:04 | per-parameter handled atoms (resolver handles + Ck.handled): row 7 now (int / #_) -> int, rows 3,4,6,8 (String / #_), others unchanged |
+| PLAN-audit-apply | impl attempt 1 | 2026-11-03 15:54 | merge lock taken |
 | PLAN-audit-dagview | impl attempt 1 | 2026-11-03 15:54 | done: 354a92e2 on wt/plan-audit-dagview (not merged); 30/30 tests, tsc clean; live server pid 4169839 needs a restart after merge to load state.ts |
 | PTR-memo | orchestrator attempt  | 2026-11-03 11:14 | reopened: the runner's verify rule bans pointer-keyed memos; my 12:46 close was wrong |
 | S22e-wide | impl attempt 1 | 2026-11-03 11:28 | started; worktree wt/s22e-wide from c076719 |
-| SCALE-threads | impl attempt 1 | 2026-11-03 12:56 | per-thread counts inherited by a pthread_create wrapper in zed-alloc-count; helper tests 18/18 pass; negative control (old allocator, new scaling.rs): the_bytes |
+| SCALE-threads | verify attempt 1 | 2026-11-03 12:56 | DEFECT: the_bytes_of_a_bare_thread_a_run_starts_count is flaky in the zed_kernel test binary (shares tests/src/scaling.rs): fails at scaling.rs:608 nested > joi |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
-| WIDE-copies | impl attempt 1 | 2026-11-03 12:51 | started |
-| ZIR-validate-bytes | impl attempt 1 | 2026-11-03 08:00 | done: branch wt/zir-validate-bytes 1d562d26; l01_33 two tests back on scaling::check (bytes 8.0x/9.8x), control fails 37.3x/28.8x; not pushed |
+| WIDE-copies | verify attempt 1 | 2026-11-03 12:51 | fmt check and clippy -D warnings clean; tools/run_tests.sh 4 started (load5 51) |
+| ZIR-validate-bytes | verify attempt 3 | 2026-11-03 08:00 | start; verify#1 results reused (control at n=4000 fails 35.7x/30.6x, real 8.0x/9.0x); reading a55ccfd6 vs main; load5 66.08 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
