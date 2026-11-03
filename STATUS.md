@@ -115,6 +115,13 @@ in docs/layout.md.
 - Done: **L2.1**, the parser of the L2 forms (`zedc::ast`): structs, record displays, `with`
   clauses, methods, patterns, the tuple parameter and type declarations; resolution refuses
   each with the step that compiles it (14ff528, spec 3038709).
+- Done: **L2.2**, the parser of `match` (arms, guards, type patterns), `import` with `@hash`
+  and annotations; resolution refuses each with its layer (9777b2d, 395b46e, 6bcc68e).
+- Done: **L3.1**, the parser of the L3 forms: displays, ranges, indexing, `in`, range
+  patterns, `for`, `><`, folds, `::` metadata, operator sections (02a8cdb).
+- Done: **L6.1**, the parser, formatter and refusals of the L6 forms: `loop`, `while` and
+  `until`, `break`, indexed and piecewise definitions, boundary clauses, primes, pushes,
+  `*.` (95e0a03, 241d535).
 - Complexity audit (2026-10-30, DESIGN.md Part G, "Every algorithm is of low complexity") (the caps and budgets named here were removed later by docs/thresholds.md, replacements 3, 4, 8 and 9):
   every finding is listed in COMPLEXITY.md with its state. Fixed so far: the preimage transfer
   (exponential in `let` depth and guard nesting, now one computation per term and scope) and
@@ -144,8 +151,8 @@ in docs/layout.md.
   from the hardware counter, the least of two runs of each size, one measurement; with no counter
   (`perf_event_paranoid` above 2, or a VM with no PMU) it is the task clock, the processor time of the thread and the threads it starts, and a
   test fails only when three measurements in a row are over; with `perf_event_open` refused the check stops with its own error. Every test run is capped at 64 GB, half the machine.
-- Next: the items of `docs/plan_dag.md`, in its order. L2.2 is running. L1.40 needs T4, which
-  is done, and ST1 and ST2, which item ST builds (in repair).
+- Next: the items of `docs/plan_dag.md`, in its order; what runs now is under "In progress".
+  L1.40 needs T4, which is done, and ST1 and ST2, which item ST builds (in repair).
 - Plan extended (spec, 2026-10-30): **L30 — the editor**, a VS Code extension on the L25
   language server (static information per position, the dependency margin, recomputation of
   dirty nodes, values in place with visualizers), steps L30.1–L30.6.
@@ -771,26 +778,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| L2.2 | impl attempt 1 | 2026-11-03 00:08 | started: parser for match/guards/type patterns, import @hash, @ annotations |
-| LR4 | impl attempt 1 | 2026-11-03 00:05 | start; reading brief, SYNTHESIS, sec:grammar |
-| ST1 | repair attempt 3 (item ST) | 2026-11-02 21:50 | start: fix quadratic reduce on one linked component (Scope::project collects whole component) |
-| ST2 | repair attempt 3 (item ST) | 2026-11-02 21:50 | start: fix quadratic reduce on one linked component (Scope::project collects whole component) |
-| T11-fix-rest | impl attempt 1 | 2026-11-03 00:06 | started |
-| T11-preimage | repair attempt 1 | 2026-11-02 23:25 | start: fix S20 auxiliary names printing whole subterm in preimage.rs |
-| T14-heap | impl attempt 1 | 2026-11-03 00:06 | start |
-| T14-hooks | impl attempt 1 | 2026-11-03 00:06 | started |
-| T14-provenance | verify attempt 2 | 2026-11-02 23:25 | started; reading diff main..24929b1 |
-| T6 | impl attempt 1 | 2026-11-03 00:01 | read split_bdw2 helpers and family generators; writing types/bes.rs port / load 18.93 34.15 36.18 |
-| XT | impl XT-R attempt 1 | 2026-11-03 03:10 | round 2 synthesized; design R built on wt/xt-r (simplex removed: box stages, column quotient, UTVPI DAG potential); cyclic UTVPI and the lost decisions go to XT3 |
+| ST (ST1 and ST2) | repair attempt 6 | 2026-11-02 21:50 | 03:05 verify 6 of 1233fbd: suite 91 pieces, 0 failed, but a nested or/and formula of depth d is quadratic (1573 ms at d=4000, 62 times the work at 8 times d; before repair 5, 9 times), since `complementary()` hashes every disjunct in full |
+| ST-ladder | waits for ST | 2026-11-03 02:59 | split from ST repair 5: a ladder block built one test at a time is O(k³) in total, and the walk through a shared name Θ(n²) |
+| T6 | repair attempt 2 | 2026-11-03 00:01 | 02:59 its controls fail the old code (empty.rs 44.4 times, bdd.rs 293 times); `nth union` is still about n³ (0.75 s at n=64), which blocks it |
+| OSP-order | verify attempt 1 | 2026-11-03 02:23 | 03:03 suite on e303b4e: 96 pieces, 0 failed |
+| OSP-diag | impl attempt 1 | 2026-11-03 02:23 | 03:04 part 3: reader rule tests (6) and scaling at n and 8n pass |
+| S22a | impl attempt 1 | 2026-11-03 03:01 | started from /home/luke/Work/wt/xs22/synth/S22a_BRIEF.md |
 
-Merged into local main and not yet pushed (6 commits); the push follows one full test run on the merged tree:
-
-- c884798 T11-elab: terms shared in elaboration and staging
-- cb7ba9a STATUS: L2.1 done (merged)
-- 14ff528 L2.1: parser of structs, record displays, with clauses, methods, patterns, the tuple parameter and type declarations; resolution refuses each with its
-- 505567c T14-value: Tuple, Path and atom payloads share their parts (Arc<[Value]>); deep walks meet a shared part once
-- b43cd24 T14-low: free the JIT memory when a native compile fails (Drop guard, tested); jump-table dispatch; fewer copies in number_cmp, read_rat, apply, ty me
-- 4420380 plan: needs keep only code, measure and files-heavy edges; T11-fix split into T11-fix-store and T11-fix-rest; X14 added
+Merged into local main and not yet pushed: every commit after 8c9e81b (LR4-fix), the last push. Among them L2.1, L2.2, L3.1, L6.1, T11-elab, T11-fix-rest, T11-preimage, T11-uses-of, T14-value, T14-low, T14-heap, T14-heap-rest, T14-hooks, T14-provenance, T14-R1, T14-rope, T14-rope-len, T14-cell-len, T14-occ, T14-occ-id, P14-MST (closes XP14), OSP-lit, T-zone and XT-R. The push follows one full test run on the merged tree.
 
 ## Open points
 
