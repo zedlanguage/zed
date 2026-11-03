@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use zed_kernel::types::Type;
-use zed_kernel::types::rec::Expr;
+use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::value::Value;
 use zed_kernel::{Pattern, Term};
 use zed_tests::scaling;
@@ -159,6 +159,17 @@ fn next(s: &mut u64) -> u64 {
 
 /// A random type `d` deep; with `print`, the text of each part is made before it is used.
 fn random(s: &mut u64, d: u32, print: bool) -> Type {
+    random_in(s, d, print, None)
+}
+
+/// The instances of a group built by [`random_in`], each with its argument.
+struct Trees {
+    group: Group,
+    made: RefCell<Vec<(Type, Type)>>,
+}
+
+/// [`random`], with instances of `tree` among the parts when it is given.
+fn random_in(s: &mut u64, d: u32, print: bool, tree: Option<&Trees>) -> Type {
     let k = next(s);
     let t = if d == 0 || k.is_multiple_of(7) {
         match k % 6 {
@@ -170,8 +181,16 @@ fn random(s: &mut u64, d: u32, print: bool) -> Type {
             _ => Type::empty(),
         }
     } else {
-        let mut part = || random(s, d - 1, print);
+        let mut part = || random_in(s, d - 1, print, tree);
         match k % 9 {
+            _ if let Some(g) = tree
+                && k.is_multiple_of(4) =>
+            {
+                let arg = part();
+                let t = g.group.instance(vec![arg.clone()]).remove(0);
+                g.made.borrow_mut().push((t.clone(), arg));
+                t
+            }
             0 => Type::tuple(vec![part(), part()]),
             1 => Type::tuple(vec![part()]),
             2 => Type::atom_with(["a", "b"][(k % 2) as usize], &Type::tuple(vec![part()])),
@@ -193,11 +212,21 @@ fn random(s: &mut u64, d: u32, print: bool) -> Type {
 /// its own, `make(n, i)` for the `i`-th run at size `n`, all built before any run is timed, and
 /// what it returns is kept until the check ends, so its release is not timed either.
 fn scales<I, O>(what: &str, make: impl Fn(usize, usize) -> I, run: impl Fn(usize, I) -> O) {
+    scales_at(what, N, make, run);
+}
+
+/// [`scales`] at sizes `n` and 8 times it.
+fn scales_at<I, O>(
+    what: &str,
+    n: usize,
+    make: impl Fn(usize, usize) -> I,
+    run: impl Fn(usize, I) -> O,
+) {
     let (small, large) = scaling::Meter::new().runs();
     let pool = |n: usize, runs: usize| (n, RefCell::new((0..runs).map(|i| make(n, i)).collect()));
-    let pools: [(usize, RefCell<Vec<I>>); 2] = [pool(N, small), pool(scaling::FACTOR * N, large)];
+    let pools: [(usize, RefCell<Vec<I>>); 2] = [pool(n, small), pool(scaling::FACTOR * n, large)];
     let kept = RefCell::new(Vec::new());
-    scaling::check(what, N, |n| {
+    scaling::check(what, n, |n| {
         let (_, inputs) = pools.iter().find(|(m, _)| *m == n).expect("a size checked");
         let input = inputs.borrow_mut().pop().expect("one input per run");
         let out = run(n, input);
@@ -232,18 +261,24 @@ fn printing_a_deep_type_scales() {
 
 #[test]
 fn releasing_deep_types_terms_and_patterns_scales() {
+    // The thread's tables of diagram nodes hold a type's parts until the thread ends, so a type
+    // dropped on this thread frees nearly nothing. Built and dropped on a thread of its own, it
+    // is freed when that thread ends, and the freeing is measured with the building.
+    let on_a_thread = |make: fn(usize, usize) -> Type| {
+        move |n: usize, i: usize| scaling::on_a_thread(2 << 20, || drop(make(i, n)))
+    };
     scales(
-        "a list type n deep, released",
-        |n, i| list_on(i, n),
-        |_, t| drop(t),
+        "a list type n deep, built and released on a thread of its own",
+        |_, i| i,
+        on_a_thread(list_on),
     );
     scales(
-        "a numeral type n deep, released",
-        |n, i| {
+        "a numeral type n deep, built and released on a thread of its own",
+        |_, i| i,
+        on_a_thread(|i, n| {
             let leaf = Type::lit(&Value::Int(i as i64)).expect("an integer literal is a type");
             (0..n).fold(leaf, |t, _| Type::atom_with("succ", &Type::tuple(vec![t])))
-        },
-        |_, t| drop(t),
+        }),
     );
     scales(
         "a block of n lets, released",
@@ -267,7 +302,6 @@ fn a_recursive_type_inside_a_type_is_named_with_its_arguments() {
     // `type Tree(A) = #leaf(A) | #fork(Tree(A), Tree(A))` at a type whose text is not made yet.
     // The name of `Tree(…)` prints its argument while the text of the tuple around it is being
     // made, and must print it in full.
-    use zed_kernel::types::rec::{Def, Group};
     let t = || Expr::Ref(0, vec![Expr::Param(0)]);
     let tree = Group::new(vec![Def {
         name: "Tree".into(),
@@ -282,4 +316,81 @@ fn a_recursive_type_inside_a_type_is_named_with_its_arguments() {
     let member = tree.instance(vec![arg]).remove(0);
     let pair = Type::tuple(vec![member, Type::int()]);
     assert_eq!(pair.to_string(), "(tuple Tree((| 12345 String)) int)");
+}
+
+/// How deep [`trees`] nests: building it takes time quadratic in the depth (ledger INST-bucket),
+/// about 6 s at this depth.
+const TREES: usize = 10_000;
+
+/// `type Tree(A) = #leaf(A) | #fork(Tree(A), Tree(A))`, its parameter named `param` and the
+/// type `name`. Groups that differ in either have instances of their own.
+fn tree(name: &str, param: &str) -> Group {
+    let t = || Expr::Ref(0, vec![Expr::Param(0)]);
+    Group::new(vec![Def {
+        name: name.into(),
+        params: vec![param.into()],
+        body: Expr::Union(vec![
+            Expr::Atom("leaf".into(), vec![Expr::Param(0)]),
+            Expr::Atom("fork".into(), vec![t(), t()]),
+        ]),
+    }])
+    .unwrap()
+}
+
+/// `Tree(Tree(… Tree(leaf) …))`, `d` instances of `group` nested in each other's argument.
+fn trees(group: &Group, leaf: Type, d: usize) -> Type {
+    (0..d).fold(leaf, |t, _| group.instance(vec![t]).remove(0))
+}
+
+#[test]
+fn a_recursive_type_nested_deep_in_its_own_arguments_is_printed() {
+    // The name of each `Tree(…)` holds the text of its argument, another `Tree(…)` whose name
+    // is not made yet: the loop that makes texts takes each name as an item of its stack.
+    let t = trees(&tree("Tree", "A"), Type::int(), TREES);
+    let text = t.to_string();
+    assert_eq!(
+        text,
+        format!("{}int{}", "Tree(".repeat(TREES), ")".repeat(TREES))
+    );
+    let pair = Type::tuple(vec![t, Type::int()]).to_string();
+    assert_eq!(pair, format!("(tuple {text} int)"));
+}
+
+#[test]
+fn printing_a_recursive_type_nested_deep_in_its_own_arguments_scales() {
+    // Each input is built from a group of its own, so no run finds the names of another made.
+    scales_at(
+        "the text of Tree(Tree(..)) n deep",
+        500,
+        |n, i| trees(&tree(&format!("T{i}x{n}"), "A"), Type::int(), n),
+        |n, t| {
+            let text = t.to_string();
+            assert!(text.len() > n);
+            (t, text)
+        },
+    );
+}
+
+#[test]
+fn the_text_of_a_type_with_recursive_types_is_the_same_made_outside_in_and_inside_out() {
+    // `Tree(…)` stands among the other parts, its arguments random too. Two groups would give
+    // two sets of recursive nodes, which order the parts of a type differently, so both texts
+    // are made with one group: first from the outside in, the loop making every name, then for
+    // the type built again with the text of each part made before it is used, which shares the
+    // recursive nodes and makes the other parts' texts anew. Each name must spell out the text
+    // of its argument. A group of its own for each type keeps the names of one from another.
+    for k in 0..1500 {
+        let trees = Trees {
+            group: tree(&format!("T{k}"), "A"),
+            made: RefCell::new(Vec::new()),
+        };
+        let mut seed = 23 + k;
+        let outside_in = random_in(&mut seed.clone(), 5, false, Some(&trees));
+        let text = outside_in.to_string();
+        for (t, arg) in trees.made.borrow().iter() {
+            assert_eq!(t.to_string(), format!("T{k}({arg})"));
+        }
+        let inside_out = random_in(&mut seed, 5, true, Some(&trees));
+        assert_eq!(text, inside_out.to_string());
+    }
 }

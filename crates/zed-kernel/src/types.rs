@@ -226,8 +226,10 @@ struct Rec {
     id: u64,
     /// The name, made when first printed: a name spells out its part of the definition, so
     /// making every part's name at once cost the product of the definition's size and depth.
-    name: OnceLock<String>,
-    naming: Box<dyn Fn() -> String + Send + Sync>,
+    /// It is a rope holding the texts of the argument types, which [`Type::rope`] makes in its
+    /// loop like any other text.
+    name: OnceLock<Rope>,
+    naming: Box<dyn Fn() -> Rope + Send + Sync>,
     body: OnceLock<Type>,
     make: Box<dyn Fn() -> Type + Send + Sync>,
     /// The emptiness its group decides for it, if the group is decided (module `bes`).
@@ -254,28 +256,14 @@ impl Ord for Rec {
     }
 }
 
-impl Rec {
-    fn name(&self) -> &str {
-        self.name.get_or_init(|| (self.naming)())
-    }
-
-    /// The name, made apart from any text under way on this thread: a name prints the types of its
-    /// arguments, and inside the loop of [`Type::rope`] a type whose text is not made yet prints
-    /// as a placeholder, which the name would keep.
-    fn name_apart(&self) -> &str {
-        if let Some(n) = self.name.get() {
-            return n;
-        }
-        let outer = SHOWING.with_borrow_mut(Option::take);
-        let name = self.name();
-        SHOWING.with_borrow_mut(|s| *s = outer);
-        name
-    }
-}
-
 impl fmt::Debug for Rec {
+    /// The name, made apart from any text under way on this thread, in which a text not made yet
+    /// is a placeholder. The argument types' texts are then each made by a loop of their own.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
+        let outer = SHOWING.with_borrow_mut(Option::take);
+        let name = self.name.get_or_init(|| (self.naming)()).clone();
+        SHOWING.with_borrow_mut(|s| *s = outer);
+        name.strs().try_for_each(|s| f.write_str(s))
     }
 }
 
@@ -468,7 +456,7 @@ impl Type {
     /// The node named `naming()` whose parts are `make()`'s, each computed when first needed.
     /// `make` must not need this node's parts, which a contractive definition ensures.
     fn rec(
-        naming: impl Fn() -> String + Send + Sync + 'static,
+        naming: impl Fn() -> Rope + Send + Sync + 'static,
         make: impl Fn() -> Type + Send + Sync + 'static,
     ) -> Type {
         Type::rec_with(Box::new(naming), Box::new(make), None)
@@ -476,7 +464,7 @@ impl Type {
 
     /// The node of [`Type::rec`], with its emptiness given by `judge` when there is one.
     fn rec_with(
-        naming: Box<dyn Fn() -> String + Send + Sync>,
+        naming: Box<dyn Fn() -> Rope + Send + Sync>,
         make: Box<dyn Fn() -> Type + Send + Sync>,
         judge: Option<Box<dyn Fn() -> Option<bool> + Send + Sync>>,
     ) -> Type {
@@ -492,8 +480,8 @@ impl Type {
     }
 
     /// [`Type::rec`], with `judge()` giving its emptiness when its group decides it.
-    pub(crate) fn rec_judged(
-        naming: impl Fn() -> String + Send + Sync + 'static,
+    fn rec_judged(
+        naming: impl Fn() -> Rope + Send + Sync + 'static,
         make: impl Fn() -> Type + Send + Sync + 'static,
         judge: impl Fn() -> Option<bool> + Send + Sync + 'static,
     ) -> Type {
@@ -1409,6 +1397,24 @@ impl Drop for Rope {
 }
 
 impl Rope {
+    /// The pieces in order.
+    fn cat(pieces: impl IntoIterator<Item = Piece>) -> Rope {
+        Rope(pieces.into_iter().collect())
+    }
+
+    /// `head`, then the items with `sep` between them, then `tail`.
+    fn joined(head: &str, items: impl IntoIterator<Item = Rope>, sep: &str, tail: &str) -> Rope {
+        let mut pieces = vec![Piece::from(head)];
+        for (k, i) in items.into_iter().enumerate() {
+            if k > 0 {
+                pieces.push(Piece::from(sep));
+            }
+            pieces.push(Piece::from(i));
+        }
+        pieces.push(Piece::from(tail));
+        Rope(Arc::from(pieces))
+    }
+
     /// `head`, then each item after a space, then `)`.
     fn listed(head: &str, items: impl IntoIterator<Item = Rope>) -> Rope {
         let mut pieces = vec![Piece::from(head)];
@@ -1484,14 +1490,11 @@ impl Drop for EndShowing {
 impl Type {
     /// The text as a rope, made once, which holds the ropes of the types inside without copying
     /// them, so that a type nested deep takes time linear in its text. The texts are made in a
-    /// loop: a try of `show` that finds a text inside missing gives up, the types it named are
-    /// made first, and the try is made again, so each type is tried at most twice.
+    /// loop: a try of `show`, or of a recursive node's naming, that finds a text inside missing
+    /// gives up, the types it named are made first, and the try is made again, so each type is
+    /// tried at most twice.
     fn rope(&self) -> Rope {
-        let shown = match &*self.0 {
-            Node::Parts(_, shown) => shown,
-            Node::Rec(r) => return rope![r.name_apart()],
-        };
-        if let Some(r) = shown.0.get() {
+        if let Some(r) = self.text().get() {
             return r.clone();
         }
         let inside = SHOWING.with_borrow_mut(|s| {
@@ -1511,29 +1514,40 @@ impl Type {
         }
     }
 
-    /// The loop of [`Type::rope`], from the outermost type whose text is asked for.
+    /// Where the text is kept once made: a recursive node's name, or the text of its parts.
+    fn text(&self) -> &OnceLock<Rope> {
+        match &*self.0 {
+            Node::Parts(_, shown) => &shown.0,
+            Node::Rec(r) => &r.name,
+        }
+    }
+
+    /// The loop of [`Type::rope`], from the outermost type whose text is asked for. A recursive
+    /// node is an item like any other, since its name holds the texts of its arguments, which
+    /// can be recursive nodes in turn: `Tree(Tree(int))`.
     fn make_rope(&self) -> Rope {
         SHOWING.with_borrow_mut(|s| *s = Some(Showing::default()));
         let _end = EndShowing;
         let mut stack = vec![self.clone()];
         while let Some(t) = stack.last() {
-            let Node::Parts(p, shown) = &*t.0 else {
-                unreachable!("a recursive node's text is its name, never missing")
-            };
+            let text = t.text();
             let made = SHOWING.with_borrow(|s| s.as_ref().and_then(|s| s.made.get(t).cloned()));
             if let Some(r) = made {
-                let _ = shown.0.set(r);
+                let _ = text.set(r);
             }
-            if shown.0.get().is_some() {
+            if text.get().is_some() {
                 stack.pop();
                 continue;
             }
-            let r = t.show(p);
+            let r = match &*t.0 {
+                Node::Parts(p, _) => t.show(p),
+                Node::Rec(rec) => (rec.naming)(),
+            };
             let missing = SHOWING.with_borrow_mut(|s| {
                 std::mem::take(&mut s.as_mut().expect("the making is under way").missing)
             });
             if missing.is_empty() {
-                let _ = shown.0.set(r.clone());
+                let _ = text.set(r.clone());
                 let t = stack.pop().expect("the stack holds `t`");
                 SHOWING.with_borrow_mut(|s| {
                     s.as_mut()
@@ -1545,10 +1559,7 @@ impl Type {
                 stack.extend(missing);
             }
         }
-        match &*self.0 {
-            Node::Parts(_, shown) => shown.0.get().expect("the loop made the text").clone(),
-            Node::Rec(r) => rope![r.name_apart()],
-        }
+        self.text().get().expect("the loop made the text").clone()
     }
 
     fn show(&self, p: &Parts) -> Rope {

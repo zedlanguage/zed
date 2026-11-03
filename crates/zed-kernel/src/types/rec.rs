@@ -24,7 +24,7 @@ use std::fmt;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use super::bes::{Answer, Bes, Kind, decide};
-use super::{Type, Verdict};
+use super::{Piece, Rope, Type, Verdict};
 use crate::deep;
 
 /// A type expression in a definition's body.
@@ -723,14 +723,16 @@ impl Env {
     }
 
     /// The name of definition `i` at the arguments: `Tree(int)`.
-    fn name(&self, i: usize) -> String {
+    fn name(&self, i: usize) -> Rope {
         let d = &self.group().0.defs[i];
         match self.args.is_empty() {
-            true => d.name.clone(),
-            false => {
-                let args: Vec<String> = self.args.iter().map(Type::to_string).collect();
-                format!("{}({})", d.name, args.join(", "))
-            }
+            true => Rope::cat([Piece::from(d.name.as_str())]),
+            false => Rope::joined(
+                &format!("{}(", d.name),
+                self.args.iter().map(Type::rope),
+                ", ",
+                ")",
+            ),
         }
     }
 }
@@ -774,7 +776,7 @@ fn component(e: &Arc<Node>, env: &Arc<Env>) -> Type {
                 args: Some(&at.args),
                 e: &named,
             }
-            .to_string()
+            .rope()
         },
         move || eval(&e, &env),
     )
@@ -788,45 +790,62 @@ struct Show<'a> {
     e: &'a Node,
 }
 
-impl fmt::Display for Show<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Show<'_> {
+    /// The text as a rope, which holds the texts of the types it names without copying them,
+    /// so that the name of `Tree(Tree(..))` takes time linear in its text.
+    fn rope(&self) -> Rope {
         let sub = |e: &'_ Node| {
-            let s = Show { e, ..*self }.to_string();
+            let r = Show { e, ..*self }.rope();
             match e.e {
                 Shape::Union(_) | Shape::And(_) | Shape::Diff(..) | Shape::Morphism(..) => {
-                    format!("({s})")
+                    Rope::joined("(", [r], "", ")")
                 }
-                _ => s,
+                _ => r,
             }
         };
-        let list =
-            |xs: &[Arc<Node>], sep: &str| xs.iter().map(|x| sub(x)).collect::<Vec<_>>().join(sep);
+        let list = |head: &str, xs: &[Arc<Node>], sep: &str, tail: &str| {
+            Rope::joined(head, xs.iter().map(|x| sub(x)), sep, tail)
+        };
         match &self.e.e {
             Shape::Param(i) => match self.args {
-                Some(args) => write!(f, "{}", args[*i]),
-                None => f.write_str(&self.params[*i]),
+                Some(args) => args[*i].rope(),
+                None => Rope::cat([Piece::from(self.params[*i].as_str())]),
             },
-            Shape::Ref(i, args) if args.is_empty() => f.write_str(&self.defs[*i].name),
-            Shape::Ref(i, args) => {
-                let args: Vec<String> = args
-                    .iter()
-                    .map(|a| Show { e: a, ..*self }.to_string())
-                    .collect();
-                write!(f, "{}({})", self.defs[*i].name, args.join(", "))
+            Shape::Ref(i, args) if args.is_empty() => {
+                Rope::cat([Piece::from(self.defs[*i].name.as_str())])
             }
-            Shape::Type(t) => write!(f, "{t}"),
-            Shape::Union(xs) => f.write_str(&list(xs, " | ")),
-            Shape::And(xs) => f.write_str(&list(xs, " & ")),
-            Shape::Not(a) => write!(f, "!{}", sub(a)),
-            Shape::Diff(a, b) => write!(f, "{} \\ {}", sub(a), sub(b)),
-            Shape::Tuple(xs) => write!(f, "({})", list(xs, ", ")),
-            Shape::Atom(name, xs) => write!(f, "#{name}({})", list(xs, ", ")),
-            Shape::Morphism(l, u, v) if l == u => write!(f, "({}) -> {}", sub(l), sub(v)),
+            Shape::Ref(i, args) => Rope::joined(
+                &format!("{}(", self.defs[*i].name),
+                args.iter().map(|a| Show { e: a, ..*self }.rope()),
+                ", ",
+                ")",
+            ),
+            Shape::Type(t) => t.rope(),
+            Shape::Union(xs) => list("", xs, " | ", ""),
+            Shape::And(xs) => list("", xs, " & ", ""),
+            Shape::Not(a) => Rope::joined("!", [sub(a)], "", ""),
+            Shape::Diff(a, b) => Rope::joined("", [sub(a), sub(b)], " \\ ", ""),
+            Shape::Tuple(xs) => list("(", xs, ", ", ")"),
+            Shape::Atom(name, xs) => list(&format!("#{name}("), xs, ", ", ")"),
+            Shape::Morphism(l, u, v) if l == u => Rope::joined("(", [sub(l), sub(v)], ") -> ", ""),
             Shape::Morphism(l, u, v) if l.e == Shape::Type(Type::empty()) => {
-                write!(f, "{} ->? {}", sub(u), sub(v))
+                Rope::joined("", [sub(u), sub(v)], " ->? ", "")
             }
-            Shape::Morphism(l, u, v) => write!(f, "({} ⊆ dom ⊆ {}) -> {}", sub(l), sub(u), sub(v)),
+            Shape::Morphism(l, u, v) => Rope::cat([
+                Piece::from("("),
+                Piece::from(sub(l)),
+                Piece::from(" ⊆ dom ⊆ "),
+                Piece::from(sub(u)),
+                Piece::from(") -> "),
+                Piece::from(sub(v)),
+            ]),
         }
+    }
+}
+
+impl fmt::Display for Show<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.rope().strs().try_for_each(|s| f.write_str(s))
     }
 }
 
