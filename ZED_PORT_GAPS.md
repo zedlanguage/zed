@@ -923,3 +923,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A persistent treap in `Rc` nodes, each holding its subtree's least and greatest value and a lazy affine tag pushed down on a split, with a priority computed from the piece's ends, shared by every summary built from it | `PaNode`, `Tree`, `split_at`, `join_treap`, `slice_treap`, `apply_tag`, `invert_treap` | Identity (gap 1) | A Zed tree value: an update makes new nodes along one path and shares the rest, which the runtime must keep at `O(log n)`; the priority is a field, so no identity is needed |
 | The sticky `ROUNDED` flag saved, cleared and restored around the hull of a term, so a rounding while computing the hull is seen and not reported | `Tx::clip`, `Tx::invert_pa` | Mutation, global state (gap 11) | The hull computation returns whether it rounded with its result; no flag |
+
+## Entries from ENDS-dag (`zedc/src/stage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Raw pointer `*const Term` as the key of the map from part to number while the term is read | `Reader::read`, `Reader::got` | Identity | Keyed by the content digest of gap 1; the address lives only during the reading and is never a memo key or an order |
+| An explicit stack `Vec<(&Term, bool)>` read in post-order, results pushed to a `Vec` by number | `Reader::read`, `each_part` | Mutation | A fold over a worklist list with the map from part to result as its state |
+| An arena of trie nodes (`Vec<SetNode>`) with a hash table from node to number (hash-consing) and a memo `HashMap<(Set, Set), Set>` of unions, all filled through `&mut self` | `Sets::make`, `Sets::union` | Shared memo (gap 2), Mutation | A state receiver holding the arena, the table and the memo, returned with each set made; or sets made identical by the content digest of gap 1 |
+| `u32::leading_zeros` and bit masks to find the highest differing bit of two names | `Sets::join`, `above` | Bit operations (gap 4) | As gap 4 |

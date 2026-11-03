@@ -149,7 +149,15 @@ fn children(t: &Term) -> Vec<&Term> {
 /// primitive, a lambda whose body ends, or a name a `let` binds to one. A `let` binds a name
 /// only in its body, so such calls nest no deeper than the term; a call through a parameter
 /// or a pattern variable, as in `w(w)`, is not shown to end. Free names are prelude words,
-/// which are primitives. Each subterm is read once.
+/// which are primitives.
+///
+/// The term is read as the graph of its distinct parts: a part shared by two places (one
+/// `Arc` reached twice) is read once, so the time is near the number of distinct parts, not
+/// the size of the term unshared (COMPLEXITY.md row ENDS). Each part is read once whatever
+/// names are bound around it: what it needs of them is the set of names it calls that must
+/// each be free or bound by `let` to a function that ends ([`Needs`]), and the binder of a
+/// name reads that set. A part shared under two bindings of a name it calls so gives each
+/// place its own answer.
 ///
 /// Complexity tradeoff: a term that ends but whose form does not show it (recursion, `fix`,
 /// `gen`, a call through a parameter) is treated as possibly not ending: the build stage
@@ -163,114 +171,427 @@ fn children(t: &Term) -> Vec<&Term> {
 /// exist; a stronger sound one would add a termination proof by decreasing measures
 /// (size-change termination, PSPACE-complete in the call graph).
 pub fn ends(t: &Term) -> bool {
-    ends_in(t, &mut Around::default())
+    Reader::default().read(t).is_some()
 }
 
-/// The names bound around a term, each with whether it is bound to a function that ends,
-/// kept by name so that a name is looked up in `O(1)`.
+/// What a part of a term needs of the names bound around it to end: `None` when no binding
+/// makes it end, otherwise the set of names it calls that must each be free (a prelude word) or
+/// bound by `let` to a function that ends. A name bound by a lambda, a pattern or a family is
+/// not known to be such a function, so a binder of a name in the set gives `None`.
+type Needs = Option<Set>;
+
+/// A name's number among the names of one term.
+type Name = u32;
+
+/// The reading of one term by [`ends`]: each distinct part numbered once, in an order that puts
+/// a part after its own parts, with what it needs.
 #[derive(Default)]
-struct Around {
-    /// For each name, its bindings, innermost last.
-    by_name: HashMap<Arc<str>, Vec<bool>>,
-    /// The names in the order bound, innermost last.
-    order: Vec<Arc<str>>,
+struct Reader {
+    /// What each part needs, by its number.
+    needs: Vec<Needs>,
+    /// The number of each part read. A part is found by its address while the term is held
+    /// borrowed, so no address outlives the reading and none is reused within it; results are
+    /// kept by number.
+    ids: HashMap<*const Term, usize>,
+    names: HashMap<Arc<str>, Name>,
+    sets: Sets,
 }
 
-impl Around {
-    fn push(&mut self, x: &Arc<str>, ends: bool) {
-        self.by_name.entry(x.clone()).or_default().push(ends);
-        self.order.push(x.clone());
+impl Reader {
+    /// What `root` needs. The parts are read with an explicit stack, each after its own parts.
+    fn read(&mut self, root: &Term) -> Needs {
+        let mut todo = vec![(root, false)];
+        while let Some((t, parts_read)) = todo.pop() {
+            if self.ids.contains_key(&(t as *const Term)) {
+                continue;
+            }
+            if parts_read {
+                let needs = self.needs_of(t);
+                self.ids.insert(t, self.needs.len());
+                self.needs.push(needs);
+            } else {
+                todo.push((t, true));
+                each_part(t, &mut todo);
+            }
+        }
+        self.got(root)
     }
 
-    /// Unbinds all but the first `n` names bound.
-    fn truncate(&mut self, n: usize) {
-        while self.order.len() > n {
-            let x = self.order.pop().expect("a name bound");
-            let stack = self.by_name.get_mut(&x).expect("a name bound");
-            stack.pop();
-            if stack.is_empty() {
-                self.by_name.remove(&x);
+    /// What the part `t`, already read, needs.
+    fn got(&self, t: &Term) -> Needs {
+        self.needs[self.ids[&(t as *const Term)]]
+    }
+
+    fn name(&mut self, x: &Arc<str>) -> Name {
+        if let Some(&n) = self.names.get(x) {
+            return n;
+        }
+        let n = self.names.len() as Name;
+        self.names.insert(x.clone(), n);
+        n
+    }
+
+    /// What a term needs whose parts need `a` and `b`: both.
+    fn and(&mut self, a: Needs, b: Needs) -> Needs {
+        Some(self.sets.union(a?, b?))
+    }
+
+    /// What `t` needs, its parts read.
+    fn needs_of(&mut self, t: &Term) -> Needs {
+        match t {
+            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => Some(EMPTY),
+            Term::Fix { .. } | Term::Gen { .. } => None,
+            Term::Lam(ps, b) => self.under(ps, b),
+            Term::App(f, args) => {
+                let mut out = self.callee(f);
+                for a in args {
+                    out = self.and(out, self.got(a));
+                }
+                out
+            }
+            Term::Prim(_, args) => {
+                let mut out = Some(EMPTY);
+                for a in args {
+                    out = self.and(out, self.got(a));
+                }
+                out
+            }
+            Term::Let(x, e, b) => {
+                // A lambda bound and never called need not end; any other binding is evaluated.
+                let evaluated = match &**e {
+                    Term::Lam(..) => Some(EMPTY),
+                    _ => self.got(e),
+                };
+                let x = self.name(x);
+                let mut body = self.got(b);
+                if let Some(rest) = body.and_then(|b| self.sets.remove(b, x)) {
+                    let callee = self.callee(e);
+                    body = self.and(Some(rest), callee);
+                }
+                self.and(body, evaluated)
+            }
+            Term::If(c, a, b) => {
+                let ca = self.and(self.got(c), self.got(a));
+                self.and(ca, self.got(b))
+            }
+            Term::Match(s, arms) => {
+                let mut out = self.got(s);
+                for (p, a) in arms {
+                    let arm = self.under(&binds(p), a);
+                    out = self.and(out, arm);
+                }
+                out
+            }
+            Term::Fam { domain, var, body } => {
+                let body = self.under(std::slice::from_ref(var), body);
+                self.and(self.got(domain), body)
+            }
+            Term::Reindex { family, kf, vf, .. } => {
+                let (k, v) = (self.callee(kf), self.callee(vf));
+                let kv = self.and(k, v);
+                self.and(self.got(family), kv)
+            }
+            Term::Discard { family, sel } => {
+                let sel = self.callee(sel);
+                self.and(self.got(family), sel)
+            }
+            Term::Fold {
+                family,
+                op,
+                identity,
+                ..
+            } => {
+                let op = self.callee(op);
+                let out = self.and(self.got(family), op);
+                match identity {
+                    Some(i) => self.and(out, self.got(i)),
+                    None => out,
+                }
+            }
+            Term::Push(_, t) => self.got(t),
+        }
+    }
+
+    /// What `f`, in the position of a function called, needs to be one that ends: a primitive
+    /// ends, a lambda when its body does, a name when it is free or bound to one that ends.
+    fn callee(&mut self, f: &Term) -> Needs {
+        match f {
+            Term::PrimFn(_) => Some(EMPTY),
+            Term::Lam(..) => self.got(f),
+            Term::Var(x) => {
+                let x = self.name(x);
+                Some(self.sets.one(x))
+            }
+            _ => None,
+        }
+    }
+
+    /// What `body`, read, needs with `names` bound around it to values not known to be
+    /// functions that end.
+    fn under(&mut self, names: &[Arc<str>], body: &Term) -> Needs {
+        let body = self.got(body)?;
+        for x in names {
+            let x = self.name(x);
+            if self.sets.remove(body, x).is_some() {
+                return None;
+            }
+        }
+        Some(body)
+    }
+}
+
+/// A set of names, by its number in [`Sets`].
+type Set = u32;
+
+/// The set of no names.
+const EMPTY: Set = 0;
+
+/// A node of a set of names as a big-endian Patricia trie (Okasaki and Gill, "Fast Mergeable
+/// Integer Maps", 1998).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum SetNode {
+    Empty,
+    One(Name),
+    /// The names whose bits above `bit` are those of `prefix`: those with `bit` clear in
+    /// `zero`, the others in `one`, neither empty.
+    Split {
+        prefix: Name,
+        bit: Name,
+        zero: Set,
+        one: Set,
+    },
+}
+
+/// The sets of names of one reading, each node made once and each union of two nodes computed
+/// once. A Patricia trie is fixed by its names, so two equal sets have one number and a union
+/// stops where its two sets share a node; a set that adds one name to another differs from it
+/// only along the path to that name, so a union of two sets each one name larger than a pair
+/// joined before reads only those paths, at most 32 nodes deep. The sets of the arms of an `if`
+/// that each add a name to what a shared part needs, and two chains of calls joined at every
+/// level, are so joined in time near the length of a path, not the size of the sets
+/// (COMPLEXITY.md row ENDS).
+///
+/// Complexity tradeoff: the time of a union is bounded by the number of pairs of nodes it reads
+/// that no earlier union read, not by the sizes of its sets, and no bound in the size of the
+/// term is proved for that number: a term whose parts need many sets that share few nodes
+/// pairwise could make it near the product of their sizes. Why: the sets are the answer the
+/// reading of each part must carry so that it is read once, and hash-consed tries with a memo
+/// of the pairs joined make the common case, sets that mostly agree, cost a path. Trigger: many
+/// distinct parts calling many distinct names whose sets are joined in ways unlike those of a
+/// program's nesting. Tests: the four scaling tests in `l01_28_staging::ends`, each at k and 8k,
+/// one of which fails at 60 s with the memo of pairs removed. COMPLEXITY.md row ENDS. A complete
+/// solution would bound the pairs read, for instance by reading each binder only against the
+/// one name it binds (a membership query per binder on a persistent structure built once per
+/// part), which needs the parts' sets never to be materialized.
+struct Sets {
+    nodes: Vec<SetNode>,
+    made: HashMap<SetNode, Set>,
+    /// The union of each pair of sets joined, the smaller number first.
+    unions: HashMap<(Set, Set), Set>,
+}
+
+impl Default for Sets {
+    fn default() -> Self {
+        Sets {
+            nodes: vec![SetNode::Empty],
+            made: HashMap::from([(SetNode::Empty, EMPTY)]),
+            unions: HashMap::new(),
+        }
+    }
+}
+
+/// The bits of `x` above `bit`.
+fn above(x: Name, bit: Name) -> Name {
+    x & !(bit | (bit - 1))
+}
+
+impl Sets {
+    fn make(&mut self, n: SetNode) -> Set {
+        let Sets { nodes, made, .. } = self;
+        *made.entry(n).or_insert_with(|| {
+            nodes.push(n);
+            (nodes.len() - 1) as Set
+        })
+    }
+
+    fn one(&mut self, x: Name) -> Set {
+        self.make(SetNode::One(x))
+    }
+
+    fn split(&mut self, prefix: Name, bit: Name, zero: Set, one: Set) -> Set {
+        match (zero, one) {
+            (EMPTY, s) | (s, EMPTY) => s,
+            _ => self.make(SetNode::Split {
+                prefix,
+                bit,
+                zero,
+                one,
+            }),
+        }
+    }
+
+    /// The union of the nonempty sets `s` and `t`, whose names start with `p` and `q`, which
+    /// differ above both sets' split bits.
+    fn join(&mut self, p: Name, s: Set, q: Name, t: Set) -> Set {
+        let bit = 1 << (Name::BITS - 1 - (p ^ q).leading_zeros());
+        match p & bit {
+            0 => self.split(above(p, bit), bit, s, t),
+            _ => self.split(above(p, bit), bit, t, s),
+        }
+    }
+
+    fn insert(&mut self, s: Set, x: Name) -> Set {
+        match self.nodes[s as usize] {
+            SetNode::Empty => self.one(x),
+            SetNode::One(y) if y == x => s,
+            SetNode::One(y) => {
+                let o = self.one(x);
+                self.join(x, o, y, s)
+            }
+            SetNode::Split {
+                prefix,
+                bit,
+                zero,
+                one,
+            } => {
+                if above(x, bit) != prefix {
+                    let o = self.one(x);
+                    self.join(x, o, prefix, s)
+                } else if x & bit == 0 {
+                    let zero = self.insert(zero, x);
+                    self.split(prefix, bit, zero, one)
+                } else {
+                    let one = self.insert(one, x);
+                    self.split(prefix, bit, zero, one)
+                }
             }
         }
     }
 
-    /// Whether the innermost binding of `x` is to a function that ends; `None` when no
-    /// binding is.
-    fn get(&self, x: &str) -> Option<bool> {
-        self.by_name.get(x).and_then(|s| s.last().copied())
+    /// `s` without `x`, or `None` when `x` is not in `s`.
+    fn remove(&mut self, s: Set, x: Name) -> Option<Set> {
+        match self.nodes[s as usize] {
+            SetNode::Empty => None,
+            SetNode::One(y) => (y == x).then_some(EMPTY),
+            SetNode::Split {
+                prefix,
+                bit,
+                zero,
+                one,
+            } => {
+                if above(x, bit) != prefix {
+                    None
+                } else if x & bit == 0 {
+                    let zero = self.remove(zero, x)?;
+                    Some(self.split(prefix, bit, zero, one))
+                } else {
+                    let one = self.remove(one, x)?;
+                    Some(self.split(prefix, bit, zero, one))
+                }
+            }
+        }
+    }
+
+    /// The union of `s` and `t`. A part the two share is not read: the recursion goes no
+    /// deeper than the bits of a name.
+    fn union(&mut self, s: Set, t: Set) -> Set {
+        if s == t || t == EMPTY {
+            return s;
+        }
+        if s == EMPTY {
+            return t;
+        }
+        let pair = (s.min(t), s.max(t));
+        if let Some(&u) = self.unions.get(&pair) {
+            return u;
+        }
+        let u = self.union_new(s, t);
+        self.unions.insert(pair, u);
+        u
+    }
+
+    /// The union of the distinct nonempty sets `s` and `t`, not joined before.
+    fn union_new(&mut self, s: Set, t: Set) -> Set {
+        let split = |n: SetNode| match n {
+            SetNode::Split {
+                prefix,
+                bit,
+                zero,
+                one,
+            } => (prefix, bit, zero, one),
+            SetNode::Empty | SetNode::One(_) => unreachable!("a node of two names or more"),
+        };
+        match (self.nodes[s as usize], self.nodes[t as usize]) {
+            (SetNode::One(x), _) => self.insert(t, x),
+            (_, SetNode::One(x)) => self.insert(s, x),
+            (ns, nt) => {
+                let (p, m, s0, s1) = split(ns);
+                let (q, n, t0, t1) = split(nt);
+                if m == n && p == q {
+                    let zero = self.union(s0, t0);
+                    let one = self.union(s1, t1);
+                    self.split(p, m, zero, one)
+                } else if m > n && above(q, m) == p {
+                    if q & m == 0 {
+                        let zero = self.union(s0, t);
+                        self.split(p, m, zero, s1)
+                    } else {
+                        let one = self.union(s1, t);
+                        self.split(p, m, s0, one)
+                    }
+                } else if n > m && above(p, n) == q {
+                    if p & n == 0 {
+                        let zero = self.union(s, t0);
+                        self.split(q, n, zero, t1)
+                    } else {
+                        let one = self.union(s, t1);
+                        self.split(q, n, t0, one)
+                    }
+                } else {
+                    self.join(p, s, q, t)
+                }
+            }
+        }
     }
 }
 
-/// [`ends`] under the names bound around `t`.
-fn ends_in(t: &Term, scope: &mut Around) -> bool {
+/// Puts on `todo`, to be read, the parts of `t` that [`Reader::needs_of`] reads: every subterm,
+/// except those of `fix` and `gen`, and a function called or handed to a family operation only
+/// when it is a lambda.
+fn each_part<'t>(t: &'t Term, todo: &mut Vec<(&'t Term, bool)>) {
+    let mut part = |p: &'t Term| todo.push((p, false));
+    let lam = |g: &'t Term| matches!(g, Term::Lam(..)).then_some(g);
     match t {
-        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => true,
-        Term::Fix { .. } | Term::Gen { .. } => false,
-        Term::Lam(ps, b) => under(scope, ps, |scope| ends_in(b, scope)),
-        Term::App(f, args) => callable(f, scope) && args.iter().all(|a| ends_in(a, scope)),
-        Term::Let(x, e, b) => {
-            // A lambda bound and never called need not end; any other binding is evaluated.
-            let c = match &**e {
-                Term::Lam(..) => ends_in(e, scope),
-                _ if ends_in(e, scope) => callable(e, scope),
-                _ => return false,
-            };
-            let n = scope.order.len();
-            scope.push(x, c);
-            let out = ends_in(b, scope);
-            scope.truncate(n);
-            out
-        }
-        Term::Match(s, arms) => {
-            ends_in(s, scope)
-                && arms
-                    .iter()
-                    .all(|(p, a)| under(scope, &binds(p), |scope| ends_in(a, scope)))
-        }
-        Term::Fam { domain, var, body } => {
-            ends_in(domain, scope)
-                && under(scope, std::slice::from_ref(var), |scope| {
-                    ends_in(body, scope)
-                })
-        }
-        Term::Reindex { family, kf, vf, .. } => {
-            ends_in(family, scope) && callable(kf, scope) && callable(vf, scope)
-        }
-        Term::Discard { family, sel } => ends_in(family, scope) && callable(sel, scope),
+        Term::Lit(_)
+        | Term::Var(_)
+        | Term::PrimFn(_)
+        | Term::Read(_)
+        | Term::Fix { .. }
+        | Term::Gen { .. } => {}
+        Term::Lam(_, b) | Term::Push(_, b) => part(b),
+        Term::App(g, args) => lam(g).into_iter().chain(args).for_each(part),
+        Term::Prim(_, args) => args.iter().for_each(part),
+        Term::Let(_, e, b) => [e, b].into_iter().for_each(|p| part(p)),
+        Term::If(c, a, b) => [c, a, b].into_iter().for_each(|p| part(p)),
+        Term::Match(s, arms) => std::iter::once(&**s)
+            .chain(arms.iter().map(|(_, a)| a))
+            .for_each(part),
+        Term::Fam { domain, body, .. } => [domain, body].into_iter().for_each(|p| part(p)),
+        Term::Reindex { family, kf, vf, .. } => std::iter::once(&**family)
+            .chain(lam(kf))
+            .chain(lam(vf))
+            .for_each(part),
+        Term::Discard { family, sel } => std::iter::once(&**family).chain(lam(sel)).for_each(part),
         Term::Fold {
             family,
             op,
             identity,
             ..
-        } => {
-            ends_in(family, scope)
-                && callable(op, scope)
-                && identity.iter().all(|i| ends_in(i, scope))
-        }
-        _ => children(t).into_iter().all(|c| ends_in(c, scope)),
+        } => std::iter::once(&**family)
+            .chain(lam(op))
+            .chain(identity.as_deref())
+            .for_each(part),
     }
-}
-
-/// Whether `f`, in the position of a function called, is one that ends: a primitive, a
-/// lambda whose body ends, or a name bound to one; a free name is a prelude word.
-fn callable(f: &Term, scope: &mut Around) -> bool {
-    match f {
-        Term::PrimFn(_) => true,
-        Term::Lam(..) => ends_in(f, scope),
-        Term::Var(x) => scope.get(x).unwrap_or(true),
-        _ => false,
-    }
-}
-
-/// `f` with `names` bound around it to values not known to be functions that end.
-fn under<T>(scope: &mut Around, names: &[Arc<str>], f: impl FnOnce(&mut Around) -> T) -> T {
-    let n = scope.order.len();
-    for x in names {
-        scope.push(x, false);
-    }
-    let out = f(scope);
-    scope.truncate(n);
-    out
 }
 
 /// The names `p` binds.

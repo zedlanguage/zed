@@ -31,7 +31,7 @@ fn chain(n: usize, all: bool) -> String {
 }
 
 /// `f` on a thread whose stack holds the recursion of a body `O(n)` deep.
-fn deep(f: impl FnOnce() + Send + 'static) {
+pub(super) fn deep(f: impl FnOnce() + Send + 'static) {
     let t = std::thread::Builder::new().stack_size(1 << 29).spawn(f);
     t.unwrap().join().unwrap();
 }
