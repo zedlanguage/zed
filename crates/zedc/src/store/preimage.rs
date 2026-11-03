@@ -214,17 +214,36 @@ fn preimage_in(
     // more than two periods (row C17), and then reads a chain of such guards once for each
     // demand the chain's arms shift, `O(k^2)` for `k` guards; in a class the chain is read
     // once for all classes ([`Tx::by_class`]).
-    if !is_empty(inputs)
-        && let Some(dom) = split_residues(tx, root, inputs, demand, &marks)
-    {
-        return Preimage {
-            domains: dom,
-            exact: true,
-            enumerated: false,
-            stops: Vec::new(),
-            relation: None,
-            refusal: None,
-        };
+    //
+    // Complexity tradeoff: the split before the first transfer is given up, and the transfer
+    // runs first as without it, when the box holds the split input within two periods (the
+    // transfer reads every guard on the remainder exactly) or when a class's run reads a guard
+    // on the remainder by itself rather than from the summary over every class (a `min` arm,
+    // an `if` with boolean arms): run first in those cases the split would cost one transfer
+    // of the chain per class, `O(G n)` for `G` classes, where the transfer alone may be exact
+    // in `O(n)`. Given up: those inputs get the transfer's answer, and the split after it
+    // when that is inexact, as before S22e-quad; at most one class's run is spent. Trigger:
+    // the input's domain within two periods of the modulus, or a guard on the remainder that
+    // [`Tx::by_class`] does not read. Test:
+    // `l01_25_preimage_catalog::s22::remainders_read_by_each_class_keep_the_transfer_first_scales`,
+    // COMPLEXITY.md row S22e-quad. A complete solution would hold the congruence facet in
+    // the backward transfer's sets, so that one transfer carries every class at once.
+    let mut whole_tried = false;
+    if !is_empty(inputs) {
+        match split_residues(tx, root, inputs, demand, &marks, true) {
+            Split::Exact(dom) => {
+                return Preimage {
+                    domains: dom,
+                    exact: true,
+                    enumerated: false,
+                    stops: Vec::new(),
+                    relation: None,
+                    refusal: None,
+                };
+            }
+            Split::NotExact => whole_tried = true,
+            Split::Deferred => {}
+        }
     }
 
     tx.start(inputs, marks.clone());
@@ -246,8 +265,8 @@ fn preimage_in(
     if !r.exact
         && !is_empty(&r.dom)
         // The split over the whole box was tried above.
-        && r.dom != *inputs
-        && let Some(dom) = split_residues(tx, root, &r.dom, demand, &marks)
+        && !(whole_tried && r.dom == *inputs)
+        && let Split::Exact(dom) = split_residues(tx, root, &r.dom, demand, &marks, false)
     {
         r = Whole { dom, exact: true };
     }
@@ -288,7 +307,22 @@ fn preimage_in(
     }
 }
 
-/// The preimage within `dom` by classes of remainders, or `None` when it is not found exact.
+/// What [`split_residues`] found.
+enum Split {
+    /// The preimage, exact.
+    Exact(Domains),
+    /// No split applies, or it is not exact.
+    NotExact,
+    /// The split before the first transfer was given up for the transfer to run first
+    /// ([`preimage_in`]).
+    Deferred,
+}
+
+/// The preimage within `dom` by classes of remainders ([`Split::Exact`]). When `early`, the
+/// split is run before the first transfer, and is [`Split::Deferred`] when the box holds the
+/// split input within two periods or when a class's run reads a guard on the remainder by
+/// itself ([`Residue::alone`]).
+///
 /// The terms compare `x mod m` with constants for one input `x` and one modulus `m`; the
 /// constants cut `[0, m)` into classes in which each such comparison is true throughout or
 /// false throughout, so a backward transfer restricted to one class reads the comparisons
@@ -302,9 +336,14 @@ fn preimage_in(
 /// a chain of `k` guards `x mod m == c` with arms the summary reads costs `O(k log k)` in all
 /// (COMPLEXITY.md row S22e-quad).
 ///
-/// Complexity tradeoff: a term the summary does not read is read by each class's run,
-/// `O(G n log n)` for `G` classes, and `G` is at most `2d + 1` for `d` distinct constants
-/// compared, up to `O(n^2 log n)`. The split is not tried when the terms compare remainders
+/// Complexity tradeoff: a term the summary does not read is read by each class's run, `G`
+/// times the cost of one transfer of it for `G` classes, and `G` is at most `2d + 1` for `d`
+/// distinct constants compared: `O(G n log n)`, up to `O(n^2 log n)`, where that transfer is
+/// `O(n log n)`, and more where it is not. Measured over `[-5000, 5000]`: a chain of `k` guards
+/// `i mod 1024 == j` with arms `min(t + 1, 2^40)`, about `k^2.7` (21.7M to 5.25G
+/// instructions at `k` = 8 to 64; one class's transfer of the `min` chain is itself above
+/// linear), and `k` guards `i >= 7j` above `k` such guards with arms `t + 1`, `k^2` (22.4M to
+/// 358M at `k` = 16 to 64). The split is not tried when the terms compare remainders
 /// of two inputs or two moduli, and it is given up when a class's transfer is not exact,
 /// when two classes narrow another input differently, or when a stretch of `x` where some
 /// classes keep their points and others do not spans more than two periods of `m`; those
@@ -328,10 +367,39 @@ fn split_residues(
     dom: &Domains,
     demand: &Demand,
     marks: &Landmarks,
+    early: bool,
+) -> Split {
+    let mut deferred = false;
+    match split_classes(tx, root, dom, demand, marks, early, &mut deferred) {
+        Some(d) => Split::Exact(d),
+        None if deferred => Split::Deferred,
+        None => Split::NotExact,
+    }
+}
+
+/// [`split_residues`]: `None` when the split is not found exact, with `deferred` set when it is
+/// given up for the first transfer to run first.
+fn split_classes(
+    tx: &mut Tx<'_>,
+    root: Tid,
+    dom: &Domains,
+    demand: &Demand,
+    marks: &Landmarks,
+    early: bool,
+    deferred: &mut bool,
 ) -> Option<Domains> {
     let (x, c, cuts) = tx.residue_cuts(dom)?;
     let m = c.unsigned_abs() as i128;
     let name = tx.name(x).clone();
+    // Within two periods the transfer over the box reads every guard on the remainder exactly
+    // ([`mod_pre`]).
+    if early
+        && let Some((Fin(lo), Fin(hi))) = dom[&name].bounds()
+        && i128::from(hi).div_euclid(m) <= i128::from(lo).div_euclid(m) + 1
+    {
+        *deferred = true;
+        return None;
+    }
     let cuts: Rc<[i128]> = cuts.into();
     let mut common: Option<IntervalSet> = None;
     let mut rest: Option<Domains> = None;
@@ -348,11 +416,16 @@ fn split_residues(
             class: IntervalSet::range(End::from_i128(w[0]), End::from_i128(w[1] - 1)),
             index,
             cuts: cuts.clone(),
+            alone: false,
         });
         interval::rounded();
         let r = tx.back(root, ROOT, demand);
         let exact = r.exact && !interval::rounded() && tx.run.stops.is_empty();
-        let Residue { class, .. } = tx.run.residue.take().expect("the class was set above");
+        let Residue { class, alone, .. } = tx.run.residue.take().expect("the class was set above");
+        if early && alone {
+            *deferred = true;
+            return None;
+        }
         if !exact {
             return None;
         }
@@ -882,6 +955,9 @@ struct Residue {
     class: IntervalSet,
     index: usize,
     cuts: Rc<[i128]>,
+    /// Whether the run read a guard on the remainder by itself ([`Tx::back_arith`]), not from
+    /// the summary over every class ([`Tx::by_class`]).
+    alone: bool,
 }
 
 /// What a run computes without reading its class of remainders, kept from one class's run to
@@ -2891,9 +2967,12 @@ impl<'t> Tx<'t> {
                     Node::Var(x) if self.lookup(env, x).is_none() => self
                         .run
                         .residue
-                        .as_ref()
+                        .as_mut()
                         .filter(|r| r.x == x && r.m == m)
-                        .map(|r| (r.class.is_subset(z), r.class.meet(z).is_empty())),
+                        .map(|r| {
+                            r.alone = true;
+                            (r.class.is_subset(z), r.class.meet(z).is_empty())
+                        }),
                     _ => None,
                 };
                 match class {

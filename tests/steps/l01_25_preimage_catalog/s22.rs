@@ -1510,6 +1510,94 @@ fn many_remainders_scales() {
     });
 }
 
+/// The chain of `k` guards `i mod 1024 == j`, else `min(t + 1, 2^40)`, asked `tk >= 0`: the
+/// summary over every class does not read `min`, so each class's run reads the guards itself.
+fn min_remainders(k: usize) -> Term {
+    let g = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(1024)), int(j));
+    let arm = |_, t| prim(Prim::Min, prim(Prim::Add, t, int(1)), int(1 << 40));
+    prim(Prim::Ge, chain(k, var("i"), g, arm), int(0))
+}
+
+/// `i mod 1024 != j` for every `j` in `1..=k`, and `i >= 0`, as a chain of `if`s whose else
+/// arms are `false`: boolean arms, which the summary over every class does not read.
+fn no_remainder_of(k: usize) -> Term {
+    (1..=k as i64).fold(ge_i(0), |t, j| {
+        let g = prim(Prim::Ne, prim(Prim::Mod, var("i"), int(1024)), int(j));
+        Term::If(
+            Arc::new(g),
+            Arc::new(t),
+            Arc::new(Term::Lit(Value::Bool(false))),
+        )
+    })
+}
+
+/// `k` guards `i >= 7j`, else `t + 1`, above the chain of `many_remainders`, asked `>= 0`: each
+/// class's run reads the `k` guards that are not on the remainder.
+fn above_remainders(k: usize) -> Term {
+    let g = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(1024)), int(j));
+    let t = chain(k, var("i"), g, plus(|_| 1));
+    let t = chain(k, t, |j| ge_i(j * 7), plus(|_| 1));
+    prim(Prim::Ge, t, int(0))
+}
+
+/// COMPLEXITY.md S22e-quad: over one period the transfer over the box reads every guard on the
+/// remainder exactly, and where a class's run reads a guard by itself the split by classes
+/// costs one transfer of the chain per class. In both the transfer runs first, as before the
+/// split was moved ahead of it. With the split run first, from 8 to 64 the `min` chain took
+/// 45.3 times the instructions, from 16 to 128 the `!=` chain 45.7 times and the tests above
+/// the chain 64.8 times (21.0M against 1361.2M); the transfer alone is linear in all three.
+#[test]
+fn remainders_read_by_each_class_keep_the_transfer_first_scales() {
+    on_big_stack(|| {
+        let ds = i_in(0, 1000);
+        let d = Demand::Bool(true);
+        let n = 8;
+        let (a, b) = (min_remainders(n), min_remainders(n * scaling::FACTOR));
+        scaling::check("the preimage of the min chain of k remainders", n, |k| {
+            preimage(if k == n { &a } else { &b }, &ds, &d);
+        });
+        let n = 16;
+        let (a, b) = (no_remainder_of(n), no_remainder_of(n * scaling::FACTOR));
+        scaling::check("the preimage of k remainders excluded", n, |k| {
+            preimage(if k == n { &a } else { &b }, &ds, &d);
+        });
+        let n = 16;
+        let (a, b) = (above_remainders(n), above_remainders(n * scaling::FACTOR));
+        scaling::check("the preimage of k tests above k remainders", n, |k| {
+            preimage(if k == n { &a } else { &b }, &ds, &d);
+        });
+    });
+}
+
+/// COMPLEXITY.md S22e-quad, the three families of
+/// `remainders_read_by_each_class_keep_the_transfer_first_scales` over one period, and the
+/// `min` and `!=` chains over many periods, where the split before the first transfer is given
+/// up after one class: each preimage agrees with the interpreter, and is exact over one period
+/// (the `min` and the tests-above chains hold everywhere on `[0, 1000]`, and the `!=` chain keeps
+/// `0` and `k + 1..=1000`).
+#[test]
+fn remainders_read_by_each_class_keep_their_preimages() {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        for k in [0, 1, 2, 5] {
+            for (t, lo, hi) in [
+                (min_remainders(k), 0, 1000),
+                (no_remainder_of(k), 0, 1000),
+                (min_remainders(k), -3000, 3000),
+                (no_remainder_of(k), -3000, 3000),
+                (above_remainders(k), 0, 1000),
+            ] {
+                let ds = i_in(lo, hi);
+                let p = preimage(&t, &ds, &d);
+                if lo == 0 {
+                    assert!(p.exact, "{t} over {ds:?}: {p:?}");
+                }
+                check(&t, &ds, &d, &p, (-1100, 1100));
+            }
+        }
+    });
+}
+
 /// The chain of guards `i mod m(j) == r(j)` for `j` in `1..=k`, else arm `arm(j, t)`, asked
 /// `tk >= 0`.
 fn remainder_chain(
