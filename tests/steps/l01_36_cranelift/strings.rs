@@ -22,8 +22,9 @@ fn concatenation_links_ropes_and_copies_once_when_read() {
         panic!("{}", o.value)
     };
     assert!(!text.is_written_out(), "the run never read the text");
-    assert_eq!(o.value, kernel(&s).unwrap());
+    assert_eq!(&**text, "abcdefgh");
     assert!(text.is_written_out());
+    assert_eq!(o.value, kernel(&s).unwrap());
     let n = native(&prim(Prim::Len, vec![s.clone()])).unwrap();
     assert_eq!(n.value.to_string(), "8");
     assert_eq!((n.kernel_calls, n.stats.copied), (0, 0));
@@ -120,7 +121,8 @@ fn len_counts_characters_the_same_natively_and_in_the_kernel() {
 
 /// A log line built from 500 fields, each `++`ed onto the line so far, some with characters
 /// of two to four bytes, and its length read after every field: the kernel's count and the
-/// native count agree at each step and with the characters of the text written out.
+/// native count agree at each step and with a line built by `push_str`, independently of the
+/// rope.
 #[test]
 fn len_after_many_appends_agrees_natively_and_in_the_kernel() {
     let fields = ["id=7", " naïve", " Σ=3", " 🚚", ""];
@@ -141,16 +143,16 @@ fn len_after_many_appends_agrees_natively_and_in_the_kernel() {
     }
     let t = let_("s0", Term::Read("x".into()), body);
     let (native, kernel) = on_big_stack(|| both_with(&t, "log:"));
-    assert_eq!(native, kernel);
-    let Value::Tuple(parts) = &native else {
-        panic!("{native}")
-    };
-    let (Value::Tuple(lens), Value::Str(line)) = (&parts[0], &parts[1]) else {
-        panic!("{native}")
-    };
-    let want = Value::Int(line.chars().count() as i64);
-    assert_eq!(lens.last(), Some(&want));
-    assert_eq!(line.char_count(), line.chars().count());
+    // The expected line and its length after each field, built without the rope.
+    let mut line = String::from("log:");
+    let mut lens = Vec::with_capacity(n);
+    for i in 1..=n {
+        line.push_str(fields[i % fields.len()]);
+        lens.push(Value::Int(line.chars().count() as i64));
+    }
+    let want = Value::tuple(vec![Value::tuple(lens), Value::str(&line)]);
+    assert_eq!(native, want);
+    assert_eq!(kernel, want);
 }
 
 /// A string handed to the kernel by a node the runtime does not run natively, here `show`, is
@@ -165,6 +167,7 @@ fn a_string_handed_to_the_kernel_is_shared_not_copied() {
         panic!("{}", o.value)
     };
     assert!(!text.is_written_out());
+    assert_eq!(&**text, "abcdef");
     assert_eq!(o.value, kernel(&t).unwrap());
 }
 

@@ -41,6 +41,14 @@ pub enum KernelError {
         /// The undefined keys, in order.
         keys: Vec<crate::value::Value>,
     },
+    /// `++` of two strings whose lengths in bytes add up past `usize::MAX`, the most a length
+    /// holds: the joined string's length is not representable, whatever memory there is.
+    StringTooLong {
+        /// The left string's length in bytes.
+        left: usize,
+        /// The right string's length in bytes.
+        right: usize,
+    },
 }
 
 impl fmt::Display for KernelError {
@@ -73,6 +81,15 @@ impl fmt::Display for KernelError {
                 }
                 write!(f, " depend on each other")
             }
+            KernelError::StringTooLong { left, right } => write!(
+                f,
+                "`++` cannot join a string of {left} bytes to one of {right} bytes: the result \
+                 would be {} bytes, more than the {} bytes a string's length can hold; keep \
+                 the parts apart, as a list of strings written out one at a time, or join \
+                 fewer of them",
+                *left as u128 + *right as u128,
+                usize::MAX
+            ),
         }
     }
 }

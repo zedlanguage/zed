@@ -183,7 +183,7 @@ fn a_word_kept_past_the_free_of_its_cell_is_reported_after_the_cell_is_taken_aga
 #[test]
 fn a_literal_pattern_reads_a_string_only_when_the_lengths_agree() {
     let mut h = Heap::new();
-    let r = Text::join(&"ab".into(), &"cd".into());
+    let r = Text::join(&"ab".into(), &"cd".into()).unwrap();
     let s = h.alloc(Obj::Str(r));
     let is = |h: &mut Heap, l: Value| {
         h.matches(&Pattern::Lit(l), s, &mut Vec::new(), &mut Vec::new())

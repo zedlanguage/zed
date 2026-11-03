@@ -269,7 +269,7 @@ fn an_empty_tuple_and_a_bare_atom_are_uncounted_at_any_depth() {
 #[test]
 fn a_rope_inside_a_tuple_is_shared_not_copied_when_read() {
     let mut h = Heap::new();
-    let r = Text::join(&"ab".into(), &"cd".into());
+    let r = Text::join(&"ab".into(), &"cd".into()).unwrap();
     let s = h.alloc(Obj::Str(r.clone()));
     let w = h.alloc(Obj::Tuple(vec![Word::int(1), s]));
     let want = Value::tuple(vec![Value::Int(1), Value::str("abcd")]);

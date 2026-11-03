@@ -15,6 +15,7 @@ mod ports;
 mod reuse;
 mod scalars;
 mod scaling;
+mod string_length;
 mod string_scaling;
 mod strings;
 mod table;

@@ -63,7 +63,11 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         (Prim::Abs, Value::Rat(r)) if r.numer().is_negative() => Value::rat(r.neg()),
         (Prim::Abs, Value::Rat(_)) => x.clone(),
         (Prim::Abs, Value::Float(f)) => Value::float(f.get().abs()),
-        (Prim::Len, Value::Str(s)) => Value::Int(s.char_count() as i64),
+        // A string doubled 63 times holds more than `i64::MAX` characters.
+        (Prim::Len, Value::Str(s)) => match i64::try_from(s.char_count()) {
+            Ok(n) => Value::Int(n),
+            Err(_) => Value::int(BigInt::from(s.char_count())),
+        },
         (Prim::Lower, Value::Str(s)) => Value::str(&s.to_lowercase()),
         (Prim::Upper, Value::Str(s)) => Value::str(&s.to_uppercase()),
         (Prim::Trim, Value::Str(s)) => Value::str(s.trim()),

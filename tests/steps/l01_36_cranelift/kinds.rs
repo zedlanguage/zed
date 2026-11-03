@@ -47,7 +47,7 @@ fn a_tuple_in_cells_is_tested_by_its_kind() {
 #[test]
 fn a_string_in_cells_is_tested_without_flattening_it() {
     let mut h = Heap::new();
-    let ab = Text::join(&"a".into(), &"b".into());
+    let ab = Text::join(&"a".into(), &"b".into()).unwrap();
     let w = h.alloc(Obj::Str(ab.clone()));
     assert!(is(&mut h, w, &Type::string()));
     assert!(is(&mut h, w, &Type::top()));

@@ -19,6 +19,8 @@ use std::fmt;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use crate::KernelError;
+
 /// A string's text, shared.
 #[derive(Clone)]
 pub struct Text(Arc<Node>);
@@ -45,20 +47,30 @@ impl Node {
 }
 
 impl Text {
-    /// The text `a` then `b`, in `O(1)`: neither part is copied or read.
-    pub fn join(a: &Text, b: &Text) -> Text {
+    /// The text `a` then `b`, in `O(1)`: neither part is copied or read. A join shares its
+    /// parts, so a string doubled 64 times is 64 nodes and `2^64` times as long as the first:
+    /// when the two lengths in bytes add up past `usize::MAX` the join's length is not
+    /// representable, and it is refused with [`KernelError::StringTooLong`].
+    pub fn join(a: &Text, b: &Text) -> Result<Text, KernelError> {
         if a.0.len == 0 {
-            return b.clone();
+            return Ok(b.clone());
         }
         if b.0.len == 0 {
-            return a.clone();
+            return Ok(a.clone());
         }
-        Text(Arc::new(Node {
-            len: a.0.len + b.0.len,
+        let Some(len) = a.0.len.checked_add(b.0.len) else {
+            return Err(KernelError::StringTooLong {
+                left: a.0.len,
+                right: b.0.len,
+            });
+        };
+        Ok(Text(Arc::new(Node {
+            len,
+            // A character is at least one byte, so this sum is at most `len`.
             chars: a.0.chars + b.0.chars,
             flat: OnceLock::new(),
             parts: Mutex::new(Some((a.clone(), b.clone()))),
-        }))
+        })))
     }
 
     /// The length in bytes, without writing the text out.
@@ -230,6 +242,10 @@ impl fmt::Display for Text {
 mod tests {
     use super::*;
 
+    // Every expected text below is a literal or a plain `String` built by `push_str`, never
+    // text the rope wrote out, so a fault in `join` or in writing out shows as a difference.
+    // `Text::len` is the kept count; `str::len(&t)` is the length of the text written out.
+
     /// The length of a test piece, in characters.
     const PIECE: usize = 64;
 
@@ -237,59 +253,139 @@ mod tests {
         Text::from(c.to_string().repeat(PIECE))
     }
 
+    fn join(a: &Text, b: &Text) -> Text {
+        Text::join(a, b).unwrap()
+    }
+
     #[test]
     fn a_join_reads_as_its_parts_in_order() {
         let (a, b) = (long('a'), long('b'));
-        let ab = Text::join(&a, &b);
-        assert_eq!(&*ab, format!("{a}{b}"));
-        assert_eq!(Text::join(&Text::from(""), &a), a);
-        assert_eq!(
-            Text::join(&Text::from("x"), &Text::from("y")),
-            Text::from("xy")
-        );
+        let ab = join(&a, &b);
+        let mut want = "a".repeat(PIECE);
+        want.push_str(&"b".repeat(PIECE));
+        assert_eq!(&*ab, want);
+        assert_eq!(&*join(&Text::from(""), &a), "a".repeat(PIECE));
+        assert_eq!(&*join(&Text::from("x"), &Text::from("y")), "xy");
         // Equal text, made two ways, is equal and orders the same.
-        let whole = Text::from(format!("{a}{b}"));
+        let whole = Text::from(want);
         assert_eq!(ab, whole);
         assert_eq!(ab.cmp(&whole), Ordering::Equal);
-        assert!(ab < Text::join(&a, &long('c')));
+        assert!(ab < join(&a, &long('c')));
     }
 
     #[test]
     fn lengths_are_kept_through_joins_without_writing_out() {
         // "naïve " is 6 characters in 7 bytes; "日本" 2 in 6; "" none.
-        let parts = ["naïve ", "", "日本", "a"].map(Text::from);
-        for p in &parts {
-            assert_eq!(p.char_count(), p.chars().count());
-        }
+        let pieces = ["naïve ", "", "日本", "a"];
         let mut t = Text::from("");
-        for p in parts.iter().cycle().take(40) {
-            t = Text::join(&t, p);
+        let mut want = String::new();
+        for p in pieces.iter().cycle().take(40) {
+            t = join(&t, &Text::from(*p));
+            want.push_str(p);
         }
         assert_eq!((t.len(), t.char_count()), (140, 90));
         assert!(!t.is_written_out(), "neither length reads the text");
-        assert_eq!(t.char_count(), t.chars().count());
-        assert!(t.is_written_out());
+        assert_eq!(&*t, want);
+        assert_eq!((str::len(&t), t.chars().count()), (140, 90));
         // Two short strings joined are a node too; they read as one.
-        let xy = Text::join(&Text::from("x"), &Text::from("ÿ"));
+        let xy = join(&Text::from("x"), &Text::from("ÿ"));
         assert!(!xy.is_written_out());
         assert_eq!((xy.len(), xy.char_count(), &*xy), (3, 2, "xÿ"));
     }
 
     #[test]
+    fn a_string_joined_with_itself_reads_twice() {
+        let s = join(&Text::from("tō"), &Text::from("kyō"));
+        let ss = join(&s, &s);
+        // "tōkyō" is 5 characters in 7 bytes.
+        assert_eq!((ss.len(), ss.char_count()), (14, 10));
+        assert_eq!(&*ss, "tōkyōtōkyō");
+        // The empty string joined with itself, any number of times, is the empty string.
+        let mut e = Text::from("");
+        for _ in 0..64 {
+            e = join(&e, &e);
+        }
+        assert_eq!((e.len(), e.char_count(), &*e), (0, 0, ""));
+    }
+
+    /// A block doubled `k` times, `s = s ++ s`: `k` nodes, `2^k` blocks long.
+    fn doubled(block: &str, k: u32) -> Result<Text, KernelError> {
+        let mut s = Text::from(block);
+        for _ in 0..k {
+            s = Text::join(&s, &s)?;
+        }
+        Ok(s)
+    }
+
+    #[test]
+    fn a_string_doubled_to_2_63_bytes_keeps_its_length() {
+        for k in [62, 63] {
+            let s = doubled("a", k).unwrap();
+            assert_eq!((s.len(), s.char_count()), (1 << k, 1 << k));
+            assert!(!s.is_written_out());
+        }
+        // `ä` is one character in two bytes.
+        let s = doubled("ä", 62).unwrap();
+        assert_eq!((s.len(), s.char_count()), (1 << 63, 1 << 62));
+    }
+
+    #[test]
+    fn a_string_doubled_to_2_64_bytes_is_refused() {
+        let half = 1usize << 63;
+        let too_long = KernelError::StringTooLong {
+            left: half,
+            right: half,
+        };
+        assert_eq!(doubled("a", 64).unwrap_err(), too_long);
+        assert_eq!(doubled("ä", 63).unwrap_err(), too_long);
+        assert_eq!(
+            too_long.to_string(),
+            "`++` cannot join a string of 9223372036854775808 bytes to one of \
+             9223372036854775808 bytes: the result would be 18446744073709551616 bytes, more \
+             than the 18446744073709551615 bytes a string's length can hold; keep the parts \
+             apart, as a list of strings written out one at a time, or join fewer of them"
+        );
+    }
+
+    #[test]
+    fn a_string_of_usize_max_bytes_is_kept_and_one_byte_more_is_refused() {
+        // 1 + 2 + … + 2^63 = 2^64 - 1 bytes: the strings doubled 0 to 63 times, joined.
+        let mut all = Text::from("");
+        let mut s = Text::from("a");
+        for k in 0..64 {
+            all = join(&all, &s);
+            if k < 63 {
+                s = join(&s, &s);
+            }
+        }
+        assert_eq!((all.len(), all.char_count()), (usize::MAX, usize::MAX));
+        assert_eq!(
+            Text::join(&all, &Text::from("b")).unwrap_err(),
+            KernelError::StringTooLong {
+                left: usize::MAX,
+                right: 1,
+            }
+        );
+        // An empty string adds nothing, so it joins even here.
+        assert_eq!(join(&all, &Text::from("")).len(), usize::MAX);
+    }
+
+    #[test]
     fn a_chain_a_million_deep_is_written_out_and_dropped() {
         let piece = long('z');
+        let n = 1_000_000;
         let mut t = Text::from("");
-        for _ in 0..1_000_000 {
-            t = Text::join(&t, &piece);
+        for _ in 0..n {
+            t = join(&t, &piece);
         }
-        assert_eq!(t.len(), PIECE * 1_000_000);
-        assert_eq!(t.char_count(), PIECE * 1_000_000);
+        assert_eq!((t.len(), t.char_count()), (PIECE * n, PIECE * n));
+        assert_eq!(str::len(&t), PIECE * n, "every piece is written out");
         assert!(t.bytes().all(|b| b == b'z'));
         drop(t);
         // A chain never read keeps all its nodes, and drops them one at a time.
         let mut t = Text::from("");
-        for _ in 0..1_000_000 {
-            t = Text::join(&t, &piece);
+        for _ in 0..n {
+            t = join(&t, &piece);
         }
         assert!(!t.is_written_out());
         drop(t);
@@ -302,11 +398,13 @@ mod tests {
         // elsewhere are freed and memory stays that of the latest text.
         let line = long('l');
         let mut log = Text::from("log:");
+        let mut want = String::from("log:");
         for i in 1..=100 {
             let before = log.clone();
-            log = Text::join(&log, &line);
+            log = join(&log, &line);
+            want.push_str(&"l".repeat(PIECE));
             assert_eq!(log.len(), 4 + PIECE * i);
-            assert!(log.ends_with(&*line));
+            assert_eq!(&*log, want);
             assert!(log.0.parts().is_none(), "the parts are let go of once read");
             assert_eq!(
                 Arc::strong_count(&before.0),

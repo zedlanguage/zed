@@ -359,19 +359,22 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         }
         Op::Prim(Prim::Concat) if ins.len() == 2 => match (text(s, ins[0])?, text(s, ins[1])?) {
             (Some(a), Some(b)) => {
-                let r = Text::join(&a, &b);
+                let r = Text::join(&a, &b).map_err(|e| e.to_string())?;
                 consume(s, ni, ins)?;
                 Ok(s.heap.alloc(Obj::Str(r)))
             }
             _ => slow(t, s, ni, ins),
         },
-        Op::Prim(Prim::Len) if ins.len() == 1 => match text(s, ins[0])? {
-            Some(r) => {
-                consume(s, ni, ins)?;
-                Ok(Word::int(r.char_count() as i64))
+        // A count past `i64::MAX`, a string doubled 63 times, is a big integer the kernel makes.
+        Op::Prim(Prim::Len) if ins.len() == 1 => {
+            match text(s, ins[0])?.map(|r| i64::try_from(r.char_count())) {
+                Some(Ok(n)) => {
+                    consume(s, ni, ins)?;
+                    Ok(Word::int(n))
+                }
+                _ => slow(t, s, ni, ins),
             }
-            None => slow(t, s, ni, ins),
-        },
+        }
         Op::Lambda => Ok(s.heap.alloc(Obj::Clo {
             lambda: ni.lambda.expect("a lambda's index"),
             caps: ins.to_vec(),

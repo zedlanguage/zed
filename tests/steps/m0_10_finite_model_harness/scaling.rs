@@ -262,11 +262,16 @@ fn a_string_joined_by_a_fold_scales() {
     // `++` copied both strings, and a `foldl` keeps every accumulator, so joining `n` pieces
     // took `O(n²)` time and memory (8,000 against 64,000 pieces: ratio 26.5). A join is now
     // the node of its two parts, written out once when it is read as text.
+    // The expected text, built by `push_str` and not by the code under test.
+    let mut want = String::new();
+    for i in 0..scaling::FACTOR * 8000 {
+        want.push_str(["a", "b", "c"][i % 3]);
+    }
     scaling::check("a foldl of ++, by pieces", 8000, |n| {
         let Value::Str(s) = run(&joined(n), Schedule::Rounds) else {
             panic!("not a string")
         };
         assert_eq!(s.len(), n);
-        assert!(s.starts_with("abcab"));
+        assert_eq!(&*s, &want[..n]);
     });
 }
