@@ -963,29 +963,32 @@ fn complete(u: &[Int; 3]) -> [[Int; 3]; 3] {
 /// dimension that bounds the work and is never a budget: every slice is tried.
 fn slices(rows: &[Row3], u: &[Int; 3], lo: &Q, hi: &Q) -> Option<[Int; 3]> {
     let v = complete(u);
-    let rs: Vec<([Int; 3], &Int)> = rows
-        .iter()
-        .map(|(a, k)| ([0, 1, 2].map(|j| dot_int(a, &v[j])), k))
-        .collect();
     let mut t = lo.ceil();
     let top = hi.floor();
+    // Each row over `(t, w1, w2)`, built once: its coefficient at `t`, its terms over `w1` and
+    // `w2`, and its constant at the current `t`, which moves by the coefficient at `t` from one
+    // slice to the next.
+    let mut rs: Vec<(Int, Vec<Term>, Int)> = rows
+        .iter()
+        .map(|(a, k)| {
+            let [c0, c1, c2] = [0, 1, 2].map(|j| dot_int(a, &v[j]));
+            let at_t = &(&c0 * &t) + k;
+            let terms = [(0, c1), (1, c2)]
+                .into_iter()
+                .filter(|(_, c)| !c.is_zero())
+                .collect();
+            (c0, terms, at_t)
+        })
+        .collect();
     while t <= top {
-        let held: Vec<(Vec<Term>, Int)> = rs
-            .iter()
-            .map(|(c, k)| {
-                let terms = [(0, &c[1]), (1, &c[2])]
-                    .into_iter()
-                    .filter(|(_, c)| !c.is_zero())
-                    .map(|(i, c)| (i, c.clone()))
-                    .collect();
-                (terms, &(&c[0] * &t) + *k)
-            })
-            .collect();
-        let refs: Vec<(&[Term], &Int)> = held.iter().map(|(a, k)| (a.as_slice(), k)).collect();
+        let refs: Vec<(&[Term], &Int)> = rs.iter().map(|(_, a, k)| (a.as_slice(), k)).collect();
         if let Some((w1, w2)) = twovar::point(&refs, 0, Some(1), true) {
             return Some(
                 [0, 1, 2].map(|i| &(&(&v[0][i] * &t) + &(&v[1][i] * &w1)) + &(&v[2][i] * &w2)),
             );
+        }
+        for (c0, _, k) in &mut rs {
+            *k = &*k + &*c0;
         }
         t = &t + &Int::ONE;
     }
