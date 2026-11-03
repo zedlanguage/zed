@@ -966,11 +966,27 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| ADDR-keys | impl attempt 1 | 2026-11-03 15:48 | started |
+| BODY-display | impl attempt 1 | 2026-11-03 14:50 | run 1: 5 pieces failed, all old-behavior tests and the fence EXAMPLES.md:1024 (ledger arm, parenthesized in spec); tests updated; rerunning suite |
+| BOUNDS-parse | verify attempt 1 | 2026-11-03 07:14 | fmt, clippy clean; sync no change; cases 393/0 wrong, left-rec 85/0; neg control (Sig::write scans bound keys per bound, worktree bounds-parse-ctl) fails print  |
+| CHK-cost | impl attempt 1 | 2026-11-03 15:48 | probe (check only, instructions) at load 28: flat tuples 102k/node linear; nested tuples 4.1M/10.6M/31.8M/106M per node at n=50..400 (~n^2.7); nested lambdas 33 |
+| CHK-lambda | running | 2026-11-03 06:31 |  |
+| CHK-node-cost | running | 2026-11-03 06:31 |  |
+| CHK-tuple | running | 2026-11-03 06:31 |  |
+| ELAB-namedarg | impl attempt 1 | 2026-11-03 15:38 | reproduced: checker gave no error for dbl(3) with dbl(x) named (and 5 other binding errors: kind both ways, unknown name, already supplied, missing, curry), ela |
+| ISSUE1-else-atoms | impl attempt 1 | 2026-11-03 16:04 | start; worktree wt/issue1-else-atoms on main b0a733ff; load 39.69 36.78 32.63 |
+| LOWER-addr | running | 2026-11-03 13:55 |  |
+| MSG-operand-print | running | 2026-11-03 12:51 |  |
+| PLAN-audit-apply | impl attempt 1 | 2026-11-03 15:54 | S22-more-random-fail refuted on main b0a733ff: more_random_guarded (28.3 s), random_guarded (30.2 s), chains_of_growing_constants (17.7 s), random_terms (2.6 s) |
+| PLAN-audit-dagview | impl attempt 1 | 2026-11-03 15:54 | done: 354a92e2 on wt/plan-audit-dagview (not merged); 30/30 tests, tsc clean; live server pid 4169839 needs a restart after merge to load state.ts |
+| PTR-memo | orchestrator attempt  | 2026-11-03 11:14 | reopened: the runner's verify rule bans pointer-keyed memos; my 12:46 close was wrong |
 | S22e-wide | impl attempt 1 | 2026-11-03 11:28 | started; worktree wt/s22e-wide from c076719 |
+| SCALE-threads | impl attempt 1 | 2026-11-03 12:56 | per-thread counts inherited by a pthread_create wrapper in zed-alloc-count; helper tests 18/18 pass; negative control (old allocator, new scaling.rs): the_bytes |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
+| WIDE-copies | impl attempt 1 | 2026-11-03 12:51 | started |
+| ZIR-validate-bytes | impl attempt 1 | 2026-11-03 08:00 | done: branch wt/zir-validate-bytes 1d562d26; l01_33 two tests back on scaling::check (bytes 8.0x/9.8x), control fails 37.3x/28.8x; not pushed |
 
-Merged into local main and not yet pushed: none (S22-WIDE pushed ST-formula-share with its own commits).
-
+Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
 
 ## Open points
