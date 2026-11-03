@@ -841,7 +841,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | OSP-neglit | impl attempt 1 | 2026-11-03 07:14 | correction: baseline had 6 failing pieces, all caused by my new offsets.zed and cases.txt lines written during the run (counts 53->54, 356->358); the tree at 79 |
 | R10-stack | impl attempt 1 | 2026-11-03 07:14 | negative control on main code: linked_list(10000) native on a 2 MiB thread aborts with stack overflow; 100,000-concat function overflows a test-harness thread ( |
 | S22b-rest | impl attempt 1 | 2026-11-03 07:22 | start: c - u in pa_prim and clip_at |
-| S22e | verify attempt 1 | 2026-11-03 06:39 | done: run_tests.sh 4 98/98 pieces pass (load 61-112); fmt and clippy -D warnings clean; control and probes as logged; ok=true, non-blocking notes: O(d n log n)  |
 | SCALE-bytes | impl attempt 1 | 2026-11-03 07:14 | counting allocator crate zed-alloc-count + bytes measure in tests/src/scaling.rs; harness unit tests 24/24 and allocator 4/4 pass |
 | ST-arms-quad | verify attempt 4 | 2026-11-03 03:16 | control B (summary cut removed): one-level test FAILS ([3..=4, 10..=10, 100..=200]); new probe 'paired' (accounts_paired recursed d deep, fresh q_i per level):  |
 | T11-S22 | merge attempt 1 (item S22a) | 2026-11-03 03:01 | lock released |
@@ -851,8 +850,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | negsssp.rs and GOR state machine + race written; utvpi unit tests pass (race, GOR, Duong on 1000 random graphs and BAD-GOR k=64); running near tests / load 87.4 |
 | WIDEN-WARN | impl attempt 1 | 2026-11-03 07:14 | start |
 
-Merged into local main and not yet pushed (48 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (51 commits); the push follows one full test run on the merged tree:
 
+- 15657d9 S22e: read guards on remainders class by class
 - 5adc3c2 STATUS: S22c merged
 - ce36748 S22c: complement_in keeps the integers past an end of i64
 - 42dca7d Merge branch 'wt/audit-gaps-plan'
