@@ -956,7 +956,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PA-affine-i128 | impl attempt 1 | 2026-11-03 10:45 | negative control 1 (fits back on the constant): 5 of 6 new tests fail; control 2 (reach fix off): product-of-literals test fails with main's unsound set; both r |
 | PLAN-hygiene | verify attempt 1 | 2026-11-03 11:35 | fmt, clippy -D warnings pass; run_tests.sh 4: 312 pieces, 4 failed, the 4 known base failures (s22 chain_cross_dead/live, l01_38 repair, l01_39a alloc-count ove |
 | S22e-wide | impl attempt 1 | 2026-11-03 11:28 | started; worktree wt/s22e-wide from c076719 |
-| SEQ-rulenames | merge attempt 1 | 2026-11-03 11:34 | started; ZED0 L3 row sorted on branch (84eae949) per orchestrator ruling; waiting for merge lock (held by T2-mid:verify#2) |
 | ST-formula-share | orchestrator attempt  | 2026-11-03 06:50 | TIP: perf is blocked; sample stacks with eu-stack instead: start the probe under timeout, take the test pid with pgrep -P <timeout pid>, then run 'eu-stack -p < |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | verify attempt 2 | 2026-11-03 04:26 | done: verify passes; merged, main c076719 (unpushed; rebased on f6dd8e8, 32 commits 71ad20f..c076719); fmt, clippy pass; l01_14/15/16/26/28/29/31/32/33/34, m0_0 |
@@ -971,8 +970,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 | WIDEN-WARN-tidy | verify attempt 1 | 2026-11-03 10:50 | done: ok; fmt, clippy -D warnings exit 0; run_tests.sh 4: 311 pieces, 4 failed, all known (s22 chain_cross_dead 29.1x, chain_cross_live 38.3x bytes, l01_38 poin |
 
-Merged into local main and not yet pushed (236 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (240 commits); the push follows one full test run on the merged tree:
 
+- 429bb523 ZED0: keep the L3 row in alphabetical order after the ArrayExpr rename
+- 66bbb041 Rename PEG rules SeqExpr to ArrayExpr and SeqType to RankArrayType
 - 9ab26a9e STATUS: AXIOMS-bool merged, unpushed (tip 99fd3892)
 - 99fd3892 AXIOMS-bool: == and != axioms at bool
 - 430a275b STATUS, plan_dag: LIVE3 merged, unpushed (tip 059f4df3)
