@@ -1,8 +1,9 @@
 //! The last stages of the Omega test after design R (STATUS.md, L1.38): the box of the bounds
-//! with its point nearest zero, the merging of proportional columns, and the potential of an
-//! acyclic UTVPI graph in topological order. Their corner cases, and the scaling of each at n
-//! and 8n: rows of three terms, the coefficients' bit size, columns seen only through two
-//! aggregates, a UTVPI hub, and three variables in many rows.
+//! with its point nearest zero, the merging of proportional columns, and the potential of a
+//! UTVPI graph, in topological order when it has no cycle and by Goldberg and Radzik's search
+//! when it has. Their corner cases, and the scaling of each at n and 8n: rows of three terms,
+//! the coefficients' bit size, columns seen only through two aggregates, a UTVPI hub with and
+//! without cycles, and three variables in many rows.
 
 use std::sync::Arc;
 
@@ -281,6 +282,85 @@ fn the_acyclic_hub_scales() {
     scaling::check("the acyclic hub", 512, |n| {
         let rows = if n == 512 { &small } else { &large };
         std::hint::black_box(empty(n, rows));
+    });
+}
+
+#[test]
+fn unit_rows_around_cycles_are_decided() {
+    // `x0 >= x1 + 1` and `x1 >= x0`: a cycle of weight -1, no point.
+    assert!(empty(2, &differences(&[(0, 1, -1), (1, 0, 0)])));
+    // Each step of a path one or two up: edges both ways along the path, a point.
+    assert!(!empty(512, &two_way_path(512)));
+    // The graph on which the search's passes grow with the nodes has a point.
+    let (n, rows) = bad_gor(64, 1);
+    assert!(!empty(n, &rows));
+}
+
+/// `x[i] + 1 <= x[i+1] <= x[i] + 2` for each `i < n - 1`.
+fn two_way_path(n: usize) -> Rows {
+    let rows: Vec<(usize, usize, i64)> = (0..n - 1)
+        .flat_map(|i| [(i + 1, i, -1), (i, i + 1, 2)])
+        .collect();
+    differences(&rows)
+}
+
+/// Rows of one or two unit terms and their constants, as the parity test takes them.
+type Rows = Vec<(Vec<(usize, Int)>, Int)>;
+
+/// BAD-GOR of Cherkassky and Goldberg as Cassis et al. 2025 (arXiv 2502.11999, appendix) give
+/// it, over `2k + 1` variables, its nodes 1 to 2k + 1 at 0 to 2k, an edge `u → v` of weight `w`
+/// the row `x[v] <= x[u] + w`. Augmented as there: 5m random rows of one weight above every
+/// path's, and the variables renamed by a random permutation, from `seed`. On it the
+/// topological order of the edges of negative reduced cost moves one step per pass of
+/// Goldberg and Radzik's search (COMPLEXITY.md C24).
+fn bad_gor(k: usize, seed: u64) -> (usize, Rows) {
+    let n = 2 * k + 1;
+    let mut edges: Vec<(usize, usize, i64)> = vec![(0, 1, -3 * k as i64), (0, k, -1)];
+    edges.extend((1..k - 1).map(|i| (i, i + 1, 1)));
+    edges.extend((1..=k).map(|i| (k, k + i, -1)));
+    edges.extend((1..k).map(|i| (i, k, 2 * (k - 1 - i) as i64)));
+    let heavy = n as i64 + 1 + edges.iter().map(|e| e.2.abs()).sum::<i64>();
+    let mut g = Rng::new(seed);
+    for _ in 0..5 * edges.len() {
+        let (a, b) = (g.below(n), g.below(n));
+        if a != b {
+            edges.push((a, b, heavy));
+        }
+    }
+    let mut name: Vec<usize> = (0..n).collect();
+    for i in (1..n).rev() {
+        name.swap(i, g.below(i + 1));
+    }
+    // The row `x[v] <= x[u] + w` is `x[u] - x[v] + w >= 0`.
+    let rows: Vec<(usize, usize, i64)> = edges
+        .into_iter()
+        .map(|(u, v, w)| (name[u], name[v], w))
+        .collect();
+    (n, differences(&rows))
+}
+
+#[test]
+fn the_cyclic_hub_scales() {
+    // Goldberg and Radzik's search takes three passes at both sizes; Bellman–Ford–Moore took
+    // 41.9 times the work (measured on this branch; XT3 measured 42.5).
+    let (small, large) = (hub(512, true), hub(scaling::FACTOR * 512, true));
+    assert!(!empty(512, &small) && !empty(scaling::FACTOR * 512, &large));
+    scaling::check("the cyclic hub", 512, |n| {
+        let rows = if n == 512 { &small } else { &large };
+        std::hint::black_box(empty(n, rows));
+    });
+}
+
+#[test]
+#[ignore = "fails: the worst case of the potential search, O(V·E), open in item UTVPI-NEAR (COMPLEXITY.md C24)"]
+fn bad_gor_scales() {
+    // 129 passes at k = 256 and 1,026 at k = 2,048: 58.4 times the work
+    // measured on this branch (XT3 measured 62), above the limit of 24.
+    let (small, large) = (bad_gor(256, 1), bad_gor(scaling::FACTOR * 256, 1));
+    assert!(!empty(small.0, &small.1) && !empty(large.0, &large.1));
+    scaling::check("BAD-GOR augmented, by k", 256, |k| {
+        let (n, rows) = if k == 256 { &small } else { &large };
+        std::hint::black_box(empty(*n, rows));
     });
 }
 

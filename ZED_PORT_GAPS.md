@@ -642,9 +642,17 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A tree held as a ring of `next` and `prev` indices in preorder with a depth per node, relinked in place by index when a subtree is cut out | `utvpi::potential` | Mutation | A state receiver over a map from node to `(next, prev, depth)`, or the persistent tree of the dependency graph |
-| `VecDeque` used as a FIFO queue, `push_back` and `pop_front`, with a `Vec<bool>` of what it holds | `utvpi::potential` | Mutation | A state receiver over a list and a set, or two lists swapped at each round |
+| A tree held as a ring of `next` and `prev` indices in preorder with a depth per node, relinked in place by index when a subtree is cut out | `utvpi::potential` | None | Removed by UTVPI-GOR: the search keeps no shortest-path tree |
+| `VecDeque` used as a FIFO queue, `push_back` and `pop_front`, with a `Vec<bool>` of what it holds | `utvpi::potential` (Kahn's order since UTVPI-GOR) | Mutation | A state receiver over a list and a set, or two lists swapped at each round |
 | `Iterator::partition` of borrowed rows into two `Vec<&Row>` | `presburger::search` | None | `partition` over a list of rows, which Zed shares rather than borrows |
+
+## Entries from UTVPI-GOR (`zedc/src/store/utvpi.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec<usize>` of pass numbers written in place as the visited set of each pass, so no set is cleared between passes, with a `Vec<bool>` of the nodes on the search stack | `utvpi::potential` | Mutation | A state receiver over a map from node to pass, or a fresh persistent set per pass at a log factor |
+| `Vec` of `(node, next edge)` frames as an explicit stack for a depth-first search, the top frame's edge place advanced through `last_mut` | `utvpi::potential` | Mutation | A state receiver, as for the parser's machine |
+| Distances in a `Vec<Int>` lowered in place while the edges are relaxed | `utvpi::potential` | Mutation | A state receiver over a map from node to distance |
 
 ## Entries from T14-low (`zed-native/src/lib.rs`, `codegen.rs`)
 
