@@ -1,0 +1,135 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { buildNodes, directNeeds, parseLedger, parseLog, parsePlan, resolveId, shortLabel } from "./state.ts";
+
+const plan = `# Plan
+## Items by level
+
+| Level | Id | Title | Size | Hard | Needs | Paths |
+|---|---|---|---|---|---|---|
+| 0 | A | First item: with detail | S | no | none | \`a.rs\` |
+| 0 | LR2 | Second | M | yes | none |  |
+| 1 | B | A pipe in code, O(|Ty|), and \\| escaped | L | no | A, LR2 | \`b.rs\` |
+| 2 | C | Third | M | no | B, A |  |
+
+## Next
+| 9 | Z | Not an item | S | no | none |  |
+`;
+
+test("plan rows keep their columns when a title holds a pipe", () => {
+  const rows = parsePlan(plan);
+  assert.deepEqual(rows.map((r) => r.id), ["A", "LR2", "B", "C"]);
+  assert.equal(rows[2].title, "A pipe in code, O(|Ty|), and | escaped");
+  assert.deepEqual(rows[2].needs, ["A", "LR2"]);
+  assert.equal(rows[1].hard, true);
+});
+
+test("log lines split into item, role and attempt, and text may hold a bar", () => {
+  const [a, b, c] = parseLog(
+    "2026-11-02 10:00:00 | A:repair#2 | one | two\n" +
+      "2026-11-02 10:00:01 | orchestrator | started\nnot a log line\n" +
+      "2026-11-02 10:00:02 | DART-RS:verify#x | ok=false\n",
+  );
+  assert.deepEqual([a.id, a.role, a.attempt, a.text], ["A", "repair", "2", "one | two"]);
+  assert.equal(b.role, "");
+  assert.equal(c.attempt, "x");
+});
+
+test("a half-written ledger line is skipped", () => {
+  assert.equal(parseLedger('{"id":"A","state":"fixed"}\n{"id":"B","sta').length, 1);
+});
+
+test("aliases reach the plan's ids", () => {
+  const known = new Map([["lr2", "LR2"], ["t2-eval", "T2-eval"]]);
+  assert.equal(resolveId("lr2", known)?.id, "LR2");
+  assert.equal(resolveId("T2-eval-repair", known)?.id, "T2-eval");
+  assert.deepEqual(resolveId("XV-Q8", known), { id: "XE2", sub: "Q8" });
+  assert.equal(resolveId("orchestrator", known), null);
+});
+
+test("short labels stop at a clause and at a word", () => {
+  assert.equal(shortLabel("Done: tests no longer fail"), "tests no longer fail");
+  assert.equal(shortLabel("First item: with detail"), "First item");
+  assert.equal(shortLabel("S18: Omega loop"), "S18: Omega loop");
+  assert.ok(shortLabel("word ".repeat(30)).endsWith("…"));
+  assert.ok(shortLabel("word ".repeat(30)).length <= 37);
+});
+
+const inputs = (log: string, ledger: string, onOrigin = (_: string) => true) => ({
+  plan: parsePlan(plan),
+  log: parseLog(log),
+  ledger: parseLedger(ledger),
+  overrides: {},
+  onOrigin,
+  now: Date.parse("2026-11-02T11:00:00"),
+});
+const by = (nodes: ReturnType<typeof buildNodes>) => new Map(nodes.map((n) => [n.id, n]));
+
+test("states follow the ledger, then the log, and readiness follows needs", () => {
+  const nodes = by(buildNodes(inputs(
+    "2026-11-02 10:00:00 | B:impl#1 | start\n",
+    '{"id":"A","state":"fixed","commit":"c1"}\n{"id":"LR2","state":"fixing"}\n{"id":"LR2","state":"fixed","commit":"c2"}\n',
+  )));
+  assert.equal(nodes.get("A")!.state, "done");
+  assert.equal(nodes.get("LR2")!.state, "done");
+  assert.equal(nodes.get("B")!.state, "active");
+  assert.equal(nodes.get("C")!.state, "unstarted");
+  assert.equal(nodes.get("C")!.ready, false);
+  assert.equal(by(buildNodes(inputs("", '{"id":"A","state":"fixed"}\n{"id":"LR2","state":"fixed"}\n'))).get("B")!.ready, true);
+});
+
+test("a merged commit not on origin is done but not pushed", () => {
+  const n = by(buildNodes(inputs("", '{"id":"A","state":"fixed","commit":"c1"}\n', () => false))).get("A")!;
+  assert.equal(n.state, "done");
+  assert.equal(n.pushed, false);
+  assert.equal(n.awaitingBatch, true);
+});
+
+test("a repair after a fixed line makes the node active again", () => {
+  const led = '{"id":"A","state":"fixed","commit":"c1"}\n{"id":"A","state":"fixing"}\n';
+  assert.equal(by(buildNodes(inputs("", led))).get("A")!.state, "active");
+});
+
+test("retries, rejections, runtime and last tests come from the log", () => {
+  const n = by(buildNodes(inputs(
+    "2026-11-02 10:00:00 | A:impl#1 | start\n" +
+      "2026-11-02 10:10:00 | A:verify#1 | NOT accepted\n" +
+      "2026-11-02 10:20:00 | A:repair#2 | run_tests: 91 pieces, 0 failed\n" +
+      "2026-11-02 10:30:00 | A:repair#3 | start\n",
+    "",
+  ))).get("A")!;
+  assert.equal(n.retries, 2);
+  assert.equal(n.rejections, 1);
+  assert.equal(n.runtimeMs, 3600_000);
+  assert.equal(n.lastTests, "91 pieces, 0 failed");
+  assert.equal(n.role, "repair");
+});
+
+test("the XV checks appear as parts of XE2, and unplanned ids get a node", () => {
+  const nodes = by(buildNodes(inputs(
+    "2026-11-02 10:00:00 | XV-Q8:verify#1 | one\n2026-11-02 10:01:00 | XV-Q8:verify#1 | two\n2026-11-02 10:01:00 | XV-Q9:verify#1 | three\n",
+    "",
+  )));
+  const x = nodes.get("XE2")!;
+  assert.equal(x.planned, false);
+  assert.deepEqual(x.subs.map((s) => [s.name, s.text]), [["Q8", "two"], ["Q9", "three"]]);
+});
+
+test("an override wins over the log", () => {
+  const inp = { ...inputs("2026-11-02 10:00:00 | A:impl#1 | start\n", ""), overrides: { A: { state: "done" as const } } };
+  assert.equal(by(buildNodes(inp)).get("A")!.state, "done");
+});
+
+test("directNeeds drops a need that another need implies", () => {
+  const d = directNeeds(parsePlan(plan));
+  assert.deepEqual(d.get("C"), ["B"]);
+  assert.deepEqual(d.get("B"), ["A", "LR2"]);
+});
+
+test("directNeeds on a shared chain visits each node once", () => {
+  const nodes = Array.from({ length: 3000 }, (_, i) => ({
+    id: `n${i}`,
+    needs: i === 0 ? [] : i === 1 ? ["n0"] : [`n${i - 1}`, `n${i - 2}`],
+  }));
+  assert.deepEqual(directNeeds(nodes).get("n2999"), ["n2998"]);
+});

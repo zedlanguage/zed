@@ -1,0 +1,8 @@
+{
+  "name": "dagview",
+  "private": true,
+  "type": "module",
+  "description": "Live view of the plan DAG in docs/plan_dag.md",
+  "scripts": { "start": "node server.ts", "test": "node --test" },
+  "dependencies": { "@dagrejs/dagre": "1.1.4" }
+}
