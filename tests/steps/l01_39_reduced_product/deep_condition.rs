@@ -11,6 +11,7 @@ use zed_kernel::term::build::{if_, let_, lit, prim, var};
 use zed_kernel::{Prim, Term};
 use zed_tests::scaling;
 use zedc::store::preimage::relations;
+use zedc::store::presburger;
 use zedc::store::product::{Arm, Scope, arms};
 
 use super::ints;
@@ -446,5 +447,82 @@ fn arms_of_a_test_whose_small_choice_misses_the_bound_take_time_near_linear_in_i
                 std::hint::black_box(arms(&tests[&d], &scope));
             },
         );
+    });
+}
+
+/// `100 <= x <= 200 || (0 <= x <= 10 && (q >= 0 && inner || q <= -1 && 3 <= x <= 4) && (y >= 1
+/// && x >= 5 || q <= -1))`: a branch whose first choice holds `inner`, a choice between `x`
+/// and `y` of opposite signs, beside a second choice that needs `y >= 1` and `x >= 5`.
+fn accounts_paired(inner: Term) -> Term {
+    let ge = |n, v| cmp(Prim::Ge, n, v);
+    let le = |n, v| cmp(Prim::Le, n, v);
+    let first = either(
+        all(vec![ge("q", 0), inner]),
+        all(vec![le("q", -1), ge("x", 3), le("x", 4)]),
+    );
+    let second = either(all(vec![ge("y", 1), ge("x", 5)]), le("q", -1));
+    let level = all(vec![ge("x", 0), le("x", 10), first, second]);
+    either(all(vec![ge("x", 100), le("x", 200)]), level)
+}
+
+/// The hull of `x` in the then arm of `if test then 1 else 2` over `x`, `y` and `q`.
+fn then_x(test: Term) -> String {
+    let names: Vec<Arc<str>> = ["x", "y", "q"].map(Into::into).into();
+    let a = arms(&if_(test, lit(1), lit(2)), &ints(&names));
+    a[0].scope.get("x").ints().to_string()
+}
+
+#[test]
+fn a_choice_one_level_inside_a_branch_is_read_with_the_rest_of_the_branch() {
+    // Inner: `x <= 0 && y >= 1 || x >= 10 && y <= -1`. With `q >= 0` the second choice needs
+    // `y >= 1` and `x >= 5`, which neither inner choice meets, so `q <= -1` and `3 <= x <= 4`.
+    let ge = |n, v| cmp(Prim::Ge, n, v);
+    let le = |n, v| cmp(Prim::Le, n, v);
+    let inner = either(
+        all(vec![le("x", 0), ge("y", 1)]),
+        all(vec![ge("x", 10), le("y", -1)]),
+    );
+    assert_eq!(then_x(accounts_paired(inner)), "[3..=4, 100..=200]");
+}
+
+#[test]
+fn a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only() {
+    // Inner as above with each sign of `y` one choice further in: `x <= 0 && (y >= 1 || y >=
+    // 2) || x >= 10 && (y <= -1 || y <= -2)`. The level reads the inner choices by their own
+    // constraints and the branch by its projections, `x` in `{0, 10}` and `y` not 0, which
+    // allow `x = 10` with `y = 1`, so `10` is kept, though no point of the test has it
+    // (tradeoff comment at `presburger::summarize`).
+    let ge = |n, v| cmp(Prim::Ge, n, v);
+    let le = |n, v| cmp(Prim::Le, n, v);
+    let inner = either(
+        all(vec![le("x", 0), either(ge("y", 1), ge("y", 2))]),
+        all(vec![ge("x", 10), either(le("y", -1), le("y", -2))]),
+    );
+    assert_eq!(
+        then_x(accounts_paired(inner)),
+        "[3..=4, 10..=10, 100..=200]"
+    );
+}
+
+#[test]
+fn the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times() {
+    // The search marks a part it finds not to hold and does not test it again while its values
+    // are unchanged (`Parts::failed`). Without the marks a nest that fails deep is tested again
+    // below each level: 516 parts per level at d = 60 and 3876 at d = 480 for `heavy`. With
+    // them both nests measure 24 to 41 parts per level at both depths.
+    on_a_deep_stack(|| {
+        let scope = ints(&level_names());
+        for (name, nest) in [("heavy", heavy as fn(usize) -> Term), ("moving", moving)] {
+            for d in [60, 480] {
+                let test = if_(nest(d), lit(1), lit(2));
+                presburger::parts_tested();
+                std::hint::black_box(arms(&test, &scope));
+                let tested = presburger::parts_tested();
+                assert!(
+                    tested <= 48 * d as u64,
+                    "{name}, d = {d}: {tested} parts tested, more than 48 per level"
+                );
+            }
+        }
     });
 }

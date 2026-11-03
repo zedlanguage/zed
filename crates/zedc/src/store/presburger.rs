@@ -803,6 +803,19 @@ fn local_repair(
     Some(m)
 }
 
+thread_local! {
+    /// The parts [`Parts::witness`] has tested on this thread since [`parts_tested`] was last
+    /// called.
+    static TESTED: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The number of parts (a disjunct and its own constraints) that the search for a point has
+/// tested against its values on this thread since the last call, which resets it. A test reads
+/// it to count that work directly.
+pub fn parts_tested() -> u64 {
+    TESTED.replace(0)
+}
+
 /// A stamp no search has used before ([`Parts::witness`]); zero is never one.
 fn fresh_stamp() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -887,13 +900,16 @@ fn pick(p: &Parts, deep: bool) -> Result<Model, Refusal> {
         let Some((d, m)) = taken else {
             return Err(why);
         };
-        // Complexity tradeoff: a change of any value drops every mark, not only the marks of
-        // the parts that mention it, so a nest whose search changes the model at each level
-        // and fails only at the bottom is read again below each level, O(d²) for a nest `d`
-        // deep. Keeping the marks of parts that do not mention a changed value needs each
-        // part's atoms checked at each change. A disjunct whose constraints already hold is
-        // taken with the model unchanged, which leaves the marks; a nest whose model climbs at
-        // each level measured linear too (COMPLEXITY S26).
+        // A change of any value drops every mark, not only the marks of the parts that mention
+        // it, yet no part is read again below each level: a part is marked by the first walk
+        // that reaches it and fails, at the disjunction `D` popped then. The disjunctions
+        // popped after `D` and before the one that holds the part are those of the disjuncts
+        // taken on the way down, read last to first as that walk read them; each was found to
+        // hold by that walk, and each disjunct on the way has its constraints holding, so it is
+        // taken with the model unchanged. A disjunct taken earlier in its disjunction leaves
+        // the part unread. So the model is the same when the part is reached again, and its
+        // mark holds. Test `l01_39_reduced_product::deep_condition::the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`
+        // counts the parts tested ([`parts_tested`]) (COMPLEXITY S26).
         if m.iter().any(|(a, v)| model.get(a) != Some(v)) {
             stamp = fresh_stamp();
         }
@@ -1113,7 +1129,10 @@ impl Parts {
     /// passes a new stamp whenever `values` change.
     fn witness<'a>(&'a self, values: &Model, stamp: u64, out: &mut Vec<&'a Parts>) -> bool {
         let fails = |p: &Parts| {
-            let no = p.failed.get() == stamp || !p.cons.iter().all(|c| c.holds(values));
+            let no = p.failed.get() == stamp || {
+                TESTED.set(TESTED.get() + 1);
+                !p.cons.iter().all(|c| c.holds(values))
+            };
             if no {
                 p.failed.set(stamp);
             }
@@ -2773,8 +2792,9 @@ fn no_points(syms: &[Atom]) -> Each {
 /// atoms when they are fewer, so that a nest of disjunctions `d` deep costs each disjunct once,
 /// not once for each level above it. A disjunct is asked only for the symbols that every
 /// disjunct with a point beside it touches, and a hull is tightened at the top over the whole
-/// formula and below it over the level with each disjunct's disjunctions replaced by its
-/// projections ([`summarize`]), so that no level reads the whole nest below it either.
+/// formula and below it over the level with each disjunct's disjunctions cut to their
+/// disjuncts' own constraints and its projections added ([`summarize`]), so that no level
+/// reads the whole nest below it either.
 fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result<Each, Refusal> {
     let none = || no_points(syms);
     let mut skipped: Vec<Refusal> = Vec::new();
@@ -3002,24 +3022,38 @@ type Projected<'a> = (&'a Parts, Vec<(usize, IntervalSet)>);
 /// A level of [`project_parts`] below the top, with more points than it has, for tightening
 /// its hulls: the base `cons` and, for each disjunction (`None` where a disjunct was refused),
 /// the disjunction of its disjuncts with a point, each a disjunct's own constraints and, when
-/// it has disjunctions, in their place its projections onto the symbols it was asked for.
+/// it has disjunctions, its projections onto the symbols it was asked for and each of its
+/// disjunctions with every disjunct cut to its own constraints. Each part's constraints are
+/// read here at its own level and at the level above it, so the summaries of a nest cost its
+/// size twice, however deep it is.
 // Complexity tradeoff: below the top, a hull is tightened over this formula, not over the
-// level's own, so a bound that only the disjunctions inside a disjunct jointly with the rest of
-// the level push inward is left where the projections put it: a sound hull, wider than the
-// level's. The level's own formula holds the whole nest below it, and tightening over it at
-// each level costs the nest once for each level above, O(d²) and more for a nest `d` deep
-// (COMPLEXITY S26). It is triggered by two disjunctions or more at a level below the top, one of
-// them with a disjunct that has disjunctions of its own. Tests
-// `l01_39_reduced_product::deep_condition::arms_of_a_test_whose_bound_moves_at_each_level_*`.
-// A complete answer at this cost would need each level's formula decided incrementally from
-// the level below's.
+// level's own, so a bound that only a choice two disjunctions or more inside a disjunct, jointly
+// with the rest of the level, pushes inward is left where the projections put it: a sound
+// hull, wider than the level's. Test
+// `l01_39_reduced_product::deep_condition::a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only`
+// asserts the wider hull `[3..=4, 10..=10, 100..=200]` where the level's own is
+// `[3..=4, 100..=200]`; a choice one disjunction inside is read exactly
+// (`a_choice_one_level_inside_a_branch_is_read_with_the_rest_of_the_branch`). The level's own
+// formula holds the whole nest below it, and tightening over it at each level costs the nest
+// once for each level above: measured on this code, `arms_of_a_capped_test_take_time_near_linear_in_its_depth`
+// then takes 51.1 times the work from d = 30 to 240 (limit 24), O(d²) (COMPLEXITY S26). It is
+// triggered by two disjunctions or more at a level below the top, one of them with a disjunct
+// whose disjunctions have disjunctions of their own. A complete answer would need each level's
+// formula decided incrementally from the level below's; in general the exact bound decides
+// whether a nest of disjunctions of linear constraints has a point, which is NP-complete.
 fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Formula {
+    let own = |p: &Parts| -> Vec<Formula> { p.cons.iter().cloned().map(Formula::Con).collect() };
     let mut fs: Vec<Formula> = cons.iter().cloned().map(Formula::Con).collect();
     for ds in seen.iter().flatten() {
         let each = ds.iter().map(|(d, rs)| {
-            let mut gs: Vec<Formula> = d.cons.iter().cloned().map(Formula::Con).collect();
+            let mut gs = own(d);
             if !d.ors.is_empty() {
                 gs.extend(rs.iter().map(|(k, h)| member(&syms[*k], h)));
+                let cut = d
+                    .ors
+                    .iter()
+                    .map(|es| Formula::or(es.iter().map(|e| Formula::and(own(e))).collect()));
+                gs.extend(cut);
             }
             Formula::and(gs)
         });
