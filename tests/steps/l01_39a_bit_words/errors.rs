@@ -164,3 +164,22 @@ fn a_name_carries_what_its_text_shows() {
     let out = rejected("w = 4 + 0;\ny = bitNot(16, width: w);\n");
     assert!(out.contains("and this `x` is 16 with `width` 4"), "{out}");
 }
+
+#[test]
+fn bit_words_nested_in_each_other_are_each_checked_with_the_inner_values() {
+    // Positional, named and receiver arguments that are themselves calls of bit words.
+    assert!(accepted("x = bitAnd(bitOr(bitXor(6, 3), 1), 7);\n"));
+    assert!(accepted(
+        "x = leadingZeros(bitAnd(255, 15), width: bitOr(4, 4));\n"
+    ));
+    assert!(accepted("x = 6.bitOr(1).bitAnd(bitXor(2, 1));\n"));
+    // `bitXor(6, 3)` is 5, so the outer `a` is -1.
+    let out = rejected("x = bitAnd(bitXor(6, 3) - 6, 1);\n");
+    assert!(
+        out.starts_with("1:5: `bitAnd` takes `a` in int[0..], and this `a` is -1"),
+        "{out}"
+    );
+    // The width is 2, and 15 does not lie below `2 ** 2`.
+    let out = rejected("x = leadingZeros(bitAnd(255, 15), width: bitAnd(6, 3));\n");
+    assert!(out.contains("takes `x` in int[0..<2 ** width]"), "{out}");
+}

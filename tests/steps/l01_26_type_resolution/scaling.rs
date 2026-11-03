@@ -242,3 +242,33 @@ fn lambdas_nested_1000_deep_check_on_a_2_mib_stack() {
     let res = zedc::resolve::resolve(&stmts).unwrap();
     on_small_stack(|| assert!(zedc::check::check(&stmts, &res).errors.is_empty()));
 }
+
+/// `x = bitAnd(bitAnd(… bitAnd(1, 1) …, 1), 1);`, `n` calls of the bit word nested.
+fn bit_words(n: usize) -> String {
+    format!("x = {}1{};\n", "bitAnd(".repeat(n), ", 1)".repeat(n))
+}
+
+#[test]
+fn bit_words_8000_deep_check_on_a_2_mib_stack() {
+    // A bit word's arguments are checked from the walk's frame `Bits`, so the nesting keeps
+    // no frame of the thread's stack per call. Checked by a recursive call per argument, this
+    // overflowed the stack below 1,000 deep. A call costs about 150 us in the kernel's type
+    // algebra, as the calls above do, so 100,000 deep would take most of a minute.
+    use zed_tests::deep::{on_small_stack, statements};
+    let n = 1_000;
+    let small = statements(&bit_words(n));
+    let large = statements(&bit_words(8 * n));
+    let small_res = zedc::resolve::resolve(&small).unwrap();
+    let large_res = zedc::resolve::resolve(&large).unwrap();
+    on_small_stack(|| {
+        scaling::check_order("checking nested bit words", n, 1, |k| {
+            let (stmts, res) = if k == n {
+                (&small, &small_res)
+            } else {
+                (&large, &large_res)
+            };
+            let info = zedc::check::check(stmts, res);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        });
+    });
+}
