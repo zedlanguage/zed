@@ -2,11 +2,12 @@
 //! thread allocates, for the second measure of the scaling tests (`zed_tests::scaling`).
 //!
 //! A block of `n` bytes counts `n` when it is allocated, and a block grown or shrunk in place or
-//! by a copy counts its new size, which is what a copy writes. Freeing counts nothing. The count
-//! is kept per thread, so tests that run beside a measured one in the same process do not change
-//! it, whatever the scheduling. A thread a measured run starts counts on its own; the run adds
-//! that count to its own with [`add`] when the thread ends, as `zed_tests::deep` and
-//! `zed_tests::scaling` do.
+//! by a copy counts its new size, which is what a copy writes. A request the system refuses writes
+//! nothing and counts nothing, so a probe such as `try_reserve` of an impossible size leaves the
+//! count as it was. Freeing counts nothing. The count is kept per thread, so tests that run beside
+//! a measured one in the same process do not change it, whatever the scheduling. A thread a
+//! measured run starts counts on its own; the run adds that count to its own with [`add`] when
+//! the thread ends, as `zed_tests::deep` and `zed_tests::scaling` do.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -27,9 +28,13 @@ pub fn add(bytes: u64) {
     BYTES.set(BYTES.get() + bytes);
 }
 
-/// Adds `bytes` to this thread's count, from inside the allocator.
-fn count(bytes: usize) {
-    BYTES.set(BYTES.get() + bytes as u64);
+/// Adds `bytes` to this thread's count, from inside the allocator, when the system gave the block
+/// (`block` is not null) and returns `block`.
+fn count(block: *mut u8, bytes: usize) -> *mut u8 {
+    if !block.is_null() {
+        BYTES.set(BYTES.get() + bytes as u64);
+    }
+    block
 }
 
 /// The system allocator, counting bytes per thread.
@@ -43,15 +48,13 @@ pub struct Counting;
 // `GlobalAlloc`; counting reads and writes a thread-local `Cell` and never allocates.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        count(layout.size());
         // SAFETY: the caller's guarantees about `layout` are passed on unchanged.
-        unsafe { System.alloc(layout) }
+        count(unsafe { System.alloc(layout) }, layout.size())
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        count(layout.size());
         // SAFETY: as in `alloc`.
-        unsafe { System.alloc_zeroed(layout) }
+        count(unsafe { System.alloc_zeroed(layout) }, layout.size())
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -60,9 +63,8 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        count(new_size);
         // SAFETY: as in `dealloc`; the caller's guarantees about `new_size` are passed on.
-        unsafe { System.realloc(ptr, layout, new_size) }
+        count(unsafe { System.realloc(ptr, layout, new_size) }, new_size)
     }
 }
 
@@ -95,6 +97,21 @@ mod tests {
             black_box(v);
         });
         assert_eq!(grown, 100 + 300);
+    }
+
+    #[test]
+    fn a_refused_request_counts_nothing() {
+        // Two requests near `isize::MAX` bytes would overflow the count if they were counted.
+        for _ in 0..2 {
+            let asked = bytes_of(|| {
+                assert!(
+                    Vec::<u8>::new()
+                        .try_reserve_exact(isize::MAX as usize)
+                        .is_err()
+                );
+            });
+            assert_eq!(asked, 0);
+        }
     }
 
     #[test]
