@@ -112,3 +112,21 @@ fn a_source_that_does_not_parse_is_reported_at_its_line_and_column() {
     let e = zedc::format::format_source(b"f(x) = 1;\ng(x) = ;\n").unwrap_err();
     assert!(e.starts_with("2:8: expected "), "{e}");
 }
+
+#[test]
+fn a_match_puts_each_arm_on_its_own_line() {
+    // Step L2.2: a comment stays with its arm, and a guard is written after the pattern.
+    check(
+        "depth(t)=match t{#leaf->0,// no children\n// a node\n#node(l:,r:) where l==r->1+depth(l),_->-1\n// none else\n};\n",
+        "depth(t) = match t {\n  #leaf -> 0, // no children\n  // a node\n  #node(l:, r:) where l == r -> 1 + depth(l),\n  _ -> -1,\n  // none else\n};\n",
+    );
+}
+
+#[test]
+fn imports_and_annotations_stay_on_one_line() {
+    // Step L2.2.
+    check(
+        "import geometry.shapes as gs;\nimport io.{read,write,};\n@memoized\nfib(n)=n;\n",
+        "import geometry.shapes as gs;\nimport io.{read, write};\n@memoized fib(n) = n;\n",
+    );
+}

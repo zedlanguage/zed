@@ -18,8 +18,8 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    Expr, ExprKind, Field, Function, Param, Port, Stmt, StmtKind, Target, Type, TypeKind,
-    TypeParam, Update,
+    Annot, Arm, Expr, ExprKind, Field, Function, ImportKind, Param, Pattern, Port, Stmt, StmtKind,
+    Target, Type, TypeKind, TypeParam, Update,
 };
 use crate::lex::{self, Span, Token};
 use crate::parse::{TOP, parse};
@@ -264,6 +264,22 @@ enum Job<'a> {
     TypeParams(&'a [TypeParam]),
     /// The fields of a record type, with `, ` between.
     RecordType(&'a [(String, Type)]),
+    /// A pattern.
+    Pattern(&'a Pattern),
+    /// Patterns, with `, ` between.
+    Patterns(&'a [Pattern]),
+    /// Fields of a pattern, `f: p` or `f:`, with `, ` between.
+    FieldPats(&'a [(String, Option<Pattern>)]),
+    /// The arms of a `match` whose `match` is at indentation `ind`, each on a line of its own
+    /// and followed by `,`, with the comments in `prev..end` that the arms do not hold.
+    Arms {
+        arms: &'a [Arm],
+        prev: usize,
+        end: usize,
+        ind: usize,
+    },
+    /// Annotations, each followed by a space.
+    Annots { annots: &'a [Annot], ind: usize },
 }
 
 /// Pushes jobs to run in the order written.
@@ -588,6 +604,142 @@ impl<'a> Formatter<'a> {
                     stack.push(Job::Ty { t, min: 0 });
                 }
             }
+            Job::Pattern(p) => self.pattern(p, stack),
+            Job::Patterns(ps) => {
+                if let Some((p, rest)) = ps.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(", "), Job::Patterns(rest)];
+                    }
+                    self.pattern(p, stack);
+                }
+            }
+            Job::FieldPats(fields) => {
+                if let Some(((n, p), rest)) = fields.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(", "), Job::FieldPats(rest)];
+                    }
+                    match p {
+                        Some(p) => {
+                            self.put(format!("{n}: "));
+                            self.pattern(p, stack);
+                        }
+                        None => self.put(format!("{n}:")),
+                    }
+                }
+            }
+            Job::Arms {
+                arms,
+                prev,
+                end,
+                ind,
+            } => {
+                let pad = indent(ind + 1);
+                let Some((a, rest)) = arms.split_first() else {
+                    // The comments after the last arm, each on its own line before the `}`.
+                    for c in self.take(prev, end) {
+                        self.put(format!("\n{pad}{}", &self.text[c.start..c.end]));
+                    }
+                    return;
+                };
+                for c in self.take(prev, a.span.start) {
+                    self.put(format!("\n{pad}{}", &self.text[c.start..c.end]));
+                }
+                self.put(format!("\n{pad}"));
+                let next = rest.first().map_or(end, |n| n.span.start);
+                let trailing = self.take_same_line(a.span.end, next);
+                let after: String = trailing
+                    .iter()
+                    .map(|c| format!(" {}", &self.text[c.start..c.end]))
+                    .collect();
+                stack.push(Job::Arms {
+                    arms: rest,
+                    prev: trailing.last().map_or(a.span.end, |c| c.end),
+                    end,
+                    ind,
+                });
+                let guard = a.guard.iter().flat_map(|g| {
+                    [
+                        put(" where "),
+                        Job::Expr {
+                            e: g,
+                            min: ELSE,
+                            ind: ind + 1,
+                        },
+                    ]
+                });
+                let jobs = [Job::Pattern(&a.pattern)].into_iter().chain(guard).chain([
+                    put(" -> "),
+                    Job::Branch {
+                        e: &a.body,
+                        min: LAMBDA,
+                        ind: ind + 1,
+                    },
+                    put(format!(",{after}")),
+                ]);
+                let mark = stack.len();
+                stack.extend(jobs);
+                stack[mark..].reverse();
+            }
+            Job::Annots { annots, ind } => {
+                if let Some((a, rest)) = annots.split_first() {
+                    stack.push(Job::Annots { annots: rest, ind });
+                    self.put(format!("@{}", a.name));
+                    if a.called {
+                        self.put("(");
+                        then![stack;
+                            Job::Exprs { exprs: &a.positional, min: LAMBDA, ind },
+                            Job::Named {
+                                args: &a.named,
+                                min: LAMBDA,
+                                comma: !a.positional.is_empty(),
+                                ind,
+                            },
+                            put(") "),
+                        ];
+                    } else {
+                        self.put(" ");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The pattern `p` as written: a type pattern's type is at the level of a union.
+    fn pattern(&mut self, p: &'a Pattern, stack: &mut Vec<Job<'a>>) {
+        match p {
+            Pattern::Name(n, _) => self.put(n.as_str()),
+            Pattern::Wild(_) => self.put("_"),
+            Pattern::Tuple(items, _) => {
+                self.put("(");
+                then![stack; Job::Patterns(items), put(")")];
+            }
+            Pattern::Struct { name, fields, .. } => {
+                self.put(format!("{name}("));
+                then![stack; Job::FieldPats(fields), put(")")];
+            }
+            Pattern::Atom {
+                name,
+                fields,
+                items,
+                ..
+            } => {
+                self.put(format!("#{name}"));
+                if !fields.is_empty() {
+                    self.put("(");
+                    then![stack; Job::FieldPats(fields), put(")")];
+                } else if !items.is_empty() {
+                    self.put("(");
+                    then![stack; Job::Patterns(items), put(")")];
+                }
+            }
+            Pattern::Is { name, ty, .. } => {
+                if let Some(n) = name {
+                    self.put(format!("{n} "));
+                }
+                self.put("is ");
+                stack.push(Job::Ty { t: ty, min: 1 });
+            }
+            Pattern::Lit(e) => self.raw(e, 0, stack),
         }
     }
 
@@ -701,6 +853,24 @@ impl<'a> Formatter<'a> {
                 }
                 self.put(" = ");
                 then![stack; Job::Ty { t: &t.ty, min: 0 }, put(";")];
+            }
+            StmtKind::Import(i) => {
+                self.put(format!("import {}", i.path));
+                match &i.kind {
+                    ImportKind::Qualified => {}
+                    ImportKind::Alias(a) => self.put(format!(" as {a}")),
+                    ImportKind::Selective(names) => self.put(format!(".{{{}}}", names.join(", "))),
+                }
+                if let Some(h) = &i.pin {
+                    self.put(format!(" @hash(\"{h}\")"));
+                }
+                self.put(";");
+            }
+            StmtKind::Annotated { annots, decl } => {
+                then![stack;
+                    Job::Annots { annots, ind },
+                    Job::Stmt { s: decl, ind, bare: false },
+                ];
             }
         }
     }
@@ -857,14 +1027,15 @@ impl<'a> Formatter<'a> {
                 pattern,
                 default,
             } => {
-                let pat = pattern
-                    .as_ref()
-                    .map_or(String::new(), |p| format!("{p} -> "));
-                then![stack;
-                    at(of, ELSE),
-                    put(format!(" else {pat}")),
-                    Job::Branch { e: default, min: OR, ind },
-                ];
+                stack.push(Job::Branch {
+                    e: default,
+                    min: OR,
+                    ind,
+                });
+                if let Some(p) = pattern {
+                    then![stack; Job::Pattern(p), put(" -> ")];
+                }
+                then![stack; at(of, ELSE), put(" else ")];
             }
             ExprKind::Block(_) => self.block(e, ind, Place::Operand, stack),
             ExprKind::Record(fields) => {
@@ -905,6 +1076,16 @@ impl<'a> Formatter<'a> {
                     otherwise,
                 ];
                 self.put(if unsafe_head { "if (" } else { "if " });
+            }
+            ExprKind::Match { of, arms } => {
+                let unsafe_head = head_unsafe(of);
+                self.put(if unsafe_head { "match (" } else { "match " });
+                then![stack;
+                    at(of, ELSE),
+                    put(if unsafe_head { ") {" } else { " {" }),
+                    Job::Arms { arms, prev: of.span.end, end: e.span.end, ind },
+                    put(format!("\n{}}}", indent(ind))),
+                ];
             }
         }
     }

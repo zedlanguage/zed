@@ -20,7 +20,9 @@ use std::ops::Range;
 
 use imbl::Vector;
 
-use crate::ast::{Error, Expr, ExprKind, Param, Pattern, Port, Stmt, StmtKind, StrPart, Target};
+use crate::ast::{
+    Annot, Error, Expr, ExprKind, Param, Pattern, Port, Stmt, StmtKind, StrPart, Target,
+};
 use crate::ast::{Note, Type, TypeKind};
 use crate::lex::Span;
 
@@ -128,6 +130,46 @@ const WORDS: &[(&str, u32)] = &[
 /// The layer of the prelude value word `name`, if it is one.
 pub fn prelude_layer(name: &str) -> Option<u32> {
     WORDS
+        .iter()
+        .find(|(w, _)| *w == name)
+        .map(|&(_, layer)| layer)
+}
+
+/// The annotations, each with the layer it belongs to (DESIGN.md, "Defined words by layer").
+/// `@hash`, of layer L2, pins an import and annotates no declaration.
+const ANNOTATIONS: &[(&str, u32)] = &[
+    ("hash", 2),
+    ("foreign", 7),
+    ("export", 7),
+    ("borrowed", 7),
+    ("stateless", 7),
+    ("log", 7),
+    ("after", 7),
+    ("checked", 10),
+    ("invariant", 15),
+    ("ensure", 15),
+    ("proved", 15),
+    ("exhaustive", 15),
+    ("exact", 15),
+    ("strict", 15),
+    ("associative", 16),
+    ("commutative", 16),
+    ("idempotent", 16),
+    ("injective", 16),
+    ("assume", 16),
+    ("measure", 17),
+    ("cost", 18),
+    ("fused", 18),
+    ("memoized", 18),
+    ("noalloc", 18),
+    ("preallocated", 18),
+    ("decides", 22),
+    ("require", 24),
+];
+
+/// The layer of the annotation `@name`, if it is one.
+pub fn annotation_layer(name: &str) -> Option<u32> {
+    ANNOTATIONS
         .iter()
         .find(|(w, _)| *w == name)
         .map(|&(_, layer)| layer)
@@ -281,6 +323,10 @@ impl Resolver {
     /// The statements of the innermost scope: their binders first, since order has no meaning.
     fn stmts(&mut self, stmts: &[Stmt]) {
         for s in stmts {
+            let s = match &s.kind {
+                StmtKind::Annotated { decl, .. } => decl,
+                _ => s,
+            };
             match &s.kind {
                 StmtKind::Bind { targets, .. } => {
                     for t in targets {
@@ -300,33 +346,62 @@ impl Resolver {
                 | StmtKind::Push { .. }
                 | StmtKind::Struct(_)
                 | StmtKind::Type(_)
-                | StmtKind::Method(_) => {}
+                | StmtKind::Method(_)
+                | StmtKind::Import(_)
+                | StmtKind::Annotated { .. } => {}
             }
         }
-        for s in stmts {
-            match &s.kind {
-                StmtKind::Bind { value, .. } => self.expr(value),
-                StmtKind::Return(es) => es.iter().for_each(|e| self.expr(e)),
-                StmtKind::Push { port, value } => {
-                    self.name(port, s.span);
-                    self.expr(value);
+        stmts.iter().for_each(|s| self.stmt(s));
+    }
+
+    /// The statement `s`, whose binders its scope has.
+    fn stmt(&mut self, s: &Stmt) {
+        match &s.kind {
+            StmtKind::Bind { value, .. } => self.expr(value),
+            StmtKind::Return(es) => es.iter().for_each(|e| self.expr(e)),
+            StmtKind::Push { port, value } => {
+                self.name(port, s.span);
+                self.expr(value);
+            }
+            StmtKind::Function(f) => {
+                let ports: &[Port] = f.ports.as_deref().unwrap_or_default();
+                for p in ports {
+                    self.ty(&p.ty);
                 }
-                StmtKind::Function(f) => {
-                    let ports: &[Port] = f.ports.as_deref().unwrap_or_default();
-                    for p in ports {
-                        self.ty(&p.ty);
-                    }
-                    for (a, b) in &f.tests {
-                        self.expr(a);
-                        self.expr(b);
-                    }
-                    self.function(&f.params, ports, &f.body);
+                for (a, b) in &f.tests {
+                    self.expr(a);
+                    self.expr(b);
                 }
-                StmtKind::Struct(_) => self.later(s.span, "a struct declaration", "L2.4"),
-                StmtKind::Method(_) => self.later(s.span, "a method", "L2.4"),
-                StmtKind::Type(_) => self.later(s.span, "a type declaration", "L2.5"),
+                self.function(&f.params, ports, &f.body);
+            }
+            StmtKind::Struct(_) => self.later(s.span, "a struct declaration", "L2.4"),
+            StmtKind::Method(_) => self.later(s.span, "a method", "L2.4"),
+            StmtKind::Type(_) => self.later(s.span, "a type declaration", "L2.5"),
+            StmtKind::Import(_) => self.later(s.span, "an import", "L2.3"),
+            StmtKind::Annotated { annots, decl } => {
+                annots.iter().for_each(|a| self.annotation(a));
+                self.stmt(decl);
             }
         }
+    }
+
+    /// The annotation `a`. None has a meaning before layer L7, so each is refused with its
+    /// reason: it is no annotation, it is `@hash`, which annotates no declaration, or it is of
+    /// a later layer.
+    fn annotation(&mut self, a: &Annot) {
+        let name = &a.name;
+        let message = match annotation_layer(name) {
+            None => format!("`@{name}` is not an annotation"),
+            Some(2) => "`@hash` pins an import and follows its unit path, as in \
+                 `import geometry.shapes @hash(\"…\");`; it annotates no declaration"
+                .into(),
+            Some(layer) => format!("`@{name}` is an annotation of layer L{layer}"),
+        };
+        self.errors.push(Error {
+            span: a.span,
+            message,
+            notes: Vec::new(),
+        });
     }
 
     /// The form `what`, which the parser builds, has its meaning from step `step`.
@@ -441,6 +516,7 @@ impl Resolver {
             ExprKind::Record(_) => self.later(e.span, "a record display", "L2.4"),
             ExprKind::With { .. } => self.later(e.span, "a `with` clause", "L2.4"),
             ExprKind::This => self.later(e.span, "`this`", "L2.4"),
+            ExprKind::Match { .. } => self.later(e.span, "a `match`", "L2.4"),
         }
     }
 
@@ -453,7 +529,12 @@ impl Resolver {
             ..
         } = p
         else {
-            return self.later(p.span(), "a struct, name, `_` or tuple pattern", "L2.4");
+            let what = match p {
+                Pattern::Is { .. } => "a type pattern `n is T`",
+                Pattern::Lit(_) => "a literal pattern",
+                _ => "a struct, name, `_` or tuple pattern",
+            };
+            return self.later(p.span(), what, "L2.4");
         };
         for (f, sub) in fields {
             match sub {

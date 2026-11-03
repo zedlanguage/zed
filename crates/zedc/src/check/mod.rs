@@ -487,7 +487,11 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     fn stmt(&mut self, s: &'a Stmt) {
         match &s.kind {
-            StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {
+            StmtKind::Struct(_)
+            | StmtKind::Type(_)
+            | StmtKind::Method(_)
+            | StmtKind::Import(_)
+            | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
             StmtKind::Bind { targets, value } => {
@@ -1536,7 +1540,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
         }
         match &e.kind {
-            ExprKind::Record(_) | ExprKind::With { .. } | ExprKind::This => {
+            ExprKind::Record(_)
+            | ExprKind::With { .. }
+            | ExprKind::This
+            | ExprKind::Match { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
             // A `rat` literal is decorated and keeps its carrier; a literal past the size

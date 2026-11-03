@@ -2,12 +2,13 @@
 //! lambda's parameters and an `else` pattern are written with. Step L2.1 adds the applied
 //! types `Tree(T)` and `#node(l: T)`, the record type `{x: int}`, the tuple-destructuring
 //! parameter `(a, b)`, and the patterns that destructure a struct, `Point(x:, y: b)`, with the
-//! name, `_` and tuple patterns they hold.
+//! name, `_` and tuple patterns they hold. Step L2.2 adds the patterns of a `match` arm: the
+//! type pattern `n is T` and the literal pattern.
 
 use std::collections::HashMap;
 use std::mem;
 
-use super::{Builder, Built, Error, Expr, Target};
+use super::{Builder, Built, Error, Expr, ExprKind, Target};
 use crate::lex::{Span, Tok};
 
 /// A type expression and its span.
@@ -113,13 +114,27 @@ pub enum Pattern {
         /// Its text.
         span: Span,
     },
+    /// `n is T`, the value matched when it is in the set of `T`, bound to `n` if written.
+    Is {
+        /// The name bound.
+        name: Option<String>,
+        /// The type.
+        ty: Box<Type>,
+        /// Its text.
+        span: Span,
+    },
+    /// A literal, `-1`, `"a"` or `true`, matching the value equal to it.
+    Lit(Box<Expr>),
 }
 
 impl Pattern {
     /// Its text.
     pub fn span(&self) -> Span {
         match self {
-            Pattern::Struct { span, .. } | Pattern::Atom { span, .. } => *span,
+            Pattern::Struct { span, .. }
+            | Pattern::Atom { span, .. }
+            | Pattern::Is { span, .. } => *span,
+            Pattern::Lit(e) => e.span,
             Pattern::Name(_, span) | Pattern::Wild(span) | Pattern::Tuple(_, span) => *span,
         }
     }
@@ -354,8 +369,8 @@ impl Builder<'_> {
         }
     }
 
-    /// The pattern of node `n`, of a rule `AtomPattern`, `CtorPat`, `NamePat`, `WildPat` or
-    /// `TuplePat`.
+    /// The pattern of node `n`, of a rule `AtomPattern`, `CtorPat`, `NamePat`, `WildPat`,
+    /// `TuplePat`, `IsPat` or `SignedLit`.
     pub(super) fn make_pattern(&mut self, n: usize) -> Result<Pattern, Error> {
         let node = &self.tree.nodes[n];
         let span = self.span(n);
@@ -366,6 +381,28 @@ impl Builder<'_> {
                 let items = node.kids.iter().map(|&k| self.pattern(k));
                 return Ok(Pattern::Tuple(items.collect::<Result<_, _>>()?, span));
             }
+            "IsPat" => {
+                let (&ty, name) = node
+                    .kids
+                    .split_last()
+                    .expect("IsPat = Name? 'is' TypeUnion");
+                return Ok(Pattern::Is {
+                    name: name
+                        .first()
+                        .map(|&k| self.word(self.tree.nodes[k].start).into()),
+                    ty: Box::new(self.ty(ty)?),
+                    span,
+                });
+            }
+            "SignedLit" if self.word(node.start) == "-" => {
+                let i = node.start + 1;
+                let value = self.literal_at(i, self.tokens[i].span)?;
+                return Ok(Pattern::Lit(Box::new(Expr {
+                    kind: ExprKind::Unary("-", Box::new(value)),
+                    span,
+                })));
+            }
+            "SignedLit" => return Ok(Pattern::Lit(Box::new(self.literal_at(node.start, span)?))),
             "CtorPat" => {
                 let (&name, fields) = node.kids.split_first().expect("CtorPat = Name '(' …");
                 let out = fields.iter().map(|&k| self.field_pattern(k));

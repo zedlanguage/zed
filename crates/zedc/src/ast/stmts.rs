@@ -1,11 +1,14 @@
 //! Statements and blocks (step L1.11): bindings with their targets, and `return`; and
 //! declarations (step L1.12): functions with their `test` tables, and the push `p <- e`; and
-//! from step L2.1, the declarations of structs, of types, and of methods `T.m`.
+//! from step L2.1, the declarations of structs, of types, and of methods `T.m`; and from step
+//! L2.2, imports with their `@hash` pins, and the annotations `@name` written before a
+//! declaration.
 
 use std::collections::HashMap;
 
 use super::{Builder, Built, Error, Expr, ExprKind, Note, Param, Type};
-use crate::lex::Span;
+use crate::address::ContentAddress;
+use crate::lex::{Part, Span, Tok};
 
 /// A statement and its span.
 #[derive(Debug)]
@@ -43,6 +46,53 @@ pub enum StmtKind {
     Type(TypeDecl),
     /// A method declaration.
     Method(Method),
+    /// An import of a unit.
+    Import(Import),
+    /// A declaration and the annotations written before it, in written order.
+    Annotated {
+        /// The annotations.
+        annots: Vec<Annot>,
+        /// The declaration.
+        decl: Box<Stmt>,
+    },
+}
+
+/// `import geometry.shapes;`, `import geometry.shapes as gs;` or
+/// `import geometry.shapes.{Circle, area};`, each with an optional pin `@hash("…")`.
+#[derive(Debug)]
+pub struct Import {
+    /// The unit's path, joined by `.`.
+    pub path: String,
+    /// What it binds.
+    pub kind: ImportKind,
+    /// The content address it is pinned to, if written.
+    pub pin: Option<ContentAddress>,
+}
+
+/// What an import binds.
+#[derive(Debug)]
+pub enum ImportKind {
+    /// The unit, under the last name of its path.
+    Qualified,
+    /// The unit, under this name.
+    Alias(String),
+    /// These names of the unit, in written order.
+    Selective(Vec<String>),
+}
+
+/// An annotation: `@log`, or `@cost(n)` with its arguments.
+#[derive(Debug)]
+pub struct Annot {
+    /// Its name, without its `@`.
+    pub name: String,
+    /// Whether parentheses follow it, `@log()` rather than `@log`.
+    pub called: bool,
+    /// The positional arguments, in order.
+    pub positional: Vec<Expr>,
+    /// The named arguments, in written order; `x:` is `x: x`.
+    pub named: Vec<(String, Expr)>,
+    /// Its text.
+    pub span: Span,
 }
 
 /// `struct Point { x: f64, y: f64 = 0.0, import geometry.Named }`.
@@ -198,8 +248,170 @@ impl Builder<'_> {
 
     pub(super) fn make_item(&mut self, n: usize) -> Result<Stmt, Error> {
         let d = self.kids(n)[0];
+        let kind = if self.tree.name(d) == "Annotated" {
+            self.annotated(d)?
+        } else {
+            self.decl(d)?
+        };
+        Ok(Stmt {
+            kind,
+            span: self.span(n),
+        })
+    }
+
+    /// The annotations and declaration of node `n`, an `Annotated`. An annotation with
+    /// parentheses is an `Annot` node; a bare one is an `ANNOT` token of `n` itself.
+    fn annotated(&mut self, n: usize) -> Result<StmtKind, Error> {
+        let (&d, nodes) = self.kids(n).split_last().expect("Annotated ends in a Decl");
+        let mut annots = Vec::new();
+        let mut nodes = nodes.iter().peekable();
+        let mut i = self.tree.nodes[n].start;
+        while i < self.tree.nodes[d].start {
+            if let Some(&a) = nodes.next_if(|&&a| self.tree.nodes[a].start == i) {
+                annots.push(self.annot(a)?);
+                i = self.tree.nodes[a].end;
+                continue;
+            }
+            let Tok::Annot(name) = &self.tokens[i].tok else {
+                unreachable!("Annotated = (Annot | ANNOT)+ Decl")
+            };
+            annots.push(Annot {
+                name: name.clone(),
+                called: false,
+                positional: Vec::new(),
+                named: Vec::new(),
+                span: self.tokens[i].span,
+            });
+            i += 1;
+        }
+        let decl = Stmt {
+            kind: self.decl(d)?,
+            span: self.span(d),
+        };
+        Ok(StmtKind::Annotated {
+            annots,
+            decl: Box::new(decl),
+        })
+    }
+
+    /// The annotation of node `n`, an `Annot`: `@name`, or `@name(args)`, whose arguments do
+    /// not end in `...`, since an annotation is not a call that can be curried.
+    fn annot(&mut self, n: usize) -> Result<Annot, Error> {
+        let node = &self.tree.nodes[n];
+        let Tok::Annot(name) = &self.tokens[node.start].tok else {
+            unreachable!("Annot = ANNOT …")
+        };
+        let (positional, named) = match node.kids[..] {
+            [] => (Vec::new(), Vec::new()),
+            [args] => match self.args(args)? {
+                (_, _, true) => {
+                    return Err(Error {
+                        span: self.span(n),
+                        message: format!(
+                            "the arguments of `@{name}` end in `...`, which only a call takes"
+                        ),
+                        notes: Vec::new(),
+                    });
+                }
+                (positional, named, false) => (positional, named),
+            },
+            _ => unreachable!("Annot = ANNOT ('(' Args? ')')?"),
+        };
+        Ok(Annot {
+            name: name.clone(),
+            called: node.end - node.start > 1,
+            positional,
+            named,
+            span: self.span(n),
+        })
+    }
+
+    /// The import of node `n`, an `Import`: its path, what it binds, and its pin.
+    fn import(&mut self, n: usize) -> Result<Import, Error> {
+        let kids = self.kids(n);
+        let (pin, kids) = match kids.split_last() {
+            Some((&p, rest)) if self.tree.name(p) == "Pin" => (Some(self.pin(p)?), rest),
+            _ => (None, kids),
+        };
+        let p = &self.tree.nodes[kids[0]];
+        let path = (p.start..p.end).step_by(2).map(|i| self.word(i));
+        let path = path.collect::<Vec<_>>().join(".");
+        let kind = match &kids[1..] {
+            // `import u.{a, b}`: the path is followed by `.`.
+            names if self.word(p.end) == "." => {
+                let mut seen = HashMap::new();
+                let mut out = Vec::with_capacity(names.len());
+                for &k in names {
+                    let name = self.word(self.tree.nodes[k].start);
+                    self.once(&mut seen, name, k, "name", "imported")?;
+                    out.push(name.to_string());
+                }
+                ImportKind::Selective(out)
+            }
+            [alias] => ImportKind::Alias(self.word(self.tree.nodes[*alias].start).into()),
+            _ => ImportKind::Qualified,
+        };
+        Ok(Import { path, kind, pin })
+    }
+
+    /// The content address of node `n`, a `Pin`: `@hash("…")` with 64 lowercase hexadecimal
+    /// digits written out in the string.
+    fn pin(&self, n: usize) -> Result<ContentAddress, Error> {
+        let node = &self.tree.nodes[n];
+        let fail = |span: Span, message: String| {
+            Err(Error {
+                span,
+                message,
+                notes: Vec::new(),
+            })
+        };
+        let Tok::Annot(name) = &self.tokens[node.start].tok else {
+            unreachable!("Pin = ANNOT '(' STRING ','? ')'")
+        };
+        if name != "hash" {
+            return fail(
+                self.tokens[node.start].span,
+                format!("an import is pinned with `@hash`, not `@{name}`"),
+            );
+        }
+        let string = &self.tokens[node.start + 2];
+        let Tok::Str(parts) = &string.tok else {
+            unreachable!("Pin = ANNOT '(' STRING ','? ')'")
+        };
+        let mut hex = String::new();
+        for p in parts {
+            match p {
+                Part::Text(t) => hex.push_str(t),
+                Part::Hole { .. } => {
+                    return fail(
+                        string.span,
+                        "the hash of a pin is written out; it has no `${…}` hole".into(),
+                    );
+                }
+            }
+        }
+        if let Some(c) = hex.chars().find(|c| !matches!(c, '0'..='9' | 'a'..='f')) {
+            return fail(
+                string.span,
+                format!("a hash is written in lowercase hexadecimal digits, and {c:?} is not one"),
+            );
+        }
+        match ContentAddress::parse(&hex) {
+            Some(a) => Ok(a),
+            None => fail(
+                string.span,
+                format!(
+                    "a hash has 64 hexadecimal digits, and this one has {}",
+                    hex.len()
+                ),
+            ),
+        }
+    }
+
+    /// The statement kind of node `d`, a declaration.
+    fn decl(&mut self, d: usize) -> Result<StmtKind, Error> {
         let kids = self.kids(d);
-        let kind = match self.tree.name(d) {
+        Ok(match self.tree.name(d) {
             "Return" => StmtKind::Return(
                 kids.iter()
                     .map(|&k| self.node(k))
@@ -240,11 +452,8 @@ impl Builder<'_> {
                 port: self.word(self.tree.nodes[kids[0]].start).into(),
                 value: self.node(kids[1])?,
             },
+            "Import" => StmtKind::Import(self.import(d)?),
             _ => return Err(self.later(d)),
-        };
-        Ok(Stmt {
-            kind,
-            span: self.span(n),
         })
     }
 

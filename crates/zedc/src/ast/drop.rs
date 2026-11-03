@@ -4,8 +4,8 @@
 use std::mem;
 
 use super::{
-    Expr, ExprKind, Field, Function, Method, Param, Pattern, Stmt, StmtKind, StrPart, Struct, Type,
-    TypeKind,
+    Annot, Expr, ExprKind, Field, Function, Method, Param, Pattern, Stmt, StmtKind, StrPart,
+    Struct, Type, TypeKind,
 };
 
 impl Drop for Expr {
@@ -60,20 +60,14 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
         }
         ExprKind::Block(stmts) => {
             for Stmt { kind, .. } in stmts {
-                match kind {
-                    StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => out.push(value),
-                    StmtKind::Return(mut es) => out.append(&mut es),
-                    StmtKind::Function(f) | StmtKind::Method(Method { function: f, .. }) => {
-                        function_kids(f, out)
-                    }
-                    StmtKind::Struct(Struct { fields, .. }) => {
-                        out.extend(fields.into_iter().filter_map(|f| match f {
-                            Field::Typed { default, .. } => default,
-                            Field::Import { .. } => None,
-                        }))
-                    }
-                    StmtKind::Type(_) => {}
-                }
+                stmt_kids(kind, out);
+            }
+        }
+        ExprKind::Match { of, arms } => {
+            out.push(*of);
+            for a in arms {
+                out.extend(a.guard);
+                out.push(a.body);
             }
         }
         ExprKind::Record(fields) => out.extend(fields.into_iter().map(|(_, e)| e)),
@@ -86,6 +80,35 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
             then,
             otherwise,
         } => out.extend([*cond, *then, *otherwise]),
+    }
+}
+
+/// Moves the expressions directly in the statement `kind` to `out`.
+fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
+    match kind {
+        StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => out.push(value),
+        StmtKind::Return(mut es) => out.append(&mut es),
+        StmtKind::Function(f) | StmtKind::Method(Method { function: f, .. }) => {
+            function_kids(f, out)
+        }
+        StmtKind::Struct(Struct { fields, .. }) => {
+            out.extend(fields.into_iter().filter_map(|f| match f {
+                Field::Typed { default, .. } => default,
+                Field::Import { .. } => None,
+            }))
+        }
+        StmtKind::Type(_) | StmtKind::Import(_) => {}
+        // The declaration is not annotated again, so this recursion is one level deep.
+        StmtKind::Annotated { annots, decl } => {
+            for Annot {
+                positional, named, ..
+            } in annots
+            {
+                out.extend(positional);
+                out.extend(named.into_iter().map(|(_, e)| e));
+            }
+            stmt_kids(decl.kind, out);
+        }
     }
 }
 
@@ -160,6 +183,7 @@ fn pattern_kids(p: &mut Pattern, out: &mut Vec<Pattern>) {
             out.extend(mem::take(fields).into_iter().filter_map(|(_, p)| p));
         }
         Pattern::Tuple(items, _) => out.append(items),
-        Pattern::Name(..) | Pattern::Wild(_) => {}
+        // A type and an expression drop by their own work lists.
+        Pattern::Name(..) | Pattern::Wild(_) | Pattern::Is { .. } | Pattern::Lit(_) => {}
     }
 }

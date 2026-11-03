@@ -33,10 +33,10 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "25: the line is marked ✗ and has no diagnostic",
         ),
         (
-            // The `type` declaration parses (step L2.1); the parse stops at `match` (L2.2), and
-            // the marked line comes first.
+            // The unit parses from step L2.2; resolution refuses its `type` declaration, which
+            // comes before the marked line.
             "payload-built-by-position",
-            "5: the line is marked ✗ and has no diagnostic",
+            "3: a type declaration is compiled from step L2.5",
         ),
         // Passes the mark check because its marked line does not parse at L1.
         ("taint-reaches-clean-sink", "pass"),

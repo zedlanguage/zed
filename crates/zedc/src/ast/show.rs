@@ -4,13 +4,14 @@
 use std::fmt;
 
 use super::{
-    Expr, ExprKind, Field, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
-    TypeKind, TypeParam,
+    Expr, ExprKind, Field, Function, ImportKind, Param, Pattern, Stmt, StmtKind, StrPart, Target,
+    Type, TypeKind, TypeParam,
 };
 
 /// What is left to write.
 enum Show<'a> {
     Text(&'a str),
+    Owned(String),
     Quoted(&'a str),
     Expr(&'a Expr),
     Stmt(&'a Stmt),
@@ -29,6 +30,7 @@ fn write(f: &mut fmt::Formatter<'_>, first: Show<'_>) -> fmt::Result {
         let mark = stack.len();
         match job {
             Text(s) => f.write_str(s)?,
+            Show::Owned(s) => f.write_str(&s)?,
             Show::Quoted(s) => write!(f, "{s:?}")?,
             Show::Expr(e) => expr(e, &mut stack),
             Show::Stmt(s) => stmt(s, &mut stack),
@@ -54,7 +56,7 @@ fn each<'a, T: 'a>(
 
 /// An s-expression: `(call f 1 (x: 2) ...)`, `(index m k)`, `(. p x)`, `(?. p x)`, `(+ a b)`,
 /// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`, `(record (x: 1))`,
-/// `(with p (= c.x 1))`.
+/// `(with p (= c.x 1))`, `(match x (-> p e) (-> q (where c) f))`.
 fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
     let at = |e: &'a Expr| Show::Expr(e);
     match &e.kind {
@@ -180,6 +182,17 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
             out.push(Text(")"));
         }
         ExprKind::This => out.push(Text("this")),
+        ExprKind::Match { of, arms } => {
+            out.extend([Text("(match "), at(of)]);
+            for a in arms {
+                out.extend([Text(" (-> "), Show::Pattern(&a.pattern), Text(" ")]);
+                if let Some(g) = &a.guard {
+                    out.extend([Text("(where "), at(g), Text(") ")]);
+                }
+                out.extend([at(&a.body), Text(")")]);
+            }
+            out.push(Text(")"));
+        }
     }
 }
 
@@ -194,7 +207,10 @@ fn params_spaced<'a>(params: &'a [Param], out: &mut Vec<Show<'a>>) {
 /// `(= (a b) e)`, `(= (_) e)`, `(return a b)`, `(<- p e)`, a function
 /// `(def f (x (y: int)) (-> (stdout: Lines)) = e (test (a b) …))`, the `=` for an equation,
 /// a method `(method T.m (k) = e)`, or `(method T.m = e)` without parentheses, a struct
-/// `(struct P (x: f64) (y: f64 = 0.0) (import a.B))` and a type `(type T (A) (| A #b))`.
+/// `(struct P (x: f64) (y: f64 = 0.0) (import a.B))`, a type `(type T (A) (| A #b))`, an import
+/// `(import a.b)`, `(import a.b as c)` or `(import a.b (x y) @hash(…))`, and an annotated
+/// declaration `(annotated @log (@cost n (k: 1)) (def …))`, a bare annotation without
+/// parentheses.
 fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
     match &s.kind {
         StmtKind::Bind { targets, value } => {
@@ -277,6 +293,42 @@ fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
                 out.push(Text(")"));
             }
             out.extend([Text(" "), Show::Type(&t.ty), Text(")")]);
+        }
+        StmtKind::Import(i) => {
+            out.extend([Text("(import "), Text(&i.path)]);
+            match &i.kind {
+                ImportKind::Qualified => {}
+                ImportKind::Alias(a) => out.extend([Text(" as "), Text(a)]),
+                ImportKind::Selective(names) => {
+                    out.push(Text(" ("));
+                    let mut sep = "";
+                    for n in names {
+                        out.extend([Text(sep), Text(n)]);
+                        sep = " ";
+                    }
+                    out.push(Text(")"));
+                }
+            }
+            if let Some(pin) = &i.pin {
+                out.push(Show::Owned(format!(" @hash({pin})")));
+            }
+            out.push(Text(")"));
+        }
+        StmtKind::Annotated { annots, decl } => {
+            out.push(Text("(annotated"));
+            for a in annots {
+                if !a.called {
+                    out.extend([Text(" @"), Text(&a.name)]);
+                    continue;
+                }
+                out.extend([Text(" (@"), Text(&a.name)]);
+                each(out, &a.positional, Show::Expr);
+                for (n, e) in &a.named {
+                    out.extend([Text(" ("), Text(n), Text(": "), Show::Expr(e), Text(")")]);
+                }
+                out.push(Text(")"));
+            }
+            out.extend([Text(" "), Show::Stmt(decl), Text(")")]);
         }
     }
 }
@@ -411,8 +463,8 @@ fn param<'a>(p: &'a Param, out: &mut Vec<Show<'a>>) {
     out.push(Text(")"));
 }
 
-/// `#name`, `#name(f: p, g:)`, `#name(p, q)`, `Point(x:, y: b)`, `n`, `_`, `(p, q)`: as
-/// written, which the formatter relies on.
+/// `#name`, `#name(f: p, g:)`, `#name(p, q)`, `Point(x:, y: b)`, `n`, `_`, `(p, q)` as written;
+/// a type pattern `(is n T)` or `(is T)`, and a literal as an expression is shown.
 fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
     let (fields, items) = match p {
         Pattern::Atom {
@@ -434,6 +486,14 @@ fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
         Pattern::Name(n, _) => return out.push(Text(n)),
         Pattern::Wild(_) => return out.push(Text("_")),
         Pattern::Tuple(items, _) => (&[][..], &items[..]),
+        Pattern::Is { name, ty, .. } => {
+            out.push(Text("(is "));
+            if let Some(n) = name {
+                out.extend([Text(n), Text(" ")]);
+            }
+            return out.extend([Show::Type(ty), Text(")")]);
+        }
+        Pattern::Lit(e) => return out.push(Show::Expr(e)),
     };
     out.push(Text("("));
     let mut sep = "";

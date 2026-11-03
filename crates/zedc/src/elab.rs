@@ -269,7 +269,11 @@ impl<'a> Tables<'a> {
                     self.collect_in(value)
                 }
                 StmtKind::Return(es) => es.iter().for_each(|e| self.collect_in(e)),
-                StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {}
+                StmtKind::Struct(_)
+                | StmtKind::Type(_)
+                | StmtKind::Method(_)
+                | StmtKind::Import(_)
+                | StmtKind::Annotated { .. } => {}
             }
         }
     }
@@ -357,7 +361,11 @@ impl<'a> Tables<'a> {
                 .collect(),
             StmtKind::Function(f) => vec![self.id(s.span, &f.name)],
             StmtKind::Push { .. } | StmtKind::Return(_) => Vec::new(),
-            StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {
+            StmtKind::Struct(_)
+            | StmtKind::Type(_)
+            | StmtKind::Method(_)
+            | StmtKind::Import(_)
+            | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
         }
@@ -590,7 +598,11 @@ impl<'a> Elab<'a> {
 
     fn stmt(&mut self, s: &'a Stmt, top: bool, out: &mut Vec<Bind>) -> Option<()> {
         match &s.kind {
-            StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {
+            StmtKind::Struct(_)
+            | StmtKind::Type(_)
+            | StmtKind::Method(_)
+            | StmtKind::Import(_)
+            | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
             StmtKind::Bind { targets, value } => {
@@ -760,7 +772,10 @@ impl<'a> Elab<'a> {
         }
         let lit = |v: Value| Some(Term::Lit(v));
         match &e.kind {
-            ExprKind::Record(_) | ExprKind::With { .. } | ExprKind::This => {
+            ExprKind::Record(_)
+            | ExprKind::With { .. }
+            | ExprKind::This
+            | ExprKind::Match { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
             ExprKind::Int { radix, digits } => {
@@ -1567,7 +1582,11 @@ fn what(s: &Stmt) -> String {
         StmtKind::Function(f) => format!("`{}`", f.name),
         StmtKind::Push { port, .. } => format!("the push to `{port}`"),
         StmtKind::Return(_) => "the export".into(),
-        StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {
+        StmtKind::Struct(_)
+        | StmtKind::Type(_)
+        | StmtKind::Method(_)
+        | StmtKind::Import(_)
+        | StmtKind::Annotated { .. } => {
             unreachable!("resolve rejects the forms of layer L2")
         }
     }

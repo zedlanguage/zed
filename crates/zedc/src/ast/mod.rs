@@ -27,7 +27,10 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::OnceLock;
 
-pub use stmts::{Field, Function, Method, Port, Stmt, StmtKind, Struct, Target, TypeDecl};
+pub use stmts::{
+    Annot, Field, Function, Import, ImportKind, Method, Port, Stmt, StmtKind, Struct, Target,
+    TypeDecl,
+};
 pub use types::{Param, Pattern, Type, TypeKind, TypeParam};
 
 use crate::lex::{Part, Span, Tok, Token};
@@ -142,6 +145,26 @@ pub enum ExprKind {
     },
     /// `this`, a method's receiver.
     This,
+    /// `match e { p -> a, q where c -> b }`: the value matched and its arms, in written order.
+    Match {
+        /// The value matched.
+        of: Box<Expr>,
+        /// The arms.
+        arms: Vec<Arm>,
+    },
+}
+
+/// An arm of a `match`: a pattern, a guard `where c` if written, and the arm's value.
+#[derive(Debug)]
+pub struct Arm {
+    /// The pattern.
+    pub pattern: Pattern,
+    /// The guard.
+    pub guard: Option<Expr>,
+    /// The value when the pattern matches and the guard holds.
+    pub body: Expr,
+    /// Its text.
+    pub span: Span,
 }
 
 /// One update of a `with`: a field path, `c.y`, and its new value.
@@ -306,12 +329,13 @@ fn forms() -> &'static [Form] {
             "Expr" | "Lambda" | "Expr12" | "Or" | "And" | "Additive" | "Multiplicative"
             | "Equality" | "Compare" | "IsTest" | "Reduce" | "Range" | "Prefix" | "Power"
             | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If" | "Literal"
-            | "Display" | "This" => Form::Expr,
+            | "Display" | "This" | "Match" => Form::Expr,
             "Type" | "TypePostfix" | "Arrow" | "TypeDiff" | "TypeOr" | "TypeAnd" | "TypeName"
             | "AtomType" | "TupleType" | "GroupType" | "TypeApply" | "AtomApply" | "RecordType" => {
                 Form::Type
             }
-            "AtomPattern" | "CtorPat" | "NamePat" | "WildPat" | "TuplePat" => Form::Pattern,
+            "AtomPattern" | "CtorPat" | "NamePat" | "WildPat" | "TuplePat" | "IsPat"
+            | "SignedLit" => Form::Pattern,
             "Item" => Form::Item,
             _ => Form::Part,
         };
@@ -572,6 +596,7 @@ impl<'a> Builder<'a> {
                 kind: ExprKind::This,
                 span: self.span(n),
             }),
+            "Match" => self.matching(n),
             _ => unreachable!("make builds only these rules as expressions"),
         }
     }
@@ -763,6 +788,34 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// The `match` of node `n`: the value matched, then each `Arm`, which holds its pattern,
+    /// its guard if written, and its value.
+    fn matching(&mut self, n: usize) -> Result<Expr, Error> {
+        let (&of, arms) = self
+            .kids(n)
+            .split_first()
+            .expect("Match = 'match' Expr12 …");
+        let of = Box::new(self.node(of)?);
+        let mut out = Vec::with_capacity(arms.len());
+        for &a in arms {
+            let (pattern, guard, body) = match *self.kids(a) {
+                [p, b] => (p, None, b),
+                [p, g, b] => (p, Some(g), b),
+                _ => unreachable!("Arm = Pattern ('where' Expr12)? '->' body"),
+            };
+            out.push(Arm {
+                pattern: self.pattern(pattern)?,
+                guard: guard.map(|g| self.node(g)).transpose()?,
+                body: self.node(body)?,
+                span: self.span(a),
+            });
+        }
+        Ok(Expr {
+            kind: ExprKind::Match { of, arms: out },
+            span: self.span(n),
+        })
+    }
+
     /// Records the `what` named `name`, written at node `n`, in `seen`, or the error that it
     /// is `done` twice, with a note at the first.
     fn once(
@@ -827,7 +880,11 @@ impl<'a> Builder<'a> {
     }
 
     fn literal(&mut self, n: usize) -> Result<Expr, Error> {
-        let i = self.tree.nodes[n].start;
+        self.literal_at(self.tree.nodes[n].start, self.span(n))
+    }
+
+    /// The literal of token `i`, written in `span`, which holds its grouping parentheses.
+    fn literal_at(&mut self, i: usize, span: Span) -> Result<Expr, Error> {
         let kind = match &self.tokens[i].tok {
             Tok::Int { radix, digits } => ExprKind::Int {
                 radix: *radix,
@@ -853,9 +910,6 @@ impl<'a> Builder<'a> {
             }
             _ => unreachable!("Literal = INT | FLOAT | RAT | STRING | 'true' | 'false'"),
         };
-        Ok(Expr {
-            kind,
-            span: self.span(n),
-        })
+        Ok(Expr { kind, span })
     }
 }

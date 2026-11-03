@@ -1,0 +1,53 @@
+//! The `@` annotation syntax: a bare `@name`, or `@name(args)` with the arguments of a call,
+//! written before a declaration. The syntax is built whole; resolution names each one's layer.
+
+use super::check;
+
+#[test]
+fn annotations_before_declarations() {
+    check(&[
+        (
+            "@memoized\nfib(n) = n;",
+            "(annotated @memoized (def fib (n) = n))",
+        ),
+        (
+            "@cost(n * log(n), space: n)\n@noalloc\nsort(xs) = xs;",
+            "(annotated (@cost (* n (call log n)) (space: n)) @noalloc (def sort (xs) = xs))",
+        ),
+        (
+            "@log @strict\nf(x) = x;",
+            "(annotated @log @strict (def f (x) = x))",
+        ),
+        ("@log()\nf(x) = x;", "(annotated (@log) (def f (x) = x))"),
+        (
+            "@foreign(\"c\", name: \"cos\")\ncos(x: f64) = x;",
+            "(annotated (@foreign (str \"c\") (name: (str \"cos\"))) (def cos ((x: f64)) = x))",
+        ),
+        (
+            "@invariant(x >= 0)\nstruct Account { x: int }",
+            "(annotated (@invariant (>= x 0)) (struct Account (x: int)))",
+        ),
+        ("@export\nimport a.b;", "(annotated @export (import a.b))"),
+        (
+            "f(x) {\n  @measure(x)\n  g(y) = y;\n  g(x)\n}",
+            "(def f (x) (block (annotated (@measure x) (def g (y) = y)) (return (call g x))))",
+        ),
+    ]);
+}
+
+#[test]
+fn malformed_annotations() {
+    check(&[
+        (
+            "@cost(n, ...)\nf(x) = x;",
+            "error: the arguments of `@cost` end in `...`, which only a call takes",
+        ),
+        ("@log", "syntax"),
+        ("@log(\nf(x) = x;", "syntax"),
+        (
+            "@log;\nf(x) = x;",
+            "error: this form (UnitAnnot) is built from layer L15",
+        ),
+        ("x = @log 1;", "syntax"),
+    ]);
+}
