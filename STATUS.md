@@ -877,7 +877,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ADDITIVE-desugar | verify attempt 1 | 2026-11-03 07:14 | clippy -D warnings exit 0, fmt check exit 0; desugar Additive line equals DESIGN 3619 (zed 3dd26f0); non-String ++ refused with span diagnostic; returning ok=tr |
 | BIT-words | orchestrator attempt  | 2026-11-03 07:14 | NOTE for repair#1: main is now 88c51bb; rebase onto it. The new lazy Ck::known must not recurse on expression depth: T2-mid (still in repair) tests binders 100, |
 | CANON-stable | impl attempt 1 | 2026-11-03 09:30 | docs committed (COMPLEXITY S31, STATUS, plan_dag row+note, ZED_PORT_GAPS); full suites running on branch and on main baseline (load 123.18) |
 | CAP-pow32 | verify attempt 1 | 2026-11-03 08:53 | clippy -D warnings and fmt clean on f6e2feb; suite (run_tests.sh 2, load ~90-105) running; reading Tx::joined: exact Int count stored per product node is O(d) b |
