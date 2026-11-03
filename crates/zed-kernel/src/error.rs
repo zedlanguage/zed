@@ -79,6 +79,13 @@ pub enum KernelError {
         /// At most this many bits: the size of the widest bound or number to build.
         bits: num_bigint::BigUint,
     },
+    /// Two numbers in families, compared for equality (two leaves written at one keypath, or a
+    /// key and its member when a set is printed), must be put in the same normal form, which
+    /// needs up to `bits` bits, and the system refused the memory for it.
+    FamilyEqualityTooLarge {
+        /// At most this many bits: the size of the copy and the division.
+        bits: num_bigint::BigUint,
+    },
     /// A number lies so near a rounding boundary of a float that telling which side it is on
     /// needs bounds of up to `bits` bits, or the number in full, and the system refused the
     /// memory for it.
@@ -169,6 +176,14 @@ impl fmt::Display for KernelError {
                  which needs up to {bits} bits of each to order them, and the system refused \
                  the memory for it; the numbers are exact and have no size limit, but this \
                  machine cannot hold enough of their digits to order them"
+            ),
+            KernelError::FamilyEqualityTooLarge { bits } => write!(
+                f,
+                "two numbers in families, compared to tell whether they are equal, must be put \
+                 in the same normal form, which moves a prime one keeps as a power out of the \
+                 other's digits and needs up to {bits} bits, and the system refused the memory \
+                 for it; the numbers are exact and have no size limit, but this machine cannot \
+                 hold enough of their digits to compare them"
             ),
             KernelError::RoundTooLarge { to, bits } => write!(
                 f,

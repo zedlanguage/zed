@@ -13,7 +13,7 @@ use std::process::Command;
 
 use num_bigint::{BigInt, BigUint};
 use zed_kernel::term::build::{lit, prim};
-use zed_kernel::{Family, KernelError, Prim, Rat, Term, Value, eval};
+use zed_kernel::{Evidence, Family, FixKind, KernelError, Pattern, Prim, Rat, Term, Value, eval};
 use zed_tests::kernel::{bin, get, path};
 use zed_tests::scaling::check_order;
 
@@ -490,4 +490,233 @@ fn the_plan_example_is_refused_at_the_sum() {
         panic!("{err:?}")
     };
     assert_eq!(*op, "+");
+}
+
+/// `2^n + 1`, an integer of `n + 1` bits, built.
+fn wide_int() -> Value {
+    Value::integer(built_above(WIDE))
+}
+
+fn third() -> Value {
+    Value::rat(Rat::new(BigInt::from(1), BigInt::from(3)).unwrap())
+}
+
+/// An integer and a rational at one place in two tuples, or as a family's key and the key
+/// looked up, are ordered by value with the wide one read where it is held; ordering them
+/// multiplies the integer by 3, which the system refuses, and each stops with its own error.
+#[test]
+fn ordering_a_wide_integer_against_a_rational_is_refused_when_memory_is_short() {
+    if !in_child("ordering_a_wide_integer_against_a_rational_is_refused_when_memory_is_short") {
+        return;
+    }
+    let a = lit(Value::tuple(vec![wide_int()]));
+    let b = lit(Value::tuple(vec![third()]));
+    let family = lit(Value::Family(Family::of([(wide_int(), 1)])));
+    lower_limit();
+    let err = eval(&bin(Prim::Lt, a.clone(), b)).unwrap_err();
+    let KernelError::OrderTooLarge { op: "<", bits } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(*bits, BigUint::from(WIDE + 3));
+    let err = eval(&get(family, lit(third()))).unwrap_err();
+    assert!(
+        matches!(&err, KernelError::KeyOrderTooLarge { .. }),
+        "{err:?}"
+    );
+    // A small integer is apart from the wide one by its width, and builds nothing.
+    assert_eq!(
+        eval(&bin(Prim::Lt, a, lit(Value::tuple(vec![Value::Int(0)])))).unwrap(),
+        Value::Bool(false)
+    );
+}
+
+/// `int` and `rat` of a wide integer give the same digits as the other kind, shared and not
+/// copied, so they answer under a limit that refuses a copy.
+#[test]
+fn casting_a_wide_number_shares_its_digits() {
+    if !in_child("casting_a_wide_number_shares_its_digits") {
+        return;
+    }
+    let x = wide_int();
+    lower_limit();
+    let as_rat = eval(&prim(Prim::CastRat, vec![lit(x.clone())])).unwrap();
+    assert_eq!(as_rat.number_kind(), Some(1));
+    let back = eval(&prim(Prim::CastInt, vec![lit(as_rat)])).unwrap();
+    assert_eq!(back, x);
+    assert_eq!(eval(&prim(Prim::CastInt, vec![lit(x.clone())])).unwrap(), x);
+}
+
+/// The casts of numbers that fit: an integer-valued rational in the 64-bit range is an `Int`,
+/// a wide one a wide `int`, and one that is not an integer is `#inexact`.
+#[test]
+fn casts_between_int_and_rat_keep_the_value() {
+    let wide = Value::integer(built_above(1 << 12));
+    let rat = |v: &Value| eval(&prim(Prim::CastRat, vec![lit(v.clone())])).unwrap();
+    let int = |v: Value| eval(&prim(Prim::CastInt, vec![lit(v)])).unwrap();
+    assert_eq!(int(rat(&Value::Int(-5))), Value::Int(-5));
+    assert_eq!(int(rat(&wide)), wide);
+    assert_eq!(rat(&wide).number_kind(), Some(1));
+    assert_eq!(int(third()), Value::atom("inexact"));
+    assert_eq!(int(Value::float(4.0)), Value::Int(4));
+    assert_eq!(rat(&third()), third());
+}
+
+/// `3 (2^n + 1)`, built, and `3^(2^20)`, kept: testing them for equality moves the 3 out of
+/// the built one, which copies it.
+fn equal_only_by_a_copy() -> (Value, Value) {
+    let built = Value::integer(Rat::int(
+        BigInt::from(3) * ((BigInt::from(1u32) << WIDE) + 1u32),
+    ));
+    let kept = Value::integer(int(3).pow(&BigUint::from(1u32 << 20)).unwrap());
+    (built, kept)
+}
+
+/// A `match` arm whose literal pattern must be tested for equality by a copy the system
+/// refuses stops with the error of `match`, not of a family's key order.
+#[test]
+fn a_literal_pattern_refused_its_equality_test_is_an_error_of_match() {
+    if !in_child("a_literal_pattern_refused_its_equality_test_is_an_error_of_match") {
+        return;
+    }
+    let (built, kept) = equal_only_by_a_copy();
+    let t = Term::Match(
+        std::sync::Arc::new(lit(built)),
+        vec![(Pattern::Lit(kept), lit(1)), (Pattern::Wild, lit(2))],
+    );
+    lower_limit();
+    let err = eval(&t).unwrap_err();
+    let KernelError::EqualityTooLarge { op: "match", bits } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "`match` must compare two numbers in the same normal form, which moves a prime \
+             one keeps as a power out of the other's digits and needs up to {bits} bits, and \
+             the system refused the memory for it; the numbers are exact and have no size \
+             limit, but this machine cannot hold enough of their digits to compare them"
+        )
+    );
+}
+
+/// The fixpoint test of a lattice `fix` whose iterates must be tested for equality by a copy
+/// the system refuses stops with the error of `fix`.
+#[test]
+fn a_lattice_fixpoint_test_refused_is_an_error_of_fix() {
+    if !in_child("a_lattice_fixpoint_test_refused_is_an_error_of_fix") {
+        return;
+    }
+    use zed_kernel::term::build::{lam, var};
+    let (built, kept) = equal_only_by_a_copy();
+    // From `built`, one step gives `kept`, and the join keeps the newer iterate.
+    let t = Term::Fix {
+        init: std::sync::Arc::new(lit(built)),
+        step: std::sync::Arc::new(lam(&["x"], lit(kept))),
+        this: "this".into(),
+        key: "k".into(),
+        kind: FixKind::Lattice {
+            join: std::sync::Arc::new(lam(&["a", "b"], var("b"))),
+        },
+        ev: Evidence::new(),
+    };
+    lower_limit();
+    let err = eval(&t).unwrap_err();
+    assert!(
+        matches!(&err, KernelError::EqualityTooLarge { op: "fix", .. }),
+        "{err:?}"
+    );
+}
+
+/// With memory to spare, the same `match` and `fix` give their answers: the two numbers
+/// differ, so the literal arm does not match, and the ascent ends at `kept`.
+#[test]
+fn a_literal_pattern_and_a_lattice_fixpoint_answer_when_memory_is_given() {
+    use zed_kernel::term::build::{lam, var};
+    let built = Value::integer(Rat::int(
+        BigInt::from(3) * ((BigInt::from(1u32) << 4096u32) + 1u32),
+    ));
+    let kept = Value::integer(int(3).pow(&BigUint::from(1u32 << 10)).unwrap());
+    let t = Term::Match(
+        std::sync::Arc::new(lit(built.clone())),
+        vec![
+            (Pattern::Lit(kept.clone()), lit(1)),
+            (Pattern::Wild, lit(2)),
+        ],
+    );
+    assert_eq!(eval(&t).unwrap(), Value::Int(2));
+    let t = Term::Fix {
+        init: std::sync::Arc::new(lit(built)),
+        step: std::sync::Arc::new(lam(&["x"], lit(kept.clone()))),
+        this: "this".into(),
+        key: "k".into(),
+        kind: FixKind::Lattice {
+            join: std::sync::Arc::new(lam(&["a", "b"], var("b"))),
+        },
+        ev: Evidence::new(),
+    };
+    assert_eq!(eval(&t).unwrap(), kept);
+}
+
+/// Two families written together that hold numbers at one key agree there only when the
+/// numbers are equal; a test of them the system refuses stops with its own error.
+#[test]
+fn a_family_merge_refused_its_equality_test_is_an_error() {
+    if !in_child("a_family_merge_refused_its_equality_test_is_an_error") {
+        return;
+    }
+    let (built, kept) = equal_only_by_a_copy();
+    let a = lit(Value::Family(Family::of([(1, built)])));
+    let b = lit(Value::Family(Family::of([(1, kept)])));
+    lower_limit();
+    let err = eval(&bin(Prim::Union, a, b)).unwrap_err();
+    let KernelError::FamilyEqualityTooLarge { bits } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "two numbers in families, compared to tell whether they are equal, must be put in \
+             the same normal form, which moves a prime one keeps as a power out of the other's \
+             digits and needs up to {bits} bits, and the system refused the memory for it; the \
+             numbers are exact and have no size limit, but this machine cannot hold enough of \
+             their digits to compare them"
+        )
+    );
+}
+
+/// Negating a wide number, or its `abs` when it is negative, copies its digits, which asks the
+/// system first; `abs` of a wide number that is not negative is the number itself, shared.
+#[test]
+fn negating_a_wide_number_is_refused_when_memory_is_short() {
+    if !in_child("negating_a_wide_number_is_refused_when_memory_is_short") {
+        return;
+    }
+    let x = wide_int();
+    let minus_x = Value::integer(Rat::int(-((BigInt::from(1u32) << WIDE) + 1u32)));
+    lower_limit();
+    for (p, op, v) in [(Prim::Neg, "-", x.clone()), (Prim::Abs, "abs", minus_x)] {
+        let err = eval(&prim(p, vec![lit(v)])).unwrap_err();
+        let KernelError::NumberTooLarge { op: o, bits } = &err else {
+            panic!("{op}: {err:?}")
+        };
+        assert_eq!((*o, bits), (op, &BigUint::from(WIDE + 2)));
+    }
+    assert_eq!(eval(&prim(Prim::Abs, vec![lit(x.clone())])).unwrap(), x);
+}
+
+/// With memory to spare, `-` and `abs` of wide numbers give their values.
+#[test]
+fn negating_a_wide_number_gives_its_value_when_memory_is_given() {
+    let x = Value::integer(built_above(1 << 12));
+    let minus = eval(&prim(Prim::Neg, vec![lit(x.clone())])).unwrap();
+    assert_eq!(
+        minus,
+        Value::integer(Rat::int(-((BigInt::from(1u32) << 4096u32) + 1u32)))
+    );
+    assert_eq!(eval(&prim(Prim::Abs, vec![lit(minus)])).unwrap(), x);
+    let q = Value::rat(Rat::new(BigInt::from(-2), BigInt::from(7)).unwrap());
+    assert_eq!(
+        eval(&prim(Prim::Abs, vec![lit(q)])).unwrap(),
+        Value::rat(Rat::new(BigInt::from(2), BigInt::from(7)).unwrap())
+    );
 }

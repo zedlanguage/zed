@@ -21,6 +21,7 @@ use std::rc::Rc;
 use crate::error::KernelError;
 use crate::exact::{CanonicalTree, TreeStep, exact_sum};
 use crate::family::{Family, Keypath};
+use crate::num::{Test, TooLarge, refused};
 use std::sync::Arc;
 
 use num_bigint::BigInt;
@@ -724,11 +725,15 @@ impl<'t> Machine<'_, 't> {
                     step = self.demand(fix, k);
                     continue;
                 }
-                Ok(Step::Give(v)) => match crate::num::refused() {
+                Ok(Step::Give(v)) => match refused() {
                     None => Ok(v),
-                    Some(e) => Err(KernelError::KeyOrderTooLarge { bits: e.bits }.into()),
+                    Some((t, e)) => Err(test_too_large(None, t, e).into()),
                 },
-                Err(stop) => Err(stop),
+                // A stop after a refused test may follow from the answer the test was given.
+                Err(stop) => match refused() {
+                    None => Err(stop),
+                    Some((t, e)) => Err(test_too_large(None, t, e).into()),
+                },
             };
             step = match self.frames.pop() {
                 Some(frame) => self.resume(frame, out),
@@ -1153,6 +1158,10 @@ impl<'t> Machine<'_, 't> {
                         (_, Pattern::Is(t)) => t.functions(),
                         _ => false,
                     };
+                    // A literal pattern whose test was refused its memory gave no answer.
+                    if let Some((t, e)) = refused() {
+                        return Err(test_too_large(Some("match"), t, e).into());
+                    }
                     if hit {
                         return Ok(Step::Eval(body, self.ev.child(at, 1 + i), env2));
                     }
@@ -1234,7 +1243,12 @@ impl<'t> Machine<'_, 't> {
                 self.ev.leave(1);
                 let joined = data(v)?;
                 st.from = self.ev.last_fact();
-                if joined == st.x {
+                let same = joined == st.x;
+                // The fixpoint test of an iterate whose test was refused its memory gave no answer.
+                if let Some((t, e)) = refused() {
+                    return Err(test_too_large(Some("fix"), t, e).into());
+                }
+                if same {
                     return give(st.x);
                 }
                 st.x = joined;
@@ -1396,11 +1410,14 @@ impl<'t> Machine<'_, 't> {
             let atoms = vals.iter().filter(|v| matches!(v, Value::Atom(_)));
             return give(Value::merge_failures(atoms));
         }
-        let out = prim_data(p, vals)?;
-        if let Some(e) = crate::num::refused() {
-            return Err(order_too_large(p, e).into());
+        // A refused test answered by the order of the normal forms, which may have made the
+        // primitive fail (a collision of two leaves it took as different): the refusal is the
+        // cause.
+        let out = prim_data(p, vals);
+        if let Some((t, e)) = refused() {
+            return Err(order_too_large(p, t, e).into());
         }
-        give(out)
+        give(out?)
     }
 
     /// Evaluates the entry at the next key, or makes the family.
@@ -2049,7 +2066,7 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
 fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
     let op = match p {
         Prim::Add => "+",
-        Prim::Sub => "-",
+        Prim::Sub | Prim::Neg => "-",
         Prim::IntDiv => "div",
         Prim::Mod => "mod",
         _ => "**",
@@ -2057,24 +2074,33 @@ fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
     KernelError::NumberTooLarge { op, bits: e.bits }
 }
 
-/// The error of a primitive during which a comparison of two numbers was refused its memory:
-/// an order operator's own, an equality's, or a key order's for a primitive that reads a
-/// family.
-fn order_too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
+/// The error of a primitive during which a test of two numbers was refused its memory: a
+/// comparison operator's own, or that of the families a primitive builds or reads.
+fn order_too_large(p: Prim, t: Test, e: TooLarge) -> KernelError {
     let op = match p {
-        Prim::Eq | Prim::Ne => {
-            let op = if p == Prim::Eq { "==" } else { "!=" };
-            return KernelError::EqualityTooLarge { op, bits: e.bits };
-        }
+        Prim::Eq => "==",
+        Prim::Ne => "!=",
         Prim::Lt => "<",
         Prim::Le => "<=",
         Prim::Gt => ">",
         Prim::Ge => ">=",
         Prim::Min => "min",
         Prim::Max => "max",
-        _ => return KernelError::KeyOrderTooLarge { bits: e.bits },
+        _ => return test_too_large(None, t, e),
     };
-    KernelError::OrderTooLarge { op, bits: e.bits }
+    test_too_large(Some(op), t, e)
+}
+
+/// The error for a test `t` of two numbers refused its memory, made by `op` (an operator or
+/// `match` or `fix`), or with no `op` while building or reading families.
+fn test_too_large(op: Option<&'static str>, t: Test, e: TooLarge) -> KernelError {
+    let bits = e.bits;
+    match (op, t) {
+        (Some(op), Test::Order) => KernelError::OrderTooLarge { op, bits },
+        (Some(op), Test::Equality) => KernelError::EqualityTooLarge { op, bits },
+        (None, Test::Order) => KernelError::KeyOrderTooLarge { bits },
+        (None, Test::Equality) => KernelError::FamilyEqualityTooLarge { bits },
+    }
 }
 
 /// A primitive on data none of which is an atom.
@@ -2107,7 +2133,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             Some(n) => Int(n),
             None => Value::int(-BigInt::from(*a)),
         },
-        (Prim::Neg, [Value::Big(a)]) => Value::integer(a.neg()),
+        (Prim::Neg, [Value::Big(a)]) => Value::integer(a.try_neg().map_err(|e| too_large(p, e))?),
         (Prim::Add | Prim::Sub | Prim::Mul | Prim::Div, [Value::Rat(a), Value::Rat(b)]) => {
             let r = match p {
                 Prim::Add => a.add(b),
@@ -2120,7 +2146,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             };
             Value::rat(r.map_err(|e| too_large(p, e))?)
         }
-        (Prim::Neg, [Value::Rat(a)]) => Value::rat(a.neg()),
+        (Prim::Neg, [Value::Rat(a)]) => Value::rat(a.try_neg().map_err(|e| too_large(p, e))?),
         (Prim::Add, [Float(a), Float(b)]) => Value::float(a.get() + b.get()),
         (Prim::Sub, [Float(a), Float(b)]) => Value::float(a.get() - b.get()),
         (Prim::Mul, [Float(a), Float(b)]) => Value::float(a.get() * b.get()),

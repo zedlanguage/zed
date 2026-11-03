@@ -1139,7 +1139,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A guard struct whose `Drop` restores the outer flag and record when a run ends, on every exit path | `num::Watch`, `Evaluator::run` | Mutation | The run passes its own state; nothing to restore |
 | `Vec::try_reserve_exact` to ask the allocator for a block and free it at once | `num::room`, `num::given` (from CAP-bits) | Missing (no allocator query) | A runtime primitive that answers whether a block of a size can be given |
 | `Cow<'a, BigUint>` for a coefficient borrowed from a number or built as a product | `bound::Product`, `num::times` | None | Zed shares values, so the field holds the number itself |
-| A `let held;` declared before a `match` so one arm can borrow a value built in another | `words::word`, the casts | None | A plain binding of the number |
+| `Cow<'a, Rat>` in `Exact`, a wide number borrowed and a small one or a float built, so ordering numbers of two kinds copies no digits | `num::Exact`, `Value::exact`, `words::word` | None | Zed shares values, so the place holds the number itself |
 | `rustix::process::setrlimit(Resource::As, …)` in a test child process | `tests/.../memory_check.rs` | Missing (process limits) | A test-harness facility, not the language |
 | A `fmt::Write` sink that counts bytes, so `Display` and `Debug` give a leaf's length with nothing written | `words::Count`, `words::written` | Missing (no formatter trait) | A length function per printed kind, or printing into a counting port |
 | `String::try_reserve_exact` that keeps the reserved block and writes into it | `words::print` | Missing (no allocator query) | The runtime primitive above, returning the block |

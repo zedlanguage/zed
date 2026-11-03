@@ -426,6 +426,13 @@ impl Rat {
         }
     }
 
+    /// `-a`, or [`TooLarge`] when the system refuses the memory for its coefficients: negating
+    /// copies them.
+    pub fn try_neg(&self) -> Result<Rat, TooLarge> {
+        room(BigUint::from(self.num.bits() + self.den.bits()))?;
+        Ok(self.neg())
+    }
+
     /// `|a|`.
     pub fn abs(&self) -> Rat {
         match self.is_negative() {
@@ -928,8 +935,8 @@ thread_local! {
     /// Whether an evaluator run on this thread watches the comparisons made through [`Ord`],
     /// which cannot return an error, for a refused build ([`Watch`]).
     static WATCHED: Cell<bool> = const { Cell::new(false) };
-    /// The first comparison in the watched run whose build the system refused.
-    static REFUSED: Cell<Option<TooLarge>> = const { Cell::new(None) };
+    /// The first comparison in the watched run whose build the system refused, and its test.
+    static REFUSED: Cell<Option<(Test, TooLarge)>> = const { Cell::new(None) };
 }
 
 /// While it lives, an [`Ord`] comparison of two numbers on this thread asks the system for the
@@ -938,7 +945,16 @@ thread_local! {
 /// dropping it restores the watch it replaced, so a run nested in another keeps its own.
 pub(crate) struct Watch {
     was: bool,
-    outer: Option<TooLarge>,
+    outer: Option<(Test, TooLarge)>,
+}
+
+/// The test of two numbers whose build the system refused, so the error names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Test {
+    /// Their order ([`Ord`]).
+    Order,
+    /// Their equality ([`PartialEq`]).
+    Equality,
 }
 
 impl Watch {
@@ -957,14 +973,14 @@ impl Drop for Watch {
     }
 }
 
-/// The first comparison refused since the last call, under a [`Watch`].
-pub(crate) fn refused() -> Option<TooLarge> {
+/// The first comparison refused since the last call, under a [`Watch`], and its test.
+pub(crate) fn refused() -> Option<(Test, TooLarge)> {
     REFUSED.take()
 }
 
-/// Records the refusal `e` for [`refused`], after any recorded before it.
-fn record(e: TooLarge) {
-    let first = REFUSED.take().unwrap_or(e);
+/// Records the refusal `e` of the test `t` for [`refused`], after any recorded before it.
+fn record(t: Test, e: TooLarge) {
+    let first = REFUSED.take().unwrap_or((t, e));
     REFUSED.set(Some(first));
 }
 
@@ -1058,7 +1074,7 @@ impl PartialEq for Rat {
         ) {
             (Ok(a), Ok(b)) => a.num == b.num && a.den == b.den && a.pows == b.pows,
             (Err(e), _) | (_, Err(e)) => {
-                record(e);
+                record(Test::Equality, e);
                 self.form_cmp(other) == Ordering::Equal
             }
         }
@@ -1075,7 +1091,7 @@ impl Ord for Rat {
         match self.order(other, WATCHED.get()) {
             Ok(o) => o,
             Err(e) => {
-                record(e);
+                record(Test::Order, e);
                 self.form_cmp(other)
             }
         }
@@ -1102,17 +1118,18 @@ impl fmt::Display for Rat {
 
 /// A number placed on the extended line, for comparing numbers of different kinds.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Exact {
+pub(crate) enum Exact<'a> {
     NegInf,
-    Finite(Rat),
+    /// Borrowed from a wide number, so placing one copies none of its digits.
+    Finite(Cow<'a, Rat>),
     PosInf,
     /// After every number, as the canonical NaN is after `+inf` in a float's total order.
     NaN,
 }
 
-impl Exact {
+impl Exact<'_> {
     /// The exact value of a float: every finite double is a dyadic rational.
-    pub(crate) fn float(x: f64) -> Exact {
+    pub(crate) fn float(x: f64) -> Exact<'static> {
         if x.is_nan() {
             return Exact::NaN;
         }
@@ -1141,7 +1158,7 @@ impl Exact {
         } else {
             Rat::new(m, two.pow((-exp) as u32)).expect("den > 0")
         };
-        Exact::Finite(r)
+        Exact::Finite(Cow::Owned(r))
     }
 }
 
@@ -1230,7 +1247,7 @@ pub(crate) fn exact_f64(r: &Rat) -> Result<Option<f64>, TooLarge> {
         Err(LiteralRounding::Infinite | LiteralRounding::Zero) => return Ok(None),
     };
     Ok(match Exact::float(x) {
-        Exact::Finite(f) => (f == *r).then_some(x),
+        Exact::Finite(f) => (*f == *r).then_some(x),
         Exact::NegInf | Exact::PosInf | Exact::NaN => None,
     })
 }

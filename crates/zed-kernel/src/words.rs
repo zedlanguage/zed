@@ -53,25 +53,26 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             if x.number_kind().is_none() {
                 return type_err(p, x);
             }
-            // A wide number is read where it is held, not copied: its copy would be built without
-            // asking the system for the memory.
-            let held;
-            let r = match x {
-                Value::Big(n) | Value::Rat(n) => &**n,
-                _ => match x.exact() {
-                    Exact::Finite(r) => {
-                        held = r;
-                        &held
-                    }
-                    _ if p == Prim::CastF64 => return Ok(x.clone()),
-                    _ => return Ok(invalid()),
-                },
+            // A wide number is read where it is held, and a cast to an exact kind shares its
+            // digits: a copy would be built without asking the system for the memory.
+            let r = match x.exact() {
+                Exact::Finite(r) => r,
+                _ if p == Prim::CastF64 => return Ok(x.clone()),
+                _ => return Ok(invalid()),
             };
-            match p {
-                Prim::CastInt if r.is_integer() => Value::integer(r.clone()),
-                Prim::CastInt => inexact(),
-                Prim::CastRat => Value::rat(r.clone()),
-                _ => match exact_f64(r) {
+            match (p, x) {
+                (Prim::CastInt, Value::Int(_) | Value::Big(_)) | (Prim::CastRat, Value::Rat(_)) => {
+                    x.clone()
+                }
+                (Prim::CastRat, Value::Big(n)) => Value::Rat(n.clone()),
+                (Prim::CastInt, Value::Rat(n)) if r.is_integer() => match r.small_integer() {
+                    Some(k) => Value::int(k),
+                    None => Value::Big(n.clone()),
+                },
+                (Prim::CastInt, _) if r.is_integer() => Value::integer(r.into_owned()),
+                (Prim::CastInt, _) => inexact(),
+                (Prim::CastRat, _) => Value::rat(r.into_owned()),
+                _ => match exact_f64(&r) {
                     Ok(Some(f)) => Value::float(f),
                     Ok(None) => inexact(),
                     Err(e) => {
@@ -87,9 +88,19 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             Some(n) => Value::Int(n),
             None => Value::int(-BigInt::from(*n)),
         },
-        (Prim::Abs, Value::Big(n)) => Value::integer(n.abs()),
-        (Prim::Abs, Value::Rat(r)) if r.is_negative() => Value::rat(r.neg()),
-        (Prim::Abs, Value::Rat(_)) => x.clone(),
+        // A wide number not negative is its own `abs`, shared; a negative one is copied, which
+        // asks the system for the memory first.
+        (Prim::Abs, Value::Big(n) | Value::Rat(n)) if n.is_negative() => {
+            let r = n.try_neg().map_err(|e| KernelError::NumberTooLarge {
+                op: "abs",
+                bits: e.bits,
+            })?;
+            match x {
+                Value::Big(_) => Value::integer(r),
+                _ => Value::rat(r),
+            }
+        }
+        (Prim::Abs, Value::Big(_) | Value::Rat(_)) => x.clone(),
         (Prim::Abs, Value::Float(f)) => Value::float(f.get().abs()),
         // A string doubled 63 times holds more than `i64::MAX` characters.
         (Prim::Len, Value::Str(s)) => match i64::try_from(s.char_count()) {

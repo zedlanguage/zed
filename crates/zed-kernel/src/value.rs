@@ -439,12 +439,12 @@ impl Value {
         }
     }
 
-    /// The number's exact place on the extended line.
-    pub(crate) fn exact(&self) -> Exact {
+    /// The number's exact place on the extended line. A wide number is borrowed, not copied:
+    /// a copy would be built without asking the system for the memory.
+    pub(crate) fn exact(&self) -> Exact<'_> {
         match self {
-            Value::Int(n) => Exact::Finite(Rat::int(BigInt::from(*n))),
-            Value::Big(n) => Exact::Finite((**n).clone()),
-            Value::Rat(r) => Exact::Finite((**r).clone()),
+            Value::Int(n) => Exact::Finite(Cow::Owned(Rat::int(BigInt::from(*n)))),
+            Value::Big(n) | Value::Rat(n) => Exact::Finite(Cow::Borrowed(n)),
             Value::Float(x) => Exact::float(x.get()),
             _ => unreachable!("only numbers are placed on the line"),
         }
