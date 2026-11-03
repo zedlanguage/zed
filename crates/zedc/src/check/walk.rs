@@ -226,11 +226,21 @@ pub(super) enum Frame<'a> {
     AtKey(Ty, Span),
     AtIndex(Ty, Option<usize>, Span),
     LambdaEnd {
-        params: &'a [Param],
+        names: Vec<SParam>,
         level: usize,
         tys: Vec<Ty>,
     },
+    /// A parameter of a lambda bound to the type of its default.
+    BindDefault(&'a Param),
     FitLambda(Box<FitF<'a>>),
+    /// A lambda checked generic in its parameters, to be passed for the function type `e`
+    /// as a declared function is.
+    FitGeneric {
+        e: Arc<Sig>,
+        span: Span,
+        order: Vec<Option<usize>>,
+        extra: Vec<usize>,
+    },
 }
 
 pub(super) struct StrF<'a> {
@@ -880,20 +890,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.at_index(&v, i, x, span);
                 m.ty(t);
             }
-            Frame::LambdaEnd { params, level, tys } => {
+            Frame::LambdaEnd { names, level, tys } => {
                 let result = m.take_ty();
-                let names = params
-                    .iter()
-                    .map(|p| SParam {
-                        name: p.name.as_str().into(),
-                        positional: true,
-                        default: None,
-                    })
-                    .collect();
                 let sig = self.generalize(level, Sig::one(names, tys, result));
                 m.ty(Ty::func(sig));
             }
+            Frame::BindDefault(p) => {
+                let t = m.take_ty();
+                let id = self.id(p.span, &p.name);
+                self.env.insert(id, t);
+            }
             Frame::FitLambda(s) => self.fit_step(m, s),
+            Frame::FitGeneric {
+                e,
+                span,
+                order,
+                extra,
+            } => {
+                let t = m.take_ty();
+                let s = only_fn(&t).expect("a lambda's type is a function type");
+                if !self.fits_slot(&s, &e, "the lambda", span) {
+                    self.error(span, format!("the lambda is `{s}`, not `{e}`"));
+                }
+                self.fitted(span, order, extra);
+                m.ty(Ty::func(e));
+            }
         }
     }
 
@@ -2121,23 +2142,54 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// A lambda with no expected type: its parameters positional, typed by their
     /// annotations; one without is generic, as a declared function's.
     fn lambda(&mut self, m: &mut M<'a>, params: &'a [Param], body: &'a Expr) {
+        let names = params
+            .iter()
+            .map(|p| SParam {
+                name: p.name.as_str().into(),
+                positional: true,
+                default: None,
+            })
+            .collect();
+        self.lambda_sig(m, params.iter().map(Some), &[], names, body);
+    }
+
+    /// The signature of a lambda checked as a declared function's body is: each parameter of
+    /// `slots` typed by its annotation, one without a type variable its uses constrain, and a
+    /// slot no parameter takes a type variable nothing constrains; each parameter of `extra`
+    /// typed by its default; the signature's parameters are `names`. Its function type is the
+    /// result of the jobs pushed.
+    fn lambda_sig(
+        &mut self,
+        m: &mut M<'a>,
+        slots: impl Iterator<Item = Option<&'a Param>>,
+        extra: &[&'a Param],
+        names: Vec<SParam>,
+        body: &'a Expr,
+    ) {
         self.level += 1;
         let level = self.level;
         if self.pending.len() <= level {
             self.pending.push(Vec::new());
         }
         let mut tys = Vec::new();
-        for p in params {
-            let t = match &p.ty {
+        for p in slots {
+            let t = match p.and_then(|p| p.ty.as_ref()) {
                 Some(t) => denoted(t),
                 None => Ty::var(format!("${}", self.class()).into()),
             };
-            let id = self.id(p.span, &p.name);
-            self.env.insert(id, t.clone());
+            if let Some(p) = p {
+                let id = self.id(p.span, &p.name);
+                self.env.insert(id, t.clone());
+            }
             tys.push(t);
         }
-        m.k(Frame::LambdaEnd { params, level, tys });
+        m.k(Frame::LambdaEnd { names, level, tys });
         m.job(Job::Body(body, Want::default()));
+        // The defaults are checked first, in order, each bound before the next.
+        for &p in extra.iter().rev() {
+            m.k(Frame::BindDefault(p));
+            m.job(Job::Expr(p.default.as_ref().expect("a default")));
+        }
     }
 
     /// A lambda in a slot of the function type `e`: its first parameters take `e`'s
@@ -2201,6 +2253,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                     return m.ty(Ty::func(e));
                 }
             }
+        }
+        if !e.held.is_empty() {
+            // A bounded variable a parameter holds stands for whichever carrier the caller
+            // passes, so a parameter of that type has no use of its own. The lambda is checked
+            // as a declared function is, generic in its parameters, and passed as
+            // `fit_declared` passes one: each use its body makes is checked at each carrier.
+            let defaults: Vec<&'a Param> = extra.iter().map(|&i| &params[i]).collect();
+            let slots: Vec<Option<&'a Param>> =
+                order.iter().map(|o| o.map(|i| &params[i])).collect();
+            let names = e.params.clone();
+            m.k(Frame::FitGeneric {
+                e,
+                span,
+                order,
+                extra,
+            });
+            return self.lambda_sig(m, slots.into_iter(), &defaults, names, body);
         }
         // A bounded variable of `e` no parameter holds is fixed by no argument: the lambda may
         // return any carrier of its bound.
@@ -2296,10 +2365,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             extra,
             ..
         } = *s;
+        self.fitted(span, order, extra);
+        m.ty(Ty::func(e));
+    }
+
+    /// Records how the lambda at `span` was fitted, unless its parameters are the slots'
+    /// in order with none left to a default.
+    fn fitted(&mut self, span: Span, order: Vec<Option<usize>>, extra: Vec<usize>) {
         let identity = extra.is_empty() && order.iter().enumerate().all(|(j, o)| *o == Some(j));
         if !identity {
             self.put(Undo::Fit(span, Some(Fit::Lambda { order, extra })));
         }
-        m.ty(Ty::func(e));
     }
 }

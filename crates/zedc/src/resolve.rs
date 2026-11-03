@@ -428,7 +428,7 @@ impl Resolver {
                 Task::ArrowEnd => {
                     self.arrows.pop();
                 }
-                Task::ForEnd(ty, fresh) => self.for_end(ty, fresh),
+                Task::ForEnd(ty, bounds) => self.for_end(ty, bounds),
             }
         }
     }
@@ -807,7 +807,6 @@ impl Resolver {
                 for b in bounds {
                     self.carriers(&b.name, &b.carriers);
                 }
-                let mut fresh = Vec::with_capacity(bounds.len());
                 for b in bounds {
                     if let Some(outer) = self.tvars.get(&b.name) {
                         self.errors.push(Error {
@@ -827,10 +826,9 @@ impl Resolver {
                         first: None,
                     };
                     self.tvars.insert(b.name.clone(), var);
-                    fresh.push(b);
                 }
                 self.clauses.push(t.span);
-                todo.push(Task::ForEnd(ty, fresh));
+                todo.push(Task::ForEnd(ty, bounds));
                 todo.push(Task::Ty(ty));
             }
             TypeKind::Atom(_) => {}
@@ -905,11 +903,16 @@ impl Resolver {
         });
     }
 
-    /// The end of the type `ty` of a bounds clause: the clause closes, each variable of `fresh`
-    /// leaves scope, and one the type does not hold is an error.
-    fn for_end(&mut self, ty: &Type, fresh: Vec<&TypeBound>) {
+    /// The end of the type `ty` of a bounds clause of `bounds`: the clause closes, each variable
+    /// it bounded leaves scope, and one the type does not hold is an error. A bound of a name
+    /// already bounded bound nothing, and the variable in scope under the name is another's:
+    /// its text is not the bound's.
+    fn for_end(&mut self, ty: &Type, bounds: &[TypeBound]) {
         self.clauses.pop();
-        for b in fresh {
+        for b in bounds {
+            if self.tvars.get(&b.name).is_none_or(|v| v.span != b.span) {
+                continue;
+            }
             let var = self.tvars.remove(&b.name).expect("bound above");
             if var.first.is_none() {
                 self.errors.push(Error {
@@ -998,6 +1001,6 @@ enum Task<'a> {
     Close,
     /// The end of a function type, which is no longer open around the place.
     ArrowEnd,
-    /// The end of the type of a bounds clause, whose variables are the bounds listed.
-    ForEnd(&'a Type, Vec<&'a TypeBound>),
+    /// The end of the type of a bounds clause, and the clause's bounds.
+    ForEnd(&'a Type, &'a [TypeBound]),
 }

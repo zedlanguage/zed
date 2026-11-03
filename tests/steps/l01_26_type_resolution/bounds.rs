@@ -653,3 +653,187 @@ fn a_bounded_function_fits_only_where_each_carrier_it_returns_is_taken() {
         assert_eq!(type_errors(&text).len(), n, "{k}: {:?}", type_errors(&text));
     }
 }
+
+/// Functions whose parameter `g` has bounded variables, for lambdas passed as `g`: `t` calls
+/// it on an int, `two` and `mix` on an f64 and an int.
+const L: &str = "t(g: (x: T) -> bool for T in int | f64) = g(x: 2);\n\
+                 two(g: (a: T, b: U) -> T for T in int | f64, U in int) = g(a: 1.5, b: 2);\n\
+                 mix(g: (a: T, b: int) -> T for T in int | f64) = g(a: 1.5, b: 2);\n\
+                 pz(g: (z: T) -> T for T in int) = g(z: 1);\n\
+                 dbl(x) = x + x;\n";
+
+#[test]
+fn a_lambda_uses_its_bounded_parameters_as_a_declared_function_does() {
+    // Each use is checked at each carrier of the bound: at int, and for `p_wide` at f64.
+    let cases = [
+        ("y = p(g: (x) -> x + 1);\n", "2"),
+        ("y = p_wide(g: (x) -> x + x);\n", "3.0"),
+        ("y = p_wide(g: (x) -> -x);\n", "-1.5"),
+        ("y = p_wide(g: (x) -> x - x);\n", "0.0"),
+        ("y = t(g: (x) -> x < x + x);\n", "true"),
+        ("y = p_wide(g: (x) -> dbl(x: x));\n", "3.0"),
+        ("y = two(g: (a, b) -> a + a);\n", "3.0"),
+        // Named parameters taken in another order, and one `g` is not passed, by its default.
+        ("y = two(g: (b, a) -> a);\n", "1.5"),
+        ("y = p_wide(g: (x, k = 2) -> x);\n", "1.5"),
+        // A parameter of a plain type beside a bounded one.
+        ("y = mix(g: (a, b) -> a);\n", "1.5"),
+        // Nested lambdas, the inner one using the outer one's parameter.
+        ("y = p(g: (x) -> pz(g: (z) -> z + x));\n", "2"),
+        (
+            "y = p(g: (x) -> x + p(g: (x) -> x + p(g: (x) -> x)));\n",
+            "3",
+        ),
+        // `(x: int) -> int` has no bounded variable: the lambda is checked against it alone.
+        (
+            "q(g: (x: int) -> int) = g(x: 1);\ny = q(g: (x) -> x + 1);\n",
+            "2",
+        ),
+    ];
+    for (q, v) in cases {
+        let text = format!("{P}{L}{q}");
+        assert!(
+            type_errors(&text).is_empty(),
+            "{q}: {:?}",
+            type_errors(&text)
+        );
+        assert_eq!(value(&text, "y"), v, "{q}");
+    }
+    let twice = format!("{TWICE}y = twice(3, g: (x) -> -x);\n");
+    assert!(type_errors(&twice).is_empty(), "{:?}", type_errors(&twice));
+    assert_eq!(value(&twice, "y"), "3");
+}
+
+#[test]
+fn a_lambda_whose_uses_the_bound_does_not_allow_is_an_error() {
+    let cases = [
+        // The literal 1 makes `x` an int, and `p_wide` passes an f64 too.
+        (
+            "y = p_wide(g: (x) -> x + 1);\n",
+            "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64` \
+             [(x) -> x + 1]",
+        ),
+        (
+            "y = p_wide(g: (x, k = 2) -> x + k);\n",
+            "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64` \
+             [(x, k = 2) -> x + k]",
+        ),
+        (
+            "y = p_wide(g: (x) -> upper(x));\n",
+            "the lambda is `(x: String) -> String`, not `(x: T) -> T for T in int | f64` \
+             [(x) -> upper(x)]",
+        ),
+        (
+            "y = p_wide(g: (x: int) -> x);\n",
+            "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64` \
+             [(x: int) -> x]",
+        ),
+        // A comparison gives a bool, not the carrier passed.
+        (
+            "y = p_wide(g: (x) -> x < x);\n",
+            "the lambda is `(x: T) -> bool for T in int | f64 | rat | String | bool`, \
+             not `(x: T) -> T for T in int | f64` [(x) -> x < x]",
+        ),
+        // `a` and `b` take different carriers, so `a + b` is no sum of one carrier.
+        (
+            "y = two(g: (a, b) -> a + b);\n",
+            "the lambda is `(a: T, b: T) -> T for T in int | f64 | rat`, \
+             not `(a: T, b: U) -> T for T in int | f64, U in int` [(a, b) -> a + b]",
+        ),
+        (
+            "y = mix(g: (a, b) -> b);\n",
+            "the lambda is `(a: T, b: U) -> U`, not `(a: T, b: int) -> T for T in int | f64` \
+             [(a, b) -> b]",
+        ),
+        // The inner `p_wide` gives an f64, so `x` is an f64, and `p_wide` passes an int too.
+        (
+            "y = p_wide(g: (x) -> p_wide(g: (x) -> x + x) + x);\n",
+            "the lambda is `(x: f64) -> f64`, not `(x: T) -> T for T in int | f64` \
+             [(x) -> p_wide(g: (x) -> x + x) + x]",
+        ),
+    ];
+    for (q, message) in cases {
+        let text = format!("{P}{L}{q}");
+        assert_eq!(type_errors(&text), [message], "{q}");
+    }
+}
+
+#[test]
+fn a_lambda_and_a_declared_function_of_the_same_body_give_the_same_result() {
+    for body in [
+        "x + 1",
+        "x + x",
+        "-x",
+        "x - x",
+        "x < x",
+        "upper(x)",
+        "dbl(x: x)",
+        "x",
+    ] {
+        for (g, n) in [("p", "x"), ("p_wide", "x"), ("t", "x")] {
+            let lambda = format!("{P}{L}y = {g}(g: ({n}) -> {body});\n");
+            let named = format!("{P}{L}f({n}) = {body};\ny = {g}(g: f);\n");
+            let shown = |errors: Vec<String>, what: &str, at: &str| -> Vec<String> {
+                errors
+                    .iter()
+                    .map(|e| e.replace(what, "it").replace(at, "[]"))
+                    .collect()
+            };
+            let from_lambda = shown(
+                type_errors(&lambda),
+                "the lambda",
+                &format!("[({n}) -> {body}]"),
+            );
+            let from_named = shown(type_errors(&named), "`f`", "[f]");
+            assert_eq!(from_lambda, from_named, "{g} with {body}");
+            if from_lambda.is_empty() {
+                assert_eq!(value(&lambda, "y"), value(&named, "y"), "{g} with {body}");
+            }
+        }
+    }
+}
+
+/// `n` lambdas nested, each passed for a parameter bounded by int and using its own.
+fn nested_lambdas(n: usize) -> String {
+    let mut body = String::from("x");
+    for _ in 1..n {
+        body = format!("x + p(g: (x) -> {body})");
+    }
+    format!("{P}y = p(g: (x) -> {body});\n")
+}
+
+/// A lambda of `n` parameters, each of its own bounded variable, passed to the `h` of
+/// [`wide`].
+fn wide_lambda(n: usize) -> String {
+    let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    format!("{}y = h(g: ({}) -> x0 + x0);\n", wide(n), xs.join(", "))
+}
+
+#[test]
+fn a_lambda_of_many_bounded_parameters_scales() {
+    let text = wide_lambda(3);
+    assert!(type_errors(&text).is_empty(), "{:?}", type_errors(&text));
+    assert_eq!(value(&text, "y"), "2");
+    check_scales(
+        "a lambda of n bounded parameters passed as a function of n",
+        800,
+        wide_lambda,
+    );
+}
+
+#[test]
+fn nested_lambdas_for_bounded_parameters_scale() {
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(|| {
+            assert_eq!(value(&nested_lambdas(3), "y"), "3");
+            check_scales(
+                "n nested lambdas, each for a bounded parameter",
+                400,
+                nested_lambdas,
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

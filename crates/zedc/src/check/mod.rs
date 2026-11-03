@@ -2273,21 +2273,28 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
                 .collect(),
         };
-        let fits = match permuted.needs.is_empty() {
-            true => ty::fits_sig(&permuted, e),
-            false => {
-                let what = format!("`{}`", f.name);
-                let p = Ty::func(e.clone());
-                self.fit_needs(&Arc::new(permuted), &p, &mut Binds::new(), &what, span)
-            }
-        };
-        if !fits {
+        let what = format!("`{}`", f.name);
+        if !self.fits_slot(&Arc::new(permuted), e, &what, span) {
             self.error(span, format!("`{}` is `{s}`, not `{e}`", f.name));
         }
         if from.iter().enumerate().any(|(i, &j)| i != j) {
             self.put(Undo::Fit(span, Some(Fit::Adapter { from })));
         }
         Ty::func(e.clone())
+    }
+
+    /// Whether the function `s`, named `what` in messages, with its parameters in the order of
+    /// the function type `e`'s, fits a slot of `e`: as a type, or, when its body makes uses of
+    /// its type variables, by those uses checked on the types `e` passes. False only when no
+    /// error says why.
+    fn fits_slot(&mut self, s: &Arc<Sig>, e: &Arc<Sig>, what: &str, span: Span) -> bool {
+        match s.needs.is_empty() {
+            true => ty::fits_sig(s, e),
+            false => {
+                let p = Ty::func(e.clone());
+                self.fit_needs(s, &p, &mut Binds::new(), what, span)
+            }
+        }
     }
 
     /// The derivation of an application `apply` rejects: each argument's, in order, then each
@@ -3505,6 +3512,7 @@ fn bit_sig(p: Prim) -> Arc<Sig> {
         data: false,
         needs: Vec::new(),
         own: BTreeSet::new(),
+        held: BTreeSet::new(),
     })
 }
 
