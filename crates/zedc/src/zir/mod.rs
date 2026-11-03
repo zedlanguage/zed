@@ -209,9 +209,9 @@ pub struct Node {
     pub regions: Vec<Arc<Region>>,
 }
 
-/// A region. Its drop and its comparison keep their own stack on the heap, so a graph's depth
-/// is limited by the machine's memory alone.
-#[derive(Clone, Debug)]
+/// A region. Its drop, its comparison and its `Debug` keep their own stack on the heap, so a
+/// graph's depth is limited by the machine's memory alone.
+#[derive(Clone)]
 pub struct Region {
     /// The kind.
     pub kind: RegionKind,
@@ -221,6 +221,56 @@ pub struct Region {
     pub nodes: Vec<Node>,
     /// The results.
     pub results: Vec<Src>,
+}
+
+impl std::fmt::Debug for Region {
+    /// Writes, in both the `{:?}` and `{:#?}` forms, the one line a derived `Debug` writes for
+    /// `{:?}`, from a stack of regions to open and the text that closes each, so a graph of any
+    /// depth prints on a small stack. `Node`'s derived `Debug` calls this for its regions.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum Todo<'a> {
+            Region(&'a Region),
+            Node(&'a Node),
+            Results(&'a Region),
+            Text(&'static str),
+        }
+        let mut todo = vec![Todo::Region(self)];
+        while let Some(t) = todo.pop() {
+            match t {
+                Todo::Text(s) => f.write_str(s)?,
+                Todo::Results(r) => write!(f, "], results: {:?} }}", r.results)?,
+                Todo::Region(r) => {
+                    write!(
+                        f,
+                        "Region {{ kind: {:?}, args: {:?}, nodes: [",
+                        r.kind, r.args
+                    )?;
+                    todo.push(Todo::Results(r));
+                    for (i, n) in r.nodes.iter().enumerate().rev() {
+                        todo.push(Todo::Node(n));
+                        if i > 0 {
+                            todo.push(Todo::Text(", "));
+                        }
+                    }
+                }
+                Todo::Node(n) => {
+                    write!(
+                        f,
+                        "Node {{ op: {:?}, inputs: {:?}, outputs: {:?}, regions: [",
+                        n.op, n.inputs, n.outputs
+                    )?;
+                    todo.push(Todo::Text("] }"));
+                    for (i, r) in n.regions.iter().enumerate().rev() {
+                        todo.push(Todo::Region(r));
+                        if i > 0 {
+                            todo.push(Todo::Text(", "));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Drop for Region {

@@ -647,7 +647,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| An enum of frames borrowing the input (`Job<'t>`, `Walk<'t>`, `Mix<'t>`) on a `Vec`, with a second `Vec` of results that a frame drains the last `k` of (`Vec::drain(len - k..)`) | `canon::binders::Levels::term`, `set_binds`, `stage::ends`, `Mixer::mix` | Mutation | A state receiver holding the two lists, as for the evaluator's machine |
+| An enum of frames borrowing the input (`Job<'t>`, `Walk<'t>`, `Mix<'t>`) on a `Vec`, with a second `Vec` of results that a frame drains the last `k` of (`Vec::drain(len - k..)`) | `canon::binders::Levels::term`, `set_binds`, `stage::ends`, `Mixer::mix`, `zir::Region`'s `Debug` | Mutation | A state receiver holding the two lists, as for the evaluator's machine |
 | Children pushed in order, then the pushed range reversed in place (`todo[start..].reverse()`), with a frame's count patched after the push | `canon::binders::Levels::term`, `each_binder`, `serial::Out::write`, `stage::ends`, `Mixer::enter` | Mutation | Build the list of children, then prepend it reversed |
 | `impl Drop` taking a `thread_local!` `Cell<Vec<Term>>` as its stack and putting it back, so a drop reuses its capacity | `zed_kernel::term` | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `Arc::get_mut` with `mem::replace` to take a part out of a uniquely held node | `Term::take_parts` | Identity, mutation | Removed with the drop above |

@@ -273,3 +273,51 @@ fn writing_and_reading_deep_values_patterns_and_types_is_linear_in_their_depth()
         });
     });
 }
+
+// `Debug` writes a region from a stack of its own too, so an assertion that fails on a deep graph
+// can print it (step T2-mid).
+
+#[test]
+fn a_graph_prints_for_debugging_as_a_derived_debug_would() {
+    let edge = format!("{:?}", Edge::value(Type::int()));
+    let zero = "Region { kind: Match, args: [], nodes: [], results: [Const(Int(0))] }";
+    let branch = |then: &str| {
+        format!(
+            "Node {{ op: If, inputs: [Const(Bool(true))], outputs: [{edge}], \
+             regions: [{then}, {zero}] }}"
+        )
+    };
+    let arm = format!(
+        "Region {{ kind: Match, args: [], nodes: [{}], results: [Out(0, 0)] }}",
+        branch(zero)
+    );
+    let expected = format!(
+        "Region {{ kind: Function, args: [], nodes: [{}], results: [Out(0, 0)] }}",
+        branch(&arm)
+    );
+    assert_eq!(format!("{:?}", nested_ifs(2)), expected);
+    assert_eq!(format!("{:#?}", nested_ifs(2)), expected);
+}
+
+#[test]
+fn a_graph_nested_100000_deep_is_printed_for_debugging_on_a_2_mib_stack() {
+    on_small_stack(|| {
+        let text = format!("{:?}", nested_ifs(100_000));
+        assert_eq!(text.matches("Node { op: If").count(), 100_000);
+    });
+}
+
+#[test]
+fn printing_a_deep_graph_for_debugging_is_linear_in_its_depth() {
+    on_small_stack(|| {
+        let (small, large) = (nested_ifs(12_500), nested_ifs(100_000));
+        check_order(
+            "printing nested `if` regions for debugging",
+            12_500,
+            1,
+            |k| {
+                let _ = format!("{:?}", if k == 12_500 { &small } else { &large });
+            },
+        );
+    });
+}
