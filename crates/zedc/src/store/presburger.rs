@@ -1952,26 +1952,283 @@ fn row_key(c: &Con, keys: &BTreeMap<Atom, u64>) -> u64 {
     }
     h
 }
-/// `atoms` sorted by color refinement of the variable-constraint graph: log n rounds over the
-/// rows, each rows.len() log rows at most; each variable's key depends on the shape of the
-/// system only.
+/// `atoms`, in name order, sorted by their colors in the coarsest stable coloring of the
+/// system ([`stable_colors`]), names breaking ties between equal colors; with the colors.
 fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
-    let mut keys: BTreeMap<Atom, u64> = atoms.iter().map(|a| (a.clone(), 1)).collect();
-    let rounds = usize::BITS - atoms.len().leading_zeros() + 1;
-    for _ in 0..rounds {
-        let mut next: BTreeMap<Atom, u64> = atoms.iter().map(|a| (a.clone(), 0)).collect();
-        for c in cons {
-            let r = row_key(c, &keys);
-            for (a, k) in &c.lin.terms {
-                let e = next.get_mut(a).expect("an atom of the system");
-                *e = e.wrapping_add(xv_mix(r ^ int_key(k).wrapping_mul(0x9E3779B97F4A7C15)));
+    let colors = stable_colors(&atoms, cons);
+    let mut order: Vec<(u64, Atom)> = colors.into_iter().zip(atoms).collect();
+    order.sort();
+    let keys = order.iter().map(|(k, a)| (a.clone(), *k)).collect();
+    (order.into_iter().map(|(_, a)| a).collect(), keys)
+}
+
+/// The colors of the variables of the conjunction `cons`, by which the solver orders them:
+/// two variables have one color exactly when the structure of the rows does not tell them
+/// apart, and the numbers depend on that structure only, not on the names.
+pub fn colors(cons: &[Con]) -> BTreeMap<Atom, u64> {
+    let cons: Vec<&Con> = cons.iter().collect();
+    let atoms: Vec<Atom> = cons
+        .iter()
+        .flat_map(|c| c.lin.terms.keys().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    canonical(atoms, &cons).1
+}
+
+/// The color of each of `atoms` (sorted, each in some row of `cons`) in the coarsest stable
+/// coloring of the system's graph. The graph has a vertex for each variable, each row and each
+/// term of a row, a term joined to its row and to its variable. A row starts colored by its
+/// relation and constant, a term by its coefficient, and every variable alike. A coloring is
+/// stable when any two vertices of one color have, for every color, as many neighbors of that
+/// color. So two variables keep one color exactly when no number of rounds of comparing the
+/// multisets of (row color, coefficient) of their rows tells them apart: refinement runs until
+/// the partition is stable, with no count of rounds.
+///
+/// The method is the canonical color refinement of Berkholz, Bonsma and Grohe, "Tight lower and
+/// upper bounds for the complexity of canonical colour refinement" (Theory Comput. Syst. 60,
+/// 2017; arXiv:1509.08251), section 3, with edge colors by the subdivision of their
+/// edge-colored theorem, which is the term vertex here. A popped color class R refines every
+/// class by the number of neighbors in R each of its vertices has. After a split, the largest
+/// new class is not pushed unless the old one was waiting (Hopcroft's rule), so a vertex is in
+/// O(log N) refining classes in all. New colors are numbered in the increasing order of
+/// (old color, number of neighbors), never by a hash, so equal colors mean equal structure and
+/// the numbers depend on the structure alone, not on the names or the order of the rows.
+/// O((n + m + t) log(n + m + t)) for n variables, m rows and t terms, with the sorts of the
+/// starting colors.
+fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<u64> {
+    let (n, m) = (atoms.len(), cons.len());
+    let mut terms: Vec<(usize, usize, &Int)> = Vec::new();
+    for (r, c) in cons.iter().enumerate() {
+        for (a, k) in &c.lin.terms {
+            let x = atoms.binary_search(a).expect("an atom of the system");
+            terms.push((r, x, k));
+        }
+    }
+    let size = n + m + terms.len();
+    // Vertices: the variables, then the rows, then the terms.
+    let mut color = vec![0; size];
+    let mut next = usize::from(n > 0);
+    let mut rows: Vec<usize> = (0..m).collect();
+    let row = |r: usize| (cons[r].rel, &cons[r].lin.constant);
+    rows.sort_by(|&p, &q| row(p).cmp(&row(q)));
+    for (i, &r) in rows.iter().enumerate() {
+        if i > 0 && row(rows[i - 1]) != row(r) {
+            next += 1;
+        }
+        color[n + r] = next;
+    }
+    next += usize::from(m > 0);
+    let mut by_coef: Vec<usize> = (0..terms.len()).collect();
+    by_coef.sort_by(|&p, &q| terms[p].2.cmp(terms[q].2));
+    for (i, &e) in by_coef.iter().enumerate() {
+        if i > 0 && terms[by_coef[i - 1]].2 != terms[e].2 {
+            next += 1;
+        }
+        color[n + m + e] = next;
+    }
+    next += usize::from(!terms.is_empty());
+    // The neighbors of vertex v are `adj[start[v]..start[v + 1]]`.
+    let mut start = vec![0; size + 1];
+    for (e, &(r, x, _)) in terms.iter().enumerate() {
+        start[x + 1] += 1;
+        start[n + r + 1] += 1;
+        start[n + m + e + 1] = 2;
+    }
+    for v in 0..size {
+        start[v + 1] += start[v];
+    }
+    let mut adj = vec![0; start[size]];
+    let mut cursor = start[..size].to_vec();
+    let mut link = |a: usize, b: usize| {
+        adj[cursor[a]] = b;
+        cursor[a] += 1;
+    };
+    for (e, &(r, x, _)) in terms.iter().enumerate() {
+        let e = n + m + e;
+        link(x, e);
+        link(e, x);
+        link(n + r, e);
+        link(e, n + r);
+    }
+    let degree = (0..size).map(|v| start[v + 1] - start[v]).max().unwrap_or(0);
+    let mut refine = Refine::new(color, next, degree);
+    refine.run(&start, &adj);
+    refine.color[..n].iter().map(|&c| c as u64).collect()
+}
+
+/// The state of [`stable_colors`]' refinement, after Berkholz, Bonsma and Grohe's
+/// Algorithms 2 and 3. Arrays by color have one entry for each vertex, the most colors there
+/// can be.
+struct Refine {
+    /// The color of each vertex.
+    color: Vec<usize>,
+    /// The vertices of each color, in no particular order.
+    members: Vec<Vec<usize>>,
+    /// The place of each vertex in its color's `members`.
+    at: Vec<usize>,
+    /// How many colors there are.
+    colors: usize,
+    /// The colors waiting to refine the others, and whether each is waiting.
+    stack: Vec<usize>,
+    queued: Vec<bool>,
+    /// For the class being refined by: each vertex's number of neighbors in it.
+    count: Vec<usize>,
+    /// For each color, its vertices with a neighbor in the class, the most and least of their
+    /// numbers, and whether it is in `adjacent`.
+    hit: Vec<Vec<usize>>,
+    most: Vec<usize>,
+    least: Vec<usize>,
+    seen: Vec<bool>,
+    /// The colors with a vertex next to the class, and those of them that split.
+    adjacent: Vec<usize>,
+    splits: Vec<usize>,
+    /// By number of neighbors, for one split: how many vertices have it, and their new color.
+    tally: Vec<usize>,
+    new: Vec<usize>,
+}
+
+impl Refine {
+    /// The refinement of the coloring `color`, with colors `0..colors`, of a graph whose
+    /// vertices have at most `degree` neighbors.
+    fn new(color: Vec<usize>, colors: usize, degree: usize) -> Refine {
+        let size = color.len();
+        let mut members = vec![Vec::new(); size];
+        let mut at = vec![0; size];
+        for (v, &c) in color.iter().enumerate() {
+            at[v] = members[c].len();
+            members[c].push(v);
+        }
+        let mut queued = vec![false; size];
+        queued[..colors].fill(true);
+        Refine {
+            color,
+            members,
+            at,
+            colors,
+            stack: (0..colors).collect(),
+            queued,
+            count: vec![0; size],
+            hit: vec![Vec::new(); size],
+            most: vec![0; size],
+            least: vec![0; size],
+            seen: vec![false; size],
+            adjacent: Vec::new(),
+            splits: Vec::new(),
+            tally: vec![0; degree + 1],
+            new: vec![0; degree + 1],
+        }
+    }
+
+    /// Refines until no waiting color splits another: the coloring is then stable.
+    fn run(&mut self, start: &[usize], adj: &[usize]) {
+        while let Some(r) = self.stack.pop() {
+            self.queued[r] = false;
+            let Refine {
+                color,
+                members,
+                count,
+                hit,
+                most,
+                least,
+                seen,
+                adjacent,
+                splits,
+                ..
+            } = self;
+            for &v in &members[r] {
+                for &w in &adj[start[v]..start[v + 1]] {
+                    let c = color[w];
+                    count[w] += 1;
+                    if count[w] == 1 {
+                        hit[c].push(w);
+                    }
+                    if !seen[c] {
+                        seen[c] = true;
+                        adjacent.push(c);
+                    }
+                    most[c] = most[c].max(count[w]);
+                }
+            }
+            for &c in adjacent.iter() {
+                least[c] = if hit[c].len() < members[c].len() {
+                    0
+                } else {
+                    hit[c].iter().map(|&v| count[v]).min().expect("a vertex hit")
+                };
+                if least[c] < most[c] {
+                    splits.push(c);
+                }
+            }
+            splits.sort_unstable();
+            let mut splits = mem::take(&mut self.splits);
+            for &c in &splits {
+                self.split(c);
+            }
+            splits.clear();
+            self.splits = splits;
+            for &c in &self.adjacent {
+                for &v in &self.hit[c] {
+                    self.count[v] = 0;
+                }
+                self.hit[c].clear();
+                self.most[c] = 0;
+                self.seen[c] = false;
+            }
+            self.adjacent.clear();
+        }
+    }
+
+    /// Splits color `c` by the numbers of neighbors its vertices have in the refining class.
+    /// The vertices with the least number keep `c`; the others take new colors in increasing
+    /// order of their number. Every new class waits to refine except the largest, unless `c`
+    /// was waiting already, and then all do.
+    fn split(&mut self, c: usize) {
+        let top = self.most[c];
+        let hit = mem::take(&mut self.hit[c]);
+        self.tally[..=top].fill(0);
+        self.tally[0] = self.members[c].len() - hit.len();
+        for &v in &hit {
+            self.tally[self.count[v]] += 1;
+        }
+        let mut big = 0;
+        for i in 1..=top {
+            if self.tally[i] > self.tally[big] {
+                big = i;
             }
         }
-        keys = next;
+        let waiting = self.queued[c];
+        for i in 0..=top {
+            if self.tally[i] == 0 {
+                continue;
+            }
+            let k = if i == self.least[c] {
+                c
+            } else {
+                self.colors += 1;
+                self.colors - 1
+            };
+            self.new[i] = k;
+            if (waiting && k != c) || (!waiting && i != big) {
+                self.queued[k] = true;
+                self.stack.push(k);
+            }
+        }
+        for &v in &hit {
+            let k = self.new[self.count[v]];
+            if k != c {
+                let place = self.at[v];
+                self.members[c].swap_remove(place);
+                if let Some(&u) = self.members[c].get(place) {
+                    self.at[u] = place;
+                }
+                self.at[v] = self.members[k].len();
+                self.members[k].push(v);
+                self.color[v] = k;
+            }
+        }
+        self.hit[c] = hit;
     }
-    let mut order = atoms;
-    order.sort_by(|a, b| (keys[a], a).cmp(&(keys[b], b)));
-    (order, keys)
 }
 
 /// The coefficients of a row, nonzero, in variable order. Rows are shared, not copied, among

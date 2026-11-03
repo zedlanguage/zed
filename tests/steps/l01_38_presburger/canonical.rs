@@ -1,0 +1,265 @@
+//! The order in which the solver takes the variables (item CANON-stable): `colors` refines the
+//! variables until the partition is stable, with no count of rounds that depends on the size,
+//! and the colors depend on the structure of the rows only, not on the names.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+use zed_tests::instances::Rng;
+use zed_tests::scaling;
+use zedc::store::presburger::{Atom, Con, Lin, Rel, colors};
+
+fn var(name: &str) -> Atom {
+    Atom::Sym(Arc::from(name))
+}
+
+/// `Σ k·x + c >= 0`, or `== 0` when `eq`, over the named variables.
+fn row(terms: &[(&str, i128)], c: i128, eq: bool) -> Con {
+    Con {
+        lin: Lin {
+            terms: terms.iter().map(|(a, k)| (var(a), (*k).into())).collect(),
+            constant: c.into(),
+        },
+        rel: if eq { Rel::Eq } else { Rel::Ge },
+    }
+}
+
+fn names(n: usize, prefix: &str) -> Vec<String> {
+    (0..n).map(|i| format!("{prefix}{i}")).collect()
+}
+
+/// A pipeline of `n` stages, `stage[i] + 2·stage[i+1] >= 1`: each stage is told apart from the
+/// others by its distance from the two ends, which takes about n/2 rounds of comparison to see.
+fn pipeline(n: usize) -> Vec<Con> {
+    let s = names(n, "stage");
+    (0..n - 1)
+        .map(|i| row(&[(&s[i], 1), (&s[i + 1], 2)], -1, false))
+        .collect()
+}
+
+/// A ring of `n` buffers, `buf[i] + buf[i+1] <= 8` around the ring: every buffer is like every
+/// other.
+fn ring(n: usize) -> Vec<Con> {
+    let b = names(n, "buf");
+    (0..n)
+        .map(|i| row(&[(&b[i], -1), (&b[(i + 1) % n], -1)], 8, false))
+        .collect()
+}
+
+/// `rows` rows over `n` variables, each of two or three terms with coefficients in -3..=3,
+/// constants in -4..=4, an equality one time in four.
+fn random(rng: &mut Rng, n: usize, rows: usize, prefix: &str) -> Vec<Con> {
+    let v = names(n, prefix);
+    (0..rows)
+        .map(|_| {
+            let mut t: BTreeMap<&str, i128> = BTreeMap::new();
+            for _ in 0..2 + rng.below(2) {
+                let k = rng.int(-3, 3) as i128;
+                if k != 0 {
+                    t.insert(&v[rng.below(n)], k);
+                }
+            }
+            let t: Vec<(&str, i128)> = t.into_iter().collect();
+            row(&t, rng.int(-4, 4) as i128, rng.below(4) == 0)
+        })
+        .collect()
+}
+
+fn distinct(c: &BTreeMap<Atom, u64>) -> usize {
+    c.values().collect::<BTreeSet<_>>().len()
+}
+
+#[test]
+fn every_stage_of_a_long_pipeline_gets_its_own_color() {
+    // Control: the old count of rounds, log n + 1, gave 17 colors at 64 and 23 at 512.
+    for n in [8, 64, 512] {
+        let c = colors(&pipeline(n));
+        assert_eq!(c.len(), n);
+        assert_eq!(distinct(&c), n, "pipeline of {n} stages");
+    }
+}
+
+#[test]
+fn every_buffer_of_a_ring_keeps_one_color() {
+    for n in [3, 64, 512] {
+        let c = colors(&ring(n));
+        assert_eq!(c.len(), n);
+        assert_eq!(distinct(&c), 1, "ring of {n} buffers");
+    }
+    // A budget shared by k counts, each count at least 0: the counts are alike.
+    let k = names(20, "count");
+    let mut rows: Vec<Con> = k.iter().map(|x| row(&[(x, 1)], 0, false)).collect();
+    let sum: Vec<(&str, i128)> = k.iter().map(|x| (x.as_str(), -1)).collect();
+    rows.push(row(&sum, 49, false));
+    assert_eq!(distinct(&colors(&rows)), 1);
+}
+
+#[test]
+fn colors_do_not_depend_on_the_names_or_the_order_of_the_rows() {
+    // Each system of five variables, under all 120 namings: a variable's color follows it.
+    let mut rng = Rng::new(0xCA_0001);
+    let base = names(5, "x");
+    // The k-th permutation, by its factorial digits.
+    let perms: Vec<Vec<usize>> = (0..120)
+        .map(|mut k: usize| {
+            let mut left: Vec<usize> = (0..5).collect();
+            let mut p = Vec::new();
+            for f in (1..=5).rev() {
+                let fact: usize = (1..f).product();
+                p.push(left.remove(k / fact));
+                k %= fact;
+            }
+            p
+        })
+        .collect();
+    assert_eq!(perms.iter().collect::<BTreeSet<_>>().len(), 120);
+    let mut ties = 0;
+    for _ in 0..40 {
+        let rows = 2 + rng.below(5);
+        let sys = random(&mut rng, 5, rows, "x");
+        let first = colors(&sys);
+        ties += usize::from(distinct(&first) < first.len());
+        for p in &perms {
+            let rename = |a: &Atom| match a {
+                Atom::Sym(s) => {
+                    let i = base.iter().position(|b| **b == **s).expect("a named variable");
+                    var(&base[p[i]])
+                }
+                other => other.clone(),
+            };
+            let mut renamed: Vec<Con> = sys
+                .iter()
+                .map(|c| Con {
+                    lin: Lin {
+                        terms: c.lin.terms.iter().map(|(a, k)| (rename(a), k.clone())).collect(),
+                        constant: c.lin.constant.clone(),
+                    },
+                    rel: c.rel,
+                })
+                .collect();
+            renamed.reverse();
+            let got = colors(&renamed);
+            for (a, k) in &first {
+                assert_eq!(got[&rename(a)], *k, "{sys:?} renamed by {p:?}");
+            }
+        }
+    }
+    // The renamings must reach systems where some variables share a color.
+    assert!(ties > 0, "no system with a tie");
+}
+
+/// The partition of the variables that rounds of plain refinement reach when run until the
+/// number of classes stops rising: a row's signature is its relation, constant and multiset of
+/// (coefficient, variable class); a variable's is its class and multiset of (row class,
+/// coefficient). Classes are numbered by sorting the signatures. Each variable maps to the least
+/// variable of its class.
+fn plain_refinement(cons: &[Con]) -> BTreeMap<Atom, Atom> {
+    let vars: Vec<Atom> = cons
+        .iter()
+        .flat_map(|c| c.lin.terms.keys().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut class: BTreeMap<Atom, usize> = vars.iter().map(|a| (a.clone(), 0)).collect();
+    let mut count = 1;
+    loop {
+        let row_sigs: Vec<_> = cons
+            .iter()
+            .map(|c| {
+                let mut t: Vec<_> = c.lin.terms.iter().map(|(a, k)| (k.clone(), class[a])).collect();
+                t.sort();
+                (c.rel, c.lin.constant.clone(), t)
+            })
+            .collect();
+        let sorted: BTreeSet<_> = row_sigs.iter().collect();
+        let row_class: Vec<usize> = row_sigs
+            .iter()
+            .map(|s| sorted.iter().position(|t| *t == s).expect("a signature"))
+            .collect();
+        let mut var_sigs: BTreeMap<&Atom, (usize, Vec<(usize, _)>)> =
+            vars.iter().map(|a| (a, (class[a], Vec::new()))).collect();
+        for (c, r) in cons.iter().zip(&row_class) {
+            for (a, k) in &c.lin.terms {
+                var_sigs.get_mut(a).expect("a variable").1.push((*r, k.clone()));
+            }
+        }
+        for s in var_sigs.values_mut() {
+            s.1.sort();
+        }
+        let sorted: BTreeSet<_> = var_sigs.values().collect();
+        let next: BTreeMap<Atom, usize> = var_sigs
+            .iter()
+            .map(|(a, s)| ((*a).clone(), sorted.iter().position(|t| *t == s).expect("a signature")))
+            .collect();
+        let rising = sorted.len() > count;
+        count = sorted.len();
+        class = next;
+        if !rising {
+            break;
+        }
+    }
+    let mut first: BTreeMap<usize, Atom> = BTreeMap::new();
+    for (a, c) in &class {
+        first.entry(*c).or_insert_with(|| a.clone());
+    }
+    class.iter().map(|(a, c)| (a.clone(), first[c].clone())).collect()
+}
+
+#[test]
+fn the_partition_is_the_one_plain_refinement_reaches() {
+    let mut rng = Rng::new(0xCA_0003);
+    for i in 0..300 {
+        let n = 2 + rng.below(12);
+        let rows = 1 + rng.below(2 * n);
+        let sys = random(&mut rng, n, rows, "y");
+        let c = colors(&sys);
+        let mut first: BTreeMap<u64, Atom> = BTreeMap::new();
+        for (a, k) in &c {
+            first.entry(*k).or_insert_with(|| a.clone());
+        }
+        let got: BTreeMap<Atom, Atom> = c.iter().map(|(a, k)| (a.clone(), first[k].clone())).collect();
+        assert_eq!(got, plain_refinement(&sys), "system {i}: {sys:?}");
+    }
+    let sys = pipeline(40);
+    assert_eq!(distinct(&colors(&sys)), 40);
+}
+
+#[test]
+fn corner_cases() {
+    // No rows, and rows with no variables.
+    assert!(colors(&[]).is_empty());
+    assert!(colors(&[row(&[], 3, false), row(&[], 0, true)]).is_empty());
+    // One variable.
+    let one = colors(&[row(&[("n", 1)], 0, false)]);
+    assert_eq!(one.len(), 1);
+    // Duplicate rows: as many copies of every row change no color class.
+    let sys = pipeline(30);
+    let twice: Vec<Con> = sys.iter().chain(sys.iter()).cloned().collect();
+    assert_eq!(distinct(&colors(&twice)), 30);
+    // Two variables alike in a row written twice stay alike.
+    let pair = row(&[("lo", 1), ("hi", 1)], -2, false);
+    let c = colors(&[pair.clone(), pair]);
+    assert_eq!(distinct(&c), 1);
+    // The coefficient and the relation tell variables apart.
+    let c = colors(&[row(&[("a", 1), ("b", 2)], 0, false)]);
+    assert_eq!(distinct(&c), 2);
+    let c = colors(&[row(&[("a", 1)], 0, true), row(&[("b", 1)], 0, false)]);
+    assert_eq!(distinct(&c), 2);
+}
+
+#[test]
+fn refinement_scales() {
+    let n = 2_000;
+    let chains = (pipeline(n), pipeline(scaling::FACTOR * n));
+    scaling::check("colors of a pipeline", n, |m| {
+        drop(colors(if m == n { &chains.0 } else { &chains.1 }));
+    });
+    let mut rng = Rng::new(0xCA_0002);
+    let sparse = (
+        random(&mut rng, n, 2 * n, "v"),
+        random(&mut rng, scaling::FACTOR * n, 2 * scaling::FACTOR * n, "v"),
+    );
+    scaling::check("colors of a random sparse system", n, |m| {
+        drop(colors(if m == n { &sparse.0 } else { &sparse.1 }));
+    });
+}

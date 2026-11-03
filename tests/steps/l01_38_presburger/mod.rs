@@ -10,6 +10,7 @@
 //! answer. `omega` holds the solver's corner cases, and `repair` the greedy
 //! search over disjunctions and its repair of one disjunct.
 
+mod canonical;
 mod checker;
 mod controls;
 mod deep;
