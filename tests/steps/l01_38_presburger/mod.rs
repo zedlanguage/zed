@@ -7,7 +7,8 @@
 //! checks the translation, the Omega test, the projection and entailment against the
 //! interpreter at every point of a window, and `controls` checks that a relation of any size is decided, that a question outside
 //! the polynomial fragment is refused, and that each check of `random` rejects a wrong
-//! answer. `omega` holds the solver's corner cases.
+//! answer. `omega` holds the solver's corner cases, and `repair` the greedy
+//! search over disjunctions and its repair of one disjunct.
 
 mod checker;
 mod controls;
@@ -17,6 +18,7 @@ mod omega;
 mod oracle;
 mod preimage;
 pub(crate) mod random;
+mod repair;
 pub(crate) mod scaling;
 mod stages;
 mod tight;

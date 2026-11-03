@@ -120,7 +120,8 @@ fn bits(k: usize, lo: i64, hi: i64) -> Domains {
 /// - the probe spelled otherwise: guard `i > j-1`, `j <= i`, `i < j` with the arms swapped,
 ///   `1 + t`, `t - (-1)`, an input the chain does not read;
 /// - `conj`: `t1 >= 0 && ... && tk >= 0`, every term of the chain asked;
-/// - `cross`: `t0 = m` with the guards on `i`, two inputs;
+/// - `cross`: `t0 = m` with the guards on `i`, two inputs in `[-50, 50]`; `cross_live` with
+///   both in `[-k, k]`, and `cross_dead` in `[2-k, k-2]`, so its last two guards always hold;
 /// - guards `i != j`, `abs(i) >= j` and `i mod 7 == j mod 7`;
 /// - else arms that are not translations: `j - t`, `3t - 1`, `min(t + 1, 100)`, `-2t`,
 ///   `0 - (t + 1)`;
@@ -223,8 +224,12 @@ fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
             let ds = if name == "conj" { narrow() } else { live() };
             (all, ds, yes)
         }
-        "cross" | "cross_live" => {
-            let w = if name == "cross" { 50 } else { ki };
+        "cross" | "cross_live" | "cross_dead" => {
+            let w = match name {
+                "cross" => 50,
+                "cross_live" => ki,
+                _ => ki - 2,
+            };
             let ds = over(&[("i", IntervalSet::of(-w, w)), ("m", IntervalSet::of(-w, w))]);
             (ge0(chain(k, var("m"), ge_i, plus(|_| 1))), ds, yes)
         }
@@ -1350,4 +1355,66 @@ fn remainders_many_classes_cost_one_transfer_each() {
             check(&t, &ds, &d, &p, (-60, 60));
         }
     });
+}
+
+/// The chains on two inputs keep the boxes they had before LIN-cross, whose repair of the
+/// search over disjunctions changed only its cost: `m` in `[-min(k, 50), 50]` on `cross`, both
+/// inputs in `[-k, k]` on `cross_live` and in `[2-k, k-2]` on `cross_dead` (from `k = 5`,
+/// where its box stops being exact, to 13, as it costs `k^2.4`: ledger LIN-probe). Each box is
+/// inexact with its relation kept, and no point within the interpreter's window meets the
+/// demand outside it. Before the change and after, the whole preimage, relation included, was
+/// equal on every family of this file (running log, LIN-cross).
+#[test]
+fn chains_on_two_inputs_keep_their_boxes() {
+    on_big_stack(|| {
+        for k in [1, 2, 3, 5, 8, 13, 21, 34, 48, 50, 51] {
+            for name in ["cross", "cross_live", "cross_dead"] {
+                if name == "cross_dead" && !(5..=13).contains(&k) {
+                    continue;
+                }
+                let (t, ds, d) = family(name, k);
+                let p = preimage(&t, &ds, &d);
+                let what = format!("{name} k={k}");
+                let ki = k as i64;
+                let (i, m) = match name {
+                    "cross" => (IntervalSet::of(-50, 50), IntervalSet::of(-ki.min(50), 50)),
+                    "cross_live" => (IntervalSet::of(-ki, ki), IntervalSet::of(-ki, ki)),
+                    _ => (
+                        IntervalSet::of(2 - ki, ki - 2),
+                        IntervalSet::of(2 - ki, ki - 2),
+                    ),
+                };
+                assert_eq!((&p.domains["i"], &p.domains["m"]), (&i, &m), "{what}");
+                assert!(!p.exact && p.relation.is_some(), "{what}: {p:?}");
+                if k <= 13 {
+                    assert!(!refuted(&t, &ds, &d, &p.domains, p.exact), "{what}");
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn chain_cross_live_scales() {
+    scales("cross_live", 32);
+}
+
+/// `cross` with every guard inside the inputs' width, so that the relation is asked at both
+/// sizes (from `k = 100` on, the transfer's box is exact and the relation is not needed).
+#[test]
+fn chain_cross_within_its_width_scales() {
+    scales("cross", 6);
+}
+
+/// `cross_dead` (`cross` with its inputs two narrower than the chain is long) has its only
+/// point outside the demand at an end, `i = k - 2` and `m = 2 - k`. The greedy search over
+/// disjunctions keeps `i` where the first solution put it and fails, and the search then tests
+/// each of the `2k` disjuncts in turn with a full propagation, about `k^2.4` in all (0.26,
+/// 1.40, 7.2 and 39.4 G instructions at `k` = 10, 18, 34, 66). The same holds of `cross` from
+/// `k = 51` to `99` (22.9 G at 52 against 1.09 G at 48): the jump the ledger reports is the
+/// guards `j > 50` that no input meets, not a size where the method changes.
+#[test]
+#[ignore = "ledger LIN-probe: the failed-literal search on a chain of guards that no input meets"]
+fn chain_cross_dead_scales() {
+    scales("cross_dead", 8);
 }

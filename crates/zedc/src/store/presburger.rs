@@ -736,13 +736,10 @@ fn specialize_con(c: &Con, free: &BTreeSet<Atom>, model: &Model) -> Con {
         rel: c.rel,
     }
 }
-/// The variables of `extra` re-solved with their neighbors fixed at `model`.
-fn local_repair(
-    acc: &[Con],
-    by_atom: &BTreeMap<Atom, Vec<usize>>,
-    model: &Model,
-    extra: &[Con],
-) -> Option<Model> {
+/// The variables of `extra` re-solved with their neighbors fixed at `model`: with `extra`, the
+/// constraints taken so far that link a variable of `extra` to others, specialized at `model`,
+/// and each variable's bounds.
+fn local_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> Option<Model> {
     let seed: BTreeSet<Atom> = extra
         .iter()
         .flat_map(|c| c.lin.terms.keys().cloned())
@@ -751,12 +748,13 @@ fn local_repair(
         return None;
     }
     let mut ids = BTreeSet::new();
+    let mut local: Vec<Con> = extra.to_vec();
     for a in &seed {
-        if let Some(v) = by_atom.get(a) {
+        if let Some(v) = near.by_atom.get(a) {
             ids.extend(v.iter().copied());
         }
+        near.bounds(a, &mut local);
     }
-    let mut local: Vec<Con> = extra.to_vec();
     for id in ids {
         local.push(specialize_con(&acc[id], &seed, model));
     }
@@ -785,11 +783,9 @@ fn pick(p: &Parts) -> Result<Model, Refusal> {
     let mut model = solve(&p.cons, true)?.ok_or(Refusal::Disjuncts)?;
     let mut acc = Linked::of(p.cons.clone());
     let mut queue = p.ors.clone();
-    let mut by_atom: BTreeMap<Atom, Vec<usize>> = BTreeMap::new();
+    let mut near = Near::default();
     for (i, c) in acc.cons.iter().enumerate() {
-        for a in c.lin.terms.keys() {
-            by_atom.entry(a.clone()).or_default().push(i);
-        }
+        near.add(i, c);
     }
     while let Some(ds) = queue.pop() {
         let mut taken = None;
@@ -802,7 +798,7 @@ fn pick(p: &Parts) -> Result<Model, Refusal> {
         }
         if taken.is_none() {
             for d in &ds {
-                if let Some(m) = local_repair(&acc.cons, &by_atom, &model, &lits(d)) {
+                if let Some(m) = local_repair(&acc.cons, &near, &model, &lits(d)) {
                     taken = Some((d.clone(), Some(m)));
                     break;
                 }
@@ -831,15 +827,78 @@ fn pick(p: &Parts) -> Result<Model, Refusal> {
         let mut q = Parts::default();
         q.add(d);
         for c in q.cons {
-            let i = acc.cons.len();
-            for a in c.lin.terms.keys() {
-                by_atom.entry(a.clone()).or_default().push(i);
-            }
+            near.add(acc.cons.len(), &c);
             acc.add(c);
         }
         queue.extend(q.ors);
     }
     Ok(model)
+}
+
+/// The constraints taken so far by [`pick`], indexed for [`local_repair`]: each constraint of
+/// two or more atoms under each of its atoms, and the constraints of one atom as that atom's
+/// bounds. A repair then costs the constraints that link its atoms to others and two bounds
+/// for each atom, not every constraint an atom has had alone: on a chain of `k` guards
+/// `i >= j` on one input, listing them made the repair of each of the `k` levels cost `k`.
+#[derive(Default)]
+struct Near {
+    by_atom: BTreeMap<Atom, Vec<usize>>,
+    /// The least and the greatest value of an atom; a least above the greatest leaves none.
+    one: BTreeMap<Atom, (Option<Int>, Option<Int>)>,
+}
+
+impl Near {
+    /// Adds the constraint `c`, numbered `i` among those taken.
+    fn add(&mut self, i: usize, c: &Con) {
+        let mut terms = c.lin.terms.iter();
+        let (Some((a, coef)), None) = (terms.next(), terms.next()) else {
+            for a in c.lin.terms.keys() {
+                self.by_atom.entry(a.clone()).or_default().push(i);
+            }
+            return;
+        };
+        // `coef·a + k` compared with zero.
+        let k = &c.lin.constant;
+        let m = coef.abs();
+        let (lo, hi) = match c.rel {
+            // `a >= -k / coef`, rounded up.
+            Rel::Ge if coef.is_positive() => (Some(-&k.div_floor(&m)), None),
+            // `a <= k / |coef|`, rounded down.
+            Rel::Ge => (None, Some(k.div_floor(&m))),
+            Rel::Eq if k.mod_floor(&m).is_zero() => {
+                let v = -&k.div_floor(&m);
+                let v = if coef.is_positive() { v } else { -&v };
+                (Some(v.clone()), Some(v))
+            }
+            // No integer `a` has `coef·a == -k`.
+            Rel::Eq => (Some(Int::ONE), Some(Int::ZERO)),
+        };
+        let (l, h) = self.one.entry(a.clone()).or_default();
+        if let Some(lo) = lo
+            && l.as_ref().is_none_or(|l| lo > *l)
+        {
+            *l = Some(lo);
+        }
+        if let Some(hi) = hi
+            && h.as_ref().is_none_or(|h| hi < *h)
+        {
+            *h = Some(hi);
+        }
+    }
+
+    /// Pushes the bounds of `a` onto `out` as constraints.
+    fn bounds(&self, a: &Atom, out: &mut Vec<Con>) {
+        let Some((lo, hi)) = self.one.get(a) else {
+            return;
+        };
+        let x = Lin::atom(a.clone());
+        if let Some(lo) = lo {
+            out.push(Con::ge(&x, &Lin::constant(lo.clone())));
+        }
+        if let Some(hi) = hi {
+            out.push(Con::ge(&Lin::constant(hi.clone()), &x));
+        }
+    }
 }
 
 /// Constraints grouped by the variables they share, so that a question about a few variables
