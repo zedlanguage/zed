@@ -356,20 +356,31 @@ fn tests_read_through_the_functions_they_call_scale() {
             super::arms(&chains[&k], &x);
         },
     );
-    // The preimage still recurses on the depth of the term (item T2-mid), so the chain stays
-    // within what a test thread's stack holds.
+    // The preimage still recurses on the depth of the term (item T2-mid), about 4 KB a level
+    // here, so the nest runs on a stack of its own: at 256 levels it needs about as much as a
+    // test thread holds (2 MiB).
     let nests: BTreeMap<usize, Term> = [32, 256]
         .into_iter()
         .map(|k| (k, nested_helpers(k)))
         .collect();
-    scaling::check_order(
-        "one test through k functions, each calling the two before it",
-        32,
-        1,
-        |k| {
-            super::arms(&nests[&k], &x);
-        },
-    );
+    on_big_stack(|| {
+        scaling::check_order(
+            "one test through k functions, each calling the two before it",
+            32,
+            1,
+            |k| {
+                super::arms(&nests[&k], &x);
+            },
+        )
+    });
+}
+
+/// Runs `f` on a thread with a stack deep enough for the nests above (item T2-mid).
+fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|s| {
+        let thread = std::thread::Builder::new().stack_size(1 << 28);
+        thread.spawn_scoped(s, f).unwrap().join().unwrap()
+    })
 }
 
 /// `xi - yi >= 1`, or with `or` the test `xi - yi >= 1 || yi - xi >= 1`, for `i` below `k`:

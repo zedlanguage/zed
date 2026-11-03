@@ -83,10 +83,10 @@ fn an_arm_or_a_second_input_past_max() {
     );
     let t = prim(Prim::Eq, t, int(MAX));
     let ds = doms(&[("y", Some(-10), Some(10))]);
-    // Sound, not exact: the box cannot leave out 3 alone.
+    // Exact: the arm at `y = 3` is `MAX`, and past it `MAX + 1` and more differ from `MAX`.
     assert_eq!(
         checked(&t, &ds, &Demand::Bool(false), (-10, 10)),
-        "y [-10..=10]; necessary"
+        "y [-10..=2, 4..=10]; exact"
     );
     let sum = prim(Prim::Add, prim(Prim::Add, var("x"), var("y")), int(MAX - 3));
     let t = prim(Prim::Eq, sum, int(MAX));

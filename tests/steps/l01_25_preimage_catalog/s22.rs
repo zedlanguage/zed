@@ -1201,11 +1201,10 @@ fn a_chain_on_two_inputs_below_its_domains_width_ends() {
 
 /// `3 * t - 1` in every else arm, over `i` in `[-24, -21]` and `[-15, -4]` (and `5` in the
 /// `five` cases), where every guard `i >= j` with `j >= 1` fails on the negative inputs, so
-/// `t_k = 3^k i - (3^k - 1) / 2`. At `i = -24` that leaves `i64` from `k = 37`, and the
-/// transfer rounds there. Its empty preimage of `t_k >= 0` was called inexact for the rounding,
-/// so the preimage went on to list the box, and asked `stage::ends`, which walks the shared
-/// term as a tree, before it saw that the box is empty: over 60 s at `k = 37`. An empty box is
-/// now read as exact before `ends` is asked; it is the one box here that is listed.
+/// `t_k = 3^k i - (3^k - 1) / 2`. At `i = -24` that leaves `i64` from `k = 37`, where the
+/// transfer once rounded and the empty preimage of `t_k >= 0` was then listed, after a walk of
+/// the shared term as a tree that took over 60 s at `k = 37`. The ends are now kept exactly
+/// past `i64`, so every preimage here is exact without listing the box.
 #[test]
 fn a_chain_that_leaves_i64_keeps_its_exact_preimage() {
     on_big_stack(|| {
@@ -1221,7 +1220,7 @@ fn a_chain_that_leaves_i64_keeps_its_exact_preimage() {
                 let p = preimage(&t, &ds, &d);
                 assert_eq!(p.domains["i"], want, "{name} k={k}: {p:?}");
                 assert!(p.exact, "{name} k={k}: {p:?}");
-                assert_eq!(p.enumerated, k >= 37 && name == "t3_gaps", "{name} k={k}");
+                assert!(!p.enumerated, "{name} k={k}");
                 assert!(
                     p.stops.is_empty() && p.relation.is_none() && p.refusal.is_none(),
                     "{name} k={k}: {p:?}"

@@ -129,9 +129,8 @@ fn the_domain_of_the_input_meets_the_reflection() {
     );
 }
 
-/// The ends of `i64`: `i64::MAX - x` and `i64::MIN - x`. A reflected end past `i64` is read as
-/// the infinity on its side or rounded outward, so the box keeps every point that meets the
-/// demand; within `i64` it is exact.
+/// The ends of `i64`: `i64::MAX - x` and `i64::MIN - x`. Ends are integers of any size, so a
+/// reflected end past `i64` is kept as it is and the box is exact on both sides of `i64`.
 #[test]
 fn the_ends_of_i64() {
     let (max, min) = (i64::MAX, i64::MIN);
@@ -146,10 +145,9 @@ fn the_ends_of_i64() {
     // MIN - x in [MIN, MIN + 2] for x in [-2, 0].
     let p = at(min, fin(&[(min, min + 2)]));
     assert_eq!(shown(&p), "x [-2..=0]; exact");
-    // MAX - x in [MIN, -1] for x >= MAX + 1, past `i64`: the lower end is rounded down to
-    // MAX, whose ray holds every integer beyond it, and the box is not exact.
+    // MAX - x in [.., -1] for x >= MAX + 1, past `i64`: the end MAX + 1 is kept exactly.
     let p = at(max, pieces(&[(End::NegInf, End::of(-1))]));
-    assert_eq!(shown(&p), "x [9223372036854775807..]; necessary");
+    assert_eq!(shown(&p), "x [9223372036854775808..]; exact");
     // MIN - x for z a ray down to MIN: x >= 0 at the top end.
     let p = at(min, pieces(&[(End::NegInf, End::of(min))]));
     assert_eq!(p.domains["x"], pieces(&[(End::of(0), End::PosInf)]));
@@ -277,9 +275,10 @@ fn reflected_arms_under_a_point_nothing_and_everything() {
 /// `i64::MAX - i` with the else arm `i64::MAX - (i + 3)`, and `i64::MIN - i` with the else arm
 /// `i64::MIN - (i - 3)`. Over the inputs where both arms stay in `i64`, `[-3, 60]` and
 /// `[-60, 0]`, the `if` is summarized with `c` at an end of `i64`: no value lies near a demand
-/// near zero, and every integer takes the whole domain. Over `[-60, 60]` an arm leaves `i64`,
-/// the summary gives up on the `if` and the box of the transfer is listed; a value past `i64`
-/// meets a demand only when the demand is unbounded on its side.
+/// near zero, and every integer takes the whole domain. Over `[-60, 60]` an arm leaves `i64`
+/// and the summary gives up on the `if`; the transfer keeps the values past `i64` exactly, so
+/// its box is exact and is not listed. A value past `i64` meets a demand only when the demand
+/// is unbounded on its side.
 #[test]
 fn reflected_arms_at_the_ends_of_i64() {
     let z = fin(&[(-30, -20), (-1, 1), (4, 9)]);
@@ -296,7 +295,7 @@ fn reflected_arms_at_the_ends_of_i64() {
         summarized(&max_t, all.clone()),
         summarized(&min_t, all),
     ];
-    let (none, listed) = ("i []; exact", "i []; exact; enumerated");
+    let none = "i []; exact";
     let whole = "i [-60..=60]; exact";
     assert_eq!(
         got,
@@ -305,8 +304,8 @@ fn reflected_arms_at_the_ends_of_i64() {
             none,
             "i [-3..=60]; exact",
             "i [-60..=0]; exact",
-            listed,
-            listed,
+            none,
+            none,
             whole,
             whole
         ]

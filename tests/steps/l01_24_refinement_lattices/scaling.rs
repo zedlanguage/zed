@@ -549,7 +549,11 @@ fn equality_over_a_wide_base_scales_with_its_bits() {
             &Num::from(2).pow(1000 * n32) * &Num::from(3).pow(1000),
         )
     };
-    let n = 8192;
+    // Both sizes lie past the size at which num-bigint divides by Burnikel and Ziegler's method
+    // in place of long division, so that its change of method is not read as the growth of
+    // `strip` (from 8192 to 65536 bits the bytes allocated grow 26.3 times; from 65536 to
+    // 524288, 17.2 times).
+    let n = 65536;
     let (small, large) = (pair(n), pair(scaling::FACTOR * n));
     scaling::check(
         "(2^n * 3) ** 1000 against 2 ** (1000 n) * 3 ** 1000: n bits",
