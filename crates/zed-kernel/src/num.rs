@@ -154,13 +154,33 @@ impl Rat {
         self.pows.is_empty()
     }
 
-    /// The integer it is, built. It must be an integer.
-    pub fn to_integer(&self) -> BigInt {
+    /// The integer it is, built, or [`TooLarge`] when the system refuses the memory for it.
+    /// It must be an integer.
+    pub fn to_integer(&self) -> Result<BigInt, TooLarge> {
+        room(width(
+            &self.num,
+            self.pows.iter().map(|(p, e)| (*p, e.magnitude())),
+        ))?;
+        Ok(self.integer_built())
+    }
+
+    /// The integer it is, built, with no check of its size. It must be an integer.
+    fn integer_built(&self) -> BigInt {
         let mut out = self.num.clone();
         for (p, e) in self.pows.iter() {
             out *= Pow::pow(BigInt::from(*p), e.magnitude());
         }
         out
+    }
+
+    /// Whether the integer it is is even: a positive power of 2, or an even coefficient. It
+    /// must be an integer.
+    pub fn is_even(&self) -> bool {
+        self.num.is_even()
+            || self
+                .pows
+                .first()
+                .is_some_and(|(p, e)| *p == 2 && e.is_positive())
     }
 
     /// The integer it is, built, unless it is surely beyond 64 bits. It must be an integer.
@@ -171,7 +191,7 @@ impl Rat {
         for (p, e) in self.pows.iter() {
             low += e * (63 - p.leading_zeros());
         }
-        (low <= BigInt::from(63)).then(|| self.to_integer())
+        (low <= BigInt::from(63)).then(|| self.integer_built())
     }
 
     /// The numerator's digits, with its sign.
@@ -195,20 +215,23 @@ impl Rat {
         digits(self.den.magnitude(), pows.collect())
     }
 
-    /// `a + b`.
-    pub fn add(&self, b: &Rat) -> Rat {
+    /// `a + b`, or [`TooLarge`] when the system refuses the memory for the part of the
+    /// operands it builds.
+    pub fn add(&self, b: &Rat) -> Result<Rat, TooLarge> {
         if self.is_plain() && b.is_plain() {
             if self.den.is_one() && b.den.is_one() {
-                return Rat::int(&self.num + &b.num);
+                return Ok(Rat::int(&self.num + &b.num));
             }
-            return Rat::new(&self.num * &b.den + &b.num * &self.den, &self.den * &b.den)
-                .expect("den > 0");
+            return Ok(
+                Rat::new(&self.num * &b.den + &b.num * &self.den, &self.den * &b.den)
+                    .expect("den > 0"),
+            );
         }
         if self.is_zero() {
-            return b.clone();
+            return Ok(b.clone());
         }
         if b.is_zero() {
-            return self.clone();
+            return Ok(self.clone());
         }
         // The common powers `g`, each prime at the lesser exponent, factor out; the rest of
         // each operand is built, at the cost of its size.
@@ -216,9 +239,12 @@ impl Rat {
         // operand above the common powers is built, at a cost proportional to the size of the
         // sum's coefficient; `10 ** 10 ** 9 + 1` builds the billion digits, while
         // `10 ** 10 ** 9 + 10 ** 10 ** 9` builds nothing. This is the cost of the output in this
-        // form, and no input is refused. Tested by `kept_powers_agree_with_the_built_value` and
-        // `close_products_compare_exactly` (COMPLEXITY.md K30). A complete solution would keep
-        // a sum of terms unbuilt, ordered and projected by bounds as products are.
+        // form, and no input is refused for its size; a part that does not fit in memory is
+        // `TooLarge`, found before building it. Tested by
+        // `kept_powers_agree_with_the_built_value`, `close_products_compare_exactly` and
+        // `a_sum_too_large_to_build_is_an_error_naming_its_size` (COMPLEXITY.md K30).
+        // A complete solution would keep a sum of terms unbuilt, ordered and projected by
+        // bounds as products are.
         let a = self.aligned(&b.pows);
         let b = b.aligned(&self.pows);
         let mut common = Vec::new();
@@ -230,13 +256,20 @@ impl Rat {
             rest_b.push((p, (eb - &g).magnitude().clone()));
             common.push((p, g));
         }
+        let sizes = [(&a.num, &rest_a, &b.den), (&b.num, &rest_b, &a.den)]
+            .map(|(n, rest, d)| width(n, rest.iter().map(|(p, e)| (*p, e))) + d.bits());
+        room(sizes[0].clone().max(sizes[1].clone()) + 1u32)?;
         let ra = &a.num * built(&rest_a);
         let rb = &b.num * built(&rest_b);
-        Rat::build(ra * &b.den + rb * &a.den, &a.den * &b.den, common)
+        Ok(Rat::build(
+            ra * &b.den + rb * &a.den,
+            &a.den * &b.den,
+            common,
+        ))
     }
 
-    /// `a - b`.
-    pub fn sub(&self, b: &Rat) -> Rat {
+    /// `a - b`, by the rule of [`Rat::add`].
+    pub fn sub(&self, b: &Rat) -> Result<Rat, TooLarge> {
         self.add(&b.neg())
     }
 
@@ -289,12 +322,13 @@ impl Rat {
 
     /// `a^e`. Powers of primes multiply their exponents, and a numerator or denominator that
     /// fits in 64 bits is factored into primes, so `10 ** 10 ** 9` is `2^(10^9) * 5^(10^9)`.
-    pub fn pow(&self, e: &BigUint) -> Rat {
+    /// [`TooLarge`] when a wider part's power is built and the system refuses the memory.
+    pub fn pow(&self, e: &BigUint) -> Result<Rat, TooLarge> {
         if e.is_zero() {
-            return Rat::int(BigInt::one());
+            return Ok(Rat::int(BigInt::one()));
         }
         if self.is_zero() {
-            return self.clone();
+            return Ok(self.clone());
         }
         let times = BigInt::from(e.clone());
         let mut pows: Vec<(u64, BigInt)> =
@@ -318,10 +352,14 @@ impl Rat {
                 // the power by building it, at a cost proportional to the result's size,
                 // where one within 64 bits is factored and kept as exponents; such a part only
                 // arises from a value built before, so its power is the size of that value
-                // times `e`. Tested by `a_power_of_a_wide_base_is_built` (COMPLEXITY.md K30).
+                // times `e`; one that does not fit in memory is `TooLarge`. Tested by
+                // `a_power_of_a_wide_base_is_built` (COMPLEXITY.md K30).
                 // A complete solution would keep an opaque base `b^e` beside the primes, with
                 // the bases made pairwise coprime by Bernstein's coprime-base algorithm.
-                None => parts[i] = BigInt::from(Pow::pow(part, e)),
+                None => {
+                    room(BigUint::from(part.bits()) * e)?;
+                    parts[i] = BigInt::from(Pow::pow(part, e));
+                }
             }
         }
         pows.sort_unstable_by_key(|(p, _)| *p);
@@ -330,45 +368,95 @@ impl Rat {
             num = -num;
         }
         // The factored primes are new: `num` and `den` held none of the listed ones.
-        Rat {
+        Ok(Rat {
             num,
             den,
             pows: pows.into_boxed_slice(),
-        }
+        })
     }
 
-    /// The Euclidean remainder of two integers, in `0 ..< |m|`; `m` is not zero. A power of
-    /// a prime is reduced by modular exponentiation, so `10 ** 10 ** 9 mod 7` builds no
-    /// large number.
-    pub fn rem_euclid(&self, m: &Rat) -> Rat {
+    /// The Euclidean remainder of two integers, in `0 ..< |m|`; `m` is not zero. An exact
+    /// division gives `0` and a dividend in `0 ..< |m|` gives itself, without building either;
+    /// otherwise a power of a prime is reduced by modular exponentiation, so `10 ** 10 ** 9 mod
+    /// 7` builds no large number. [`TooLarge`] when the divisor is built and the system
+    /// refuses the memory for it.
+    pub fn rem_euclid(&self, m: &Rat) -> Result<Rat, TooLarge> {
         if self.is_plain() && m.is_plain() {
-            return Rat::int(Euclid::rem_euclid(&self.num, &m.num));
+            return Ok(Rat::int(Euclid::rem_euclid(&self.num, &m.num)));
         }
-        let m = m.to_integer().magnitude().clone();
+        if self.divides_by(m) {
+            return Ok(Rat::int(BigInt::zero()));
+        }
+        if !self.is_negative() && *self < m.abs() {
+            return Ok(self.clone());
+        }
+        self.rem_built(m)
+    }
+
+    /// The Euclidean remainder by an `m` that does not divide this integer, found by building
+    /// `m`.
+    fn rem_built(&self, m: &Rat) -> Result<Rat, TooLarge> {
+        // Complexity tradeoff: a remainder that is neither `0` nor the dividend itself is
+        // found by building the divisor `m`, at a cost proportional to `m`'s size, which bounds
+        // the remainder's; `3 ** 10 ** 9 mod 2 ** 10 ** 9` builds `2^(10^9)`, while
+        // `10 ** 10 ** 12 mod 2 ** 10 ** 12` and `5 mod 2 ** 10 ** 12` build nothing. No input
+        // is refused for its size; one whose divisor does not fit in memory is `TooLarge`.
+        // Tested by `an_exact_division_by_a_huge_power_builds_nothing` and
+        // `kept_powers_agree_with_the_built_value` (COMPLEXITY.md K30). A complete solution
+        // would keep a residue modulo a kept power unbuilt, as `p^a mod p^b` is, which needs
+        // modular arithmetic on the kept forms.
+        let m = m.to_integer()?.magnitude().clone();
         let mut r = self.num.magnitude() % &m;
         for (p, e) in self.pows.iter() {
             r = r * BigUint::from(*p).modpow(e.magnitude(), &m) % &m;
         }
         let r = BigInt::from(r);
-        if self.is_negative() && !r.is_zero() {
+        Ok(if self.is_negative() && !r.is_zero() {
             Rat::int(BigInt::from(m) - r)
         } else {
             Rat::int(r)
-        }
+        })
     }
 
     /// The Euclidean quotient of two integers; `m` is not zero. An exact division keeps the
-    /// powers; any other builds the dividend, whose size the quotient's is near.
-    pub fn div_euclid(&self, m: &Rat) -> Rat {
+    /// powers, and a dividend smaller than `|m|` gives `0` or `±1`, building nothing; any
+    /// other builds the remainder, by the rule of [`Rat::rem_euclid`], and the dividend's part
+    /// above the powers it shares with the remainder, by the rule of [`Rat::add`].
+    pub fn div_euclid(&self, m: &Rat) -> Result<Rat, TooLarge> {
         if self.is_plain() && m.is_plain() {
-            return Rat::int(Euclid::div_euclid(&self.num, &m.num));
+            return Ok(Rat::int(Euclid::div_euclid(&self.num, &m.num)));
         }
-        let r = self.rem_euclid(m);
-        let whole = match r.is_zero() {
-            true => self.div(m),
-            false => self.sub(&r).div(m),
-        };
-        whole.expect("the divisor is not zero")
+        let q = self.div(m).expect("the divisor is not zero");
+        if q.is_integer() {
+            return Ok(q);
+        }
+        if self.abs() < m.abs() {
+            // `0 <= a < |m|` gives `0`; `-|m| < a < 0` gives `-1` toward a positive `m`.
+            let q = match (self.is_negative(), m.is_negative()) {
+                (false, _) => 0,
+                (true, false) => -1,
+                (true, true) => 1,
+            };
+            return Ok(Rat::int(BigInt::from(q)));
+        }
+        // Complexity tradeoff: a quotient that is not exact and not `0` or `±1` is found by
+        // building the remainder (`rem_built`) and the part of the dividend above the powers
+        // it shares with the remainder (`Rat::add`), at a cost proportional to the dividend's
+        // size, near the quotient's; `3 ** 10 ** 9 div 2 ** 10 ** 9` builds both, while
+        // `10 ** 10 ** 12 div 2 ** 10 ** 12` builds nothing. No input is refused for its size;
+        // one whose parts do not fit in memory is `TooLarge`. Tested by
+        // `an_exact_division_by_a_huge_power_builds_nothing` and
+        // `kept_powers_agree_with_the_built_value` (COMPLEXITY.md K30). A complete solution
+        // would keep the floor of a quotient of kept powers unbuilt, which needs the same
+        // modular arithmetic on kept forms as `rem_built`.
+        let r = self.rem_built(m)?;
+        Ok(self.sub(&r)?.div(m).expect("the divisor is not zero"))
+    }
+
+    /// Whether the integer `m` divides this integer: their quotient is an integer, found by
+    /// subtracting exponents.
+    fn divides_by(&self, m: &Rat) -> bool {
+        self.div(m).expect("the divisor is not zero").is_integer()
     }
 
     /// The same number, with each prime of `others` moved out of `num` and `den` too.
@@ -567,6 +655,41 @@ fn built(pows: &[(u64, BigUint)]) -> BigInt {
         }
     }
     BigInt::from(out)
+}
+
+/// At least the number of bits of `coef * prod p^e`, from the exponents alone: the size of
+/// building it.
+fn width<'a>(coef: &BigInt, pows: impl Iterator<Item = (u64, &'a BigUint)>) -> BigUint {
+    let mut bits = BigUint::from(coef.bits());
+    for (p, e) in pows {
+        // `p^e < 2^(e * ceil(log2 p))`.
+        bits += e * (p.ilog2() + u32::from(!p.is_power_of_two()));
+    }
+    bits
+}
+
+/// A number the evaluator must build, of at most `bits` bits, for which the system refused
+/// the memory (DESIGN.md sec:domains): the number is a value of the language, and building
+/// it is the machine's failure, not the program's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TooLarge {
+    /// At most this many bits: the size the build needs.
+    pub bits: BigUint,
+}
+
+/// `Ok` when the system gives the memory for a number of `bits` bits, asked of the allocator
+/// itself and freed at once, so the answer is the machine's and the evaluator sets no limit.
+/// A build that would ask for more than the system gives is reported before it starts, where
+/// num-bigint would abort the process.
+fn room(bits: BigUint) -> Result<(), TooLarge> {
+    let words = (&bits + 63u32) >> 6u32;
+    let given = words
+        .to_usize()
+        .is_some_and(|w| Vec::<u64>::new().try_reserve_exact(w).is_ok());
+    match given {
+        true => Ok(()),
+        false => Err(TooLarge { bits }),
+    }
 }
 
 /// The digits of `coef * prod pows`. The power of 10 they share is written as zeros, so a

@@ -886,3 +886,4 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Cow<'_, Rat>`, an operand borrowed unless it must be rebuilt over more primes | `Rat::aligned`, `Value::as_integer` | None | Zed shares values, so the function returns the operand or the rebuilt one |
 | `&dyn Fn(&BigInt, &BigUint) -> bool`, the exact test of a near-tie passed into the rounding | `bound::round`, `Quotient::floor_scaled` | None | A function value |
 | `Box<[(u64, BigInt)]>`, the primes and exponents of a number | `Rat::pows` | None | A shared list of pairs |
+| `Vec::<u64>::try_reserve_exact`, asking the allocator for a block and freeing it at once, to learn before a build whether its memory exists | `num::room` | Zed has no fallible allocation a program can ask for | A runtime word that reports whether the allocator grants `n` words, failing as an error atom rather than stopping the process |

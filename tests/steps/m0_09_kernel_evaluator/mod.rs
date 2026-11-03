@@ -986,7 +986,7 @@ fn a_power_by_a_huge_exponent() {
     assert_eq!(eval(&to_huge(1)).unwrap(), Value::Int(1));
     assert_eq!(eval(&to_huge(-1)).unwrap(), Value::Int(1));
     assert_eq!(eval(&bin(Prim::Pow, lit(-1), odd)).unwrap(), Value::Int(-1));
-    // `2^100` is even, so the sign drops; `2^100 = 1 (mod 2)` and `= 1 (mod 3)`.
+    // `2^100` is even, so the sign drops; `2^100 = 0 (mod 2)` and `= 1 (mod 3)`.
     let two = eval(&to_huge(2)).unwrap();
     assert_eq!(eval(&to_huge(-2)).unwrap(), two);
     let below = bin(Prim::Pow, lit(2), sub(huge.clone(), lit(1)));
@@ -1004,4 +1004,69 @@ fn a_power_by_a_huge_exponent() {
         eval(&bin(Prim::Mod, to_huge(3), lit(4))).unwrap(),
         Value::Int(1)
     );
+}
+
+/// `0`, `1` and `-1` raised to an exponent that is itself a power past any machine word,
+/// `2 ** 2 ** 33`, read the exponent's parity from its kept form and build nothing.
+#[test]
+fn a_unit_to_a_kept_power_builds_no_exponent() {
+    let exp = bin(Prim::Pow, lit(2), bin(Prim::Pow, lit(2), lit(33)));
+    let pow = |x: i64, e: &Term| bin(Prim::Pow, lit(x), e.clone());
+    assert_eq!(eval(&pow(1, &exp)).unwrap(), Value::Int(1));
+    assert_eq!(eval(&pow(0, &exp)).unwrap(), Value::Int(0));
+    assert_eq!(eval(&pow(-1, &exp)).unwrap(), Value::Int(1));
+    // `3^(2^33)` is odd: its kept form has no power of 2 and an odd coefficient.
+    let odd3 = bin(Prim::Pow, lit(3), bin(Prim::Pow, lit(2), lit(33)));
+    assert_eq!(eval(&pow(-1, &odd3)).unwrap(), Value::Int(-1));
+}
+
+/// A sum whose operands share no powers builds them: `2^(2^100) + 1` needs `2^100` bits,
+/// more than any machine's memory, and `2^(2^60) + 1` needs `2^57` bytes, more than any
+/// address space. Each stops the run with an error naming the size, and the process goes on.
+#[test]
+fn a_sum_too_large_to_build_is_an_error_naming_its_size() {
+    for (k, bits) in [
+        (100u32, "1267650600228229401496703205379"),
+        (60, "1152921504606846979"),
+    ] {
+        let huge = bin(Prim::Pow, lit(2), bin(Prim::Pow, lit(2), lit(k as i64)));
+        let err = eval(&add(huge.clone(), lit(1))).unwrap_err();
+        assert!(
+            matches!(&err, KernelError::NumberTooLarge { op: "+", .. }),
+            "{err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "`+` must build a number of up to {bits} bits in full, and the system refused \
+                 the memory for it; the number is exact and has no size limit, but this \
+                 machine cannot hold its digits"
+            )
+        );
+        // The same number is a value while it is kept: compared, multiplied, divided exactly.
+        let half = bin(Prim::IntDiv, huge.clone(), lit(2));
+        assert_eq!(
+            eval(&bin(Prim::Lt, half.clone(), huge.clone())).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval(&bin(Prim::Mod, huge.clone(), lit(2))).unwrap(),
+            Value::Int(0)
+        );
+        // A sum of two kept powers builds only what is above the powers they share: 1 + 2.
+        let upper = bin(
+            Prim::Pow,
+            lit(2),
+            add(bin(Prim::Pow, lit(2), lit(k as i64)), lit(1)),
+        );
+        assert_eq!(
+            eval(&bin(
+                Prim::Eq,
+                add(huge.clone(), upper),
+                bin(Prim::Mul, lit(3), huge.clone())
+            ))
+            .unwrap(),
+            Value::Bool(true)
+        );
+    }
 }

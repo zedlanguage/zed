@@ -38,6 +38,15 @@ pub enum KernelError {
         /// The undefined keys, in order.
         keys: Vec<crate::value::Value>,
     },
+    /// An arithmetic operation had to build a number in full, of at most `bits` bits, and the
+    /// system refused the memory for it (sec:domains says when a number is built). The number
+    /// is a value of the language; this evaluator cannot run the program on this machine.
+    NumberTooLarge {
+        /// The operator: `+`, `-`, `div`, `mod` or `**`.
+        op: &'static str,
+        /// At most this many bits: the size of the number to build.
+        bits: num_bigint::BigUint,
+    },
     /// `++` of two strings whose lengths in bytes add up past `usize::MAX`, the most a length
     /// holds: the joined string's length is not representable, whatever memory there is.
     StringTooLong {
@@ -77,6 +86,12 @@ impl fmt::Display for KernelError {
                 }
                 write!(f, " depend on each other")
             }
+            KernelError::NumberTooLarge { op, bits } => write!(
+                f,
+                "`{op}` must build a number of up to {bits} bits in full, and the system \
+                 refused the memory for it; the number is exact and has no size limit, but this \
+                 machine cannot hold its digits"
+            ),
             KernelError::StringTooLong { left, right } => write!(
                 f,
                 "`++` cannot join a string of {left} bytes to one of {right} bytes: the result \

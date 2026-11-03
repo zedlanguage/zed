@@ -1982,8 +1982,9 @@ fn as_key(k: &Value) -> Cow<'_, Value> {
 }
 
 /// An integer `+`, `-`, `*`, `div`, `mod` or `**` of two integers, either of either width:
-/// in a machine word when the result fits, else unbounded. `None` for a negative power.
-fn int_binary(p: Prim, a: &Value, b: &Value) -> Option<Value> {
+/// in a machine word when the result fits, else unbounded. `None` for a negative power;
+/// [`KernelError::NumberTooLarge`] when a number it must build does not fit in memory.
+fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelError> {
     if let (Value::Int(x), Value::Int(y)) = (a, b) {
         let fast = match p {
             Prim::Add => x.checked_add(*y),
@@ -1995,24 +1996,54 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Option<Value> {
             _ => None,
         };
         if let Some(n) = fast {
-            return Some(Value::Int(n));
+            return Ok(Some(Value::Int(n)));
         }
     }
     let x = a.as_integer().expect("an integer");
     let y = b.as_integer().expect("an integer");
     if matches!(p, Prim::IntDiv | Prim::Mod) && y.is_zero() {
-        return Some(Value::atom("divByZero"));
+        return Ok(Some(Value::atom("divByZero")));
     }
     let r = match p {
         Prim::Add => x.add(&y),
         Prim::Sub => x.sub(&y),
-        Prim::Mul => x.mul(&y),
+        Prim::Mul => Ok(x.mul(&y)),
         Prim::IntDiv => x.div_euclid(&y),
         Prim::Mod => x.rem_euclid(&y),
-        _ if y.is_negative() => return None,
-        _ => x.pow(y.to_integer().magnitude()),
+        _ if y.is_negative() => return Ok(None),
+        // `0`, `1` and `-1` to any power are read from the exponent's sign and parity, so
+        // `1 ** 2 ** 2 ** 33` builds no exponent.
+        _ => match a {
+            Value::Int(u @ -1..=1) => {
+                let one = *u == 1 || (*u == -1 && y.is_even());
+                return Ok(Some(Value::Int(match (*u, y.is_zero()) {
+                    (_, true) => 1,
+                    (0, false) => 0,
+                    _ if one => 1,
+                    _ => -1,
+                })));
+            }
+            // Any other base's power is at least `2^y`, kept with `y` as its exponent, so
+            // building `y` costs the size of the result's own form.
+            _ => y.to_integer().and_then(|e| x.pow(e.magnitude())),
+        },
     };
-    Some(Value::integer(r))
+    match r {
+        Ok(r) => Ok(Some(Value::integer(r))),
+        Err(e) => Err(too_large(p, e)),
+    }
+}
+
+/// The error for a number that `p` must build and the system has no memory for.
+fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
+    let op = match p {
+        Prim::Add => "+",
+        Prim::Sub => "-",
+        Prim::IntDiv => "div",
+        Prim::Mod => "mod",
+        _ => "**",
+    };
+    KernelError::NumberTooLarge { op, bits: e.bits }
 }
 
 /// A primitive on data none of which is an atom.
@@ -2036,7 +2067,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Add | Prim::Sub | Prim::Mul | Prim::IntDiv | Prim::Mod | Prim::Pow, [a, b])
             if a.number_kind() == Some(0) && b.number_kind() == Some(0) =>
         {
-            match int_binary(p, a, b) {
+            match int_binary(p, a, b)? {
                 Some(v) => v,
                 None => return ty(&vals),
             }
@@ -2050,13 +2081,13 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             let r = match p {
                 Prim::Add => a.add(b),
                 Prim::Sub => a.sub(b),
-                Prim::Mul => a.mul(b),
+                Prim::Mul => Ok(a.mul(b)),
                 _ => match a.div(b) {
-                    Some(r) => r,
+                    Some(r) => Ok(r),
                     None => return Ok(Value::atom("divByZero")),
                 },
             };
-            Value::rat(r)
+            Value::rat(r.map_err(|e| too_large(p, e))?)
         }
         (Prim::Neg, [Value::Rat(a)]) => Value::rat(a.neg()),
         (Prim::Add, [Float(a), Float(b)]) => Value::float(a.get() + b.get()),
