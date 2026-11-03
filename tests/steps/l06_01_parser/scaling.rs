@@ -25,21 +25,28 @@ fn parsed(text: String) -> Parsed {
     Parsed { text, tokens, tree }
 }
 
-/// Builds, formats and resolves the unit `p`, and drops what it built. Resolution refuses
-/// every form of this step; the refusals are part of the work.
-fn pass(p: &Parsed) {
+/// Builds, formats if `formatted`, and resolves the unit `p`, and drops what it built.
+/// Resolution refuses every form of this step; the refusals are part of the work.
+fn pass(p: &Parsed, formatted: bool) {
     let stmts = unit(&p.text, &p.tokens, &p.tree).unwrap();
-    std::hint::black_box(format(&p.text, &p.tokens, &stmts));
+    if formatted {
+        std::hint::black_box(format(&p.text, &p.tokens, &stmts));
+    }
     assert!(resolve(&stmts).is_err());
+}
+
+/// The units `make(base)` and `make(8 * base)`, parsed.
+fn units(base: usize, make: impl Fn(usize) -> String) -> HashMap<usize, Parsed> {
+    [base, 8 * base]
+        .into_iter()
+        .map(|n| (n, parsed(make(n))))
+        .collect()
 }
 
 /// Checks that `pass` over `make(n)` is linear in `n`, from `n` = `base`.
 fn linear(what: &str, base: usize, make: impl Fn(usize) -> String) {
-    let units: HashMap<usize, Parsed> = [base, 8 * base]
-        .into_iter()
-        .map(|n| (n, parsed(make(n))))
-        .collect();
-    scaling::check(what, base, |n| pass(&units[&n]));
+    let units = units(base, make);
+    scaling::check(what, base, |n| pass(&units[&n], true));
 }
 
 /// `f(n) = loop t { x0' = x0 + t with x0 = 0; until x1' > n; … };`, a loop body of `n`
@@ -68,9 +75,20 @@ fn nested(n: usize) -> String {
     format!("f(n) = {opens}break n;{};\n", " };".repeat(n - 1) + " }")
 }
 
+/// Building, resolving and dropping are linear in the depth. The formatter writes each loop on
+/// its own lines, indented by its depth, so its text is of order n^2 and so is writing it, as
+/// for any nest of blocks (step L1.13).
 #[test]
 fn nested_loops_scale() {
-    linear("n nested loops", 1000, nested);
+    let units = units(1000, nested);
+    scaling::check("n nested loops, built and resolved", 1000, |n| {
+        pass(&units[&n], false)
+    });
+    scaling::check_order("n nested loops, formatted", 1000, 2, |n| {
+        let p = &units[&n];
+        let stmts = unit(&p.text, &p.tokens, &p.tree).unwrap();
+        assert!(format(&p.text, &p.tokens, &stmts).len() > n * n);
+    });
 }
 
 /// `x[i in 0..<1] = cold(i); x[i in 1..<2] = x[i - 1] + 1; …`, a piecewise definition of `n`

@@ -778,3 +778,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `usize::checked_add` of two byte counts, refused past `usize::MAX` | `Text::join` | Machine integers | With `int` counts the sum never wraps; the refusal stays as an `if` comparing the sum with the largest length the runtime can address |
 | `i64::try_from` of a count, with a big integer when it does not fit | `words::word` (`Len`), `hooks::node` (`Len`), `store::cell::Cell::literal` (a string's length; past `i64` the ray from `i64::MAX` up) | Machine integers | Vanishes: `len` returns an `int` |
+
+## Entries from L6.1 (`zedc/src/ast/`, `format.rs`, `resolve.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A stable `sort_by_key` on a key method of an enum, shared by the builder and the formatter | `StmtKind::place`, `Builder::block`, `ast::unit`, `Formatter::stmts` | None | A `sort` by a key function; the prelude's sort is stable |
+| `match *self.kids(k) { [name, set] => …, [e] => … }`, slice patterns on a dereferenced slice | `Builder` index keys | Slice patterns | Test the length, then index (the appendix's row for slice patterns) |
+| A `HashSet<&str>` borrowed from the statements, so each indexed family is bound once | `Resolver::declare` | Borrowed keys | A set of names; strings are values, so no borrow is needed |
+| `unreachable!` arms for the L6 forms that resolution refuses | `elab.rs`, `check/mod.rs` | Partial match | As for L2.1 and L3.1: a total match whose L6 arm returns the refusal, or a narrower type from resolution |
