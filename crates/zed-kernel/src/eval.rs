@@ -24,9 +24,7 @@ use crate::family::{Family, Keypath};
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use num_traits::{Euclid, Signed, Zero};
 
-use crate::num::MAX_BITS;
 use crate::provenance::{Fact, FactAddress, NodeAddress, Position, Provenance};
 use crate::term::{FixKind, GuardPos, Pattern, Prim, Term};
 use crate::value::Value;
@@ -1974,18 +1972,6 @@ fn matches<'t>(pat: &'t Pattern, v: &Value, env: &mut Env<'t>, fact: Option<usiz
     }
 }
 
-fn overflow<T>() -> Result<T, KernelError> {
-    Err(KernelError::Overflow)
-}
-
-/// The integer `n`, unless it is beyond the evaluator's size limit.
-fn sized(n: BigInt) -> Result<Value, KernelError> {
-    if n.bits() > MAX_BITS {
-        return overflow();
-    }
-    Ok(Value::int(n))
-}
-
 /// The key `k` reads: `k` itself unless it holds a `-0.0`, which its key does not. Domains
 /// and maps of entries hold keys, and the order on values tells `-0.0` from `0.0`.
 fn as_key(k: &Value) -> Cow<'_, Value> {
@@ -1997,7 +1983,7 @@ fn as_key(k: &Value) -> Cow<'_, Value> {
 
 /// An integer `+`, `-`, `*`, `div`, `mod` or `**` of two integers, either of either width:
 /// in a machine word when the result fits, else unbounded. `None` for a negative power.
-fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelError> {
+fn int_binary(p: Prim, a: &Value, b: &Value) -> Option<Value> {
     if let (Value::Int(x), Value::Int(y)) = (a, b) {
         let fast = match p {
             Prim::Add => x.checked_add(*y),
@@ -2009,37 +1995,24 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
             _ => None,
         };
         if let Some(n) = fast {
-            return Ok(Some(Value::Int(n)));
+            return Some(Value::Int(n));
         }
     }
-    let (x, y) = (
-        a.as_bigint().expect("an integer"),
-        b.as_bigint().expect("an integer"),
-    );
-    let n = match p {
-        Prim::Add => x + y,
-        Prim::Sub => x - y,
-        Prim::Mul => x * y,
-        Prim::IntDiv | Prim::Mod if y.is_zero() => return Ok(Some(Value::atom("divByZero"))),
+    let x = a.as_integer().expect("an integer");
+    let y = b.as_integer().expect("an integer");
+    if matches!(p, Prim::IntDiv | Prim::Mod) && y.is_zero() {
+        return Some(Value::atom("divByZero"));
+    }
+    let r = match p {
+        Prim::Add => x.add(&y),
+        Prim::Sub => x.sub(&y),
+        Prim::Mul => x.mul(&y),
         Prim::IntDiv => x.div_euclid(&y),
         Prim::Mod => x.rem_euclid(&y),
-        _ if y.is_negative() => return Ok(None),
-        // `0`, `1` and `-1` stay small at any power.
-        _ if x.magnitude() <= &1u32.into() => {
-            if y.is_zero() || (x.is_negative() && (&y % 2u32).is_zero()) {
-                BigInt::from(1)
-            } else {
-                x
-            }
-        }
-        // `|x| >= 2^(bits - 1)`, so past this bound the power has more than `MAX_BITS` bits.
-        // Within it the power has at most twice that, and `sized` makes the exact check.
-        _ => match u32::try_from(&y) {
-            Ok(e) if (x.bits() - 1).saturating_mul(u64::from(e)) < MAX_BITS => x.pow(e),
-            _ => return overflow(),
-        },
+        _ if y.is_negative() => return None,
+        _ => x.pow(y.to_integer().magnitude()),
     };
-    sized(n).map(Some)
+    Some(Value::integer(r))
 }
 
 /// A primitive on data none of which is an atom.
@@ -2063,16 +2036,16 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Add | Prim::Sub | Prim::Mul | Prim::IntDiv | Prim::Mod | Prim::Pow, [a, b])
             if a.number_kind() == Some(0) && b.number_kind() == Some(0) =>
         {
-            match int_binary(p, a, b)? {
+            match int_binary(p, a, b) {
                 Some(v) => v,
                 None => return ty(&vals),
             }
         }
         (Prim::Neg, [Int(a)]) => match a.checked_neg() {
             Some(n) => Int(n),
-            None => sized(-BigInt::from(*a))?,
+            None => Value::int(-BigInt::from(*a)),
         },
-        (Prim::Neg, [Value::Big(a)]) => sized(-(**a).clone())?,
+        (Prim::Neg, [Value::Big(a)]) => Value::integer(a.neg()),
         (Prim::Add | Prim::Sub | Prim::Mul | Prim::Div, [Value::Rat(a), Value::Rat(b)]) => {
             let r = match p {
                 Prim::Add => a.add(b),
@@ -2083,9 +2056,6 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
                     None => return Ok(Value::atom("divByZero")),
                 },
             };
-            if r.bits() > MAX_BITS {
-                return overflow();
-            }
             Value::rat(r)
         }
         (Prim::Neg, [Value::Rat(a)]) => Value::rat(a.neg()),

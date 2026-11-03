@@ -6,7 +6,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use zed_kernel::num::MAX_BITS;
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{
     Evaluator, Evidence, Family, FixKind, GuardPos, KernelError, Lookup, Pattern, Prim, Schedule,
@@ -950,38 +949,34 @@ fn a_lookup_port_is_read_by_key() {
     assert_eq!(keys, [&Value::tuple(vec![Value::float(0.0), s("usd")])]);
 }
 
-/// Whether a power is built does not depend on how it is written: `x ** e` gives what
-/// `x ** a * x ** b` gives for `a + b = e`, at every size around the limit.
+/// A power does not depend on how it is written: `x ** e` gives what `x ** a * x ** b` gives
+/// for `a + b = e`, at sizes far past any machine word, and each square of a power is below the next.
 #[test]
 fn a_power_is_the_product_of_its_halves() {
     let pow = |x: &Term, e: i64| bin(Prim::Pow, x.clone(), lit(e));
-    let max = MAX_BITS as i64;
     let big = pow(&lit(2), 1000);
     let cases = [
-        // 2^600000 has 600,001 bits, so it fits, and so does the largest power of two.
-        (lit(2), 600_000, true),
-        (lit(-2), 600_001, true),
-        (lit(2), max - 1, true),
-        (lit(2), max, false),
-        // 3^e has floor(e log2 3) + 1 bits.
-        (lit(3), 661_577, true),
-        (lit(3), 661_578, false),
-        // (2^1000)^e has 1000 e + 1 bits.
-        (big.clone(), 1048, true),
-        (big, 1049, false),
+        (lit(2), 600_000),
+        (lit(-2), 600_001),
+        (lit(2), 1 << 20),
+        (lit(2), 1 << 40),
+        (lit(3), 661_578),
+        (lit(-6), 1 << 33),
+        (big.clone(), 1049),
+        (big, 1 << 30),
     ];
-    for (x, e, fits) in cases {
-        let whole = eval(&pow(&x, e));
-        let halves = eval(&mul(pow(&x, e / 2), pow(&x, e - e / 2)));
-        assert!(whole == halves, "{x:?} ** {e} and its halves differ");
-        assert_eq!(whole.is_ok(), fits, "{x:?} ** {e}");
-        if !fits {
-            assert_eq!(whole.unwrap_err(), KernelError::Overflow);
-        }
+    for (x, e) in cases {
+        let whole = eval(&pow(&x, e)).unwrap();
+        let halves = eval(&mul(pow(&x, e / 2), pow(&x, e - e / 2))).unwrap();
+        assert_eq!(whole, halves, "{x:?} ** {e} and its halves differ");
+        let square = |e: i64| mul(pow(&x, e), pow(&x, e));
+        let next = bin(Prim::Lt, square(e), square(e + 1));
+        assert_eq!(eval(&next).unwrap(), Value::Bool(true), "{x:?} ** {e}");
     }
 }
 
-/// An exponent past any machine word: `0`, `1` and `-1` stay small, and anything else overflows.
+/// An exponent past any machine word: `0`, `1` and `-1` stay small, and any other base gives
+/// its power, kept as a power of primes, whose remainders are found without building it.
 #[test]
 fn a_power_by_a_huge_exponent() {
     let huge = bin(Prim::Pow, lit(2), lit(100));
@@ -991,6 +986,22 @@ fn a_power_by_a_huge_exponent() {
     assert_eq!(eval(&to_huge(1)).unwrap(), Value::Int(1));
     assert_eq!(eval(&to_huge(-1)).unwrap(), Value::Int(1));
     assert_eq!(eval(&bin(Prim::Pow, lit(-1), odd)).unwrap(), Value::Int(-1));
-    assert_eq!(eval(&to_huge(2)).unwrap_err(), KernelError::Overflow);
-    assert_eq!(eval(&to_huge(-2)).unwrap_err(), KernelError::Overflow);
+    // `2^100` is even, so the sign drops; `2^100 = 1 (mod 2)` and `= 1 (mod 3)`.
+    let two = eval(&to_huge(2)).unwrap();
+    assert_eq!(eval(&to_huge(-2)).unwrap(), two);
+    let below = bin(Prim::Pow, lit(2), sub(huge.clone(), lit(1)));
+    assert_eq!(
+        eval(&bin(Prim::Lt, below.clone(), to_huge(2))).unwrap(),
+        Value::Bool(true)
+    );
+    assert_eq!(eval(&mul(below, lit(2))).unwrap(), two);
+    // `2^(2^100) mod 7 = 2^(2^100 mod 3) mod 7 = 2`, and `3^(2^100) mod 4 = 1`.
+    assert_eq!(
+        eval(&bin(Prim::Mod, to_huge(2), lit(7))).unwrap(),
+        Value::Int(2)
+    );
+    assert_eq!(
+        eval(&bin(Prim::Mod, to_huge(3), lit(4))).unwrap(),
+        Value::Int(1)
+    );
 }

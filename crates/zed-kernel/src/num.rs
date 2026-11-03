@@ -1,38 +1,41 @@
 //! Exact numbers (step L1.17): unbounded integers, rationals, and the order of numbers by
 //! value across `int`, `rat` and floats (DESIGN.md sec:keys, the natural order).
 //!
-//! The semantic `int` is unbounded (sec:numeric). An integer inside the 64-bit range is a
-//! [`Value::Int`](crate::Value::Int); one outside it is a `Value::Big`, so every integer has
-//! one representation and the fast path stays a machine word. A [`Rat`] is reduced, with a
-//! positive denominator, so equal rationals are equal values.
+//! The semantic `int` and `rat` are unbounded (sec:domains), and the evaluator sets no size
+//! limit on them. An integer inside the 64-bit range is a [`Value::Int`](crate::Value::Int);
+//! one outside it is a `Value::Big` holding a [`Rat`], so every integer has one representation
+//! and the fast path stays a machine word.
+//!
+//! A [`Rat`] is `n/d * prod p^e`: a reduced rational, and powers of primes with unbounded
+//! exponents that are kept as exponents, not built. A decimal literal with an exponent is the
+//! case of the primes 2 and 5, so `1.345e932` is `269 * 2^929 * 5^930` and costs its digits
+//! and the exponent's, not the value's 3100 bits; `2 ** 2 ** 40` is `2^(2^40)`. Products,
+//! quotients and powers add and multiply exponents. Order is decided by bounds on the two
+//! values ([`bound`]), equality by the normal form, and a sum builds only the part of the
+//! operands above their common powers. Printing builds the digits, at a cost proportional to
+//! them. A value with no prime powers is a plain reduced rational, whose arithmetic is what it
+//! was before the powers.
+
+mod bound;
+mod factor;
 
 use std::cmp::Ordering;
 use std::fmt;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
-use num_traits::{One, Signed, Zero};
+use num_traits::{Euclid, One, Pow, Signed, ToPrimitive, Zero};
 
-/// The largest integer the evaluator builds, in bits: beyond it an operation is
-/// [`KernelError::Overflow`](crate::KernelError::Overflow), a limit of the evaluator's memory
-/// and not of the language.
-///
-/// Complexity tradeoff: an integer or rational past `2^20` bits is given up with
-/// `KernelError::Overflow`, though the language's `Int` is unbounded. Why: an operation such
-/// as `x ** e` builds a result whose size is exponential in the bits of `e`, so one short
-/// expression could take all memory and time. Trigger: a result (or, for a power, a predicted
-/// result) of more than `MAX_BITS` bits. Test:
-/// `m0_09_kernel_evaluator::a_power_by_a_huge_exponent`. COMPLEXITY.md row C23. This switches
-/// behavior at a constant size, so it violates the no-thresholds rule; to be replaced (ledger
-/// item CAP-bits). A complete solution would build any result that fits in the memory
-/// available and report the allocation failure as such, or keep huge powers symbolic.
-pub const MAX_BITS: u64 = 1 << 20;
+use bound::{Format, Product};
 
-/// A rational number, reduced, with a positive denominator.
-#[derive(Clone, PartialEq, Eq, Debug)]
+/// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
+/// `p` distinct and in increasing order, each `e` nonzero, and `num` and `den` divisible by
+/// none of the `p`. Zero has no powers.
+#[derive(Clone, Debug)]
 pub struct Rat {
     num: BigInt,
     den: BigInt,
+    pows: Box<[(u64, BigInt)]>,
 }
 
 impl Rat {
@@ -41,57 +44,195 @@ impl Rat {
         if den.is_zero() {
             return None;
         }
-        let g = num.gcd(&den);
-        let sign = if den.is_negative() { -1 } else { 1 };
-        Some(Rat {
-            num: sign * (num / &g),
-            den: sign * (den / g),
-        })
+        let (num, den) = reduce(num, den);
+        Some(Rat::plain(num, den))
+    }
+
+    fn plain(num: BigInt, den: BigInt) -> Rat {
+        Rat {
+            num,
+            den,
+            pows: Box::default(),
+        }
     }
 
     /// The integer `n` as a rational.
     pub fn int(n: BigInt) -> Self {
+        Rat::plain(n, BigInt::one())
+    }
+
+    /// `2^s`.
+    fn two_pow(s: BigInt) -> Rat {
+        if s.is_zero() {
+            return Rat::int(BigInt::one());
+        }
         Rat {
-            num: n,
+            num: BigInt::one(),
             den: BigInt::one(),
+            pows: Box::new([(2, s)]),
         }
     }
 
-    /// The exact value of a decimal literal's text, such as `0.1` or `2.5e-3`; `None` when
-    /// it is beyond [`MAX_BITS`].
+    /// `num/den * prod pows`, `den` nonzero, `pows` by prime and in normal form.
+    fn build(num: BigInt, den: BigInt, pows: Vec<(u64, BigInt)>) -> Rat {
+        let (num, den) = if den.is_one() {
+            (num, den)
+        } else {
+            reduce(num, den)
+        };
+        Rat::extract(num, den, pows)
+    }
+
+    /// `num/den * prod pows` from a reduced `num/den`: each listed prime is moved out of
+    /// `num` and `den` into its exponent.
+    fn extract(mut num: BigInt, mut den: BigInt, pows: Vec<(u64, BigInt)>) -> Rat {
+        if num.is_zero() {
+            return Rat::int(num);
+        }
+        let mut out = Vec::with_capacity(pows.len());
+        for (p, mut e) in pows {
+            let (v, n) = valuation(num, p);
+            num = n;
+            e += v;
+            let (v, d) = valuation(den, p);
+            den = d;
+            e -= v;
+            if !e.is_zero() {
+                out.push((p, e));
+            }
+        }
+        Rat {
+            num,
+            den,
+            pows: out.into_boxed_slice(),
+        }
+    }
+
+    /// The exact value of a decimal literal's text, such as `0.1`, `2.5e-3` or `1e400000`;
+    /// `None` when it is not decimal digits with an optional `-`, fraction and exponent. A
+    /// written exponent is kept as powers of 2 and 5, so the text's length bounds the cost.
     pub fn decimal(text: &str) -> Option<Self> {
         let (mantissa, exp) = match text.find(['e', 'E']) {
-            Some(i) => (&text[..i], text[i + 1..].parse::<i64>().ok()?),
-            None => (text, 0),
+            Some(i) => (&text[..i], Some(text[i + 1..].parse::<BigInt>().ok()?)),
+            None => (text, None),
         };
         let (whole, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
         let digits: BigInt = format!("{whole}{frac}").parse().ok()?;
-        let exp = exp.checked_sub(frac.len() as i64)?;
-        // 10^e has more than 3e bits.
-        if exp.unsigned_abs().saturating_mul(3) > MAX_BITS {
-            return None;
-        }
-        let scale = BigInt::from(10).pow(exp.unsigned_abs() as u32);
-        if exp >= 0 {
-            Rat::new(digits * scale, BigInt::one())
-        } else {
-            Rat::new(digits, scale)
+        match exp {
+            None => {
+                let scale = BigInt::from(10).pow(u32::try_from(frac.len()).ok()?);
+                Rat::new(digits, scale)
+            }
+            Some(e) => {
+                let e = e - frac.len();
+                Some(Rat::extract(
+                    digits,
+                    BigInt::one(),
+                    vec![(2, e.clone()), (5, e)],
+                ))
+            }
         }
     }
 
-    /// The numerator.
-    pub fn numer(&self) -> &BigInt {
-        &self.num
+    /// Whether it is zero.
+    pub fn is_zero(&self) -> bool {
+        self.num.is_zero()
     }
 
-    /// The denominator, positive.
-    pub fn denom(&self) -> &BigInt {
-        &self.den
+    /// Whether it is below zero.
+    pub fn is_negative(&self) -> bool {
+        self.num.is_negative()
+    }
+
+    /// Whether it is an integer.
+    pub fn is_integer(&self) -> bool {
+        self.den.is_one() && self.pows.iter().all(|(_, e)| !e.is_negative())
+    }
+
+    /// Whether it holds no prime powers: a plain reduced rational.
+    fn is_plain(&self) -> bool {
+        self.pows.is_empty()
+    }
+
+    /// The integer it is, built. It must be an integer.
+    pub fn to_integer(&self) -> BigInt {
+        let mut out = self.num.clone();
+        for (p, e) in self.pows.iter() {
+            out *= Pow::pow(BigInt::from(*p), e.magnitude());
+        }
+        out
+    }
+
+    /// The integer it is, built, unless it is surely beyond 64 bits. It must be an integer.
+    pub(crate) fn small_integer(&self) -> Option<BigInt> {
+        // `|n| >= 2^(bits(n) - 1)` and `p^e >= 2^((bits(p) - 1) e)`, so past this bound the
+        // value is beyond `2^63`; within it, it has at most about 128 bits.
+        let mut low = BigInt::from(self.num.bits()) - 1;
+        for (p, e) in self.pows.iter() {
+            low += e * (63 - p.leading_zeros());
+        }
+        (low <= BigInt::from(63)).then(|| self.to_integer())
+    }
+
+    /// The numerator's digits, with its sign.
+    pub fn numer_text(&self) -> String {
+        let sign = if self.is_negative() { "-" } else { "" };
+        let pows = self
+            .pows
+            .iter()
+            .filter(|(_, e)| e.is_positive())
+            .map(|(p, e)| (*p, e.magnitude().clone()));
+        format!("{sign}{}", digits(self.num.magnitude(), pows.collect()))
+    }
+
+    /// The denominator's digits.
+    pub fn denom_text(&self) -> String {
+        let pows = self
+            .pows
+            .iter()
+            .filter(|(_, e)| e.is_negative())
+            .map(|(p, e)| (*p, e.magnitude().clone()));
+        digits(self.den.magnitude(), pows.collect())
     }
 
     /// `a + b`.
     pub fn add(&self, b: &Rat) -> Rat {
-        Rat::new(&self.num * &b.den + &b.num * &self.den, &self.den * &b.den).expect("den > 0")
+        if self.is_plain() && b.is_plain() {
+            if self.den.is_one() && b.den.is_one() {
+                return Rat::int(&self.num + &b.num);
+            }
+            return Rat::new(&self.num * &b.den + &b.num * &self.den, &self.den * &b.den)
+                .expect("den > 0");
+        }
+        if self.is_zero() {
+            return b.clone();
+        }
+        if b.is_zero() {
+            return self.clone();
+        }
+        // The common powers `g`, each prime at the lesser exponent, factor out; the rest of
+        // each operand is built, at the cost of its size.
+        // Complexity tradeoff: a sum is kept as one rational times powers, so the part of each
+        // operand above the common powers is built, at a cost proportional to the size of the
+        // sum's coefficient; `10 ** 10 ** 9 + 1` builds the billion digits, while
+        // `10 ** 10 ** 9 + 10 ** 10 ** 9` builds nothing. This is the cost of the output in this
+        // form, and no input is refused. Tested by `kept_powers_agree_with_the_built_value` and
+        // `close_products_compare_exactly` (COMPLEXITY.md K30). A complete solution would keep
+        // a sum of terms unbuilt, ordered and projected by bounds as products are.
+        let a = self.aligned(&b.pows);
+        let b = b.aligned(&self.pows);
+        let mut common = Vec::new();
+        let mut rest_a = Vec::new();
+        let mut rest_b = Vec::new();
+        for (p, ea, eb) in zip_pows(&a.pows, &b.pows) {
+            let g = (&ea).min(&eb).clone();
+            rest_a.push((p, (ea - &g).magnitude().clone()));
+            rest_b.push((p, (eb - &g).magnitude().clone()));
+            common.push((p, g));
+        }
+        let ra = &a.num * built(&rest_a);
+        let rb = &b.num * built(&rest_b);
+        Rat::build(ra * &b.den + rb * &a.den, &a.den * &b.den, common)
     }
 
     /// `a - b`.
@@ -101,12 +242,32 @@ impl Rat {
 
     /// `a * b`.
     pub fn mul(&self, b: &Rat) -> Rat {
-        Rat::new(&self.num * &b.num, &self.den * &b.den).expect("den > 0")
+        if self.is_plain() && b.is_plain() {
+            if self.den.is_one() && b.den.is_one() {
+                return Rat::int(&self.num * &b.num);
+            }
+            return Rat::new(&self.num * &b.num, &self.den * &b.den).expect("den > 0");
+        }
+        Rat::build(
+            &self.num * &b.num,
+            &self.den * &b.den,
+            merge(&self.pows, &b.pows, |x, y| x + y),
+        )
     }
 
     /// `a / b`; `None` when `b` is zero.
     pub fn div(&self, b: &Rat) -> Option<Rat> {
-        Rat::new(&self.num * &b.den, &self.den * &b.num)
+        if b.is_zero() {
+            return None;
+        }
+        if self.is_plain() && b.is_plain() {
+            return Rat::new(&self.num * &b.den, &self.den * &b.num);
+        }
+        Some(Rat::build(
+            &self.num * &b.den,
+            &self.den * &b.num,
+            merge(&self.pows, &b.pows, |x, y| x - y),
+        ))
     }
 
     /// `-a`.
@@ -114,18 +275,372 @@ impl Rat {
         Rat {
             num: -&self.num,
             den: self.den.clone(),
+            pows: self.pows.clone(),
         }
     }
 
-    /// The number of bits of its larger part.
-    pub fn bits(&self) -> u64 {
-        self.num.bits().max(self.den.bits())
+    /// `|a|`.
+    pub fn abs(&self) -> Rat {
+        match self.is_negative() {
+            true => self.neg(),
+            false => self.clone(),
+        }
+    }
+
+    /// `a^e`. Powers of primes multiply their exponents, and a numerator or denominator that
+    /// fits in 64 bits is factored into primes, so `10 ** 10 ** 9` is `2^(10^9) * 5^(10^9)`.
+    pub fn pow(&self, e: &BigUint) -> Rat {
+        if e.is_zero() {
+            return Rat::int(BigInt::one());
+        }
+        if self.is_zero() {
+            return self.clone();
+        }
+        let times = BigInt::from(e.clone());
+        let mut pows: Vec<(u64, BigInt)> =
+            self.pows.iter().map(|(p, x)| (*p, x * &times)).collect();
+        let mut parts = [BigInt::one(), BigInt::one()];
+        for (i, part) in [self.num.magnitude(), self.den.magnitude()]
+            .into_iter()
+            .enumerate()
+        {
+            if part.is_one() {
+                continue;
+            }
+            match part.to_u64() {
+                Some(w) => {
+                    for (p, k) in factor::factor(w) {
+                        let x = &times * k;
+                        pows.push((p, if i == 0 { x } else { -x }));
+                    }
+                }
+                // Complexity tradeoff: a numerator or denominator beyond 64 bits is raised to
+                // the power by building it, at a cost proportional to the result's size,
+                // where one within 64 bits is factored and kept as exponents; such a part only
+                // arises from a value built before, so its power is the size of that value
+                // times `e`. Tested by `a_power_of_a_wide_base_is_built` (COMPLEXITY.md K30).
+                // A complete solution would keep an opaque base `b^e` beside the primes, with
+                // the bases made pairwise coprime by Bernstein's coprime-base algorithm.
+                None => parts[i] = BigInt::from(Pow::pow(part, e)),
+            }
+        }
+        pows.sort_unstable_by_key(|(p, _)| *p);
+        let [mut num, den] = parts;
+        if self.is_negative() && e.bit(0) {
+            num = -num;
+        }
+        // The factored primes are new: `num` and `den` held none of the listed ones.
+        Rat {
+            num,
+            den,
+            pows: pows.into_boxed_slice(),
+        }
+    }
+
+    /// The Euclidean remainder of two integers, in `0 ..< |m|`; `m` is not zero. A power of
+    /// a prime is reduced by modular exponentiation, so `10 ** 10 ** 9 mod 7` builds no
+    /// large number.
+    pub fn rem_euclid(&self, m: &Rat) -> Rat {
+        if self.is_plain() && m.is_plain() {
+            return Rat::int(Euclid::rem_euclid(&self.num, &m.num));
+        }
+        let m = m.to_integer().magnitude().clone();
+        let mut r = self.num.magnitude() % &m;
+        for (p, e) in self.pows.iter() {
+            r = r * BigUint::from(*p).modpow(e.magnitude(), &m) % &m;
+        }
+        let r = BigInt::from(r);
+        if self.is_negative() && !r.is_zero() {
+            Rat::int(BigInt::from(m) - r)
+        } else {
+            Rat::int(r)
+        }
+    }
+
+    /// The Euclidean quotient of two integers; `m` is not zero. An exact division keeps the
+    /// powers; any other builds the dividend, whose size the quotient's is near.
+    pub fn div_euclid(&self, m: &Rat) -> Rat {
+        if self.is_plain() && m.is_plain() {
+            return Rat::int(Euclid::div_euclid(&self.num, &m.num));
+        }
+        let r = self.rem_euclid(m);
+        let whole = match r.is_zero() {
+            true => self.div(m),
+            false => self.sub(&r).div(m),
+        };
+        whole.expect("the divisor is not zero")
+    }
+
+    /// The same number, with each prime of `others` moved out of `num` and `den` too.
+    fn aligned(&self, others: &[(u64, BigInt)]) -> std::borrow::Cow<'_, Rat> {
+        let listed = |p: u64| self.pows.binary_search_by_key(&p, |(q, _)| *q).is_ok();
+        let divides = |p: u64| {
+            let p = BigInt::from(p);
+            (&self.num % &p).is_zero() || (&self.den % &p).is_zero()
+        };
+        let new: Vec<u64> = others
+            .iter()
+            .map(|(p, _)| *p)
+            .filter(|&p| !listed(p) && divides(p))
+            .collect();
+        if new.is_empty() {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut pows = self.pows.to_vec();
+        pows.extend(new.into_iter().map(|p| (p, BigInt::zero())));
+        pows.sort_unstable_by_key(|(p, _)| *p);
+        std::borrow::Cow::Owned(Rat::extract(self.num.clone(), self.den.clone(), pows))
+    }
+
+    /// `|self|` as the quotient of two products of positive powers.
+    fn split(&self) -> (Product, Product) {
+        let side = |coef: &BigInt, sign: Sign| Product {
+            coef: coef.magnitude().clone(),
+            pows: self
+                .pows
+                .iter()
+                .filter(|(_, e)| e.sign() == sign)
+                .map(|(p, e)| (*p, e.magnitude().clone()))
+                .collect(),
+        };
+        (side(&self.num, Sign::Plus), side(&self.den, Sign::Minus))
+    }
+
+    /// The nearest number of the format, ties to even, as its sign, significand and the
+    /// exponent of its leading place; `None` for zero.
+    fn project(&self, f: &Format) -> Result<Option<(bool, u64, i64)>, LiteralRounding> {
+        if self.is_zero() {
+            return Ok(None);
+        }
+        let (n, d) = self.split();
+        let size = self.abs();
+        let is = |s: &BigInt, w: &BigUint| {
+            size.mul(&Rat::two_pow(s.clone())) == Rat::int(BigInt::from(w.clone()))
+        };
+        let (m, t) = bound::round(&n, &d, f, &is)?;
+        Ok(Some((self.is_negative(), m, t)))
+    }
+
+    /// The nearest `f64`, ties to even: correctly rounded from the exact value, without
+    /// building it. [`LiteralRounding`] when it rounds to infinity, or to zero while not zero.
+    pub fn to_f64(&self) -> Result<f64, LiteralRounding> {
+        let f = Format {
+            prec: 53,
+            emin: -1022,
+            emax: 1023,
+        };
+        Ok(match self.project(&f)? {
+            None => 0.0,
+            Some((neg, m, t)) => {
+                let bits = if m >> 52 == 0 {
+                    m
+                } else {
+                    (((t + 1023) as u64) << 52) | (m & ((1 << 52) - 1))
+                };
+                f64::from_bits(bits | (u64::from(neg) << 63))
+            }
+        })
+    }
+
+    /// The nearest `f32`, by the rule of [`Rat::to_f64`].
+    pub fn to_f32(&self) -> Result<f32, LiteralRounding> {
+        let f = Format {
+            prec: 24,
+            emin: -126,
+            emax: 127,
+        };
+        Ok(match self.project(&f)? {
+            None => 0.0,
+            Some((neg, m, t)) => {
+                let m = m as u32;
+                let bits = if m >> 23 == 0 {
+                    m
+                } else {
+                    (((t + 127) as u32) << 23) | (m & ((1 << 23) - 1))
+                };
+                f32::from_bits(bits | (u32::from(neg) << 31))
+            }
+        })
     }
 }
 
+/// `num / den` reduced, with `den` positive.
+fn reduce(num: BigInt, den: BigInt) -> (BigInt, BigInt) {
+    let g = num.gcd(&den);
+    let sign = if den.is_negative() { -1 } else { 1 };
+    (sign * (num / &g), sign * (den / g))
+}
+
+/// The power of the prime `p` in `n`, and `n` without it. Powers `p, p^2, p^4, ...` divide
+/// out while they can, then the same powers in decreasing order, so the cost is `log v`
+/// divisions for a power `v`, not `v`.
+fn valuation(n: BigInt, p: u64) -> (u64, BigInt) {
+    if n.is_zero() || n.magnitude().is_one() {
+        return (0, n);
+    }
+    if p == 2 {
+        let z = n.trailing_zeros().expect("n is not zero");
+        return (z, n >> z);
+    }
+    let mut n = n;
+    let mut powers = vec![BigInt::from(p)];
+    let mut v = 0u64;
+    loop {
+        let last = powers.last().expect("powers starts with p");
+        let (q, r) = n.div_rem(last);
+        if !r.is_zero() {
+            break;
+        }
+        n = q;
+        v += 1 << (powers.len() - 1);
+        let next = last * last;
+        powers.push(next);
+    }
+    for (i, pw) in powers.iter().enumerate().rev() {
+        let (q, r) = n.div_rem(pw);
+        if r.is_zero() {
+            n = q;
+            v += 1 << i;
+        }
+    }
+    (v, n)
+}
+
+/// The prime powers of two numbers merged by prime, `f` combining the exponents of a prime
+/// both hold, a missing exponent being zero; zero exponents are left out.
+fn merge(
+    a: &[(u64, BigInt)],
+    b: &[(u64, BigInt)],
+    f: impl Fn(&BigInt, &BigInt) -> BigInt,
+) -> Vec<(u64, BigInt)> {
+    zip_pows(a, b)
+        .map(|(p, x, y)| (p, f(&x, &y)))
+        .filter(|(_, e)| !e.is_zero())
+        .collect()
+}
+
+/// Each prime of either list with its two exponents, zero where a list lacks it.
+fn zip_pows<'a>(
+    a: &'a [(u64, BigInt)],
+    b: &'a [(u64, BigInt)],
+) -> impl Iterator<Item = (u64, BigInt, BigInt)> + 'a {
+    let (mut i, mut j) = (0, 0);
+    std::iter::from_fn(move || {
+        let x = a.get(i);
+        let y = b.get(j);
+        let (p, ex, ey) = match (x, y) {
+            (None, None) => return None,
+            (Some((p, e)), None) => {
+                i += 1;
+                (*p, e.clone(), BigInt::zero())
+            }
+            (None, Some((q, e))) => {
+                j += 1;
+                (*q, BigInt::zero(), e.clone())
+            }
+            (Some((p, e)), Some((q, f))) => match p.cmp(q) {
+                Ordering::Less => {
+                    i += 1;
+                    (*p, e.clone(), BigInt::zero())
+                }
+                Ordering::Greater => {
+                    j += 1;
+                    (*q, BigInt::zero(), f.clone())
+                }
+                Ordering::Equal => {
+                    i += 1;
+                    j += 1;
+                    (*p, e.clone(), f.clone())
+                }
+            },
+        };
+        Some((p, ex, ey))
+    })
+}
+
+/// `prod p^e`, built.
+fn built(pows: &[(u64, BigUint)]) -> BigInt {
+    let mut out = BigUint::one();
+    for (p, e) in pows {
+        if !e.is_zero() {
+            out *= Pow::pow(BigUint::from(*p), e);
+        }
+    }
+    BigInt::from(out)
+}
+
+/// The digits of `coef * prod pows`. The power of 10 they share is written as zeros, so a
+/// decimal literal's digits cost their number.
+fn digits(coef: &BigUint, pows: Vec<(u64, BigUint)>) -> String {
+    let exp = |q: u64| {
+        pows.iter()
+            .find(|(p, _)| *p == q)
+            .map_or(BigUint::zero(), |(_, e)| e.clone())
+    };
+    let tens = exp(2).min(exp(5));
+    let rest: Vec<(u64, BigUint)> = pows
+        .iter()
+        .map(|(p, e)| match p {
+            2 | 5 => (*p, e - &tens),
+            _ => (*p, e.clone()),
+        })
+        .collect();
+    let mut out = (BigInt::from(coef.clone()) * built(&rest)).to_string();
+    if !coef.is_zero() {
+        let zeros = tens
+            .to_usize()
+            .expect("a number whose digits fit in memory");
+        out.push_str(&"0".repeat(zeros));
+    }
+    out
+}
+
+impl PartialEq for Rat {
+    fn eq(&self, other: &Self) -> bool {
+        if self.is_plain() && other.is_plain() {
+            return self.num == other.num && self.den == other.den;
+        }
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Rat {}
+
 impl Ord for Rat {
     fn cmp(&self, other: &Self) -> Ordering {
-        (&self.num * &other.den).cmp(&(&other.num * &self.den))
+        if self.is_plain() && other.is_plain() {
+            if self.den.is_one() && other.den.is_one() {
+                return self.num.cmp(&other.num);
+            }
+            return (&self.num * &other.den).cmp(&(&other.num * &self.den));
+        }
+        let sign = self.num.sign().cmp(&other.num.sign());
+        if sign != Ordering::Equal || self.is_zero() {
+            return sign;
+        }
+        // With both coprime to every listed prime, the two are equal exactly when their
+        // coefficients and exponents are, and otherwise one side holds a prime the other lacks.
+        let a = self.aligned(&other.pows);
+        let b = other.aligned(&self.pows);
+        let n = a.num.magnitude() * b.den.magnitude();
+        let d = b.num.magnitude() * a.den.magnitude();
+        let f = merge(&a.pows, &b.pows, |x, y| x - y);
+        let side = |coef: BigUint, sign: Sign| Product {
+            coef,
+            pows: f
+                .iter()
+                .filter(|(_, e)| e.sign() == sign)
+                .map(|(p, e)| (*p, e.magnitude().clone()))
+                .collect(),
+        };
+        let o = match f.is_empty() {
+            true => n.cmp(&d),
+            false => bound::cmp(&side(n, Sign::Plus), &side(d, Sign::Minus)),
+        };
+        match self.is_negative() {
+            true => o.reverse(),
+            false => o,
+        }
     }
 }
 
@@ -138,10 +653,11 @@ impl PartialOrd for Rat {
 /// Written as its literal: `3r`, `-1r/3r`.
 impl fmt::Display for Rat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.den.is_one() {
-            write!(f, "{}r", self.num)
+        let den = self.denom_text();
+        if den == "1" {
+            write!(f, "{}r", self.numer_text())
         } else {
-            write!(f, "{}r/{}r", self.num, self.den)
+            write!(f, "{}r/{den}r", self.numer_text())
         }
     }
 }
@@ -233,64 +749,41 @@ pub fn show_f64(x: f64) -> String {
 pub enum LiteralRounding {
     /// It rounds to infinity: it is beyond the largest finite float.
     Infinite,
-    /// Its digits are not all zero, but it rounds to zero: it is below half the least
-    /// subnormal.
+    /// It is not zero, but it rounds to zero: it is below half the least subnormal.
     Zero,
 }
 
 /// The float literal `text` at `f64`: decimal digits with an optional fraction and exponent,
-/// no sign and no `_`, as the lexer keeps it (`0.1`, `1e9`, `2.5E-3`). It is correctly
-/// rounded, to nearest with ties to even, by the standard library's reading, which costs time
-/// linear in the text; it is an error when that rounds to infinity, or to zero while some
-/// digit before the exponent is not `0`, so `0e999` is zero and `1e-400` is an error.
+/// no sign and no `_`, as the lexer keeps it (`0.1`, `1e9`, `2.5E-3`). It is the exact
+/// decimal [`Rat::decimal`] projected by [`Rat::to_f64`], correctly rounded, to nearest with
+/// ties to even; it is an error when that rounds to infinity, or to zero while the literal is
+/// not zero, so `0e999` is zero and `1e-400` is an error.
 pub fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
-    rounded(text, text.parse::<f64>().ok(), f64::is_infinite, |x| {
-        x == 0.0
-    })
+    Rat::decimal(text)
+        .expect("the lexer's float text is a decimal")
+        .to_f64()
 }
 
 /// The float literal `text` at `f32`, by the rule of [`literal_f64`]: `1e39` rounds to
 /// infinity and `1e-46` to zero.
 pub fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
-    rounded(text, text.parse::<f32>().ok(), f32::is_infinite, |x| {
-        x == 0.0
-    })
-}
-
-fn rounded<F>(
-    text: &str,
-    read: Option<F>,
-    infinite: fn(F) -> bool,
-    zero: fn(F) -> bool,
-) -> Result<F, LiteralRounding>
-where
-    F: Copy,
-{
-    let x = read.expect("the lexer's float text reads as a float");
-    let digits = text.split(['e', 'E']).next().unwrap_or(text);
-    if infinite(x) {
-        Err(LiteralRounding::Infinite)
-    } else if zero(x) && digits.bytes().any(|b| matches!(b, b'1'..=b'9')) {
-        Err(LiteralRounding::Zero)
-    } else {
-        Ok(x)
-    }
+    Rat::decimal(text)
+        .expect("the lexer's float text is a decimal")
+        .to_f32()
 }
 
 /// The float equal to `r`, when there is one.
 pub(crate) fn exact_f64(r: &Rat) -> Option<f64> {
-    // A double is m * 2^k with |m| < 2^53, so its denominator is a power of two.
-    let den_bits = r.den.bits() - 1;
-    if r.den != BigInt::one() << den_bits {
+    // A double is m * 2^k, so its denominator is a power of two.
+    let den = r.den.magnitude();
+    let dyadic = den.trailing_zeros().unwrap_or(0) + 1 == den.bits()
+        && r.pows.iter().all(|(p, e)| *p == 2 || e.is_positive());
+    if !dyadic {
         return None;
     }
-    let mut x = num_traits::ToPrimitive::to_f64(&r.num)?;
-    // Two exact scalings, the first staying normal, so the only rounding is the last one.
-    let mut k = den_bits as i32;
-    if k > 1022 {
-        x *= 2f64.powi(-1022);
-        k -= 1022;
+    let x = r.to_f64().ok()?;
+    match Exact::float(x) {
+        Exact::Finite(f) => (f == *r).then_some(x),
+        Exact::NegInf | Exact::PosInf | Exact::NaN => None,
     }
-    x *= 2f64.powi(-k);
-    (Exact::float(x) == Exact::Finite(r.clone())).then_some(x)
 }

@@ -459,7 +459,7 @@ fn show<'a>(v: &'a Value, f: &mut fmt::Formatter<'_>, todo: &mut Vec<Task<'a>>) 
     match v {
         Value::Bool(b) => write!(f, "{b}"),
         Value::Int(n) => write!(f, "{n}"),
-        Value::Big(n) => write!(f, "{n}"),
+        Value::Big(n) => write!(f, "{}", n.numer_text()),
         Value::Rat(r) => write!(f, "{r}"),
         Value::Float(x) => write!(f, "{}", crate::num::show_f64(x.get())),
         Value::Str(s) => write!(f, "{s:?}"),

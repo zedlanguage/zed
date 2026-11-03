@@ -7,10 +7,9 @@
 //! float that is infinite or NaN cast to an exact kind.
 
 use num_bigint::BigInt;
-use num_traits::{One, Signed};
 
 use crate::KernelError;
-use crate::num::{Exact, MAX_BITS, Rat, exact_f64, show_f64};
+use crate::num::{Exact, Rat, exact_f64, show_f64};
 use crate::term::Prim;
 use crate::value::Value;
 
@@ -23,11 +22,10 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         (Prim::Show, Value::Float(f)) => Value::str(&show_f64(f.get())),
         (Prim::Show, _) => Value::str(&x.to_string()),
         (Prim::CastInt, Value::Str(s)) => match read_int(s) {
-            Some(n) => sized(n)?,
+            Some(n) => Value::int(n),
             None => invalid(),
         },
         (Prim::CastRat, Value::Str(s)) => match read_rat(s) {
-            Some(r) if r.bits() > MAX_BITS => return Err(KernelError::Overflow),
             Some(r) => Value::rat(r),
             None => invalid(),
         },
@@ -46,7 +44,7 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                 _ => return Ok(invalid()),
             };
             match p {
-                Prim::CastInt if r.denom().is_one() => Value::int(r.numer().clone()),
+                Prim::CastInt if r.is_integer() => Value::integer(r),
                 Prim::CastInt => inexact(),
                 Prim::CastRat => Value::rat(r),
                 _ => match exact_f64(&r) {
@@ -57,10 +55,10 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         }
         (Prim::Abs, Value::Int(n)) => match n.checked_abs() {
             Some(n) => Value::Int(n),
-            None => Value::int(BigInt::from(*n).abs()),
+            None => Value::int(-BigInt::from(*n)),
         },
-        (Prim::Abs, Value::Big(n)) => Value::int(n.abs()),
-        (Prim::Abs, Value::Rat(r)) if r.numer().is_negative() => Value::rat(r.neg()),
+        (Prim::Abs, Value::Big(n)) => Value::integer(n.abs()),
+        (Prim::Abs, Value::Rat(r)) if r.is_negative() => Value::rat(r.neg()),
         (Prim::Abs, Value::Rat(_)) => x.clone(),
         (Prim::Abs, Value::Float(f)) => Value::float(f.get().abs()),
         // A string doubled 63 times holds more than `i64::MAX` characters.
@@ -78,13 +76,6 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
 
 fn type_err(p: Prim, x: &Value) -> Result<Value, KernelError> {
     Err(KernelError::Type(format!("{p:?} applied to {x}")))
-}
-
-fn sized(n: BigInt) -> Result<Value, KernelError> {
-    if n.bits() > MAX_BITS {
-        return Err(KernelError::Overflow);
-    }
-    Ok(Value::int(n))
 }
 
 /// An optional `-` and decimal digits.

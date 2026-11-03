@@ -28,12 +28,16 @@ fn a_row_of_several_arguments_and_a_failure_value() {
 
 #[test]
 fn a_row_that_stops_the_evaluator_fails() {
-    // The checker passes every row a program it accepts can run; a number beyond the
-    // evaluator's size limit still stops it.
-    let src = "big(positional n: int) = 2 ** 100000000 * n test { 1 -> 1 }\n";
-    let got = checks(src);
+    // The checker passes every row a program it accepts can run; a string too long for its
+    // length still stops it.
+    let src = format!(
+        "{}big(positional n: int) = len({}) * n test {{ 1 -> 1 }}\n",
+        zed_tests::TWICE,
+        zed_tests::too_long()
+    );
+    let got = checks(&src);
     assert_eq!(got.len(), 1);
-    assert!(got[0].starts_with("1:52: `1 -> 1` of `big`: "), "{got:?}");
+    assert!(got[0].starts_with("2:494: `1 -> 1` of `big`: "), "{got:?}");
     assert!(!got[0].ends_with(": ok"), "{got:?}");
 }
 
@@ -92,16 +96,20 @@ fn a_row_of_the_wrong_shape_says_what_a_port_takes() {
 
 #[test]
 fn a_wave_that_aborts_fails_its_row() {
-    // `3 ** 10000000` is past the evaluator's size limit.
-    let src = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- String(3 ** 10000000);\n}\n\
-               test { \"7\" -> \"7\\n\" }\n";
-    let got = checks(src);
+    // A string too long for its length stops the wave.
+    let src = format!(
+        "{}main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- {};\n}}\n\
+         test {{ \"7\" -> \"7\\n\" }}\n",
+        zed_tests::TWICE,
+        zed_tests::too_long()
+    );
+    let got = checks(&src);
     assert_eq!(got.len(), 1);
     assert!(
-        got[0].starts_with("4:8: `\"7\" -> \"7\\n\"` of `main`: "),
+        got[0].starts_with("5:8: `\"7\" -> \"7\\n\"` of `main`: "),
         "{got:?}"
     );
-    assert!(got[0].contains("size limit"), "{got:?}");
+    assert!(got[0].contains("cannot join"), "{got:?}");
 }
 
 #[test]

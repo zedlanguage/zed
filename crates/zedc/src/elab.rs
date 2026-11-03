@@ -912,10 +912,9 @@ impl<'a> Elab<'a> {
                     ),
                 }
             }
-            ExprKind::Rat(s) => match Rat::decimal(s) {
-                Some(r) => lit(Value::rat(r)),
-                None => self.error(e.span, "this rational is beyond the evaluator's size limit"),
-            },
+            ExprKind::Rat(s) => lit(Value::rat(
+                Rat::decimal(s).expect("the lexer's rat text is a decimal"),
+            )),
             ExprKind::Bool(b) => lit(Value::Bool(*b)),
             ExprKind::Atom(a) => lit(Value::atom(a)),
             ExprKind::Str(parts) => self.string(parts),

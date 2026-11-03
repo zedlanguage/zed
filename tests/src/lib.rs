@@ -16,6 +16,15 @@ pub mod scaling;
 pub mod tokens;
 pub mod trees;
 
+/// A Zed function that doubles a string, for [`too_long`].
+pub const TWICE: &str = "twice(positional s: String) = s ++ s;\n";
+
+/// A Zed expression that stops evaluation at run time: `"a"` doubled by [`TWICE`] 64 times,
+/// whose `2^64` bytes no string's length holds, so the last `++` refuses.
+pub fn too_long() -> String {
+    format!("{}\"a\"{}", "twice(".repeat(64), ")".repeat(64))
+}
+
 /// The folder that holds every step folder.
 pub fn steps_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("steps")

@@ -40,7 +40,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `DEFAULT_FUEL` 10^8 | zed-kernel eval.rs | removed (8): a compile-time evaluation stopped |
 
 Not thresholds: `TOP` 29 (the number of grammar layers), `POWER_FACTORS` 64 (the width of
-`i64`), `MAX_BITS`, `MIN_STEPS`, `MIN_MEMORY` (resources). `MIN_NESTED_CALLS` is a minimum the
+`i64`), `MIN_STEPS`, `MIN_MEMORY` (resources). `MIN_NESTED_CALLS` is a minimum the
 spec guarantees; the evaluator has no maximum.
 
 ## The replacements

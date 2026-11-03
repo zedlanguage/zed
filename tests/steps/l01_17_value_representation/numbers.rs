@@ -47,17 +47,15 @@ fn powers_of_zero_one_and_minus_one_stay_small() {
 }
 
 #[test]
-fn a_number_past_the_size_limit_is_an_evaluator_error() {
-    let src = "huge = 3 ** 10000000;\n";
-    assert_eq!(
-        value(src, "huge"),
-        "error: a number beyond the evaluator's size limit"
-    );
-    let e = errors("x = 1e999999r;\n");
-    assert_eq!(
-        e,
-        ["this rational is beyond the evaluator's size limit [1e999999r]"]
-    );
+fn a_number_far_past_a_machine_word_is_exact() {
+    // `3 ** 10000000` has 4.7 million digits and `1e999999r` a million: both are kept as
+    // powers of primes, so their remainders, order and quotients come without the digits.
+    let src = "huge = 3 ** 10000000;\nlast = huge mod 1000;\nbelow = huge < 3 ** 10000001;\n\
+               x = 1e999999r;\nten = x / 1e999998r;\ntiny = 1r / x * 1e1000000r;\n";
+    assert_eq!(value(src, "last"), "1");
+    assert_eq!(value(src, "below"), "true");
+    assert_eq!(value(src, "ten"), "10r");
+    assert_eq!(value(src, "tiny"), "10r");
 }
 
 #[test]

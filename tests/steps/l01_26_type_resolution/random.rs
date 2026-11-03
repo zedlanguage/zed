@@ -86,7 +86,7 @@ fn each_computed_value_is_in_its_arrows_result() {
                     assert!(result.contains(&v), "{f}{call}: {v} is not in {result}");
                     checked += 1;
                 }
-                // A value past the size limit; a division by zero is the atom, a value.
+                // A run-time error; a division by zero is the atom, a value.
                 Err(_) => failed += 1,
             }
         }

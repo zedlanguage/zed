@@ -34,13 +34,16 @@ fn an_error_stops_the_wave_before_anything_is_written() {
     let d = dir("abort");
     let path = d.join("out.txt");
     std::fs::write(&path, "previous\n").unwrap();
-    // `out` is pushed first in the text, then `3 ** 10000000` is past the size limit.
-    let src = "main() -> (out: Lines, stdout: Lines) {\n  \
-               out <- \"half done\";\n  stdout <- String(3 ** 10000000);\n}\n";
+    // `out` is pushed first in the text, then a string too long for its length stops the wave.
+    let src = format!(
+        "{}main() -> (out: Lines, stdout: Lines) {{\n  out <- \"half done\";\n  stdout <- {};\n}}\n",
+        zed_tests::TWICE,
+        zed_tests::too_long()
+    );
     let bind = format!("out={}", path.display());
-    let out = run("abort", src, "", &[&bind]);
+    let out = run("abort", &src, "", &[&bind]);
     assert_eq!(out.status, 1, "{}", out.stderr);
-    assert!(out.stderr.contains("size limit"), "{}", out.stderr);
+    assert!(out.stderr.contains("cannot join"), "{}", out.stderr);
     assert_eq!(out.stdout, "");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous\n");
 }

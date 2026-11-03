@@ -7,6 +7,7 @@
 //! on values is the ties of that order: the bitwise identity that keys and the law catalog
 //! read. The language's `==` is [`Value::surface_eq`], which differs only at floats.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;
 use std::mem;
@@ -209,8 +210,9 @@ pub enum Value {
     Bool(bool),
     /// An integer in the 64-bit range.
     Int(i64),
-    /// An integer outside the 64-bit range; never one inside it.
-    Big(Arc<BigInt>),
+    /// An integer outside the 64-bit range, never one inside it: a [`Rat`] that is an integer,
+    /// which may hold its prime powers unbuilt.
+    Big(Arc<Rat>),
     /// A rational, `3r` or `1r/3r`.
     Rat(Arc<Rat>),
     /// A float, compared bitwise.
@@ -336,7 +338,15 @@ impl Value {
     pub fn int(n: BigInt) -> Self {
         match n.to_i64() {
             Some(n) => Value::Int(n),
-            None => Value::Big(Arc::new(n)),
+            None => Value::Big(Arc::new(Rat::int(n))),
+        }
+    }
+
+    /// The integer `r`, which must be one, as an `Int` when it is in the 64-bit range.
+    pub fn integer(r: Rat) -> Self {
+        match r.small_integer() {
+            Some(n) => Value::int(n),
+            None => Value::Big(Arc::new(r)),
         }
     }
 
@@ -351,10 +361,10 @@ impl Value {
     }
 
     /// The integer inside, of either width.
-    pub fn as_bigint(&self) -> Option<BigInt> {
+    pub fn as_integer(&self) -> Option<Cow<'_, Rat>> {
         match self {
-            Value::Int(n) => Some(BigInt::from(*n)),
-            Value::Big(n) => Some((**n).clone()),
+            Value::Int(n) => Some(Cow::Owned(Rat::int(BigInt::from(*n)))),
+            Value::Big(n) => Some(Cow::Borrowed(n)),
             _ => None,
         }
     }
@@ -433,7 +443,7 @@ impl Value {
     pub(crate) fn exact(&self) -> Exact {
         match self {
             Value::Int(n) => Exact::Finite(Rat::int(BigInt::from(*n))),
-            Value::Big(n) => Exact::Finite(Rat::int((**n).clone())),
+            Value::Big(n) => Exact::Finite((**n).clone()),
             Value::Rat(r) => Exact::Finite((**r).clone()),
             Value::Float(x) => Exact::float(x.get()),
             _ => unreachable!("only numbers are placed on the line"),
@@ -473,8 +483,15 @@ fn number_cmp(a: &Value, b: &Value) -> Ordering {
         (Value::Float(x), Value::Float(y)) => x.cmp(y),
         (Value::Rat(x), Value::Rat(y)) => x.cmp(y),
         (Value::Big(x), Value::Big(y)) => x.cmp(y),
-        (Value::Int(x), Value::Big(y)) => BigInt::from(*x).cmp(y.as_ref()),
-        (Value::Big(x), Value::Int(y)) => x.as_ref().cmp(&BigInt::from(*y)),
+        // A `Big` is never in the 64-bit range.
+        (Value::Int(_), Value::Big(y)) => match y.is_negative() {
+            true => Ordering::Greater,
+            false => Ordering::Less,
+        },
+        (Value::Big(x), Value::Int(_)) => match x.is_negative() {
+            true => Ordering::Less,
+            false => Ordering::Greater,
+        },
         _ => a
             .exact()
             .cmp(&b.exact())

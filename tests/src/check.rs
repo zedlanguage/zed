@@ -104,7 +104,7 @@ mod tests {
             keypath: vec![Value::Int(k)],
         };
         assert!(agree(&Err(c(1)), &Err(c(2))));
-        assert!(!agree(&Err(c(1)), &Err(KernelError::Overflow)));
+        assert!(!agree(&Err(c(1)), &Err(KernelError::OutOfFuel)));
         assert!(!agree(&Err(c(1)), &Ok(Value::Int(1))));
     }
 

@@ -1718,12 +1718,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
                 unreachable!("resolve rejects the forms of layer L6")
             }
-            // A `rat` literal is decorated and keeps its carrier; a literal past the size
-            // limit is elaboration's error.
-            ExprKind::Rat(s) => match Rat::decimal(s) {
-                Some(r) => Ty::lit(&Value::rat(r)),
-                None => Ty::empty(),
-            },
+            // A `rat` literal is decorated and keeps its carrier.
+            ExprKind::Rat(s) => Ty::lit(&Value::rat(
+                Rat::decimal(s).expect("the lexer's rat text is a decimal"),
+            )),
             ExprKind::Int { .. } | ExprKind::Float(_) => Ty::empty(),
             ExprKind::Bool(b) => Ty::lit(&Value::Bool(*b)),
             ExprKind::Atom(a) => Ty::set(KType::atom(a)),

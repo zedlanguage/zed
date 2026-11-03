@@ -95,12 +95,12 @@ impl Out<'_> {
             }
             Value::Big(n) => {
                 self.tag(8);
-                self.str(&n.to_string());
+                self.str(&n.numer_text());
             }
             Value::Rat(r) => {
                 self.tag(9);
-                self.str(&r.numer().to_string());
-                self.str(&r.denom().to_string());
+                self.str(&r.numer_text());
+                self.str(&r.denom_text());
             }
             Value::Tuple(vs) => {
                 self.tag(5);

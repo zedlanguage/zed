@@ -378,8 +378,7 @@ which 196 inside a loop body; `?` 1015, of which 276 in a loop; `continue` 110; 
 
 - **Overflow as refusal.** Since T4 the Omega test, `twovar` and `utvpi` compute in
   `store::int::Int`, unbounded with i128 while a value fits, and no coefficient refuses a
-  question; in Zed this is `int`, and `store::int` goes at the port. `checked_*` remain elsewhere
-  (`MAX_BITS`, `num.rs:19`, is still a bound to port as an explicit test).
+  question; in Zed this is `int`, and `store::int` goes at the port. `checked_*` remain elsewhere.
 - **`as` casts** (272): most go, but a truncating cast must become `mod 2 ** k`.
 
 ## Mechanical rewrites
@@ -405,7 +404,7 @@ Confirmed against sec:grammar; counts in the appendix.
 | Same-scope `let` rebinding | 44 | Rename: rebinding in one scope is an error (line 2385) |
 | Integer division: `rem_euclid`, `div_euclid`, and their `checked_` forms | 20, 12, 2 | `mod` and `div`, which are Euclidean (line 589) and give `#divByZero` |
 | Truncating `/` and `%` on integers | 16, 22 | `div` and `mod`, since `/` is on float and `rat` only, and truncating variants are library functions (line 589). The results agree when the division is exact (`hull.rs:89`, `num.rs:37`) or the dividend is nonnegative and the divisor positive. Sites where an operand may be negative must be read at S.3: midpoints (`revision.rs:420`, `presburger.rs:1379`), `gcd` (`presburger.rs:839`, `preimage.rs:2533`), parity `k % 2 == 1` (`revision.rs:74`, `:444`), which in Zed is true for an odd negative `k` |
-| `saturating_add`, `saturating_mul`, `saturating_sub` | 9, 6, 3 | `saturating_sub` becomes an `if`. The other two guard a machine word and vanish on an unbounded `int`, except for `eval.rs:1385` and `num.rs:61`, where the test against `MAX_BITS` stays as written. In `cost.rs`, costs then no longer stop at the maximum, so a comparison of very large costs can differ from the Rust at S.3 |
+| `saturating_add`, `saturating_mul`, `saturating_sub` | 9, 6, 3 | `saturating_sub` becomes an `if`. The other two guard a machine word and vanish on an unbounded `int`. In `cost.rs`, costs then no longer stop at the maximum, so a comparison of very large costs can differ from the Rust at S.3 |
 | Machine integers (`usize` 760, `i128` 167, `u64` 188, `i64` 206) | | `int` with a domain |
 | `Vec`, `HashMap`, `BTreeMap`, sets, `imbl` | 1668, 207, 287, 36 | `[T]`, `K ->? V`, a set is a self-map; keys need a natural order, which excludes NaN-admitting floats |
 | `.sort`, `.dedup`, `.retain`, `.truncate`, `.windows`, `peekable` | 27, 12, 9, 17, 7, 13 | `sort`, `.sort(by: le)`, `group`, `where`, `take`, `zip` with `drop`, an index |
@@ -877,3 +876,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `BTreeMap` from block to the conjuncts it loses, with a `Vec` of the blocks in the order first met, filled through `entry(..).or_default()` | `Blocks::remove` | None | A fold over the removed conjuncts into a map of lists and a list of blocks |
 | A slice pattern with a guard that changes `self` (`[g] if self.unlink(b, g) => {}`), so the guard both tests and does the unlinking | `Blocks::remove` | Mutation (gap 11) | `unlink` returns the new forest or nothing, and a `match` on that result picks the split |
 | The block of a conjunct kept in a local while the forest is merged around it, since looking the conjunct up again compares it whole (`Ord` on `Arc<Formula>`) | `Blocks::place`, `Blocks::split` | Identity (gap 1) | The same local, carried through the fold; with content digests a lookup would cost O(1) and the local would be a choice, not a need |
+
+## Entries from CAP-bits (`zed-kernel/src/num.rs`, `num/bound.rs`, `num/factor.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `u128` products for a 64-bit product modulo a 64-bit number | `factor::mul_mod`, `factor::split` | None | `(a * b) mod m` on unbounded `int`, the operands' ranges `int[0..<2 ** 64]` letting the plan use two words |
+| `BigUint::bits`, `trailing_zeros`, `bit`, `<<` and `>>` on big integers, and `u64::leading_zeros` and `trailing_zeros` | `bound::Bound`, `Rat::small_integer`, `valuation`, `factor::factor` | Bit operations on `int` | Library words on `int` (`bits`, `trailing_zeros`, `shl`), as for the counts in the row of `count_ones` above |
+| `Cow<'_, Rat>`, an operand borrowed unless it must be rebuilt over more primes | `Rat::aligned`, `Value::as_integer` | None | Zed shares values, so the function returns the operand or the rebuilt one |
+| `&dyn Fn(&BigInt, &BigUint) -> bool`, the exact test of a near-tie passed into the rounding | `bound::round`, `Quotient::floor_scaled` | None | A function value |
+| `Box<[(u64, BigInt)]>`, the primes and exponents of a number | `Rat::pows` | None | A shared list of pairs |

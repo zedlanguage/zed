@@ -133,12 +133,12 @@ impl W {
             }
             Value::Big(b) => {
                 self.tag(2);
-                self.s(&b.to_string());
+                self.s(&b.numer_text());
             }
             Value::Rat(r) => {
                 self.tag(3);
-                self.s(&r.numer().to_string());
-                self.s(&r.denom().to_string());
+                self.s(&r.numer_text());
+                self.s(&r.denom_text());
             }
             Value::Float(x) => {
                 self.tag(4);

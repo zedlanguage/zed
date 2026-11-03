@@ -58,11 +58,14 @@ fn a_failure_atom_is_a_value_the_build_computes() {
 
 #[test]
 fn an_evaluation_error_is_left_to_run() {
-    // An integer past the evaluator's size limit stops evaluation: the build leaves it, and
-    // the run reports it in the ordinary way.
-    let src = "huge = 10 ** 100000000;\nmain(stdin: Lines) -> (stdout: Lines) {\n  \
-               stdout <- String(huge);\n}\n";
-    let (p, s, report) = staged(src);
+    // A string too long for its length stops evaluation: the build leaves it, and the run
+    // reports it in the ordinary way.
+    let src = format!(
+        "{}huge = {};\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- huge;\n}}\n",
+        zed_tests::TWICE,
+        zed_tests::too_long()
+    );
+    let (p, s, report) = staged(&src);
     assert!(report.built.is_empty());
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
     assert_eq!(term(&s, "huge"), term(&p, "huge"));
