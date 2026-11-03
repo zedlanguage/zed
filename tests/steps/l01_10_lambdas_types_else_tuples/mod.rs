@@ -4,6 +4,7 @@
 mod elses;
 mod fences;
 mod lambdas;
+mod later_types;
 mod scaling;
 mod tests_of_types;
 mod tuples;
