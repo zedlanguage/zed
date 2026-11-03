@@ -276,11 +276,13 @@ mod tests {
     #[test]
     fn lengths_are_kept_through_joins_without_writing_out() {
         // "naïve " is 6 characters in 7 bytes; "日本" 2 in 6; "" none.
+        // Each piece is one `Text`, joined ten times, so the chain shares it.
         let pieces = ["naïve ", "", "日本", "a"];
+        let parts = pieces.map(Text::from);
         let mut t = Text::from("");
         let mut want = String::new();
-        for p in pieces.iter().cycle().take(40) {
-            t = join(&t, &Text::from(*p));
+        for (p, part) in pieces.iter().zip(&parts).cycle().take(40) {
+            t = join(&t, part);
             want.push_str(p);
         }
         assert_eq!((t.len(), t.char_count()), (140, 90));
