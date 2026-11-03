@@ -900,35 +900,35 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | ARXIV-1003-spec | impl attempt 1 | 2026-11-03 11:09 | done: zed 0f61a00 (D, A, [GArrows], L11.1a, PROGRESS 297), zed-impl 2360363 (plan_dag L11.1a); check OK 149/0, cases 85/0, fences 149; sync --check out of date  |
-| BIT-words | repair attempt 2 | 2026-11-03 07:14 | added deep.rs: 20000-binding chain read by popCount on 8 MiB stack passes in 9.3 s (load 86, 237 MB); control with recursive Ck::known aborts with stack overflo |
-| CANON-stable | verify attempt 1 | 2026-11-03 09:30 | run_tests.sh 2 on 58d5cd4: 99 pieces, 1 failed (l01_25 s22 random_terms 0/1 + more_random_guarded_chains 5/7, pre-existing on base 1ab9e33, fixed on main by 51b |
-| CAP-pow32 | verify attempt 2 | 2026-11-03 08:53 | started on afcadac; reusing verify#1 controls; load 62.82 71.11 76.61 |
+| BIT-words | verify attempt 3 | 2026-11-03 07:14 | started on 9cdd34e; reusing verify#2 results for 208bc87 (unchanged code); checking deep.rs and its control / load 66.54 66.32 69.12 |
+| CANON-stable | repair attempt 1 | 2026-11-03 09:30 | start: commit 720-naming test on Codex 6-var system, fix doc, colors map, citations |
+| CAP-pow32 | verify attempt 2 | 2026-11-03 08:53 | afcadac cherry-picked onto main b0811c3 (SCALE-bytes) in wt/cap-pow32-ctl: powers 13/13 pass; control exact Int count (f6e2feb files) also passes 13/13 incl. by |
 | CATCHUP-cross | repair attempt 1 | 2026-11-03 11:18 | cause: settle (873f1a8, ST-arms-quad repair 2) merges one-disjunct disjunctions into the base within a round; each later disjunct test solves the whole grown ch |
 | F44-memo | repair attempt 5 | 2026-11-03 07:14 | committed fcd1270 on wt/f44-memo, rebased on main b0811c3 (earlier line said 5b7c3ad; the base is b0811c3); clippy -D warnings clean (l01_39 deep_condition with |
 | GLAM-spec | impl attempt 1 | 2026-11-03 11:10 | done: zed wt/spec-glam cd724c9, zed-impl wt/plan-glam ac63f8a; check/cases/fences/sync --check exit 0; 10 plan rows (5 items incl. SPECULATE, 5 step rows); ledg |
-| HKT | orchestrator attempt  | 2026-11-03 11:41 | owner: direct research agent (not a workflow), started 11:41 |
-| L1.17a | repair attempt 2 | 2026-11-03 07:14 | spec branch wt/l1-17a-spec rebased on zed main 1f3048d (one paragraph conflict with the widening-warning sentences, both kept); zed-tools check RESULT: OK; suit |
+| HKT-spec | impl attempt 1 | 2026-11-03 12:01 | start: weave HKT-1, HKT-2 into DESIGN and plan_dag |
+| L1.17a | repair attempt 2 | 2026-11-03 07:14 | suite: 119 pieces, 1 failed: l01_25_preimage_catalog (2 of 140 tests), load 53-86; finding out whether main has it too |
 | LIN-probe | verify attempt 2 | 2026-11-03 07:30 | fmt and clippy pass on 5a4d737; starting tools/run_tests.sh 2, load 72.78 |
 | LIVE3 | orchestrator attempt  | 2026-11-03 09:30 | REFERENCE (XR3 Codex report /home/luke/Work/wt/xt4/codex/R3_CODEX.md Q3, lines 122-224, and Q5 lines 280-284): a second design for the same method (bounded back |
 | S22-cross-scaling | orchestrator attempt  | 2026-11-03 11:23 | owner: CATCHUP-cross direct agent, bisecting |
 | S22e-quad | verify attempt 2 | 2026-11-03 07:43 | start: verify wt/s22e-quad 02f907b (load 60.76 63.42 69.81) |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | verify attempt 1 | 2026-11-03 04:26 | control worktree /home/luke/Work/wt/t2-mid-ctl at 6b28b53: Region Debug and Term Drop each scan their stack per step (quadratic); building; load 63.20 64.08 70. |
-| T2-types | repair attempt 1 | 2026-11-03 08:34 | started on wt/t2-types 5c6d82b; scope: Rec::name_apart nested recursive-type args on the text loop's stack, deep Tree test, release checks in spawned thread; lo |
-| T6-bound-load | verify attempt 2 | 2026-11-03 07:07 | started on 59601e0; load 58.18 63.38 70.51 |
+| T2-types | repair attempt 1 | 2026-11-03 08:34 | controls: old 5c6d82b aborts the new Tree deep test and Tree scaling test with stack overflow; 3000 random types with Tree instances (10,944 text lines) byte-id |
+| T6-bound-load | verify attempt 2 | 2026-11-03 07:07 | fmt ok, clippy -D warnings rc=0; run_tests.sh 2 started; control worktree /home/luke/Work/wt/t6-bound-load-v2ctl (detached 59601e0) for a quadratic bound walk a |
 | T6-payload-pinwheel | repair attempt 1 | 2026-11-03 08:25 | fix: overlaps keys Walk.seen by Type (structure); a type met at a second node merges the two trie nodes (union-find, children merged small-to-large) instead of  |
 | T6-ratlit | verify attempt 1 | 2026-11-03 05:01 | suite run_tests.sh 2 on 29a50e7: 119 pieces, 1 failed (l01_25 chain_cross_within_its_width_scales 26.3x instr and chain_cross_live_scales 48.6x bytes, same as m |
 | TD-ends | repair attempt 6 | 2026-11-03 03:52 | fmt clean, clippy -D warnings clean; started tools/run_tests.sh 2 / load 70.88 72.14 78.40 |
-| TD-values | merge attempt 1 | 2026-11-03 03:52 | lock released |
 | TERM-spec | orchestrator attempt  | 2026-11-03 11:25 | owner: direct spec agent (not a workflow), started 11:40 |
 | TEST-split | verify attempt 1 | 2026-11-03 07:56 | run_tests.sh 4 on 80808c6: 298 pieces, 2 failed (s22 chain_cross_within_its_width 26.2x instr, chain_cross_live 48.6x bytes; same numbers as repair#2, steps sou |
-| TYPE-forms | verify attempt 1 | 2026-11-03 08:16 | control (old per-variable scan in apply_one) in wt/type-forms-ctl: many_bounded_variables_scale fails 28.3x (1.34G -> 37.9G instr, load 62-71), as reported; pro |
+| TYPE-forms | repair attempt 1 | 2026-11-03 08:16 | start: fixing fits_sig own-bounded vars, result-only escape, timed inputs, unbounded note |
 | UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | fmt and clippy -D warnings clean on 942fd60; starting tools/run_tests.sh 2 (load 65.80) |
 | UTVPI-NEAR | verify attempt 2 | 2026-11-03 06:34 | fmt rc=0, clippy -D warnings rc=0 on a18cf9e; diff read (negsssp.rs, utvpi.rs race, tests, docs); suite run_tests.sh 2 running; open from verify#1 not addressed |
 | XR3-synth | orchestrator attempt  | 2026-11-03 11:44 | owner: direct agent, started 11:43 |
 
 Merged into local main and not yet pushed (126 commits); the push follows one full test run on the merged tree:
 
+- 4ef3c21 plan_dag, STATUS: SEQ-desugar done (tip 76ca195)
 - f27e00a SEQ-desugar merge: check::widen (WIDEN-WARN) names ExprKind::Array, not Seq
 - 76ca195 SEQ-desugar: array displays and [T] are rank-keyed arrays, not Seq
 - 705cf33 STATUS: in progress as of 2026-11-03 11:57
