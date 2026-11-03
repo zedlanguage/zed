@@ -1118,3 +1118,124 @@ impl<'a> Rounds<'a> {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+
+    use super::{Int, Stop, bf_dijkstra};
+
+    /// A graph `u → (v, w)` in the compressed rows [`bf_dijkstra`] reads.
+    fn rows(out: &[Vec<(usize, i64)>]) -> (Vec<usize>, Vec<usize>, Vec<Int>) {
+        let mut start = vec![0];
+        let (mut to, mut w) = (Vec::new(), Vec::new());
+        for edges in out {
+            for &(v, x) in edges {
+                to.push(v);
+                w.push(Int::from(x));
+            }
+            start.push(to.len());
+        }
+        (start, to, w)
+    }
+
+    /// [`bf_dijkstra`] from labels 0, the first round started from the tails of the negative
+    /// edges as [`super::Solver::merge`] starts it, with the round bound `eta`; `None` for a
+    /// negative cycle.
+    fn search(out: &[Vec<(usize, i64)>], eta: u64) -> Option<Vec<Int>> {
+        let (start, to, w) = rows(out);
+        let seeds: Vec<usize> = (0..out.len())
+            .filter(|&u| out[u].iter().any(|&(_, x)| x < 0))
+            .collect();
+        let label = vec![Int::ZERO; out.len()];
+        match bf_dijkstra(&start, &to, &w, label, &seeds, eta, &mut || {
+            Ok::<(), Infallible>(())
+        }) {
+            Ok(d) => Some(d),
+            Err(Stop::Negative) => None,
+            Err(Stop::Tick(never)) => match never {},
+        }
+    }
+
+    /// The reference: Bellman–Ford from labels 0, `n` passes over every edge; a label that
+    /// falls in the last pass shows a negative cycle, since a shortest path from the source
+    /// joined to each node has at most `n - 1` edges of the graph.
+    fn bellman_ford(out: &[Vec<(usize, i64)>]) -> Option<Vec<Int>> {
+        let n = out.len();
+        let mut d = vec![Int::ZERO; n];
+        for pass in 1..=n {
+            let mut fell = false;
+            for (u, edges) in out.iter().enumerate() {
+                for &(v, x) in edges {
+                    let to = &d[u] + &Int::from(x);
+                    if to < d[v] {
+                        d[v] = to;
+                        fell = true;
+                    }
+                }
+            }
+            if !fell {
+                return Some(d);
+            }
+            if pass == n {
+                return None;
+            }
+        }
+        Some(d)
+    }
+
+    /// The exit at round `eta` is what reports this cycle. Round 1 starts from node 1 alone,
+    /// the one tail of a negative edge, and node 0 falls from it; node 1's parent is still the
+    /// source, so the parent walk finds no cycle. In round 2 node 1 falls from node 0 and node 0
+    /// from node 1, and the round bound, 2 nodes, is reached before the walk that would close
+    /// the cycle.
+    #[test]
+    fn the_round_bound_reports_a_cycle_before_the_parent_walk() {
+        let out = vec![vec![(1, 1)], vec![(0, -2)]];
+        assert_eq!(bellman_ford(&out), None);
+        assert_eq!(search(&out, 2), None);
+    }
+
+    /// A path of `n - 1` negative edges, each falling one round after the one before it,
+    /// needs every round up to the bound `n` and is not taken for a cycle.
+    #[test]
+    fn the_round_bound_lets_the_longest_path_finish() {
+        let n = 9;
+        let out: Vec<Vec<(usize, i64)>> = (0..n)
+            .map(|u| if u == 0 { vec![] } else { vec![(u - 1, -1)] })
+            .collect();
+        let expected: Vec<Int> = (0..n).map(|u| Int::from(u as i64 + 1 - n as i64)).collect();
+        assert_eq!(bellman_ford(&out), Some(expected.clone()));
+        assert_eq!(search(&out, n as u64), Some(expected));
+    }
+
+    /// 20,000 graphs of 1 to 10 nodes, weights -6 to 9, with the round bound set to the node
+    /// count: [`bf_dijkstra`] gives the reference's labels exactly, or reports a negative
+    /// cycle exactly when the reference does. Both answers occur.
+    #[test]
+    fn the_round_bound_agrees_with_bellman_ford() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut below = |k: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % k as u64) as usize
+        };
+        let (mut negative, mut feasible) = (0, 0);
+        for _ in 0..20_000 {
+            let n = 1 + below(10);
+            let mut out: Vec<Vec<(usize, i64)>> = vec![Vec::new(); n];
+            for _ in 0..below(3 * n + 1) {
+                let (u, v) = (below(n), below(n));
+                out[u].push((v, below(16) as i64 - 6));
+            }
+            let expected = bellman_ford(&out);
+            match &expected {
+                Some(_) => feasible += 1,
+                None => negative += 1,
+            }
+            assert_eq!(search(&out, n as u64), expected, "graph {out:?}");
+        }
+        assert!(negative > 1000 && feasible > 1000, "{negative} {feasible}");
+    }
+}

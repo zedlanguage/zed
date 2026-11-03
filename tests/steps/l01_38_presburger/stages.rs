@@ -420,7 +420,11 @@ fn bad_gor_and_a_fan_scale() {
     // BF-Dijkstra 344k to 19.3M, Duong 3.72M to 43.1M, and Duong 404M at k = 16,384 (9.4 times
     // its count at 2,048). Both quadratic searches are cheaper than Duong's below k = 2,048, so
     // the race grows with them; it falls back to Duong's growth only past that size.
-    // Main before UTVPI-NEAR, Goldberg and Radzik alone, takes 53.3M to 2,993M (56.2 times). The
+    // Main before UTVPI-NEAR, Goldberg and Radzik alone, takes 53.3M to 2,993M (56.2 times), and
+    // the race, measured with it in repair 2, 202.3M to 12,236M (60.5 times): about 4 times main
+    // at both sizes, with the same growth. Ruling (orchestrator, 2026-11-03, after verify 2):
+    // accepted for the merge, since main fails here too and the extra cost is a constant bounded
+    // by the number of racers, three; it buys BAD-GOR (`bad_gor_scales`, main 59.7 times). The
     // fix is open in item UTVPI-union: a search near-linear in the worst case, small constant.
     let (small, large) = (
         bad_gor_and_fan(256, 0),
