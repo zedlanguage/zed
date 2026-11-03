@@ -898,31 +898,44 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ARXIV-1003 | running | 2026-11-03 11:09 |  |
-| BIT-words | verify attempt 2 | 2026-11-03 07:14 | started on 208bc87; verify#1 results for 30525fd reused only where code unchanged / load 93.10 86.99 87.12 |
-| CANON-stable | impl attempt 1 | 2026-11-03 09:30 | run1: 3 tests regressed vs baseline (omega equality chain 333x n^2, model past 128 bits, s22 slow families 2 vs 7) from color-sorted order; fixed by breadth-fir |
-| CAP-pow32 | repair attempt 1 | 2026-11-03 08:53 | start: replace exact Int factor count in Tx::joined with O(1) summary (u32 value if fits + parity) |
-| F44-memo | verify attempt 2 | 2026-11-03 07:14 | returning ok=false: (1) branch conflicts with SCALE-bytes (main 3fa1fdc) in tests/src/scaling.rs; alone() spawns a bare thread, so main's per-thread byte count  |
-| GLAM | running | 2026-11-03 11:10 |  |
-| L1.17a | repair attempt 1 | 2026-11-03 07:14 | start: fix room_to_print total, Rat::aligned room, plain-rational order, shared-tuple test |
-| LIN-probe | verify attempt 1 | 2026-11-03 07:30 | negative control (main ab26ea6 probe in ctl, not committed): chain_cross_dead_scales fails 242.9M -> 38.33G instr, 157.8x; repair a_chain_whose_point_is_at_an_e |
+| ARXIV-1003-spec | impl attempt 1 | 2026-11-03 11:09 | done: zed 0f61a00 (D, A, [GArrows], L11.1a, PROGRESS 297), zed-impl 2360363 (plan_dag L11.1a); check OK 149/0, cases 85/0, fences 149; sync --check out of date  |
+| BIT-words | repair attempt 2 | 2026-11-03 07:14 | added deep.rs: 20000-binding chain read by popCount on 8 MiB stack passes in 9.3 s (load 86, 237 MB); control with recursive Ck::known aborts with stack overflo |
+| CANON-stable | verify attempt 1 | 2026-11-03 09:30 | run_tests.sh 2 on 58d5cd4: 99 pieces, 1 failed (l01_25 s22 random_terms 0/1 + more_random_guarded_chains 5/7, pre-existing on base 1ab9e33, fixed on main by 51b |
+| CAP-pow32 | verify attempt 2 | 2026-11-03 08:53 | started on afcadac; reusing verify#1 controls; load 62.82 71.11 76.61 |
+| CATCHUP-cross | repair attempt 1 | 2026-11-03 11:18 | cause: settle (873f1a8, ST-arms-quad repair 2) merges one-disjunct disjunctions into the base within a round; each later disjunct test solves the whole grown ch |
+| F44-memo | repair attempt 5 | 2026-11-03 07:14 | committed fcd1270 on wt/f44-memo, rebased on main b0811c3 (earlier line said 5b7c3ad; the base is b0811c3); clippy -D warnings clean (l01_39 deep_condition with |
+| GLAM-spec | impl attempt 1 | 2026-11-03 11:10 | done: zed wt/spec-glam cd724c9, zed-impl wt/plan-glam ac63f8a; check/cases/fences/sync --check exit 0; 10 plan rows (5 items incl. SPECULATE, 5 step rows); ledg |
+| HKT | orchestrator attempt  | 2026-11-03 11:41 | owner: direct research agent (not a workflow), started 11:41 |
+| L1.17a | repair attempt 2 | 2026-11-03 07:14 | spec branch wt/l1-17a-spec rebased on zed main 1f3048d (one paragraph conflict with the widening-warning sentences, both kept); zed-tools check RESULT: OK; suit |
+| LIN-probe | verify attempt 2 | 2026-11-03 07:30 | fmt and clippy pass on 5a4d737; starting tools/run_tests.sh 2, load 72.78 |
 | LIVE3 | orchestrator attempt  | 2026-11-03 09:30 | REFERENCE (XR3 Codex report /home/luke/Work/wt/xt4/codex/R3_CODEX.md Q3, lines 122-224, and Q5 lines 280-284): a second design for the same method (bounded back |
-| S22e-quad | repair attempt 1 | 2026-11-03 07:43 | early split now deferred when x's domain lies within two periods or a class reads a remainder guard alone; probes at load 84: min chain one period 1.87M..15.3M  |
+| S22-cross-scaling | orchestrator attempt  | 2026-11-03 11:23 | owner: CATCHUP-cross direct agent, bisecting |
+| S22e-quad | verify attempt 2 | 2026-11-03 07:43 | start: verify wt/s22e-quad 02f907b (load 60.76 63.42 69.81) |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
-| T2-mid | repair attempt 4 | 2026-11-03 04:26 | elab ty/pattern converted, committed; old elab overflows type 100k and patterns 10k (load 96.66) |
-| T2-types | repair attempt 3 | 2026-11-03 08:34 | control on main 21bd4f8 with b3ec3c8's deep_types.rs: all 9 deep and scaling tests abort (134 overflow x5, 139 SIGSEGV x4); rec-name test and text equivalence t |
-| T6-bound-load | verify attempt 1 | 2026-11-03 07:07 | negative control (not committed): quadratic bound walk (kernel_type over all written types per root) fails the_bound_walk_scales_linearly, 250: 1.56 s, 2000: 47 |
-| T6-payload-pinwheel | verify attempt 1 | 2026-11-03 08:25 | started; load 77.64 86.08 87.12 |
-| T6-ratlit | impl attempt 3 | 2026-11-03 05:01 | meKr print in place, l01_22 32 pass, fmt and clippy clean; scaling N=2^20 vs 2^23: 2,951,041 vs 2,949,632 instructions, 414 kB both; exponent of 200 vs 1600 dig |
-| TD-ends | repair attempt 5 | 2026-11-03 03:52 | squashed onto main 66945e0 as 4ba6b1d; main's S22 code, preimage_ref and tests ported to exact ends; running tests |
-| TEST-split | repair attempt 2 | 2026-11-03 07:56 | rebased on main 88c51bb as 0b5d7c1 (STATUS conflict, kept both); steps binary 1889 tests, 233 step pieces, selections identical to the full list, each once (old |
-| TYPE-forms | orchestrator attempt  | 2026-11-03 08:16 | LOAD REQUIREMENT (user, 09:57): the machine is at load 110 on 32 cores; target is about 32. From now on build with CARGO_BUILD_JOBS=4, run the suite as tools/ru |
-| UNITANNOT-L7 | repair attempt 1 | 2026-11-03 07:14 | run_tests.sh 2 on 52b6b67 (base 1ab9e33): 100 pieces, 2 failed: m0_01 step_index snapshot lacked l07_03 (mine, updated), l01_25 s22 random pair (known on main,  |
-| UTVPI-NEAR | repair attempt 2 | 2026-11-03 06:34 | start; per orchestrator split (UTVPI-union) measuring main on the union family k=256,2048; load 85.27 |
+| T2-mid | verify attempt 1 | 2026-11-03 04:26 | control worktree /home/luke/Work/wt/t2-mid-ctl at 6b28b53: Region Debug and Term Drop each scan their stack per step (quadratic); building; load 63.20 64.08 70. |
+| T2-types | repair attempt 1 | 2026-11-03 08:34 | started on wt/t2-types 5c6d82b; scope: Rec::name_apart nested recursive-type args on the text loop's stack, deep Tree test, release checks in spawned thread; lo |
+| T6-bound-load | verify attempt 2 | 2026-11-03 07:07 | started on 59601e0; load 58.18 63.38 70.51 |
+| T6-payload-pinwheel | repair attempt 1 | 2026-11-03 08:25 | fix: overlaps keys Walk.seen by Type (structure); a type met at a second node merges the two trie nodes (union-find, children merged small-to-large) instead of  |
+| T6-ratlit | verify attempt 1 | 2026-11-03 05:01 | suite run_tests.sh 2 on 29a50e7: 119 pieces, 1 failed (l01_25 chain_cross_within_its_width_scales 26.3x instr and chain_cross_live_scales 48.6x bytes, same as m |
+| TD-ends | repair attempt 6 | 2026-11-03 03:52 | fmt clean, clippy -D warnings clean; started tools/run_tests.sh 2 / load 70.88 72.14 78.40 |
+| TD-values | merge attempt 1 | 2026-11-03 03:52 | lock released |
+| TERM-spec | orchestrator attempt  | 2026-11-03 11:25 | owner: direct spec agent (not a workflow), started 11:40 |
+| TEST-split | verify attempt 1 | 2026-11-03 07:56 | run_tests.sh 4 on 80808c6: 298 pieces, 2 failed (s22 chain_cross_within_its_width 26.2x instr, chain_cross_live 48.6x bytes; same numbers as repair#2, steps sou |
+| TYPE-forms | verify attempt 1 | 2026-11-03 08:16 | control (old per-variable scan in apply_one) in wt/type-forms-ctl: many_bounded_variables_scale fails 28.3x (1.34G -> 37.9G instr, load 62-71), as reported; pro |
+| UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | fmt and clippy -D warnings clean on 942fd60; starting tools/run_tests.sh 2 (load 65.80) |
+| UTVPI-NEAR | verify attempt 2 | 2026-11-03 06:34 | fmt rc=0, clippy -D warnings rc=0 on a18cf9e; diff read (negsssp.rs, utvpi.rs race, tests, docs); suite run_tests.sh 2 running; open from verify#1 not addressed |
+| XR3-synth | orchestrator attempt  | 2026-11-03 11:44 | owner: direct agent, started 11:43 |
 
-Merged into local main and not yet pushed (115 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (122 commits); the push follows one full test run on the merged tree:
 
+- 05ad41b fences: sync after the Glam and arXiv 1003.5954 spec merges; l01_07 snapshots re-accepted
+- 40750ce Merge branch 'wt/plan-arxiv1003'
+- 05a620d Merge branch 'wt/plan-glam'
+- ac63f8a plan_dag: Glam study rows and SPECULATE; fences synced to DESIGN
+- 2360363 plan_dag: L11.1a (calls of declared functions in an Ast), needed by L11.3 and L22.9
+- b0811c3 plan_dag, STATUS: TD-values done (9a66958)
 - 9a66958 TD-values: each_value makes every inner type lazily, one maker per type, explicit stack
+- 5b7c3ad STATUS: in progress as of 2026-11-03 11:12
 - 404bae5 STATUS: in progress as of 2026-11-03 11:11
 - ba12343 STATUS: HULL3 done (tip c52cc3c)
 - c52cc3c HULL3: three live variables with a unit side decided by a 3-D shadow in O(m log m) (XT3 B4)
