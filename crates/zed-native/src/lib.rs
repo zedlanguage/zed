@@ -43,20 +43,37 @@ pub struct Outcome {
     pub cells: usize,
 }
 
-fn isa(pic: bool) -> Result<Arc<dyn cranelift_codegen::isa::TargetIsa>, String> {
+/// Cranelift's `opt_level`, with the register allocator that goes with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OptLevel {
+    /// `none`, with the `single_pass` register allocator: each pass is linear in the size of a
+    /// function. [`run`] and [`object`] use it.
+    None,
+    /// `speed`, with the `backtracking` register allocator: Cranelift's optimizing settings,
+    /// whose passes grow faster than the size of a function. Tests compare it with `None`.
+    Speed,
+}
+
+fn isa(pic: bool, level: OptLevel) -> Result<Arc<dyn cranelift_codegen::isa::TargetIsa>, String> {
     let mut flags = settings::builder();
     let set = |f: &mut settings::Builder, k, v| f.set(k, v).map_err(|e| format!("native: {e}"));
     // Cranelift's e-graph optimizer and its backtracking register allocator take time growing
     // faster than the size of a function (n^1.6 and n^1.4 measured); with neither, each pass is
     // linear (COMPLEXITY.md Z15).
     //
-    // Complexity tradeoff: the code Cranelift emits is unoptimized and keeps more values on
-    // the stack, so it runs slower; every input still compiles. Why: the costs above. Trigger:
-    // every function. Test: no test yet. COMPLEXITY.md row Z15. A complete solution is the
-    // ZIR e-graph optimizer (DESIGN.md L23) before Cranelift, with a linear-time register
-    // allocator.
-    set(&mut flags, "opt_level", "none")?;
-    set(&mut flags, "regalloc_algorithm", "single_pass")?;
+    // Complexity tradeoff: at `OptLevel::None`, which `run` and `object` use, the code Cranelift
+    // emits is unoptimized and keeps more values on the stack, so it runs slower; every input
+    // still compiles. Why: the costs above. Trigger: every function. Tests: the unit test
+    // `tests::the_default_level_is_opt_level_none_with_a_single_pass_allocator` checks the
+    // settings, and `l01_36_cranelift::levels` runs programs at both levels and checks that
+    // their values agree. COMPLEXITY.md row Z15. A complete solution is the ZIR e-graph
+    // optimizer (DESIGN.md L23) before Cranelift, with a linear-time register allocator.
+    let (opt, regalloc) = match level {
+        OptLevel::None => ("none", "single_pass"),
+        OptLevel::Speed => ("speed", "backtracking"),
+    };
+    set(&mut flags, "opt_level", opt)?;
+    set(&mut flags, "regalloc_algorithm", regalloc)?;
     set(&mut flags, "is_pic", if pic { "true" } else { "false" })?;
     // A body's frame grows with its size, so a frame can be larger than the guard page below the
     // stack; without probes its first write could land past that page, in other memory.
@@ -89,9 +106,19 @@ impl Drop for Jit {
 /// Compiles graph `g` under `plan` by the JIT and runs it, the kernel in `ev` running the
 /// nodes the runtime does not.
 pub fn run(g: &Arc<Region>, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, String> {
+    run_at(OptLevel::None, g, plan, ev)
+}
+
+/// [`run`] at Cranelift's `opt_level` `level`.
+pub fn run_at(
+    level: OptLevel,
+    g: &Arc<Region>,
+    plan: &Plan,
+    ev: &mut Evaluator,
+) -> Result<Outcome, String> {
     let (t, plans) = Tables::new(g, plan)?;
     let t = Arc::new(t);
-    let mut b = JITBuilder::with_isa(isa(false)?, default_libcall_names());
+    let mut b = JITBuilder::with_isa(isa(false, level)?, default_libcall_names());
     for ((name, _, _), a) in hooks::HOOKS.iter().zip(hooks::addresses()) {
         b.symbol(*name, a);
     }
@@ -127,7 +154,7 @@ pub fn run(g: &Arc<Region>, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, 
 /// runtime's hooks imported.
 pub fn object(g: &Arc<Region>, plan: &Plan) -> Result<Vec<u8>, String> {
     let (t, plans) = Tables::new(g, plan)?;
-    let b = ObjectBuilder::new(isa(true)?, "zed", default_libcall_names())
+    let b = ObjectBuilder::new(isa(true, OptLevel::None)?, "zed", default_libcall_names())
         .map_err(|e| format!("native: {e}"))?;
     let mut m = ObjectModule::new(b);
     codegen::define(&mut m, &t, &plans)?;
@@ -216,9 +243,23 @@ mod tests {
     }
 
     #[test]
+    fn the_default_level_is_opt_level_none_with_a_single_pass_allocator() {
+        use cranelift_codegen::settings::{OptLevel as Cranelift, RegallocAlgorithm};
+        for pic in [false, true] {
+            let flags = isa(pic, OptLevel::None).unwrap().flags().clone();
+            assert_eq!(flags.opt_level(), Cranelift::None);
+            assert_eq!(flags.regalloc_algorithm(), RegallocAlgorithm::SinglePass);
+        }
+        let flags = isa(false, OptLevel::Speed).unwrap().flags().clone();
+        assert_eq!(flags.opt_level(), Cranelift::Speed);
+        assert_eq!(flags.regalloc_algorithm(), RegallocAlgorithm::Backtracking);
+    }
+
+    #[test]
     fn a_failed_compile_frees_the_jit_memory() {
         let (allocated, freed) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
-        let mut b = JITBuilder::with_isa(isa(false).unwrap(), default_libcall_names());
+        let mut b =
+            JITBuilder::with_isa(isa(false, OptLevel::None).unwrap(), default_libcall_names());
         b.memory_provider(Box::new(Counted {
             memory: SystemMemoryProvider::new(),
             allocated: allocated.clone(),

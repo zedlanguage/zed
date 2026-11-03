@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use zed_kernel::{Prim, Term, Value};
+use zed_kernel::term::build::{lam, lit, prim, var};
+use zed_kernel::{Family, GuardPos, Prim, Term, Value};
+use zed_tests::kernel::{add, eq, fam, fix_lattice, fold, lt, rc, sub};
 use zedc::store::preimage::{Demand, StopKind, preimage};
 
 use super::{check, doms, function, listed, pre, shown};
@@ -119,5 +121,107 @@ fn a_call_that_never_returns_stops_where_it_calls_itself() {
         p.stops.iter().any(|s| s.kind == StopKind::Recursion),
         "{}",
         shown(&p)
+    );
+}
+
+/// The family `0 -> 0, 1 -> 1, …, n - 1 -> n - 1`.
+fn upto(n: i64) -> Term {
+    let leaves = (0..n).map(|i| (vec![Value::Int(i)], Value::Int(i)));
+    Term::Lit(Value::Family(Family::from_leaves(leaves).unwrap()))
+}
+
+#[test]
+fn a_fold_between_the_demand_and_an_input_stops_the_transfer() {
+    // Three monthly payments of `x`, `x + 1` and `x + 2` cents total under 20: reading the
+    // demand back through the `fold` would unfold it once per entry, so the transfer stops at
+    // the `fold` and keeps the whole box.
+    let payments = fam(upto(3), "i", add(var("x"), var("i")));
+    let total = fold(payments, Term::PrimFn(Prim::Add), Some(lit(0)));
+    let t = lt(total, lit(20));
+    let ds = doms(&[("x", None, None)]);
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    check(&t, &ds, &Demand::Bool(true), &p, (-150, 150));
+    assert_eq!(
+        shown(&p),
+        "x [..]; necessary; stop: no scalar catalog entry for fold(fam({0, 1, 2}, \
+         i -> (x + i)), (+), identity: 0, depth: 1, ev: {})"
+    );
+    assert_eq!(p.stops.len(), 1);
+    assert_eq!(p.stops[0].kind, StopKind::Outside);
+    // On a listed domain the enumeration decides it, and the stop is still reported.
+    let ds = listed(&[("x", &[0, 5, 6, 100])]);
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    check(&t, &ds, &Demand::Bool(true), &p, (-150, 150));
+    assert_eq!(
+        shown(&p),
+        "x [0..=0, 5..=5]; exact; enumerated; stop: no scalar catalog entry for \
+         fold(fam({0, 1, 2}, i -> (x + i)), (+), identity: 0, depth: 1, ev: {})"
+    );
+}
+
+#[test]
+fn a_gen_between_the_demand_and_an_input_stops_the_transfer() {
+    // A countdown from `x` shows 3, 2, 1, 0: the frames of a `gen` compared with a family.
+    // The comparison is not of integers, so its operands are scanned for stops, and the scan
+    // stops at the `gen`.
+    let countdown = Term::Gen {
+        init: rc(var("x")),
+        step: rc(lam(&["n"], sub(var("n"), lit(1)))),
+        guard: rc(lam(&["n"], prim(Prim::Gt, vec![var("n"), lit(0)]))),
+        pos: GuardPos::Before,
+    };
+    let shows =
+        Family::from_leaves((0..4).map(|i| (vec![Value::Int(i)], Value::Int(3 - i)))).unwrap();
+    let t = eq(countdown, Term::Lit(Value::Family(shows)));
+    let ds = doms(&[("x", None, None)]);
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    check(&t, &ds, &Demand::Bool(true), &p, (-150, 150));
+    assert_eq!(
+        shown(&p),
+        "x [..]; necessary; stop: no scalar catalog entry for gen(x, n -> (n - 1), \
+         n -> (n > 0), guard: before)"
+    );
+    assert_eq!(p.stops.len(), 1);
+    assert_eq!(p.stops[0].kind, StopKind::Outside);
+    // A `gen` is not shown to end, so a listed domain is not enumerated either: the box is
+    // the whole listed domain.
+    let ds = listed(&[("x", &[-1, 2, 3, 4])]);
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    check(&t, &ds, &Demand::Bool(true), &p, (-150, 150));
+    assert_eq!(
+        shown(&p),
+        "x [-1..=-1, 2..=4]; necessary; stop: no scalar catalog entry for gen(x, n -> (n - 1), \
+         n -> (n > 0), guard: before)"
+    );
+}
+
+#[test]
+fn a_fix_between_the_demand_and_an_input_stops_the_transfer() {
+    // A level starts at `x` and climbs one step at a time to a ceiling of 10, so it settles
+    // at the larger of `x` and 10; it must stay under 12. The transfer stops at the `fix`.
+    let climb = lam(
+        &["n"],
+        prim(Prim::Min, vec![add(var("n"), lit(1)), lit(10)]),
+    );
+    let level = fix_lattice(var("x"), climb, Term::PrimFn(Prim::Max));
+    let t = lt(level, lit(12));
+    let ds = doms(&[("x", None, None)]);
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    check(&t, &ds, &Demand::Bool(true), &p, (-150, 150));
+    assert_eq!(
+        shown(&p),
+        "x [..]; necessary; stop: no scalar catalog entry for fix(x, n -> min((n + 1), 10), \
+         join: max, ev: {})"
+    );
+    assert_eq!(p.stops.len(), 1);
+    assert_eq!(p.stops[0].kind, StopKind::Outside);
+    // Nor is a `fix` shown to end: on a listed domain the box is the whole domain.
+    let ds = listed(&[("x", &[-5, 10, 11, 12, 40])]);
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    check(&t, &ds, &Demand::Bool(true), &p, (-150, 150));
+    assert_eq!(
+        shown(&p),
+        "x [-5..=-5, 10..=12, 40..=40]; necessary; stop: no scalar catalog entry for fix(x, \
+         n -> min((n + 1), 10), join: max, ev: {})"
     );
 }

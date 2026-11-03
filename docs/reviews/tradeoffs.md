@@ -39,7 +39,7 @@ Status before: yes (all five parts written at the site), partial (some written),
 | `zed/prelude/revision.zed` forward revision | as `map2` | as there | as there | as there | S4, S14 | partial | completed |
 | `zedc/src/store/preimage.rs` `summon` landmark snapping | exactness of a call's preimage | one summary per interval, 2^k | argument ends not landmarks | `l01_25_preimage_catalog::scopes::one_function_called_twice_is_summarized_for_each_argument`, `scaling::nested_calls_are_summarized` | S13, S15 | no | new |
 | `preimage.rs` `through`, `StopKind::Recursion` | transfer through recursion | unfolding need not end | a call cycle | `stops::a_call_that_never_returns_stops_where_it_calls_itself` | S12, S15 | partial | completed |
-| `preimage.rs` `StopKind::Outside` at `fix`, `gen`, `fold` | transfer through loops: whole box, stop reported | unfolding need not end | a loop term between demand and input | `stops::a_term_outside_the_scalar_catalog_is_reported` (through `sum`; no test yet at a loop) | none | partial | completed |
+| `preimage.rs` `StopKind::Outside` at `fix`, `gen`, `fold` | transfer through loops: whole box, stop reported | unfolding need not end | a loop term between demand and input | `stops::a_term_outside_the_scalar_catalog_is_reported` (through `sum`); at a loop (TD-tests): `stops::a_fold_between_the_demand_and_an_input_stops_the_transfer`, `stops::a_gen_between_the_demand_and_an_input_stops_the_transfer`, `stops::a_fix_between_the_demand_and_an_input_stops_the_transfer` | none | partial | completed |
 | `preimage.rs` `union` | unions that are not boxes: hull | box lists grow 2^k | boxes differing on 2+ inputs, neither within the other | `scopes::a_union_of_boxes_is_exact_when_it_is_a_box` | none | partial | completed |
 | `preimage.rs` `project` (HC4) | relations between operands | exact region costs the points | no exact catalog entry | `entries::a_strict_disjunction_with_a_failing_side_is_necessary_only` | none | partial | completed |
 | `preimage.rs` `mod_pre` | remainders in middle periods | pieces in width / c | more than two periods | `random::a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between` | none | partial | completed |
@@ -52,7 +52,7 @@ Status before: yes (all five parts written at the site), partial (some written),
 | `types.rs` `Type::listed` | types with more values than written: not finite | product of components | rows exceed component values (relative) | `scaling::listing_a_diagram_with_exponentially_many_paths_scales`, `trick::a_finite_domain_…` | none | partial | completed |
 | `zed-kernel/src/types/empty.rs` module header | parts that need a multi-component split: inhabited | coNP-hard | emptiness needing a split in 2+ components | `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key` | K1, K2, Kept emptiness row | partial | completed |
 | `zed-kernel/src/num.rs` `MAX_BITS` (violation) | integers past 2^20 bits: `Overflow` | result size exponential in exponent bits | result over 2^20 bits | `m0_09_kernel_evaluator::a_power_by_a_huge_exponent` | none | partial | completed |
-| `zed-native/src/lib.rs` `isa`, `opt_level none` | optimized machine code | n^1.6 and n^1.4 passes | every function | no test yet | Z15 | partial | completed |
+| `zed-native/src/lib.rs` `isa`, `opt_level none` | optimized machine code | n^1.6 and n^1.4 passes | every function | (TD-tests) `l01_36_cranelift::levels`: programs at `opt_level` `none` and `speed` give the same values, counts and table rows; `zed-native` unit test `the_default_level_is_opt_level_none_with_a_single_pass_allocator` | Z15 | partial | completed |
 
 ## Discarded reports
 
@@ -80,7 +80,7 @@ Status before: yes (all five parts written at the site), partial (some written),
 
 ## Counts
 
-Reports 113; distinct sites 57 from the reports plus 5 found in verification, 62 in all; confirmed 43; already fully documented 0; newly documented 2; completed 41; discarded 19; size-switch violations 6 sites (4 rules: `i64` ends at three sites, `POWER_FACTORS`, `MAX_BITS`, `Type::values(cap)`); without tests 2, and `StopKind::Outside` has no test of a stop at `fix`, `gen` or `fold`.
+Reports 113; distinct sites 57 from the reports plus 5 found in verification, 62 in all; confirmed 43; already fully documented 0; newly documented 2; completed 41; discarded 19; size-switch violations 6 sites (4 rules: `i64` ends at three sites, `POWER_FACTORS`, `MAX_BITS`, `Type::values(cap)`); without tests 2, and `StopKind::Outside` has no test of a stop at `fix`, `gen` or `fold`. Since then TD-tests added the tests of `opt_level none` and of the loop stops, so 1 site is without tests: `Scope::refusals`.
 
 ## Findings
 
@@ -88,6 +88,6 @@ Reports 113; distinct sites 57 from the reports plus 5 found in verification, 62
 2. The COMPLEXITY.md Kept row "emptiness and subtyping of tuple and morphism parts" and docs/thresholds.md section 9 call emptiness exact; `empty.rs` is sound and incomplete (the pigeonhole test). Fix: reword both.
 3. docs/thresholds.md section 4 says splinters are gone; `search` still takes one level of splinters. Fix: reword.
 4. Violations of the no-thresholds rule: `i64` interval ends (`End::from_i128`, `hull_from`, `Bounds::offset`), `POWER_FACTORS` (its stated reason is false, since `Int` is unbounded), `MAX_BITS`, `Type::values(cap)` (tests only).
-5. No test: `Scope::refusals`, `zed-native` `opt_level none`; and no test of a preimage stop at `fix`, `gen` or `fold` (`StopKind::Outside`). Fix for the last: a `stops` test whose demand reads an input through a `fold`.
+5. No test: `Scope::refusals`, `zed-native` `opt_level none`; and no test of a preimage stop at `fix`, `gen` or `fold` (`StopKind::Outside`). Fix for the last: a `stops` test whose demand reads an input through a `fold`. Done in TD-tests for `opt_level none` and for stops at `fold`, `gen` and `fix`; `Scope::refusals` remains.
 6. No COMPLEXITY.md row: `hull_from`, `products`, product type widening, type facet listing, product enumeration, `End::from_i128`, `Congruence::narrow`, `IntervalSet::narrow`, product type narrowing, the four `affine` sites, preimage `union`, `StopKind::Outside`, `project`, `mod_pre`, `enumerate`, `POWER_FACTORS`, `stage::ends`, `Type::values`, `Type::listed`, `MAX_BITS`.
 7. Sites in files being rewritten on active branches, documented here on main: T6 (`types/empty.rs`, `types.rs`), ST (`store/product.rs`), S22a and T11-S22 (`store/preimage.rs`), and OSP-diag (`check/mod.rs` `resolve`, `run.rs` `linear_questions`, `zed-native/src/lib.rs` `isa`; from `git diff --stat main...wt/osp-diag`). These comments need carrying over when those branches merge.

@@ -125,7 +125,11 @@ pub enum StopKind {
     /// `StopKind::Recursion`; a fixpoint over the loop is the full analysis this transfer
     /// avoids. Trigger: a `fix`, `gen` or `fold` term between the demand and an input. Test:
     /// `l01_25_preimage_catalog::stops::a_term_outside_the_scalar_catalog_is_reported`
-    /// covers the stop through `sum` of a tuple; no test yet stops at `fix`, `gen` or `fold`.
+    /// covers the stop through `sum` of a tuple; in the same module,
+    /// `a_fold_between_the_demand_and_an_input_stops_the_transfer` stops at a `fold` and
+    /// `a_fix_between_the_demand_and_an_input_stops_the_transfer` at a `fix`, both at the `_`
+    /// arm of `back_in`, and `a_gen_between_the_demand_and_an_input_stops_the_transfer` at a
+    /// `gen`, at the `_` arm of `scan`.
     /// COMPLEXITY.md row C15. A complete solution would compute a fixpoint of the loop's
     /// backward transfer with widening, as the forward iteration does for loops.
     Outside,
