@@ -166,7 +166,7 @@ fn deep_units(n: usize) -> Vec<(&'static str, Unit, Term)> {
             first_order: false,
         }],
         tests: Arc::new([]),
-        warnings: Arc::new([]),
+        warnings: Vec::new(),
     };
     // Built once per shape: cloning a term recursed (step T2-types).
     let ends = || (0..n).fold(lit(0), |a, _| prim(Prim::Add, vec![a, lit(1)]));
