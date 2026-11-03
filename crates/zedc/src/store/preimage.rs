@@ -193,6 +193,23 @@ fn preimage_of(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
     preimage_in(&mut tx, root, term, inputs, demand)
 }
 
+/// The inputs on which the piecewise-affine summary of `term` ([`Pa`]) takes a value in `z`,
+/// read without the transfer around it (and without [`Tx::fits`], which turns the summary off
+/// for a term whose ends may pass `i64`), or `None` when the summary of `term` or its
+/// inversion is given up: for the tests that check where the summary exists and what it says.
+#[doc(hidden)]
+pub fn summary_preimage(term: &Term, inputs: &Domains, z: &IntervalSet) -> Option<Domains> {
+    on_stack(|| {
+        let mut tx = Tx::new();
+        let root = tx.terms.add(term);
+        let marks = tx.landmarks(inputs, &Demand::Ints(z.clone()));
+        tx.start(inputs, marks);
+        let pa = tx.pa(root, ROOT)?;
+        let r = tx.invert_pa(&pa, z)?;
+        Some(tx.whole(&r))
+    })
+}
+
 /// [`preimage`] of `term`, which is `root` in `tx`'s terms.
 fn preimage_in(
     tx: &mut Tx<'_>,
@@ -2579,7 +2596,8 @@ impl<'t> Tx<'t> {
 
     /// How far reading the term can move an end of a demand or of an input's domain: the
     /// magnitudes of its integer literals summed, plus one at each primitive, through the
-    /// names it reads. `i128::MAX` for a term holding a call of a lambda or a term the
+    /// names it reads, and at least the magnitude of each constant part's value. `i128::MAX`
+    /// for a term holding a call of a lambda or a term the
     /// summary and the clip do not read. Every end the transfer computes from an end `e`
     /// while it reads the term lies within `|e| + reach` of zero.
     fn reach(&mut self, t: Tid, env: Eid) -> i128 {
@@ -2609,9 +2627,22 @@ impl<'t> Tx<'t> {
                 }
                 _ => i128::MAX,
             },
-            Node::Prim(_, args) => (0..args.len()).fold(1, |r: i128, i| {
-                r.saturating_add(self.reach(self.arg(args, i), env))
-            }),
+            Node::Prim(_, args) => {
+                let r = (0..args.len()).fold(1, |r: i128, i| {
+                    r.saturating_add(self.reach(self.arg(args, i), env))
+                });
+                // A constant moves an end by its value, which can be far above its literals
+                // summed: `-2147483648 * 4294967296` is `i64::MIN`. Counted by the sum alone,
+                // `i64::MIN + 5 - u` over every `u` passed [`Tx::fits`], and the summary read
+                // the end of `i64` that stands for `u`'s infinite end as a value
+                // (`l01_25_preimage_catalog::wide_constants`).
+                if r < i128::MAX
+                    && let Some(Value::Int(c)) = self.constant(t, env)
+                {
+                    return r.max(i128::from(c).abs());
+                }
+                r
+            }
             _ => i128::MAX,
         }
     }
@@ -3065,8 +3096,8 @@ impl<'t> Tx<'t> {
     // ---- Piecewise-affine summaries -----------------------------------------------------
 
     /// The value of the term as a piecewise-affine function of one input ([`Pa`]), or `None`
-    /// when it is not one or when it reads more than one input. A value may leave `i64` where
-    /// the term fails; the `if` that takes the term on fewer inputs checks the values it keeps
+    /// when it is not one or when it reads more than one input. A value, a coefficient or a
+    /// constant may leave `i64`; the `if` that takes the term on fewer inputs checks the values it keeps
     /// ([`Tx::pa_if`]), so the summary of an `if` lies in `i64` and one of `t + 1` over all of
     /// `i64` is still a summary. Keyed on the term alone, so an `if` chain whose arms read one
     /// shared term is summarized once, whatever demands reach it.
@@ -3175,7 +3206,7 @@ impl<'t> Tx<'t> {
             }
             for (lo, hi) in set.pieces() {
                 if let Some(s) = slice_treap(tree.clone(), lo, hi)? {
-                    // A value the arm takes on these inputs leaves `i64`: the term fails there.
+                    // A value the arm takes on these inputs leaves `i64`: give up the summary.
                     fits(s.vals.0)?;
                     fits(s.vals.1)?;
                     slices.push((key(lo), s));
@@ -3446,9 +3477,13 @@ impl<'t> Tx<'t> {
 /// An integer term as a function of one input `var` (R1_GEMINI Thm 3.1: the value of a term
 /// built from one input by `if`s on that input, constants, negation, adding a constant and
 /// multiplying by one is affine on each of finitely many intervals of the input, cut at the
-/// domain's and the guards' ends). The coefficients lie in `i64` and the values in `i128`; a
-/// value outside `i64` is an input where the term fails, and [`Tx::pa_if`] gives up on an
-/// `if` that keeps one.
+/// domain's and the guards' ends). The coefficients, constants and values lie in `i128`, every
+/// step checked there, so an affine step ([`Pa::affine`], [`apply_tag`]) is given up only when
+/// one leaves `i128`. Kernel integers are unbounded, so a value outside `i64` is a value of the
+/// term; the summary is read only where its values lie in `i64`: [`Tx::pa_if`] gives up on an
+/// `if` that keeps a value outside `i64`, and [`invert_piece`] on a piece that takes one. So
+/// `i64::MIN - (u + 3)` for `u <= -3` is summarized, although its constant `i64::MIN - 3` lies
+/// outside `i64`.
 #[derive(Clone)]
 enum Pa {
     /// The constant `c` everywhere.
@@ -3468,7 +3503,8 @@ impl Pa {
         }
     }
 
-    /// `mul * self + add`, or `None` when a constant or a coefficient leaves `i64`.
+    /// `mul * self + add`, or `None` when a coefficient or a constant leaves `i128`, or the
+    /// value of a [`Pa::Const`], the term's one value, leaves `i64`.
     fn affine(&self, mul: i128, add: i128) -> Option<Pa> {
         match self {
             Pa::Const(c) => {
@@ -3477,8 +3513,8 @@ impl Pa {
             }
             Pa::Linear { var, a, b } => Some(Pa::Linear {
                 var: var.clone(),
-                a: fits(a.checked_mul(mul)?)?,
-                b: fits(b.checked_mul(mul)?.checked_add(add)?)?,
+                a: a.checked_mul(mul)?,
+                b: b.checked_mul(mul)?.checked_add(add)?,
             }),
             Pa::Piecewise { var, root } => Some(Pa::Piecewise {
                 var: var.clone(),
@@ -3812,7 +3848,7 @@ fn prio_of(lo: &End, hi: &End) -> u64 {
 }
 
 /// The node for the piece `lo..=hi` with value `a * x + b` over two subtrees with no tag
-/// above them, its coefficients in `i64`.
+/// above them; `None` when a value leaves `i128`.
 fn make_node(lo: End, hi: End, a: i128, b: i128, left: Tree, right: Tree) -> Option<Rc<PaNode>> {
     let at = |x: &End| a.checked_mul(input(x))?.checked_add(b);
     let (u, v) = (at(&lo)?, at(&hi)?);
@@ -3846,15 +3882,16 @@ fn make_node(lo: End, hi: End, a: i128, b: i128, left: Tree, right: Tree) -> Opt
     }))
 }
 
-/// The subtree with every value mapped by `x -> mul * x + add`, in `O(1)`.
+/// The subtree with every value mapped by `x -> mul * x + add`, in `O(1)`; `None` when a
+/// coefficient, a constant or a value leaves `i128`.
 fn apply_tag(node: &Rc<PaNode>, f: (i128, i128)) -> Option<Rc<PaNode>> {
     if f == (1, 0) {
         return Some(node.clone());
     }
     let (mul, add) = f;
     Some(Rc::new(PaNode {
-        a: fits(node.a.checked_mul(mul)?)?,
-        b: fits(node.b.checked_mul(mul)?.checked_add(add)?)?,
+        a: node.a.checked_mul(mul)?,
+        b: node.b.checked_mul(mul)?.checked_add(add)?,
         vals: map_vals(node.vals, f)?,
         tag: compose(node.tag, f)?,
         ..(**node).clone()
@@ -3984,12 +4021,22 @@ fn invert_piece(
         if key(zlo) > vhi {
             break;
         }
-        // The values met, both in `i64`.
+        // The values met, both in `i64`. A coefficient may lie outside `i64`, so the
+        // differences with `b` are checked.
         let (zl, zh) = (key(zlo).max(vlo), key(zhi).min(vhi));
         let (xl, xh) = match a.signum() {
             0 => (x0, x1),
-            1 => (ceil_div(zl - b, a), floor_div(zh - b, a)),
-            _ => (ceil_div(b - zh, -a), floor_div(b - zl, -a)),
+            1 => (
+                ceil_div(zl.checked_sub(b)?, a)?,
+                floor_div(zh.checked_sub(b)?, a),
+            ),
+            _ => {
+                let d = a.checked_neg()?;
+                (
+                    ceil_div(b.checked_sub(zh)?, d)?,
+                    floor_div(b.checked_sub(zl)?, d),
+                )
+            }
         };
         let (xl, xh) = (xl.max(x0), xh.min(x1));
         if xl <= xh {
@@ -4011,9 +4058,9 @@ fn floor_div(n: i128, d: i128) -> i128 {
     n.div_euclid(d)
 }
 
-/// `n / d` rounded up, for `d > 0`.
-fn ceil_div(n: i128, d: i128) -> i128 {
-    -(-n).div_euclid(d)
+/// `n / d` rounded up, for `d > 0`; `None` for `n = i128::MIN`.
+fn ceil_div(n: i128, d: i128) -> Option<i128> {
+    Some(-n.checked_neg()?.div_euclid(d))
 }
 
 /// The names bound within a term being closed ([`Tx::close`]).

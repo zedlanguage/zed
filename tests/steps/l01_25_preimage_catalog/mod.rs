@@ -21,6 +21,7 @@ mod scaling;
 mod scopes;
 mod stops;
 mod tonicity;
+mod wide_constants;
 
 use std::sync::Arc;
 
