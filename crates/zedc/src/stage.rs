@@ -313,6 +313,36 @@ pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
 /// `unit` with its demanded build-stage terms evaluated, keeping the definitions `roots`
 /// and the tests read.
 pub fn mix(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
+    let (out, m) = mix_keeping(unit, roots);
+    (out, m.report)
+}
+
+/// The mixer of a unit after [`mix`] with every definition a root: it mixes a changed term of
+/// one of the unit's definitions under the others (step L25.8, a mutant).
+pub struct Remix {
+    m: Mixer,
+}
+
+impl Remix {
+    /// `unit` with its build-stage terms evaluated, every definition kept, and the mixer.
+    pub fn new(unit: &Unit) -> (Unit, Remix) {
+        let roots: Vec<&str> = unit.defs.iter().map(|d| d.name.as_str()).collect();
+        let (out, mut m) = mix_keeping(unit, &roots);
+        m.report = Report::default();
+        (out, Remix { m })
+    }
+
+    /// `t`, a changed term of a definition of the unit, mixed as [`mix`] mixes that
+    /// definition: under the definitions of the unit, which names unique in the unit keep
+    /// apart from those `t` does not read. It costs the mixing of `t` alone.
+    pub fn mix(&mut self, t: &Term) -> Term {
+        let out = self.m.mix_top(t);
+        self.m.report = Report::default();
+        out
+    }
+}
+
+fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
     let roots: HashSet<&str> = roots.iter().copied().collect();
     let mut demanded: BTreeSet<Arc<str>> = unit
         .defs
@@ -353,7 +383,7 @@ pub fn mix(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
             first_order: d.first_order,
         });
     }
-    (out, m.report)
+    (out, m)
 }
 
 /// The domain of a parameter.

@@ -159,19 +159,88 @@ impl<'u> Cones<'u> {
     /// `body` under the definitions it reaches, each a let, in the unit's order: each after
     /// those it uses, as in the unit. Each let shares its definition's term.
     pub fn close(&self, body: Term) -> Term {
-        let defs: Vec<&Def> = self.defs(&[&body]).collect();
-        defs.into_iter().rev().fold(body, |body, d| {
-            Term::Let(d.kernel.clone(), d.term.clone(), Arc::new(body))
+        self.close_with(body, None)
+    }
+
+    /// `body` closed as [`Cones::close`] closes it, with the definition at position `i` bound
+    /// to `term` when `swap` is `Some((i, term))` (step L25.8, a mutant). `term` must read
+    /// the names the definition reads, as a mutant's term does, so the cone is the same.
+    pub fn close_with(&self, body: Term, swap: Option<(usize, &Arc<Term>)>) -> Term {
+        let reach = self.reach(&[&body]);
+        reach.into_iter().rev().fold(body, |body, i| {
+            let d = &self.unit.defs[i];
+            let term = match swap {
+                Some((j, term)) if j == i => term.clone(),
+                _ => d.term.clone(),
+            };
+            Term::Let(d.kernel.clone(), term, Arc::new(body))
         })
     }
 }
 
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.
 pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
+    elaborate_in(unit, res, None).map(|(unit, _)| unit)
+}
+
+/// A written operator or integer constant that a mutant may replace (step L25.8), found by
+/// [`elaborate_marked`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Mark {
+    /// For an operator, the text between its operands, which holds it; for a constant, the
+    /// constant.
+    pub span: Span,
+    /// For `*`, whether `/` is defined on its operands (both hold no `int`).
+    pub quotient: bool,
+}
+
+/// The operators a mutant may replace: `==`, `!=`, `<`, `<=`, `>`, `>=`, `+`, `-`, `*`, `/`.
+pub fn mutable(p: Prim) -> bool {
+    use Prim::*;
+    matches!(p, Eq | Ne | Lt | Le | Gt | Ge | Add | Sub | Mul | Div)
+}
+
+/// The elaboration of `unit` as [`elaborate`] gives it, with each written operator and integer
+/// constant a mutant may replace marked, and the marks (step L25.8). A marked operator
+/// `Prim(p, [a, b])` is `Prim(p, [a, b, m])` and a marked constant `n` is `Prim(Neg, [n, m])`,
+/// `m` the literal index of its [`Mark`]: neither shape is elaborated otherwise, an operator
+/// having two arguments and `Neg` one. A mark adds a last child or wraps a leaf, so every
+/// node of the unmarked elaboration has the same position in the marked one. The marked unit
+/// is for finding positions only; it is never run.
+pub fn elaborate_marked(unit: &[Stmt], res: &Resolution) -> Result<(Unit, Vec<Mark>), Vec<Error>> {
+    elaborate_in(unit, res, Some(Vec::new()))
+        .map(|(unit, marks)| (unit, marks.expect("marks were asked for")))
+}
+
+/// The index of the mark on `t`, when `t` is a marked operator or constant of
+/// [`elaborate_marked`].
+pub fn mark_of(t: &Term) -> Option<usize> {
+    match t {
+        Term::Prim(p, args) if mutable(*p) => match &args[..] {
+            [_, _, Term::Lit(Value::Int(m))] => usize::try_from(*m).ok(),
+            _ => None,
+        },
+        Term::Prim(Prim::Neg, args) => match &args[..] {
+            [
+                Term::Lit(Value::Int(_) | Value::Big(_)),
+                Term::Lit(Value::Int(m)),
+            ] => usize::try_from(*m).ok(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn elaborate_in(
+    unit: &[Stmt],
+    res: &Resolution,
+    marks: Option<Vec<Mark>>,
+) -> Result<(Unit, Option<Vec<Mark>>), Vec<Error>> {
     let t = Tables::new(unit, res);
     let mut info = check::check_with(&t, unit);
     let checked = std::mem::take(&mut info.errors);
     let mut e = Elab::new(t, &info);
+    e.marks = marks;
     let mut out = Unit::default();
     if let Some((binds, _)) = e.scope(unit, true) {
         out.defs = binds
@@ -187,7 +256,7 @@ pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
     out.tests = std::mem::take(&mut e.tests).into();
     e.errors.extend(checked);
     if e.errors.is_empty() {
-        Ok(out)
+        Ok((out, e.marks.take()))
     } else {
         e.errors
             .sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
@@ -256,6 +325,8 @@ struct Elab<'a> {
     /// The term a call leaving a parameter out binds it to, by the function's binder and the
     /// parameter's index.
     defaults: HashMap<(usize, usize), Term>,
+    /// The marks of a marked elaboration ([`elaborate_marked`]), `None` for an ordinary one.
+    marks: Option<Vec<Mark>>,
 }
 
 impl<'a> Tables<'a> {
@@ -518,6 +589,26 @@ impl<'a> Elab<'a> {
             tests: Vec::new(),
             errors: Vec::new(),
             defaults: HashMap::new(),
+            marks: None,
+        }
+    }
+
+    /// The literal `v` of the constant `e`; marked when the elaboration is marked and `v` is
+    /// an integer.
+    fn constant(&mut self, e: &Expr, v: Value) -> Term {
+        match &mut self.marks {
+            Some(marks)
+                if matches!(e.kind, ExprKind::Int { .. })
+                    && matches!(v, Value::Int(_) | Value::Big(_)) =>
+            {
+                let m = Term::Lit(Value::Int(marks.len() as i64));
+                marks.push(Mark {
+                    span: e.span,
+                    quotient: false,
+                });
+                Term::Prim(Prim::Neg, vec![Term::Lit(v), m])
+            }
+            _ => Term::Lit(v),
         }
     }
 
@@ -756,7 +847,10 @@ impl<'a> Elab<'a> {
                         ok = false;
                         continue;
                     };
-                    let at_call = if matches!(t, Term::Lit(_) | Term::Var(_)) {
+                    // A marked constant (`elaborate_marked`) is a literal here too, so marking
+                    // leaves the shape alone.
+                    let marked = matches!(&t, Term::Prim(Prim::Neg, xs) if xs.len() == 2);
+                    let at_call = if matches!(t, Term::Lit(_) | Term::Var(_)) || marked {
                         t
                     } else {
                         let k: Arc<str> = format!("{}${}", self.names[id], params[j]).into();
@@ -865,7 +959,7 @@ impl<'a> Elab<'a> {
             return self.fit(e, fit);
         }
         if let Some(v) = info.adopt.get(&e.span) {
-            return Some(Term::Lit(v.clone()));
+            return Some(self.constant(e, v.clone()));
         }
         let lit = |v: Value| Some(Term::Lit(v));
         match &e.kind {
@@ -889,7 +983,8 @@ impl<'a> Elab<'a> {
             }
             ExprKind::Int { radix, digits } => {
                 let digits: String = digits.chars().filter(|&c| c != '_').collect();
-                lit(Value::int_text(&digits, *radix).expect("the lexer's digits"))
+                let v = Value::int_text(&digits, *radix).expect("the lexer's digits");
+                Some(self.constant(e, v))
             }
             ExprKind::Float(s) => {
                 let s: String = s.chars().filter(|&c| c != '_').collect();
@@ -923,8 +1018,8 @@ impl<'a> Elab<'a> {
                 let p = if *op == "-" { Prim::Neg } else { Prim::Not };
                 Some(Term::Prim(p, vec![self.expr(a)?]))
             }
-            ExprKind::Binary(op, a, b) => {
-                let (a, b) = (self.expr(a), self.expr(b));
+            ExprKind::Binary(op, l, r) => {
+                let (a, b) = (self.expr(l), self.expr(r));
                 let (a, b) = (a?, b?);
                 let t = |v: bool| Term::Lit(Value::Bool(v));
                 let p = match *op {
@@ -946,7 +1041,20 @@ impl<'a> Elab<'a> {
                     "++" => Prim::Concat,
                     _ => return self.error(e.span, format!("`{op}` is not an L1 operator")),
                 };
-                Some(Term::Prim(p, vec![a, b]))
+                let mut args = vec![a, b];
+                if let Some(marks) = &mut self.marks
+                    && mutable(p)
+                {
+                    args.push(Term::Lit(Value::Int(marks.len() as i64)));
+                    marks.push(Mark {
+                        span: Span {
+                            start: l.span.end,
+                            end: r.span.start,
+                        },
+                        quotient: self.info.quotients.get(&e.span) == Some(&true),
+                    });
+                }
+                Some(Term::Prim(p, args))
             }
             ExprKind::Call {
                 callee,

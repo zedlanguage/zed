@@ -361,7 +361,7 @@ impl Program {
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<Wave, String> {
-        Ok(self.wave(lines, files, false, &direct)?.0)
+        Ok(self.wave(lines, files, false, &direct, None)?.0)
     }
 
     /// Runs one wave as [`Program::run`] does, with the wave's term run by `map`: the test
@@ -372,7 +372,19 @@ impl Program {
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         map: &Through<'_>,
     ) -> Result<Wave, String> {
-        Ok(self.wave(lines, files, false, map)?.0)
+        Ok(self.wave(lines, files, false, map, None)?.0)
+    }
+
+    /// Runs one wave as [`Program::run_through`] does, with `main` in place of the program's
+    /// `main` closed over its unit: `main` closed over a changed unit (step L25.8, a mutant).
+    pub fn run_main_through(
+        &self,
+        main: &Term,
+        lines: &BTreeMap<String, Vec<u8>>,
+        files: impl Fn(&str) -> Arc<dyn Lookup>,
+        map: &Through<'_>,
+    ) -> Result<Wave, String> {
+        Ok(self.wave(lines, files, false, map, Some(main))?.0)
     }
 
     /// Runs one wave as [`Program::run`] does, and records its provenance (step L1.20): the
@@ -382,7 +394,7 @@ impl Program {
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<(Wave, Provenance), String> {
-        let (wave, prov) = self.wave(lines, files, true, &direct)?;
+        let (wave, prov) = self.wave(lines, files, true, &direct, None)?;
         Ok((wave, prov.expect("provenance was recorded")))
     }
 
@@ -392,6 +404,7 @@ impl Program {
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         trace: bool,
         map: &Through<'_>,
+        main: Option<&Term>,
     ) -> Result<(Wave, Option<Provenance>), String> {
         let mut world = World::new();
         let mut record = Record::default();
@@ -410,10 +423,13 @@ impl Program {
         for name in &self.outputs {
             world = world.output(name);
         }
-        let main = self
-            .main
-            .get_or_init(|| self.unit.get("main").expect("`main` was elaborated"))
-            .clone();
+        let main = match main {
+            Some(main) => main.clone(),
+            None => self
+                .main
+                .get_or_init(|| self.unit.get("main").expect("`main` was elaborated"))
+                .clone(),
+        };
         let args = self
             .inputs
             .iter()

@@ -17,6 +17,7 @@ use zed_kernel::{Evaluator, Lookup, Term, Value, World};
 
 use crate::ast::StmtKind;
 use crate::elab::{Cones, Test};
+use crate::mutate::{self, Verdict};
 use crate::query::{self, Db, Query};
 use crate::rejection::Row;
 use crate::run::{self, PortKind, Program, Through};
@@ -129,12 +130,13 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
                         let ports = format!("{:?} {:?}", p.inputs(), p.outputs());
                         let k =
                             query::key("wave", &[&query::cone(&cones, &roots), ports.as_bytes()]);
-                        db.row(Query::Wave, k, || wave(&cones, p, t, map)).err()
+                        db.row(Query::Wave, k, || wave(&cones, None, p, t, map))
+                            .err()
                     }
                     (None, "main") => continue,
                     _ => {
                         let k = query::key("row", &[&query::cone(&cones, &[&t.check])]);
-                        db.row(Query::Row, k, || row(&cones, t, map)).err()
+                        db.row(Query::Row, k, || row(&cones, None, t, map)).err()
                     }
                 };
                 out.push(Outcome {
@@ -176,34 +178,58 @@ fn mark_failure(ds: &[&run::Diagnostic], named: Option<Row>) -> Option<String> {
     })
 }
 
-/// The value of `term` under the definitions it reaches and the prelude.
-fn value(cones: &Cones<'_>, term: &Term, map: &Through<'_>) -> Result<Value, String> {
+/// A definition of the unit and the term that replaces its own (step L25.8, a mutant): its
+/// position in the unit and the term.
+pub(crate) type Swap<'a> = Option<(usize, &'a Arc<Term>)>;
+
+/// The value of `term` under the definitions it reaches, with `swap`, and the prelude.
+fn value(
+    cones: &Cones<'_>,
+    swap: Swap<'_>,
+    term: &Term,
+    map: &Through<'_>,
+) -> Result<Value, String> {
     map(
-        &interp::prelude(cones.close(term.clone())),
+        &interp::prelude(cones.close_with(term.clone(), swap)),
         &mut Evaluator::new(World::new()),
     )
 }
 
-/// Checks a row of a function's table.
-fn row(cones: &Cones<'_>, t: &Test, map: &Through<'_>) -> Result<(), String> {
-    match value(cones, &t.check, map)? {
+/// Checks a row of a function's table, with `swap`.
+pub(crate) fn row(
+    cones: &Cones<'_>,
+    swap: Swap<'_>,
+    t: &Test,
+    map: &Through<'_>,
+) -> Result<(), String> {
+    match value(cones, swap, &t.check, map)? {
         Value::Bool(true) => Ok(()),
         _ => {
             let Term::Prim(_, sides) = &t.check else {
                 unreachable!("a check is `call == want`")
             };
-            Err(format!("the result is {}", value(cones, &sides[0], map)?))
+            Err(format!(
+                "the result is {}",
+                value(cones, swap, &sides[0], map)?
+            ))
         }
     }
 }
 
-/// Checks a row of `main`'s table: runs the wave its key gives, and compares the writes.
-fn wave(cones: &Cones<'_>, program: &Program, t: &Test, map: &Through<'_>) -> Result<(), String> {
+/// Checks a row of `main`'s table: runs the wave its key gives, and compares the writes. With
+/// `swap`, the wave runs `main` closed under the unit with `swap`.
+pub(crate) fn wave(
+    cones: &Cones<'_>,
+    swap: Swap<'_>,
+    program: &Program,
+    t: &Test,
+    map: &Through<'_>,
+) -> Result<(), String> {
     let mut lines = BTreeMap::new();
     let mut files: BTreeMap<&str, Arc<dyn Lookup>> = BTreeMap::new();
     for ((name, kind), arg) in program.inputs().iter().zip(&t.args) {
         match kind {
-            PortKind::Lines => match value(cones, arg, map)? {
+            PortKind::Lines => match value(cones, swap, arg, map)? {
                 Value::Str(s) => {
                     lines.insert(name.clone(), s.as_bytes().to_vec());
                 }
@@ -216,14 +242,22 @@ fn wave(cones: &Cones<'_>, program: &Program, t: &Test, map: &Through<'_>) -> Re
             PortKind::Files => {
                 files.insert(
                     name,
-                    Arc::new(Given(interp::prelude(cones.close(arg.clone())))),
+                    Arc::new(Given(interp::prelude(cones.close_with(arg.clone(), swap)))),
                 );
             }
         }
     }
-    let wave = program.run_through(&lines, |name| files[name].clone(), map)?;
+    let wave = match swap {
+        None => program.run_through(&lines, |name| files[name].clone(), map)?,
+        Some(_) => {
+            let main = program.unit.defs.iter().find(|d| d.name == "main");
+            let main = Term::Var(main.expect("`main` was elaborated").kernel.clone());
+            let main = cones.close_with(main, swap);
+            program.run_main_through(&main, &lines, |name| files[name].clone(), map)?
+        }
+    };
     let outputs = program.outputs();
-    let wants = match (outputs.len(), value(cones, &t.want, map)?) {
+    let wants = match (outputs.len(), value(cones, swap, &t.want, map)?) {
         (1, v) => vec![v],
         (n, Value::Tuple(xs)) if xs.len() == n => xs.into_vec(),
         (n, v) => {
@@ -271,13 +305,25 @@ impl Lookup for Given {
 /// that finds no tests fails. Returns the exit status: 0 when every check passes, 1 when
 /// one fails (a unit that does not compile, a row that fails or aborts, a marked line), 2 for
 /// a usage error or a file that cannot be read.
+///
+/// `zedc test --mutate <file> …` then runs the tables against each mutant of each unit that
+/// compiles (step L25.8, [`crate::mutate`]) when every check passes, and writes each mutant
+/// no row detects, each skipped and each not run as `file:line:col: …`, then the counts. The
+/// mutants change no exit status: there is no fraction to reach. When a check fails, no
+/// mutant runs and the status is the one above. A unit whose mutants cannot be made, an
+/// error of the compiler, gives 1.
 pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> u8 {
+    let (mutate, args) = match args {
+        [flag, rest @ ..] if flag == "--mutate" => (true, rest),
+        _ => (false, args),
+    };
     if args.is_empty() {
-        let _ = writeln!(stderr, "usage: zedc test <file> …");
+        let _ = writeln!(stderr, "usage: zedc test [--mutate] <file> …");
         return 2;
     }
     let (mut passed, mut failed, mut rejection) = (0, 0, 0);
     let mut db = Db::new();
+    let mut texts = Vec::new();
     for file in args {
         let text = match std::fs::read(file) {
             Ok(bytes) => source::load(&bytes).map_err(|e| e.to_string()),
@@ -298,6 +344,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
             rejection += 1;
         }
         let outcomes = test_in(&mut db, &text);
+        texts.push((file, text));
         if outcomes.is_empty() {
             let _ = writeln!(
                 stdout,
@@ -320,5 +367,52 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         stdout,
         "{passed} passed, {failed} failed, {rejection} rejection {units}"
     );
-    u8::from(failed > 0)
+    if failed > 0 {
+        if mutate {
+            let _ = writeln!(stdout, "no mutant runs: the original's checks fail");
+        }
+        return 1;
+    }
+    if mutate {
+        return mutants(&mut db, &texts, stdout);
+    }
+    0
+}
+
+/// Runs the mutants of each unit of `texts` that compiles, and writes the report.
+fn mutants(db: &mut Db, texts: &[(&String, String)], stdout: &mut dyn Write) -> u8 {
+    let (mut detected, mut undetected, mut skipped, mut not_run) = (0, 0, 0, 0);
+    let mut status = 0;
+    for (file, text) in texts {
+        let front = db.front(text);
+        let Ok((stmts, unit)) = &*front else {
+            continue;
+        };
+        let found = match mutate::run(text, stmts, unit, &run::direct) {
+            Ok(found) => found,
+            Err(why) => {
+                let _ = writeln!(stdout, "{file}: no mutants: {why}");
+                status = 1;
+                continue;
+            }
+        };
+        for (m, v) in &found {
+            match v {
+                Verdict::Detected => detected += 1,
+                Verdict::Undetected(_) => undetected += 1,
+                Verdict::Skipped => skipped += 1,
+                Verdict::NotRun => not_run += 1,
+            }
+            if let Some(line) = mutate::describe(text, &unit.defs[m.def].name, m, v) {
+                let _ = writeln!(stdout, "{file}:{line}");
+            }
+        }
+    }
+    let total = detected + undetected + skipped + not_run;
+    let _ = writeln!(
+        stdout,
+        "{total} mutants: {detected} detected, {undetected} undetected, {skipped} skipped, \
+         {not_run} not run"
+    );
+    status
 }

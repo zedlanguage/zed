@@ -1,0 +1,11 @@
+// A child fare applies up to and including age 12; the table tries the boundary.
+isChild(positional age) = age <= 12
+test { 12 -> true, 13 -> false, 0 -> true }
+
+// A minor is under 18; the table never tries 17 or 18.
+isMinor(positional age) = age < 18
+test { 5 -> true, 40 -> false }
+
+// The fare in cents, with a zero surcharge written out.
+fare(positional age) = if isChild(age) { 150 * (1 + 0) } else { 300 }
+test { 12 -> 150, 13 -> 300 }

@@ -18,6 +18,7 @@ pub mod fence;
 pub mod format;
 pub mod interp;
 pub mod lex;
+pub mod mutate;
 pub mod parse;
 pub mod query;
 pub mod rejection;

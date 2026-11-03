@@ -94,6 +94,9 @@ pub struct Info {
     /// take: an atom there selects no arrow and is the call's value (rule 6 of
     /// sec:type_resolution), by the call's span and the arguments' spans.
     pub passes: HashMap<Span, Vec<Span>>,
+    /// For each `*`, whether `/` is defined on every pair of operand types the checker gave
+    /// it: both hold no `int` (step L25.8, the `*` to `/` mutant).
+    pub quotients: HashMap<Span, bool>,
     /// The type errors.
     pub errors: Vec<Error>,
 }
@@ -2042,6 +2045,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .any(|t| t.atoms().contains(&Value::atom("divByZero")));
                 if op == "**" {
                     self.exponent(&x, &y, b, span);
+                }
+                if op == "*" {
+                    let int = KType::int();
+                    let quotient = [&x.ty, &y.ty]
+                        .iter()
+                        .all(|t| !t.set.is_empty() && (&t.set & &int).is_empty());
+                    *self.info.quotients.entry(span).or_insert(quotient) &= quotient;
                 }
                 let sig = op_sig(op);
                 let r = self.apply(&format!("`{op}`"), &sig, vec![Some(x), Some(y)], true, span);

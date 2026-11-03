@@ -37,7 +37,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: zedc [fmt <file> | run <file> … | replay <file> <record> … | test <file> …]"
+                "usage: zedc [fmt <file> | run <file> … | replay <file> <record> … | test [--mutate] <file> …]"
             );
             return ExitCode::from(2);
         }
