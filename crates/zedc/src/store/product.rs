@@ -308,8 +308,8 @@ impl Product {
     }
 
     /// Meets the interval domain with `x`.
-    fn meet_ints(&mut self, x: &IntervalSet, premises: &Premises) {
-        self.cell.ints.meet(&Bounds::ints(x.clone()), premises);
+    fn meet_ints(&mut self, x: IntervalSet, premises: &Premises) {
+        self.cell.ints.meet(&Bounds::ints(x), premises);
     }
 
     /// The reductions between this product's own domains, once each.
@@ -317,11 +317,11 @@ impl Product {
         let prem = self.premises();
         let int = Type::int();
         let (x, c) = reduce_congruence(self.ints(), &self.cell.congruence.element);
-        self.meet_ints(&x, &prem);
+        self.meet_ints(x, &prem);
         self.cell.congruence.meet(&c, &prem);
         // A finite set against the interval: an integer member outside it goes.
         if let FiniteSet::Set(vs) = &self.cell.finite.element {
-            let x = self.ints().clone();
+            let x = self.ints();
             let kept: BTreeSet<Value> = vs
                 .iter()
                 .filter(|v| !matches!(v, Value::Int(n) if !x.contains(*n)))
@@ -336,7 +336,7 @@ impl Product {
                         })
                         .collect(),
                 );
-                self.meet_ints(&ints, &prem);
+                self.meet_ints(ints, &prem);
             }
             self.cell.finite.meet(&FiniteSet::Set(kept), &prem);
         }
@@ -357,7 +357,7 @@ impl Product {
             // `l01_39_reduced_product::controls::a_listed_set_is_enumerated_and_a_range_is_not`.
             // No COMPLEXITY.md row. A complete solution would let the type language hold
             // integer ranges, so that the interval enters the type without listing.
-            let x = self.ints().clone();
+            let x = self.ints();
             let vs: Option<Vec<Value>> = match (&self.ty.element & &int).listed() {
                 Some(vs) => Some(
                     vs.into_iter()
@@ -410,7 +410,7 @@ impl Product {
                     })
                     .collect(),
             );
-            self.meet_ints(&ints, &prem);
+            self.meet_ints(ints, &prem);
         }
     }
 }
@@ -1406,9 +1406,9 @@ impl Scope {
             for (n, d) in &pre.domains {
                 if let Some(p) = self.names.get_mut(n) {
                     if convex {
-                        p.meet_ints(&d.hull(), prem);
+                        p.meet_ints(d.hull(), prem);
                     } else {
-                        p.meet_ints(d, prem);
+                        p.meet_ints(d.clone(), prem);
                     }
                 }
             }
@@ -1803,7 +1803,7 @@ impl Scope {
                 && let Some(p) = self.names.get_mut(n)
             {
                 let prem = p.premises();
-                p.meet_ints(&x, &prem);
+                p.meet_ints(x, &prem);
             }
         }
     }
@@ -1930,7 +1930,7 @@ impl Scope {
                         );
                         let p = self.names.get_mut(n).expect("a name in scope");
                         let prem = p.premises();
-                        p.meet_ints(&x, &prem);
+                        p.meet_ints(x, &prem);
                     }
                 }
                 _ => continue,
@@ -2335,7 +2335,7 @@ fn equality(p: &mut Product, v: &Value, equal: bool, prem: &Premises) {
         p.ty.meet(&lit.ty.element, prem);
         p.cell.finite.meet(&lit.cell.finite.element, prem);
         if let Value::Int(n) = v {
-            p.meet_ints(&IntervalSet::single(*n), prem);
+            p.meet_ints(IntervalSet::single(*n), prem);
             p.cell.congruence.meet(&Congruence::single(*n), prem);
         }
         return;
@@ -2345,7 +2345,7 @@ fn equality(p: &mut Product, v: &Value, equal: bool, prem: &Premises) {
     }
     if let Value::Int(n) = v {
         let x = IntervalSet::single(*n).complement_in(p.ints());
-        p.meet_ints(&x, prem);
+        p.meet_ints(x, prem);
     }
     if let FiniteSet::Set(vs) = &p.cell.finite.element {
         let mut vs = vs.clone();

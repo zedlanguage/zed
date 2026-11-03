@@ -454,3 +454,80 @@ fn tests_on_names_apart_narrow_in_time_near_their_number() {
     assert!(r.contains(&at([1, 0, 1, 0, 9, 8])));
     assert!(!r.contains(&at([0, 0, 1, 0, 9, 8])));
 }
+
+/// `let x1 = x0 in let x1 = x1 + 1 in … let xk = x0 in let xk = xk + 1 in if xk >= 1 { 1 }
+/// else { 2 }`: each name is bound and then shadowed, so every second binding saves the
+/// scope, which then holds up to `k` names.
+fn shadows(k: usize) -> Term {
+    let last = format!("x{k}");
+    let mut t = Term::If(
+        arc(prim(Prim::Ge, var(&last), int(1))),
+        arc(int(1)),
+        arc(int(2)),
+    );
+    for i in (1..=k).rev() {
+        let x = format!("x{i}");
+        t = Term::Let(
+            x.as_str().into(),
+            arc(var("x0")),
+            arc(Term::Let(
+                x.as_str().into(),
+                arc(prim(Prim::Add, var(&x), int(1))),
+                arc(t),
+            )),
+        );
+    }
+    t
+}
+
+/// `if x >= 0 { let x = x + 1 in let x = x + 1 in if x >= 2 { 1 } else { 2 } } else { 3 }`:
+/// each binding reads the `x` it shadows, so the innermost `x` is at least 2 and the inner
+/// false arm is never reached.
+#[test]
+fn a_binding_that_reads_the_name_it_shadows_keeps_what_held_of_it() {
+    let inner = Term::If(
+        arc(prim(Prim::Ge, var("x"), int(2))),
+        arc(int(1)),
+        arc(int(2)),
+    );
+    let step = |body: Term| {
+        Term::Let(
+            "x".into(),
+            arc(prim(Prim::Add, var("x"), int(1))),
+            arc(body),
+        )
+    };
+    let t = Term::If(
+        arc(prim(Prim::Ge, var("x"), int(0))),
+        arc(step(step(inner))),
+        arc(int(3)),
+    );
+    let a = super::arms(&t, &ints(&["x".into()]));
+    let shown: Vec<String> = a
+        .iter()
+        .map(|a| format!("{} {}: {}", a.guard, a.outcome, a.scope))
+        .collect();
+    assert_eq!(a.len(), 4, "{shown:#?}");
+    assert!(a[1].outcome && !a[1].scope.bottom, "{shown:#?}");
+    assert!(!a[2].outcome && a[2].scope.bottom, "{shown:#?}");
+}
+
+#[test]
+fn a_chain_of_shadowing_lets_scales() {
+    // `arms` recurses on the depth of the term (T2-mid), so the chain runs on a thread whose
+    // stack holds it: 1,600 `let`s at the larger size.
+    let t = std::thread::Builder::new().stack_size(1 << 28).spawn(|| {
+        let x0 = ints(&["x0".into()]);
+        let terms: BTreeMap<usize, Term> = [100, scaling::FACTOR * 100]
+            .into_iter()
+            .map(|k| (k, shadows(k)))
+            .collect();
+        let a = super::arms(&terms[&100], &x0);
+        assert_eq!(a.len(), 2, "both arms of the last test are reached");
+        assert!(a.iter().all(|a| !a.scope.bottom));
+        scaling::check("a chain of shadowing `let`s", 100, |k| {
+            super::arms(&terms[&k], &x0);
+        });
+    });
+    t.expect("a thread").join().expect("the chain scales");
+}

@@ -101,10 +101,11 @@ impl Hull {
         })
     }
 
-    /// The hull of the points of this one where `t` is zero.
-    pub fn and(&self, t: &Lin) -> Hull {
+    /// The hull of the points of this one where `t` is zero. The hull is taken by value, so
+    /// that rows and uses it holds alone are changed in place rather than copied.
+    pub fn and(mut self, t: &Lin) -> Hull {
         if self.is_empty {
-            return self.clone();
+            return self;
         }
         let mut r = t.clone();
         for a in t.terms.keys() {
@@ -114,7 +115,7 @@ impl Hull {
         }
         if r.terms.is_empty() {
             return if r.constant.is_zero() {
-                self.clone()
+                self
             } else {
                 Hull::empty()
             };
@@ -126,38 +127,41 @@ impl Hull {
             .min_by_key(|a| self.uses.get(*a).map_or(0, OrdMap::len))
             .expect("a term")
             .clone();
-        let mut out = self.clone();
-        let mentions: Vec<Atom> = self
-            .uses
-            .get(&pivot)
-            .map(|m| m.keys().cloned().collect())
-            .unwrap_or_default();
-        for q in mentions {
-            let old = out.rows[&q].clone();
-            let now = eliminate(&old, &r, &pivot);
-            out.uses = used(out.uses, &old, &q, false);
-            out.uses = used(out.uses, &now, &q, true);
-            out.rows.insert(q, Arc::new(now));
+        // Once the pivot is eliminated from the rows that mention it, no row other than the
+        // new one mentions it, so its entry in `uses` is taken out whole. `remove` and `get_mut`
+        // copy the path to a key even when it is absent, if the map is shared, so an absent key
+        // is looked up first.
+        let mentions = if self.uses.contains_key(&pivot) {
+            self.uses.remove(&pivot).expect("a pivot in `uses`")
+        } else {
+            OrdMap::new()
+        };
+        for q in mentions.keys() {
+            let row = self.rows.get_mut(q).expect("a row of each pivot in `uses`");
+            let now = eliminate(row, &r, &pivot);
+            used(&mut self.uses, row, q, false);
+            used(&mut self.uses, &now, q, true);
+            *row = Arc::new(now);
         }
-        out.uses = used(out.uses, &r, &pivot, true);
-        out.rows.insert(pivot, Arc::new(r));
-        out
+        used(&mut self.uses, &r, &pivot, true);
+        self.rows.insert(pivot, Arc::new(r));
+        self
     }
 
     /// The hull of the union of the two sets: the equalities both hold. The rows the two have
     /// in common are kept, and the rest are intersected. The rows both span are the common
     /// rows plus what the rest of each span in common, since neither rest mentions a common
     /// row's pivot; so a join of hulls that differ in a few rows costs near the rows that
-    /// differ.
-    pub fn join(&self, other: &Hull) -> Hull {
+    /// differ. The rows of `self` that `other` lacks or holds otherwise are found first and
+    /// removed after, so that `self` is changed in place.
+    pub fn join(mut self, other: &Hull) -> Hull {
         if self.is_empty {
             return other.clone();
         }
         if other.is_empty {
-            return self.clone();
+            return self;
         }
-        let (mut a, mut b) = (Vec::new(), Vec::new());
-        let mut out = self.clone();
+        let (mut gone, mut a, mut b) = (Vec::new(), Vec::new(), Vec::new());
         for d in self.rows.diff(&other.rows) {
             let (s, t) = match d {
                 DiffItem::Add(_, t) => (None, Some(t)),
@@ -165,16 +169,19 @@ impl Hull {
                 DiffItem::Update { old, new } => (Some(old), Some(new.1)),
             };
             if let Some((p, s)) = s {
-                out.rows.remove(p);
-                out.uses = used(out.uses, s, p, false);
+                gone.push(p.clone());
                 a.push(s.clone());
             }
             if let Some(t) = t {
                 b.push(t.clone());
             }
         }
+        for (p, s) in gone.iter().zip(&a) {
+            self.rows.remove(p);
+            used(&mut self.uses, s, p, false);
+        }
         // The common rows are reduced against each other already.
-        intersect(&a, &b).iter().fold(out, |h, t| h.and(t))
+        intersect(&a, &b).iter().fold(self, |h, t| h.and(t))
     }
 }
 
@@ -188,27 +195,20 @@ impl fmt::Display for Hull {
     }
 }
 
-/// `uses` with the row `t` at `pivot` added or removed.
-fn used(
-    mut uses: OrdMap<Atom, OrdMap<Atom, ()>>,
-    t: &Lin,
-    pivot: &Atom,
-    add: bool,
-) -> OrdMap<Atom, OrdMap<Atom, ()>> {
+/// Adds the row `t` at `pivot` to `uses`, or removes it.
+fn used(uses: &mut OrdMap<Atom, OrdMap<Atom, ()>>, t: &Lin, pivot: &Atom, add: bool) {
     for a in t.terms.keys().filter(|a| *a != pivot) {
-        let mut m = uses.get(a).cloned().unwrap_or_default();
         if add {
-            m.insert(pivot.clone(), ());
-        } else {
+            uses.entry(a.clone()).or_default().insert(pivot.clone(), ());
+        } else if uses.contains_key(a)
+            && let Some(m) = uses.get_mut(a)
+        {
             m.remove(pivot);
-        }
-        if m.is_empty() {
-            uses.remove(a);
-        } else {
-            uses.insert(a.clone(), m);
+            if m.is_empty() {
+                uses.remove(a);
+            }
         }
     }
-    uses
 }
 
 /// `r` with the atom `a` removed by adding a multiple of `p`, whose coefficient of `a` is

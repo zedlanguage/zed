@@ -797,6 +797,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `str::parse::<f64>()` and `str::parse::<f32>()`, correctly rounded by the standard library | `num::literal_f64`, `num::literal_f32` | Missing primitive | A prelude cast `f64(text)` that rounds to nearest with ties to even, as `num::literal_f64` does |
 | A sink typed `FnMut(&str, &str) -> Result<(), (String, String)>` for the path and reason of a failed write | `run::commit` | Mutation | A function returning the acknowledgment atom `#ioError(op:, path:, why:)` directly |
 
+## Entries from T11-fix-store (`zedc/src/store/hull.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A builder that takes `mut self` and changes its `imbl::OrdMap`s in place through `get_mut` and `entry(..).or_default()`, which copy only the shared nodes on the path; `contains_key` first, since `remove` and `get_mut` copy that path even for an absent key | `Hull::and`, `Hull::join`, `used` | Mutation | Zed's map updates return new maps; the cost matches only if the runtime updates a map in place at its last use (step L6.13) |
+
 ## Entries from T-zone (`zedc/src/store/product.rs`)
 
 | Rust construct | Sites | Gap | At the port |

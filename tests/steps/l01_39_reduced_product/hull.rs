@@ -143,7 +143,7 @@ fn rows_of(n: usize) -> Hull {
 fn loop_joins(h: &Hull, n: usize) {
     let mut h = h.clone();
     for i in 0..n {
-        let b = h.and(&lin(&[(&format!("x{i}"), 1)], -(i as i128)));
+        let b = h.clone().and(&lin(&[(&format!("x{i}"), 1)], -(i as i128)));
         h = h.join(&b);
     }
     assert_eq!(h.rows().count(), n);
@@ -154,7 +154,7 @@ fn the_textbook_join_keeps_exactly_i_plus_j_minus_n() {
     // {i == 0, j == n} and {i == 1, j == n - 1} both hold i + j == n, and nothing else.
     let a = Hull::of(&[lin(&[("i", 1)], 0), lin(&[("j", 1), ("n", -1)], 0)]);
     let b = Hull::of(&[lin(&[("i", 1)], -1), lin(&[("j", 1), ("n", -1)], 1)]);
-    assert_eq!(a.join(&b).to_string(), "i + j - n == 0");
+    assert_eq!(a.clone().join(&b).to_string(), "i + j - n == 0");
     assert_eq!(b.join(&a).to_string(), "i + j - n == 0");
 }
 
@@ -164,8 +164,9 @@ fn a_contradiction_is_the_empty_hull_and_the_identity_of_join() {
     assert!(e.is_empty);
     let a = Hull::of(&[lin(&[("x", 2), ("y", -4)], 6)]);
     assert_eq!(a.to_string(), "x - 2 * y + 3 == 0");
-    assert_eq!(e.join(&a).to_string(), a.to_string());
-    assert_eq!(a.join(&e).to_string(), a.to_string());
+    let shown = a.to_string();
+    assert_eq!(e.clone().join(&a).to_string(), shown);
+    assert_eq!(a.join(&e).to_string(), shown);
 }
 
 #[test]
@@ -238,4 +239,35 @@ fn a_join_costs_near_the_rows_that_differ() {
         .map(|m| (m, rows_of(m)))
         .collect();
     scaling::check("the join of hulls", 256, |m| loop_joins(&hulls[&m], m));
+}
+
+/// The rows `x0 - x1`, `x0 - x2`, …, `x0 - xn`, then `x0 - 7`, which rewrites the rows that
+/// mention the pivot it takes.
+fn star(n: usize) -> Vec<Lin> {
+    (1..=n)
+        .map(|i| lin(&[("x0", 1), (&format!("x{i}"), -1)], 0))
+        .chain([lin(&[("x0", 1)], -7)])
+        .collect()
+}
+
+#[test]
+fn names_equal_to_one_name_and_then_fixed_are_all_fixed() {
+    let h = Hull::of(&star(3));
+    assert_eq!(
+        h.to_string(),
+        "x0 - 7 == 0, x1 - 7 == 0, x2 - 7 == 0, x3 - 7 == 0"
+    );
+}
+
+#[test]
+fn a_hull_is_built_row_by_row_in_time_near_its_rows() {
+    // Each row is added to a hull that no one else holds, so it is changed in place.
+    let rows: BTreeMap<usize, Vec<Lin>> = [512, scaling::FACTOR * 512]
+        .into_iter()
+        .map(|m| (m, star(m)))
+        .collect();
+    scaling::check("building a hull row by row", 512, |m| {
+        let h = Hull::of(&rows[&m]);
+        assert_eq!(h.rows().count(), m + 1);
+    });
 }
