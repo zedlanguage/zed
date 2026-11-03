@@ -391,6 +391,7 @@ which 196 inside a loop body; `?` 1015, of which 276 in a loop; `continue` 110; 
 - **Overflow as refusal.** Since T4 the Omega test, `twovar` and `utvpi` compute in
   `store::int::Int`, unbounded with i128 while a value fits, and no coefficient refuses a
   question; in Zed this is `int`, and `store::int` goes at the port. `checked_*` remain elsewhere.
+- **Three live variables (LIVE3).** `store::live3` computes in `Int` and `linear::Q` and holds no state; its numbers of three (`[Q; 3]`, `[[Int; 3]; 3]`) are fixed-size tuples in Zed. The 64-bit fast paths added to `Int` (`div_floor`, `mod_floor`, `*`) go with `store::int` at the port.
 - **`as` casts** (272): most go, but a truncating cast must become `mod 2 ** k`.
 
 ## Mechanical rewrites

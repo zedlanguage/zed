@@ -94,7 +94,7 @@ use imbl::OrdSet;
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
 use super::linear::{Q, Term};
-use super::{hull3, twovar, utvpi};
+use super::{hull3, live3, twovar, utvpi};
 
 mod deep;
 
@@ -135,13 +135,13 @@ impl fmt::Display for Atom {
 /// narrowing keeps the written constraint, which is sound.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Refusal {
-    /// Every elimination of a variable would enlarge the system, which has three variables or
+    /// Every elimination of a variable would enlarge the system, which has four variables or
     /// more and is not of the form `±x ± y + k >= 0`; no row is below zero over the box its
     /// bounds give its variables, and each of the five points of that box that `box_point`
-    /// tries misses some row.
+    /// tries misses some row. A system with three variables left is decided by `live3`.
     Growth,
     /// The integer points could lie only in a splinter of a splinter: a gray shadow within a
-    /// gray shadow, whose search is exponential in the variables.
+    /// gray shadow over four variables or more, whose search is exponential in the variables.
     Shadows,
     /// The search through the disjunctions found no point and removed no disjunct.
     Disjuncts,
@@ -151,7 +151,7 @@ impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Refusal::Growth => {
-                "the integer constraints have three variables or more, each of whose \
+                "the integer constraints have four variables or more, each of whose \
                  elimination would enlarge them, so whether they hold at an integer point \
                  is not decided"
             }
@@ -1900,16 +1900,29 @@ fn search(vars: usize, base: &[(Row, Rel)], want: bool) -> Result<Option<Vec<Int
             let Some(mut child) = top.splinter(base, at, n, bound, *j, &m) else {
                 continue;
             };
-            match child.run() {
+            let mut leaf = child.run();
+            if matches!(leaf, Leaf::Empty) && child.gap {
+                // Run again with each gray shadow over three variables decided by `live3`,
+                // which leaves a gap only where four variables or more are left.
+                let Some(again) = top.splinter(base, at, n, bound, *j, &m) else {
+                    unreachable!("a splinter built once is built again");
+                };
+                child = again;
+                child.exact3 = true;
+                leaf = child.run();
+            }
+            match leaf {
                 Leaf::Point(v) => return Ok(Some(v)),
                 Leaf::Empty if !child.gap => {}
                 // Complexity tradeoff: a splinter whose own elimination leaves a gray shadow
-                // (a splinter of a splinter) is not searched; the question gets
-                // `Refusal::Shadows` ("not decided") even when a point lies there. Why: each
-                // level of splinters multiplies the searches by the bounds of one side and
-                // their coefficients, so nested splinters cost time exponential in the
-                // variables. Trigger: an inexact elimination inside a splinter, which needs
-                // coefficients other than ±1 on both sides of a variable at two levels.
+                // (a splinter of a splinter) over four variables or more is not searched; the
+                // question gets `Refusal::Shadows` ("not decided") even when a point lies
+                // there. With three variables left, the run again above decides the gray
+                // shadow by `live3`. Why: each level of splinters multiplies the searches by
+                // the bounds of one side and their coefficients, so nested splinters cost time
+                // exponential in the variables. Trigger: an inexact elimination inside a
+                // splinter with four variables or more live, which needs coefficients other
+                // than ±1 on both sides of a variable at two levels.
                 // Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
                 // `l01_38_presburger::checker::a_question_whose_point_lies_past_one_splinter_is_rejected`,
                 // `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`. COMPLEXITY.md
@@ -3047,6 +3060,9 @@ struct Omega {
     gray: Vec<(usize, usize)>,
     /// Whether a dark shadow was taken whose splinters are not searched.
     gap: bool,
+    /// Whether a gray shadow with three variables left is decided by `live3` in place of a
+    /// dark shadow with a gap: set when a splinter is run again after its first run left one.
+    exact3: bool,
     /// Whether an exact elimination may add terms: set once a system of rows `±x ± y + k >= 0`
     /// is shown to have a point, since its eliminations are all exact and keep that form.
     fill_ok: bool,
@@ -3073,6 +3089,7 @@ impl Omega {
             may_splinter,
             gray: Vec::new(),
             gap: false,
+            exact3: false,
             fill_ok: false,
         }
     }
@@ -3150,6 +3167,14 @@ impl Omega {
                         return Leaf::Empty;
                     }
                 }
+                if self.exact3 && self.sys.live == 3 {
+                    // A gray shadow inside a splinter, which would leave the question
+                    // refused, is decided completely when three variables are left.
+                    match self.three() {
+                        Some(leaf) => return leaf,
+                        None => continue,
+                    }
+                }
                 if self.may_splinter {
                     self.gray.push((self.steps.len(), self.sys.vars.len()));
                 } else {
@@ -3200,9 +3225,11 @@ impl Omega {
             }
             // The rows are empty when the box of their bounds shows it, and have a point when
             // one of the five points of the box that `box_point` tries holds them; otherwise
-            // the question is refused.
+            // three variables left (with no unit side) are decided by `live3`, and four or
+            // more are refused.
             //
-            // Complexity tradeoff: a system that the box neither empties nor satisfies, once
+            // Complexity tradeoff: a system over four variables or more that the box neither
+            // empties nor satisfies, once
             // no elimination is left that keeps the rows from growing, is given up: it gets
             // `Refusal::Growth` ("not decided", rejected at the function by `run.rs`
             // `linear_questions`), though it may have a point or none. Only five points of the
@@ -3216,11 +3243,11 @@ impl Omega {
             // elimination that adds terms multiplies lower by upper bounds, so the rows can grow
             // doubly exponentially in the variables eliminated (Fourier–Motzkin), and the dark
             // and gray shadows of the full Omega test add an exponential search on top; trying
-            // every point of the box is exponential in the variables. Trigger: three live
-            // variables with no unit side, or four or more, whose every elimination pairs more
-            // bounds than it removes and whose rows are not all `±x ± y + k >= 0`; the size of
-            // the system plays no part. (Three live variables with a unit side are decided by
-            // the `hull3` stage above.) Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
+            // every point of the box is exponential in the variables. Trigger: four or more
+            // live variables whose every elimination pairs more bounds than it removes and
+            // whose rows are not all `±x ± y + k >= 0`; the size of the system plays no part.
+            // (Three live variables are decided completely: with a unit side by the `hull3`
+            // stage above, otherwise by `live3` below.) Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
             // `l01_38_presburger::checker::a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`,
             // `l01_38_presburger::scaling::the_shifted_sparse_family_scales`,
             // `l01_38_presburger::stages::rows_the_one_pass_test_does_not_show_empty_stay_refused`,
@@ -3228,20 +3255,25 @@ impl Omega {
             // COMPLEXITY.md rows S18, Q1-ROWBOX and Kept "Fourier–Motzkin pairs". A complete
             // solution would run the growing eliminations of the full Omega test (or another
             // complete Presburger procedure) and accept their exponential worst case, or find a
-            // structural class of growing systems decidable in O(n log n); plan item HULL3-GEN
-            // (which needs the cross-review XR3) is the general fix for three live variables
-            // with no unit side.
+            // structural class of growing systems over four variables or more decidable in
+            // O(n log n).
             let Some((lo, hi)) = bounds(&self.sys) else {
                 return Leaf::Empty;
             };
             if box_empty_in(&self.sys, &lo, &hi) {
                 return Leaf::Empty;
             }
-            let Some(v) = box_point(&self.sys, &lo, &hi) else {
+            if let Some(v) = box_point(&self.sys, &lo, &hi) {
+                start = v;
+                break;
+            }
+            if self.sys.live > 3 {
                 return Leaf::Refused(Refusal::Growth);
-            };
-            start = v;
-            break;
+            }
+            match self.three() {
+                Some(leaf) => return leaf,
+                None => continue,
+            }
         }
         if !self.want {
             return Leaf::Point(Vec::new());
@@ -3256,6 +3288,41 @@ impl Omega {
             vals[j] = v;
         }
         Leaf::Point(vals)
+    }
+
+    /// Decides the rows, which hold three variables, by Lenstra's method in dimension three
+    /// (`live3`), with no refusal: the answer when it is settled here (empty, or a point
+    /// that is not wanted), or `None` once the three variables are defined by a point.
+    fn three(&mut self) -> Option<Leaf> {
+        let Some((x, v)) = self.triple() else {
+            return Some(Leaf::Empty);
+        };
+        if !self.want {
+            return Some(Leaf::Point(Vec::new()));
+        }
+        for (j, v) in x.into_iter().zip(v) {
+            self.sys.take(j);
+            let a = Vec::new().into();
+            self.steps.push(Step::Defined(j, Row { a, k: v }));
+        }
+        None
+    }
+
+    /// The three live variables and an integer point of the rows over them, or `None` when
+    /// the rows have none.
+    fn triple(&self) -> Option<([usize; 3], [Int; 3])> {
+        let vs: BTreeSet<usize> = self
+            .sys
+            .rows
+            .keys()
+            .flat_map(|a| a.iter().map(|(i, _)| *i))
+            .collect();
+        let vs: [usize; 3] = Vec::from_iter(vs)
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("three live variables"));
+        let rows: Vec<(&[Term], &Int)> = self.sys.rows.iter().map(|(a, h)| (&**a, &h.k)).collect();
+        let x = live3::decide(&rows, &vs)?;
+        Some((vs, x))
     }
 
     /// Decides the rows, which hold two variables or fewer: their variables and a point of

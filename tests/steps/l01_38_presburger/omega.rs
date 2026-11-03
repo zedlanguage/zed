@@ -133,16 +133,18 @@ fn each_cause_of_a_refusal_has_its_own_message() {
             ge(&[("w", -8), ("x", -5), ("y", 12), ("z", -1)], 31),
         ]),
         Refusal::Growth,
-        "the integer constraints have three variables or more, each of whose elimination \
+        "the integer constraints have four variables or more, each of whose elimination \
          would enlarge them, so whether they hold at an integer point is not decided",
     );
-    // A splinter of the dark elimination takes a dark shadow of its own that has no point.
+    // A splinter of the dark elimination takes a dark shadow of its own that has no point,
+    // over four variables: with three, `live3` decides the splinter's gray shadow.
     refused(
         Formula::and(vec![
-            ge(&[("x", -2), ("y", -3), ("z", -6)], 4),
-            ge(&[("x", -4), ("z", -6)], -22),
-            ge(&[("x", 1), ("y", -1), ("z", 4)], 36),
-            ge(&[("x", 2), ("y", 3), ("z", 3)], -24),
+            ge(&[("x", 9), ("y", -4), ("w", -8)], -3),
+            ge(&[("x", 5), ("y", 11), ("w", 9)], -9),
+            ge(&[("x", -7), ("y", -12), ("z", -2), ("w", 8)], -1),
+            ge(&[("x", -9), ("y", 8), ("z", 7)], 0),
+            ge(&[("x", -10), ("y", 4), ("z", -6), ("w", -4)], 22),
         ]),
         Refusal::Shadows,
         "an integer point of the integer constraints could lie only in a splinter of a \
@@ -386,22 +388,53 @@ fn shuffled(f: &Formula, rng: &mut Rng) -> Formula {
     }
 }
 
-#[test]
-fn the_answer_does_not_depend_on_the_order_of_the_disjuncts() {
-    // A proof rule that held on one spelling of `a < 0 || b < 0` and not on `b < 0 || a < 0`
-    // would change with a reformatting of the source.
+/// Formulas `from..to` of one random sequence of 2000, each solved and solved reordered, and how
+/// many of them the reordering changed. The formulas before `from` are drawn and not solved,
+/// so that the two halves together are the one sequence.
+fn reordered_formulas_agree(from: usize, to: usize) -> usize {
     let mut rng = Rng::new(0x1380);
     let mut disjunctive = 0;
-    for _ in 0..2000 {
+    for i in 0..to {
         let f = random_formula(&mut rng, 3);
         let g = shuffled(&f, &mut rng);
+        if i < from {
+            continue;
+        }
         disjunctive += usize::from(f != g);
         assert_eq!(satisfiable(&f), satisfiable(&g), "{f} and {g}");
         for s in ["a", "b", "c"] {
             assert_eq!(project(&f, &sym(s)), project(&g, &sym(s)), "{f} and {g}");
         }
     }
-    assert!(disjunctive > 1000, "{disjunctive} of 2000 reordered");
+    disjunctive
+}
+
+// A proof rule that held on one spelling of `a < 0 || b < 0` and not on `b < 0 || a < 0` would
+// change with a reformatting of the source. The 2000 formulas are checked in four quarters, each
+// well under the 60-second limit of one test.
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_disjuncts() {
+    let disjunctive = reordered_formulas_agree(0, 500);
+    assert!(disjunctive > 250, "{disjunctive} of 500 reordered");
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_second_quarter() {
+    let disjunctive = reordered_formulas_agree(500, 1000);
+    assert!(disjunctive > 250, "{disjunctive} of 500 reordered");
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_third_quarter() {
+    let disjunctive = reordered_formulas_agree(1000, 1500);
+    assert!(disjunctive > 250, "{disjunctive} of 500 reordered");
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_fourth_quarter() {
+    let disjunctive = reordered_formulas_agree(1500, 2000);
+    assert!(disjunctive > 250, "{disjunctive} of 500 reordered");
 }
 
 /// `Σ x[i] >= 0` with `x[i] == x[i+1] + 1`: one long row, each equality substituted into it.

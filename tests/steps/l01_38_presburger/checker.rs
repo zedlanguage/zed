@@ -58,7 +58,7 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
     );
     assert_eq!(
         rejection("growth", &src),
-        "1:1: whether `ok` can hold is not decided: the integer constraints have three \
+        "1:1: whether `ok` can hold is not decided: the integer constraints have four \
          variables or more, each of whose elimination would enlarge them, so whether they hold \
          at an integer point is not decided\n  \
          [1] 1:18: the constraints: 12 * w + 10 * y + 12 * z <= 4 * x + 11 && 4 * w + 10 * x \
@@ -70,17 +70,19 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
 #[test]
 fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
     let src = program(
-        "ok(x, y, z) = 4 - 2 * x - 3 * y - 6 * z >= 0 && -4 * x - 6 * z - 22 >= 0 && x - y + 4 \
-         * z + 36 >= 0 && 2 * x + 3 * y + 3 * z - 24 >= 0;",
-        "x: a, y: a, z: a",
+        "ok(x, y, z, w) = 9 * x - 4 * y - 8 * w - 3 >= 0 && 5 * x + 11 * y + 9 * w - 9 >= 0 && -7 \
+         * x - 12 * y - 2 * z + 8 * w - 1 >= 0 && -9 * x + 8 * y + 7 * z >= 0 && -10 * x + 4 * y \
+         - 6 * z - 4 * w + 22 >= 0;",
+        "x: a, y: a, z: a, w: a",
     );
     assert_eq!(
         rejection("shadows", &src),
         "1:1: whether `ok` can hold is not decided: an integer point of the integer \
          constraints could lie only in a splinter of a splinter of their projection, so \
          whether one exists is not decided\n  \
-         [1] 1:15: the constraints: 2 * x + 3 * y + 6 * z <= 4 && 4 * x + 6 * z <= -22 && x + \
-         4 * z >= y - 36 && 2 * x + 3 * y + 3 * z >= 24"
+         [1] 1:18: the constraints: 8 * w + 4 * y <= 9 * x - 3 && 9 * w + 5 * x + 11 * y >= 9 \
+         && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * x + 6 \
+         * z <= 4 * y + 22"
     );
 }
 

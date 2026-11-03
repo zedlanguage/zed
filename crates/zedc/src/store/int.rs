@@ -13,6 +13,33 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 
+/// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
+/// division.
+macro_rules! stein {
+    ($name:ident, $t:ty) => {
+        fn $name(mut a: $t, mut b: $t) -> $t {
+            if a == 0 || b == 0 {
+                return a | b;
+            }
+            let s = (a | b).trailing_zeros();
+            a >>= a.trailing_zeros();
+            loop {
+                b >>= b.trailing_zeros();
+                if a > b {
+                    (a, b) = (b, a);
+                }
+                b -= a;
+                if b == 0 {
+                    return a << s;
+                }
+            }
+        }
+    };
+}
+
+stein!(stein64, u64);
+stein!(stein128, u128);
+
 /// An integer. A value that fits in `i128` is always `Small`, so that two equal values have
 /// one form.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -132,11 +159,13 @@ impl Int {
     pub fn gcd(&self, other: &Int) -> Int {
         match (&self.0, &other.0) {
             (Repr::Small(a), Repr::Small(b)) => {
-                let (mut a, mut b) = (a.unsigned_abs(), b.unsigned_abs());
-                while b != 0 {
-                    (a, b) = (b, a % b);
-                }
-                i128::try_from(a).map_or_else(|_| BigInt::from(a).into(), Int::from)
+                let (a, b) = (a.unsigned_abs(), b.unsigned_abs());
+                // In 64 bits when both fit, where each step is one instruction.
+                let g = match (u64::try_from(a), u64::try_from(b)) {
+                    (Ok(a), Ok(b)) => u128::from(stein64(a, b)),
+                    _ => stein128(a, b),
+                };
+                i128::try_from(g).map_or_else(|_| BigInt::from(g).into(), Int::from)
             }
             _ => self.big().gcd(&other.big()).into(),
         }
@@ -145,7 +174,11 @@ impl Int {
     /// `self / m` rounded down, for `m` above zero.
     pub fn div_floor(&self, m: &Int) -> Int {
         match (&self.0, &m.0) {
-            (Repr::Small(a), Repr::Small(b)) => a.div_euclid(*b).into(),
+            // In 64 bits when both fit, where a 128-bit division is many times slower.
+            (Repr::Small(a), Repr::Small(b)) => match (i64::try_from(*a), i64::try_from(*b)) {
+                (Ok(a), Ok(b)) => a.div_euclid(b).into(),
+                _ => a.div_euclid(*b).into(),
+            },
             _ => self.big().div_floor(&m.big()).into(),
         }
     }
@@ -153,7 +186,10 @@ impl Int {
     /// The remainder of [`Int::div_floor`], for `m` above zero.
     pub fn mod_floor(&self, m: &Int) -> Int {
         match (&self.0, &m.0) {
-            (Repr::Small(a), Repr::Small(b)) => a.rem_euclid(*b).into(),
+            (Repr::Small(a), Repr::Small(b)) => match (i64::try_from(*a), i64::try_from(*b)) {
+                (Ok(a), Ok(b)) => a.rem_euclid(b).into(),
+                _ => a.rem_euclid(*b).into(),
+            },
             _ => self.big().mod_floor(&m.big()).into(),
         }
     }
@@ -189,10 +225,14 @@ impl Mul for &Int {
     type Output = Int;
 
     fn mul(self, other: &Int) -> Int {
-        if let (Repr::Small(a), Repr::Small(b)) = (&self.0, &other.0)
-            && let Some(v) = a.checked_mul(*b)
-        {
-            return v.into();
+        if let (Repr::Small(a), Repr::Small(b)) = (&self.0, &other.0) {
+            // Two values of 64 bits have a product that fits in 128, with no overflow test.
+            if let (Ok(x), Ok(y)) = (i64::try_from(*a), i64::try_from(*b)) {
+                return (i128::from(x) * i128::from(y)).into();
+            }
+            if let Some(v) = a.checked_mul(*b) {
+                return v.into();
+            }
         }
         (&*self.big() * &*other.big()).into()
     }

@@ -20,7 +20,11 @@ impl Q {
 
     pub(crate) fn new(n: Int, d: Int) -> Q {
         let g = n.gcd(&d);
-        let (mut n, mut d) = (n.div_floor(&g), d.div_floor(&g));
+        let (mut n, mut d) = if g == Int::ONE {
+            (n, d)
+        } else {
+            (n.div_floor(&g), d.div_floor(&g))
+        };
         if d.is_negative() {
             (n, d) = (-&n, -&d);
         }
@@ -28,6 +32,9 @@ impl Q {
     }
 
     pub(crate) fn add(&self, o: &Q) -> Q {
+        if self.d == Int::ONE && o.d == Int::ONE {
+            return Q::of(&self.n + &o.n);
+        }
         Q::new(&(&self.n * &o.d) + &(&o.n * &self.d), &self.d * &o.d)
     }
 
@@ -40,6 +47,13 @@ impl Q {
             n: -&self.n,
             d: self.d.clone(),
         }
+    }
+
+    pub(crate) fn mul(&self, o: &Q) -> Q {
+        if self.d == Int::ONE && o.d == Int::ONE {
+            return Q::of(&self.n * &o.n);
+        }
+        Q::new(&self.n * &o.n, &self.d * &o.d)
     }
 
     pub(crate) fn div(&self, o: &Q) -> Q {

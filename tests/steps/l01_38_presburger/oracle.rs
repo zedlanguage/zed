@@ -509,9 +509,11 @@ fn small_coefficients_answer_the_same_under_any_names_and_order() {
 #[test]
 fn rows_of_three_terms_answer_the_same_under_any_names_and_order() {
     // 4000 systems, not 3000: since the row test of the box stage (Q1-ROWBOX), 3000 of them
-    // give 17 refusals and 4000 give 25, so more than 20 refusals are compared.
+    // gave 17 refusals and 4000 gave 25. `live3` decides the parts left with three variables,
+    // which left 13 of 3000 refused (more than 20 before it), so the bound checks that
+    // refusals still occur and agree under renaming.
     let refused = reorderings(0x38_41, 4000, 4, 3, |rng| corner_rows(rng, 4, 3));
-    assert!(refused > 20, "{refused}");
+    assert!(refused > 10, "{refused}");
 }
 
 #[test]

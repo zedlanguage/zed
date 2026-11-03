@@ -72,7 +72,7 @@ fn texts(s: &Scope) -> Vec<String> {
     s.warnings().iter().map(|w| w.to_string()).collect()
 }
 
-const GROWTH: &str = "the integer constraints have three variables or more, each of whose \
+const GROWTH: &str = "the integer constraints have four variables or more, each of whose \
                       elimination would enlarge them, so whether they hold at an integer point \
                       is not decided";
 
