@@ -11,6 +11,7 @@
 
 mod entries;
 mod exact;
+mod powers;
 mod random;
 mod s22;
 mod scaling;

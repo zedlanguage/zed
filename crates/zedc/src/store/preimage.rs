@@ -187,21 +187,6 @@ fn run_closed(t: &Term) -> Option<Value> {
     eval(t).ok()
 }
 
-/// The most factors read as one power: an integer power past 64 of anything but -1, 0 and 1
-/// leaves `i64`.
-///
-/// Complexity tradeoff: a product of more than 64 equal factors is not read as a power, so it
-/// is read as nested products (the HC4 entry for `*`), wider than the power's exact inverse. Why
-/// given: the power would leave `i64`; that reason does not hold, since `Int` is unbounded
-/// and `x ** k` inverts by a k-th root at a cost in the bits of its bounds. Trigger: more than
-/// 64 equal factors. Test:
-/// `l01_25_preimage_catalog::scopes::equal_factors_written_twice_are_read_as_a_square`
-/// (below the constant only). COMPLEXITY.md row C19. This switches behavior at a constant
-/// size, so it violates the no-thresholds rule; to be replaced (ledger item CAP-power). A
-/// complete solution would read any count of equal factors as a power, with ends held as
-/// unbounded integers.
-const POWER_FACTORS: usize = 64;
-
 /// The preimage of `demand` under `term`, whose free names in `inputs` range over their
 /// domains.
 pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
@@ -470,6 +455,11 @@ const ROOT: Eid = 0;
 /// A term and the scope it is read in, by their numbers: what the transfer remembers results
 /// by.
 type At = (Tid, Eid);
+
+/// How a product reads as a power: its first factor, the scope that factor is read in, and the
+/// number of factors; `None` when two factors differ. A term that is not a product is its own
+/// one factor.
+type Power = Option<(Tid, Eid, u32)>;
 
 /// A run of consecutive numbers in [`Terms::kids`] or [`Terms::params`].
 #[derive(Clone, Copy)]
@@ -906,6 +896,9 @@ struct Tx<'t> {
     /// Each scope by the scope it extends and the binding it adds, so that a binding made
     /// twice gives one scope.
     scope_ids: HashMap<(Eid, Name, At), Eid>,
+    /// How each product, by the term and scope its names lead to, reads as a power ([`Tx::power`]).
+    /// It depends on the terms and scopes alone, so it outlives one box.
+    powers: HashMap<At, Power>,
     run: Run,
     cx: Cx,
 }
@@ -916,6 +909,7 @@ impl<'t> Tx<'t> {
             terms: Terms::default(),
             scopes: vec![Scope::new()],
             scope_ids: HashMap::new(),
+            powers: HashMap::new(),
             run: Run::default(),
             cx: Cx {
                 inputs: Sets::new(),
@@ -1641,37 +1635,84 @@ impl<'t> Tx<'t> {
         }
     }
 
-    /// The factors of a product of one value read `k` times, as that value and `k`.
-    fn power(&self, t: Tid, env: Eid) -> Option<(Tid, Eid, u32)> {
-        let mut fs = Vec::new();
-        self.factors(t, env, &mut fs);
-        let (first, fenv) = fs[0];
-        let one = |&(t, e): &At| match (self.node(t), self.node(first)) {
-            (Node::Var(x), Node::Var(y)) if x == y => true,
-            _ => e == fenv && self.same(t, first),
-        };
-        (fs.len() >= 2 && fs.len() <= POWER_FACTORS && fs.iter().all(one)).then_some((
-            first,
-            fenv,
-            fs.len() as u32,
-        ))
+    /// The product `t` as a power, when it multiplies two or more factors that are all the same
+    /// term: that factor, the scope it is read in, and the number of factors. Any number of
+    /// factors is read (DESIGN.md sec:constraints, "How a constraint reaches the domains").
+    fn power(&mut self, t: Tid, env: Eid) -> Option<(Tid, Eid, u32)> {
+        let at = self.followed(t, env);
+        self.read_powers(at);
+        self.powers[&at].filter(|&(_, _, k)| k >= 2)
     }
 
-    fn factors(&self, t: Tid, env: Eid, out: &mut Vec<At>) {
+    /// The term and scope that `t`, read in `env`, stands for once its names are followed.
+    fn followed(&self, t: Tid, env: Eid) -> At {
         let (mut t, mut env) = (t, env);
         while let Node::Var(x) = self.node(t)
             && let Some(to) = self.lookup(env, x)
         {
             (t, env) = to;
         }
-        match self.node(t) {
-            _ if out.len() > POWER_FACTORS => {}
-            Node::Prim(Prim::Mul, args) if args.len() == 2 => {
-                self.factors(self.arg(args, 0), env, out);
-                self.factors(self.arg(args, 1), env, out);
+        (t, env)
+    }
+
+    /// Reads `at` and each product under it as a power ([`Tx::powers`]), the operands of a
+    /// product before the product, on an explicit stack, since a product of `k` factors can be
+    /// `k` deep. Each product is read once and compares the first factors of its two operands
+    /// once, so the cost is linear in the products reached plus the size of the factors
+    /// compared, however the products share operands.
+    fn read_powers(&mut self, at: At) {
+        let mut todo = vec![at];
+        while let Some(&at) = todo.last() {
+            if self.powers.contains_key(&at) {
+                todo.pop();
+                continue;
             }
-            _ => out.push((t, env)),
+            let (t, env) = at;
+            let args = match self.node(t) {
+                Node::Prim(Prim::Mul, args) if args.len() == 2 => args,
+                _ => {
+                    todo.pop();
+                    self.powers.insert(at, Some((t, env, 1)));
+                    continue;
+                }
+            };
+            let a = self.followed(self.arg(args, 0), env);
+            let b = self.followed(self.arg(args, 1), env);
+            match (self.powers.get(&a), self.powers.get(&b)) {
+                (Some(&pa), Some(&pb)) => {
+                    todo.pop();
+                    let p = self.joined(pa, pb);
+                    self.powers.insert(at, p);
+                }
+                (pa, pb) => {
+                    let (wait_a, wait_b) = (pa.is_none(), pb.is_none());
+                    if wait_b {
+                        todo.push(b);
+                    }
+                    if wait_a {
+                        todo.push(a);
+                    }
+                }
+            }
         }
+    }
+
+    /// The product of two powers: one power when their factors are the same term. A free name
+    /// is the same input in every scope; any other factor must also be read in the same scope.
+    /// A count past `u32::MAX`, which only shared operands reach, is not read as a power: the
+    /// revision table's `**` holds its exponent in a `u32`, as it does for `x ** k` written
+    /// out, and the product is then read by the entry for `*` from its two operands, each
+    /// still a power.
+    fn joined(&self, a: Power, b: Power) -> Power {
+        let ((s, se, j), (u, ue, k)) = (a?, b?);
+        let alike = match (self.node(s), self.node(u)) {
+            (Node::Var(x), Node::Var(y)) if x == y => true,
+            _ => se == ue && self.same(s, u),
+        };
+        if !alike {
+            return None;
+        }
+        Some((s, se, j.checked_add(k)?))
     }
 
     // ---- Into the linear-relation domain ------------------------------------------------

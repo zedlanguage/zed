@@ -613,7 +613,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `Vec` of `Copy` frames as an explicit stack, popped and pushed in a loop | `Parser` machine, `Formatter::run`, `ast::show` | Mutation | A state receiver, as for the evaluator's machine |
+| `Vec` of `Copy` frames as an explicit stack, popped and pushed in a loop | `Parser` machine, `Formatter::run`, `ast::show`, `preimage::Tx::read_powers` (with a `u32` count added by `checked_add`, whose end Zed's `int` does not have) | Mutation | A state receiver, as for the evaluator's machine |
 | `impl Drop` with a work list, on enums and structs | `ast/drop.rs`, `parse::Tree`, `lex::Part` | None | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `VecDeque` with `push_front`, `pop_back` and `get_mut`, slots taken in place by `Option::take` | `Builder::fill`, `Builder::take` | Mutation | A map keyed by position, or a state receiver over a list |
 | `Cow<str>` for pieces of output, some borrowed from the source | `Formatter::pieces` | None | Zed shares strings, so a piece is a plain `String` |

@@ -38,10 +38,11 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `BMC_SEQ_LEN` 4, `BMC_GENERATIONS` 16, `BMC_BUDGET` 65536, the integer cut | zed-kernel budgets.rs | removed (8): never read by the compiler; the M0.10 harness keeps its own instance sizes in `tests/src/instances.rs` |
 | `SATURATION_ITERATIONS` 8, `SATURATION_NODES` 10^4 | zed-kernel budgets.rs | removed (8): never read; rung 3 is not built |
 | `DEFAULT_FUEL` 10^8 | zed-kernel eval.rs | removed (8): a compile-time evaluation stopped |
+| `POWER_FACTORS` 64 | store/preimage.rs | removed (CAP-power; COMPLEXITY.md S30): a product of more equal factors was read by the entry for `*`, not as a power |
 
-Not thresholds: `TOP` 29 (the number of grammar layers), `POWER_FACTORS` 64 (the width of
-`i64`), `MIN_STEPS`, `MIN_MEMORY` (resources). `MIN_NESTED_CALLS` is a minimum the
-spec guarantees; the evaluator has no maximum.
+Not thresholds: `TOP` 29 (the number of grammar layers), `MIN_STEPS`, `MIN_MEMORY`
+(resources). `MIN_NESTED_CALLS` is a minimum the spec guarantees; the evaluator has no
+maximum.
 
 ## The replacements
 
