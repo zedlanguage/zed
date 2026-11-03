@@ -120,3 +120,77 @@ fn using_many_overloads_scales() {
             .all(|v| v.len() == 3 && v.is_sorted() && *v == sets[0])
     );
 }
+
+/// The statements of `text`, built before any timing.
+fn statements(text: &str) -> Vec<zedc::ast::Stmt> {
+    let tokens = zedc::lex::lex_fence(text).unwrap();
+    let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
+    zedc::ast::unit(text, &tokens, &tree).unwrap()
+}
+
+/// Resolves each program of `shapes` on a 2 MiB stack, 100,000 deep and 12,500 deep, and checks
+/// the time is linear. Resolution recursed once per level of nesting, and overflowed this stack
+/// near 10,000.
+fn resolves_deep(shapes: &[&str]) {
+    use zed_tests::deep::{on_small_stack, program};
+    let n = 12_500;
+    let deep = 8 * n;
+    on_small_stack(|| {
+        for &shape in shapes {
+            let small = statements(&program(shape, n).text);
+            let large = statements(&program(shape, deep).text);
+            zed_tests::scaling::check_order(&format!("resolving {shape}"), n, 1, |k| {
+                let stmts = if k == n { &small } else { &large };
+                assert!(!zedc::resolve::resolve(stmts).unwrap().binders.is_empty());
+            });
+            let r = zedc::resolve::resolve(&large).unwrap();
+            match shape {
+                // The `c` inside every block is the top level's.
+                "nested blocks" => {
+                    let c = r.binders.iter().position(|b| b.name == "c").unwrap();
+                    let reads_c = r.uses.values().filter(|u| **u == Ref::Bound([c].into()));
+                    assert_eq!(reads_c.count(), 1);
+                }
+                // Nested lambdas bind their parameters in written order, after `main`, its
+                // port and `t`.
+                "nested lambdas" => {
+                    let names = r.binders[3..].iter().map(|b| b.name.as_str());
+                    assert!(names.enumerate().all(|(i, x)| x == format!("x{i}")));
+                    assert_eq!(r.binders.len(), 3 + deep);
+                }
+                // Each call names the one `f`.
+                "nested calls" => {
+                    let f = r.binders.iter().position(|b| b.name == "f").unwrap();
+                    let calls = r.uses.values().filter(|u| **u == Ref::Bound([f].into()));
+                    assert_eq!(calls.count(), deep);
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
+#[test]
+fn sums_negations_lambdas_and_long_bodies_100000_deep_resolve_on_a_2_mib_stack() {
+    resolves_deep(&[
+        "a left-nested sum",
+        "nested negations",
+        "nested lambdas",
+        "a long sum in a function's body",
+    ]);
+}
+
+#[test]
+fn blocks_nested_100000_deep_resolve_on_a_2_mib_stack() {
+    resolves_deep(&["nested blocks"]);
+}
+
+#[test]
+fn else_if_chains_and_parenthesized_sums_100000_deep_resolve_on_a_2_mib_stack() {
+    resolves_deep(&["an `else if` chain", "a sum nested in parentheses"]);
+}
+
+#[test]
+fn calls_and_tuples_nested_100000_deep_resolve_on_a_2_mib_stack() {
+    resolves_deep(&["nested calls", "nested tuples"]);
+}

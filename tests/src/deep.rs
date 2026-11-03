@@ -98,3 +98,93 @@ pub fn list_type() -> Type {
     };
     Group::new(vec![def]).unwrap().instance(vec![]).remove(0)
 }
+
+/// Runs `f` on a thread with a 2 MiB stack, the default of a test thread, whatever
+/// `RUST_MIN_STACK` says.
+pub fn on_small_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new().stack_size(2 << 20);
+        thread.spawn_scoped(scope, f).unwrap().join().unwrap()
+    })
+}
+
+/// A program whose text nests `n` deep, as a generator writes one, and what it prints.
+pub struct Program {
+    /// What nests.
+    pub shape: &'static str,
+    /// The source text.
+    pub text: String,
+    /// What `main` pushes to `stdout`.
+    pub prints: String,
+}
+
+/// `main` printing `prefix` + `body` + `suffix`, inside a string hole.
+fn printing(top: &str, hole: String, prints: String, shape: &'static str) -> Program {
+    let text = format!("{top}main() -> (stdout: Lines) {{\n  stdout <- \"${{{hole}}}\";\n}}\n");
+    Program {
+        shape,
+        text,
+        prints,
+    }
+}
+
+/// Every shape of deep program, `n` deep, `n` at least 4: a left-nested sum, a right-nested
+/// sum in parentheses, nested blocks, an `else if` chain, nested negations, nested calls, a
+/// long sum in a function's body, nested tuples and nested lambdas.
+pub fn programs(n: usize) -> Vec<Program> {
+    assert!(n >= 4, "a deep program is at least 4 deep");
+    let ones = vec!["1"; n].join(" + ");
+    let paren = "(1 + ".repeat(n - 1) + "1" + &")".repeat(n - 1);
+    let blocks = "{ return ".repeat(n) + "c" + &"; }".repeat(n);
+    let ifs: String = (0..n)
+        .map(|i| format!("if x == {i} {{ {i} }} else "))
+        .collect::<String>()
+        + "{ 0 }";
+    let neg = "-".repeat(n) + "1";
+    let calls = "f(".repeat(n) + "1" + &")".repeat(n);
+    let tuple = "(".repeat(n) + "1" + &", 0)".repeat(n);
+    let lams: String = (0..n).map(|i| format!("(x{i}) -> ")).collect::<String>() + "1";
+    let done = |shape, body: String| Program {
+        shape,
+        text: format!("main() -> (stdout: Lines) {{\n  t = {body};\n  stdout <- \"done\";\n}}\n"),
+        prints: "done".into(),
+    };
+    vec![
+        printing("", ones, n.to_string(), "a left-nested sum"),
+        printing("", paren, n.to_string(), "a sum nested in parentheses"),
+        printing(
+            &format!("c = 1;\nv = {blocks};\n"),
+            "v".into(),
+            "1".into(),
+            "nested blocks",
+        ),
+        printing("x = 3;\n", ifs, "3".into(), "an `else if` chain"),
+        printing(
+            "",
+            neg,
+            if n.is_multiple_of(2) { "1" } else { "-1" }.into(),
+            "nested negations",
+        ),
+        printing(
+            "f(positional x) = x + 1;\n",
+            calls,
+            (n + 1).to_string(),
+            "nested calls",
+        ),
+        printing(
+            &format!("f(positional x) = x + {};\n", vec!["1"; n - 1].join(" + ")),
+            "f(1)".into(),
+            n.to_string(),
+            "a long sum in a function's body",
+        ),
+        done("nested tuples", tuple),
+        done("nested lambdas", lams),
+    ]
+}
+
+/// The program of shape `shape`, one of those [`programs`] gives, `n` deep.
+pub fn program(shape: &str, n: usize) -> Program {
+    let mut all = programs(n);
+    let i = all.iter().position(|p| p.shape == shape);
+    all.swap_remove(i.unwrap_or_else(|| panic!("no deep program of shape {shape}")))
+}

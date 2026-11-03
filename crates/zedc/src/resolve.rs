@@ -204,7 +204,7 @@ const TYPES: &[&str] = &["int", "rat", "f64", "bool", "String", "Lines", "Files"
 pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
     let mut r = Resolver::default();
     r.scopes.push(Vec::new());
-    r.stmts(unit);
+    r.walk(Task::Stmts(unit));
     if r.errors.is_empty() {
         Ok(r.out)
     } else {
@@ -350,8 +350,57 @@ impl Resolver {
         });
     }
 
+    /// Does `root` and every task it leads to, in written order. The tasks wait on a stack on
+    /// the heap, so a unit of any nesting depth is resolved on a small thread stack; a task
+    /// pushes the pieces it leads to in reverse, so they are done, and their binders numbered,
+    /// in the order the text gives.
+    fn walk<'a>(&mut self, root: Task<'a>) {
+        let mut todo = vec![root];
+        while let Some(task) = todo.pop() {
+            match task {
+                Task::Stmts(stmts) => self.stmts(stmts, &mut todo),
+                Task::Stmt(s) => self.stmt(s, &mut todo),
+                Task::Function {
+                    params,
+                    ports,
+                    body,
+                } => self.function(params, ports, body, &mut todo),
+                Task::Expr(e) => self.expr(e, &mut todo),
+                Task::Ty(t) => self.ty(t, &mut todo),
+                Task::Pattern(p) => self.pattern(p, &mut todo),
+                Task::BindField(name, span) => self.bind(name, span, Kind::Pattern, None),
+                Task::Else {
+                    span,
+                    pattern,
+                    default,
+                } => {
+                    self.open();
+                    todo.push(Task::Close);
+                    todo.push(Task::Expr(default));
+                    if let Some(p) = pattern {
+                        let start = self.out.binders.len();
+                        todo.push(Task::PatternEnd(span, start));
+                        todo.push(Task::Pattern(p));
+                    }
+                }
+                Task::PatternEnd(span, start) => {
+                    let end = self.out.binders.len();
+                    self.out.patterns.insert(span, start..end);
+                }
+                Task::Member(span, name) => {
+                    if name.ends_with('\'') {
+                        self.later(span, &format!("the primed field `{name}`"), "L6.3");
+                    } else if let Some(Found::Bound(ids)) = self.find(name) {
+                        self.out.uses.insert(span, Ref::Bound(ids));
+                    }
+                }
+                Task::Close => self.close(),
+            }
+        }
+    }
+
     /// The statements of the innermost scope: their binders first, since order has no meaning.
-    fn stmts(&mut self, stmts: &[Stmt]) {
+    fn stmts<'a>(&mut self, stmts: &'a [Stmt], todo: &mut Vec<Task<'a>>) {
         let mut families = HashSet::new();
         for s in stmts {
             if !matches!(
@@ -366,7 +415,7 @@ impl Resolver {
             }
             self.declare(s, false, &mut families);
         }
-        stmts.iter().for_each(|s| self.stmt(s));
+        todo.extend(stmts.iter().rev().map(Task::Stmt));
     }
 
     /// Binds the names the statement `s` declares. Resolution refuses the forms of layer L6
@@ -416,30 +465,32 @@ impl Resolver {
     }
 
     /// The statement `s`, whose binders its scope has.
-    fn stmt(&mut self, s: &Stmt) {
+    fn stmt<'a>(&mut self, s: &'a Stmt, todo: &mut Vec<Task<'a>>) {
         match &s.kind {
             StmtKind::Bind { boundary, .. } if !boundary.is_empty() => {
                 self.later(s.span, "a boundary `with`", "L6.2")
             }
-            StmtKind::Bind { value, .. } => self.expr(value),
-            StmtKind::Return(es) => es.iter().for_each(|e| self.expr(e)),
+            StmtKind::Bind { value, .. } => todo.push(Task::Expr(value)),
+            StmtKind::Return(es) => todo.extend(es.iter().rev().map(Task::Expr)),
             StmtKind::Push { port, .. } if port.ends_with('\'') => {
                 self.later(s.span, "a generation push `x' <- e`", "L6.3")
             }
             StmtKind::Push { port, value } => {
                 self.name(port, s.span);
-                self.expr(value);
+                todo.push(Task::Expr(value));
             }
             StmtKind::Function(f) => {
                 let ports: &[Port] = f.ports.as_deref().unwrap_or_default();
-                for p in ports {
-                    self.ty(&p.ty);
+                todo.push(Task::Function {
+                    params: &f.params,
+                    ports,
+                    body: &f.body,
+                });
+                for (a, b) in f.tests.iter().rev() {
+                    todo.push(Task::Expr(b));
+                    todo.push(Task::Expr(a));
                 }
-                for (a, b) in &f.tests {
-                    self.expr(a);
-                    self.expr(b);
-                }
-                self.function(&f.params, ports, &f.body);
+                todo.extend(ports.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
             StmtKind::Struct(_) => self.later(s.span, "a struct declaration", "L2.4"),
             // A primed name is of layer L6 wherever it stands (DESIGN.md sec:grammar).
@@ -457,7 +508,7 @@ impl Resolver {
             StmtKind::Expr(_) => self.later(s.span, "an expression statement", "L6.3"),
             StmtKind::Annotated { annots, decl } => {
                 annots.iter().for_each(|a| self.annotation(a));
-                self.stmt(decl);
+                todo.push(Task::Stmt(decl));
             }
         }
     }
@@ -499,7 +550,13 @@ impl Resolver {
 
     /// A function's or lambda's parameters, ports and body: one scope, which a body block's
     /// statements share.
-    fn function(&mut self, params: &[Param], ports: &[Port], body: &Expr) {
+    fn function<'a>(
+        &mut self,
+        params: &'a [Param],
+        ports: &'a [Port],
+        body: &'a Expr,
+        todo: &mut Vec<Task<'a>>,
+    ) {
         if let Some(p) = params.iter().find(|p| p.tuple.is_some()) {
             return self.later(p.span, "a tuple-destructuring parameter", "L2.4");
         }
@@ -510,40 +567,33 @@ impl Resolver {
         for p in ports {
             self.bind(&p.name, p.span, Kind::Port, None);
         }
-        for p in params {
-            if let Some(t) = &p.ty {
-                self.ty(t);
-            }
-            if let Some(d) = &p.default {
-                self.expr(d);
-            }
+        todo.push(Task::Close);
+        todo.push(match &body.kind {
+            ExprKind::Block(stmts) => Task::Stmts(stmts),
+            _ => Task::Expr(body),
+        });
+        for p in params.iter().rev() {
+            todo.extend(p.default.as_ref().map(Task::Expr));
+            todo.extend(p.ty.as_ref().map(Task::Ty));
         }
-        match &body.kind {
-            ExprKind::Block(stmts) => self.stmts(stmts),
-            _ => self.expr(body),
-        }
-        self.close();
     }
 
-    fn expr(&mut self, e: &Expr) {
+    fn expr<'a>(&mut self, e: &'a Expr, todo: &mut Vec<Task<'a>>) {
         match &e.kind {
             ExprKind::Int { .. }
             | ExprKind::Float(_)
             | ExprKind::Rat(_)
             | ExprKind::Bool(_)
             | ExprKind::Atom(_) => {}
-            ExprKind::Str(parts) => {
-                for p in parts {
-                    if let StrPart::Hole(h) = p {
-                        self.expr(h);
-                    }
-                }
-            }
+            ExprKind::Str(parts) => todo.extend(parts.iter().rev().filter_map(|p| match p {
+                StrPart::Hole(h) => Some(Task::Expr(h)),
+                StrPart::Text(_) => None,
+            })),
             ExprKind::Name(n) => self.name(n, e.span),
-            ExprKind::Unary(_, a) => self.expr(a),
+            ExprKind::Unary(_, a) => todo.push(Task::Expr(a)),
             ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
-                self.expr(a);
-                self.expr(b);
+                todo.push(Task::Expr(b));
+                todo.push(Task::Expr(a));
             }
             ExprKind::Call {
                 callee,
@@ -551,54 +601,49 @@ impl Resolver {
                 named,
                 ..
             } => {
-                self.expr(callee);
-                positional.iter().for_each(|a| self.expr(a));
-                named.iter().for_each(|(_, a)| self.expr(a));
+                todo.extend(named.iter().rev().map(|(_, a)| Task::Expr(a)));
+                todo.extend(positional.iter().rev().map(Task::Expr));
+                todo.push(Task::Expr(callee));
             }
-            ExprKind::Tuple(items) => items.iter().for_each(|i| self.expr(i)),
-            ExprKind::Lambda { params, body } => self.function(params, &[], body),
+            ExprKind::Tuple(items) => todo.extend(items.iter().rev().map(Task::Expr)),
+            ExprKind::Lambda { params, body } => todo.push(Task::Function {
+                params,
+                ports: &[],
+                body,
+            }),
             ExprKind::Is { of, ty, .. } => {
-                self.expr(of);
-                self.ty(ty);
+                todo.push(Task::Ty(ty));
+                todo.push(Task::Expr(of));
             }
             ExprKind::Else {
                 of,
                 pattern,
                 default,
             } => {
-                self.expr(of);
-                self.open();
-                if let Some(p) = pattern {
-                    let start = self.out.binders.len();
-                    self.pattern(p);
-                    let end = self.out.binders.len();
-                    self.out.patterns.insert(e.span, start..end);
-                }
-                self.expr(default);
-                self.close();
+                todo.push(Task::Else {
+                    span: e.span,
+                    pattern: pattern.as_ref(),
+                    default,
+                });
+                todo.push(Task::Expr(of));
             }
             ExprKind::Block(stmts) => {
                 self.open();
-                self.stmts(stmts);
-                self.close();
+                todo.push(Task::Close);
+                todo.push(Task::Stmts(stmts));
             }
             ExprKind::If {
                 cond,
                 then,
                 otherwise,
             } => {
-                self.expr(cond);
-                self.expr(then);
-                self.expr(otherwise);
+                todo.push(Task::Expr(otherwise));
+                todo.push(Task::Expr(then));
+                todo.push(Task::Expr(cond));
             }
             ExprKind::Member { of, name, .. } => {
-                self.expr(of);
-                if name.ends_with('\'') {
-                    return self.later(e.span, &format!("the primed field `{name}`"), "L6.3");
-                }
-                if let Some(Found::Bound(ids)) = self.find(name) {
-                    self.out.uses.insert(e.span, Ref::Bound(ids));
-                }
+                todo.push(Task::Member(e.span, name));
+                todo.push(Task::Expr(of));
             }
             ExprKind::Record(_) => self.later(e.span, "a record display", "L2.4"),
             ExprKind::With { .. } => self.later(e.span, "a `with` clause", "L2.4"),
@@ -623,7 +668,7 @@ impl Resolver {
     }
 
     /// The names the pattern `p` binds: each field written `f:` binds `f`.
-    fn pattern(&mut self, p: &Pattern) {
+    fn pattern<'a>(&mut self, p: &'a Pattern, todo: &mut Vec<Task<'a>>) {
         let Pattern::Atom {
             fields,
             items,
@@ -639,16 +684,14 @@ impl Resolver {
             };
             return self.later(p.span(), what, "L2.4");
         };
-        for (f, sub) in fields {
-            match sub {
-                Some(sub) => self.pattern(sub),
-                None => self.bind(f, *span, Kind::Pattern, None),
-            }
-        }
-        items.iter().for_each(|i| self.pattern(i));
+        todo.extend(items.iter().rev().map(Task::Pattern));
+        todo.extend(fields.iter().rev().map(|(f, sub)| match sub {
+            Some(sub) => Task::Pattern(sub),
+            None => Task::BindField(f, *span),
+        }));
     }
 
-    fn ty(&mut self, t: &Type) {
+    fn ty<'a>(&mut self, t: &'a Type, todo: &mut Vec<Task<'a>>) {
         match &t.kind {
             TypeKind::Name(n) if TYPES.contains(&n.as_str()) => {
                 self.out.uses.insert(t.span, Ref::Prelude(n.clone()));
@@ -661,15 +704,15 @@ impl Resolver {
             }),
             TypeKind::Atom(_) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => {
-                ts.iter().for_each(|t| self.ty(t));
+                todo.extend(ts.iter().rev().map(Task::Ty));
             }
             TypeKind::Diff(a, b) => {
-                self.ty(a);
-                self.ty(b);
+                todo.push(Task::Ty(b));
+                todo.push(Task::Ty(a));
             }
             TypeKind::Arrow { params, result, .. } => {
-                params.iter().for_each(|p| self.ty(&p.ty));
-                self.ty(result);
+                todo.push(Task::Ty(result));
+                todo.extend(params.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
             TypeKind::Bounded {
                 lower,
@@ -682,4 +725,34 @@ impl Resolver {
             TypeKind::Array(_) => self.later(t.span, "a family type `[T]`", "L3.2"),
         }
     }
+}
+
+/// A piece of the walk still to do, kept on the walk's stack.
+#[derive(Clone, Copy)]
+enum Task<'a> {
+    Stmts(&'a [Stmt]),
+    Stmt(&'a Stmt),
+    /// A function's or lambda's parameters, ports and body.
+    Function {
+        params: &'a [Param],
+        ports: &'a [Port],
+        body: &'a Expr,
+    },
+    Expr(&'a Expr),
+    Ty(&'a Type),
+    Pattern(&'a Pattern),
+    /// A pattern field written `f:`, which binds `f` at the pattern's text.
+    BindField(&'a str, Span),
+    /// An `else` whose `of` is done: its pattern and default, in a scope of their own.
+    Else {
+        span: Span,
+        pattern: Option<&'a Pattern>,
+        default: &'a Expr,
+    },
+    /// The end of the pattern of the `else` at the span: its binders are those from the index.
+    PatternEnd(Span, usize),
+    /// A member `of.name` whose `of` is done: what `name` names, if anything.
+    Member(Span, &'a str),
+    /// The end of the innermost scope.
+    Close,
 }
