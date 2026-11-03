@@ -908,3 +908,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Two `HashMap<Span, KType>` fields of `Ck` (`unnamed`, `made`) and a `HashMap<usize, Span>` (`alias`), written as each expression is checked and read by later ones | `Ck::expr`, `Ck::unnamed_of`, `Ck::entries` | Mutation (gap 11) | Maps threaded through the checker's state, as `seen` would be |
 | A loop over an array of `(&mut HashMap, Option<KType>)` pairs, to insert or remove one entry in each of two maps | `Ck::expr` | None | Two calls of one helper, or a fold over the pairs |
 | Closures that borrow `self` immutably (`u`, `union`, `made`) inside one method | `Ck::unnamed_of` | None | Local functions taking the maps as arguments |
+
+## Entries from S22a (`zedc/src/store/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent treap in `Rc` nodes, each holding its subtree's least and greatest value and a lazy affine tag pushed down on a split, with a priority computed from the piece's ends, shared by every summary built from it | `PaNode`, `Tree`, `split_at`, `join_treap`, `slice_treap`, `apply_tag`, `invert_treap` | Identity (gap 1) | A Zed tree value: an update makes new nodes along one path and shares the rest, which the runtime must keep at `O(log n)`; the priority is a field, so no identity is needed |
+| The sticky `ROUNDED` flag saved, cleared and restored around the hull of a term, so a rounding while computing the hull is seen and not reported | `Tx::clip`, `Tx::invert_pa` | Mutation, global state (gap 11) | The hull computation returns whether it rounded with its result; no flag |
