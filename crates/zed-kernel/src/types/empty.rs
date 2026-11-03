@@ -7,9 +7,12 @@
 //! product: each tuple type is known to hold the box, known to miss it, or open on it; the
 //! part is evaluated in three-valued logic on what is known; a tuple type in every value of
 //! the part narrows the box to it, and one in no value takes itself out of the one component
-//! where it does not hold the box. A tuple type that misses or holds a component still does
-//! when the box shrinks, so only the components changed since they were last tested are tested
-//! again, against the tuple types open on them. When narrowing stops, a component whose pieces cut by the
+//! where it does not hold the box. What is known is kept in a table of cells: for each
+//! component, one cell for each distinct type the tuple types take there, tested once for all
+//! the tuple types that share it, and closed when it holds or misses the box in that component.
+//! A cell that misses or holds a component still does when the box shrinks, so only the
+//! components changed since they were last tested are tested again, against their open cells,
+//! all tests of missing before any test of holding. When narrowing stops, a component whose pieces cut by the
 //! open tuple types are pairwise equal or disjoint is split into those pieces, and each piece
 //! decided; otherwise each piece on which narrowing alone proves the part empty is taken out
 //! of the box; otherwise, once on each branch, when the part holds nothing outside the open
@@ -89,23 +92,36 @@ struct Search {
     members: BTreeMap<(Type, Type), bool>,
 }
 
+/// One distinct type among the components a column's tuple types have, and those tuple types.
+/// Whether a tuple type misses or holds a component of the box depends only on its type there,
+/// so the cell is tested once for all of them, and all are open on the component or none.
+struct Cell {
+    ty: Type,
+    rows: Vec<usize>,
+    open: bool,
+}
+
 /// A box of tuples, one type per component, and where each tuple type of a part stands on it
 /// component by component: missing it, holding it, or open on it. A tuple type that misses a
 /// component of the box, or holds it, still does when the box shrinks, so a component that
-/// changed is tested again only against the tuple types open on it and still in the part, and
-/// only when they are next read. Each change is logged, so a piece of the box is tried and the
-/// box restored after.
+/// changed is tested again only against the cells open on it that have a tuple type still in
+/// the part, and only when they are next read. Each change is logged, so a piece of the box is
+/// tried and the box restored after.
 struct Region {
     r: Vec<Type>,
     atoms: Vec<Row>,
     index: BTreeMap<Row, usize>,
+    /// For each component, the distinct types the tuple types have there.
+    cells: Vec<Vec<Cell>>,
+    /// The cell of tuple type `k` in component `j`, at `k * r.len() + j`.
+    cell_of: Vec<usize>,
     /// For each tuple type, how many components it misses.
     missed: Vec<usize>,
     /// For each tuple type, how many components it does not hold, and the sum of their
     /// positions, which is the position when there is one.
     loose: Vec<(usize, usize)>,
-    /// For each component, the tuple types open on it when it was last tested.
-    open: Vec<BTreeSet<usize>>,
+    /// For each component, how many tuple types are open on it.
+    opens: Vec<usize>,
     /// For each component, whether it changed since it was last tested.
     changed: Vec<bool>,
     log: Vec<Change>,
@@ -116,7 +132,7 @@ enum Change {
     Component(usize, Type, bool),
     /// A component tested again.
     Tested(usize),
-    /// A tuple type no longer open on a component, and whether it misses it.
+    /// A cell of a component no longer open on it, and whether it misses it.
     Closed(usize, usize, bool),
 }
 
@@ -130,13 +146,17 @@ impl Region {
                     self.changed[j] = changed;
                 }
                 Change::Tested(j) => self.changed[j] = true,
-                Change::Closed(k, j, missed) => {
-                    self.open[j].insert(k);
-                    if missed {
-                        self.missed[k] -= 1;
-                    } else {
-                        self.loose[k].0 += 1;
-                        self.loose[k].1 += j;
+                Change::Closed(j, c, missed) => {
+                    let cell = &mut self.cells[j][c];
+                    cell.open = true;
+                    self.opens[j] += cell.rows.len();
+                    for &k in &cell.rows {
+                        if missed {
+                            self.missed[k] -= 1;
+                        } else {
+                            self.loose[k].0 += 1;
+                            self.loose[k].1 += j;
+                        }
                     }
                 }
             }
@@ -148,6 +168,41 @@ impl Region {
         let old = std::mem::replace(&mut self.r[j], t);
         self.log.push(Change::Component(j, old, self.changed[j]));
         self.changed[j] = true;
+    }
+
+    /// The cell of tuple type `k` in component `j`.
+    fn cell(&self, k: usize, j: usize) -> usize {
+        self.cell_of[k * self.r.len() + j]
+    }
+
+    /// Whether tuple type `k` is open on component `j`.
+    fn is_open(&self, k: usize, j: usize) -> bool {
+        self.cells[j][self.cell(k, j)].open
+    }
+
+    /// Closes cell `c` of component `j`, open on it, for each of its tuple types: it misses the
+    /// component when `missed`, and holds it otherwise.
+    fn close(&mut self, j: usize, c: usize, missed: bool) {
+        let cell = &mut self.cells[j][c];
+        cell.open = false;
+        self.opens[j] -= cell.rows.len();
+        for &k in &cell.rows {
+            if missed {
+                self.missed[k] += 1;
+            } else {
+                self.loose[k].0 -= 1;
+                self.loose[k].1 -= j;
+            }
+        }
+        self.log.push(Change::Closed(j, c, missed));
+    }
+
+    /// The open cells of component `j` that have one of the tuple types `ks`, in order.
+    fn open_cells(&self, j: usize, ks: &[usize]) -> BTreeSet<usize> {
+        ks.iter()
+            .map(|&k| self.cell(k, j))
+            .filter(|&c| self.cells[j][c].open)
+            .collect()
     }
 
     /// Where the tuple type `a` stands on the box, as last tested: `Some(false)` if it misses it, `Some(true)`
@@ -257,12 +312,16 @@ impl Search {
             )
     }
 
-    /// The region of the part `f` on the box `r`, each tuple type tested on each component.
+    /// The region of the part `f` on the box `r`, each distinct type of each component tested
+    /// once.
     fn region(&mut self, r: Vec<Type>, f: &Part<Row>) -> Region {
         let atoms = f.distinct_atoms();
+        let n = r.len();
         let mut g = Region {
-            open: vec![BTreeSet::new(); r.len()],
-            changed: vec![false; r.len()],
+            cells: (0..n).map(|_| Vec::new()).collect(),
+            cell_of: vec![0; atoms.len() * n],
+            opens: vec![0; n],
+            changed: vec![false; n],
             missed: vec![0; atoms.len()],
             loose: vec![(0, 0); atoms.len()],
             index: BTreeMap::new(),
@@ -270,51 +329,78 @@ impl Search {
             log: Vec::new(),
             r,
         };
-        for (k, a) in atoms.iter().enumerate() {
-            for j in 0..g.r.len() {
-                if self.empty(&(&g.r[j] & &a[j])) {
-                    g.missed[k] += 1;
-                } else if self.empty(&(&g.r[j] - &a[j])) {
-                    continue;
-                } else {
-                    g.open[j].insert(k);
-                }
-                g.loose[k].0 += 1;
-                g.loose[k].1 += j;
+        for j in 0..n {
+            let mut found: BTreeMap<&Type, usize> = BTreeMap::new();
+            for (k, a) in atoms.iter().enumerate() {
+                let cells = &mut g.cells[j];
+                let c = *found.entry(&a[j]).or_insert_with(|| {
+                    cells.push(Cell {
+                        ty: a[j].clone(),
+                        rows: Vec::new(),
+                        open: false,
+                    });
+                    cells.len() - 1
+                });
+                cells[c].rows.push(k);
+                g.cell_of[k * n + j] = c;
             }
+            for c in 0..g.cells[j].len() {
+                let cell = &mut g.cells[j][c];
+                let missed = self.empty(&(&g.r[j] & &cell.ty));
+                if !missed && self.empty(&(&g.r[j] - &cell.ty)) {
+                    continue;
+                }
+                cell.open = !missed;
+                if cell.open {
+                    g.opens[j] += cell.rows.len();
+                }
+                for &k in &cell.rows {
+                    g.missed[k] += usize::from(missed);
+                    g.loose[k].0 += 1;
+                    g.loose[k].1 += j;
+                }
+            }
+        }
+        for (k, a) in atoms.iter().enumerate() {
             g.index.insert(a.clone(), k);
         }
         g.atoms = atoms;
         g
     }
 
-    /// Tests each changed component of the box against the tuple types of `f` open on it, and
-    /// closes those it settles. A tuple type that misses one is out of the part, so whether it
-    /// holds the others is not tested.
+    /// Tests each changed component of the box against its open cells that have a tuple type
+    /// of `f` not yet known to miss the box, and closes those it settles. A tuple type that
+    /// misses a component is out of the part, so whether it holds the others is not tested:
+    /// every changed component is tested for cells that miss it before any is tested for
+    /// cells that hold it, and a cell only such tuple types have is not tested.
     fn retest(&mut self, g: &mut Region, f: &Part<Row>) {
         let changed: Vec<usize> = (0..g.r.len()).filter(|&j| g.changed[j]).collect();
         if changed.is_empty() {
             return;
         }
+        let mut live = vec![false; g.atoms.len()];
+        for a in f.distinct_atoms() {
+            live[g.index[&a]] = true;
+        }
         for &j in &changed {
             g.changed[j] = false;
             g.log.push(Change::Tested(j));
         }
-        'live: for k in f.distinct_atoms().iter().map(|a| g.index[a]) {
+        for missed in [true, false] {
             for &j in &changed {
-                if g.open[j].contains(&k) && self.empty(&(&g.r[j] & &g.atoms[k][j])) {
-                    g.missed[k] += 1;
-                    g.open[j].remove(&k);
-                    g.log.push(Change::Closed(k, j, true));
-                    continue 'live;
-                }
-            }
-            for &j in &changed {
-                if g.open[j].contains(&k) && self.empty(&(&g.r[j] - &g.atoms[k][j])) {
-                    g.loose[k].0 -= 1;
-                    g.loose[k].1 -= j;
-                    g.open[j].remove(&k);
-                    g.log.push(Change::Closed(k, j, false));
+                for c in 0..g.cells[j].len() {
+                    let cell = &g.cells[j][c];
+                    if !cell.open || !cell.rows.iter().any(|&k| live[k] && g.missed[k] == 0) {
+                        continue;
+                    }
+                    let settled = if missed {
+                        self.empty(&(&g.r[j] & &cell.ty))
+                    } else {
+                        self.empty(&(&g.r[j] - &cell.ty))
+                    };
+                    if settled {
+                        g.close(j, c, missed);
+                    }
                 }
             }
         }
@@ -337,11 +423,14 @@ impl Search {
             // The components changed in this pass, against which a refused tuple type's
             // standing is tested before it is used.
             let mut shrunk = BTreeSet::new();
+            // A component narrowed to a tuple type's own holds it, and one that takes a tuple
+            // type out misses it, so its cell there is closed without a test.
             for a in &taken {
                 let k = g.index[a];
                 for j in 0..g.r.len() {
-                    if g.open[j].contains(&k) {
+                    if g.is_open(k, j) {
                         g.shrink(j, &g.r[j] & &a[j]);
+                        g.close(j, g.cell(k, j), false);
                         shrunk.insert(j);
                     }
                 }
@@ -350,7 +439,7 @@ impl Search {
                 let k = g.index[a];
                 let (mut loose, mut at) = g.loose[k];
                 for &j in &shrunk {
-                    if !g.open[j].contains(&k) {
+                    if !g.is_open(k, j) {
                         continue;
                     }
                     if self.empty(&(&g.r[j] & &a[j])) {
@@ -363,6 +452,9 @@ impl Search {
                 }
                 if g.missed[k] == 0 && loose == 1 {
                     g.shrink(at, &g.r[at] - &a[at]);
+                    if g.is_open(k, at) {
+                        g.close(at, g.cell(k, at), true);
+                    }
                     shrunk.insert(at);
                 }
             }
@@ -396,16 +488,16 @@ impl Search {
                 .min_by_key(|&&k| g.loose[k].0)
                 .expect("an open part has a tuple type");
             for j in 0..g.r.len() {
-                if !g.open[j].contains(&fewest)
-                    || g.open[j].len() < open.len()
-                    || open.iter().any(|k| !g.open[j].contains(k))
+                if !g.is_open(fewest, j)
+                    || g.opens[j] < open.len()
+                    || open.iter().any(|&k| !g.is_open(k, j))
                 {
                     continue;
                 }
                 let mut cells = BTreeSet::new();
                 let mut union = Type::empty();
-                let ok = open.iter().all(|&k| {
-                    let c = &g.atoms[k][j] & &g.r[j];
+                let ok = g.open_cells(j, &open).into_iter().all(|c| {
+                    let c = &g.cells[j][c].ty & &g.r[j];
                     if cells.contains(&c) {
                         return true;
                     }
@@ -434,8 +526,10 @@ impl Search {
             let mut narrowed = false;
             for j in 0..g.r.len() {
                 let mut tried = BTreeSet::new();
-                for &k in &open {
-                    let a = &g.atoms[k][j];
+                // A cell closed on the component misses or holds it, so its pieces are the
+                // component and nothing, and narrow nothing.
+                for cell in g.open_cells(j, &open) {
+                    let a = &g.cells[j][cell].ty;
                     for c in [a & &g.r[j], &g.r[j] - a] {
                         if tried.contains(&c) || self.empty(&c) || self.empty(&(&g.r[j] - &c)) {
                             continue;
@@ -460,9 +554,10 @@ impl Search {
                 return open.iter().all(|&k| {
                     let mark = g.log.len();
                     for j in 0..g.r.len() {
-                        if g.open[j].contains(&k) {
+                        if g.is_open(k, j) {
                             let t = &g.r[j] & &g.atoms[k][j];
                             g.shrink(j, t);
+                            g.close(j, g.cell(k, j), false);
                         }
                     }
                     let b = self.tuples(g, f.clone(), false);
@@ -678,6 +773,39 @@ mod tests {
         assert_eq!(nodes, 3);
         let g = Search::default().region(vec![Type::top(); 2], f);
         assert_eq!((g.atoms.len(), g.missed.len()), (2, 2));
-        assert_eq!(g.open.iter().map(BTreeSet::len).collect::<Vec<_>>(), [1, 1]);
+        assert_eq!(g.opens, [1, 1]);
+    }
+
+    /// Tuple types with one type in a component share its cell there, which is tested once
+    /// for all of them; a type that holds the box there is closed, and one open on it is open.
+    #[test]
+    fn tuple_types_with_one_component_type_share_its_cell() {
+        let lit = |i| Type::lit(&Value::Int(i)).unwrap();
+        let ints = Type::int();
+        let rows: Vec<Type> = (0..4)
+            .map(|i| Type::tuple(vec![lit(i), ints.clone(), lit(i % 2)]))
+            .collect();
+        let t = Type::union_all(rows);
+        let f = &t.p().tuples.lens[&3];
+        let g = Search::default().region(vec![Type::top(); 3], f);
+        let sizes: Vec<Vec<usize>> = g
+            .cells
+            .iter()
+            .map(|cells| cells.iter().map(|c| c.rows.len()).collect())
+            .collect();
+        assert_eq!(sizes, [vec![1, 1, 1, 1], vec![4], vec![2, 2]]);
+        assert_eq!(g.opens, [4, 4, 4]);
+        let mut h = Search::default().region(vec![Type::top(), Type::int(), Type::top()], f);
+        assert_eq!(h.opens, [4, 0, 4]);
+        assert!(h.loose.iter().all(|&(n, at)| (n, at) == (2, 2)));
+        // Narrowing the last component to `0` closes the cell `1` as missed for both of its
+        // tuple types at once, and leaves `0` to be tested again.
+        h.shrink(2, lit(0));
+        let mut s = Search::default();
+        s.retest(&mut h, f);
+        for (k, a) in h.atoms.iter().enumerate() {
+            assert_eq!(h.missed[k], usize::from(a[2] == lit(1)), "{k}");
+        }
+        assert_eq!(h.opens, [4, 0, 0]);
     }
 }

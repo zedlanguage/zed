@@ -6,6 +6,7 @@
 //! declarations, which elaborate to them, join at L2.
 
 mod cases;
+mod cells;
 mod oracle;
 mod rec;
 mod scaling;
