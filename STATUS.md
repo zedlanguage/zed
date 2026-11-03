@@ -815,8 +815,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | IDLANG | orchestrator attempt  | 2026-11-03 04:42 | study agent started (Id dataflow language vs Zed) |
 | L25.8 | repair attempt 1 | 2026-11-03 03:49 | start: fix tradeoff comment, per-row scaling test, rat */ and int-literal mutants |
 | OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | per-path unnamed-atom map in checker written (Else/If/Block/alias/call-own); tests in discard_paths.rs; building steps (load 41.74) |
+| PROOFS-spec | impl attempt 1 | 2026-11-03 04:49 | started: brief and REPORT read; worktrees at zed b0ff20f, zed-impl f2b5c0e |
 | S22a | orchestrator attempt  | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
-| SEMIRING | orchestrator attempt  | 2026-11-03 04:11 | report saved; adopting best-first fix, SCC closure, nonlinear bound note; spec agent starting |
 | ST-arms-quad | repair attempt 1 | 2026-11-03 03:35 | start, continuing wt/st-arms at 31e6e2f |
 | ST-join | impl attempt 1 | 2026-11-03 04:30 | cause: Blocks::remove split the one block (the join's either() conjunct merged with one side's k groups) once per removed constraint, O(block) each, and place() |
 | T11-S22 | orchestrator attempt  (item S22a) | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
@@ -827,8 +827,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (43 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (44 commits); the push follows one full test run on the merged tree:
 
+- b0c7fee STATUS: in progress as of 2026-11-03 04:49
 - f2b5c0e Merge branch 'wt/plan-semiring'
 - dbdef37 STATUS: L29-print merged
 - 6111e6c L29-print: print an atom's known payload type and read it back
