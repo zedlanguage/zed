@@ -690,14 +690,19 @@ impl Ty {
             // costs every shape times the components; the kernel splits the components once.
             // The rule of one shape is sound, so it is tried only when the kernel refused.
             let decided = match p {
-                Piece::Tuple(cs) => Ty::tuple(cs.clone()).kernel().and_then(|a| {
-                    let b = whole.get_or_insert_with(|| other.kernel()).as_ref()?;
-                    match a.subtype_verdict(b) {
-                        Verdict::Empty => Some(true),
-                        Verdict::Inhabited => Some(false),
-                        Verdict::Refused(_) => None,
-                    }
-                }),
+                Piece::Tuple(cs) => cs
+                    .iter()
+                    .map(Ty::kernel)
+                    .collect::<Option<Vec<_>>>()
+                    .map(KType::tuple)
+                    .and_then(|a| {
+                        let b = whole.get_or_insert_with(|| other.kernel()).as_ref()?;
+                        match a.subtype_verdict(b) {
+                            Verdict::Empty => Some(true),
+                            Verdict::Inhabited => Some(false),
+                            Verdict::Refused(_) => None,
+                        }
+                    }),
                 _ => None,
             };
             decided.unwrap_or_else(|| accepts(other, p, self, binds))

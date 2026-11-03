@@ -26,15 +26,19 @@
 //! So `is_empty` is sound, never empty for an inhabited type, and its time is polynomial in
 //! the types written; it is not complete, since emptiness of Boolean combinations of tuple
 //! types is coNP-hard. A part that only a split of the box in more than one component at once
-//! proves empty counts as inhabited: a subtyping check then fails, and the error names the
-//! types, so the program states the case split itself (DESIGN.md L1.23).
+//! proves empty counts as inhabited for `is_empty`, and `Type::verdict` answers
+//! `Refused(TupleSplit)` for it unless a value is found first: a subtyping check then fails,
+//! and the error names the types and the cause, so the program states the case split itself
+//! (DESIGN.md L1.23).
 //!
 //! Complexity tradeoff: what is given up, why and the trigger are the paragraph above: a
 //! part that only a split of the box in two or more components at once proves empty counts as
-//! inhabited (a subtyping check fails; the representative search of `no_morphism` likewise
-//! answers "none found", never "empty"). Test:
+//! inhabited, and `verdict` answers `Refused(TupleSplit)` (a subtyping check fails; the
+//! representative search of `no_morphism` likewise answers "none found", never "empty"). The
+//! site comment at `give_up(Refusal::TupleSplit)` names the steps tried first. Tests:
 //! `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key` (four pigeons in three
-//! holes, empty and not proved so). COMPLEXITY.md rows K1 and K2, and the Kept row
+//! holes, empty and not proved so) and `l01_23_subtyping::refusals::each_refusal_names_its_cause`
+//! (`box_cover`). COMPLEXITY.md rows K1 and K2, and the Kept row
 //! "emptiness and subtyping of tuple and morphism parts".
 //! A complete solution would split the box in every component (a DPLL search over the tuple
 //! types, exponential in them), or hand the part to a SAT solver.
@@ -1431,6 +1435,20 @@ impl Search {
             if narrowed {
                 continue;
             }
+            // Complexity tradeoff: a tuple part that neither narrowing, nor the split by class,
+            // nor one split per branch into its open tuple types, nor one cut of a component
+            // decides counts as inhabited for `is_empty`, and `verdict` answers
+            // `Refused(TupleSplit)` unless `Search::refine` finds a value first; the checker
+            // adds the cause to the rejection. Why: emptiness of Boolean combinations of tuple
+            // types is coNP-hard (a cover of the box by tuple types is a DNF tautology), and one
+            // split per branch keeps the search polynomial. Trigger: a part that only a split of
+            // the box in two or more components at once proves empty. Tests:
+            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`box_cover`),
+            // `a_call_whose_check_was_refused_says_why` and
+            // `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key`. COMPLEXITY.md
+            // K2 and the Kept row "emptiness and subtyping of tuple and morphism parts". A
+            // complete solution needs a split of the box in every component (a DPLL search over
+            // the tuple types, exponential in them), or a SAT encoding.
             self.give_up(Refusal::TupleSplit);
             return false;
         }
@@ -1687,41 +1705,37 @@ impl Search {
 
     /// A list of `m`, of the length `residue_length` gives, kept as that length: the work is
     /// that of the rule on residues, polynomial in the cycles, whatever the length.
-    fn cycle_rep(&mut self, m: &Meet) -> Option<Rep> {
+    fn cycle_rep(&mut self, m: &Meet) -> Option<usize> {
         let len = residue_length(&m.all, &m.none)?;
         let item = self.rep(&m.item)?;
-        Some(Rep::List {
+        Some(self.show(Rep::List {
             stop: m.stop.clone(),
             link: m.link.clone(),
             item,
             len,
-        })
+        }))
     }
 
-    /// Whether the list of `len` links of the item numbered `item`, ending in `stop`, is in
-    /// `u`; `None` when that is not known. The walk follows the rest type link by link; at a
-    /// meet of pure cycles of the same atoms the rule on residues answers at once, and a rest
-    /// type met again cuts the length left to its remainder modulo the steps between, so no
-    /// type is walked twice and the length is never walked.
-    fn list_member(
-        &mut self,
-        (stop, link, item): (&std::sync::Arc<str>, &std::sync::Arc<str>, usize),
-        len: &BigUint,
-        u: &Type,
-    ) -> Option<bool> {
-        let (mut x, mut left) = (u.clone(), len.clone());
+    /// Whether the list numbered `v` among the values shown, of `len` links of the item
+    /// numbered `item`, ending in `stop`, is in `u`; `None` when that is not known. The walk
+    /// follows the rest type link by link; at a meet of pure cycles of the same atoms the rule
+    /// on residues answers at once, and a rest type met again cuts the length left to its
+    /// remainder modulo the steps between, so no type is walked twice and the length is never
+    /// walked.
+    fn list_member(&mut self, v: usize, item: usize, u: &Type) -> Option<bool> {
+        let (mut x, mut left) = (u.clone(), self.list_parts(v).2.clone());
         let mut seen: BTreeMap<Type, BigUint> = BTreeMap::new();
         loop {
             if left == BigUint::ZERO {
-                return Some(x.contains(&Value::atom(stop)));
+                return Some(x.contains(&Value::atom(self.list_parts(v).0)));
             }
-            if let Some(m) = self.cycle_meet(&x)
-                && m.link == *link
-                && m.stop == *stop
-            {
-                let fits = m.all.iter().all(|&(p, at)| &left % p == BigUint::from(at))
-                    && m.none.iter().all(|&(p, at)| &left % p != BigUint::from(at));
-                return Some(fits && self.member(item, &m.item));
+            if let Some(m) = self.cycle_meet(&x) {
+                let (stop, link, _) = self.list_parts(v);
+                if m.link == *link && m.stop == *stop {
+                    let fits = m.all.iter().all(|&(p, at)| &left % p == BigUint::from(at))
+                        && m.none.iter().all(|&(p, at)| &left % p != BigUint::from(at));
+                    return Some(fits && self.member(item, &m.item));
+                }
             }
             if let Some(before) = seen.insert(x.clone(), left.clone()) {
                 // `x` again after `before - left` links: the rest of each length is in `x`
@@ -1731,7 +1745,7 @@ impl Search {
                 continue;
             }
             let p = x.p();
-            let Some(a) = p.atoms.names.get(link) else {
+            let Some(a) = p.atoms.names.get(self.list_parts(v).1) else {
                 return Some(p.atoms.cofinite);
             };
             let f = a.payload.p().tuples.get(2);
@@ -1784,10 +1798,7 @@ impl Search {
         self.reps.insert(t.clone(), None);
         self.building.insert(t.clone());
         let (mark, resting) = (self.built.len(), self.resting);
-        let r = self.find_rep(t).map(|v| {
-            self.shown.push(v);
-            self.shown.len() - 1
-        });
+        let r = self.find_rep(t);
         self.building.remove(t);
         self.reps.insert(t.clone(), r);
         if r.is_some() {
@@ -1801,6 +1812,12 @@ impl Search {
         r
     }
 
+    /// Keeps `v` among the values shown, and gives its number.
+    fn show(&mut self, v: Rep) -> usize {
+        self.shown.push(v);
+        self.shown.len() - 1
+    }
+
     /// Whether a closure can return a value of `v`.
     fn returnable(&mut self, v: &Type) -> bool {
         if self.building.contains(v) {
@@ -1811,15 +1828,15 @@ impl Search {
     }
 
     /// The representatives of the row, if each component has one, when they make a tuple of `f`.
-    fn row_rep(&mut self, row: &[Type], f: &Part<Row>) -> Option<Rep> {
+    fn row_rep(&mut self, row: &[Type], f: &Part<Row>) -> Option<usize> {
         let mut vs = Vec::with_capacity(row.len());
         for x in row {
             vs.push(self.rep(x)?);
         }
-        self.holds(&vs, f).then_some(Rep::Tuple(vs))
+        self.holds(&vs, f).then(|| self.show(Rep::Tuple(vs)))
     }
 
-    fn find_rep(&mut self, t: &Type) -> Option<Rep> {
+    fn find_rep(&mut self, t: &Type) -> Option<usize> {
         // A bare atom is a value: the empty list of a list type.
         if let Some(name) = t
             .p()
@@ -1828,7 +1845,7 @@ impl Search {
             .iter()
             .find_map(|(n, a)| a.bare.then_some(n))
         {
-            return Some(Rep::Value(Value::atom(name)));
+            return Some(self.show(Rep::Value(Value::atom(name))));
         }
         // A list of pure cycles with no stop in it: a list of it, kept as its length.
         if let Some(m) = self.cycle_meet(t) {
@@ -1836,7 +1853,7 @@ impl Search {
         }
         let p = t.p();
         if p.bools != 0 {
-            return Some(Rep::Value(Value::Bool(p.bools & 1 == 0)));
+            return Some(self.show(Rep::Value(Value::Bool(p.bools & 1 == 0))));
         }
         type Fresh = Option<fn(i64) -> Value>;
         let fresh: [(&Lits, Fresh); 4] = [
@@ -1852,27 +1869,27 @@ impl Search {
                 (true, None) => None,
             };
             if let Some(v) = v {
-                return Some(Rep::Value(v));
+                return Some(self.show(Rep::Value(v)));
             }
         }
         if p.atoms.cofinite {
             let name = (0..)
                 .map(|i| format!("a{i}"))
                 .find(|n| !p.atoms.names.contains_key(n.as_str()));
-            return Some(Rep::Value(Value::atom(&name.expect("a name is free"))));
+            return Some(self.show(Rep::Value(Value::atom(&name.expect("a name is free")))));
         }
         for (name, a) in &p.atoms.names {
             if a.bare {
-                return Some(Rep::Value(Value::atom(name)));
+                return Some(self.show(Rep::Value(Value::atom(name))));
             }
             if let Some(r) = self.rep(&a.payload)
                 && matches!(self.shown[r], Rep::Tuple(_))
             {
-                return Some(Rep::Atom(name.clone(), r));
+                return Some(self.show(Rep::Atom(name.clone(), r)));
             }
         }
         if p.structs {
-            return Some(Rep::Struct);
+            return Some(self.show(Rep::Struct));
         }
         if p.morphisms.is_leaf() != Some(false) {
             let top = Morphism {
@@ -1904,7 +1921,7 @@ impl Search {
                 let returns = self.returnable(&m.value);
                 self.reps.insert(t.clone(), None);
                 if returns {
-                    return Some(Rep::Closure);
+                    return Some(self.show(Rep::Closure));
                 }
                 for x in self.built.split_off(mark) {
                     self.reps.remove(&x);
@@ -1920,13 +1937,13 @@ impl Search {
             for x in &row {
                 vs.push(self.rep(x)?);
             }
-            return Some(Rep::Tuple(vs));
+            return Some(self.show(Rep::Tuple(vs)));
         }
         for f in p.tuples.lens.values() {
             for row in f.union_rows().unwrap_or_default() {
                 let vs: Option<Vec<usize>> = row.iter().map(|x| self.rep(x)).collect();
                 if let Some(vs) = vs {
-                    return Some(Rep::Tuple(vs));
+                    return Some(self.show(Rep::Tuple(vs)));
                 }
             }
         }
@@ -1948,7 +1965,7 @@ impl Search {
             if self.narrow_tuples(&mut b, &mut g) {
                 continue;
             }
-            if let Some(v) = self.row_rep(&b.r.clone(), f) {
+            if let Some(v) = self.row_rep(&b.r, f) {
                 return Some(v);
             }
             if let Some(found) = self.class_rep(&b, &g, *len) {
@@ -2006,7 +2023,7 @@ impl Search {
     /// of its own whose part holds no tuple type of the other half. Each half is split again
     /// when its value is sought, so each tuple type is in the part of O(log k) of the pieces.
     /// Nothing when there are no such classes; `Some(None)` when no piece has a value found.
-    fn class_rep(&mut self, b: &Region, g: &Part<Row>, len: usize) -> Option<Option<Rep>> {
+    fn class_rep(&mut self, b: &Region, g: &Part<Row>, len: usize) -> Option<Option<usize>> {
         let open: Vec<usize> = g.distinct_atoms().iter().map(|a| b.index[a]).collect();
         let (j, classes) = classes(b, &open)?;
         let m = classes.len() / 2;
@@ -2032,7 +2049,7 @@ impl Search {
                     p.tuples.lens.insert(len, part);
                 });
             if let Some(r) = self.rep(&piece) {
-                return Some(Some(self.shown[r].clone()));
+                return Some(Some(r));
             }
         }
         Some(None)
@@ -2082,16 +2099,21 @@ impl Search {
 
     /// Whether the tuple `vs` is in `f`; false when that is not known.
     fn holds(&mut self, vs: &[usize], f: &Part<Row>) -> bool {
-        self.holds_known(vs, f) == Some(true)
+        self.holds_known(|_, i| vs[i], f) == Some(true)
     }
 
-    /// Whether the tuple `vs` is in `f`; `None` when the membership of a component in a tuple
-    /// type is not known, since `f` may hold that tuple type negated.
-    fn holds_known(&mut self, vs: &[usize], f: &Part<Row>) -> Option<bool> {
+    /// Whether the tuple whose component `i` is the value numbered `item(self, i)` is in `f`;
+    /// `None` when the membership of a component in a tuple type is not known, since `f` may
+    /// hold that tuple type negated. A component is read by number when it is tested, so a
+    /// tuple among the values shown is read in place while the tests add to the search.
+    fn holds_known(&mut self, item: impl Fn(&Self, usize) -> usize, f: &Part<Row>) -> Option<bool> {
         let outer = std::mem::take(&mut self.unsure);
         let mut fits = BTreeSet::new();
         for a in f.distinct_atoms() {
-            if vs.iter().zip(a.iter()).all(|(v, y)| self.member(*v, y)) {
+            if a.iter().enumerate().all(|(i, y)| {
+                let v = item(self, i);
+                self.member(v, y)
+            }) {
                 fits.insert(a);
             }
         }
@@ -2118,24 +2140,46 @@ impl Search {
         if let Some(b) = self.members.get(&key) {
             return *b;
         }
-        let b = match self.shown[v].clone() {
+        let b = match &self.shown[v] {
             Rep::Value(_) => unreachable!("a value was read above"),
             Rep::Closure => u.p().morphisms.is_leaf(),
             Rep::Struct => Some(u.p().structs),
-            Rep::Tuple(vs) => self.holds_known(&vs, &u.p().tuples.get(vs.len())),
-            Rep::Atom(name, payload) => match u.p().atoms.names.get(&name) {
-                None => Some(u.p().atoms.cofinite),
-                Some(a) => self.member_known(payload, &a.payload.clone()),
-            },
-            Rep::List {
-                stop,
-                link,
-                item,
-                len,
-            } => self.list_member((&stop, &link, item), &len, u),
+            Rep::Tuple(vs) => {
+                let f = u.p().tuples.get(vs.len());
+                self.holds_known(|s, i| s.tuple_item(v, i), &f)
+            }
+            Rep::Atom(name, payload) => {
+                let payload = *payload;
+                match u.p().atoms.names.get(name) {
+                    None => Some(u.p().atoms.cofinite),
+                    Some(a) => self.member_known(payload, &a.payload),
+                }
+            }
+            Rep::List { item, .. } => {
+                let item = *item;
+                self.list_member(v, item, u)
+            }
         };
         self.members.insert(key, b);
         b
+    }
+
+    /// Component `i` of the tuple numbered `v` among the values shown.
+    fn tuple_item(&self, v: usize, i: usize) -> usize {
+        match &self.shown[v] {
+            Rep::Tuple(vs) => vs[i],
+            _ => unreachable!("the value numbered {v} is read as a tuple and is not one"),
+        }
+    }
+
+    /// The stop atom, link atom and length of the list numbered `v` among the values shown.
+    fn list_parts(&self, v: usize) -> (&std::sync::Arc<str>, &std::sync::Arc<str>, &BigUint) {
+        match &self.shown[v] {
+            Rep::List {
+                stop, link, len, ..
+            } => (stop, link, len),
+            _ => unreachable!("the value numbered {v} is read as a list and is not one"),
+        }
     }
 
     /// Whether every morphism `m` admits is in `n`, by the variance law. With no value, the
@@ -2234,36 +2278,89 @@ fn classes(g: &Region, open: &[usize]) -> Option<(usize, Vec<Class>)> {
     })
 }
 
-/// What a value of a type can be equal to, per universe: a literal or atom name, or the whole
-/// universe. Two types with no key in common are disjoint.
+/// What a value of a type can be equal to, per universe: a literal, atom name or tuple length,
+/// or the whole universe. Two types with no key in common are disjoint.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-enum Key {
+enum Key<'a> {
     Bool(u8),
-    Lit(usize, Value),
-    Atom(std::sync::Arc<str>),
+    Lit(usize, &'a Value),
+    Atom(&'a std::sync::Arc<str>),
     Len(usize),
     /// A whole universe: 0 to 3 the literals of `Lits`, 4 the atoms, 5 the tuples, 6 the
     /// structs, 7 the morphisms.
     All(usize),
 }
 
-/// The types `ps` in classes, by index in order of their first members, joined when they share
-/// a key: two types of different classes are disjoint. A universe in which one of them has a
-/// cofinite set is one key for all of them, so the keys are found in two passes.
-// Complexity tradeoff: types are joined by what they could share, not by their meet, so two
-// types that share a key but are disjoint (`int \ 3` and `3`, `#a(1)` and `#a(2)`, two tuple
-// types of one length) land in one class and the split is coarser. Keys cost the size of the
-// types, where testing each pair's meet costs their square. Test:
-// `l01_23_subtyping::scaling::a_union_of_disjoint_pinwheels_is_decided_piece_by_piece`.
-fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts> + Clone) -> Vec<Vec<usize>> {
-    let lits = |p: &'a Parts| [&p.ints, &p.rats, &p.floats, &p.strings];
-    let mut wide = [false; 6];
-    for p in ps.clone() {
-        for (s, l) in lits(p).into_iter().enumerate() {
-            wide[s] |= l.cofinite;
+/// The keys `p` lists in universe `u` (0 to 3 the literals of `Lits`, 4 the atoms, 5 the
+/// tuples), each with whether `p` holds a value of it, and whether `p` is cofinite there: it
+/// then holds every value of each key it does not list. `none` is the empty type.
+fn listed<'a>(p: &'a Parts, u: usize, none: &Type) -> (bool, Vec<(Key<'a>, bool)>) {
+    match u {
+        0..4 => {
+            let l = [&p.ints, &p.rats, &p.floats, &p.strings][u];
+            let ks = l.values.iter().map(|v| (Key::Lit(u, v), !l.cofinite));
+            (l.cofinite, ks.collect())
         }
-        wide[4] |= p.atoms.cofinite;
-        wide[5] |= p.tuples.rest;
+        4 => {
+            let ks = p.atoms.names.iter();
+            let ks = ks.map(|(n, a)| (Key::Atom(n), a.bare || a.payload != *none));
+            (p.atoms.cofinite, ks.collect())
+        }
+        _ => {
+            let ks = p.tuples.lens.iter();
+            let ks = ks.map(|(&n, f)| (Key::Len(n), f.is_leaf() != Some(false)));
+            (p.tuples.rest, ks.collect())
+        }
+    }
+}
+
+/// The types `ps` in classes, by index in order of their first members, joined when they share
+/// a key: two types of different classes are disjoint. The cofinite types of a universe share
+/// it whole. A finite type meets one of them exactly when it holds a key that one does not
+/// list, so it shares the whole universe when it holds a key outside those every cofinite type
+/// lists; that set is the meet of their lists, taken from the shortest, so the work is the size
+/// of the types.
+// Complexity tradeoff: types are joined by the literals, atom names and tuple lengths they
+// hold, not by their meet, so two types that hold one atom name or tuple length and are
+// disjoint inside it (`#a((1,))` and `#a((2,))`, `(1,)` and `(2,)`) land in one class, and
+// `split_classes` does not split them apart. Those inputs get the later steps of `tuples` on
+// the part whole; where those steps do not decide it, the part counts as inhabited for
+// `is_empty`, and `verdict` answers `Refused(TupleSplit)` (a subtyping check fails and names
+// the types). Why: the meet of two payloads is an emptiness check, and testing it for each
+// pair of types costs their square and a search each, where the keys cost the size of the
+// types. Trigger: cells on the split component that hold one atom name or tuple length and
+// differ only inside it. Tests:
+// `types::empty::tests::classes_are_exact_on_cofinite_sets_and_join_types_that_share_a_name_or_length`
+// (`#a((1,))` and `#a((2,))` in one class, `(1,)` and `(2,)` in one class, cofinite sets
+// joined only where they meet) and
+// `l01_23_subtyping::scaling::a_union_of_disjoint_pinwheels_is_decided_piece_by_piece` (the
+// classes split, with and without a cofinite type). COMPLEXITY.md K36. A complete solution
+// needs the connected parts of the graph in which two types meet: for atom payloads and tuples
+// that is the classes of their components found the same way, joined where every component
+// meets, which for tuples is the intersection graph of boxes, whose edges can number the
+// square of the types.
+fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts> + Clone) -> Vec<Vec<usize>> {
+    let none = Type::empty();
+    // Per universe with a cofinite type, the keys every cofinite type lists.
+    let mut shut: [Option<BTreeSet<Key<'a>>>; 6] = Default::default();
+    for (u, shut) in shut.iter_mut().enumerate() {
+        let mut lists: Vec<Vec<(Key<'a>, bool)>> = ps
+            .clone()
+            .filter_map(|p| match listed(p, u, &none) {
+                (true, ks) => Some(ks),
+                (false, _) => None,
+            })
+            .collect();
+        let Some(i) = (0..lists.len()).min_by_key(|&i| lists[i].len()) else {
+            continue;
+        };
+        let mut meet: BTreeSet<Key<'a>> =
+            lists.swap_remove(i).into_iter().map(|(k, _)| k).collect();
+        for ks in lists {
+            let ks: BTreeSet<Key<'a>> = ks.into_iter().map(|(k, _)| k).collect();
+            meet.retain(|k| ks.contains(k));
+        }
+        *shut = Some(meet);
     }
     let mut first: BTreeMap<Key, usize> = BTreeMap::new();
     let mut parent: Vec<usize> = Vec::new();
@@ -2280,22 +2377,13 @@ fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts> + Clone) -> Vec<Vec<usize>> 
             .filter(|b| p.bools >> b & 1 == 1)
             .map(Key::Bool)
             .collect();
-        for (s, l) in lits(p).into_iter().enumerate() {
-            match wide[s] {
-                true if l.cofinite || !l.values.is_empty() => keys.push(Key::All(s)),
-                true => {}
-                false => keys.extend(l.values.iter().map(|v| Key::Lit(s, v.clone()))),
+        for (u, shut) in shut.iter().enumerate() {
+            let (cofinite, ks) = listed(p, u, &none);
+            let outside = |s: &BTreeSet<Key>| ks.iter().any(|(k, held)| *held && !s.contains(k));
+            if cofinite || shut.as_ref().is_some_and(outside) {
+                keys.push(Key::All(u));
             }
-        }
-        match wide[4] {
-            true if p.atoms.cofinite || !p.atoms.names.is_empty() => keys.push(Key::All(4)),
-            true => {}
-            false => keys.extend(p.atoms.names.keys().map(|n| Key::Atom(n.clone()))),
-        }
-        match wide[5] {
-            true if p.tuples.rest || !p.tuples.lens.is_empty() => keys.push(Key::All(5)),
-            true => {}
-            false => keys.extend(p.tuples.lens.keys().map(|&n| Key::Len(n))),
+            keys.extend(ks.into_iter().filter_map(|(k, held)| held.then_some(k)));
         }
         if p.structs {
             keys.push(Key::All(6));
@@ -2370,6 +2458,32 @@ fn meet(a: &Morphism, b: &Morphism) -> Morphism {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The classes of `overlaps` on everyday types: a finite set and a cofinite one are joined
+    /// exactly when they meet, while two types of one atom name or tuple length are joined even
+    /// when they are disjoint inside it (the tradeoff at `overlaps`).
+    #[test]
+    fn classes_are_exact_on_cofinite_sets_and_join_types_that_share_a_name_or_length() {
+        let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+        let ts = [
+            lit(3),                                           // 0, in no cofinite set
+            &Type::int() - &lit(3),                           // 1, meets 2, 7 and 8
+            lit(4),                                           // 2
+            Type::atom_with("a", &Type::tuple(vec![lit(1)])), // 3, disjoint from 4
+            Type::atom_with("a", &Type::tuple(vec![lit(2)])), // 4
+            Type::tuple(vec![lit(1)]),                        // 5, disjoint from 6
+            Type::tuple(vec![lit(2)]),                        // 6
+            &Type::int() - &(&lit(3) | &lit(5)),              // 7
+            lit(5),                                           // 8, in 1, not in 7
+            // 9, every atom but `#a` and `#a(..)`
+            &(&Type::with(|p| p.atoms.cofinite = true) - &Type::atom_with("a", &Type::top()))
+                - &Type::atom("a"),
+        ];
+        let classes = overlaps(ts.iter().map(Type::p));
+        let expected: Vec<Vec<usize>> =
+            vec![vec![0], vec![1, 2, 7, 8], vec![3, 4], vec![5, 6], vec![9]];
+        assert_eq!(classes, expected);
+    }
 
     /// `inverse` against a scan, and `residue_length` against a scan of the lengths from 1 on
     /// every choice of at most two classes of `all` and three of `none` with periods 1 to 6,

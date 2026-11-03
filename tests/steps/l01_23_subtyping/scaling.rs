@@ -487,16 +487,11 @@ fn a_key_past_many_excluded_tuples_is_found_and_scales() {
     );
 }
 
-/// The pinwheel on `b + 1`, `b + 2` and `b + 3`: the square of them less four boxes around its
+/// The pinwheel on `b + 1`, `b + 2` and `third`: the square of them less four boxes around its
 /// middle `(b + 2, b + 2)`, and less the middle too when `full`, which makes it empty.
-fn pinwheel(b: i64, full: bool) -> Type {
-    let set = |m: u8| {
-        Type::union_all(
-            (1..=3)
-                .filter(|i| m >> (i - 1) & 1 == 1)
-                .map(|i| lit_i(b + i)),
-        )
-    };
+fn pinwheel(b: i64, full: bool, third: Type) -> Type {
+    let ends = [lit_i(b + 1), lit_i(b + 2), third];
+    let set = |m: u8| Type::union_all((0..3).filter(|i| m >> i & 1 == 1).map(|i| ends[i].clone()));
     let boxes: &[[u8; 2]] = match full {
         false => &[[3, 1], [4, 3], [6, 4], [1, 6]],
         true => &[[3, 1], [4, 3], [6, 4], [1, 6], [2, 2]],
@@ -516,7 +511,17 @@ fn lit_i(i: i64) -> Type {
 
 /// The union of `k` pinwheels on disjoint integers.
 fn pinwheels(k: usize, full: bool) -> Type {
-    Type::union_all((0..k).map(|i| pinwheel(10 * i as i64, full)))
+    Type::union_all((0..k as i64).map(|i| pinwheel(10 * i, full, lit_i(10 * i + 3))))
+}
+
+/// [`pinwheels`] with the third end of the last pinwheel cofinite: its own integer and every
+/// integer no pinwheel uses.
+fn cofinite_pinwheels(k: usize, full: bool) -> Type {
+    let k = k as i64;
+    let used = Type::union_all((0..k).flat_map(|i| (1..=3).map(move |j| lit_i(10 * i + j))));
+    let third = &(&Type::int() - &used) | &lit_i(10 * (k - 1) + 3);
+    let others = (0..k - 1).map(|i| pinwheel(10 * i, full, lit_i(10 * i + 3)));
+    Type::union_all(others.chain([pinwheel(10 * (k - 1), full, third)]))
 }
 
 #[test]
@@ -532,6 +537,18 @@ fn a_union_of_disjoint_pinwheels_is_decided_piece_by_piece() {
                 Type::forget_emptiness();
                 assert!(pinwheels(k, true).is_empty());
             });
+            // A cofinite type lists the integers it leaves out. When any cofinite cell joined
+            // its whole universe, all k pinwheels fell in one class: 62.6 times the work from
+            // k = 64 to 512. A finite cell now joins it only when it holds an integer the
+            // cofinite one does not leave out.
+            scaling::check(
+                "k disjoint pinwheels, one end cofinite, empty, by k",
+                64,
+                |k| {
+                    Type::forget_emptiness();
+                    assert!(cofinite_pinwheels(k, true).is_empty());
+                },
+            );
             scaling::check("k disjoint pinwheels with a middle, by k", 64, |k| {
                 Type::forget_emptiness();
                 let t = pinwheels(k, false);
