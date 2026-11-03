@@ -479,14 +479,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `matches` | 21 | 86 | 6 | 2 | 115 | Evaluator::prim `zed-kernel/eval.rs:779` (5); prim_data `zed-kernel/eval.rs:1462` (4); node `zedc/zir/mod.rs:521` (3) |
 | `match` | 204 | 731 | 28 | 25 | 988 | prim_data `zed-kernel/eval.rs:1402` (11); Machine::node `zedc/zir/memory.rs:652` (11); Ck::apply_one `zedc/check/mod.rs:3131` (9) |
 | `or_pattern` | 40 | 134 | 3 | 3 | 180 | Cx::back_prim `zedc/store/preimage.rs:1663` (5); Cx::back_arith `zedc/store/preimage.rs:1830` (5); binary_level `zedc/format.rs:82` (4) |
-| `at_binding` | 3 | 7 | 0 | 0 | 10 | Evaluator::eval_node `zed-kernel/eval.rs:544` (1); Evaluator::go_on `zed-kernel/eval.rs:1251` (1); Provenance::origins `zed-kernel/provenance.rs:123` (1) |
+| `at_binding` | 3 | 7 | 0 | 0 | 10 | Evaluator::eval_node `zed-kernel/eval.rs:544` (1); Evaluator::go_on `zed-kernel/eval.rs:1251` (1); Provenance::origins `zed-kernel/provenance.rs:297` (1) |
 | `slice_pattern` | 2 | 40 | 0 | 1 | 43 | Builder::node `zedc/ast/mod.rs:268` (8); command_inner `zedc/run.rs:583` (4); Builder::lambda `zedc/ast/mod.rs:411` (3) |
 | `closure` | 226 | 1217 | 71 | 16 | 1530 | Omega::inequalities `zedc/store/presburger.rs:994` (23); Ck::apply_one `zedc/check/mod.rs:3109` (21); command_inner `zedc/run.rs:574` (17) |
-| `move_closure` | 7 | 5 | 1 | 0 | 13 | Group::instance `zed-kernel/types/rec.rs:303` (2); component `zed-kernel/types/rec.rs:470` (2); Provenance::preorder `zed-kernel/provenance.rs:98` (1) |
+| `move_closure` | 7 | 5 | 1 | 0 | 13 | Group::instance `zed-kernel/types/rec.rs:303` (2); component `zed-kernel/types/rec.rs:470` (2); Provenance::preorder `zed-kernel/provenance.rs:98` (1; removed by T14-occ) |
 | `fnmut` | 11 | 15 | 1 | 0 | 27 | Bdd (impl) `zed-kernel/types/bdd.rs:362` (2); Part::atoms `zed-kernel/types/bdd.rs:806` (2); map_children `zedc/canon/binders.rs:139` (2) |
 | `fn_bound` | 22 | 37 | 3 | 0 | 62 | Program (impl) `zedc/run.rs:281` (4); Cx (impl) `zedc/store/preimage.rs:837` (3); Type (impl) `zed-kernel/types.rs:372` (3) |
 | `fn_ptr` | 1 | 5 | 14 | 0 | 20 | addresses `zed-native/hooks.rs:112` (13); Search::find_rep `zed-kernel/types/empty.rs:508` (1); run `zed-native/lib.rs:70` (1) |
-| `panic` | 1 | 1 | 1 | 0 | 3 | Provenance::term `zed-kernel/provenance.rs:88` (1); Tables::const_index `zed-native/tables.rs:222` (1); parse_to `zedc/parse/mod.rs:111` (1) |
+| `panic` | 1 | 1 | 1 | 0 | 3 | Provenance::term `zed-kernel/provenance.rs:238` (1); Tables::const_index `zed-native/tables.rs:222` (1); parse_to `zedc/parse/mod.rs:111` (1) |
 | `unreachable` | 8 | 50 | 4 | 1 | 63 | Builder::node `zedc/ast/mod.rs:292` (4); Lin::product `zedc/store/presburger.rs:181` (2); Builder::ty `zedc/ast/types.rs:118` (2) |
 | `assert` | 3 | 0 | 0 | 0 | 3 | canonical_tree `zed-kernel/exact.rs:148` (1); Group::instance `zed-kernel/types/rec.rs:288` (1) |
 | `debug_assert` | 0 | 4 | 1 | 0 | 5 | State::new `zed-native/hooks.rs:43` (1); Walk::set `zedc/store/iterate.rs:198` (1); narrow `zedc/store/iterate.rs:250` (1) |
@@ -534,7 +534,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `hashmap` | 32 | 98 | 12 | 0 | 142 | Elab::new `zedc/elab.rs:385` (6); Part::eval3_pinned `zed-kernel/types/bdd.rs:595` (5); Part::restrict `zed-kernel/types/bdd.rs:766` (4) |
 | `hashset` | 9 | 54 | 2 | 0 | 65 | Ty::union `zedc/check/ty.rs:507` (4); Part::atoms `zed-kernel/types/bdd.rs:809` (2); Ck::derive_into `zedc/check/mod.rs:334` (2) |
 | `btreemap` | 44 | 121 | 5 | 0 | 170 | relaxed_empty `zedc/store/presburger.rs:1134` (7); blocks `zedc/store/product.rs:503` (6); Omega::inequalities `zedc/store/presburger.rs:988` (5) |
-| `btreeset` | 36 | 81 | 0 | 0 | 117 | Provenance::origins `zed-kernel/provenance.rs:122` (8); products `zedc/store/presburger.rs:1502` (3); Scope::enumerate_exactly `zedc/store/product.rs:1350` (2) |
+| `btreeset` | 36 | 81 | 0 | 0 | 117 | Provenance::origins `zed-kernel/provenance.rs:296` (8); products `zedc/store/presburger.rs:1502` (3); Scope::enumerate_exactly `zedc/store/product.rs:1350` (2) |
 | `binheap` | 0 | 4 | 0 | 0 | 4 | IntervalSet::cap `zedc/store/interval.rs:268` (2); topo `zedc/elab.rs:1542` (1) |
 | `imbl` | 21 | 15 | 0 | 0 | 36 | used `zedc/store/hull.rs:196` (2); walk `zedc/store/product.rs:1656` (2); spaced `zed-kernel/types.rs:1269` (1) |
 | `range_query` | 0 | 9 | 0 | 0 | 9 | IntervalSet::snap `zedc/store/interval.rs:354` (2); Tables::uses_in `zedc/elab.rs:319` (1); Formatter::take `zedc/format.rs:155` (1) |
@@ -561,7 +561,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `rev` | 7 | 28 | 1 | 1 | 37 | Ck::derive_into `zedc/check/mod.rs:336` (3); Elab::call_declared `zedc/elab.rs:1178` (3); cmp `zed-kernel/exact.rs:44` (2) |
 | `peekable` | 0 | 13 | 0 | 0 | 13 | tokens `zedc/parse/grammar.rs:158` (3); name `zedc/lex/name.rs:22` (2); P::value `zedc/zir/text.rs:889` (2) |
 | `next` | 6 | 46 | 0 | 0 | 52 | tokens `zedc/parse/grammar.rs:159` (6); P::string `zedc/zir/text.rs:956` (3); decode `zedc/lex/string.rs:280` (2) |
-| `skip_take` | 4 | 45 | 0 | 0 | 49 | Cx::scan `zedc/store/preimage.rs:1771` (7); children `zed-kernel/provenance.rs:186` (3); children `zedc/canon/binders.rs:107` (2) |
+| `skip_take` | 4 | 45 | 0 | 0 | 49 | Cx::scan `zedc/store/preimage.rs:1771` (7); children `zed-kernel/provenance.rs:186` (3; removed by T14-occ); children `zedc/canon/binders.rs:107` (2) |
 | `minmax` | 9 | 60 | 0 | 1 | 70 | first_on_cycle `zed-kernel/types/rec.rs:361` (4); map2 `zedc/store/revision.rs:278` (3); backward `zedc/store/revision.rs:366` (3) |
 | `unsafe` | 0 | 0 | 2 | 0 | 2 | run `zed-native/lib.rs:70` (2); since T14-low one in `run` and one in `Jit::drop` |
 | `extern` | 0 | 0 | 27 | 0 | 27 | addresses `zed-native/hooks.rs:112` (13); rt_arg `zed-native/hooks.rs:128` (1); rt_node `zed-native/hooks.rs:132` (1) |
@@ -760,3 +760,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A generic method taking `impl FnOnce(&mut Self, usize) -> Result<T, Error>`, so one helper builds the end of a range for both expressions and patterns | `Builder::range_end` | Mutation | The builder is a state receiver; the function argument returns the new builder with the result |
 | `match (layer, kids)` on a tuple of an integer and a slice pattern (`&[op]`, `&[_, unordered]`) | `Builder::reduce_tail` | Slice patterns | Test the length, then index (the appendix's row for slice patterns) |
 | `unreachable!` arms for the L3 forms that resolution refuses | `elab.rs`, `check/mod.rs` | Partial match | As for L2.1: a total match whose L3 arm returns the refusal, or a narrower type from resolution |
+
+## Entries from T14-occ (`zed-kernel/src/provenance.rs`, `value.rs`, `family.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A global `AtomicU64` handing out blocks of ids to a thread-local `Cell` counter, so that each new list or family gets a fresh id | `fresh_id` in `value.rs`; `Items::from`, `Family::made_from`, `Family::extend` | Identity (gap 1), mutation | A content digest as a field (gap 1), or an id counter threaded as state through the machine |
+| `imbl::OrdMap::diff`, which skips subtrees two maps share | `Held::base`, `short_diff` | Identity (gap 1) | A diff that compares entries; it costs the size of the smaller map rather than the change, unless the runtime gives `==` a shortcut on shared nodes |
+| `HashMap` keyed by list and family ids, filled during the pass | `Held::{sets, seen, done, made}` | Identity, mutation | A state receiver over a map keyed by the ids above |
+| A persistent cons list in `Arc` with a cached hash and depth, whose `Eq` first tests `Arc::ptr_eq` | `Position::{child, eq}` | Identity (gap 1) | A list of child indices with the hash as a field; `==` compares the hashes, then the indices |
+| `Drop` that unlinks a long cons list in a loop, so that dropping it does not recurse | `Position::drop` | No destructors | The runtime frees long lists without recursion (step L6.13) |

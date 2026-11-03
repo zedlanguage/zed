@@ -17,7 +17,7 @@ use imbl::shared_ptr::DefaultSharedPtr;
 
 use crate::deep::{self, Part};
 use crate::error::KernelError;
-use crate::value::Value;
+use crate::value::{Id, Value, fresh_id};
 
 /// The keys from a family's top level down to one of its leaves.
 pub type Keypath = Vec<Value>;
@@ -25,8 +25,13 @@ pub type Keypath = Vec<Value>;
 /// A finite family. No level of a family is empty except a whole family that has no entries.
 /// Its entries sit in a persistent map: a copy of a family costs O(1) whatever its size, and
 /// a family one entry larger than another shares all but O(log n) of its nodes with it.
+///
+/// The second field is the family's [`Id`]: a copy keeps it, and a change takes a new one, so
+/// the map is never changed in place except through [`Family::extend`]. The third is the id of
+/// the family this one was made from by adding entries to a copy of its map, 0 for none: the
+/// two share all but the nodes the change copied, which provenance reads (`Provenance::origins`).
 #[derive(Clone, Default)]
-pub struct Family(pub(crate) OrdMap<Value, Value>);
+pub struct Family(pub(crate) OrdMap<Value, Value>, Id, Id);
 
 impl Drop for Family {
     fn drop(&mut self) {
@@ -137,7 +142,7 @@ impl Levels {
                 Slot::Leaf(v) => (k, v),
                 Slot::Inner(j) => (k, Value::Family(mem::take(&mut built[j]))),
             });
-            let family = Family(entries.collect());
+            let family = Family::from_map(entries.collect());
             built[i] = family;
         }
         built.swap_remove(0)
@@ -148,6 +153,30 @@ impl Family {
     /// The family with no entries.
     pub fn new() -> Self {
         Family::default()
+    }
+
+    /// The family of the entries `map`, with an id of its own.
+    pub(crate) fn from_map(map: OrdMap<Value, Value>) -> Self {
+        Family::made_from(map, 0)
+    }
+
+    /// The family of the entries `map`, made by adding entries to a copy of the map of the
+    /// family whose id is `from`.
+    fn made_from(map: OrdMap<Value, Value>, from: Id) -> Self {
+        match map.is_empty() {
+            true => Family::default(),
+            false => Family(map, fresh_id(), from),
+        }
+    }
+
+    /// The family's id.
+    pub(crate) fn id(&self) -> Id {
+        self.1
+    }
+
+    /// The id of the family this one was made from, 0 for none.
+    pub(crate) fn from(&self) -> Id {
+        self.2
     }
 
     /// A one-level family written out as a literal. A value that is an empty family drops
@@ -165,7 +194,7 @@ impl Family {
     /// A set: each key maps to itself, as a set leaf does, so a membership lookup yields
     /// the element (sec:kernel, `discard`).
     pub fn set<K: Into<Value>>(keys: impl IntoIterator<Item = K>) -> Self {
-        Family(
+        Family::from_map(
             keys.into_iter()
                 .map(|k| {
                     let k = k.into().key();
@@ -259,10 +288,14 @@ impl Family {
         union(self, other)
     }
 
-    /// Adds `v` at key `k` of the top level, sharing all but O(log n) of the map's nodes with
-    /// the family it was cloned from.
-    pub(crate) fn insert(&mut self, k: Value, v: Value) {
-        self.0.insert(k, v);
+    /// Adds the entries at the top level, sharing all but O(m log n) of the map's nodes with the
+    /// family it was cloned from, for m entries.
+    pub(crate) fn extend(&mut self, entries: impl IntoIterator<Item = (Value, Value)>) {
+        self.0.extend(entries);
+        if !self.0.is_empty() {
+            self.2 = self.1;
+            self.1 = fresh_id();
+        }
     }
 
     /// The number of top-level entries.
@@ -308,13 +341,16 @@ fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
     loop {
         let Some((k, s)) = level.left.next() else {
             let Some(outer) = above.pop() else {
-                return Ok(Family(level.out));
+                return Ok(Family::made_from(level.out, level.big.id()));
             };
             let inner = mem::replace(&mut level, outer);
             let key = prefix
                 .pop()
                 .expect("each level beneath the top has its key");
-            level.out.insert(key, Value::Family(Family(inner.out)));
+            level.out.insert(
+                key,
+                Value::Family(Family::made_from(inner.out, inner.big.id())),
+            );
             continue;
         };
         let big = level.big;

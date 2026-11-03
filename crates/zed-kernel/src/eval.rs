@@ -27,7 +27,7 @@ use num_bigint::BigInt;
 use num_traits::{Euclid, Signed, Zero};
 
 use crate::num::MAX_BITS;
-use crate::provenance::{Fact, FactAddress, NodeAddress, Provenance, children, unshare};
+use crate::provenance::{Fact, FactAddress, NodeAddress, Position, Provenance};
 use crate::term::{FixKind, GuardPos, Pattern, Prim, Term};
 use crate::value::Value;
 
@@ -64,6 +64,8 @@ enum V<'t> {
 struct Closure<'t> {
     params: &'t [Arc<str>],
     body: &'t Term,
+    /// The body's position, when provenance is recorded.
+    at: At,
     env: Env<'t>,
     drops: Rc<Drops<'t>>,
 }
@@ -257,23 +259,29 @@ impl World {
 /// What a run records for its provenance (step L1.20).
 #[derive(Debug, Default)]
 struct Trace {
-    /// The preorder position of each node of the evaluated term, by the node's address in
-    /// memory, which is used during the run only and never enters a fact address.
-    positions: HashMap<usize, u32>,
+    /// The position of each node the run has reached, by its [`At`]: the root's is 0.
+    nodes: Vec<Position>,
+    /// The [`At`] of each position reached below the root, by its parent's and its child index.
+    ids: HashMap<(At, u32), At>,
     term: Option<Term>,
     facts: Vec<Fact>,
     /// The positions of the call sites the run is inside, in a persistent vector that each
     /// fact's address shares rather than copies.
-    calls: Vector<u32>,
+    calls: Vector<Position>,
     /// The keypath of the region instance the run is inside, shared the same way.
     keys: Vector<Value>,
     /// The facts read so far by the node being evaluated, one entry per subterm evaluated,
     /// `None` for a value that came from no fact, such as a family key.
     reads: Vec<Option<usize>>,
     /// The call site and the facts of the arguments of the next closure call.
-    site: Option<u32>,
+    site: Option<At>,
     args: Vec<Option<usize>>,
 }
+
+/// A position of the evaluated term during a run, numbered as the run reaches it: the run's own
+/// name for the [`Position`] it stands for, which is what enters a fact address. Without
+/// provenance every node is at 0.
+type At = u32;
 
 /// The reference evaluator, holding the world and the remaining fuel.
 pub struct Evaluator {
@@ -348,23 +356,10 @@ impl Evaluator {
 
     /// Evaluates a closed term, expecting data.
     pub fn run(&mut self, term: &Term) -> Result<Value, KernelError> {
-        let copy;
-        let term = match &mut self.trace {
-            Some(_) => {
-                copy = unshare(term);
-                &copy
-            }
-            None => term,
-        };
         let mut marks = (0, 0);
         if let Some(t) = &mut self.trace {
-            t.positions.clear();
-            let mut stack = vec![term];
-            while let Some(node) = stack.pop() {
-                let n = t.positions.len() as u32;
-                t.positions.insert(node as *const Term as usize, n);
-                stack.extend(children(node).into_iter().rev());
-            }
+            t.nodes = vec![Position::root()];
+            t.ids.clear();
             t.facts.clear();
             marks = (t.calls.len(), t.keys.len());
         }
@@ -407,13 +402,21 @@ impl Evaluator {
         self.trace.as_ref()?.reads.last().copied().flatten()
     }
 
-    /// The position of `term`, when provenance is recorded.
-    fn pos(&self, term: &Term) -> Option<u32> {
-        Some(self.trace.as_ref()?.positions[&(term as *const Term as usize)])
+    /// The position of child `i` of the node at `at`, when provenance is recorded.
+    fn child(&mut self, at: At, i: usize) -> At {
+        let Some(t) = &mut self.trace else {
+            return 0;
+        };
+        let i = u32::try_from(i).expect("a node has fewer than 2^32 children");
+        let next = At::try_from(t.nodes.len()).expect("a run reaches fewer than 2^32 positions");
+        *t.ids.entry((at, i)).or_insert_with(|| {
+            t.nodes.push(t.nodes[at as usize].child(i));
+            next
+        })
     }
 
     /// Names the call site and the argument facts of the next closure call.
-    fn aim(&mut self, site: Option<u32>, args: Vec<Option<usize>>) {
+    fn aim(&mut self, site: Option<At>, args: Vec<Option<usize>>) {
         if let Some(t) = &mut self.trace {
             t.site = site;
             t.args = args;
@@ -444,13 +447,14 @@ impl Evaluator {
 
 /// What the machine does next.
 enum Step<'t> {
-    /// Evaluates a term.
-    Eval(&'t Term, Env<'t>),
+    /// Evaluates a term at a position.
+    Eval(&'t Term, At, Env<'t>),
     /// Evaluates a function's body, called from `site` when provenance is recorded.
     Call {
         body: &'t Term,
+        at: At,
         env: Env<'t>,
-        site: Option<u32>,
+        site: Option<At>,
     },
     /// Evaluates an undefined entry where an attempt reads it.
     Demand(Rc<Definedness<'t>>, Value),
@@ -480,10 +484,7 @@ fn family(v: Value) -> R<Family> {
 enum Frame<'t> {
     /// Records the fact of `term` when it gives a value. `outer` holds the reads of the node
     /// around it, which go back in place however the term ended.
-    Fact {
-        term: &'t Term,
-        outer: Vec<Option<usize>>,
-    },
+    Fact { at: At, outer: Vec<Option<usize>> },
     /// Ends a pure region.
     Pure,
     /// Leaves a call that recorded its call site.
@@ -498,13 +499,15 @@ enum Frame<'t> {
 enum Wait<'t> {
     /// The function of a call has its value; its arguments come next.
     Fun {
-        term: &'t Term,
+        at: At,
         args: &'t [Term],
         env: Env<'t>,
     },
     /// An argument has its value. For a call, `done` begins with the function.
     Args {
-        head: Head<'t>,
+        head: Head,
+        /// The position of the call or primitive; the next argument is its child `done.len()`.
+        at: At,
         rest: &'t [Term],
         done: Vec<V<'t>>,
         env: Env<'t>,
@@ -512,21 +515,26 @@ enum Wait<'t> {
     Let {
         name: &'t str,
         body: &'t Term,
+        at: At,
         env: Env<'t>,
     },
     If {
         a: &'t Term,
         b: &'t Term,
+        at: At,
         env: Env<'t>,
     },
     Match {
         arms: &'t [(Pattern, Term)],
+        at: At,
         env: Env<'t>,
     },
     Push(&'t Arc<str>),
     /// An operand of `region` has its value.
     Operand {
         region: &'t Term,
+        /// The region's position; the next operand is its child `done.len()`.
+        at: At,
         done: Vec<V<'t>>,
         from: Option<usize>,
         env: Env<'t>,
@@ -544,13 +552,13 @@ enum Wait<'t> {
 
 /// What receives the arguments of [`Wait::Args`].
 #[derive(Clone, Copy)]
-enum Head<'t> {
-    App(&'t Term),
+enum Head {
+    App,
     Prim(Prim),
 }
 
 /// A function operand of a region, with its call site.
-type Operator<'t> = (V<'t>, Option<u32>);
+type Operator<'t> = (V<'t>, Option<At>);
 
 /// A `fam` running: the keys left, and the entries made.
 struct Fam<'t> {
@@ -558,6 +566,8 @@ struct Fam<'t> {
     key: Option<Value>,
     var: &'t str,
     body: &'t Term,
+    /// The body's position.
+    at: At,
     env: Env<'t>,
     out: Vec<(Keypath, Value)>,
 }
@@ -664,10 +674,10 @@ impl<'t> By<'t> {
 
 /// The part of [`Trace`] an entry demanded where it is read swaps for that of its `fix`.
 struct Saved {
-    calls: Vector<u32>,
+    calls: Vector<Position>,
     keys: Vector<Value>,
     reads: Vec<Option<usize>>,
-    site: Option<u32>,
+    site: Option<At>,
     args: Vec<Option<usize>>,
 }
 
@@ -688,19 +698,24 @@ struct Machine<'e, 't> {
 
 impl<'t> Machine<'_, 't> {
     fn run(&mut self, term: &'t Term) -> R<V<'t>> {
-        let mut step = Ok(Step::Eval(term, None));
+        let mut step = Ok(Step::Eval(term, 0, None));
         loop {
             let out = match step {
-                Ok(Step::Eval(term, env)) => {
-                    step = self.eval(term, env);
+                Ok(Step::Eval(term, at, env)) => {
+                    step = self.eval(term, at, env);
                     continue;
                 }
-                Ok(Step::Call { body, env, site }) => {
+                Ok(Step::Call {
+                    body,
+                    at,
+                    env,
+                    site,
+                }) => {
                     if let (Some(t), Some(site)) = (&mut self.ev.trace, site) {
-                        t.calls.push_back(site);
+                        t.calls.push_back(t.nodes[site as usize].clone());
                         self.frames.push(Frame::Return);
                     }
-                    step = self.eval(body, env);
+                    step = self.eval(body, at, env);
                     continue;
                 }
                 Ok(Step::Demand(fix, k)) => {
@@ -724,7 +739,7 @@ impl<'t> Machine<'_, 't> {
     /// Goes on from `frame` with how the term above it ended.
     fn resume(&mut self, frame: Frame<'t>, out: R<V<'t>>) -> R<Step<'t>> {
         match frame {
-            Frame::Fact { term, outer } => self.fact(term, outer, out),
+            Frame::Fact { at, outer } => self.fact(at, outer, out),
             Frame::Pure => {
                 self.ev.pure -= 1;
                 out.map(Step::Give)
@@ -743,13 +758,13 @@ impl<'t> Machine<'_, 't> {
     /// Evaluates `term`, and when provenance is recorded, sets up the recording of its fact,
     /// whose inputs are the facts its subterms read. A variable is an edge, not a node: it
     /// passes on the fact of the value it names.
-    fn eval(&mut self, term: &'t Term, env: Env<'t>) -> R<Step<'t>> {
+    fn eval(&mut self, term: &'t Term, at: At, env: Env<'t>) -> R<Step<'t>> {
         let Some(t) = &mut self.ev.trace else {
-            return self.node(term, env);
+            return self.node(term, at, env);
         };
         if let Term::Var(name) = term {
             let fact = lookup_fact(&env, name);
-            let out = self.node(term, env);
+            let out = self.node(term, at, env);
             if out.is_ok() {
                 let t = self.ev.trace.as_mut().expect("provenance is recorded");
                 t.reads.push(fact);
@@ -757,16 +772,16 @@ impl<'t> Machine<'_, 't> {
             return out;
         }
         let outer = std::mem::take(&mut t.reads);
-        self.frames.push(Frame::Fact { term, outer });
-        self.node(term, env)
+        self.frames.push(Frame::Fact { at, outer });
+        self.node(term, at, env)
     }
 
-    fn fact(&mut self, term: &'t Term, outer: Vec<Option<usize>>, out: R<V<'t>>) -> R<Step<'t>> {
+    fn fact(&mut self, at: At, outer: Vec<Option<usize>>, out: R<V<'t>>) -> R<Step<'t>> {
         let t = self.ev.trace.as_mut().expect("provenance is recorded");
         let inputs = std::mem::replace(&mut t.reads, outer);
         let v = out?;
         let mut node = t.calls.clone();
-        node.push_back(t.positions[&(term as *const Term as usize)]);
+        node.push_back(t.nodes[at as usize].clone());
         t.facts.push(Fact {
             address: FactAddress {
                 node: NodeAddress(node),
@@ -783,7 +798,7 @@ impl<'t> Machine<'_, 't> {
         Ok(Step::Give(v))
     }
 
-    fn node(&mut self, term: &'t Term, env: Env<'t>) -> R<Step<'t>> {
+    fn node(&mut self, term: &'t Term, at: At, env: Env<'t>) -> R<Step<'t>> {
         match term {
             Term::Lit(v) => give(v.clone()),
             Term::Var(name) => match lookup(&env, name) {
@@ -793,53 +808,58 @@ impl<'t> Machine<'_, 't> {
             Term::Lam(params, body) => Ok(Step::Give(V::Closure(Rc::new(Closure {
                 params,
                 body,
+                at: self.ev.child(at, 0),
                 env,
                 drops: self.drops.clone(),
             })))),
             Term::PrimFn(p) => Ok(Step::Give(V::Prim(*p))),
             Term::App(f, args) => {
                 self.wait(Wait::Fun {
-                    term,
+                    at,
                     args,
                     env: env.clone(),
                 });
-                Ok(Step::Eval(f, env))
+                Ok(Step::Eval(f, self.ev.child(at, 0), env))
             }
             Term::Prim(p, args) => {
-                self.args(Head::Prim(*p), args, Vec::with_capacity(args.len()), env)
+                let done = Vec::with_capacity(args.len());
+                self.args(Head::Prim(*p), at, args, done, env)
             }
             Term::Let(name, e, body) => {
                 self.wait(Wait::Let {
                     name,
                     body,
+                    at,
                     env: env.clone(),
                 });
-                Ok(Step::Eval(e, env))
+                Ok(Step::Eval(e, self.ev.child(at, 0), env))
             }
             Term::If(c, a, b) => {
                 self.wait(Wait::If {
                     a,
                     b,
+                    at,
                     env: env.clone(),
                 });
-                Ok(Step::Eval(c, env))
+                Ok(Step::Eval(c, self.ev.child(at, 0), env))
             }
             Term::Match(scrutinee, arms) => {
                 self.wait(Wait::Match {
                     arms,
+                    at,
                     env: env.clone(),
                 });
-                Ok(Step::Eval(scrutinee, env))
+                Ok(Step::Eval(scrutinee, self.ev.child(at, 0), env))
             }
             Term::Fix { .. } => {
                 self.begin_pure();
-                self.operand(term, Vec::new(), None, env)
+                self.operand(term, at, Vec::new(), None, env)
             }
             Term::Fam { .. }
             | Term::Reindex { .. }
             | Term::Discard { .. }
             | Term::Fold { .. }
-            | Term::Gen { .. } => self.operand(term, Vec::new(), None, env),
+            | Term::Gen { .. } => self.operand(term, at, Vec::new(), None, env),
             Term::Read(port) => {
                 self.ev.check_impure(port)?;
                 match self.ev.world.inputs.get(&**port) {
@@ -852,7 +872,7 @@ impl<'t> Machine<'_, 't> {
             }
             Term::Push(port, value) => {
                 self.wait(Wait::Push(port));
-                Ok(Step::Eval(value, env))
+                Ok(Step::Eval(value, self.ev.child(at, 0), env))
             }
         }
     }
@@ -866,35 +886,37 @@ impl<'t> Machine<'_, 't> {
     /// the last argument takes the environment, so that a frame does not hold it longer.
     fn args(
         &mut self,
-        head: Head<'t>,
+        head: Head,
+        at: At,
         rest: &'t [Term],
         done: Vec<V<'t>>,
         env: Env<'t>,
     ) -> R<Step<'t>> {
         let Some((first, rest)) = rest.split_first() else {
-            return self.finish(head, done);
+            return self.finish(head, at, done);
         };
         let kept = if rest.is_empty() { None } else { env.clone() };
+        let first_at = self.ev.child(at, done.len());
         self.wait(Wait::Args {
             head,
+            at,
             rest,
             done,
             env: kept,
         });
-        Ok(Step::Eval(first, env))
+        Ok(Step::Eval(first, first_at, env))
     }
 
-    fn finish(&mut self, head: Head<'t>, mut done: Vec<V<'t>>) -> R<Step<'t>> {
+    fn finish(&mut self, head: Head, at: At, mut done: Vec<V<'t>>) -> R<Step<'t>> {
         match head {
             Head::Prim(p) => self.prim(p, done),
-            Head::App(term) => {
+            Head::App => {
                 let f = done.remove(0);
                 let facts = match &self.ev.trace {
                     Some(t) => t.reads[t.reads.len() - done.len()..].to_vec(),
                     None => Vec::new(),
                 };
-                let site = self.ev.pos(term);
-                self.ev.aim(site, facts);
+                self.ev.aim(Some(at), facts);
                 self.apply(&f, done)
             }
         }
@@ -931,21 +953,24 @@ impl<'t> Machine<'_, 't> {
     fn operand(
         &mut self,
         region: &'t Term,
+        at: At,
         done: Vec<V<'t>>,
         from: Option<usize>,
         env: Env<'t>,
     ) -> R<Step<'t>> {
         match Self::operands(region).get(done.len()).copied().flatten() {
             Some(t) => {
+                let t_at = self.ev.child(at, done.len());
                 self.wait(Wait::Operand {
                     region,
+                    at,
                     done,
                     from,
                     env: env.clone(),
                 });
-                Ok(Step::Eval(t, env))
+                Ok(Step::Eval(t, t_at, env))
             }
-            None => self.begin(region, done, from, env),
+            None => self.begin(region, at, done, from, env),
         }
     }
 
@@ -968,10 +993,13 @@ impl<'t> Machine<'_, 't> {
         }
     }
 
-    /// Begins `region` with its operands evaluated: `from` is the fact of the first.
+    /// Begins `region` with its operands evaluated: `from` is the fact of the first. Operand
+    /// `i` is the region's child `i`, and a `fam` or a definedness `fix` evaluates its child 1
+    /// for each key.
     fn begin(
         &mut self,
         region: &'t Term,
+        at: At,
         operands: Vec<V<'t>>,
         from: Option<usize>,
         env: Env<'t>,
@@ -984,18 +1012,20 @@ impl<'t> Machine<'_, 't> {
                 self.begin_pure();
                 let keys: Vec<Value> = family(first)?.keys().cloned().collect();
                 let out = Vec::with_capacity(keys.len());
+                let at = self.ev.child(at, 1);
                 self.fam(Box::new(Fam {
                     keys: keys.into_iter(),
                     key: None,
                     var,
                     body,
+                    at,
                     env,
                     out,
                 }))
             }
-            Term::Reindex { kf, vf, .. } => {
-                let kf = (next(), self.ev.pos(kf));
-                let vf = (next(), self.ev.pos(vf));
+            Term::Reindex { .. } => {
+                let kf = (next(), Some(self.ev.child(at, 1)));
+                let vf = (next(), Some(self.ev.child(at, 2)));
                 self.begin_pure();
                 self.reindex(Box::new(Reindex {
                     leaves: family(first)?.leaves().into_iter(),
@@ -1008,8 +1038,8 @@ impl<'t> Machine<'_, 't> {
                     out: Vec::new(),
                 }))
             }
-            Term::Discard { sel, .. } => {
-                let sel = (next(), self.ev.pos(sel));
+            Term::Discard { .. } => {
+                let sel = (next(), Some(self.ev.child(at, 1)));
                 self.begin_pure();
                 self.discard(Box::new(Discard {
                     levels: vec![level(&family(first)?)],
@@ -1019,12 +1049,9 @@ impl<'t> Machine<'_, 't> {
                 }))
             }
             Term::Fold {
-                op,
-                identity,
-                depth,
-                ..
+                identity, depth, ..
             } => {
-                let op = (next(), self.ev.pos(op));
+                let op = (next(), Some(self.ev.child(at, 1)));
                 let identity = match identity {
                     Some(_) => Some(data(next())?),
                     None => None,
@@ -1039,9 +1066,9 @@ impl<'t> Machine<'_, 't> {
                 kind,
                 ..
             } => match kind {
-                FixKind::Lattice { join } => {
-                    let step = (next(), self.ev.pos(step));
-                    let join = (next(), self.ev.pos(join));
+                FixKind::Lattice { .. } => {
+                    let step = (next(), Some(self.ev.child(at, 1)));
+                    let join = (next(), Some(self.ev.child(at, 2)));
                     self.lattice(Box::new(Lattice {
                         x: first,
                         from,
@@ -1050,13 +1077,14 @@ impl<'t> Machine<'_, 't> {
                         join,
                     }))
                 }
-                FixKind::Definedness => self.begin_definedness(first, step, this, key, env),
+                FixKind::Definedness => {
+                    let at = self.ev.child(at, 1);
+                    self.begin_definedness(first, step, at, this, key, env)
+                }
             },
-            Term::Gen {
-                step, guard, pos, ..
-            } => {
-                let step = (next(), self.ev.pos(step));
-                let guard = (next(), self.ev.pos(guard));
+            Term::Gen { pos, .. } => {
+                let step = (next(), Some(self.ev.child(at, 1)));
+                let guard = (next(), Some(self.ev.child(at, 2)));
                 let st = Box::new(Gen {
                     frames: vec![first],
                     from,
@@ -1075,33 +1103,40 @@ impl<'t> Machine<'_, 't> {
     /// Goes on with the value `v` that the term above `wait` gave.
     fn go_on(&mut self, wait: Wait<'t>, v: V<'t>) -> R<Step<'t>> {
         match wait {
-            Wait::Fun { term, args, env } => {
+            Wait::Fun { at, args, env } => {
                 let mut done = Vec::with_capacity(args.len() + 1);
                 done.push(v);
-                self.args(Head::App(term), args, done, env)
+                self.args(Head::App, at, args, done, env)
             }
             Wait::Args {
                 head,
+                at,
                 rest,
                 mut done,
                 env,
             } => {
                 done.push(v);
-                self.args(head, rest, done, env)
+                self.args(head, at, rest, done, env)
             }
-            Wait::Let { name, body, env } => {
+            Wait::Let {
+                name,
+                body,
+                at,
+                env,
+            } => {
                 let fact = self.ev.last_fact();
-                Ok(Step::Eval(body, bind(env, name, v, fact)))
+                let at = self.ev.child(at, 1);
+                Ok(Step::Eval(body, at, bind(env, name, v, fact)))
             }
-            Wait::If { a, b, env } => match data(v)? {
-                Value::Bool(true) => Ok(Step::Eval(a, env)),
-                Value::Bool(false) => Ok(Step::Eval(b, env)),
+            Wait::If { a, b, at, env } => match data(v)? {
+                Value::Bool(true) => Ok(Step::Eval(a, self.ev.child(at, 1), env)),
+                Value::Bool(false) => Ok(Step::Eval(b, self.ev.child(at, 2), env)),
                 atom @ Value::Atom(_) => give(atom),
                 other => type_err(format!("`if` on {other}")),
             },
-            Wait::Match { arms, env } => {
+            Wait::Match { arms, at, env } => {
                 let fact = self.ev.last_fact();
-                for (pat, body) in arms {
+                for (i, (pat, body)) in arms.iter().enumerate() {
                     let mut env2 = env.clone();
                     let hit = match (&v, pat) {
                         (V::Data(v), pat) => matches(pat, v, &mut env2, fact),
@@ -1114,7 +1149,7 @@ impl<'t> Machine<'_, 't> {
                         _ => false,
                     };
                     if hit {
-                        return Ok(Step::Eval(body, env2));
+                        return Ok(Step::Eval(body, self.ev.child(at, 1 + i), env2));
                     }
                 }
                 match v {
@@ -1136,6 +1171,7 @@ impl<'t> Machine<'_, 't> {
             }
             Wait::Operand {
                 region,
+                at,
                 mut done,
                 from,
                 env,
@@ -1146,7 +1182,7 @@ impl<'t> Machine<'_, 't> {
                 } else {
                     from
                 };
-                self.operand(region, done, from, env)
+                self.operand(region, at, done, from, env)
             }
             Wait::Fam(mut st) => {
                 self.ev.leave(1);
@@ -1247,6 +1283,7 @@ impl<'t> Machine<'_, 't> {
                 }
                 Ok(Step::Call {
                     body: c.body,
+                    at: c.at,
                     env,
                     site,
                 })
@@ -1364,10 +1401,10 @@ impl<'t> Machine<'_, 't> {
         };
         self.ev.enter(std::slice::from_ref(&k));
         let env = bind(st.env.clone(), st.var, V::Data(k.clone()), None);
-        let body = st.body;
+        let (body, at) = (st.body, st.at);
         st.key = Some(k);
         self.wait(Wait::Fam(st));
-        Ok(Step::Eval(body, env))
+        Ok(Step::Eval(body, at, env))
     }
 
     /// Each region call below reads its argument from the fact `from`, the region's input,
@@ -1538,6 +1575,7 @@ impl<'t> Machine<'_, 't> {
         &mut self,
         init: Value,
         body: &'t Term,
+        at: At,
         this: &'t str,
         key: &'t str,
         env: Env<'t>,
@@ -1552,6 +1590,7 @@ impl<'t> Machine<'_, 't> {
             id: self.ev.fixes,
             domain,
             body,
+            at,
             this,
             key,
             env,
@@ -1592,7 +1631,7 @@ impl<'t> Machine<'_, 't> {
         }));
         let env = bind(fix.env.clone(), fix.this, part, None);
         let env = bind(env, fix.key, V::Data(k.clone()), None);
-        let body = fix.body;
+        let (body, at) = (fix.body, fix.at);
         let mark = self
             .ev
             .trace
@@ -1601,7 +1640,7 @@ impl<'t> Machine<'_, 't> {
         self.ev.enter(std::slice::from_ref(&k));
         self.frames
             .push(Frame::Entry(Box::new(Entry { k, mark, by })));
-        Ok(Step::Eval(body, env))
+        Ok(Step::Eval(body, at, env))
     }
 
     /// An attempt ended: with the entry's value, with a read of an undefined entry of its
@@ -1842,10 +1881,12 @@ struct Definedness<'t> {
     domain: Box<[Value]>,
     defined: RefCell<Defined>,
     body: &'t Term,
+    /// The body's position.
+    at: At,
     this: &'t str,
     key: &'t str,
     env: Env<'t>,
-    calls: Vector<u32>,
+    calls: Vector<Position>,
     keys: Vector<Value>,
     busy: RefCell<BTreeSet<Value>>,
     stalled: RefCell<BTreeSet<Value>>,

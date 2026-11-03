@@ -39,7 +39,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-use zed_kernel::provenance::{FactAddress, NodeAddress, Vector};
+use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
 
@@ -1659,7 +1659,7 @@ fn walk(t: &Term, scope: &mut Scope, out: &mut Vec<Arm>, count: &mut u32) {
         }
         Term::If(c, a, b) => {
             let at = FactAddress {
-                node: NodeAddress(Vector::unit(*count)),
+                node: NodeAddress(Vector::unit(Position::root().child(*count))),
                 keypath: Vector::new(),
             };
             *count += 1;

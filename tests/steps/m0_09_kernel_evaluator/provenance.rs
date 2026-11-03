@@ -2,6 +2,7 @@
 //! one backward pass over the run graph, and terms whose subterms are shared, as a term built
 //! by cloning is.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use zed_kernel::term::build::{if_, let_, lit, prim, var};
@@ -18,11 +19,11 @@ fn trace(t: &Term) -> (Value, Provenance) {
 
 /// The printed terms of the origins of the result's failure, sorted.
 fn origin_terms(p: &Provenance) -> Vec<String> {
-    let terms = p.terms();
+    let terms = p.fact_terms();
     let mut out: Vec<String> = p
         .origins(p.result())
         .into_iter()
-        .map(|j| terms[p.facts()[j].address.node.position() as usize].to_string())
+        .map(|j| terms[j].to_string())
         .collect();
     out.sort();
     out
@@ -148,11 +149,10 @@ fn two_uses_of_a_cloned_term_in_one_scope_are_two_facts() {
     let (v, p) = trace(&t);
     assert_eq!(v, Value::Int(4));
     unique(&p);
-    let terms = p.terms();
     let twos = p
-        .facts()
+        .fact_terms()
         .iter()
-        .filter(|f| terms[f.address.node.position() as usize].to_string() == "2")
+        .filter(|t| t.to_string() == "2")
         .count();
     assert_eq!(twos, 2);
 }
@@ -181,10 +181,10 @@ fn the_origins_of_a_failure_read_through_a_wide_tuple_scale() {
 }
 
 #[test]
-#[ignore = "open: unshare copies the term to one node per position, 2^depth here; see COMPLEXITY.md"]
 fn a_term_shared_by_both_branches_of_each_level_scales() {
-    // The run takes `depth` branches; recording its provenance copies the whole term, each
-    // shared branch once per position: `2^depth` nodes.
+    // The run takes `depth` branches, and a fact's position is its parent's and one child
+    // index, so recording its provenance is `O(depth)`. Copying the term to one node per
+    // position took `2^depth` steps (COMPLEXITY.md K25).
     let n = 3;
     let terms: Vec<(usize, Term)> = [n, scaling::FACTOR * n]
         .into_iter()
@@ -227,10 +227,11 @@ fn each_missing_reading_of_a_chain_is_traced_to_its_literal() {
 }
 
 #[test]
-#[ignore = "open: origins reads each product's #errs set whole, n²/2 members on a chain; see COMPLEXITY.md K25"]
 fn the_origins_of_a_failure_built_one_reading_at_a_time_scale() {
-    // The `k`-th product's `#errs` set shares all but one member with the one before it, and
-    // the pass tests every member of each: `O(n² log n)`. The runs are recorded before timing.
+    // The `k`-th product's `#errs` set is made from the one before it by adding one member, so
+    // the failures it holds are found from that set's by their difference, and the common
+    // members of two sets likewise: `O(n log n)`. Reading every member of each set took
+    // `O(n² log n)` (COMPLEXITY.md K25). The runs are recorded before timing.
     let n = 200;
     let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
         .into_iter()
@@ -276,14 +277,22 @@ fn a_failure_read_out_of_a_table_of_shared_levels_starts_at_its_literal() {
 }
 
 #[test]
-#[ignore = "open, item T14-occ: holds() walks each value as a tree, 2^depth here; see COMPLEXITY.md K25"]
 fn the_origins_of_a_failure_read_out_of_shared_levels_scale() {
-    // The run takes `depth` steps, but `holds` walks each input value of a fact as a tree with
-    // no visited set, `2^depth` nodes for `f{depth}`. Measured 1.8, 25.9, 99 and 275 ms at
-    // depth 12, 16, 18 and 20, and 40.8 k against 233.2 M instructions at depth 2 against 16
-    // (5719.6 times). A visited set needs node identity, which item T14-occ builds. The runs are
-    // recorded before the timing.
-    let n = 2;
+    // The run takes `depth` steps, and the failures each value holds are found once per
+    // distinct tuple and family, keyed by its id: `O(depth)`. Walking each value as a tree took
+    // `2^depth` steps (COMPLEXITY.md K25). The runs are recorded before the timing.
+    shared_levels_scale(2);
+}
+
+#[test]
+fn the_origins_of_a_failure_read_out_of_deep_shared_levels_scale() {
+    // Each level's family holds the level below it, so comparing two levels' maps compares
+    // them whole: finding one level's set from another's by their difference made this
+    // `O(depth²)`. A family's set is found that way only from a family it was made from.
+    shared_levels_scale(128);
+}
+
+fn shared_levels_scale(n: usize) {
     let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|m| (m, trace(&shared_levels(m)).1))
@@ -297,4 +306,149 @@ fn the_origins_of_a_failure_read_out_of_shared_levels_scale() {
             assert_eq!(p.origins(p.result()).len(), 1);
         },
     );
+}
+
+/// Whether `v` is `m` or holds it, read as a tree.
+fn holds(v: &Value, m: &Value) -> bool {
+    let mut todo = vec![v];
+    while let Some(v) = todo.pop() {
+        if v == m {
+            return true;
+        }
+        match v {
+            Value::Atom(a) => todo.extend(&a.args),
+            Value::Tuple(xs) | Value::Path(xs) => todo.extend(xs.iter()),
+            Value::Family(f) => todo.extend(f.iter().map(|(_, x)| x)),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The origins of fact `i`'s failure by a search per member over every input, each value read
+/// as a tree: the definition, at a cost only small runs afford.
+fn origins_by_search(p: &Provenance, i: usize) -> BTreeSet<usize> {
+    let Some(v @ Value::Atom(_)) = &p.facts()[i].value else {
+        return BTreeSet::new();
+    };
+    let members: Vec<Value> = match v.errs() {
+        Some(set) => set.iter().map(|(k, _)| k.clone()).collect(),
+        None => vec![v.clone()],
+    };
+    let mut out = BTreeSet::new();
+    for m in &members {
+        let mut seen = BTreeSet::from([i]);
+        let mut todo = vec![i];
+        while let Some(j) = todo.pop() {
+            let mut held = false;
+            for &k in &p.facts()[j].inputs {
+                if p.facts()[k].value.as_ref().is_some_and(|v| holds(v, m)) {
+                    held = true;
+                    if seen.insert(k) {
+                        todo.push(k);
+                    }
+                }
+            }
+            if !held {
+                out.insert(j);
+            }
+        }
+    }
+    out
+}
+
+/// Asserts that the origins of every fact of `t`'s run are those the search per member finds.
+fn agrees_with_search(t: &Term) {
+    let (_, p) = trace(t);
+    unique(&p);
+    for i in 0..p.facts().len() {
+        assert_eq!(p.origins(i), origins_by_search(&p, i), "fact {i} of {t}");
+    }
+}
+
+/// `shared_branches` with `#late` at the bottom, each level's branches one shared term when
+/// `shared`, or two copies built apart.
+fn late_branches(depth: usize, shared: bool) -> Arc<Term> {
+    match depth {
+        0 => Arc::new(lit(Value::atom("late"))),
+        _ if shared => {
+            let d = late_branches(depth - 1, true);
+            Arc::new(Term::If(Arc::new(lit(true)), d.clone(), d))
+        }
+        _ => Arc::new(Term::If(
+            Arc::new(lit(true)),
+            late_branches(depth - 1, false),
+            late_branches(depth - 1, false),
+        )),
+    }
+}
+
+#[test]
+fn the_origins_agree_with_a_search_per_member() {
+    let late = || lit(Value::atom("late"));
+    let both = let_("a", late(), let_("b", late(), add(var("a"), var("b"))));
+    let picked = mul(
+        nth(prim(Prim::Tuple, vec![lit(1), late()]), 1),
+        lit(Value::atom("early")),
+    );
+    for t in [
+        missing_row(5),
+        missing_chain(6),
+        shared_levels(5),
+        Arc::unwrap_or_clone(late_branches(4, true)),
+        both,
+        picked,
+    ] {
+        agrees_with_search(&t);
+    }
+}
+
+#[test]
+fn a_shared_term_and_its_copy_built_apart_have_the_same_provenance() {
+    let (v, p) = trace(&late_branches(5, true));
+    let (w, q) = trace(&late_branches(5, false));
+    assert_eq!(v, w);
+    let show = |p: &Provenance| -> Vec<String> {
+        p.facts()
+            .iter()
+            .map(|f| format!("{} {:?} {:?}", f.address, f.value, f.inputs))
+            .collect()
+    };
+    assert_eq!(show(&p), show(&q));
+    assert_eq!(p.origins(p.result()), q.origins(q.result()));
+    assert_eq!(origin_terms(&p), ["#late"]);
+}
+
+#[test]
+fn an_empty_failure_has_no_origins() {
+    let empty = Value::atom_with("errs", vec![Value::Family(Family::new())]);
+    let (v, p) = trace(&lit(empty.clone()));
+    assert_eq!(v, empty);
+    assert!(p.origins(p.result()).is_empty());
+    assert_eq!(origins_by_search(&p, p.result()), BTreeSet::new());
+}
+
+#[test]
+fn a_failure_read_by_itself_is_its_own_origin() {
+    let (_, p) = trace(&lit(Value::atom("late")));
+    assert_eq!(p.origins(p.result()), BTreeSet::from([p.result()]));
+}
+
+#[test]
+fn a_term_shared_by_both_parts_of_the_root_runs_once_at_each_position() {
+    // `let x = #late * #early in #late * #early`, the bound term and the body one shared
+    // term: the run evaluates it at two positions, and the `let` reads both, so each
+    // literal is an origin at each position.
+    let both = Arc::new(mul(lit(Value::atom("late")), lit(Value::atom("early"))));
+    let t = Term::Let("x".into(), both.clone(), both);
+    let (v, p) = trace(&t);
+    assert_eq!(v.errs().map(|e| e.len()), Some(2), "{v}");
+    unique(&p);
+    let o = p.origins(p.result());
+    let at: Vec<String> = o
+        .iter()
+        .map(|&j| p.facts()[j].address.to_string())
+        .collect();
+    assert_eq!(at, [".0.0@(0)", ".0.1@(0)", ".1.0@(0)", ".1.1@(0)"]);
+    agrees_with_search(&t);
 }

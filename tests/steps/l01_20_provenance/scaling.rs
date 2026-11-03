@@ -67,15 +67,15 @@ fn tree(lo: usize, hi: usize, op: fn(Term, Term) -> Term, leaf: &dyn Fn(usize) -
 fn the_term_of_every_fact_scales() {
     // The term at a node is found by walking the term in preorder to its position, so
     // reading the term of each of the `O(n)` facts of an `n`-node term one at a time took
-    // `O(n²)` steps (ratio 61). `terms()` reads them all in one walk.
+    // `O(n²)` steps (ratio 61). `fact_terms()` finds each
+    // distinct position once, from its parent.
     scaling::check("the term at each fact, by term size", 1000, |n| {
         let (v, p) = trace(&tree(0, n, add, &|_| lit(Value::Int(1))));
         assert_eq!(v, Value::Int(n as i64));
-        let terms = p.terms();
         let adds = p
-            .facts()
+            .fact_terms()
             .iter()
-            .filter(|f| matches!(terms[f.address.node.position() as usize], Term::Prim(..)))
+            .filter(|t| matches!(t, Term::Prim(..)))
             .count();
         assert_eq!(adds, n - 1);
     });
@@ -92,8 +92,7 @@ fn the_origins_of_a_failure_with_many_members_scale() {
         assert_eq!(v.errs().map(|e| e.len()), Some(n), "{v}");
         let o = p.origins(p.result());
         assert_eq!(o.len(), n);
-        let terms = p.terms();
-        let at = |j: usize| terms[p.facts()[j].address.node.position() as usize];
-        assert!(o.iter().all(|&j| matches!(at(j), Term::Lit(_))));
+        let terms = p.fact_terms();
+        assert!(o.iter().all(|&j| matches!(terms[j], Term::Lit(_))));
     });
 }
