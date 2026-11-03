@@ -13,6 +13,7 @@ mod scaling;
 mod untracked;
 mod variants;
 mod widen;
+mod widen_test;
 
 use zedc::run::load;
 

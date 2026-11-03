@@ -16,7 +16,7 @@ use zedc::run;
 pub(crate) fn report(text: &str) -> Vec<String> {
     let mut db = Db::new();
     let front = db.front(text);
-    let (stmts, unit) = front.as_ref().as_ref().expect("the unit compiles");
+    let (stmts, unit, _) = front.as_ref().as_ref().expect("the unit compiles");
     let found = mutate::run(text, stmts, unit, &run::direct).expect("the mutants are made");
     let mut out = Vec::new();
     let mut counts = [0; 4];

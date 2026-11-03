@@ -73,15 +73,10 @@ pub struct Record {
 /// The program in `bytes`, or its errors, one per line as `line:col: why`.
 pub fn load(bytes: &[u8]) -> Result<Program, String> {
     let text = source::load(bytes).map_err(|e| e.to_string())?;
-    let (stmts, mut unit) = compile(&text).map_err(|ds| {
+    let (stmts, unit, warnings) = compile(&text).map_err(|ds| {
         let lines: Vec<String> = ds.iter().map(Diagnostic::to_string).collect();
         lines.join("\n")
     })?;
-    let warnings = placed(
-        &text,
-        &source::Lines::new(text.as_bytes()),
-        std::mem::take(&mut unit.warnings),
-    );
     let mut program = program(&stmts, unit)?;
     program.warnings = warnings.into();
     Ok(program)
@@ -159,9 +154,9 @@ impl std::fmt::Display for Diagnostic {
     }
 }
 
-/// The statements and elaboration of the unit `text`, or the diagnostics of the first phase
-/// that rejects it.
-pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> {
+/// The statements, elaboration and warnings of the unit `text`, the warnings moved out of the
+/// elaboration and placed in the source, or the diagnostics of the first phase that rejects it.
+pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), Vec<Diagnostic>> {
     let lines = source::Lines::new(text.as_bytes());
     let at = |start: usize, message: String| {
         let (line, col) = lines.line_col(text.as_bytes(), start);
@@ -182,7 +177,7 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
     let res = resolve::resolve(&stmts).map_err(all)?;
     // Doc comments are checked after parsing; their errors join elaboration's.
     let mut errors = docs::check(text, &tokens, &docs, &res);
-    let unit = match elaborate(&stmts, &res) {
+    let mut unit = match elaborate(&stmts, &res) {
         Ok(unit) if errors.is_empty() => unit,
         Ok(_) => return Err(all(errors)),
         Err(es) => {
@@ -195,7 +190,21 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
     if !refused.is_empty() {
         return Err(all(refused));
     }
-    Ok((stmts, unit))
+    let warnings = all(std::mem::take(&mut unit.warnings));
+    Ok((stmts, unit, warnings))
+}
+
+/// Writes each warning of `warnings`, of the unit read from `file`, to `out` as `file:` then
+/// the warning: what `zedc run` and `zedc test` print before they run the unit.
+pub(crate) fn write_warnings(
+    out: &mut dyn Write,
+    file: &str,
+    warnings: &[Diagnostic],
+) -> std::io::Result<()> {
+    for w in warnings {
+        writeln!(out, "{file}:{w}")?;
+    }
+    Ok(())
 }
 
 /// The linear questions of the unit (step L1.38): for each function other than `main` whose
@@ -740,9 +749,8 @@ fn command_inner(
     }
     let bytes = std::fs::read(file).map_err(|e| (2, format!("{file}: {e}")))?;
     let program = load(&bytes).map_err(|e| (1, format!("{file}:{e}")))?;
-    for w in program.warnings() {
-        writeln!(stderr, "{file}:{w}").map_err(|e| (2, format!("standard error: {e}")))?;
-    }
+    write_warnings(stderr, file, program.warnings())
+        .map_err(|e| (2, format!("standard error: {e}")))?;
     let known =
         |p: &String| program.inputs.iter().any(|(n, _)| n == p) || program.outputs.contains(p);
     if let Some(p) = binds.keys().find(|p| !known(p)) {

@@ -77,8 +77,8 @@ pub struct Unit {
     /// The test cases, in written order, shared with the unit once staged.
     pub tests: Arc<[Test]>,
     /// The warnings, which do not stop the build: each operation that widens a value past a
-    /// machine word (DESIGN.md sec:domains). [`crate::run::load`] moves them into the
-    /// program, placed in the source, and leaves this empty.
+    /// machine word (DESIGN.md sec:domains). `run::compile` moves them out, placed in the
+    /// source, and leaves this empty.
     pub warnings: Vec<Error>,
 }
 

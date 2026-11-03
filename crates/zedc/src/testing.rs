@@ -90,7 +90,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
                 });
             }
         }
-        Ok((stmts, unit)) => {
+        Ok((stmts, unit, _)) => {
             let lines = source::Lines::new(text.as_bytes());
             let cones = Cones::new(unit);
             for &line in &marked {
@@ -299,8 +299,9 @@ impl Lookup for Given {
     }
 }
 
-/// `zedc test <file> …`, with `args` the words after `test`: writes each failing check as
-/// `file:line:col: why`, then the counts: checks passed and failed, and the rejection units
+/// `zedc test <file> …`, with `args` the words after `test`: writes the warnings of each unit
+/// that compiles to `stderr`, as `zedc run` does, and each failing check as `file:line:col: why`
+/// to `stdout`, then the counts: checks passed and failed, and the rejection units
 /// run, those with a line marked ✗. A file with no table row and no ✗ mark fails, so a run
 /// that finds no tests fails. Returns the exit status: 0 when every check passes, 1 when
 /// one fails (a unit that does not compile, a row that fails or aborts, a marked line), 2 for
@@ -342,6 +343,9 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         };
         if !fence::marks(&text).lines.is_empty() {
             rejection += 1;
+        }
+        if let Ok((_, _, warnings)) = &*db.front(&text) {
+            let _ = run::write_warnings(stderr, file, warnings);
         }
         let outcomes = test_in(&mut db, &text);
         texts.push((file, text));
@@ -385,7 +389,7 @@ fn mutants(db: &mut Db, texts: &[(&String, String)], stdout: &mut dyn Write) -> 
     let mut status = 0;
     for (file, text) in texts {
         let front = db.front(text);
-        let Ok((stmts, unit)) = &*front else {
+        let Ok((stmts, unit, _)) = &*front else {
             continue;
         };
         let found = match mutate::run(text, stmts, unit, &run::direct) {

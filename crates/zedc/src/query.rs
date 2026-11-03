@@ -58,9 +58,9 @@ pub enum Query {
     Wave,
 }
 
-/// The front end's result: the statements and elaboration, or the first rejecting phase's
-/// diagnostics.
-pub type Front = Result<(Vec<Stmt>, Unit), Vec<Diagnostic>>;
+/// The front end's result: the statements, elaboration and placed warnings, or the first
+/// rejecting phase's diagnostics.
+pub type Front = Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), Vec<Diagnostic>>;
 
 /// The memoized results, and how many times each query was computed rather than reused.
 #[derive(Clone, Default)]

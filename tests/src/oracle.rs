@@ -86,7 +86,7 @@ fn printed(r: Result<Value, String>) -> String {
 pub fn unit(text: &str, engines: &[Engine<'_>]) -> Report {
     let mut r = Report::default();
     let front = Db::new().front(text);
-    let Ok((_, u)) = &*front else {
+    let Ok((_, u, _)) = &*front else {
         return r;
     };
     for d in u.defs.iter().filter(|d| d.first_order) {

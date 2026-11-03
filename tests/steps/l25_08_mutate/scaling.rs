@@ -61,7 +61,7 @@ fn finding() {
         scaling::check_order(what, 100, 1, |n| {
             let (text, mut db) = warm(&cache, n, make);
             let front = db.front(&text);
-            let (stmts, unit) = front.as_ref().as_ref().unwrap();
+            let (stmts, unit, _) = front.as_ref().as_ref().unwrap();
             let found = mutate::mutants(&text, stmts, unit).unwrap();
             assert!(found.len() >= per * n, "{}", found.len());
         });
@@ -78,7 +78,7 @@ fn running_the_mutants_of_n_functions_each_with_a_row_scales() {
         |n| {
             let (text, mut db) = warm(&cache, n, unit);
             let front = db.front(&text);
-            let (stmts, unit) = front.as_ref().as_ref().unwrap();
+            let (stmts, unit, _) = front.as_ref().as_ref().unwrap();
             let found = mutate::run(&text, stmts, unit, &run::direct).unwrap();
             assert_eq!(found.len(), 3 * n + 3);
             // Each mutant ran its row; only `x + 0` replaced by `x - 0` in `g0` passes it.
@@ -117,7 +117,7 @@ fn running_a_chain() {
         |n| {
             let (text, mut db) = warm(&cache, n, chain_with_row);
             let front = db.front(&text);
-            let (stmts, unit) = front.as_ref().as_ref().unwrap();
+            let (stmts, unit, _) = front.as_ref().as_ref().unwrap();
             let found = mutate::run(&text, stmts, unit, &run::direct).unwrap();
             assert_eq!(found.len(), 3 * n);
             // Each mutant changes the sum, and the row detects it.
