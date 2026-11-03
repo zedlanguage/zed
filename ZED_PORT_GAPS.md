@@ -619,3 +619,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `OnceLock` for a table computed once | `ast::forms` | Global state | A constant, or a value passed in |
 | A generic struct over a trait with an unsized `Self` (`Parser<I: Input + ?Sized>` on `[char]` and on `Tokens`) | `zedc::parse::engine` | Unsized types | An interface over a value, passed as a parameter |
 | `env!("CARGO_MANIFEST_DIR")`, a path fixed when the tool is built | `zed_tools::impl_root` | Build-time environment | A parameter of the tool |
+
+## Entries from T4 (`zedc/src/store/utvpi.rs`, `presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A tree held as a ring of `next` and `prev` indices in preorder with a depth per node, relinked in place by index when a subtree is cut out | `utvpi::potential` | Mutation | A state receiver over a map from node to `(next, prev, depth)`, or the persistent tree of the dependency graph |
+| `VecDeque` used as a FIFO queue, `push_back` and `pop_front`, with a `Vec<bool>` of what it holds | `utvpi::potential` | Mutation | A state receiver over a list and a set, or two lists swapped at each round |
+| `Iterator::partition` of borrowed rows into two `Vec<&Row>` | `presburger::search` | None | `partition` over a list of rows, which Zed shares rather than borrows |
