@@ -899,10 +899,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TYPE-forms | orchestrator attempt  | 2026-11-03 08:16 | LOAD REQUIREMENT (user, 09:57): the machine is at load 110 on 32 cores; target is about 32. From now on build with CARGO_BUILD_JOBS=4, run the suite as tools/ru |
 | UNITANNOT-L7 | repair attempt 1 | 2026-11-03 07:14 | suite build failed: link of the steps test binary had undefined references inside its own codegen units (stale incremental state left by the killed run); remove |
 | UTVPI-NEAR | repair attempt 1 | 2026-11-03 06:34 | reproduced verifier: union k=256->2048 race 62.3x; units alone at k=256 GOR 546k, BFD 344k, Duong 4.54M; Duong 52.5M at 2048; per-site unit counts show ~14 unit |
-| WIDEN-WARN | verify attempt 2 | 2026-11-03 07:14 | diff read; probes via zedc run: nested mod 2**32 inside mod 2**64, unary - and mod 1 give no warning; ** , if and mod 1000 inside mod 2**64 warn; mod 2**65 warn |
 
-Merged into local main and not yet pushed (106 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (110 commits); the push follows one full test run on the merged tree:
 
+- 34e6088 WIDEN-WARN: the sort key form of main (AXIOMS-fmt) is a later-layer form in check::widen
+- 1132193 WIDEN-WARN: only +, -, *, unary - and literals wrap under mod 2 ** k
+- 2df3b8d WIDEN-WARN: warn when widening crosses a machine word
 - 4f0cc81 HOLE-oneline: the holes of a """ string in a one-line hole are one-line too
 - cf3f8d1 HOLE-oneline: reject a line break in a hole of a one-line string
 - 66ca165 plan_dag: ST-arms-quad, R10-stack, ADDITIVE-desugar done (catch-up 88c51bb)
