@@ -811,25 +811,28 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CAP-bits | verify attempt 1 | 2026-11-03 03:35 | run_tests.sh 4: 97 pieces, 0 failed (load 42-53); probe: 10**10**12 div/mod 2**10**12 times out (>20 s, rem_euclid builds the divisor); 1e(10^12)r aborts in che |
-| L25.8 | impl attempt 1 | 2026-11-03 03:49 | negative control (not committed): unit elaborated again per definition makes finding_the_mutants_scales not end in 60 s (exit 124), a re-compile per mutant make |
-| OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | start |
-| PROOFS | orchestrator attempt  | 2026-11-03 04:29 | study agent started (Osprey proofs, Lean/Mathlib, Zed math library plan) |
+| CAP-bits | repair attempt 1 | 2026-11-03 03:35 | div/mod divide by exponents first (exact or smaller dividend builds nothing), room() asks the allocator before a forced build -> KernelError::NumberTooLarge, un |
+| IDLANG | orchestrator attempt  | 2026-11-03 04:42 | study agent started (Id dataflow language vs Zed) |
+| L25.8 | repair attempt 1 | 2026-11-03 03:49 | start: fix tradeoff comment, per-row scaling test, rat */ and int-literal mutants |
+| OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | per-path unnamed-atom map in checker written (Else/If/Block/alias/call-own); tests in discard_paths.rs; building steps (load 41.74) |
 | S22a | orchestrator attempt  | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
 | SEMIRING | orchestrator attempt  | 2026-11-03 04:11 | report saved; adopting best-first fix, SCC closure, nonlinear bound note; spec agent starting |
 | ST-arms-quad | repair attempt 1 | 2026-11-03 03:35 | start, continuing wt/st-arms at 31e6e2f |
-| ST-join | impl attempt 1 | 2026-11-03 04:30 | started |
+| ST-join | impl attempt 1 | 2026-11-03 04:30 | cause: Blocks::remove split the one block (the join's either() conjunct merged with one side's k groups) once per removed constraint, O(block) each, and place() |
 | T11-S22 | orchestrator attempt  (item S22a) | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
-| T2-mid | impl attempt 1 | 2026-11-03 04:27 | started; worktree /home/luke/Work/wt/t2-mid on main b9115b2 |
-| T6 | repair attempt 4 | 2026-11-03 00:01 | baseline after rebase on 42efeec: 2 failing pieces; l01_08 case count (T6 adds 3 cases, fixed to 353); l01_29 printed-types #ioError(_) fails identically on mai |
-| TD-ends | impl attempt 2 | 2026-11-03 03:52 | corner tests pass (ends.rs, 2^200 literal, offset round trips, exact 2^63 string length); big literals now integers in preimage fwd |
-| TD-refusals | impl attempt 2 | 2026-11-03 03:52 | cause: Scope::join of two scopes whose sides hold k disjoint 4-name conjunct groups is ~k^3 (refused groups k=16/32/64: 0.14/1.3/6.9 s; decided groups 0.03/0.20 |
-| TD-values | repair attempt 2 | 2026-11-03 03:52 | started; zed-impl main still e6900f7, wt/t6 bb1f8a7 not merged; per the 03:55 order nothing changed, returning ok=false (waits for T6) |
+| T2-mid | impl attempt 1 | 2026-11-03 04:27 | baseline on main b9115b2: 97 pieces, 1 failing (l01_29_diagnostics::printed::every_printed_type_parses_back_to_itself, #ioError(_) 'holds a form of layer L2', n |
+| T6 | repair attempt 4 | 2026-11-03 00:01 | cycle_rep length by CRT+sieve (least_length); controls: old (1..).find scan passes the n^2 test (scan within the class count of the build), quadratic rescan fai |
+| TD-ends | verify attempt 1 | 2026-11-03 03:52 | run_tests.sh 4 on 88c5e7f: 97 pieces, 1 failed (l01_29 every_printed_type_parses_back_to_itself, pre-existing on main b9115b2 per T2-mid baseline) / load 35.8-4 |
+| TD-refusals | verify attempt 1 | 2026-11-03 03:52 | run_tests.sh 4: 97 pieces, 1 failed (l01_29 every_printed_type_parses_back_to_itself, corpus printed types of layer L2; branch touches no file on that path; led |
+| TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (40 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (43 commits); the push follows one full test run on the merged tree:
 
+- f2b5c0e Merge branch 'wt/plan-semiring'
+- dbdef37 STATUS: L29-print merged
 - 6111e6c L29-print: print an atom's known payload type and read it back
+- cd4e0fe plan_dag: best-first fix, closure by components, Newton
 - 4ec27f7 STATUS: in progress as of 2026-11-03 04:30
 - 001e9e4 STATUS: in progress as of 2026-11-03 04:28
 - 24aad53 STATUS: TD-tests merged
