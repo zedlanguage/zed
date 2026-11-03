@@ -1,4 +1,4 @@
-# Implementation status
+# Implementation status Repair 3: the blocks are kept up to date as conjuncts come and go (`conjuncts::Blocks`), and `project` runs a worklist over the due blocks, so tests assumed one at a time on one linked component take time near their number (chain at k = 50 to 400: 8.8 times; 41.0 at e658011); a bound that comes back to a block by the name it left by projects the tree once (`l01_39_reduced_product::linked`, COMPLEXITY.md S20). Open: 14 of 300 random tests are wider than at e658011, cause not identified; one block grown one test at a time stays quadratic or cubic, as at e658011. |
 
 This file records where the implementation stands, so that the work can be restarted from it.
 The plan is Part G of DESIGN.md, in the spec repository (`../zed`). The repository layout is
