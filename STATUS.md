@@ -917,7 +917,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | ARXIV-1003-spec | impl attempt 1 | 2026-11-03 11:09 | done: zed 0f61a00 (D, A, [GArrows], L11.1a, PROGRESS 297), zed-impl 2360363 (plan_dag L11.1a); check OK 149/0, cases 85/0, fences 149; sync --check out of date  |
 | BIT-words | merge attempt 1 | 2026-11-03 07:14 | lock released |
-| CANON-stable | merge attempt 1 | 2026-11-03 09:30 | started; waiting for merge lock held by UTVPI-NEAR:repair#3 |
 | CAP-pow32 | merge attempt 1 | 2026-11-03 08:53 | lock released |
 | CATCHUP-cross | repair attempt 1 | 2026-11-03 11:18 | suite on b0811c3+fix: 119 pieces, 0 failed (load 47-74) |
 | F44-memo | repair attempt 5 | 2026-11-03 07:14 | done: suite 119 pieces, 3 failed (2 deep_scaling zero-byte refusals fixed in bc30039: deep_scaling 9/9 and m0_09 98/98 pass; l01_25 chain_cross = main); fmt, cl |
@@ -939,8 +938,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | returning ok=true: 942fd60 merges cleanly into main 40750ce, spec a628181 into zed cc889a2; non-blocking: no log port yet so @log(#off); drops no line (L7.3 own |
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 
-Merged into local main and not yet pushed (154 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (162 commits); the push follows one full test run on the merged tree:
 
+- 7d5d668 presburger canonical(): test Codex's 6-variable system under all 720 namings; colors as a vector; cite Cardon-Crochemore and Paige-Tarjan (CANON-stable repair)
+- fd64eb4 COMPLEXITY S31, STATUS, plan_dag, ZED_PORT_GAPS: CANON-stable breadth-first order
+- cb62c1f presburger canonical(): take variables and rows breadth first in stable color order; drop the row hash (CANON-stable)
+- e224d5b COMPLEXITY S31, STATUS, plan_dag, ZED_PORT_GAPS: CANON-stable
+- 070e96d presburger canonical(), canonical.rs: cargo fmt
+- 4036a22 presburger canonical(): refine to the stable partition (CANON-stable)
+- df8e34f STATUS: in progress as of 2026-11-03 12:42
 - 7e296bf plan_dag, STATUS: UTVPI-NEAR done (tip 16d8ce6)
 - 16d8ce6 UTVPI-NEAR repair 3: test the round bound of BF-Dijkstra against Bellman-Ford; record the ruling on the union family
 - e5e34af UTVPI-NEAR repair 2: the union-family failure goes to UTVPI-union; main's numbers on that family
