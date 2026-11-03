@@ -809,14 +809,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | OSP-drop | impl attempt 1 | 2026-11-03 03:39 | started: reading briefs, DESIGN and l01_27 code |
 | S22a | impl attempt 1 | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
 | ST | merge attempt 1 | 2026-11-02 21:50 | lock released |
-| T11-fix-store | impl attempt 1 | 2026-11-03 03:35 | started |
 | T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
 | T6 | repair attempt 3 | 2026-11-03 00:01 | (b) TupleSplit and NoWitness reachable, tests added; witnesses for pure cycles and greedy box refinement; controls fail |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (21 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (24 commits); the push follows one full test run on the merged tree:
 
-- STATUS: TRADEOFF-DOC merged
+- STATUS, plan_dag: T11-fix-store merged and marked done (this commit)
+- 6328164 T11-fix-store: borrow-checker copies in the store
+- 90695ef dagview: edges for items outside the plan; plan_dag: none for two needs cells
+- f6c2444 STATUS: TRADEOFF-DOC merged
 - e86e485 Document complexity tradeoffs: narrowings and loop stops; drop the trick claim
 - 44d370e Document complexity tradeoffs at their sites
 - 95db769 STATUS: in progress as of 2026-11-03 03:43
