@@ -8,9 +8,12 @@
 //! (`meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened`); since plan item
 //! S22b, a box of `c - x` that the transfer before merged across zero (`constant_minus.rs`),
 //! whose pieces are now kept: the new result is checked by the interpreter, lies inside the one
-//! before, and is exact wherever the one before was; and a preimage found exact by classes of
-//! remainders (COMPLEXITY.md S22e) that was inexact, refused or listed before, checked against
-//! the interpreter. Each test states how many cases of each kind it finds. The scaling tests
+//! before, and is exact wherever the one before was; and a preimage now exact, with no relation,
+//! refusal or listing, that was inexact, refused or listed before, checked against the
+//! interpreter: found by classes of remainders (COMPLEXITY.md S22e), or by S22b's reflection
+//! when that makes an inexact box exact. The kinds are told apart by the result, not by the
+//! item that made it, so a box S22b made exact counts as exact, not reflected. Each test states
+//! how many cases of each kind it finds. The scaling tests
 //! then check that the chains cost `O(n log n)`.
 
 use std::sync::Arc;
@@ -322,8 +325,9 @@ fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
 }
 
 /// The cases compared, the differences found, each shown, the cases whose inexact box is
-/// narrower than the one before and still sound, and the cases found exact by classes of
-/// remainders (COMPLEXITY.md S22e) that the transfer before left inexact, refused or listed.
+/// narrower than the one before and still sound, the other boxes of `c - x` that S22b changed,
+/// and the cases now exact that the transfer before left inexact, refused or listed (by
+/// classes of remainders, COMPLEXITY.md S22e, or by S22b's reflection).
 #[derive(Default)]
 struct Diffs {
     cases: usize,
@@ -382,9 +386,11 @@ impl Diffs {
             self.narrower += 1;
             return;
         }
-        // Found exact by classes of remainders, with no relation, refusal or listing: the box
-        // equals the one before when that was exact, lies inside it otherwise, and the
-        // interpreter finds no point that meets the demand outside it or fails it inside.
+        // Now exact, with no relation, refusal or listing: the box equals the one before when
+        // that was exact, lies inside it otherwise, and the interpreter finds no point that
+        // meets the demand outside it or fails it inside. Classes of remainders (S22e) find
+        // these, and so does S22b's reflection of `c - x` when it makes an inexact box exact;
+        // such a box is counted here, before the reflected branch below is tried.
         if new != old
             && now.exact
             && !now.enumerated
@@ -443,16 +449,15 @@ impl Diffs {
         }
     }
 
-    /// [`Diffs::none_but`] with no box of `c - x` changed and none found exact by classes of
-    /// remainders.
+    /// [`Diffs::none_but`] with no box of `c - x` changed and none made exact.
     fn none(self, least: usize, narrower: usize) {
         self.none_but(least, narrower, 0, 0)
     }
 
     /// Panics, showing the first differences, when there are any, when fewer than `least`
     /// cases were compared, when the number of narrower boxes is not `narrower`, when the
-    /// number of boxes of `c - x` that S22b changed is not `reflected`, or when the number of
-    /// boxes found exact by classes of remainders is not `exact`.
+    /// number of other boxes of `c - x` that S22b changed is not `reflected`, or when the number
+    /// of boxes made exact (by classes of remainders or by S22b) is not `exact`.
     fn none_but(self, least: usize, narrower: usize, reflected: usize, exact: usize) {
         assert!(
             self.found.is_empty(),
@@ -468,12 +473,9 @@ impl Diffs {
         );
         assert_eq!(
             self.reflected, reflected,
-            "the number of boxes of `c - x` changed by S22b differs"
+            "the number of other boxes of `c - x` changed by S22b differs"
         );
-        assert_eq!(
-            self.exact, exact,
-            "the number of boxes found exact by classes of remainders changed"
-        );
+        assert_eq!(self.exact, exact, "the number of boxes made exact changed");
     }
 }
 
@@ -774,10 +776,14 @@ fn random_guarded_chains_keep_their_preimages() {
     random_guarded_chains(0, 2000, 2, 6, 39);
 }
 
-/// Random chains of every kind of guard, the second half.
+/// Random chains of every kind of guard, the second half. S22b changes 7 boxes of `c - x` here;
+/// two of them, inexact before and exact now, count as made exact (54 by classes of remainders,
+/// S22e, and 2 by S22b): the chains `(if (6 < i) { (if (7 < i) { (0 - …` and
+/// `if ((i mod 3) == 1) { min(if (i >= -9) { …`, whose results are the same on main before S22e
+/// merged (5adc3c2).
 #[test]
 fn more_random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(2000, 4000, 0, 7, 54);
+    random_guarded_chains(2000, 4000, 0, 5, 56);
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
@@ -846,7 +852,10 @@ fn random_terms_keep_their_preimages() {
                 diffs.exact("exact", &t, &ds, &cs, &d);
             }
         }
-        diffs.none_but(6800, 0, 1, 0);
+        // The one box S22b changes here, `((5 mod (3 - x)) mod abs(5))` with `x` in `[-4, ∞)`
+        // and the demand `[-3, 5]`, is now exact (`x` in `[-4, 2] | [4, ∞)`, where `3 - x` is
+        // not zero) and was inexact (`[-4, ∞)`), so it counts as made exact, not reflected.
+        diffs.none_but(6800, 0, 0, 1);
     });
 }
 
