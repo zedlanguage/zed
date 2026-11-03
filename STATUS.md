@@ -932,8 +932,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | verify attempt 2 | 2026-11-03 06:34 | fmt rc=0, clippy -D warnings rc=0 on a18cf9e; diff read (negsssp.rs, utvpi.rs race, tests, docs); suite run_tests.sh 2 running; open from verify#1 not addressed |
 | XR3-synth | orchestrator attempt  | 2026-11-03 11:44 | owner: direct agent, started 11:43 |
 
-Merged into local main and not yet pushed (145 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (147 commits); the push follows one full test run on the merged tree:
 
+- 23bd2ca INFER-FIELD-desugar: desugar.txt already matches DESIGN; test that InferType and FieldType are refused naming L10
+- 0e8ba54 plan_dag, STATUS: BIT-words done (tip aed59e4)
 - aed59e4 L1.39a repair: test that Ck::known reads a 20,000-binding chain on an 8 MiB stack
 - 7089dbb L1.39a repair: C26 says what a complete solution needs; STATUS note on lazy binder reading
 - 867865c L1.39a repair: binder values read lazily for bit words and exponents, on an explicit stack; nest, chain and unread-constant scaling tests
