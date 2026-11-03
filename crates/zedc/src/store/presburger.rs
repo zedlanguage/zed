@@ -992,6 +992,9 @@ struct Parts {
     /// The atoms of the parts, found the first time they are asked for ([`Parts::atoms`]).
     /// They are asked only of a disjunct, which is not changed once it is made.
     atoms: OnceCell<OrdSet<Atom>>,
+    /// The number of constraints in the parts, a disjunct shared by two disjunctions counted
+    /// in each, found with the atoms.
+    size: OnceCell<usize>,
 }
 
 impl Parts {
@@ -1071,9 +1074,19 @@ impl Parts {
                     set.insert(a.clone());
                 }
             }
+            let size = (p.ors.iter().flatten())
+                .map(|d| *d.size.get().expect("a size found below"))
+                .fold(p.cons.len(), usize::saturating_add);
             let _ = p.atoms.set(set);
+            let _ = p.size.set(size);
         }
         self.atoms.get().expect("the set just found")
+    }
+
+    /// The number of constraints in the parts ([`Parts::atoms`]).
+    fn size(&self) -> usize {
+        self.atoms();
+        *self.size.get().expect("the size found with the atoms")
     }
 }
 
@@ -2617,8 +2630,12 @@ fn no_points(syms: &[Atom]) -> Each {
 
 /// [`project_each`] of the settled parts `p` of a formula, which is `whole` when it is given.
 /// A disjunct is projected from the parts of it, shared, not copied, and the base groups it
-/// touches, found from its atoms, which are found once ([`Parts::atoms`]), so that a nest of
-/// disjunctions `d` deep costs each disjunct once, not once for each level above it.
+/// touches, found from its atoms, which are found once ([`Parts::atoms`]), or from the base's
+/// atoms when they are fewer, so that a nest of disjunctions `d` deep costs each disjunct once,
+/// not once for each level above it. A disjunct is asked only for the symbols that every
+/// disjunct with a point beside it touches, and a hull is tightened over the whole formula only
+/// when no point is found at its bounds from a small disjunct ([`Around`]), so that no level
+/// reads the whole nest below it either.
 fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result<Each, Refusal> {
     let none = || no_points(syms);
     let mut skipped: Vec<Refusal> = Vec::new();
@@ -2636,12 +2653,11 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
     // own group, and a disjunct is projected with the groups its atoms touch, onto the symbols
     // in them, the others keeping the base's hull. A projection then costs the groups each
     // disjunct touches, not the whole base for each disjunct and each symbol.
-    // With two disjunctions or more, the hulls are tightened over the whole formula; below the
-    // top it is rebuilt from the parts, and only when a hull has two finite bounds, the only
-    // hull a tightening moves. The disjunctions are kept for that, shared.
+    // With two disjunctions or more, a hull with two finite bounds, the only hull a tightening
+    // moves, is tightened over the whole formula unless a point is found at each bound first
+    // ([`Around`]); below the top the formula is rebuilt from the parts for that.
     let ors = std::mem::take(&mut p.ors);
     let n_ors = ors.len();
-    let kept_ors = (whole.is_none() && n_ors > 1).then(|| ors.clone());
     let linked = Linked::of(std::mem::take(&mut p.cons));
     let bases: HashMap<usize, Formula> = (0..linked.held.len())
         .filter(|r| !linked.held[*r].is_empty())
@@ -2664,26 +2680,84 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
         let g = group(s).expect("a symbol's group");
         syms_of.entry(g).or_default().push(k);
     }
+    // The symbols no base constraint mentions.
+    let free: Vec<&Atom> = index
+        .keys()
+        .copied()
+        .filter(|s| !linked.ids.contains_key(*s))
+        .collect();
     let top = Formula::top();
     let base_of = |r: usize| bases.get(&r).unwrap_or(&top);
     let mut out: Vec<Result<IntervalSet, Refusal>> = syms
         .iter()
         .map(|s| hull_from(base_of(group(s).expect("a symbol's group")), s, &model))
         .collect();
-    for ds in ors {
+    // For each disjunction, its disjuncts with a point and their projections, each sorted by
+    // symbol; read only to tighten a hull, so kept only with two disjunctions or more.
+    let mut seen: Vec<Vec<Projected>> = Vec::new();
+    for ds in &ors {
         // For each symbol, the join of its projections over the satisfiable disjuncts that
         // touch it (`None` once one is refused), and how many touch it; a satisfiable disjunct
         // that does not touch it gives the base's hull, which leaves it as it is.
         let mut acc: HashMap<usize, (Option<IntervalSet>, usize)> = HashMap::new();
         let (mut sat, mut refused) = (0usize, false);
-        for d in ds {
-            // Not fixed (COMPLEXITY S26): each level reads every atom below it here and
-            // returns a hull for every symbol they touch, so a nest `d` deep that names new
-            // symbols at each level costs O(d²) (about 3.7x per doubling of `d`, as at the base
-            // commit). A fix needs hulls passed up only for the symbols a level changes.
-            let mut roots: Vec<usize> = d.atoms().iter().filter_map(&group).collect();
+        let mut found_here = Vec::new();
+        // A symbol changes only when every disjunct with a point touches it, so the disjuncts
+        // are read smallest first, and each is asked only for the symbols that every disjunct
+        // with a point before it touched (`None`: all of them). A deep disjunct beside a small
+        // one is then asked for the few symbols the small one names, not for every symbol of
+        // the nest below it.
+        let mut order: Vec<&Parts> = ds.iter().map(|d| &**d).collect();
+        order.sort_by_key(|d| d.atoms().len());
+        let mut wanted: Option<Vec<usize>> = None;
+        for d in order {
+            // The groups the disjunct touches, found from its atoms or from the base's,
+            // whichever are fewer, so that a level does not read every atom below it.
+            let atoms = d.atoms();
+            let mut roots: Vec<usize> = if atoms.len() <= linked.ids.len() {
+                (atoms.iter())
+                    .filter_map(|a| linked.ids.get(a).map(|i| linked.root(*i)))
+                    .collect()
+            } else {
+                (linked.ids.iter())
+                    .filter(|(a, _)| atoms.contains(*a))
+                    .map(|(_, i)| linked.root(*i))
+                    .collect()
+            };
             roots.sort_unstable();
             roots.dedup();
+            let ks: Vec<usize> = match &wanted {
+                Some(ws) => ws
+                    .iter()
+                    .copied()
+                    .filter(|&k| match linked.ids.get(&syms[k]) {
+                        Some(i) => roots.binary_search(&linked.root(*i)).is_ok(),
+                        None => atoms.contains(&syms[k]),
+                    })
+                    .collect(),
+                None => {
+                    let named: Vec<&Atom> = if atoms.len() <= free.len() {
+                        (atoms.iter())
+                            .filter(|a| index.contains_key(a) && !linked.ids.contains_key(*a))
+                            .collect()
+                    } else {
+                        free.iter()
+                            .copied()
+                            .filter(|s| atoms.contains(*s))
+                            .collect()
+                    };
+                    let groups = roots
+                        .iter()
+                        .copied()
+                        .chain(named.into_iter().filter_map(group));
+                    let mut ks: Vec<usize> = groups
+                        .flat_map(|r| syms_of.get(&r).into_iter().flatten().copied())
+                        .collect();
+                    ks.sort_unstable();
+                    ks.dedup();
+                    ks
+                }
+            };
             // The disjunct's parts with the base groups it touches, its constraints sorted as
             // [`nnf`] sorts them and its disjunctions shared.
             let mut fs: Vec<Formula> = roots.iter().map(|r| base_of(*r).clone()).collect();
@@ -2691,12 +2765,8 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
             let mut q = Parts::of(Formula::and(fs));
             q.cons.sort();
             q.ors.extend(d.ors.iter().cloned());
-            let ks: Vec<usize> = roots
-                .iter()
-                .flat_map(|r| syms_of.get(r).into_iter().flatten().copied())
-                .collect();
             let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
-            // A disjunct that touches no symbol is only asked whether it has a point, as
+            // A disjunct asked for no symbol is only asked whether it has a point, as
             // [`decide`] asks it.
             let found_rs = settle(q).and_then(|q| match q {
                 None => Ok((no_points(&sub), false)),
@@ -2724,6 +2794,7 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
                 continue;
             }
             sat += 1;
+            let mut kept = Vec::new();
             for (j, &k) in ks.iter().enumerate() {
                 if let Err(r) = &rs[j] {
                     skipped.push(*r);
@@ -2733,7 +2804,19 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
                     e.0.take()
                         .and_then(|u| rs[j].as_ref().ok().map(|h| u.join(h)));
                 e.1 += 1;
+                if n_ors > 1
+                    && let Ok(h) = &rs[j]
+                {
+                    kept.push((k, h.clone()));
+                }
             }
+            if n_ors > 1 {
+                found_here.push((d, kept));
+            }
+            wanted = Some(ks);
+        }
+        if n_ors > 1 {
+            seen.push(found_here);
         }
         if refused {
             continue;
@@ -2752,33 +2835,96 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
     }
     let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if matches!(s.bounds(), Some((End::Fin(_), End::Fin(_)))));
     if n_ors > 1 && out.iter().any(finite) {
-        // Not fixed (COMPLEXITY S26): below the top the formula is rebuilt, and each
-        // tightening asks `decide` of the whole of it, so a nest `d` deep with two
-        // disjunctions or more and a hull with two finite bounds at each level costs
-        // O(d² log w), `w` the hull's width (about 4x per doubling of `d`, as at the base
-        // commit). A fix needs a decision procedure that keeps the levels below as it adds a
-        // bound.
-        let rebuilt = kept_ors.map(|ors| {
-            let cons = linked.cons.clone();
-            Parts {
-                cons,
-                ors,
-                ..Parts::default()
+        let at = Around::of(&linked.cons, &ors, &seen);
+        let mut rebuilt: Option<Formula> = None;
+        for (k, (o, sym)) in out.iter_mut().zip(syms).enumerate() {
+            let Ok(s) = o else { continue };
+            let Some((End::Fin(lo), End::Fin(hi))) = s.bounds() else {
+                continue;
+            };
+            if at.bound(k, sym, lo, true) && at.bound(k, sym, hi, false) {
+                continue;
             }
-            .to_formula()
-        });
-        let f = whole
-            .or(rebuilt.as_ref())
-            .expect("the formula, given or rebuilt");
-        for (o, sym) in out.iter_mut().zip(syms) {
-            if let Ok(s) = o {
-                *o = tighten(f, sym, s.clone());
-            }
+            let f = match whole {
+                Some(f) => f,
+                None => rebuilt.get_or_insert_with(|| at.formula(None)),
+            };
+            *o = tighten(f, sym, s.clone());
         }
     }
     skipped.sort_unstable();
     skipped.dedup();
     Ok((out, skipped))
+}
+
+/// A disjunct with a point and its projections, each with the index of its symbol, sorted.
+type Projected<'a> = (&'a Parts, Vec<(usize, IntervalSet)>);
+
+/// A level of [`project_parts`] with two disjunctions or more, read to find a point at a bound
+/// of a hull before the hull is tightened by bisection over the whole formula. A point found
+/// with the largest disjunction replaced by one small disjunct of it shows the bound is met, so
+/// the bisection would leave it where it is; a level then costs its small parts, not the whole
+/// nest below it once for each level above.
+struct Around<'a> {
+    cons: &'a [Con],
+    ors: &'a [Vec<Rc<Parts>>],
+    /// For each disjunction, its disjuncts with a point and their projections, sorted by symbol.
+    seen: &'a [Vec<Projected<'a>>],
+    /// The disjunction with the most constraints.
+    largest: usize,
+}
+
+impl<'a> Around<'a> {
+    fn of(
+        cons: &'a [Con],
+        ors: &'a [Vec<Rc<Parts>>],
+        seen: &'a [Vec<Projected<'a>>],
+    ) -> Around<'a> {
+        let size = |ds: &Vec<Rc<Parts>>| ds.iter().fold(0usize, |n, d| n.saturating_add(d.size()));
+        let largest = (0..ors.len()).max_by_key(|&i| size(&ors[i])).unwrap_or(0);
+        Around {
+            cons,
+            ors,
+            seen,
+            largest,
+        }
+    }
+
+    /// The formula of the level, with the disjunction `i`, when given, replaced by its
+    /// disjunct `d`.
+    fn formula(&self, pick: Option<(usize, &Parts)>) -> Formula {
+        let cons = self.cons.iter().map(|c| Formula::Con(c.clone()));
+        let ors = self.ors.iter().enumerate().map(|(j, ds)| match pick {
+            Some((i, d)) if i == j => d.to_formula(),
+            _ => Formula::Or(ds.iter().map(|d| d.to_formula()).collect()),
+        });
+        Formula::and(cons.chain(ors).collect())
+    }
+
+    /// Whether the level is shown to have a point with the symbol `k`, `sym`, at most `v`
+    /// (`lower`) or at least `v`: the largest disjunction is replaced by its smallest disjunct
+    /// with a point whose projection of `sym` holds `v`, or that was not asked for it.
+    fn bound(&self, k: usize, sym: &Atom, v: i64, lower: bool) -> bool {
+        let holds = |rs: &[(usize, IntervalSet)]| match rs.binary_search_by_key(&k, |(j, _)| *j) {
+            Ok(j) => rs[j].1.contains(v),
+            Err(_) => true,
+        };
+        let Some(seen) = self.seen.get(self.largest) else {
+            return false;
+        };
+        let small = seen.iter().filter(|(_, rs)| holds(rs));
+        let Some((d, _)) = small.min_by_key(|(d, _)| d.size()) else {
+            return false;
+        };
+        let (x, v) = (Lin::atom(sym.clone()), Lin::constant(v));
+        let con = if lower {
+            Con::ge(&v, &x)
+        } else {
+            Con::ge(&x, &v)
+        };
+        let f = self.formula(Some((self.largest, d)));
+        matches!(decide(&Formula::and(vec![f, Formula::Con(con)])), Ok(true))
+    }
 }
 
 /// `set`, holding every value of `sym` over `f`'s points, with each finite bound raised or
