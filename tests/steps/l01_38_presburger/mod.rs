@@ -16,7 +16,8 @@ mod omega;
 mod oracle;
 mod preimage;
 pub(crate) mod random;
-mod scaling;
+pub(crate) mod scaling;
+mod tight;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

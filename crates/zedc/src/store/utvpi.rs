@@ -5,59 +5,128 @@
 //!
 //! The graph has a node for each literal, `+x` at `2j` and `-x` at `2j + 1`. The row
 //! `l1 + l2 <= k`, with `l1` and `l2` literals, is the two edges `¬l1 → l2` and `¬l2 → l1` of
-//! weight `k`, and `l1 <= k` is the edge `¬l1 → l1` of weight `2k`. A rational point `v` of the
-//! rows is a potential, `p(+x) = v[x]` and `p(-x) = -v[x]`, under which no edge is shorter than
-//! the difference of its ends; so the graph has a negative cycle exactly when the rows have no
-//! rational point, and its zero-weight cycles are exactly the cycles of its tight edges, those
-//! whose weight is the difference of their ends. Along tight edges the path from `+x` to `-x`
-//! weighs `p(-x) - p(+x) = -2·v[x]`, odd exactly when `v[x]` has denominator 2. The test is then
-//! one simplex run and one strongly connected components pass over the tight edges.
+//! weight `k`, and `l1 <= k` is the edge `¬l1 → l1` of weight `2k`. The graph has a negative
+//! cycle exactly when it has no potential, an integer `p` at each node under which no edge
+//! `u → v` of weight `w` has `p(v) > p(u) + w`; the shortest paths from a source joined to
+//! every node by an edge of weight 0 give one when there is. Its zero-weight cycles are then
+//! exactly the cycles of its tight edges, those with `p(v) = p(u) + w`, since the slacks of a
+//! cycle sum to its weight and none is below zero; and along tight edges the path from `+x` to
+//! `-x` weighs `p(-x) - p(+x)`. The test is then one shortest-path search and one strongly
+//! connected components pass over the tight edges. No rational arithmetic is needed.
+//!
+//! The search is the Bellman–Ford–Moore queue with Tarjan's subtree disassembly [BFCT]: when a
+//! node's distance falls, the subtree below it in the shortest-path tree is taken out of the
+//! tree, since each of its distances will fall with it, and the edge's tail lying in that
+//! subtree closes a negative cycle. The work is at most the nodes times the edges, and in
+//! the tests near the edges.
 //!
 //! [UTVPI]: S. K. Lahiri and M. Musuvathi, "An Efficient Decision Procedure for UTVPI
 //! Constraints", FroCoS 2005.
+//! [BFCT]: B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms",
+//! Mathematical Programming 85 (1999), 277–311.
+
+use std::collections::VecDeque;
 
 use super::int::Int;
-use super::simplex::{Q, Simplex, Term};
+use super::simplex::Term;
 
 /// Whether the rows, each of one or two terms with unit coefficients, over `n` variables, have
 /// no integer point.
 pub(crate) fn integer_empty(n: usize, rows: &[(&[Term], &Int)]) -> bool {
-    let mut lp = Simplex::new(n, rows.iter().copied());
-    if !lp.feasible() {
-        return true;
-    }
-    let p = |node: usize| {
-        let v = &lp.val[node / 2];
-        if node.is_multiple_of(2) {
-            v.clone()
-        } else {
-            v.neg()
-        }
-    };
     // The literal `-c·x` of a term `c·x`, as a node.
     let lit = |(j, c): &Term| if c.is_negative() { 2 * j } else { 2 * j + 1 };
-    let mut out: Vec<Vec<usize>> = vec![Vec::new(); 2 * n];
-    let mut edge = |from: usize, to: usize, w: Q| {
-        if p(to) == p(from).add(&w) {
-            out[from].push(to);
-        }
-    };
+    let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); 2 * n];
     for (a, k) in rows {
         match a {
             [t] => {
                 let l = lit(t);
-                edge(l ^ 1, l, Q::of(*k + *k));
+                out[l ^ 1].push((l, *k + *k));
             }
             [s, t] => {
                 let (l1, l2) = (lit(s), lit(t));
-                edge(l1 ^ 1, l2, Q::of((*k).clone()));
-                edge(l2 ^ 1, l1, Q::of((*k).clone()));
+                out[l1 ^ 1].push((l2, (*k).clone()));
+                out[l2 ^ 1].push((l1, (*k).clone()));
             }
             _ => unreachable!("a row of one or two terms"),
         }
     }
-    let comp = components(&out);
-    (0..n).any(|j| comp[2 * j] == comp[2 * j + 1] && lp.val[j].d == Int::from(2))
+    let Some(p) = potential(&out) else {
+        return true;
+    };
+    let tight: Vec<Vec<usize>> = out
+        .iter()
+        .zip(&p)
+        .map(|(es, pu)| {
+            es.iter()
+                .filter(|(v, w)| p[*v] == pu + w)
+                .map(|(v, _)| *v)
+                .collect()
+        })
+        .collect();
+    let comp = components(&tight);
+    let two = Int::from(2);
+    (0..n).any(|j| {
+        comp[2 * j] == comp[2 * j + 1] && !(&p[2 * j + 1] - &p[2 * j]).mod_floor(&two).is_zero()
+    })
+}
+
+/// A potential of the graph `out`, its edges `u → (v, w)`, or `None` when it has a negative
+/// cycle: the distances from a source joined to each node by an edge of weight 0.
+fn potential(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
+    let n = out.len();
+    let root = n;
+    let mut d = vec![Int::ZERO; n];
+    // The shortest-path tree in preorder, as a ring through `next` and `prev`, the source
+    // first, with each node's depth; at first each node is a child of the source.
+    let mut next: Vec<usize> = (1..=n).chain([0]).collect();
+    let mut prev: Vec<usize> = [n].into_iter().chain(0..n).collect();
+    let mut depth = vec![1usize; n + 1];
+    depth[root] = 0;
+    let mut in_tree = vec![true; n];
+    let mut queued = vec![true; n];
+    let mut queue: VecDeque<usize> = (0..n).collect();
+    while let Some(u) = queue.pop_front() {
+        queued[u] = false;
+        if !in_tree[u] {
+            continue;
+        }
+        for (v, w) in &out[u] {
+            let v = *v;
+            let to = &d[u] + w;
+            if to >= d[v] {
+                continue;
+            }
+            if v == u {
+                return None;
+            }
+            // Takes `v` and its subtree out of the tree; `u` among them closes a negative cycle.
+            if in_tree[v] {
+                let mut c = next[v];
+                while depth[c] > depth[v] {
+                    if c == u {
+                        return None;
+                    }
+                    in_tree[c] = false;
+                    c = next[c];
+                }
+                next[prev[v]] = c;
+                prev[c] = prev[v];
+            }
+            // `v` becomes the first child of `u`.
+            depth[v] = depth[u] + 1;
+            next[v] = next[u];
+            prev[next[u]] = v;
+            next[u] = v;
+            prev[v] = u;
+            in_tree[v] = true;
+            d[v] = to;
+            if !queued[v] {
+                queued[v] = true;
+                queue.push_back(v);
+            }
+        }
+    }
+    Some(d)
 }
 
 /// The strongly connected component of each node (Tarjan), with an explicit stack.

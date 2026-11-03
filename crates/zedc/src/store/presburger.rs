@@ -1183,12 +1183,14 @@ fn parts(vars: usize, base: Vec<(Row, Rel)>, want: bool) -> Result<Option<Vec<In
 /// eliminations: by Pugh's lemma [Omega, sec. 2.3] the problem has an integer point exactly
 /// when its dark shadow has one or one of the splinters of a dark elimination has one. The
 /// splinters are searched only when the dark shadows have no point, each once, without
-/// splinters of their own; the first point found is the answer, and otherwise the first
-/// refusal, so the answer does not depend on which splinter is tried first except in which
-/// point or refusal is given. A refused dark shadow is the answer: the splinters hold only
-/// the points it misses, so they could turn the refusal into a point but never into an empty
-/// answer, and searching them would run the test again once per lower bound of each dark
-/// elimination.
+/// splinters of their own. Pugh's lemma holds for either side of an elimination (for the
+/// upper bounds, it is the lemma for `-x`), so the splinters taken are those of the side with
+/// fewer bounds. They are tried in the order of the steps and of the rows, which is fixed by
+/// the problem: the first point is the answer, and so is the first refusal, since a splinter
+/// that is refused leaves the answer refused unless a later one has a point, and searching on
+/// for that point would run the test again for every bound when none has one. A refused dark
+/// shadow is the answer likewise: the splinters hold only the points it misses, so they could
+/// turn the refusal into a point but never into an empty answer.
 fn search(vars: usize, base: &[(Row, Rel)], want: bool) -> Result<Option<Vec<Int>>, Refusal> {
     let mut top = Omega::new(vars, base, want, true);
     match top.run() {
@@ -1196,33 +1198,37 @@ fn search(vars: usize, base: &[(Row, Rel)], want: bool) -> Result<Option<Vec<Int
         Leaf::Empty => {}
         Leaf::Refused(r) => return Err(r),
     }
-    let mut refused = None;
     for &(at, n) in &top.gray {
         let Step::Chosen(j, rows) = &top.steps[at] else {
             unreachable!("a dark elimination is a chosen step")
         };
-        let m = rows
+        let (lowers, uppers): (Vec<&Row>, Vec<&Row>) =
+            rows.iter().partition(|r| r.at(*j).is_positive());
+        // The splinters of the side with fewer rows, each bound measured against the largest
+        // coefficient of the other side; the lower side on a tie.
+        let (side, other) = if uppers.len() < lowers.len() {
+            (uppers, lowers)
+        } else {
+            (lowers, uppers)
+        };
+        let m = other
             .iter()
-            .map(|r| -r.at(*j))
+            .map(|r| r.at(*j).abs())
             .max()
-            .expect("an inexact elimination has an upper bound");
-        for lower in rows.iter().filter(|r| r.at(*j).is_positive()) {
-            let Some(mut child) = top.splinter(base, at, n, lower, *j, &m) else {
+            .expect("an inexact elimination has both bounds");
+        for bound in side {
+            let Some(mut child) = top.splinter(base, at, n, bound, *j, &m) else {
                 continue;
             };
             match child.run() {
                 Leaf::Point(v) => return Ok(Some(v)),
                 Leaf::Empty if !child.gap => {}
-                Leaf::Empty => {
-                    refused.get_or_insert(Refusal::Shadows);
-                }
-                Leaf::Refused(r) => {
-                    refused.get_or_insert(r);
-                }
+                Leaf::Empty => return Err(Refusal::Shadows),
+                Leaf::Refused(r) => return Err(r),
             }
         }
     }
-    refused.map_or(Ok(None), Err)
+    Ok(None)
 }
 
 /// The equalities `x - y == d` as a forest with union by rank, so that each root is found in
@@ -2006,9 +2012,10 @@ impl Omega {
     }
 
     /// The splinter of the dark elimination whose step is at `at`, the system then having
-    /// `vars` variables, for its lower bound `a·x + l >= 0` on `x = x[j]`, with `m` the
-    /// largest upper coefficient of `x`: the problem with `a·x + l == k` for a fresh
-    /// `0 <= k <= (a·m - a - m) / m` [Omega, sec. 2.3], or `None` when that range is empty.
+    /// `vars` variables, for its bound `r >= 0` on `x = x[j]` with coefficient `±a` there, and
+    /// `m` the largest coefficient of `x`, in magnitude, among the bounds of the other side:
+    /// the problem with `r == k` for a fresh `0 <= k <= (a·m - a - m) / m` [Omega, sec. 2.3;
+    /// for an upper bound, the same of `-x`], or `None` when that range is empty.
     /// It is built from the given rows and the definitions made before the step, so nothing of
     /// this run's state is copied: its points are points of the problem, and it holds the
     /// points of the splinter of the system at the step, each of which extends to one.
@@ -2017,11 +2024,11 @@ impl Omega {
         base: &[(Row, Rel)],
         at: usize,
         vars: usize,
-        lower: &Row,
+        bound: &Row,
         j: usize,
         m: &Int,
     ) -> Option<Omega> {
-        let a = lower.at(j);
+        let a = &bound.at(j).abs();
         let top = (&(&(a * m) - a) - m).div_floor(m);
         if top.is_negative() {
             return None;
@@ -2047,7 +2054,7 @@ impl Omega {
             }
         }
         let a = merge(
-            &lower.a,
+            &bound.a,
             &Int::ONE,
             &[(k, Int::ONE)],
             &-&Int::ONE,
@@ -2056,7 +2063,7 @@ impl Omega {
         rows.push((
             Row {
                 a,
-                k: lower.k.clone(),
+                k: bound.k.clone(),
             },
             Rel::Eq,
         ));

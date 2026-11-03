@@ -6,10 +6,11 @@
 
 use std::sync::Arc;
 
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
 
-fn x(i: usize) -> Lin {
+pub(super) fn x(i: usize) -> Lin {
     Lin::atom(Atom::Sym(Arc::from(format!("x{i}"))))
 }
 
@@ -273,5 +274,76 @@ fn a_chain_into_a_refused_block_scales() {
         64,
         Err(Refusal::Growth),
         chain_into_block,
+    );
+}
+
+/// `rows` random rows `±x[i] ± x[j] + k >= 0` over `n` variables, each holding at a random
+/// point with slack 0 or 1, so that many are tight there and the system has a point: decided
+/// by the parity test, whose shortest-path search must give integer potentials on graphs with
+/// long paths of tight edges.
+fn random_unit_rows(n: usize, rows: usize, seed: u64) -> Formula {
+    let mut g = Rng::new(seed);
+    let p: Vec<i64> = (0..n).map(|_| g.int(-50, 50)).collect();
+    let mut r = Vec::new();
+    for _ in 0..rows {
+        let i = g.below(n);
+        let mut j = g.below(n);
+        if j == i {
+            j = (i + 1) % n;
+        }
+        let t = [(i, 1 - 2 * g.int(0, 1)), (j, 1 - 2 * g.int(0, 1))];
+        let at: i64 = t.iter().map(|(i, c)| c * p[*i]).sum();
+        r.push(row(&t, g.int(0, 1) - at, false));
+    }
+    Formula::and(r)
+}
+
+#[test]
+fn random_rows_of_two_unit_coefficients_with_a_point_are_decided() {
+    for n in [16, 64, 256, 1024] {
+        for d in [1, 2, 4] {
+            let f = random_unit_rows(n, d * n, 0xabc + n as u64);
+            assert_eq!(decide(&f), Ok(true), "{n} variables, {} rows", d * n);
+            let m = satisfiable(&f).expect("answered").expect("a point");
+            assert!(f.holds(&m), "{n} variables, {} rows", d * n);
+        }
+    }
+}
+
+#[test]
+fn random_rows_of_two_unit_coefficients_scale() {
+    decides("random rows of two unit coefficients", 256, Ok(true), |n| {
+        random_unit_rows(n, 4 * n, 0xabc)
+    });
+}
+
+/// A chain `2·x[i] - 5 <= 3·x[i+1] <= 2·x[i] + 5` with Pugh's example on the link at the
+/// middle: empty, since that link is, and no shadow shows it. The first splinter of the chain's
+/// dark eliminations that is refused is the answer, [`Refusal::Shadows`]; searching on ran the
+/// test again once per bound.
+fn pugh_in_a_chain(n: usize) -> Formula {
+    let mut r = Vec::new();
+    for i in 0..n {
+        let (a, b) = (i, i + 1);
+        if i == n / 2 {
+            r.push(row(&[(a, 11), (b, 13)], -27, false));
+            r.push(row(&[(a, -11), (b, -13)], 45, false));
+            r.push(row(&[(a, 7), (b, -9)], 10, false));
+            r.push(row(&[(a, -7), (b, 9)], 4, false));
+        } else {
+            r.push(row(&[(b, 3), (a, -2)], 5, false));
+            r.push(row(&[(a, 2), (b, -3)], 5, false));
+        }
+    }
+    Formula::and(r)
+}
+
+#[test]
+fn pughs_example_in_a_chain_scales() {
+    decides(
+        "Pugh's example in a chain",
+        512,
+        Err(Refusal::Shadows),
+        pugh_in_a_chain,
     );
 }
