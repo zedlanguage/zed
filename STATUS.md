@@ -819,24 +819,30 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| IDLANG-spec | orchestrator attempt  | 2026-11-03 05:20 | brief written; launching spec agent |
-| OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | per-path unnamed-atom map in checker written (Else/If/Block/alias/call-own); tests in discard_paths.rs; building steps (load 41.74) |
-| S22a | impl attempt 1 | 2026-11-03 03:01 | neg controls (load ~45): off-by-one Pa cut in slice_treap -> 15 of 89 l01_25 tests fail, twice; clip hull 1 too narrow -> 34 of 89 fail, twice; both reverted |
-| ST-arms-quad | repair attempt 2 | 2026-11-03 03:35 | reproduced on 904eeab (load 43): distinct nest 0.60G/2.01G/7.09G instr at d=60/120/240 (3.3x,3.5x per 2x); two-choice nest with cap x<=2d 0.38G/1.30G/4.93G at d |
-| T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | neg controls (load ~45): off-by-one Pa cut in slice_treap -> 15 of 89 l01_25 tests fail, twice; clip hull 1 too narrow -> 34 of 89 fail, twice; both reverted |
+| IDLANG-spec+NONCOMM | merge attempt  | 2026-11-03 05:34 | lock released; zed-impl 2c33435, zed 1025886 |
+| OSP-drop2 | verify attempt 1 | 2026-11-03 04:27 | probe: _ = apply(lookup, 1) and _ = first((lookup(1), 2)) (value int / #notFound, no else) accepted on branch, rejected on main a155283: generic call result's a |
+| S22a | repair attempt 2 | 2026-11-03 03:01 | cause of cross exponential found: enumerate() called stage::ends (tree walk of the shared term, 2^k) before its O(1) box test; reordered: cross k=22 1.01 s -> 0 |
+| ST-arms-quad | verify attempt 2 | 2026-11-03 03:35 | started on af39546 (base 03d3d41); no earlier verify lines for af39546; load 36.14 32.87 37.69 |
+| T11-S22 | repair attempt 2 (item S22a) | 2026-11-03 03:01 | cause of cross exponential found: enumerate() called stage::ends (tree walk of the shared term, 2^k) before its O(1) box test; reordered: cross k=22 1.01 s -> 0 |
 | T2-mid | impl attempt 1 | 2026-11-03 04:27 | elab Tables collect on explicit stack committed; deep tests l01_16 pass, old code overflows; shallow +1.7%; load 27.42 |
-| T6 | repair attempt 3 | 2026-11-03 00:01 | union tests in definitions N (n 64 and 186, N 2210 and 17765, 8.04x), inputs built before timing under fresh names: build 8.0-8.2x, decided 10.1-11.8x (limit 24 |
-| TD-ends | verify attempt 2 | 2026-11-03 03:52 | run_tests.sh 4 on c664182: 97 pieces, 1 failed (l01_29 diagnostics, checking it is the baseline one) / load 18.9-36.2 |
+| T6 | repair attempt 3 | 2026-11-03 00:01 | build test controls (not committed, reverted): Group::new scanning every kept definition by name 23.5x (passes, limit 24); comparing bodies did not end in 300 s |
+| TD-ends | repair attempt 2 | 2026-11-03 03:52 | reproduced on c664182 at load 28-40: x**k+1 forward 17 ms/349 ms/15.5 s at k=1e6/8e6/1e8; preimage x**1e8+1>=50 14.7 s (0.7 ms without +1); x**4<=2**1e8 3.0 s;  |
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (10 commits, with this STATUS commit; spec commits c58d3d1, 1542e46, c825507 in local zed main); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (14 commits); the push follows one full test run on the merged tree:
 
+- 2c33435 Merge branch 'wt/plan-noncomm'
+- a155283 Merge branch 'wt/plan-idlang'
+- f824074 fences: NonCommRing fence and line shifts from the DESIGN edit
+- 03b0870 STATUS: L25.8 merged; mutate::beside builds a literal's neighbors with CAP-bits' Rat arithmetic, a refused build an error naming its bits
+- 2941471 plan_dag: L24.10 bounded unfolding of generation loops, needed by L24.9; refresh design fences and l01_07 snapshots
 - 76c39f1 L25.8: COMPLEXITY F58 per-mutant cost O(size of the definition), chain test and control numbers; STATUS test count; ZED_PORT_GAPS entry for child_mut
-- 6a193f5 L25.8: a mutant is one copy of its definition changed in place (child_mut), not a rebuild along its path that copied each inline child; scaling test on the mutants of one chain
-- e247420 L25.8: *->/ by the product's type, integer literal mutants at their adopted carrier, a row per function in the running scaling test, tradeoff comment names its test and trigger
+- 6a193f5 L25.8: a mutant is one copy of its definition changed in place (child_mut), not a rebuild along its path that copied each inline child; scaling test o
+- e247420 L25.8: *->/ by the product's type, integer literal mutants at their adopted carrier, a row per function in the running scaling test, tradeoff comment 
 - 90d762f L25.8: COMPLEXITY F56, STATUS, ZED_PORT_GAPS; step-unit counts and usage line in other steps' tests
 - 3ca608e L25.8: zedc test --mutate
+- 4692c3a STATUS: CAP-bits merged
 - 01fda12 CAP-bits repair 2: String of a number asks for the memory of its digits; a refusal is NumberTooLarge
 - e3b51e9 CAP-bits repair: exact div and mod build nothing; a refused build is NumberTooLarge, not an abort
 - 2bf39d2 CAP-bits: exact numbers without a size limit
