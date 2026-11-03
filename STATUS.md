@@ -807,25 +807,27 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CAP-bits | impl attempt 1 | 2026-11-03 03:35 | survey done; writing symbolic prime-power Rat in num.rs |
-| L25.8 | impl attempt 1 | 2026-11-03 03:49 | started |
-| OSP-drop | impl attempt 1 | 2026-11-03 03:39 | check written (check/mod.rs discard+entries, Ty::dropped); 12 l01_27 discard tests and 2 scaling tests pass, load 21 |
+| CAP-bits | impl attempt 1 | 2026-11-03 03:35 | negative control (materialized 10^n, n=2^17 vs 2^20): 62.8M -> 1363M instructions, 21.7x, fails limit 3; symbolic (n=2^20 vs 2^23): 178753 -> 203141, 1.1x; cont |
+| L25.8 | impl attempt 1 | 2026-11-03 03:49 | mutate.rs + --mutate built; examples work; measured: mutant 0->-1 of guard(x)=if x>0 {w(w)} else {x} runs forever (zedc test on it killed at 20 s, exit 124), so |
+| L29-print | impl attempt 1 | 2026-11-03 04:06 | start |
+| OSP-drop | repair attempt 1 | 2026-11-03 03:39 | start: rebase wt/osp-drop on main, Row::WritesNothing, else defaults inside if/block arms |
 | S22a | impl attempt 1 | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
-| ST-arms-quad | impl attempt 1 | 2026-11-03 03:35 | cause found: not in arms() itself; (1) preimage.rs Tx::cached clones every Formula into the memo at insert, O(n*depth) in relation_of (35/134/438 ms at d=125/25 |
-| ST-deep-stack | impl attempt 1 | 2026-11-03 03:35 | Formula Drop/Clone/Eq/Ord/Hash/Debug/Display, fold, map_cons, forget, walk, holds_as, nnf on explicit stacks; deep tests pass; scaling 12500->100000 levels 193. |
+| ST-arms-quad | verify attempt 1 | 2026-11-03 03:35 | started on 31e6e2f (base 03d3d41); no earlier verify lines; load 33.46 32.17 28.78 |
+| ST-deep-stack | impl attempt 1 | 2026-11-03 03:35 | constant factor vs base 03d3d41 (instructions, whole groups, one thread): l01_39 192.2G->203.4G (+5.8%), l01_38::random +4.3%, ::omega +2.6%, l01_25 +1.0%; Form |
 | ST | merge attempt 1 | 2026-11-02 21:50 | lock released |
 | T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
-| T6 | repair attempt 3 | 2026-11-03 00:01 | (b) TupleSplit and NoWitness reachable, tests added; witnesses for pure cycles and greedy box refinement; controls fail |
-| TD-ends | impl attempt 1 | 2026-11-03 03:52 | started |
-| TD-refusals | impl attempt 1 | 2026-11-03 03:52 | started |
-| TD-tests | impl attempt 1 | 2026-11-03 03:52 | start: StopKind::Outside tests at fold/gen/fix, zed-native opt_level none test |
-| TD-values | impl attempt 1 | 2026-11-03 03:52 | start: Type::values without a cap |
+| T6 | repair attempt 4 | 2026-11-03 00:01 | start: continue from c196c66 on wt/t6; open: pinwheel superlinear, cycle_rep lcm, canonical form, union control, contains memo address key |
+| TD-ends | impl attempt 2 | 2026-11-03 03:52 | start; worktree has uncommitted work from impl#1 (6 store files, last edit 04:04:54), checking it is idle before continuing |
+| TD-refusals | impl attempt 2 | 2026-11-03 03:52 | resuming impl#1's uncommitted work (product.rs Refused/Warning, refused.rs tests; last edit 04:03; workflow resumed 04:06, no process in worktree) |
+| TD-tests | impl attempt 2 | 2026-11-03 03:52 | fixed impl#1's corrupted UTF-8 in two preimage.rs comments and a garbled levels.rs doc line; committed c091145; red controls rerun: no Outside stop fails 4 stop |
+| TD-values | repair attempt 2 | 2026-11-03 03:52 | started; zed-impl main still e6900f7, wt/t6 bb1f8a7 not merged; per the 03:55 order nothing changed, returning ok=false (waits for T6) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (26 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (27 commits); the push follows one full test run on the merged tree:
 
-- STATUS: TD-docs merged
+- 42efeec STATUS: TD-docs merged
 - 5f387d6 TD-docs: COMPLEXITY rows C1-C23 for the tradeoff sites; emptiness is sound and not complete; splinters one level deep
+- e6900f7 STATUS: in progress as of 2026-11-03 03:53
 - d6f3f05 STATUS, plan_dag: T11-fix-store merged and marked done
 - 6328164 T11-fix-store: borrow-checker copies in the store
 - 90695ef dagview: edges for items outside the plan; plan_dag: none for two needs cells
