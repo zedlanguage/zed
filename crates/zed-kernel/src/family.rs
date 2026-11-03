@@ -24,13 +24,15 @@ use crate::value::Value;
 /// The keys from a family's top level down to one of its leaves.
 pub type Keypath = Vec<Value>;
 
-/// The number that names one family as it was built, so that provenance can find a family's
-/// failures from those of the family it was made from. Copies share it; a family changed in
-/// place takes a new one. Ids are drawn once each and never reused, and a walk only tests them
-/// for equality: what it finds does not depend on their values. The empty family has id 0.
+/// The number that names one family, sequence ([`crate::Items`]) or list of field names
+/// ([`crate::value::Fields`]) as it was built, so that provenance can find a family's failures
+/// from those of the family it was made from, and a walk can know a shared part met again.
+/// Copies share it; a family changed in place takes a new one. Ids are drawn once each and
+/// never reused, and a walk only tests them for equality: what it finds does not depend on
+/// their values. The empty family, sequence and list have id 0.
 pub(crate) type Id = u64;
 
-/// The ids a thread draws from, a block at a time, so that threads building families do not
+/// The ids a thread draws from, a block at a time, so that threads building values do not
 /// share one counter.
 const BLOCK: Id = 1 << 16;
 static BLOCKS: AtomicU64 = AtomicU64::new(1);
@@ -39,8 +41,8 @@ thread_local! {
     static NEXT: Cell<(Id, Id)> = const { Cell::new((0, 0)) };
 }
 
-/// A new id. Block 0 is never drawn, so no family built non-empty has id 0.
-fn fresh_id() -> Id {
+/// A new id. Block 0 is never drawn, so nothing built non-empty has id 0.
+pub(crate) fn fresh_id() -> Id {
     NEXT.with(|next| {
         let (mut id, mut end) = next.get();
         if id == end {

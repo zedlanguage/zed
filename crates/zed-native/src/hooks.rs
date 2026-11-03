@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, KernelError, Pattern, Prim, Term, Text, Value};
+use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
 use zedc::zir::memory::Mode;
@@ -51,7 +51,7 @@ pub(crate) struct Run {
 #[derive(Clone)]
 struct Shape {
     name: Arc<str>,
-    fields: Arc<[Arc<str>]>,
+    fields: Fields,
     order: Arc<[usize]>,
 }
 

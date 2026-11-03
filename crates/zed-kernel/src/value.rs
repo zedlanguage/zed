@@ -19,7 +19,7 @@ use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 
 use crate::deep::{self, Part};
-use crate::family::Family;
+use crate::family::{Family, Id, fresh_id};
 use crate::num::{Exact, Rat};
 use crate::text::Text;
 
@@ -78,16 +78,95 @@ pub struct Atom {
     pub name: Arc<str>,
     /// The field names of a struct payload, sorted; empty for a tuple payload. Shared, so a
     /// copy of the atom is O(1).
-    pub fields: Arc<[Arc<str>]>,
+    pub fields: Fields,
     /// The payload's values, one per field of a struct payload; empty for a bare atom.
     pub args: Items,
+}
+
+/// The field names of a struct payload, shared, with the [`Id`] of the list as it was built, so
+/// a walk can read a list shared by many atoms once. It is one pointer wide, and `None` for no
+/// fields, which keeps an [`Atom`] at 48 bytes and a [`Value`] at 56 next to the id in
+/// [`Items`].
+#[derive(Clone, Default)]
+pub struct Fields(Option<Arc<Names>>);
+
+struct Names {
+    id: Id,
+    names: Box<[Arc<str>]>,
+}
+
+impl Fields {
+    /// The id of the list: copies share it, and no other list has it. Empty lists have id 0.
+    pub(crate) fn id(&self) -> Id {
+        self.0.as_ref().map_or(0, |n| n.id)
+    }
+}
+
+impl Deref for Fields {
+    type Target = [Arc<str>];
+
+    fn deref(&self) -> &[Arc<str>] {
+        self.0.as_ref().map_or(&[], |n| &n.names)
+    }
+}
+
+impl From<Vec<Arc<str>>> for Fields {
+    fn from(names: Vec<Arc<str>>) -> Self {
+        match names.is_empty() {
+            true => Fields::default(),
+            false => Fields(Some(Arc::new(Names {
+                id: fresh_id(),
+                names: names.into(),
+            }))),
+        }
+    }
+}
+
+impl FromIterator<Arc<str>> for Fields {
+    fn from_iter<I: IntoIterator<Item = Arc<str>>>(names: I) -> Self {
+        Fields::from(names.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl PartialEq for Fields {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id() || **self == **other
+    }
+}
+
+impl Eq for Fields {}
+
+impl Ord for Fields {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.id() == other.id() {
+            true => Ordering::Equal,
+            false => (**self).cmp(&**other),
+        }
+    }
+}
+
+impl PartialOrd for Fields {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl fmt::Debug for Fields {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (**self).fmt(f)
+    }
 }
 
 /// The values inside a tuple, a keypath or a payload, shared: a copy is a reference count, so
 /// reading a variable that holds a tuple of any size is O(1). It owns its drop, comparison and
 /// `Debug` form so that each runs on the heap, whatever the depth (see [`crate::deep`]).
+///
+/// The second field is the sequence's [`Id`], drawn when the sequence is built: copies share
+/// it, no other sequence has it, and the sequence is never changed in place, so a walk that
+/// meets a shared sequence again knows it by its id (memo keys are ids or structure, never
+/// addresses). Empty sequences have id 0.
 #[derive(Clone, Default)]
-pub struct Items(Arc<[Value]>);
+pub struct Items(Arc<[Value]>, Id);
 
 impl Items {
     /// The values, in order.
@@ -96,13 +175,13 @@ impl Items {
     }
 
     /// Whether `self` and `other` are one shared sequence, so equal without reading them.
-    pub(crate) fn ptr_eq(&self, other: &Items) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+    pub(crate) fn same(&self, other: &Items) -> bool {
+        self.1 == other.1
     }
 
-    /// The address of the sequence, which identifies it while it is borrowed.
-    pub(crate) fn addr(&self) -> usize {
-        Arc::as_ptr(&self.0).cast::<Value>().addr()
+    /// The id of the sequence.
+    pub(crate) fn id(&self) -> Id {
+        self.1
     }
 
     /// Whether another holder shares the sequence, so a walk of a value can meet it twice. A
@@ -111,11 +190,11 @@ impl Items {
         Arc::strong_count(&self.0) > 1
     }
 
-    /// The addresses of `a` and `b` when a walk over both can meet the pair again: when
-    /// either is shared. Empty sequences are read at once.
+    /// The ids of `a` and `b` when a walk over both can meet the pair again: when either is
+    /// shared. Empty sequences are read at once.
     pub(crate) fn pair(a: &Items, b: &Items) -> Option<deep::Pair> {
         let again = (a.is_shared() || b.is_shared()) && !(a.is_empty() && b.is_empty());
-        again.then(|| (a.addr(), b.addr()))
+        again.then_some((a.1, b.1))
     }
 
     /// The values, as a vector: moved out when this is their only holder, and each copied by
@@ -145,7 +224,7 @@ impl From<Vec<Value>> for Items {
         // The empty slice is one static allocation; `Arc::from` would allocate per call.
         match values.is_empty() {
             true => Items::default(),
-            false => Items(values.into()),
+            false => Items(values.into(), fresh_id()),
         }
     }
 }
@@ -254,7 +333,7 @@ impl Value {
     pub fn atom(name: &str) -> Self {
         Value::Atom(Atom {
             name: name.into(),
-            fields: Arc::default(),
+            fields: Fields::default(),
             args: Items::default(),
         })
     }
@@ -263,7 +342,7 @@ impl Value {
     pub fn atom_with(name: &str, args: Vec<Value>) -> Self {
         Value::Atom(Atom {
             name: name.into(),
-            fields: Arc::default(),
+            fields: Fields::default(),
             args: args.into(),
         })
     }
@@ -571,10 +650,14 @@ mod tests {
 
     #[test]
     fn a_value_is_56_bytes() {
-        // Each value of every tuple, list and family costs this much; an id in `Items` made it
-        // 64 and cost 13 to 27% more peak memory on runs without provenance (COMPLEXITY.md K25).
+        // Each value of every tuple, list and family costs this much; an id in `Items` with an
+        // atom's fields two words wide made it 64 and cost 13 to 27% more peak memory on runs
+        // without provenance (COMPLEXITY.md K25). The fields are one word wide, so the atom,
+        // the widest kind, holds the id in 48 bytes (ADDR-keys).
         assert_eq!(size_of::<Value>(), 56);
-        assert_eq!(size_of::<Items>(), 16);
+        assert_eq!(size_of::<Atom>(), 48);
+        assert_eq!(size_of::<Items>(), 24);
+        assert_eq!(size_of::<Fields>(), 8);
     }
 
     #[test]

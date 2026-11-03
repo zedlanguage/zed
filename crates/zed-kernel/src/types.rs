@@ -40,7 +40,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::deep;
 use crate::num::Rat;
-use crate::value::Value;
+use crate::value::{Items, Value};
 use bdd::{Form, Part};
 
 /// A type: the set of values it denotes. Types are ordered by their digests first, so two
@@ -102,7 +102,7 @@ enum Member<'v> {
     Known(bool),
     /// In the type exactly when the tuple of these values is, read in place: an atom's payload
     /// was copied into a tuple to be tested, so a value nested `d` deep was copied `d` times.
-    Tuple(Type, &'v [Value]),
+    Tuple(Type, &'v Items),
 }
 
 /// A hash of a literal: equal literals hash alike. A big integer or a `rat` hashes its
@@ -867,26 +867,25 @@ impl Type {
     /// Whether `v` is in `self`, for a decidable `self`. Each tuple and payload of `v` is tested
     /// once against each component type it meets, innermost first, so the cost follows the
     /// size of `v` and its depth is limited by memory alone. A test is kept under the type, by
-    /// its contents, and the sequence of `v` it reads, by the sequence's address and length as
-    /// `Items::addr` does: `v` is borrowed for the call, so no sequence is freed and an address
-    /// names one sequence while the call runs, and the kept tests are never iterated, so the
-    /// answer does not depend on where `v` is in memory.
+    /// its contents, and the sequence of `v` it reads, by the sequence's id (`Items::id`): copies
+    /// of one sequence share it and no other sequence has it, and the kept tests are never
+    /// iterated, so the answer does not depend on the ids' values or on where `v` is in memory.
     ///
-    /// Exception to keying by content (deterministic checking): the address is the
-    /// occurrence id of a shared sequence. A content key would hash a sequence in full at
-    /// each test, O(size) per node, and a value whose halves are one shared value at every
-    /// level has `2^d` paths and `d` sequences, so its content is exponential to read while
-    /// the address keeps the work linear in the sequences. Two sequences equal in content at
-    /// different addresses are tested twice, which costs time and never changes the answer.
-    /// Test: `l01_23_subtyping::rec::membership_by_sequence_address_is_deterministic` (shared
-    /// against apart, three allocation orders, one thread against a fresh thread per query).
-    /// At the port: a hash-consed id of the value (ZED_PORT_GAPS.md, the `deep::walk` row).
+    /// Exception to keying by content (deterministic checking): the id names one occurrence of
+    /// a shared sequence. A content key would hash a sequence in full at each test, O(size) per
+    /// node, and a value whose halves are one shared value at every level has `2^d` paths and
+    /// `d` sequences, so its content is exponential to read while the id keeps the work linear
+    /// in the sequences. Two sequences equal in content built apart are tested twice, which
+    /// costs time and never changes the answer. Tests:
+    /// `l01_23_subtyping::rec::membership_by_sequence_id_is_deterministic` (shared against
+    /// apart, three allocation orders, one thread against a fresh thread per query) and
+    /// `membership_of_a_value_whose_halves_share_scales`.
     pub fn contains(&self, v: &Value) -> bool {
         let first = match self.member(v) {
             Member::Known(b) => return b,
             Member::Tuple(ty, xs) => (ty, xs),
         };
-        let key = |t: &Type, xs: &[Value]| (t.clone(), xs.as_ptr().addr(), xs.len());
+        let key = |t: &Type, xs: &Items| (t.clone(), xs.id());
         let mut known = HashMap::new();
         let mut todo = vec![first];
         loop {

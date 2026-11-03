@@ -28,7 +28,7 @@ use std::{mem, slice};
 
 use zed_kernel::term::Pattern;
 use zed_kernel::types::{Type, Universe};
-use zed_kernel::value::{Atom, Items, Value};
+use zed_kernel::value::{Atom, Fields, Items, Value};
 
 use zed_kernel::Text;
 
@@ -153,7 +153,7 @@ pub enum Obj {
         /// The atom's name.
         name: Arc<str>,
         /// The field names of a struct payload, sorted; empty for a tuple payload.
-        fields: Arc<[Arc<str>]>,
+        fields: Fields,
         /// The payload.
         args: Vec<Word>,
     },

@@ -122,7 +122,7 @@ fn type_err(p: Prim, x: &Value) -> Result<Value, KernelError> {
 /// A part of a value that more than one holder can share, read once by [`room_to_print`].
 #[derive(PartialEq, Eq, Hash)]
 enum Shared {
-    Items(usize),
+    Items(crate::family::Id),
     Family(crate::family::Id),
 }
 
@@ -190,7 +190,7 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
     let mut known: HashMap<Shared, Option<u128>> = HashMap::new();
     let mut open: Vec<Option<u128>> = vec![Some(0)];
     // The length of a struct payload's field names, `name: ` each, by their shared list.
-    let mut names: HashMap<(usize, usize), u128> = HashMap::new();
+    let mut names: HashMap<(crate::family::Id, usize), u128> = HashMap::new();
     let mut widest = BigUint::zero();
     let add = |open: &mut Vec<Option<u128>>, n: Option<u128>| {
         let sum = open.last_mut().expect("the whole value is open");
@@ -244,7 +244,7 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
                 if !a.args.is_empty() {
                     let fields = &a.fields[..a.fields.len().min(a.args.len())];
                     let named = *names
-                        .entry((fields.as_ptr().addr(), fields.len()))
+                        .entry((a.fields.id(), fields.len()))
                         .or_insert_with(|| fields.iter().map(|k| k.len() as u128 + 2).sum());
                     own += 2 + 2 * (a.args.len() as u128 - 1) + named;
                 }
@@ -254,7 +254,7 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
         add(&mut open, Some(own));
         let Some(items) = items else { continue };
         if items.is_shared() {
-            let key = Shared::Items(items.addr());
+            let key = Shared::Items(items.id());
             if let Some(&n) = known.get(&key) {
                 add(&mut open, n);
                 continue;

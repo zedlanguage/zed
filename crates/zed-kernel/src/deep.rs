@@ -15,12 +15,11 @@ use imbl::OrdMap;
 use imbl::ordmap::Iter;
 use imbl::shared_ptr::DefaultSharedPtr;
 
-use crate::family::Family;
+use crate::family::{Family, Id};
 use crate::value::{Atom, Items, Value};
 
-/// The addresses of two shared sequences under comparison. A walk keeps a pair only while it
-/// borrows both values, so no address can be freed and reused while the pair is held.
-pub(crate) type Pair = (usize, usize);
+/// The ids of two shared sequences under comparison ([`Items::id`]).
+pub(crate) type Pair = (Id, Id);
 
 /// A part of a value whose owner is being dropped. A family's map is freed whole: the map's own
 /// nodes nest only as deep as its height, and the values inside it land here in turn.
@@ -108,7 +107,7 @@ enum Relation {
 
 /// The two sequences of entries under comparison at one depth.
 enum Level<'a> {
-    /// The two sequences, and the pair of their addresses when either is shared, so a pair
+    /// The two sequences, and the pair of their ids when either is shared, so a pair
     /// met again through the sharing is not read again.
     Items(
         slice::Iter<'a, Value>,
@@ -146,7 +145,7 @@ fn items<'a>(a: &'a Items, b: &'a Items, r: Relation) -> Step<'a> {
     match r {
         // One shared sequence is bitwise equal to itself; the IEEE 754 relations read it,
         // since a NaN inside is not equal to itself.
-        Relation::Identity | Relation::Total if a.ptr_eq(b) => Step::Same,
+        Relation::Identity | Relation::Total if a.same(b) => Step::Same,
         Relation::Identity | Relation::SurfaceEq if a.len() != b.len() => Step::Ends(None),
         _ => Step::Enter(Level::Items(a.iter(), b.iter(), r, Items::pair(a, b))),
     }
@@ -362,12 +361,12 @@ struct Copying<'a> {
     left: slice::Iter<'a, Value>,
     done: Vec<Value>,
     shape: Shape<'a>,
-    /// The address of the sequence copied, when it is shared and so can be met again.
-    shared: Option<usize>,
+    /// The id of the sequence copied, when it is shared and so can be met again.
+    shared: Option<Id>,
 }
 
 impl<'a> Copying<'a> {
-    fn new(from: &'a [Value], shape: Shape<'a>, shared: Option<usize>) -> Self {
+    fn new(from: &'a [Value], shape: Shape<'a>, shared: Option<Id>) -> Self {
         Copying {
             left: from.iter(),
             done: Vec::with_capacity(from.len()),
@@ -383,7 +382,7 @@ impl<'a> Copying<'a> {
 pub(crate) fn copy(from: &[Value], leaf: fn(&Value) -> Value) -> Vec<Value> {
     let mut level = Copying::new(from, Shape::Tuple, None);
     let mut above = Vec::new();
-    let mut copied: HashMap<usize, Items> = HashMap::new();
+    let mut copied: HashMap<Id, Items> = HashMap::new();
     loop {
         let (xs, shape) = match level.left.next() {
             Some(Value::Tuple(xs)) => (xs, Shape::Tuple),
@@ -406,7 +405,7 @@ pub(crate) fn copy(from: &[Value], leaf: fn(&Value) -> Value) -> Vec<Value> {
                 None => return level.done,
             },
         };
-        let shared = xs.is_shared().then(|| xs.addr());
+        let shared = xs.is_shared().then(|| xs.id());
         match shared.and_then(|at| copied.get(&at)) {
             Some(items) => level.done.push(shape.wrap(items.clone())),
             None => above.push(mem::replace(&mut level, Copying::new(xs, shape, shared))),
@@ -434,7 +433,7 @@ pub(crate) fn all_leaves(from: &[Value], test: fn(&Value) -> bool) -> bool {
                 None => return true,
             },
         };
-        if inner.is_shared() && !read.insert(inner.addr()) {
+        if inner.is_shared() && !read.insert(inner.id()) {
             continue;
         }
         above.push(mem::replace(&mut level, inner.iter()));

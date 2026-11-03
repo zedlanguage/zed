@@ -403,13 +403,13 @@ fn products_of_recursive_types() {
     }
 }
 
-/// `Type::contains` keeps each test by the address of the sequence it reads, which names one
-/// sequence while the value is borrowed. A tree whose two halves are one shared value at every
-/// level has `2^d` paths and `d` sequences: each is tested once, so depth 60 is decided at
-/// once. The answers agree with those on copies built apart, whose sequences are all distinct,
-/// and do not change when the values are rebuilt elsewhere in memory.
+/// `Type::contains` keeps each test by the id of the sequence it reads (`Items::id`), which
+/// copies of one sequence share and no other sequence has. A tree whose two halves are one
+/// shared value at every level has `2^d` paths and `d` sequences: each is tested once, so depth
+/// 60 is decided at once. The answers agree with those on copies built apart, whose sequences
+/// are all distinct, and do not change when the values are rebuilt elsewhere in memory.
 #[test]
-fn membership_by_sequence_address_is_deterministic() {
+fn membership_by_sequence_id_is_deterministic() {
     let t = tree().instance(vec![Type::int()]).remove(0);
     let shared = |d: usize, x: Value| (0..d).fold(x, |v, _| fork(v.clone(), v));
     fn apart(d: usize, x: &Value) -> Value {
@@ -476,4 +476,30 @@ fn membership_by_sequence_address_is_deterministic() {
         .collect();
     assert_eq!(batch, alone);
     assert_eq!(batch.iter().filter(|&&b| b).count(), 6);
+}
+
+/// A value `d` levels deep whose two halves are one shared value at every level has `2^d`
+/// paths and `d` sequences; membership tests each sequence once, by its id, so the work is of
+/// order `d`. Without the kept tests it is of order `2^d` and does not end at depth 512.
+#[test]
+fn membership_of_a_value_whose_halves_share_scales() {
+    let t = tree().instance(vec![Type::int()]).remove(0);
+    let shared = |d: usize, x: Value| (0..d).fold(x, |v, _| fork(v.clone(), v));
+    let built: std::collections::HashMap<usize, (Value, Value)> = [64, 512]
+        .into_iter()
+        .map(|d| {
+            let good = shared(d, leaf(Value::Int(1)));
+            let bad = shared(d, leaf(Value::str("x")));
+            (d, (good, bad))
+        })
+        .collect();
+    zed_tests::scaling::check(
+        "membership of a value whose halves share, by depth",
+        64,
+        |d| {
+            let (good, bad) = &built[&d];
+            assert!(t.contains(good));
+            assert!(!t.contains(bad));
+        },
+    );
 }

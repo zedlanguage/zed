@@ -78,7 +78,7 @@ struct Closure<'t> {
 /// How a call of a [`Closure`] lowers.
 enum Call<'t> {
     /// Its body in place, under the bindings it was defined under: the name occurs once.
-    Inline { body: &'t Term, env: Scope<'t> },
+    Inline { body: At<'t>, env: Scope<'t> },
     /// An `apply` of its `lambda` node's output, in the region at depth `at`.
     Node { fun: Src, at: usize },
 }
@@ -136,8 +136,9 @@ struct Lower<'t> {
     fresh: usize,
     /// How often each name occurs in the term, binders of the same name counted together.
     uses: HashMap<Arc<str>, usize>,
-    /// The [`Uses`] of each lambda body met so far, by address.
+    /// The [`Uses`] of each lambda body met so far, by occurrence id.
     bodies: Bodies,
+    places: Places,
 }
 
 /// What a lambda body uses from outside it: a port it reads or pushes, or a name free in it.
@@ -150,14 +151,72 @@ enum Use {
 /// The distinct [`Use`]s of a lambda body, in the order of their first occurrence.
 type Uses = Arc<[Use]>;
 
-/// The [`Uses`] of each lambda body, by its address; the body is kept so the address stays its.
-type Bodies = HashMap<*const Term, (Arc<Term>, Uses)>;
+/// The [`Uses`] of each lambda body, by its occurrence id in [`Places`].
+type Bodies = HashMap<usize, Uses>;
+
+/// A subterm of the term being lowered with its occurrence id in [`Places`].
+#[derive(Clone, Copy)]
+struct At<'t> {
+    t: &'t Term,
+    id: usize,
+}
+
+/// Occurrence ids of the subterms of the term being lowered, given by one walk from the root,
+/// so they depend only on where a subterm stands in the term, never on where it is in memory
+/// (step ADDR-keys). The root is 0, and the parts of occurrence `i`, in the order of [`parts`],
+/// are `first[i]`, `first[i] + 1`, and so on.
+// Complexity tradeoff: a value shared at several places of the term gets an id at each, so
+// the walk is linear in the term's size as a tree, not in its distinct subterms. Lowering is a
+// walk of the term as a tree, linear in that size already, so the order of the whole is kept.
+struct Places {
+    first: Vec<usize>,
+}
+
+impl Places {
+    /// The ids of the subterms of `t`, calling `f` on `t` and every subterm. A term nests as
+    /// deep as its program, so the subterms still to number are kept on a heap stack.
+    fn new(t: &Term, f: &mut dyn FnMut(&Term)) -> Places {
+        let mut first = vec![0];
+        let mut todo = vec![(t, 0)];
+        let mut ps = Vec::new();
+        while let Some((t, i)) = todo.pop() {
+            f(t);
+            parts(t, &mut ps);
+            let next = first.len();
+            first[i] = next;
+            first.resize(next + ps.len(), 0);
+            todo.extend(ps.drain(..).enumerate().map(|(j, p)| (p, next + j)));
+        }
+        Places { first }
+    }
+
+    /// The id of the first part of `at`.
+    fn first(&self, at: At<'_>) -> usize {
+        self.first[at.id]
+    }
+
+    /// `t`, part `j` of `at` in the order of [`parts`], with its id.
+    fn part<'t>(&self, at: At<'t>, j: usize, t: &'t Term) -> At<'t> {
+        debug_assert!(
+            {
+                let mut ps = Vec::new();
+                parts(at.t, &mut ps);
+                std::ptr::eq(ps[j], t)
+            },
+            "part {j} of a term is the subterm given"
+        );
+        At {
+            t,
+            id: self.first(at) + j,
+        }
+    }
+}
 
 /// The graph of the closed term `t`, validated. A prelude word is read only where the term
 /// binds it, as [`crate::interp::prelude`] does.
 pub fn lower(t: &Term) -> Result<Region, String> {
     let mut uses: HashMap<Arc<str>, usize> = HashMap::new();
-    visit(t, &mut |s| {
+    let places = Places::new(t, &mut |s| {
         if let Term::Var(x) = s {
             *uses.entry(x.clone()).or_default() += 1;
         }
@@ -168,8 +227,9 @@ pub fn lower(t: &Term) -> Result<Region, String> {
         fresh: 0,
         uses,
         bodies: HashMap::new(),
+        places,
     };
-    let v = l.term(t)?;
+    let v = l.term(At { t, id: 0 })?;
     let out = l.src(v)?;
     let f = l.frames.pop().expect("the root frame");
     let mut root = f.region;
@@ -434,8 +494,8 @@ impl<'t> Lower<'t> {
 
     /// The ports `b`, a lambda body, reads or pushes, itself or by calling a function free in
     /// it that does, in the order of their first use in the text.
-    fn ports(&mut self, b: &Arc<Term>) -> Vec<Arc<str>> {
-        let uses = body_uses(b, &mut self.bodies);
+    fn ports(&mut self, b: At<'_>) -> Vec<Arc<str>> {
+        let uses = body_uses(b, &mut self.bodies, &self.places);
         let mut out: Vec<Arc<str>> = Vec::new();
         let mut seen: HashSet<Arc<str>> = HashSet::new();
         for u in uses.iter() {
@@ -462,7 +522,7 @@ impl<'t> Lower<'t> {
     /// The value of `t`, lowered into the current region. A term nests as deep as its program,
     /// so the walk keeps the work still to do on heap stacks (step T2-mid): it does what the
     /// recursive walk did, in the same order, so the graph is the same.
-    fn term(&mut self, t: &'t Term) -> Result<Val<'t>, String> {
+    fn term(&mut self, t: At<'t>) -> Result<Val<'t>, String> {
         let mut s = Stacks {
             jobs: vec![Job::Term(t)],
             vals: Vec::new(),
@@ -476,15 +536,15 @@ impl<'t> Lower<'t> {
     }
 
     /// Schedules the lowering of `t`, or lowers it now when it holds no term.
-    fn enter(&mut self, t: &'t Term, s: &mut Stacks<'t>) -> Result<(), String> {
+    fn enter(&mut self, here: At<'t>, s: &mut Stacks<'t>) -> Result<(), String> {
         let at = self.top();
-        let region = |kind, params: &'t [Arc<str>], body: &'t Term| Job::Region {
+        let region = |kind, params: &'t [Arc<str>], body: At<'t>| Job::Region {
             kind,
             params: Params::Names(Cow::Borrowed(params)),
             ports: Vec::new(),
             body: Body::Term(body),
         };
-        match t {
+        match here.t {
             Term::Lit(v) => s.vals.push(Val::Src(Src::Const(v.clone()), at)),
             Term::Var(x) => {
                 let v = self.lookup(x)?;
@@ -492,13 +552,19 @@ impl<'t> Lower<'t> {
             }
             Term::PrimFn(p) => s.vals.push(Val::Prim(*p)),
             Term::Let(x, e, body) => {
-                let ports = match &**e {
-                    Term::Lam(_, b) => self.ports(b),
-                    _ => Vec::new(),
+                let e = self.places.part(here, 0, e);
+                let body = self.places.part(here, 1, body);
+                let b = match e.t {
+                    Term::Lam(_, b) => Some(self.places.part(e, 0, b)),
+                    _ => None,
+                };
+                let ports = match b {
+                    Some(b) => self.ports(b),
+                    None => Vec::new(),
                 };
                 s.jobs.push(Job::Let { x, body });
-                match &**e {
-                    Term::Lam(ps, b) if !ports.is_empty() => {
+                match (e.t, b) {
+                    (Term::Lam(ps, _), Some(b)) if !ports.is_empty() => {
                         if self.uses.get(x).is_none_or(|&n| n <= 1) {
                             let call = Call::Inline {
                                 body: b,
@@ -524,7 +590,7 @@ impl<'t> Lower<'t> {
                             });
                         }
                     }
-                    e => s.jobs.push(Job::Term(e)),
+                    _ => s.jobs.push(Job::Term(e)),
                 }
             }
             Term::Lam(ps, body) => {
@@ -533,9 +599,14 @@ impl<'t> Lower<'t> {
                     fixed: 0,
                     regions: 1,
                 });
+                let body = self.places.part(here, 0, body);
                 s.jobs.push(region(RegionKind::Function, ps, body));
             }
-            Term::App(f, args) => Self::apply(f, Args::Terms(args), s),
+            Term::App(f, args) => {
+                let f = self.places.part(here, 0, f);
+                let first = self.places.first(here) + 1;
+                self.apply(f, Args::Terms(args, first), s)
+            }
             Term::Prim(p, args) => {
                 if let Some(k) = p.arity()
                     && k != args.len()
@@ -548,9 +619,11 @@ impl<'t> Lower<'t> {
                     ));
                 }
                 s.jobs.push(Job::Leaf(Op::Prim(*p), args.len()));
-                s.args(Args::Terms(args), true);
+                s.args(Args::Terms(args, self.places.first(here)), true);
             }
             Term::If(c, a, b) => {
+                let p = |j, t| self.places.part(here, j, t);
+                let (c, a, b) = (p(0, c), p(1, a), p(2, b));
                 s.jobs.push(Job::Node {
                     op: Op::If,
                     fixed: 1,
@@ -567,17 +640,21 @@ impl<'t> Lower<'t> {
                     fixed: 1,
                     regions: arms.len(),
                 });
-                for (p, body) in arms.iter().rev() {
+                for (j, (p, body)) in arms.iter().enumerate().rev() {
                     s.jobs.push(Job::Region {
                         kind: RegionKind::Match,
                         params: Params::Names(Cow::Owned(names(p))),
                         ports: Vec::new(),
-                        body: Body::Term(body),
+                        body: Body::Term(self.places.part(here, 1 + j, body)),
                     });
                 }
-                s.srcs(&[scrutinee]);
+                s.srcs(&[self.places.part(here, 0, scrutinee)]);
             }
             Term::Fam { domain, var, body } => {
+                let (domain, body) = (
+                    self.places.part(here, 0, domain),
+                    self.places.part(here, 1, body),
+                );
                 s.jobs.push(Job::Node {
                     op: Op::Fam,
                     fixed: 1,
@@ -596,12 +673,14 @@ impl<'t> Lower<'t> {
                 vf,
                 witness,
             } => {
+                let p = |j, t| self.places.part(here, j, t);
                 s.jobs.push(Job::Leaf(Op::Reindex(witness.clone()), 3));
-                s.srcs(&[family, kf, vf]);
+                s.srcs(&[p(0, family), p(1, kf), p(2, vf)]);
             }
             Term::Discard { family, sel } => {
+                let p = |j, t| self.places.part(here, j, t);
                 s.jobs.push(Job::Leaf(Op::Discard, 2));
-                s.srcs(&[family, sel]);
+                s.srcs(&[p(0, family), p(1, sel)]);
             }
             Term::Fold {
                 family,
@@ -610,6 +689,7 @@ impl<'t> Lower<'t> {
                 depth,
                 ev,
             } => {
+                let p = |j, t| self.places.part(here, j, t);
                 let leaf = Op::Fold {
                     depth: *depth,
                     identity: identity.is_some(),
@@ -618,11 +698,11 @@ impl<'t> Lower<'t> {
                 match identity {
                     Some(id) => {
                         s.jobs.push(Job::Leaf(leaf, 3));
-                        s.srcs(&[family, op, id]);
+                        s.srcs(&[p(0, family), p(1, op), p(2, id)]);
                     }
                     None => {
                         s.jobs.push(Job::Leaf(leaf, 2));
-                        s.srcs(&[family, op]);
+                        s.srcs(&[p(0, family), p(1, op)]);
                     }
                 }
             }
@@ -633,44 +713,48 @@ impl<'t> Lower<'t> {
                 key,
                 kind,
                 ev,
-            } => match kind {
-                FixKind::Lattice { join } => {
-                    let op = Op::Fix {
-                        lattice: true,
-                        ev: ev.clone(),
-                    };
-                    s.jobs.push(Job::Node {
-                        op,
-                        fixed: 2,
-                        regions: 1,
-                    });
-                    s.jobs.push(Job::Region {
-                        kind: RegionKind::Loop,
-                        params: Params::Fresh,
-                        ports: Vec::new(),
-                        body: Body::Apply(step),
-                    });
-                    s.srcs(&[init, join]);
+            } => {
+                let p = |j, t| self.places.part(here, j, t);
+                let (init, step) = (p(0, init), p(1, step));
+                match kind {
+                    FixKind::Lattice { join } => {
+                        let op = Op::Fix {
+                            lattice: true,
+                            ev: ev.clone(),
+                        };
+                        s.jobs.push(Job::Node {
+                            op,
+                            fixed: 2,
+                            regions: 1,
+                        });
+                        s.jobs.push(Job::Region {
+                            kind: RegionKind::Loop,
+                            params: Params::Fresh,
+                            ports: Vec::new(),
+                            body: Body::Apply(step),
+                        });
+                        s.srcs(&[init, p(2, join)]);
+                    }
+                    FixKind::Definedness => {
+                        let op = Op::Fix {
+                            lattice: false,
+                            ev: ev.clone(),
+                        };
+                        s.jobs.push(Job::Node {
+                            op,
+                            fixed: 1,
+                            regions: 1,
+                        });
+                        s.jobs.push(Job::Region {
+                            kind: RegionKind::Loop,
+                            params: Params::Names(Cow::Owned(vec![this.clone(), key.clone()])),
+                            ports: Vec::new(),
+                            body: Body::Term(step),
+                        });
+                        s.srcs(&[init]);
+                    }
                 }
-                FixKind::Definedness => {
-                    let op = Op::Fix {
-                        lattice: false,
-                        ev: ev.clone(),
-                    };
-                    s.jobs.push(Job::Node {
-                        op,
-                        fixed: 1,
-                        regions: 1,
-                    });
-                    s.jobs.push(Job::Region {
-                        kind: RegionKind::Loop,
-                        params: Params::Names(Cow::Owned(vec![this.clone(), key.clone()])),
-                        ports: Vec::new(),
-                        body: Body::Term(step),
-                    });
-                    s.srcs(&[init]);
-                }
-            },
+            }
             Term::Gen {
                 init,
                 step,
@@ -682,7 +766,8 @@ impl<'t> Lower<'t> {
                     fixed: 1,
                     regions: 2,
                 });
-                for f in [guard, step] {
+                let p = |j, t| self.places.part(here, j, t);
+                for f in [p(2, guard), p(1, step)] {
                     s.jobs.push(Job::Region {
                         kind: RegionKind::Loop,
                         params: Params::Fresh,
@@ -690,7 +775,7 @@ impl<'t> Lower<'t> {
                         body: Body::Apply(f),
                     });
                 }
-                s.srcs(&[init]);
+                s.srcs(&[p(0, init)]);
             }
             Term::Read(p) => {
                 let st = self.state(at, p)?;
@@ -708,7 +793,7 @@ impl<'t> Lower<'t> {
             }
             Term::Push(p, v) => {
                 s.jobs.push(Job::Push(p));
-                s.srcs(&[v]);
+                s.srcs(&[self.places.part(here, 0, v)]);
             }
         }
         Ok(())
@@ -716,10 +801,11 @@ impl<'t> Lower<'t> {
 
     /// Schedules the call of `f` with `args`. A literal lambda called with as many arguments as
     /// it has parameters binds them and lowers its body in place.
-    fn apply(f: &'t Term, args: Args<'t>, s: &mut Stacks<'t>) {
-        if let Term::Lam(ps, body) = f
+    fn apply(&self, f: At<'t>, args: Args<'t>, s: &mut Stacks<'t>) {
+        if let Term::Lam(ps, body) = f.t
             && ps.len() == args.len()
         {
+            let body = self.places.part(f, 0, body);
             s.jobs.push(Job::Bound { params: ps, body });
             s.args(args, false);
         } else {
@@ -802,7 +888,7 @@ impl<'t> Lower<'t> {
             Body::Term(t) => s.jobs.push(Job::Term(t)),
             Body::Apply(f) => {
                 let x = params.first().expect("a loop's one parameter").clone();
-                Self::apply(f, Args::Name(x), s);
+                self.apply(f, Args::Name(x), s);
             }
         }
     }
@@ -863,7 +949,7 @@ impl<'t> Lower<'t> {
             }
             Job::Call(args) => self.call(args, s)?,
             Job::Inline(c) => {
-                let Call::Inline { body, env } = &c.call else {
+                let &Call::Inline { body, ref env } = &c.call else {
                     unreachable!("only an inlined function is called in place")
                 };
                 let vs = take(&mut s.vals, c.params.len());
@@ -955,9 +1041,9 @@ impl<'t> Lower<'t> {
 /// Where the body of a region being built comes from.
 enum Body<'t> {
     /// A term of the program.
-    Term(&'t Term),
+    Term(At<'t>),
     /// `f` applied to the region's one parameter: the step or guard of a loop.
-    Apply(&'t Term),
+    Apply(At<'t>),
 }
 
 /// The parameters of a region being built.
@@ -969,7 +1055,9 @@ enum Params<'t> {
 
 /// The arguments of a call.
 enum Args<'t> {
-    Terms(&'t [Term]),
+    /// Terms of the program, the first of the given occurrence id and the others of the ids
+    /// after it.
+    Terms(&'t [Term], usize),
     /// One argument: the value bound to the name.
     Name(Arc<str>),
 }
@@ -977,7 +1065,7 @@ enum Args<'t> {
 impl Args<'_> {
     fn len(&self) -> usize {
         match self {
-            Args::Terms(ts) => ts.len(),
+            Args::Terms(ts, _) => ts.len(),
             Args::Name(_) => 1,
         }
     }
@@ -987,7 +1075,7 @@ impl Args<'_> {
 /// [`Job::Src`] moves the top value to [`Stacks::srcs`] as an edge of the current region, and a
 /// region, once built, waits on [`Stacks::built`] for its node.
 enum Job<'t> {
-    Term(&'t Term),
+    Term(At<'t>),
     /// The value bound to the name.
     Var(Arc<str>),
     Src,
@@ -996,7 +1084,7 @@ enum Job<'t> {
     /// Binds `x` to the top value and lowers `body` under it.
     Let {
         x: &'t Arc<str>,
-        body: &'t Term,
+        body: At<'t>,
     },
     /// The closure of a `let`-bound function from its built region: a `lambda` node.
     Closure {
@@ -1006,7 +1094,7 @@ enum Job<'t> {
     /// Binds `params` to the top values and lowers `body`: a call of a literal lambda.
     Bound {
         params: &'t [Arc<str>],
-        body: &'t Term,
+        body: At<'t>,
     },
     /// Calls the top value with `args`.
     Call(Args<'t>),
@@ -1048,7 +1136,7 @@ struct Stacks<'t> {
 
 impl<'t> Stacks<'t> {
     /// Lowers `ts` in turn, each to an edge.
-    fn srcs(&mut self, ts: &[&'t Arc<Term>]) {
+    fn srcs(&mut self, ts: &[At<'t>]) {
         for &t in ts.iter().rev() {
             self.jobs.push(Job::Src);
             self.jobs.push(Job::Term(t));
@@ -1058,12 +1146,12 @@ impl<'t> Stacks<'t> {
     /// Lowers `args` in turn, each to a value, or to an edge when `edges`.
     fn args(&mut self, args: Args<'t>, edges: bool) {
         match args {
-            Args::Terms(ts) => {
-                for t in ts.iter().rev() {
+            Args::Terms(ts, first) => {
+                for (j, t) in ts.iter().enumerate().rev() {
                     if edges {
                         self.jobs.push(Job::Src);
                     }
-                    self.jobs.push(Job::Term(t));
+                    self.jobs.push(Job::Term(At { t, id: first + j }));
                 }
             }
             Args::Name(x) => {
@@ -1120,8 +1208,8 @@ fn names(p: &Pattern) -> Vec<Arc<str>> {
 
 /// The [`Uses`] of the lambda body `b`, each body's found once: a lambda inside `b` adds the
 /// uses of its own body, less the names bound around it in `b`.
-fn body_uses(b: &Arc<Term>, bodies: &mut Bodies) -> Uses {
-    if let Some((_, u)) = bodies.get(&Arc::as_ptr(b)) {
+fn body_uses(b: At<'_>, bodies: &mut Bodies, places: &Places) -> Uses {
+    if let Some(u) = bodies.get(&b.id) {
         return u.clone();
     }
     // A body waits at a lambda whose body is not yet known while that body is walked; lambdas
@@ -1130,8 +1218,8 @@ fn body_uses(b: &Arc<Term>, bodies: &mut Bodies) -> Uses {
     loop {
         let w = walks.last_mut().expect("a walk");
         match w.todo.pop() {
-            Some(Visit::Lam(ps, inner)) => match bodies.get(&Arc::as_ptr(inner)) {
-                Some((_, u)) => {
+            Some(Visit::Lam(ps, inner)) => match bodies.get(&inner.id) {
+                Some(u) => {
                     w.bind(ps);
                     u.iter().for_each(|u| w.add(u.clone()));
                     w.unbind(ps);
@@ -1141,11 +1229,11 @@ fn body_uses(b: &Arc<Term>, bodies: &mut Bodies) -> Uses {
                     walks.push(UseWalk::new(inner));
                 }
             },
-            Some(v) => w.visit(v),
+            Some(v) => w.visit(v, places),
             None => {
                 let w = walks.pop().expect("a walk");
                 let u: Uses = w.out.into();
-                bodies.insert(Arc::as_ptr(w.body), (w.body.clone(), u.clone()));
+                bodies.insert(w.body.id, u.clone());
                 if walks.is_empty() {
                     return u;
                 }
@@ -1156,32 +1244,35 @@ fn body_uses(b: &Arc<Term>, bodies: &mut Bodies) -> Uses {
 
 /// A step of a [`UseWalk`].
 enum Visit<'t> {
-    Term(&'t Term),
+    Term(At<'t>),
     /// `t` under the binders `xs`.
-    Under(Cow<'t, [Arc<str>]>, &'t Term),
+    Under(Cow<'t, [Arc<str>]>, At<'t>),
     Unbind(Cow<'t, [Arc<str>]>),
     /// A lambda of parameters `ps` and body `b`: the uses of `b` less `ps`.
-    Lam(&'t [Arc<str>], &'t Arc<Term>),
+    Lam(&'t [Arc<str>], At<'t>),
 }
 
 /// The walk of one lambda body for [`body_uses`].
 struct UseWalk<'t> {
-    body: &'t Arc<Term>,
+    body: At<'t>,
     /// How many binders in the body are around the current subterm, for each name.
     bound: HashMap<Arc<str>, usize>,
     seen: HashSet<Use>,
     out: Vec<Use>,
     todo: Vec<Visit<'t>>,
+    /// The parts of the subterm being visited, reused from one to the next.
+    parts: Vec<&'t Term>,
 }
 
 impl<'t> UseWalk<'t> {
-    fn new(body: &'t Arc<Term>) -> UseWalk<'t> {
+    fn new(body: At<'t>) -> UseWalk<'t> {
         UseWalk {
             body,
             bound: HashMap::new(),
             seen: HashSet::new(),
             out: Vec::new(),
             todo: vec![Visit::Term(body)],
+            parts: Vec::new(),
         }
     }
 
@@ -1212,14 +1303,9 @@ impl<'t> UseWalk<'t> {
         }
     }
 
-    /// Visits `ts` in turn.
-    fn terms(&mut self, ts: &[&'t Arc<Term>]) {
-        self.todo.extend(ts.iter().rev().map(|&t| Visit::Term(t)));
-    }
-
     /// Does `v`, or schedules the visits of its parts; [`Visit::Lam`] is [`body_uses`]'s.
-    fn visit(&mut self, v: Visit<'t>) {
-        let t = match v {
+    fn visit(&mut self, v: Visit<'t>, places: &Places) {
+        let here = match v {
             Visit::Term(t) => t,
             Visit::Under(xs, t) => {
                 self.bind(&xs);
@@ -1233,118 +1319,95 @@ impl<'t> UseWalk<'t> {
             }
             Visit::Lam(..) => unreachable!("body_uses visits a lambda"),
         };
-        match t {
+        let p = |j, t| places.part(here, j, t);
+        let one = |x: &'t Arc<str>| Cow::Borrowed(std::slice::from_ref(x));
+        match here.t {
             Term::Lit(_) | Term::PrimFn(_) => {}
             Term::Var(x) => self.add(Use::Free(x.clone())),
-            Term::Read(p) => self.add(Use::Port(p.clone())),
-            Term::Push(p, v) => {
-                self.add(Use::Port(p.clone()));
-                self.terms(&[v]);
-            }
-            Term::Lam(ps, b) => self.todo.push(Visit::Lam(ps, b)),
-            Term::App(g, args) => {
-                self.todo.extend(args.iter().rev().map(Visit::Term));
-                self.terms(&[g]);
-            }
-            Term::Prim(_, args) => self.todo.extend(args.iter().rev().map(Visit::Term)),
+            Term::Read(q) => self.add(Use::Port(q.clone())),
+            Term::Lam(ps, b) => self.todo.push(Visit::Lam(ps, p(0, b))),
             Term::Let(x, e, b) => {
-                self.todo
-                    .push(Visit::Under(Cow::Borrowed(std::slice::from_ref(x)), b));
-                self.terms(&[e]);
+                self.todo.push(Visit::Under(one(x), p(1, b)));
+                self.todo.push(Visit::Term(p(0, e)));
             }
-            Term::If(c, a, b) => self.terms(&[c, a, b]),
             Term::Match(s, arms) => {
-                for (p, a) in arms.iter().rev() {
-                    self.todo.push(Visit::Under(Cow::Owned(names(p)), a));
+                for (j, (q, a)) in arms.iter().enumerate().rev() {
+                    self.todo
+                        .push(Visit::Under(Cow::Owned(names(q)), p(1 + j, a)));
                 }
-                self.terms(&[s]);
+                self.todo.push(Visit::Term(p(0, s)));
             }
             Term::Fam { domain, var, body } => {
-                self.todo
-                    .push(Visit::Under(Cow::Borrowed(std::slice::from_ref(var)), body));
-                self.terms(&[domain]);
+                self.todo.push(Visit::Under(one(var), p(1, body)));
+                self.todo.push(Visit::Term(p(0, domain)));
             }
-            Term::Reindex { family, kf, vf, .. } => self.terms(&[family, kf, vf]),
-            Term::Discard { family, sel } => self.terms(&[family, sel]),
-            Term::Fold {
-                family,
-                op,
-                identity,
-                ..
-            } => match identity {
-                Some(i) => self.terms(&[family, op, i]),
-                None => self.terms(&[family, op]),
-            },
             Term::Fix {
                 init,
                 step,
                 this,
                 key,
-                kind,
+                kind: FixKind::Definedness,
                 ..
-            } => match kind {
-                FixKind::Lattice { join } => self.terms(&[init, step, join]),
-                FixKind::Definedness => {
-                    let xs = Cow::Owned(vec![this.clone(), key.clone()]);
-                    self.todo.push(Visit::Under(xs, step));
-                    self.terms(&[init]);
+            } => {
+                let xs = Cow::Owned(vec![this.clone(), key.clone()]);
+                self.todo.push(Visit::Under(xs, p(1, step)));
+                self.todo.push(Visit::Term(p(0, init)));
+            }
+            // The rest bind no name: their parts are visited in turn.
+            t => {
+                if let Term::Push(q, _) = t {
+                    self.add(Use::Port(q.clone()));
                 }
-            },
-            Term::Gen {
-                init, step, guard, ..
-            } => self.terms(&[init, step, guard]),
+                parts(t, &mut self.parts);
+                let first = places.first(here);
+                let parts = self.parts.drain(..).enumerate().rev();
+                self.todo
+                    .extend(parts.map(|(j, t)| Visit::Term(At { t, id: first + j })));
+            }
         }
     }
 }
 
-/// Calls `f` on `t` and every subterm, in preorder, keeping the subterms still to visit on a
-/// heap stack: a term nests as deep as its program.
-fn visit(t: &Term, f: &mut dyn FnMut(&Term)) {
-    let mut todo = vec![t];
-    while let Some(t) = todo.pop() {
-        f(t);
-        // The parts are pushed in order and then reversed, so the first is visited first.
-        let at = todo.len();
-        match t {
-            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
-            Term::Lam(_, b) => todo.push(b),
-            Term::App(g, args) => {
-                todo.push(g);
-                todo.extend(args);
-            }
-            Term::Prim(_, args) => todo.extend(args),
-            Term::Let(_, e, b) => todo.extend([&**e, b]),
-            Term::If(c, a, b) => todo.extend([&**c, a, b]),
-            Term::Match(s, arms) => {
-                todo.push(s);
-                todo.extend(arms.iter().map(|(_, a)| a));
-            }
-            Term::Fam { domain, body, .. } => todo.extend([&**domain, body]),
-            Term::Reindex { family, kf, vf, .. } => todo.extend([&**family, kf, vf]),
-            Term::Discard { family, sel } => todo.extend([&**family, sel]),
-            Term::Fold {
-                family,
-                op,
-                identity,
-                ..
-            } => {
-                todo.extend([&**family, op]);
-                todo.extend(identity.as_deref());
-            }
-            Term::Fix {
-                init, step, kind, ..
-            } => {
-                todo.extend([&**init, step]);
-                if let FixKind::Lattice { join } = kind {
-                    todo.push(join);
-                }
-            }
-            Term::Gen {
-                init, step, guard, ..
-            } => todo.extend([&**init, step, guard]),
-            Term::Push(_, v) => todo.push(v),
+/// Pushes the parts of `t` on `todo`, in the order of its fields.
+fn parts<'a>(t: &'a Term, todo: &mut Vec<&'a Term>) {
+    match t {
+        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
+        Term::Lam(_, b) => todo.push(b),
+        Term::App(g, args) => {
+            todo.push(g);
+            todo.extend(args);
         }
-        todo[at..].reverse();
+        Term::Prim(_, args) => todo.extend(args),
+        Term::Let(_, e, b) => todo.extend([&**e, b]),
+        Term::If(c, a, b) => todo.extend([&**c, a, b]),
+        Term::Match(s, arms) => {
+            todo.push(s);
+            todo.extend(arms.iter().map(|(_, a)| a));
+        }
+        Term::Fam { domain, body, .. } => todo.extend([&**domain, body]),
+        Term::Reindex { family, kf, vf, .. } => todo.extend([&**family, kf, vf]),
+        Term::Discard { family, sel } => todo.extend([&**family, sel]),
+        Term::Fold {
+            family,
+            op,
+            identity,
+            ..
+        } => {
+            todo.extend([&**family, op]);
+            todo.extend(identity.as_deref());
+        }
+        Term::Fix {
+            init, step, kind, ..
+        } => {
+            todo.extend([&**init, step]);
+            if let FixKind::Lattice { join } = kind {
+                todo.push(join);
+            }
+        }
+        Term::Gen {
+            init, step, guard, ..
+        } => todo.extend([&**init, step, guard]),
+        Term::Push(_, v) => todo.push(v),
     }
 }
 

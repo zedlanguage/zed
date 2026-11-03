@@ -139,3 +139,56 @@ fn each_arm_passes_through_the_ports_it_does_not_touch() {
     assert_eq!(node.regions[1].results[1..], [Src::Arg(0), Src::Out(0, 1)]);
     same(&t, "z");
 }
+
+/// `g{d} = (x) -> (h{d} = (y) -> stdout <- y; (h{d}(x), h{d}(x))); …` nested `d` deep, each
+/// lambda bound inside the body of the one before and called twice, with `keep` called
+/// between the parts built so a caller can place other allocations among them.
+fn nested_pushers(d: usize, keep: &mut dyn FnMut()) -> Term {
+    use zed_kernel::term::build::app;
+    let mut t = lit(0i64);
+    for i in (0..d).rev() {
+        keep();
+        let (g, h) = (format!("g{i}"), format!("h{i}"));
+        let pusher = lam(&["y"], push("stdout", var("y")));
+        keep();
+        let twice = prim(
+            Prim::Tuple,
+            vec![app(var(&h), vec![var("x")]), app(var(&h), vec![var("x")])],
+        );
+        keep();
+        let body = let_(&h, pusher, prim(Prim::Tuple, vec![twice, t]));
+        t = let_(
+            &g,
+            lam(&["x"], body),
+            prim(
+                Prim::Tuple,
+                vec![app(var(&g), vec![lit(1i64)]), app(var(&g), vec![lit(2i64)])],
+            ),
+        );
+    }
+    t
+}
+
+/// The ports of each `let`-bound lambda are kept by its place in the term, never by where the
+/// term is in memory: the same term built in three allocation orders lowers to the same graph,
+/// whose raised term pushes what the term does.
+#[test]
+fn ports_are_kept_by_place_not_address() {
+    let plain = nested_pushers(6, &mut || {});
+    let mut held: Vec<Vec<u64>> = Vec::new();
+    let mut n = 0;
+    let interleaved = nested_pushers(6, &mut || {
+        n += 1;
+        held.push(vec![0; 1 + n % 7]);
+    });
+    let mut big: Vec<Box<[u8]>> = (0..1000).map(|i| vec![0; 16 + i % 64].into()).collect();
+    big.retain(|b| b.len() % 2 == 0);
+    let shifted = nested_pushers(6, &mut || {});
+    assert!(plain == interleaved && plain == shifted);
+    let g = lower(&plain).unwrap();
+    assert_eq!(lower(&interleaved).unwrap(), g);
+    assert_eq!(lower(&shifted).unwrap(), g);
+    assert_eq!(g.kind, RegionKind::Port);
+    same(&plain, "");
+    drop((held, big));
+}
