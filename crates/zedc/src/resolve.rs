@@ -245,6 +245,8 @@ struct Resolver {
     tvars: HashMap<String, TypeVar>,
     /// The function types around the type being walked, outermost first, by their text.
     arrows: Vec<Span>,
+    /// The bounds clauses around the type being walked, outermost first, by their text.
+    clauses: Vec<Span>,
 }
 
 /// A type variable of a bounds clause, while its type is walked.
@@ -785,7 +787,19 @@ impl Resolver {
                 row: None,
                 span: t.span,
                 message: format!("the type `{n}` is not defined"),
-                notes: Vec::new(),
+                // Inside a clause, the name reads as a type variable its clause forgot.
+                notes: self
+                    .clauses
+                    .last()
+                    .map(|&span| Note {
+                        span,
+                        text: format!(
+                            "a type variable is bounded by the clause after its type, as \
+                             `for {n} in int | f64`; this clause does not bound `{n}`"
+                        ),
+                    })
+                    .into_iter()
+                    .collect(),
             }),
             TypeKind::For { ty, bounds } => {
                 // Each bound is read outside the clause, so `for T in U` with `U` bounded
@@ -815,6 +829,7 @@ impl Resolver {
                     self.tvars.insert(b.name.clone(), var);
                     fresh.push(b);
                 }
+                self.clauses.push(t.span);
                 todo.push(Task::ForEnd(ty, fresh));
                 todo.push(Task::Ty(ty));
             }
@@ -890,9 +905,10 @@ impl Resolver {
         });
     }
 
-    /// The end of the type `ty` of a bounds clause: each variable of `fresh` leaves scope, and
-    /// one the type does not hold is an error.
+    /// The end of the type `ty` of a bounds clause: the clause closes, each variable of `fresh`
+    /// leaves scope, and one the type does not hold is an error.
     fn for_end(&mut self, ty: &Type, fresh: Vec<&TypeBound>) {
+        self.clauses.pop();
         for b in fresh {
             let var = self.tvars.remove(&b.name).expect("bound above");
             if var.first.is_none() {

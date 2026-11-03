@@ -3096,11 +3096,23 @@ fn close(t: &Ty, sig: &Sig) -> Ty {
     for a in &sig.arrows {
         a.params.iter().for_each(|p| p.vars_in(&mut own));
     }
+    // A bounded variable no parameter holds is bound by no argument: the call gives a value of
+    // some carrier of its bound.
+    let unbound: Vec<(Arc<str>, Ty)> = sig
+        .bounds
+        .iter()
+        .filter(|(v, _)| !own.contains(v))
+        .map(|(v, &m)| {
+            let carriers: Vec<Ty> = Carrier::of_mask(m).map(Ty::carrier).collect();
+            (v.clone(), Ty::union_all(&carriers))
+        })
+        .collect();
     let binds: Binds = own
         .order
         .into_iter()
         .filter(|v| !v.starts_with('$'))
         .map(|v| (v, Ty::dynamic()))
+        .chain(unbound)
         .collect();
     t.subst(&binds)
 }

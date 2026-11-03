@@ -56,12 +56,23 @@ impl Shape {
         }
     }
 
-    /// The type of the atom `#name` with this payload: `#name(int, f: String)`.
-    fn text(&self, name: &str) -> String {
-        let items = self.items.iter().map(|t| t.to_string());
-        let fields = self.fields.iter().map(|(f, t)| format!("{f}: {t}"));
-        let parts: Vec<String> = items.chain(fields).collect();
-        format!("#{name}({})", parts.join(", "))
+    /// Writes the type of the atom `#name` with this payload to `out`: `#name(int, f: String)`.
+    fn write(&self, name: &str, out: &mut String) {
+        out.push('#');
+        out.push_str(name);
+        out.push('(');
+        let mut first = true;
+        for t in &self.items {
+            separate(out, &mut first, ", ");
+            t.write(out);
+        }
+        for (f, t) in &self.fields {
+            separate(out, &mut first, ", ");
+            out.push_str(f);
+            out.push_str(": ");
+            t.write(out);
+        }
+        out.push(')');
     }
 
     /// It with `f` applied to each component and field.
@@ -424,6 +435,11 @@ impl Piece {
 /// The binding of type variables made while applying an arrow.
 pub type Binds = BTreeMap<Arc<str>, Ty>;
 
+/// The bounded variables of the expected function types a comparison is inside, each with the
+/// mask of its bound: the caller of such a function picks one carrier of the bound for each,
+/// so a variable here stands for every carrier of its mask and is never bound.
+type Rigid = BTreeMap<Arc<str>, u8>;
+
 /// Type variables, each once, in order of first appearance.
 #[derive(Default)]
 pub struct Vars {
@@ -696,6 +712,11 @@ impl Ty {
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
     pub fn sub(&self, other: &Ty, binds: &mut Binds) -> bool {
+        self.sub_in(other, binds, &mut Rigid::new())
+    }
+
+    /// [`Self::sub`] inside the expected function types whose bounded variables `rigid` holds.
+    fn sub_in(&self, other: &Ty, binds: &mut Binds, rigid: &mut Rigid) -> bool {
         // `other` as a kernel type, built at most once, when a tuple piece needs it.
         let mut whole: Option<Option<KType>> = None;
         self.pieces().iter().all(|p| {
@@ -719,14 +740,16 @@ impl Ty {
                     }),
                 _ => None,
             };
-            decided.unwrap_or_else(|| accepts(other, p, self, binds))
+            decided.unwrap_or_else(|| accepts(other, p, self, binds, rigid))
         })
     }
 
-    /// [`Self::sub`] with each tuple piece held by one tuple shape of `other`: the rule for the
-    /// components of a tuple, whose joint check is the kernel's on the whole tuple.
-    fn sub_by_shape(&self, other: &Ty, binds: &mut Binds) -> bool {
-        self.pieces().iter().all(|p| accepts(other, p, self, binds))
+    /// [`Self::sub_in`] with each tuple piece held by one tuple shape of `other`: the rule for
+    /// the components of a tuple, whose joint check is the kernel's on the whole tuple.
+    fn sub_by_shape(&self, other: &Ty, binds: &mut Binds, rigid: &mut Rigid) -> bool {
+        self.pieces()
+            .iter()
+            .all(|p| accepts(other, p, self, binds, rigid))
     }
 
     /// The kernel type of its values, when it holds no function, variable or unknown at any
@@ -997,31 +1020,47 @@ impl Ty {
 }
 
 /// Whether the piece `p` of `of` is in `t`, binding a variable of `t` to it when nothing else
-/// of `t` holds it.
-fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds) -> bool {
+/// of `t` holds it. A variable of `rigid` stands for each carrier of its mask in turn: as `p`,
+/// `t` must hold each; in `t`, it holds what each carrier, with the rest of `t`, holds.
+fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, rigid: &mut Rigid) -> bool {
     if t.dynamic {
         return true;
     }
     let ok = match p {
         Piece::Dyn => false,
-        Piece::Set(s) => s.subtype(&t.set),
+        Piece::Set(s) => {
+            s.subtype(&t.set)
+                || t.vars.iter().any(|w| {
+                    rigid.get(w).is_some_and(|&m| {
+                        Carrier::of_mask(m).all(|c| s.subtype(&(&t.set | &c.ty())))
+                    })
+                })
+        }
         Piece::Tuple(cs) => t.tuples.iter().any(|ds| {
             ds.len() == cs.len() && {
                 let mut b = binds.clone();
-                let ok = cs.iter().zip(ds).all(|(c, d)| c.sub_by_shape(d, &mut b));
+                let ok = cs
+                    .iter()
+                    .zip(ds)
+                    .all(|(c, d)| c.sub_by_shape(d, &mut b, rigid));
                 if ok {
                     *binds = b;
                 }
                 ok
             }
         }),
-        Piece::Fn(s) => t.fns.iter().any(|q| fits_sig(s, q)),
-        Piece::Var(v) => t.vars.contains(v),
+        Piece::Fn(s) => t.fns.iter().any(|q| fits_in(s, q, rigid)),
+        Piece::Var(v) => {
+            t.vars.contains(v)
+                || rigid
+                    .get(v)
+                    .is_some_and(|&m| Carrier::of_mask(m).all(|c| c.ty().subtype(&t.set)))
+        }
     };
     if ok {
         return true;
     }
-    match t.vars.iter().next() {
+    match t.vars.iter().find(|v| !rigid.contains_key(*v)) {
         Some(v) => {
             let b = binds.entry(v.clone()).or_insert_with(Ty::empty);
             *b = b.union(&of.of_piece(p));
@@ -1035,32 +1074,74 @@ fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds) -> bool {
 /// names and kinds, and on each arrow of `q`, an arrow of `s` that takes its parameters and
 /// returns within its result.
 pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
+    fits_in(s, q, &mut Rigid::new())
+}
+
+/// [`fits_sig`] inside the expected function types whose bounded variables `rigid` holds.
+/// `q`'s own bounded variables join them: the caller of a function of type `q` picks one
+/// carrier of each bound, so `s` must take every carrier of it. Each is renamed apart first,
+/// since `s` may use the same name for a variable of its own.
+fn fits_in(s: &Sig, q: &Sig, rigid: &mut Rigid) -> bool {
     if !s.needs.is_empty() {
         return s == q;
     }
-    s.params.len() == q.params.len()
+    let same_params = s.params.len() == q.params.len()
         && s.params
             .iter()
             .zip(&q.params)
-            .all(|(a, b)| a.positional == b.positional && (a.positional || a.name == b.name))
-        && q.arrows.iter().all(|qa| {
-            s.arrows.iter().any(|sa| {
-                let mut b = Binds::new();
-                qa.params
-                    .iter()
-                    .zip(&sa.params)
-                    .all(|(x, y)| x.sub(y, &mut b))
-                    && s.bounds.iter().all(|(v, m)| {
-                        b.get(v).is_none_or(|t| {
-                            t.pieces().iter().all(|p| match p.carrier() {
+            .all(|(a, b)| a.positional == b.positional && (a.positional || a.name == b.name));
+    if !same_params {
+        return false;
+    }
+    let mut renamed = Binds::new();
+    for (v, &m) in q.bounds.iter().filter(|(v, _)| q.own.contains(*v)) {
+        // A quote is in no name a program writes, and the count keeps nested renamings apart.
+        let w: Arc<str> = format!("{v}'{}", rigid.len()).into();
+        rigid.insert(w.clone(), m);
+        renamed.insert(v.clone(), Ty::var(w));
+    }
+    let renamed_q;
+    let q = match renamed.is_empty() {
+        true => q,
+        false => {
+            renamed_q = q.replace(&renamed);
+            &renamed_q
+        }
+    };
+    let fits = q.arrows.iter().all(|qa| {
+        s.arrows.iter().any(|sa| {
+            let mut b = Binds::new();
+            qa.params
+                .iter()
+                .zip(&sa.params)
+                .all(|(x, y)| x.sub_in(y, &mut b, rigid))
+                && s.bounds.iter().all(|(v, &m)| {
+                    b.get(v)
+                        .is_none_or(|t| match t.as_var().and_then(|w| rigid.get(w)) {
+                            // Each carrier the caller of `q` may pick is one `s` takes.
+                            Some(&mq) => mq & !m == 0,
+                            // `v` is one carrier at a call, so it cannot be a rigid variable and
+                            // something else at once.
+                            None => t.pieces().iter().all(|p| match p.carrier() {
                                 Some(c) => m & c.bit() != 0,
-                                None => m & OTHER != 0 && !matches!(p, Piece::Dyn),
-                            })
+                                None => {
+                                    m & OTHER != 0
+                                        && !matches!(p, Piece::Dyn)
+                                        && !matches!(p, Piece::Var(w) if rigid.contains_key(w))
+                                }
+                            }),
                         })
-                    })
-                    && sa.result.subst(&b).subtype(&qa.result)
-            })
+                })
+                && {
+                    let mut rb = Binds::new();
+                    sa.result.subst(&b).sub_in(&qa.result, &mut rb, rigid) && rb.is_empty()
+                }
         })
+    });
+    for w in renamed.values().filter_map(Ty::as_var) {
+        rigid.remove(w);
+    }
+    fits
 }
 
 impl Sig {
@@ -1151,17 +1232,28 @@ impl Sig {
 
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let text = self.text();
+        let mut text = String::new();
+        self.write(&mut text);
         #[cfg(feature = "printed-types")]
         printed::record(self, &text);
         f.write_str(&text)
     }
 }
 
+/// Writes `sep` to `out` before every item but the first, which `first` tells.
+fn separate(out: &mut String, first: &mut bool, sep: &str) {
+    if !*first {
+        out.push_str(sep);
+    }
+    *first = false;
+}
+
 impl Ty {
-    /// Its text, in type syntax.
-    fn text(&self) -> String {
-        let mut items: Vec<String> = Vec::new();
+    /// Writes its text, in type syntax, to `out`. Each part is written in place, not built as a
+    /// string and copied into the whole: copying cost the depth of each part, so O(n^2) for a
+    /// function type n deep.
+    fn write(&self, out: &mut String) {
+        let mut first = true;
         // An atom whose payloads are known prints each payload's type, `#ioError(op: String,
         // path: String, why: String)` (L29-print); the kernel set holds it with any payload.
         let shaped: Vec<(&Arc<str>, &Vec<Shape>)> = self
@@ -1178,35 +1270,52 @@ impl Ty {
         });
         let set = rest.as_ref().unwrap_or(&self.set);
         if !set.is_empty() {
-            items.push(set.surface_in_union().to_string());
+            separate(out, &mut first, " | ");
+            out.push_str(&set.surface_in_union().to_string());
         }
         for (n, ss) in shaped {
-            items.extend(ss.iter().map(|s| s.text(n)));
+            for s in ss {
+                separate(out, &mut first, " | ");
+                s.write(n, out);
+            }
         }
         for cs in &self.tuples {
-            let cs: Vec<String> = cs.iter().map(|c| c.to_string()).collect();
-            items.push(match cs.len() {
-                1 => format!("({},)", cs[0]),
-                _ => format!("({})", cs.join(", ")),
-            });
+            separate(out, &mut first, " | ");
+            out.push('(');
+            let mut one = true;
+            for c in cs {
+                separate(out, &mut one, ", ");
+                c.write(out);
+            }
+            if cs.len() == 1 {
+                out.push(',');
+            }
+            out.push(')');
         }
         for s in &self.fns {
-            items.push(format!("({s})"));
+            separate(out, &mut first, " | ");
+            out.push('(');
+            s.write(out);
+            out.push(')');
         }
-        items.extend(self.vars.iter().map(|v| v.to_string()));
+        for v in &self.vars {
+            separate(out, &mut first, " | ");
+            out.push_str(v);
+        }
         if self.dynamic {
-            items.push("_".into());
+            separate(out, &mut first, " | ");
+            out.push('_');
         }
-        match items.len() {
-            0 => "!_".into(),
-            _ => items.join(" | "),
+        if first {
+            out.push_str("!_");
         }
     }
 }
 
 impl fmt::Display for Sig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let text = self.text();
+        let mut text = String::new();
+        self.write(&mut text);
         #[cfg(feature = "printed-types")]
         printed::record(&Ty::func(Arc::new(self.clone())), &text);
         f.write_str(&text)
@@ -1214,40 +1323,37 @@ impl fmt::Display for Sig {
 }
 
 impl Sig {
-    /// Its text, in type syntax.
-    fn text(&self) -> String {
-        let arrows: Vec<String> = self
-            .arrows
-            .iter()
-            .map(|a| {
-                let ps: Vec<String> = self
-                    .params
-                    .iter()
-                    .zip(&a.params)
-                    .map(|(p, t)| match p.positional {
-                        true => t.to_string(),
-                        false => format!("{}: {t}", p.name),
-                    })
-                    .collect();
-                format!("({}) -> {}", ps.join(", "), a.result)
-            })
-            .collect();
-        let mut out = match <[String; 1]>::try_from(arrows) {
-            Ok([one]) => one,
-            Err(arrows) => {
-                let arrows: Vec<String> = arrows.iter().map(|a| format!("({a})")).collect();
-                arrows.join(" & ")
+    /// Writes its text, in type syntax, to `out`.
+    fn write(&self, out: &mut String) {
+        let several = self.arrows.len() != 1;
+        let mut first = true;
+        for a in &self.arrows {
+            separate(out, &mut first, " & ");
+            if several {
+                out.push('(');
             }
-        };
-        let bounds: Vec<String> = self
-            .bounds
-            .iter()
-            .map(|(v, m)| format!("{v} in {}", mask_text(*m)))
-            .collect();
-        if !bounds.is_empty() {
-            out = format!("{out} for {}", bounds.join(", "));
+            out.push('(');
+            let mut one = true;
+            for (p, t) in self.params.iter().zip(&a.params) {
+                separate(out, &mut one, ", ");
+                if !p.positional {
+                    out.push_str(&p.name);
+                    out.push_str(": ");
+                }
+                t.write(out);
+            }
+            out.push_str(") -> ");
+            a.result.write(out);
+            if several {
+                out.push(')');
+            }
         }
-        out
+        for (i, (v, m)) in self.bounds.iter().enumerate() {
+            out.push_str(if i == 0 { " for " } else { ", " });
+            out.push_str(v);
+            out.push_str(" in ");
+            out.push_str(&mask_text(*m));
+        }
     }
 }
 

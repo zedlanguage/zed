@@ -134,7 +134,11 @@ fn the_signature_holds_the_bound() {
 fn an_unbounded_name_is_an_error() {
     assert_eq!(
         resolve_errors("f(g: (T) -> U for T in int) = 0;\n"),
-        ["the type `U` is not defined [U]"]
+        [
+            "the type `U` is not defined [U]; a type variable is bounded by the clause after its \
+             type, as `for U in int | f64`; this clause does not bound `U` \
+             [(T) -> U for T in int]"
+        ]
     );
 }
 
@@ -311,11 +315,55 @@ fn wide(n: usize) -> String {
 
 /// `n` bounds clauses nested in the parameter of a function type.
 fn nested(n: usize) -> String {
-    let mut t = "T0 -> T0 for T0 in int".to_string();
+    let mut t = "(".repeat(n - 1);
+    t.push_str("T0 -> T0 for T0 in int");
     for i in 1..n {
-        t = format!("({t}) -> T{i} for T{i} in f64");
+        t.push_str(&format!(") -> T{i} for T{i} in f64"));
     }
     format!("h(g: {t}) = 0;\n")
+}
+
+/// A function that passes its argument, of `n` parameters each of its own variable bounded by
+/// int and f64, where one bounded by int alone is expected.
+fn passed(n: usize) -> String {
+    let ps = |v: &str| -> String {
+        let ps: Vec<String> = (0..n).map(|i| format!("x{i}: {v}{i}")).collect();
+        ps.join(", ")
+    };
+    let bs = |v: &str, b: &str| -> String {
+        let bs: Vec<String> = (0..n).map(|i| format!("{v}{i} in {b}")).collect();
+        bs.join(", ")
+    };
+    format!(
+        "p(g: ({}) -> T0 for {}) = 0;\nq(f: ({}) -> U0 for {}) = p(g: f);\n",
+        ps("T"),
+        bs("T", "int"),
+        ps("U"),
+        bs("U", "int | f64")
+    )
+}
+
+/// The unit `text` lexed, parsed and resolved, for a test that times the check alone.
+fn resolved(text: &str) -> (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution) {
+    let tokens = lex_fence(text).unwrap();
+    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
+    let stmts = unit(text, &tokens, &tree).unwrap();
+    let res = resolve(&stmts).unwrap_or_else(|e| panic!("{e:?}"));
+    (stmts, res)
+}
+
+/// Checks `make(n)` at `n` and `8n` with `check_order`, each input lexed, parsed and resolved
+/// before timing, so that the check alone is measured.
+fn check_scales(what: &str, n: usize, make: impl Fn(usize) -> String) {
+    let inputs: std::collections::HashMap<usize, _> = [n, zed_tests::scaling::FACTOR * n]
+        .into_iter()
+        .map(|n| (n, resolved(&make(n))))
+        .collect();
+    zed_tests::scaling::check_order(what, n, 1, |n| {
+        let (stmts, res) = &inputs[&n];
+        let info = zedc::check::check(stmts, res);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
 }
 
 #[test]
@@ -325,16 +373,21 @@ fn many_bounded_variables_scale() {
         "{:?}",
         type_errors(&wide(3))
     );
-    zed_tests::scaling::check_order(
-        "a clause of n bounds and a call of n arguments",
+    assert_eq!(fmt(&wide(800)), wide(800));
+    check_scales("a clause of n bounds and a call of n arguments", 800, wide);
+}
+
+#[test]
+fn passing_a_function_of_many_bounded_variables_scales() {
+    assert!(
+        type_errors(&passed(3)).is_empty(),
+        "{:?}",
+        type_errors(&passed(3))
+    );
+    check_scales(
+        "a function of n bounded variables passed as one of n",
         800,
-        1,
-        |n| {
-            let text = wide(n);
-            let (info, _) = info(&text);
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-            assert_eq!(fmt(&text), text);
-        },
+        passed,
     );
 }
 
@@ -351,13 +404,133 @@ fn nested_bounds_clauses_scale() {
             assert_eq!(fmt(&nested(400)), nested(400));
             // The check alone is timed: the formatter's linear work would hide a walk of each
             // clause's whole type, quadratic in the depth.
-            zed_tests::scaling::check_order("n nested bounds clauses", 400, 1, |n| {
-                let text = nested(n);
-                let (info, _) = info(&text);
-                assert!(info.errors.is_empty(), "{:?}", info.errors);
+            check_scales("n nested bounds clauses", 400, nested);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// `p` calls its argument on an int; `p_wide` on an int and on an f64.
+const P: &str = "p(g: (x: T) -> T for T in int) = g(x: 1);\n\
+                 p_wide(g: (x: T) -> T for T in int | f64) = g(x: 1.5);\n";
+
+#[test]
+fn a_bounded_function_passes_where_its_bound_holds_the_expected_one() {
+    // `f` takes int and f64, so it serves where only int is asked, whatever its variable's name.
+    for q in [
+        "q(f: (x: T) -> T for T in int | f64) = p(g: f);\n",
+        "q(f: (x: U) -> U for U in int | f64) = p(g: f);\n",
+        "q(f: (x: U) -> U for U in int | f64) = p_wide(g: f);\n",
+        "q(f: (x: T) -> T for T in int | f64) = p_wide(g: f);\n",
+    ] {
+        let text = format!("{P}{q}");
+        assert!(
+            type_errors(&text).is_empty(),
+            "{q}: {:?}",
+            type_errors(&text)
+        );
+    }
+    let text = format!("{P}q(f: (x: U) -> U for U in int | f64) = p_wide(g: f);\n");
+    assert_eq!(
+        sig(&text, "q"),
+        "(f: ((x: U) -> U for U in int | f64)) -> f64"
+    );
+}
+
+#[test]
+fn a_bounded_function_does_not_pass_where_more_carriers_are_asked() {
+    // `p_wide` calls `g` on an f64, which `f` does not take.
+    for q in [
+        "q(f: (x: T) -> T for T in int) = p_wide(g: f);\n",
+        "q(f: (x: U) -> U for U in int) = p_wide(g: f);\n",
+        "q(f: (x: U) -> U for U in int | rat) = p_wide(g: f);\n",
+    ] {
+        let text = format!("{P}{q}");
+        let errors = type_errors(&text);
+        assert_eq!(errors.len(), 1, "{q}: {errors:?}");
+        assert!(errors[0].ends_with("[p_wide(g: f)]"), "{q}: {errors:?}");
+    }
+}
+
+#[test]
+fn a_function_of_one_carrier_is_the_function_bounded_by_it() {
+    let q = format!("{P}q(f: (x: int) -> int) = p(g: f);\n");
+    assert!(type_errors(&q).is_empty(), "{:?}", type_errors(&q));
+    let inc = format!("{P}inc(x: int) = x + 1;\ny = p(g: inc);\n");
+    assert!(type_errors(&inc).is_empty(), "{:?}", type_errors(&inc));
+    assert_eq!(value(&inc, "y"), "2");
+    // Of two carriers, a function of one does not do; nor does one that takes both but
+    // returns either, since the caller's `T` is the carrier it passed.
+    let narrow = format!("{P}q(f: (x: int) -> int) = p_wide(g: f);\n");
+    assert_eq!(type_errors(&narrow).len(), 1, "{:?}", type_errors(&narrow));
+    let either = format!("{P}q(f: (x: int | f64) -> int | f64) = p_wide(g: f);\n");
+    assert_eq!(type_errors(&either).len(), 1, "{:?}", type_errors(&either));
+    let test = "t(g: (x: T) -> bool for T in int | f64) = g(x: 2);\n\
+                q(f: (x: int | f64) -> bool) = t(g: f);\n";
+    assert!(type_errors(test).is_empty(), "{:?}", type_errors(test));
+}
+
+#[test]
+fn a_bounded_variable_only_in_the_result_gives_its_whole_bound() {
+    let text = "h(g: () -> T for T in int | f64) = g();\n";
+    assert!(type_errors(text).is_empty(), "{:?}", type_errors(text));
+    assert_eq!(
+        sig(text, "h"),
+        "(g: (() -> T for T in int | f64)) -> int | f64"
+    );
+}
+
+#[test]
+fn printing_a_deep_function_type_scales() {
+    // Each function type is written in place: building each part as a string and copying it
+    // into the whole cost O(n^2) for n nested function types.
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(|| {
+            let inputs: std::collections::HashMap<usize, _> = [800, 6400]
+                .into_iter()
+                .map(|n| {
+                    let (info, names) = info(&nested(n));
+                    let (_, s) = info
+                        .sigs
+                        .iter()
+                        .find(|(id, _)| names[**id] == "h")
+                        .expect("h");
+                    (n, s.clone())
+                })
+                .collect();
+            assert!(inputs[&800].to_string().ends_with(" -> 0"));
+            zed_tests::scaling::check("printing n nested function types", 800, |n| {
+                assert!(!inputs[&n].to_string().is_empty());
             });
         })
         .unwrap()
         .join()
         .unwrap();
+}
+
+#[test]
+fn a_bounded_variable_in_a_parameter_that_is_a_function_is_checked_at_each_carrier() {
+    // `p2` gives its argument a function on the carrier its caller picks.
+    let p2 = "p2(g: ((x: T) -> T) -> T for T in int | f64) = 0;\n\
+              p1(g: ((x: T) -> T) -> T for T in int) = 0;\n";
+    let cases = [
+        // Refused for now, though sound to take: `U` occurs only under a function parameter,
+        // where `fits_sig` binds no variable of the outer function (STATUS, TYPE-forms).
+        (
+            "q(f: ((x: U) -> U) -> U for U in int | f64) = p2(g: f);\n",
+            1,
+        ),
+        ("q(f: ((x: int) -> int) -> int) = p1(g: f);\n", 0),
+        // At f64, `f` would get a function on f64, which it does not take.
+        ("q(f: ((x: int) -> int) -> int) = p2(g: f);\n", 1),
+        ("q(f: ((x: U) -> U) -> U for U in int) = p2(g: f);\n", 1),
+        // A generic function with no bound takes every carrier.
+        ("id(x) = x;\ny = p_wide(g: id);\n", 0),
+    ];
+    for (q, n) in cases {
+        let text = format!("{P}{p2}{q}");
+        assert_eq!(type_errors(&text).len(), n, "{q}: {:?}", type_errors(&text));
+    }
 }

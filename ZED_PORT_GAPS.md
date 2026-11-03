@@ -354,6 +354,10 @@ Forms, confirmed in DESIGN.md:
 - `&mut` on a non-receiver argument returns the new value. `each_edge_mut` (`zir/canon.rs:285`)
   and `rename` (`zir/lower.rs:1196`) become maps. A visitor taking `&mut dyn FnMut` (`visit`,
   `zir/lower.rs:951`; `Formula::walk`, `presburger.rs:471`) becomes a fold with an accumulator.
+- A map held across a recursion and undone after it (`Rigid` in `check/ty.rs` `fits_in`, which
+  adds the expected type's bounded variables, recurses through `accepts`, then removes them)
+  becomes a persistent map passed down, so nothing is undone. The printer's `&mut String`
+  (`Ty::write`, `Sig::write`) becomes a fold over text pieces joined once, which keeps it O(n).
 - Open point: whether `*.` reaches a nested receiver such as `self.classes[i]*.m()`. DESIGN.md
   says it "needs a state receiver" and does not define that for a nested path. Fix: define it.
 
