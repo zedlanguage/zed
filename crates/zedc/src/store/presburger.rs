@@ -78,6 +78,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::mem;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -85,6 +86,8 @@ use super::int::Int;
 use super::interval::{End, IntervalSet};
 use super::simplex::Term;
 use super::{twovar, utvpi};
+
+mod deep;
 
 /// A variable of a relation.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -370,8 +373,8 @@ impl fmt::Display for Con {
     }
 }
 
-/// A quantifier-free formula over linear constraints.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+/// A quantifier-free formula over linear constraints. Drop, copy, compare, hash and show do
+/// not recurse on its depth (`deep`).
 pub enum Formula {
     /// A constraint.
     Con(Con),
@@ -399,7 +402,7 @@ impl Formula {
         let mut flat = Vec::new();
         for f in fs {
             match f {
-                Formula::And(gs) => flat.extend(gs),
+                Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
                 Formula::Or(ref gs) if gs.is_empty() => return Formula::bottom(),
                 g => flat.push(g),
             }
@@ -443,7 +446,7 @@ impl Formula {
         let mut out = Vec::new();
         for f in fs {
             match f {
-                Formula::Or(gs) => out.extend(gs),
+                Formula::Or(_) => out.extend(f.into_parts().expect("a disjunction")),
                 Formula::And(ref gs) if gs.is_empty() => return Formula::top(),
                 g => out.push(g),
             }
@@ -534,8 +537,11 @@ impl Formula {
     /// replaced by `true` where it occurs under an even number of negations and by `false`
     /// where under an odd number: a formula implied by `self` that says nothing of `sym`.
     pub fn forget(&self, sym: &Arc<str>) -> Formula {
-        fn go(f: &Formula, sym: &Arc<str>, pos: bool) -> Formula {
-            match f {
+        // The context is whether the part is under an even number of negations.
+        self.fold(
+            true,
+            |g, pos| pos != matches!(g, Formula::Not(_)),
+            |g, pos, parts| match g {
                 Formula::Con(c) => {
                     let mentions = c.lin.terms.keys().any(|a| match a {
                         Atom::Sym(n) => n == sym,
@@ -543,33 +549,43 @@ impl Formula {
                         Atom::Aux(_) => false,
                     });
                     match (mentions, pos) {
-                        (false, _) => f.clone(),
+                        (false, _) => g.clone(),
                         (true, true) => Formula::top(),
                         (true, false) => Formula::bottom(),
                     }
                 }
-                Formula::Not(g) => Formula::negate(go(g, sym, !pos)),
-                Formula::And(gs) => Formula::and(gs.iter().map(|g| go(g, sym, pos)).collect()),
-                Formula::Or(gs) => Formula::or(gs.iter().map(|g| go(g, sym, pos)).collect()),
-            }
-        }
-        go(self, sym, true)
+                Formula::Not(_) | Formula::And(_) | Formula::Or(_) => g.rebuild(parts),
+            },
+        )
     }
 
     /// The formula with each constraint `c` replaced by `f(c)`.
     pub fn map_cons(&self, f: &dyn Fn(&Con) -> Formula) -> Formula {
+        self.fold(
+            (),
+            |_, ()| (),
+            |g, (), parts| match g {
+                Formula::Con(c) => f(c),
+                Formula::Not(_) | Formula::And(_) | Formula::Or(_) => g.rebuild(parts),
+            },
+        )
+    }
+
+    /// The node `self` with `parts` in place of its parts, through [`Formula::negate`],
+    /// [`Formula::and`] or [`Formula::or`]; a constraint has no parts and is copied.
+    fn rebuild(&self, mut parts: Vec<Formula>) -> Formula {
         match self {
-            Formula::Con(c) => f(c),
-            Formula::Not(g) => Formula::negate(g.map_cons(f)),
-            Formula::And(gs) => Formula::and(gs.iter().map(|g| g.map_cons(f)).collect()),
-            Formula::Or(gs) => Formula::or(gs.iter().map(|g| g.map_cons(f)).collect()),
+            Formula::Con(c) => Formula::Con(c.clone()),
+            Formula::Not(_) => Formula::negate(parts.pop().expect("one part")),
+            Formula::And(_) => Formula::and(parts),
+            Formula::Or(_) => Formula::or(parts),
         }
     }
 
     /// The negation, with double negations and constants removed.
     pub fn negate(f: Formula) -> Formula {
         match f {
-            Formula::Not(g) => *g,
+            Formula::Not(_) => f.into_negated().expect("a negation"),
             Formula::And(ref gs) if gs.is_empty() => Formula::bottom(),
             Formula::Or(ref gs) if gs.is_empty() => Formula::top(),
             g => Formula::Not(Box::new(g)),
@@ -581,14 +597,6 @@ impl Formula {
         let mut out = Vec::new();
         self.walk(&mut |c| out.push(c));
         out
-    }
-
-    fn walk<'a>(&'a self, f: &mut dyn FnMut(&'a Con)) {
-        match self {
-            Formula::Con(c) => f(c),
-            Formula::Not(g) => g.walk(f),
-            Formula::And(gs) | Formula::Or(gs) => gs.iter().for_each(|g| g.walk(f)),
-        }
     }
 
     /// Each atom, in order.
@@ -614,19 +622,23 @@ impl Formula {
 
     /// Whether the formula holds at `values`, each atom read as its value there.
     fn holds_as(&self, vs: &Model) -> bool {
-        match self {
-            Formula::Con(c) => {
-                let v = c.lin.eval(vs);
-                if c.rel == Rel::Eq {
-                    v.is_zero()
-                } else {
-                    !v.is_negative()
+        self.fold(
+            (),
+            |_, ()| (),
+            |g, (), parts: Vec<bool>| match g {
+                Formula::Con(c) => {
+                    let v = c.lin.eval(vs);
+                    if c.rel == Rel::Eq {
+                        v.is_zero()
+                    } else {
+                        !v.is_negative()
+                    }
                 }
-            }
-            Formula::Not(g) => !g.holds_as(vs),
-            Formula::And(gs) => gs.iter().all(|g| g.holds_as(vs)),
-            Formula::Or(gs) => gs.iter().any(|g| g.holds_as(vs)),
-        }
+                Formula::Not(_) => !parts[0],
+                Formula::And(_) => parts.iter().all(|&p| p),
+                Formula::Or(_) => parts.iter().any(|&p| p),
+            },
+        )
     }
 
     /// The top-level conjuncts.
@@ -634,42 +646,6 @@ impl Formula {
         match self {
             Formula::And(gs) => gs.iter().collect(),
             g => vec![g],
-        }
-    }
-}
-
-impl fmt::Display for Formula {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let part = |g: &Formula, f: &mut fmt::Formatter<'_>| match g {
-            Formula::And(gs) | Formula::Or(gs) if gs.len() > 1 => write!(f, "({g})"),
-            _ => write!(f, "{g}"),
-        };
-        match self {
-            Formula::Con(c) => write!(f, "{c}"),
-            Formula::Not(g) => {
-                write!(f, "!")?;
-                match &**g {
-                    Formula::Con(_) | Formula::And(_) | Formula::Or(_) => write!(f, "({g})"),
-                    _ => write!(f, "{g}"),
-                }
-            }
-            Formula::And(gs) | Formula::Or(gs) if gs.is_empty() => {
-                write!(f, "{}", matches!(self, Formula::And(_)))
-            }
-            Formula::And(gs) | Formula::Or(gs) => {
-                let sep = if matches!(self, Formula::And(_)) {
-                    " && "
-                } else {
-                    " || "
-                };
-                for (i, g) in gs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, "{sep}")?;
-                    }
-                    part(g, f)?;
-                }
-                Ok(())
-            }
         }
     }
 }
@@ -988,11 +964,15 @@ struct Parts {
 impl Parts {
     /// Adds a formula in negation normal form.
     fn add(&mut self, f: Formula) {
-        match f {
-            Formula::Con(c) => self.cons.push(c),
-            Formula::And(gs) => gs.into_iter().for_each(|g| self.add(g)),
-            Formula::Or(gs) => self.ors.push(gs),
-            Formula::Not(_) => unreachable!("a formula in negation normal form"),
+        let mut stack = vec![f];
+        while let Some(mut g) = stack.pop() {
+            match &mut g {
+                Formula::Con(c) => self.cons.push(Con::take(c)),
+                // Reversed, so the conjuncts are added in order.
+                Formula::And(gs) => stack.extend(mem::take(gs).into_iter().rev()),
+                Formula::Or(gs) => self.ors.push(mem::take(gs)),
+                Formula::Not(_) => unreachable!("a formula in negation normal form"),
+            }
         }
     }
 }
@@ -1002,29 +982,31 @@ impl Parts {
 /// disjunction are sorted, so that the search through them, which takes the first that serves,
 /// does not depend on the order they are written in.
 fn nnf(f: &Formula, sign: bool) -> Formula {
-    let mut out = match (f, sign) {
-        (Formula::Not(g), s) => nnf(g, !s),
-        (Formula::And(gs), true) | (Formula::Or(gs), false) => {
-            Formula::and(gs.iter().map(|g| nnf(g, sign)).collect())
-        }
-        (Formula::And(gs), false) | (Formula::Or(gs), true) => {
-            Formula::or(gs.iter().map(|g| nnf(g, sign)).collect())
-        }
-        (Formula::Con(c), true) => Formula::Con(c.clone()),
-        (Formula::Con(c), false) => {
-            let one = Lin::constant(1);
-            let neg = Formula::Con(Con::ge(&Lin::default(), &c.lin.plus(&one)));
-            if c.rel == Rel::Ge {
-                neg
-            } else {
-                Formula::or(vec![Formula::Con(Con::ge(&c.lin, &one)), neg])
+    f.fold(
+        sign,
+        |g, s| s != matches!(g, Formula::Not(_)),
+        |g, sign, mut parts| {
+            let mut out = match (g, sign) {
+                (Formula::Not(_), _) => parts.pop().expect("one part"),
+                (Formula::And(_), true) | (Formula::Or(_), false) => Formula::and(parts),
+                (Formula::And(_), false) | (Formula::Or(_), true) => Formula::or(parts),
+                (Formula::Con(c), true) => Formula::Con(c.clone()),
+                (Formula::Con(c), false) => {
+                    let one = Lin::constant(1);
+                    let neg = Formula::Con(Con::ge(&Lin::default(), &c.lin.plus(&one)));
+                    if c.rel == Rel::Ge {
+                        neg
+                    } else {
+                        Formula::or(vec![Formula::Con(Con::ge(&c.lin, &one)), neg])
+                    }
+                }
+            };
+            if let Formula::And(gs) | Formula::Or(gs) = &mut out {
+                gs.sort();
             }
-        }
-    };
-    if let Formula::And(gs) | Formula::Or(gs) = &mut out {
-        gs.sort();
-    }
-    out
+            out
+        },
+    )
 }
 
 /// The top-level constraints of a formula in negation normal form.

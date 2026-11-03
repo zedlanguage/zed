@@ -172,7 +172,11 @@ impl Conjuncts {
 
     fn and_held(&mut self, f: Formula, held: &mut Held) {
         match f {
-            Formula::And(gs) => gs.into_iter().for_each(|g| self.and_one(g, held)),
+            Formula::And(_) => f
+                .into_parts()
+                .expect("a conjunction")
+                .into_iter()
+                .for_each(|g| self.and_one(g, held)),
             g => self.and_one(g, held),
         }
     }
@@ -193,15 +197,15 @@ impl Conjuncts {
         }
         // `!(t >= 0)` is the constraint `-t - 1 >= 0` on the integers, which is projected with
         // every part of its block ([`Formula::cons`]), where its negation would be a part alone.
-        let g = match g {
-            Formula::Not(n) => match *n {
+        let g = match &g {
+            Formula::Not(n) => match &**n {
                 Formula::Con(c) if c.rel == Rel::Ge => Formula::Con(Con {
                     lin: Lin::constant(-1).minus(&c.lin),
                     rel: Rel::Ge,
                 }),
-                n => Formula::Not(Box::new(n)),
+                _ => g,
             },
-            g => g,
+            _ => g,
         };
         if g.atoms().is_empty() {
             if !g.holds(&Model::new()) {

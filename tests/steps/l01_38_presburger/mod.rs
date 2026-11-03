@@ -11,6 +11,7 @@
 
 mod checker;
 mod controls;
+mod deep;
 mod entailment;
 mod omega;
 mod oracle;

@@ -845,3 +845,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `BTreeMap` keyed by `(&'static str, Option<usize>)` to group the live cells | `Heap::survivors` | None | A family keyed by the pair, summed by a reduce |
 | A text-level pass over a printed type that tracks parenthesis depth and quotes to cut the `for` clauses | `read::clauses` | None | A fold over the characters with the stack of open groups as its state |
 | `<[String; 1]>::try_from(Vec)` to move the one item out, the vector given back otherwise | `Sig::text` | None | A list pattern of one item |
+
+## Entries from ST-deep-stack (`zedc/src/store/presburger/deep.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `impl Drop` with a work list on the enum `Formula`, so a value nested 100,000 deep is freed without recursion | `presburger/deep.rs` | None | Removed: the runtime frees values, and must free a deep chain without recursion itself (as for T2-parse's row) |
+| Moving parts out of a value whose type has `Drop` by `mem::take` and `mem::replace` through `&mut` (`into_parts`, `into_negated`, `Con::take`), since Rust forbids moving fields out of such a value by a pattern | `Formula::and`, `or`, `negate`, `Parts::add`, `Conjuncts::and_held` | Workaround | A pattern that binds the parts; with no `Drop` in Zed the workaround goes |
+| Hand-written `Clone`, `PartialEq`, `Ord`, `Hash`, `Debug` and `Display` over explicit stacks, giving what the derived forms give | `presburger/deep.rs` | Missing | Structural equality, order, hashing and printing are the runtime's, which must not recurse on depth |
+| A generic post-order fold with a context passed down, results kept on one `Vec` and split off per node | `Formula::fold`, used by `map_cons`, `forget`, `holds_as`, `nnf` and `Clone` | None | A recursive function, once the machine keeps frames on the heap; or a state receiver over a list |
