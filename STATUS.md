@@ -711,7 +711,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   Omega test, `quotient` merges proportional columns by a unimodular substitution and lifts a
   model back by the Bézout factors. `utvpi` finds potentials in topological order when the
   unit rows form a DAG, O(V+E), and by Bellman–Ford–Moore otherwise; the cyclic case is
-  O(V·E) and open (cyclic hub 42.5 times the work from n to 8n; XT3 in docs/plan_dag.md).
+  O(V·E): cyclic hub 42.5 times the work from n to 8n; UTVPI-GOR (Goldberg–Radzik, 7.8 times in the XT3 probe) and UTVPI-NEAR in docs/plan_dag.md.
   Decisions lost, option A: the linear program decided questions that design R refuses. The
   oracle's 400 four-variable systems with coefficients up to 7 go from 229 sat, 21 unsat,
   150 Growth to 213, 3, 184; in `random.rs` one projection of the 60, of `y` on a term with
@@ -827,7 +827,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T2-mid | repair attempt 1 | 2026-11-03 04:26 | deep checker tests time out at 12.5k (check costs ~0.2 ms per node at load 85); control worktree t2-mid-ctl at 2d0d512 made to compare |
 | T6 | repair attempt 6 | 2026-11-03 00:01 | rebased wt/t6 on main 7073be1 (both commits squashed first; T6's K30 renamed K37, CAP-bits owns K30) and wt/t6-spec on zed 1025886; fences resynced, l01_07/l01_ |
 | TD-ends | verify attempt 3 | 2026-11-03 03:52 | probe zedc test 'f(x: int) = x ** (3 ** 100000000 + 5 ** 100000000);' >60 s (main binary 0.03 s); '+ 1' 0.08 s, '3**1e8 * 5**1e8' 0.03 s: a sum of unrelated cor |
-| XT3 | research attempt 1 | 2026-11-03 03:08 | probes run: GOR hub 7.8x vs BFM 42.3x (512->4096), BAD-GOR control 63.8x; five order-free candidate points take oracle 213/3/184 -> 255/3/142 and decide REGULAR |
 
 Merged into local main and not yet pushed (25 commits); the push follows one full test run on the merged tree:
 
