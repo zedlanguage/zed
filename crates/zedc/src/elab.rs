@@ -719,7 +719,71 @@ impl<'a> Elab<'a> {
 
     /// An `else` pattern: an atom, its payload matched by position or by name; a field
     /// written `f:` binds `f`.
+    ///
+    /// Patterns nest as deep as the source, so the atoms still open wait on a stack. The
+    /// parts are elaborated in written order, and the first refused part ends the atom and
+    /// each atom around it, as the recursion did (step T2-mid).
     fn pattern(&mut self, p: &Pattern) -> Option<KPattern> {
+        let mut stack = Vec::new();
+        let mut finished = self.pattern_open(p, &mut stack);
+        loop {
+            let Some(top) = stack.last_mut() else {
+                return finished.expect("the pattern's result");
+            };
+            let step = match (top, finished.take()) {
+                (_, Some(None)) => Err(None),
+                (OpenPattern::Items { name, items, done }, k) => {
+                    let items: &[Pattern] = items;
+                    done.extend(k.flatten());
+                    match items.get(done.len()) {
+                        Some(item) => Ok(item),
+                        None => Err(Some(KPattern::Atom((*name).into(), std::mem::take(done)))),
+                    }
+                }
+                (
+                    OpenPattern::Fields {
+                        name,
+                        fields,
+                        span,
+                        done,
+                    },
+                    k,
+                ) => {
+                    let fields: &[(String, Option<Pattern>)] = fields;
+                    if let Some(Some(k)) = k {
+                        done.push((fields[done.len()].0.as_str().into(), k));
+                    }
+                    loop {
+                        match fields.get(done.len()) {
+                            None => {
+                                let fs = std::mem::take(done);
+                                break Err(Some(KPattern::Fields((*name).into(), fs)));
+                            }
+                            Some((_, Some(sub))) => break Ok(sub),
+                            Some((f, None)) => {
+                                let b = self.names[self.id(*span, f)].clone();
+                                done.push((f.as_str().into(), KPattern::Bind(b)));
+                            }
+                        }
+                    }
+                }
+            };
+            match step {
+                Ok(part) => finished = self.pattern_open(part, &mut stack),
+                Err(k) => {
+                    stack.pop();
+                    finished = Some(k);
+                }
+            }
+        }
+    }
+
+    /// Opens the atom pattern `p` on `stack`; or, when its shape is refused, its result.
+    fn pattern_open<'p>(
+        &mut self,
+        p: &'p Pattern,
+        stack: &mut Vec<OpenPattern<'p>>,
+    ) -> Option<Option<KPattern>> {
         let Pattern::Atom {
             name,
             fields,
@@ -730,24 +794,26 @@ impl<'a> Elab<'a> {
             unreachable!("resolve rejects the forms of layer L2")
         };
         if fields.is_empty() {
-            let items: Option<Vec<KPattern>> = items.iter().map(|i| self.pattern(i)).collect();
-            return Some(KPattern::Atom(name.as_str().into(), items?));
+            stack.push(OpenPattern::Items {
+                name,
+                items,
+                done: Vec::new(),
+            });
+            return None;
         }
         if !items.is_empty() {
-            return self.error(*span, "an atom's payload is all by position or all by name");
+            return Some(self.error(*span, "an atom's payload is all by position or all by name"));
         }
         if let Some(f) = repeated(fields.iter().map(|(f, _)| f.as_str())) {
-            return self.error(*span, format!("the pattern names `{f}` twice"));
+            return Some(self.error(*span, format!("the pattern names `{f}` twice")));
         }
-        let mut out = Vec::new();
-        for (f, sub) in fields {
-            let sub = match sub {
-                Some(sub) => self.pattern(sub)?,
-                None => KPattern::Bind(self.names[self.id(*span, f)].clone()),
-            };
-            out.push((f.as_str().into(), sub));
-        }
-        Some(KPattern::Fields(name.as_str().into(), out))
+        stack.push(OpenPattern::Fields {
+            name,
+            fields,
+            span: *span,
+            done: Vec::new(),
+        });
+        None
     }
 }
 
@@ -758,18 +824,39 @@ impl<'a> Elab<'a> {
 /// error there, with the cause when that check was refused; the checker passes it once for
 /// each written type of a program (the list `Tables::written`, walked by `Ck::bounds`), so
 /// every way a program is checked runs this check, and runs it once. One pass over the type.
+///
+/// Types nest as deep as the source, so the types still open wait on a stack, each with the
+/// types of its parts so far; every part is elaborated, in written order, before the type that
+/// holds it, so the errors come in the order a recursion would give (step T2-mid).
 pub(crate) fn kernel_type(
     t: &Type,
     ports: &mut Vec<(Span, String)>,
     mut bounds: Option<&mut Vec<(Span, String)>>,
 ) -> Option<KType> {
-    let mut all = |ts: &[Type]| -> Option<Vec<KType>> {
-        let ts: Vec<Option<KType>> = ts
-            .iter()
-            .map(|t| kernel_type(t, ports, bounds.as_deref_mut()))
-            .collect();
-        ts.into_iter().collect()
-    };
+    let mut stack = vec![OpenType::of(t)];
+    loop {
+        let top = stack.last_mut().expect("a type in progress");
+        if let Some(&part) = top.parts.get(top.done.len()) {
+            stack.push(OpenType::of(part));
+            continue;
+        }
+        let OpenType { t, done, .. } = stack.pop().expect("a type in progress");
+        let k = kernel_form(t, done, ports, bounds.as_deref_mut());
+        match stack.last_mut() {
+            Some(holder) => holder.done.push(k),
+            None => return k,
+        }
+    }
+}
+
+/// The type `t` denotes, given the types of its parts in [`type_parts`] order, `None` where a
+/// part was refused; the errors of [`kernel_type`] for `t` itself go to `ports` and `bounds`.
+fn kernel_form(
+    t: &Type,
+    parts: Vec<Option<KType>>,
+    ports: &mut Vec<(Span, String)>,
+    bounds: Option<&mut Vec<(Span, String)>>,
+) -> Option<KType> {
     Some(match &t.kind {
         TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
             unreachable!("resolve rejects the forms of layer L2")
@@ -790,25 +877,16 @@ pub(crate) fn kernel_type(
             }
         },
         TypeKind::Atom(a) => KType::atom(a),
-        TypeKind::Tuple(ts) => KType::tuple(all(ts)?),
-        TypeKind::Union(ts) => KType::union_all(all(ts)?),
-        TypeKind::And(ts) => KType::meet_all(all(ts)?),
-        TypeKind::Diff(a, b) => {
-            let a = kernel_type(a, ports, bounds.as_deref_mut());
-            let b = kernel_type(b, ports, bounds.as_deref_mut());
+        TypeKind::Tuple(_) => KType::tuple(parts.into_iter().collect::<Option<_>>()?),
+        TypeKind::Union(_) => KType::union_all(parts.into_iter().collect::<Option<Vec<_>>>()?),
+        TypeKind::And(_) => KType::meet_all(parts.into_iter().collect::<Option<Vec<_>>>()?),
+        TypeKind::Diff(..) => {
+            let [a, b] = <[Option<KType>; 2]>::try_from(parts).expect("two parts");
             a? - &b?
         }
-        TypeKind::Arrow {
-            params,
-            partial,
-            result,
-        } => {
-            let keys: Vec<Option<KType>> = params
-                .iter()
-                .map(|p| kernel_type(&p.ty, ports, bounds.as_deref_mut()))
-                .collect();
-            let result = kernel_type(result, ports, bounds.as_deref_mut());
-            let mut keys: Vec<KType> = keys.into_iter().collect::<Option<_>>()?;
+        TypeKind::Arrow { partial, .. } => {
+            let mut keys: Vec<KType> = parts.into_iter().collect::<Option<_>>()?;
+            let result = keys.pop().expect("the result is the last part");
             if keys.is_empty() {
                 keys.push(KType::tuple(Vec::new()));
             }
@@ -817,16 +895,10 @@ pub(crate) fn kernel_type(
             } else {
                 KType::exact
             };
-            keys.into_iter().rev().fold(result?, |v, k| level(k, v))
+            keys.into_iter().rev().fold(result, |v, k| level(k, v))
         }
-        TypeKind::Bounded {
-            lower,
-            upper,
-            result,
-        } => {
-            let l = kernel_type(lower, ports, bounds.as_deref_mut());
-            let u = kernel_type(upper, ports, bounds.as_deref_mut());
-            let v = kernel_type(result, ports, bounds.as_deref_mut());
+        TypeKind::Bounded { .. } => {
+            let [l, u, v] = <[Option<KType>; 3]>::try_from(parts).expect("three parts");
             let (l, u) = (l?, u?);
             if let Some(bounds) = bounds
                 && !l.subtype(&u)
@@ -848,6 +920,62 @@ pub(crate) fn kernel_type(
             KType::morphism(l, u, v?)
         }
     })
+}
+
+/// A type expression being elaborated by [`kernel_type`]: its parts and the types of those done.
+struct OpenType<'t> {
+    t: &'t Type,
+    parts: Vec<&'t Type>,
+    done: Vec<Option<KType>>,
+}
+
+impl<'t> OpenType<'t> {
+    fn of(t: &'t Type) -> Self {
+        Self {
+            t,
+            parts: type_parts(t),
+            done: Vec::new(),
+        }
+    }
+}
+
+/// The parts of `t` that [`kernel_form`] takes the types of, in the order the source writes
+/// them: a function type's parameters, then its result.
+fn type_parts(t: &Type) -> Vec<&Type> {
+    match &t.kind {
+        TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => ts.iter().collect(),
+        TypeKind::Diff(a, b) => vec![a, b],
+        TypeKind::Arrow { params, result, .. } => {
+            params.iter().map(|p| &p.ty).chain([&**result]).collect()
+        }
+        TypeKind::Bounded {
+            lower,
+            upper,
+            result,
+        } => vec![lower, upper, result],
+        TypeKind::Name(_)
+        | TypeKind::Atom(_)
+        | TypeKind::Apply(..)
+        | TypeKind::AtomApply(..)
+        | TypeKind::Record(_)
+        | TypeKind::Array(_) => Vec::new(),
+    }
+}
+
+/// An atom pattern being elaborated by [`Elab::pattern`]: by position, the patterns of the
+/// items done; by name, the fields done.
+enum OpenPattern<'p> {
+    Items {
+        name: &'p str,
+        items: &'p [Pattern],
+        done: Vec<KPattern>,
+    },
+    Fields {
+        name: &'p str,
+        fields: &'p [(String, Option<Pattern>)],
+        span: Span,
+        done: Vec<(Arc<str>, KPattern)>,
+    },
 }
 
 /// A name that occurs twice in `names`.

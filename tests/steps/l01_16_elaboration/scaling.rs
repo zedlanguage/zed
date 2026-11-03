@@ -476,3 +476,70 @@ fn negations_and_calls_8000_deep_elaborate_on_a_2_mib_stack() {
     // Nested tuples are left out: the checker takes time superlinear in their depth (open).
     elaborates_deep(&["nested negations", "nested calls"], 1_000);
 }
+
+/// `t = x is int \ int \ … \ int;`, `n` differences nested to the left.
+fn differences(n: usize) -> String {
+    format!("x = 1;\nt = x is {};\n", vec!["int"; n + 1].join(" \\ "))
+}
+
+/// `t = x else #a(#a(…#a…)) -> 0;`, the pattern `n` atoms deep, its payloads by position, or
+/// by name when `named`.
+fn else_patterns(n: usize, named: bool) -> String {
+    let open = if named { "#a(f: " } else { "#a(" };
+    let p = open.repeat(n) + "#a" + &")".repeat(n);
+    format!("x = #b;\nt = x else {p} -> 0;\n")
+}
+
+/// Elaborates `text(n)` and `text(8n)` on a 2 MiB stack, and checks the time is linear.
+fn elaborates_text_deep(what: &str, n: usize, text: fn(usize) -> String) {
+    use zed_tests::deep::{on_small_stack, statements};
+    on_small_stack(|| {
+        let (small, large) = (statements(&text(n)), statements(&text(8 * n)));
+        let (small_res, large_res) = (resolve(&small).unwrap(), resolve(&large).unwrap());
+        zed_tests::scaling::check_order(&format!("elaborating {what}"), n, 1, |k| {
+            let (stmts, res) = if k == n {
+                (&small, &small_res)
+            } else {
+                (&large, &large_res)
+            };
+            let unit = elaborate(stmts, res).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+            assert_eq!(unit.defs.len(), 2, "{what}");
+        });
+    });
+}
+
+#[test]
+fn a_type_100000_deep_elaborates_on_a_2_mib_stack() {
+    elaborates_text_deep("a difference of types", 12_500, differences);
+}
+
+// The kernel's `Pattern` drops its parts by recursion (ZED_PORT_GAPS.md), so a pattern 100,000
+// deep overflows a 2 MiB stack whatever elaborates it; these go 10,000 deep.
+
+#[test]
+fn else_patterns_10000_deep_elaborate_on_a_2_mib_stack() {
+    elaborates_text_deep("a pattern by position", 1_250, |n| else_patterns(n, false));
+    elaborates_text_deep("a pattern by name", 1_250, |n| else_patterns(n, true));
+}
+
+#[test]
+fn errors_inside_types_and_patterns_keep_their_order() {
+    // Every part of a type is elaborated, and its errors reported in written order; the first
+    // refused part of a pattern ends it. The expected output is the recursive code's.
+    let port = "`Lines` is the type of a port, and no value has it [Lines]";
+    assert_eq!(
+        super::errors("x = 1;\nt = x is (Lines, int \\ Lines) | Lines;\n"),
+        [port, port, port]
+    );
+    let twice = "the pattern names `k` twice [#c(k: #a, k: #b)]";
+    for p in [
+        "#a(#c(k: #a, k: #b), #d(j: #a, j: #b))",
+        "#a(f: #c(k: #a, k: #b), h: #d(j: #a, j: #b))",
+    ] {
+        assert_eq!(
+            super::errors(&format!("x = #b;\nt = x else {p} -> 0;\n")),
+            [twice],
+            "{p}"
+        );
+    }
+}
