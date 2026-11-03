@@ -93,7 +93,7 @@ use imbl::OrdSet;
 
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
-use super::linear::Term;
+use super::linear::{Q, Term};
 use super::{hull3, twovar, utvpi};
 
 mod deep;
@@ -2799,20 +2799,87 @@ fn bounds(sys: &System) -> Option<Bounds> {
     (!empty).then_some((tlo, thi))
 }
 
-/// Whether some wide row `Σ a[i]·x[i] + k >= 0` is below zero at every point of the box
-/// `lo`, `hi`: its largest value there, `k` plus each `a[i]` times the upper bound of `x[i]`
-/// when `a[i]` is above zero and the lower one when below, is negative. Every point of the
-/// rows lies in the box, so such a row shows them empty.
+/// Whether the wide rows `Σ a[i]·x[i] + k >= 0` have no rational point in the box `lo`, `hi`,
+/// by one of two tests on each row ([`row_box_empty`]): the row is below zero at every point of
+/// the box, or it bounds a variable on one side by a rational past the bound another row gives
+/// it on the other. Each variable keeps the greatest lower and the least upper bound the rows
+/// have given it so far, so a pair of crossing bounds is found when the later of its two rows
+/// is read, whatever the order of the rows. One pass over the terms. Every point of the rows
+/// lies in the box, so either test shows them empty.
 fn box_empty_in(sys: &System, lo: &[Option<Int>], hi: &[Option<Int>]) -> bool {
-    sys.rows.iter().any(|(a, held)| {
-        a.len() > 1
-            && a.iter()
-                .try_fold(held.k.clone(), |m, (i, c)| {
-                    let b = if c.is_positive() { &hi[*i] } else { &lo[*i] }.as_ref()?;
-                    Some(&m + &(c * b))
-                })
-                .is_some_and(|m| m.is_negative())
-    })
+    // The box's own bounds have no place here: a row that bounds a variable past one of them
+    // is below zero at every point of the box, which the first test finds.
+    let mut least: Vec<Option<Q>> = vec![None; lo.len()];
+    let mut most: Vec<Option<Q>> = vec![None; hi.len()];
+    sys.rows
+        .iter()
+        .filter(|(a, _)| a.len() > 1)
+        .any(|(a, held)| row_box_empty(a, &held.k, lo, hi, &mut least, &mut most))
+}
+
+/// Whether the row `Σ a[i]·x[i] + k >= 0` shows the rows empty in the box `lo`, `hi`, given the
+/// greatest lower bounds `least` and the least upper bounds `most` that the rows read before it
+/// gave each variable, which it then updates with its own. Its largest value in the box, `k`
+/// plus each `a[i]` times the upper bound of `x[i]` when `a[i]` is above zero and the lower one
+/// when below, is negative; or, with each other term at its largest value `rest`, the row
+/// leaves `a[i]·x[i] >= -rest`, a rational bound on `x[i]` that crosses the other side's bound.
+/// `rest` is known when at most `x[i]` itself lacks the bound the row needs. No bound is
+/// rounded, so what is shown empty has no rational point in the box. Two passes over the
+/// row's terms.
+fn row_box_empty(
+    a: &[Term],
+    k: &Int,
+    lo: &[Option<Int>],
+    hi: &[Option<Int>],
+    least: &mut [Option<Q>],
+    most: &mut [Option<Q>],
+) -> bool {
+    // The largest value of `c·x[i]` in the box.
+    let top = |i: usize, c: &Int| {
+        if c.is_positive() { &hi[i] } else { &lo[i] }
+            .as_ref()
+            .map(|b| c * b)
+    };
+    let mut sum = k.clone();
+    let mut open: Option<usize> = None;
+    for (i, c) in a {
+        match top(*i, c) {
+            Some(m) => sum = &sum + &m,
+            None if open.is_none() => open = Some(*i),
+            // Two variables lack the bound the row needs: it bounds none of them.
+            None => return false,
+        }
+    }
+    if open.is_none() && sum.is_negative() {
+        return true;
+    }
+    for (i, c) in a {
+        let rest = match (open, top(*i, c)) {
+            (None, Some(m)) => &sum - &m,
+            (Some(o), None) if o == *i => sum.clone(),
+            _ => continue,
+        };
+        if c.is_positive() {
+            // `c·x[i] >= -rest`: a lower bound.
+            let b = Q::new(-&rest, c.clone());
+            if most[*i].as_ref().is_some_and(|h| *h < b) {
+                return true;
+            }
+            if least[*i].as_ref().is_none_or(|l| *l < b) {
+                least[*i] = Some(b);
+            }
+        } else {
+            // `-c·x[i] <= rest`: an upper bound.
+            let b = Q::new(rest, -c);
+            if least[*i].as_ref().is_some_and(|l| b < *l) {
+                return true;
+            }
+            if most[*i].as_ref().is_none_or(|h| b < *h) {
+                most[*i] = Some(b);
+            }
+        }
+    }
+    false
 }
 
 /// Whether the rows are empty by [`bounds`] or by [`box_empty_in`] in the box it gives.
@@ -3140,7 +3207,12 @@ impl Omega {
             // `Refusal::Growth` ("not decided", rejected at the function by `run.rs`
             // `linear_questions`), though it may have a point or none. Only five points of the
             // box are tried (nearest zero, lower corner, upper corner, the two midpoints), so a
-            // system whose points all lie elsewhere in the box is refused. Why: an
+            // system whose points all lie elsewhere in the box is refused. The box is shown empty
+            // only by one pass over the rows (`row_box_empty`): a row below zero over the box, or
+            // two rows that bound a variable past each other with the other terms at their
+            // largest; a system with no rational point that no such pair shows (the rows of
+            // `stages::CROSSING` raised by 1 to 7) is refused, since the resolvents that would
+            // find more (cross-review XR3 Q1) were not adopted. Why: an
             // elimination that adds terms multiplies lower by upper bounds, so the rows can grow
             // doubly exponentially in the variables eliminated (Fourier–Motzkin), and the dark
             // and gray shadows of the full Omega test add an exponential search on top; trying
@@ -3150,12 +3222,15 @@ impl Omega {
             // the system plays no part. (Three live variables with a unit side are decided by
             // the `hull3` stage above.) Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
             // `l01_38_presburger::checker::a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`,
-            // `l01_38_presburger::scaling::the_shifted_sparse_family_scales`. COMPLEXITY.md
-            // rows S18 and Kept "Fourier–Motzkin pairs". A complete solution would run the
-            // growing eliminations of the full Omega test (or another complete Presburger
-            // procedure) and accept their exponential worst case, or find a structural class
-            // of growing systems decidable in O(n log n); plan item HULL3-GEN (which needs the
-            // cross-review XR3) is the general fix for three live variables with no unit side.
+            // `l01_38_presburger::scaling::the_shifted_sparse_family_scales`,
+            // `l01_38_presburger::stages::rows_the_one_pass_test_does_not_show_empty_stay_refused`,
+            // `l01_38_presburger::scaling::the_box_stage_with_a_hub_in_one_row_per_block_scales`.
+            // COMPLEXITY.md rows S18, Q1-ROWBOX and Kept "Fourier–Motzkin pairs". A complete
+            // solution would run the growing eliminations of the full Omega test (or another
+            // complete Presburger procedure) and accept their exponential worst case, or find a
+            // structural class of growing systems decidable in O(n log n); plan item HULL3-GEN
+            // (which needs the cross-review XR3) is the general fix for three live variables
+            // with no unit side.
             let Some((lo, hi)) = bounds(&self.sys) else {
                 return Leaf::Empty;
             };
@@ -4248,6 +4323,288 @@ mod tests {
                 want,
                 "{a} {b}"
             );
+        }
+    }
+
+    /// Whether the rows `Σ a[i]·x[i] + k >= 0` over `n` variables, with the box `lo`, `hi` as
+    /// rows, have no rational point: Fourier–Motzkin over every variable, exact over `Int`.
+    fn rationally_empty(
+        n: usize,
+        rows: &[(Vec<Int>, Int)],
+        lo: &[Option<Int>],
+        hi: &[Option<Int>],
+    ) -> bool {
+        let unit = |j: usize, c: i128| -> Vec<Int> {
+            (0..n)
+                .map(|i| Int::from(if i == j { c } else { 0 }))
+                .collect()
+        };
+        let mut cur: Vec<(Vec<Int>, Int)> = rows.to_vec();
+        for j in 0..n {
+            if let Some(l) = &lo[j] {
+                cur.push((unit(j, 1), -l));
+            }
+            if let Some(h) = &hi[j] {
+                cur.push((unit(j, -1), h.clone()));
+            }
+        }
+        for j in 0..n {
+            let (mut pos, mut neg, mut rest) = (Vec::new(), Vec::new(), Vec::new());
+            for r in cur {
+                if r.0[j].is_positive() {
+                    pos.push(r);
+                } else if r.0[j].is_negative() {
+                    neg.push(r);
+                } else {
+                    rest.push(r);
+                }
+            }
+            for (pa, pk) in &pos {
+                for (qa, qk) in &neg {
+                    let (a, b) = (&pa[j], &-&qa[j]);
+                    let c: Vec<Int> = (0..n).map(|i| &(b * &pa[i]) + &(a * &qa[i])).collect();
+                    let k = &(b * pk) + &(a * qk);
+                    let g = c.iter().fold(k.abs(), |g, x| g.gcd(x));
+                    if g.is_zero() {
+                        rest.push((c, k));
+                    } else {
+                        rest.push((c.iter().map(|x| x.div_floor(&g)).collect(), k.div_floor(&g)));
+                    }
+                }
+            }
+            rest.sort();
+            rest.dedup();
+            cur = rest;
+        }
+        cur.iter().any(|(_, k)| k.is_negative())
+    }
+
+    /// The rows of `sys` over `n` variables, each as its coefficients by place and its constant.
+    fn dense(sys: &System, n: usize) -> Vec<(Vec<Int>, Int)> {
+        sys.rows
+            .iter()
+            .map(|(a, held)| {
+                let mut c = vec![Int::ZERO; n];
+                for (i, x) in a.iter() {
+                    c[*i] = x.clone();
+                }
+                (c, held.k.clone())
+            })
+            .collect()
+    }
+
+    /// The old box test: some wide row below zero at every point of the box.
+    fn a_row_below_zero(sys: &System, lo: &[Option<Int>], hi: &[Option<Int>]) -> bool {
+        sys.rows
+            .iter()
+            .filter(|(a, _)| a.len() > 1)
+            .any(|(a, held)| {
+                let mut s = held.k.clone();
+                for (i, c) in a.iter() {
+                    match if c.is_positive() { &hi[*i] } else { &lo[*i] } {
+                        Some(b) => s = &s + &(c * b),
+                        None => return false,
+                    }
+                }
+                s.is_negative()
+            })
+    }
+
+    /// A system of the rows `Σ c·x + k >= 0` over variables by place, renamed by `perm`, with
+    /// each variable in `[-half, half]`.
+    fn boxed_system(rows: &[(Vec<i128>, i128)], perm: &[usize], half: i128) -> System {
+        let n = perm.len();
+        let mut sys = System::new(n);
+        for (c, k) in rows {
+            let t: Vec<(usize, i128)> = (0..n)
+                .filter(|&i| c[i] != 0)
+                .map(|i| (perm[i], c[i]))
+                .collect();
+            let mut t = t;
+            t.sort();
+            sys.add(row(&t, *k));
+        }
+        for j in 0..n {
+            sys.add(row(&[(j, 1)], half));
+            sys.add(row(&[(j, -1)], half));
+        }
+        sys
+    }
+
+    /// A small random generator for the tests below (xorshift).
+    struct Draw(u64);
+
+    impl Draw {
+        fn int(&mut self, lo: i128, hi: i128) -> i128 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            lo + (self.0 % (hi - lo + 1) as u64) as i128
+        }
+    }
+
+    /// Every permutation of `0..4`.
+    fn perms4() -> Vec<Vec<usize>> {
+        let mut out = Vec::new();
+        for a in 0..4 {
+            for b in 0..4 {
+                for c in 0..4 {
+                    for d in 0..4 {
+                        let p = vec![a, b, c, d];
+                        let mut s = p.clone();
+                        s.sort();
+                        s.dedup();
+                        if s.len() == 4 {
+                            out.push(p);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_row_test_of_the_box_shows_empty_only_what_has_no_rational_point() {
+        // 3000 systems of 2 to 5 rows over four variables in [-4, 4], coefficients up to 7
+        // and constants up to 20 (the oracle's 0x38_0a family). Wherever the box test says
+        // empty, Fourier–Motzkin finds no rational point in the box it was given; the answer
+        // is the same under all 24 namings of the variables, which reorder the rows; and some
+        // systems are shown empty only by two rows whose bounds on a variable cross.
+        let mut g = Draw(0x38_0a_0b);
+        let all = perms4();
+        let (mut empty, mut crossed) = (0, 0);
+        for _ in 0..3000 {
+            let rows: Vec<(Vec<i128>, i128)> = (0..g.int(2, 5))
+                .map(|_| ((0..4).map(|_| g.int(-7, 7)).collect(), g.int(-20, 20)))
+                .collect();
+            let mut answers = Vec::new();
+            for p in &all {
+                let sys = boxed_system(&rows, p, 4);
+                if sys.empty {
+                    answers.push(None);
+                    continue;
+                }
+                let Some((lo, hi)) = bounds(&sys) else {
+                    answers.push(None);
+                    continue;
+                };
+                let e = box_empty_in(&sys, &lo, &hi);
+                if p == &all[0] {
+                    if e {
+                        assert!(rationally_empty(4, &dense(&sys, 4), &lo, &hi), "{rows:?}");
+                    }
+                    empty += usize::from(e);
+                    crossed += usize::from(e && !a_row_below_zero(&sys, &lo, &hi));
+                }
+                answers.push(Some(e));
+            }
+            assert!(answers.windows(2).all(|w| w[0] == w[1]), "{rows:?}");
+        }
+        assert!(empty > crossed && crossed > 0, "{empty} {crossed}");
+    }
+
+    #[test]
+    fn the_row_test_of_the_box_keeps_every_system_with_an_integer_point() {
+        // 3000 systems of 2 to 6 rows over four variables in [-4, 4], each row holding at a
+        // random point of the box with slack 0 to 2: the box test never says empty.
+        let mut g = Draw(0x38_0c_0d);
+        for _ in 0..3000 {
+            let p: Vec<i128> = (0..4).map(|_| g.int(-4, 4)).collect();
+            let rows: Vec<(Vec<i128>, i128)> = (0..g.int(2, 6))
+                .map(|_| {
+                    let c: Vec<i128> = (0..4).map(|_| g.int(-7, 7)).collect();
+                    let at: i128 = c.iter().zip(&p).map(|(c, x)| c * x).sum();
+                    (c, g.int(0, 2) - at)
+                })
+                .collect();
+            let sys = boxed_system(&rows, &[0, 1, 2, 3], 4);
+            let (lo, hi) = bounds(&sys).expect("a box holding the point");
+            assert!(!box_empty_in(&sys, &lo, &hi), "{rows:?} at {p:?}");
+        }
+    }
+
+    /// The box test on the rows `Σ a·x + k >= 0` over `n` variables and the box `lo`, `hi`.
+    fn box_test(
+        n: usize,
+        rows: &[(&[(usize, i128)], Int)],
+        lo: &[Option<i128>],
+        hi: &[Option<i128>],
+    ) -> bool {
+        let mut sys = System::new(n);
+        for (a, k) in rows {
+            sys.add(Row {
+                a: a.iter().map(|(j, c)| (*j, Int::from(*c))).collect(),
+                k: k.clone(),
+            });
+        }
+        let lo: Vec<Option<Int>> = lo.iter().map(|b| b.map(Int::from)).collect();
+        let hi: Vec<Option<Int>> = hi.iter().map(|b| b.map(Int::from)).collect();
+        box_empty_in(&sys, &lo, &hi)
+    }
+
+    #[test]
+    fn a_row_with_no_variables_is_below_zero_when_its_constant_is() {
+        let (lo, hi) = ([Some(0)], [Some(1)]);
+        let (mut least, mut most) = (vec![None], vec![None]);
+        let to = |b: &[Option<i128>]| -> Vec<Option<Int>> {
+            b.iter().map(|b| b.map(Int::from)).collect()
+        };
+        let (lo, hi) = (to(&lo), to(&hi));
+        assert!(row_box_empty(
+            &[],
+            &Int::from(-1),
+            &lo,
+            &hi,
+            &mut least,
+            &mut most
+        ));
+        assert!(!row_box_empty(
+            &[],
+            &Int::ZERO,
+            &lo,
+            &hi,
+            &mut least,
+            &mut most
+        ));
+    }
+
+    #[test]
+    fn a_variable_with_no_bound_on_the_side_a_row_needs_is_bounded_by_that_row() {
+        // x0 has no bound and x1 is in [0, 1]. `2·x0 - x1 - 3 >= 0` needs the upper bound of
+        // x0, so it bounds x0 alone: x0 >= 3/2. `-2·x0 - x1 + k >= 0` gives x0 <= k/2, below
+        // 3/2 for k = 2 (empty) and not for k = 4 (the point (2, 0)).
+        let (lo, hi) = ([None, Some(0)], [None, Some(1)]);
+        let a: &[(usize, i128)] = &[(0, 2), (1, -1)];
+        let b: &[(usize, i128)] = &[(0, -2), (1, -1)];
+        for (k, empty) in [(2, true), (3, false), (4, false)] {
+            let rows = [(a, Int::from(-3)), (b, Int::from(k))];
+            assert_eq!(box_test(2, &rows, &lo, &hi), empty, "k = {k}");
+        }
+        // With x2 unbounded too, `x0 + x2 - 100 >= 0` lacks two bounds and bounds neither.
+        let c: &[(usize, i128)] = &[(0, 1), (2, 1)];
+        let rows = [(a, Int::from(-3)), (c, Int::from(-100))];
+        assert!(!box_test(
+            3,
+            &rows,
+            &[None, Some(0), None],
+            &[None, Some(1), None]
+        ));
+    }
+
+    #[test]
+    fn bounds_at_the_edge_of_i128_cross_exactly() {
+        // `P·x0 + x1 - (P - 1) >= 0` and `-P·x0 + x1 + R >= 0` with P = i128::MAX, x0 in
+        // [-1, 1] and x1 in [0, 1]: x0 >= (P - 2)/P and x0 <= (R + 1)/P. Each row's largest
+        // value in the box passes i128 and is positive; the bounds cross for R = P - 10 and
+        // meet at one point for R = P - 3.
+        let p = i128::MAX;
+        let (lo, hi) = ([Some(-1), Some(0)], [Some(1), Some(1)]);
+        let a: &[(usize, i128)] = &[(0, p), (1, 1)];
+        let b: &[(usize, i128)] = &[(0, -p), (1, 1)];
+        for (r, empty) in [(p - 10, true), (p - 3, false), (p, false)] {
+            let rows = [(a, -&Int::from(p - 1)), (b, Int::from(r))];
+            assert_eq!(box_test(2, &rows, &lo, &hi), empty, "R = P - {}", p - r);
         }
     }
 }

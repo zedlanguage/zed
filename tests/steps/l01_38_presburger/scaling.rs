@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+use super::stages::Row;
+
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
@@ -352,5 +354,104 @@ fn pughs_example_in_a_chain_scales() {
         512,
         Err(Refusal::Shadows),
         pugh_in_a_chain,
+    );
+}
+
+/// Rows `Σ c·x[i] + k >= 0`.
+fn rows_of(rows: &[Row]) -> Formula {
+    Formula::and(
+        rows.iter()
+            .map(|(t, k)| {
+                let lin = t
+                    .iter()
+                    .fold(Lin::constant(*k), |l, (i, c)| l.plus(&x(*i).times(*c)));
+                Formula::Con(Con::ge(&lin, &Lin::constant(0)))
+            })
+            .collect(),
+    )
+}
+
+/// Gemini's relaxed blocks of cross-review XR3 Q1 (`verify_r3.rs`): a block of five rows over
+/// x0..x3 and `n - 1` blocks of three rows over four variables each, with a hub `x[4n]` added
+/// with coefficient +1 (even blocks) or -1 (odd blocks) to the third row of every block after
+/// the first, every variable in [-4, 4]. The hub joins the blocks into one part with `n - 1`
+/// wide rows of the hub; no row is below zero over the box and no two rows bound a variable
+/// past each other, so the box stage passes every row once and the question is refused.
+fn blocks_with_a_hub(n: usize) -> Vec<Row> {
+    let mut r: Vec<Row> = [
+        ([5, 5, -7, -4], 3),
+        ([7, -7, -3, -6], 40),
+        ([2, 3, -2, -6], -18),
+        ([7, 3, 7, 4], -10),
+        ([-7, 2, 5, 4], -5),
+    ]
+    .iter()
+    .map(|(c, k)| ((0..4).map(|j| (j, c[j])).collect(), *k))
+    .collect();
+    for b in 1..n {
+        let rows = [
+            ([2, -3, 1, 2], 15),
+            ([-3, 1, -2, 3], 15),
+            ([1, 2, -3, -2], 15),
+        ];
+        for (m, (c, k)) in rows.iter().enumerate() {
+            let mut t: Vec<(usize, i64)> = (0..4).map(|j| (4 * b + j, c[j])).collect();
+            if m == 2 {
+                t.push((4 * n, if b % 2 == 0 { 1 } else { -1 }));
+            }
+            r.push((t, *k));
+        }
+    }
+    for i in 0..=4 * n {
+        r.push((vec![(i, 1)], 4));
+        r.push((vec![(i, -1)], 4));
+    }
+    r
+}
+
+#[test]
+fn the_box_stage_with_a_hub_in_one_row_per_block_scales() {
+    // HUB-SCALE: the row test of the box stage (Q1-ROWBOX) is one pass over the terms, so a
+    // hub in a row of every block costs nothing per row beyond its own term. Measured
+    // 2026-11-03: 9.1 times the instructions from 16 to 128 and 9.3 from 64 to 512; with
+    // `row_box_empty` run again over every row of each variable of a row it was 44.6 and
+    // 175.2, and with the bounds rebuilt for each row from the rows before it, 32.8 and 49.6.
+    decides(
+        "the box stage with a hub in one row per block",
+        64,
+        Err(Refusal::Growth),
+        |n| rows_of(&blocks_with_a_hub(n)),
+    );
+}
+
+/// [`blocks_with_a_hub`] with the rows of `stages::CROSSING` over four more variables, joined
+/// to the hub by a row that holds over the box: the row test finds two rows that bound a
+/// variable past each other, after it has kept the bounds of about a third of the wide rows
+/// (518 of 1538 at n = 512, measured 2026-11-03), so it runs over more rows at 8n.
+fn blocks_with_a_hub_and_a_crossing(n: usize) -> Vec<Row> {
+    let mut r = blocks_with_a_hub(n);
+    let base = 4 * n + 1;
+    for (c, k) in super::stages::CROSSING {
+        r.push(((0..4).map(|j| (base + j, c[j])).collect(), k));
+    }
+    r.push((vec![(4 * n, 1), (base, 1)], 8));
+    for i in base..base + 4 {
+        r.push((vec![(i, 1)], 4));
+        r.push((vec![(i, -1)], 4));
+    }
+    r
+}
+
+#[test]
+fn the_row_test_of_the_box_scales() {
+    // Measured 2026-11-03: 8.7 times the instructions from 16 to 128 and 9.2 from 64 to 512;
+    // 46.5 and 209.5 with `row_box_empty` run again over every row of each variable of a row.
+    // With the bounds rebuilt for each row it was 12.4 and 21.3, under the limit, since the
+    // crossing is found early; the hub family above shows that cost.
+    decides(
+        "the row test of the box with a crossing after the hub's blocks",
+        64,
+        Ok(false),
+        |n| rows_of(&blocks_with_a_hub_and_a_crossing(n)),
     );
 }

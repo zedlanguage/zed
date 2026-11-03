@@ -131,11 +131,14 @@ fn small_coefficients_over_four_variables_match_enumeration() {
     // Growth. With only the point nearest zero the counts were (213, 3, 184); the four other
     // points decide 42 more with a point, more than the 229 the linear program found: (255, 3,
     // 142). The `hull3` stage (XT3 B4), which decides three live variables with a unit side
-    // exactly, decides 6 more with a point. The counts measure how much is decided, not
-    // correctness, which `run` checks on every system against enumeration.
+    // exactly, decides 6 more with a point. Of the 136 systems then refused, 18 have no rational
+    // point (cross-review XR3, Q1); the row test of the box stage (Q1-ROWBOX), two rows
+    // bounding one variable by rationals that cross, shows 1 of them empty. The counts measure
+    // how much is decided, not correctness, which `run` checks on every system against
+    // enumeration.
     assert_eq!(
         (t.sat, t.unsat, t.growth, t.shadows),
-        (261, 3, 136, 0),
+        (261, 4, 135, 0),
         "{t:?}"
     );
 }
@@ -231,10 +234,13 @@ fn rows_of_three_terms_tight_at_a_corner_match_enumeration() {
     // the box test 5,074 are refused (control run once, STATUS.md, L1.38); the box shows most
     // of the empty ones empty. With only the point nearest zero the counts were (2550, 9282,
     // 168): the corners and midpoints find 36 more points, (2586, 9282, 132). The `hull3`
-    // stage (XT3 B4) decides 25 more with a point and shows 24 more empty.
+    // stage (XT3 B4) decides 25 more with a point and shows 24 more empty. The row test of the
+    // box stage (Q1-ROWBOX) shows 14 more empty. Without the `hull3` stage it shows 23 of the
+    // 64 systems with no rational point empty that design R and the five points refused
+    // (2586, 9305, 109, as cross-review XR3 counted); `hull3` already decides 9 of those 23.
     assert_eq!(
         (t.sat, t.unsat, t.growth, t.shadows),
-        (2611, 9306, 83, 0),
+        (2611, 9320, 69, 0),
         "{t:?}"
     );
     eprintln!("three terms: {t:?}");
@@ -437,17 +443,23 @@ fn each_permutation(n: usize, mut visit: impl FnMut(&[usize])) -> usize {
     count
 }
 
-/// Decides 3000 systems from `make` over `n` variables in the box `[-half, half]^n`, then each
+/// Decides `count` systems from `make` over `n` variables in the box `[-half, half]^n`, then each
 /// again under every naming of its variables: `n` random names given to the variables in each
 /// of the `n!` orders, so that the names sort in every order, with the rows and bounds shuffled
 /// anew each time; when `n! < 4` the orders are run again, so each system is shuffled at least
 /// four times. Fails at the first answer that changes. Returns the refusals, which are
 /// among the answers compared.
-fn reorderings(seed: u64, n: usize, half: i64, make: impl Fn(&mut Rng) -> Vec<Row>) -> usize {
+fn reorderings(
+    seed: u64,
+    count: usize,
+    n: usize,
+    half: i64,
+    make: impl Fn(&mut Rng) -> Vec<Row>,
+) -> usize {
     let mut rng = Rng::new(seed);
     let plain: Vec<Arc<str>> = (0..n).map(|i| Arc::from(format!("v{i}"))).collect();
     let mut refused = 0;
-    for _ in 0..3000 {
+    for _ in 0..count {
         let rows = make(&mut rng);
         let all = rows.len() + 2 * n;
         let f = named(&rows, half, &plain, &(0..all).collect::<Vec<_>>());
@@ -479,14 +491,15 @@ fn reorderings(seed: u64, n: usize, half: i64, make: impl Fn(&mut Rng) -> Vec<Ro
     refused
 }
 
-// 174,000 renamed and reordered systems in all: 72,000 in each four-variable family, 18,000
-// over three variables and 12,000 over two (each of the two namings twice). The four-variable families check that the five
-// points of the box stage, which are computed on the rows left after the eliminations, give no
-// answer that depends on the names (XT3 report, part E).
+// 198,000 renamed and reordered systems in all: 72,000 and 96,000 in the two four-variable
+// families, 18,000 over three variables and 12,000 over two (each of the two namings twice).
+// The four-variable families check that the five points of the box stage, which are computed
+// on the rows left after the eliminations, give no answer that depends on the names (XT3
+// report, part E).
 
 #[test]
 fn small_coefficients_answer_the_same_under_any_names_and_order() {
-    let refused = reorderings(0x38_40, 4, 4, |rng| {
+    let refused = reorderings(0x38_40, 3000, 4, 4, |rng| {
         let rows = 2 + rng.below(4);
         small(rng, 4, rows, 7, 20)
     });
@@ -495,13 +508,15 @@ fn small_coefficients_answer_the_same_under_any_names_and_order() {
 
 #[test]
 fn rows_of_three_terms_answer_the_same_under_any_names_and_order() {
-    let refused = reorderings(0x38_41, 4, 3, |rng| corner_rows(rng, 4, 3));
+    // 4000 systems, not 3000: since the row test of the box stage (Q1-ROWBOX), 3000 of them
+    // give 17 refusals and 4000 give 25, so more than 20 refusals are compared.
+    let refused = reorderings(0x38_41, 4000, 4, 3, |rng| corner_rows(rng, 4, 3));
     assert!(refused > 20, "{refused}");
 }
 
 #[test]
 fn rows_over_three_variables_answer_the_same_under_any_names_and_order() {
-    let refused = reorderings(0x38_42, 3, 3, |rng| {
+    let refused = reorderings(0x38_42, 3000, 3, 3, |rng| {
         let rows = 2 + rng.below(4);
         small(rng, 3, rows, 9, 30)
     });
@@ -510,7 +525,7 @@ fn rows_over_three_variables_answer_the_same_under_any_names_and_order() {
 
 #[test]
 fn large_coefficients_answer_the_same_under_any_names_and_order() {
-    let refused = reorderings(0x38_43, 2, 40, |rng| {
+    let refused = reorderings(0x38_43, 3000, 2, 40, |rng| {
         let rows = 2 + rng.below(4);
         small(rng, 2, rows, 60, 400)
     });

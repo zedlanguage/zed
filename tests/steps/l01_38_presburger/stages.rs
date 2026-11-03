@@ -584,3 +584,150 @@ fn twice_a_variable_odd_has_no_point() {
     r.push(ge(&[(0, 1), (1, 3), (2, -1)], 20));
     answers(&Formula::and(r), Ok(false));
 }
+
+/// A row `Σ c·x[i] + k >= 0`, as the pairs `(i, c)` and `k`.
+pub(super) type Row = (Vec<(usize, i64)>, i64);
+
+/// Whether the rows `Σ c·x[i] + k >= 0` over `n` variables have no rational point:
+/// Fourier–Motzkin over every variable, each row divided by the gcd of its entries, with
+/// checked `i128` arithmetic (the rows here are small enough; an overflow panics).
+fn rationally_empty(rows: &[Row], n: usize) -> bool {
+    let mut cur: Vec<(Vec<i128>, i128)> = rows
+        .iter()
+        .map(|(t, k)| {
+            let mut c = vec![0i128; n];
+            for (i, x) in t {
+                c[*i] += i128::from(*x);
+            }
+            (c, i128::from(*k))
+        })
+        .collect();
+    let gcd = |mut a: i128, mut b: i128| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a.abs()
+    };
+    let mul = |a: i128, b: i128| a.checked_mul(b).expect("no overflow");
+    let add = |a: i128, b: i128| a.checked_add(b).expect("no overflow");
+    for j in 0..n {
+        let (mut pos, mut neg, mut rest) = (Vec::new(), Vec::new(), Vec::new());
+        for r in cur {
+            match r.0[j].signum() {
+                1 => pos.push(r),
+                -1 => neg.push(r),
+                _ => rest.push(r),
+            }
+        }
+        for (pa, pk) in &pos {
+            for (qa, qk) in &neg {
+                let (a, b) = (pa[j], -qa[j]);
+                let mut c: Vec<i128> = (0..n).map(|i| add(mul(b, pa[i]), mul(a, qa[i]))).collect();
+                let mut k = add(mul(b, *pk), mul(a, *qk));
+                let g = c.iter().fold(k, |g, x| gcd(g, *x));
+                if g > 1 {
+                    c.iter_mut().for_each(|x| *x /= g);
+                    k /= g;
+                }
+                rest.push((c, k));
+            }
+        }
+        rest.sort();
+        rest.dedup();
+        cur = rest;
+    }
+    cur.iter().any(|(_, k)| *k < 0)
+}
+
+/// One of the oracle's 400 systems over four variables in [-4, 4] (seed 0x38_0a,
+/// `oracle::small_coefficients_over_four_variables_match_enumeration`), as `(c, k)` for
+/// `Σ c·x[i] + k >= 0`: every elimination adds terms and no row is below zero over the box,
+/// but two rows bound a variable by rationals that cross.
+pub(super) const CROSSING: [([i64; 4], i64); 4] = [
+    ([-6, -6, 2, -7], -17),
+    ([2, -3, -4, -1], -20),
+    ([2, -2, 4, 1], -17),
+    ([3, 5, -7, -1], -12),
+];
+
+/// The rows of [`CROSSING`] with each constant raised by `s`, and the formula of those rows
+/// with each variable in [-4, 4] except where `free` drops its lower bound.
+fn crossing(s: i64, free: Option<usize>) -> (Vec<Row>, Formula) {
+    let mut rows: Vec<Row> = CROSSING
+        .iter()
+        .map(|(c, k)| ((0..4).map(|i| (i, c[i])).collect(), k + s))
+        .collect();
+    let mut f: Vec<Formula> = rows.iter().map(|(t, k)| ge(t, *k)).collect();
+    for i in 0..4 {
+        let [lo, hi] = within(i, -4, 4);
+        if free != Some(i) {
+            f.push(lo);
+            rows.push((vec![(i, 1)], 4));
+        }
+        f.push(hi);
+        rows.push((vec![(i, -1)], 4));
+    }
+    (rows, Formula::and(f))
+}
+
+#[test]
+fn two_rows_that_bound_a_variable_past_each_other_show_the_rows_empty() {
+    // The box of the bounds is [-4, 4] × [-4, 2] × [0, 1] × [-4, 4]; with the other variables
+    // in it, one row bounds a variable from below past the bound another row gives it from
+    // above. Fourier–Motzkin and enumeration agree that there is no point (Q1-ROWBOX).
+    let (rows, f) = crossing(0, None);
+    assert!(rationally_empty(&rows, 4));
+    assert!(!enumerate(&rows, 4, 4));
+    answers(&f, Ok(false));
+    // Without the lower bound of x0 the rows still have no rational point, and the bounds
+    // the other rows give x0 show it.
+    let (rows, f) = crossing(0, Some(0));
+    assert!(rationally_empty(&rows, 4));
+    answers(&f, Ok(false));
+}
+
+#[test]
+fn rows_with_a_rational_point_are_not_shown_empty_by_the_box() {
+    // The same rows, each constant raised by 8 to 11, have rational and integer points, and
+    // the row test of the box keeps them: they are refused with Growth, as before the row
+    // test (deciding them needs a complete method at four live variables, cross-review XR3
+    // Q1). A box test that showed empty a system with a rational point would answer Ok(false).
+    // With x3 or x0 unbounded below they keep their points.
+    for free in [None, Some(0), Some(3)] {
+        for s in 8..=11 {
+            let (rows, f) = crossing(s, free);
+            assert!(!rationally_empty(&rows, 4), "s = {s}, {free:?}");
+            if free.is_none() {
+                assert!(enumerate(&rows, 4, 4), "s = {s}");
+            }
+            answers(&f, Err(Refusal::Growth));
+        }
+    }
+}
+
+#[test]
+fn rows_the_one_pass_test_does_not_show_empty_stay_refused() {
+    // Raised by 1 to 7 the rows have no rational point, but no single row bounds a variable
+    // past another's bound over the tightened box, so the one-pass test does not find it
+    // (the resolvent stage that would was not adopted, XR3 Q1). With x3 unbounded below even
+    // the rows of `CROSSING` are not shown empty: the row with -7·x3 then bounds only x3.
+    // Measured 2026-11-03; a stronger complete method may later decide these Ok(false).
+    for s in 1..=7 {
+        let (rows, f) = crossing(s, None);
+        assert!(rationally_empty(&rows, 4), "s = {s}");
+        assert!(!enumerate(&rows, 4, 4), "s = {s}");
+        answers(&f, Err(Refusal::Growth));
+    }
+    let (rows, f) = crossing(0, Some(3));
+    assert!(rationally_empty(&rows, 4));
+    answers(&f, Err(Refusal::Growth));
+}
+
+#[test]
+fn a_row_with_no_variables_decides_by_its_constant() {
+    // `-1 >= 0` with the rows of `CROSSING` raised by 8 (which have a point): no point;
+    // `0 >= 0` changes nothing.
+    let (_, f) = crossing(8, None);
+    answers(&Formula::and(vec![f.clone(), ge(&[], -1)]), Ok(false));
+    answers(&Formula::and(vec![f, ge(&[], 0)]), Err(Refusal::Growth));
+}

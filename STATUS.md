@@ -1,3 +1,4 @@
+| Q1-ROWBOX | done | Cross-review XR3 Q1 (SYNTH_R3.md; VERIFY_GEMINI_R3.md rows 1.7 and 1.11): the box test of the box stage, `presburger::box_empty_in`, reads each wide row once (`row_box_empty`): a row whose largest value over the box is negative shows the rows empty, as before; otherwise, with every other term at its largest, the row bounds each variable on one side by a rational (at most one variable may lack the bound the row needs, and is then the only one bounded), and each variable keeps the greatest lower and least upper bound seen so far, so two rows that bound a variable past each other show the rows empty whatever their order. One pass over the terms, exact (`Q`, no rounding, `Int` unbounded); the resolvent stage was not adopted. Oracle 0x38_0a: 1 of its 18 rationally empty refused systems is now decided Ok(false) (261, 3, 136 → 261, 4, 135); corner oracle 0x38_3b: 2,611, 9,306, 83 → 2,611, 9,320, 69 (23 of the 64 without `hull3`, which already decided 9 of them). Tests: `stages::two_rows_that_bound_a_variable_past_each_other_show_the_rows_empty`, `rows_with_a_rational_point_are_not_shown_empty_by_the_box` (control family, refused), `rows_the_one_pass_test_does_not_show_empty_stay_refused`, `a_row_with_no_variables_decides_by_its_constant`; unit tests in presburger.rs against Fourier–Motzkin on 3,000 random boxed systems over 24 namings, an open variable and bounds at the edge of `i128`. HUB-SCALE: `scaling::the_box_stage_with_a_hub_in_one_row_per_block_scales` (9.1 and 9.3 times the instructions, n = 16 and 64) and `the_row_test_of_the_box_scales` (8.7, 9.2). COMPLEXITY.md Q1-ROWBOX. |
 # Implementation status
 
 This file records where the implementation stands, so that the work can be restarted from it.
@@ -832,6 +833,24 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   `hull3::the_shadow_scales`, 128 → 1,024, 13.1. Negative control, run once and not
   committed: all m² pairs fail the first at 68.2. Open: three live variables with no unit
   side, and four or more, stay refused (HULL3-GEN, after XR3).
+- L1.38, Q1-ROWBOX and HUB-SCALE (cross-review XR3 Q1): the box test reads each wide row
+  once and keeps, for each variable, the greatest lower and least upper rational bound the
+  rows give it with their other terms at their largest; two that cross show the rows empty.
+  Changed asserts, each a count of how much is decided and checked against enumeration:
+  0x38_0a 261, 3, 136 → 261, 4, 135, and 0x38_3b 2,611, 9,306, 83 → 2,611, 9,320, 69. The
+  brief expected 23 of the 64 at 0x38_3b; that is the count without `hull3` (with `hull3`
+  switched off for one run: 2,586, 9,305, 109, 23 more than the 2,586, 9,282, 132 before
+  `hull3`), and `hull3` already decides 9 of those 23. 0x38_41 (`refused > 20`) now runs 4,000 systems instead of
+  3,000: the row test leaves 17 refusals at 3,000 and 25 at 4,000. Not shown empty: the
+  rows of `stages::CROSSING` with each constant raised by 1 to 7 have no rational point, but
+  no pair of rows crosses over the tightened box; they stay refused (Growth) since the
+  resolvent stage was not adopted. Negative controls, run once and not committed: `<=` for
+  `<` in the crossing checks fails 3 unit tests (the `i128` edge, the open variable, the
+  systems with an integer point); `row_box_empty` run again over every row of each variable
+  of a row fails both scaling tests (hub family 44.6 and 175.2, with a crossing 46.5 and
+  209.5); the bounds rebuilt for each row from the rows before it fail the hub family (32.8
+  and 49.6) but not the family with a crossing (12.4 and 21.3), where the crossing is found
+  after about a third of the rows.
 - LR1: the failures of the last, failed expansion stay in `far` and `expected`. That pass reaches the operator a flat `*` loop stops at, so it records what the loop records; dropping them would lose operators from the messages. docs/plan_dag.md's wording says the opposite and its aim, unchanged messages, is met: with `Additive` and `Multiplicative` made left-recursive in a trial copy, `errors.rs` passed, and 3 of the 323 bracketing cases differed, each a flat chain now nested to the left. On that trial copy a parse took the same time per token as the flat rules (5.2 µs). The real grammar with no left recursion is no slower than before LR1 (3.8 to 5.1 µs per token against 4.1 to 5.2 µs, under load).
 - LR1, for LR2: as in the paper, `E = E '+' E | N` gives a right-associative tree, so a rung must use the form `E = E '+' T | T`. A loop written in a left-recursive rule before a token that fails is walked again at each growth, so such a prefix must be a rule of its own (COMPLEXITY.md F35). A left-recursive cycle of two or more rules under a long list makes the same quadratic walk at each growth at the list's own token, so each rung must be directly left-recursive. The first alternative that matches ends a growth: with `Sum = Attempt | Sum '+' INT` and `Attempt = Sum 'q'`, a match of `Attempt` is kept on the next growth, so `Sum '+' INT` is not tried after it (a case in `leftrec.txt`).
 - LR1: an entry that reads no seed is no longer matched again, which changes one thing: a rule first matched inside `!` keeps no failures, so a later read of its entry records none, as in a parser with no left recursion. As first built, a growth at that token re-recorded them. On random grammars 0.06% of error reports lost expected items or moved `far` back, never forward, and trees did not change; with no `!` in the grammars, 6.24 million comparisons showed no difference. The real grammar parses in the same time as before (4.4 to 5.9 µs per token against 4.4 to 5.7 µs, alternating runs under load).
