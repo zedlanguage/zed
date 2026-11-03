@@ -820,7 +820,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PROOFS-spec | impl attempt 1 | 2026-11-03 04:49 | started: brief and REPORT read; worktrees at zed b0ff20f, zed-impl f2b5c0e |
 | S22a | orchestrator attempt  | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
 | ST-arms-quad | repair attempt 1 | 2026-11-03 03:35 | start, continuing wt/st-arms at 31e6e2f |
-| ST-join | impl attempt 1 | 2026-11-03 04:30 | negative control (main's conjuncts.rs, sizes 8 and 64): join of disjoint decided groups 305x instructions (178.5M -> 54444M), limit 24, fails; 600 random joins  |
 | T11-S22 | orchestrator attempt  (item S22a) | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
 | T2-mid | impl attempt 1 | 2026-11-03 04:27 | baseline on main b9115b2: 97 pieces, 1 failing (l01_29_diagnostics::printed::every_printed_type_parses_back_to_itself, #ioError(_) 'holds a form of layer L2', n |
 | T6 | repair attempt 4 | 2026-11-03 00:01 | x13 union control: rep memo ignored for found values -> 317.7x > 192 (n 16->128), test fails as required; reverted. Split at 16/64/128: build 9.3M/118M/432M, v< |
@@ -828,9 +827,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (4 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (6 commits); the push follows one full test run on the merged tree:
 
-- TD-refusals: `Scope::refusals` reported as one warning each (c3d19a6, 4a32fa2, 9466b5d and this status commit)
+- TD-refusals: `Scope::refusals` reported as one warning each (c3d19a6, 4a32fa2, 9466b5d, fdf7918)
+- ST-join: `Scope::join` on k disjoint groups near linear, not k³; COMPLEXITY row S29, since TD-refusals took S28 (ff5ce44 and this status commit)
 
 
 ## Open points
