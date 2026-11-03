@@ -193,3 +193,12 @@ test("a ledger line carries edges too, and a bare string is not a list", () => {
   assert.deepEqual(nodes.get("C")!.needs, ["B", "A", "W"]);
   assert.deepEqual(nodes.get("V")!.needs, []);
 });
+
+test("a ledger line's own time counts toward the runtime", () => {
+  const led =
+    '{"id":"A","state":"running","at":"2026-11-02T10:00:00Z"}\n' +
+    '{"id":"A","state":"fixing","ts":"2026-11-02T11:00:00Z"}\n';
+  const a = by(buildNodes(inputs("", led))).get("A")!;
+  assert.equal(a.startedAt, Date.parse("2026-11-02T10:00:00Z"));
+  assert.equal(a.lastAt, Date.parse("2026-11-02T11:00:00Z"));
+});

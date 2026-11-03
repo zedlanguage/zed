@@ -26,6 +26,9 @@ export interface LedgerEntry {
   by?: string;
   agent?: string;
   started?: string;
+  // When the line was written: orchestrator lines use `at`, some older lines `ts`.
+  at?: string;
+  ts?: string;
   note?: string;
   commit?: string;
   // As in an override: what an item outside the plan needs, and what needs it.
@@ -255,7 +258,7 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     const day = lines[0]?.entry.time.slice(0, 10) ?? inp.log[0]?.time.slice(0, 10) ?? "";
     const times = [
       ...lines.map((l) => l.entry.at),
-      ...[...ledgerLines.map((e) => e.started), inp.overrides[r.id]?.started]
+      ...[...ledgerLines.flatMap((e) => [e.started, e.at, e.ts]), inp.overrides[r.id]?.started]
         .map((t) => ledgerTime(t, day))
         .filter((t): t is number => t !== null),
     ];
