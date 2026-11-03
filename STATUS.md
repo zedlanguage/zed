@@ -112,6 +112,9 @@ in docs/layout.md.
   until none changes (no cap; the projection reads the congruences, docs/thresholds.md 3),
   the enumeration of listed sets with no fuel (docs/thresholds.md 8), narrowing by tests, and
   the arms of a body.
+- Done: **L2.1**, the parser of the L2 forms (`zedc::ast`): structs, record displays, `with`
+  clauses, methods, patterns, the tuple parameter and type declarations; resolution refuses
+  each with the step that compiles it (14ff528, spec 3038709).
 - Complexity audit (2026-10-30, DESIGN.md Part G, "Every algorithm is of low complexity") (the caps and budgets named here were removed later by docs/thresholds.md, replacements 3, 4, 8 and 9):
   every finding is listed in COMPLEXITY.md with its state. Fixed so far: the preimage transfer
   (exponential in `let` depth and guard nesting, now one computation per term and scope) and
@@ -141,14 +144,21 @@ in docs/layout.md.
   from the hardware counter, the least of two runs of each size, one measurement; with no counter
   (`perf_event_paranoid` above 2, or a VM with no PMU) it is the task clock, the processor time of the thread and the threads it starts, and a
   test fails only when three measurements in a row are over; with `perf_event_open` refused the check stops with its own error. Every test run is capped at 64 GB, half the machine.
-- Next: the remaining COMPLEXITY.md items, then L1.40.
+- Next: the items of `docs/plan_dag.md`, in its order. L2.2 is running. L1.40 needs T4, which
+  is done, and ST1 and ST2, which item ST builds (in repair).
 - Plan extended (spec, 2026-10-30): **L30 — the editor**, a VS Code extension on the L25
   language server (static information per position, the dependency margin, recomputation of
   dirty nodes, values in place with visualizers), steps L30.1–L30.6.
 
 ## Test baseline
 
-Last full run: `cargo test --workspace` gave 930 passed and 0 failed (23 unit tests of
+Latest run on main: `tools/run_tests.sh 4` at cb7ba9a gave 94 pieces and 0 failed (2026-11-03,
+L2.2's baseline). The last batch test ran on 78ddc7e: 91 pieces, 1 failed (`l01_07_fences`, a
+fence copy behind the spec), fixed in e4d3879 (2026-11-02). T14-low, T14-value, L2.1, T11-elab
+and T14-provenance merged after it (b43cd24 to 5e063a2) and await a batch test; T11-elab and
+T14-provenance passed 91 of 91 pieces on their branches.
+
+Last `cargo test --workspace` count (2026-10-31, older than the runs above): 930 passed and 0 failed (23 unit tests of
 `zed-kernel`, 13 of `zed-tests`, 24 of `zedc`, 6 of `zed-rt`, 864 step tests: 7 in `l01_01_source_loading`, 8 in `l01_02_lexer_names`, 5 in `l01_03_lexer_integers`, 5 in `l01_04_lexer_floats_and_rationals`, 12 in `l01_05_lexer_strings`, 10 in `l01_06_lexer_tokens`, 11 in `l01_07_fences`, 7 in `l01_08_parser`, 9 in `l01_09_postfix_chains`, 9 in `l01_10_lambdas_types_else_tuples`, 7 in `l01_11_statements`, 11 in `l01_12_declarations`, 14 in `l01_13_formatter`, 22 in `l01_14_name_resolution`, 20 in `l01_15_kernel_terms`, 35 in `l01_16_elaboration`, 19 in `l01_17_value_representation`, 22 in `l01_18_scalar_interpreter`, 19 in `l01_19_whole_file_ports`, 20 in `l01_20_provenance`, 22 in `l01_21_test_runner` (with the checks of every step's `zed/` units), 12 in `l01_22_type_representation`, 29 in `l01_23_subtyping`, 26 in `l01_24_refinement_lattices`, 42 in `l01_25_preimage_catalog`, 42 in `l01_26_type_resolution`, 11 in `l01_27_absences`, 18 in `l01_28_staging`, 19 in `l01_29_diagnostics`, 9 in `l01_30_queries`, 20 in `l01_31_zir`, 12 in `l01_32_canonical_zir`, 29 in `l01_33_lowering`, 20 in `l01_34_memory`, 4 in `l01_35_mlir_study`, 18 in `l01_36_cranelift`, 7 in `l01_37_oracle`, 16 in `l01_38_presburger`, 28 in `l01_39_reduced_product`, 3 in `m0_01_scaffolding`, 34 in
 `m0_05_widening_and_iteration`, 8 in `m0_06_cost_scalarization`, 18 in
 `m0_07_canonicalization`, 1 in `m0_08_zed0_checklist`, 41 in
@@ -230,7 +240,14 @@ LR2 added 23 tests to `l01_08_parser`, so the steps binary has 985. `tools/run_t
 | T14-low | done | Thirteen low findings of the T14 review. `zed_native::run` frees the JIT memory on every way out by a `Jit` guard; before, a failed `define` or finalize leaked it (COMPLEXITY R11; the unit test fails against a guard without `free_memory`: freed 0, want 1). The transmute's `allow` is an `expect` with a reason. `codegen::dispatch` is a Cranelift `Switch` (Z16) and `int_op` returns `bool`. `number_cmp` compares Big with Int or Big without cloning. `read_rat` chains bytes instead of building a string. `eval::apply` allocates its argument list once. `check` prints a missing parameter type with `map_or_else`. `Ty::meet` moves met tuples into the result after a first-occurrence pass instead of cloning each into a set. `preimage::lin` drops a clone of an atom; the subterm-printed auxiliary name stays open (S20). `parse_one` collects tokens and the end marker in one allocation. Not changed: `family.rs:243` (fixed on main by `collision`), `ty.rs:685` (a needed copy of `Arc`s), `run.rs:324` (the record copies the input once, O(input), below line splitting; removing it changes `Record` and `Program::run` ownership across six callers: take `lines` by value or store `Arc<[u8]>`). No order changed, so no scaling test. |
 | T14-value | done | `Value::Tuple`, `Value::Path` and an atom's payload hold `Items`, an `Arc<[Value]>`; an atom's field names are an `Arc<[Arc<str>]>`. A clone and a variable read are O(1), and every user built unchanged except three field types in `zed-rt/src/heap.rs`. A value is now a DAG, so the walks of `deep.rs` meet a shared part once: comparison keeps, per relation, the pairs of shared sequences it has read to the end, and answers a sequence against itself at once under identity and order but not under `==` and `<`, which must still read a NaN; `copy` keeps one copy of each shared sequence; `all_leaves` skips a shared sequence it has read; `key` of a value that is already a key is a clone. Drop stays iterative, through the thread-local list. An empty `Items` is the static empty `Arc`, so it allocates nothing. Tests: `m0_09_kernel_evaluator/shared.rs` (12, five of them scaling) and two in `deep_values.rs` (a value 1,000,000 levels deep whose every level is a pair of one shared value, compared, keyed and freed on the test thread's stack; a list whose every tail is held elsewhere, freed from either end). Scaling in instructions, branch against main: a tuple read once per element 9.1 against 62.4 times; n copies of an n-tuple 8.0 against 63.8; a `foldl` cons list 9.1 against 60.9 (limit 24). With the read sets removed, the shared-value comparison and key tests pass 60 s; with them, under 1 s. COMPLEXITY rows K21 (fixed) and K22. Open: equality of two families with no shared nodes whose values form a DAG is still exponential (imbl gives no node identity); `provenance.rs` (T14-provenance) and `Heap::fresh` and `value` (T14-heap) still walk a shared part once per path; `Display` writes a one-tuple as `(0)`, not `(0,)` (pre-existing). |
 | T11-elab | done | Terms are shared in elaboration and staging. `Def.term` is an `Arc<Term>` and `Unit.tests` an `Arc<[Test]>`; `Elab` borrows the checker's `Info`, and `passes` no longer copies its names. `Cones` digests each definition once and keeps each one's reads as positions, so a row's query key and closed term cost the definitions it reaches (COMPLEXITY.md F41). The mixer's scope holds shared terms, and `kids` borrows binder names (F43). `stage::Specializer`, taken over from T14-low, mixes the unit once for all splits (F42); `passed` and `split` keep their signatures. Scaling, `n` and 8`n`: rows reaching one function of `n` terms, 8.6 times (old code 50.2); splitting `n` functions, 8.7 times (old code 72.3). Not changed: `Mixer::eval` runs `ends` over the whole closed term per evaluation, and `testing` still clones the `Unit` for `run::program`, now `O(definitions)` rather than the size of their terms |
-| T14-provenance | partly done | `Provenance::origins` is one backward pass over the run graph, newest fact first, carrying at each fact the members of the failure whose search reaches it; the search per member tested every input of a fact once per member, `O(n²)` at a fact that reads `n` operands. Tests in `m0_09_kernel_evaluator::provenance`: origins of a row of missing readings, of one atom from two sources, of a failure read through a variable many times and taken out of a tuple, of a value that is no failure, of a failure read out of a table whose levels share one value; two uses of a cloned term in one scope are two facts; a scaling test at 500 and 4000 readings (12.5 times the work; on main 56.7, failing; 11.5 times from 4000 to 32000, the second log factor of reading `n log n` value nodes, COMPLEXITY.md K25). Open, item T14-occ: origins on a chain of products built one reading at a time reads `n²/2` members (200 against 1600: 91.1 times; the test is ignored). Not fixed: exponential in sharing depth, measured; open, item T14-occ: `holds`, the walk origins makes of each value a fact reads, has no visited set, so a table of `d` levels whose two entries are one shared value costs `2^d` (depth 2 against 16: 40.8 k against 233.2 M instructions; 275 ms at depth 20; the test is ignored); a visited set needs the node identities T14-occ builds. Open, item T14-occ: `unshare` copies the term to one node per position, `2^d` for a term whose `d` levels share a subterm (depth 3 against 24: 35 k against 59.2 G instructions; the test is ignored). The plan's fix, a memo by `Arc` pointer, is wrong: positions name occurrences in the term as a tree, and the memo, run once as a control, gave repeated fact addresses in 4 tests, 2 of them existing `l01_20_provenance` tests. The fix is in `eval.rs`, positions computed as the machine enters each node (COMPLEXITY.md K25) |
+| T14-provenance | done | `Provenance::origins` is one backward pass over the run graph, newest fact first, carrying at each fact the members of the failure whose search reaches it; the search per member tested every input of a fact once per member, `O(n²)` at a fact that reads `n` operands. Tests in `m0_09_kernel_evaluator::provenance`: origins of a row of missing readings, of one atom from two sources, of a failure read through a variable many times and taken out of a tuple, of a value that is no failure, of a failure read out of a table whose levels share one value; two uses of a cloned term in one scope are two facts; a scaling test at 500 and 4000 readings (12.5 times the work; on main 56.7, failing; 11.5 times from 4000 to 32000, the second log factor of reading `n log n` value nodes, COMPLEXITY.md K25). Open, item T14-occ: origins on a chain of products built one reading at a time reads `n²/2` members (200 against 1600: 91.1 times; the test is ignored). Not fixed: exponential in sharing depth, measured; open, item T14-occ: `holds`, the walk origins makes of each value a fact reads, has no visited set, so a table of `d` levels whose two entries are one shared value costs `2^d` (depth 2 against 16: 40.8 k against 233.2 M instructions; 275 ms at depth 20; the test is ignored); a visited set needs the node identities T14-occ builds. Open, item T14-occ: `unshare` copies the term to one node per position, `2^d` for a term whose `d` levels share a subterm (depth 3 against 24: 35 k against 59.2 G instructions; the test is ignored). The plan's fix, a memo by `Arc` pointer, is wrong: positions name occurrences in the term as a tree, and the memo, run once as a control, gave repeated fact addresses in 4 tests, 2 of them existing `l01_20_provenance` tests. The fix is in `eval.rs`, positions computed as the machine enters each node (COMPLEXITY.md K25) |
+| T3 | done | Z9 and Z9b: native tables share regions with no clones, and `Tables::visit` and the code generator's walks use explicit stacks (d5e160e). |
+| T4 | done | S18: the Omega test with unbounded integers, no cubic recursion and no 128-bit refusal; parts, two-variable and UTVPI decisions, one-level splinters (0768a80 to 78ddc7e; spec d681155 to 1d70b44). Batch test on 78ddc7e: one fence copy behind the spec, fixed in e4d3879. The tight family stays open under cross-review XT (COMPLEXITY.md S18). |
+| ST3 | done | In the spec only: DESIGN L1.23 records the Ω(c²) lower bound for a decision tree (spec cb3d910). |
+| T11 | done | Audit of all Rust at f425b32 for copies made for the borrow checker; no code changed. Its findings are the nodes T11-preimage, T11-ty, T11-check, T11-elab and T11-fix, which 4420380 split into T11-fix-store and T11-fix-rest (6adc2bc). |
+| T14 | done | Review of all Rust at f425b32 against WRITING_GOOD_RUST.md; findings only. They are the T14-* nodes of `docs/plan_dag.md` (6adc2bc); the first fix, T14-bugs-rt, merged in c5362b5. |
+| XE2 | done | Cross-review xe rounds 2 and 3 on type emptiness; the unified design and the issue history are in `docs/reviews/` (83d0858). T5 and T5b built on it. |
+| X14 | done | Cross-review xs on the quadratic large tuple SCC in type inhabitation; its synthesis (`split_bdw2`, `flipped_complete`) is `wt/xs-cmp/SYNTHESIS.md`, outside the repositories; T6 builds it. Added to the plan in 4420380. |
 
 ## Decisions made
 
@@ -722,13 +739,13 @@ Merged into local main and not yet pushed (6 commits); the push follows one full
   position, `2^d` for a term whose `d` levels share a subterm. A memo by `Arc` pointer gives
   repeated fact addresses, since positions name occurrences. The fix is in `eval.rs`: number
   positions as the machine enters each node, from memoized subtree sizes, with 64-bit
-  positions (COMPLEXITY.md K25). Not started, to avoid T14-value's changes to `eval.rs`;
-  it is item T14-occ.
+  positions (COMPLEXITY.md K25). It is item T14-occ, started after T14-value merged
+  (505567c).
 - `Provenance::origins` (T14-provenance) reads each product's `#errs` set whole, so a chain of
   `n` products built one reading at a time costs `O(n² log n)` (200 against 1600 readings:
   91.1 times; `the_origins_of_a_failure_built_one_reading_at_a_time_scale`, ignored). Reading
-  two sets with `OrdMap::diff`, which skips shared nodes, is the likely fix, after T14-value
-  settles how `Value` is stored; it is item T14-occ. The run without provenance is also above
+  two sets with `OrdMap::diff`, which skips shared nodes, is the likely fix, now that T14-value
+  (505567c) has settled how `Value` is stored; it is item T14-occ. The run without provenance is also above
   `n log n` on that chain (2000 against 500 readings: 14.4 times); T14-value's verifier found
   the cause, a `Value` copied at each variable read (K21), and measured `n log n` on its branch.
 - `holds` in `zed-kernel/src/provenance.rs`, the walk `Provenance::origins` makes of each value
@@ -750,12 +767,6 @@ Merged into local main and not yet pushed (6 commits); the push follows one full
 
 - Apply the batch of resolutions from the six-part read of DESIGN.md (scan files in the
   session scratchpad), prose and grammar together, before the steps they affect.
-- After the Dart port, reimplement two steps under the hard rule against exponential
-  algorithms (DESIGN.md, sec:plan, zed commit 522e2c9): L1.23's emptiness check expands
-  paths and becomes one topological pass over the shared diagram; L1.38's Omega test
-  (128-bit, polynomial in rows only) becomes octagon closure, Hermite normal form,
-  congruences and an exact-rational LP refutation (sec:constraints). The port keeps both
-  unchanged so the Rust/Dart comparison stays valid.
 
 ## Postmortem amendments (spec commit after 678e2d1)
 
@@ -782,6 +793,6 @@ The spec's sec:grammar now has a `desugar` fence with one rule per syntactic pro
 - T14 and T11 findings are now nodes in `docs/plan_dag.md`, with a table placing each finding
   (section "T14 and T11 findings"): T14-bugs-rt, T14-bugs-kernel, T14-value, T14-heap,
   T14-hooks, T14-rope, T14-bring, T14-paths, T14-provenance, T14-low, T14-rest, T11-preimage,
-  T11-ty, T11-check, T11-elab. T14 itself blocks nothing; T12 needs every fix node, which
-  orders them before L1.40. Plan only: no code changed.
+  T11-ty, T11-check, T11-elab. T14 itself blocks nothing; T12 needs every fix node, and
+  L1.41 needs T12 (since 4420380, L1.40 needs only T4, ST1 and ST2). Plan only: no code changed.
 - `Prim::TupleGet` on a `fix` under construction is a type error, `TupleGet applied to a function`: the Partial case in `Machine::prim` tests only `Prim::Get`, while `elab.rs` gives `v[0]` as `TupleGet`. No term reaches it today, since `elab.rs` makes no `Term::Fix`; the elaboration of definedness `fix` must write `Get` or the case must take both, as the port case does.
