@@ -117,6 +117,8 @@ impl Eq for Position {}
 
 impl Ord for Position {
     /// The order of the paths, index by index from the root, a path before the paths below it.
+    /// It walks up to the common ancestor, so it costs the distance to it: `O(depth)` for two
+    /// positions far apart in a deep term. Many positions are kept by hash, not by this order.
     fn cmp(&self, other: &Self) -> Ordering {
         let (mut a, mut b) = (self, other);
         while a.depth() > b.depth() {
@@ -276,13 +278,16 @@ impl Provenance {
         t
     }
 
-    /// The addresses held by more than one fact; a correct run has none (sec:keypaths, one
-    /// writer per fact address).
+    /// The addresses held by more than one fact, in fact order; a correct run has none
+    /// (sec:keypaths, one writer per fact address). Node addresses are found by their cached
+    /// hashes, not by [`Position`]'s order, whose comparison walks up to the common ancestor;
+    /// the keypaths of one node are ordered, since a [`Value`] has no hash.
     pub fn repeated(&self) -> Vec<&FactAddress> {
-        let mut seen = BTreeSet::new();
+        let mut seen: HashMap<&NodeAddress, BTreeSet<&Vector<Value>>> = HashMap::new();
         let mut out = Vec::new();
         for f in &self.facts {
-            if !seen.insert(&f.address) {
+            let a = &f.address;
+            if !seen.entry(&a.node).or_default().insert(&a.keypath) {
                 out.push(&f.address);
             }
         }

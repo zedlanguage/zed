@@ -248,6 +248,28 @@ fn the_origins_of_a_failure_built_one_reading_at_a_time_scale() {
     );
 }
 
+#[test]
+fn the_check_for_repeated_addresses_on_a_chain_of_products_scales() {
+    // A chain of n products is n deep, and two positions far apart in it are compared by a
+    // walk up to their common ancestor; a set ordered by position made the check `O(n²)`
+    // (54.7x at 250 vs 2000). Addresses are found by their hashes. The runs are recorded
+    // before timing.
+    let n = 250;
+    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, trace(&missing_chain(m)).1))
+        .collect();
+    scaling::check_order(
+        "the check for repeated addresses on a chain of n products, by n",
+        n,
+        1,
+        |m| {
+            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
+            assert!(p.repeated().is_empty());
+        },
+    );
+}
+
 /// `let f0 = #late in let f1 = fam({0, 1}, k -> f0) in … f{depth}[0]…[0]`: a table of
 /// `depth` levels whose two entries at each level are one shared value, read down to its
 /// bottom. The run takes `depth` steps; the value `f{depth}`, read as a tree, has `2^depth`
