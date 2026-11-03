@@ -885,14 +885,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ST-arms-quad | repair attempt 4 | 2026-11-03 03:16 | second cause: every failed case rebuilt its names map as bottom (O(names) per failed case); now only shown scopes are emptied: paired fresh-q 2.67/5.53/11.55/24 |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | repair attempt 3 | 2026-11-03 04:26 | zir canon committed 5909cd0; l01_32 14 pass; load 103.02 94.46 90.16 |
-| T6 | verify attempt 3 | 2026-11-03 00:01 | start: verifying wt/t6 da5c7ff (repair 7); no earlier verify#3 lines to reuse; load 85.20 94.07 89.36 |
 | TD-ends | repair attempt 4 | 2026-11-03 03:52 | start: Hash/Eq comment and canonical coprime bases for equal cores (S26 3^e*9^(e+1)-3^(3e+2)) |
 | TEST-split | impl attempt 1 | 2026-11-03 07:56 | measured alone at load 99-112, timeout 60: all four pieces hit 60 s; slowest l01_25 s22::chains_of_slow_families 53.8 s, l01_16 scaling::a_call_through_a_value_ |
 | UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | three-way race wired, docs in code rewritten, clippy clean; starting tools/run_tests.sh 4 (load 106.33 99.51 92.81) |
 | WIDEN-WARN | impl attempt 1 | 2026-11-03 07:14 | scaling (pass alone, instructions, 1000 vs 8000): many warnings 16.1M->129.0M 8.01x, chain derivation 13.5M->108.6M 8.01x. Negative controls, not committed: bin |
 
-Merged into local main and not yet pushed (57 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (67 commits); the push follows one full test run on the merged tree:
 
+- 9a413d5 T6 repair 7: no copies of shown values; exact overlaps keys for cofinite sets; TupleSplit and overlaps tradeoff comments
+- 80e69d5 T6 repair 6: tradeoff comments at every refusal site; Type::contains address key recorded as an exception; Bdd::apply without its unused limit
+- 75e0008 T6 repair 6: a closed tuple piece is decided by the kernel, and every refused check in a call says why
+- 4be7a96 T6 repair 6: a list of pure cycles is kept as its length (Rep::List, BigUint) and never built
+- 3d98b6f T6: type emptiness (E/I judgments, X14 decider, witness-first search, refusals with causes, no Type::values(cap))
 - e52e433 STATUS: in progress as of 2026-11-03 08:09
 - 931c8ac plan_dag, STATUS: AXIOMS-order merged (spec: zed c4f4680)
 - 21a488f AXIOMS-order: the order axioms an order chain's compositions read, at int and f64
