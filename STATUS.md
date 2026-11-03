@@ -867,7 +867,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| AXIOMS-order | verify attempt 1 | 2026-11-03 07:14 | start |
 | BIT-words | impl attempt 1 | 2026-11-03 07:14 | kernel bits module built; unit test run (load 72.26) |
 | F44-memo | impl attempt 1 | 2026-11-03 07:14 | probe: first runs (fresh) vs least: l01_10 no memo (7.7x either way); l01_21 first run builds Db inside timing; l01_23 morphism first-run ratio 48, tuple 28 vs  |
 | HOLE-oneline | impl attempt 1 | 2026-11-03 07:14 | fmt, clippy -D warnings clean; l01_05, l01_08, m0_03, l01_07 pass; cases tool 369 cases, 2 wrong not this item's ((T,) types); check, fences OK; full suite star |
@@ -885,8 +884,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | negsssp.rs and GOR state machine + race written; utvpi unit tests pass (race, GOR, Duong on 1000 random graphs and BAD-GOR k=64); running near tests / load 87.4 |
 | WIDEN-WARN | impl attempt 1 | 2026-11-03 07:14 | start |
 
-Merged into local main and not yet pushed (54 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (56 commits); the push follows one full test run on the merged tree:
 
+- 21a488f AXIOMS-order: the order axioms an order chain's compositions read, at int and f64
+- f129ec7 plan_dag, STATUS: BOX-5pt merged
 - 09a3ec3 BOX-5pt repair 1: scale a box point held by every row; at least four row orders per system in the naming tests
 - 94f0f2b BOX-5pt: the Presburger box stage tries five order-free points (XT3 B3)
 - 0f792ff STATUS: S22e merged
