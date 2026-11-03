@@ -957,29 +957,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BIT-kept-ends | repair attempt 1 | 2026-11-03 13:23 | run_tests.sh 2: 312 pieces, 0 failed (load 19.54 to 43.38) |
-| BIT-words | merge attempt 1 | 2026-11-03 07:14 | lock released |
-| CANON-stable | merge attempt 1 | 2026-11-03 09:30 | lock released |
-| CAP-pow32 | merge attempt 1 | 2026-11-03 08:53 | lock released |
-| F44-memo | verify attempt 2 | 2026-11-03 07:14 | merged: zed-impl main f6dd8e8 (5e32f5d, 5c39bbe, c4b9a0b, 456873c, f6dd8e8 STATUS/plan_dag), ff from 49e387c; not pushed; worktree and branch removed; lock rele |
-| LIN-probe | merge attempt 1 | 2026-11-03 07:30 | lock released |
-| LIN-probe-refute | impl attempt 1 | 2026-11-03 11:15 | learn() + bounds propagation over a breadth-first tree of the parts: guards(8k,3k/4) 11.0x bytes at k=8,16,32 (old 31.0x,41.7x,50.8x); one learn, one settle tes |
-| LIVE3 | merge attempt 1 | 2026-11-03 09:30 | lock released |
+| JIT-reloc | impl attempt 1 | 2026-11-03 15:06 | cause read: compiled_blob.rs:172 is Reloc::X86PCRel4, emitted only by non-PIC func_addr of a colocated fn (codegen.rs:206 root registers zed_entry_i); SystemMem |
+| LIN-probe-refute | repair attempt 2 | 2026-11-03 11:15 | added the complete-solution sentence to the probe tradeoff comment; fmt and clippy clean; s22 group 55 pass 1 ignored (S22-WIDE), l01_38 probe 5 pass incl. chai |
 | S22e-wide | impl attempt 1 | 2026-11-03 11:28 | started; worktree wt/s22e-wide from c076719 |
-| ST-formula-share | impl attempt 1 | 2026-11-03 06:50 | negative control (not committed): let-bound formula deep-copied at each use (preimage Var) -> probe 1.13/3.58/12.59/46.92 G at d=30/60/120/240; named_test scali |
+| S22-WIDE | impl attempt 1 | 2026-11-03 06:26 | main 43742125 re-measure (load ~40-49): probe_wide k=128..2048 0.154/0.477/1.16/6.7/30.3 s; chain_probe_wide_scales FAILS 39.2x bytes at 256->2048 (limit 24); s |
+| ST-formula-share | repair attempt 1 | 2026-11-03 06:50 | wrote uncommitted probe wide_probe.rs for cases A (shared And, k=d) and B (shared Or, k=d) |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
-| T2-mid | verify attempt 2 | 2026-11-03 04:26 | done: verify passes; merged, main c076719 (unpushed; rebased on f6dd8e8, 32 commits 71ad20f..c076719); fmt, clippy pass; l01_14/15/16/26/28/29/31/32/33/34, m0_0 |
-| T2-types | merge attempt 1 | 2026-11-03 08:34 | lock released |
-| T6-bound-load | merge attempt 1 | 2026-11-03 07:07 | lock released |
-| T6-payload-pinwheel | merge attempt 1 | 2026-11-03 08:25 | lock released |
-| T6-ratlit | merge attempt 1 | 2026-11-03 05:01 | lock released |
-| TERM-spec | running | 2026-11-03 11:25 | fixed: DESIGN ef80bbd (binary struct grammars, GItem gains TypeFacet*, Assumed(site) foreign obligations, PNG/gzip formats; steps L20.2a, L20.3a, L25.4a) + plan |
-| TYPE-forms | repair attempt 4 | 2026-11-03 08:16 | reproduced on branch: p_wide(g: (x) -> x + 1) and (x) -> -x give 'the lambda returns _'; fixed in check/mod.rs fit_lambda: a lambda for a function type with a h |
-| UNITANNOT-fix | running | 2026-11-03 14:11 |  |
-| UNITANNOT-L7 | merge attempt 1 | 2026-11-03 07:14 | lock released |
-| UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
+| TYPE-forms | repair attempt 4 | 2026-11-03 08:16 | lock released (coordinator asked; port, build and tests continue in the worktree) |
 
-Merged into local main and not yet pushed: none. The COUNTS-reorder merge (2026-11-03 15:25) pushed main to origin with 9fd9e552 (BIT-kept-ends), d8f5354b, 0afff76c (COUNTS-reorder) and the commit that records this; the commits listed here before were already on origin.
+Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
+
 
 ## Open points
 
