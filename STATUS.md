@@ -811,68 +811,24 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CAP-bits | repair attempt 1 | 2026-11-03 03:35 | div/mod divide by exponents first (exact or smaller dividend builds nothing), room() asks the allocator before a forced build -> KernelError::NumberTooLarge, un |
+| CAP-bits | repair attempt 1 | 2026-11-03 03:35 | negative controls (not committed, reverted): room() always yes -> 2**2**100+1 aborts 'memory allocation of 274877906968 bytes failed' (SIGABRT, both tests, >60  |
 | IDLANG | orchestrator attempt  | 2026-11-03 04:42 | study agent started (Id dataflow language vs Zed) |
-| L25.8 | repair attempt 1 | 2026-11-03 03:49 | start: fix tradeoff comment, per-row scaling test, rat */ and int-literal mutants |
+| L25.8 | repair attempt 1 | 2026-11-03 03:49 | rat */ and int-literal mutants fixed (product type; every Int literal marked, neighbors at its carrier); scaling with a row per function 100->800: 8.0x instr (2 |
 | OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | per-path unnamed-atom map in checker written (Else/If/Block/alias/call-own); tests in discard_paths.rs; building steps (load 41.74) |
 | PROOFS-spec | impl attempt 1 | 2026-11-03 04:49 | started: brief and REPORT read; worktrees at zed b0ff20f, zed-impl f2b5c0e |
 | S22a | orchestrator attempt  | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
 | ST-arms-quad | repair attempt 1 | 2026-11-03 03:35 | start, continuing wt/st-arms at 31e6e2f |
-| ST-join | impl attempt 1 | 2026-11-03 04:30 | cause: Blocks::remove split the one block (the join's either() conjunct merged with one side's k groups) once per removed constraint, O(block) each, and place() |
+| ST-join | impl attempt 1 | 2026-11-03 04:30 | negative control (main's conjuncts.rs, sizes 8 and 64): join of disjoint decided groups 305x instructions (178.5M -> 54444M), limit 24, fails; 600 random joins  |
 | T11-S22 | orchestrator attempt  (item S22a) | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
 | T2-mid | impl attempt 1 | 2026-11-03 04:27 | baseline on main b9115b2: 97 pieces, 1 failing (l01_29_diagnostics::printed::every_printed_type_parses_back_to_itself, #ioError(_) 'holds a form of layer L2', n |
-| T6 | repair attempt 4 | 2026-11-03 00:01 | cycle_rep length by CRT+sieve (least_length); controls: old (1..).find scan passes the n^2 test (scan within the class count of the build), quadratic rescan fai |
+| T6 | repair attempt 4 | 2026-11-03 00:01 | x13 union control: rep memo ignored for found values -> 317.7x > 192 (n 16->128), test fails as required; reverted. Split at 16/64/128: build 9.3M/118M/432M, v< |
 | TD-ends | verify attempt 1 | 2026-11-03 03:52 | run_tests.sh 4 on 88c5e7f: 97 pieces, 1 failed (l01_29 every_printed_type_parses_back_to_itself, pre-existing on main b9115b2 per T2-mid baseline) / load 35.8-4 |
-| TD-refusals | verify attempt 1 | 2026-11-03 03:52 | run_tests.sh 4: 97 pieces, 1 failed (l01_29 every_printed_type_parses_back_to_itself, corpus printed types of layer L2; branch touches no file on that path; led |
+| TD-refusals | repair attempt 2 | 2026-11-03 03:52 | start: join check n=256, narrowing counter, Test/Onto warning tests |
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (44 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
-- b0c7fee STATUS: in progress as of 2026-11-03 04:49
-- f2b5c0e Merge branch 'wt/plan-semiring'
-- dbdef37 STATUS: L29-print merged
-- 6111e6c L29-print: print an atom's known payload type and read it back
-- cd4e0fe plan_dag: best-first fix, closure by components, Newton
-- 4ec27f7 STATUS: in progress as of 2026-11-03 04:30
-- 001e9e4 STATUS: in progress as of 2026-11-03 04:28
-- 24aad53 STATUS: TD-tests merged
-- d24cb25 STATUS: TD-tests row names back_in, where the fold and fix stops are
-- fc4686d TD-tests: preimage stops at fold, gen and fix; zed-native OptLevel and run_at, opt_level none tested against speed
-- b9115b2 STATUS, plan_dag: OSP-drop merged and marked done
-- 7d0993b OSP-drop: the drop error is a case of Row::WritesNothing; else defaults in if branches and a block's export count as named
-- 3645925 OSP-drop: _ binds no loose failure; an else default or a match names a dropped failure
-- b7cb5fe STATUS: in progress as of 2026-11-03 04:25
-- 79008d6 STATUS: ST-deep-stack merged
-- b707823 ST-deep-stack: Formula walks, Drop, Clone, Eq, Ord, Hash and printing on explicit stacks
-- 8ce61e0 STATUS: in progress as of 2026-11-03 04:10
-- 42efeec STATUS: TD-docs merged
-- 5f387d6 TD-docs: COMPLEXITY rows C1-C23 for the tradeoff sites; emptiness is sound and not complete; splinters one level deep
-- e6900f7 STATUS: in progress as of 2026-11-03 03:53
-- d6f3f05 STATUS, plan_dag: T11-fix-store merged and marked done
-- 6328164 T11-fix-store: borrow-checker copies in the store
-- 90695ef dagview: edges for items outside the plan; plan_dag: none for two needs cells
-- f6c2444 STATUS: TRADEOFF-DOC merged
-- e86e485 Document complexity tradeoffs: narrowings and loop stops; drop the trick claim
-- 44d370e Document complexity tradeoffs at their sites
-- 95db769 STATUS: in progress as of 2026-11-03 03:43
-- fcc8e80 STATUS, plan_dag: OSP-diag merged and marked done; OSP-lit doc errors carry no rejection row
-- abf477c OSP-diag repair: rows for a positional item after a named one; full test removes its directory
-- 4d82672 OSP-diag: rejection rows on diagnostics, zedc test exit codes, printed types read back, runtime counts
-- ed87e4c plan_dag: OSP-drop and T6-kinds (author decisions, 2026-11-03)
-- 03d3d41 docs/wip: delete the stopped Z8/Z9 patch (author decision, 2026-11-03)
-- 1687495 STATUS, plan_dag: ST (ST1, ST2) merged and marked done
-- 4993072 ST repair 6: the complement lookup of Formula::or holds constraints only
-- 5ecfcdb ST repair 5: complementary disjuncts are true; a block of names splits in place
-- f395817 ST repair 4: joins replace a block's conjuncts in place; a && b on names apart never wider than a then b
-- e2825f8 ST repair 3: blocks kept as conjuncts come and go, worklist projection over blocks
-- 2cb1d74 ST repair 2: the relation as a persistent set of conjuncts; narrowing by tests on names apart near linear
-- a65a8e6 ST: Scope::narrow near linear in nested tests; product.rs precision (xv Q8)
-- 059aafa STATUS: in progress as of 2026-11-03 03:13
-- 18fbed0 COMPLEXITY: T-zone's row is S24 (S23 is OSP-order's)
-- 53ba86b STATUS: in progress as of 2026-11-03 03:12
-- 7fe4783 STATUS, plan_dag: OSP-order merged and marked done
-- b62a249 OSP-order: the weak topological order follows the cells' keys
 
 ## Open points
 
