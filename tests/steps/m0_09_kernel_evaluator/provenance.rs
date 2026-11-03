@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use zed_kernel::term::build::{if_, let_, lit, prim, var};
-use zed_kernel::{Evaluator, Prim, Provenance, Term, Value, World};
+use zed_kernel::{Evaluator, Family, Prim, Provenance, Term, Value, World};
 use zed_tests::kernel::*;
 use zed_tests::scaling;
 
@@ -243,6 +243,58 @@ fn the_origins_of_a_failure_built_one_reading_at_a_time_scale() {
         |m| {
             let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
             assert_eq!(p.origins(p.result()).len(), m);
+        },
+    );
+}
+
+/// `let f0 = #late in let f1 = fam({0, 1}, k -> f0) in … f{depth}[0]…[0]`: a table of
+/// `depth` levels whose two entries at each level are one shared value, read down to its
+/// bottom. The run takes `depth` steps; the value `f{depth}`, read as a tree, has `2^depth`
+/// leaves.
+fn shared_levels(depth: usize) -> Term {
+    let keys = lit(Family::set([0, 1].map(Value::Int)));
+    let mut read = var(&format!("f{depth}"));
+    for _ in 0..depth {
+        read = get(read, lit(0));
+    }
+    let body = (1..=depth).rev().fold(read, |body, i| {
+        let_(
+            &format!("f{i}"),
+            fam(keys.clone(), "k", var(&format!("f{}", i - 1))),
+            body,
+        )
+    });
+    let_("f0", lit(Value::atom("late")), body)
+}
+
+#[test]
+fn a_failure_read_out_of_a_table_of_shared_levels_starts_at_its_literal() {
+    let (v, p) = trace(&shared_levels(6));
+    assert_eq!(v, Value::atom("late"));
+    unique(&p);
+    assert_eq!(origin_terms(&p), ["#late"]);
+}
+
+#[test]
+#[ignore = "open, item T14-occ: holds() walks each value as a tree, 2^depth here; see COMPLEXITY.md K25"]
+fn the_origins_of_a_failure_read_out_of_shared_levels_scale() {
+    // The run takes `depth` steps, but `holds` walks each input value of a fact as a tree with
+    // no visited set, `2^depth` nodes for `f{depth}`. Measured 1.8, 25.9, 99 and 275 ms at
+    // depth 12, 16, 18 and 20, and 40.8 k against 233.2 M instructions at depth 2 against 16
+    // (5719.6 times). A visited set needs node identity, which item T14-occ builds. The runs are
+    // recorded before the timing.
+    let n = 2;
+    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, trace(&shared_levels(m)).1))
+        .collect();
+    scaling::check_order(
+        "the origins of a failure read out of shared levels, by depth",
+        n,
+        1,
+        |m| {
+            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
+            assert_eq!(p.origins(p.result()).len(), 1);
         },
     );
 }
