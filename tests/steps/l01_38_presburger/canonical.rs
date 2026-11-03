@@ -122,7 +122,10 @@ fn colors_do_not_depend_on_the_names_or_the_order_of_the_rows() {
         for p in &perms {
             let rename = |a: &Atom| match a {
                 Atom::Sym(s) => {
-                    let i = base.iter().position(|b| **b == **s).expect("a named variable");
+                    let i = base
+                        .iter()
+                        .position(|b| **b == **s)
+                        .expect("a named variable");
                     var(&base[p[i]])
                 }
                 other => other.clone(),
@@ -131,7 +134,12 @@ fn colors_do_not_depend_on_the_names_or_the_order_of_the_rows() {
                 .iter()
                 .map(|c| Con {
                     lin: Lin {
-                        terms: c.lin.terms.iter().map(|(a, k)| (rename(a), k.clone())).collect(),
+                        terms: c
+                            .lin
+                            .terms
+                            .iter()
+                            .map(|(a, k)| (rename(a), k.clone()))
+                            .collect(),
                         constant: c.lin.constant.clone(),
                     },
                     rel: c.rel,
@@ -166,7 +174,12 @@ fn plain_refinement(cons: &[Con]) -> BTreeMap<Atom, Atom> {
         let row_sigs: Vec<_> = cons
             .iter()
             .map(|c| {
-                let mut t: Vec<_> = c.lin.terms.iter().map(|(a, k)| (k.clone(), class[a])).collect();
+                let mut t: Vec<_> = c
+                    .lin
+                    .terms
+                    .iter()
+                    .map(|(a, k)| (k.clone(), class[a]))
+                    .collect();
                 t.sort();
                 (c.rel, c.lin.constant.clone(), t)
             })
@@ -180,7 +193,11 @@ fn plain_refinement(cons: &[Con]) -> BTreeMap<Atom, Atom> {
             vars.iter().map(|a| (a, (class[a], Vec::new()))).collect();
         for (c, r) in cons.iter().zip(&row_class) {
             for (a, k) in &c.lin.terms {
-                var_sigs.get_mut(a).expect("a variable").1.push((*r, k.clone()));
+                var_sigs
+                    .get_mut(a)
+                    .expect("a variable")
+                    .1
+                    .push((*r, k.clone()));
             }
         }
         for s in var_sigs.values_mut() {
@@ -189,7 +206,12 @@ fn plain_refinement(cons: &[Con]) -> BTreeMap<Atom, Atom> {
         let sorted: BTreeSet<_> = var_sigs.values().collect();
         let next: BTreeMap<Atom, usize> = var_sigs
             .iter()
-            .map(|(a, s)| ((*a).clone(), sorted.iter().position(|t| *t == s).expect("a signature")))
+            .map(|(a, s)| {
+                (
+                    (*a).clone(),
+                    sorted.iter().position(|t| *t == s).expect("a signature"),
+                )
+            })
             .collect();
         let rising = sorted.len() > count;
         count = sorted.len();
@@ -202,7 +224,10 @@ fn plain_refinement(cons: &[Con]) -> BTreeMap<Atom, Atom> {
     for (a, c) in &class {
         first.entry(*c).or_insert_with(|| a.clone());
     }
-    class.iter().map(|(a, c)| (a.clone(), first[c].clone())).collect()
+    class
+        .iter()
+        .map(|(a, c)| (a.clone(), first[c].clone()))
+        .collect()
 }
 
 #[test]
@@ -217,7 +242,10 @@ fn the_partition_is_the_one_plain_refinement_reaches() {
         for (a, k) in &c {
             first.entry(*k).or_insert_with(|| a.clone());
         }
-        let got: BTreeMap<Atom, Atom> = c.iter().map(|(a, k)| (a.clone(), first[k].clone())).collect();
+        let got: BTreeMap<Atom, Atom> = c
+            .iter()
+            .map(|(a, k)| (a.clone(), first[k].clone()))
+            .collect();
         assert_eq!(got, plain_refinement(&sys), "system {i}: {sys:?}");
     }
     let sys = pipeline(40);

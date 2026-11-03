@@ -2051,7 +2051,10 @@ fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<u64> {
         link(n + r, e);
         link(e, n + r);
     }
-    let degree = (0..size).map(|v| start[v + 1] - start[v]).max().unwrap_or(0);
+    let degree = (0..size)
+        .map(|v| start[v + 1] - start[v])
+        .max()
+        .unwrap_or(0);
     let mut refine = Refine::new(color, next, degree);
     refine.run(&start, &adj);
     refine.color[..n].iter().map(|&c| c as u64).collect()
@@ -2154,7 +2157,11 @@ impl Refine {
                 least[c] = if hit[c].len() < members[c].len() {
                     0
                 } else {
-                    hit[c].iter().map(|&v| count[v]).min().expect("a vertex hit")
+                    hit[c]
+                        .iter()
+                        .map(|&v| count[v])
+                        .min()
+                        .expect("a vertex hit")
                 };
                 if least[c] < most[c] {
                     splits.push(c);
