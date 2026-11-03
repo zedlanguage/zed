@@ -869,3 +869,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | An `FnMut` closure that prints the constraint once into a captured `Option<Arc<str>>` (`get_or_insert_with`) and is called at each refused question of one projection | `Scope::project_part` (`refuse`) | Mutation (gap 11) | The text is printed before the projection when it may be needed, or each call returns the text with the refusal; printing once per refused part costs the same |
 | A struct whose derived `Ord` (field order: constraint, how it was asked, cause) is the order of the warnings, kept in an `imbl::OrdSet` | `Refused`, `Scope::warnings` | None | A record in a set ordered by its fields in that order |
+
+## Entries from ST-join (`zedc/src/store/conjuncts.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `BTreeMap` from block to the conjuncts it loses, with a `Vec` of the blocks in the order first met, filled through `entry(..).or_default()` | `Blocks::remove` | None | A fold over the removed conjuncts into a map of lists and a list of blocks |
+| A slice pattern with a guard that changes `self` (`[g] if self.unlink(b, g) => {}`), so the guard both tests and does the unlinking | `Blocks::remove` | Mutation (gap 11) | `unlink` returns the new forest or nothing, and a `match` on that result picks the split |
+| The block of a conjunct kept in a local while the forest is merged around it, since looking the conjunct up again compares it whole (`Ord` on `Arc<Formula>`) | `Blocks::place`, `Blocks::split` | Identity (gap 1) | The same local, carried through the fold; with content digests a lookup would cost O(1) and the local would be a choice, not a need |

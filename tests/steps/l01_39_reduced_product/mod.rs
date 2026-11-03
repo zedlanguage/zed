@@ -9,6 +9,7 @@
 //! arm, and `controls` checks each reduction.
 
 mod controls;
+mod disjoint;
 mod exact;
 mod helpers;
 mod hull;

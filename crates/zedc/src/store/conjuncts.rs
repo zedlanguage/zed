@@ -528,17 +528,18 @@ impl Blocks {
 
     /// Puts `a` and `b`, two blocks or names, in one block: the blocks on their tree path are
     /// merged, or, when they lie in different trees, the smaller tree is rerooted at its node
-    /// and its block merged with the other's.
-    fn unite(&mut self, a: BlockId, b: BlockId) {
+    /// and its block merged with the other's. `a` is a block; the block that holds its
+    /// conjuncts afterward is returned.
+    fn unite(&mut self, a: BlockId, b: BlockId) -> BlockId {
         if self.find(a) != self.find(b) {
             // Two blocks of different trees, which share an atom other than a name.
             let small_first = self.tree_size(self.find(a)) <= self.tree_size(self.find(b));
             let (x, y) = if small_first { (a, b) } else { (b, a) };
             self.reroot(x);
             let top = self.up.get(&y).copied();
-            self.merge(&[x, y], top);
+            let keep = self.merge(&[x, y], top);
             self.union(a, b);
-            return;
+            return keep;
         }
         let (path, top) = self.path(a, b);
         let blocks: Vec<BlockId> = path
@@ -547,7 +548,7 @@ impl Blocks {
             .filter(|n| self.members.contains_key(n))
             .collect();
         if blocks.len() < 2 {
-            return;
+            return a;
         }
         let parent = if self.members.contains_key(&top) {
             self.up.get(&top).copied()
@@ -560,6 +561,7 @@ impl Blocks {
                 self.up.insert(n, keep);
             }
         }
+        keep
     }
 
     /// Places `g`, already indexed by its atoms, in the forest.
@@ -582,10 +584,11 @@ impl Blocks {
                 }
             }
         }
+        // The block that holds `g`, kept here: looking `g` up again would compare it whole.
+        let mut cur = b;
         for id in met {
-            let cur = self.of[g];
             if self.find(cur) == self.find(id) {
-                self.unite(cur, id);
+                cur = self.unite(cur, id);
             } else {
                 self.join_trees(cur, id);
             }
@@ -597,11 +600,10 @@ impl Blocks {
                 .and_then(|s| s.iter().find(|h| *h != g))
                 .and_then(|h| self.of.get(h))
                 .copied();
-            if let Some(o) = other {
-                let cur = self.of[g];
-                if o != cur {
-                    self.unite(cur, o);
-                }
+            if let Some(o) = other
+                && o != cur
+            {
+                cur = self.unite(cur, o);
             }
         }
     }
@@ -645,85 +647,118 @@ impl Blocks {
         }
     }
 
-    /// Removes the conjuncts `gs`. One that is a block alone and shares at most one name and
-    /// no other atom with the rest is unlinked; if any other is removed, the blocks of every
-    /// conjunct linked to one of `gs` are built again.
+    /// Removes the conjuncts `gs`, block by block. A block that loses its one conjunct, which
+    /// shares at most one name and no other atom with the rest, is unlinked; a block that loses
+    /// some of its conjuncts is split once by placing its other conjuncts again
+    /// ([`Blocks::split`]); if that fails, the blocks of every conjunct linked to one of `gs`
+    /// are built again. Each block is split once for all the conjuncts it loses, so a removal
+    /// costs near the blocks it touches, not their size times the conjuncts removed.
     pub fn remove(&mut self, gs: &[Arc<Formula>]) {
-        let mut rebuild = false;
+        // The conjuncts removed from each block, the blocks in the order `gs` first meets them.
+        let mut from: BTreeMap<BlockId, Vec<&Arc<Formula>>> = BTreeMap::new();
+        let mut order: Vec<BlockId> = Vec::new();
         for g in gs {
-            let atoms = g.atoms();
-            for a in &atoms {
-                match a {
-                    Atom::Sym(n) => self.syms.remove(n, g),
-                    a => {
-                        if let Some(s) = self.shared.get_mut(a) {
-                            s.remove(g);
-                            if s.is_empty() {
-                                self.shared.remove(a);
-                            }
-                        }
+            match self.of.get(g) {
+                Some(&b) => {
+                    let out = from.entry(b).or_default();
+                    if out.is_empty() {
+                        order.push(b);
                     }
+                    out.push(g);
                 }
+                None => self.unuse(g),
+            }
+        }
+        let mut rebuild = false;
+        for b in order {
+            let out = &from[&b];
+            for g in out {
+                self.unuse(g);
             }
             if rebuild {
                 continue;
             }
-            let Some(b) = self.of.get(g).copied() else {
-                continue;
-            };
-            let alone = self.members.get(&b).is_some_and(|m| m.len() == 1);
-            let apart = atoms
-                .iter()
-                .all(|a| matches!(a, Atom::Sym(_)) || !self.shared.contains_key(a));
-            let kept: Vec<&Arc<str>> = atoms
-                .iter()
-                .filter_map(|a| match a {
-                    Atom::Sym(n) => Some(n),
-                    _ => None,
-                })
-                .filter(|n| self.syms.of(n).next().is_some())
-                .collect();
-            if !(alone && apart && kept.len() <= 1) {
-                rebuild = !self.split(b, g);
-                continue;
+            match out[..] {
+                [g] if self.unlink(b, g) => {}
+                _ => rebuild = !self.split(b, out),
             }
-            for a in &atoms {
-                if let Atom::Sym(n) = a
-                    && kept.first() != Some(&n)
-                    && let Some(id) = self.name.remove(n)
-                {
-                    self.up.remove(&id);
-                }
-            }
-            if let Some(s) = kept.first()
-                && let Some(&id) = self.name.get(*s)
-                && self.up.get(&id) == Some(&b)
-            {
-                self.up.remove(&id);
-            }
-            self.up.remove(&b);
-            self.members.remove(&b);
-            self.of.remove(g);
         }
         if rebuild {
             self.rebuild(gs);
         }
     }
 
-    /// Removes `g`, already out of `syms`, from its block `b` by placing the block's other
-    /// conjuncts again, in time near the block's size, when that keeps the tree whole: every
-    /// atom of the block is a name, and the other conjuncts link every name of the block that
-    /// some conjunct still mentions. Removing `b` from the tree leaves one piece per name of
-    /// it, all in one tree of the union-find, which cannot split; the pieces of the names `b`
-    /// is the parent of are rooted at those names, so linking a piece to the rest reroots it
-    /// within the block's nodes only. Whether it did; if not, nothing is changed.
-    fn split(&mut self, b: BlockId, g: &Arc<Formula>) -> bool {
+    /// Takes `g` out of the index of the atoms it mentions.
+    fn unuse(&mut self, g: &Arc<Formula>) {
+        for a in g.atoms() {
+            match a {
+                Atom::Sym(n) => self.syms.remove(&n, g),
+                a => {
+                    if let Some(s) = self.shared.get_mut(&a) {
+                        s.remove(g);
+                        if s.is_empty() {
+                            self.shared.remove(&a);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Unlinks `g`, already out of `syms` and `shared`, from the forest when it is its block
+    /// `b` alone and shares at most one name and no other atom with the rest; whether it was.
+    fn unlink(&mut self, b: BlockId, g: &Arc<Formula>) -> bool {
+        let atoms = g.atoms();
+        let alone = self.members.get(&b).is_some_and(|m| m.len() == 1);
+        let apart = atoms
+            .iter()
+            .all(|a| matches!(a, Atom::Sym(_)) || !self.shared.contains_key(a));
+        let kept: Vec<&Arc<str>> = atoms
+            .iter()
+            .filter_map(|a| match a {
+                Atom::Sym(n) => Some(n),
+                _ => None,
+            })
+            .filter(|n| self.syms.of(n).next().is_some())
+            .collect();
+        if !(alone && apart && kept.len() <= 1) {
+            return false;
+        }
+        for a in &atoms {
+            if let Atom::Sym(n) = a
+                && kept.first() != Some(&n)
+                && let Some(id) = self.name.remove(n)
+            {
+                self.up.remove(&id);
+            }
+        }
+        if let Some(s) = kept.first()
+            && let Some(&id) = self.name.get(*s)
+            && self.up.get(&id) == Some(&b)
+        {
+            self.up.remove(&id);
+        }
+        self.up.remove(&b);
+        self.members.remove(&b);
+        self.of.remove(g);
+        true
+    }
+
+    /// Removes `out`, conjuncts of block `b` already out of `syms`, from it by placing the
+    /// block's other conjuncts again, in time near the block's size, when that keeps the tree
+    /// whole: every atom of the block is a name, and the other conjuncts link every name of
+    /// the block that some conjunct still mentions. Removing `b` from the tree leaves one piece
+    /// per name of it, all in one tree of the union-find, which cannot split; the pieces of
+    /// the names `b` is the parent of are rooted at those names, so linking a piece to the rest
+    /// reroots it within the block's nodes only. Whether it did; if not, nothing is changed.
+    fn split(&mut self, b: BlockId, out: &[&Arc<Formula>]) -> bool {
         let Some(ms) = self.members.get(&b) else {
             return false;
         };
+        let gone: BTreeSet<&Arc<Formula>> = out.iter().copied().collect();
         let rest: Vec<(Arc<Formula>, Vec<Arc<str>>)> = ms
             .iter()
-            .filter(|h| *h != g)
+            .filter(|h| !gone.contains(h))
             .map(|h| {
                 let names = h.atoms().into_iter().filter_map(|a| match a {
                     Atom::Sym(n) => Some(n),
@@ -785,7 +820,9 @@ impl Blocks {
         for (h, _) in &rest {
             self.of.remove(h);
         }
-        self.of.remove(g);
+        for g in out {
+            self.of.remove(*g);
+        }
         // The local pieces: each kept name of the block and each new block, with the piece
         // that holds `top`, which hangs from the rest of the tree, never rerooted.
         let mut piece: BTreeMap<BlockId, BlockId> = BTreeMap::new();
@@ -819,12 +856,13 @@ impl Blocks {
             self.of.insert(h.clone(), nb);
             self.union(nb, any);
             count.insert(nb, 1);
+            // The block that holds `h`.
+            let mut cur = nb;
             for n in ns {
                 let id = self.name[n];
-                let cur = self.of[h];
                 let (pc, pi) = (find(&piece, cur), find(&piece, id));
                 if pc == pi {
-                    self.unite(cur, id);
+                    cur = self.unite(cur, id);
                     continue;
                 }
                 // Reroot the smaller piece at its node and hang it from the other's.

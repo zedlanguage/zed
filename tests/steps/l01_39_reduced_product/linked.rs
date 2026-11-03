@@ -136,7 +136,7 @@ fn conjunct(r: &mut Rng) -> Formula {
 }
 
 /// The blocks of `c`, each as the set of its conjuncts.
-fn partition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
+pub(super) fn partition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
     let blocks = c.blocks();
     let mut by: BTreeMap<u64, BTreeSet<Arc<Formula>>> = BTreeMap::new();
     for g in c.set() {
@@ -153,7 +153,7 @@ fn partition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
 /// The blocks of `c` by their definition, by brute force: conjuncts that share an atom other
 /// than a name are one group, and two groups are in one block when no single name separates
 /// them in the graph of groups and the names they mention as atoms of their own.
-fn partition_by_definition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
+pub(super) fn partition_by_definition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
     let gs: Vec<Arc<Formula>> = c.set().iter().cloned().collect();
     let n = gs.len();
     let mut group: Vec<usize> = (0..n).collect();
@@ -307,6 +307,50 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
         }
     }
     assert!(mixed > 500, "{mixed} states with mixed blocks");
+}
+
+/// As a join of two arms does: many conjuncts go at once, often most of a block, and the
+/// disjunction of some of them with a new conjunct takes their place. The blocks stay those
+/// of the definition when a block loses several conjuncts in one removal.
+#[test]
+fn the_blocks_stay_those_of_the_definition_when_many_conjuncts_go_at_once() {
+    let mut r = Rng::new(0x5a1e);
+    let mut many = 0;
+    for case in 0..200 {
+        let mut c = Conjuncts::default();
+        let mut log: Vec<String> = Vec::new();
+        for _ in 0..16 {
+            if r.below(3) == 0 && !c.is_top() {
+                let gs: Vec<Arc<Formula>> = c.set().iter().cloned().collect();
+                let gone: Vec<Arc<Formula>> = gs.into_iter().filter(|_| r.below(3) != 0).collect();
+                many += usize::from(gone.len() > 2);
+                let mut either: Vec<Formula> = gone
+                    .iter()
+                    .filter(|_| r.below(2) == 0)
+                    .map(|g| Formula::clone(g))
+                    .collect();
+                either.push(conjunct(&mut r));
+                let g = Formula::or(either);
+                log.push(format!("swap {} conjuncts for {g}", gone.len()));
+                c.swap(&gone, g);
+            } else {
+                let g = conjunct(&mut r);
+                log.push(format!("and {g}"));
+                c.and(g);
+            }
+            if c.is_bottom() {
+                c = Conjuncts::default();
+                log.push("false; from true again".into());
+                continue;
+            }
+            assert_eq!(
+                partition(&c),
+                partition_by_definition(&c),
+                "case {case} after {log:#?}"
+            );
+        }
+    }
+    assert!(many > 250, "{many} removals of three conjuncts or more");
 }
 
 #[test]
