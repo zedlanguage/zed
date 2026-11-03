@@ -932,15 +932,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T2-types | verify attempt 2 | 2026-11-03 08:34 | fmt --check and clippy -D warnings pass on 48c6594; control (not committed): text loop finding made texts by linear scan fails the Tree text scaling 50.0x (limi |
 | T6-bound-load | verify attempt 2 | 2026-11-03 07:07 | done ok=true: run_tests.sh 2 on 59601e0: 98 pieces, 1 failed (l01_25 s22 pair, pre-existing in base); l01_23 94, l01_29 31, l01_22 24 pass; fmt, clippy clean; p |
 | T6-payload-pinwheel | verify attempt 2 | 2026-11-03 08:25 | launching run_tests.sh 4 and clippy on 5f76fa3 in background; load 16.65 32.72 48.96 |
-| T6-ratlit | verify attempt 1 | 2026-11-03 05:01 | suite run_tests.sh 2 on 29a50e7: 119 pieces, 1 failed (l01_25 chain_cross_within_its_width_scales 26.3x instr and chain_cross_live_scales 48.6x bytes, same as m |
 | TD-ends | merge attempt 1 | 2026-11-03 03:52 | start; merge lock held by UTVPI-NEAR:repair#3, waiting |
 | TERM-spec | running | 2026-11-03 11:25 | fixed: DESIGN ef80bbd (binary struct grammars, GItem gains TypeFacet*, Assumed(site) foreign obligations, PNG/gzip formats; steps L20.2a, L20.3a, L25.4a) + plan |
 | TYPE-forms | repair attempt 1 | 2026-11-03 08:16 | found O(n^2) in main's type printer (each nested part built as a String and copied into its parent; every declaration prints its signature for its origin note): |
 | UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | returning ok=true: 942fd60 merges cleanly into main 40750ce, spec a628181 into zed cc889a2; non-blocking: no log port yet so @log(#off); drops no line (L7.3 own |
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 
-Merged into local main and not yet pushed (162 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (164 commits); the push follows one full test run on the merged tree:
 
+- 79d9f6d T6-ratlit: rat literal types hash by residues, compare the exact value, and print the one literal meKr
+- 129accb STATUS: CANON-stable done (tip 7d5d668); its COMPLEXITY row is S32, since main's S31 is ST-arms-quad
 - 7d5d668 presburger canonical(): test Codex's 6-variable system under all 720 namings; colors as a vector; cite Cardon-Crochemore and Paige-Tarjan (CANON-stable repair)
 - fd64eb4 COMPLEXITY S31, STATUS, plan_dag, ZED_PORT_GAPS: CANON-stable breadth-first order
 - cb62c1f presburger canonical(): take variables and rows breadth first in stable color order; drop the row hash (CANON-stable)
