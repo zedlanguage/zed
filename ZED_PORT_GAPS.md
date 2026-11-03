@@ -971,3 +971,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A `OnceCell<HashSet<&str>>` of the names written bare, shared by every builder of one source and filled on the first rejection through `&self` | `Builder::written_bare`, `ast::with_holes` | Lazy cells (gap 3) | The set made in one pass before building, or threaded through as a state receiver that is filled on first use |
 | A `HashSet<&str>` borrowed from the source text | `bare_names` | Borrowed keys | A set of names; strings are values, so no borrow is needed |
+
+## Entries from SCALE-bytes (`zed-alloc-count/src/lib.rs`, `tests/src/scaling.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `#[global_allocator]` and `unsafe impl GlobalAlloc` forwarding to `System` | `zed_alloc_count::Counting` | Foreign library | Test harness only: the Zed runtime's allocator counts the bytes itself, read through an `@ffi` binding |
+| `thread_local!` with a `const` `Cell<u64>`, added to through `&self` | `zed_alloc_count::BYTES`, `add`, `allocated` | Mutation | A count kept by the runtime per thread and read as a value |
+| `#[expect(unsafe_code, reason = ...)]` and a crate lint table that denies `unsafe_code` instead of forbidding it | `zed-alloc-count` | Attributes | None needed: Zed has no lint attributes |
+| `std::thread::scope` with a stack size, returning the closure's value and its thread's count | `scaling::on_a_thread` | None | A task with its own stack, as in T2-eval |

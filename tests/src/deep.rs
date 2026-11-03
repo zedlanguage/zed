@@ -7,12 +7,10 @@ use zed_kernel::{Family, Prim, Term, Value};
 
 use crate::kernel::*;
 
-/// Runs `f` on a thread with the 8 MiB stack of a main thread.
+/// Runs `f` on a thread with the 8 MiB stack of a main thread, the bytes it allocates counted
+/// as this thread's ([`crate::scaling::on_a_thread`]).
 pub fn on_main_sized_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(1 << 23);
-        thread.spawn_scoped(scope, f).unwrap().join().unwrap()
-    })
+    crate::scaling::on_a_thread(1 << 23, f)
 }
 
 /// `list(k) = if k == 0 { 0 } else { (k, list(k - 1)) }`: the list `(k, (k - 1, ... (1, 0)))`,

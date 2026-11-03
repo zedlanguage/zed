@@ -43,6 +43,7 @@ insta.workspace = true
 zedc = { workspace = true, features = ["printed-types"] }
 zed-corpus-ref.workspace = true
 zed-tools.workspace = true
+zed-alloc-count.workspace = true
 zed-kernel.workspace = true
 zed-native = { workspace = true, features = ["counts"] }
 zed-rt = { workspace = true, features = ["counts"] }

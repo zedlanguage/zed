@@ -13,6 +13,7 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
                       interpreter, ZIR, code generation, and the `zedc` command
   zed-rt/             the runtime that native code links against
   zed-cert/           the independent certificate checker; depends on zed-kernel only
+  zed-alloc-count/    the counting allocator the test binaries use to measure bytes allocated
   zed-tools/          the commands: check, cases, fences, fuzz, layer, ring, audit, sync,
                       progress; each takes the spec directory, and shares `zedc::parse`
 zed/                  Zed source code
