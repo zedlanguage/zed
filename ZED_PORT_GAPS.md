@@ -692,7 +692,8 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A cell's index and generation packed into one `i64` by shifts and masks | `Word::cell`, `Word::index`, `Word::generation` | Bit operations | A pair of integers in the word, or the bit words of gap 4 |
 | A free list of cell indices, a `Vec` popped and pushed, beside the cells the heap mutates in place | `Heap::alloc`, `Heap::free_cell` | Mutation | A state receiver over the cells and the free list |
 | `BTreeMap<Value, usize>` that interns the empty tuple and bare atoms across calls | `Heap::uncounted` (`bare`) | Shared tables across pure calls | A map in the heap's state receiver |
-| `HashMap<usize, Value>` held for one call, the value of each shared cell by index | `Heap::value` | None | A map threaded through the walk |
+| `Option<Value>` in each cell, set at the first read and cleared when the cell is freed (T14-R1) | `Cell::value`, `Heap::value`, `Heap::fresh`, `Heap::free_cell` | Lazy cells (gap 3), Mutation | A map from cell to value in the heap's state receiver, its entry removed when the cell is freed |
+| A `match` arm guarded by `if let` on the cell's kept value | `Heap::read` | None | An `is` test before the `match` |
 | `Option<String>` kept by `inc`, which cannot return an error, and taken by the next `dec` | `Heap::inc`, `Heap::dec` | Early exit | `inc` returns the error as a value |
 | An `enum` whose variants borrow the heap's cells or table (`Shape<'h>`) while a `match` reads them | `Heap::shape` | None | A value returned by the read |
 

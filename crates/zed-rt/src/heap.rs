@@ -22,7 +22,7 @@
 //! the first time a match reads them, so matching a constant again adds nothing (COMPLEXITY.md
 //! R3, R6).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::{mem, slice};
 
@@ -188,14 +188,17 @@ impl Obj {
     }
 }
 
-/// A heap cell: its count, its generation, its contents until it is freed, and whether it was
-/// ever shared in this generation.
+/// A heap cell: its count, its generation, its contents until it is freed, whether it was ever
+/// shared in this generation, and the kernel value of a string, tuple or atom once made. A
+/// cell's contents do not change while it is live, and its parts live at least as long, so the
+/// value holds until the cell is freed (COMPLEXITY.md R1).
 #[derive(Debug)]
 struct Cell {
     count: u32,
     generation: u32,
     obj: Option<Obj>,
     shared: bool,
+    value: Option<Value>,
 }
 
 /// An entry of the table: an uncounted value, and where the entries of its parts start once a
@@ -224,6 +227,9 @@ pub struct Stats {
     pub shared: u64,
     /// The bytes copied flattening ropes.
     pub copied: u64,
+    /// The words [`Heap::value`] read to make kernel values: one for a word whose value it had
+    /// already made.
+    pub converted: u64,
 }
 
 /// Where the parts of a tuple or an atom being matched are read: a live cell, or the entries
@@ -246,6 +252,8 @@ struct Shape<'h> {
 /// and the words of those made. Values nest as deep as a program builds them, so the values in
 /// progress are on a stack.
 struct Making<'v> {
+    /// The value, which the cell keeps as its kernel value.
+    value: &'v Value,
     /// The atom; none for a tuple.
     atom: Option<&'v Atom>,
     rest: slice::Iter<'v, Value>,
@@ -411,6 +419,7 @@ impl Heap {
                     generation: 0,
                     obj: Some(obj),
                     shared: false,
+                    value: None,
                 });
                 self.cells.len() - 1
             }
@@ -418,11 +427,12 @@ impl Heap {
         Word::cell(i, self.cells[i].generation)
     }
 
-    /// Frees cell `i`, whose count has reached 0: its contents, which it gives back, go, and
-    /// its generation advances.
+    /// Frees cell `i`, whose count has reached 0: its contents, which it gives back, and its
+    /// kernel value go, and its generation advances.
     fn free_cell(&mut self, i: usize) -> Obj {
         let c = &mut self.cells[i];
         let obj = c.obj.take().expect("a live cell holds its contents");
+        c.value = None;
         c.generation += 1;
         if c.generation < GENERATIONS {
             self.free.push(i);
@@ -433,7 +443,8 @@ impl Heap {
     }
 
     /// A fresh word for `v`, owned: its cells allocated, each part of a tuple or an atom its
-    /// own, as the counting machine allocates a value the kernel returns.
+    /// own, as the counting machine allocates a value the kernel returns. Each cell keeps its
+    /// part of `v` as its kernel value, so handing it to the kernel again reads nothing.
     pub fn fresh(&mut self, v: &Value) -> Word {
         let mut stack: Vec<Making<'_>> = Vec::new();
         let mut next = v;
@@ -446,6 +457,7 @@ impl Heap {
             let mut rest = items.iter();
             if let Some(first) = rest.next() {
                 stack.push(Making {
+                    value: next,
                     atom,
                     rest,
                     parts: Vec::with_capacity(items.len()),
@@ -473,6 +485,7 @@ impl Heap {
                         args: m.parts,
                     },
                 });
+                self.cells[w.index()].value = Some(m.value.clone());
             }
         }
     }
@@ -484,7 +497,11 @@ impl Heap {
         }
         match v {
             Value::Tuple(_) | Value::Atom(_) => self.uncounted(v.clone()),
-            Value::Str(s) => self.alloc(Obj::Str(Rope::leaf(s.clone().into()))),
+            Value::Str(s) => {
+                let w = self.alloc(Obj::Str(Rope::leaf(s.clone().into())));
+                self.cells[w.index()].value = Some(v.clone());
+                w
+            }
             _ => self.alloc(Obj::Data(v.clone())),
         }
     }
@@ -503,14 +520,13 @@ impl Heap {
         })
     }
 
-    /// The kernel value of data word `w`; a string's rope is flattened. A cell that more than
-    /// one reference holds can be met again on another path, so its value is kept the first
-    /// time and shared after: the walk reads each cell once, and the value shares its parts as
-    /// the cells do.
+    /// The kernel value of data word `w`; a string's rope is flattened. Each string, tuple or
+    /// atom cell keeps the value made from it until it is freed, so a cell met again, on another
+    /// path or in a later call, is read once: the value shares its parts as the cells do, and a
+    /// value handed to the kernel many times costs its size once (COMPLEXITY.md R1).
     pub fn value(&mut self, w: Word) -> Result<Value, String> {
         let mut stack = Vec::new();
-        let mut seen = HashMap::new();
-        let mut made = self.read(w, &mut stack, &seen)?;
+        let mut made = self.read(w, &mut stack)?;
         loop {
             let Some(top) = stack.last_mut() else {
                 return Ok(made.expect("an empty stack follows a finished value"));
@@ -518,7 +534,7 @@ impl Heap {
             top.parts.extend(made.take());
             let parts = self.obj(top.w)?.map_or(&[][..], Obj::parts);
             match parts.get(top.parts.len()) {
-                Some(&part) => made = self.read(part, &mut stack, &seen)?,
+                Some(&part) => made = self.read(part, &mut stack)?,
                 None => {
                     let r = stack.pop().expect("the stack has a top");
                     let v = match self.obj(r.w)? {
@@ -529,34 +545,30 @@ impl Heap {
                         }),
                         _ => Value::Tuple(r.parts.into()),
                     };
-                    if self.cells[r.w.index()].count > 1 {
-                        seen.insert(r.w.index(), v.clone());
-                    }
+                    self.cells[r.w.index()].value = Some(v.clone());
                     made = Some(v);
                 }
             }
         }
     }
 
-    /// The value of `w` when it has no parts to read or was read before (`seen`, by cell);
-    /// otherwise enters it on `stack`.
-    fn read(
-        &mut self,
-        w: Word,
-        stack: &mut Vec<Reading>,
-        seen: &HashMap<usize, Value>,
-    ) -> Result<Option<Value>, String> {
+    /// The value of `w` when it has no parts to read or its cell keeps its value; otherwise
+    /// enters it on `stack`.
+    fn read(&mut self, w: Word, stack: &mut Vec<Reading>) -> Result<Option<Value>, String> {
+        self.stats.converted += 1;
         Ok(Some(match w.tag {
             Word::INT => Value::Int(w.bits),
             Word::FLOAT => Value::float(f64::from_bits(w.bits as u64)),
             Word::BOOL => Value::Bool(w.bits != 0),
             Word::VAL => self.vals[w.bits as usize].value.clone(),
             Word::CELL => match obj_in(&self.cells, w)? {
-                Some(Obj::Str(r)) => Value::Str(r.flat(&mut self.stats.copied).into()),
+                _ if let Some(v) = &self.cells[w.index()].value => v.clone(),
+                Some(Obj::Str(r)) => {
+                    let v = Value::Str(r.flat(&mut self.stats.copied).into());
+                    self.cells[w.index()].value = Some(v.clone());
+                    v
+                }
                 Some(o @ (Obj::Tuple(_) | Obj::Atom { .. })) => {
-                    if let Some(v) = seen.get(&w.index()) {
-                        return Ok(Some(v.clone()));
-                    }
                     stack.push(Reading {
                         w,
                         parts: Vec::with_capacity(o.parts().len()),
