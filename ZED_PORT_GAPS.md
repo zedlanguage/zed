@@ -171,11 +171,12 @@ measured at S.3.
 
 ### Gap 4. Bit operations (missing)
 
-Confirmed: line 589 defines `shl(x, k)`: `k : int[0..]`, value `x · 2^k` on the unbounded `int`,
-with a width enforced where one is written. Line 695 uses `bitAnd`, `bitOr`, `bitXor` and `shl`,
-line 2408 lists them as named functions, and `zed/fences/examples.md:78` uses `shl`. The gap: the
-words table (line 3343) lists none of them, `Prim` (`zed-kernel/term.rs:18`) has none, and only
-`shl` has semantics.
+Confirmed: line 612 defines `shl(x, k)`: `k : int[0..]`, value `x · 2^k` on the unbounded `int`,
+with a width enforced where one is written. Line 729 uses `bitAnd`, `bitOr`, `bitXor` and `shl`,
+line 2632 lists them as named functions, and `zed/fences/examples.md:78` uses `shl`. The gap, when found: the
+words table (line 3723) lists none of them, `Prim` (`zed-kernel/term.rs:18`) has none, and only
+`shl` has semantics. Since the 2026-11-03 DESIGN audit, step L1.39a specifies the bit words and
+the L1 row of the words table lists them; ledger item BIT-words builds them (docs/plan_dag.md).
 
 Rust uses: `<<`, `>>` 42; `&`, `|`, `^` on integers up to 115; `wrapping_*` and `overflowing_*` 14;
 `rotate_left` 1 (`mix`, types.rs:79); `count_ones`, `leading_zeros`, `trailing_zeros` 7 (`Ck::resolve`
@@ -183,21 +184,21 @@ Rust uses: `<<`, `>>` 42; `&`, `|`, `^` on integers up to 115; `wrapping_*` and 
 sets (`Carrier::of_mask`, `check/ty.rs:340`). `blake3::Hasher` is used at 6 sites (`address_at`,
 `canon/mod.rs:196`, and others).
 
-Fix: add to the L1 row of the words table `shl` as line 589 specifies it, and semantics for
+Fix: add to the L1 row of the words table `shl` as line 612 specifies it, and semantics for
 `bitAnd bitOr bitXor bitNot shr popCount leadingZeros trailingZeros` on `int[0..]`, so that a
 negative operand is a type error. `bitNot`, `leadingZeros` and `rotl` depend on a width, so each
-takes it as an argument. Shift counts stay domain-typed and are never masked (line 589), so a
+takes it as an argument. Shift counts stay domain-typed and are never masked (line 612), so a
 wrapping shift is written `shl(x, k) mod 2 ** w`. `rotl` and `rotr` are new words.
 
 Wrapping arithmetic is written `(a * b) mod 2 ** 64`. Line 589 already permits computing that in
 wrapping `w`-bit arithmetic when the result domain is known statically and spans at most `2^w`
-integers (see also line 3691), and step L3.13 builds it, with a test at `mod 2 ** 63`. What remains
+integers (see also line 4088), and step L3.13 builds it, with a test at `mod 2 ** 63`. What remains
 is to confirm it for `mix` (`types.rs:77`), where each product is its own expression, since
-`bitXor` and `rotl` are not in line 589's list of operators. Also, line 589 lists the
+`bitXor` and `rotl` are not in line 612's list of operators. Also, line 612 lists the
 representations as i8…i64, else big-integer, and `int[0..<2 ** 64]` does not fit `i64`, so a hash
 would be stored as a big integer. Fix: state that a domain spanning at most `2^w` integers is
 stored in one word. Both points are inferred; the test is a scaling run of `mix` at S.3. Carrier masks become sets of atoms. BLAKE3 in Zed
-is then ZED0.md's plan; if a stage build shows it too slow, a primitive is allowed by line 1040.
+is then ZED0.md's plan; if a stage build shows it too slow, a primitive is allowed by line 1075.
 
 Also float bits, no word: `to_bits`, `from_bits` 13 matches (`Out::value`, `canon/serial.rs:78`;
 `W::value`, `zir/binary.rs:122`; `Exact::float`, `num.rs:151`; `exact_sum`, `exact.rs:94`;

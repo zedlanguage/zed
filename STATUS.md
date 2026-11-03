@@ -735,7 +735,8 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   the corner oracle's refusals go from 168 to 5,074, which no wrong answer showed, so its
   counts are now asserted. Flaw named, not fixed here: `Scope.refusals` in `product.rs` is
   written (`:1011`, `:1239`, `:1247`) and joined (`:864`) but never read (no reader in `crates`
-  or `tests`); the xe round 3 item owns it.
+  or `tests`); the xe round 3 item owns it. Fixed since by TD-refusals (c3d19a6):
+  `Scope::warnings` reports each refusal as a warning.
 - LR1: the failures of the last, failed expansion stay in `far` and `expected`. That pass reaches the operator a flat `*` loop stops at, so it records what the loop records; dropping them would lose operators from the messages. docs/plan_dag.md's wording says the opposite and its aim, unchanged messages, is met: with `Additive` and `Multiplicative` made left-recursive in a trial copy, `errors.rs` passed, and 3 of the 323 bracketing cases differed, each a flat chain now nested to the left. On that trial copy a parse took the same time per token as the flat rules (5.2 µs). The real grammar with no left recursion is no slower than before LR1 (3.8 to 5.1 µs per token against 4.1 to 5.2 µs, under load).
 - LR1, for LR2: as in the paper, `E = E '+' E | N` gives a right-associative tree, so a rung must use the form `E = E '+' T | T`. A loop written in a left-recursive rule before a token that fails is walked again at each growth, so such a prefix must be a rule of its own (COMPLEXITY.md F35). A left-recursive cycle of two or more rules under a long list makes the same quadratic walk at each growth at the list's own token, so each rung must be directly left-recursive. The first alternative that matches ends a growth: with `Sum = Attempt | Sum '+' INT` and `Attempt = Sum 'q'`, a match of `Attempt` is kept on the next growth, so `Sum '+' INT` is not tried after it (a case in `leftrec.txt`).
 - LR1: an entry that reads no seed is no longer matched again, which changes one thing: a rule first matched inside `!` keeps no failures, so a later read of its entry records none, as in a parser with no left recursion. As first built, a growth at that token re-recorded them. On random grammars 0.06% of error reports lost expected items or moved `far` back, never forward, and trees did not change; with no `!` in the grammars, 6.24 million comparisons showed no difference. The real grammar parses in the same time as before (4.4 to 5.9 µs per token against 4.4 to 5.7 µs, alternating runs under load).
@@ -885,7 +886,8 @@ Merged into local main and not yet pushed (38 commits); the push follows one ful
 - The instruction count of `zed_tests::scaling` does not show the order of large copies done
   by vector moves (T11-fix-rest, F46): the old `resolve` took 10.2 times the instructions at
   8 times the size, but 51.8 times the processor time. A scaling test of code whose cost is
-  copying memory needs a second measure, such as bytes allocated or copied.
+  copying memory needs a second measure, such as bytes allocated or copied (ledger item
+  SCALE-bytes).
 - After T14-occ (COMPLEXITY.md K25): `Provenance::origins` reads a family entry by entry when
   no family it was made from, or made from it, has been read, at the cost of the set of
   failures each entry holds, so `n` entries holding one set of `m` failures cost `n·m` (no
@@ -894,14 +896,10 @@ Merged into local main and not yet pushed (38 commits); the push follows one ful
   ids; since T14-occ-id `origins` keys sequences by address the same way, only while every
   value is borrowed and never in an order or an output.
 - From OSP-diag: (a) `-1.abs`, the case of the rejection row "Prefix `-` on a numeric
-  literal's postfix chain", is accepted at L1; it needs its own follow-up item that adds
+  literal's postfix chain", is accepted at L1; ledger item OSP-neglit adds
   the rejection. (b) Fixed in repair #1: the rows "Named argument before a positional one"
   and "`positional` parameter after a named one" are set by the AST builder. (c) The
-  `for T in …` clause DESIGN decides for printed bounds is not in the `Type` grammar. A
-  one-tuple prints as `(T,)`, which `TupleType` refuses; DESIGN (the `,` row of
-  sec:operators) says `(e,)` and `(T,)` are errors, so the grammar should not gain it. No
-  checker path builds a one-tuple type (tuples come from `TupleExpr` and `TupleType`, with
-  two or more components or none), so that printer arm is not reached from source. (d) The
+  `for T in …` clause DESIGN decides for printed bounds is not in the `Type` grammar. (d) The
   printed-type check leaves out what type syntax cannot state: families, payloads, the names
   of positional parameters, defaults, needs, ownership and data. (e) Features `printed-types`
   and `counts` are on in any build that includes `zed-tests`, since cargo unifies features in
