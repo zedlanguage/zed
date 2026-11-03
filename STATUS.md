@@ -869,10 +869,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | AXIOMS-fmt | impl attempt 1 | 2026-11-03 07:55 | start |
 | AXIOMS-gaps | impl attempt 1 | 2026-11-03 07:55 | started |
-| AXIOMS-order | merge attempt 1 | 2026-11-03 07:14 | lock released |
 | BIT-words | impl attempt 1 | 2026-11-03 07:14 | l01_39a step tests 32/32 pass (load 124.12); checker now reads names and constants for bit-word domains |
-| BOX-5pt | merge attempt 1 | 2026-11-03 06:34 | lock released |
-| F44-memo | impl attempt 1 | 2026-11-03 07:14 | parts test ignored pending new ledger F44-forced (Part::forced O(atoms*size), owned by T6); tradeoff comment, gaps entry written; T6 control build running |
+| F44-memo | impl attempt 1 | 2026-11-03 07:14 | T6 control (24ad3e4 + new harness): the_parts_scale passes; morphism is_empty 3.67M/28.6M/229.7M at c=16/128/1024 (7.8x, 8.0x); load 122 |
 | HOLE-oneline | verify attempt 1 | 2026-11-03 07:14 | fmt, clippy -D warnings clean; check OK (149 parsed 0 failed), fences exit 0, cases 13 new all ok, 2 DIFF (T,) not this item's; probe: "${"""${a // c}"""}" give |
 | L1.17a | impl attempt 1 | 2026-11-03 07:14 | memory_check tests pass (35/35 in l01_17); child RLIMIT_AS tests found 3 unchecked copies (aligned %, project abs, Bound::div) now fixed; load 115.44 102.41 93. |
 | LAYER-argname | research attempt 1 | 2026-11-03 07:52 | started: orchestrator full suite (shell bky8qvrqv) on wt/layer-argname 15046f2, 67 pieces done so far |
@@ -892,8 +890,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | three-way race wired, docs in code rewritten, clippy clean; starting tools/run_tests.sh 4 (load 106.33 99.51 92.81) |
 | WIDEN-WARN | impl attempt 1 | 2026-11-03 07:14 | scaling (pass alone, instructions, 1000 vs 8000): many warnings 16.1M->129.0M 8.01x, chain derivation 13.5M->108.6M 8.01x. Negative controls, not committed: bin |
 
-Merged into local main and not yet pushed (56 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (57 commits); the push follows one full test run on the merged tree:
 
+- e52e433 STATUS: in progress as of 2026-11-03 08:09
 - 931c8ac plan_dag, STATUS: AXIOMS-order merged (spec: zed c4f4680)
 - 21a488f AXIOMS-order: the order axioms an order chain's compositions read, at int and f64
 - f129ec7 plan_dag, STATUS: BOX-5pt merged
