@@ -824,11 +824,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T2-mid | impl attempt 1 | 2026-11-03 04:27 | baseline on main b9115b2: 97 pieces, 1 failing (l01_29_diagnostics::printed::every_printed_type_parses_back_to_itself, #ioError(_) 'holds a form of layer L2', n |
 | T6 | repair attempt 4 | 2026-11-03 00:01 | x13 union control: rep memo ignored for found values -> 317.7x > 192 (n 16->128), test fails as required; reverted. Split at 16/64/128: build 9.3M/118M/432M, v< |
 | TD-ends | verify attempt 1 | 2026-11-03 03:52 | run_tests.sh 4 on 88c5e7f: 97 pieces, 1 failed (l01_29 every_printed_type_parses_back_to_itself, pre-existing on main b9115b2 per T2-mid baseline) / load 35.8-4 |
-| TD-refusals | repair attempt 2 | 2026-11-03 03:52 | start: join check n=256, narrowing counter, Test/Onto warning tests |
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (4 commits); the push follows one full test run on the merged tree:
+
+- TD-refusals: `Scope::refusals` reported as one warning each (c3d19a6, 4a32fa2, 9466b5d and this status commit)
 
 
 ## Open points
