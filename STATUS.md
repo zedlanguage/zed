@@ -931,15 +931,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | S22-cross-scaling | orchestrator attempt  | 2026-11-03 11:23 | owner: CATCHUP-cross direct agent, bisecting |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | repair attempt 1 | 2026-11-03 04:26 | rebased on main 3626624 (STATUS rows kept both; check/mod.rs and elab.rs took the branch walks with main's Seq->Array and Op::Pow(Int) ported); builds; load 43. |
-| T6-payload-pinwheel | verify attempt 2 | 2026-11-03 08:25 | launching run_tests.sh 4 and clippy on 5f76fa3 in background; load 16.65 32.72 48.96 |
 | TD-ends | merge attempt 1 | 2026-11-03 03:52 | start; merge lock held by UTVPI-NEAR:repair#3, waiting |
 | TERM-spec | running | 2026-11-03 11:25 | fixed: DESIGN ef80bbd (binary struct grammars, GItem gains TypeFacet*, Assumed(site) foreign obligations, PNG/gzip formats; steps L20.2a, L20.3a, L25.4a) + plan |
 | TYPE-forms | repair attempt 1 | 2026-11-03 08:16 | found O(n^2) in main's type printer (each nested part built as a String and copied into its parent; every declaration prints its signature for its origin note): |
 | UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | returning ok=true: 942fd60 merges cleanly into main 40750ce, spec a628181 into zed cc889a2; non-blocking: no log port yet so @log(#off); drops no line (L7.3 own |
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 
-Merged into local main and not yet pushed (179 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (182 commits); the push follows one full test run on the merged tree:
 
+- 5ea42bc T6-payload-pinwheel repair 1: overlaps finds a type by structure and merges the nodes of a type met twice
+- 6ff2370 T6-payload-pinwheel: decide unions of pinwheels with payload and one-tuple ends
 - df8465c T6-bound-load: the bound walk is measured by check_order; converted keeps its doc; refused_among takes references
 - 63fa169 T6-bound-load: a decided failure of an arrow names no refused cause; cofinite rationals and floats get a value
 - 04aeb1f STATUS: T6-bound-load row; T6 row names what it fixed
