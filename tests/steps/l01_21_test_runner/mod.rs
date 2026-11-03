@@ -6,6 +6,7 @@ mod command;
 mod cones;
 mod fences;
 mod marks;
+mod rows;
 mod scaling;
 mod tables;
 mod zed;

@@ -12,4 +12,6 @@
 pub mod heap;
 pub mod ports;
 
+#[cfg(feature = "counts")]
+pub use heap::Survivor;
 pub use heap::{Heap, Obj, Stats, Word};

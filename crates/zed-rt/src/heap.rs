@@ -169,6 +169,22 @@ pub enum Obj {
 }
 
 impl Obj {
+    /// The type of what the cell holds, as a survivor report names it.
+    #[cfg(feature = "counts")]
+    fn kind(&self) -> &'static str {
+        match self {
+            Obj::Str(_) => "String",
+            Obj::Tuple(_) => "tuple",
+            Obj::Atom { .. } => "atom",
+            Obj::Data(Value::Int(_) | Value::Big(_)) => "int",
+            Obj::Data(Value::Rat(_)) => "rat",
+            Obj::Data(Value::Path(_)) => "keypath",
+            Obj::Data(Value::Family(_)) => "family",
+            Obj::Data(_) => "kernel value",
+            Obj::Clo { .. } => "closure",
+        }
+    }
+
     fn parts(&self) -> &[Word] {
         match self {
             Obj::Tuple(xs) => xs,
@@ -199,6 +215,9 @@ struct Cell {
     obj: Option<Obj>,
     shared: bool,
     value: Option<Value>,
+    /// The node that allocated it, none outside every node (feature `counts`).
+    #[cfg(feature = "counts")]
+    site: Option<usize>,
 }
 
 /// An entry of the table: an uncounted value, and where the entries of its parts start once a
@@ -230,6 +249,19 @@ pub struct Stats {
     /// The words [`Heap::value`] read to make kernel values: one for a word whose value it had
     /// already made.
     pub converted: u64,
+}
+
+/// Live cells of one type allocated by one node, as [`Heap::survivors`] lists them (feature
+/// `counts`).
+#[cfg(feature = "counts")]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Survivor {
+    /// The type of what the cells hold.
+    pub kind: &'static str,
+    /// The node that allocated them, none outside every node.
+    pub node: Option<usize>,
+    /// How many there are.
+    pub cells: u64,
 }
 
 /// Where the parts of a tuple or an atom being matched are read: a live cell, or the entries
@@ -323,6 +355,9 @@ pub struct Heap {
     live: u64,
     /// The stack of words [`Heap::dec`] still has to drop, empty between calls.
     todo: Vec<Word>,
+    /// The node whose allocations are being made, none outside every node (feature `counts`).
+    #[cfg(feature = "counts")]
+    site: Option<usize>,
 }
 
 impl Heap {
@@ -344,6 +379,34 @@ impl Heap {
     /// The entries of the table of uncounted values.
     pub fn table_len(&self) -> usize {
         self.vals.len()
+    }
+
+    /// Records that the allocations from now on are made by `node`, none outside every node.
+    /// Empty unless feature `counts` is on.
+    #[inline]
+    pub fn allocating(&mut self, node: Option<usize>) {
+        #[cfg(feature = "counts")]
+        {
+            self.site = node;
+        }
+        #[cfg(not(feature = "counts"))]
+        let _ = node;
+    }
+
+    /// The cells live now, grouped by their type and the node that allocated them, in that
+    /// order (feature `counts`).
+    #[cfg(feature = "counts")]
+    pub fn survivors(&self) -> Vec<Survivor> {
+        let mut groups: BTreeMap<(&'static str, Option<usize>), u64> = BTreeMap::new();
+        for c in &self.cells {
+            if let Some(o) = &c.obj {
+                *groups.entry((o.kind(), c.site)).or_default() += 1;
+            }
+        }
+        groups
+            .into_iter()
+            .map(|((kind, node), cells)| Survivor { kind, node, cells })
+            .collect()
     }
 
     /// The word of `v`, uncounted: a scalar, or an entry of the table. The empty tuple and a
@@ -409,6 +472,10 @@ impl Heap {
             Some(i) => {
                 let c = &mut self.cells[i];
                 (c.count, c.obj, c.shared) = (1, Some(obj), false);
+                #[cfg(feature = "counts")]
+                {
+                    c.site = self.site;
+                }
                 i
             }
             None => {
@@ -418,6 +485,8 @@ impl Heap {
                     obj: Some(obj),
                     shared: false,
                     value: None,
+                    #[cfg(feature = "counts")]
+                    site: self.site,
                 });
                 self.cells.len() - 1
             }

@@ -18,9 +18,12 @@ fn units() -> Vec<PathBuf> {
 
 #[test]
 fn every_zed_test_of_every_step_passes() {
-    let mut passed = 0;
+    let (mut passed, mut rejection) = (0, 0);
     for path in units() {
         let text = std::fs::read_to_string(&path).unwrap();
+        if !zedc::fence::marks(&text).lines.is_empty() {
+            rejection += 1;
+        }
         for o in test(&text) {
             let at = format!("{}:{}:{}", path.display(), o.line, o.col);
             assert_eq!(o.failure, None, "{at}");
@@ -30,4 +33,8 @@ fn every_zed_test_of_every_step_passes() {
     // The four units of this step hold 22 rows; a runner that skipped them would pass the
     // loop above.
     assert!(passed >= 22, "{passed} checks ran");
+    // A rejection unit passes only if each marked line has its diagnostic, and the unit of
+    // labels is one; a runner that dropped the marks would count none.
+    println!("{passed} checks, {rejection} rejection units");
+    assert!(rejection >= 1, "{rejection} rejection units ran");
 }

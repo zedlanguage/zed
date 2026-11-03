@@ -21,5 +21,10 @@ zed-kernel.workspace = true
 name = "zedc_binary"
 path = "../../tests/steps/m0_09_kernel_evaluator/binary.rs"
 
+[features]
+# Records each type printed on a thread with its text, for the test that parses each back
+# (OSP-diag). Off in a release build.
+printed-types = []
+
 [lints]
 workspace = true

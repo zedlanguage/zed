@@ -29,6 +29,7 @@
 //! Step L1.27: an atom of a named family is data (sec:failure). `else` strips only the loose
 //! atoms, and a family atom that selects no arrow is an error, where a loose one flows on.
 
+pub mod read;
 pub mod ty;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -43,6 +44,7 @@ use crate::ast::{
 };
 use crate::elab::Tables;
 use crate::lex::Span;
+use crate::rejection::Row;
 use crate::resolve::{Ref, Resolution};
 use crate::store::interval::{
     End::{Fin, PosInf},
@@ -307,8 +309,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.error_with(span, message, notes);
     }
 
+    /// An error at `span` that is a case of the row `row` of the rejection table, with the
+    /// derivation of the expression there.
+    fn rejects(&mut self, row: Row, span: Span, message: impl Into<String>) {
+        let notes = self.derive(&[span]);
+        self.info.errors.push(Error {
+            row: Some(row),
+            span,
+            message: message.into(),
+            notes,
+        });
+    }
+
     fn error_with(&mut self, span: Span, message: impl Into<String>, notes: Vec<Note>) {
         self.info.errors.push(Error {
+            row: None,
             span,
             message: message.into(),
             notes,
@@ -1267,11 +1282,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn show(&self, t: &Ty) -> String {
         let mut rest = t.clone();
         let mut parts = Vec::new();
+        let mut narrowed = 0;
         for v in &t.vars {
             if let Some(r) = self.class_of(&Piece::Var(v.clone())) {
                 let m = self.classes[r].mask;
                 if m != EVERY && m & OTHER == 0 {
                     parts.push(mask_text(m));
+                    narrowed |= m;
                     rest.vars.remove(v);
                 }
             }
@@ -1282,7 +1299,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !rest.is_empty() {
             parts.push(rest.to_string());
         }
-        parts.join(" | ")
+        let text = parts.join(" | ");
+        #[cfg(feature = "printed-types")]
+        {
+            let carriers: Vec<Ty> = Carrier::of_mask(narrowed).map(Ty::carrier).collect();
+            ty::printed::record(&rest.union(&Ty::union_all(&carriers)), &text);
+        }
+        #[cfg(not(feature = "printed-types"))]
+        let _ = narrowed;
+        text
     }
 
     /// The uses that narrowed the classes in `t`.
@@ -1427,7 +1452,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// carrier widened to the whole carrier.
     fn param_type(&mut self, p: &'a Param) -> Option<Ty> {
         if let Some(t) = &p.ty {
-            return Some(self.ty_of(t));
+            return Some(denoted(t));
         }
         let d = p.default.as_ref()?;
         if !self.t.uses_in(d.span, &[]).is_empty() {
@@ -1618,9 +1643,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .collect(),
             ),
             ExprKind::Lambda { params, body } => self.lambda(params, body),
-            ExprKind::Is { of, ty, .. } => {
+            ExprKind::Is { of, .. } => {
                 self.expr(of);
-                self.ty_of(ty);
                 Ty::carrier(Carrier::Bool)
             }
             ExprKind::Else {
@@ -1806,7 +1830,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         match &e.kind {
             ExprKind::Is { of, ty, negated } => {
                 let v = self.expr(of);
-                let t = self.ty_of(ty);
+                let t = denoted(ty);
                 let b = match (&of.kind, self.t.res.uses.get(&of.span)) {
                     (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => ids[0],
                     _ => return (Ty::carrier(Carrier::Bool), Vec::new(), Vec::new()),
@@ -2661,7 +2685,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut tys = Vec::new();
         for p in params {
             let t = match &p.ty {
-                Some(t) => self.ty_of(t),
+                Some(t) => denoted(t),
                 None => Ty::var(format!("${}", self.class()).into()),
             };
             let id = self.id(p.span, &p.name);
@@ -2697,7 +2721,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut order: Vec<Option<usize>> = vec![None; e.params.len()];
         let mut extra = Vec::new();
         if params.len() < pos.len() {
-            self.error(
+            self.rejects(
+                Row::ParameterKinds,
                 span,
                 format!(
                     "the lambda takes {} parameter{}, and `{e}` passes {} by position",
@@ -2729,7 +2754,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         Some(f) => format!(": rename it {f}"),
                         None => String::new(),
                     };
-                    self.error(
+                    self.rejects(
+                        Row::ParameterKinds,
                         p.span,
                         format!(
                             "the lambda's parameter `{}` is not a parameter of `{e}`{fix}",
@@ -2746,7 +2772,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let p = &params[*i];
                     let mut t = arrow.params[j].clone();
                     if let Some(a) = &p.ty {
-                        let a = self.ty_of(a);
+                        let a = denoted(a);
                         if !t.subtype(&a) {
                             self.error(
                                 p.span,
@@ -2819,7 +2845,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !ok {
             let names: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
             let call: Vec<String> = names.iter().map(|n| format!("{n}: {n}")).collect();
-            self.error(
+            self.rejects(
+                Row::ParameterKinds,
                 span,
                 format!(
                     "the parameters of `{}` ({}) do not fit `{e}`: declare them as it passes them, \
@@ -2875,59 +2902,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.put(Undo::Fit(span, Some(Fit::Adapter { from })));
         }
         Ty::func(e.clone())
-    }
-
-    /// The type a type expression denotes; a port's type is unknown here, and elaboration
-    /// reports it.
-    fn ty_of(&mut self, t: &Type) -> Ty {
-        match &t.kind {
-            TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
-                unreachable!("resolve rejects the forms of layer L2")
-            }
-            TypeKind::Seq(_) => unreachable!("resolve rejects the forms of layer L3"),
-            TypeKind::Name(n) => match n.as_str() {
-                "int" => Ty::carrier(Carrier::Int),
-                "rat" => Ty::carrier(Carrier::Rat),
-                "f64" => Ty::carrier(Carrier::F64),
-                "bool" => Ty::carrier(Carrier::Bool),
-                "String" => Ty::carrier(Carrier::Str),
-                "Lines" => port(true),
-                "Files" => port(false),
-                _ => Ty::empty(),
-            },
-            TypeKind::Atom(a) => Ty::set(KType::atom(a)),
-            TypeKind::Tuple(ts) => Ty::tuple(ts.iter().map(|t| self.ty_of(t)).collect()),
-            TypeKind::Union(ts) => {
-                let ts: Vec<Ty> = ts.iter().map(|t| self.ty_of(t)).collect();
-                Ty::union_all(&ts)
-            }
-            TypeKind::And(ts) => {
-                let mut ts = ts
-                    .iter()
-                    .map(|t| self.ty_of(t))
-                    .collect::<Vec<_>>()
-                    .into_iter();
-                let first = ts.next().unwrap_or_else(Ty::dynamic);
-                ts.fold(first, |a, b| a.meet(&b))
-            }
-            TypeKind::Diff(a, b) => {
-                let (a, b) = (self.ty_of(a), self.ty_of(b));
-                a.diff(&b)
-            }
-            TypeKind::Arrow { params, result, .. } => {
-                let tys = params.iter().map(|p| self.ty_of(&p.ty)).collect();
-                let result = self.ty_of(result);
-                let names = params
-                    .iter()
-                    .map(|p| SParam {
-                        name: p.name.clone().unwrap_or_default().into(),
-                        positional: p.positional || p.name.is_none(),
-                        default: None,
-                    })
-                    .collect();
-                Ty::func(Arc::new(Sig::one(names, tys, result)))
-            }
-        }
     }
 
     /// The derivation of an application `apply` rejects: each argument's, in order, then each
@@ -4111,4 +4085,60 @@ fn mask_of(t: &Ty) -> u8 {
         m |= OTHER;
     }
     m
+}
+
+/// The type a type expression denotes; a name that is no prelude type is a type variable.
+pub fn denoted(t: &Type) -> Ty {
+    denoted_with(t, &Binds::new())
+}
+
+/// The type a type expression denotes, each name `leaves` binds standing for its type before
+/// any other reading of the name (OSP-diag: the leaves of layer L10 a printed type holds).
+pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
+    let denoted = |t: &Type| denoted_with(t, leaves);
+    match &t.kind {
+        TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
+            unreachable!("resolve rejects the forms of layer L2")
+        }
+        TypeKind::Seq(_) => unreachable!("resolve rejects the forms of layer L3"),
+        TypeKind::Name(n) if leaves.contains_key(n.as_str()) => leaves[n.as_str()].clone(),
+        TypeKind::Name(n) => match n.as_str() {
+            "int" => Ty::carrier(Carrier::Int),
+            "rat" => Ty::carrier(Carrier::Rat),
+            "f64" => Ty::carrier(Carrier::F64),
+            "bool" => Ty::carrier(Carrier::Bool),
+            "String" => Ty::carrier(Carrier::Str),
+            "Lines" => port(true),
+            "Files" => port(false),
+            _ => Ty::var(n.as_str().into()),
+        },
+        TypeKind::Atom(a) => Ty::set(KType::atom(a)),
+        TypeKind::Tuple(ts) => Ty::tuple(ts.iter().map(&denoted).collect()),
+        TypeKind::Union(ts) => {
+            let ts: Vec<Ty> = ts.iter().map(&denoted).collect();
+            Ty::union_all(&ts)
+        }
+        TypeKind::And(ts) => {
+            let mut ts = ts.iter().map(&denoted).collect::<Vec<_>>().into_iter();
+            let first = ts.next().unwrap_or_else(Ty::dynamic);
+            ts.fold(first, |a, b| a.meet(&b))
+        }
+        TypeKind::Diff(a, b) => {
+            let (a, b) = (denoted(a), denoted(b));
+            a.diff(&b)
+        }
+        TypeKind::Arrow { params, result, .. } => {
+            let tys = params.iter().map(|p| denoted(&p.ty)).collect();
+            let result = denoted(result);
+            let names = params
+                .iter()
+                .map(|p| SParam {
+                    name: p.name.clone().unwrap_or_default().into(),
+                    positional: p.positional || p.name.is_none(),
+                    default: None,
+                })
+                .collect();
+            Ty::func(Arc::new(Sig::one(names, tys, result)))
+        }
+    }
 }

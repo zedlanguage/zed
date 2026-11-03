@@ -40,7 +40,7 @@ fn a_missed_drop_leaves_a_cell_live() {
     p.regions.get_mut("r").unwrap().nodes[2].drops.clear();
     assert_eq!(
         run(&g, &p).unwrap_err(),
-        "memory: 1 cell live after the result is dropped"
+        "memory: 1 cell live after the result is dropped: 1 String allocated by node r.0"
     );
 }
 

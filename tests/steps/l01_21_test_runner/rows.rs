@@ -1,0 +1,93 @@
+//! A `// ✗` comment that names a row of the rejection table (DESIGN.md sec:diagnostics) is
+//! checked against the row of the diagnostic on its line; one that names no row accepts any.
+
+use zedc::rejection::Row;
+
+use super::checks;
+
+const ROWS: &str = include_str!("../../../zed/fences/rejections.txt");
+
+#[test]
+fn the_rows_are_those_of_the_spec_table() {
+    let names: Vec<&str> = Row::ALL.iter().map(|r| r.name()).collect();
+    let spec: Vec<&str> = ROWS.lines().collect();
+    assert_eq!(names, spec);
+}
+
+#[test]
+fn a_comment_names_a_row_by_its_name_and_a_colon() {
+    let cases = [
+        (
+            " Missing argument: name has no default",
+            Some(Row::MissingArgument),
+        ),
+        (
+            " Unreachable `match` arm: every Temp already matched",
+            Some(Row::UnreachableArm),
+        ),
+        (" Missing argument has no colon", None),
+        (" compile error: unit mismatch", None),
+        (" Missing arguments: a plural is another name", None),
+        (" missing argument: the case differs", None),
+    ];
+    for (comment, want) in cases {
+        assert_eq!(Row::named_by(comment), want, "{comment}");
+    }
+}
+
+/// A label printer whose calls break each argument rule L1 checks: each mark names its row.
+const LABELS: &str = include_str!("zed/labels.zed");
+
+#[test]
+fn each_argument_rule_names_its_row() {
+    assert_eq!(
+        checks(LABELS),
+        ["5:5: ok", "6:17: ok", "7:5: ok", "8:25: ok"]
+    );
+}
+
+#[test]
+fn a_linear_question_outside_the_fragment_names_its_row() {
+    let unit = "ok(x, y, z) = 4 - 2 * x - 3 * y - 6 * z >= 0 && -4 * x - 6 * z - 22 >= 0 && x - y \
+                + 4 * z + 36 >= 0 && 2 * x + 3 * y + 3 * z - 24 >= 0;  // ✗ Linear question \
+                outside the polynomial fragment of the linear-relation domain: a splinter\n";
+    assert_eq!(checks(unit), ["1:1: ok"]);
+}
+
+#[test]
+fn a_mark_naming_another_row_fails_with_both_rows() {
+    let unit = "\
+label(positional name: String, city: String) = name ++ \", \" ++ city;
+a = label(city: \"Leeds\");    // ✗ Argument in the wrong form: but the name is left out
+";
+    assert_eq!(
+        checks(unit),
+        [
+            "2:5: the mark names the row \"Argument in the wrong form\", and the diagnostic is \
+             in the row \"Missing argument\": missing argument `name` of `label`"
+        ]
+    );
+}
+
+#[test]
+fn a_mark_naming_a_row_fails_on_a_diagnostic_in_no_row() {
+    let unit = "total = 3 + \"pounds\";    // ✗ Missing argument: not this one\n";
+    let got = checks(unit);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(
+        got[0].starts_with(
+            "1:9: the mark names the row \"Missing argument\", and the diagnostic is in no row \
+             of the rejection table: "
+        ),
+        "{got:?}"
+    );
+}
+
+#[test]
+fn a_mark_naming_no_row_accepts_any_row() {
+    let unit = "\
+label(positional name: String, city: String) = name ++ \", \" ++ city;
+a = label(city: \"Leeds\");    // ✗ the name is left out
+";
+    assert_eq!(checks(unit), ["2:5: ok"]);
+}

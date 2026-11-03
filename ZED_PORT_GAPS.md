@@ -828,3 +828,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A persistent union-find of block trees and a block-cut forest (`imbl::OrdMap` from conjunct to block, block to members, name to blocks, and parent links), rerooted and merged in place of a rebuild as conjuncts come and go | `conjuncts::Blocks`, `Conjuncts::and`, `Conjuncts::swap`, `Conjuncts::remove` | None | A Zed record of persistent maps updated by one function; union by size without path compression keeps it a value |
 | A map from a set of atoms to the conjuncts taken out of a relation (`BTreeMap<BTreeSet<Atom>, Vec<Arc<Formula>>>`), passed by `&mut` through `and_one` so each new conjunct takes the place of an old one with the same atoms (`Vec::swap_remove`), the rest removed after | `Conjuncts::swap`, `Conjuncts::and_one` | Mutation | A state receiver, or the map returned with the relation from each step of the fold over the new conjuncts |
 | `std::mem::take` of the relation out of the scope while the worklist reads its blocks and narrows the names, and putting it back after | `Scope::project` | Workaround | In Zed the relation and the names are separate values of one record; the worklist reads one and returns the other, so nothing is taken out |
+
+## Entries from OSP-diag (`zedc/src/rejection.rs`, `check/read.rs`, `check/ty.rs`, `testing.rs`, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `macro_rules!` that declares the enum of rejection rows, its list of every row and its name function from one table | `rejection::rows!` | No macros | An atom union with a constant list of `(row, name)` pairs; the name function is a lookup in it |
+| A cargo feature that adds a field to a struct and a body to a method, off in a release build | `Cell::site`, `Heap::site`, `Heap::allocating`, `Display for Ty` and `Sig` under `printed-types` | No conditional compilation | A build mode of the runtime unit: the test build imports a counting heap, the release build the plain one, both with one interface |
+| A thread-local `RefCell` that a test turns on and reads back, filled from inside `Display` | `ty::printed::{start, take, record}`, `hooks::COUNTED`, `zed_native::counted` | Mutation (gap 11), no global state | The printer and the run return what they record beside their result, and the test reads it there |
+| `BTreeMap` keyed by `(&'static str, Option<usize>)` to group the live cells | `Heap::survivors` | None | A family keyed by the pair, summed by a reduce |
+| A text-level pass over a printed type that tracks parenthesis depth and quotes to cut the `for` clauses | `read::clauses` | None | A fold over the characters with the stack of open groups as its state |

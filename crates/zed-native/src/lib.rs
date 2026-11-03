@@ -25,6 +25,9 @@ use zed_rt::{Stats, Word};
 
 use crate::tables::Tables;
 
+#[cfg(feature = "counts")]
+pub use hooks::{Counted, counted};
+
 /// What one native run gives.
 #[derive(Clone, Debug)]
 pub struct Outcome {
@@ -102,7 +105,7 @@ pub fn run(g: &Arc<Region>, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, 
     let root: extern "C" fn() -> Word = unsafe { std::mem::transmute(code) };
     let w = root();
     let mut s = hooks::remove();
-    let r = hooks::finish(&mut s.run, w);
+    let r = hooks::finish(&s.t, &mut s.run, w);
     *ev = s.run.ev;
     drop(m);
     Ok(Outcome {

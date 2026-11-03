@@ -35,6 +35,7 @@ use crate::ast::{
 };
 use crate::check::{self, Fit, Info};
 use crate::lex::Span;
+use crate::rejection::Row;
 use crate::resolve::{Kind, Ref, Resolution, prelude_layer};
 
 /// A top-level definition.
@@ -521,7 +522,22 @@ impl<'a> Elab<'a> {
     }
 
     fn error<T>(&mut self, span: Span, message: impl Into<String>) -> Option<T> {
+        self.error_in(None, span, message)
+    }
+
+    /// An error that is a case of the row `row` of the rejection table.
+    fn rejects<T>(&mut self, row: Row, span: Span, message: impl Into<String>) -> Option<T> {
+        self.error_in(Some(row), span, message)
+    }
+
+    fn error_in<T>(
+        &mut self,
+        row: Option<Row>,
+        span: Span,
+        message: impl Into<String>,
+    ) -> Option<T> {
         self.errors.push(Error {
+            row,
             span,
             message: message.into(),
             notes: Vec::new(),
@@ -1152,7 +1168,8 @@ impl<'a> Elab<'a> {
                     return self.error(a.span, format!("too many arguments: `{sig}` takes {n}"));
                 }
                 Some(p) if !p.positional => {
-                    return self.error(
+                    return self.rejects(
+                        Row::WrongForm,
                         a.span,
                         format!(
                             "`{}` of `{sig}` is named: pass it as `{}: …`",
@@ -1179,7 +1196,8 @@ impl<'a> Elab<'a> {
             match at.get(name.as_str()).copied() {
                 None => return self.error(a.span, format!("`{sig}` has no parameter `{name}`")),
                 Some(j) if sig.params[j].positional => {
-                    return self.error(
+                    return self.rejects(
+                        Row::WrongForm,
                         a.span,
                         format!("`{name}` of `{sig}` is positional: pass it by position"),
                     );
@@ -1199,7 +1217,8 @@ impl<'a> Elab<'a> {
         let missing: Vec<usize> = (0..n).filter(|&j| slots[j].is_none()).collect();
         if curry {
             if let Some(&j) = missing.iter().find(|&&j| sig.params[j].positional) {
-                return self.error(
+                return self.rejects(
+                    Row::NothingLeftOut,
                     span,
                     format!(
                         "`...` curries named parameters only; the positional `{}` is left out",
@@ -1208,7 +1227,11 @@ impl<'a> Elab<'a> {
                 );
             }
             if missing.is_empty() {
-                return self.error(span, "`...` leaves no named parameter out");
+                return self.rejects(
+                    Row::NothingLeftOut,
+                    span,
+                    "`...` leaves no named parameter out",
+                );
             }
             // The function value is bound once, outside the lambda.
             let fv = self.temp();
@@ -1241,7 +1264,8 @@ impl<'a> Elab<'a> {
                     self.expr(d)
                 }
                 Some((_, _, false)) => {
-                    return self.error(
+                    return self.rejects(
+                        Row::MissingArgument,
                         span,
                         format!(
                             "the default of `{}` reads the function's other parameters, so only \
@@ -1251,7 +1275,11 @@ impl<'a> Elab<'a> {
                     );
                 }
                 None => {
-                    return self.error(span, format!("missing argument `{}` of `{sig}`", p.name));
+                    return self.rejects(
+                        Row::MissingArgument,
+                        span,
+                        format!("missing argument `{}` of `{sig}`", p.name),
+                    );
                 }
             };
             slots[j] = Some(filled?);
@@ -1328,7 +1356,8 @@ impl<'a> Elab<'a> {
                     return self.error(a.span, format!("too many arguments: `{fname}` takes {n}"));
                 }
                 Some(p) if !p.positional => {
-                    return self.error(
+                    return self.rejects(
+                        Row::WrongForm,
                         a.span,
                         format!(
                             "`{}` of `{fname}` is named: pass it as `{}: …`",
@@ -1357,7 +1386,8 @@ impl<'a> Elab<'a> {
                     return self.error(a.span, format!("`{fname}` has no parameter `{name}`"));
                 }
                 Some(j) if f.params[j].positional => {
-                    return self.error(
+                    return self.rejects(
+                        Row::WrongForm,
                         a.span,
                         format!("`{name}` of `{fname}` is positional: pass it by position"),
                     );
@@ -1390,7 +1420,8 @@ impl<'a> Elab<'a> {
         };
         if curry {
             if let Some(&j) = missing.iter().find(|&&j| f.params[j].positional) {
-                return self.error(
+                return self.rejects(
+                    Row::NothingLeftOut,
                     span,
                     format!(
                         "`...` curries named parameters only; the positional `{}` is left out",
@@ -1399,7 +1430,11 @@ impl<'a> Elab<'a> {
                 );
             }
             if missing.is_empty() {
-                return self.error(span, "`...` leaves no named parameter out");
+                return self.rejects(
+                    Row::NothingLeftOut,
+                    span,
+                    "`...` leaves no named parameter out",
+                );
             }
             let params = missing.iter().map(|&j| kname(self, &f.params[j])).collect();
             let body = supplied(self, slots, Term::App(fv, all));
@@ -1413,7 +1448,8 @@ impl<'a> Elab<'a> {
         for &j in &missing {
             if f.params[j].default.is_none() {
                 ok = false;
-                self.error::<()>(
+                self.rejects::<()>(
+                    Row::MissingArgument,
                     span,
                     format!("missing argument `{}` of `{fname}`", f.params[j].name),
                 );

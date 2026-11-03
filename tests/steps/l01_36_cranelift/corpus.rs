@@ -55,7 +55,8 @@ fn every_row_passes_natively_with_the_machines_counts() {
             assert_eq!(got, want, "{} (fuse {fuse})", path.display());
             rows += got.len();
         }
-        assert_eq!(rows, 41);
+        // 41 checks of table rows, and the 5 marked lines of the two rejection units.
+        assert_eq!(rows, 46);
         let want = if fuse { 112 } else { 138 };
         assert_eq!((runs.get(), cells.get(), writes.get()), (58, 108, want));
     }

@@ -1,0 +1,8 @@
+// A label printer whose calls break each argument rule: each ✗ names its row of the
+// rejection table (DESIGN.md sec:diagnostics), and the runner checks the row.
+label(positional name: String, city: String, postcode: String = "") = name ++ ", " ++ city ++ " " ++ postcode;
+stamp(positional weight: int, handler: (grams: int) -> String) = handler(grams: weight);
+a = label();                                // ✗ Missing argument: name has no default
+b = label(name: "Ada", city: "Leeds");      // ✗ Argument in the wrong form: name is positional
+c = label("Ada", city: "Leeds", postcode: "LS1", ...);  // ✗ `...` with no named parameter left out: all are given
+d = stamp(120, handler: g -> "x");          // ✗ Function whose parameter kinds do not fit the expected function type: the type names grams

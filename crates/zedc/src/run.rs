@@ -90,6 +90,8 @@ pub struct Diagnostic {
     pub message: String,
     /// Each constraint and step that led to it, in the order the compiler met them.
     pub steps: Vec<Step>,
+    /// The row of the rejection table (DESIGN.md sec:diagnostics) it is a case of, if any.
+    pub row: Option<crate::rejection::Row>,
 }
 
 /// One step of a derivation, placed in the source.
@@ -159,6 +161,7 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
             col,
             message,
             steps: Vec::new(),
+            row: None,
         }
     };
     let all = |errors: Vec<ast::Error>| {
@@ -166,6 +169,7 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit), Vec<Diagnostic>> 
             .into_iter()
             .map(|e| Diagnostic {
                 steps: e.notes.iter().map(|n| step(text, &lines, n)).collect(),
+                row: e.row,
                 ..at(e.span.start, e.message)
             })
             .collect::<Vec<_>>()
@@ -230,6 +234,7 @@ fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
                 let q = presburger::Formula::and(vec![r.defined(), question]);
                 if let Err(why) = presburger::decide(&q) {
                     out.push(ast::Error {
+                        row: Some(crate::rejection::Row::NonLinearQuestion),
                         span: s.span,
                         message: format!("whether `{}` can {can} is not decided: {why}", f.name),
                         notes: vec![ast::Note {

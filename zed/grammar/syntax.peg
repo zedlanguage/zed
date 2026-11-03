@@ -297,7 +297,8 @@ AtomApply     = ATOM '(' nest(TypeParam % ',' ','?) ')'                         
 AtomType      = ATOM                                                               L1
 ArrayType     = '[' nest(Type ';' ShapeDim % ',' ','?) ']'                          L14
 SeqType       = '[' nest(Type) ']'                                                 L3
-TupleType     = '(' nest(Type (',' Type)+ ','?) ')'                                L1
+TupleType     = '(' ')'                                                            L1
+              | '(' nest(Type (',' Type)+ ','?) ')'                                L1
 FieldType     = '(' nest(Name ':' Type) ')'                                        L10
 GroupType     = '(' nest(Type) ')'                                                 L1
 RecordType    = '{' nest((Name ':' Type) % ',' ','?) '}'                             L2

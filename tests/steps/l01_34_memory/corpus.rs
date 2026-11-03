@@ -42,7 +42,8 @@ fn every_row_passes_through_the_machine() {
             assert_eq!(got, want, "{} (fuse {fuse})", path.display());
             rows += got.len();
         }
-        assert_eq!(rows, 41);
+        // 41 checks of table rows, and the 5 marked lines of the two rejection units.
+        assert_eq!(rows, 46);
         // The seven corpus units evaluate 58 closed terms, which allocate 108 cells; fusion
         // saves 26 count writes.
         let want = if fuse { 112 } else { 138 };

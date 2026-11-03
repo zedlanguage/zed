@@ -55,11 +55,22 @@ impl Report {
     }
 }
 
-/// The two native engines: the plan with fused match release, and without it.
-pub fn native<R>(f: impl FnOnce(&[Engine<'_>]) -> R) -> R {
+/// The two native engines: the plan with fused match release, and without it. Returns what
+/// `f` gives and how many native runs it made; every one of those runs, whichever way it
+/// ended, must leave no cell live, and the runtime's report names any it left by type and
+/// allocating node.
+pub fn native<R>(f: impl FnOnce(&[Engine<'_>]) -> R) -> (R, u64) {
     let fused = zed_native::through(true);
     let unfused = zed_native::through(false);
-    f(&[("native (fused)", &fused), ("native (unfused)", &unfused)])
+    zed_native::counted();
+    let r = f(&[("native (fused)", &fused), ("native (unfused)", &unfused)]);
+    let c = zed_native::counted();
+    assert_eq!(
+        c.left,
+        Vec::<String>::new(),
+        "cells live at the end of a native run"
+    );
+    (r, c.runs)
 }
 
 /// The outcome of a run, as the oracle compares it.

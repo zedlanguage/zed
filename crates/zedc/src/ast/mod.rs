@@ -291,6 +291,8 @@ pub struct Error {
     pub message: String,
     /// How the checker reached it: each constraint and step, in the order it met them.
     pub notes: Vec<Note>,
+    /// The row of the rejection table (DESIGN.md sec:diagnostics) the error is a case of, if any.
+    pub row: Option<crate::rejection::Row>,
 }
 
 /// One step of a derivation: a place in the source and what holds there.
@@ -321,6 +323,14 @@ pub fn expr(text: &str, tokens: &[Token], tree: &Tree, n: usize) -> Result<Expr,
     })
 }
 
+/// The type of `tree`, parsed as `Type` from `tokens` of `text`.
+pub fn ty(text: &str, tokens: &[Token], tree: &Tree) -> Result<Type, Error> {
+    with_holes(text, tokens, tree, |b| {
+        b.fill(tree.root);
+        b.ty(tree.root)
+    })
+}
+
 /// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, in written order but
 /// for guards, which are ordered as in a block (`StmtKind::place`). A unit's top level exports
 /// its declarations, so `return` there is an error.
@@ -333,6 +343,7 @@ pub fn unit(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Erro
             let s = b.item(k)?;
             if let StmtKind::Return(_) = s.kind {
                 return Err(Error {
+                    row: None,
                     span: s.span,
                     message: "`return` exports from a block; a unit's top level has none".into(),
                     notes: Vec::new(),
@@ -548,6 +559,7 @@ impl<'a> Builder<'a> {
     /// The error for node `n`, of a form of a layer after L1.
     fn later(&self, n: usize) -> Error {
         Error {
+            row: None,
             span: self.span(n),
             message: format!(
                 "this form ({}) is built from layer L{}",
@@ -572,6 +584,7 @@ impl<'a> Builder<'a> {
             )
         {
             return Err(Error {
+                row: None,
                 span: e.span,
                 message: "this block exports nothing: end it with an expression or `return e;`"
                     .into(),
@@ -901,6 +914,7 @@ impl<'a> Builder<'a> {
             if let Some(&first) = paths.get(&path) {
                 let path = path.join(".");
                 return Err(Error {
+                    row: None,
                     span,
                     message: format!("the field `{path}` is updated twice"),
                     notes: vec![Note {
@@ -986,6 +1000,7 @@ impl<'a> Builder<'a> {
                 ("a map entry `k -> v`", "set element")
             };
             return Err(Error {
+                row: None,
                 span: self.span(odd),
                 message: format!(
                     "{this} in a display whose first entry is a {that}: a display is a set \
@@ -1103,6 +1118,7 @@ impl<'a> Builder<'a> {
         let span = self.span(n);
         if let Some(&first) = seen.get(name) {
             return Err(Error {
+                row: None,
                 span,
                 message: format!("the {what} `{name}` is {done} twice"),
                 notes: vec![Note {
@@ -1135,6 +1151,7 @@ impl<'a> Builder<'a> {
             let word = self.word(self.tree.nodes[kids[0]].start);
             if let Some(first) = seen.get(word) {
                 return Err(Error {
+                    row: None,
                     span,
                     message: format!("the argument `{word}` is named twice"),
                     notes: vec![Note {

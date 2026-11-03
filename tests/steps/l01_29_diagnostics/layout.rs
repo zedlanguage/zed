@@ -23,6 +23,7 @@ fn steps_are_numbered_to_one_width_and_places_shown_once_when_repeated() {
         steps.push(step(9, 7, &format!("fact {i}"), src9, 5));
     }
     let d = Diagnostic {
+        row: None,
         line: 12,
         col: 7,
         message: "`++` does not take (int, \"!\")".into(),
@@ -49,6 +50,7 @@ fn steps_are_numbered_to_one_width_and_places_shown_once_when_repeated() {
 #[test]
 fn a_diagnostic_without_steps_is_one_line() {
     let d = Diagnostic {
+        row: None,
         line: 3,
         col: 1,
         message: "`Point` is not defined".into(),

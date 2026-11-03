@@ -40,8 +40,9 @@ fn every_row_passes_through_zir() {
         rows += got.len();
     }
     // The seven corpus units hold 41 checks, which evaluate 58 closed terms; the 11 waves
-    // among them lower to port regions. A runner that skipped the map would pass the
+    // among them lower to port regions. The two rejection units add 5 marked lines, which
+    // run nothing. A runner that skipped the map would pass the
     // comparison above.
-    assert_eq!(rows, 41);
+    assert_eq!(rows, 46);
     assert_eq!((lowered.get(), ported.get()), (58, 11));
 }

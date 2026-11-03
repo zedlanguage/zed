@@ -1,0 +1,40 @@
+Collision
+Unlifted carrier
+Missing algebraic obligation
+Undischargeable `@ensure`
+Unsatisfiable declared constraints
+Obligation below proof grade under `--strict` / `@proved` / `total` / `@decides`
+Non-exhaustive `match`
+Unreachable `match` arm
+`.fold` on a type that has none
+Key outside the permission bound
+Undischarged region assertion
+Cross-unit overlapping incomparable arrows
+Ambiguous imported name
+Import cycle
+Order read on a level with no natural order — origin keys outside their `Seq`
+Two declared orders meet in one key type
+Emission-disjointness
+Binder naming a type
+Match binder unused in its guard and arm
+Capitalized free name used once in a signature and nowhere in the body
+Remap output name that names a source level and resolves to a value in scope
+Method declared on a value
+Prefix `-` on a numeric literal's postfix chain
+Named argument before a positional one
+`positional` parameter after a named one
+Argument in the wrong form
+Function whose parameter kinds do not fit the expected function type
+Missing argument
+`...` with no named parameter left out
+Positional constructor call or pattern
+Inner-domain dependency outside the fragment
+Operator or literal ambiguous at a theory's carrier
+Operator or literal at a theory's carrier with no field to name
+Instance of a generic definition that fails to type
+Size with no proven bound under `@preallocated` or the `preallocated` mode
+Cell read on a path back to its own cell
+Meaning function with a case `@decides` cannot reify
+Linear question outside the polynomial fragment of the linear-relation domain
+Statement that writes nothing, or drops a declared result
+Cycle through state and value edges

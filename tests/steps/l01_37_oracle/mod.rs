@@ -4,4 +4,5 @@
 //! top-level binding whose type has no function component. The oracle runs in CI from this
 //! step on, so every later step keeps the two in agreement.
 
+mod counts;
 mod oracle;

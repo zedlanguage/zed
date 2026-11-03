@@ -1,7 +1,8 @@
 //! `sync SPEC_DIR [--check]` copies the `zed` fences of the spec's `DESIGN.md` and `EXAMPLES.md`
 //! into `zed/fences/design.md` and `zed/fences/examples.md`, each under a header naming its
 //! source line and its layer (step L1.7), and the syntactic grammar, the documentation notation,
-//! the lexical grammar and the desugaring rules into `zed/grammar` (step L1.8). With `--check` it
+//! the lexical grammar and the desugaring rules into `zed/grammar` (step L1.8), and the row names
+//! of the rejection table into `zed/fences/rejections.txt`. With `--check` it
 //! writes nothing and fails if a copy is out of date.
 //!
 //! CI does not read the spec repository, so the copies are the fixtures; run this by hand after
@@ -104,6 +105,25 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
     sync_into(&spec, &format!("{}/zed", impl_root()), check, out)
 }
 
+/// The rows of the rejection table of DESIGN sec:diagnostics (step L1.29), one per line: each
+/// row's first column up to any parenthesis, which is what a `// ✗ Row: …` comment names. A
+/// document with no table gives no rows.
+fn rejections(design: &str) -> String {
+    let mut out = String::new();
+    let rows = design
+        .split('\n')
+        .skip_while(|l| !l.starts_with("| Rejection |"))
+        .skip(2)
+        .take_while(|l| l.starts_with("| "));
+    for row in rows {
+        let first = row[2..].split(" | ").next().unwrap_or_default();
+        let name = first.split('(').next().unwrap_or_default().trim();
+        out.push_str(name);
+        out.push('\n');
+    }
+    out
+}
+
 /// Copies from `spec` into `zed/fences` and `zed/grammar` under `zed`.
 pub fn sync_into(spec: &Spec, zed: &str, check: bool, out: &mut String) -> Outcome {
     let table = WordTable::read(&spec.design)?;
@@ -132,6 +152,10 @@ pub fn sync_into(spec: &Spec, zed: &str, check: bool, out: &mut String) -> Outco
         (
             format!("{zed}/grammar/desugar.txt"),
             format!("{}\n", fence_texts(&spec.design, "desugar")?.join("\n")),
+        ),
+        (
+            format!("{zed}/fences/rejections.txt"),
+            rejections(&read_text(&spec.design)?),
         ),
     ];
     let mut stale = false;

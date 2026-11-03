@@ -17,6 +17,12 @@ zed-kernel.workspace = true
 zed-rt.workspace = true
 zedc.workspace = true
 
+[features]
+# A test build: the runtime records the node that allocates each cell, a run that leaves
+# cells live names them by type and node, and `counted` gives the runs since it was last
+# called and what each left live (OSP-diag). Off in a release build.
+counts = ["zed-rt/counts"]
+
 # The workspace forbids `unsafe`; calling JIT-compiled code needs it once, at the entry.
 [lints.rust]
 missing_docs = "warn"

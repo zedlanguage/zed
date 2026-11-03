@@ -40,12 +40,12 @@ full = []
 
 [dependencies]
 insta.workspace = true
-zedc.workspace = true
+zedc = { workspace = true, features = ["printed-types"] }
 zed-corpus-ref.workspace = true
 zed-tools.workspace = true
 zed-kernel.workspace = true
-zed-native.workspace = true
-zed-rt.workspace = true
+zed-native = { workspace = true, features = ["counts"] }
+zed-rt = { workspace = true, features = ["counts"] }
 rustix.workspace = true
 perf-event2.workspace = true
 unicode-normalization = "0.1.26"

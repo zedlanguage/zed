@@ -3,5 +3,6 @@
 //! `needs`. `tools/run_tests.sh --full` runs these after the local suite, and stops first if a
 //! tool is missing, so no test here is ever skipped. Plain `cargo test` does not build them.
 
+mod l01_21_test_runner;
 mod m0_09_kernel_evaluator;
 mod s00_01_tools;

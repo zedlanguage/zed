@@ -28,7 +28,7 @@ type Decision = Result<(usize, Vec<Value>), Value>;
 
 /// A native run: the program's tables, read by every hook, and the state the hooks change.
 pub(crate) struct State {
-    t: Arc<Tables>,
+    pub t: Arc<Tables>,
     pub run: Run,
 }
 
@@ -167,6 +167,7 @@ extern "C" fn rt_arg(tag: i64, bits: i64) {
 
 extern "C" fn rt_node(id: i64) -> Word {
     with_args(|t, s, ins| {
+        s.heap.allocating(Some(id as usize));
         let r = node(t, s, id as usize, ins);
         word(s, r)
     })
@@ -216,6 +217,7 @@ extern "C" fn rt_register(lambda: i64, address: i64) {
 
 extern "C" fn rt_branch(id: i64) -> i64 {
     with_args(|t, s, ins| {
+        s.heap.allocating(Some(id as usize));
         let r = branch(t, s, id as usize, ins);
         code(s, r)
     })
@@ -223,6 +225,7 @@ extern "C" fn rt_branch(id: i64) -> i64 {
 
 extern "C" fn rt_match(id: i64) -> i64 {
     with_args(|t, s, ins| {
+        s.heap.allocating(Some(id as usize));
         let r = matched(t, s, id as usize, ins);
         code(s, r)
     })
@@ -657,7 +660,64 @@ fn rename(p: &mut Pattern, f: &mut dyn FnMut() -> Arc<str>) {
 }
 
 /// The program's result: its value, after the result is dropped and no cell is left live.
-pub(crate) fn finish(s: &mut Run, w: Word) -> Result<Value, String> {
+/// Under feature `counts`, a run that leaves cells live names them, and every run is counted
+/// for [`counted`], with what it left live, whichever way it ended.
+pub(crate) fn finish(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
+    let r = result(t, s, w);
+    #[cfg(feature = "counts")]
+    COUNTED.with(|c| {
+        let mut c = c.borrow_mut();
+        c.runs += 1;
+        if s.heap.live() != 0 {
+            c.left.push(survivors(t, &s.heap));
+        }
+    });
+    r
+}
+
+/// The native runs of this thread, and what each run that left cells live left, as
+/// [`survivors`] names them (feature `counts`).
+#[cfg(feature = "counts")]
+#[derive(Clone, Debug, Default)]
+pub struct Counted {
+    /// The runs that reached their end.
+    pub runs: u64,
+    /// For each run that left cells live, those cells.
+    pub left: Vec<String>,
+}
+
+#[cfg(feature = "counts")]
+thread_local! {
+    static COUNTED: RefCell<Counted> = RefCell::new(Counted::default());
+}
+
+/// The native runs of this thread since the last call, and what they left live (feature
+/// `counts`).
+#[cfg(feature = "counts")]
+pub fn counted() -> Counted {
+    COUNTED.with(|c| std::mem::take(&mut *c.borrow_mut()))
+}
+
+/// The cells live in `heap`, by type and allocating node: `1 String allocated by node r.0.3,
+/// 2 tuple allocated by node r.0.5/1.2`. The node is its fact address in the graph.
+#[cfg(feature = "counts")]
+fn survivors(t: &Tables, heap: &Heap) -> String {
+    let groups = heap.survivors();
+    let mut out = String::new();
+    for (i, g) in groups.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let at = g.node.map_or_else(
+            || "outside every node".into(),
+            |n| format!("by node {}", t.path(n)),
+        );
+        out.push_str(&format!("{} {} allocated {at}", g.cells, g.kind));
+    }
+    out
+}
+
+fn result(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
     if let Some(e) = s.err.take() {
         return Err(e);
     }
@@ -673,8 +733,15 @@ pub(crate) fn finish(s: &mut Run, w: Word) -> Result<Value, String> {
     s.heap.dec(w)?;
     if s.heap.live() != 0 {
         let n = s.heap.live();
+        #[cfg(feature = "counts")]
+        let which = format!(": {}", survivors(t, &s.heap));
+        #[cfg(not(feature = "counts"))]
+        let which = {
+            let _ = t;
+            ""
+        };
         return Err(format!(
-            "memory: {n} cell{} live after the result is dropped",
+            "memory: {n} cell{} live after the result is dropped{which}",
             if n == 1 { "" } else { "s" }
         ));
     }
@@ -745,7 +812,7 @@ mod tests {
         rt_inc(old.tag, old.bits);
         let mut s = remove();
         assert_eq!(
-            finish(&mut s.run, Word::err()).unwrap_err(),
+            finish(&s.t, &mut s.run, Word::err()).unwrap_err(),
             SHARED_AFTER_FREE
         );
     }
@@ -758,7 +825,7 @@ mod tests {
         let mut s = remove();
         assert_eq!(s.run.heap.live(), 0, "the drop was written");
         assert_eq!(
-            finish(&mut s.run, Word::int(0)).unwrap_err(),
+            finish(&s.t, &mut s.run, Word::int(0)).unwrap_err(),
             SHARED_AFTER_FREE
         );
     }

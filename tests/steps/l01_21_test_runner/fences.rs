@@ -5,7 +5,7 @@ use zedc::testing::test;
 /// elaborated, so its ✗ marks are not checked.
 #[test]
 fn every_l1_fence_passes_but_for_its_free_names() {
-    let mut clean = Vec::new();
+    let (mut clean, mut rejection) = (Vec::new(), 0);
     for f in zed_tests::fences::all()
         .iter()
         .filter(|f| f.layer <= 1 && !f.notation)
@@ -14,6 +14,7 @@ fn every_l1_fence_passes_but_for_its_free_names() {
         let failures: Vec<&String> = outcomes.iter().filter_map(|o| o.failure.as_ref()).collect();
         let free = |w: &&String| w.ends_with("is not defined");
         if failures.is_empty() {
+            rejection += usize::from(!zedc::fence::marks(&f.text).lines.is_empty());
             clean.push((f.at.clone(), outcomes.len()));
             continue;
         }
@@ -24,6 +25,10 @@ fn every_l1_fence_passes_but_for_its_free_names() {
             f.at
         );
     }
+    // A fence with a ✗ mark that compiles fails above, since its outcome is neither of the
+    // two kinds allowed. The rebinding fence is the one rejection fence whose marks run.
+    println!("{rejection} rejection fences run");
+    assert_eq!(rejection, 1);
     // The rebinding fence checks its one mark; the lambda fence binds every name it uses.
     assert_eq!(
         clean,

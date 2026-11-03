@@ -155,7 +155,7 @@ AtomApply     : an atom type with its payload
 AtomType      : an atom type
 ArrayType     : a shaped array
 SeqType       : Seq(T)
-TupleType     : a tuple type
+TupleType     : a tuple type; `()` is the type of the empty tuple
 FieldType     : a one-field tuple
 GroupType     : the type T
 RecordType    : a record type

@@ -1033,6 +1033,16 @@ impl Sig {
 
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = self.text();
+        #[cfg(feature = "printed-types")]
+        printed::record(self, &text);
+        f.write_str(&text)
+    }
+}
+
+impl Ty {
+    /// Its text, in type syntax.
+    fn text(&self) -> String {
         let mut items: Vec<String> = Vec::new();
         if !self.set.is_empty() {
             items.push(surface(&self.set.to_string()));
@@ -1052,14 +1062,24 @@ impl fmt::Display for Ty {
             items.push("_".into());
         }
         match items.len() {
-            0 => f.write_str("!_"),
-            _ => f.write_str(&items.join(" | ")),
+            0 => "!_".into(),
+            _ => items.join(" | "),
         }
     }
 }
 
 impl fmt::Display for Sig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = self.text();
+        #[cfg(feature = "printed-types")]
+        printed::record(&Ty::func(Arc::new(self.clone())), &text);
+        f.write_str(&text)
+    }
+}
+
+impl Sig {
+    /// Its text, in type syntax.
+    fn text(&self) -> String {
         let arrows: Vec<String> = self
             .arrows
             .iter()
@@ -1076,22 +1096,22 @@ impl fmt::Display for Sig {
                 format!("({}) -> {}", ps.join(", "), a.result)
             })
             .collect();
-        match arrows.len() {
-            1 => f.write_str(&arrows[0])?,
+        let mut out = match arrows.len() {
+            1 => arrows[0].clone(),
             _ => {
                 let arrows: Vec<String> = arrows.iter().map(|a| format!("({a})")).collect();
-                f.write_str(&arrows.join(" & "))?
+                arrows.join(" & ")
             }
-        }
+        };
         let bounds: Vec<String> = self
             .bounds
             .iter()
             .map(|(v, m)| format!("{v} in {}", mask_text(*m)))
             .collect();
-        match bounds.is_empty() {
-            true => Ok(()),
-            false => write!(f, " for {}", bounds.join(", ")),
+        if !bounds.is_empty() {
+            out = format!("{out} for {}", bounds.join(", "));
         }
+        out
     }
 }
 
@@ -1211,5 +1231,37 @@ fn show(s: &S, prec: u8) -> String {
                 .collect::<Vec<_>>()
                 .join(" ")
         ),
+    }
+}
+
+/// The types printed on a thread while recording is on, each with the text printed (feature
+/// `printed-types`, OSP-diag): a test parses each text back and compares.
+#[cfg(feature = "printed-types")]
+pub mod printed {
+    use std::cell::RefCell;
+
+    use super::Ty;
+
+    thread_local! {
+        static SEEN: RefCell<Option<Vec<(Ty, String)>>> = const { RefCell::new(None) };
+    }
+
+    /// Starts recording on this thread, dropping what was recorded.
+    pub fn start() {
+        SEEN.set(Some(Vec::new()));
+    }
+
+    /// What was recorded since `start`, in printed order; recording stops.
+    pub fn take() -> Vec<(Ty, String)> {
+        SEEN.take().unwrap_or_default()
+    }
+
+    /// Records that `t` was printed as `text`, if recording is on.
+    pub fn record(t: &Ty, text: &str) {
+        SEEN.with_borrow_mut(|seen| {
+            if let Some(seen) = seen {
+                seen.push((t.clone(), text.into()));
+            }
+        });
     }
 }

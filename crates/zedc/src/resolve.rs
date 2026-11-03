@@ -263,6 +263,7 @@ impl Resolver {
                     text: note,
                 }];
                 self.errors.push(Error {
+                    row: None,
                     span,
                     message,
                     notes,
@@ -330,6 +331,7 @@ impl Resolver {
             None => format!("`{name}` is not defined"),
         };
         self.errors.push(Error {
+            row: None,
             span,
             message,
             notes: Vec::new(),
@@ -461,6 +463,7 @@ impl Resolver {
             Some(layer) => format!("`@{name}` is an annotation of layer L{layer}"),
         };
         self.errors.push(Error {
+            row: None,
             span: a.span,
             message,
             notes: Vec::new(),
@@ -475,6 +478,7 @@ impl Resolver {
     /// The form `what`, which the parser builds, has its meaning from step `step`.
     fn later(&mut self, span: Span, what: &str, step: &str) {
         self.errors.push(Error {
+            row: None,
             span,
             message: format!("{what} is compiled from step {step}"),
             notes: Vec::new(),
@@ -637,6 +641,7 @@ impl Resolver {
                 self.out.uses.insert(t.span, Ref::Prelude(n.clone()));
             }
             TypeKind::Name(n) => self.errors.push(Error {
+                row: None,
                 span: t.span,
                 message: format!("the type `{n}` is not defined"),
                 notes: Vec::new(),

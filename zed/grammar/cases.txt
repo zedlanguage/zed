@@ -106,6 +106,10 @@ Expr ::: if k in {1, 2} { 1 } else { 2 } ::: (if (k in ({ 1 , 2 })) ({ 1 }) else
 Type ::: (int, int) -> int ::: ((( int , int )) -> int)
 Type ::: ((int, int)) -> int ::: ((( (( int , int )) )) -> int)
 Type ::: (a: int, b: int) -> int ::: ((( (a : int) , (b : int) )) -> int)
+# the empty tuple's type: `()` before `->` is an empty parameter list, and elsewhere the type
+Type ::: () ::: ( )
+Type ::: () -> () ::: (( ) -> ( ))
+Type ::: (s: Lines) -> () ::: ((( s : Lines )) -> ( ))
 Item ::: p[k] <- v; ::: (p [ k ] <- v ;)
 # a brace after a fallback's else or an arrow is a block, never a display
 Expr ::: parse(s) else { 0 } ::: ((parse (( s ))) (else ({ 0 })))

@@ -293,6 +293,7 @@ impl Builder<'_> {
             if let StmtKind::Return(_) = s.kind {
                 if let Some(first) = export {
                     return Err(Error {
+                        row: None,
                         span: s.span,
                         message: "a block exports once".into(),
                         notes: vec![Note {
@@ -383,6 +384,7 @@ impl Builder<'_> {
             [args] => match self.args(args)? {
                 (_, _, true) => {
                     return Err(Error {
+                        row: None,
                         span: self.span(n),
                         message: format!(
                             "the arguments of `@{name}` end in `...`, which only a call takes"
@@ -437,6 +439,7 @@ impl Builder<'_> {
         let node = &self.tree.nodes[n];
         let fail = |span: Span, message: String| {
             Err(Error {
+                row: None,
                 span,
                 message,
                 notes: Vec::new(),

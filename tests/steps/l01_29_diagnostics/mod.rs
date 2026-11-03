@@ -5,6 +5,7 @@
 
 mod derivations;
 mod layout;
+mod printed;
 mod repairs;
 mod scaling;
 mod variants;

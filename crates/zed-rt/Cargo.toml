@@ -11,3 +11,9 @@ workspace = true
 
 [dependencies]
 zed-kernel.workspace = true
+
+[features]
+# A test build: each cell records the node that allocated it, and `Heap::survivors` lists the
+# cells still live by type and by that node (OSP-diag). Off in a release build, where
+# `Heap::allocating` is empty.
+counts = []
