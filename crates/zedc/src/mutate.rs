@@ -3,8 +3,9 @@
 //! each such mutant.
 //!
 //! The replacements: a comparison by its neighbor (`<=` and `<`, `>=` and `>`, `==` and
-//! `!=`, each way), `+` and `-` each way, `*` by `/` where `/` is defined on its operands (both
-//! hold no `int`) and `/` by `*`, and an integer constant `n` by `n - 1` and by `n + 1`. A
+//! `!=`, each way), `+` and `-` each way, `*` by `/` where `/` is defined (the checker types
+//! the product with no `int`) and `/` by `*`, and an integer literal `n` by `n - 1` and by
+//! `n + 1` at the carrier it adopted (`int`, `rat` or `f64`). A
 //! mutant is named by its definition's source name, the position of the node in the
 //! definition's kernel term, and the replacement, so the name does not change when other
 //! declarations move; mutants are taken in that order (definitions by name, nodes in
@@ -22,7 +23,7 @@
 use std::sync::Arc;
 
 use zed_kernel::provenance::{Position, child, with_child};
-use zed_kernel::{Prim, Term, Value};
+use zed_kernel::{Prim, Rat, Term, Value};
 
 use crate::ast::{Stmt, StmtKind};
 use crate::elab::{self, Cones, Mark, Unit};
@@ -114,6 +115,24 @@ fn neighbors(p: Prim, quotient: bool) -> &'static [Prim] {
     }
 }
 
+/// The neighbors `n - 1` and `n + 1` of the integer literal `n`, at the carrier it adopted:
+/// `int`, `rat` or `f64`.
+fn beside(n: &Value) -> [Value; 2] {
+    match n {
+        Value::Rat(r) => {
+            let one = Rat::int(1.into());
+            [Value::rat(r.sub(&one)), Value::rat(r.add(&one))]
+        }
+        Value::Float(x) => [Value::float(x.get() - 1.0), Value::float(x.get() + 1.0)],
+        _ => {
+            let n = n
+                .as_bigint()
+                .expect("an integer literal is an int, a rat or an f64");
+            [Value::int(&n - 1), Value::int(&n + 1)]
+        }
+    }
+}
+
 /// The offset of the operator in the text between its operands, `gap`: the first byte that
 /// is not white space, a `//` comment or a parenthesis.
 fn operator_at(text: &str, gap: Span) -> usize {
@@ -202,15 +221,13 @@ fn sites(
                     stack.push((&ms[1], &us[1], at.child(1)));
                     stack.push((&ms[0], &us[0], at.child(0)));
                 }
-                (Term::Prim(Prim::Neg, ms), Term::Lit(v)) if matches!(&ms[0], Term::Lit(w) if w == v) =>
-                {
-                    let n = v.as_bigint().expect("a marked constant is an integer");
-                    for to in [&n - 1, &n + 1] {
+                (Term::Prim(Prim::Neg, ms), Term::Lit(v)) if matches!(&ms[0], Term::Lit(w) if w == v) => {
+                    for to in beside(v) {
                         out.push(Mutant {
                             def,
                             at: at.clone(),
                             was: Change::Int(v.clone()),
-                            to: Change::Int(Value::int(to)),
+                            to: Change::Int(to),
                             offset: mark.span.start,
                         });
                     }
@@ -327,14 +344,21 @@ pub fn run(
                     }
                     _ => vec![cones.close_with(t.check.clone(), swap)],
                 };
-                // Complexity tradeoff: a row of a mutant runs only when its form shows that
-                // it ends (`stage::ends`, docs/thresholds.md, replacement 6). Why: a
-                // mutant may not end where the original does (`n - 1` replaced by `n + 1`
-                // in a recursive call), whether it ends is undecidable, and a step count would
-                // switch behavior at a size. What is given up: rows through recursion, `fix`
-                // or `gen` are not run against mutants; such a mutant is reported as not
-                // run, never as detected or undetected. Trigger: those forms in the row's
-                // closed term. Tests: `l25_08_mutate::examples::a_mutant_of_a_recursive_function_is_not_run`.
+                // Complexity tradeoff: a row of a mutant runs only when the form of its
+                // closed term shows that it ends (`stage::ends`, docs/thresholds.md,
+                // replacement 6). What is given up: a row whose form does not show it, though
+                // it may end, is not run against the mutant, and a mutant with such a row
+                // and no failing row is reported "not run", never detected or undetected.
+                // Why: a mutant may not end where the original does (`if x > 0 { w(w) }`
+                // with `0` replaced by `-1` never ends), whether it ends is undecidable, and
+                // a step count would switch behavior at a size. Trigger: a call through a
+                // parameter or a pattern variable in the row's closed term, as in `w(w)` or
+                // `twice(f: inc, x)` (L1 has no recursion; `fix` and `gen` would also
+                // trigger it). Test:
+                // `l25_08_mutate::examples::a_mutant_whose_row_may_not_end_is_not_run`.
+                // COMPLEXITY.md row F58. A complete solution cannot exist; a stronger sound
+                // one would add a termination proof by decreasing measures (size-change
+                // termination, PSPACE-complete in the call graph), as `stage::ends` says.
                 if !closed.iter().all(stage::ends) {
                     verdict = Verdict::NotRun;
                     continue;

@@ -6,17 +6,18 @@ use std::collections::BTreeMap;
 
 use zed_tests::deep::on_main_sized_stack;
 use zed_tests::scaling;
-use zedc::mutate;
+use zedc::mutate::{self, Verdict};
 use zedc::query::Db;
 use zedc::run;
 
-/// A table of fixed size beside `n` functions no row reaches, each with one operator and one
-/// constant: `3n + 3` mutants.
+/// `n` functions, each with one operator, one constant and a row of its own, beside a table
+/// of fixed size: `3n + 3` mutants, each of which runs the one row that reaches its
+/// definition, so the run measures what a mutant's rows cost.
 fn unit(n: usize) -> String {
     let mut text =
         String::from("isChild(positional age) = age <= 12 test { 12 -> true, 13 -> false }\n");
     for i in 0..n {
-        text += &format!("g{i}(positional x) = x + {i};\n");
+        text += &format!("g{i}(positional x) = x + {i} test {{ 0 -> {i} }}\n");
     }
     text
 }
@@ -68,10 +69,10 @@ fn finding() {
 }
 
 #[test]
-fn running_the_mutants_against_a_fixed_table_scales() {
+fn running_the_mutants_of_n_functions_each_with_a_row_scales() {
     let cache = Warm::default();
     scaling::check_order(
-        "running the mutants of n functions and a fixed table",
+        "running the mutants of n functions, each with a row",
         100,
         1,
         |n| {
@@ -80,6 +81,12 @@ fn running_the_mutants_against_a_fixed_table_scales() {
             let (stmts, unit) = front.as_ref().as_ref().unwrap();
             let found = mutate::run(&text, stmts, unit, &run::direct).unwrap();
             assert_eq!(found.len(), 3 * n + 3);
+            // Each mutant ran its row; only `x + 0` replaced by `x - 0` in `g0` passes it.
+            let detected = found
+                .iter()
+                .filter(|(_, v)| *v == Verdict::Detected)
+                .count();
+            assert_eq!(detected, 3 * n + 2);
         },
     );
 }

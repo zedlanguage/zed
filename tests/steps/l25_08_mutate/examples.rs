@@ -96,6 +96,37 @@ fn a_multiplication_becomes_a_division_only_where_division_is_defined() {
 }
 
 #[test]
+fn a_whole_number_on_rat_has_its_mutants_at_rat() {
+    // `2` adopts `rat`, so `price * 2` is a `rat` product, on which `/` is defined, and the
+    // constant's neighbors are the `rat` values 1 and 3. A table that tries only a price of
+    // zero detects none of them; one that tries 3 detects all three.
+    let only_zero = "doubled(positional price: rat) = price * 2 test { 0 -> 0 }\n";
+    assert_eq!(
+        report(only_zero),
+        [
+            "1:40: undetected: `*` replaced by `/` in `doubled` at .0: every row that reaches \
+             it passes",
+            "1:42: undetected: `2r` replaced by `1r` in `doubled` at .0.1: every row that \
+             reaches it passes",
+            "1:42: undetected: `2r` replaced by `3r` in `doubled` at .0.1: every row that \
+             reaches it passes",
+            "3 mutants: 0 detected, 3 undetected, 0 skipped, 0 not run",
+        ]
+    );
+    let three = "doubled(positional price: rat) = price * 2 test { 3 -> 6 }\n";
+    assert_eq!(
+        report(three),
+        ["3 mutants: 3 detected, 0 undetected, 0 skipped, 0 not run"]
+    );
+    // On `f64` too `/` is defined, and the constant adopts `f64`.
+    let scaled = "scaled(positional x: f64) = x * 4 test { 2.0 -> 8.0 }\n";
+    assert_eq!(
+        report(scaled),
+        ["3 mutants: 3 detected, 0 undetected, 0 skipped, 0 not run"]
+    );
+}
+
+#[test]
 fn a_row_of_main_runs_the_mutant_wave() {
     // `c * 9 div 5 + 32`: each mutant changes what the wave writes for 21 degrees.
     let unit = "\

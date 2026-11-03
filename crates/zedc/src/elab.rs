@@ -190,7 +190,7 @@ pub struct Mark {
     /// For an operator, the text between its operands, which holds it; for a constant, the
     /// constant.
     pub span: Span,
-    /// For `*`, whether `/` is defined on its operands (both hold no `int`).
+    /// For `*`, whether `/` is defined there (the product holds no `int`).
     pub quotient: bool,
 }
 
@@ -221,10 +221,7 @@ pub fn mark_of(t: &Term) -> Option<usize> {
             _ => None,
         },
         Term::Prim(Prim::Neg, args) => match &args[..] {
-            [
-                Term::Lit(Value::Int(_) | Value::Big(_)),
-                Term::Lit(Value::Int(m)),
-            ] => usize::try_from(*m).ok(),
+            [Term::Lit(_), Term::Lit(Value::Int(m))] => usize::try_from(*m).ok(),
             _ => None,
         },
         _ => None,
@@ -593,14 +590,11 @@ impl<'a> Elab<'a> {
         }
     }
 
-    /// The literal `v` of the constant `e`; marked when the elaboration is marked and `v` is
-    /// an integer.
+    /// The literal `v` of the constant `e`; marked when the elaboration is marked and `e` is
+    /// an integer literal, whatever carrier it adopted.
     fn constant(&mut self, e: &Expr, v: Value) -> Term {
         match &mut self.marks {
-            Some(marks)
-                if matches!(e.kind, ExprKind::Int { .. })
-                    && matches!(v, Value::Int(_) | Value::Big(_)) =>
-            {
+            Some(marks) if matches!(e.kind, ExprKind::Int { .. }) => {
                 let m = Term::Lit(Value::Int(marks.len() as i64));
                 marks.push(Mark {
                     span: e.span,
