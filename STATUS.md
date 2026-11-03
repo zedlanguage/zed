@@ -905,7 +905,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ARXIV-1003-spec | impl attempt 1 | 2026-11-03 11:09 | done: zed 0f61a00 (D, A, [GArrows], L11.1a, PROGRESS 297), zed-impl 2360363 (plan_dag L11.1a); check OK 149/0, cases 85/0, fences 149; sync --check out of date  |
 | BIT-words | verify attempt 3 | 2026-11-03 07:14 | started on 9cdd34e; reusing verify#2 results for 208bc87 (unchanged code); checking deep.rs and its control / load 66.54 66.32 69.12 |
 | CANON-stable | repair attempt 1 | 2026-11-03 09:30 | start: commit 720-naming test on Codex 6-var system, fix doc, colors map, citations |
-| CAP-pow32 | verify attempt 2 | 2026-11-03 08:53 | afcadac cherry-picked onto main b0811c3 (SCALE-bytes) in wt/cap-pow32-ctl: powers 13/13 pass; control exact Int count (f6e2feb files) also passes 13/13 incl. by |
 | CATCHUP-cross | repair attempt 1 | 2026-11-03 11:18 | cause: settle (873f1a8, ST-arms-quad repair 2) merges one-disjunct disjunctions into the base within a round; each later disjunct test solves the whole grown ch |
 | F44-memo | repair attempt 5 | 2026-11-03 07:14 | committed fcd1270 on wt/f44-memo, rebased on main b0811c3 (earlier line said 5b7c3ad; the base is b0811c3); clippy -D warnings clean (l01_39 deep_condition with |
 | GLAM-spec | impl attempt 1 | 2026-11-03 11:10 | done: zed wt/spec-glam cd724c9, zed-impl wt/plan-glam ac63f8a; check/cases/fences/sync --check exit 0; 10 plan rows (5 items incl. SPECULATE, 5 step rows); ledg |
@@ -927,8 +926,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | verify attempt 2 | 2026-11-03 06:34 | fmt rc=0, clippy -D warnings rc=0 on a18cf9e; diff read (negsssp.rs, utvpi.rs race, tests, docs); suite run_tests.sh 2 running; open from verify#1 not addressed |
 | XR3-synth | orchestrator attempt  | 2026-11-03 11:44 | owner: direct agent, started 11:43 |
 
-Merged into local main and not yet pushed (137 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (140 commits); the push follows one full test run on the merged tree:
 
+- e4915df CAP-pow32 repair: count factors of a power by value while it fits in u32 and by parity
+- 7b1307b CAP-pow32: the exponent of Op::Pow is an unbounded integer
 - 3cdb76c LIN-probe repair: the tradeoff at probe names its tests; cross 12 to 96 kept as an ignored scaling test (ledger LIN-probe-refute); k = 256 numbers
 - 01e79bd LIN-probe: failed-literal probing keeps each disjunct a found point holds without its test
 - 2d6c53b STATUS: TEST-split after the rebase on main 88c51bb: 1889 tests each once, 298 pieces, 2 failures also on main
