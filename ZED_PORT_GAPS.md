@@ -643,7 +643,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `thread_local!` record of the text being made, read by a recursive `show` that returns a placeholder for a missing text, and a drop guard that clears it on a panic | `Type::rope`, `make_rope`, `SHOWING`, `EndShowing`, `Rec::naming` (a recursive type's name, made as an item of the same loop) | Mutation, global state | A fold over the types in postorder that passes the map of texts along |
 | `OnceLock::set` from a loop outside the cell's own initializer | `make_rope` | Lazy cells (gap 3) | The map of texts from the row above |
 
-## Entries from T2-mid (`zedc/src/resolve.rs`, `elab.rs`, `canon/`, `stage.rs`, `zed-kernel/src/term.rs`)
+## Entries from T2-mid (`zedc/src/resolve.rs`, `elab.rs`, `canon/`, `stage.rs`, `check/`, `zed-kernel/src/term.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -651,6 +651,8 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Children pushed in order, then the pushed range reversed in place (`todo[start..].reverse()`), with a frame's count patched after the push | `canon::binders::Levels::term`, `each_binder`, `serial::Out::write`, `stage::ends`, `Mixer::enter` | Mutation | Build the list of children, then prepend it reversed |
 | `impl Drop` taking a `thread_local!` `Cell<Vec<Term>>` as its stack and putting it back, so a drop reuses its capacity | `zed_kernel::term` | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `Arc::get_mut` with `mem::replace` to take a part out of a uniquely held node | `Term::take_parts` | Identity, mutation | Removed with the drop above |
+| A machine of `Job`s and `Frame`s on a `Vec`, each frame taking its child's result from one register (`Ret`, read by `take_ty`, `take_arg`, `take_cond`, `take_sig`), large frames boxed to keep the enum small | `check::walk` | Mutation | A state receiver holding the list and the register; a sum type of frames, with no boxing |
+| `Rc<Origin>` chains with an `impl Drop` that unwraps each link by `Rc::try_unwrap` in a loop | `check::Origin` | Identity, mutation | Removed: the runtime shares and frees values, and must free a long chain without recursion itself |
 
 ## Entries from L2.1 (`zedc/src/ast/`, `format.rs`)
 
