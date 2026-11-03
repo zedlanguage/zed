@@ -70,7 +70,11 @@ fn a_file_that_is_not_utf8_fails_and_a_missing_file_is_a_usage_error() {
     assert!(err.starts_with("/nonexistent/zed-l01-21.zed: "), "{err}");
     assert_eq!(
         run(&[]),
-        (2, String::new(), "usage: zedc test <file> …\n".into())
+        (
+            2,
+            String::new(),
+            "usage: zedc test [--mutate] <file> …\n".into()
+        )
     );
 }
 

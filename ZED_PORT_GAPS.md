@@ -887,3 +887,16 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `&dyn Fn(&BigInt, &BigUint) -> bool`, the exact test of a near-tie passed into the rounding | `bound::round`, `Quotient::floor_scaled` | None | A function value |
 | `Box<[(u64, BigInt)]>`, the primes and exponents of a number | `Rat::pows` | None | A shared list of pairs |
 | `Vec::<u64>::try_reserve_exact`, asking the allocator for a block and freeing it at once, to learn before a build whether its memory exists | `num::room` | Zed has no fallible allocation a program can ask for | A runtime word that reports whether the allocator grants `n` words, failing as an error atom rather than stopping the process |
+
+## Entries from L25.8 (`zedc/src/mutate.rs`, `elab.rs`, `stage.rs`, `testing.rs`, `zed-kernel/src/provenance.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An explicit stack `Vec` of (marked term, term, position) pushed and popped to walk two terms together in preorder | `mutate::sites` | Mutation | A fold over a worklist list with the found mutants as its state, or recursion on the term's depth |
+| A path of borrowed nodes pushed root to leaf and popped to rebuild the term upward, one child replaced at each level (`provenance::with_child`) | `mutate::apply` | Mutation | A fold over the reversed path that returns the rebuilt term |
+| `std::mem::discriminant` to compare two terms' variants without their fields | `mutate::sites` | None | A `match` on the pair of terms with one arm per variant and a final arm for a mismatch |
+| A lazily filled `Vec<Option<Term>>` of each definition's remixed original, written by index the first time a mutant of that definition is seen | `mutate::run` (`built`) | Mutation | A map from definition to remixed original built before the loop over the mutants, or a state receiver |
+| `stage::Remix::mix(&mut self, …)`, a mixer that keeps its memo across calls | `mutate::run` | Shared memo (gap 2) | A state receiver that returns the memo with each mixed term |
+| `.expect` on a marked constant's integer and on a position inside its definition | `mutate::sites`, `mutate::apply` | Abort (gap 8) | As gap 8 |
+| `text.as_bytes()` scanned for the operator after a span, skipping blanks, parentheses and `//` comments | `mutate::operator_at` | Bytes (gap 5) | A fold over the text's characters from the span's end |
+| `Option<(usize, &Arc<Term>)>` passed down to replace one definition while closing a term | `testing::Swap`, `Cones::close_with`, `testing::row`, `testing::wave` | None | An optional pair argument |
