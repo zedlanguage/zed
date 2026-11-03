@@ -50,6 +50,14 @@ Item ::: f(x) = x + 1 test { 1 -> 2, 2 -> 3 } ::: (f ( x ) (= (x + 1) (test { (1
 Item ::: f(x, y) = x test { (1, 2) -> 1 } ::: (f ( (x , y) ) (= x (test { ((( 1 , 2 )) -> 1) })))
 Item ::: main(stdin: Lines) -> (stdout: Lines) { stdout <- stdin; } ::: (main ( (stdin : Lines) ) (-> ( (stdout : Lines) )) ({ (stdout <- stdin ;) }))
 Item ::: @strict; ::: (@strict ;)
+Item ::: @log(#off); ::: ((@log ( #off )) ;)
+Item@7 ::: @log(#off); ::: ((@log ( #off )) ;)
+Item ::: @log(#on); ::: ((@log ( #on )) ;)
+Item@6 ::: @log(#off); ::: (@log ((( #off )) ;))
+Item@5 ::: @log(#off); ::: ERROR
+Item ::: @log(#off) ::: ERROR
+Item ::: @log(#off) f(x) = x; ::: ((@log ( #off )) (f ( x ) (= x ;)))
+Item ::: @log(#off) (x); ::: ((@log ( #off )) ((( x )) ;))
 Item ::: @memoized fib(n) = n; ::: (@memoized (fib ( n ) (= n ;)))
 Item ::: import a.b.{c, d}; ::: (import (a . b) . { c , d } ;)
 Item ::: import units as u; ::: (import units as u ;)

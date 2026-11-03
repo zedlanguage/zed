@@ -366,6 +366,8 @@ impl<'a> Elab<'a> {
 
     fn stmt(&mut self, m: &mut M<'a>, s: &'a Stmt, top: bool) {
         match &s.kind {
+            // It binds nothing; step L7.3 reads it from the resolution to drop the log lines.
+            StmtKind::UnitAnnot(_) => {}
             StmtKind::Struct(_)
             | StmtKind::Type(_)
             | StmtKind::Method(_)

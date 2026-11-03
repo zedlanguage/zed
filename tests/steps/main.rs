@@ -44,6 +44,7 @@ mod l02_01_parser_structs;
 mod l02_02_parser_match_imports;
 mod l03_01_parser;
 mod l06_01_parser;
+mod l07_03_unit_log_off;
 mod l25_08_mutate;
 mod m0_01_scaffolding;
 mod m0_03_grammar_tools;

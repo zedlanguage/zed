@@ -28,6 +28,9 @@ fn annotations_before_declarations() {
             "(annotated (@invariant (>= x 0)) (struct Account (x: int)))",
         ),
         ("@export\nimport a.b;", "(annotated @export (import a.b))"),
+        // From layer L7 an annotation followed by `;` is a unit item; resolution refuses
+        // `@log;` with its reason (tests/steps/l07_03_unit_log_off).
+        ("@log;\nf(x) = x;", "(unit @log)\n(def f (x) = x)"),
         (
             "f(x) {\n  @measure(x)\n  g(y) = y;\n  g(x)\n}",
             "(def f (x) (block (annotated (@measure x) (def g (y) = y)) (return (call g x))))",
@@ -44,10 +47,6 @@ fn malformed_annotations() {
         ),
         ("@log", "syntax"),
         ("@log(\nf(x) = x;", "syntax"),
-        (
-            "@log;\nf(x) = x;",
-            "error: this form (UnitAnnot) is built from layer L7",
-        ),
         ("x = @log 1;", "syntax"),
     ]);
 }

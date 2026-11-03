@@ -4,7 +4,7 @@
 use std::fmt;
 
 use super::{
-    BoundaryItem, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param, Pattern, Stmt,
+    Annot, BoundaryItem, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param, Pattern, Stmt,
     StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
 };
 
@@ -446,20 +446,30 @@ fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
         StmtKind::Annotated { annots, decl } => {
             out.push(Text("(annotated"));
             for a in annots {
-                if !a.called {
-                    out.extend([Text(" @"), Text(&a.name)]);
-                    continue;
-                }
-                out.extend([Text(" (@"), Text(&a.name)]);
-                each(out, &a.positional, Show::Expr);
-                for (n, e) in &a.named {
-                    out.extend([Text(" ("), Text(n), Text(": "), Show::Expr(e), Text(")")]);
-                }
-                out.push(Text(")"));
+                annot(a, out);
             }
             out.extend([Text(" "), Show::Stmt(decl), Text(")")]);
         }
+        StmtKind::UnitAnnot(a) => {
+            out.push(Text("(unit"));
+            annot(a, out);
+            out.push(Text(")"));
+        }
     }
+}
+
+/// The annotation `a`, after a space: `@name`, or `(@name args)` when parentheses follow it.
+fn annot<'a>(a: &'a Annot, out: &mut Vec<Show<'a>>) {
+    if !a.called {
+        out.extend([Text(" @"), Text(&a.name)]);
+        return;
+    }
+    out.extend([Text(" (@"), Text(&a.name)]);
+    each(out, &a.positional, Show::Expr);
+    for (n, e) in &a.named {
+        out.extend([Text(" ("), Text(n), Text(": "), Show::Expr(e), Text(")")]);
+    }
+    out.push(Text(")"));
 }
 
 /// The rest of a function after its parameters: its ports, body and tests, and the `)`.

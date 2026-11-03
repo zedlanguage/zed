@@ -78,6 +78,9 @@ pub struct Resolution {
     /// annotated one. A doc comment attaches to the declaration that follows it (DESIGN.md
     /// sec:grammar, comments).
     pub decls: HashSet<usize>,
+    /// The unit item `@log(#off);`, if the unit has one: it drops the log lines that every
+    /// body of the unit writes (DESIGN.md sec:ports). Step L7.3, which writes the lines, reads it.
+    pub log_off: Option<Span>,
 }
 
 /// The value words of the prelude, each with the layer it belongs to (DESIGN.md, "Defined
@@ -195,6 +198,12 @@ pub fn annotation_layer(name: &str) -> Option<u32> {
         .iter()
         .find(|(w, _)| *w == name)
         .map(|&(_, layer)| layer)
+}
+
+/// Whether `a` is written `@name(#off)`, with the one argument `#off`.
+fn is_off(a: &Annot) -> bool {
+    a.named.is_empty()
+        && matches!(&a.positional[..], [Expr { kind: ExprKind::Atom(x), .. }] if x == "off")
 }
 
 /// The type names of the prelude at L1; a unit declares no type before L2.
@@ -410,6 +419,7 @@ impl Resolver {
                     | StmtKind::While(_)
                     | StmtKind::Until(_)
                     | StmtKind::Expr(_)
+                    | StmtKind::UnitAnnot(_)
             ) {
                 self.out.decls.insert(s.span.start);
             }
@@ -460,7 +470,8 @@ impl Resolver {
             | StmtKind::Import(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
-            | StmtKind::Expr(_) => {}
+            | StmtKind::Expr(_)
+            | StmtKind::UnitAnnot(_) => {}
         }
     }
 
@@ -510,6 +521,7 @@ impl Resolver {
                 annots.iter().for_each(|a| self.annotation(a));
                 todo.push(Task::Stmt(decl));
             }
+            StmtKind::UnitAnnot(a) => self.unit_annotation(a, s.span),
         }
     }
 
@@ -531,6 +543,55 @@ impl Resolver {
             message,
             notes: Vec::new(),
         });
+    }
+
+    /// The unit item `a;`, written as the statement at `span`. Two annotations are unit items:
+    /// `@log(#off);`, which this layer accepts, and `@strict;`, of layer L15. Each other way to
+    /// write one is refused with its reason.
+    fn unit_annotation(&mut self, a: &Annot, span: Span) {
+        let name = &a.name;
+        let fail = |message: String| Error {
+            row: None,
+            span,
+            message,
+            notes: Vec::new(),
+        };
+        let error = match annotation_layer(name) {
+            Some(_) if name == "strict" => return self.annotation(a),
+            None | Some(2) => return self.annotation(a),
+            Some(_) if name != "log" => fail(format!(
+                "`@{name}` annotates a declaration and is not a unit item; write it before \
+                 the declaration it annotates"
+            )),
+            Some(_) if !a.called => fail(
+                "`@log;` is not a unit item: `@log` writes a line at each evaluation of the \
+                 definition or statement it annotates, and the unit item `@log(#off);` drops \
+                 the lines of every body in the unit"
+                    .into(),
+            ),
+            Some(_) if !is_off(a) => fail(
+                "the unit item `@log` takes the one argument `#off`, as in `@log(#off);`, \
+                 which drops the lines of every body in the unit"
+                    .into(),
+            ),
+            Some(_) if self.scopes.len() > 1 => fail(
+                "`@log(#off);` is an item of a unit and stands at its top level, not in a \
+                 block; write `@log(#off)` before a function's declaration to drop the lines \
+                 of its body"
+                    .into(),
+            ),
+            Some(_) => match self.out.log_off {
+                None => return self.out.log_off = Some(span),
+                Some(first) => Error {
+                    notes: vec![Note {
+                        span: first,
+                        text: "the first `@log(#off);`".into(),
+                    }],
+                    ..fail("the unit has `@log(#off);` twice".into())
+                },
+            },
+        };
+        self.errors.push(error);
     }
 
     /// The primed name `name`, which names a loop step's output.

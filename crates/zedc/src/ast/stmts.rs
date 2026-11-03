@@ -4,7 +4,8 @@
 //! L2.2, imports with their `@hash` pins, and the annotations `@name` written before a
 //! declaration; and from step L6.1, the guards `while c;` and `until c;`, `mutable x = e;`,
 //! indexed definitions `x[i in s] = e;`, boundary values `with x = e0` after a binding or an
-//! indexed definition, and expression statements `e;`.
+//! indexed definition, and expression statements `e;`; and from step L7.3, the unit items
+//! `@name;` and `@name(args);`, as `@log(#off);`.
 
 use std::collections::HashMap;
 
@@ -71,6 +72,8 @@ pub enum StmtKind {
         /// The declaration.
         decl: Box<Stmt>,
     },
+    /// `@log(#off);` or `@strict;`: an annotation of the enclosing unit, an item of its own.
+    UnitAnnot(Annot),
 }
 
 /// `import geometry.shapes;`, `import geometry.shapes as gs;` or
@@ -265,7 +268,8 @@ impl StmtKind {
             | StmtKind::Struct(_)
             | StmtKind::Type(_)
             | StmtKind::Import(_)
-            | StmtKind::Annotated { .. } => 1,
+            | StmtKind::Annotated { .. }
+            | StmtKind::UnitAnnot(_) => 1,
             StmtKind::Until(_) => 2,
             StmtKind::Return(_) => 3,
         }
@@ -326,10 +330,10 @@ impl Builder<'_, '_> {
 
     pub(super) fn make_item(&mut self, n: usize) -> Result<Stmt, Error> {
         let d = self.kids(n)[0];
-        let kind = if self.tree.name(d) == "Annotated" {
-            self.annotated(d)?
-        } else {
-            self.decl(d)?
+        let kind = match self.tree.name(d) {
+            "Annotated" => self.annotated(d)?,
+            "UnitAnnot" => StmtKind::UnitAnnot(self.annot(self.kids(d)[0])?),
+            _ => self.decl(d)?,
         };
         Ok(Stmt {
             kind,

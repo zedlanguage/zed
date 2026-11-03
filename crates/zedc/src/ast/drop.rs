@@ -162,6 +162,12 @@ fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
             }
             stmt_kids(decl.kind, out);
         }
+        StmtKind::UnitAnnot(Annot {
+            positional, named, ..
+        }) => {
+            out.extend(positional);
+            out.extend(named.into_iter().map(|(_, e)| e));
+        }
     }
 }
 

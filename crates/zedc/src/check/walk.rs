@@ -1025,6 +1025,8 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     fn stmt(&mut self, m: &mut M<'a>, s: &'a Stmt) {
         match &s.kind {
+            // It has no type: it binds nothing and gives no value.
+            StmtKind::UnitAnnot(_) => {}
             StmtKind::Struct(_)
             | StmtKind::Type(_)
             | StmtKind::Method(_)

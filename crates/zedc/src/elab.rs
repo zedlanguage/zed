@@ -473,7 +473,8 @@ impl<'a> Tables<'a> {
             | StmtKind::IndexedDef(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
-            | StmtKind::Expr(_) => {}
+            | StmtKind::Expr(_)
+            | StmtKind::UnitAnnot(_) => {}
         }
     }
 
@@ -515,7 +516,7 @@ impl<'a> Tables<'a> {
                 })
                 .collect(),
             StmtKind::Function(f) => vec![self.id(s.span, &f.name)],
-            StmtKind::Push { .. } | StmtKind::Return(_) => Vec::new(),
+            StmtKind::Push { .. } | StmtKind::Return(_) | StmtKind::UnitAnnot(_) => Vec::new(),
             StmtKind::Struct(_)
             | StmtKind::Type(_)
             | StmtKind::Method(_)
@@ -1004,6 +1005,7 @@ fn what(s: &Stmt) -> String {
         StmtKind::Function(f) => format!("`{}`", f.name),
         StmtKind::Push { port, .. } => format!("the push to `{port}`"),
         StmtKind::Return(_) => "the export".into(),
+        StmtKind::UnitAnnot(a) => format!("the unit item `@{}`", a.name),
         StmtKind::Struct(_)
         | StmtKind::Type(_)
         | StmtKind::Method(_)

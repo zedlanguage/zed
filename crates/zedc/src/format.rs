@@ -828,22 +828,7 @@ impl<'a> Formatter<'a> {
             Job::Annots { annots, ind } => {
                 if let Some((a, rest)) = annots.split_first() {
                     stack.push(Job::Annots { annots: rest, ind });
-                    self.put(format!("@{}", a.name));
-                    if a.called {
-                        self.put("(");
-                        then![stack;
-                            Job::Exprs { exprs: &a.positional, min: LAMBDA, ind },
-                            Job::Named {
-                                args: &a.named,
-                                min: LAMBDA,
-                                comma: !a.positional.is_empty(),
-                                ind,
-                            },
-                            put(") "),
-                        ];
-                    } else {
-                        self.put(" ");
-                    }
+                    self.annot(a, " ", ind, stack);
                 }
             }
         }
@@ -1061,7 +1046,27 @@ impl<'a> Formatter<'a> {
                     Job::Stmt { s: decl, ind, bare: false },
                 ];
             }
+            StmtKind::UnitAnnot(a) => self.annot(a, ";", ind, stack),
         }
+    }
+
+    /// The annotation `a`, `@name` or `@name(args)`, followed by `end`.
+    fn annot(&mut self, a: &'a Annot, end: &'static str, ind: usize, stack: &mut Vec<Job<'a>>) {
+        self.put(format!("@{}", a.name));
+        if !a.called {
+            return self.put(end);
+        }
+        self.put("(");
+        then![stack;
+            Job::Exprs { exprs: &a.positional, min: LAMBDA, ind },
+            Job::Named {
+                args: &a.named,
+                min: LAMBDA,
+                comma: !a.positional.is_empty(),
+                ind,
+            },
+            put(format!("){end}")),
+        ];
     }
 
     /// A function's text after its name and `(`: its parameters and `)` when `called`, then its
