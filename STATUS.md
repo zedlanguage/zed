@@ -870,36 +870,41 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ADDITIVE-desugar | impl attempt 1 | 2026-11-03 07:14 | started |
-| AXIOMS-fmt | impl attempt 1 | 2026-11-03 07:55 | negative controls run, not committed: old 'law' field in axioms.zed -> prelude test fails at axioms.zed:15:3; blank lines among moved comments dropped -> 2 l01_ |
-| AXIOMS-gaps | verify attempt 1 | 2026-11-03 07:55 | started |
+| ADDITIVE-desugar | repair attempt 1 | 2026-11-03 07:14 | cargo clippy -D warnings passes (7m42s at load ~150) |
+| AXIOMS-fmt | verify attempt 1 | 2026-11-03 07:55 | full suite started on c10cacd (load 121); control worktree /home/luke/Work/wt/axioms-fmt-ctl made |
+| AXIOMS-gaps | verify attempt 1 | 2026-11-03 07:55 | fmt and clippy -D warnings clean; control (false '>' total at String in table and prelude, ctl worktree) fails every_axiom_holds and strings_compare_by_code_poi |
 | BIT-words | impl attempt 1 | 2026-11-03 07:14 | run_tests.sh 4: 99 pieces, 1 failed (m0_01 step-folder name l01_39a rejected by is_step_name; fixing), l01_39a 32 pass 6.7 s (load 69-136) |
-| F44-memo | verify attempt 1 | 2026-11-03 07:14 | T6 merged to main 08:25 before impl commit 08:33; trial merge of wt/f44-memo onto main 3b44b91 in /home/luke/Work/wt/f44-memo-ctl: bdd.rs auto-merges leaving th |
-| HOLE-oneline | repair attempt 1 | 2026-11-03 07:14 | fix: Inside::Str carries its hole's one_line; inner hole one_line = outer // !triple; l01_05 19/19 pass; 3 new grammar cases ok (372 cases, the 2 old DIFFs rema |
-| L1.17a | impl attempt 1 | 2026-11-03 07:14 | negative control (k += 64 in bound::cmp, n=2^18): 57.9x work at 8n (2.21e9 -> 1.28e11 instr), limit 24 -> FAILS as expected; real code at n=2^18 passes in 0.02  |
-| OSP-neglit | verify attempt 1 | 2026-11-03 07:14 | done ok: a63de84 verified; merge with impl main 3b44b91 has text conflicts in STATUS.md, ZED_PORT_GAPS.md and l01_08 cases.rs (case count: main 359, merged shou |
-| R10-stack | verify attempt 1 | 2026-11-03 07:14 | start; reviewing 9cdc70f on wt/r10-stack |
-| S22b-rest | repair attempt 1 | 2026-11-03 07:22 | start: run1.txt ended without its summary (killed); rerunning full suite on the uncommitted fix |
-| S22e-quad | impl attempt 1 | 2026-11-03 07:43 | pre-existing on base 0f792ff (fix disabled, same result): s22::random_terms_keep_their_preimages expects 1 reflected 0 exact, gets 0/1; case ((5 mod (3 - x)) mo |
-| S22-merge | impl attempt 1 | 2026-11-03 08:07 | cause confirmed, no code bug: at pre-S22e main 5adc3c2 the 8 S22b reflected cases (random_terms 1, more_random_guarded_chains 7) give byte-identical now/before  |
-| SCALE-bytes | verify attempt 1 | 2026-11-03 07:14 | started |
-| ST-arms-quad | repair attempt 4 | 2026-11-03 03:16 | control B (failed cases emptied again): new paired test fails 1.454/22.158 G at d=120/960, 15.2x > 11.47; accounts test passes; load 77 |
+| CANON-stable | impl attempt 1 | 2026-11-03 09:30 | start |
+| CAP-pow32 | impl attempt 1 | 2026-11-03 08:53 | negative control on main ab26ea6: 3 of 13 powers tests fail (past-u32 shared count at depth 32, parity at k=u32::MAX+1, nested-square scaling), 10 pass; probe n |
+| F44-memo | impl attempt 2 | 2026-11-03 07:14 | rebased wt/f44-memo on main ab26ea6 (T6 merged): stale Part::forced tradeoff comment dropped, the_parts_scale un-ignored, x13.rs and scaling.rs unit test Cell-> |
+| HOLE-oneline | impl attempt 2 | 2026-11-03 07:14 | continuing repair#1's uncommitted fix; fmt, clippy -D warnings clean; check OK (149 parsed), fences exit 0, cases 372 with 2 wrong ((T,) types, not this item's) |
+| L1.17a | impl attempt 1 | 2026-11-03 07:14 | Product::bound multiplies 2^e exactly (no squaring); the three child tests and the scaling test each run in under 2 s; full suite started, load 116.88 127.59 13 |
+| LIN-probe | orchestrator attempt  | 2026-11-03 07:30 | also remove the per-call model clone in Formula::holds (borrow the model; no copies for the borrow checker); state the argument that skipping disjuncts true at  |
+| LIVE3 | impl attempt 1 | 2026-11-03 09:30 | started: reading brief, SYNTHESIS, R3_CLAUDE 3.1-3.4 |
+| R10-stack | verify attempt 1 | 2026-11-03 07:14 | control: 150,000-concat test without the stack switch aborts with stack overflow (rc 134); with it passes in 115.5 s, 1.25 GB peak, load 149 |
+| S22b-rest | verify attempt 1 | 2026-11-03 07:22 | negative control (4a2686f preimage.rs + new tests, /home/luke/Work/wt/s22b-rest-ctl, load ~102): constant_minus 2 of 12 fail (clip at ends of i64, reflected arm |
+| S22e-quad | repair attempt 1 | 2026-11-03 07:43 | suite BUILD FAILED: link of steps test binary, undefined llvm anon symbols (corrupt incremental cache from the killed earlier run); cargo clean -p zed-tests and |
+| S22-merge | impl attempt 1 | 2026-11-03 08:07 | l01_25 piece passes with the counts updated: 130 passed, 1 ignored, 219.7 s at load 178 (125.8 s at load 134 before the fix); starting clippy and tools/run_test |
+| SCALE-bytes | merge attempt 1 | 2026-11-03 07:14 | waiting: merge.lock held by OSP-neglit since 08:53 (38 min, over 30; not broken; its last line 09:05 says rebuilding) |
+| ST-arms-quad | verify attempt 5 | 2026-11-03 03:16 | fmt --check and clippy -D warnings clean on cd363ae; suite running (load 134.48) |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
-| T2-mid | repair attempt 3 | 2026-11-03 04:26 | per-file negative controls on d537273, one old file each: old binary.rs, text.rs, canon.rs, lower.rs each overflow their deep test on 2 MiB (exit 134); old recu |
-| T2-types | impl attempt 1 | 2026-11-03 08:34 | started |
-| T6-bound-load | impl attempt 1 | 2026-11-03 07:07 | started |
-| T6-payload-pinwheel | impl attempt 1 | 2026-11-03 08:25 | reproduced on main 3b44b91 (load 156): full pinwheels with payload ends Refused(NoWitness) k1 166 ms, k16 24.3 s; one-tuple ends NoWitness k1 379 ms, k16 11.6 s |
-| T6-ratlit | impl attempt 1 | 2026-11-03 05:01 | started |
-| TD-ends | repair attempt 4 | 2026-11-03 03:52 | fmt and clippy clean; starting tools/run_tests.sh 4; load 84.15 86.49 92.05 |
-| TD-values | impl attempt 1 | 2026-11-03 03:52 | T6 already removed Type::values(cap) and Type::listed (main 9a413d5); each_value still collects inner types eagerly (types.rs:676). Control on main code: first  |
-| TEST-split | impl attempt 1 | 2026-11-03 07:56 | measured alone at load 99-112, timeout 60: all four pieces hit 60 s; slowest l01_25 s22::chains_of_slow_families 53.8 s, l01_16 scaling::a_call_through_a_value_ |
-| TYPE-forms | impl attempt 1 | 2026-11-03 08:16 | started |
-| UNITANNOT-L7 | impl attempt 1 | 2026-11-03 07:14 | found: grammar reads `@log(#off);` as `@log` on the statement `(#off);` (Annotated is tried before UnitAnnot, at rings 6+); fixing by trying UnitAnnot first, sp |
-| UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | run_tests.sh 4 cut by my outer timeout 900 at load ~100 (30 pieces ok, no summary); rerunning (load 68.77 88.48 95.69) |
-| WIDEN-WARN | verify attempt 1 | 2026-11-03 07:14 | negative control (not committed): a scan of all nodes per warning fails many_warnings_scale at 46.6x (52.2M -> 2433.5M instructions, limit 24), chain test passe |
+| T2-mid | orchestrator attempt  | 2026-11-03 04:26 | SCOPE CUT for repair#4: finish and commit the zir/memory.rs walks and l01_34 tests now in progress, run the suite, then return ok=true for verify and merge. Do  |
+| T2-types | impl attempt 1 | 2026-11-03 08:34 | correction: the compared texts have 24354 distinct lines, not 13k |
+| T6-bound-load | impl attempt 1 | 2026-11-03 07:07 | bound check moved to checker over all written types; refusal causes on overload, literal and need-result paths; untracked param printed by kernel printer; build |
+| T6-payload-pinwheel | impl attempt 1 | 2026-11-03 08:25 | fix 1 (exact f in narrow_tuples/morphisms, settle only for empty proof and forced): k=1 Payload/OneTuple Empty+Inhabited; k=16 Payload Empty 3.48 s, OneTuple 3. |
+| T6-ratlit | orchestrator attempt  | 2026-11-03 05:01 | REQUIREMENT for impl#2 and verify: residues mod 2^61-1 may only bucket or hash; equality, order and subtyping of rat literal types must compare the exact canoni |
+| TD-ends | verify attempt 5 | 2026-11-03 03:52 | probes on 08a8abc (ctl worktree td-ends-ctl): -(2^127 kept) == Big(-2^127) but hashes differ (Hash/Eq broken; Kept::neg leaves a kept value inside i128); least_ |
+| TD-values | repair attempt 1 | 2026-11-03 03:52 | started; previous suite run ended without its summary (34 pieces, killed at return); rerunning after review and commit |
+| TEST-split | impl attempt 1 | 2026-11-03 07:56 | full run_tests.sh 4 cut at 50 min by my outer timeout with 259 pieces queued on 8 machine-wide slots at load 87-182; no summary, rerun needed; of 125 new pieces |
+| TYPE-forms | impl attempt 1 | 2026-11-03 08:16 | AST/resolve/check/format/elab For arm done; 15 bounds tests pass in l01_26; grammar cases added (365, 0 wrong) |
+| UNITANNOT-L7 | impl attempt 1 | 2026-11-03 07:14 | parser/AST/format/resolve/check built; zedc run of a unit with @log(#off); prints the same as without; building step tests (load 149.75) |
+| UTVPI-NEAR | orchestrator attempt  | 2026-11-03 06:34 | for the repair: both union probes (feasible and negative-cycle) become committed scaling tests; the eta exit needs a test that reaches it (or remove it if unrea |
+| WIDEN-WARN | repair attempt 1 | 2026-11-03 07:14 | fix applied: only + - * unary - and literals inherit wrap; new test with the 3 probes passes, widen 16/16; clippy, fmt clean; follow-up WIDEN-WARN-test added to |
 
-Merged into local main and not yet pushed (70 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (72 commits); the push follows one full test run on the merged tree:
 
+- 2e145cc OSP-neglit: reject a prefix - on a postfix chain whose base is a numeric literal, with both groupings and their values
+- ab26ea6 STATUS: in progress as of 2026-11-03 08:53
 - 99deb6b plan_dag, STATUS: LIN-cross merged
 - 99987df LIN-cross: pick's repair reads each variable's bounds, not every guard on it
 - 3b44b91 STATUS: in progress as of 2026-11-03 08:24
