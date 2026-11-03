@@ -425,3 +425,54 @@ fn sums_calls_and_long_bodies_100000_deep_are_ordered_on_a_2_mib_stack() {
 fn blocks_and_tuples_nested_100000_deep_are_ordered_on_a_2_mib_stack() {
     ordered_deep(&["nested blocks", "nested tuples"]);
 }
+
+/// Elaborates each program of `shapes` on a 2 MiB stack, `n` deep and `8n` deep, and checks
+/// the time is linear. Elaboration recursed once per level of nesting; the time includes the
+/// checker's, which elaboration runs first.
+fn elaborates_deep(shapes: &[&str], n: usize) {
+    use zed_tests::deep::{on_small_stack, program, statements};
+    on_small_stack(|| {
+        for &shape in shapes {
+            let small = statements(&program(shape, n).text);
+            let large = statements(&program(shape, 8 * n).text);
+            let small_res = resolve(&small).unwrap();
+            let large_res = resolve(&large).unwrap();
+            zed_tests::scaling::check_order(&format!("elaborating {shape}"), n, 1, |k| {
+                let (stmts, res) = if k == n {
+                    (&small, &small_res)
+                } else {
+                    (&large, &large_res)
+                };
+                let unit = elaborate(stmts, res).unwrap_or_else(|e| panic!("{shape}: {e:?}"));
+                assert!(!unit.defs.is_empty(), "{shape}");
+            });
+        }
+    });
+}
+
+#[test]
+fn blocks_nested_100000_deep_elaborate_on_a_2_mib_stack() {
+    elaborates_deep(&["nested blocks"], 12_500);
+}
+
+// The checker, which elaboration runs first, costs about a million instructions for each `+`
+// and a third of that for each negation, branch or call (COMPLEXITY.md F60), so these shapes
+// elaborate 8,000 deep.
+
+#[test]
+fn sums_and_else_if_chains_8000_deep_elaborate_on_a_2_mib_stack() {
+    elaborates_deep(
+        &[
+            "a left-nested sum",
+            "a sum nested in parentheses",
+            "an `else if` chain",
+        ],
+        1_000,
+    );
+}
+
+#[test]
+fn negations_and_calls_8000_deep_elaborate_on_a_2_mib_stack() {
+    // Nested tuples are left out: the checker takes time superlinear in their depth (open).
+    elaborates_deep(&["nested negations", "nested calls"], 1_000);
+}
