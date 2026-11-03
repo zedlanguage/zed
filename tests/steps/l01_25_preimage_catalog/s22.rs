@@ -1,10 +1,12 @@
 //! COMPLEXITY.md S22: the backward transfer through `if` chains whose arms read one shared
 //! term. The transfer reads such a chain through a piecewise-affine summary of each term in
 //! one input, and meets each integer demand with the hull of the term's values first. Neither
-//! may change a preimage, so each one here is compared, whole (domains, exactness,
+//! may change an exact preimage, so each one here is compared, whole (domains, exactness,
 //! enumeration, stops, relation and refusal), with the transfer as it was before
-//! (`zedc::store::preimage_ref`, commit 397f1c9); the scaling tests then check that the
-//! chains cost `O(n log n)`.
+//! (`zedc::store::preimage_ref`, main at fdf7918: the 397f1c9 transfer with later changes);
+//! the one difference allowed is an inexact box made narrower and still sound
+//! (`meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened`). The scaling
+//! tests then check that the chains cost `O(n log n)`.
 
 use std::sync::Arc;
 
@@ -635,6 +637,41 @@ fn random_chains_of_shared_terms_keep_their_preimages() {
     });
 }
 
+/// The one kind of difference the comparison allows. Lemma 4 of the synthesis (meeting a
+/// demand with a hull of the term's values changes no preimage) holds for the exact
+/// preimage, but the map2 cap (`revision::map2`) merges pieces by how many the operands have,
+/// demand included, so an inexact box depends on the demand's pieces outside the hull. Here
+/// the demand on `x` through `x + x` is met with `x`'s hull `[-17, inf)`, the cap then merges
+/// less, and the box shrinks from `[-10] | [-2, 10]` to `[-10] | [-2, 3] | [10]`; the true set
+/// is `{-10} | [1, 3] | {10}`. Both boxes are inexact and hold every point that meets the
+/// demand. The transfer before cannot be kept on such demands without reading both the met
+/// and the whole demand at each term, which doubles the demands per level.
+#[test]
+fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
+    let i = || var("i");
+    let abs = || Term::Prim(Prim::Abs, vec![i()]);
+    let x = Term::If(
+        Arc::new(prim(Prim::Ge, abs(), int(10))),
+        Arc::new(prim(Prim::Sub, int(-5), i())),
+        Arc::new(prim(Prim::Sub, int(6), i())),
+    );
+    let t = Term::If(
+        Arc::new(prim(Prim::Ge, abs(), int(3))),
+        Arc::new(prim(Prim::Mul, int(2), x.clone())),
+        Arc::new(prim(Prim::Add, x.clone(), x)),
+    );
+    let ds = over(&[("i", IntervalSet::range(End::NegInf, End::Fin(12)))]);
+    let d = Demand::Ints(pieces(&[(-30, -29), (6, 10)]));
+    let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
+    assert!(!now.exact && !then.exact);
+    assert_eq!(now.domains["i"], pieces(&[(-10, -10), (-2, 3), (10, 10)]));
+    assert_eq!(then.domains["i"], pieces(&[(-10, -10), (-2, 10)]));
+    assert!(!refuted(&t, &ds, &d, &now.domains, false));
+    let mut diffs = Diffs::default();
+    diffs.preimage("the narrowed case", &t, &ds, &d);
+    assert_eq!((diffs.cases, diffs.narrower, diffs.found.len()), (1, 1, 0));
+}
+
 /// Every kind of guard and arm the summary reads, and some it does not: the cases `from..to`
 /// of one sequence, split in two tests so they run in parallel.
 fn random_guarded_chains(from: usize, to: usize) {
@@ -999,4 +1036,25 @@ fn chain_pow2_scales() {
 #[test]
 fn chain_jt_scales() {
     scales("jt", 256);
+}
+
+#[test]
+fn chain_min_scales() {
+    scales("min", 256);
+}
+
+/// `cross` below its domain's width: `m` plus the number of guards `i >= j` that fail, for
+/// `j` up to 40 and both inputs in `[-50, 50]`. The transfer's box is inexact, so the
+/// preimage asks whether the box can be listed; it cannot (two inputs are ranges), and that is
+/// read before `stage::ends`, which walks the term as a tree and so costs `2^40` steps on this
+/// chain, whose arms share their term (ledger ENDS-dag).
+#[test]
+fn a_chain_on_two_inputs_below_its_domains_width_ends() {
+    on_big_stack(|| {
+        let (t, ds, d) = family("cross", 40);
+        let p = preimage(&t, &ds, &d);
+        assert!(!p.exact);
+        assert_eq!(p.domains["i"], IntervalSet::of(-50, 50));
+        assert_eq!(p.domains["m"], IntervalSet::of(-40, 50));
+    });
 }

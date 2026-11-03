@@ -2089,8 +2089,9 @@ impl<'t> Tx<'t> {
     /// An interval that holds every integer value of the term, for a term whose backward
     /// result under an integer demand `z` is its result under `z` met with the interval:
     /// an input, a literal, a name bound to such a term, a constant added to or subtracted
-    /// from one, and a choice between two of them. `None` for any other term, and for a hull
-    /// whose computation rounds an end; the rounding flag is left as it was.
+    /// from one, a choice between two of them, and their `min` or `max`. `None` for any other
+    /// term, and for a hull whose computation rounds an end; the rounding flag is left as it
+    /// was.
     fn clip(&mut self, t: Tid, env: Eid) -> Option<IntervalSet> {
         self.cached(
             |m| &mut m.clip,
@@ -2140,6 +2141,14 @@ impl<'t> Tx<'t> {
                     }
                     _ => None,
                 }
+            }
+            // `min` and `max` are monotone in each operand, so their hull is the operator on
+            // the operands' ends.
+            Node::Prim(p @ (Prim::Min | Prim::Max), args) if args.len() == 2 => {
+                let (la, ha) = self.clip(self.arg(args, 0), env)?.bounds()?;
+                let (lb, hb) = self.clip(self.arg(args, 1), env)?.bounds()?;
+                let pick = if p == Prim::Min { End::min } else { End::max };
+                Some(IntervalSet::range(pick(la, lb), pick(ha, hb)))
             }
             _ => None,
         }
@@ -3410,9 +3419,6 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
 /// COMPLEXITY.md row C18 (thresholds.md replacement 8). A complete solution is `@exact`
 /// ([`exact_preimage`]), branch and prune over the box, at a cost in its points.
 fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
-    if !stage::ends(term) {
-        return None;
-    }
     let mut axes: Vec<(Arc<str>, Vec<i64>)> = Vec::new();
     for (k, s) in dom {
         let mut vs = Vec::new();
@@ -3425,6 +3431,11 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
         axes.push((k.clone(), vs));
     }
     if axes.iter().filter(|(_, vs)| vs.len() > 1).count() > 1 {
+        return None;
+    }
+    // The box is read first: `ends` walks the term as a tree, so it costs the term unshared
+    // (ledger ENDS-dag), and a box that cannot be listed needs no answer from it.
+    if !stage::ends(term) {
         return None;
     }
     if axes.iter().any(|(_, vs)| vs.is_empty()) {
