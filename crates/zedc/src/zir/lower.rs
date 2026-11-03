@@ -165,9 +165,15 @@ struct At<'t> {
 /// so they depend only on where a subterm stands in the term, never on where it is in memory
 /// (step ADDR-keys). The root is 0, and the parts of occurrence `i`, in the order of [`parts`],
 /// are `first[i]`, `first[i] + 1`, and so on.
-// Complexity tradeoff: a value shared at several places of the term gets an id at each, so
-// the walk is linear in the term's size as a tree, not in its distinct subterms. Lowering is a
-// walk of the term as a tree, linear in that size already, so the order of the whole is kept.
+// Complexity tradeoff: a subterm shared at several places of the term (an `Arc` held twice)
+// gets an id at each, so the numbering costs the term's size as a tree, not its number of
+// distinct subterms: a term of `d` levels whose two parts share one subterm costs `2^d`. Every
+// term gets the right ids; only such a term pays more. Lowering itself walks the term as a
+// tree, so it already pays that size (it did before ADDR-keys), and the numbering keeps the
+// order of the whole. Tests: `l01_33_lowering::scaling` (`lowering_a_wide_match_scales` and the
+// rest, unchanged) and `l01_33_lowering::ports::ports_are_kept_by_place_not_address`;
+// COMPLEXITY.md K40. A complete solution needs hash-consed term ids, so that a shared subterm
+// is numbered once and the lowering walks it once.
 struct Places {
     first: Vec<usize>,
 }
@@ -197,14 +203,6 @@ impl Places {
 
     /// `t`, part `j` of `at` in the order of [`parts`], with its id.
     fn part<'t>(&self, at: At<'t>, j: usize, t: &'t Term) -> At<'t> {
-        debug_assert!(
-            {
-                let mut ps = Vec::new();
-                parts(at.t, &mut ps);
-                std::ptr::eq(ps[j], t)
-            },
-            "part {j} of a term is the subterm given"
-        );
         At {
             t,
             id: self.first(at) + j,

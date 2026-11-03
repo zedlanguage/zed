@@ -416,3 +416,36 @@ fn a_port_used_100000_regions_deep_is_lowered_on_a_2_mib_stack() {
         });
     });
 }
+
+/// `f = (x) -> match x { 0 => 0, 1 => 10, … }; f(n - 1)`: a function over a match of `n`
+/// literal arms.
+fn wide_match(n: usize) -> Term {
+    use zed_kernel::{Pattern, Value};
+    let arms = (0..n as i64)
+        .map(|i| (Pattern::Lit(Value::Int(i)), lit(10 * i)))
+        .collect();
+    let f = lam(&["x"], Term::Match(var("x").into(), arms));
+    let_("f", f, app(var("f"), vec![lit(n as i64 - 1)]))
+}
+
+/// Each arm of a match is found by its index among the match's parts, once per arm; checking
+/// that index by listing the parts again made a match of `n` arms cost n² (ADDR-keys, COMPLEXITY
+/// K40).
+#[test]
+fn lowering_a_wide_match_scales() {
+    let terms: std::collections::BTreeMap<usize, Term> = [N, N * scaling::FACTOR]
+        .into_iter()
+        .map(|n| (n, wide_match(n)))
+        .collect();
+    scaling::check("lowering a function over a match of n arms", N, |n| {
+        lower(&terms[&n]).unwrap();
+    });
+    let t = wide_match(4);
+    let back = raise(&lower(&t).unwrap()).unwrap();
+    let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
+    assert_eq!(run(&back), run(&t));
+    assert_eq!(
+        run(&t),
+        Evaluator::new(World::new()).run(&lit(30i64)).unwrap()
+    );
+}
