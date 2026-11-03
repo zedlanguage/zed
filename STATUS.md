@@ -778,14 +778,41 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ST (ST1 and ST2) | repair attempt 6 | 2026-11-02 21:50 | 03:05 verify 6 of 1233fbd: suite 91 pieces, 0 failed, but a nested or/and formula of depth d is quadratic (1573 ms at d=4000, 62 times the work at 8 times d; before repair 5, 9 times), since `complementary()` hashes every disjunct in full |
-| ST-ladder | waits for ST | 2026-11-03 02:59 | split from ST repair 5: a ladder block built one test at a time is O(k³) in total, and the walk through a shared name Θ(n²) |
-| T6 | repair attempt 2 | 2026-11-03 00:01 | 02:59 its controls fail the old code (empty.rs 44.4 times, bdd.rs 293 times); `nth union` is still about n³ (0.75 s at n=64), which blocks it |
-| OSP-order | verify attempt 1 | 2026-11-03 02:23 | 03:03 suite on e303b4e: 96 pieces, 0 failed |
-| OSP-diag | impl attempt 1 | 2026-11-03 02:23 | 03:04 part 3: reader rule tests (6) and scaling at n and 8n pass |
-| S22a | impl attempt 1 | 2026-11-03 03:01 | started from /home/luke/Work/wt/xs22/synth/S22a_BRIEF.md |
+| OSP-diag | impl attempt 1 | 2026-11-03 02:23 | part 4 counts feature done: l01_37 checks 368 native runs leave 0 cells; negative control (owned inputs never dropped) caught with survivors by type and node; l |
+| OSP-order | verify attempt 1 | 2026-11-03 02:23 | tools/run_tests.sh 4 on e303b4e: 96 pieces, 0 failed, load 36.6-49.7 |
+| S22a | impl attempt 1 | 2026-11-03 03:01 | started; reading brief, SYNTH_R1, S22a_BRIEF, verifier reports |
+| ST1 | verify attempt 6 (item ST) | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
+| ST2 | verify attempt 6 (item ST) | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
+| ST | verify attempt 6 | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
+| T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | started; reading brief, SYNTH_R1, S22a_BRIEF, verifier reports |
+| T14-cell-len:merge (orchestrator) | running | 2026-11-03 02:51 | lock released |
+| T14-occ:cost-probe | running | 2026-11-03 02:07 | orchestrator started a measurement of the Value 56->64 byte cost (a5c7f08 vs f09648f), logs wt/occ-cost-logs |
+| T6 | repair attempt 2 | 2026-11-03 00:01 | committed 1321097 6410fe9 a52c9aa (X13 fixes+tests, checker refusal messages, docs); rebasing on main |
 
-Merged into local main and not yet pushed: every commit after 8c9e81b (LR4-fix), the last push. Among them L2.1, L2.2, L3.1, L6.1, T11-elab, T11-fix-rest, T11-preimage, T11-uses-of, T14-value, T14-low, T14-heap, T14-heap-rest, T14-hooks, T14-provenance, T14-R1, T14-rope, T14-rope-len, T14-cell-len, T14-occ, T14-occ-id, P14-MST (closes XP14), OSP-lit, T-zone and XT-R. The push follows one full test run on the merged tree.
+Merged into local main and not yet pushed (22 commits); the push follows one full test run on the merged tree:
+
+- 092410d STATUS, plan_dag: merged items marked done; In progress and the unpushed list rewritten from the ledger
+- 0870948 XT-R: design R for S18: box stages replace the simplex; column quotient; UTVPI DAG potential
+- 1e8f357 T-zone: arm tests are closed over the functions they call before the preimage; integer names stay names in atom
+- 9543a53 OSP-lit: correctly rounded float literals with range errors, #ioError(op, path, why) on read and write failures, unknown escapes list the valid ones, 
+- 241d535 L6.1: STATUS row and notes, COMPLEXITY F51-F53, ZED_PORT_GAPS entries; nested-loop formatting checked at the order of its text
+- 95e0a03 L6.1: parser, formatter and refusals for the forms of layer L6
+- b63fd40 P14-MST: reference 14 single linkage in O(n log n) by Delaunay
+- 877fc86 T14-occ-id: Items loses its id; provenance keys sequences by address while the facts are borrowed
+- bcd83d2 plan_dag: steps from the Victor and FRP studies
+- e24bb5c T14-cell-len: a string literal's length in the store converts char_count with i64::try_from; past i64::MAX it is the ray [i64::MAX..], not a wrapped n
+- 51db8ee T14-rope-len: COMPLEXITY R5, STATUS row, ZED_PORT_GAPS entries, plan_dag row
+- 5102843 T14-rope-len: the lengths test joins one Text per piece ten times, so the chain shares it
+- 96726c6 T14-rope-len: ++ refuses a join whose length in bytes passes usize::MAX (KernelError::StringTooLong), natively and in the kernel; len past i64::MAX is
+- b5bdf25 zed-testgen follow-up: plan row L2.13 (coverage report), L2 gate renumbered to L2.14, L2.12 carries the unreachable-arm warning; fences synced; l01_07
+- 594ac07 Osprey follow-up: plan rows OSP-order, OSP-lit and OSP-diag for the requirements added to done steps; L1.41 needs them; fences synced to DESIGN 891ebe
+- ea12173 plan_dag: steps L7.14 and L25.8 from the Osprey study; OSPREY done
+- 1f50505 T14-occ repair: Provenance::repeated finds addresses by hash, not by position order (chain of products 54.7x -> 8.0x); scaling test; K25 and STATUS sa
+- 8c5cccc T14-occ: provenance does its work once per distinct node
+- 02a8cdb L3.1: parser for the L3 forms
+- f09648f T14-rope repair: a written-out join lets go of its parts (no O(n²) bytes); kinds test asserts the text is not written out; zed-rt doc says strings are
+- 43bafef T14-rope: one rope for the kernel and the native runtime; counts kept per node, so len is O(1) and a join is written out once (COMPLEXITY R4, R5)
+- 32952a8 T11-uses-of: elaboration stores each use of an overload set once and orders through one join node per set, U + K not U·K (COMPLEXITY F49); eval.rs pri
 
 ## Open points
 
