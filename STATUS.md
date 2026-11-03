@@ -822,8 +822,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-values | impl attempt 1 | 2026-11-03 03:52 | start: Type::values without a cap |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (24 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (26 commits); the push follows one full test run on the merged tree:
 
+- STATUS: TD-docs merged
+- 5f387d6 TD-docs: COMPLEXITY rows C1-C23 for the tradeoff sites; emptiness is sound and not complete; splinters one level deep
 - d6f3f05 STATUS, plan_dag: T11-fix-store merged and marked done
 - 6328164 T11-fix-store: borrow-checker copies in the store
 - 90695ef dagview: edges for items outside the plan; plan_dag: none for two needs cells
