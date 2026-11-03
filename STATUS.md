@@ -910,7 +910,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | GLAM-spec | impl attempt 1 | 2026-11-03 11:10 | done: zed wt/spec-glam cd724c9, zed-impl wt/plan-glam ac63f8a; check/cases/fences/sync --check exit 0; 10 plan rows (5 items incl. SPECULATE, 5 step rows); ledg |
 | HKT-spec | impl attempt 1 | 2026-11-03 12:01 | start: weave HKT-1, HKT-2 into DESIGN and plan_dag |
 | L1.17a | repair attempt 2 | 2026-11-03 07:14 | suite: 119 pieces, 1 failed: l01_25_preimage_catalog (2 of 140 tests), load 53-86; finding out whether main has it too |
-| LIN-probe | verify attempt 2 | 2026-11-03 07:30 | fmt and clippy pass on 5a4d737; starting tools/run_tests.sh 2, load 72.78 |
 | LIVE3 | orchestrator attempt  | 2026-11-03 09:30 | REFERENCE (XR3 Codex report /home/luke/Work/wt/xt4/codex/R3_CODEX.md Q3, lines 122-224, and Q5 lines 280-284): a second design for the same method (bounded back |
 | S22-cross-scaling | orchestrator attempt  | 2026-11-03 11:23 | owner: CATCHUP-cross direct agent, bisecting |
 | S22e-quad | verify attempt 2 | 2026-11-03 07:43 | start: verify wt/s22e-quad 02f907b (load 60.76 63.42 69.81) |
@@ -927,8 +926,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | verify attempt 2 | 2026-11-03 06:34 | fmt rc=0, clippy -D warnings rc=0 on a18cf9e; diff read (negsssp.rs, utvpi.rs race, tests, docs); suite run_tests.sh 2 running; open from verify#1 not addressed |
 | XR3-synth | orchestrator attempt  | 2026-11-03 11:44 | owner: direct agent, started 11:43 |
 
-Merged into local main and not yet pushed (128 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (137 commits); the push follows one full test run on the merged tree:
 
+- 3cdb76c LIN-probe repair: the tradeoff at probe names its tests; cross 12 to 96 kept as an ignored scaling test (ledger LIN-probe-refute); k = 256 numbers
+- 01e79bd LIN-probe: failed-literal probing keeps each disjunct a found point holds without its test
 - 2d6c53b STATUS: TEST-split after the rebase on main 88c51bb: 1889 tests each once, 298 pieces, 2 failures also on main
 - 143b7cd tools/run_tests.sh: split l01_08, l01_16, l01_25, l01_36 and l01_38 into pieces by module, and their slow modules by test
 - 4ef3c21 plan_dag, STATUS: SEQ-desugar done (tip 76ca195)
