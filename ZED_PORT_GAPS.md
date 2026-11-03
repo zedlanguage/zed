@@ -980,3 +980,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `thread_local!` with a `const` `Cell<u64>`, added to through `&self` | `zed_alloc_count::BYTES`, `add`, `allocated` | Mutation | A count kept by the runtime per thread and read as a value |
 | `#[expect(unsafe_code, reason = ...)]` and a crate lint table that denies `unsafe_code` instead of forbidding it | `zed-alloc-count` | Attributes | None needed: Zed has no lint attributes |
 | `std::thread::scope` with a stack size, returning the closure's value and its thread's count | `scaling::on_a_thread` | None | A task with its own stack, as in T2-eval |
+
+## Entries from R10-stack (`zed-rt/src/stack.rs`, `zed-native/src/lib.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `libc::mmap` with `MAP_NORESERVE` and `mprotect` of a guard page, sized by `libc::sysinfo`; `munmap` in `Drop` | `Stack::new`, `Drop for Stack` | System calls, no destructors | Stays in the Rust runtime (L6.13); a Zed runtime needs a foreign call to map memory and a scope that unmaps it |
+| `psm::on_stack`, switching the machine stack for one call | `Stack::run` | Stack switching | Stays in the runtime; a Zed program has no access to the machine stack |
+| `catch_unwind` on the new stack and `resume_unwind` on the old one | `Stack::run` | Early exit (gap 12) | Errors are values in Zed; the runtime returns the run's error across the switch |
+| A raw pointer `*mut c_void` to the mapping | `Stack::base` | Identity (gap 1) | An address held by the runtime, not by Zed code |

@@ -7,6 +7,7 @@ mod aot;
 mod checks;
 mod constants;
 mod corpus;
+mod deep_calls;
 mod drops;
 mod hooks;
 mod kernel_inputs;
