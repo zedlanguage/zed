@@ -615,7 +615,15 @@ LR2 added 23 tests to `l01_08_parser`, so the steps binary has 985. `tools/run_t
   cause, the function's span and the constraints, and a decided question rejects nothing. The
   parameters' types are not read there, so the domains are unbounded, and a question typed
   bounds would decide can be refused. Of 400 dense four-variable systems with coefficients up
-  to 7, about 150 are refused with Growth.
+  to 7, about 150 are refused with Growth. A refused dark shadow is the answer: its splinters
+  are not searched, since they could only turn the refusal into a point, and searching them
+  ran the test again once per lower bound of each dark elimination (a chain into a refused
+  block, 64 to 512 variables: 33.5 times the work before, about 11 after; the oracle's 400
+  four-variable answers did not change). The simplex switches to Bland's rule for good after 4
+  to 12 pivots on the `tight` probe family, so in practice it is Bland's rule; a rule that
+  returns to Dantzig's at each new least total violation was tried and measured worse (shifted
+  sparse family 26.9 times the work from 128 to 1,024, over the limit of 24; `tight` at 64
+  variables 46 s against 9 s), and was not kept.
 - LR1: the failures of the last, failed expansion stay in `far` and `expected`. That pass reaches the operator a flat `*` loop stops at, so it records what the loop records; dropping them would lose operators from the messages. docs/plan_dag.md's wording says the opposite and its aim, unchanged messages, is met: with `Additive` and `Multiplicative` made left-recursive in a trial copy, `errors.rs` passed, and 3 of the 323 bracketing cases differed, each a flat chain now nested to the left. On that trial copy a parse took the same time per token as the flat rules (5.2 µs). The real grammar with no left recursion is no slower than before LR1 (3.8 to 5.1 µs per token against 4.1 to 5.2 µs, under load).
 - LR1, for LR2: as in the paper, `E = E '+' E | N` gives a right-associative tree, so a rung must use the form `E = E '+' T | T`. A loop written in a left-recursive rule before a token that fails is walked again at each growth, so such a prefix must be a rule of its own (COMPLEXITY.md F35). A left-recursive cycle of two or more rules under a long list makes the same quadratic walk at each growth at the list's own token, so each rung must be directly left-recursive. The first alternative that matches ends a growth: with `Sum = Attempt | Sum '+' INT` and `Attempt = Sum 'q'`, a match of `Attempt` is kept on the next growth, so `Sum '+' INT` is not tried after it (a case in `leftrec.txt`).
 - LR1: an entry that reads no seed is no longer matched again, which changes one thing: a rule first matched inside `!` keeps no failures, so a later read of its entry records none, as in a parser with no left recursion. As first built, a growth at that token re-recorded them. On random grammars 0.06% of error reports lost expected items or moved `far` back, never forward, and trees did not change; with no `!` in the grammars, 6.24 million comparisons showed no difference. The real grammar parses in the same time as before (4.4 to 5.9 µs per token against 4.4 to 5.7 µs, alternating runs under load).

@@ -1185,14 +1185,18 @@ fn parts(vars: usize, base: Vec<(Row, Rel)>, want: bool) -> Result<Option<Vec<In
 /// splinters are searched only when the dark shadows have no point, each once, without
 /// splinters of their own; the first point found is the answer, and otherwise the first
 /// refusal, so the answer does not depend on which splinter is tried first except in which
-/// point or refusal is given.
+/// point or refusal is given. A refused dark shadow is the answer: the splinters hold only
+/// the points it misses, so they could turn the refusal into a point but never into an empty
+/// answer, and searching them would run the test again once per lower bound of each dark
+/// elimination.
 fn search(vars: usize, base: &[(Row, Rel)], want: bool) -> Result<Option<Vec<Int>>, Refusal> {
     let mut top = Omega::new(vars, base, want, true);
-    let mut refused = match top.run() {
+    match top.run() {
         Leaf::Point(v) => return Ok(Some(v)),
-        Leaf::Empty => None,
-        Leaf::Refused(r) => Some(r),
-    };
+        Leaf::Empty => {}
+        Leaf::Refused(r) => return Err(r),
+    }
+    let mut refused = None;
     for &(at, n) in &top.gray {
         let Step::Chosen(j, rows) = &top.steps[at] else {
             unreachable!("a dark elimination is a chosen step")

@@ -247,3 +247,31 @@ fn disjoint_two_variable_parts_scale() {
         pugh_pairs,
     );
 }
+
+/// `chain(n, 3)` joined at `x[n]` to a block of three rows of three variables at each of `m`
+/// places around a cycle, shifted: the chain's dark eliminations come first, and the block
+/// then has no elimination that keeps it, so the question is refused with
+/// [`Refusal::Growth`]. The splinters of the chain's eliminations are not searched, since a
+/// refused dark shadow leaves the answer refused whatever they hold; searching them ran the
+/// test again once per elimination.
+fn chain_into_block(n: usize) -> Formula {
+    let m = 8;
+    let mut r = vec![chain(n, 3)];
+    for i in 0..m {
+        let (a, b, c) = (n + i, n + (i + 1) % m, n + (i + 2) % m);
+        r.push(row(&[(a, 2), (b, -3), (c, 1)], 5, true));
+        r.push(row(&[(a, -3), (b, 1), (c, -2)], 5, true));
+        r.push(row(&[(a, 1), (b, 2), (c, -3)], 5, true));
+    }
+    Formula::and(r)
+}
+
+#[test]
+fn a_chain_into_a_refused_block_scales() {
+    decides(
+        "a chain into a refused block",
+        64,
+        Err(Refusal::Growth),
+        chain_into_block,
+    );
+}
