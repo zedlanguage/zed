@@ -398,10 +398,8 @@ fn reading_a_product_as_a_power_is_linear_in_its_factors() {
     thread.spawn(measure).unwrap().join().unwrap();
 }
 
-/// `x1 = i * i; …; x<d> <= 0` at depths 512 and 4096: the count at depth `d` is `2^d`, a
-/// `d`-bit integer, and each name adds two of them, so the reading costs O(d) additions of
-/// at most `d` bits: O(d^2 / 64) word operations, which at these depths are far fewer than
-/// the O(d) work of reading the names. On a 256 MiB stack, as the transfer recurses on the
+/// `x1 = i * i; …; x<d> <= 0` at depths 512 and 4096: the count at depth `d` is `2^d`, held
+/// by its value while it fits in `u32` and its parity, so each name costs O(1) to read. On a 256 MiB stack, as the transfer recurses on the
 /// depth of the term; the terms are built before the timing.
 #[test]
 fn reading_nested_squares_as_a_power_is_linear_in_their_depth() {

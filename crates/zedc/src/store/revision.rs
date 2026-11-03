@@ -50,12 +50,20 @@ pub enum Op {
     Max,
 }
 
-/// The constant exponent `k >= 0` of `x ** k`, of any size, held exactly.
+/// The constant exponent `k >= 0` of `x ** k`, of any size: held exactly, except a count of
+/// factors past `u32::MAX`, held by its parity.
 #[derive(Clone, Debug)]
 pub enum Exponent {
     /// A solver integer: a constant in the 64-bit range, or the number of factors of a
-    /// product of one value (S30), which a sum of counts can take past any fixed width.
+    /// product of one value (S30) when it fits in `u32`.
     Int(Int),
+    /// The number of factors of a product of one value past `u32::MAX`, of which only the
+    /// parity is held: nested squaring names reach `2^d` factors at depth `d`, and an exact
+    /// count would cost `d` bits per name. Every entry reads no more of it (`Op::Pow`).
+    Past {
+        /// Whether the count is odd.
+        odd: bool,
+    },
     /// A kernel integer past the 64-bit range ([`Value::Big`](zed_kernel::Value::Big)), kept
     /// as the kernel holds it, prime powers unbuilt: `10 ** 10 ** 9` is two pairs of numbers
     /// there and 3.3·10^9 bits built, so it is read without being built.
@@ -67,7 +75,7 @@ impl Exponent {
     pub fn is_zero(&self) -> bool {
         match self {
             Exponent::Int(k) => k.is_zero(),
-            Exponent::Big(_) => false,
+            Exponent::Past { .. } | Exponent::Big(_) => false,
         }
     }
 
@@ -75,15 +83,17 @@ impl Exponent {
     pub fn is_odd(&self) -> bool {
         match self {
             Exponent::Int(k) => k.is_odd(),
+            Exponent::Past { odd } => *odd,
             Exponent::Big(k) => !k.is_even(),
         }
     }
 
-    /// `k` when it fits in `u32`; a kernel integer past the 64-bit range never does.
+    /// `k` when it fits in `u32`; a count past `u32::MAX` and a kernel integer past the 64-bit
+    /// range never do.
     pub fn to_u32(&self) -> Option<u32> {
         match self {
             Exponent::Int(k) => u32::try_from(k.to_i128()?).ok(),
-            Exponent::Big(_) => None,
+            Exponent::Past { .. } | Exponent::Big(_) => None,
         }
     }
 }

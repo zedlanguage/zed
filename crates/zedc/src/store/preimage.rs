@@ -558,7 +558,45 @@ type At = (Tid, Eid);
 /// How a product reads as a power: its first factor, the scope that factor is read in, and the
 /// number of factors; `None` when two factors differ. A term that is not a product is its own
 /// one factor.
-type Power = Option<(Tid, Eid, Int)>;
+type Power = Option<(Tid, Eid, Count)>;
+
+/// The number of factors of a power, held by what the revision table reads of an exponent
+/// ([`Exponent`]): its value while it fits in `u32`, and its parity. Nested squaring names
+/// double the count at each name, so an exact count would cost `d` bits at depth `d`.
+#[derive(Clone, Copy)]
+struct Count {
+    fits: Option<u32>,
+    odd: bool,
+}
+
+impl Count {
+    const ONE: Count = Count {
+        fits: Some(1),
+        odd: true,
+    };
+
+    fn add(self, other: Count) -> Count {
+        Count {
+            fits: self
+                .fits
+                .zip(other.fits)
+                .and_then(|(j, k)| j.checked_add(k)),
+            odd: self.odd != other.odd,
+        }
+    }
+
+    /// Two or more factors: a count past `u32::MAX` is.
+    fn is_several(self) -> bool {
+        self.fits.is_none_or(|k| k > 1)
+    }
+
+    fn exponent(self) -> Exponent {
+        match self.fits {
+            Some(k) => k.into(),
+            None => Exponent::Past { odd: self.odd },
+        }
+    }
+}
 
 /// A run of consecutive numbers in [`Terms::kids`] or [`Terms::params`].
 #[derive(Clone, Copy)]
@@ -1835,11 +1873,11 @@ impl<'t> Tx<'t> {
     /// The product `t` as a power, when it multiplies two or more factors that are all the same
     /// term: that factor, the scope it is read in, and the number of factors. Any number of
     /// factors is read (DESIGN.md sec:constraints, "How a constraint reaches the domains").
-    fn power(&mut self, t: Tid, env: Eid) -> Option<(Tid, Eid, Int)> {
+    fn power(&mut self, t: Tid, env: Eid) -> Option<(Tid, Eid, Exponent)> {
         let at = self.followed(t, env);
         self.read_powers(at);
-        match &self.powers[&at] {
-            Some((f, fe, k)) if *k > Int::ONE => Some((*f, *fe, k.clone())),
+        match self.powers[&at] {
+            Some((f, fe, k)) if k.is_several() => Some((f, fe, k.exponent())),
             _ => None,
         }
     }
@@ -1872,7 +1910,7 @@ impl<'t> Tx<'t> {
                 Node::Prim(Prim::Mul, args) if args.len() == 2 => args,
                 _ => {
                     todo.pop();
-                    self.powers.insert(at, Some((t, env, Int::ONE)));
+                    self.powers.insert(at, Some((t, env, Count::ONE)));
                     continue;
                 }
             };
@@ -1881,7 +1919,7 @@ impl<'t> Tx<'t> {
             match (self.powers.get(&a), self.powers.get(&b)) {
                 (Some(pa), Some(pb)) => {
                     todo.pop();
-                    let p = self.joined(pa, pb);
+                    let p = self.joined(*pa, *pb);
                     self.powers.insert(at, p);
                 }
                 (pa, pb) => {
@@ -1899,24 +1937,18 @@ impl<'t> Tx<'t> {
 
     /// The product of two powers: one power when their factors are the same term. A free name
     /// is the same input in every scope; any other factor must also be read in the same scope.
-    /// The count is an unbounded integer, since shared operands double it at each name: `x1 =
-    /// i * i; x2 = x1 * x1; …` reaches `2^64` factors at the 64th name. Adding two counts costs
-    /// time in their bits, which is at most the number of products reached.
-    // Complexity tradeoff: the count is kept exactly, so `d` nested squaring names cost O(d^2 /
-    // 64) word additions in all, not O(d). The revision table reads only whether the count is
-    // 0, its parity and its value when it fits in `u32`, so a summary of those three would be
-    // O(1) per name; the exact count keeps the reading the power written out, and from depth
-    // 4096 to 32768 the work grows 8.65 times, as from 512 to 4096 (COMPLEXITY.md S30b).
-    fn joined(&self, a: &Power, b: &Power) -> Power {
-        let ((s, se, j), (u, ue, k)) = (a.as_ref()?, b.as_ref()?);
-        let alike = match (self.node(*s), self.node(*u)) {
+    /// Shared operands double the count at each name: `x1 = i * i; x2 = x1 * x1; …` reaches
+    /// `2^64` factors at the 64th name, so the count is a [`Count`], O(1) to add.
+    fn joined(&self, a: Power, b: Power) -> Power {
+        let ((s, se, j), (u, ue, k)) = (a?, b?);
+        let alike = match (self.node(s), self.node(u)) {
             (Node::Var(x), Node::Var(y)) if x == y => true,
-            _ => se == ue && self.same(*s, *u),
+            _ => se == ue && self.same(s, u),
         };
         if !alike {
             return None;
         }
-        Some((*s, *se, j + k))
+        Some((s, se, j.add(k)))
     }
 
     // ---- Into the linear-relation domain ------------------------------------------------
@@ -2261,7 +2293,7 @@ impl<'t> Tx<'t> {
             && let Some((base, be, k)) = self.power(t, env)
         {
             let b = self.fwd(base, be);
-            return self.arith(&Op::Pow(k.into()), &b, &b, false);
+            return self.arith(&Op::Pow(k), &b, &b, false);
         }
         let fwd = |s: &mut Self, i: usize| s.fwd(s.arg(args, i), env);
         match p {
@@ -2739,7 +2771,7 @@ impl<'t> Tx<'t> {
         if p == Mul
             && let Some((base, be, k)) = self.power(t, env)
         {
-            return self.back_unary(&Op::Pow(k.into()), base, be, z);
+            return self.back_unary(&Op::Pow(k), base, be, z);
         }
         let a = self.arg(args, 0);
         match p {
