@@ -43,8 +43,9 @@ fn linear(what: &str, base: usize, make: impl Fn(usize) -> String) {
     scaling::check(what, base, |n| pass(&units[&n]));
 }
 
-/// `name(c) = match c { 0 -> "c0", k where k == 1 -> "c1", … };`, `n` arms, every second one
-/// with a guard and every third a type pattern.
+/// `name(c) = match c { 0 -> "c0", k where k == 1 -> "c1", s is String -> …, … };`, `n` arms,
+/// in turn a literal, a guard and a type pattern. At 1000 against 8000, a scan of the arms left
+/// at each arm passed (20 times the work); at 4000 it fails (37 times).
 fn arms(n: usize) -> String {
     let arms: Vec<String> = (0..n)
         .map(|i| match i % 3 {
@@ -58,7 +59,7 @@ fn arms(n: usize) -> String {
 
 #[test]
 fn a_match_of_many_arms_scales() {
-    linear("a match of n arms", 1000, arms);
+    linear("a match of n arms", 4000, arms);
 }
 
 /// `n` imports in the three forms, every second one pinned.

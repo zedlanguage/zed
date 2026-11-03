@@ -629,6 +629,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `HashMap<&'a str, Span>` borrowing names from the source text, filled while a list is built | `Builder::once` and its callers (struct fields, display entries, `with` paths, type parameters) | None | A map from name to span over shared strings |
 | `let … else { unreachable!() }` on an enum variant that an earlier pass has ruled out | `elab.rs`, `check/mod.rs` (the L2 forms resolution refuses) | Partial match | A total match whose L2 arm returns the refusal, or a narrower type from resolution |
 
+## Entries from L2.2 (`zedc/src/ast/`, `format.rs`, `resolve.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Iterator::peekable` with `next_if`, taking the next node only when it starts at a given token | `Builder::annotated` | Mutation | An index into the list of nodes, passed along a fold |
+| `let … else { … return; }` taking the first arm of a slice, the rest of the arms pushed back as a job | `Formatter::run`, `Job::Arms` | Early return | A `match` on the list, empty against first and rest |
+| `Box<Type>` and `Box<Expr>` in `Pattern::{Is, Lit}`, so the enum stays small | `ast/types.rs` | None | Removed: Zed values are shared, and size is not the programmer's concern |
+
+
 ## Entries from T4 (`zedc/src/store/utvpi.rs`, `presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
