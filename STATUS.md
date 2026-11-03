@@ -808,23 +808,24 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CAP-bits | impl attempt 1 | 2026-11-03 03:35 | negative control (materialized 10^n, n=2^17 vs 2^20): 62.8M -> 1363M instructions, 21.7x, fails limit 3; symbolic (n=2^20 vs 2^23): 178753 -> 203141, 1.1x; cont |
-| L25.8 | impl attempt 1 | 2026-11-03 03:49 | mutate.rs + --mutate built; examples work; measured: mutant 0->-1 of guard(x)=if x>0 {w(w)} else {x} runs forever (zedc test on it killed at 20 s, exit 124), so |
-| L29-print | impl attempt 1 | 2026-11-03 04:06 | start |
-| OSP-drop | repair attempt 1 | 2026-11-03 03:39 | start: rebase wt/osp-drop on main, Row::WritesNothing, else defaults inside if/block arms |
+| CAP-bits | verify attempt 1 | 2026-11-03 03:35 | started; no earlier verify lines found; reading diff 37dd1e5 vs main |
+| L25.8 | impl attempt 1 | 2026-11-03 03:49 | step tests l25_08_mutate 18/18 pass (examples, order, command, scaling n/8n) / load 40.58 43.48 35.70 |
+| L29-print | impl attempt 1 | 2026-11-03 04:06 | printer prints known payloads (#ioError(op: String, path: String, why: String)); reader reads #a(T, f: U); 7 checker sites that dropped payloads (Ty::set(t.loos |
+| OSP-drop | verify attempt 2 | 2026-11-03 03:39 | fmt, clippy -D warnings clean; probes (not committed): a ✗ mark naming the row passes the test runner (2:1 ok); _ = if c { lookup(1) else #notFound } else { loo |
 | S22a | impl attempt 1 | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
-| ST-arms-quad | verify attempt 1 | 2026-11-03 03:35 | started on 31e6e2f (base 03d3d41); no earlier verify lines; load 33.46 32.17 28.78 |
-| ST | merge attempt 1 | 2026-11-02 21:50 | lock released |
+| SEMIRING | orchestrator attempt  | 2026-11-03 04:11 | report saved; adopting best-first fix, SCC closure, nonlinear bound note; spec agent starting |
+| ST-arms-quad | repair attempt 1 | 2026-11-03 03:35 | start, continuing wt/st-arms at 31e6e2f |
 | T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
-| T6 | repair attempt 4 | 2026-11-03 00:01 | start: continue from c196c66 on wt/t6; open: pinwheel superlinear, cycle_rep lcm, canonical form, union control, contains memo address key |
-| TD-ends | impl attempt 2 | 2026-11-03 03:52 | start; worktree has uncommitted work from impl#1 (6 store files, last edit 04:04:54), checking it is idle before continuing |
+| T6 | repair attempt 4 | 2026-11-03 00:01 | baseline after rebase on 42efeec: 2 failing pieces; l01_08 case count (T6 adds 3 cases, fixed to 353); l01_29 printed-types #ioError(_) fails identically on mai |
+| TD-ends | impl attempt 2 | 2026-11-03 03:52 | all targets build; Landmarks widened to Num (big literals and domain ends stay landmarks); omega test asserts exact 2^70 hull |
 | TD-refusals | impl attempt 2 | 2026-11-03 03:52 | resuming impl#1's uncommitted work (product.rs Refused/Warning, refused.rs tests; last edit 04:03; workflow resumed 04:06, no process in worktree) |
-| TD-tests | impl attempt 2 | 2026-11-03 03:52 | fixed impl#1's corrupted UTF-8 in two preimage.rs comments and a garbled levels.rs doc line; committed c091145; red controls rerun: no Outside stop fails 4 stop |
+| TD-tests | repair attempt 2 | 2026-11-03 03:52 | done: STATUS.md:221 back_at -> back_in, commit a6180b5 on wt/td-tests; docs only, no rerun; remaining back_at in STATUS is TD-docs row describing the rename (co |
 | TD-values | repair attempt 2 | 2026-11-03 03:52 | started; zed-impl main still e6900f7, wt/t6 bb1f8a7 not merged; per the 03:55 order nothing changed, returning ok=false (waits for T6) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
 Merged into local main and not yet pushed (30 commits); the push follows one full test run on the merged tree:
 
+- 79008d6 STATUS: ST-deep-stack merged
 - b707823 ST-deep-stack: Formula walks, Drop, Clone, Eq, Ord, Hash and printing on explicit stacks
 - 8ce61e0 STATUS: in progress as of 2026-11-03 04:10
 - 42efeec STATUS: TD-docs merged
