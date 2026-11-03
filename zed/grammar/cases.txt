@@ -177,8 +177,8 @@ Expr ::: m into ((x > 0 && y > 0) -> v) ::: ERROR
 Expr ::: m into ((x > 0) -> v) ::: (m (into ( ((( (x > 0) )) -> v) )))
 Type ::: (x: T,) -> R ::: ((( x : T , )) -> R)
 Type ::: (x: T,) ->? R ::: ((( x : T , )) ->? R)
-Type ::: (T,) ::: ERROR
-Type ::: (T,) -> R ::: ERROR
+Type ::: (T,) ::: (( T , ))
+Type ::: (T,) -> R ::: ((( T , )) -> R)
 Expr ::: for x in m into (k -> { v }) { x } ::: (for (x in (m (into ( (k -> ({ v })) )))) ({ x }))
 Expr ::: if m into (k -> { v }) == n { 1 } else { 0 } ::: (if ((m (into ( (k -> ({ v })) ))) == n) ({ 1 }) else ({ 0 }))
 Expr ::: m into (k -> asc a, desc b,) ::: (m (into ( (k -> ((asc a) , (desc b) ,)) )))
