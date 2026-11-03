@@ -70,6 +70,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Prim, Term, Value, World, eval, on_stack};
 
+use super::int::Int;
 use super::interval::{self, End, IntervalSet};
 use super::lattice::{Congruence, Landmarks, Lattice};
 use super::presburger::{self, Con, Formula, Lin, Refusal, Relation};
@@ -377,6 +378,20 @@ impl Tr {
         let n = self.defs.len() as u32;
         self.defs.push((n, what, def));
         presburger::Atom::Aux(n)
+    }
+}
+
+/// `l` as the operand of an infix operator: in parentheses unless it is one name or a natural
+/// number.
+fn operand(l: &Lin) -> String {
+    let bare = match l.terms.iter().next() {
+        None => !l.constant.is_negative(),
+        Some((_, c)) => l.terms.len() == 1 && *c == Int::ONE && l.constant.is_zero(),
+    };
+    if bare {
+        l.to_string()
+    } else {
+        format!("({l})")
     }
 }
 
@@ -1649,12 +1664,15 @@ impl<'t> Tx<'t> {
             Node::If(g, a, b) => {
                 let g = self.formula(tr, g, env)?;
                 let (la, lb) = (self.lin(tr, a, env)?, self.lin(tr, b, env)?);
+                // One level: the parts are shown by their linear forms, in which an auxiliary
+                // variable is its name, so the name costs the size of what it is made of.
+                let what = format!("if {g} then {la} else {lb}");
                 let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
                 let def = Formula::or(vec![
                     Formula::and(vec![g.clone(), Formula::Con(Con::eq(&x, &la))]),
                     Formula::and(vec![Formula::negate(g), Formula::Con(Con::eq(&x, &lb))]),
                 ]);
-                tr.aux(self.print(t), def);
+                tr.aux(what, def);
                 Some(x)
             }
             Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
@@ -1694,7 +1712,7 @@ impl<'t> Tx<'t> {
                             Formula::Con(Con::ge(&r, &Lin::constant(0))),
                             Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r)),
                         ]);
-                        let first = self.print(self.arg(args, 0));
+                        let first = operand(&a);
                         let shown = |op: &str| format!("{first} {op} {c}");
                         tr.defs.push((n, shown("div"), def));
                         tr.defs.push((n + 1, shown("mod"), Formula::top()));
@@ -1721,7 +1739,12 @@ impl<'t> Tx<'t> {
                                 Formula::Con(Con::eq(&x, &b)),
                             ]),
                         ]);
-                        tr.aux(self.print(t), def);
+                        let what = match p {
+                            Abs => format!("abs({a})"),
+                            Min => format!("min({a}, {b})"),
+                            _ => format!("max({a}, {b})"),
+                        };
+                        tr.aux(what, def);
                         Some(x)
                     }
                     _ => None,

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
 use zedc::store::interval::{End::Fin, IntervalSet};
-use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage};
+use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage, relations};
 
 use super::{doms, shown};
 
@@ -390,4 +390,106 @@ fn long_squares_of_one_name() {
 #[test]
 fn long_shared_arms() {
     long("branches whose arms are one shared term", shared_arms, one);
+}
+
+/// `t0 = i; tj = if (i >= j) { t(j-1) + 1 } else { j - i }; tk >= 0`: each value nested in
+/// the arm of the next, so each auxiliary variable of the linear-relation domain names one
+/// `if`. Its name shows the parts by their linear forms, the arm by the auxiliary variable
+/// before it: printing the whole subterm instead took 62.4 times the work at sizes 256 and
+/// 2048.
+fn nested_values(k: usize) -> Term {
+    let t = (1..=k as i64).fold(var("i"), |t, j| {
+        Term::If(
+            Arc::new(prim(Prim::Ge, var("i"), int(j))),
+            Arc::new(prim(Prim::Add, t, int(1))),
+            Arc::new(prim(Prim::Sub, int(j), var("i"))),
+        )
+    });
+    prim(Prim::Ge, t, int(0))
+}
+
+/// `t0 = i; tj = if (i >= j) { t(j-1) } else { t(j-1) + 1 }; tk >= 0`, both arms reading one
+/// shared term: `k` distinct parts and `2^k` paths. Printing each subterm took time of its
+/// paths: 19 ms at `k = 12`, 383 ms at 16, 1.64 s at 18.
+fn shared_values(k: usize) -> Term {
+    let t = (1..=k as i64).fold(var("i"), |t, j| {
+        let t = Arc::new(t);
+        let more = prim(Prim::Add, (*t).clone(), int(1));
+        Term::If(
+            Arc::new(prim(Prim::Ge, var("i"), int(j))),
+            t,
+            Arc::new(more),
+        )
+    });
+    prim(Prim::Ge, t, int(0))
+}
+
+/// [`long_at`] for the relations of the linear-relation domain.
+fn long_relations(what: &'static str, n: usize, make: fn(usize) -> Term) {
+    let measure = move || {
+        let (a, b) = (make(n), make(n * scaling::FACTOR));
+        let inputs: [Arc<str>; 1] = ["i".into()];
+        scaling::check(what, n, |k| {
+            let t = if k == n { &a } else { &b };
+            relations(&[t], &inputs, false).expect("in the domain");
+        });
+    };
+    let thread = std::thread::Builder::new().stack_size(1 << 28);
+    thread.spawn(measure).unwrap().join().unwrap();
+}
+
+#[test]
+fn long_nested_values() {
+    let what = "values nested in the arms of `if`s";
+    long_relations(what, 256, nested_values);
+    long_at(what, 256, nested_values, one);
+}
+
+#[test]
+fn long_shared_values() {
+    long_relations("`if`s whose arms read one shared term", 256, shared_values);
+}
+
+/// The preimage of [`shared_values`]: the shared term below level `j` is asked for `t >= -d`
+/// for each `d` up to `k - j`, and the backward transfer keeps one result for each term and
+/// demand, so it does `k^2 / 2` transfers: 598,546,859 and 35,138,463,041 instructions at
+/// sizes 256 and 2048, 58.7 times. Whether a join of the demands at a shared term can keep
+/// the preimage exact is open: COMPLEXITY.md S22, cross-review.
+#[test]
+#[ignore = "open: S22, demands on a shared term, cross-review"]
+fn long_shared_values_preimage() {
+    long_at(
+        "the preimage of `if`s whose arms read one shared term",
+        256,
+        shared_values,
+        one,
+    );
+}
+
+/// Each auxiliary variable is named by one level of its term.
+#[test]
+fn auxiliary_variables_are_named_one_level_deep() {
+    let inputs: [Arc<str>; 2] = ["i".into(), "j".into()];
+    let t = prim(
+        Prim::Ge,
+        prim(
+            Prim::Max,
+            prim(Prim::IntDiv, prim(Prim::Add, var("i"), var("j")), int(3)),
+            Term::If(
+                Arc::new(prim(Prim::Ge, var("i"), int(0))),
+                Arc::new(var("j")),
+                Arc::new(int(2)),
+            ),
+        ),
+        int(0),
+    );
+    let rs = relations(&[&t], &inputs, false).expect("in the domain");
+    assert_eq!(rs.len(), 1);
+    let shown = rs[0].to_string();
+    assert!(
+        shown.contains("q0 = (i + j) div 3, q1 = (i + j) mod 3"),
+        "{shown}"
+    );
+    assert!(shown.contains(" then j else 2"), "{shown}");
+    assert!(shown.contains("q3 = max(q0, q2)"), "{shown}");
 }
