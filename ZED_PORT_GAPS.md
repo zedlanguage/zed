@@ -1141,3 +1141,6 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Cow<'a, BigUint>` for a coefficient borrowed from a number or built as a product | `bound::Product`, `num::times` | None | Zed shares values, so the field holds the number itself |
 | A `let held;` declared before a `match` so one arm can borrow a value built in another | `words::word`, the casts | None | A plain binding of the number |
 | `rustix::process::setrlimit(Resource::As, …)` in a test child process | `tests/.../memory_check.rs` | Missing (process limits) | A test-harness facility, not the language |
+| A `fmt::Write` sink that counts bytes, so `Display` and `Debug` give a leaf's length with nothing written | `words::Count`, `words::written` | Missing (no formatter trait) | A length function per printed kind, or printing into a counting port |
+| `String::try_reserve_exact` that keeps the reserved block and writes into it | `words::print` | Missing (no allocator query) | The runtime primitive above, returning the block |
+| A `HashMap` memo keyed by a sequence's address and a family's id, read only while the value is borrowed | `words::room_to_print` | Identity | Occurrence addresses or stable ids (T14-occ) |
