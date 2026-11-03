@@ -837,10 +837,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T2-mid | repair attempt 1 | 2026-11-03 04:26 | checker pass: fmt and clippy clean; full suite 98 pieces, 0 failed (baseline 98/0), load 36.2 to 45.2 |
 | T6 | repair attempt 6 | 2026-11-03 00:01 | rebased wt/t6 on main 7073be1 (both commits squashed first; T6's K30 renamed K37, CAP-bits owns K30) and wt/t6-spec on zed 1025886; fences resynced, l01_07/l01_ |
 | TD-ends | repair attempt 3 | 2026-11-03 03:52 | start: fix kept sum/difference of unrelated cores (int.rs:1326) and the 11 incomplete tradeoff comments |
-| UTVPI-GOR | impl attempt 1 | 2026-11-03 06:34 | started |
 
-Merged into local main and not yet pushed (29 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (33 commits); the push follows one full test run on the merged tree:
 
+- 7c1a6fe UTVPI-GOR: Goldberg-Radzik potential search for cyclic UTVPI graphs
 - 3fab318 plan_dag, STATUS: XT3 done; add UTVPI-GOR, BOX-5pt, UTVPI-NEAR, HULL3, XR3, HULL3-GEN with edges
 - ea2e48f STATUS: S22a merged
 - 217bb0a S22a repair 1: Pa keeps values in i128 and checks each kept slice; probe over all integers and a half-line scale; comparison asserts exact narrower co
