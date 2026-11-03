@@ -821,19 +821,22 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CPLX-stale | impl attempt 1 | 2026-11-03 06:08 | start: rewrite stale S2/S4/S5 rows in COMPLEXITY.md |
-| ENDS-dag | impl attempt 1 | 2026-11-03 05:46 | stage::ends now reads each distinct part once (numbered by address while borrowed, results by number), summary per part = names it calls that must end; seeded c |
-| PLUG-spec | impl attempt 1 | 2026-11-03 06:08 | started; worktrees wt/spec-plug and wt/plan-plug created |
-| S22a | repair attempt 1 | 2026-11-03 03:01 | negative control (old i64 checks in map_vals/make_node, uncommitted): chain_probe_all_scales fails 62.8x; probe_all 0.23/0.82/3.9/25.0 s; probe_half 78/179/413/ |
-| ST-arms-quad | repair attempt 2 | 2026-11-03 03:16 | pick: witness (nest read once) + meet in acc; tighten below top over a summary (Around removed). probes: moving 2.02-2.13x/doubling to d=960 (10.9G), heavy 2.10 |
-| T11-S22 | repair attempt 1 (item S22a) | 2026-11-03 03:01 | negative control (old i64 checks in map_vals/make_node, uncommitted): chain_probe_all_scales fails 62.8x; probe_all 0.23/0.82/3.9/25.0 s; probe_half 78/179/413/ |
-| T2-mid | repair attempt 1 | 2026-11-03 04:26 | baseline after rebase on 7073be1: 98 pieces, 0 failed (load 30.56 22.16 24.94) |
+| CLEAN-presb | impl attempt 1 | 2026-11-03 06:17 | start |
+| ENDS-dag | impl attempt 1 | 2026-11-03 05:46 | Patricia sets: compare 200000 cases 0 differ; two_names 57k->66k instr/level k=500..8000 (was quadratic); negative control checkout made |
+| PLUG-spec | impl attempt 1 | 2026-11-03 06:08 | DESIGN edits done: B1-B6, refs NelsonOppen and CousotReducedNO, steps L1.40a-c, L12.3a, changed L1.26 note, L12.1, L12.3, L15.2, L19.2 |
+| S22a | repair attempt 1 | 2026-11-03 03:01 | found: Tx::fits (preimage.rs:2200) refuses Pa and clip when a domain end plus the clipped demand end pass i64::MAX (domain end >= ~2^62, or Fin(MAX)); the trans |
+| ST-arms-quad | repair attempt 2 | 2026-11-03 03:16 | negative control on af39546 (tests not committed there): heavy scaling test fails 706.7M -> 29478M at d=60/480, 41.7x (limit 24); moving scaling test killed at  |
+| T11-S22 | repair attempt 1 (item S22a) | 2026-11-03 03:01 | found: Tx::fits (preimage.rs:2200) refuses Pa and clip when a domain end plus the clipped demand end pass i64::MAX (domain end >= ~2^62, or Fin(MAX)); the trans |
+| T2-mid | repair attempt 1 | 2026-11-03 04:26 | deep checker tests written; building |
 | T6 | repair attempt 6 | 2026-11-03 00:01 | rebased wt/t6 on main 7073be1 (both commits squashed first; T6's K30 renamed K37, CAP-bits owns K30) and wt/t6-spec on zed 1025886; fences resynced, l01_07/l01_ |
-| TD-ends | repair attempt 2 | 2026-11-03 03:52 | reproduced on c664182 at load 28-40: x**k+1 forward 17 ms/349 ms/15.5 s at k=1e6/8e6/1e8; preimage x**1e8+1>=50 14.7 s (0.7 ms without +1); x**4<=2**1e8 3.0 s;  |
-| XT3 | research attempt 1 | 2026-11-03 03:08 | read brief inputs; literature: deterministic near-linear negative SSSP found (Li 2511.07859, HJS 2511.08551, Duong 2609.05590); setting up probe worktree |
+| TD-ends | verify attempt 3 | 2026-11-03 03:52 | started on ff1c3db (repair#2); reusing verify#1/#2 results for earlier parts |
+| XT3 | research attempt 1 | 2026-11-03 03:08 | probes P1-P4 written in wt/xt3-probe (tests/steps/l01_38_presburger/xt3.rs); building |
 
-Merged into local main and not yet pushed (9 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (12 commits); the push follows one full test run on the merged tree:
 
+- 96b792c MAP2-bound: map2 takes at most 4(k + 2) pairs, not k + m
+- d72abc8 COMPLEXITY: S1b, S2, S3, S4, S5, S11, S12 and the intro describe the current code, not removed caps
+- 2160e3b STATUS: in progress as of 2026-11-03 06:11
 - b52092d STATUS: OSP-drop2 merged
 - 3747791 OSP-drop2: scaling tests for a long chain of cheap defaulted branches and for generic calls; F59 and STATUS rows
 - 9f784f8 OSP-drop2: a generic call whose result variable is no parameter's own makes every loose atom of its value; tradeoff comment names its test and a compl
