@@ -879,7 +879,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | ADDITIVE-desugar | repair attempt 1 | 2026-11-03 07:14 | cargo clippy -D warnings passes (7m42s at load ~150) |
 | AXIOMS-fmt | verify attempt 1 | 2026-11-03 07:55 | full suite started on c10cacd (load 121); control worktree /home/luke/Work/wt/axioms-fmt-ctl made |
-| AXIOMS-gaps | verify attempt 1 | 2026-11-03 07:55 | fmt and clippy -D warnings clean; control (false '>' total at String in table and prelude, ctl worktree) fails every_axiom_holds and strings_compare_by_code_poi |
 | BIT-words | impl attempt 1 | 2026-11-03 07:14 | run_tests.sh 4: 99 pieces, 1 failed (m0_01 step-folder name l01_39a rejected by is_step_name; fixing), l01_39a 32 pass 6.7 s (load 69-136) |
 | CANON-stable | impl attempt 1 | 2026-11-03 09:30 | start |
 | CAP-pow32 | impl attempt 1 | 2026-11-03 08:53 | negative control on main ab26ea6: 3 of 13 powers tests fail (past-u32 shared count at depth 32, parity at k=u32::MAX+1, nested-square scaling), 10 pass; probe n |
@@ -908,8 +907,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | verify attempt 1 | 2026-11-03 06:34 | done ok=false: fmt, clippy pass; run_tests.sh 4 98 pieces 0 failed (load 81-162; l01_38 88 pass 45 s); BLOCKING: race fails scaling on BAD-GOR + fan union 62.3x |
 | WIDEN-WARN | repair attempt 1 | 2026-11-03 07:14 | fix applied: only + - * unary - and literals inherit wrap; new test with the 3 probes passes, widen 16/16; clippy, fmt clean; follow-up WIDEN-WARN-test added to |
 
-Merged into local main and not yet pushed (76 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (99 commits); the push follows one full test run on the merged tree:
 
+- 064a9fa Merge branch 'wt/axioms-gaps' into wt/catchup (AXIOMS-gaps, tip d5b232e)
+- d5b232e AXIOMS-gaps: > and >= at String, != at f64 and String
 - 4be54a5 plan_dag, STATUS: SCALE-bytes merged (3fa1fdc)
 - 3fa1fdc SCALE-bytes: scaling tests check bytes allocated next to instructions
 - 85e5b47 plan_dag: OSP-neglit done (2e145cc)
