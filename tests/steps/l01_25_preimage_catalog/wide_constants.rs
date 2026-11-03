@@ -284,12 +284,13 @@ fn wide(ps: &[(i128, i128)]) -> IntervalSet {
 }
 
 /// `if u <= -3 { MIN + 5 - u } else { u }` and `if u <= -3 { MIN - (u + 3) } else { u }` over
-/// every integer, with `MIN` written as a product of literals. Before S22-WIDE, `Tx::fits` measured how far the
-/// term moves an end by its literals summed, about `2^33`, so it let the summary read the `if`,
-/// and the summary takes the end of `i64` as the input that stands for `u`'s infinite lower
-/// end: the first returned `u [..=MIN + 5, 0..=10]` as exact, though `u = MIN - 100` gives
-/// 105. Each value in `z` is now found exactly, at inputs below `MIN` too. The second has no
-/// summary before this item, and would have had the same fault with one.
+/// every integer, with `MIN` written as a product of literals. Before S22-WIDE, `Tx::fits`
+/// measured how far the term moves an end by its literals summed, about `2^33`, so it let the
+/// summary read the `if`, and the summary took the end of `i64` as the input that stood for
+/// `u`'s infinite lower end: the first returned `u [..=MIN + 5, 0..=10]` as exact, though
+/// `u = MIN - 100` gives 105. Each value in `z` is now found exactly, at inputs below `MIN`
+/// too. The second has no summary before this item, and would have had the same fault with
+/// one.
 #[test]
 fn a_product_of_literals_near_an_end_of_i64_is_measured_by_its_value() {
     let ds = doms(&[("u", None, None)]);

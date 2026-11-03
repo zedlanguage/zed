@@ -2990,8 +2990,9 @@ impl<'t> Tx<'t> {
     /// The value of the term as a piecewise-affine function of one input ([`Pa`]), or `None`
     /// when it is not one or when it reads more than one input. Its coefficients, constants
     /// and values lie in `i128` ([`finite`]), and an infinite end of a piece is the limit of
-    /// its line there, so `t + 1` over all integers is a summary. Keyed on the term alone, so an `if` chain whose arms read one
-    /// shared term is summarized once, whatever demands reach it.
+    /// its line there, so `t + 1` over all integers is a summary. Keyed on the term alone, so
+    /// an `if` chain whose arms read one shared term is summarized once, whatever demands
+    /// reach it.
     fn pa(&mut self, t: Tid, env: Eid) -> Option<Pa> {
         if self.run.void {
             return None;

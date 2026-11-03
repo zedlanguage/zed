@@ -1006,6 +1006,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `c - v` computed in `i128` and turned into an end by `End::lower` and `End::upper`, which set the global `ROUNDED` flag when the end leaves `i64` | `reflect` | Machine integers; Mutation, global state | Zed's `int` is unbounded, so `c - v` needs no wider type and no rounding flag |
 
+## Entries from S22-WIDE (`zedc/src/store/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `i128::MIN` and `i128::MAX` as sentinels for the infinities among the summary's values, matched in patterns (`NEG \| POS if mul > 0`), with `checked_mul` and `checked_add` returning `None` to give the summary up when a finite value would reach a sentinel | `NEG`, `POS`, `finite`, `value_at`, `map_vals`, `make_node` | Machine integers | Zed's `int` is unbounded: the values are `int`, the infinities a tagged variant (`#negInf`, `#fin(int)`, `#posInf`), and no give-up is needed, at a cost in the bits of each value per node |
+| An `End` turned into a machine integer by `to_i128` with `expect`, after `in_range` checked every end | `small`, `key` | Machine integers; Abort on a broken invariant (gap 8) | With `int` ends no conversion is needed |
+| The priority of a piece mixed from both 64-bit halves of its `i128` end by `as u64` casts, `>>`, `^`, `wrapping_add` and `rotate_left` | `prio_of` | Bit operations (gap 4) | As gap 4, or a hash of the end's content digest (gap 1) |
+| A closure `impl FnOnce(i128) -> Option<i128>` passed to a free function that applies it to a finite end or returns the given infinity | `solve` | None | A function argument |
+
 ## Entries from T6 (`zed-kernel/src/types/bes.rs`, `rec.rs`, `empty.rs`)
 
 | Rust construct | Sites | Gap | At the port |
@@ -1134,7 +1143,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Int`, the same with an `i128` word, for the Presburger solver | `store::int::Int`, `presburger.rs` | Machine integers | Vanishes: an `int` |
 | `BigInt` from `num-bigint` behind both | `store::int` | External crate | Goes with `num-bigint` (see the external crates above) |
 | `u64` residues multiplied in `u128` and reduced (`pow_mod`), and big integers reduced modulo a power of 2 by a bit mask (`odd_root_mod_pow2`, `pow_mod_pow2`, `inverse_mod_pow2`) | `store::int::{pow_mod, odd_root_mod_pow2, pow_mod_pow2, inverse_mod_pow2}` | Machine integers; bit operations on `int` | `int` products and `%` (the runtime keeps them in a word while they fit), and a mask as `x % 2 ** k` unless Zed gains bit operations on `int` |
-| The S22a summary's pieces as `i128` values with the ends of `i64` standing for the infinities, entered only when every finite end lies strictly inside `i64` (`in_i64`, `small`), and nodes copied whole with `..(**node).clone()` now that an end is not `Copy` | `store::preimage::{in_i64, small, key, input, apply_tag}` | Machine integers; struct update syntax | Vanishes: ends are `int` and the summary holds them as they are |
+| The S22a summary's pieces as `i128` values with the ends of `i64` standing for the infinities, entered only when every finite end lies strictly inside `i64` (`in_i64`, `small`; since S22-WIDE `in_range`, the ends strictly inside `i128` and the infinities `i128::MIN` and `i128::MAX`), and nodes copied whole with `..(**node).clone()` now that an end is not `Copy` | `store::preimage::{in_range, small, key, input, apply_tag}` | Machine integers; struct update syntax | Vanishes: ends are `int` and the summary holds them as they are |
 
 ## Entries from F44-memo (`tests/src/scaling.rs`)
 
