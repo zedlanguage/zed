@@ -867,7 +867,7 @@ impl<'a> Formatter<'a> {
                     self.put(format!("{n} "));
                 }
                 self.put("is ");
-                stack.push(Job::Ty { t: ty, min: 1 });
+                stack.push(Job::Ty { t: ty, min: 2 });
             }
             Pattern::Lit(e) => self.raw(e, 0, stack),
             Pattern::Range { from, to, .. } => {
@@ -1213,7 +1213,7 @@ impl<'a> Formatter<'a> {
                 then![stack;
                     at(of, REDUCE),
                     put(format!(" is {not}")),
-                    Job::Ty { t, min: 1 },
+                    Job::Ty { t, min: 2 },
                 ];
             }
             ExprKind::Else {
@@ -1417,17 +1417,17 @@ impl<'a> Formatter<'a> {
                 let close = if ts.len() == 1 { ",)" } else { ")" };
                 then![stack; list(ts, 0, ", "), put(close)];
             }
-            TypeKind::Union(ts) => stack.push(list(ts, 2, " | ")),
-            TypeKind::And(ts) => stack.push(list(ts, 3, " & ")),
+            TypeKind::Union(ts) => stack.push(list(ts, 3, " | ")),
+            TypeKind::And(ts) => stack.push(list(ts, 4, " & ")),
             TypeKind::Diff(a, b) => {
                 let min = match a.kind {
-                    TypeKind::Diff(..) => 1,
-                    _ => 3,
+                    TypeKind::Diff(..) => 2,
+                    _ => 4,
                 };
                 then![stack;
                     Job::Ty { t: a, min },
                     put(" \\ "),
-                    Job::Ty { t: b, min: 3 },
+                    Job::Ty { t: b, min: 4 },
                 ];
             }
             TypeKind::Arrow {
@@ -1436,7 +1436,7 @@ impl<'a> Formatter<'a> {
                 result,
             } => {
                 let arrow = if *partial { " ->? " } else { " -> " };
-                then![stack; put(arrow), Job::Ty { t: result, min: 0 }];
+                then![stack; put(arrow), Job::Ty { t: result, min: 1 }];
                 match &params[..] {
                     [
                         TypeParam {
@@ -1447,7 +1447,7 @@ impl<'a> Formatter<'a> {
                             self.put("(");
                             then![stack; Job::Ty { t: p, min: 0 }, put(")")];
                         }
-                        _ => stack.push(Job::Ty { t: p, min: 1 }),
+                        _ => stack.push(Job::Ty { t: p, min: 2 }),
                     },
                     ps => {
                         self.put("(");
@@ -1461,11 +1461,11 @@ impl<'a> Formatter<'a> {
                 result,
             } => {
                 then![stack;
-                    Job::Ty { t: lower, min: 1 },
+                    Job::Ty { t: lower, min: 2 },
                     put(" .. "),
-                    Job::Ty { t: upper, min: 1 },
+                    Job::Ty { t: upper, min: 2 },
                     put(" -> "),
-                    Job::Ty { t: result, min: 0 },
+                    Job::Ty { t: result, min: 1 },
                 ];
             }
             TypeKind::Apply(name, ps) => {
@@ -1480,6 +1480,16 @@ impl<'a> Formatter<'a> {
                 self.put("[");
                 then![stack; Job::Ty { t, min: 0 }, put("]")];
             }
+            TypeKind::For { ty, bounds } => {
+                // The bounds go on the stack last first, so they print in order.
+                for (i, b) in bounds.iter().enumerate().rev() {
+                    then![stack; put(format!("{} in ", b.name)), Job::Ty { t: &b.carriers, min: 2 }];
+                    if i > 0 {
+                        stack.push(put(", "));
+                    }
+                }
+                then![stack; Job::Ty { t: ty, min: 1 }, put(" for ")];
+            }
             TypeKind::Record(fields) => {
                 self.put("{ ");
                 then![stack; Job::RecordType(fields), put(" }")];
@@ -1488,12 +1498,14 @@ impl<'a> Formatter<'a> {
     }
 }
 
-/// Type precedence levels: an arrow, a union or difference, an intersection, a primary.
+/// Type precedence levels: a bounds clause, an arrow, a union or difference, an intersection, a
+/// primary.
 fn type_level(t: &Type) -> u8 {
     match t.kind {
-        TypeKind::Arrow { .. } | TypeKind::Bounded { .. } => 0,
-        TypeKind::Union(_) | TypeKind::Diff(..) => 1,
-        TypeKind::And(_) => 2,
-        _ => 5,
+        TypeKind::For { .. } => 0,
+        TypeKind::Arrow { .. } | TypeKind::Bounded { .. } => 1,
+        TypeKind::Union(_) | TypeKind::Diff(..) => 2,
+        TypeKind::And(_) => 3,
+        _ => 6,
     }
 }

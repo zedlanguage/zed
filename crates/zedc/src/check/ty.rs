@@ -432,6 +432,13 @@ pub struct Vars {
     pub order: Vec<Arc<str>>,
 }
 
+impl Vars {
+    /// Whether `v` is one of them.
+    pub fn contains(&self, v: &str) -> bool {
+        self.seen.contains(v)
+    }
+}
+
 impl Ty {
     /// No value.
     pub fn empty() -> Ty {
@@ -485,6 +492,13 @@ impl Ty {
         let mut t = Ty::empty();
         t.vars.insert(v);
         t
+    }
+
+    /// The variable it is, when it is one type variable and nothing else.
+    pub fn as_var(&self) -> Option<&Arc<str>> {
+        let mut vs = self.vars.iter();
+        let v = vs.next()?;
+        (vs.next().is_none() && *self == Ty::var(v.clone())).then_some(v)
     }
 
     /// The unknown.

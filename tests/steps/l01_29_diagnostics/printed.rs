@@ -245,11 +245,15 @@ fn what_is_no_printed_type_is_an_error() {
         ),
         (
             "(T) -> T for T int",
-            "`(T) -> T for T int`: the bound `T int` has no ` in `",
+            "`(T) -> T for T int` is not a type: expected 'in'",
         ),
         (
             "int for U in int",
             "`int for U in int`: the bound of `U` is on no signature that names it",
+        ),
+        (
+            "(T) -> T for T in int | #a",
+            "`(T) -> T for T in int | #a`: `#a` in the bound of `T` is no carrier",
         ),
     ];
     for (text, want) in cases {

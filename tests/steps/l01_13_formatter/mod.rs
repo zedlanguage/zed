@@ -45,7 +45,7 @@ fn comment_texts(text: &str, tokens: &[Token]) -> Vec<String> {
 /// `text` formatted, after checking that the result builds to the same statements, keeps the
 /// same comments, and formats to itself.
 #[track_caller]
-fn fmt(text: &str) -> String {
+pub(crate) fn fmt(text: &str) -> String {
     let (tokens, stmts) = build(text).unwrap();
     let out = format(text, &tokens, &stmts);
     let (tokens2, stmts2) = build(&out).unwrap_or_else(|e| panic!("{e} in\n{out}"));

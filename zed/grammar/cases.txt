@@ -402,3 +402,9 @@ Expr ::: """${"${x /* c⏎*/}"}""" ::: ERROR
 Expr ::: "${"""${x // c}"""}"⏎}"""}" ::: ERROR
 Expr ::: "${"""${x⏎}"""}" ::: ERROR
 Expr ::: "${"""${x /* c */}"""}" ::: "${"""${x /* c */}"""}"
+Type ::: (x: T) -> T for T in int | f64 ::: (((( x : T )) -> T) (for T in (int | f64)))
+Type ::: T -> U for T in int, U in String | bool ::: ((T -> U) (for T in int , U in (String | bool)))
+Type ::: ((T) -> T for T in rat) -> U for U in bool ::: (((( (((( T )) -> T) (for T in rat)) )) -> U) (for U in bool))
+Type ::: A -> B for T int ::: ERROR
+Type ::: A -> B for T in int, ::: ERROR
+Type ::: A for T in int for U in f64 ::: ERROR

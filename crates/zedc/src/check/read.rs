@@ -6,14 +6,14 @@
 //! signature whose type variables are bounded the clause `for T in int | f64 | rat` (DESIGN.md
 //! sec:checking); this reads those too.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use num_bigint::BigInt;
 use zed_kernel::{Rat, Value};
 
-use super::denoted_with;
-use super::ty::{Binds, Carrier, Sig, Ty, Vars};
+use super::ty::{Binds, Ty};
+use super::{carrier_mask, denoted_with};
 use crate::ast::{self, TypeKind};
 use crate::lex::{self, Part, Tok};
 use crate::parse::{self, TOP};
@@ -22,14 +22,14 @@ use crate::parse::{self, TOP};
 /// meaning for at layer L1 other than an atom with its payload type, and a leaf of layer L10
 /// other than the three above.
 pub fn parse_type(text: &str) -> Result<Ty, String> {
-    let (head, bounds) = clauses(text)?;
-    let tokens = lex::lex(&head).map_err(|e| format!("`{text}`: {e}"))?;
-    let (body, binds) = leaves(text, &head, &tokens)?;
+    let tokens = lex::lex(text).map_err(|e| format!("`{text}`: {e}"))?;
+    let (body, binds) = leaves(text, text, &tokens)?;
     let tokens = lex::lex(&body).map_err(|e| format!("`{text}`: {e}"))?;
     let tree = parse::parse(&body, &tokens, "Type", TOP)
         .map_err(|e| format!("`{text}` is not a type: {e}"))?;
     let t = ast::ty(&body, &tokens, &tree).map_err(|e| format!("`{text}`: {e}"))?;
-    // A later layer's form, found with an explicit stack.
+    // A later layer's form, found with an explicit stack, and the variables bounded.
+    let mut bounded = Vec::new();
     let mut stack = vec![&t];
     while let Some(t) = stack.pop() {
         match &t.kind {
@@ -50,84 +50,47 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
                 upper,
                 result,
             } => stack.extend([&**lower, &**upper, &**result]),
+            TypeKind::For { ty, bounds } => {
+                for b in bounds {
+                    if let Err(c) = carrier_mask(&b.carriers) {
+                        let c = &body[c.span.start..c.span.end];
+                        return Err(format!(
+                            "`{text}`: `{c}` in the bound of `{}` is no carrier",
+                            b.name
+                        ));
+                    }
+                    bounded.push(b.name.as_str());
+                }
+                stack.push(ty);
+            }
         }
     }
-    let mut ty = denoted_with(&t, &binds);
-    for (v, m) in bounds {
-        if !bound(&mut ty, &v, m) {
-            return Err(format!(
-                "`{text}`: the bound of `{v}` is on no signature that names it"
-            ));
-        }
+    let ty = denoted_with(&t, &binds);
+    let on = bounds_in(&ty);
+    if let Some(v) = bounded.into_iter().find(|v| !on.contains(*v)) {
+        return Err(format!(
+            "`{text}`: the bound of `{v}` is on no signature that names it"
+        ));
     }
     Ok(ty)
 }
 
-/// Type variables, each with the mask of the carriers it is bounded by.
-type Bounds = Vec<(Arc<str>, u8)>;
-
-/// `text` without its `for` clauses, and the bounds they give, in written order. A clause
-/// runs from ` for ` to the parenthesis that closes the group it is in, or to the end.
-fn clauses(text: &str) -> Result<(String, Bounds), String> {
-    let (mut out, mut bounds) = (String::with_capacity(text.len()), Vec::new());
-    // The open groups, each with the start in `text` of its clause if it has one.
-    let mut groups: Vec<Option<usize>> = vec![None];
-    let mut quoted = false;
-    let mut chars = text.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        let in_clause = groups.last().copied().flatten().is_some();
-        match c {
-            '"' => quoted = !quoted,
-            '\\' if quoted => {
-                if !in_clause {
-                    out.push(c);
-                }
-                if let Some((_, d)) = chars.next()
-                    && !in_clause
-                {
-                    out.push(d);
-                }
-                continue;
+/// The variables the signatures of `t` bound, at any depth. A type read from text is a tree,
+/// each signature built once, so the walk meets each node once.
+fn bounds_in(t: &Ty) -> HashSet<Arc<str>> {
+    let mut out = HashSet::new();
+    let mut stack = vec![t];
+    while let Some(t) = stack.pop() {
+        stack.extend(t.tuples.iter().flatten());
+        for s in &t.fns {
+            out.extend(s.bounds.keys().cloned());
+            for a in &s.arrows {
+                stack.extend(&a.params);
+                stack.push(&a.result);
             }
-            ' ' if !quoted && !in_clause && text[i..].starts_with(" for ") => {
-                *groups.last_mut().expect("the outermost group") = Some(i + " for ".len());
-                continue;
-            }
-            '(' if !quoted => groups.push(None),
-            ')' if !quoted => {
-                if let Some(Some(from)) = groups.pop() {
-                    bounds.extend(clause(text, &text[from..i])?);
-                }
-            }
-            _ => {}
-        }
-        if groups.last().copied().flatten().is_none() || c == ')' {
-            out.push(c);
         }
     }
-    if let Some(Some(from)) = groups.pop() {
-        bounds.extend(clause(text, &text[from..])?);
-    }
-    Ok((out, bounds))
-}
-
-/// The bounds of the clause `body`, `T in int | rat, U in f64`.
-fn clause(text: &str, body: &str) -> Result<Bounds, String> {
-    body.split(", ")
-        .map(|b| {
-            let (v, cs) = b
-                .split_once(" in ")
-                .ok_or_else(|| format!("`{text}`: the bound `{b}` has no ` in `"))?;
-            let mut mask = 0;
-            for c in cs.split(" | ") {
-                let carrier = Carrier::ALL.iter().find(|k| k.name() == c).ok_or_else(|| {
-                    format!("`{text}`: `{c}` in the bound of `{v}` is no carrier")
-                })?;
-                mask |= carrier.bit();
-            }
-            Ok((v.into(), mask))
-        })
-        .collect()
+    out
 }
 
 /// `head` with each leaf of layer L10 replaced by a type variable, and what each variable
@@ -187,41 +150,4 @@ fn int(radix: u32, digits: &str, negative: bool) -> Result<Value, String> {
     let n = BigInt::parse_bytes(digits.as_bytes(), radix)
         .ok_or_else(|| format!("the digits `{digits}` in base {radix}"))?;
     Ok(Value::int(if negative { -n } else { n }))
-}
-
-/// Bounds `v` by the carriers of `mask` on the first signature of `t`, outermost first, whose
-/// arrows name `v`; whether one does.
-fn bound(t: &mut Ty, v: &Arc<str>, mask: u8) -> bool {
-    let mut stack = vec![t];
-    while let Some(t) = stack.pop() {
-        for s in t.fns.iter_mut() {
-            if names(s, v) {
-                Arc::make_mut(s).bounds.insert(v.clone(), mask);
-                return true;
-            }
-        }
-        // The children, the first last, so the first is taken next.
-        let mut kids: Vec<&mut Ty> = Vec::new();
-        for cs in t.tuples.iter_mut() {
-            kids.extend(cs.iter_mut());
-        }
-        for s in t.fns.iter_mut() {
-            for a in Arc::make_mut(s).arrows.iter_mut() {
-                kids.extend(a.params.iter_mut());
-                kids.push(&mut a.result);
-            }
-        }
-        stack.extend(kids.into_iter().rev());
-    }
-    false
-}
-
-/// Whether an arrow of `s` names the type variable `v`.
-fn names(s: &Sig, v: &Arc<str>) -> bool {
-    let mut vars = Vars::default();
-    for a in &s.arrows {
-        a.params.iter().for_each(|p| p.vars_in(&mut vars));
-        a.result.vars_in(&mut vars);
-    }
-    vars.order.contains(v)
 }

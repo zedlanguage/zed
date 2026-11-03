@@ -355,6 +355,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         stack.extend(params.iter().map(|p| &p.ty));
                         stack.push(result);
                     }
+                    // A bound is a union of carrier names, which holds no morphism type.
+                    TypeKind::For { ty, .. } => stack.push(ty),
                     TypeKind::Name(_) | TypeKind::Atom(_) => {}
                     TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
                         unreachable!("resolve rejects the forms of layer L2")
@@ -2451,12 +2453,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn refuses(&self, sig: &Sig, i: usize, loose: &KType) -> bool {
         sig.arrows.iter().all(|arrow| {
             let p = &arrow.params[i];
-            if let Some(&m) = sig
-                .bounds
-                .iter()
-                .find(|(v, _)| *p == Ty::var((*v).clone()))
-                .map(|(_, m)| m)
-            {
+            if let Some(&m) = p.as_var().and_then(|v| sig.bounds.get(v)) {
                 return m & OTHER == 0;
             }
             !p.dynamic
@@ -2511,10 +2508,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         let fail = |ck: &Self| Err(ck.rejected(what, args));
         let mut binds = Binds::new();
         let mut grouped = vec![false; args.len()];
+        // The arguments each bounded variable stands at, in one pass over the arguments: one
+        // pass per variable over every argument cost `O(v a)`.
+        let mut at_of: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (i, (p, a)) in arrow.params.iter().zip(args).enumerate() {
+            if let Some(v) = p.as_var().filter(|_| a.is_some()) {
+                at_of.entry(&**v).or_default().push(i);
+            }
+        }
         for (v, &m) in &sig.bounds {
-            let at: Vec<usize> = (0..args.len())
-                .filter(|&i| args[i].is_some() && arrow.params[i] == Ty::var(v.clone()))
-                .collect();
+            let at = at_of.remove(&**v).unwrap_or_default();
             let lit_at = at
                 .iter()
                 .any(|&i| args[i].as_ref().is_some_and(|a| a.lit.is_some()));
@@ -2671,7 +2674,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .iter()
                 .for_each(|a| a.params.iter().for_each(|p| p.vars_in(&mut inner)));
         }
-        defer.extend(inner.order.into_iter().filter(|v| !taken.order.contains(v)));
+        defer.extend(inner.order.into_iter().filter(|v| !taken.contains(v)));
         let mut left = self.replay(what, &sig.needs, &mut binds, defer, span);
         // Each bounded variable's binding is within its bound, and of one carrier, or of
         // other values only: the arrows of an operator each take one. So the classes in it
@@ -3861,6 +3864,24 @@ fn mask_of(t: &Ty) -> u8 {
     m
 }
 
+/// The mask of the carriers of the bound `t`, a union of carrier names; `Err` with the first
+/// part that is no carrier name.
+fn carrier_mask(t: &Type) -> Result<u8, &Type> {
+    let mut stack = vec![t];
+    let mut mask = 0;
+    while let Some(t) = stack.pop() {
+        match &t.kind {
+            TypeKind::Union(ts) => stack.extend(ts),
+            TypeKind::Name(n) => match Carrier::ALL.iter().find(|c| c.name() == n.as_str()) {
+                Some(c) => mask |= c.bit(),
+                None => return Err(t),
+            },
+            _ => return Err(t),
+        }
+    }
+    Ok(mask)
+}
+
 /// The type a type expression denotes; a name that is no prelude type is a type variable.
 pub fn denoted(t: &Type) -> Ty {
     denoted_with(t, &Binds::new())
@@ -3869,82 +3890,153 @@ pub fn denoted(t: &Type) -> Ty {
 /// The type a type expression denotes, each name `leaves` binds standing for its type before
 /// any other reading of the name (OSP-diag: the leaves of layer L10 a printed type holds).
 pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
-    let denoted = |t: &Type| denoted_with(t, leaves);
-    match &t.kind {
-        TypeKind::Apply(..) | TypeKind::Record(_) => {
-            unreachable!("resolve rejects the forms of layer L2")
-        }
-        // Resolve rejects a written one until L2.5; the reader of printed types reads one, since
-        // the checker builds atoms with payloads from L1 on (L29-print).
-        TypeKind::AtomApply(a, ps) => {
-            let mut shape = Shape {
-                items: Vec::new(),
-                fields: BTreeMap::new(),
-            };
-            for p in ps {
-                match &p.name {
-                    Some(n) if !p.positional => {
-                        shape.fields.insert(n.as_str().into(), denoted(&p.ty));
-                    }
-                    _ => shape.items.push(denoted(&p.ty)),
-                }
+    Denote {
+        leaves,
+        bound: HashMap::new(),
+        open: Vec::new(),
+    }
+    .ty(t)
+}
+
+/// One denotation, read from the top down so that each variable a `for` clause bounds is
+/// bounded on the outermost signature of the clause whose arrows name it, as resolve finds its
+/// home: each use looks up its clause and the function type open at that depth, so the cost is
+/// linear in the size of the type, however deeply clauses nest.
+struct Denote<'a> {
+    leaves: &'a Binds,
+    /// Each variable a clause around the place bounds: its mask and the number of function
+    /// types open at the clause, which is the index in `open` of its signature.
+    bound: HashMap<&'a str, (u8, usize)>,
+    /// The function types open around the place, outermost first, each with the bounds of
+    /// the variables it is the home of.
+    open: Vec<BTreeMap<Arc<str>, u8>>,
+}
+
+impl<'a> Denote<'a> {
+    fn ty(&mut self, t: &'a Type) -> Ty {
+        match &t.kind {
+            TypeKind::Apply(..) | TypeKind::Record(_) => {
+                unreachable!("resolve rejects the forms of layer L2")
             }
-            let mut t = Ty::set(KType::atom_with(a, &KType::top()));
-            t.payloads.insert(a.as_str().into(), Some(vec![shape]));
-            t
-        }
-        TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
-        TypeKind::Name(n) if leaves.contains_key(n.as_str()) => leaves[n.as_str()].clone(),
-        TypeKind::Name(n) => match n.as_str() {
-            "int" => Ty::carrier(Carrier::Int),
-            "rat" => Ty::carrier(Carrier::Rat),
-            "f64" => Ty::carrier(Carrier::F64),
-            "bool" => Ty::carrier(Carrier::Bool),
-            "String" => Ty::carrier(Carrier::Str),
-            "Lines" => port(true),
-            "Files" => port(false),
-            _ => Ty::var(n.as_str().into()),
-        },
-        TypeKind::Atom(a) => Ty::set(KType::atom(a)),
-        TypeKind::Tuple(ts) => Ty::tuple(ts.iter().map(&denoted).collect()),
-        TypeKind::Union(ts) => {
-            let ts: Vec<Ty> = ts.iter().map(&denoted).collect();
-            Ty::union_all(&ts)
-        }
-        TypeKind::And(ts) => {
-            let mut ts = ts.iter().map(&denoted).collect::<Vec<_>>().into_iter();
-            let first = ts.next().unwrap_or_else(Ty::dynamic);
-            ts.fold(first, |a, b| a.meet(&b))
-        }
-        TypeKind::Diff(a, b) => {
-            let (a, b) = (denoted(a), denoted(b));
-            a.diff(&b)
-        }
-        TypeKind::Arrow { params, result, .. } => {
-            let tys = params.iter().map(|p| denoted(&p.ty)).collect();
-            let result = denoted(result);
-            let names = params
-                .iter()
-                .map(|p| SParam {
-                    name: p.name.clone().unwrap_or_default().into(),
-                    positional: p.positional || p.name.is_none(),
+            // Resolve rejects a written one until L2.5; the reader of printed types reads one,
+            // since the checker builds atoms with payloads from L1 on (L29-print).
+            TypeKind::AtomApply(a, ps) => {
+                let mut shape = Shape {
+                    items: Vec::new(),
+                    fields: BTreeMap::new(),
+                };
+                for p in ps {
+                    match &p.name {
+                        Some(n) if !p.positional => {
+                            shape.fields.insert(n.as_str().into(), self.ty(&p.ty));
+                        }
+                        _ => shape.items.push(self.ty(&p.ty)),
+                    }
+                }
+                let mut t = Ty::set(KType::atom_with(a, &KType::top()));
+                t.payloads.insert(a.as_str().into(), Some(vec![shape]));
+                t
+            }
+            TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
+            TypeKind::Name(n) if self.leaves.contains_key(n.as_str()) => {
+                self.leaves[n.as_str()].clone()
+            }
+            TypeKind::Name(n) => match n.as_str() {
+                "int" => Ty::carrier(Carrier::Int),
+                "rat" => Ty::carrier(Carrier::Rat),
+                "f64" => Ty::carrier(Carrier::F64),
+                "bool" => Ty::carrier(Carrier::Bool),
+                "String" => Ty::carrier(Carrier::Str),
+                "Lines" => port(true),
+                "Files" => port(false),
+                v => {
+                    // A use outside every function type of its clause, as in `int \ T`, bounds
+                    // nothing; resolve rejects it.
+                    if let Some(&(mask, at)) = self.bound.get(v)
+                        && let Some(home) = self.open.get_mut(at)
+                    {
+                        home.insert(v.into(), mask);
+                    }
+                    Ty::var(v.into())
+                }
+            },
+            TypeKind::Atom(a) => Ty::set(KType::atom(a)),
+            TypeKind::Tuple(ts) => Ty::tuple(ts.iter().map(|t| self.ty(t)).collect()),
+            TypeKind::Union(ts) => {
+                let ts: Vec<Ty> = ts.iter().map(|t| self.ty(t)).collect();
+                Ty::union_all(&ts)
+            }
+            TypeKind::And(ts) => {
+                let ts: Vec<Ty> = ts.iter().map(|t| self.ty(t)).collect();
+                let mut ts = ts.into_iter();
+                let first = ts.next().unwrap_or_else(Ty::dynamic);
+                ts.fold(first, |a, b| a.meet(&b))
+            }
+            TypeKind::Diff(a, b) => {
+                let (a, b) = (self.ty(a), self.ty(b));
+                a.diff(&b)
+            }
+            TypeKind::Arrow { params, result, .. } => {
+                self.open.push(BTreeMap::new());
+                let tys = params.iter().map(|p| self.ty(&p.ty)).collect();
+                let result = self.ty(result);
+                let names = params
+                    .iter()
+                    .map(|p| SParam {
+                        name: p.name.clone().unwrap_or_default().into(),
+                        positional: p.positional || p.name.is_none(),
+                        default: None,
+                    })
+                    .collect();
+                self.sig(names, tys, result)
+            }
+            // Each variable is bounded on the outermost signature that names it, which resolve
+            // found to hold its every use: a call of that function binds it to one carrier of
+            // the bound (DESIGN.md sec:type_language, sec:checking).
+            TypeKind::For { ty, bounds } => {
+                let depth = self.open.len();
+                let outer: Vec<(&'a str, Option<(u8, usize)>)> = bounds
+                    .iter()
+                    .map(|b| {
+                        let mask = carrier_mask(&b.carriers)
+                            .expect("resolve and the reader of printed types check each bound");
+                        (
+                            b.name.as_str(),
+                            self.bound.insert(b.name.as_str(), (mask, depth)),
+                        )
+                    })
+                    .collect();
+                let t = self.ty(ty);
+                for (v, was) in outer {
+                    match was {
+                        Some(was) => self.bound.insert(v, was),
+                        None => self.bound.remove(v),
+                    };
+                }
+                t
+            }
+            // This checker keeps one domain per function: the permission.
+            TypeKind::Bounded { upper, result, .. } => {
+                self.open.push(BTreeMap::new());
+                let names = vec![SParam {
+                    name: String::new().into(),
+                    positional: true,
                     default: None,
-                })
-                .collect();
-            Ty::func(Arc::new(Sig::one(names, tys, result)))
+                }];
+                let tys = vec![self.ty(upper)];
+                let result = self.ty(result);
+                self.sig(names, tys, result)
+            }
         }
-        // This checker keeps one domain per function: the permission.
-        TypeKind::Bounded { upper, result, .. } => {
-            let names = vec![SParam {
-                name: String::new().into(),
-                positional: true,
-                default: None,
-            }];
-            Ty::func(Arc::new(Sig::one(
-                names,
-                vec![denoted(upper)],
-                denoted(result),
-            )))
-        }
+    }
+
+    /// The signature of the function type opened last, with the bounds of the variables it
+    /// is the home of.
+    fn sig(&mut self, names: Vec<SParam>, tys: Vec<Ty>, result: Ty) -> Ty {
+        let bounds = self.open.pop().expect("each function type is opened first");
+        let mut sig = Sig::one(names, tys, result);
+        sig.own.extend(bounds.keys().cloned());
+        sig.bounds = bounds;
+        Ty::func(Arc::new(sig))
     }
 }

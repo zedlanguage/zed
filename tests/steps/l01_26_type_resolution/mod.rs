@@ -4,6 +4,7 @@
 //! the function type its slot expects.
 
 mod adoption;
+mod bounds;
 mod calls;
 mod docs;
 mod fits;

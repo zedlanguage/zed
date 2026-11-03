@@ -864,6 +864,21 @@ fn kernel_form(
             unreachable!("resolve rejects the forms of layer L2")
         }
         TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
+        // A bounded variable stands for one carrier that a call of the function chooses; a
+        // run-time test has no call to choose it.
+        TypeKind::For { bounds, .. } => {
+            let vars: Vec<String> = bounds.iter().map(|b| format!("`{}`", b.name)).collect();
+            ports.push((
+                t.span,
+                format!(
+                    "an `is` test cannot take a type with bounded variables ({}): a call \
+                     chooses each one's carrier, and a test has no call; test each carrier \
+                     instead",
+                    vars.join(", ")
+                ),
+            ));
+            return None;
+        }
         TypeKind::Name(n) => match n.as_str() {
             "int" => KType::int(),
             "rat" => KType::rat(),
@@ -960,7 +975,8 @@ fn type_parts(t: &Type) -> Vec<&Type> {
         | TypeKind::Apply(..)
         | TypeKind::AtomApply(..)
         | TypeKind::Record(_)
-        | TypeKind::Array(_) => Vec::new(),
+        | TypeKind::Array(_)
+        | TypeKind::For { .. } => Vec::new(),
     }
 }
 

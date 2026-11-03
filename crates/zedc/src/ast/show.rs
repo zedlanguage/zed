@@ -508,7 +508,7 @@ fn function<'a>(func: &'a Function, out: &mut Vec<Show<'a>>) {
 }
 
 /// `int`, `#none`, `(tuple A B)`, `(| A B)`, `(& A B)`, `(\ A B)`, `(-> (A (x: B)) R)`,
-/// `(Tree T)`, `(#node (l: T))`, `(record (x: int))`, `(array T)`.
+/// `(Tree T)`, `(#node (l: T))`, `(record (x: int))`, `(array T)`, `(for (-> (T) T) (T (| int f64)))`.
 fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
     let mut list = |head, ts: &'a [Type]| {
         out.push(Text(head));
@@ -561,6 +561,19 @@ fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
             out.push(Text(")"));
         }
         TypeKind::Array(t) => out.extend([Text("(array "), Show::Type(t), Text(")")]),
+        TypeKind::For { ty, bounds } => {
+            out.extend([Text("(for "), Show::Type(ty)]);
+            for b in bounds {
+                out.extend([
+                    Text(" ("),
+                    Text(&b.name),
+                    Text(" "),
+                    Show::Type(&b.carriers),
+                ]);
+                out.push(Text(")"));
+            }
+            out.push(Text(")"));
+        }
         TypeKind::Record(fields) => {
             out.push(Text("(record"));
             for (n, t) in fields {

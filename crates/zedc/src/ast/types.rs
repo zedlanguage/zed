@@ -65,6 +65,25 @@ pub enum TypeKind {
     /// domain `0..<n` the type leaves open (sec:grammar, `RankArrayType`). It is not `Seq(T)`
     /// (sec:order), whose keys are origins.
     Array(Box<Type>),
+    /// A type with its type variables bounded, `(x: T) -> T for T in int | f64`: each variable
+    /// ranges over the carriers of its bound, one carrier at every place it stands.
+    For {
+        /// The type the variables stand in.
+        ty: Box<Type>,
+        /// The variables, in written order.
+        bounds: Vec<TypeBound>,
+    },
+}
+
+/// One variable of a bounds clause, `T in int | f64`.
+#[derive(Debug)]
+pub struct TypeBound {
+    /// The variable.
+    pub name: String,
+    /// The variable's text.
+    pub span: Span,
+    /// The bound, a union of carriers.
+    pub carriers: Type,
 }
 
 /// A parameter of a function type: `int`, `x: int` or `positional x: int`.
@@ -184,6 +203,22 @@ impl Builder<'_, '_> {
         let span = self.span(n);
         let kind = match self.tree.name(n) {
             "Type" if kids.len() == 1 => return self.ty(kids[0]),
+            "Type" if kids.len() == 2 && self.tree.name(kids[1]) == "TypeBounds" => {
+                let ty = Box::new(self.ty(kids[0])?);
+                let pairs = self.kids(kids[1]);
+                let mut bounds = Vec::with_capacity(pairs.len() / 2);
+                let mut seen = HashMap::new();
+                for &[v, c] in pairs.as_chunks::<2>().0 {
+                    let name = self.word(self.tree.nodes[v].start);
+                    self.once(&mut seen, name, v, "type variable", "bounded")?;
+                    bounds.push(TypeBound {
+                        name: name.to_string(),
+                        span: self.span(v),
+                        carriers: self.ty(c)?,
+                    });
+                }
+                TypeKind::For { ty, bounds }
+            }
             "Type" => return Err(self.later(kids[1])),
             "TypePostfix" if self.tree.nodes[kids[0]].rule == node.rule => {
                 return self.ty(kids[0]);

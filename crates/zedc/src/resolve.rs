@@ -23,7 +23,7 @@ use imbl::Vector;
 use crate::ast::{
     Annot, Error, Expr, ExprKind, Param, Pattern, Port, Stmt, StmtKind, StrPart, Target,
 };
-use crate::ast::{Note, Type, TypeKind};
+use crate::ast::{Note, Type, TypeBound, TypeKind};
 use crate::lex::Span;
 
 /// What binds a name.
@@ -209,6 +209,10 @@ fn is_off(a: &Annot) -> bool {
 /// The type names of the prelude at L1; a unit declares no type before L2.
 const TYPES: &[&str] = &["int", "rat", "f64", "bool", "String", "Lines", "Files"];
 
+/// The carriers, which a bounded type variable ranges over, in the order the checker prints
+/// them.
+const CARRIERS: &[&str] = &["int", "f64", "rat", "String", "bool"];
+
 /// The resolution of `unit`, or every error in it, in text order.
 pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
     let mut r = Resolver::default();
@@ -237,6 +241,21 @@ struct Resolver {
     /// The bindings of each name in the open scopes, innermost last, so a name is found in
     /// `O(1)` however deep the scopes nest.
     visible: HashMap<String, Vec<Bound>>,
+    /// The type variables a bounds clause around the type being walked binds, by name.
+    tvars: HashMap<String, TypeVar>,
+    /// The function types around the type being walked, outermost first, by their text.
+    arrows: Vec<Span>,
+}
+
+/// A type variable of a bounds clause, while its type is walked.
+struct TypeVar {
+    /// Its text in the clause.
+    span: Span,
+    /// How many function types were open around the clause.
+    depth: usize,
+    /// Its first use, and the outermost function type inside the clause that holds the use,
+    /// if one does.
+    first: Option<(Span, Option<Span>)>,
 }
 
 /// A name's binders in one scope.
@@ -404,6 +423,10 @@ impl Resolver {
                     }
                 }
                 Task::Close => self.close(),
+                Task::ArrowEnd => {
+                    self.arrows.pop();
+                }
+                Task::ForEnd(ty, fresh) => self.for_end(ty, fresh),
             }
         }
     }
@@ -757,12 +780,44 @@ impl Resolver {
             TypeKind::Name(n) if TYPES.contains(&n.as_str()) => {
                 self.out.uses.insert(t.span, Ref::Prelude(n.clone()));
             }
+            TypeKind::Name(n) if self.tvars.contains_key(n) => self.type_var(n, t.span),
             TypeKind::Name(n) => self.errors.push(Error {
                 row: None,
                 span: t.span,
                 message: format!("the type `{n}` is not defined"),
                 notes: Vec::new(),
             }),
+            TypeKind::For { ty, bounds } => {
+                // Each bound is read outside the clause, so `for T in U` with `U` bounded
+                // around it is no carrier either.
+                for b in bounds {
+                    self.carriers(&b.name, &b.carriers);
+                }
+                let mut fresh = Vec::with_capacity(bounds.len());
+                for b in bounds {
+                    if let Some(outer) = self.tvars.get(&b.name) {
+                        self.errors.push(Error {
+                            row: None,
+                            span: b.span,
+                            message: format!("the type variable `{}` is bounded twice", b.name),
+                            notes: vec![Note {
+                                span: outer.span,
+                                text: format!("the first bound of `{}`", b.name),
+                            }],
+                        });
+                        continue;
+                    }
+                    let var = TypeVar {
+                        span: b.span,
+                        depth: self.arrows.len(),
+                        first: None,
+                    };
+                    self.tvars.insert(b.name.clone(), var);
+                    fresh.push(b);
+                }
+                todo.push(Task::ForEnd(ty, fresh));
+                todo.push(Task::Ty(ty));
+            }
             TypeKind::Atom(_) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => {
                 todo.extend(ts.iter().rev().map(Task::Ty));
@@ -772,6 +827,8 @@ impl Resolver {
                 todo.push(Task::Ty(a));
             }
             TypeKind::Arrow { params, result, .. } => {
+                self.arrows.push(t.span);
+                todo.push(Task::ArrowEnd);
                 todo.push(Task::Ty(result));
                 todo.extend(params.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
@@ -779,11 +836,118 @@ impl Resolver {
                 lower,
                 upper,
                 result,
-            } => todo.extend([result, upper, lower].map(|t| Task::Ty(t))),
+            } => {
+                self.arrows.push(t.span);
+                todo.push(Task::ArrowEnd);
+                todo.extend([result, upper, lower].map(|t| Task::Ty(t)));
+            }
             TypeKind::Apply(..) => self.later(t.span, "an applied type", "L2.5"),
             TypeKind::AtomApply(..) => self.later(t.span, "an atom type with a payload", "L2.5"),
             TypeKind::Record(_) => self.later(t.span, "a record type", "L2.5"),
             TypeKind::Array(_) => self.later(t.span, "a family type `[T]`", "L3.2"),
+        }
+    }
+
+    /// A use of the bounded type variable `n` at `span`. Its bound is a bound of the outermost
+    /// function type inside its clause that holds it, where a call binds it (DESIGN.md
+    /// sec:type_language), so every use stands in that one function type.
+    fn type_var(&mut self, n: &str, span: Span) {
+        let var = self.tvars.get_mut(n).expect("a bounded variable");
+        let home = self.arrows.get(var.depth).copied();
+        let first = var.first;
+        if first.is_none() {
+            var.first = Some((span, home));
+        }
+        let message = match (home, first) {
+            (None, _) => format!(
+                "the bounded variable `{n}` stands outside a function type: its bound is a \
+                 function type's, which a call binds"
+            ),
+            // The first use was outside one, and is reported.
+            (Some(_), Some((_, None))) => return,
+            (Some(h), Some((_, Some(f)))) if h != f => format!(
+                "the bounded variable `{n}` stands in two function types: its bound is the bound \
+                 of one function type, which a call binds"
+            ),
+            _ => return,
+        };
+        let mut notes: Vec<Note> = first
+            .map(|(s, _)| Note {
+                span: s,
+                text: format!("the first use of `{n}`"),
+            })
+            .into_iter()
+            .collect();
+        notes.extend(home.or(first.and_then(|(_, h)| h)).map(|f| Note {
+            span: f,
+            text: "the function type that holds a use".into(),
+        }));
+        self.errors.push(Error {
+            row: None,
+            span,
+            message,
+            notes,
+        });
+    }
+
+    /// The end of the type `ty` of a bounds clause: each variable of `fresh` leaves scope, and
+    /// one the type does not hold is an error.
+    fn for_end(&mut self, ty: &Type, fresh: Vec<&TypeBound>) {
+        for b in fresh {
+            let var = self.tvars.remove(&b.name).expect("bound above");
+            if var.first.is_none() {
+                self.errors.push(Error {
+                    row: None,
+                    span: b.span,
+                    message: format!(
+                        "the bound names `{}`, which the type before `for` does not hold",
+                        b.name
+                    ),
+                    notes: vec![Note {
+                        span: ty.span,
+                        text: "the type".into(),
+                    }],
+                });
+            }
+        }
+    }
+
+    /// The bound `t` of the type variable `v`: a union of carriers. Unions nest as deep as the
+    /// text, so the parts still to read wait on a stack, in written order.
+    fn carriers(&mut self, v: &str, t: &Type) {
+        let mut todo = vec![t];
+        while let Some(t) = todo.pop() {
+            self.carrier(v, t, &mut todo);
+        }
+    }
+
+    /// One part `t` of the bound of `v`; the parts of a union go to `todo`.
+    fn carrier<'t>(&mut self, v: &str, t: &'t Type, todo: &mut Vec<&'t Type>) {
+        match &t.kind {
+            TypeKind::Name(n) if CARRIERS.contains(&n.as_str()) => {
+                self.out.uses.insert(t.span, Ref::Prelude(n.clone()));
+            }
+            TypeKind::Union(ts) => todo.extend(ts.iter().rev()),
+            kind => {
+                let what = match kind {
+                    TypeKind::Name(n) if self.tvars.contains_key(n) => {
+                        format!("`{n}` is a type variable")
+                    }
+                    TypeKind::Name(n) => format!("`{n}` is no carrier"),
+                    TypeKind::Atom(a) => format!("`#{a}` is an atom, no carrier"),
+                    _ => "this type is no carrier".into(),
+                };
+                self.errors.push(Error {
+                    row: None,
+                    span: t.span,
+                    message: format!(
+                        "the bound of `{v}` is not a union of carriers: {what}; the carriers are \
+                         {}",
+                        CARRIERS.join(", ")
+                    ),
+                    notes: Vec::new(),
+                });
+            }
         }
     }
 }
@@ -816,4 +980,8 @@ enum Task<'a> {
     Member(Span, &'a str),
     /// The end of the innermost scope.
     Close,
+    /// The end of a function type, which is no longer open around the place.
+    ArrowEnd,
+    /// The end of the type of a bounds clause, whose variables are the bounds listed.
+    ForEnd(&'a Type, Vec<&'a TypeBound>),
 }

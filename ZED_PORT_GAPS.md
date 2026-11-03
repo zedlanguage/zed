@@ -1151,3 +1151,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A `match` arm guarded by `if let … && let …` on a divisor that is a kept power of 2 and on the dividend's shift by its exponent (`Kept::shr`, `None` when no term has that power as a factor) | `Num::div_floor` | None | An `is` test and the shift before the `match`, falling through to it when either is absent |
 | A struct declared inside a function, `Part<'a>`, whose odd atoms borrow the exponents of the kept form | `Kept::trailing_zeros` | None | A record of the function's own module; the exponents are shared values, not borrows |
+
+## Entries from TYPE-forms (`zedc/src/check/mod.rs`, `resolve.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap` of the clauses' variables, each entry saved on entering a clause and restored on leaving it, and a stack of open function types whose bound maps are filled in place by the uses below them | `check::Denote`, `resolve::Resolver::type_var` | Mutation | The clause map passed down as a persistent map argument, and each denotation returning, with its type, the bounds of the variables it uses keyed by the depth of their clause, merged at each function type |
+| A `HashMap<&str, Vec<usize>>` of the argument positions of each bounded variable, keyed by borrowed names and emptied by `remove` as each variable is read | `check::Checker::apply_one` | Mutation | A persistent map folded over the arguments, looked up per variable |

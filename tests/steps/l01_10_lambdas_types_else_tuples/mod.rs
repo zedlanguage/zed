@@ -14,7 +14,7 @@ use zedc::parse::{TOP, parse};
 
 /// The s-expression of the expression `text`, or its error: `error: …`, or `syntax` when it
 /// does not parse.
-fn sx(text: &str) -> String {
+pub(crate) fn sx(text: &str) -> String {
     let tokens = lex(text).unwrap();
     match parse(text, &tokens, "Expr", TOP) {
         Err(_) => "syntax".into(),
