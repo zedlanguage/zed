@@ -249,8 +249,11 @@ impl<'t, 'a> Walk<'t, 'a> {
             StmtKind::IndexedDef(d) => {
                 self.root(&d.value, Label::Other);
             }
-            StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) | StmtKind::Import(_) => {
-            }
+            StmtKind::Struct(_)
+            | StmtKind::Type(_)
+            | StmtKind::Method(_)
+            | StmtKind::Import(_)
+            | StmtKind::UnitAnnot(_) => {}
         }
     }
 
