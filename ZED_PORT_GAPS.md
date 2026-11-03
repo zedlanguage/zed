@@ -643,6 +643,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `thread_local!` record of the text being made, read by a recursive `show` that returns a placeholder for a missing text, and a drop guard that clears it on a panic | `Type::rope`, `make_rope`, `SHOWING`, `EndShowing`, `Rec::naming` (a recursive type's name, made as an item of the same loop) | Mutation, global state | A fold over the types in postorder that passes the map of texts along |
 | `OnceLock::set` from a loop outside the cell's own initializer | `make_rope` | Lazy cells (gap 3) | The map of texts from the row above |
 
+## Entries from T2-mid (`zedc/src/resolve.rs`, `elab.rs`, `canon/`, `stage.rs`, `zed-kernel/src/term.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An enum of frames borrowing the input (`Job<'t>`, `Walk<'t>`, `Mix<'t>`) on a `Vec`, with a second `Vec` of results that a frame drains the last `k` of (`Vec::drain(len - k..)`) | `canon::binders::Levels::term`, `set_binds`, `stage::ends`, `Mixer::mix` | Mutation | A state receiver holding the two lists, as for the evaluator's machine |
+| Children pushed in order, then the pushed range reversed in place (`todo[start..].reverse()`), with a frame's count patched after the push | `canon::binders::Levels::term`, `each_binder`, `serial::Out::write`, `stage::ends`, `Mixer::enter` | Mutation | Build the list of children, then prepend it reversed |
+| `impl Drop` taking a `thread_local!` `Cell<Vec<Term>>` as its stack and putting it back, so a drop reuses its capacity | `zed_kernel::term` | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
+| `Arc::get_mut` with `mem::replace` to take a part out of a uniquely held node | `Term::take_parts` | Identity, mutation | Removed with the drop above |
+
 ## Entries from L2.1 (`zedc/src/ast/`, `format.rs`)
 
 | Rust construct | Sites | Gap | At the port |
