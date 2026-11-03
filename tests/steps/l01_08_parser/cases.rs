@@ -1,5 +1,4 @@
-//! The bracketing cases of the spec's `tools/grammar/cases.txt`, copied into
-//! `zed/grammar/cases.txt`: each line is `Rule[@ring] ::: text ::: tree`, and a tree of
+//! The bracketing cases of `zed/grammar/cases.txt`: each line is `Rule[@ring] ::: text ::: tree`, and a tree of
 //! `ERROR` means the text must not parse.
 
 use std::path::Path;
@@ -105,11 +104,8 @@ fn the_copies_match_the_spec_where_it_is_present() {
         }
     }
     let read = |f: &str| std::fs::read_to_string(grammar_dir().join(f)).unwrap();
-    let stale = "zed/grammar is out of date: run tools/bin/sync.dart";
+    let stale = "zed/grammar is out of date: run the sync tool";
+    assert_eq!(read("lexical.peg"), pegs[0], "{stale}");
     assert_eq!(read("syntax.peg"), pegs[1], "{stale}");
     assert_eq!(read("notation.peg"), pegs[2], "{stale}");
-    for copy in ["cases.txt", "leftrec.txt"] {
-        let want = std::fs::read_to_string(spec.join("tools/grammar").join(copy)).unwrap();
-        assert_eq!(read(copy), want, "{stale}");
-    }
 }

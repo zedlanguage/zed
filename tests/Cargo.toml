@@ -41,6 +41,8 @@ full = []
 [dependencies]
 insta.workspace = true
 zedc.workspace = true
+zed-corpus-ref.workspace = true
+zed-tools.workspace = true
 zed-kernel.workspace = true
 zed-native.workspace = true
 zed-rt.workspace = true

@@ -1,4 +1,4 @@
-# Left-recursive rules, parsed by the reference parser (bin/cases.dart) and by the compiler's
+# Left-recursive rules, parsed by the reference parser (the `cases` tool) and by the compiler's
 # parser: the grammars of the Squirrel paper's figure of left recursion types, and the cases
 # where seed growing meets lookahead, layers, `head`, and error reports.
 #

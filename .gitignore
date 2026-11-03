@@ -25,6 +25,3 @@ flamegraph.svg
 *.swo
 *~
 .DS_Store
-
-# Dart.
-/tools/.dart_tool/

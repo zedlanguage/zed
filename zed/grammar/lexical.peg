@@ -1,0 +1,28 @@
+Source        = (Space | Comment | Token)* !ANY                                   L1
+Space         = [ \t\r\n]+                                                         L1
+Comment       = '//' (!'\n' ANY)* | BlockComment                                   L1
+BlockComment  = '/*' (BlockComment | !'*/' ANY)* '*/'                              L1
+Token         = Number | String | AtomLit | AnnotLit | Keyword | Wildcard | Ident | Operator   L1
+
+Number        = (Rational | Float | Integer) !XID_CONTINUE                         L1
+Rational      = (Float | Decimal) 'r'                                              L1
+Float         = Decimal '.' Decimal Exponent? | Decimal Exponent                   L1
+Exponent      = [eE] [+\-]? Decimal                                                L1
+Integer       = '0x' Hex ('_'? Hex)* | '0o' [0-7] ('_'? [0-7])* | '0b' [01] ('_'? [01])* | Decimal   L1
+Hex           = [0-9a-fA-F]                                                        L1
+Decimal       = [0-9] ('_'? [0-9])*                                                L1
+
+String        = '"""' (!'"""' Char)* '"""' | '"' (!'"' !'\n' Char)* '"'            L1
+Char          = Escape | Hole | !('\\' | '${') ANY                                 L1
+Escape        = '\\' ([ntr0\\"$] | 'u{' Hex+ '}')                                  L1
+Hole          = '${' HoleText '}'                                                  L1
+HoleText      = (String | Comment | '{' HoleText '}' | !'}' ANY)*                  L1
+
+AtomLit       = '#' Name                                                           L1
+AnnotLit      = '@' Name                                                           L1
+Keyword       = KeywordWord !XID_CONTINUE                                          L1
+KeywordWord   = 'struct' | 'type' | 'interface' | 'grammar' | 'matching' | 'import' | 'asc' | 'as' | 'into' | 'local' | 'for' | 'in' | 'not' | 'loop' | 'until' | 'while' | 'break' | 'match' | 'if' | 'else' | 'is' | 'mutable' | 'positional' | 'with' | 'return' | 'test' | 'law' | 'proof' | 'emit' | 'this' | 'desc' | 'div' | 'mod' | 'true' | 'false' | 'unordered'   L1
+Wildcard      = '_' !XID_CONTINUE                                                  L1
+Ident         = Name                                                               L1
+Name          = (XID_START | '_' &XID_CONTINUE) XID_CONTINUE* "'"?                 L1
+Operator      = '->?' | '->' | '...' | '..<' | '..=' | '..' | '?.' | '*.' | '**' | '++' | '<-' | '<=' | '>=' | '><' | '==' | '!=' | '&&' | '||' | '::' | [+\-*/<>=!&|\\:,;.?()\[\]{}]   L1

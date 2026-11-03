@@ -213,6 +213,7 @@ LR2 added 23 tests to `l01_08_parser`, so the steps binary has 985. `tools/run_t
 | L1.39 | done | `zedc::store::product::{Product, Scope, arms, forward}`: the reduced product of the cell, the type and the binding time, with the scope's linear relation and written constraints; `Scope::reduce` until a round changes nothing (docs/thresholds.md 3); enumeration of a name whose finite set lists its integers, each evaluation admitted by `stage::ends` and run with no fuel (docs/thresholds.md 8); `Scope::assume` narrows by a test's preimage, relation, congruence and literal equality. Tests: the design's arms (`n` in `1..=9`; an unreachable arm accepted; a static `if` read as static); negated equality by complement; a two-name relation; binding times; each reduction alone, a listed set enumerated and the same range not, a constraint whose form does not show it ends removing nothing; 300 random bodies checked against the interpreter at every point of a window. |
 | LR1 | done | `zedc::parse` and `tools/grammar/lib/check.dart` grow a left-recursive rule by the Squirrel parser's algorithm, without its error recovery: a memo entry with `in_path`, `left_rec`, `reads_seed` and a version, a version per token that only an entry with `reads_seed` consults, and a loop that keeps only a longer match. `parse_with` parses by any `Grammar`. `tools/grammar/leftrec.txt` (85 cases over grammars of their own, copied to `zed/grammar/`) runs in both parsers. The grammar itself is not changed: that is LR2. |
 | LR2 | done | sec:grammar is rewritten: a left-associative operator is a left-recursive rule (Or, And, Additive, Multiplicative, Postfix, Reduce, Path, KeyPath, TypePostfix, TypeAnd, TypeOr, TypeDiff), an alternative that only passes a rule on is marked `~R` and leaves no node, and each form is a rule of its own. A parse gives 2.6 times fewer nodes. `zedc::ast` dispatches on rule names, not alternative numbers, and walks a chain by `spine`, without recursion. `layer.dart` reads rule names too. Grammar tools: check OK, 324 bracketing cases and 85 left-recursion cases, fuzz 0 failures; the ring histogram is unchanged. Messages name the form (`Decl` became `Struct`, `Local` and others); `({ x })` now reports L3, its true layer, not L2. COMPLEXITY.md F36 |
+| DART-RS | done | `crates/zed-tools` (`check`, `cases`, `fences`, `fuzz`, `layer`, `ring`, `audit`, `sync`, `progress`) over `zedc::parse`, and `zed/corpus/ref` (31 programs and their runtime, no compiler dependency). Byte-identical to the Dart tools on the spec and on 12 broken specs, apart from the differences listed in the notes below; 3982 reference runs agree with Dart. References 04, 07, 15, 27, 31 and 02, 05, 16 rewritten after review to be linear with no recursion on input. `sync` also copies the lexical grammar and the desugaring rules. Tests `m0_03_grammar_tools`, `m0_04_corpus_references`; COMPLEXITY.md F37. All Dart removed from both repositories. |
 | M0.4 | done | `zed/corpus/`: 31 programs with inputs, outputs and Python reference scripts (`refcheck.sh`, run in CI). The layer checker is the spec's `tools/grammar/layer.py`; every label equals its enabled layer, and the four negative controls fail. Four ledger descriptions corrected in the spec (programs 6, 8, 13, 19) |
 | M0.9 | done | `zed-kernel`: values, families, terms, exact float sum and canonical tree, big-step evaluator with a world of ports. Done ahead of M0.3–M0.8 because later steps test against it. Its decisions are the "Reference semantics" paragraph of DESIGN.md sec:kernel. Negative controls: disabling the exact sum fails 2 step tests; changing the tree split fails 2 unit tests |
 | T13 | done | `ZED_PORT_GAPS.md`: audit of all Rust against DESIGN.md at f425b32 (32,508 code lines), twelve gaps with sites, counts, classes and proposed fixes, and an appendix of counts by construct. Documentation only, so no step tests, scaling test or COMPLEXITY.md row. It contradicts `zed/compiler/ZED0.md` "Gaps found" (one gap); step S.1 should take its list from this file. The file import graph has 3 cycles and 5 parent/child groups (gap 10): five are fixed by moving definitions, and three need files merged, since their recursive types or functions must share a unit. The scanners are not committed, so the counts cannot be reproduced from the repository. Spec proposals in it are the author's call and are not in DESIGN.md |
@@ -231,16 +232,49 @@ LR2 added 23 tests to `l01_08_parser`, so the steps binary has 985. `tools/run_t
 - Language tests: `tests/steps/<step>/`, all in one test binary. Unit tests of internal
   functions: `#[cfg(test)]` beside the code.
 - Fences: CI must not read the spec repository (the author's instruction, 2026-10-29).
-  `tools/bin/sync.dart`, run by hand, copies the fences into `zed/fences/design.md` and
-  `examples.md`, each under a header with its source line and layer; `sync.dart --check` exits
+  The `sync` tool, run by hand, copies the fences into `zed/fences/design.md` and
+  `examples.md`, each under a header with its source line and layer; `sync --check` exits
   1 when a copy is stale, and the step test `the_copies_match_the_spec_where_it_is_present`
   compares the texts where `../zed` exists (it passes without checking in CI).
-- No Python (the author's instruction, 2026-10-31). The helper commands are the Dart package
-  `tools/` (`tools/bin/{sync,audit,progress,sizes}.dart`), the spec's grammar
-  tools are the Dart package `zed/tools/grammar` of the spec repository, and the corpus
-  reference scripts are `zed/corpus/ref/NN.dart`; CI installs Dart for `refcheck.sh`. Each
-  printed the same output as the Python it replaced on every committed input. Step rows and
-  notes above that name a `.py` file record what was built at the time.
+- No Python and no Dart (the author's instructions, 2026-10-31 and DART-RS). The tools are the
+  binaries of the crate `crates/zed-tools`, each taking the spec directory as its first
+  argument, run as `cargo run -q -p zed-tools --bin TOOL -- ../zed ...`: `check`, `cases`,
+  `fences`, `fuzz`, `layer`, `ring`, `audit`, `sync`, `progress`. They share the grammar rules
+  and the engine of `zedc::parse`. The corpus references are the crate `zed/corpus/ref`
+  (`ref NN INPUT`, `ref --write`), which depends on no compiler crate; the step test
+  `m0_04_corpus_references` compares every `.out` with it in the local suite, so CI needs no
+  other language.
+- Where the Rust tools differ from the Dart ones they replaced (DART-RS). On the spec, 12
+  broken specs and fuzz seeds the output was byte-identical except as listed. A hole failure now
+  gives the hole parser's position in the hole's own tokens; Dart set it against the outer
+  tokens, and a lexical error in a hole crashed it. `progress` with no sec:steps refuses with exit
+  status 1; Dart rewrote PROGRESS.md with 0/0 and exit status 0. Identifiers follow the
+  `unicode-ident` crate, as the compiler does; the Dart tables were an older Unicode, with 17.5k
+  code points Dart refused and the crate accepts. A duplicate rule across the syntax and
+  documentation grammars is an error (Dart overrode it silently), `audit` passes on the exit
+  status of `layer` (Dart dropped it), a crash exits 1 (Dart 255), `check` reads fences from its
+  spec argument (Dart from the package root), and `fuzz` computes depths by Knuth's generalization
+  of Dijkstra's algorithm (Dart ran a fixed 60 passes). `sync` no longer copies `cases.txt` and
+  `leftrec.txt`.
+- The references against Dart: 3982 runs agree on the first rewrite and 1011 random runs on the
+  second, with these exceptions, none of them a different answer. Reference 16 on a tick near 1e20
+  hit the timeout of the comparison on one side, so that point was not compared. On a cycle, 15 and 27 give an
+  error where Dart overflowed its stack or hung (39 of 150 random inputs to 27 hung). The second
+  rewrite (04, 07, 15, 27, 31 and 02, 05, 16) also agrees with the first on 13800 random and
+  mutated inputs and 1800 well-formed typechecker inputs.
+- No reference recurses on its input now, and the tools parse with the iterative machine of
+  `zedc::parse`, generic over its input, so `on_large_stack` is gone from both crates and a deep
+  program runs through `ring`, `layer` and `check` on a 2 MiB stack. The tools still recurse over
+  the grammar's text (`Reader`, `Expr`'s `Drop` and `Clone`, `fuzz`'s walks of rules), which is
+  bounded by the nesting of the spec's own rules, not by a program. A `%` in the grammar copies
+  its operand, so nested `%` doubles per level; the spec does not nest it. Reference 13 allocates by a node number in its input, and 16 and 26
+  loop over a tick or step count in their input, as Dart did: their cost follows a value, not a
+  length. References 12, 14 and 15 no longer repeat their corpus programs' algorithms: 12 is one
+  pass with a stack, O(n); 14 keeps a distance matrix and each cluster's nearest, O(n²); 15 applies
+  an edit only to the cells that depend on it, by change in value. Each was compared with the Dart
+  program on 2000 random inputs (0 differences, apart from a count of clusters near -1e24, where
+  the earlier Rust panicked, Dart crashed and 14 now gives an error) and on sized inputs.
+  Step rows and notes above that name a `.py` or `.dart` file record what was built at the time.
 - The reference evaluator computes integers in `i64` and widens to a big integer instead of
   overflowing; a number past 2^20 bits is its `Overflow` error (L1.17). It has no fuel unless
   a caller sets one (docs/thresholds.md 8), and no limit on nested calls: its frames are on the heap (T2-eval). A divergent program

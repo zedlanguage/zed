@@ -1,4 +1,4 @@
-//! Parse trees printed as the bracketing cases of `tools/grammar/cases.txt` print them.
+//! Parse trees printed as the bracketing cases of `zed/grammar/cases.txt` print them.
 
 use zedc::lex::Token;
 use zedc::parse::Tree;

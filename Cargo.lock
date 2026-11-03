@@ -932,6 +932,15 @@ name = "zed-cert"
 version = "0.0.0"
 
 [[package]]
+name = "zed-corpus-ref"
+version = "0.0.0"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "zed-kernel"
 version = "0.0.0"
 dependencies = [
@@ -973,9 +982,18 @@ dependencies = [
  "perf-event2",
  "rustix",
  "unicode-normalization",
+ "zed-corpus-ref",
  "zed-kernel",
  "zed-native",
  "zed-rt",
+ "zed-tools",
+ "zedc",
+]
+
+[[package]]
+name = "zed-tools"
+version = "0.0.0"
+dependencies = [
  "zedc",
 ]
 

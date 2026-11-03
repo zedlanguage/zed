@@ -6,6 +6,8 @@ members = [
     "crates/zed-rt",
     "crates/zed-cert",
     "crates/zed-native",
+    "crates/zed-tools",
+    "zed/corpus/ref",
     "tests",
 ]
 
@@ -22,6 +24,8 @@ zed-rt = { path = "crates/zed-rt" }
 zed-cert = { path = "crates/zed-cert" }
 zedc = { path = "crates/zedc" }
 zed-native = { path = "crates/zed-native" }
+zed-corpus-ref = { path = "zed/corpus/ref" }
+zed-tools = { path = "crates/zed-tools" }
 insta = "1.49.0"
 rustix = { version = "1.1.6", features = ["time"] }
 perf-event2 = "0.7.4"

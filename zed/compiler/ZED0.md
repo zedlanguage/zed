@@ -11,13 +11,13 @@ freezes this list against the compiler's design and inserts a step for each gap 
 
 ## The audit
 
-`dart ../../tools/bin/audit.dart ../corpus/31-typechecker.zed --checklist ZED0.md`
+`cargo run -q -p zed-tools --bin audit -- ../../../zed ../corpus/31-typechecker.zed --checklist ZED0.md`
 (run by hand, since CI does not read the spec repository, which must be beside this one;
-last run at spec commit 17bd42f, exit status 0, 91 grammar alternatives and 13 words needed,
-none missing). An alternative is needed when program 31's units stop parsing, or parse to a
+last run at spec commit 1f79b05, exit status 0, 118 grammar alternatives and 13 words
+needed, none missing). An alternative is needed when program 31's units stop parsing, or parse to a
 different tree, without it, so the list is exact for the grammar of DESIGN.md sec:grammar.
 `Rule#i` is alternative `i` (from 0) of the rule, in the grammar's order. The words are
-those `layer.dart -v` reports. The indices follow the grammar: after a grammar change, rerun
+those `layer -v` reports. The indices follow the grammar: after a grammar change, rerun
 the audit and update the list.
 
 Negative controls: with the entry for alternative 0 of Loop deleted from this file, the audit
@@ -28,12 +28,12 @@ above Zed₀.
 
 | Layer | Grammar alternatives | Defined words |
 |---|---|---|
-| L1 | `Additive#0` `And#0` `Args#0` `Args#1` `Arrow#1` `AtomPattern#0` `Binding#1` `Block#0` `Body#0` `Body#1` `Decl#11` `Decl#14` `Decl#15` `ElseTail#1` `Equality#1` `Expr#0` `Expr#2` `Expr12#0` `FieldPat#0` `Function#0` `If#0` `Item#3` `Lambda#0` `Literal#0` `Multiplicative#0` `Name#0` `NamedArg#0` `Or#0` `Param#0` `Params#0` `Params#1` `Path#0` `Pattern#1` `Port#0` `PosArg#1` `PosParam#1` `Postfix#0` `Power#0` `Prefix#1` `Primary#0` `Primary#1` `Primary#2` `Primary#5` `Primary#7` `Primary#13` `Push#1` `Range#0` `Reduce#0` `RelTail#0` `RelTail#1` `Relation#2` `Result#0` `Suffix#0` `Suffix#1` `Suffix#2` `Target#0` `Type#0` `TypeAnd#0` `TypeNot#1` `TypeParam#0` `TypePostfix#0` `TypePrimary#1` `TypePrimary#3` `TypeUnion#1` `Unit#0` | `String` |
-| L2 | `Arm#0` `Decl#2` `Decl#3` `Decl#4` `Field#1` `Import#0` `Match#0` `Pattern#2` `Pattern#7` `Primary#8` `Struct#0` `StructField#1` `TypeDecl#0` `TypePrimary#2` | — |
-| L3 | `Binder#0` `For#0` `Generator#0` `InPattern#0` `Primary#9` `Primary#11` `Suffix#5` | `map` `where` `foldl` `split` `concat` |
-| L4 | — | `group` `flatMap` `#collision` |
-| L5 | — | `take` `drop` `last` `rank` |
-| L6 | `Boundary#0` `BoundaryItem#0` `Decl#10` `Loop#0` `Primary#10` | — |
+| L1 | `Additive#0` `Additive#1` `And#0` `And#1` `Args#0` `Args#1` `Arrow#2` `AtomExpr#0` `AtomPattern#0` `AtomType#0` `Binding#1` `Block#0` `Body#0` `Body#1` `CallSuffix#0` `Compare#0` `Decl#11` `Decl#14` `Decl#15` `ElseTail#1` `Equality#1` `Equality#2` `Expr#0` `Expr#2` `Expr12#0` `FieldPat#0` `Function#0` `Group#0` `If#0` `IndexSuffix#0` `IsTest#0` `Item#2` `Lambda#0` `Literal#0` `MemberSuffix#0` `Multiplicative#1` `Name#0` `NamedArg#0` `Or#0` `Or#1` `Param#0` `Params#0` `Params#1` `Path#1` `Pattern#1` `PlainArg#0` `PlainBinding#0` `Port#0` `Ports#0` `PosArg#1` `PosParam#1` `PositionalParam#0` `Postfix#0` `Postfix#1` `Power#1` `Prefix#1` `Primary#0` `Primary#1` `Primary#2` `Primary#5` `Primary#7` `Primary#13` `Push#1` `Range#1` `Reduce#1` `Relation#2` `Relation#3` `Relation#5` `Result#0` `Suffix#0` `Suffix#1` `Suffix#2` `Target#0` `Type#0` `TypeAnd#1` `TypeName#0` `TypeNot#1` `TypeOr#0` `TypeOr#1` `TypeParam#0` `TypePostfix#1` `TypePrimary#1` `TypePrimary#3` `TypeUnion#1` `Unit#0` `WholePush#0` | `String` |
+| L2 | `Arm#0` `AtomApply#0` `Decl#2` `Decl#3` `Decl#4` `Field#1` `Import#0` `Match#0` `NamePat#0` `Pattern#2` `Pattern#7` `Primary#8` `Struct#0` `StructField#1` `TypeDecl#0` `TypePrimary#2` `WildPat#0` | — |
+| L3 | `Binder#0` `For#0` `Generator#0` `InPattern#0` `Primary#9` `Primary#11` `ReadSuffix#0` `SeqExpr#0` `Suffix#5` | `concat` `foldl` `map` `split` `where` |
+| L4 | — | `#collision` `flatMap` `group` |
+| L5 | — | `drop` `last` `rank` `take` |
+| L6 | `Boundary#0` `BoundaryItem#0` `Decl#10` `Loop#0` `Primary#10` `Until#0` | — |
 
 Program 31 also needs two things no parser sees: general recursion through named functions
 (its evaluation of the recursive union `Expr`), which is the definedness `fix` of step L6.4,

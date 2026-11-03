@@ -102,7 +102,7 @@ fn ellipsis_is_an_elision_only_in_a_fence() {
 }
 
 /// The copies equal the spec's fences, where the spec repository is beside this one (it is not
-/// in CI). Layers are not compared: `tools/bin/sync.dart --check` recomputes them with the
+/// in CI). Layers are not compared: `sync --check` recomputes them with the
 /// spec's tools.
 #[test]
 fn the_copies_match_the_spec_where_it_is_present() {
@@ -124,9 +124,6 @@ fn the_copies_match_the_spec_where_it_is_present() {
             .into_iter()
             .map(|f| (f.at, f.text))
             .collect();
-        assert!(
-            ours == theirs,
-            "{copy} is out of date: run tools/bin/sync.dart"
-        );
+        assert!(ours == theirs, "{copy} is out of date: run the sync tool");
     }
 }

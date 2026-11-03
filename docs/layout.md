@@ -13,16 +13,19 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
                       interpreter, ZIR, code generation, and the `zedc` command
   zed-rt/             the runtime that native code links against
   zed-cert/           the independent certificate checker; depends on zed-kernel only
+  zed-tools/          the commands: check, cases, fences, fuzz, layer, ring, audit, sync,
+                      progress; each takes the spec directory, and shares `zedc::parse`
 zed/                  Zed source code
   prelude/            the normative prelude (from step M0.5)
   corpus/             the 31 corpus programs (step M0.4): NN-name.zed with its .in and .out,
                       a folder NN-name/ for the other units of a multi-unit program,
-                      ref/NN.dart computing each .out, variants/, controls/, LEDGER.md
+                      ref/, the crate zed-corpus-ref computing each .out, variants/, controls/,
+                      LEDGER.md
   compiler/           the compiler written in Zed (row S); empty until then
   grammar/            the syntactic grammar of sec:grammar and its bracketing cases (step
-                      L1.8), written by tools/bin/sync.dart
+                      L1.8), written by the sync tool
   fences/             the spec's `zed` fences (step L1.7): design.md and examples.md, written
-                      by tools/bin/sync.dart, and variants/, one fixture per commented ✗ variant
+                      by the sync tool, and variants/, one fixture per commented ✗ variant
 tests/                the step tests (the `zed-tests` crate)
   src/                helpers shared by every step
   steps/main.rs       declares one module per step, in plan order
@@ -31,8 +34,7 @@ tests/                the step tests (the `zed-tests` crate)
   full/<step>/        tests of a step that need outside tools, listed in the folder's file
                       `needs`; run by tools/run_tests.sh --full
 docs/                 documentation of the implementation
-tools/                helper commands, a Dart package: tools/bin/sync.dart, audit.dart,
-                      and progress.dart
+tools/                run_tests.sh and fetch_test_deps.sh
 build/                every generated file; ignored by git
 STATUS.md             progress and handoff notes
 ZED_PORT_GAPS.md      what the Rust relies on that Zed lacks; each step adds to it

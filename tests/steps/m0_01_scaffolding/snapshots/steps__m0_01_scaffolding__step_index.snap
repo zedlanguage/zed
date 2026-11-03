@@ -42,6 +42,8 @@ l01_37_oracle
 l01_38_presburger
 l01_39_reduced_product
 m0_01_scaffolding
+m0_03_grammar_tools
+m0_04_corpus_references
 m0_05_widening_and_iteration
 m0_06_cost_scalarization
 m0_07_canonicalization

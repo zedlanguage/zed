@@ -1,0 +1,169 @@
+Unit          : the bindings of its items as one environment (sec:units); a unit is that environment, not a term
+Name          : a variable, resolved to its binding site
+Item          : the declaration of its alternative
+Annotated     : ⟦Decl⟧ with each annotation recorded on the declaration
+UnitAnnot     : annotates the enclosing unit
+Annot         : an annotation record whose arguments are compile-time-stage values (sec:staging)
+Decl          : the declaration or statement of its alternative
+Local         : ⟦D⟧ visible in its unit only
+Mutable       : declares a generation variable of the enclosing loop
+Return        : the result tuple(⟦e1⟧, …), or ⟦e1⟧ alone
+Emit          : adds ⟦e⟧ at the body's next emission rank, so a body with emits is the family {0 -> ⟦e0⟧, 1 -> ⟦e1⟧, …}
+While         : the guard of the enclosing loop's gen, tested before its step
+Until         : the guard of the enclosing loop's gen, tested after its step
+ExprStmt      : writes the generations `e` writes and drops its value
+Import        : binds the listed names, or the unit under its name or alias, to bindings the unit at Path exports, checked against the Pin when one is given; no term
+Path          : a qualified name, resolved to a unit or a binding
+Pin           : the BLAKE3-256 content address the imported unit must have (step M0.7)
+Struct        : a record type, and its constructor λ(f1, …). {#f1 -> f1, …}, a family keyed by field atoms; the grammar form also derives the struct's parser and printer (sec:tour_grammar)
+StructField   : a field, with its default as the constructor's default argument
+Field         : a field name and type; `import P` copies the fields of P
+TypeDecl      : binds a type name, with its parameters, in the type environment; the atoms of a named atom family are data (sec:failure); no term
+TypeParams    : the type parameters of a declaration
+Interface     : a record type of fields and law members; a value ascribed to it carries the laws as obligations (sec:theories)
+Member        : a field; `law` an obligation over the fields; `import P(T, …)` copies P's fields and law members at those arguments
+Law           : the obligation ∀ params. ⟦e⟧, discharged by the ladder or by its proof (sec:verification); no run-time term
+Function      : binds the name to λ(params). ⟦Body⟧; a function whose body reads its own name, or a name of its recursive group, is the definedness fix over its parameter domain, evaluated on demand (L6)
+Method        : the function T.f with the receiver `this: T` as its first positional parameter
+Params        : the λ's parameters in order, each with its kind and default recorded for the elaborator
+PosParam      : a positional parameter
+TupleParam    : `(a, b)` is a fresh parameter p with `let a = p[0]`, `let b = p[1]` in the body
+PositionalParam : a parameter passed by position, its default filled at saturated calls that omit it
+Param         : a named parameter, its default filled at saturated calls that omit it
+Result        : the output of a function
+Ports         : declares output ports, each written by push
+ResultType    : declares the result type
+Port          : an output port's name and type
+Body          : the λ body ⟦e⟧ or ⟦Block⟧; trailers add no term
+Trailer       : the trailer of its alternative
+TestTable     : a list of test cases
+TestCase      : `a -> b` asserts ⟦f(a)⟧ == ⟦b⟧ for the enclosing f, run by `zed test` (step L1.21); for `main`, that a wave reading the ports ⟦a⟧ writes the bytes ⟦b⟧
+Proof         : a derivation checked by the proof checker (sec:verification); no run-time term
+IndexedDef    : `f[i in D] = e` is fam(⟦D⟧, i -> ⟦e⟧) when e does not read f, the definedness fix(⟦D⟧, step, ev) with `this` = f when it does, and gen when the reads are one step back in a time order (sec:generations); several `[ ]` nest; the boundary's entries are defined before the first round
+IndexKey      : `i in D` binds i over the keys of ⟦D⟧; an expression is the key of one case of a piecewise definition
+Push          : a push
+KeyedPush     : writes ⟦e⟧ at keypath ⟦k⟧ of a keyed accumulator, whose writes at one keypath are folded by its reducer
+WholePush     : push(p, ⟦e⟧)
+Binding       : the binding of its alternative
+TypedBinding  : `x: T = e` is PlainBinding's `x = e`, also checking e against T
+PlainBinding  : `x = e;` is let x = ⟦e⟧ over the block, in dependency order; `a, b = e` is let t = ⟦e⟧ with a = t[0], b = t[1], and `_` binds nothing; a boundary gives the entries before generation 0
+Target        : a bound name, or `_`, which binds nothing
+Boundary      : the entries a generation variable or indexed definition holds before its first step or round: the init of its gen, or entries defined before a fix's first round
+BoundaryItem  : one boundary entry, `x[-1] = e`
+Signature     : the type of a name with no definition, a foreign function (sec:ffi) or a declared accumulator; no term
+Expr          : ⟦Lambda⟧, ⟦Break⟧ or ⟦Expr12⟧
+Break         : ends the enclosing gen: the step's guard returns #break(⟦e⟧) and the loop's result is ⟦e⟧
+Lambda        : λ(params). ⟦body⟧, each parameter's kind taken from the expected function type (sec:power)
+Expr12        : the else tails applied left to right to ⟦Or⟧
+ElseTail      : `e else d` is match ⟦e⟧ { a -> ⟦d⟧ for each loose atom member a of e's type, x -> x }; `e else P -> d` is match ⟦e⟧ { P -> ⟦d⟧, x -> x }
+Or            : `a || b` is if(⟦a⟧, true, ⟦b⟧), left to right
+And           : `a && b` is if(⟦a⟧, ⟦b⟧, false), left to right
+Equality      : `a == b` and `a != b` are the primitives eq and ne
+EqChain       : `a == b == c` is let t = ⟦b⟧ in (⟦a⟧ == t) && (t == ⟦c⟧), and in a proof the #chain derivation of its links
+Relation      : the comparison of its alternative
+AscChain      : a chain of `<` and `<=`, as in EqChain
+DescChain     : a chain of `>` and `>=`, as in EqChain
+Compare       : the primitives lt, le, gt and ge
+IsTest        : the type test of ⟦e⟧ against T, a bool
+InTest        : `e in D` is match get(⟦D⟧, ⟦e⟧) { #notFound -> false, _ -> true }, and `not in` its negation
+Reduce        : the tails applied left to right to ⟦Range⟧
+ReduceTail    : `F >< op` is fold(⟦F⟧, ⟦op⟧, ev) with the evidence the checker attaches (sec:reduction); `as (p)` names the levels of ⟦F⟧ and `into (q)` is the reindex its output pattern builds, with a fold for each level collapsed by `><` (sec:remap_law); `with { u, … }` is discard(⟦F⟧, keep all but the updated keypaths) ⊎ the updated entries; `with f(…)` attaches a facet (sec:facets), adding its failure members and leaving the term unchanged
+Unordered     : the fold's evidence permits any grouping and order (sec:reduction)
+Range         : `a ..< b`, `a ..= b` and `a ..` are the domains {a, …, b−1}, {a, …, b} and {a, a+1, …}, built by the primitive range; an unbounded domain is read only by generators that stop
+RangeTail     : the upper end of a range, exclusive, inclusive or absent
+Additive      : the primitives add and sub; `++` joins strings, and on Seq is the right operand reindexed by rank + count(⟦a⟧) unioned with ⟦a⟧ (L5)
+Multiplicative: the primitives mul, div, intDiv and mod
+Prefix        : the primitives neg and not
+Power         : the primitive pow, right-associative
+Postfix       : the suffixes applied left to right to ⟦Primary⟧
+Suffix        : the suffix of its alternative, over its receiver x
+CallSuffix    : the application with its arguments in parameter order, defaults filled and `...` a λ over the parameters left out
+IndexSuffix   : get on a family, application on a function, tupleGet on a tuple
+MemberSuffix  : get(x, #n) where x's type guarantees the field n, else the application n(x, …)
+SafeSuffix    : match ⟦x⟧ { a -> a for each atom member a, v -> ⟦v.n⟧ }
+SpreadSuffix  : the method call that writes the receiver's next generation
+ReadSuffix    : a compile-time read replaced by the value it denotes, except the run-time reads (sec:property_tracking)
+Update        : one keypath and its new value in a `with { }` update
+KeyPath       : the keypath of a `with { }` update, of fields and keys
+FacetCall     : a facet record name(args), its arguments compile-time-stage
+Args          : the arguments, resolved by the call rules (sec:power) to positional kernel arguments
+NamedArg      : the argument of the named parameter; `name:` alone is `name: name`
+PosArg        : the positional argument of its alternative
+SortArg       : a sort key
+PlainArg      : a positional argument
+Primary       : the primary of its alternative
+AtomExpr      : a literal term
+This          : the receiver, or the family a definedness fix defines
+OpFunction    : the primitive as a function
+Group         : ⟦e⟧
+TupleExpr     : the primitive tuple
+SeqExpr       : the Seq {0 -> ⟦e0⟧, …}
+HoleExpr      : a hole, reported, whose term is #hole
+Literal       : the literal value; a float literal rounds once to the nearest double
+BinOp         : the operator's primitive as a function; `&&` and `||` are λ(a, b). ⟦a && b⟧ and λ(a, b). ⟦a || b⟧
+Block         : its bindings as lets in dependency order (statement order has no meaning), over the final expression or the return tuple
+Display       : `{ n: e, … }` is the record {#n -> ⟦e⟧, …}, `n:` alone is `n: n`; `{}` the empty family; `{ k -> v, … }` the family of those entries, a repeated key being a collision; `{ k, … }` the set of those keys
+Entry         : one entry of a display
+If            : if(⟦c⟧, ⟦a⟧, ⟦b⟧)
+Match         : match ⟦e⟧ { ⟦arm⟧, … }, first arm first, exhaustiveness checked by the elaborator
+Arm           : `p -> e` is the kernel arm; `p where g -> e` is `p -> if(⟦g⟧, ⟦e⟧, r(x))` with r the match of the remaining arms as a λ applied to the scrutinee x; a pattern the kernel lacks is a Bind with that guard
+For           : fam(⟦D⟧, k -> ⟦body⟧) over the generator's levels, with `where g` a discard of the entries where g is false and an emission level for a body with emits; several generators nest left to right (L5)
+MoreGen       : an inner generator, nested in the previous one
+Generator     : binds the InPattern to the levels of ⟦D⟧: `k in D` its keys, `k -> v in D` its keys with v = get(⟦D⟧, k), deeper levels nested
+Loop          : gen(init, step, guard): init the frame of the generation variables' boundaries, step the λ from a frame to the frame of primed values, the guard from `while`, `until` and `break`; a loop of monotone inflationary steps on a lattice of finite height is the lattice fix (sec:generations)
+Pattern       : the pattern of its alternative
+RangePat      : a Bind x with the guard a <= x && x < b
+WildPat       : the kernel wildcard pattern
+IsPat         : a Bind n with the guard n is T
+CtorPat       : a Bind with S's type test and the guards of its field patterns
+TuplePat      : the kernel tuple pattern
+NamePat       : the kernel Bind pattern
+AtomPattern   : the kernel atom pattern, payload patterns by position, or by name in field order
+FieldPat      : the pattern of a named payload or struct field; `name:` alone is `name: name`
+SignedLit     : a literal pattern
+InPattern     : the binders of a generator's levels, outermost first
+Binder        : a bound name, or `_`
+OutPattern    : the output keypath of an `into`, the key map of its reindex level by level
+Level         : one output level: several sort keys are one rank level; `asc k` or `desc k` a rank level; `k >< op` a fold of the level k collapses
+SortKey       : a rank by the key, ascending or descending
+JoinTerm      : a join region (sec:joins): `&&` inner, `||` outer, `&& ?` left, `&& !` difference, `==` an equality assertion; a discard over the union of the operands' keyspaces
+KeyTerm       : a key, or a parenthesized join term
+JoinExpr      : a parenthesized boolean expression in key position, which is a key and not a region
+Key           : a key expression over the source's level names; `_` the leaf value
+KeyOp         : a lookahead only; no term
+Type          : the set-theoretic type its arrow denotes (sec:type_language), with the facets attached and the `where` refinement applied
+TypeFacet     : a facet attached to the type (sec:facets)
+TypeWhere     : the refinement of the type to the values where the predicate holds
+Arrow         : a function type, its parameters' kinds recorded; `->?` a partial family type, whose reads may be #notFound
+ArrowParams   : the parameter list of a function type
+TypeParam     : a parameter type, positional or named
+TypeUnion     : the union or difference of its alternative
+TypeDiff      : difference left to right
+TypeOr        : union
+TypeAnd       : intersection
+TypeNot       : complement
+TypePostfix   : the type with its suffixes applied left to right
+TypeSuffix    : `[r]` a refinement; `matching G` the strings G parses
+Refinement    : the subset of the type a comparison, range or named predicate selects
+RangeLit      : an interval of the type, `_` an open end
+TypePrimary   : the type of its alternative
+LitType       : the singleton type of the literal
+TypeApply     : a type application
+TypeName      : a named type
+AtomApply     : an atom type with its payload
+AtomType      : an atom type
+ArrayType     : a shaped array
+SeqType       : Seq(T)
+TupleType     : a tuple type
+FieldType     : a one-field tuple
+GroupType     : the type T
+RecordType    : a record type
+SetType       : the singleton types of the literals, as one union
+InferType     : a type to infer
+HoleType      : a hole
+ShapeDim      : one dimension of a shaped array, a size with an optional name
+GrammarBlock  : a grammar, elaborated to the parser and printer it defines, its rule recursion a fix (sec:tour_grammar)
+GAlt          : ordered choice
+GSeq          : sequence
+GItem         : an item with an optional field name, repetition and separator
+GPrimary      : a literal string, a rule name or a group

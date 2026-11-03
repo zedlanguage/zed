@@ -1,6 +1,6 @@
-//! Left-recursive rules, by the Squirrel paper's algorithm: the cases of the spec's
-//! `tools/grammar/leftrec.txt`, copied into `zed/grammar/leftrec.txt`, give the reference
-//! parser's trees and errors here too, and a chain of operators leans left.
+//! Left-recursive rules, by the Squirrel paper's algorithm: the cases of
+//! `zed/grammar/leftrec.txt` give the reference parser's trees and errors here too, and a chain
+//! of operators leans left.
 
 use std::path::Path;
 

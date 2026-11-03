@@ -1,4 +1,4 @@
-<!-- The `zed` fences of the spec's DESIGN.md, copied by tools/bin/sync.dart: do not edit. -->
+<!-- The `zed` fences of the spec's DESIGN.md, copied by the sync tool: do not edit. -->
 
 <!-- DESIGN.md:196 layer L8: ring L8, word none, label none, documentation notation -->
 ```zed

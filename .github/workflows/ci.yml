@@ -24,11 +24,6 @@ jobs:
       # hardware counter. A test stops with an error if neither opens.
       - run: sudo sysctl kernel.perf_event_paranoid=1
       - run: cargo test --workspace
-      - uses: dart-lang/setup-dart@v1.8.1
-        with:
-          sdk: 3.13.7
-      # The corpus outputs against their Dart reference scripts (step M0.4).
-      - run: sh zed/corpus/refcheck.sh
 
   # Line coverage of the compiler crates, printed in the job log. No threshold yet: the plan
   # asks for near-full coverage, judged per step from this report.
