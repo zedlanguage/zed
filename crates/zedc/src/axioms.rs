@@ -216,21 +216,28 @@ pub const AXIOMS: &[Axiom] = &[
     ax(">=", String, Transitive),
     ax(">=", String, Total),
     // How `<` and `<=`, and `>` and `>=`, relate, which the compositions of an order chain read
-    // (sec:verification). They hold at `f64` too: a comparison with a NaN is false, so when
-    // the premises hold no operand is a NaN, and on the other floats the comparisons are an
-    // order in which `-0.0` and `0.0` are one point.
+    // (sec:verification). At `int` and `String` they are facts of a total order. They hold at
+    // `f64` too: a comparison with a NaN is false, so when the premises hold no operand is a
+    // NaN, and on the other floats the comparisons are an order in which `-0.0` and `0.0` are
+    // one point.
     ax("<", Int, Implies("<=")),
     ax("<", Int, Composes("<=", "<")),
     ax("<=", Int, Composes("<", "<")),
     ax("<", F64, Implies("<=")),
     ax("<", F64, Composes("<=", "<")),
     ax("<=", F64, Composes("<", "<")),
+    ax("<", String, Implies("<=")),
+    ax("<", String, Composes("<=", "<")),
+    ax("<=", String, Composes("<", "<")),
     ax(">", Int, Implies(">=")),
     ax(">", Int, Composes(">=", ">")),
     ax(">=", Int, Composes(">", ">")),
     ax(">", F64, Implies(">=")),
     ax(">", F64, Composes(">=", ">")),
     ax(">=", F64, Composes(">", ">")),
+    ax(">", String, Implies(">=")),
+    ax(">", String, Composes(">=", ">")),
+    ax(">=", String, Composes(">", ">")),
 ];
 
 /// The axioms of `op` at `carrier`.

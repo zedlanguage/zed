@@ -265,7 +265,7 @@ fn every_axiom_holds_on_the_harness_instances() {
             Err(why) => panic!("{} at {:?}: {:?} fails on {why}", a.op, a.carrier, a.law),
         }
     }
-    assert_eq!(AXIOMS.len(), 111);
+    assert_eq!(AXIOMS.len(), 117);
     assert!(total > 50_000, "{total} instances");
 }
 
@@ -303,6 +303,8 @@ fn a_false_claim_of_each_kind_is_refuted() {
         claim("==", Bool, Law::Irreflexive), // true == true
         claim(">=", String, Law::Implies(">")), // "a" >= "a" but not "a" > "a"
         claim(">", String, Law::Total),      // neither "a" > "a"
+        claim("<=", String, Law::Composes("<=", "<")), // "a" <= "a" <= "a" but not "a" < "a"
+        claim("<", String, Law::Composes(">", "<")), // "a" < "b" > "a" but not "a" < "a"
     ];
     for c in &controls {
         assert!(
@@ -369,14 +371,15 @@ fn the_prelude_copy_is_the_rust_table() {
     assert_eq!(prelude, rust);
 }
 
-/// The compositions sec:verification gives an order chain are axioms at `int` and `f64`: in
-/// `a <= b < c <= d` each pair of links composes, and the chain ends at `a < d`, which proves a
-/// `<=` law through `<` implying `<=`. The `>=`, `>` family is the same.
+/// The compositions sec:verification gives an order chain are axioms at `int`, `f64` and
+/// `String` (DESIGN M0.11): in `a <= b < c <= d` each pair of links composes, and the chain ends
+/// at `a < d`, which proves a `<=` law through `<` implying `<=`. The `>=`, `>` family is the
+/// same, so `name <= "m" < other` on strings reaches `name < other` as it does on numbers.
 #[test]
 fn the_compositions_an_order_chain_needs_are_axioms() {
     use zedc::axioms::of;
     let has = |op: &str, c: Carrier, law: Law| of(op, c).any(|l| *l == law);
-    for c in [Carrier::Int, Carrier::F64] {
+    for c in [Carrier::Int, Carrier::F64, Carrier::String] {
         for (strict, weak) in [("<", "<="), (">", ">=")] {
             let missing: Vec<String> = [
                 (weak, Law::Transitive),
@@ -392,10 +395,13 @@ fn the_compositions_an_order_chain_needs_are_axioms() {
             assert!(missing.is_empty(), "at {c:?}: {missing:?}");
         }
     }
-    // No `<=` link turns into `<`: a chain of `<=` links never proves a `<` law.
-    for c in [Carrier::Int, Carrier::F64] {
+    // No `<=` link turns into `<`, nor `>=` into `>`: a chain of weak links never proves a strict
+    // law.
+    for c in [Carrier::Int, Carrier::F64, Carrier::String] {
         assert!(!has("<=", c, Law::Implies("<")));
         assert!(!has("<=", c, Law::Composes("<=", "<")));
+        assert!(!has(">=", c, Law::Implies(">")));
+        assert!(!has(">=", c, Law::Composes(">=", ">")));
     }
     // At `String` a chain of one comparison composes by transitivity, `<` and `>` alike. No
     // carrier makes `!=` transitive: `a != b` and `b != a` do not give `a != a`.
@@ -444,8 +450,8 @@ fn the_float_instances_hold_the_ieee_corner_values() {
 /// Strings compare by code point, which is the byte order of their UTF-8 (sec:order): a proper
 /// prefix first, `"é"` (U+00E9) after `"z"`, and U+E000 before U+10000, which UTF-16 code units
 /// would put the other way. The evaluator's comparisons agree with that order on strings the
-/// harness's `a`, `b` instances lack, and every `String` axiom of `!=` and the comparisons
-/// holds on them.
+/// harness's `a`, `b` instances lack, and every `String` axiom of `!=` and the comparisons,
+/// the compositions of an order chain among them, holds on them.
 #[test]
 fn strings_compare_by_code_point() {
     let words = [
