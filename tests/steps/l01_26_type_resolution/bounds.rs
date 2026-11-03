@@ -582,3 +582,74 @@ fn a_lambda_outside_a_result_only_bound_names_the_whole_bound() {
         "{errors:?}"
     );
 }
+
+/// `p` and `q` both take a function of type `t` nested `n` deep, `(h: … (x: int) -> int …)
+/// -> int`, each level's result its own variable bounded by int when `bounded`; `q` passes its
+/// argument to `p`.
+fn passed_deep(n: usize, bounded: bool) -> String {
+    let mut t = String::from("(x: int) -> int");
+    for i in 0..n {
+        t = match bounded {
+            false => format!("(h{i}: {t}) -> int"),
+            true => format!("((h{i}: {t}) -> T{i} for T{i} in int)"),
+        };
+    }
+    format!("p(g: {t}) = 0;\nq(f: {t}) = p(g: f);\n")
+}
+
+#[test]
+fn passing_a_deep_function_type_as_itself_scales() {
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(|| {
+            check_scales("a function type n deep passed as itself", 400, |n| {
+                passed_deep(n, false)
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn passing_a_deep_bounded_function_type_as_itself_scales() {
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(|| {
+            let e = type_errors(&passed_deep(3, true));
+            assert!(e.is_empty(), "{e:?}");
+            check_scales(
+                "a function type n deep, a bound at each level, passed as itself",
+                400,
+                |n| passed_deep(n, true),
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// Functions with bounded variables passed where other bounded function types are expected.
+const S: &str = "r(g: () -> T for T in int | f64) = g();\n\
+                 need_int(x: int) = x;\n\
+                 r4(g: (h: () -> T) -> int for T in int | f64) = 0;\n\
+                 r5(g: (x: int) -> U for U in int | f64) = 0;\n";
+
+#[test]
+fn a_bounded_function_fits_only_where_each_carrier_it_returns_is_taken() {
+    let cases = [
+        // `r` returns an int or an f64, so its result is no int.
+        ("z = need_int(x: r(g: () -> 1));\n", 1),
+        ("k(f: () -> T for T in int | f64) = need_int(x: f());\n", 1),
+        // The caller of `r4`'s argument passes `h` returning either carrier.
+        ("k(f: (h: () -> int) -> int) = r4(g: f);\n", 1),
+        // `f` returns the carrier it is given; `r5` asks for an int or an f64 back.
+        ("k(f: (x: T) -> T for T in int | f64) = r5(g: f);\n", 0),
+        ("k(f: (x: T) -> T for T in int | f64) = r(g: f);\n", 1),
+        ("k(f: (x: int) -> String) = r5(g: f);\n", 1),
+    ];
+    for (k, n) in cases {
+        let text = format!("{S}{k}");
+        assert_eq!(type_errors(&text).len(), n, "{k}: {:?}", type_errors(&text));
+    }
+}

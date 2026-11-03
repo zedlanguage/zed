@@ -144,6 +144,10 @@ pub struct Sig {
     /// of the variables of a type that holds it leaves them alone. The others are those of
     /// the functions around it.
     pub own: BTreeSet<Arc<str>>,
+    /// Its own bounded variables a parameter holds, at any depth, on any arrow: an argument
+    /// fixes their carriers. Worked out when it is built ([`Sig::note_held`]), so a comparison
+    /// does not walk its parameters again at each depth.
+    pub held: BTreeSet<Arc<str>>,
 }
 
 /// A use the body of a generic function makes of a value whose type is a variable: checked
@@ -435,10 +439,98 @@ impl Piece {
 /// The binding of type variables made while applying an arrow.
 pub type Binds = BTreeMap<Arc<str>, Ty>;
 
-/// The bounded variables of the expected function types a comparison is inside, each with the
-/// mask of its bound: the caller of such a function picks one carrier of the bound for each,
-/// so a variable here stands for every carrier of its mask and is never bound.
-type Rigid = BTreeMap<Arc<str>, u8>;
+/// How a comparison reads a variable of the types on one side ([`Env`]).
+#[derive(Clone, Debug, PartialEq)]
+enum Read {
+    /// As the rigid variable of this name, in [`Cx::rigid`].
+    Rigid(Arc<str>),
+    /// As every value of the carriers of the mask, [`Ty::of_mask`].
+    Mask(u8),
+}
+
+/// The variables of the function types around one side of a comparison that it reads as
+/// something else: the own bounded variables of each expected function type around it, and
+/// those of each given one that no parameter holds. Persistent, so that each function met
+/// keeps the reading of its own side at the cost of a pointer.
+type Env = imbl::OrdMap<Arc<str>, Read>;
+
+/// The state of one comparison of function types ([`fits_sig`], [`Ty::sub`]).
+#[derive(Default)]
+struct Cx {
+    /// The bounded variables of the expected function types the comparison is inside, each
+    /// with the mask of its bound: the caller of such a function picks one carrier of the
+    /// bound for each, so a variable here stands for every carrier of its mask and is never
+    /// bound.
+    rigid: BTreeMap<Arc<str>, u8>,
+    /// The functions of the types being compared, each put in its type as a variable of its
+    /// own and kept here with the reading of its side: a function moved into the other side,
+    /// as a binding of a variable there, is read as it was where it came from.
+    fns: BTreeMap<Arc<str>, (Arc<Sig>, Env)>,
+    /// The names of `rigid` and `fns` made by the comparisons open now, last made last.
+    made: Vec<Arc<str>>,
+    /// The number of names made: a quote is in no name a program writes, and the count keeps
+    /// the names apart.
+    count: usize,
+}
+
+impl Cx {
+    /// A new name, from `v`.
+    fn fresh(&mut self, v: &str) -> Arc<str> {
+        self.count += 1;
+        let w: Arc<str> = format!("{v}'{}", self.count).into();
+        self.made.push(w.clone());
+        w
+    }
+
+    /// `t` as the comparison reads it on a side read by `env`: each variable `env` maps
+    /// replaced, and each function, outside other functions, replaced by a new variable that
+    /// `fns` maps to it and `env`. The payloads stay as they are, since no comparison reads
+    /// them. The cost is that of `t` outside its functions, so each function type is read once
+    /// for each comparison of it.
+    fn read(&mut self, t: &Ty, env: &Env) -> Ty {
+        let mut out = Ty {
+            set: t.set.clone(),
+            tuples: t
+                .tuples
+                .iter()
+                .map(|cs| cs.iter().map(|c| self.read(c, env)).collect())
+                .collect(),
+            fns: Vec::new(),
+            vars: BTreeSet::new(),
+            dynamic: t.dynamic,
+            family: t.family.clone(),
+            payloads: t.payloads.clone(),
+        };
+        for s in &t.fns {
+            let w = self.fresh("");
+            self.fns.insert(w.clone(), (s.clone(), env.clone()));
+            out.vars.insert(w);
+        }
+        for v in &t.vars {
+            match env.get(v) {
+                None => {
+                    out.vars.insert(v.clone());
+                }
+                Some(Read::Rigid(w)) => {
+                    out.vars.insert(w.clone());
+                }
+                Some(&Read::Mask(m)) if m & OTHER != 0 => out.dynamic = true,
+                Some(&Read::Mask(m)) => {
+                    out.set = Carrier::of_mask(m).fold(out.set, |s, c| &s | &c.ty());
+                }
+            }
+        }
+        out
+    }
+
+    /// Forgets the names made since `mark`.
+    fn forget(&mut self, mark: usize) {
+        for w in self.made.drain(mark..) {
+            self.rigid.remove(&w);
+            self.fns.remove(&w);
+        }
+    }
+}
 
 /// Type variables, each once, in order of first appearance.
 #[derive(Default)]
@@ -721,11 +813,11 @@ impl Ty {
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
     pub fn sub(&self, other: &Ty, binds: &mut Binds) -> bool {
-        self.sub_in(other, binds, &mut Rigid::new())
+        self.sub_in(other, binds, &mut Cx::default())
     }
 
-    /// [`Self::sub`] inside the expected function types whose bounded variables `rigid` holds.
-    fn sub_in(&self, other: &Ty, binds: &mut Binds, rigid: &mut Rigid) -> bool {
+    /// [`Self::sub`] inside the comparisons of function types `cx` holds.
+    fn sub_in(&self, other: &Ty, binds: &mut Binds, cx: &mut Cx) -> bool {
         // `other` as a kernel type, built at most once, when a tuple piece needs it.
         let mut whole: Option<Option<KType>> = None;
         self.pieces().iter().all(|p| {
@@ -749,16 +841,16 @@ impl Ty {
                     }),
                 _ => None,
             };
-            decided.unwrap_or_else(|| accepts(other, p, self, binds, rigid))
+            decided.unwrap_or_else(|| accepts(other, p, self, binds, cx))
         })
     }
 
     /// [`Self::sub_in`] with each tuple piece held by one tuple shape of `other`: the rule for
     /// the components of a tuple, whose joint check is the kernel's on the whole tuple.
-    fn sub_by_shape(&self, other: &Ty, binds: &mut Binds, rigid: &mut Rigid) -> bool {
+    fn sub_by_shape(&self, other: &Ty, binds: &mut Binds, cx: &mut Cx) -> bool {
         self.pieces()
             .iter()
-            .all(|p| accepts(other, p, self, binds, rigid))
+            .all(|p| accepts(other, p, self, binds, cx))
     }
 
     /// The kernel type of its values, when it holds no function, variable or unknown at any
@@ -1029,9 +1121,10 @@ impl Ty {
 }
 
 /// Whether the piece `p` of `of` is in `t`, binding a variable of `t` to it when nothing else
-/// of `t` holds it. A variable of `rigid` stands for each carrier of its mask in turn: as `p`,
-/// `t` must hold each; in `t`, it holds what each carrier, with the rest of `t`, holds.
-fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, rigid: &mut Rigid) -> bool {
+/// of `t` holds it. A variable of `cx.rigid` stands for each carrier of its mask in turn: as
+/// `p`, `t` must hold each; in `t`, it holds what each carrier, with the rest of `t`, holds. A
+/// variable of `cx.fns` is the function it stands for.
+fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, cx: &mut Cx) -> bool {
     if t.dynamic {
         return true;
     }
@@ -1040,7 +1133,7 @@ fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, rigid: &mut Rigid) -> 
         Piece::Set(s) => {
             s.subtype(&t.set)
                 || t.vars.iter().any(|w| {
-                    rigid.get(w).is_some_and(|&m| {
+                    cx.rigid.get(w).is_some_and(|&m| {
                         Carrier::of_mask(m).all(|c| s.subtype(&(&t.set | &c.ty())))
                     })
                 })
@@ -1051,25 +1144,40 @@ fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, rigid: &mut Rigid) -> 
                 let ok = cs
                     .iter()
                     .zip(ds)
-                    .all(|(c, d)| c.sub_by_shape(d, &mut b, rigid));
+                    .all(|(c, d)| c.sub_by_shape(d, &mut b, cx));
                 if ok {
                     *binds = b;
                 }
                 ok
             }
         }),
-        Piece::Fn(s) => t.fns.iter().any(|q| fits_in(s, q, rigid)),
-        Piece::Var(v) => {
-            t.vars.contains(v)
-                || rigid
-                    .get(v)
-                    .is_some_and(|&m| Carrier::of_mask(m).all(|c| c.ty().subtype(&t.set)))
-        }
+        // A type outside every comparison of function types holds its functions as written.
+        Piece::Fn(s) => t
+            .fns
+            .iter()
+            .any(|q| fits_in(s, &Env::new(), q, &Env::new(), cx)),
+        Piece::Var(v) => match cx.fns.get(v).cloned() {
+            Some((s, se)) => t.vars.iter().any(|w| match cx.fns.get(w).cloned() {
+                Some((q, qe)) => fits_in(&s, &se, &q, &qe, cx),
+                None => false,
+            }),
+            None => {
+                t.vars.contains(v)
+                    || cx
+                        .rigid
+                        .get(v)
+                        .is_some_and(|&m| Carrier::of_mask(m).all(|c| c.ty().subtype(&t.set)))
+            }
+        },
     };
     if ok {
         return true;
     }
-    match t.vars.iter().find(|v| !rigid.contains_key(*v)) {
+    match t
+        .vars
+        .iter()
+        .find(|v| !cx.rigid.contains_key(*v) && !cx.fns.contains_key(*v))
+    {
         Some(v) => {
             let b = binds.entry(v.clone()).or_insert_with(Ty::empty);
             *b = b.union(&of.of_piece(p));
@@ -1083,18 +1191,33 @@ fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, rigid: &mut Rigid) -> 
 /// names and kinds, and on each arrow of `q`, an arrow of `s` that takes its parameters and
 /// returns within its result.
 pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
-    fits_in(s, q, &mut Rigid::new())
+    fits_in(s, &Env::new(), q, &Env::new(), &mut Cx::default())
 }
 
-/// [`fits_sig`] inside the expected function types whose bounded variables `rigid` holds.
-/// `q`'s own bounded variables that a parameter holds join them: the caller of a function of
-/// type `q` picks one carrier of each bound, so `s` must take every carrier of it. Each is
-/// renamed apart first, since `s` may use the same name for a variable of its own. A bounded
-/// variable no parameter holds, of `q` or of `s`, is fixed by no argument, so it stands for
-/// any carrier of its bound, as at a call ([`Sig::unheld`]).
-fn fits_in(s: &Sig, q: &Sig, rigid: &mut Rigid) -> bool {
+/// [`fits_sig`] inside the expected function types whose bounded variables `cx.rigid` holds,
+/// `s` read by `se` and `q` by `qe`. `q`'s own bounded variables that a parameter holds join
+/// `cx.rigid`: the caller of a function of type `q` picks one carrier of each bound, so `s`
+/// must take every carrier of it. Each gets a new name, since `s` may use the same name for a
+/// variable of its own. A bounded variable no parameter holds, of `q` or of `s`, is fixed by
+/// no argument, so it stands for any carrier of its bound, as at a call ([`Sig::unheld`]).
+///
+/// The two sides are read through their environments, not rewritten: rewriting `q` at each
+/// depth cost the size of `q` at each, the square of the depth for a function type nested
+/// that deep. Each depth now costs its own parameters and bounds, and a lookup for each
+/// variable (COMPLEXITY.md F60).
+fn fits_in(s: &Sig, se: &Env, q: &Sig, qe: &Env, cx: &mut Cx) -> bool {
     if !s.needs.is_empty() {
-        return s == q;
+        // Compared as written: the same signature, each variable read alike on both sides.
+        if s != q {
+            return false;
+        }
+        let mut vs = Vars::default();
+        for a in &s.arrows {
+            a.params.iter().for_each(|p| p.vars_in(&mut vs));
+            a.result.vars_in(&mut vs);
+        }
+        s.needs.iter().for_each(|n| n.vars_in(&mut vs));
+        return vs.order.iter().all(|v| se.get(v) == qe.get(v));
     }
     let same_params = s.params.len() == q.params.len()
         && s.params
@@ -1104,40 +1227,52 @@ fn fits_in(s: &Sig, q: &Sig, rigid: &mut Rigid) -> bool {
     if !same_params {
         return false;
     }
-    let held = q.held();
-    let mut renamed = Binds::new();
-    for (v, &m) in q.bounds.iter().filter(|(v, _)| q.own.contains(*v)) {
-        let t = match held.contains(v) {
-            true => {
-                // A quote is in no name a program writes, and the count keeps nested
-                // renamings apart.
-                let w: Arc<str> = format!("{v}'{}", rigid.len()).into();
-                rigid.insert(w.clone(), m);
-                Ty::var(w)
+    let mark = cx.made.len();
+    // Each own variable names its own binder here, so the reading of the same name around it
+    // is dropped, or replaced as above.
+    let mut qe = qe.clone();
+    for v in &q.own {
+        match q.bounds.get(v) {
+            Some(&m) if q.held.contains(v) => {
+                let w = cx.fresh(v);
+                cx.rigid.insert(w.clone(), m);
+                qe.insert(v.clone(), Read::Rigid(w));
             }
-            false => Ty::of_mask(m),
-        };
-        renamed.insert(v.clone(), t);
-    }
-    let s_unheld = s.unheld();
-    let renamed_q;
-    let q = match renamed.is_empty() {
-        true => q,
-        false => {
-            renamed_q = q.replace(&renamed);
-            &renamed_q
+            Some(&m) => {
+                qe.insert(v.clone(), Read::Mask(m));
+            }
+            None => {
+                qe.remove(v);
+            }
         }
+    }
+    let mut se = se.clone();
+    for v in &s.own {
+        match s.bounds.get(v) {
+            Some(&m) if !s.held.contains(v) => {
+                se.insert(v.clone(), Read::Mask(m));
+            }
+            _ => {
+                se.remove(v);
+            }
+        }
+    }
+    let read = |a: &Arrow, env: &Env, cx: &mut Cx| Arrow {
+        params: a.params.iter().map(|p| cx.read(p, env)).collect(),
+        result: cx.read(&a.result, env),
     };
-    let fits = q.arrows.iter().all(|qa| {
-        s.arrows.iter().any(|sa| {
+    let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
+    let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
+    let fits = qas.iter().all(|qa| {
+        sas.iter().any(|sa| {
             let mut b = Binds::new();
             qa.params
                 .iter()
                 .zip(&sa.params)
-                .all(|(x, y)| x.sub_in(y, &mut b, rigid))
+                .all(|(x, y)| x.sub_in(y, &mut b, cx))
                 && s.bounds.iter().all(|(v, &m)| {
                     b.get(v)
-                        .is_none_or(|t| match t.as_var().and_then(|w| rigid.get(w)) {
+                        .is_none_or(|t| match t.as_var().and_then(|w| cx.rigid.get(w)) {
                             // Each carrier the caller of `q` may pick is one `s` takes.
                             Some(&mq) => mq & !m == 0,
                             // `v` is one carrier at a call, so it cannot be a rigid variable and
@@ -1147,45 +1282,46 @@ fn fits_in(s: &Sig, q: &Sig, rigid: &mut Rigid) -> bool {
                                 None => {
                                     m & OTHER != 0
                                         && !matches!(p, Piece::Dyn)
-                                        && !matches!(p, Piece::Var(w) if rigid.contains_key(w))
+                                        && !matches!(p, Piece::Var(w) if cx.rigid.contains_key(w))
                                 }
                             }),
                         })
                 })
                 && {
                     let mut rb = Binds::new();
-                    // `s_unheld` binds to carriers only, so the order of the two is free.
-                    sa.result
-                        .subst(&s_unheld)
-                        .subst(&b)
-                        .sub_in(&qa.result, &mut rb, rigid)
-                        && rb.is_empty()
+                    sa.result.subst(&b).sub_in(&qa.result, &mut rb, cx) && rb.is_empty()
                 }
         })
     });
-    for w in renamed.values().filter_map(Ty::as_var) {
-        rigid.remove(w);
-    }
+    cx.forget(mark);
     fits
 }
 
 impl Sig {
-    /// The variables its parameters hold, at any depth, on any arrow.
-    pub fn held(&self) -> Vars {
-        let mut out = Vars::default();
-        for a in &self.arrows {
-            a.params.iter().for_each(|p| p.vars_in(&mut out));
+    /// Sets [`Sig::held`] from its parameters, at any depth, on any arrow: for a signature
+    /// built from parts, at the cost of a walk of its parameters.
+    pub fn note_held(&mut self) {
+        self.held.clear();
+        if self.bounds.is_empty() {
+            return;
         }
-        out
+        let mut vs = Vars::default();
+        for a in &self.arrows {
+            a.params.iter().for_each(|p| p.vars_in(&mut vs));
+        }
+        self.held = vs
+            .order
+            .into_iter()
+            .filter(|v| self.own.contains(v) && self.bounds.contains_key(v))
+            .collect();
     }
 
     /// Its own bounded variables no parameter holds, each bound to [`Ty::of_mask`] of its
     /// bound: no argument fixes its carrier, so a call returns a value of some carrier of it.
     pub fn unheld(&self) -> Binds {
-        let held = self.held();
         self.bounds
             .iter()
-            .filter(|(v, _)| self.own.contains(*v) && !held.contains(v))
+            .filter(|(v, _)| self.own.contains(*v) && !self.held.contains(*v))
             .map(|(v, &m)| (v.clone(), Ty::of_mask(m)))
             .collect()
     }
@@ -1202,6 +1338,7 @@ impl Sig {
             data: false,
             needs: Vec::new(),
             own: BTreeSet::new(),
+            held: BTreeSet::new(),
         }
     }
 
@@ -1236,6 +1373,12 @@ impl Sig {
             needs: self.needs.iter().map(|n| n.replace(binds)).collect(),
             own: self
                 .own
+                .iter()
+                .filter(|v| !binds.contains_key(*v))
+                .cloned()
+                .collect(),
+            held: self
+                .held
                 .iter()
                 .filter(|v| !binds.contains_key(*v))
                 .cloned()

@@ -852,6 +852,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .values()
             .flat_map(|t| t.vars.iter().cloned())
             .collect();
+        sig.note_held();
         self.level -= 1;
         Arc::new(sig)
     }
@@ -2117,14 +2118,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 result: sig.arrows[k].result.clone(),
             })
             .collect();
-        let rest = Sig {
+        let mut rest = Sig {
             params,
             arrows,
             bounds: sig.bounds.clone(),
             data: false,
             needs,
             own: sig.own.clone(),
+            held: BTreeSet::new(),
         };
+        // A variable only the arguments given held is held by no parameter of the rest.
+        rest.note_held();
         Ty::func(Arc::new(rest.replace(&binds)))
     }
 
@@ -2258,6 +2262,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             data: s.data,
             needs: s.needs.clone(),
             own: s.own.clone(),
+            held: s.held.clone(),
             params: e.params.clone(),
             arrows: s
                 .arrows
@@ -2307,6 +2312,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 data: sig.data,
                 needs: Vec::new(),
                 own: sig.own.clone(),
+                held: sig.held.clone(),
             };
             out.push(Note {
                 span,
@@ -3084,7 +3090,13 @@ fn hold(t: &Ty, needs: Vec<Need>) -> (Ty, Vec<Need>) {
         }
     }
     let held = Ty {
-        fns: fns.into_iter().map(Arc::new).collect(),
+        fns: fns
+            .into_iter()
+            .map(|mut s| {
+                s.note_held();
+                Arc::new(s)
+            })
+            .collect(),
         ..t.clone()
     };
     (held, now)
@@ -3409,6 +3421,7 @@ fn op_sig(op: &str) -> Sig {
         data: false,
         needs: Vec::new(),
         own: BTreeSet::new(),
+        held: BTreeSet::new(),
     }
 }
 
@@ -3458,6 +3471,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
         data: false,
         needs: Vec::new(),
         own: BTreeSet::new(),
+        held: BTreeSet::new(),
     })
 }
 
@@ -3813,6 +3827,7 @@ fn port(lines: bool) -> Ty {
         data: lines,
         needs: Vec::new(),
         own: BTreeSet::new(),
+        held: BTreeSet::new(),
     }))
 }
 
@@ -3916,9 +3931,19 @@ struct Denote<'a> {
     /// Each variable a clause around the place bounds: its mask and the number of function
     /// types open at the clause, which is the index in `open` of its signature.
     bound: HashMap<&'a str, (u8, usize)>,
-    /// The function types open around the place, outermost first, each with the bounds of
-    /// the variables it is the home of.
-    open: Vec<BTreeMap<Arc<str>, u8>>,
+    /// The function types open around the place, outermost first.
+    open: Vec<Reading>,
+}
+
+/// A function type [`Denote`] is reading.
+#[derive(Default)]
+struct Reading {
+    /// The bounds of the variables it is the home of.
+    bounds: BTreeMap<Arc<str>, u8>,
+    /// Those of them a parameter holds, at any depth ([`Sig::held`]).
+    held: BTreeSet<Arc<str>>,
+    /// Whether the place is in its parameters.
+    params: bool,
 }
 
 impl<'a> Denote<'a> {
@@ -3964,7 +3989,10 @@ impl<'a> Denote<'a> {
                     if let Some(&(mask, at)) = self.bound.get(v)
                         && let Some(home) = self.open.get_mut(at)
                     {
-                        home.insert(v.into(), mask);
+                        home.bounds.insert(v.into(), mask);
+                        if home.params {
+                            home.held.insert(v.into());
+                        }
                     }
                     Ty::var(v.into())
                 }
@@ -3986,8 +4014,9 @@ impl<'a> Denote<'a> {
                 a.diff(&b)
             }
             TypeKind::Arrow { params, result, .. } => {
-                self.open.push(BTreeMap::new());
+                self.open_params();
                 let tys = params.iter().map(|p| self.ty(&p.ty)).collect();
+                self.close_params();
                 let result = self.ty(result);
                 let names = params
                     .iter()
@@ -4026,26 +4055,44 @@ impl<'a> Denote<'a> {
             }
             // This checker keeps one domain per function: the permission.
             TypeKind::Bounded { upper, result, .. } => {
-                self.open.push(BTreeMap::new());
+                self.open_params();
                 let names = vec![SParam {
                     name: String::new().into(),
                     positional: true,
                     default: None,
                 }];
                 let tys = vec![self.ty(upper)];
+                self.close_params();
                 let result = self.ty(result);
                 self.sig(names, tys, result)
             }
         }
     }
 
+    /// Opens a function type, at its parameters.
+    fn open_params(&mut self) {
+        self.open.push(Reading {
+            params: true,
+            ..Reading::default()
+        });
+    }
+
+    /// Leaves the parameters of the function type opened last, for its result.
+    fn close_params(&mut self) {
+        self.open
+            .last_mut()
+            .expect("each function type is opened first")
+            .params = false;
+    }
+
     /// The signature of the function type opened last, with the bounds of the variables it
     /// is the home of.
     fn sig(&mut self, names: Vec<SParam>, tys: Vec<Ty>, result: Ty) -> Ty {
-        let bounds = self.open.pop().expect("each function type is opened first");
+        let open = self.open.pop().expect("each function type is opened first");
         let mut sig = Sig::one(names, tys, result);
-        sig.own.extend(bounds.keys().cloned());
-        sig.bounds = bounds;
+        sig.own.extend(open.bounds.keys().cloned());
+        sig.bounds = open.bounds;
+        sig.held = open.held;
         Ty::func(Arc::new(sig))
     }
 }
