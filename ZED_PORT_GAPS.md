@@ -1078,3 +1078,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `u128` product reduced modulo the Mersenne prime `2^61 - 1` by a mask and a shift | `num::mul_mod` | Bit operations (gap 4) | `(a * b) mod (2 ** 61 - 1)` on `int`, the operands' ranges `int[0..<2 ** 61]` letting the plan use two words |
 | `[2, 5].map` with a closure that splits each prime off two captured coefficients through `std::mem::take` and reassigns them | `Rat::literal_text` | Mutation | A fold over the two primes with the coefficients as its state |
+
+## Entries from S22e-quad (`zedc/src/store/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent segment tree in `Rc` nodes over class indices, each leaf range holding a `Pa`, with a lazy affine tag pushed down on a splice | `ByClass`, `Cls`, `cls_affine`, `cls_halves`, `cls_splice` | Identity (gap 1) | A Zed tree value, as the treap of S22a: a splice makes new nodes along `O(log n)` paths and shares the rest |
+| The memo tables a run computes without reading its class moved out with `std::mem::take` and moved back for the next class | `Kept`, `Run::keep`, `Run::restore` | Mutation | The tables are a value passed from one class's run to the next and returned with each result |
+| `u128` saturating multiply and add to bound values and coefficients over every class against `i64::MAX` | `Bound::holds`, `ByClass::affine` | Machine integers | Zed's `int` is unbounded; the check compares with the `i64` limit directly and needs no saturation |

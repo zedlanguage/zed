@@ -1492,3 +1492,161 @@ fn chain_cross_dead_at_small_sizes() {
         }
     });
 }
+
+/// COMPLEXITY.md S22e-quad: the `2k + 1` classes of `k` distinct remainders share one reading
+/// of the chain. Each class runs the transfer from the root to the chain's top `if`, whose
+/// summary in that class is read from one summary of the chain over all classes, built once.
+/// Before, the whole chain was read again in each class: 58.0 times the instructions at 32
+/// and 256 (200,279,152 against 11,615,272,274); now about 8.5 times.
+#[test]
+fn many_remainders_scales() {
+    on_big_stack(|| {
+        let n = 32;
+        let (a, b) = (many_remainders(n), many_remainders(n * scaling::FACTOR));
+        scaling::check("the preimage of the chain of k remainders", n, |k| {
+            let (t, ds, d) = if k == n { &a } else { &b };
+            preimage(t, ds, d);
+        });
+    });
+}
+
+/// The chain of guards `i mod m(j) == r(j)` for `j` in `1..=k`, else arm `arm(j, t)`, asked
+/// `tk >= 0`.
+fn remainder_chain(
+    k: usize,
+    m: impl Fn(i64) -> i64,
+    r: impl Fn(i64) -> i64,
+    arm: impl Fn(i64, Term) -> Term,
+) -> (Term, Demand) {
+    let g = |j| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(m(j))), int(r(j)));
+    let t = chain(k, var("i"), g, arm);
+    (prim(Prim::Ge, t, int(0)), Demand::Bool(true))
+}
+
+/// The interpreter agrees with `p` at each input in `points`: a point that meets the demand
+/// lies inside, and when `p` is exact a point inside meets it.
+fn check_at(what: &str, t: &Term, d: &Demand, p: &zedc::store::preimage::Preimage, points: &[i64]) {
+    let names: Vec<Arc<str>> = vec!["i".into()];
+    for &i in points {
+        let inside = p.domains["i"].contains(i);
+        let meets = super::meets(t, &names, &[i], d);
+        assert!(
+            !meets || inside,
+            "{what}: {t}: {i} meets {d:?} but is outside {p:?}"
+        );
+        assert!(
+            meets || !inside || !p.exact,
+            "{what}: {t}: {i} fails {d:?} but is inside {p:?}"
+        );
+    }
+}
+
+/// COMPLEXITY.md S22e-quad, the shapes the summary over every class reads: no guard, one and
+/// two guards, remainders repeated, a negative modulus and both signs in one chain, and
+/// remainders outside `[0, m)`, which no input has. Each preimage is exact and agrees with the
+/// interpreter.
+#[test]
+fn remainder_chains_of_every_shape_match_the_interpreter() {
+    on_big_stack(|| {
+        let plus1 = plus(|_| 1);
+        let cases: Vec<(&str, (Term, Demand))> = vec![
+            ("k=0", remainder_chain(0, |_| 16, |j| j, &plus1)),
+            ("k=1", remainder_chain(1, |_| 16, |j| j, &plus1)),
+            ("k=2", remainder_chain(2, |_| 16, |j| j, &plus1)),
+            ("j mod 3", remainder_chain(9, |_| 16, |j| j % 3, &plus1)),
+            ("all 5", remainder_chain(6, |_| 16, |_| 5, &plus1)),
+            ("m = -16", remainder_chain(5, |_| -16, |j| j, &plus1)),
+            (
+                "m = +-16",
+                remainder_chain(6, |j| if j % 2 == 0 { 16 } else { -16 }, |j| j, &plus1),
+            ),
+            (
+                "outside",
+                remainder_chain(6, |_| 16, |j| j * 7 - 20, &plus1),
+            ),
+            (
+                "arms",
+                remainder_chain(
+                    6,
+                    |_| 16,
+                    |j| j,
+                    |j, t| {
+                        let s = prim(Prim::Sub, int(0), prim(Prim::Add, int(j), t));
+                        Term::Prim(Prim::Neg, vec![prim(Prim::Mul, int(1), s)])
+                    },
+                ),
+            ),
+        ];
+        for (what, (t, d)) in cases {
+            for ds in [
+                i_in(-60, 60),
+                over(&[("i", pieces(&[(-60, -31), (-9, 50)]))]),
+            ] {
+                let p = preimage(&t, &ds, &d);
+                assert!(
+                    p.exact && p.refusal.is_none(),
+                    "{what}: {t} over {ds:?}: {p:?}"
+                );
+                check(&t, &ds, &d, &p, (-70, 70));
+            }
+        }
+    });
+}
+
+/// COMPLEXITY.md S22e-quad, the terms the summary over every class does not read, which each
+/// class reads with its own transfer as before: a guard that is not on the remainder between
+/// guards that are, an arm the summary does not read (`min`), values that leave `i64` at the
+/// ends of the domain, and remainders and moduli at the ends of `i64`. Each agrees with the
+/// interpreter, at the ends of `i64` too. Two results changed with S22e-quad: `m = i64::MAX` and
+/// `m = i64::MIN + 1` over `[i64::MIN, i64::MIN + 40]` were exact and empty before, found by
+/// listing the box; they are now exact and empty without listing it (`enumerated` false).
+#[test]
+fn remainder_chains_outside_the_shared_summary_keep_their_preimages() {
+    use End::{Fin, NegInf, PosInf};
+    const MIN: i64 = i64::MIN;
+    const MAX: i64 = i64::MAX;
+    on_big_stack(|| {
+        let plus1 = plus(|_| 1);
+        let r16 = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(16)), int(j));
+        let other = |j: i64| if j == 3 { ge_i(5) } else { r16(j) };
+        let mixed = prim(Prim::Ge, chain(6, var("i"), other, &plus1), int(0));
+        let min = |_, t| prim(Prim::Min, prim(Prim::Add, t, int(1)), int(20));
+        let cases: Vec<(&str, (Term, Demand))> = vec![
+            ("i >= 5 at j = 3", (mixed, Demand::Bool(true))),
+            ("min", remainder_chain(6, |_| 16, |j| j, min)),
+            ("plus", remainder_chain(6, |_| 16, |j| j, &plus1)),
+            (
+                "r = MAX",
+                remainder_chain(3, |_| 16, |j| if j == 2 { MAX } else { j }, &plus1),
+            ),
+            (
+                "r = MIN",
+                remainder_chain(3, |_| 16, |j| if j == 2 { MIN } else { j }, &plus1),
+            ),
+            ("m = MAX", remainder_chain(4, |_| MAX, |j| MAX - j, &plus1)),
+            ("m = MIN", remainder_chain(4, |_| MIN, |j| j, &plus1)),
+            (
+                "m = MIN + 1",
+                remainder_chain(4, |_| MIN + 1, |j| MAX - j, &plus1),
+            ),
+        ];
+        let top = IntervalSet::range(NegInf, PosInf);
+        let high = IntervalSet::range(Fin(MAX - 40), Fin(MAX));
+        let low = IntervalSet::range(Fin(MIN), Fin(MIN + 40));
+        let mut ends: Vec<i64> = (0..=40).flat_map(|d| [MIN + d, MAX - d]).collect();
+        ends.extend(-70..=70);
+        for (what, (t, d)) in cases {
+            for dom in [
+                IntervalSet::of(-60, 60),
+                top.clone(),
+                high.clone(),
+                low.clone(),
+            ] {
+                let ds = over(&[("i", dom.clone())]);
+                let p = preimage(&t, &ds, &d);
+                let at: Vec<i64> = ends.iter().copied().filter(|&i| dom.contains(i)).collect();
+                check_at(what, &t, &d, &p, &at);
+            }
+        }
+    });
+}
