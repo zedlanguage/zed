@@ -157,3 +157,39 @@ test("directNeeds on a shared chain visits each node once", () => {
   }));
   assert.deepEqual(directNeeds(nodes).get("n2999"), ["n2998"]);
 });
+
+test("override needs and feeds connect an added item", () => {
+  const inp = inputs("2026-11-02 10:00:00 | X:impl#1 | start\n", "");
+  inp.overrides = { X: { needs: ["A"], feeds: ["C"] } };
+  const nodes = by(buildNodes(inp));
+  assert.deepEqual(nodes.get("X")!.needs, ["A"]);
+  assert.deepEqual(nodes.get("C")!.needs, ["B", "A", "X"]);
+  assert.equal(nodes.get("C")!.ready, false);
+});
+
+test("a label with no attempt is a line of its item, and bookkeeping draws no box", () => {
+  const [a, b] = parseLog(
+    "2026-11-02 10:00:00 | B:code-sweep | finder done\n2026-11-02 10:00:01 | T14-cell-len:merge (orchestrator) | merged\n",
+  );
+  assert.deepEqual([a.id, a.role, a.attempt], ["B", "code-sweep", ""]);
+  assert.deepEqual([b.id, b.role], ["T14-cell-len", "merge (orchestrator)"]);
+  const nodes = by(buildNodes(inputs(
+    "2026-11-02 10:00:00 | B:orchestrator | lock taken\n2026-11-02 10:00:01 | STATUS:orchestrator | lock taken\n" +
+      "2026-11-02 10:00:02 | Y:orchestrator | started\n",
+    '{"id":"Y","state":"fixing"}\n',
+  )));
+  assert.equal(nodes.get("B")!.logLines, 1);
+  assert.equal(nodes.has("STATUS"), false);
+  assert.equal(nodes.has("B:orchestrator"), false);
+  assert.equal(nodes.get("Y")!.state, "active");
+});
+
+test("a ledger line carries edges too, and a bare string is not a list", () => {
+  const nodes = by(buildNodes(inputs(
+    "",
+    '{"id":"W","state":"open","needs":["B"],"feeds":["C"]}\n{"id":"V","state":"open","needs":"A","feeds":"C"}\n',
+  )));
+  assert.deepEqual(nodes.get("W")!.needs, ["B"]);
+  assert.deepEqual(nodes.get("C")!.needs, ["B", "A", "W"]);
+  assert.deepEqual(nodes.get("V")!.needs, []);
+});

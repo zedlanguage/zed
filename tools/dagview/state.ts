@@ -28,6 +28,9 @@ export interface LedgerEntry {
   started?: string;
   note?: string;
   commit?: string;
+  // As in an override: what an item outside the plan needs, and what needs it.
+  needs?: string[];
+  feeds?: string[];
 }
 
 export interface Override {
@@ -35,6 +38,9 @@ export interface Override {
   note?: string;
   title?: string;
   started?: string;
+  // Edges for an item the plan does not order: the items it needs, and the items that need it.
+  needs?: string[];
+  feeds?: string[];
 }
 
 export interface Sub {
@@ -105,14 +111,15 @@ export function parseLog(text: string): LogEntry[] {
   for (const line of text.split("\n")) {
     const m = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \| ([^|]+?) \| (.*)$/.exec(line);
     if (!m) continue;
-    const label = /^(.+):([a-z]+)#(.*)$/.exec(m[2]);
+    // "A:impl#1", and "A:orchestrator" or "A:code-sweep" with no attempt: all three are lines of A.
+    const label = /^([^:#]+):([a-z][^#]*?)(?:#(.*))?$/.exec(m[2]);
     out.push({
       at: Date.parse(m[1].replace(" ", "T")),
       time: m[1],
       label: m[2],
       id: label ? label[1] : m[2],
       role: label ? label[2] : "",
-      attempt: label ? label[3] : "",
+      attempt: label?.[3] ?? "",
       text: m[3],
     });
   }
@@ -191,8 +198,33 @@ export function buildNodes(inp: Inputs): ViewNode[] {
 
   const rows = [...inp.plan];
   const planned = new Set(rows.map((r) => r.id));
+  // An item only the orchestrator's bookkeeping names (status, plan and lock lines) is not a task.
+  const bookkeeping = (id: string) =>
+    !ledger.has(id) && !inp.overrides[id] && (logs.get(id) ?? []).every((l) => l.entry.role === "orchestrator");
   for (const id of new Set([...logs.keys(), ...ledger.keys()])) {
-    if (!planned.has(id)) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
+    if (!planned.has(id) && !bookkeeping(id)) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
+  }
+  // Edges come from the overrides and from ledger lines, so an agent adds them by appending.
+  const edges: [string, { needs?: string[]; feeds?: string[] }][] = [
+    ...Object.entries(inp.overrides),
+    ...[...ledger].flatMap(([id, es]) => es.map((e): [string, LedgerEntry] => [id, e])),
+  ];
+  const own = new Map<string, string[]>();
+  const fed = new Map<string, string[]>();
+  // An agent may write a bare string; only a list of ids is read.
+  const list = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
+  for (const [id, ov] of edges) {
+    if (!own.has(id)) own.set(id, []);
+    own.get(id)!.push(...list(ov.needs));
+    for (const f of list(ov.feeds)) {
+      if (!fed.has(f)) fed.set(f, []);
+      fed.get(f)!.push(id);
+    }
+  }
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const extra = [...(own.get(r.id) ?? []), ...(fed.get(r.id) ?? [])].filter((n) => !r.needs.includes(n));
+    if (extra.length > 0) rows[i] = { ...r, needs: [...r.needs, ...new Set(extra)] };
   }
 
   const states = new Map<string, NodeState>();
