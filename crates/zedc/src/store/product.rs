@@ -487,8 +487,10 @@ pub struct Scope {
     /// every question needs a complete Presburger procedure, exponential in the worst case.
     /// Trigger: a test or a part of the relation whose question is refused. Tests:
     /// `l01_39_reduced_product::refused::a_refused_test_gives_one_warning_at_its_test`,
+    /// `…::a_refused_test_through_a_helper_names_the_test_and_its_outcome`,
+    /// `…::a_refused_projection_onto_each_name_gives_one_warning_for_each`,
     /// `…::two_refused_arms_joined_give_both_warnings_in_one_order`,
-    /// `…::warnings_of_many_refused_tests_scale`. COMPLEXITY.md rows S18 (the solver) and S26
+    /// `…::warnings_of_many_refused_tests_scale`. COMPLEXITY.md rows S18 (the solver) and S28
     /// (this report). A complete solution would decide every question (see `presburger`).
     pub refusals: imbl::OrdSet<Refused>,
     /// Each name a `let` of the walk bound, with the order of its binding and, for a function,

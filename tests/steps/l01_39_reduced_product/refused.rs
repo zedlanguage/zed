@@ -256,7 +256,7 @@ fn warnings_of_many_refused_tests_scale() {
     // At sizes n and 8n: the scope after k - 2 shared tests, then each arm after one more.
     // Below n = 256 a fixed cost of about 2.8M instructions per join hides a union quadratic in
     // k. Two arms that each add many tests the other lacks are not measured here: that join is
-    // superlinear whether the tests are refused or not (COMPLEXITY.md S26); ledger item ST-join
+    // superlinear whether the tests are refused or not (COMPLEXITY.md S28); ledger item ST-join
     // owns that case.
     let n = 256;
     let arms = [n, FACTOR * n].map(|k| {
