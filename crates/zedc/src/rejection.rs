@@ -42,6 +42,10 @@ rows! {
     UndischargedRegion => "Undischarged region assertion",
     OverlappingArrows => "Cross-unit overlapping incomparable arrows",
     AmbiguousImport => "Ambiguous imported name",
+    MemberTwice =>
+        "Two members of one name with different declarations in a struct or interface body",
+    PathLeavesPackage =>
+        "File read at the compile-time stage by a path that leaves the package root",
     ImportCycle => "Import cycle",
     OrderWithNone =>
         "Order read on a level with no natural order — origin keys outside their `Seq`",

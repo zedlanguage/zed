@@ -36,7 +36,7 @@ fn every_examples_fence_lexes() {
 #[test]
 fn every_fence_has_a_layer_no_lower_than_its_label() {
     let all = fences::all();
-    assert_eq!(all.len(), 47 + 102);
+    assert_eq!(all.len(), 47 + 106);
     for f in &all {
         assert!((1..=29).contains(&f.layer), "{}", f.at);
         assert!(

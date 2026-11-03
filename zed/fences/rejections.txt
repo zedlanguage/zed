@@ -11,6 +11,8 @@ Key outside the permission bound
 Undischarged region assertion
 Cross-unit overlapping incomparable arrows
 Ambiguous imported name
+Two members of one name with different declarations in a struct or interface body
+File read at the compile-time stage by a path that leaves the package root
 Import cycle
 Order read on a level with no natural order — origin keys outside their `Seq`
 Two declared orders meet in one key type

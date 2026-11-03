@@ -17,11 +17,11 @@ Path          : a qualified name, resolved to a unit or a binding
 Pin           : the BLAKE3-256 content address the imported unit must have (step M0.7)
 Struct        : a record type, and its constructor λ(f1, …). {#f1 -> f1, …}, a family keyed by field atoms; the grammar form also derives the struct's parser and printer (sec:tour_grammar)
 StructField   : a field, with its default as the constructor's default argument
-Field         : a field name and type; `import P` copies the fields of P
+Field         : a field name and type; `import P` copies the fields of P, a field it brings in twice counting once when the two are equal (sec:introspection)
 TypeDecl      : binds a type name, with its parameters, in the type environment; the atoms of a named atom family are data (sec:failure); no term
 TypeParams    : the type parameters of a declaration
 Interface     : a record type of fields and law members; a value ascribed to it carries the laws as obligations (sec:theories)
-Member        : a field; `law` an obligation over the fields; `import P(T, …)` copies P's fields and law members at those arguments
+Member        : a field; `law` an obligation over the fields; `import P(T, …)` copies P's fields and law members at those arguments, a member brought in twice counting once when the two are equal (sec:introspection)
 Law           : the obligation ∀ params. ⟦e⟧, discharged by the ladder or by its proof (sec:verification); no run-time term
 Function      : binds the name to λ(params). ⟦Body⟧; a function whose body reads its own name, or a name of its recursive group, is the definedness fix over its parameter domain, evaluated on demand (L6)
 Method        : the function T.f with the receiver `this: T` as its first positional parameter
