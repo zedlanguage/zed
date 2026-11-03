@@ -73,3 +73,74 @@ fn golden_malformed_holes() {
         .collect();
     insta::assert_snapshot!(out.join("\n"));
 }
+
+/// The error lexing `text` gives, with the text of its span.
+fn error(text: &str) -> String {
+    let e = lex(text).unwrap_err();
+    format!("{:?}: {e}", &text[e.span.start..e.span.end])
+}
+
+#[test]
+fn a_hole_of_a_one_line_string_holds_no_line_break() {
+    // A `//` comment runs to the end of the line, so it takes the `}` with it, and a line break
+    // before the `}` does not help: the hole would then hold the line break.
+    assert_eq!(
+        error("log(\"total: ${sum // all rows\n}\");"),
+        "\"// all rows\": malformed string: a `//` comment in a hole of a `\"` string runs to \
+         the end of the line, past the `}`; write `/* … */`"
+    );
+    assert_eq!(
+        error("log(\"total: ${sum /* all\n rows */}\");"),
+        "\"/* all\": malformed string: a `/* … */` comment in a hole of a `\"` string closes on \
+         its line"
+    );
+    // A block comment nested in another is part of it.
+    assert_eq!(
+        error("log(\"${sum /* all /* the\n rows */ */}\");"),
+        "\"/* all /* the\": malformed string: a `/* … */` comment in a hole of a `\"` string \
+         closes on its line"
+    );
+    assert_eq!(
+        error("log(\"total: ${sum +\n tax}\");"),
+        "\"${sum +\": malformed string: a hole in a `\"` string closes on its line"
+    );
+    assert_eq!(
+        error("log(\"${{ t = sum + tax;\n t }}\");"),
+        "\"${{ t = sum + tax;\": malformed string: a hole in a `\"` string closes on its line"
+    );
+    assert_eq!(
+        error("log(\"${\"\"\"a\nb\"\"\" ++ name}\");"),
+        "\"\\\"\\\"\\\"a\": malformed string: a `\"\"\"` string in a hole of a `\"` string \
+         closes on its line"
+    );
+    // The `"""` string's own hole may span lines, but the one-line hole around it may not.
+    assert_eq!(
+        error("log(\"${\"\"\"${a /* c\n */}\"\"\"}\");"),
+        "\"\\\"\\\"\\\"${a /* c\": malformed string: a `\"\"\"` string in a hole of a `\"` \
+         string closes on its line"
+    );
+    // A `"` string in a `"""` string's hole is one-line again.
+    assert_eq!(
+        error("log(\"\"\"${\"${a /* c\n */}\"}\"\"\");"),
+        "\"/* c\": malformed string: a `/* … */` comment in a hole of a `\"` string closes on \
+         its line"
+    );
+}
+
+#[test]
+fn a_hole_of_a_one_line_string_may_hold_what_closes_on_its_line() {
+    assert_eq!(
+        parts(r#""total: ${sum /* all /* the */ rows */ + tax}""#),
+        ["total: ", r#"${Name("sum") Op("+") Name("tax")}"#]
+    );
+    assert_eq!(
+        parts(r#""${"""a""" ++ name}""#),
+        [r#"${Str([Text("a")]) Op("++") Name("name")}"#]
+    );
+}
+
+#[test]
+fn a_hole_of_a_multi_line_string_may_span_lines() {
+    let src = "\"\"\"${sum // all rows\n + tax /* and\n fees */}\"\"\"";
+    assert_eq!(parts(src), [r#"${Name("sum") Op("+") Name("tax")}"#]);
+}

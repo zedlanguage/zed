@@ -67,3 +67,23 @@ fn an_open_hole_at_the_bottom_of_a_deep_nest_is_reported() {
     let text = "\"${".repeat(100_000);
     assert_eq!(lex(&text).unwrap_err().span.start, text.len() - 2);
 }
+
+/// `n` lines, each a one-line string whose hole holds a block comment and a `"""` string.
+fn one_line_holes(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("\"row ${{x{i} /* cell */ ++ \"\"\"t\"\"\"}}\"\n"))
+        .collect()
+}
+
+#[test]
+fn one_line_holes_with_comments_and_strings_scale() {
+    // Each block comment and inner string is checked for a line break by a search in the
+    // text's line breaks, not by a pass over them.
+    let texts: HashMap<usize, String> = [4_000, 32_000]
+        .into_iter()
+        .map(|n| (n, one_line_holes(n)))
+        .collect();
+    scaling::check_order("n lines of one-line strings with holes", 4_000, 1, |n| {
+        assert_eq!(lex(&texts[&n]).unwrap().len(), n);
+    });
+}

@@ -1,16 +1,21 @@
 //! String literals (step L1.5):
 //!
 //! ```peg
-//! String   = '"""' (!'"""' Char)* '"""' | '"' (!'"' !'\n' Char)* '"'
-//! Char     = Escape | Hole | !('\\' | '${') ANY
-//! Escape   = '\\' ([ntr0\\"$] | 'u{' Hex+ '}')
-//! Hole     = '${' HoleText '}'
-//! HoleText = (String | Comment | '{' HoleText '}' | !'}' ANY)*
+//! String        = '"""' (!'"""' Char)* '"""' | '"' (!'"' !'\n' Char1)* '"'
+//! String1       = '"""' (!'"""' !'\n' Char1)* '"""' | '"' (!'"' !'\n' Char1)* '"'
+//! Char          = Escape | Hole | !('\\' | '${') ANY
+//! Char1         = Escape | &('${' HoleText1 '}') Hole | !('\\' | '${') ANY
+//! Escape        = '\\' ([ntr0\\"$] | 'u{' Hex+ '}')
+//! Hole          = '${' HoleText '}'
+//! HoleText      = (String | Comment | '{' HoleText '}' | !'}' ANY)*
+//! HoleText1     = (String1 | '//' (!'\n' ANY)* | BlockComment1 | '{' HoleText1 '}' | !'}' !'\n' ANY)*
+//! BlockComment1 = '/*' (BlockComment1 | !'*/' !'\n' ANY)* '*/'
 //! ```
 //!
 //! A string is its parts: decoded text, and holes, each lexed into the tokens of its
-//! expression. A `"` string has no line break, its holes included, so a `//` comment in a hole
-//! of a one-line string is an error rather than a comment that swallows the `}`.
+//! expression. A `"` string has no line break, its holes included: a line break in such a hole,
+//! in a block comment or a `"""` string in it, is an error, and so is a `//` comment in it,
+//! which runs to the end of the line and so past the `}`. Each of these has its own message.
 //!
 //! A `"""` string whose opening `"""` ends its line and whose closing `"""` begins its line
 //! after spaces and tabs only is stripped of that indentation: the line breaks after the
@@ -45,10 +50,10 @@ impl Holes {
         }
     }
 
-    /// Whether the text from `from` to `to` holds a line break.
-    fn breaks_in(&self, from: usize, to: usize) -> bool {
+    /// The position of the first line break in the text from `from` to `to`, if it holds one.
+    fn first_break(&self, from: usize, to: usize) -> Option<usize> {
         let k = self.breaks.partition_point(|&b| b < from);
-        self.breaks.get(k).is_some_and(|&b| b < to)
+        self.breaks.get(k).copied().filter(|&b| b < to)
     }
 }
 
@@ -261,14 +266,15 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                 None => {
                     let (start, end) = (scan.pos, scan.end());
                     stack.pop();
-                    let Some(&mut Inside::Hole { open, one_line, .. }) = stack.last_mut() else {
+                    let Some(&mut Inside::Hole { one_line, .. }) = stack.last_mut() else {
                         unreachable!("a string here is inside a hole");
                     };
-                    if one_line && holes.breaks_in(start, end) {
+                    // A `"` string stopped at its own line break, so this one is a `"""`.
+                    if one_line && let Some(nl) = holes.first_break(start, end) {
                         return Err(bad(
-                            open,
                             start,
-                            "a hole in a `\"` string closes on its line",
+                            nl,
+                            "a `\"\"\"` string in a hole of a `\"` string closes on its line",
                         ));
                     }
                     i = end;
@@ -313,14 +319,22 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                             "a `//` comment in a hole of a `\"` string runs to the end of the line, past the `}`; write `/* … */`",
                         ));
                     }
-                    Some('/') if comment::comment(text, i).is_some() => {
-                        comment::comment(text, i).expect("a comment starts here")?
+                    Some('/') if let Some(end) = comment::comment(text, i) => {
+                        let end = end?;
+                        if *one_line && let Some(nl) = holes.first_break(i, end) {
+                            return Err(bad(
+                                i,
+                                nl,
+                                "a `/* … */` comment in a hole of a `\"` string closes on its line",
+                            ));
+                        }
+                        end
+                    }
+                    Some('\n') if *one_line => {
+                        return Err(bad(*open, i, "a hole in a `\"` string closes on its line"));
                     }
                     Some(c) => i + c.len_utf8(),
                 };
-                if *one_line && holes.breaks_in(i, next) {
-                    return Err(bad(*open, i, "a hole in a `\"` string closes on its line"));
-                }
                 i = next;
             }
         }

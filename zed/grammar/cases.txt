@@ -374,3 +374,18 @@ Expr ::: { f: (a, b) -> a + b } ::: ({ f : (( (a , b) ) -> (a + b)) })
 Expr ::: { f: x -> y, z -> w } ::: ERROR
 Item ::: law oneNeZero() = one != zero; ::: (law oneNeZero ( ) = (one != zero) ;)
 Item ::: interface I(T) { one: T, law oneNeZero() = one != one } ::: (interface I (( T )) { (one : T) , (law oneNeZero ( ) = (one != one)) })
+
+# a hole of a one-line string holds no line break (String1, Char1, HoleText1, BlockComment1); a case writes a line break ⏎
+Expr ::: "${x // c⏎}" ::: ERROR
+Expr ::: "${x /* c⏎*/ + 2}" ::: ERROR
+Expr ::: "${x /* a /* b⏎*/ c */ + 2}" ::: ERROR
+Expr ::: "${x /* a /* b */ c */ + 2}" ::: "${x /* a /* b */ c */ + 2}"
+Expr ::: "${x⏎+ 2}" ::: ERROR
+Expr ::: "${{ x = 1;⏎x }}" ::: ERROR
+Expr ::: "${"""a⏎b"""}" ::: ERROR
+Expr ::: "${"""a"""}" ::: "${"""a"""}"
+Expr ::: "${"""${x /* c⏎*/}"""}" ::: ERROR
+Expr ::: """${x // c⏎}""" ::: """${x // c⏎}"""
+Expr ::: """${x /* c⏎*/ + 2}""" ::: """${x /* c⏎*/ + 2}"""
+Expr ::: """${"${x⏎}"}""" ::: ERROR
+Expr ::: """${"${x /* c⏎*/}"}""" ::: ERROR

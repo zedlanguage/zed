@@ -1005,3 +1005,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `std::ptr::eq` on two formulas as a shortcut to `Equal` in a hand-written `Ord` and `PartialEq` that otherwise compare as the derived ones, so a lookup that finds the very formula it holds does not walk it | `impl Ord for Formula`, `impl PartialEq for Formula` (`presburger/deep.rs`) | Identity (gap 1) | The runtime's `==` shortcut on shared values, or keys by the content digest of gap 1 |
 | `impl Drop` with a work list on `Parts`, taking each nested disjunct no other holder shares by `Rc::try_unwrap`, so a nest 100,000 deep is freed without recursion; and `Parts::of` building nested disjuncts on an explicit stack of frames | `Parts::drop`, `Parts::of` | None | Removed: the runtime frees values without recursion (as for `Formula`), and `of` becomes a fold over the formula |
 | A `bottom` flag set on a scope while its names are kept as they were, and the names rebuilt as bottom only for a scope that is shown | `Scope::reduce_case`, `Scope::empty_if_bottom` | None | A record field set by the reduce that returns the scope; the shown scope is mapped to bottom names once |
+
+## Entries from HOLE-oneline (`zedc/src/lex/string.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `match` arm guarded by `if let` on the comment that starts at the position, and `if … && let Some(nl) = …` testing a flag and binding the first line break | `hole_end` | None | An `is` test before the `match`, and an `if` on the flag around a `match` on the break |
+| `slice::partition_point` over the sorted line-break positions, the first break in a range | `Holes::first_break` | None | A binary search over a sequence by a predicate, from the L3 library (as `docs::check`) |

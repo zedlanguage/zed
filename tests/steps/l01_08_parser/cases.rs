@@ -1,5 +1,6 @@
 //! The bracketing cases of `zed/grammar/cases.txt`: each line is `Rule[@ring] ::: text ::: tree`, and a tree of
-//! `ERROR` means the text must not parse.
+//! `ERROR` means the text must not parse. A case is one line, so a line break in its text or tree
+//! is written `⏎`.
 
 use std::path::Path;
 
@@ -37,7 +38,7 @@ fn every_bracketing_case_gives_its_tree() {
             Some((s, r)) => (s, r.parse().unwrap()),
             None => (start, TOP),
         };
-        let got = show(text, start, ring);
+        let got = show(&text.replace('⏎', "\n"), start, ring).replace('\n', "⏎");
         n += 1;
         if !(got == want || want == "ERROR" && got.starts_with("ERROR")) {
             wrong.push(format!(
@@ -45,7 +46,7 @@ fn every_bracketing_case_gives_its_tree() {
             ));
         }
     }
-    assert_eq!(n, 361, "the number of cases");
+    assert_eq!(n, 374, "the number of cases");
     assert!(
         wrong.is_empty(),
         "{} wrong:\n{}",

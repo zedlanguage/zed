@@ -2,7 +2,8 @@
 //! start rule and printed as an s-expression. Each block of `zed/grammar/leftrec.txt` is a
 //! grammar of its own and its cases.
 //!
-//! A case is `START[@RING] ::: TEXT ::: WANT`; WANT `ERROR` accepts any error.
+//! A case is `START[@RING] ::: TEXT ::: WANT`; WANT `ERROR` accepts any error. A case is one
+//! line, so a line break in TEXT or WANT is written [`LINE_BREAK`].
 
 use zedc::parse::{Grammar, Parser, TOP};
 
@@ -10,6 +11,9 @@ use crate::spec::Spec;
 use crate::syntax::{Tokens, Tree, describe_fail, expected_strings, lex, then_end};
 use crate::text::{read_text, strip};
 use crate::{Outcome, arg, impl_root, say};
+
+/// What a case writes for a line break.
+pub const LINE_BREAK: char = '⏎';
 
 /// One step of writing an s-expression.
 enum Write<'a> {
@@ -115,7 +119,8 @@ fn run_cases(
                 ring.parse().map_err(|_| format!("not a ring: {line}"))?,
             ),
         };
-        let got = show(lexical, syn, text, start, ring);
+        let got = show(lexical, syn, &text.replace(LINE_BREAK, "\n"), start, ring);
+        let got = got.replace('\n', &LINE_BREAK.to_string());
         let ok = got == want || (want == "ERROR" && got.starts_with("ERROR"));
         bad += usize::from(!ok);
         let tag = if ok { "ok   " } else { "DIFF " };
