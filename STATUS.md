@@ -822,7 +822,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | ENDS-dag | orchestrator attempt  | 2026-11-03 05:46 | started: plan-runner wf_380ce798-c70 |
-| OSP-drop2 | verify attempt 2 | 2026-11-03 04:26 | start (verify#1 results read; checking 4e274dc) |
 | PLUG-study | research attempt 1 | 2026-11-03 05:45 | milestone: probe ran (reduced product interval x congruence on unchanged iterate::solve: int[1..=99] 1 mod 2; evals 3002 at n=1000, 24002 at n=8000); worktree a |
 | S22a | verify attempt 1 | 2026-11-03 03:01 | neg controls in ctl (not committed): Pa off -> chain_alt_scales 37.7x FAIL (probe, conj pass via clip); Pa and clip off -> probe 58.7x, conj 58.1x, cross 58.5x  |
 | ST-arms-quad | repair attempt 2 | 2026-11-03 03:16 | cause of verifier probe 'moving' cubic: settle flattened one forced level per round and kept each repeated bound, so d rounds x d disjuncts x O(d) solves; fix:  |
@@ -833,8 +832,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#3 in progress) |
 | XT3 | orchestrator attempt  | 2026-11-03 03:08 | started now: research agent (own attempt) on the four open problems; it had been marked started at 03:08 with nothing running |
 
-Merged into local main and not yet pushed (3 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (4 items); the push follows one full test run on the merged tree:
 
+- OSP-drop2: `_` checked per flow path (spec b514767)
 - 283695c dagview: a ledger line's at or ts time counts toward start and runtime
 - 140b42b STATUS: in progress as of 2026-11-03 06:01
 - 7073be1 STATUS: in progress as of 2026-11-03 05:42
