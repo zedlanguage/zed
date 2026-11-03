@@ -893,7 +893,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | An explicit stack `Vec` of (marked term, term, position) pushed and popped to walk two terms together in preorder | `mutate::sites` | Mutation | A fold over a worklist list with the found mutants as its state, or recursion on the term's depth |
-| A path of borrowed nodes pushed root to leaf and popped to rebuild the term upward, one child replaced at each level (`provenance::with_child`) | `mutate::apply` | Mutation | A fold over the reversed path that returns the rebuilt term |
+| A copy of the definition walked root to leaf by a reborrowed `&mut Term` (`provenance::child_mut`, which copies a shared `Arc` child first by `Arc::make_mut`), and the one node assigned in place | `mutate::apply` | Mutation | An update of the term at the position's path of child indices, which copies only the nodes on that path of a persistent term |
 | `std::mem::discriminant` to compare two terms' variants without their fields | `mutate::sites` | None | A `match` on the pair of terms with one arm per variant and a final arm for a mismatch |
 | A lazily filled `Vec<Option<Term>>` of each definition's remixed original, written by index the first time a mutant of that definition is seen | `mutate::run` (`built`) | Mutation | A map from definition to remixed original built before the loop over the mutants, or a state receiver |
 | `stage::Remix::mix(&mut self, …)`, a mixer that keeps its memo across calls | `mutate::run` | Shared memo (gap 2) | A state receiver that returns the memo with each mixed term |
