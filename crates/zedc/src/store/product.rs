@@ -938,6 +938,13 @@ impl Scope {
         self.refusals.iter().map(Refused::warning).collect()
     }
 
+    /// Keeps `r`, a question the integer solver left undecided while this scope was narrowed or
+    /// projected, once, in O(log k) in the k refusals kept. Every refused test and part of the
+    /// relation is kept through here.
+    pub fn refuse(&mut self, r: Refused) {
+        self.refusals.insert(r);
+    }
+
     /// The names with one value each, and their values.
     pub fn statics(&self) -> BTreeMap<Arc<str>, Value> {
         self.names
@@ -1495,7 +1502,7 @@ impl Scope {
             let pre = preimage(t, &doms, &Demand::Bool(outcome));
             exact = pre.exact;
             if let Some(cause) = pre.refusal {
-                self.refusals.insert(Refused {
+                self.refuse(Refused {
                     constraint: t.to_string().into(),
                     asked: Asked::Test { outcome },
                     cause,
@@ -1881,9 +1888,9 @@ impl Scope {
             .collect();
         // The text of `part`, printed once, and only when a question about it is refused.
         let mut text: Option<Arc<str>> = None;
-        let mut refuse = |refusals: &mut imbl::OrdSet<Refused>, asked: Asked, cause| {
+        let mut refuse = |s: &mut Scope, asked: Asked, cause| {
             let constraint = text.get_or_insert_with(|| part.to_string().into()).clone();
-            refusals.insert(Refused {
+            s.refuse(Refused {
                 constraint,
                 asked,
                 cause,
@@ -1892,12 +1899,12 @@ impl Scope {
         let each = match presburger::project_each(&whole, &syms) {
             Ok((each, skipped)) => {
                 for cause in skipped {
-                    refuse(&mut self.refusals, Asked::Disjunct, cause);
+                    refuse(self, Asked::Disjunct, cause);
                 }
                 each
             }
             Err(cause) => {
-                refuse(&mut self.refusals, Asked::Projection, cause);
+                refuse(self, Asked::Projection, cause);
                 return;
             }
         };
@@ -1906,7 +1913,7 @@ impl Scope {
                 Ok(x) => x,
                 Err(cause) => {
                     if let Atom::Sym(n) = a {
-                        refuse(&mut self.refusals, Asked::Onto(n.clone()), cause);
+                        refuse(self, Asked::Onto(n.clone()), cause);
                     }
                     continue;
                 }

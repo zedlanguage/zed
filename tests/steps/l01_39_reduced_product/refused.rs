@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, project_each};
-use zedc::store::product::Scope;
+use zedc::store::product::{Asked, Refused, Scope};
 
 fn sym(s: &str) -> Atom {
     Atom::Sym(Arc::from(s))
@@ -95,6 +95,74 @@ fn a_refused_test_gives_one_warning_at_its_test() {
     );
 }
 
+/// A test that calls a helper is narrowed through the helper's body as one test, whose preimage
+/// asks the solver the helper's four constraints at once: refused, it gives a warning for
+/// each outcome, which names the test as closed over the helper and the outcome assumed.
+#[test]
+fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
+    let src = format!(
+        "g(positional x: int, positional y: int, positional z: int, positional w: int) = {};\n\
+         ok(x, y, z, w) = if g(x, y, z, w) {{ 1 }} else {{ 0 }};",
+        growth_test(["x", "y", "z", "w"])
+    );
+    let (_, _, arms) = super::arms_of(&src);
+    let test = "{ g = (x@1, y@1, z@1, w@1) -> if if if ((((((4 * x@1) - (12 * w@1)) - (10 * y@1)) \
+                - (12 * z@1)) + 11) >= 0) { ((((((4 * w@1) + (10 * x@1)) - (10 * y@1)) - (11 * z@1)) \
+                - 28) >= 0) } else { false } { ((((((11 * w@1) + (4 * x@1)) - y@1) + (12 * z@1)) - 28) \
+                >= 0) } else { false } { ((((((0 - (8 * w@1)) - (5 * x@1)) + (12 * y@1)) - z@1) + 31) \
+                >= 0) } else { false }; g(x@2, y@2, z@2, w@2) }";
+    let at = |outcome: bool| {
+        format!(
+            "warning: the scope is wider than its constraints make it\
+                 \n  [1] the test `{test}` is assumed {outcome}\
+                 \n  [2] whether its names can take each value is not decided: {GROWTH}\
+                 \n  [3] the names of the test are not narrowed by it"
+        )
+    };
+    // Taken true, the helper's constraints also hold in the scope, and their projection is
+    // refused too, which gives a second warning; taken false, only the preimage is refused.
+    let constraints = "12 * w@2 + 10 * y@2 + 12 * z@2 <= 4 * x@2 + 11 \
+                       && 8 * w@2 + 5 * x@2 + z@2 <= 12 * y@2 + 31 \
+                       && 4 * w@2 + 10 * x@2 >= 10 * y@2 + 11 * z@2 + 28 \
+                       && 11 * w@2 + 4 * x@2 + 12 * z@2 >= y@2 + 28";
+    let projection = format!(
+        "warning: the scope is wider than its constraints make it\
+         \n  [1] the constraints `{constraints}` hold in the scope\
+         \n  [2] their projection onto their names is not decided: {GROWTH}\
+         \n  [3] the names of the constraints are not narrowed by them"
+    );
+    assert_eq!(
+        texts(&super::arm(&arms, "g(", true).scope),
+        vec![projection, at(true)]
+    );
+    assert_eq!(
+        texts(&super::arm(&arms, "g(", false).scope),
+        vec![at(false)]
+    );
+}
+
+/// The same four constraints with no constants have the point zero, so their projection is
+/// taken, but the projection onto each name is refused: one warning for each name, in the
+/// order of the names.
+#[test]
+fn a_refused_projection_onto_each_name_gives_one_warning_for_each() {
+    let test = "4 * x - 12 * w - 10 * y - 12 * z >= 0 && 4 * w + 10 * x - 10 * y - 11 * z >= 0 \
+                && 11 * w + 4 * x - y + 12 * z >= 0 && 0 - 8 * w - 5 * x + 12 * y - z >= 0";
+    let constraints = "12 * w + 10 * y + 12 * z <= 4 * x && 8 * w + 5 * x + z <= 12 * y \
+                       && 4 * w + 10 * x >= 10 * y + 11 * z && 11 * w + 4 * x + 12 * z >= y";
+    let expected: Vec<String> = ["w", "x", "y", "z"]
+        .map(|n| {
+            format!(
+                "warning: the scope is wider than its constraints make it\
+                 \n  [1] the constraints `{constraints}` hold in the scope\
+                 \n  [2] their projection onto `{n}` is not decided: {GROWTH}\
+                 \n  [3] that name is not narrowed by them"
+            )
+        })
+        .into();
+    assert_eq!(texts(&arm_scope(test, true)), expected);
+}
+
 /// The join of two scopes reports each one's refusal, in an order that depends neither on
 /// which side is joined to which nor on the order the tests were assumed in.
 #[test]
@@ -162,11 +230,35 @@ fn warnings_of_many_refused_tests_scale() {
             .fold(scope.clone(), |s, g| s.assume(g, true, &none));
         assert_eq!(s.warnings().len(), k);
     });
+    // The check above is mostly the solver's work, about 11M instructions per refused test, so
+    // the refusals' own cost is measured alone: keeping k refusals, each once, in a scope.
+    let n = 4096;
+    let refused = [n, FACTOR * n].map(|k| -> Vec<Refused> {
+        names(k)
+            .chunks(4)
+            .map(|c| Refused {
+                constraint: growth_test([&*c[0], &*c[1], &*c[2], &*c[3]]).into(),
+                asked: Asked::Test { outcome: true },
+                cause: Refusal::Growth,
+            })
+            .collect()
+    });
+    let empty = super::ints(&[]);
+    scaling::check("keeping refusals", n, |k| {
+        let s = refused[usize::from(k != n)]
+            .iter()
+            .fold(empty.clone(), |mut s, r| {
+                s.refuse(r.clone());
+                s
+            });
+        assert_eq!(s.refusals.len(), k);
+    });
     // At sizes n and 8n: the scope after k - 2 shared tests, then each arm after one more.
-    // Two arms that each add many tests the other lacks are not measured here: that join is
+    // Below n = 256 a fixed cost of about 2.8M instructions per join hides a union quadratic in
+    // k. Two arms that each add many tests the other lacks are not measured here: that join is
     // superlinear whether the tests are refused or not (COMPLEXITY.md S26); ledger item ST-join
     // owns that case.
-    let n = 64;
+    let n = 256;
     let arms = [n, FACTOR * n].map(|k| {
         let ns = names(k);
         let gs = guards(&ns);
