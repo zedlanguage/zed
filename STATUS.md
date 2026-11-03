@@ -813,25 +813,30 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CAP-bits | repair attempt 1 | 2026-11-03 03:35 | negative controls (not committed, reverted): room() always yes -> 2**2**100+1 aborts 'memory allocation of 274877906968 bytes failed' (SIGABRT, both tests, >60  |
-| IDLANG | orchestrator attempt  | 2026-11-03 04:42 | study agent started (Id dataflow language vs Zed) |
-| L25.8 | repair attempt 1 | 2026-11-03 03:49 | rat */ and int-literal mutants fixed (product type; every Int literal marked, neighbors at its carrier); scaling with a row per function 100->800: 8.0x instr (2 |
+| CAP-bits | repair attempt 2 | 2026-11-03 03:35 | String of a number now asks for its text's memory (text_room): String(2**2**100) is NumberTooLarge in 0.02 s; control without the check ran 30 s to timeout (loa |
+| IDLANG-spec | orchestrator attempt  | 2026-11-03 05:20 | brief written; launching spec agent |
+| L25.8 | repair attempt 2 | 2026-11-03 03:49 | apply now clones the definition once and changes the node in place (child_mut, Arc::make_mut); new test running_the_mutants_of_a_chain_of_n_additions_scales (or |
 | OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | per-path unnamed-atom map in checker written (Else/If/Block/alias/call-own); tests in discard_paths.rs; building steps (load 41.74) |
-| PROOFS-spec | impl attempt 1 | 2026-11-03 04:49 | started: brief and REPORT read; worktrees at zed b0ff20f, zed-impl f2b5c0e |
-| S22a | orchestrator attempt  | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
-| ST-arms-quad | repair attempt 1 | 2026-11-03 03:35 | start, continuing wt/st-arms at 31e6e2f |
-| T11-S22 | orchestrator attempt  (item S22a) | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
-| T2-mid | impl attempt 1 | 2026-11-03 04:27 | baseline on main b9115b2: 97 pieces, 1 failing (l01_29_diagnostics::printed::every_printed_type_parses_back_to_itself, #ioError(_) 'holds a form of layer L2', n |
-| T6 | repair attempt 4 | 2026-11-03 00:01 | x13 union control: rep memo ignored for found values -> 317.7x > 192 (n 16->128), test fails as required; reverted. Split at 16/64/128: build 9.3M/118M/432M, v< |
-| TD-ends | verify attempt 1 | 2026-11-03 03:52 | run_tests.sh 4 on 88c5e7f: 97 pieces, 1 failed (l01_29 every_printed_type_parses_back_to_itself, pre-existing on main b9115b2 per T2-mid baseline) / load 35.8-4 |
+| S22a | impl attempt 1 | 2026-11-03 03:01 | neg controls (load ~45): off-by-one Pa cut in slice_treap -> 15 of 89 l01_25 tests fail, twice; clip hull 1 too narrow -> 34 of 89 fail, twice; both reverted |
+| ST-arms-quad | repair attempt 2 | 2026-11-03 03:35 | reproduced on 904eeab (load 43): distinct nest 0.60G/2.01G/7.09G instr at d=60/120/240 (3.3x,3.5x per 2x); two-choice nest with cap x<=2d 0.38G/1.30G/4.93G at d |
+| T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | neg controls (load ~45): off-by-one Pa cut in slice_treap -> 15 of 89 l01_25 tests fail, twice; clip hull 1 too narrow -> 34 of 89 fail, twice; both reverted |
+| T2-mid | impl attempt 1 | 2026-11-03 04:27 | elab Tables collect on explicit stack committed; deep tests l01_16 pass, old code overflows; shallow +1.7%; load 27.42 |
+| T6 | repair attempt 3 | 2026-11-03 00:01 | union tests in definitions N (n 64 and 186, N 2210 and 17765, 8.04x), inputs built before timing under fresh names: build 8.0-8.2x, decided 10.1-11.8x (limit 24 |
+| TD-ends | verify attempt 2 | 2026-11-03 03:52 | run_tests.sh 4 on c664182: 97 pieces, 1 failed (l01_29 diagnostics, checking it is the baseline one) / load 18.9-36.2 |
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (6 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (9 commits); the push follows one full test run on the merged tree:
 
-- TD-refusals: `Scope::refusals` reported as one warning each (c3d19a6, 4a32fa2, 9466b5d, fdf7918)
-- ST-join: `Scope::join` on k disjoint groups near linear, not k³; COMPLEXITY row S29, since TD-refusals took S28 (ff5ce44 and this status commit)
-
+- 9dc00b7 Merge branch 'wt/plan-proofs'
+- f652317 STATUS: ST-join merged; its COMPLEXITY row is S29, since TD-refusals took S28
+- ff5ce44 ST-join: Scope::join on k disjoint groups near linear, not k^3
+- fdf7918 STATUS: TD-refusals merged; its COMPLEXITY row is S28, since main took S26 and S27
+- 9466b5d TD-refusals: COMPLEXITY S26, STATUS, tradeoffs rows for the new tests and controls
+- 4a32fa2 TD-refusals: join check at 256, refusals kept measured alone, Test and Onto warnings tested
+- c3d19a6 TD-refusals: report Scope::refusals as one warning each
+- 54511d3 plan_dag, grammar: L33.3 mathematics library, L33.4 gate; display lambdas, nullary laws
+- e74ec8a STATUS: in progress as of 2026-11-03 04:55
 
 ## Open points
 
