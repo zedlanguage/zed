@@ -4,8 +4,8 @@
 use std::fmt;
 
 use super::{
-    Annot, BoundaryItem, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param, Pattern, Stmt,
-    StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
+    Annot, BoundaryItem, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param, Pattern,
+    Stmt, StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
 };
 
 /// What is left to write.

@@ -1,6 +1,7 @@
-//! The unit item as syntax: it parses from layer L7, ahead of the reading of `@log` as an
-//! annotation of the statement `(#off);`, builds, and formats back to its text.
+//! The unit item as syntax: it parses from layer L7, and an annotation followed by `;` is never
+//! an annotation of a statement at any layer; it builds and formats back to its text.
 
+use zedc::ast::unit;
 use zedc::format::format;
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
@@ -19,7 +20,7 @@ fn the_unit_item_builds_apart_from_the_declarations() {
     assert_eq!(
         shown("@log(#off);\n\nmain(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"hi\";\n}\n"),
         "(unit (@log #off))\n\
-         (def main ((stdin: Lines)) (-> (stdout: Lines)) (block (push stdout (str \"hi\"))))"
+         (def main ((stdin: Lines)) (-> (stdout: Lines)) (block (<- stdout (str \"hi\"))))"
     );
     // `@log(#off)` before a definition annotates that definition, not the unit.
     assert_eq!(
@@ -44,13 +45,38 @@ fn below_layer_l7_the_text_is_not_the_unit_item() {
     };
     assert!(names(7).contains(&"UnitAnnot".to_string()));
     assert!(names(TOP).contains(&"UnitAnnot".to_string()));
-    // At L6 an expression statement exists, and `@log` annotates `(#off);`; resolution then
-    // refuses `@log` as an annotation of layer L7.
-    let six = names(6);
-    assert!(!six.contains(&"UnitAnnot".to_string()));
-    assert!(six.contains(&"Annotated".to_string()));
-    // Below L6 the text does not parse at all.
-    assert!(parse(text, &tokens, "Unit", 5).is_err());
+    // An annotation followed by `;` is never `@log` on the statement `(#off);`, at any layer,
+    // so a unit's tree does not change between layers: below L7 the text does not parse.
+    for ring in 1..7 {
+        assert!(
+            parse(text, &tokens, "Unit", ring).is_err(),
+            "parses at L{ring}"
+        );
+    }
+}
+
+#[test]
+fn an_annotation_before_a_parenthesized_statement_keeps_its_reading() {
+    // `@fused` annotates `(a + b).map(f);`, at L6 as at every layer above it.
+    let text = "@fused (a + b).map(f);";
+    let tokens = lex(text).unwrap();
+    let at = |ring: u32| {
+        let tree = parse(text, &tokens, "Unit", ring).unwrap();
+        unit(text, &tokens, &tree).unwrap()[0].to_string()
+    };
+    assert_eq!(at(6), at(TOP));
+    assert_eq!(at(6), "(annotated @fused (do (call (. (+ a b) map) f)))");
+    // `@fused (a + b);` is the unit item, which resolution refuses for `@fused`.
+    assert_eq!(shown("@fused (a + b);"), "(unit (@fused (+ a b)))");
+    assert!(
+        parse(
+            "@fused (a + b);",
+            &lex("@fused (a + b);").unwrap(),
+            "Unit",
+            6
+        )
+        .is_err()
+    );
 }
 
 #[test]

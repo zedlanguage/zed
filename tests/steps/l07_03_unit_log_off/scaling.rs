@@ -42,7 +42,9 @@ fn linear(what: &str, base: usize, make: impl Fn(usize) -> String) {
 #[test]
 fn many_unit_items_scale() {
     linear("n copies of the unit item", 4000, |n| {
-        (0..n).map(|i| format!("@log(#off);\nf{i}(x) = x;\n")).collect()
+        (0..n)
+            .map(|i| format!("@log(#off);\nf{i}(x) = x;\n"))
+            .collect()
     });
 }
 

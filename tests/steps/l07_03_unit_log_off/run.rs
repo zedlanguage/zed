@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use zedc::testing::test;
+
 /// Runs `zedc <command> <file>`, the file holding `src`, with `stdin`; its status, standard
 /// output and standard error.
 fn zedc(command: &str, name: &str, src: &str, stdin: &str) -> (u8, String, String) {
@@ -22,7 +24,7 @@ const GREETER: &str = "\
 greeting(name) = \"Hello, ${name}!\";
 
 main(stdin: Lines) -> (stdout: Lines) {
-  stdout <- greeting(\"world\");
+  stdout <- greeting(name: \"world\");
 }
 ";
 
@@ -36,9 +38,15 @@ fn a_program_runs_the_same_with_the_unit_item() {
 
 #[test]
 fn the_test_tables_of_a_unit_with_the_item_run() {
-    let src = "@log(#off);\n\nsquare(x) = x * x test { 2 -> 4, 3 -> 9 }\n";
-    let (status, out, err) = zedc("test", "tables", src, "");
-    assert_eq!((status, err.as_str()), (0, ""), "{out}");
+    let src = "square(positional x) = x * x test { 2 -> 4, 3 -> 9 }\n";
+    let ok = |text: &str| {
+        test(text)
+            .into_iter()
+            .map(|o| (o.line, o.failure))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ok(&format!("@log(#off);\n\n{src}")), [(3, None), (3, None)]);
+    assert_eq!(ok(src), [(1, None), (1, None)]);
 }
 
 #[test]

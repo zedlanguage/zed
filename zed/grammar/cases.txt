@@ -53,11 +53,13 @@ Item ::: @strict; ::: (@strict ;)
 Item ::: @log(#off); ::: ((@log ( #off )) ;)
 Item@7 ::: @log(#off); ::: ((@log ( #off )) ;)
 Item ::: @log(#on); ::: ((@log ( #on )) ;)
-Item@6 ::: @log(#off); ::: (@log ((( #off )) ;))
+Item@6 ::: @log(#off); ::: ERROR
 Item@5 ::: @log(#off); ::: ERROR
 Item ::: @log(#off) ::: ERROR
 Item ::: @log(#off) f(x) = x; ::: ((@log ( #off )) (f ( x ) (= x ;)))
 Item ::: @log(#off) (x); ::: ((@log ( #off )) ((( x )) ;))
+Item ::: @fused (a + b); ::: ((@fused ( (a + b) )) ;)
+Item@6 ::: @fused (a + b); ::: ERROR
 Item ::: @memoized fib(n) = n; ::: (@memoized (fib ( n ) (= n ;)))
 Item ::: import a.b.{c, d}; ::: (import (a . b) . { c , d } ;)
 Item ::: import units as u; ::: (import units as u ;)

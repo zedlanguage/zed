@@ -1,8 +1,8 @@
 Unit          = Item* END                                                          L1
 Name          = IDENT                                                              L1
 
-Item          = UnitAnnot                                                          L7
-              | Annotated                                                          L2
+Item          = !(Annot ';') Annotated                                             L2
+              | UnitAnnot                                                          L7
               | Decl                                                               L1
 Annotated     = Annot+ Decl                                                        L2
               | ANNOT+ Decl                                                        L2
