@@ -35,6 +35,9 @@
 //! [`check_instructions_only`], with a comment naming the item that fixes it. A larger run whose
 //! thread counts no bytes is refused, since its bytes cannot be compared, and a count lost to 0
 //! would otherwise pass unmeasured; a run that allocates nothing uses [`check_instructions_only`].
+//! The refusal cannot catch a run that starts a bare thread of its own: starting the thread
+//! allocates on the run's thread, so its count is not 0, though the started thread's bytes are
+//! lost.
 //!
 //! Each run is on a new thread of its own (`alone`, by [`on_a_thread`], so its bytes count), so
 //! the memos a thread keeps start empty in every run: zed-kernel keeps its tables of diagram
@@ -310,7 +313,9 @@ fn compare_by(
     let mut seen = Vec::new();
     for _ in 0..meter.repeats().1 {
         let small = meter.least(|| _ = alone(&small));
-        // The most bytes a run of the larger size allocated on its own thread.
+        // The most bytes a run of the larger size allocated on its own thread. A run that starts
+        // a bare thread allocates in starting it, so its count is not 0 and is not refused,
+        // though the started thread's bytes are lost (a known gap).
         let large_bytes = std::cell::Cell::new(0);
         let large = meter.least(|| large_bytes.set(large_bytes.get().max(alone(&large))));
         if measures == Measures::Both && large_bytes.get() == 0 {
@@ -580,6 +585,9 @@ mod tests {
         assert!(zed_alloc_count::allocated() - before >= 8 * (2048 - 4));
     }
 
+    /// Known gap: the refusal cannot catch a run that allocates only on a bare thread it starts
+    /// itself, since starting a thread allocates on the run's thread, so the run's count is not 0
+    /// though the bytes of the thread it started are lost.
     #[test]
     fn a_larger_run_that_allocates_no_bytes_on_its_thread_is_refused() {
         let message = message_of(|| check("linear work", 1000, |n| work(n, 1, 10)));
