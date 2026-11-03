@@ -786,16 +786,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | OSP-diag | impl attempt 1 | 2026-11-03 02:23 | part 4 counts feature done: l01_37 checks 368 native runs leave 0 cells; negative control (owned inputs never dropped) caught with survivors by type and node; l |
-| S22a | impl attempt 1 | 2026-11-03 03:01 | started; reading brief, SYNTH_R1, S22a_BRIEF, verifier reports |
+| S22a | impl attempt 1 | 2026-11-03 03:01 | Pa (treap with subtree value range and gap flag, no size switch) and clip integrated in preimage.rs; building |
 | ST1 | verify attempt 6 (item ST) | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
 | ST2 | verify attempt 6 (item ST) | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
 | ST | verify attempt 6 | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
-| T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | started; reading brief, SYNTH_R1, S22a_BRIEF, verifier reports |
-| T6 | repair attempt 2 | 2026-11-03 00:01 | done, ok=false: refusals before a witness (fork, residues) and no input for TupleSplit/NoWitness remain; branch wt/t6 62c6877, spec wt/t6-spec 5cd9de6 |
+| T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | Pa (treap with subtree value range and gap flag, no size switch) and clip integrated in preimage.rs; building |
+| T6 | repair attempt 3 | 2026-11-03 00:01 | start: rebase wt/t6 (62c6877) and wt/t6-spec (5cd9de6) on main, then items (a)-(i) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (2 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (4 commits); the push follows one full test run on the merged tree:
 
+- 18fbed0 COMPLEXITY: T-zone's row is S24 (S23 is OSP-order's)
+- 53ba86b STATUS: in progress as of 2026-11-03 03:12
 - 7fe4783 STATUS, plan_dag: OSP-order merged and marked done
 - b62a249 OSP-order: the weak topological order follows the cells' keys
 
