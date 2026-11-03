@@ -313,6 +313,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// derivation of the expression there.
     fn rejects(&mut self, row: Row, span: Span, message: impl Into<String>) {
         let notes = self.derive(&[span]);
+        self.rejects_with(row, span, message, notes);
+    }
+
+    /// An error at `span` that is a case of the row `row` of the rejection table, with the
+    /// notes `notes`.
+    fn rejects_with(&mut self, row: Row, span: Span, message: impl Into<String>, notes: Vec<Note>) {
         self.info.errors.push(Error {
             row: Some(row),
             span,
@@ -612,12 +618,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         if dropped.is_empty() {
             return;
         }
-        let atoms = Ty::set(dropped.clone());
         let what = match i {
             None => "this value".to_string(),
             Some(i) => format!("component {i} of this value"),
         };
         let mut notes = self.entries(e.span, &dropped);
+        let atoms = Ty::set(dropped);
         self.derive_into(&[e.span], &mut notes);
         let menu = [
             "repair: write a default for the value, as `_ = … else #ok;`, so the text names what it drops".to_string(),
@@ -625,7 +631,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             "repair: bind the value to a name, and use the name".to_string(),
         ];
         notes.extend(menu.into_iter().map(|text| Note { span, text }));
-        self.error_with(
+        self.rejects_with(
+            Row::WritesNothing,
             span,
             format!("`_` drops a loose failure {what} may be, {atoms}"),
             notes,
@@ -3884,13 +3891,30 @@ impl Ck<'_, '_> {
 
 /// The atoms that the `else` defaults of `e` write as atom literals, `#ok` or `#ok(…)`, each
 /// with any payload: the loose failures the text names, which `_` may drop. It reads each
-/// `else` at the top of `e`, and those its values and defaults are, on its own stack.
+/// `else` that `e` is or passes its value through unchanged, as an `if` branch or a block's
+/// export (the If and Block parts of `sources`), and those its values and defaults are, on
+/// its own stack.
 fn named_defaults(e: &Expr) -> KType {
     let mut out = KType::empty();
     let mut stack = vec![e];
     while let Some(e) = stack.pop() {
-        let ExprKind::Else { of, default, .. } = &e.kind else {
-            continue;
+        let (of, default) = match &e.kind {
+            ExprKind::Else { of, default, .. } => (of, default),
+            ExprKind::If {
+                then, otherwise, ..
+            } => {
+                stack.push(otherwise);
+                stack.push(then);
+                continue;
+            }
+            ExprKind::Block(stmts) => {
+                stack.extend(stmts.iter().filter_map(|s| match &s.kind {
+                    StmtKind::Return(es) if es.len() == 1 => Some(&es[0]),
+                    _ => None,
+                }));
+                continue;
+            }
+            _ => continue,
         };
         stack.push(of);
         match &default.kind {

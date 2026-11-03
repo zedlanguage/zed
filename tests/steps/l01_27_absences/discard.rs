@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use zed_kernel::types::Type as KType;
 use zedc::check::ty::{Carrier, Ty};
 use zedc::lex::Span;
+use zedc::rejection::Row;
 
 use crate::l01_16_elaboration::value;
 use crate::l01_26_type_resolution::{info, type_errors};
@@ -24,11 +25,13 @@ fn at(text: &str, s: Span) -> &str {
     &text[s.start..s.end]
 }
 
-/// The one error of `text`: its message, its span's text, and each note as `text [span]`.
+/// The one error of `text`, a case of the row "Statement that writes nothing, or drops a
+/// declared result": its message, its span's text, and each note as `text [span]`.
 fn the_error(text: &str) -> (String, String, Vec<String>) {
     let (info, _) = info(text);
     assert_eq!(info.errors.len(), 1, "{text}: {:?}", info.errors);
     let e = &info.errors[0];
+    assert_eq!(e.row, Some(Row::WritesNothing), "{text}: {e:?}");
     let notes = e
         .notes
         .iter()
@@ -75,6 +78,32 @@ fn an_else_default_names_what_is_dropped() {
     // An atom default with a payload names its atom too.
     let t = format!("{LOOKUP}_ = lookup(3) else #ok(1);\n");
     assert!(type_errors(&t).is_empty(), "{:?}", type_errors(&t));
+}
+
+#[test]
+fn an_else_default_inside_an_if_branch_or_a_block_names_what_is_dropped() {
+    // Each branch writes `#ok` as its default, and the `if` passes its branches through
+    // unchanged, so the text names every failure the value may be.
+    let t = format!(
+        "{LOOKUP}f(positional c: int) = {{\n  _ = if c > 0 {{ lookup(1) else #ok }} else {{ lookup(2) else #ok }};\n  0\n}};\n"
+    );
+    assert!(type_errors(&t).is_empty(), "{t}: {:?}", type_errors(&t));
+    // A block's export passes its value through unchanged too.
+    let t = format!("{LOOKUP}_ = {{\n  y = 1;\n  lookup(y) else #ok\n}};\n");
+    assert!(type_errors(&t).is_empty(), "{t}: {:?}", type_errors(&t));
+    // A default in one branch only: the other branch's `#notFound` is still dropped.
+    let t = format!(
+        "{LOOKUP}f(positional c: int) = {{\n  _ = if c > 0 {{ lookup(1) else #ok }} else {{ lookup(2) }};\n  0\n}};\n"
+    );
+    let (message, _, notes) = the_error(&t);
+    assert_eq!(
+        message,
+        "`_` drops a loose failure this value may be, #notFound"
+    );
+    assert_eq!(
+        notes[0],
+        "the loose failure #notFound enters here [lookup(2)]"
+    );
 }
 
 #[test]
