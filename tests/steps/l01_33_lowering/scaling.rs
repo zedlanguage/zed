@@ -5,7 +5,9 @@
 
 use zed_kernel::term::build::{app, lam, let_, lit, var};
 use zed_kernel::{Evaluator, Term, World};
+use zed_tests::deep::on_small_stack;
 use zed_tests::scaling;
+use zed_tests::scaling::check_order;
 use zedc::zir::Region;
 use zedc::zir::lower::{lower, raise};
 
@@ -348,4 +350,46 @@ fn a_name_read_at_every_depth_scales() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+// A term nested 100,000 deep lowers, and its graph raises back, on a thread of the default
+// 2 MiB stack: the lowering, the walk that finds a lambda body's uses and the raise each keep
+// their work on the heap (step T2-mid).
+
+#[test]
+fn a_term_nested_100000_deep_is_lowered_and_raised_on_a_2_mib_stack() {
+    on_small_stack(|| {
+        let t = nest(100_000);
+        let back = raise(&lower(&t).unwrap()).unwrap();
+        let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
+        assert_eq!(run(&back), run(&t));
+    });
+}
+
+#[test]
+fn lambdas_nested_100000_deep_are_lowered_on_a_2_mib_stack() {
+    on_small_stack(|| {
+        let t = lets_of_lambdas(100_000);
+        let back = raise(&lower(&t).unwrap()).unwrap();
+        let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
+        assert_eq!(run(&back), run(&t));
+    });
+}
+
+#[test]
+fn lowering_and_raising_a_deep_term_is_linear_in_its_depth() {
+    on_small_stack(|| {
+        let (small, large) = (nest(5_000), nest(40_000));
+        check_order("lowering nested `if`s", 5_000, 1, |d| {
+            lower(if d == 5_000 { &small } else { &large }).unwrap();
+        });
+        let (small, large) = (lower(&small).unwrap(), lower(&large).unwrap());
+        check_order("raising nested `if` regions", 5_000, 1, |d| {
+            raise(if d == 5_000 { &small } else { &large }).unwrap();
+        });
+        let (small, large) = (lets_of_lambdas(5_000), lets_of_lambdas(40_000));
+        check_order("lowering nested let-bound lambdas", 5_000, 1, |d| {
+            lower(if d == 5_000 { &small } else { &large }).unwrap();
+        });
+    });
 }

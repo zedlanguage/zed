@@ -42,6 +42,8 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
+use std::mem;
 use std::sync::Arc;
 
 use zed_kernel::term::{FixKind, Pattern, Prim, Term};
@@ -53,30 +55,30 @@ use crate::canon::Facet;
 
 /// The binding of each name in scope while lowering, kept persistently so that a closure keeps
 /// the scope it was defined in at no cost.
-type Scope = imbl::HashMap<Arc<str>, Val>;
+type Scope<'t> = imbl::HashMap<Arc<str>, Val<'t>>;
 
 /// What a name is bound to while lowering.
 #[derive(Clone)]
-enum Val {
+enum Val<'t> {
     /// An edge of the region at the given depth of the frame stack.
     Src(Src, usize),
     /// A prelude word, not yet a node.
     Prim(Prim),
     /// A function that uses a port, called only by name.
-    Closure(Arc<Closure>),
+    Closure(Arc<Closure<'t>>),
 }
 
 /// A `let`-bound lambda whose body uses `ports`, in the order of their first use.
-struct Closure {
-    params: Vec<Arc<str>>,
+struct Closure<'t> {
+    params: &'t [Arc<str>],
     ports: Vec<Arc<str>>,
-    call: Call,
+    call: Call<'t>,
 }
 
 /// How a call of a [`Closure`] lowers.
-enum Call {
+enum Call<'t> {
     /// Its body in place, under the bindings it was defined under: the name occurs once.
-    Inline { body: Arc<Term>, env: Scope },
+    Inline { body: &'t Term, env: Scope<'t> },
     /// An `apply` of its `lambda` node's output, in the region at depth `at`.
     Node { fun: Src, at: usize },
 }
@@ -128,9 +130,9 @@ struct Built {
     keys: Vec<Vec<ContentAddress>>,
 }
 
-struct Lower {
+struct Lower<'t> {
     frames: Vec<Frame>,
-    scope: Scope,
+    scope: Scope<'t>,
     fresh: usize,
     /// How often each name occurs in the term, binders of the same name counted together.
     uses: HashMap<Arc<str>, usize>,
@@ -185,7 +187,7 @@ pub fn lower(t: &Term) -> Result<Region, String> {
     Ok(root)
 }
 
-impl Lower {
+impl<'t> Lower<'t> {
     fn top(&self) -> usize {
         self.frames.len() - 1
     }
@@ -199,21 +201,21 @@ impl Lower {
         format!("\0lower{}", self.fresh).into()
     }
 
-    fn bind(&mut self, x: Arc<str>, v: Val) {
+    fn bind(&mut self, x: Arc<str>, v: Val<'t>) {
         self.scope.insert(x, v);
     }
 
     /// Restores the scope `mark`, taken before the bindings since.
-    fn unbind(&mut self, mark: Scope) {
+    fn unbind(&mut self, mark: Scope<'t>) {
         self.scope = mark;
     }
 
     /// Replaces the scope by `env`, returning the old one.
-    fn swap_scope(&mut self, env: Scope) -> Scope {
+    fn swap_scope(&mut self, env: Scope<'t>) -> Scope<'t> {
         std::mem::replace(&mut self.scope, env)
     }
 
-    fn lookup(&self, x: &str) -> Result<Val, String> {
+    fn lookup(&self, x: &str) -> Result<Val<'t>, String> {
         match self.scope.get(x) {
             Some(v) => Ok(v.clone()),
             None => Err(format!(
@@ -224,7 +226,7 @@ impl Lower {
     }
 
     /// `v` as an edge of the current region.
-    fn src(&mut self, v: Val) -> Result<Src, String> {
+    fn src(&mut self, v: Val<'t>) -> Result<Src, String> {
         match v {
             Val::Src(s, at) => Ok(self.bring(s, at)),
             Val::Prim(p) => self.prim_fn(p),
@@ -328,7 +330,7 @@ impl Lower {
     }
 
     /// A one-output node with no region.
-    fn leaf(&mut self, op: Op, inputs: Vec<Src>) -> Val {
+    fn leaf(&mut self, op: Op, inputs: Vec<Src>) -> Val<'t> {
         let n = self.add(
             Node {
                 op,
@@ -341,71 +343,8 @@ impl Lower {
         Val::Src(Src::Out(n, 0), self.top())
     }
 
-    fn values(&mut self, ts: &[Term]) -> Result<Vec<Src>, String> {
-        ts.iter()
-            .map(|t| {
-                let v = self.term(t)?;
-                self.src(v)
-            })
-            .collect()
-    }
-
-    fn value(&mut self, t: &Term) -> Result<Src, String> {
-        let v = self.term(t)?;
-        self.src(v)
-    }
-
-    /// Builds a region of `kind` whose first arguments are `params`, yielding `body`.
-    fn region(
-        &mut self,
-        kind: RegionKind,
-        params: &[Arc<str>],
-        body: &Term,
-    ) -> Result<Built, String> {
-        self.region_with(kind, params, &[], body)
-    }
-
-    /// A region whose arguments are `params` and then the states of `ports`, which it returns
-    /// after its value.
-    fn region_with(
-        &mut self,
-        kind: RegionKind,
-        params: &[Arc<str>],
-        ports: &[Arc<str>],
-        body: &Term,
-    ) -> Result<Built, String> {
-        let mut args: Vec<Edge> = params.iter().map(|_| top()).collect();
-        args.extend(ports.iter().map(|p| Edge::State(p.clone())));
-        let mut frame = Frame::new(kind, args);
-        for (j, p) in ports.iter().enumerate() {
-            frame.states.insert(p.clone(), Src::Arg(params.len() + j));
-        }
-        self.frames.push(frame);
-        let depth = self.top();
-        let mark = self.scope.clone();
-        for (i, p) in params.iter().enumerate() {
-            self.bind(p.clone(), Val::Src(Src::Arg(i), depth));
-        }
-        let out = self.value(body);
-        self.unbind(mark);
-        let mut f = self.frames.pop().expect("the region's frame");
-        f.region.results.push(out?);
-        for p in ports {
-            let s = f.states.get(p).expect("a port taken");
-            f.region.results.push(s.clone());
-        }
-        Ok(Built {
-            region: f.region,
-            fixed: f.fixed,
-            captures: f.captures,
-            states: f.states,
-            values: 1,
-            keys: f.keys,
-        })
-    }
-
     /// The node `op` with inputs `fixed` and regions `built`, their captures merged.
-    fn node(&mut self, op: Op, fixed: Vec<Src>, built: Vec<Built>) -> Val {
+    fn node(&mut self, op: Op, fixed: Vec<Src>, built: Vec<Built>) -> Val<'t> {
         // The union of the regions' captures, in order, with the position of each.
         let mut caps: Vec<Src> = Vec::new();
         let mut at: HashMap<(usize, usize), usize> = HashMap::new();
@@ -512,42 +451,371 @@ impl Lower {
         out
     }
 
-    fn term(&mut self, t: &Term) -> Result<Val, String> {
+    /// The value of `t`, lowered into the current region. A term nests as deep as its program,
+    /// so the walk keeps the work still to do on heap stacks (step T2-mid): it does what the
+    /// recursive walk did, in the same order, so the graph is the same.
+    fn term(&mut self, t: &'t Term) -> Result<Val<'t>, String> {
+        let mut s = Stacks {
+            jobs: vec![Job::Term(t)],
+            vals: Vec::new(),
+            srcs: Vec::new(),
+            built: Vec::new(),
+        };
+        while let Some(job) = s.jobs.pop() {
+            self.step(job, &mut s)?;
+        }
+        Ok(s.vals.pop().expect("the term's value"))
+    }
+
+    /// Schedules the lowering of `t`, or lowers it now when it holds no term.
+    fn enter(&mut self, t: &'t Term, s: &mut Stacks<'t>) -> Result<(), String> {
         let at = self.top();
-        Ok(match t {
-            Term::Lit(v) => Val::Src(Src::Const(v.clone()), at),
-            Term::Var(x) => self.lookup(x)?,
-            Term::PrimFn(p) => Val::Prim(*p),
+        let region = |kind, params: &'t [Arc<str>], body: &'t Term| Job::Region {
+            kind,
+            params: Params::Names(Cow::Borrowed(params)),
+            ports: Vec::new(),
+            body: Body::Term(body),
+        };
+        match t {
+            Term::Lit(v) => s.vals.push(Val::Src(Src::Const(v.clone()), at)),
+            Term::Var(x) => {
+                let v = self.lookup(x)?;
+                s.vals.push(v);
+            }
+            Term::PrimFn(p) => s.vals.push(Val::Prim(*p)),
             Term::Let(x, e, body) => {
                 let ports = match &**e {
                     Term::Lam(_, b) => self.ports(b),
                     _ => Vec::new(),
                 };
-                let v = match &**e {
+                s.jobs.push(Job::Let { x, body });
+                match &**e {
                     Term::Lam(ps, b) if !ports.is_empty() => {
-                        let call = if self.uses.get(x).is_none_or(|&n| n <= 1) {
-                            Call::Inline {
-                                body: b.clone(),
+                        if self.uses.get(x).is_none_or(|&n| n <= 1) {
+                            let call = Call::Inline {
+                                body: b,
                                 env: self.scope.clone(),
-                            }
-                        } else {
-                            let built = self.region_with(RegionKind::Function, ps, &ports, b)?;
-                            let Val::Src(fun, at) = self.node(Op::Lambda, Vec::new(), vec![built])
-                            else {
-                                unreachable!("a node's output")
                             };
-                            Call::Node { fun, at }
-                        };
-                        Val::Closure(Arc::new(Closure {
-                            params: ps.clone(),
-                            ports,
-                            call,
-                        }))
+                            s.vals.push(Val::Closure(Arc::new(Closure {
+                                params: ps,
+                                ports,
+                                call,
+                            })));
+                        } else {
+                            // Two owners: the region returns the ports' states, and the closure
+                            // threads them through each call.
+                            s.jobs.push(Job::Closure {
+                                params: ps,
+                                ports: ports.clone(),
+                            });
+                            s.jobs.push(Job::Region {
+                                kind: RegionKind::Function,
+                                params: Params::Names(Cow::Borrowed(ps)),
+                                ports,
+                                body: Body::Term(b),
+                            });
+                        }
                     }
-                    e => self.term(e)?,
+                    e => s.jobs.push(Job::Term(e)),
+                }
+            }
+            Term::Lam(ps, body) => {
+                s.jobs.push(Job::Node {
+                    op: Op::Lambda,
+                    fixed: 0,
+                    regions: 1,
+                });
+                s.jobs.push(region(RegionKind::Function, ps, body));
+            }
+            Term::App(f, args) => Self::apply(f, Args::Terms(args), s),
+            Term::Prim(p, args) => {
+                if let Some(k) = p.arity()
+                    && k != args.len()
+                {
+                    return Err(format!(
+                        "the primitive `{}` takes {} and is given {}",
+                        super::text::spell(*p),
+                        plural(k, "argument"),
+                        args.len()
+                    ));
+                }
+                s.jobs.push(Job::Leaf(Op::Prim(*p), args.len()));
+                s.args(Args::Terms(args), true);
+            }
+            Term::If(c, a, b) => {
+                s.jobs.push(Job::Node {
+                    op: Op::If,
+                    fixed: 1,
+                    regions: 2,
+                });
+                s.jobs.push(region(RegionKind::Match, &[], b));
+                s.jobs.push(region(RegionKind::Match, &[], a));
+                s.srcs(&[c]);
+            }
+            Term::Match(scrutinee, arms) => {
+                let ps = arms.iter().map(|(p, _)| p.clone()).collect();
+                s.jobs.push(Job::Node {
+                    op: Op::Match(ps),
+                    fixed: 1,
+                    regions: arms.len(),
+                });
+                for (p, body) in arms.iter().rev() {
+                    s.jobs.push(Job::Region {
+                        kind: RegionKind::Match,
+                        params: Params::Names(Cow::Owned(names(p))),
+                        ports: Vec::new(),
+                        body: Body::Term(body),
+                    });
+                }
+                s.srcs(&[scrutinee]);
+            }
+            Term::Fam { domain, var, body } => {
+                s.jobs.push(Job::Node {
+                    op: Op::Fam,
+                    fixed: 1,
+                    regions: 1,
+                });
+                s.jobs.push(region(
+                    RegionKind::Function,
+                    std::slice::from_ref(var),
+                    body,
+                ));
+                s.srcs(&[domain]);
+            }
+            Term::Reindex {
+                family,
+                kf,
+                vf,
+                witness,
+            } => {
+                s.jobs.push(Job::Leaf(Op::Reindex(witness.clone()), 3));
+                s.srcs(&[family, kf, vf]);
+            }
+            Term::Discard { family, sel } => {
+                s.jobs.push(Job::Leaf(Op::Discard, 2));
+                s.srcs(&[family, sel]);
+            }
+            Term::Fold {
+                family,
+                op,
+                identity,
+                depth,
+                ev,
+            } => {
+                let leaf = Op::Fold {
+                    depth: *depth,
+                    identity: identity.is_some(),
+                    ev: ev.clone(),
                 };
+                match identity {
+                    Some(id) => {
+                        s.jobs.push(Job::Leaf(leaf, 3));
+                        s.srcs(&[family, op, id]);
+                    }
+                    None => {
+                        s.jobs.push(Job::Leaf(leaf, 2));
+                        s.srcs(&[family, op]);
+                    }
+                }
+            }
+            Term::Fix {
+                init,
+                step,
+                this,
+                key,
+                kind,
+                ev,
+            } => match kind {
+                FixKind::Lattice { join } => {
+                    let op = Op::Fix {
+                        lattice: true,
+                        ev: ev.clone(),
+                    };
+                    s.jobs.push(Job::Node {
+                        op,
+                        fixed: 2,
+                        regions: 1,
+                    });
+                    s.jobs.push(Job::Region {
+                        kind: RegionKind::Loop,
+                        params: Params::Fresh,
+                        ports: Vec::new(),
+                        body: Body::Apply(step),
+                    });
+                    s.srcs(&[init, join]);
+                }
+                FixKind::Definedness => {
+                    let op = Op::Fix {
+                        lattice: false,
+                        ev: ev.clone(),
+                    };
+                    s.jobs.push(Job::Node {
+                        op,
+                        fixed: 1,
+                        regions: 1,
+                    });
+                    s.jobs.push(Job::Region {
+                        kind: RegionKind::Loop,
+                        params: Params::Names(Cow::Owned(vec![this.clone(), key.clone()])),
+                        ports: Vec::new(),
+                        body: Body::Term(step),
+                    });
+                    s.srcs(&[init]);
+                }
+            },
+            Term::Gen {
+                init,
+                step,
+                guard,
+                pos,
+            } => {
+                s.jobs.push(Job::Node {
+                    op: Op::Gen(*pos),
+                    fixed: 1,
+                    regions: 2,
+                });
+                for f in [guard, step] {
+                    s.jobs.push(Job::Region {
+                        kind: RegionKind::Loop,
+                        params: Params::Fresh,
+                        ports: Vec::new(),
+                        body: Body::Apply(f),
+                    });
+                }
+                s.srcs(&[init]);
+            }
+            Term::Read(p) => {
+                let st = self.state(at, p)?;
+                let n = self.add(
+                    Node {
+                        op: Op::Read(p.clone()),
+                        inputs: vec![st],
+                        outputs: vec![top(), Edge::State(p.clone())],
+                        regions: Vec::new(),
+                    },
+                    Vec::new(),
+                );
+                self.set_state(p, Src::Out(n, 1));
+                s.vals.push(Val::Src(Src::Out(n, 0), at));
+            }
+            Term::Push(p, v) => {
+                s.jobs.push(Job::Push(p));
+                s.srcs(&[v]);
+            }
+        }
+        Ok(())
+    }
+
+    /// Schedules the call of `f` with `args`. A literal lambda called with as many arguments as
+    /// it has parameters binds them and lowers its body in place.
+    fn apply(f: &'t Term, args: Args<'t>, s: &mut Stacks<'t>) {
+        if let Term::Lam(ps, body) = f
+            && ps.len() == args.len()
+        {
+            s.jobs.push(Job::Bound { params: ps, body });
+            s.args(args, false);
+        } else {
+            s.jobs.push(Job::Call(args));
+            s.jobs.push(Job::Term(f));
+        }
+    }
+
+    /// Calls the function value on top of `s.vals` with `args`.
+    fn call(&mut self, args: Args<'t>, s: &mut Stacks<'t>) -> Result<(), String> {
+        let n = args.len();
+        match s.vals.pop().expect("the called value") {
+            Val::Prim(p) if p.arity().is_none_or(|k| k == n) => {
+                s.jobs.push(Job::Leaf(Op::Prim(p), n));
+                s.args(args, true);
+            }
+            Val::Closure(c) => {
+                if c.params.len() != n {
+                    return Err(format!(
+                        "a function of {} that uses a port is called with {}",
+                        plural(c.params.len(), "parameter"),
+                        plural(n, "argument")
+                    ));
+                }
+                let fun = match &c.call {
+                    Call::Inline { .. } => None,
+                    Call::Node { fun, at } => Some(self.bring(fun.clone(), *at)),
+                };
+                match fun {
+                    None => {
+                        s.jobs.push(Job::Inline(c));
+                        s.args(args, false);
+                    }
+                    Some(fun) => {
+                        s.srcs.push(fun);
+                        s.jobs.push(Job::Apply(c, n + 1));
+                        s.args(args, true);
+                    }
+                }
+            }
+            fv => {
+                let fun = self.src(fv)?;
+                s.srcs.push(fun);
+                s.jobs.push(Job::Leaf(Op::Apply, n + 1));
+                s.args(args, true);
+            }
+        }
+        Ok(())
+    }
+
+    /// Begins a region of `kind` whose arguments are `params` and then the states of `ports`,
+    /// which it returns after its value, `body`.
+    fn begin(
+        &mut self,
+        kind: RegionKind,
+        params: Params<'t>,
+        ports: Vec<Arc<str>>,
+        body: Body<'t>,
+        s: &mut Stacks<'t>,
+    ) {
+        let params = match params {
+            Params::Names(ps) => ps,
+            Params::Fresh => Cow::Owned(vec![self.fresh()]),
+        };
+        let mut args: Vec<Edge> = params.iter().map(|_| top()).collect();
+        args.extend(ports.iter().map(|p| Edge::State(p.clone())));
+        let mut frame = Frame::new(kind, args);
+        for (j, p) in ports.iter().enumerate() {
+            frame.states.insert(p.clone(), Src::Arg(params.len() + j));
+        }
+        self.frames.push(frame);
+        let depth = self.top();
+        let mark = self.scope.clone();
+        for (i, p) in params.iter().enumerate() {
+            self.bind(p.clone(), Val::Src(Src::Arg(i), depth));
+        }
+        s.jobs.push(Job::EndRegion { ports, mark });
+        s.jobs.push(Job::Src);
+        match body {
+            Body::Term(t) => s.jobs.push(Job::Term(t)),
+            Body::Apply(f) => {
+                let x = params.first().expect("a loop's one parameter").clone();
+                Self::apply(f, Args::Name(x), s);
+            }
+        }
+    }
+
+    fn step(&mut self, job: Job<'t>, s: &mut Stacks<'t>) -> Result<(), String> {
+        match job {
+            Job::Term(t) => return self.enter(t, s),
+            Job::Var(x) => {
+                let v = self.lookup(&x)?;
+                s.vals.push(v);
+            }
+            Job::Src => {
+                let v = s.vals.pop().expect("a value");
+                let e = self.src(v)?;
+                s.srcs.push(e);
+            }
+            Job::Restore(mark) => self.unbind(mark),
+            Job::Let { x, body } => {
+                let v = s.vals.pop().expect("the bound value");
                 if let Val::Src(Src::Out(n, p), d) = &v
-                    && *d == at
+                    && *d == self.top()
                 {
                     let e = &mut self.frame().region.nodes[*n].outputs[*p];
                     if let Edge::Value(e) = e
@@ -562,232 +830,248 @@ impl Lower {
                 }
                 let mark = self.scope.clone();
                 self.bind(x.clone(), v);
-                let out = self.term(body);
-                self.unbind(mark);
-                out?
+                s.jobs.push(Job::Restore(mark));
+                s.jobs.push(Job::Term(body));
             }
-            Term::Lam(ps, body) => {
-                let b = self.region(RegionKind::Function, ps, body)?;
-                self.node(Op::Lambda, Vec::new(), vec![b])
-            }
-            Term::App(f, args) => {
-                if let Term::Lam(ps, body) = &**f
-                    && ps.len() == args.len()
-                {
-                    let vs = args
-                        .iter()
-                        .map(|a| self.term(a))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    return self.bound(ps, vs, body);
-                }
-                match self.term(f)? {
-                    Val::Prim(p) if p.arity().is_none_or(|k| k == args.len()) => {
-                        let ins = self.values(args)?;
-                        self.leaf(Op::Prim(p), ins)
-                    }
-                    Val::Closure(c) => {
-                        if c.params.len() != args.len() {
-                            return Err(format!(
-                                "a function of {} that uses a port is called with {}",
-                                plural(c.params.len(), "parameter"),
-                                plural(args.len(), "argument")
-                            ));
-                        }
-                        let (fun, at_fun) = match &c.call {
-                            Call::Inline { body, env } => {
-                                let vs = args
-                                    .iter()
-                                    .map(|a| self.term(a))
-                                    .collect::<Result<Vec<_>, _>>()?;
-                                let saved = self.swap_scope(env.clone());
-                                let out = self.bound(&c.params, vs, body);
-                                self.swap_scope(saved);
-                                return out;
-                            }
-                            Call::Node { fun, at } => (fun.clone(), *at),
-                        };
-                        let mut ins = vec![self.bring(fun, at_fun)];
-                        ins.extend(self.values(args)?);
-                        let mut outputs = vec![top()];
-                        for p in &c.ports {
-                            ins.push(self.state(at, p)?);
-                            outputs.push(Edge::State(p.clone()));
-                        }
-                        let n = self.add(
-                            Node {
-                                op: Op::Apply,
-                                inputs: ins,
-                                outputs,
-                                regions: Vec::new(),
-                            },
-                            Vec::new(),
-                        );
-                        for (j, p) in c.ports.iter().enumerate() {
-                            self.set_state(p, Src::Out(n, 1 + j));
-                        }
-                        Val::Src(Src::Out(n, 0), at)
-                    }
-                    fv => {
-                        let mut ins = vec![self.src(fv)?];
-                        ins.extend(self.values(args)?);
-                        self.leaf(Op::Apply, ins)
-                    }
-                }
-            }
-            Term::Prim(p, args) => {
-                if let Some(k) = p.arity()
-                    && k != args.len()
-                {
-                    return Err(format!(
-                        "the primitive `{}` takes {} and is given {}",
-                        super::text::spell(*p),
-                        plural(k, "argument"),
-                        args.len()
-                    ));
-                }
-                let ins = self.values(args)?;
-                self.leaf(Op::Prim(*p), ins)
-            }
-            Term::If(c, a, b) => {
-                let c = self.value(c)?;
-                let ra = self.region(RegionKind::Match, &[], a)?;
-                let rb = self.region(RegionKind::Match, &[], b)?;
-                self.node(Op::If, vec![c], vec![ra, rb])
-            }
-            Term::Match(s, arms) => {
-                let s = self.value(s)?;
-                let mut built = Vec::new();
-                for (p, body) in arms {
-                    built.push(self.region(RegionKind::Match, &names(p), body)?);
-                }
-                let ps = arms.iter().map(|(p, _)| p.clone()).collect();
-                self.node(Op::Match(ps), vec![s], built)
-            }
-            Term::Fam { domain, var, body } => {
-                let d = self.value(domain)?;
-                let b = self.region(RegionKind::Function, std::slice::from_ref(var), body)?;
-                self.node(Op::Fam, vec![d], vec![b])
-            }
-            Term::Reindex {
-                family,
-                kf,
-                vf,
-                witness,
-            } => {
-                let ins = vec![self.value(family)?, self.value(kf)?, self.value(vf)?];
-                self.leaf(Op::Reindex(witness.clone()), ins)
-            }
-            Term::Discard { family, sel } => {
-                let ins = vec![self.value(family)?, self.value(sel)?];
-                self.leaf(Op::Discard, ins)
-            }
-            Term::Fold {
-                family,
-                op,
-                identity,
-                depth,
-                ev,
-            } => {
-                let mut ins = vec![self.value(family)?, self.value(op)?];
-                if let Some(id) = identity {
-                    ins.push(self.value(id)?);
-                }
-                let op = Op::Fold {
-                    depth: *depth,
-                    identity: identity.is_some(),
-                    ev: ev.clone(),
+            Job::Closure { params, ports } => {
+                let built = s.built.pop().expect("the function's region");
+                let Val::Src(fun, at) = self.node(Op::Lambda, Vec::new(), vec![built]) else {
+                    unreachable!("a node's output")
                 };
-                self.leaf(op, ins)
+                s.vals.push(Val::Closure(Arc::new(Closure {
+                    params,
+                    ports,
+                    call: Call::Node { fun, at },
+                })));
             }
-            Term::Fix {
-                init,
-                step,
-                this,
-                key,
-                kind,
-                ev,
-            } => match kind {
-                FixKind::Lattice { join } => {
-                    let fixed = vec![self.value(init)?, self.value(join)?];
-                    let x = self.fresh();
-                    let body = Term::App(step.clone(), vec![Term::Var(x.clone())]);
-                    let b = self.region(RegionKind::Loop, &[x], &body)?;
-                    let op = Op::Fix {
-                        lattice: true,
-                        ev: ev.clone(),
-                    };
-                    self.node(op, fixed, vec![b])
+            Job::Bound { params, body } => {
+                let vs = take(&mut s.vals, params.len());
+                let mark = self.scope.clone();
+                for (p, v) in params.iter().cloned().zip(vs) {
+                    self.bind(p, v);
                 }
-                FixKind::Definedness => {
-                    let fixed = vec![self.value(init)?];
-                    let names = [this.clone(), key.clone()];
-                    let b = self.region(RegionKind::Loop, &names, step)?;
-                    let op = Op::Fix {
-                        lattice: false,
-                        ev: ev.clone(),
-                    };
-                    self.node(op, fixed, vec![b])
-                }
-            },
-            Term::Gen {
-                init,
-                step,
-                guard,
-                pos,
-            } => {
-                let fixed = vec![self.value(init)?];
-                let mut built = Vec::new();
-                for f in [step, guard] {
-                    let x = self.fresh();
-                    let body = Term::App(f.clone(), vec![Term::Var(x.clone())]);
-                    built.push(self.region(RegionKind::Loop, &[x], &body)?);
-                }
-                self.node(Op::Gen(*pos), fixed, built)
+                s.jobs.push(Job::Restore(mark));
+                s.jobs.push(Job::Term(body));
             }
-            Term::Read(p) => {
-                let s = self.state(at, p)?;
-                let n = self.add(
+            Job::Call(args) => self.call(args, s)?,
+            Job::Inline(c) => {
+                let Call::Inline { body, env } = &c.call else {
+                    unreachable!("only an inlined function is called in place")
+                };
+                let vs = take(&mut s.vals, c.params.len());
+                let saved = self.swap_scope(env.clone());
+                for (p, v) in c.params.iter().cloned().zip(vs) {
+                    self.bind(p, v);
+                }
+                s.jobs.push(Job::Restore(saved));
+                s.jobs.push(Job::Term(body));
+            }
+            Job::Apply(c, n) => {
+                let at = self.top();
+                let mut ins = take(&mut s.srcs, n);
+                let mut outputs = vec![top()];
+                for p in &c.ports {
+                    ins.push(self.state(at, p)?);
+                    outputs.push(Edge::State(p.clone()));
+                }
+                let k = self.add(
                     Node {
-                        op: Op::Read(p.clone()),
-                        inputs: vec![s],
-                        outputs: vec![top(), Edge::State(p.clone())],
+                        op: Op::Apply,
+                        inputs: ins,
+                        outputs,
                         regions: Vec::new(),
                     },
                     Vec::new(),
                 );
-                self.set_state(p, Src::Out(n, 1));
-                Val::Src(Src::Out(n, 0), at)
+                for (j, p) in c.ports.iter().enumerate() {
+                    self.set_state(p, Src::Out(k, 1 + j));
+                }
+                s.vals.push(Val::Src(Src::Out(k, 0), at));
             }
-            Term::Push(p, v) => {
-                let v = self.value(v)?;
-                let s = self.state(at, p)?;
+            Job::Leaf(op, n) => {
+                let ins = take(&mut s.srcs, n);
+                let v = self.leaf(op, ins);
+                s.vals.push(v);
+            }
+            Job::Region {
+                kind,
+                params,
+                ports,
+                body,
+            } => self.begin(kind, params, ports, body, s),
+            Job::EndRegion { ports, mark } => {
+                self.unbind(mark);
+                let out = s.srcs.pop().expect("the region's value");
+                let mut f = self.frames.pop().expect("the region's frame");
+                f.region.results.push(out);
+                for p in &ports {
+                    let st = f.states.get(p).expect("a port taken");
+                    f.region.results.push(st.clone());
+                }
+                s.built.push(Built {
+                    region: f.region,
+                    fixed: f.fixed,
+                    captures: f.captures,
+                    states: f.states,
+                    values: 1,
+                    keys: f.keys,
+                });
+            }
+            Job::Node { op, fixed, regions } => {
+                let built = take(&mut s.built, regions);
+                let fixed = take(&mut s.srcs, fixed);
+                let v = self.node(op, fixed, built);
+                s.vals.push(v);
+            }
+            Job::Push(p) => {
+                let v = s.srcs.pop().expect("the pushed value");
+                let at = self.top();
+                let st = self.state(at, p)?;
                 let n = self.add(
                     Node {
                         op: Op::Push(p.clone()),
-                        inputs: vec![s, v],
+                        inputs: vec![st, v],
                         outputs: vec![top(), Edge::State(p.clone())],
                         regions: Vec::new(),
                     },
                     Vec::new(),
                 );
                 self.set_state(p, Src::Out(n, 1));
-                Val::Src(Src::Out(n, 0), at)
+                s.vals.push(Val::Src(Src::Out(n, 0), at));
             }
-        })
-    }
-
-    /// `body` with `params` bound to `vals`, lowered in the current region.
-    fn bound(&mut self, params: &[Arc<str>], vals: Vec<Val>, body: &Term) -> Result<Val, String> {
-        let mark = self.scope.clone();
-        for (p, v) in params.iter().cloned().zip(vals) {
-            self.bind(p, v);
         }
-        let out = self.term(body);
-        self.unbind(mark);
-        out
+        Ok(())
     }
 }
 
+/// Where the body of a region being built comes from.
+enum Body<'t> {
+    /// A term of the program.
+    Term(&'t Term),
+    /// `f` applied to the region's one parameter: the step or guard of a loop.
+    Apply(&'t Term),
+}
+
+/// The parameters of a region being built.
+enum Params<'t> {
+    Names(Cow<'t, [Arc<str>]>),
+    /// One fresh name, drawn when the region begins, as the recursive walk drew it.
+    Fresh,
+}
+
+/// The arguments of a call.
+enum Args<'t> {
+    Terms(&'t [Term]),
+    /// One argument: the value bound to the name.
+    Name(Arc<str>),
+}
+
+impl Args<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Args::Terms(ts) => ts.len(),
+            Args::Name(_) => 1,
+        }
+    }
+}
+
+/// A step of [`Lower::term`]. A step that lowers a term pushes its value on [`Stacks::vals`],
+/// [`Job::Src`] moves the top value to [`Stacks::srcs`] as an edge of the current region, and a
+/// region, once built, waits on [`Stacks::built`] for its node.
+enum Job<'t> {
+    Term(&'t Term),
+    /// The value bound to the name.
+    Var(Arc<str>),
+    Src,
+    /// Restores the scope taken before the bindings since.
+    Restore(Scope<'t>),
+    /// Binds `x` to the top value and lowers `body` under it.
+    Let {
+        x: &'t Arc<str>,
+        body: &'t Term,
+    },
+    /// The closure of a `let`-bound function from its built region: a `lambda` node.
+    Closure {
+        params: &'t [Arc<str>],
+        ports: Vec<Arc<str>>,
+    },
+    /// Binds `params` to the top values and lowers `body`: a call of a literal lambda.
+    Bound {
+        params: &'t [Arc<str>],
+        body: &'t Term,
+    },
+    /// Calls the top value with `args`.
+    Call(Args<'t>),
+    /// Lowers the closure's body in place, its parameters bound to the top values.
+    Inline(Arc<Closure<'t>>),
+    /// The `apply` of the closure's `lambda` node on the top edges, the function's first.
+    Apply(Arc<Closure<'t>>, usize),
+    /// A one-output node of no region on the top edges.
+    Leaf(Op, usize),
+    /// Begins a region.
+    Region {
+        kind: RegionKind,
+        params: Params<'t>,
+        ports: Vec<Arc<str>>,
+        body: Body<'t>,
+    },
+    /// Ends the region begun last, its value the top edge.
+    EndRegion {
+        ports: Vec<Arc<str>>,
+        mark: Scope<'t>,
+    },
+    /// The node `op` with the top `fixed` edges as inputs and the top `regions` regions.
+    Node {
+        op: Op,
+        fixed: usize,
+        regions: usize,
+    },
+    /// Pushes the top edge to the port.
+    Push(&'t Arc<str>),
+}
+
+/// The stacks of [`Lower::term`].
+struct Stacks<'t> {
+    jobs: Vec<Job<'t>>,
+    vals: Vec<Val<'t>>,
+    srcs: Vec<Src>,
+    built: Vec<Built>,
+}
+
+impl<'t> Stacks<'t> {
+    /// Lowers `ts` in turn, each to an edge.
+    fn srcs(&mut self, ts: &[&'t Arc<Term>]) {
+        for &t in ts.iter().rev() {
+            self.jobs.push(Job::Src);
+            self.jobs.push(Job::Term(t));
+        }
+    }
+
+    /// Lowers `args` in turn, each to a value, or to an edge when `edges`.
+    fn args(&mut self, args: Args<'t>, edges: bool) {
+        match args {
+            Args::Terms(ts) => {
+                for t in ts.iter().rev() {
+                    if edges {
+                        self.jobs.push(Job::Src);
+                    }
+                    self.jobs.push(Job::Term(t));
+                }
+            }
+            Args::Name(x) => {
+                if edges {
+                    self.jobs.push(Job::Src);
+                }
+                self.jobs.push(Job::Var(x));
+            }
+        }
+    }
+}
+
+/// The top `n` items of `v`, in order.
+fn take<T>(v: &mut Vec<T>, n: usize) -> Vec<T> {
+    v.split_off(v.len() - n)
+}
 /// The key of a captured edge: a constant is never captured.
 fn captured(s: &Src) -> (usize, usize) {
     match s {
@@ -810,48 +1094,89 @@ fn plural(n: usize, thing: &str) -> String {
     }
 }
 
-/// The names pattern `p` binds, in preorder.
+/// The names pattern `p` binds, in preorder. A pattern nests as deep as its program, so the
+/// patterns still to read are kept on a heap stack.
 fn names(p: &Pattern) -> Vec<Arc<str>> {
     let mut out = Vec::new();
-    fn go(p: &Pattern, out: &mut Vec<Arc<str>>) {
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
         match p {
             Pattern::Bind(x) => out.push(x.clone()),
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter().for_each(|q| go(q, out)),
-            Pattern::Fields(_, fs) => fs.iter().for_each(|(_, q)| go(q, out)),
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, q)| q)),
             Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
         }
     }
-    go(p, &mut out);
     out
 }
 
 /// The [`Uses`] of the lambda body `b`, each body's found once: a lambda inside `b` adds the
 /// uses of its own body, less the names bound around it in `b`.
 fn body_uses(b: &Arc<Term>, bodies: &mut Bodies) -> Uses {
-    let key = Arc::as_ptr(b);
-    if let Some((_, u)) = bodies.get(&key) {
+    if let Some((_, u)) = bodies.get(&Arc::as_ptr(b)) {
         return u.clone();
     }
-    let mut w = UseWalk {
-        bound: HashMap::new(),
-        seen: HashSet::new(),
-        out: Vec::new(),
-    };
-    w.term(b, bodies);
-    let u: Uses = w.out.into();
-    bodies.insert(key, (b.clone(), u.clone()));
-    u
+    // A body waits at a lambda whose body is not yet known while that body is walked; lambdas
+    // nest as deep as the program, so the waiting walks are kept on a heap stack.
+    let mut walks = vec![UseWalk::new(b)];
+    loop {
+        let w = walks.last_mut().expect("a walk");
+        match w.todo.pop() {
+            Some(Visit::Lam(ps, inner)) => match bodies.get(&Arc::as_ptr(inner)) {
+                Some((_, u)) => {
+                    w.bind(ps);
+                    u.iter().for_each(|u| w.add(u.clone()));
+                    w.unbind(ps);
+                }
+                None => {
+                    w.todo.push(Visit::Lam(ps, inner));
+                    walks.push(UseWalk::new(inner));
+                }
+            },
+            Some(v) => w.visit(v),
+            None => {
+                let w = walks.pop().expect("a walk");
+                let u: Uses = w.out.into();
+                bodies.insert(Arc::as_ptr(w.body), (w.body.clone(), u.clone()));
+                if walks.is_empty() {
+                    return u;
+                }
+            }
+        }
+    }
+}
+
+/// A step of a [`UseWalk`].
+enum Visit<'t> {
+    Term(&'t Term),
+    /// `t` under the binders `xs`.
+    Under(Cow<'t, [Arc<str>]>, &'t Term),
+    Unbind(Cow<'t, [Arc<str>]>),
+    /// A lambda of parameters `ps` and body `b`: the uses of `b` less `ps`.
+    Lam(&'t [Arc<str>], &'t Arc<Term>),
 }
 
 /// The walk of one lambda body for [`body_uses`].
-struct UseWalk {
+struct UseWalk<'t> {
+    body: &'t Arc<Term>,
     /// How many binders in the body are around the current subterm, for each name.
     bound: HashMap<Arc<str>, usize>,
     seen: HashSet<Use>,
     out: Vec<Use>,
+    todo: Vec<Visit<'t>>,
 }
 
-impl UseWalk {
+impl<'t> UseWalk<'t> {
+    fn new(body: &'t Arc<Term>) -> UseWalk<'t> {
+        UseWalk {
+            body,
+            bound: HashMap::new(),
+            seen: HashSet::new(),
+            out: Vec::new(),
+            todo: vec![Visit::Term(body)],
+        }
+    }
+
     fn add(&mut self, u: Use) {
         if let Use::Free(x) = &u
             && self.bound.contains_key(x)
@@ -879,63 +1204,69 @@ impl UseWalk {
         }
     }
 
-    /// `t` under `xs`.
-    fn under(&mut self, xs: &[Arc<str>], t: &Term, bodies: &mut Bodies) {
-        self.bind(xs);
-        self.term(t, bodies);
-        self.unbind(xs);
+    /// Visits `ts` in turn.
+    fn terms(&mut self, ts: &[&'t Arc<Term>]) {
+        self.todo.extend(ts.iter().rev().map(|&t| Visit::Term(t)));
     }
 
-    fn term(&mut self, t: &Term, bodies: &mut Bodies) {
+    /// Does `v`, or schedules the visits of its parts; [`Visit::Lam`] is [`body_uses`]'s.
+    fn visit(&mut self, v: Visit<'t>) {
+        let t = match v {
+            Visit::Term(t) => t,
+            Visit::Under(xs, t) => {
+                self.bind(&xs);
+                self.todo.push(Visit::Unbind(xs));
+                self.todo.push(Visit::Term(t));
+                return;
+            }
+            Visit::Unbind(xs) => {
+                self.unbind(&xs);
+                return;
+            }
+            Visit::Lam(..) => unreachable!("body_uses visits a lambda"),
+        };
         match t {
             Term::Lit(_) | Term::PrimFn(_) => {}
             Term::Var(x) => self.add(Use::Free(x.clone())),
             Term::Read(p) => self.add(Use::Port(p.clone())),
             Term::Push(p, v) => {
                 self.add(Use::Port(p.clone()));
-                self.term(v, bodies);
+                self.terms(&[v]);
             }
-            Term::Lam(ps, b) => {
-                let inner = body_uses(b, bodies);
-                self.bind(ps);
-                inner.iter().for_each(|u| self.add(u.clone()));
-                self.unbind(ps);
-            }
+            Term::Lam(ps, b) => self.todo.push(Visit::Lam(ps, b)),
             Term::App(g, args) => {
-                self.term(g, bodies);
-                args.iter().for_each(|a| self.term(a, bodies));
+                self.todo.extend(args.iter().rev().map(Visit::Term));
+                self.terms(&[g]);
             }
-            Term::Prim(_, args) => args.iter().for_each(|a| self.term(a, bodies)),
+            Term::Prim(_, args) => self.todo.extend(args.iter().rev().map(Visit::Term)),
             Term::Let(x, e, b) => {
-                self.term(e, bodies);
-                self.under(std::slice::from_ref(x), b, bodies);
+                self.todo
+                    .push(Visit::Under(Cow::Borrowed(std::slice::from_ref(x)), b));
+                self.terms(&[e]);
             }
-            Term::If(c, a, b) => [c, a, b].iter().for_each(|t| self.term(t, bodies)),
+            Term::If(c, a, b) => self.terms(&[c, a, b]),
             Term::Match(s, arms) => {
-                self.term(s, bodies);
-                for (p, a) in arms {
-                    self.under(&names(p), a, bodies);
+                for (p, a) in arms.iter().rev() {
+                    self.todo.push(Visit::Under(Cow::Owned(names(p)), a));
                 }
+                self.terms(&[s]);
             }
             Term::Fam { domain, var, body } => {
-                self.term(domain, bodies);
-                self.under(std::slice::from_ref(var), body, bodies);
+                self.todo
+                    .push(Visit::Under(Cow::Borrowed(std::slice::from_ref(var)), body));
+                self.terms(&[domain]);
             }
-            Term::Reindex { family, kf, vf, .. } => {
-                [family, kf, vf].iter().for_each(|t| self.term(t, bodies))
-            }
-            Term::Discard { family, sel } => {
-                [family, sel].iter().for_each(|t| self.term(t, bodies))
-            }
+            Term::Reindex { family, kf, vf, .. } => self.terms(&[family, kf, vf]),
+            Term::Discard { family, sel } => self.terms(&[family, sel]),
             Term::Fold {
                 family,
                 op,
                 identity,
                 ..
-            } => {
-                [family, op].iter().for_each(|t| self.term(t, bodies));
-                identity.iter().for_each(|i| self.term(i, bodies));
-            }
+            } => match identity {
+                Some(i) => self.terms(&[family, op, i]),
+                None => self.terms(&[family, op]),
+            },
             Term::Fix {
                 init,
                 step,
@@ -943,69 +1274,69 @@ impl UseWalk {
                 key,
                 kind,
                 ..
-            } => {
-                self.term(init, bodies);
-                match kind {
-                    FixKind::Lattice { join } => {
-                        self.term(step, bodies);
-                        self.term(join, bodies);
-                    }
-                    FixKind::Definedness => {
-                        self.under(&[this.clone(), key.clone()], step, bodies);
-                    }
+            } => match kind {
+                FixKind::Lattice { join } => self.terms(&[init, step, join]),
+                FixKind::Definedness => {
+                    let xs = Cow::Owned(vec![this.clone(), key.clone()]);
+                    self.todo.push(Visit::Under(xs, step));
+                    self.terms(&[init]);
                 }
-            }
+            },
             Term::Gen {
                 init, step, guard, ..
-            } => [init, step, guard]
-                .iter()
-                .for_each(|t| self.term(t, bodies)),
+            } => self.terms(&[init, step, guard]),
         }
     }
 }
 
-/// Calls `f` on `t` and every subterm, in preorder.
+/// Calls `f` on `t` and every subterm, in preorder, keeping the subterms still to visit on a
+/// heap stack: a term nests as deep as its program.
 fn visit(t: &Term, f: &mut dyn FnMut(&Term)) {
-    f(t);
-    let mut each = |ts: &[&Term]| ts.iter().for_each(|t| visit(t, f));
-    match t {
-        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
-        Term::Lam(_, b) => each(&[b]),
-        Term::App(g, args) => {
-            each(&[g]);
-            args.iter().for_each(|a| visit(a, f));
-        }
-        Term::Prim(_, args) => args.iter().for_each(|a| visit(a, f)),
-        Term::Let(_, e, b) => each(&[e, b]),
-        Term::If(c, a, b) => each(&[c, a, b]),
-        Term::Match(s, arms) => {
-            each(&[s]);
-            arms.iter().for_each(|(_, a)| visit(a, f));
-        }
-        Term::Fam { domain, body, .. } => each(&[domain, body]),
-        Term::Reindex { family, kf, vf, .. } => each(&[family, kf, vf]),
-        Term::Discard { family, sel } => each(&[family, sel]),
-        Term::Fold {
-            family,
-            op,
-            identity,
-            ..
-        } => {
-            each(&[family, op]);
-            identity.iter().for_each(|i| visit(i, f));
-        }
-        Term::Fix {
-            init, step, kind, ..
-        } => {
-            each(&[init, step]);
-            if let FixKind::Lattice { join } = kind {
-                visit(join, f);
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        f(t);
+        // The parts are pushed in order and then reversed, so the first is visited first.
+        let at = todo.len();
+        match t {
+            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
+            Term::Lam(_, b) => todo.push(b),
+            Term::App(g, args) => {
+                todo.push(g);
+                todo.extend(args);
             }
+            Term::Prim(_, args) => todo.extend(args),
+            Term::Let(_, e, b) => todo.extend([&**e, b]),
+            Term::If(c, a, b) => todo.extend([&**c, a, b]),
+            Term::Match(s, arms) => {
+                todo.push(s);
+                todo.extend(arms.iter().map(|(_, a)| a));
+            }
+            Term::Fam { domain, body, .. } => todo.extend([&**domain, body]),
+            Term::Reindex { family, kf, vf, .. } => todo.extend([&**family, kf, vf]),
+            Term::Discard { family, sel } => todo.extend([&**family, sel]),
+            Term::Fold {
+                family,
+                op,
+                identity,
+                ..
+            } => {
+                todo.extend([&**family, op]);
+                todo.extend(identity.as_deref());
+            }
+            Term::Fix {
+                init, step, kind, ..
+            } => {
+                todo.extend([&**init, step]);
+                if let FixKind::Lattice { join } = kind {
+                    todo.push(join);
+                }
+            }
+            Term::Gen {
+                init, step, guard, ..
+            } => todo.extend([&**init, step, guard]),
+            Term::Push(_, v) => todo.push(v),
         }
-        Term::Gen {
-            init, step, guard, ..
-        } => each(&[init, step, guard]),
-        Term::Push(_, v) => each(&[v]),
+        todo[at..].reverse();
     }
 }
 
@@ -1043,14 +1374,21 @@ pub fn raise(g: &Region) -> Result<Term, String> {
         ));
     }
     let units = vec![unit(); g.args.len()];
-    let mut n = 0;
-    raise_region(g, (&units, &[]), &mut n, "r")
+    raise_from(Raising::region(g, units, Caps::Given(&[]), 0), "r")
 }
 
 /// The term region `r` computes, its arguments being `args`: [`raise`] for a region that is
 /// not a root, such as a function's body with its captured values (step L1.34).
 pub fn raise_with(r: &Region, args: &[Term]) -> Result<Term, String> {
-    raise_region(r, (args, &[]), &mut 0, "r")
+    raise_from(Raising::region(r, Vec::new(), Caps::Given(args), 0), "r")
+}
+
+/// The term `node` computes alone, its inputs being `ins`. It reads the node's regions and
+/// no copy of them, so a caller holding a node of any depth pays only for the node's own
+/// inputs and, when the term runs, what it raises.
+pub fn raise_node(node: &Node, ins: &[Term]) -> Result<Term, String> {
+    let at = "r.0";
+    raise_from(Raising::node(node, Cow::Borrowed(ins), at, 0)?, at)
 }
 
 fn unit() -> Term {
@@ -1062,61 +1400,255 @@ fn fresh_name(fresh: &mut usize) -> Arc<str> {
     format!("\0raise{fresh}").into()
 }
 
-/// The term region `r` computes, its arguments being those of `args.0` and then those of `args.1`:
-/// a region's own arguments and the inputs it captures, read where they are, not copied into one
-/// list.
-fn raise_region(
-    r: &Region,
-    args: (&[Term], &[Term]),
-    fresh: &mut usize,
-    path: &str,
-) -> Result<Term, String> {
-    let mut lets: Vec<(Arc<str>, Term)> = Vec::new();
-    let mut outs: Vec<Arc<str>> = Vec::new();
-    let term_of = |s: &Src, outs: &[Arc<str>]| match s {
-        Src::Arg(i) => match args.0.get(*i) {
-            Some(t) => t.clone(),
-            None => args.1[*i - args.0.len()].clone(),
-        },
-        Src::Out(n, p) if r.nodes[*n].outputs[*p].is_state() => unit(),
-        Src::Out(n, _) => Term::Var(outs[*n].clone()),
-        Src::Const(v) => Term::Lit(v.clone()),
-    };
-    for (k, node) in r.nodes.iter().enumerate() {
-        let ins: Vec<Term> = node.inputs.iter().map(|s| term_of(s, &outs)).collect();
-        let t = node_term(node, Cow::Owned(ins), fresh, &format!("{path}.{k}"))?;
-        let x = fresh_name(fresh);
-        lets.push((x.clone(), t));
-        outs.push(x);
+/// Where a region being raised finds the arguments after its own.
+enum Caps<'g> {
+    Given(&'g [Term]),
+    /// The inputs of the node at this depth of the stack, from this index on: the inputs the
+    /// region captures, read where they are, not copied.
+    Node(usize, usize),
+}
+
+/// A part of the graph being raised. A graph nests as deep as its program, so the parts being
+/// raised are kept on a heap stack (step T2-mid), each region under the node that holds it.
+enum Raising<'g> {
+    Region {
+        r: &'g Region,
+        /// The region's own arguments, before those of `caps`.
+        own: Vec<Term>,
+        caps: Caps<'g>,
+        /// A `let` for each node raised so far, in node order.
+        lets: Vec<(Arc<str>, Term)>,
+        /// The length of the path before this region's part of it.
+        mark: usize,
+    },
+    Node {
+        node: &'g Node,
+        ins: Cow<'g, [Term]>,
+        /// The terms of the node's regions raised so far.
+        subs: Vec<Term>,
+        /// The names drawn for those regions' binders, in order.
+        names: Vec<Arc<str>>,
+        /// The arms' patterns, their binders renamed, of a `match`.
+        pats: Vec<Pattern>,
+        mark: usize,
+    },
+}
+
+impl<'g> Raising<'g> {
+    fn region(r: &'g Region, own: Vec<Term>, caps: Caps<'g>, mark: usize) -> Raising<'g> {
+        Raising::Region {
+            r,
+            own,
+            caps,
+            lets: Vec::new(),
+            mark,
+        }
     }
-    let body = term_of(&r.results[0], &outs);
-    Ok(lets
-        .into_iter()
-        .rev()
-        .fold(body, |b, (x, e)| Term::Let(x, Arc::new(e), Arc::new(b))))
+
+    /// The node `node` at the path `at`, unless its op has no kernel term.
+    fn node(
+        node: &'g Node,
+        ins: Cow<'g, [Term]>,
+        at: &str,
+        mark: usize,
+    ) -> Result<Raising<'g>, String> {
+        if let op @ (Op::Derived(_) | Op::Rec | Op::Wave) = &node.op {
+            return Err(format!(
+                "{at}: `{}` has no kernel term here; the lowering does not make it",
+                op_name(op)
+            ));
+        }
+        Ok(Raising::Node {
+            node,
+            ins,
+            subs: Vec::new(),
+            names: Vec::new(),
+            pats: Vec::new(),
+            mark,
+        })
+    }
+
+    fn mark(&self) -> usize {
+        match self {
+            Raising::Region { mark, .. } | Raising::Node { mark, .. } => *mark,
+        }
+    }
 }
 
-/// The term `node` computes alone, its inputs being `ins`. It reads the node's regions and
-/// no copy of them, so a caller holding a node of any depth pays only for the node's own
-/// inputs and, when the term runs, what it raises.
-pub fn raise_node(node: &Node, ins: &[Term]) -> Result<Term, String> {
-    node_term(node, Cow::Borrowed(ins), &mut 0, "r.0")
+/// What a step of [`raise_from`] gives: a part to raise next, or the term of the top part.
+enum Raised<'g> {
+    Enter(Raising<'g>),
+    Done(Term),
 }
 
-/// The term `node` computes, its inputs being `ins`: moved into the term when they are owned,
-/// copied only when the caller keeps them.
-fn node_term(
+/// The term of `first`, at the path `path`. Fresh names are drawn in the order a recursive walk
+/// would draw them: a node's binders, then each of its regions in turn, then the node's `let`.
+fn raise_from<'g>(first: Raising<'g>, path: &str) -> Result<Term, String> {
+    let mut path = path.to_string();
+    let mut fresh = 0;
+    let mut stack = vec![first];
+    loop {
+        let depth = stack.len() - 1;
+        let (below, top) = stack.split_at_mut(depth);
+        let next = match &mut top[0] {
+            Raising::Region {
+                r, own, caps, lets, ..
+            } => {
+                let r: &'g Region = r;
+                let caps: &[Term] = match caps {
+                    Caps::Given(c) => c,
+                    Caps::Node(d, from) => match &below[*d] {
+                        Raising::Node { ins, .. } => &ins[*from..],
+                        Raising::Region { .. } => unreachable!("a region's node holds it"),
+                    },
+                };
+                let term_of = |s: &Src, lets: &[(Arc<str>, Term)]| match s {
+                    Src::Arg(i) => match own.get(*i) {
+                        Some(t) => t.clone(),
+                        None => caps[*i - own.len()].clone(),
+                    },
+                    Src::Out(n, p) if r.nodes[*n].outputs[*p].is_state() => unit(),
+                    Src::Out(n, _) => Term::Var(lets[*n].0.clone()),
+                    Src::Const(v) => Term::Lit(v.clone()),
+                };
+                let k = lets.len();
+                match r.nodes.get(k) {
+                    Some(node) => {
+                        let ins: Vec<Term> = node.inputs.iter().map(|s| term_of(s, lets)).collect();
+                        let mark = path.len();
+                        write!(path, ".{k}").expect("a String takes any text");
+                        Raised::Enter(Raising::node(node, Cow::Owned(ins), &path, mark)?)
+                    }
+                    None => {
+                        let body = term_of(&r.results[0], lets);
+                        Raised::Done(
+                            mem::take(lets)
+                                .into_iter()
+                                .rev()
+                                .fold(body, |b, (x, e)| Term::Let(x, Arc::new(e), Arc::new(b))),
+                        )
+                    }
+                }
+            }
+            Raising::Node {
+                node,
+                ins,
+                subs,
+                names,
+                pats,
+                ..
+            } => {
+                let node: &'g Node = node;
+                let i = subs.len();
+                if i < regions_raised(&node.op) {
+                    let (own, from) = open(node, ins.len(), i, names, pats, &mut fresh);
+                    let mark = path.len();
+                    write!(path, "/{i}").expect("a String takes any text");
+                    let caps = Caps::Node(depth, from);
+                    Raised::Enter(Raising::region(&node.regions[i], own, caps, mark))
+                } else {
+                    Raised::Done(close(
+                        node,
+                        mem::take(ins),
+                        mem::take(subs),
+                        mem::take(names),
+                        mem::take(pats),
+                    ))
+                }
+            }
+        };
+        match next {
+            Raised::Enter(part) => stack.push(part),
+            Raised::Done(t) => {
+                let done = stack.pop().expect("the part raised");
+                path.truncate(done.mark());
+                match stack.last_mut() {
+                    None => return Ok(t),
+                    Some(Raising::Region { lets, .. }) => lets.push((fresh_name(&mut fresh), t)),
+                    Some(Raising::Node { subs, .. }) => subs.push(t),
+                }
+            }
+        }
+    }
+}
+
+/// How many regions of a node of `op` its term holds; an op of no kernel term is refused before.
+fn regions_raised(op: &Op) -> usize {
+    match op {
+        Op::Lambda | Op::Fam | Op::Fix { .. } => 1,
+        Op::If | Op::Gen(_) => 2,
+        Op::Match(ps) => ps.len(),
+        Op::Prim(_)
+        | Op::Apply
+        | Op::Reindex(_)
+        | Op::Discard
+        | Op::Fold { .. }
+        | Op::Read(_)
+        | Op::Push(_)
+        | Op::Derived(_)
+        | Op::Rec
+        | Op::Wave => 0,
+    }
+}
+
+/// The arguments of region `i` of `node`, which has `inputs` inputs: the terms of its own,
+/// binders drawn fresh, and the index of the first input it captures.
+fn open(
+    node: &Node,
+    inputs: usize,
+    i: usize,
+    names: &mut Vec<Arc<str>>,
+    pats: &mut Vec<Pattern>,
+    fresh: &mut usize,
+) -> (Vec<Term>, usize) {
+    let mut name = |names: &mut Vec<Arc<str>>| {
+        let x = fresh_name(fresh);
+        names.push(x.clone());
+        Term::Var(x)
+    };
+    match &node.op {
+        Op::Lambda => {
+            let lead = &node.regions[0].args[..node.regions[0].args.len() - inputs];
+            let vars = lead
+                .iter()
+                .map(|e| if e.is_state() { unit() } else { name(names) })
+                .collect();
+            (vars, 0)
+        }
+        Op::If => (Vec::new(), 1),
+        Op::Match(ps) => {
+            let mut p = ps[i].clone();
+            let mut xs = Vec::new();
+            rename(&mut p, &mut || {
+                let x = fresh_name(fresh);
+                xs.push(Term::Var(x.clone()));
+                x
+            });
+            pats.push(p);
+            (xs, 1)
+        }
+        Op::Fam | Op::Gen(_) => (vec![name(names)], 1),
+        Op::Fix { lattice: true, .. } => (vec![name(names)], 2),
+        Op::Fix { lattice: false, .. } => (vec![name(names), name(names)], 1),
+        op => unreachable!("`{}` has no region in its term", op_name(op)),
+    }
+}
+
+/// The term `node` computes, its inputs being `ins` and its regions' terms `subs`: the inputs
+/// moved into the term when they are owned, copied only when the caller keeps them.
+fn close(
     node: &Node,
     ins: Cow<'_, [Term]>,
-    fresh: &mut usize,
-    at: &str,
-) -> Result<Term, String> {
+    subs: Vec<Term>,
+    names: Vec<Arc<str>>,
+    pats: Vec<Pattern>,
+) -> Term {
     let a = |i: usize| Arc::new(ins[i].clone());
-    let sub = |i: usize, fixed: Vec<Term>, from: usize, fresh: &mut usize| {
-        let args = (fixed.as_slice(), &ins[from..]);
-        raise_region(&node.regions[i], args, fresh, &format!("{at}/{i}"))
-    };
-    Ok(match &node.op {
+    let mut subs = subs.into_iter();
+    let mut names = names.into_iter();
+    let mut sub = || Arc::new(subs.next().expect("each region raised"));
+    let mut name = || names.next().expect("each binder named");
+    match &node.op {
         Op::Prim(p) if ins.is_empty() && p.arity().is_some() => Term::PrimFn(*p),
         Op::Prim(p) => Term::Prim(*p, ins.into_owned()),
         // A state edge has no term: the kernel orders effects by evaluation. The states
@@ -1127,49 +1659,14 @@ fn node_term(
             let f = ins.remove(0);
             Term::App(Arc::new(f), ins)
         }
-        Op::Lambda => {
-            let lead = &node.regions[0].args[..node.regions[0].args.len() - ins.len()];
-            let mut ps: Vec<Arc<str>> = Vec::new();
-            let mut vars = Vec::new();
-            for e in lead {
-                if e.is_state() {
-                    vars.push(unit());
-                } else {
-                    let p = fresh_name(fresh);
-                    vars.push(Term::Var(p.clone()));
-                    ps.push(p);
-                }
-            }
-            Term::Lam(ps, Arc::new(sub(0, vars, 0, fresh)?))
-        }
-        Op::If => Term::If(
-            a(0),
-            Arc::new(sub(0, Vec::new(), 1, fresh)?),
-            Arc::new(sub(1, Vec::new(), 1, fresh)?),
-        ),
-        Op::Match(ps) => {
-            let mut arms = Vec::new();
-            for (i, p) in ps.iter().enumerate() {
-                let mut p = p.clone();
-                let mut xs = Vec::new();
-                rename(&mut p, &mut || {
-                    let x = fresh_name(fresh);
-                    xs.push(Term::Var(x.clone()));
-                    x
-                });
-                arms.push((p, sub(i, xs, 1, fresh)?));
-            }
-            Term::Match(a(0), arms)
-        }
-        Op::Fam => {
-            let var = fresh_name(fresh);
-            let body = sub(0, vec![Term::Var(var.clone())], 1, fresh)?;
-            Term::Fam {
-                domain: a(0),
-                var,
-                body: Arc::new(body),
-            }
-        }
+        Op::Lambda => Term::Lam(names.collect(), sub()),
+        Op::If => Term::If(a(0), sub(), sub()),
+        Op::Match(_) => Term::Match(a(0), pats.into_iter().zip(subs).collect()),
+        Op::Fam => Term::Fam {
+            domain: a(0),
+            var: name(),
+            body: sub(),
+        },
         Op::Reindex(w) => Term::Reindex {
             family: a(0),
             kf: a(1),
@@ -1191,63 +1688,46 @@ fn node_term(
             depth: *depth,
             ev: ev.clone(),
         },
-        Op::Fix { lattice: true, ev } => {
-            let x = fresh_name(fresh);
-            let body = sub(0, vec![Term::Var(x.clone())], 2, fresh)?;
-            Term::Fix {
-                init: a(0),
-                step: Arc::new(Term::Lam(vec![x], Arc::new(body))),
-                this: "".into(),
-                key: "".into(),
-                kind: FixKind::Lattice { join: a(1) },
-                ev: ev.clone(),
-            }
-        }
-        Op::Fix { lattice: false, ev } => {
-            let (this, key) = (fresh_name(fresh), fresh_name(fresh));
-            let xs = vec![Term::Var(this.clone()), Term::Var(key.clone())];
-            Term::Fix {
-                init: a(0),
-                step: Arc::new(sub(0, xs, 1, fresh)?),
-                this,
-                key,
-                kind: FixKind::Definedness,
-                ev: ev.clone(),
-            }
-        }
-        Op::Gen(pos) => {
-            let mut fs = Vec::new();
-            for i in 0..2 {
-                let x = fresh_name(fresh);
-                let body = sub(i, vec![Term::Var(x.clone())], 1, fresh)?;
-                fs.push(Arc::new(Term::Lam(vec![x], Arc::new(body))));
-            }
-            let guard = fs.pop().expect("two regions");
-            let step = fs.pop().expect("two regions");
-            Term::Gen {
-                init: a(0),
-                step,
-                guard,
-                pos: *pos,
-            }
-        }
+        Op::Fix { lattice: true, ev } => Term::Fix {
+            init: a(0),
+            step: Arc::new(Term::Lam(vec![name()], sub())),
+            this: "".into(),
+            key: "".into(),
+            kind: FixKind::Lattice { join: a(1) },
+            ev: ev.clone(),
+        },
+        Op::Fix { lattice: false, ev } => Term::Fix {
+            init: a(0),
+            step: sub(),
+            this: name(),
+            key: name(),
+            kind: FixKind::Definedness,
+            ev: ev.clone(),
+        },
+        Op::Gen(pos) => Term::Gen {
+            init: a(0),
+            step: Arc::new(Term::Lam(vec![name()], sub())),
+            guard: Arc::new(Term::Lam(vec![name()], sub())),
+            pos: *pos,
+        },
         Op::Read(p) => Term::Read(p.clone()),
         Op::Push(p) => Term::Push(p.clone(), a(1)),
         op @ (Op::Derived(_) | Op::Rec | Op::Wave) => {
-            return Err(format!(
-                "{at}: `{}` has no kernel term here; the lowering does not make it",
-                op_name(op)
-            ));
+            unreachable!("`{}` is refused before its regions", op_name(op))
         }
-    })
+    }
 }
 
-/// Renames each binder of `p`, in preorder, to what `f` gives.
+/// Renames each binder of `p`, in preorder, to what `f` gives. A pattern nests as deep as its
+/// program, so the patterns still to rename are kept on a heap stack.
 fn rename(p: &mut Pattern, f: &mut dyn FnMut() -> Arc<str>) {
-    match p {
-        Pattern::Bind(x) => *x = f(),
-        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter_mut().for_each(|q| rename(q, f)),
-        Pattern::Fields(_, fs) => fs.iter_mut().for_each(|(_, q)| rename(q, f)),
-        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
+        match p {
+            Pattern::Bind(x) => *x = f(),
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut().rev()),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().rev().map(|(_, q)| q)),
+            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+        }
     }
 }
