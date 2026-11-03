@@ -823,16 +823,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | ENDS-dag | impl attempt 1 | 2026-11-03 05:46 | negative control (visited check removed): plain 16.5M,66M,264M,1.05G,4.2G instr at k=12..20 (x4 per +2, 2^k); two_names 28.5M..7.25G; both scaling tests killed  |
-| S22a | repair attempt 1 | 2026-11-03 03:01 | Pa without Tx::fits: ends_of_i64 test 551 of 5709 differ (enumerated flag and empty-set handling near i64 ends, both directions); reverted. The fits rule is par |
 | ST-arms-quad | repair attempt 2 | 2026-11-03 03:16 | done: 873f1a8 on wt/st-arms (not pushed); run_tests.sh 4: 97 pieces, 0 failed, load 66-89; fmt and clippy clean; profiling artifacts removed |
-| T11-S22 | repair attempt 1 (item S22a) | 2026-11-03 03:01 | Pa without Tx::fits: ends_of_i64 test 551 of 5709 differ (enumerated flag and empty-set handling near i64 ends, both directions); reverted. The fits rule is par |
 | T2-mid | repair attempt 1 | 2026-11-03 04:26 | deep checker tests time out at 12.5k (check costs ~0.2 ms per node at load 85); control worktree t2-mid-ctl at 2d0d512 made to compare |
 | T6 | repair attempt 6 | 2026-11-03 00:01 | rebased wt/t6 on main 7073be1 (both commits squashed first; T6's K30 renamed K37, CAP-bits owns K30) and wt/t6-spec on zed 1025886; fences resynced, l01_07/l01_ |
 | TD-ends | verify attempt 3 | 2026-11-03 03:52 | probe zedc test 'f(x: int) = x ** (3 ** 100000000 + 5 ** 100000000);' >60 s (main binary 0.03 s); '+ 1' 0.08 s, '3**1e8 * 5**1e8' 0.03 s: a sum of unrelated cor |
 | XT3 | research attempt 1 | 2026-11-03 03:08 | probes run: GOR hub 7.8x vs BFM 42.3x (512->4096), BAD-GOR control 63.8x; five order-free candidate points take oracle 213/3/184 -> 255/3/142 and decide REGULAR |
 
-Merged into local main and not yet pushed (18 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (25 commits); the push follows one full test run on the merged tree:
 
+- STATUS: S22a merged (this commit)
+- 217bb0a S22a repair 1: Pa keeps values in i128 and checks each kept slice; probe over all integers and a half-line scale
+- c462ff6 S22a: COMPLEXITY S22, STATUS and plan_dag S22-R2 for the min clip, the enumerate order and the narrowed inexact case
+- 132462e S22a: the clip reads min and max; enumerate reads the box before stage::ends
+- e50ee14 S22a: COMPLEXITY S22 fixed for one input with round 2 open; STATUS row; plan_dag rows S22a to S22e and S22-R2
+- 19b249a S22a: the reference transfer rebuilt from main's preimage.rs at fdf7918
+- 0c89e54 S22a: piecewise-affine summaries and the value hull in the backward transfer
 - 3ee4b07 Merge branch 'wt/plan-plug'
 - 6ce67b6 plan_dag: the four new cross-level lines list 91 pairs
 - fede004 plan_dag: L1.40a, L1.40b, L1.40c, L12.3a; fences synced to DESIGN
