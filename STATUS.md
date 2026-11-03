@@ -163,6 +163,9 @@ in docs/layout.md.
   test fails only when three measurements in a row are over; with `perf_event_open` refused the check stops with its own error. Every test run is capped at 64 GB, half the machine.
 - Next: the items of `docs/plan_dag.md`, in its order; what runs now is under "In progress".
   L1.40 needs T4, ST1 and ST2, which are done (ST1 and ST2 as item ST, merged and awaiting the batch test).
+- Plan audit (2026-11-03): `docs/plan_dag.md` has a row for each step the audit added to DESIGN.md
+  (L1.29a to L33.3a) and for each open item that had only ledger lines; each end-of-layer test from
+  L8.3 to L35.2 reruns S.6. The changes are listed under "Corrections to the supplied graph" there.
 - Plan extended (spec, 2026-10-30): **L30 — the editor**, a VS Code extension on the L25
   language server (static information per position, the dependency margin, recomputation of
   dirty nodes, values in place with visualizers), steps L30.1–L30.6.
