@@ -1091,30 +1091,81 @@ impl Linked {
 /// `p` with each disjunct removed whose addition, propagated, leaves no point, until none is
 /// removed, or `None` when `p` has no point. Each round but the last removes a disjunct, and
 /// each tests every disjunct by one propagation, so the work is polynomial in the disjuncts.
+///
+/// A disjunct that holds at a point of the formula is kept without its test: removing a
+/// disjunct that meets the rest nowhere leaves the formula's points as they were, so a point
+/// found once is a point of every later state, and propagation, which removes a disjunct only
+/// on a proof that it has no point with the rest, never removes one that holds there. The
+/// result is the one the tests give. The points are found by [`pick`] on the parts of a test,
+/// trying first the disjuncts that no point found so far holds: on a chain of `k` guards
+/// `i >= j` on one input, two points (at the least and the greatest `i` the chain allows)
+/// keep every disjunct but the `O(1)` that propagation removes, where testing each of the
+/// `2k` disjuncts by a propagation of all `2k` disjunctions cost `k^2` (ledger LIN-probe).
 fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
+    let mut points: Vec<Model> = Vec::new();
     loop {
         let mut changed = false;
+        // For each disjunct of each disjunction, whether a point found so far holds it.
+        let mut held: Vec<Vec<bool>> = p
+            .ors
+            .iter()
+            .map(|o| {
+                o.iter()
+                    .map(|d| points.iter().any(|m| d.holds(m)))
+                    .collect()
+            })
+            .collect();
         for i in 0..p.ors.len() {
             let ds = std::mem::take(&mut p.ors[i]);
+            let flags = std::mem::take(&mut held[i]);
+            // The points found while this disjunction is tested, which its flags do not count.
+            let since = points.len();
             let n = ds.len();
-            let live: Vec<Rc<Parts>> = ds
-                .into_iter()
-                .filter(|d| {
-                    let mut q = Parts {
-                        cons: p.cons.clone(),
-                        ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
-                        atoms: OnceCell::new(),
-                        failed: Cell::new(0),
-                    };
-                    q.put(d);
-                    !matches!(settle(q), Ok(None))
-                })
-                .collect();
+            let mut live = Vec::with_capacity(n);
+            let mut live_held = Vec::with_capacity(n);
+            for (d, h) in ds.into_iter().zip(flags) {
+                if h || points[since..].iter().any(|m| d.holds(m)) {
+                    live.push(d);
+                    live_held.push(true);
+                    continue;
+                }
+                if let Some(m) = point_with(&p, &held, &d) {
+                    for (o, hs) in p.ors.iter().zip(held.iter_mut()) {
+                        for (e, h) in o.iter().zip(hs.iter_mut()) {
+                            *h = *h || e.holds(&m);
+                        }
+                    }
+                    points.push(m);
+                    live.push(d);
+                    live_held.push(true);
+                    continue;
+                }
+                // Complexity tradeoff: a disjunct that no point holds is still tested by one
+                // propagation of all the parts, so `r` disjuncts that propagation removes cost
+                // `r` propagations of the whole formula, and failed-literal probing stays
+                // polynomial, not `O(n log n)`, when `r` grows with `n` (`cross` from `k = 51`
+                // to `99`, the `k - 50` guards no input meets: COMPLEXITY.md S22). Keeping the
+                // results identical needs the same proof of each removal; a removal proved
+                // once for several disjuncts would need a propagation that reports which
+                // disjuncts it refutes, which `settle` does not.
+                let mut q = Parts {
+                    cons: p.cons.clone(),
+                    ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
+                    atoms: OnceCell::new(),
+                    failed: Cell::new(0),
+                };
+                q.put(&d);
+                if !matches!(settle(q), Ok(None)) {
+                    live.push(d);
+                    live_held.push(false);
+                }
+            }
             changed |= live.len() < n;
             if live.is_empty() {
                 return Ok(None);
             }
             p.ors[i] = live;
+            held[i] = live_held;
         }
         if !changed {
             return Ok(Some(p));
@@ -1124,6 +1175,34 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
             Some(q) => p = q,
         }
     }
+}
+
+/// A point of the formula of [`probe`]'s parts `p` where the disjunct `d` holds, `d` being a
+/// disjunct of the disjunction that `p` lacks while it is tested, or `None` when [`pick`]
+/// finds none. In each other disjunction `pick` tries first the disjuncts that `held` marks as
+/// held by no point, so that the point holds as many of them as its search reaches. The point
+/// is checked against every part, so that a disjunct is kept by a point and not by trust in
+/// the search.
+fn point_with(p: &Parts, held: &[Vec<bool>], d: &Parts) -> Option<Model> {
+    let others = || p.ors.iter().zip(held).filter(|(o, _)| !o.is_empty());
+    let mut q = Parts {
+        cons: p.cons.clone(),
+        ors: others()
+            .map(|(o, hs)| {
+                let new = o.iter().zip(hs).filter(|(_, h)| !**h);
+                let old = o.iter().zip(hs).filter(|(_, h)| **h);
+                new.chain(old).map(|(e, _)| e.clone()).collect()
+            })
+            .collect(),
+        atoms: OnceCell::new(),
+        failed: Cell::new(0),
+    };
+    q.put(d);
+    let m = pick(&q, true).ok()?;
+    let meets = d.holds(&m)
+        && p.cons.iter().all(|c| c.holds(&m))
+        && others().all(|(o, _)| o.iter().any(|e| e.holds(&m)));
+    meets.then_some(m)
 }
 
 /// A formula in negation normal form as its top-level constraints and its top-level
@@ -1221,6 +1300,11 @@ impl Parts {
     fn put(&mut self, d: &Parts) {
         self.cons.extend(d.cons.iter().cloned());
         self.ors.extend(d.ors.iter().cloned());
+    }
+
+    /// Whether the parts hold at `values` ([`Formula::holds`]).
+    fn holds(&self, values: &Model) -> bool {
+        self.witness(values, fresh_stamp(), &mut Vec::new())
     }
 
     /// Whether the parts hold at `values` ([`Formula::holds`]), and if so, in `out`, the parts

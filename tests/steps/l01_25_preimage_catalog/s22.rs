@@ -1409,16 +1409,16 @@ fn remainders_many_classes_cost_one_transfer_each() {
 /// The chains on two inputs keep the boxes they had before LIN-cross, whose repair of the
 /// search over disjunctions changed only its cost: `m` in `[-min(k, 50), 50]` on `cross`, both
 /// inputs in `[-k, k]` on `cross_live` and in `[2-k, k-2]` on `cross_dead` (from `k = 5`,
-/// where its box stops being exact, to 13, as it costs `k^2.4`: ledger LIN-probe). Each box is
-/// inexact with its relation kept, and no point within the interpreter's window meets the
-/// demand outside it. Before the change and after, the whole preimage, relation included, was
-/// equal on every family of this file (running log, LIN-cross).
+/// where its box stops being exact). Each box is inexact with its relation kept, and no point
+/// within the interpreter's window meets the demand outside it. Before the
+/// change and after, the whole preimage, relation included, was equal on every family of this
+/// file (running log, LIN-cross).
 #[test]
 fn chains_on_two_inputs_keep_their_boxes() {
     on_big_stack(|| {
         for k in [1, 2, 3, 5, 8, 13, 21, 34, 48, 50, 51] {
             for name in ["cross", "cross_live", "cross_dead"] {
-                if name == "cross_dead" && !(5..=13).contains(&k) {
+                if name == "cross_dead" && k < 5 {
                     continue;
                 }
                 let (t, ds, d) = family(name, k);
@@ -1457,13 +1457,26 @@ fn chain_cross_within_its_width_scales() {
 
 /// `cross_dead` (`cross` with its inputs two narrower than the chain is long) has its only
 /// point outside the demand at an end, `i = k - 2` and `m = 2 - k`. The greedy search over
-/// disjunctions keeps `i` where the first solution put it and fails, and the search then tests
-/// each of the `2k` disjuncts in turn with a full propagation, about `k^2.4` in all (0.26,
-/// 1.40, 7.2 and 39.4 G instructions at `k` = 10, 18, 34, 66). The same holds of `cross` from
-/// `k = 51` to `99` (22.9 G at 52 against 1.09 G at 48): the jump the ledger reports is the
-/// guards `j > 50` that no input meets, not a size where the method changes.
+/// disjunctions keeps `i` where the first solution put it and fails, and the failed-literal
+/// search then tests the `2k` disjuncts. It tested each with a full propagation, about `k^2.4`
+/// in all (0.26, 1.40, 7.2 and 39.4 G instructions at `k` = 10, 18, 34, 66); since LIN-probe
+/// it keeps without a propagation each disjunct that a point found so far meets (2.88 G at
+/// `k = 66`). On `cross` from `k = 51` to `99` the `k - 50` guards `j > 50` that no input meets
+/// are each still refuted by one full propagation (2.0 G at 52, was 22.9 G; 1.05 G at 48).
 #[test]
-#[ignore = "ledger LIN-probe: the failed-literal search on a chain of guards that no input meets"]
 fn chain_cross_dead_scales() {
     scales("cross_dead", 8);
+}
+
+/// `cross_dead` at the sizes below 5, where its inputs are at most two wide and its box is
+/// exact or empty of points outside: the preimage agrees with the interpreter on a window.
+#[test]
+fn chain_cross_dead_at_small_sizes() {
+    on_big_stack(|| {
+        for k in 2..=4 {
+            let (t, ds, d) = family("cross_dead", k);
+            let p = preimage(&t, &ds, &d);
+            check(&t, &ds, &d, &p, (-8, 8));
+        }
+    });
 }

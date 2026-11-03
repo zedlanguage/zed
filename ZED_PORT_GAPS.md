@@ -1020,3 +1020,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A resumable generator per type as an explicit state machine (`At::Start`, `Tuple`, `Past`) whose step returns `Err((maker, position))` for a value it needs first, driven by an explicit stack | `types::Values::fill`, `Maker::step` | Laziness, mutation | A `gen` per type over the makers' lists, or the same loop as a state receiver holding every maker's list and position |
 | `split_at_mut` of the makers, so a maker grows its own list while it reads the lists of the makers before it | `types::Maker::step` | Mutation | The step returns the new value and state, and the loop puts them in the persistent list of makers |
 | `std::mem::replace` of the maker's state with `At::Start`, put back on the path that waits | `types::Maker::step` | Mutation | The step returns the next state as a value |
+
+## Entries from LIN-probe (`zedc/src/store/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec<Vec<bool>>` of which disjuncts a point found so far holds, beside the disjunctions; one row taken with `std::mem::take` while its disjunction is tested and put back after, the other rows set in place when a point is found | `probe` | Mutation | A loop whose state is the disjunctions with their flags as one list of records; a point found returns the list with its flags or-ed |
