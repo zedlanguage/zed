@@ -108,3 +108,16 @@ fn a_join_keeps_the_affine_relation_of_its_sides() {
     assert!(!arm(&a, "((i + j) != n)", true).reachable());
     assert!(arm(&a, "((i + j) != n)", false).reachable());
 }
+
+#[test]
+fn a_negated_equality_with_i64_max_keeps_the_integers_past_it() {
+    // Kernel integers are unbounded: `n` may be `i64::MAX + 1`, which is not `i64::MAX`, so the
+    // arm `n >= i64::MAX` under `n != i64::MAX` is reachable (S22c).
+    let m = i64::MAX;
+    let src =
+        format!("ok = (n) -> if n != {m} {{ if n >= {m} {{ 1 }} else {{ 2 }} }} else {{ 0 }};");
+    accepted(&src);
+    let (_, _, a) = arms_of(&src);
+    assert!(arm(&a, &format!("(n >= {m})"), true).reachable());
+    assert!(arm(&a, &format!("(n >= {m})"), false).reachable());
+}

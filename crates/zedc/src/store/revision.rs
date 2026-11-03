@@ -227,16 +227,40 @@ fn forward_mod(a: (End, End), b: (End, End)) -> Vec<(End, End)> {
 
 impl IntervalSet {
     /// The members of `within` that are not members of `self`.
+    ///
+    /// Kernel integers are unbounded, so a set that ends at `i64::MAX` misses the integers
+    /// past it. When `within` holds them (it is unbounded above), that gap is kept, rounded
+    /// outward to begin at `i64::MAX` ([`End::lower`], which marks the result as rounded);
+    /// `i64::MIN` likewise. Without it, `x != i64::MAX` was read as `x <= i64::MAX - 1`, and
+    /// the preimage of `y + (i64::MAX - 3) == i64::MAX` being false lost every `y` above 3.
+    // Complexity tradeoff: the gap past an end of `i64` is rounded outward to hold that end,
+    // so the complement of `{i64::MAX}` in every integer is every integer, marked rounded,
+    // and a preimage read through it is necessary, not exact, unless a later stage (the
+    // forward pass or the linear relation) confirms it. Why: ends are `i64` (COMPLEXITY.md
+    // C7), which keeps each end operation O(1); unbounded ends cost time in their bits. Trigger:
+    // a set with a piece ending at `i64::MAX` (or starting at `i64::MIN`) complemented in a set
+    // unbounded on that side. Tests: `l01_25_preimage_catalog::overflow`,
+    // `l01_39_reduced_product::spec::a_negated_equality_with_i64_max_keeps_the_integers_past_it`.
+    // A complete solution would make `End::Fin` hold an unbounded integer (`store::int`).
     pub fn complement_in(&self, within: &IntervalSet) -> IntervalSet {
+        let Some((wlo, whi)) = within.bounds() else {
+            return IntervalSet::empty();
+        };
         let mut gaps = Vec::new();
         let mut from = NegInf;
         for &(lo, hi) in self.pieces() {
-            if from == NegInf || from <= lo {
-                gaps.push((from, lo.pred()));
+            if let Fin(v) = lo
+                && (v > i64::MIN || wlo == NegInf)
+            {
+                gaps.push((from, End::upper(v as i128 - 1)));
             }
-            from = hi.succ();
+            from = match hi {
+                Fin(v) if v < i64::MAX || whi == PosInf => End::lower(v as i128 + 1),
+                Fin(_) => return IntervalSet::from_pieces(gaps).meet(within),
+                e => e,
+            };
         }
-        if self.pieces().last().is_none_or(|p| p.1 != PosInf) {
+        if from != PosInf {
             gaps.push((from, PosInf));
         }
         IntervalSet::from_pieces(gaps).meet(within)

@@ -12,6 +12,7 @@
 mod constant_minus;
 mod entries;
 mod exact;
+mod overflow;
 mod powers;
 mod random;
 mod s22;
