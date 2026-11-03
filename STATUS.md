@@ -821,19 +821,23 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CLEAN-presb | impl attempt 1 | 2026-11-03 06:17 | start |
-| ENDS-dag | impl attempt 1 | 2026-11-03 05:46 | Patricia sets: compare 200000 cases 0 differ; two_names 57k->66k instr/level k=500..8000 (was quadratic); negative control checkout made |
-| PLUG-spec | impl attempt 1 | 2026-11-03 06:08 | DESIGN edits done: B1-B6, refs NelsonOppen and CousotReducedNO, steps L1.40a-c, L12.3a, changed L1.26 note, L12.1, L12.3, L15.2, L19.2 |
-| S22a | repair attempt 1 | 2026-11-03 03:01 | found: Tx::fits (preimage.rs:2200) refuses Pa and clip when a domain end plus the clipped demand end pass i64::MAX (domain end >= ~2^62, or Fin(MAX)); the trans |
-| ST-arms-quad | repair attempt 2 | 2026-11-03 03:16 | negative control on af39546 (tests not committed there): heavy scaling test fails 706.7M -> 29478M at d=60/480, 41.7x (limit 24); moving scaling test killed at  |
-| T11-S22 | repair attempt 1 (item S22a) | 2026-11-03 03:01 | found: Tx::fits (preimage.rs:2200) refuses Pa and clip when a domain end plus the clipped demand end pass i64::MAX (domain end >= ~2^62, or Fin(MAX)); the trans |
-| T2-mid | repair attempt 1 | 2026-11-03 04:26 | deep checker tests written; building |
+| ENDS-dag | impl attempt 1 | 2026-11-03 05:46 | negative control (visited check removed): plain 16.5M,66M,264M,1.05G,4.2G instr at k=12..20 (x4 per +2, 2^k); two_names 28.5M..7.25G; both scaling tests killed  |
+| S22a | repair attempt 1 | 2026-11-03 03:01 | Pa without Tx::fits: ends_of_i64 test 551 of 5709 differ (enumerated flag and empty-set handling near i64 ends, both directions); reverted. The fits rule is par |
+| ST-arms-quad | repair attempt 2 | 2026-11-03 03:16 | done: 873f1a8 on wt/st-arms (not pushed); run_tests.sh 4: 97 pieces, 0 failed, load 66-89; fmt and clippy clean; profiling artifacts removed |
+| T11-S22 | repair attempt 1 (item S22a) | 2026-11-03 03:01 | Pa without Tx::fits: ends_of_i64 test 551 of 5709 differ (enumerated flag and empty-set handling near i64 ends, both directions); reverted. The fits rule is par |
+| T2-mid | repair attempt 1 | 2026-11-03 04:26 | deep checker tests time out at 12.5k (check costs ~0.2 ms per node at load 85); control worktree t2-mid-ctl at 2d0d512 made to compare |
 | T6 | repair attempt 6 | 2026-11-03 00:01 | rebased wt/t6 on main 7073be1 (both commits squashed first; T6's K30 renamed K37, CAP-bits owns K30) and wt/t6-spec on zed 1025886; fences resynced, l01_07/l01_ |
-| TD-ends | verify attempt 3 | 2026-11-03 03:52 | started on ff1c3db (repair#2); reusing verify#1/#2 results for earlier parts |
-| XT3 | research attempt 1 | 2026-11-03 03:08 | probes P1-P4 written in wt/xt3-probe (tests/steps/l01_38_presburger/xt3.rs); building |
+| TD-ends | verify attempt 3 | 2026-11-03 03:52 | probe zedc test 'f(x: int) = x ** (3 ** 100000000 + 5 ** 100000000);' >60 s (main binary 0.03 s); '+ 1' 0.08 s, '3**1e8 * 5**1e8' 0.03 s: a sum of unrelated cor |
+| XT3 | research attempt 1 | 2026-11-03 03:08 | probes run: GOR hub 7.8x vs BFM 42.3x (512->4096), BAD-GOR control 63.8x; five order-free candidate points take oracle 213/3/184 -> 255/3/142 and decide REGULAR |
 
-Merged into local main and not yet pushed (12 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (18 commits); the push follows one full test run on the merged tree:
 
+- 3ee4b07 Merge branch 'wt/plan-plug'
+- 6ce67b6 plan_dag: the four new cross-level lines list 91 pairs
+- fede004 plan_dag: L1.40a, L1.40b, L1.40c, L12.3a; fences synced to DESIGN
+- 45a6e1e Merge branch 'wt/clean-presb'
+- bc8cbf4 CLEAN-presb: scaling.rs control notes name the current code; S18 says what store/simplex.rs still holds
+- c6d245b STATUS: in progress as of 2026-11-03 06:24
 - 96b792c MAP2-bound: map2 takes at most 4(k + 2) pairs, not k + m
 - d72abc8 COMPLEXITY: S1b, S2, S3, S4, S5, S11, S12 and the intro describe the current code, not removed caps
 - 2160e3b STATUS: in progress as of 2026-11-03 06:11
