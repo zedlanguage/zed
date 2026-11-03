@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::deep;
 use crate::types::Type;
 use crate::value::Value;
 
@@ -377,5 +378,129 @@ pub mod build {
     /// `if c { a } else { b }`.
     pub fn if_(c: Term, a: Term, b: Term) -> Term {
         Term::If(Arc::new(c), Arc::new(a), Arc::new(b))
+    }
+}
+
+/// A part of a term or pattern whose owner is being dropped (module `deep`): a term nested deep
+/// is freed in a loop, on any stack.
+#[expect(dead_code, reason = "a part is held only to be dropped")]
+enum Freed {
+    Term(Term),
+    Terms(Vec<Term>),
+    Arms(Vec<(Pattern, Term)>),
+    Patterns(Vec<Pattern>),
+    Fields(Vec<(Arc<str>, Pattern)>),
+}
+
+thread_local! {
+    /// The parts of terms and patterns waiting to be dropped.
+    static FREED: deep::Queue<Freed> = const { deep::Queue::new() };
+}
+
+fn free(part: Freed) {
+    deep::free_in(&FREED, part);
+}
+
+/// Queues the term `t` holds, when `t` is its last owner.
+fn free_shared(t: &mut Arc<Term>) {
+    if let Some(t) = Arc::get_mut(t) {
+        free(Freed::Term(std::mem::replace(t, Term::PrimFn(Prim::Tuple))));
+    }
+}
+
+fn free_terms(ts: &mut Vec<Term>) {
+    if !ts.is_empty() {
+        free(Freed::Terms(std::mem::take(ts)));
+    }
+}
+
+/// A term's parts are freed in a loop, not by recursion.
+impl Drop for Term {
+    fn drop(&mut self) {
+        match self {
+            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
+            Term::Lam(_, b) | Term::Push(_, b) => free_shared(b),
+            Term::App(f, args) => {
+                free_shared(f);
+                free_terms(args);
+            }
+            Term::Prim(_, args) => free_terms(args),
+            Term::Let(_, a, b) | Term::Discard { family: a, sel: b } => {
+                free_shared(a);
+                free_shared(b);
+            }
+            Term::Fam { domain, body, .. } => {
+                free_shared(domain);
+                free_shared(body);
+            }
+            Term::If(a, b, c)
+            | Term::Reindex {
+                family: a,
+                kf: b,
+                vf: c,
+                ..
+            }
+            | Term::Gen {
+                init: a,
+                step: b,
+                guard: c,
+                ..
+            } => {
+                free_shared(a);
+                free_shared(b);
+                free_shared(c);
+            }
+            Term::Match(e, arms) => {
+                free_shared(e);
+                if !arms.is_empty() {
+                    free(Freed::Arms(std::mem::take(arms)));
+                }
+            }
+            Term::Fold {
+                family,
+                op,
+                identity,
+                ..
+            } => {
+                free_shared(family);
+                free_shared(op);
+                if let Some(i) = identity {
+                    free_shared(i);
+                }
+            }
+            Term::Fix {
+                init, step, kind, ..
+            } => {
+                free_shared(init);
+                free_shared(step);
+                match kind {
+                    FixKind::Lattice { join } => free_shared(join),
+                    FixKind::Definedness => {}
+                }
+            }
+        }
+    }
+}
+
+/// A pattern's parts are freed in a loop, as a term's are.
+impl Drop for Pattern {
+    fn drop(&mut self) {
+        match self {
+            Pattern::Wild
+            | Pattern::Bind(_)
+            | Pattern::Lit(_)
+            | Pattern::AnyAtom
+            | Pattern::Is(_) => {}
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => {
+                if !ps.is_empty() {
+                    free(Freed::Patterns(std::mem::take(ps)));
+                }
+            }
+            Pattern::Fields(_, fs) => {
+                if !fs.is_empty() {
+                    free(Freed::Fields(std::mem::take(fs)));
+                }
+            }
+        }
     }
 }

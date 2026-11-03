@@ -182,7 +182,7 @@ fn a_join_keeps_the_equalities_of_its_sides_and_scales() {
     // The two sides, built before the timing; the join of the two, reduced, is timed.
     let sides = |k: usize| {
         let s = ints(&names(k));
-        let Term::Prim(_, a) = all_zero_or_all_one(k) else {
+        let Term::Prim(_, a) = &all_zero_or_all_one(k) else {
             unreachable!("a disjunction")
         };
         let p = Premises::new();

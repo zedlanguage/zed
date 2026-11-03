@@ -612,7 +612,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `thread_local!` list of parts waiting to be freed, and a flag for the walk that holds it | `deep::free`, `FREEING`, `PARTS` | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
+| `thread_local!` list of parts waiting to be freed, and a flag for the walk that holds it | `deep::free`, `PARTS` (a `deep::Queue` since T2-types) | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `thread_local!` queue of families to compare, because `==` is called from inside `imbl` where no stack of ours reaches | `deep::settle`, `COMPARING`, `PAIRS` | Mutation, global state | Zed's map comparison takes the element test as a function, so the queue is a state receiver or goes away |
 | `impl Drop` on a newtype, with `mem::take` of its `Arc` or map | `Items`, `Family` | None | Removed, with the first row |
 | `slice::Iter` held in a stack frame, a borrow into the value being walked | `walk`, `Copying`, `all_leaves` | None | An index into a shared tuple |
@@ -633,6 +633,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `OnceLock` for a table computed once | `ast::forms` | Global state | A constant, or a value passed in |
 | A generic struct over a trait with an unsized `Self` (`Parser<I: Input + ?Sized>` on `[char]` and on `Tokens`) | `zedc::parse::engine` | Unsized types | An interface over a value, passed as a parameter |
 | `env!("CARGO_MANIFEST_DIR")`, a path fixed when the tool is built | `zed_tools::impl_root` | Build-time environment | A parameter of the tool |
+
+## Entries from T2-types (`zed-kernel/src/types.rs`, `types/bdd.rs`, `types/rec.rs`, `term.rs`, `deep.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A generic `thread_local!` queue of parts to free, one per module, each an enum of the kinds of part | `deep::Queue`, `deep::free_in`, `Freed` in `types.rs`, `rec.rs`, `term.rs` | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
+| `impl Drop` on a generic struct with a trait bound, freeing through a trait method (`Literal::free`) | `Branch<A>`, `bdd::Expr<A>` | None | Removed, with the first row |
+| A `thread_local!` record of the text being made, read by a recursive `show` that returns a placeholder for a missing text, and a drop guard that clears it on a panic | `Type::rope`, `make_rope`, `SHOWING`, `EndShowing` | Mutation, global state | A fold over the types in postorder that passes the map of texts along |
+| `OnceLock::set` from a loop outside the cell's own initializer | `make_rope` | Lazy cells (gap 3) | The map of texts from the row above |
 
 ## Entries from L2.1 (`zedc/src/ast/`, `format.rs`)
 

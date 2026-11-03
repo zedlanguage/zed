@@ -38,6 +38,7 @@ use std::ops::{BitAnd, BitOr, Not, Sub};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use crate::deep;
 use crate::num::Rat;
 use crate::value::Value;
 use bdd::{Form, Part};
@@ -143,6 +144,56 @@ impl fmt::Debug for Node {
             Node::Rec(r) => f.debug_tuple("Rec").field(r).finish(),
         }
     }
+}
+
+/// A node's parts and text are freed in a loop (module `deep`), so a type nested deep is freed
+/// on any stack. A recursive node's body is a type, which frees its own node so.
+impl Drop for Node {
+    fn drop(&mut self) {
+        if let Node::Parts(p, shown) = self {
+            if !p.atoms.names.is_empty() {
+                free(Freed::Atoms(std::mem::take(&mut p.atoms.names)));
+            }
+            if !p.tuples.lens.is_empty() {
+                free(Freed::Lens(std::mem::take(&mut p.tuples.lens)));
+            }
+            if p.morphisms.is_leaf().is_none() {
+                free(Freed::Morphisms(std::mem::replace(
+                    &mut p.morphisms,
+                    Part::leaf(false),
+                )));
+            }
+            if let Some(r) = shown.0.take() {
+                free(Freed::Rope(r));
+            }
+        }
+    }
+}
+
+/// A part of a type whose owner is being dropped: what lies between one level of a type and the
+/// next, which drops a type inside it by queueing that type's own parts.
+#[expect(dead_code, reason = "a part is held only to be dropped")]
+enum Freed {
+    Atoms(OrdMap<Arc<str>, AtomPart>),
+    Lens(BTreeMap<usize, Part<Row>>),
+    Rope(Rope),
+    Tuples(Part<Row>),
+    Morphisms(Part<Morphism>),
+}
+
+thread_local! {
+    /// The parts of types waiting to be dropped.
+    static FREED: deep::Queue<Freed> = const { deep::Queue::new() };
+}
+
+fn free(part: Freed) {
+    deep::free_in(&FREED, part);
+}
+
+/// Keeps [`FREED`] until after the thread-locals first used after this call, such as the tables
+/// of diagram nodes, which hold types.
+fn hold() {
+    deep::hold(&FREED);
 }
 
 /// A type's text as a rope, made when first printed. It takes no part in comparing types.
@@ -387,6 +438,7 @@ impl Parts {
 
 impl Type {
     fn new(mut p: Parts) -> Type {
+        hold();
         p.digest = p.hash();
         Type(Arc::new(Node::Parts(p, Shown::default())))
     }
@@ -1328,6 +1380,21 @@ macro_rules! rope {
     };
 }
 
+/// The ropes inside are freed in a loop, as a type's parts are.
+impl Drop for Rope {
+    fn drop(&mut self) {
+        if let Some(pieces) = Arc::get_mut(&mut self.0) {
+            for p in pieces {
+                if let Piece::Rope(_) = p
+                    && let Piece::Rope(r) = std::mem::replace(p, Piece::Str(String::new()))
+                {
+                    free(Freed::Rope(r));
+                }
+            }
+        }
+    }
+}
+
 impl Rope {
     /// `head`, then each item after a space, then `)`.
     fn listed(head: &str, items: impl IntoIterator<Item = Rope>) -> Rope {
@@ -1376,12 +1443,97 @@ impl Ord for Rope {
     }
 }
 
+/// The making of a type's text, which [`Type::rope`] does in a loop with its own stack, as a
+/// type can be deeper than the call stack.
+#[derive(Default)]
+struct Showing {
+    /// The texts made so far for types that keep none, such as the complement of a payload,
+    /// which `show` builds anew at each try.
+    made: BTreeMap<Type, Rope>,
+    /// The types inside whose text the last try of `show` found missing.
+    missing: Vec<Type>,
+}
+
+thread_local! {
+    /// The making of a text under way on this thread, if any.
+    static SHOWING: RefCell<Option<Showing>> = const { RefCell::new(None) };
+}
+
+/// Ends the making of a text, also when it panics.
+struct EndShowing;
+
+impl Drop for EndShowing {
+    fn drop(&mut self) {
+        SHOWING.with_borrow_mut(|s| *s = None);
+    }
+}
+
 impl Type {
     /// The text as a rope, made once, which holds the ropes of the types inside without copying
-    /// them, so that a type nested deep takes time linear in its text.
+    /// them, so that a type nested deep takes time linear in its text. The texts are made in a
+    /// loop: a try of `show` that finds a text inside missing gives up, the types it named are
+    /// made first, and the try is made again, so each type is tried at most twice.
     fn rope(&self) -> Rope {
+        let shown = match &*self.0 {
+            Node::Parts(_, shown) => shown,
+            Node::Rec(r) => return rope![r.name()],
+        };
+        if let Some(r) = shown.0.get() {
+            return r.clone();
+        }
+        let inside = SHOWING.with_borrow_mut(|s| {
+            s.as_mut().map(|s| match s.made.get(self) {
+                Some(r) => Some(r.clone()),
+                None => {
+                    s.missing.push(self.clone());
+                    None
+                }
+            })
+        });
+        match inside {
+            Some(Some(r)) => r,
+            // A placeholder: the try that asked for it is thrown away.
+            Some(None) => rope![],
+            None => self.make_rope(),
+        }
+    }
+
+    /// The loop of [`Type::rope`], from the outermost type whose text is asked for.
+    fn make_rope(&self) -> Rope {
+        SHOWING.with_borrow_mut(|s| *s = Some(Showing::default()));
+        let _end = EndShowing;
+        let mut stack = vec![self.clone()];
+        while let Some(t) = stack.last() {
+            let Node::Parts(p, shown) = &*t.0 else {
+                unreachable!("a recursive node's text is its name, never missing")
+            };
+            let made = SHOWING.with_borrow(|s| s.as_ref().and_then(|s| s.made.get(t).cloned()));
+            if let Some(r) = made {
+                let _ = shown.0.set(r);
+            }
+            if shown.0.get().is_some() {
+                stack.pop();
+                continue;
+            }
+            let r = t.show(p);
+            let missing = SHOWING.with_borrow_mut(|s| {
+                std::mem::take(&mut s.as_mut().expect("the making is under way").missing)
+            });
+            if missing.is_empty() {
+                let _ = shown.0.set(r.clone());
+                let t = stack.pop().expect("the stack holds `t`");
+                SHOWING.with_borrow_mut(|s| {
+                    s.as_mut()
+                        .expect("the making is under way")
+                        .made
+                        .insert(t, r)
+                });
+            } else {
+                stack.extend(missing);
+            }
+        }
         match &*self.0 {
-            Node::Parts(p, shown) => shown.0.get_or_init(|| self.show(p)).clone(),
+            Node::Parts(_, shown) => shown.0.get().expect("the loop made the text").clone(),
             Node::Rec(r) => rope![r.name()],
         }
     }

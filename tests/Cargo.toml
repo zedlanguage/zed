@@ -35,6 +35,11 @@ path = "steps/m0_09_kernel_evaluator/deep_scaling.rs"
 name = "deep_heap"
 path = "steps/l01_36_cranelift/deep_heap.rs"
 
+# Its own binary, so the default stack of a test thread is what its deep types run on.
+[[test]]
+name = "deep_types"
+path = "steps/l01_22_type_representation/deep_types.rs"
+
 [features]
 full = []
 

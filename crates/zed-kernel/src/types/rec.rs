@@ -21,6 +21,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+
+use crate::deep;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use super::bes::{Answer, Bes, Kind, decide};
@@ -182,6 +184,89 @@ impl Shape {
             Shape::Not(a) => vec![a],
             Shape::Diff(a, b) => vec![a, b],
             Shape::Morphism(l, u, v) => vec![l, u, v],
+        }
+    }
+}
+
+/// A part of an expression or tree whose owner is being dropped (module `deep`): an expression
+/// nested deep is freed in a loop, on any stack.
+#[expect(dead_code, reason = "a part is held only to be dropped")]
+enum Freed {
+    Expr(Expr),
+    Exprs(Vec<Expr>),
+    Shape(Shape),
+    Nodes(Vec<Arc<Node>>),
+}
+
+thread_local! {
+    /// The parts of expressions and trees waiting to be dropped.
+    static FREED: deep::Queue<Freed> = const { deep::Queue::new() };
+}
+
+fn free(part: Freed) {
+    deep::free_in(&FREED, part);
+}
+
+/// An expression's parts are freed in a loop, not by recursion.
+impl Drop for Expr {
+    fn drop(&mut self) {
+        match self {
+            Expr::Param(_) | Expr::Type(_) => {}
+            Expr::Ref(_, xs)
+            | Expr::Union(xs)
+            | Expr::And(xs)
+            | Expr::Tuple(xs)
+            | Expr::Atom(_, xs) => {
+                if !xs.is_empty() {
+                    free(Freed::Exprs(std::mem::take(xs)));
+                }
+            }
+            Expr::Not(a) => free(Freed::Expr(std::mem::replace(&mut **a, Expr::Param(0)))),
+            Expr::Diff(a, b) => {
+                for x in [a, b] {
+                    free(Freed::Expr(std::mem::replace(&mut **x, Expr::Param(0))));
+                }
+            }
+            Expr::Morphism(l, u, v) => {
+                for x in [l, u, v] {
+                    free(Freed::Expr(std::mem::replace(&mut **x, Expr::Param(0))));
+                }
+            }
+        }
+    }
+}
+
+/// Queues the shape `n` holds, when `n` is its last owner.
+fn free_node(n: &mut Arc<Node>) {
+    if let Some(n) = Arc::get_mut(n) {
+        free(Freed::Shape(std::mem::replace(&mut n.e, Shape::Param(0))));
+    }
+}
+
+/// A tree's children are freed in a loop, as an expression's are.
+impl Drop for Shape {
+    fn drop(&mut self) {
+        match self {
+            Shape::Param(_) | Shape::Type(_) => {}
+            Shape::Ref(_, xs)
+            | Shape::Union(xs)
+            | Shape::And(xs)
+            | Shape::Tuple(xs)
+            | Shape::Atom(_, xs) => {
+                if !xs.is_empty() {
+                    free(Freed::Nodes(std::mem::take(xs)));
+                }
+            }
+            Shape::Not(a) => free_node(a),
+            Shape::Diff(a, b) => {
+                free_node(a);
+                free_node(b);
+            }
+            Shape::Morphism(l, u, v) => {
+                free_node(l);
+                free_node(u);
+                free_node(v);
+            }
         }
     }
 }

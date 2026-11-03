@@ -203,7 +203,7 @@ impl Item {
     }
 }
 
-fn node_id<A>(b: &Bdd<A>) -> u64 {
+fn node_id<A: super::bdd::Literal>(b: &Bdd<A>) -> u64 {
     b.branch().map_or_else(u64::from, |(id, ..)| id)
 }
 

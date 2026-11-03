@@ -259,10 +259,10 @@ fn arms_that_call_different_let_functions_on_a_shared_part_are_read_in_time_near
         );
         // With the outer `let`, of `h1`, taken out, `h1` is a parameter instead and the chain
         // does not end.
-        let Term::Let(_, _, rest) = chain(3) else {
+        let Term::Let(_, _, rest) = &chain(3) else {
             unreachable!("built as a let")
         };
-        assert!(!ends(&Term::Lam(vec!["h1".into()], rest)));
+        assert!(!ends(&Term::Lam(vec!["h1".into()], rest.clone())));
     });
 }
 

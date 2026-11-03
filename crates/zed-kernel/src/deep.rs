@@ -9,6 +9,7 @@ use std::fmt;
 use std::mem;
 use std::slice;
 use std::sync::Arc;
+use std::thread::LocalKey;
 
 use imbl::OrdMap;
 use imbl::ordmap::Iter;
@@ -30,31 +31,65 @@ pub(crate) enum Part {
 }
 
 thread_local! {
-    /// Whether a drop further up this thread's stack is already emptying [`PARTS`].
-    static FREEING: Cell<bool> = const { Cell::new(false) };
-    /// The parts waiting to be dropped.
-    static PARTS: RefCell<Vec<Part>> = const { RefCell::new(Vec::new()) };
+    /// The parts of values waiting to be dropped.
+    static PARTS: Queue<Part> = const { Queue::new() };
     /// Whether a comparison further up this thread's stack is already reading [`PAIRS`].
     static COMPARING: Cell<bool> = const { Cell::new(false) };
     /// The pairs of families a comparison has yet to read.
     static PAIRS: RefCell<Vec<(Family, Family)>> = const { RefCell::new(Vec::new()) };
 }
 
+/// A thread's parts of one kind waiting to be dropped, for [`free_in`].
+pub(crate) struct Queue<T> {
+    /// Whether a drop further up this thread's stack is already emptying `parts`.
+    busy: Cell<bool>,
+    parts: RefCell<Vec<T>>,
+}
+
+impl<T> Queue<T> {
+    pub(crate) const fn new() -> Queue<T> {
+        Queue {
+            busy: Cell::new(false),
+            parts: RefCell::new(Vec::new()),
+        }
+    }
+}
+
 /// Drops `part`. A drop reached from inside this one queues its part and returns, so a chain of
 /// parts is freed in a loop, whichever containers lie between them.
 pub(crate) fn free(part: Part) {
-    if FREEING.replace(true) {
-        // `try_with` fails only while the thread is ending; such a part is dropped here.
-        let mut held = Some(part);
-        let _ = PARTS.try_with(|parts| parts.borrow_mut().extend(held.take()));
+    free_in(&PARTS, part);
+}
+
+/// Drops `part` with the thread's `queue`, as [`free`] does. While the thread is ending and its
+/// queue is gone, the part is dropped here, by recursion; [`hold`] keeps a queue until after the
+/// tables that hold its parts are gone.
+pub(crate) fn free_in<T: 'static>(queue: &'static LocalKey<Queue<T>>, part: T) {
+    let mut held = Some(part);
+    let first = queue.try_with(|q| {
+        if q.busy.replace(true) {
+            q.parts.borrow_mut().extend(held.take());
+            false
+        } else {
+            true
+        }
+    });
+    if !matches!(first, Ok(true)) {
         return;
     }
-    drop(part);
-    // The borrow ends with the pop: dropping a part can reach `free` again.
-    while let Ok(Some(next)) = PARTS.try_with(|parts| parts.borrow_mut().pop()) {
+    drop(held);
+    // The borrow ends with the pop: dropping a part can reach `free_in` again.
+    while let Ok(Some(next)) = queue.try_with(|q| q.parts.borrow_mut().pop()) {
         drop(next);
     }
-    FREEING.set(false);
+    let _ = queue.try_with(|q| q.busy.set(false));
+}
+
+/// Makes `queue` outlive every thread-local made after this call. A thread's locals are dropped
+/// in the reverse of the order in which they were first used, so a table first used after this
+/// call is dropped while the queue is still there to free its parts in a loop.
+pub(crate) fn hold<T: 'static>(queue: &'static LocalKey<Queue<T>>) {
+    let _ = queue.try_with(|_| ());
 }
 
 /// Which relation a walk over two values computes.

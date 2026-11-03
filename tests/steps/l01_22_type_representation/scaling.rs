@@ -24,20 +24,14 @@ fn chain(d: usize, b: usize) -> Type {
 #[test]
 fn the_text_of_a_deeply_nested_type_scales() {
     // Each type's text was made from copies of the texts of the types inside it. Each run
-    // makes new types, whose texts are not yet made.
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            let b = Cell::new(0);
-            scaling::check("the text of a tuple nested n deep", 600, |d| {
-                b.set(b.get() + 1_000_000);
-                assert!(chain(d, b.get()).to_string().len() > 1000 * d);
-            });
-            assert!(chain(2, 0).to_string().starts_with("(tuple (tuple \"sss"));
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // makes new types, whose texts are not yet made. The text is made in a loop, so the test
+    // runs on the stack of a test thread.
+    let b = Cell::new(0);
+    scaling::check("the text of a tuple nested n deep", 600, |d| {
+        b.set(b.get() + 1_000_000);
+        assert!(chain(d, b.get()).to_string().len() > 1000 * d);
+    });
+    assert!(chain(2, 0).to_string().starts_with("(tuple (tuple \"sss"));
 }
 
 #[test]

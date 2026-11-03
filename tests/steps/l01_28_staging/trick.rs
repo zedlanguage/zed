@@ -119,8 +119,8 @@ fn the_values_passed_are_read_from_the_calls_once_mixed() {
     assert_eq!(passed(&u, "f", 0), ints(&[4]));
     // One arm per value passed, however many calls pass it, and the general body last.
     let (lam, _) = split(&u, "f", 0, &Domain::Ints(Some(0), Some(1 << 40))).unwrap();
-    let Term::Lam(_, body) = lam else { panic!() };
-    let Term::Match(_, arms) = &*body else {
+    let Term::Lam(_, body) = &lam else { panic!() };
+    let Term::Match(_, arms) = &**body else {
         panic!()
     };
     assert_eq!(arms.len(), 2);

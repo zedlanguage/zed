@@ -35,14 +35,14 @@ pub(crate) fn function(src: &str) -> (Vec<Arc<str>>, Term) {
     let u = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
     let mut t = u.get("ok").expect("a definition `ok`");
     let mut lets = Vec::new();
-    while let Term::Let(n, e, b) = t {
-        lets.push((n, e));
-        t = (*b).clone();
+    while let Term::Let(n, e, b) = &t {
+        lets.push((n.clone(), e.clone()));
+        t = (**b).clone();
     }
-    let Term::Var(k) = t else {
+    let Term::Var(k) = &t else {
         panic!("{src}: not a closed definition: {t}")
     };
-    let Some(Term::Lam(ps, body)) = lets.iter().find(|(n, _)| *n == k).map(|(_, e)| &**e) else {
+    let Some(Term::Lam(ps, body)) = lets.iter().find(|(n, _)| n == k).map(|(_, e)| &**e) else {
         panic!("{src}: `{k}` is not a function")
     };
     let body = lets.iter().rev().fold((**body).clone(), |b, (n, e)| {

@@ -43,12 +43,12 @@ use super::{Morphism, Op, Row, mix};
 static NEXT: AtomicU64 = AtomicU64::new(2);
 
 #[derive(Clone)]
-pub(super) enum Bdd<A> {
+pub(super) enum Bdd<A: Literal> {
     Leaf(bool),
     Node(Arc<Branch<A>>),
 }
 
-pub(super) struct Branch<A> {
+pub(super) struct Branch<A: Literal> {
     id: u64,
     digest: u64,
     atom: A,
@@ -66,6 +66,8 @@ pub(super) trait Literal: Ord + Clone + 'static {
     fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R;
     /// A hash of the atom, equal for equal atoms.
     fn digest(&self) -> u64;
+    /// Drops a part in the thread's loop of type parts (module `deep`).
+    fn free(part: Part<Self>);
 }
 
 thread_local! {
@@ -75,20 +77,58 @@ thread_local! {
 
 impl Literal for Row {
     fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R {
+        super::hold();
         TUPLES.with(|t| f(&mut t.borrow_mut()))
     }
     fn digest(&self) -> u64 {
         Row::digest(self)
     }
+    fn free(part: Part<Row>) {
+        super::free(super::Freed::Tuples(part));
+    }
 }
 
 impl Literal for Morphism {
     fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R {
+        super::hold();
         MORPHISMS.with(|t| f(&mut t.borrow_mut()))
     }
     fn digest(&self) -> u64 {
         let m = mix(6, self.guarantee.digest());
         mix(mix(m, self.permission.digest()), self.value.digest())
+    }
+    fn free(part: Part<Morphism>) {
+        super::free(super::Freed::Morphisms(part));
+    }
+}
+
+/// A diagram node's children are freed in a loop (module `deep`), not by recursion: a node's
+/// last owner is the thread's table, so a long diagram is freed when the thread ends.
+impl<A: Literal> Drop for Branch<A> {
+    fn drop(&mut self) {
+        for b in [&mut self.hi, &mut self.lo] {
+            if let Bdd::Node(_) = b {
+                A::free(Part::Bdd(std::mem::replace(b, Bdd::Leaf(false))));
+            }
+        }
+    }
+}
+
+/// An expression's operands and complement are freed in a loop, as a node's children are.
+impl<A: Literal> Drop for Expr<A> {
+    fn drop(&mut self) {
+        let (p, q) = match &mut self.form {
+            Form::Not(p) => (p, None),
+            Form::Or(p, q) | Form::And(p, q) => (p, Some(q)),
+        };
+        for part in std::iter::once(p).chain(q) {
+            if part.is_leaf().is_none() {
+                A::free(std::mem::replace(part, Part::leaf(false)));
+            }
+        }
+        if let Some(c) = self.complement.take() {
+            A::free(c);
+        }
     }
 }
 
@@ -351,7 +391,7 @@ impl<A: Literal> Bdd<A> {
     }
 }
 
-impl<A> Bdd<A> {
+impl<A: Literal> Bdd<A> {
     /// The node's id, atom, `hi` and `lo`, or the leaf's value.
     pub(super) fn branch(&self) -> Result<NodeView<'_, A>, bool> {
         match self {
@@ -362,7 +402,11 @@ impl<A> Bdd<A> {
 
     /// Whether `f` holds of every atom, each node visited once.
     pub(super) fn atoms(&self, f: &mut impl FnMut(&A) -> bool) -> bool {
-        fn go<A>(b: &Bdd<A>, seen: &mut HashSet<u64>, f: &mut impl FnMut(&A) -> bool) -> bool {
+        fn go<A: Literal>(
+            b: &Bdd<A>,
+            seen: &mut HashSet<u64>,
+            f: &mut impl FnMut(&A) -> bool,
+        ) -> bool {
             let Bdd::Node(n) = b else {
                 return true;
             };
@@ -387,7 +431,7 @@ impl<A> Bdd<A> {
         prune: bool,
         f: &mut impl FnMut(&[&'a A], &[&'a A]) -> bool,
     ) -> bool {
-        fn go<'a, A>(
+        fn go<'a, A: Literal>(
             b: &'a Bdd<A>,
             prune: bool,
             pos: &mut Vec<&'a A>,
@@ -494,12 +538,12 @@ impl<A> Bdd<A> {
 /// A tuple part of one length, or the morphism part: a diagram, or, when a connective's diagram
 /// would have more nodes than its operands together, the connective applied to its operands.
 #[derive(Clone, Debug)]
-pub(super) enum Part<A: Ord> {
+pub(super) enum Part<A: Literal> {
     Bdd(Bdd<A>),
     Expr(Arc<Expr<A>>),
 }
 
-pub(super) struct Expr<A: Ord> {
+pub(super) struct Expr<A: Literal> {
     /// The node's id, unique among the nodes of the process.
     id: u64,
     digest: u64,
@@ -509,7 +553,7 @@ pub(super) struct Expr<A: Ord> {
 }
 
 #[derive(Debug)]
-pub(super) enum Form<A: Ord> {
+pub(super) enum Form<A: Literal> {
     Not(Part<A>),
     Or(Part<A>, Part<A>),
     And(Part<A>, Part<A>),
@@ -750,7 +794,7 @@ impl<A: Literal> Part<A> {
         holds: &impl Fn(&A) -> Option<bool>,
         pins: &HashMap<u64, bool>,
     ) -> Option<bool> {
-        fn bdd<A>(
+        fn bdd<A: Literal>(
             b: &Bdd<A>,
             holds: &impl Fn(&A) -> Option<bool>,
             memo: &mut HashMap<u64, Option<bool>>,
@@ -1265,7 +1309,7 @@ impl<A: Literal> Part<A> {
 
 /// Two diagrams, expressions or parts to compare, or two nodes or expressions whose contents
 /// compared equal.
-enum Step<'a, A: Ord> {
+enum Step<'a, A: Literal> {
     Bdds(&'a Bdd<A>, &'a Bdd<A>),
     Exprs(&'a Expr<A>, &'a Expr<A>),
     Parts(&'a Part<A>, &'a Part<A>),
@@ -1277,7 +1321,7 @@ enum Step<'a, A: Ord> {
 /// kept by node id and not compared again, so the cost is one step per pair of nodes compared,
 /// not one per path to them, and linear in the size when the two are equal. A loop with its own
 /// stack, as a part can be deeper than the call stack.
-fn order<A: Ord>(first: Step<'_, A>) -> Ordering {
+fn order<A: Literal>(first: Step<'_, A>) -> Ordering {
     let mut equal = HashSet::new();
     let mut steps = vec![first];
     while let Some(step) = steps.pop() {
@@ -1339,7 +1383,7 @@ fn order<A: Ord>(first: Step<'_, A>) -> Ordering {
     Ordering::Equal
 }
 
-impl<A: Ord> Form<A> {
+impl<A: Literal> Form<A> {
     /// The connective's rank in the order (`Not`, `Or`, `And`) and its operands.
     fn operands(&self) -> (u8, &Part<A>, Option<&Part<A>>) {
         match self {
@@ -1350,73 +1394,73 @@ impl<A: Ord> Form<A> {
     }
 }
 
-impl<A: Ord> Ord for Part<A> {
+impl<A: Literal> Ord for Part<A> {
     fn cmp(&self, other: &Part<A>) -> Ordering {
         order(Step::Parts(self, other))
     }
 }
 
-impl<A: Ord> PartialOrd for Part<A> {
+impl<A: Literal> PartialOrd for Part<A> {
     fn partial_cmp(&self, other: &Part<A>) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<A: Ord> PartialEq for Part<A> {
+impl<A: Literal> PartialEq for Part<A> {
     fn eq(&self, other: &Part<A>) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl<A: Ord> Eq for Part<A> {}
+impl<A: Literal> Eq for Part<A> {}
 
-impl<A: Ord> Ord for Expr<A> {
+impl<A: Literal> Ord for Expr<A> {
     fn cmp(&self, other: &Expr<A>) -> Ordering {
         order(Step::Exprs(self, other))
     }
 }
 
-impl<A: Ord> PartialOrd for Expr<A> {
+impl<A: Literal> PartialOrd for Expr<A> {
     fn partial_cmp(&self, other: &Expr<A>) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<A: Ord> PartialEq for Expr<A> {
+impl<A: Literal> PartialEq for Expr<A> {
     fn eq(&self, other: &Expr<A>) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl<A: Ord> Eq for Expr<A> {}
+impl<A: Literal> Eq for Expr<A> {}
 
-impl<A: Ord + fmt::Debug> fmt::Debug for Expr<A> {
+impl<A: Literal + fmt::Debug> fmt::Debug for Expr<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.form.fmt(f)
     }
 }
 
-impl<A: Ord> Ord for Bdd<A> {
+impl<A: Literal> Ord for Bdd<A> {
     fn cmp(&self, other: &Bdd<A>) -> Ordering {
         order(Step::Bdds(self, other))
     }
 }
 
-impl<A: Ord> PartialOrd for Bdd<A> {
+impl<A: Literal> PartialOrd for Bdd<A> {
     fn partial_cmp(&self, other: &Bdd<A>) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<A: Ord> PartialEq for Bdd<A> {
+impl<A: Literal> PartialEq for Bdd<A> {
     fn eq(&self, other: &Bdd<A>) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl<A: Ord> Eq for Bdd<A> {}
+impl<A: Literal> Eq for Bdd<A> {}
 
-impl<A: fmt::Debug> fmt::Debug for Bdd<A> {
+impl<A: Literal + fmt::Debug> fmt::Debug for Bdd<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Bdd::Leaf(b) => write!(f, "{b}"),
