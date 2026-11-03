@@ -657,8 +657,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the `else` whose default writes it on the path it flows on, never by an atom of the
     /// same name elsewhere. An `if` passes on each branch's, a block its export's, a name
     /// bound by `name = e` that of `e`. An operator or a call of a declared function passes
-    /// on its parts' and makes the atoms its signature's results hold, and `#errs`; any
-    /// other expression makes all its loose atoms. The set may hold more atoms than the
+    /// on its parts' and makes the atoms its signature's results hold, and `#errs`, unless a
+    /// type variable of a result is no parameter's own: then it makes all its loose atoms,
+    /// as any other expression does. The set may hold more atoms than the
     /// value's type, where a part's failure stops there (`==` gives a `bool`); `_` keeps
     /// only those of the type it binds, so the extra atoms can only reject, never accept.
     ///
@@ -669,22 +670,39 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn unnamed_of(&self, e: &Expr, t: &Ty, src: &Src<'_>) -> Option<(KType, Option<KType>)> {
         let loose = t.loose();
         // Complexity tradeoff: `loose` is compared with the empty type as written, which
-        // orders by digest in `O(1)`, not tested with `is_empty`, whose memo is ordered by
-        // contents: `passed` tests the operand's atoms, an equal set built apart, and each such
-        // lookup compares the two in full, `O(n²)` on a chain of `n` failures (COMPLEXITY.md
-        // F32). It gives up the atoms sets that are empty but written otherwise, an atom whose
-        // payload type is empty but not reduced; those keep their parts' atoms, which can only
-        // reject.
+        // orders by digest in `O(1)`, not tested with `is_empty`. What is given up: a set of
+        // loose atoms that is empty but not written as the empty type (an atom whose payload
+        // type is empty but not reduced) counts as holding atoms, so `e` keeps its parts'
+        // unnamed atoms; where the value bound to `_` has such an atom loose from elsewhere,
+        // `_` is rejected with the error of `discard`, never accepted wrongly. Why: the memo of
+        // `is_empty` is a map ordered by contents, and `passed` tests the operand's atoms, an
+        // equal set built apart, so each lookup compares the two sets in full, `O(n)`, and a
+        // chain of `n` failures costs `O(n²)` (COMPLEXITY.md F32 and F57). Trigger: a value
+        // whose type writes an empty payload type that was not reduced to the empty type. Test
+        // of the cost: `l01_27_absences::scaling::a_chain_of_many_failure_atoms_scales` (with
+        // `is_empty` here it fails at 40.2 times per 8 times the size); no test writes such a
+        // payload. A complete solution would key the emptiness memo by the type's digest,
+        // comparing contents only when two digests are equal, or reduce each atom's payload
+        // type to the empty type when it is built, so that comparison with the empty type as
+        // written is exact.
         if loose == KType::empty() {
             return None;
         }
         let u = |s: Span| self.unnamed.get(&s).cloned().unwrap_or_else(KType::empty);
         let union = |spans: Vec<Span>| spans.into_iter().fold(KType::empty(), |a, s| &a | &u(s));
         let made = |sigs: &[Arrow]| {
-            let atoms = sigs
-                .iter()
-                .fold(errs(), |a, arrow| &a | &arrow.result.loose());
-            let own = &loose & &atoms;
+            // A type variable of the result that is no parameter's own takes its atoms at the
+            // call from elsewhere (the result of a function value, a tuple's component), not
+            // from an argument's value, whose unnamed set `flows` passes on: then the call
+            // makes every loose atom of its value.
+            let own = if sigs.iter().all(passes_vars_on) {
+                let atoms = sigs
+                    .iter()
+                    .fold(errs(), |a, arrow| &a | &arrow.result.loose());
+                &loose & &atoms
+            } else {
+                loose.clone()
+            };
             (&union(flows(e)) | &own, Some(own))
         };
         Some(match (&e.kind, src) {
@@ -3945,6 +3963,18 @@ fn close(t: &Ty, sig: &Sig) -> Ty {
         .map(|v| (v, Ty::dynamic()))
         .collect();
     t.subst(&binds)
+}
+
+/// Whether each type variable of `arrow`'s result is one of a parameter itself, not one
+/// inside a parameter's tuple or function: then the atoms it takes at a call are those of
+/// the argument's own value. `O(v p log w)` for the result's `v` variables, `p` parameters
+/// and `w` variables a parameter holds.
+fn passes_vars_on(arrow: &Arrow) -> bool {
+    arrow
+        .result
+        .vars
+        .iter()
+        .all(|v| arrow.params.iter().any(|p| p.vars.contains(v)))
 }
 
 /// The one function `t` is, when it is nothing else.

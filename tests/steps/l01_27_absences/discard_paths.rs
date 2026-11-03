@@ -209,3 +209,65 @@ fn a_match_arm_that_leaves_a_loose_failure_is_rejected() {
         "the loose failure #notFound enters here [lookup(n)]"
     );
 }
+
+#[test]
+fn a_generic_call_makes_the_failures_its_type_variable_takes_from_elsewhere() {
+    // `apply` gives what `g` gives: the miss comes from the function value `lookup`, which
+    // is not itself a loose failure, so the call is where it enters.
+    let apply = "apply(positional g, positional x) = g(x);\n";
+    let t = format!("{LOOKUP}{apply}_ = apply(lookup, 1);\n");
+    let (message, _, notes) = the_error(&t);
+    assert_eq!(
+        message,
+        "`_` drops a loose failure this value may be, #notFound"
+    );
+    assert_eq!(
+        notes[0],
+        "the loose failure #notFound enters here [apply(lookup, 1)]"
+    );
+    // `first` gives a tuple's component, which is not one of the tuple's own atoms.
+    let first = "first(positional p) = p[0];\n";
+    let t = format!("{LOOKUP}{first}_ = first((lookup(1), 2));\n");
+    let (message, _, notes) = the_error(&t);
+    assert_eq!(
+        message,
+        "`_` drops a loose failure this value may be, #notFound"
+    );
+    assert_eq!(
+        notes[0],
+        "the loose failure #notFound enters here [first((lookup(1), 2))]"
+    );
+    // A default on the argument names the argument's own failure, not what `g` makes.
+    let t = format!("{LOOKUP}{apply}_ = apply(lookup, lookup(1) else 1);\n");
+    let (_, _, notes) = the_error(&t);
+    assert_eq!(
+        notes[0],
+        "the loose failure #notFound enters here [apply(lookup, lookup(1) else 1)]"
+    );
+    // A default on the call's value names everything it gives.
+    accepted(&format!("{LOOKUP}{apply}_ = apply(lookup, 1) else #ok;\n"));
+    accepted(&format!(
+        "{LOOKUP}{first}_ = first((lookup(1), 2)) else #ok;\n"
+    ));
+}
+
+#[test]
+fn a_generic_call_that_passes_its_argument_on_passes_its_naming_on() {
+    // The type variable of `id`'s result is its parameter's own: its atoms are those of the
+    // argument, whose default names them.
+    let id = "id(positional x) = x;\n";
+    accepted(&format!("{LOOKUP}{id}_ = id(lookup(1) else #notFound);\n"));
+    accepted(&format!("{LOOKUP}{id}_ = id(id(lookup(1) else #ok));\n"));
+    // `pick` gives one of its two arguments.
+    let pick = "pick(positional c: int, positional a, positional b) = if c > 0 { a } else { b };\n";
+    accepted(&format!(
+        "{LOOKUP}{pick}_ = pick(1, lookup(1) else #ok, lookup(2) else #ok);\n"
+    ));
+    // Without a default the argument's miss reaches `_`, and enters at the argument.
+    let t = format!("{LOOKUP}{pick}_ = pick(1, lookup(1) else #ok, lookup(2));\n");
+    let (_, _, notes) = the_error(&t);
+    assert_eq!(
+        notes[0],
+        "the loose failure #notFound enters here [lookup(2)]"
+    );
+}
