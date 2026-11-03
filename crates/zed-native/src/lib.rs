@@ -12,7 +12,7 @@ use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
 use cranelift_codegen::settings::{self, Configurable};
-use cranelift_jit::{JITBuilder, JITModule};
+use cranelift_jit::{JITBuilder, JITMemoryProvider, JITModule, SystemMemoryProvider};
 use cranelift_module::default_libcall_names;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
@@ -116,9 +116,32 @@ pub fn run_at(
     plan: &Plan,
     ev: &mut Evaluator,
 ) -> Result<Outcome, String> {
+    run_in(Box::new(SystemMemoryProvider::new()), level, g, plan, ev)
+}
+
+/// [`run_at`] with the JIT's code placed in `memory`.
+fn run_in(
+    memory: Box<dyn JITMemoryProvider + Send>,
+    level: OptLevel,
+    g: &Arc<Region>,
+    plan: &Plan,
+    ev: &mut Evaluator,
+) -> Result<Outcome, String> {
     let (t, plans) = Tables::new(g, plan)?;
     let t = Arc::new(t);
-    let mut b = JITBuilder::with_isa(isa(false, level)?, default_libcall_names());
+    // The JIT maps code in pieces, one mapping at a time, so two functions of one module can
+    // lie any distance apart: other mappings, such as a run's stack on another thread, land
+    // between them. Position-independent code reaches every symbol by an address that cannot
+    // overflow: x86-64 loads a symbol's address through `X86GOTPCRel4`, which cranelift-jit
+    // turns into a `lea` when the symbol is within 2 GiB and otherwise into a load from an
+    // entry it adds at the end of the same allocation, and it sends a call whose target is out
+    // of reach through a jump it adds there too. Without it, taking the address of a function
+    // of the module (the root registering each lambda's entry) is a `lea` whose 32-bit
+    // displacement overflowed when the two lay more than 2 GiB apart (JIT-reloc). cranelift-jit
+    // accepts position-independent code on x86-64 only, as its own default does.
+    let pic = cfg!(target_arch = "x86_64");
+    let mut b = JITBuilder::with_isa(isa(pic, level)?, default_libcall_names());
+    b.memory_provider(memory);
     for ((name, _, _), a) in hooks::HOOKS.iter().zip(hooks::addresses()) {
         b.symbol(*name, a);
     }
@@ -183,7 +206,7 @@ mod tests {
     use cranelift_codegen::ir::types::I64;
     use cranelift_codegen::ir::{AbiParam, InstBuilder};
     use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-    use cranelift_jit::{BranchProtection, JITMemoryKind, JITMemoryProvider, SystemMemoryProvider};
+    use cranelift_jit::{BranchProtection, JITMemoryKind};
     use cranelift_module::{Linkage, Module, ModuleResult};
 
     use super::*;
@@ -277,5 +300,166 @@ mod tests {
         assert_eq!(freed.load(Ordering::SeqCst), 0);
         drop(m);
         assert_eq!(freed.load(Ordering::SeqCst), 1);
+    }
+}
+
+/// Tests of where the JIT may place code: anywhere, whatever the distance between its parts.
+#[cfg(test)]
+mod placement {
+    use std::io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use cranelift_jit::{BranchProtection, JITMemoryKind};
+    use cranelift_module::ModuleResult;
+    use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
+    use zed_kernel::{Prim, Term};
+    use zedc::zir::memory::plan;
+
+    use super::*;
+
+    /// The distance between two allocations of [`FarApart`]: twice the reach of a 32-bit
+    /// displacement, so no allocation is within reach of another.
+    const SLOT: usize = 4 << 30;
+    /// The slots [`FarApart`] reserves, more than the program below allocates.
+    const SLOTS: usize = 16;
+
+    /// JIT memory that puts each allocation at the start of its own slot, [`SLOT`] bytes after
+    /// the last: the placement the system's provider gives when other mappings, such as the
+    /// stack of a run on another thread, land between the mappings it makes one by one.
+    struct FarApart {
+        /// The reserved slots, mapped with no access.
+        base: *mut u8,
+        /// The executable allocations, by slot and length, to protect at `finalize`.
+        code: Vec<(usize, usize)>,
+        /// The slots used.
+        used: Arc<AtomicUsize>,
+    }
+
+    #[expect(
+        unsafe_code,
+        reason = "reserving and protecting memory are system calls"
+    )]
+    impl FarApart {
+        fn new(used: Arc<AtomicUsize>) -> FarApart {
+            // SAFETY: a fresh anonymous mapping, at an address the kernel chooses.
+            let base = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    SLOT * SLOTS,
+                    libc::PROT_NONE,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                    -1,
+                    0,
+                )
+            };
+            assert_ne!(base, libc::MAP_FAILED, "{}", io::Error::last_os_error());
+            FarApart {
+                base: base.cast(),
+                code: Vec::new(),
+                used,
+            }
+        }
+
+        /// Sets the protection of `len` bytes from the start of slot `slot`.
+        fn protect(&self, slot: usize, len: usize, prot: libc::c_int) -> io::Result<()> {
+            // SAFETY: the bytes lie in the reservation, since `len` is at most a slot.
+            let r = unsafe { libc::mprotect(self.base.add(slot * SLOT).cast(), len, prot) };
+            if r == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        }
+    }
+
+    // SAFETY: the reservation belongs to the provider alone, whichever thread holds it.
+    #[expect(unsafe_code, reason = "a raw pointer is not `Send` by itself")]
+    unsafe impl Send for FarApart {}
+
+    impl JITMemoryProvider for FarApart {
+        fn allocate(
+            &mut self,
+            size: usize,
+            align: u64,
+            kind: JITMemoryKind,
+        ) -> io::Result<*mut u8> {
+            let slot = self.used.fetch_add(1, Ordering::SeqCst);
+            if slot == SLOTS {
+                return Err(io::Error::other(format!("all {SLOTS} slots are used")));
+            }
+            if align > 4096 || size > SLOT {
+                return Err(io::Error::other(format!(
+                    "{size} bytes at alignment {align}"
+                )));
+            }
+            let len = size.next_multiple_of(4096);
+            self.protect(slot, len, libc::PROT_READ | libc::PROT_WRITE)?;
+            if let JITMemoryKind::Executable = kind {
+                self.code.push((slot, len));
+            }
+            // SAFETY: the slot lies in the reservation.
+            #[expect(unsafe_code, reason = "an address in the reservation")]
+            Ok(unsafe { self.base.add(slot * SLOT) })
+        }
+
+        #[expect(unsafe_code, reason = "the provider's trait declares freeing unsafe")]
+        unsafe fn free_memory(&mut self) {
+            self.code.clear();
+        }
+
+        fn finalize(&mut self, _: BranchProtection) -> ModuleResult<()> {
+            for &(slot, len) in &self.code {
+                self.protect(slot, len, libc::PROT_READ | libc::PROT_EXEC)
+                    .map_err(|err| cranelift_module::ModuleError::Allocation { err })?;
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for FarApart {
+        fn drop(&mut self) {
+            // SAFETY: the module that used the memory is gone before its provider.
+            #[expect(unsafe_code, reason = "unmapping is a system call")]
+            let r = unsafe { libc::munmap(self.base.cast(), SLOT * SLOTS) };
+            assert_eq!(r, 0, "{}", io::Error::last_os_error());
+        }
+    }
+
+    /// `f0 = x => x ++ "0"; f1 = x => x ++ "1"; (f0("a"), f1("a"))`: the root takes the
+    /// address of each lambda's entry, which lies in another allocation.
+    fn two_lambdas() -> Term {
+        let calls = prim(
+            Prim::Tuple,
+            vec![
+                app(var("f0"), vec![lit("a")]),
+                app(var("f1"), vec![lit("a")]),
+            ],
+        );
+        (0..2).rev().fold(calls, |b, i| {
+            let f = lam(
+                &["x"],
+                prim(Prim::Concat, vec![var("x"), lit(i.to_string().as_str())]),
+            );
+            let_(&format!("f{i}"), f, b)
+        })
+    }
+
+    #[test]
+    fn code_runs_with_its_functions_more_than_2_gib_apart() {
+        let t = two_lambdas();
+        let g = Arc::new(lower(&t).unwrap());
+        let p = plan(&g, true);
+        let want = Evaluator::new(World::new()).run(&t).unwrap();
+        for level in [OptLevel::None, OptLevel::Speed] {
+            let used = Arc::new(AtomicUsize::new(0));
+            let memory = Box::new(FarApart::new(used.clone()));
+            let mut ev = Evaluator::new(World::new());
+            let o = run_in(memory, level, &g, &p, &mut ev).unwrap();
+            assert_eq!(o.value, want, "{level:?}");
+            assert!(
+                used.load(Ordering::SeqCst) >= 3,
+                "{level:?}: too few allocations"
+            );
+        }
     }
 }

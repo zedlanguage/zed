@@ -1173,3 +1173,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | An `AtomBounds` map passed by `&mut` through `narrow`, `narrow_ge`, `narrow_or` and `narrow_to`, with the reading stopped at the first part left without a point by a short-circuiting `.all` | `bounds_refute`, `narrow`, `narrow_ge`, `narrow_or`, `narrow_to` | Mutation (gap 11), early exit (gap 12) | Each function returns the new map or nothing, and the reading is a fold that stops on nothing |
 | `enum Unit<'a>`, a constraint or a disjunction borrowed from the formula | `Unit`, `bounds_refute` | None | Values are shared in Zed; the borrow goes and `Unit` is a union of the two |
 | The implied bounds `implied: Near` kept across the rounds of `probe` and passed as `&mut Near` to `learn`, which adds the bounds it proves | `probe`, `learn` | Mutation (gap 11) | `learn` returns the bounds it adds, and the loop of `probe` carries `implied` in its state |
+
+## Entries from JIT-reloc (`zed-native/src/lib.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `cfg!(target_arch = "x86_64")` choosing a code generator flag | `zed_native::run_in` | Missing (compile-time target query) | A constant of the build's target, read from the build description |
+| `libc::mmap` of a `PROT_NONE` reservation, `mprotect` of pieces of it, `munmap` in `Drop` | test `placement::FarApart` | System calls, no destructors | Test harness only: a foreign call to map memory and a scope that unmaps it |
+| `unsafe impl Send` for a struct holding a raw pointer to memory it alone owns | test `placement::FarApart` | Foreign library | Inside the `@ffi` binding, which owns the mapping as a handle |
+| `Box<dyn JITMemoryProvider + Send>` passed in to choose where the JIT puts code | `zed_native::run_in` | Foreign library | A parameter of the `@ffi` binding to the code generator |

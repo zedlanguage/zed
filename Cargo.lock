@@ -1009,6 +1009,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "libc",
  "zed-kernel",
  "zed-rt",
  "zedc",
