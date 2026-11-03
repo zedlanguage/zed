@@ -815,7 +815,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CAP-bits | repair attempt 2 | 2026-11-03 03:35 | String of a number now asks for its text's memory (text_room): String(2**2**100) is NumberTooLarge in 0.02 s; control without the check ran 30 s to timeout (loa |
 | IDLANG-spec | orchestrator attempt  | 2026-11-03 05:20 | brief written; launching spec agent |
 | L25.8 | repair attempt 2 | 2026-11-03 03:49 | apply now clones the definition once and changes the node in place (child_mut, Arc::make_mut); new test running_the_mutants_of_a_chain_of_n_additions_scales (or |
 | OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | per-path unnamed-atom map in checker written (Else/If/Block/alias/call-own); tests in discard_paths.rs; building steps (load 41.74) |
@@ -828,17 +827,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-values | orchestrator attempt  | 2026-11-03 03:52 | not running: waits for T6 (repair#4 in progress); ledger state open |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (9 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (4 commits, with this STATUS commit; spec commits c58d3d1, 1542e46, c825507 in local zed main); the push follows one full test run on the merged tree:
 
-- 9dc00b7 Merge branch 'wt/plan-proofs'
-- f652317 STATUS: ST-join merged; its COMPLEXITY row is S29, since TD-refusals took S28
-- ff5ce44 ST-join: Scope::join on k disjoint groups near linear, not k^3
-- fdf7918 STATUS: TD-refusals merged; its COMPLEXITY row is S28, since main took S26 and S27
-- 9466b5d TD-refusals: COMPLEXITY S26, STATUS, tradeoffs rows for the new tests and controls
-- 4a32fa2 TD-refusals: join check at 256, refusals kept measured alone, Test and Onto warnings tested
-- c3d19a6 TD-refusals: report Scope::refusals as one warning each
-- 54511d3 plan_dag, grammar: L33.3 mathematics library, L33.4 gate; display lambdas, nullary laws
-- e74ec8a STATUS: in progress as of 2026-11-03 04:55
+- 01fda12 CAP-bits repair 2: String of a number asks for the memory of its digits; a refusal is NumberTooLarge
+- e3b51e9 CAP-bits repair: exact div and mod build nothing; a refused build is NumberTooLarge, not an abort
+- 2bf39d2 CAP-bits: exact numbers without a size limit
 
 ## Open points
 
