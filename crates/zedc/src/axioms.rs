@@ -77,6 +77,11 @@ pub enum Law {
     Transitive,
     /// For a predicate, `op(a, b) || op(b, a)`.
     Total,
+    /// For a predicate, `op(a, b)` implies `other(a, b)`, `other` the named predicate.
+    Implies(&'static str),
+    /// For a predicate, `op(a, b)` and `next(b, c)` imply `result(a, c)`, written
+    /// `Composes(next, result)`: one composition of an order chain (sec:verification).
+    Composes(&'static str, &'static str),
 }
 
 /// One axiom: an operator, the carrier of its arrow, and a law.
@@ -187,10 +192,29 @@ pub const AXIOMS: &[Axiom] = &[
     ax("<=", String, Total),
     ax(">", Int, Irreflexive),
     ax(">", Int, Transitive),
+    ax(">", F64, Irreflexive),
+    ax(">", F64, Transitive),
     ax(">=", Int, Reflexive),
     ax(">=", Int, Antisymmetric),
     ax(">=", Int, Transitive),
     ax(">=", Int, Total),
+    ax(">=", F64, Transitive),
+    // How `<` and `<=`, and `>` and `>=`, relate, which the compositions of an order chain read
+    // (sec:verification). They hold at `f64` too: a comparison with a NaN is false, so when
+    // the premises hold no operand is a NaN, and on the other floats the comparisons are an
+    // order in which `-0.0` and `0.0` are one point.
+    ax("<", Int, Implies("<=")),
+    ax("<", Int, Composes("<=", "<")),
+    ax("<=", Int, Composes("<", "<")),
+    ax("<", F64, Implies("<=")),
+    ax("<", F64, Composes("<=", "<")),
+    ax("<=", F64, Composes("<", "<")),
+    ax(">", Int, Implies(">=")),
+    ax(">", Int, Composes(">=", ">")),
+    ax(">=", Int, Composes(">", ">")),
+    ax(">", F64, Implies(">=")),
+    ax(">", F64, Composes(">=", ">")),
+    ax(">=", F64, Composes(">", ">")),
 ];
 
 /// The axioms of `op` at `carrier`.

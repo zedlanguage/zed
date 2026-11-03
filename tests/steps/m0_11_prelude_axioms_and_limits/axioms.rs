@@ -232,6 +232,22 @@ fn check(a: &Axiom) -> Result<usize, String> {
                 }
             }
         }
+        Law::Implies(other) => {
+            for (x, y) in pairs() {
+                n += 1;
+                if holds(op, &[x, y]) && !holds(other, &[x, y]) {
+                    return Err(format!("{x}, {y}"));
+                }
+            }
+        }
+        Law::Composes(next, result) => {
+            for (x, y, z) in triples() {
+                n += 1;
+                if holds(op, &[x, y]) && holds(next, &[y, z]) && !holds(result, &[x, z]) {
+                    return Err(format!("{x}, {y}, {z}"));
+                }
+            }
+        }
     }
     Ok(n)
 }
@@ -245,7 +261,7 @@ fn every_axiom_holds_on_the_harness_instances() {
             Err(why) => panic!("{} at {:?}: {:?} fails on {why}", a.op, a.carrier, a.law),
         }
     }
-    assert_eq!(AXIOMS.len(), 82);
+    assert_eq!(AXIOMS.len(), 97);
     assert!(total > 50_000, "{total} instances");
 }
 
@@ -271,6 +287,12 @@ fn a_false_claim_of_each_kind_is_refuted() {
         claim("!=", Int, Law::Antisymmetric),
         claim("!=", Int, Law::Transitive),
         claim("<", Int, Law::Total),
+        claim("<=", Int, Law::Implies("<")), // 1 <= 1 but not 1 < 1
+        claim("<=", Int, Law::Composes("<=", "<")), // 1 <= 1 <= 1 but not 1 < 1
+        claim(">=", F64, Law::Composes(">=", ">")), // likewise at a float
+        claim("<", F64, Law::Composes(">", "<")), // 0.0 < 1.0 > 0.0 but not 0.0 < 0.0
+        claim("<=", F64, Law::Implies("==")), // 0.0 <= 1.0
+        claim("<=", F64, Law::Composes(">=", "<=")), // 0.0 <= 2.0 >= 1.0 but not 2.0 <= 1.0
     ];
     for c in &controls {
         assert!(
@@ -305,6 +327,8 @@ fn zed_line(a: &Axiom) -> String {
         Law::Inverse(g) => format!("#inverse({g:?})"),
         Law::LeftDistributesOver(g) => format!("#leftDistributesOver({g:?})"),
         Law::RightDistributesOver(g) => format!("#rightDistributesOver({g:?})"),
+        Law::Implies(g) => format!("#implies({g:?})"),
+        Law::Composes(g, r) => format!("#composes({g:?}, {r:?})"),
         Law::Monotone(signs) => {
             let s: Vec<&str> = signs
                 .iter()
@@ -330,4 +354,59 @@ fn the_prelude_copy_is_the_rust_table() {
         .collect();
     let rust: Vec<String> = AXIOMS.iter().map(zed_line).collect();
     assert_eq!(prelude, rust);
+}
+
+/// The compositions sec:verification gives an order chain are axioms at `int` and `f64`: in
+/// `a <= b < c <= d` each pair of links composes, and the chain ends at `a < d`, which proves a
+/// `<=` law through `<` implying `<=`. The `>=`, `>` family is the same.
+#[test]
+fn the_compositions_an_order_chain_needs_are_axioms() {
+    use zedc::axioms::of;
+    let has = |op: &str, c: Carrier, law: Law| of(op, c).any(|l| *l == law);
+    for c in [Carrier::Int, Carrier::F64] {
+        for (strict, weak) in [("<", "<="), (">", ">=")] {
+            let missing: Vec<String> = [
+                (weak, Law::Transitive),
+                (strict, Law::Transitive),
+                (weak, Law::Composes(strict, strict)),
+                (strict, Law::Composes(weak, strict)),
+                (strict, Law::Implies(weak)),
+            ]
+            .into_iter()
+            .filter(|&(op, law)| !has(op, c, law))
+            .map(|(op, law)| format!("{op} {law:?}"))
+            .collect();
+            assert!(missing.is_empty(), "at {c:?}: {missing:?}");
+        }
+    }
+    // No `<=` link turns into `<`: a chain of `<=` links never proves a `<` law.
+    for c in [Carrier::Int, Carrier::F64] {
+        assert!(!has("<=", c, Law::Implies("<")));
+        assert!(!has("<=", c, Law::Composes("<=", "<")));
+    }
+}
+
+/// The float instances the order axioms are checked on hold a NaN, both zeros and both
+/// infinities, so the f64 entries are checked where IEEE comparison departs from an order.
+#[test]
+fn the_float_instances_hold_the_ieee_corner_values() {
+    let vs = values(Carrier::F64);
+    let has = |x: f64| vs.iter().any(|v| *v == Value::float(x));
+    assert!(
+        vs.iter()
+            .any(|v| matches!(v, Value::Float(x) if x.get().is_nan()))
+    );
+    for x in [0.0, -0.0, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(has(x), "{x}");
+    }
+    // At a NaN neither premise of a composition holds: NaN <= NaN and NaN < 1.0 are false.
+    let nan = Value::float(f64::NAN);
+    assert!(!holds("<=", &[&nan, &nan]));
+    assert!(!holds("<", &[&nan, &Value::float(1.0)]));
+    // And `!=` is not irreflexive at `f64`, which is why the table gives it no law there.
+    assert!(holds("!=", &[&nan, &nan]));
+    // At the zeros, `-0.0 <= 0.0` and `0.0 <= -0.0` but neither `<` the other.
+    let (z, nz) = (Value::float(0.0), Value::float(-0.0));
+    assert!(le(&nz, &z) && le(&z, &nz));
+    assert!(!holds("<", &[&nz, &z]) && !holds("<", &[&z, &nz]));
 }

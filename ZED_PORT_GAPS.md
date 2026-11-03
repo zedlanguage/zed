@@ -465,7 +465,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `type_alias` | 7 | 25 | 2 | 0 | 34 | (item) `zed-kernel/eval.rs:91` (3); (item) `zed-kernel/exact.rs:9` (1); (item) `zed-kernel/family.rs:18` (1) |
 | `const_item` | 10 | 38 | 1 | 9 | 58 | Word (impl) `zed-rt/heap.rs:36` (9); first_on_cycle `zed-kernel/types/rec.rs:341` (1); Carrier (impl) `zedc/check/ty.rs:296` (1) |
 | `static_item` | 9 | 2 | 1 | 1 | 13 | Type::rec `zed-kernel/types.rs:375` (1); Bdd::node `zed-kernel/types/bdd.rs:108` (1); take_sides `zed-rt/rope.rs:105` (1) |
-| `const_fn` | 0 | 1 | 0 | 0 | 1 | ax `zedc/axioms.rs:97` (1) |
+| `const_fn` | 0 | 1 | 0 | 0 | 1 | ax `zedc/axioms.rs:102` (1) |
 | `try_op` | 135 | 780 | 78 | 22 | 1015 | Lower::term `zedc/zir/lower.rs:502` (39); Cx::lin_at `zedc/store/preimage.rs:1223` (30); Evaluator::eval_node `zed-kernel/eval.rs:517` (29) |
 | `return` | 183 | 577 | 14 | 18 | 792 | Elab::call_value `zedc/elab.rs:949` (14); Ck::apply_one `zedc/check/mod.rs:3135` (14); Type::list `zed-kernel/types.rs:620` (13) |
 | `continue` | 31 | 78 | 0 | 1 | 110 | Ck::apply_one `zedc/check/mod.rs:3120` (8); blocks `zedc/store/product.rs:543` (4); Bdd::forced `zed-kernel/types/bdd.rs:249` (4) |

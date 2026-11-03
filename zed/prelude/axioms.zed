@@ -102,8 +102,28 @@ axioms = [
   Axiom(op: "<=", carrier: #string, law: #total),
   Axiom(op: ">", carrier: #int, law: #irreflexive),
   Axiom(op: ">", carrier: #int, law: #transitive),
+  Axiom(op: ">", carrier: #f64, law: #irreflexive),
+  Axiom(op: ">", carrier: #f64, law: #transitive),
   Axiom(op: ">=", carrier: #int, law: #reflexive),
   Axiom(op: ">=", carrier: #int, law: #antisymmetric),
   Axiom(op: ">=", carrier: #int, law: #transitive),
   Axiom(op: ">=", carrier: #int, law: #total),
+  Axiom(op: ">=", carrier: #f64, law: #transitive),
+  // How `<` and `<=`, and `>` and `>=`, relate, which the compositions of an order chain read
+  // (sec:verification): `#implies(q)` is `op(a, b)` implies `q(a, b)`, and `#composes(q, r)` is
+  // `op(a, b)` and `q(b, c)` imply `r(a, c)`. They hold at `f64` too: a comparison with a NaN is
+  // false, so when the premises hold no operand is a NaN, and on the other floats the
+  // comparisons are an order in which `-0.0` and `0.0` are one point.
+  Axiom(op: "<", carrier: #int, law: #implies("<=")),
+  Axiom(op: "<", carrier: #int, law: #composes("<=", "<")),
+  Axiom(op: "<=", carrier: #int, law: #composes("<", "<")),
+  Axiom(op: "<", carrier: #f64, law: #implies("<=")),
+  Axiom(op: "<", carrier: #f64, law: #composes("<=", "<")),
+  Axiom(op: "<=", carrier: #f64, law: #composes("<", "<")),
+  Axiom(op: ">", carrier: #int, law: #implies(">=")),
+  Axiom(op: ">", carrier: #int, law: #composes(">=", ">")),
+  Axiom(op: ">=", carrier: #int, law: #composes(">", ">")),
+  Axiom(op: ">", carrier: #f64, law: #implies(">=")),
+  Axiom(op: ">", carrier: #f64, law: #composes(">=", ">")),
+  Axiom(op: ">=", carrier: #f64, law: #composes(">", ">")),
 ];
