@@ -262,7 +262,8 @@ function fill(card: HTMLElement, n: Node, now: number): void {
     hard.title = "Hard: a cross-review round decides the design";
     head.append(hard);
   }
-  if (!n.planned) head.append(el("span", "size", "unplanned"));
+  // Not a row of plan_dag.md: an id first seen in the running log or the ledger.
+  if (!n.planned) head.append(el("span", "size", "added"));
   card.replaceChildren(head, el("div", "label", n.short));
   if (n.state !== "active") {
     if (n.awaitingBatch) card.append(el("div", "tag", "not pushed"));
