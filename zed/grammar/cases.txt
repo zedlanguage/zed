@@ -362,3 +362,10 @@ Type ::: String matching grammar { a b c } ::: (String (matching (grammar { (a b
 Item ::: f[i in D][j in E] = 0; ::: (f [ (i in D) ] [ (j in E) ] = 0 ;)
 Item ::: f[a][b] <- 1; ::: (f [ a ] [ b ] <- 1 ;)
 Item ::: x[t] = x[t - 1] with x[-1] = 0, x[-2] = 1; ::: (x [ t ] = (x ([ (t - 1) ])) (with (x [ (- 1) ] = 0) , (x [ (- 2) ] = 1)) ;)
+# a display field's value may be a lambda
+Expr ::: { f: x -> 2 * x + 1 } ::: ({ f : (x -> ((2 * x) + 1)) })
+Expr ::: { f: x -> x, g: 1 } ::: ({ f : (x -> x) , g : 1 })
+Expr ::: { f: (a, b) -> a + b } ::: ({ f : (( (a , b) ) -> (a + b)) })
+Expr ::: { f: x -> y, z -> w } ::: ERROR
+Item ::: law oneNeZero() = one != zero; ::: (law oneNeZero ( ) = (one != zero) ;)
+Item ::: interface I(T) { one: T, law oneNeZero() = one != one } ::: (interface I (( T )) { (one : T) , (law oneNeZero ( ) = (one != one)) })
