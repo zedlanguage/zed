@@ -840,8 +840,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-ends | repair attempt 3 | 2026-11-03 03:52 | start: fix kept sum/difference of unrelated cores (int.rs:1326) and the 11 incomplete tradeoff comments |
 | UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | start: reading brief, XT3 report B2, utvpi.rs |
 
-Merged into local main and not yet pushed (35 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (38 commits); the push follows one full test run on the merged tree:
 
+- aaae77e CAP-power: read any number of equal factors as a power; POWER_FACTORS removed
+- 3c8d262 STATUS: in progress as of 2026-11-03 07:10
 - 6f5fa07 STATUS: ENDS-dag merged
 - 1248aba ENDS-dag: stage::ends reads each shared part once
 - a779147 STATUS, plan_dag: UTVPI-GOR merged
