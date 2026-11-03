@@ -49,7 +49,9 @@ fn every_corpus_program_that_builds_formats_to_a_fixed_point() {
     // their `with`, the programs that use them also break long `if` chains and definitions by
     // hand, align, write a `loop` or a `match` on one line, or keep parentheses the grammar
     // does not need; 15-spreadsheet.zed, 24-weighted-pick.zed and 28-precedence-climbing.zed
-    // write a `while` guard after the step, where the formatter writes it first.
+    // write a `while` guard after the step, where the formatter writes it first. From the
+    // AXIOMS-fmt fix, which builds `asc` and `desc` keys, 22-top-k.zed builds; it aligns a `=` and
+    // writes a block of two statements on one line.
     differ.sort();
     assert_eq!(
         differ,
@@ -67,6 +69,7 @@ fn every_corpus_program_that_builds_formats_to_a_fixed_point() {
             "13-union-find.zed",
             "15-spreadsheet.zed",
             "17-sensor-pipeline.zed",
+            "22-top-k.zed",
             "23-join-zoo.zed",
             "24-weighted-pick.zed",
             "26-heat-stencil.zed",

@@ -139,3 +139,35 @@ fn a_one_tuple_keeps_its_comma_and_two_bounds_their_dots() {
         "f(m) = m is (#a .. #a | #b -> #c | #d .. #c | #d -> int);\n",
     );
 }
+
+#[test]
+fn a_sort_key_is_written_with_one_space_after_its_word() {
+    // The key of `asc` and `desc` is any expression, a lambda too, and needs no parentheses.
+    check(
+        "byScore(rows)=rows.sort(desc  (score));\nbyKey(m)=m.keys.sort(asc v->m[v]);\n",
+        "byScore(rows) = rows.sort(desc score);\nbyKey(m) = m.keys.sort(asc v -> m[v]);\n",
+    );
+    check(
+        "two(xs)=sort(xs,asc(a.b),desc -c);\n",
+        "two(xs) = sort(xs, asc a.b, desc -c);\n",
+    );
+}
+
+#[test]
+fn a_blank_line_among_moved_comments_is_kept() {
+    // The comments inside a statement move to its end, one per line after the first, so when the
+    // result is read again they are the next statement's leading comments, or the comments that
+    // end the unit; the blank line after them stays, so formatting the result changes nothing.
+    check(
+        "a = f(1, // one\n  2, // two\n  3);\n\n// end\n",
+        "a = f(1, 2, 3); // one\n// two\n\n// end\n",
+    );
+    check(
+        "total = add(1, // the first\n  2, // the second\n  3);\n\n// The next one.\nnext = 4;\n",
+        "total = add(1, 2, 3); // the first\n// the second\n\n// The next one.\nnext = 4;\n",
+    );
+    check(
+        "// Section header.\n\n// What b is.\nb = 1;\n",
+        "// Section header.\n\n// What b is.\nb = 1;\n",
+    );
+}

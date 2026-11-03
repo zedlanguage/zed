@@ -110,3 +110,12 @@ fn a_binding_that_names_itself_resolves_to_itself() {
     // the cycle `x = x + 1` is reported by a later step; resolution ties the name to its binder
     assert_eq!(at("x = x + 1;", "x", 1), ["binding x = x + 1;"]);
 }
+
+#[test]
+fn a_sort_key_names_the_step_that_compiles_it() {
+    let es = super::run("top(xs) = pick(xs, desc x -> x);").unwrap_err();
+    assert!(
+        es.contains(&"a sort key `asc` or `desc` is compiled from step L5.1 [desc x -> x]".into()),
+        "{es:?}"
+    );
+}
