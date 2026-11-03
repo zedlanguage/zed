@@ -832,7 +832,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | BOX-5pt | verify attempt 1 | 2026-11-03 06:34 | run_tests.sh 4 on 97cbd72: 98 pieces, 0 failed, l01_38 79 pass in 49.0 s (load 63-80); control: box_point row scan made quadratic still passes three_variables_i |
 | DESIGN-audit | plan attempt  | 2026-11-03 06:08 | start: schedule audit findings B and new DESIGN steps in zed-impl plan_dag, STATUS, COMPLEXITY, ZED_PORT_GAPS; worktree wt/audit-plan |
 | LIN-cross | impl attempt 1 | 2026-11-03 05:46 | cause found: pick()'s local_repair lists every one-atom constraint on the shared input i (guards i >= j), so each of the 2k disjunctions costs k (local sizes 89 |
-| S22b | verify attempt 1 | 2026-11-03 06:39 | fmt and clippy -D warnings clean; full suite started (load 46.40) |
 | S22c | impl attempt 1 | 2026-11-03 06:39 | scaling (instructions, load ~70): complement 1024->8192 7.6x, preimage of y+1+..+1 != MAX 64->512 7.0x; negative control (quadratic complement_in, temporary) 61 |
 | S22e | impl attempt 1 | 2026-11-03 06:39 | started; worktree /home/luke/Work/wt/s22e on main ea2e48f |
 | ST-arms-quad | repair attempt 4 | 2026-11-03 03:16 | parts_tested counter + test (<= 48 per level at d=60,480; heavy 40, moving 24): stamp disabled gives heavy 516/d at 60 and 3876/d at 480, test fails; summary cu |
@@ -842,8 +841,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-ends | repair attempt 3 | 2026-11-03 03:52 | start: fix kept sum/difference of unrelated cores (int.rs:1326) and the 11 incomplete tradeoff comments |
 | UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | start: reading brief, XT3 report B2, utvpi.rs |
 
-Merged into local main and not yet pushed (41 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (43 commits); the push follows one full test run on the merged tree:
 
+- 7709581 S22b: c - x reflects each piece of the demand instead of the capped forward image
+- 70ff249 STATUS: S22d merged
 - 460cfc4 S22d: enumerate reads an empty box as exact before stage::ends
 - 7959661 plan_dag: rows and edges from the 2026-11-03 DESIGN audit
 - a727baa STATUS: CAP-power merged
