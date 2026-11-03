@@ -131,7 +131,7 @@ fn a_band_after_a_disjunction_is_a_known_precision_limit() {
     let mut late = s.assume(&d, true, &p).assume(&band, true, &p);
     assert!(!late.bottom, "the limit is closed: {late}");
     assert!(s.assume(&band, true, &p).assume(&d, true, &p).bottom);
-    late.projected.clear();
+    late.forget_projections();
     late.reduce();
     assert!(late.bottom, "{late}");
 }
@@ -445,7 +445,7 @@ fn a_walk_through_a_shared_name_reaches_the_fixed_point_in_quadratic_time() {
         let (s, clauses, last) = build(n);
         let r = s.assume(&clauses, true, &p).assume(&start, true, &p);
         let mut f = r.clone();
-        f.projected.clear();
+        f.forget_projections();
         f.reduce();
         assert_eq!(r.get(&last), f.get(&last), "n = {n}");
         assert!(

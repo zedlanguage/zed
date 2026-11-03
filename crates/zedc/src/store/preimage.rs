@@ -332,7 +332,8 @@ fn linear(
             .map(|k| presburger::Atom::Sym(k.clone()))
             .filter(|a| mentioned.contains(a))
             .collect();
-        let mut each = presburger::project_each(&whole, &syms)?.into_iter();
+        let (each, skipped) = presburger::project_each(&whole, &syms)?;
+        let mut each = each.into_iter();
         let mut out = Domains::new();
         for (k, v) in dom {
             let p = if mentioned.contains(&presburger::Atom::Sym(k.clone())) {
@@ -357,7 +358,7 @@ fn linear(
             Formula::negate(rel.body.clone()),
         ]);
         Ok(match presburger::decide(&outside) {
-            Ok(meets) => (out, !meets, None),
+            Ok(meets) => (out, !meets, skipped.first().copied()),
             Err(why) => (out, false, Some(why)),
         })
     };

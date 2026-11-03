@@ -36,7 +36,7 @@
 //! later.
 
 use imbl::ordmap::DiffItem;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -46,6 +46,7 @@ use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
 
 use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
+use super::conjuncts::{self, Conjuncts, Uses};
 use super::hull::Hull;
 use super::int::Int;
 use super::interval::{End, IntervalSet};
@@ -412,37 +413,41 @@ fn listed(p: &Product) -> Option<Vec<i64>> {
 }
 
 /// The names in scope with their products, the linear relation among them, and the written
-/// constraints that hold.
+/// constraints that hold. Each part is held in persistent maps, so that a case of a nest
+/// copies the scope in O(1), and the join of two cases and the reduction of a scope cost the
+/// parts that differ, found by the maps' difference, and not the whole scope.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Scope {
     /// One product per name, in a persistent map, so that a case of a nest copies it in O(1) and
     /// two scopes that share most of it are compared and joined in the names that differ.
     pub names: imbl::OrdMap<Arc<str>, Product>,
     /// The relation the integer names meet, with no auxiliary variable.
-    pub relation: Formula,
+    pub relation: Conjuncts,
     /// The written constraints that hold, a test and its negations by printed text, each
     /// with its free names.
-    pub written: BTreeMap<String, (Term, Vec<Arc<str>>)>,
+    pub written: imbl::OrdMap<String, (Term, Vec<Arc<str>>)>,
+    /// The texts of the written constraints on each name.
+    written_by: Uses<String>,
     /// Whether no state reaches this scope.
     pub bottom: bool,
     /// The written constraints already enumerated, each as its text with the values of its
     /// static names. A second enumeration removes nothing more: the members a constraint holds
     /// at do not depend on the interval, which already lies within them.
-    pub enumerated: BTreeSet<Enumerated>,
+    pub enumerated: imbl::OrdSet<Enumerated>,
     /// The top-level parts of the relation already projected: its constraints together, and
     /// each other conjunct with them, each with the intervals and classes of the names it
     /// mentions at that projection, which are all a projection reads of them. A part is
     /// projected again only when one of these has changed since
     /// (docs/thresholds.md, replacement 4).
-    pub projected: std::collections::HashMap<PartKey, Projected>,
+    pub projected: imbl::OrdMap<PartKey, Projected>,
     /// Whether the scope is under `@exact`.
     pub exact: bool,
     /// Under `@exact`, each group of written constraints that share names, by their texts with
     /// the static values substituted, with a point that meets them all.
-    pub exactly: BTreeMap<Vec<String>, Point>,
+    pub exactly: imbl::OrdMap<Vec<String>, Point>,
     /// The causes for which the integer solver left a question undecided while this scope was
     /// narrowed or projected; each one leaves the scope sound but wider than it could be.
-    pub refusals: BTreeSet<presburger::Refusal>,
+    pub refusals: imbl::OrdSet<presburger::Refusal>,
     /// Each name a `let` of the walk bound, with the order of its binding and, for a function,
     /// its lambda: a test that calls a function is closed over it before its preimage is taken
     /// ([`Scope::close`]). Shared between the scopes of a walk's arms, not copied.
@@ -452,6 +457,8 @@ pub struct Scope {
     /// The names as the last reduction left them, each product then at its own fixed point:
     /// a reduction reduces only the names that differ from these.
     reduced: Reduced,
+    /// The scope as the last projection and the last enumeration found it.
+    seen: Seen,
 }
 
 /// A name's `let` binding in a [`Scope`].
@@ -475,6 +482,39 @@ impl PartialEq for Reduced {
 }
 
 impl fmt::Debug for Reduced {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("..")
+    }
+}
+
+/// The names and conjuncts as the last projection found them, and the names, written
+/// constraints and enumerated ones as the last enumeration found them: a cache, equal in every
+/// scope. A projection then looks only at the trees of blocks that mention a name or hold a
+/// conjunct that has changed since, and an enumeration only at the written constraints that
+/// are new or mention such a name, so that a test costs what it changes.
+#[derive(Clone, Default)]
+struct Seen {
+    projection: Option<Projection>,
+    enumeration: Option<Enumeration>,
+}
+
+/// The names and conjuncts a projection found.
+type Projection = (imbl::OrdMap<Arc<str>, Product>, imbl::OrdSet<Arc<Formula>>);
+
+/// The names, written constraints and enumerated ones an enumeration found.
+type Enumeration = (
+    imbl::OrdMap<Arc<str>, Product>,
+    imbl::OrdMap<String, (Term, Vec<Arc<str>>)>,
+    imbl::OrdSet<Enumerated>,
+);
+
+impl PartialEq for Seen {
+    fn eq(&self, _: &Seen) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for Seen {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("..")
     }
@@ -505,34 +545,34 @@ fn syms(f: &Formula) -> Vec<Arc<str>> {
         .collect()
 }
 
-/// What a part of the relation is projected for: its conjunct, and a hash of the equalities
-/// among the constraints it is projected with. A part is projected again when an equality
-/// joins or leaves them; a new inequality alone does not make it due (a known limit of
-/// precision, COMPLEXITY.md), so that a part costs its conjunct and not the constraints.
-pub type PartKey = (Formula, u64);
+/// What a part of the relation is projected for: its conjunct, and the equalities among the
+/// constraints it is projected with, sorted; `None` in their place for a tree of blocks
+/// projected as a whole. A part is projected again when an equality joins or leaves them; a
+/// new inequality alone does not make it due (a known limit of precision, COMPLEXITY.md), so
+/// that a part costs its conjunct and not the constraints.
+pub type PartKey = (Formula, Option<Arc<[Con]>>);
 
 /// Each of `conjuncts` that is not a constraint, with the constraints, and the constraints
 /// alone when there are any; each part with its key, the conjunct it is projected for, or the
 /// constraints for theirs.
 fn split<'a>(conjuncts: impl Iterator<Item = &'a Formula>) -> Vec<(PartKey, Formula)> {
-    use std::hash::{Hash, Hasher};
     let (cons, others): (Vec<&Formula>, Vec<&Formula>) =
         conjuncts.partition(|g| matches!(g, Formula::Con(_)));
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for g in &cons {
-        if let Formula::Con(c) = g
-            && c.rel == Rel::Eq
-        {
-            c.hash(&mut h);
-        }
-    }
-    let eqs = h.finish();
+    let mut eqs: Vec<Con> = cons
+        .iter()
+        .filter_map(|g| match g {
+            Formula::Con(c) if c.rel == Rel::Eq => Some(c.clone()),
+            _ => None,
+        })
+        .collect();
+    eqs.sort_unstable();
+    let eqs: Option<Arc<[Con]>> = Some(eqs.into());
     let base = Formula::and(cons.into_iter().cloned().collect());
     let mut parts: Vec<(PartKey, Formula)> = others
         .into_iter()
         .map(|g| {
             (
-                (g.clone(), eqs),
+                (g.clone(), eqs.clone()),
                 Formula::and(vec![g.clone(), base.clone()]),
             )
         })
@@ -562,7 +602,7 @@ struct Block {
 /// components of the graph whose vertices are these groups and the names, with an edge from a
 /// group to each name it mentions, where components that share a group are one block (Tarjan's
 /// algorithm, with a stack in place of recursion). In linear time but for the sorting of atoms.
-fn blocks(conjuncts: &[Formula]) -> Vec<Block> {
+fn blocks(conjuncts: &[&Formula]) -> Vec<Block> {
     fn find(up: &mut [usize], mut i: usize) -> usize {
         while up[i] != i {
             up[i] = up[up[i]];
@@ -705,7 +745,7 @@ fn blocks(conjuncts: &[Formula]) -> Vec<Block> {
                 }
             }
             out.push(Block {
-                parts: split(members[b].iter().map(|&i| &conjuncts[i])),
+                parts: split(members[b].iter().map(|&i| conjuncts[i])),
                 conjuncts: members[b].clone(),
                 names: names[b].iter().map(|&j| name_of[j].clone()).collect(),
                 tree,
@@ -742,17 +782,19 @@ impl Scope {
     fn of(names: impl IntoIterator<Item = (Arc<str>, Product)>, exact: bool) -> Scope {
         let mut s = Scope {
             names: names.into_iter().collect(),
-            relation: Formula::top(),
-            written: BTreeMap::new(),
+            relation: Conjuncts::default(),
+            written: imbl::OrdMap::new(),
+            written_by: Uses::default(),
             bottom: false,
-            enumerated: BTreeSet::new(),
-            projected: std::collections::HashMap::new(),
+            enumerated: imbl::OrdSet::new(),
+            projected: imbl::OrdMap::new(),
             exact,
-            exactly: BTreeMap::new(),
-            refusals: BTreeSet::new(),
+            exactly: imbl::OrdMap::new(),
+            refusals: imbl::OrdSet::new(),
             bindings: imbl::OrdMap::new(),
             clock: 0,
             reduced: Reduced::default(),
+            seen: Seen::default(),
         };
         s.reduce();
         s
@@ -787,8 +829,11 @@ impl Scope {
         if self.bottom {
             return saved;
         }
-        self.relation = self.relation.forget(x);
-        self.written.retain(|_, (_, free)| !free.contains(x));
+        self.relation.forget(x);
+        let gone: Vec<String> = self.written_by.of(x).cloned().collect();
+        for k in &gone {
+            self.unwrite(k);
+        }
         self.bindings.insert(x.clone(), binding);
         self.names.insert(x.clone(), p);
         if self.names[x].is_empty() {
@@ -815,8 +860,31 @@ impl Scope {
 
     /// Records `t` as a written constraint that holds.
     pub fn write(&mut self, t: Term) {
-        let free = stage::free(&t).into_iter().collect();
-        self.written.insert(t.to_string(), (t, free));
+        let k = t.to_string();
+        self.unwrite(&k);
+        let free: Vec<Arc<str>> = stage::free(&t).into_iter().collect();
+        for n in &free {
+            self.written_by.add(n, &k);
+        }
+        self.written.insert(k, (t, free));
+    }
+
+    /// Forgets the written constraint of text `k`.
+    fn unwrite(&mut self, k: &str) {
+        if let Some((_, free)) = self.written.remove(k) {
+            let k = k.to_string();
+            for n in &free {
+                self.written_by.remove(n, &k);
+            }
+        }
+    }
+
+    /// Forgets every projection made, so that the next reduction projects the whole relation
+    /// again: for the tests that compare a scope with one projected afresh.
+    #[doc(hidden)]
+    pub fn forget_projections(&mut self) {
+        self.projected = imbl::OrdMap::new();
+        self.seen.projection = None;
     }
 
     /// The static names among `names`, and their values.
@@ -896,8 +964,9 @@ impl Scope {
         if !env.iter().all(|(n, v)| self.get(n).contains(v)) {
             return false;
         }
+        let relation = self.relation.formula();
         let mut point = BTreeMap::new();
-        for a in self.relation.atoms() {
+        for a in relation.atoms() {
             match &a {
                 Atom::Sym(n) => match env.get(n) {
                     Some(Value::Int(v)) => {
@@ -908,10 +977,12 @@ impl Scope {
                 _ => return true,
             }
         }
-        self.relation.holds(&point)
+        relation.holds(&point)
     }
 
-    /// The least scope above both.
+    /// The least scope above both. Each part of the scope is found from the parts the two
+    /// sides do not share, by the persistent maps' difference: a join of two cases of one
+    /// scope costs what the cases changed, not the scope.
     pub fn join(&self, other: &Scope) -> Scope {
         if self.bottom {
             return other.clone();
@@ -922,6 +993,7 @@ impl Scope {
         // A name both sides share unchanged is its own join; the others are found by the
         // persistent maps' difference, which skips what they share.
         let mut names = self.names.clone();
+        let mut seeds: BTreeSet<Arc<str>> = BTreeSet::new();
         for d in self.names.diff(&other.names) {
             match d {
                 DiffItem::Update {
@@ -931,18 +1003,36 @@ impl Scope {
                     let mut j = p.clone();
                     j.join(q);
                     names.insert(n.clone(), j);
+                    seeds.insert(n.clone());
                 }
                 DiffItem::Add(n, _) | DiffItem::Remove(n, _) => {
                     names.insert(n.clone(), Product::top());
+                    seeds.insert(n.clone());
                 }
             }
+        }
+        // The conjuncts of each side the other does not hold; those they share are the join's.
+        let (mut mine, mut theirs) = (Vec::new(), Vec::new());
+        for d in self.relation.set().diff(other.relation.set()) {
+            match d {
+                imbl::ordset::DiffItem::Remove(g) => mine.push(g.clone()),
+                imbl::ordset::DiffItem::Add(g) => theirs.push(g.clone()),
+            }
+        }
+        for g in mine.iter().chain(&theirs) {
+            seeds.extend(conjuncts::names(g));
         }
         // The equalities of two or more atoms that hold on both sides (Karr's join), which the
         // disjunction of the relations holds but no projection of one of its parts finds. Each
         // side implies them, so each side's rest holds where they do as it holds with their
         // pivots replaced; the disjunction then mentions no pivot, and a join of sides that fix
-        // `k` names leaves a disjunction of one name and `k - 1` equalities of two.
-        let hull = self.hull().join(&other.hull());
+        // `k` names leaves a disjunction of one name and `k - 1` equalities of two. Each side's
+        // hull is taken over the names linked by equalities to a name or a conjunct the sides
+        // do not share: the rest of the two hulls is one, which their join keeps as it is and
+        // the shared conjuncts already state.
+        let is_eq = |g: &Formula| matches!(g, Formula::Con(c) if c.rel == Rel::Eq);
+        let (eqs, near) = conjuncts::reach(&[&self.relation, &other.relation], seeds, is_eq);
+        let hull = self.hull(&eqs, &near).join(&other.hull(&eqs, &near));
         let reduce = |c: &Con| hull.reduce(c);
         let kept: Vec<Formula> = hull
             .rows()
@@ -958,30 +1048,40 @@ impl Scope {
         // does not, which its products hold and its relation leaves out: otherwise a side of
         // relation `true` makes the disjunction `true`, and the join depends on how the cases
         // are grouped.
-        let (a, b) = (self.stated(&other.relation), other.stated(&self.relation));
-        let mut relation = vec![Formula::either(&a, &b, &reduce)];
-        relation.extend(kept);
-        Scope {
-            relation: Formula::and(relation),
-            written: self
-                .written
-                .iter()
-                .filter(|(k, _)| other.written.contains_key(*k))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-            bottom: false,
-            enumerated: self
-                .enumerated
-                .intersection(&other.enumerated)
-                .cloned()
-                .collect(),
-            // A part projected on both sides is projected within the join: each side's
-            // intervals lie within its projection, and the join's within their union.
-            projected: self
-                .projected
-                .iter()
-                .filter(|(k, _)| other.projected.contains_key(*k))
-                .map(|(k, v)| {
+        let (a, b) = (self.stated(&mine, &theirs), other.stated(&theirs, &mine));
+        let mut relation = self.relation.clone();
+        for g in &mine {
+            relation.remove(g);
+        }
+        relation.and(Formula::either(&a, &b, &reduce));
+        for k in kept {
+            relation.and(k);
+        }
+        // The written and enumerated constraints both sides hold.
+        let (mut written, mut written_by) = (self.written.clone(), self.written_by.clone());
+        for d in self.written.diff(&other.written) {
+            if let DiffItem::Remove(k, (_, free)) = d {
+                written.remove(k);
+                for n in free {
+                    written_by.remove(n, k);
+                }
+            }
+        }
+        let mut enumerated = self.enumerated.clone();
+        for d in self.enumerated.diff(&other.enumerated) {
+            if let imbl::ordset::DiffItem::Remove(e) = d {
+                enumerated.remove(e);
+            }
+        }
+        // A part projected on both sides is projected within the join: each side's
+        // intervals lie within its projection, and the join's within their union.
+        let mut projected = self.projected.clone();
+        for d in self.projected.diff(&other.projected) {
+            match d {
+                DiffItem::Remove(k, _) => {
+                    projected.remove(k);
+                }
+                DiffItem::Update { old: (k, v), .. } => {
                     let at = v
                         .iter()
                         .map(|(n, _, _)| {
@@ -989,41 +1089,62 @@ impl Scope {
                             (n.clone(), p.ints().clone(), p.cell.congruence.element)
                         })
                         .collect();
-                    (k.clone(), at)
-                })
-                .collect(),
+                    projected.insert(k.clone(), at);
+                }
+                DiffItem::Add(..) => {}
+            }
+        }
+        // A point of either side is a point of the join; it is checked again when read.
+        let mut exactly = self.exactly.clone();
+        for d in self.exactly.diff(&other.exactly) {
+            if let DiffItem::Add(k, v) = d {
+                exactly.insert(k.clone(), v.clone());
+            }
+        }
+        let mut refusals = self.refusals.clone();
+        for d in self.refusals.diff(&other.refusals) {
+            if let imbl::ordset::DiffItem::Add(r) = d {
+                refusals.insert(*r);
+            }
+        }
+        Scope {
+            relation,
+            written,
+            written_by,
+            bottom: false,
+            enumerated,
+            projected,
             exact: self.exact,
-            // A point of either side is a point of the join; it is checked again when read.
-            exactly: other
-                .exactly
-                .iter()
-                .chain(&self.exactly)
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-            refusals: self.refusals.union(&other.refusals).copied().collect(),
+            exactly,
+            refusals,
             // Both sides narrow one scope, which bound the names; neither binds one the other
             // does not.
             bindings: self.bindings.clone(),
             clock: self.clock.max(other.clock),
             names,
-            // This side's reduced names: the join's differ from them in the names it changed.
+            // This side's reduced names and what it last projected and enumerated: the join
+            // differs from them in what it changed.
             reduced: self.reduced.clone(),
+            seen: self.seen.clone(),
         }
     }
 
-    /// The relation with the finite bounds of each name `other` mentions and the relation
-    /// does not.
-    fn stated(&self, other: &Formula) -> Formula {
-        let own: HashSet<Arc<str>> = syms(&self.relation).into_iter().collect();
-        let mut out = Vec::new();
-        for n in syms(other) {
-            if own.contains(&n) {
+    /// `mine`, the conjuncts of the relation the other side does not hold, with the finite
+    /// bounds of each name `theirs` mentions and the relation does not.
+    fn stated(&self, mine: &[Arc<Formula>], theirs: &[Arc<Formula>]) -> Formula {
+        let mut out: Vec<Formula> = Vec::new();
+        let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
+        for n in theirs.iter().flat_map(|g| syms(g)) {
+            let x = Atom::Sym(n.clone());
+            if !seen.insert(n.clone())
+                || self.relation.mentioning(&n).any(|g| g.atoms().contains(&x))
+            {
                 continue;
             }
             let Some((lo, hi)) = self.names.get(&n).and_then(|p| p.ints().bounds()) else {
                 continue;
             };
-            let x = Lin::atom(Atom::Sym(n));
+            let x = Lin::atom(x);
             if let End::Fin(v) = lo {
                 out.push(Formula::Con(Con::ge(&x, &Lin::constant(v))));
             }
@@ -1031,32 +1152,23 @@ impl Scope {
                 out.push(Formula::Con(Con::ge(&Lin::constant(v), &x)));
             }
         }
-        if out.is_empty() {
-            return self.relation.clone();
-        }
-        out.push(self.relation.clone());
+        out.extend(mine.iter().map(|g| (**g).clone()));
         Formula::and(out)
     }
 
-    /// The affine hull of the scope's points: the equalities among the relation's top-level
-    /// conjuncts, and each name of one integer value.
-    fn hull(&self) -> Hull {
-        if self.bottom {
-            return Hull::empty();
-        }
-        let conjuncts = match &self.relation {
-            Formula::And(gs) => gs.as_slice(),
-            g => std::slice::from_ref(g),
-        };
-        let mut terms: Vec<Lin> = conjuncts
+    /// The affine hull of the scope's points over `near`: the equalities among `eqs` the
+    /// relation holds, and each name of `near` of one integer value.
+    fn hull(&self, eqs: &BTreeSet<Arc<Formula>>, near: &BTreeSet<Arc<str>>) -> Hull {
+        let mut terms: Vec<Lin> = eqs
             .iter()
-            .filter_map(|g| match g {
-                Formula::Con(c) if c.rel == Rel::Eq => Some(c.lin.clone()),
+            .filter(|g| self.relation.set().contains(*g))
+            .filter_map(|g| match &**g {
+                Formula::Con(c) => Some(c.lin.clone()),
                 _ => None,
             })
             .collect();
-        for (n, p) in &self.names {
-            if let Some(Value::Int(v)) = p.value() {
+        for n in near {
+            if let Some(Value::Int(v)) = self.names.get(n).and_then(Product::value) {
                 terms.push(Lin::atom(Atom::Sym(n.clone())).minus(&Lin::constant(*v)));
             }
         }
@@ -1095,15 +1207,25 @@ impl Scope {
         // join of the cases states at the top (Karr's join), which a projection of the test's
         // relation onto each name does not find.
         if !self.bottom {
-            let mut all = vec![before, body];
-            let gs = match std::mem::replace(&mut self.relation, Formula::top()) {
-                Formula::And(gs) => gs,
-                g => vec![g],
-            };
-            all.extend(gs.into_iter().filter(
-                |g| matches!(g, Formula::Con(c) if c.rel == Rel::Eq && c.lin.terms.len() > 1),
-            ));
-            self.relation = Formula::and(all);
+            let narrowed = std::mem::replace(&mut self.relation, before);
+            let eqs: Vec<Formula> = self
+                .relation
+                .set()
+                .diff(narrowed.set())
+                .filter_map(|d| match d {
+                    imbl::ordset::DiffItem::Add(g) => match &**g {
+                        Formula::Con(c) if c.rel == Rel::Eq && c.lin.terms.len() > 1 => {
+                            Some((**g).clone())
+                        }
+                        _ => None,
+                    },
+                    imbl::ordset::DiffItem::Remove(_) => None,
+                })
+                .collect();
+            self.relation.and(body);
+            for g in eqs {
+                self.relation.and(g);
+            }
         }
     }
 
@@ -1277,7 +1399,7 @@ impl Scope {
             } else {
                 Formula::negate(r.body)
             };
-            self.relation = Formula::and(vec![self.relation.clone(), body]);
+            self.relation.and(body);
         }
         // The written constraint, unless it is a test of one integer name whose preimage is
         // exact: the name's interval then holds exactly the values that meet it, and
@@ -1401,7 +1523,7 @@ impl Scope {
     }
 
     fn reduce_with(&mut self, whole: bool) {
-        let mut projected: Option<imbl::OrdMap<Arc<str>, Product>> = None;
+        let mut force = whole;
         // The names as last reduced. A product's own reduction depends on it alone, so one
         // that has not changed since is at its fixed point, and only the names that differ
         // from these are reduced again or can have become empty: a reduction costs the names
@@ -1416,11 +1538,12 @@ impl Scope {
                 break;
             }
             let before = self.names.clone();
-            // The names as projected are those before the projection, so that a projection that
-            // moves a bound is followed by another, until none moves one.
-            if projected.as_ref() != Some(&self.names) {
-                projected = Some(self.names.clone());
-                self.project(whole);
+            // The names and conjuncts as projected are those before the projection, so that a
+            // projection that moves a bound is followed by another, until none moves one.
+            if let Some(seeds) = self.due(whole, force) {
+                force = false;
+                self.seen.projection = Some((self.names.clone(), self.relation.set().clone()));
+                self.project(seeds, whole);
             }
             let dirty: Vec<Arc<str>> = changed(&last, &self.names)
                 .map(|(n, _)| n.clone())
@@ -1462,28 +1585,80 @@ impl Scope {
         }
     }
 
+    /// The names whose trees of blocks a projection looks at: each name that has changed since
+    /// the last projection and each name of a conjunct added or removed since, found by the
+    /// persistent maps' difference; every name of the relation with `force`, with `whole`
+    /// once anything has changed, and when no projection was made. `None` when nothing has
+    /// changed. A conjunct removed has its parts' projections forgotten, so that it is
+    /// projected again if it comes back.
+    fn due(&mut self, whole: bool, force: bool) -> Option<BTreeSet<Arc<str>>> {
+        let all = |s: &Scope| Some(s.relation.names().cloned().collect());
+        let Some((names, set)) = &self.seen.projection else {
+            return all(self);
+        };
+        if force {
+            return all(self);
+        }
+        let mut out: BTreeSet<Arc<str>> = BTreeSet::new();
+        for d in names.diff(&self.names) {
+            let (DiffItem::Add(n, _)
+            | DiffItem::Remove(n, _)
+            | DiffItem::Update { new: (n, _), .. }) = d;
+            out.insert(n.clone());
+        }
+        let mut gone: Vec<Arc<Formula>> = Vec::new();
+        for d in set.diff(self.relation.set()) {
+            match d {
+                imbl::ordset::DiffItem::Add(g) => out.extend(conjuncts::names(g)),
+                imbl::ordset::DiffItem::Remove(g) => {
+                    out.extend(conjuncts::names(g));
+                    gone.push(g.clone());
+                }
+            }
+        }
+        for g in gone {
+            let keys: Vec<PartKey> = self
+                .projected
+                .range((Formula::clone(&g), None)..)
+                .map(|(k, _)| k)
+                .take_while(|k| k.0 == *g)
+                .cloned()
+                .collect();
+            for k in &keys {
+                self.projected.remove(k);
+            }
+        }
+        if out.is_empty() {
+            return None;
+        }
+        if whole {
+            return all(self);
+        }
+        Some(out)
+    }
+
     /// The projection of the relation, within every interval, onto each name it mentions, by
-    /// blocks. The top-level conjuncts that share an atom other than a name, or a cycle
-    /// through names, form one block, so two blocks share at most one name and the blocks
-    /// and the names they share form a forest (docs/thresholds.md, replacement 4). Each block
-    /// is projected from the leaves of its tree to the root and back, which carries every
-    /// bound across the tree, and each only when one of its parts is new or an interval or
-    /// class of a name it mentions has changed since its last projection: a test that
-    /// narrows nothing costs its own blocks alone. A tree some block of which is due after
-    /// the two passes has a block whose projection lost points the interval holds, and its
-    /// conjuncts are then projected as a whole: its constraints together, and each other
-    /// conjunct with them; with `whole`, every tree is.
-    fn project(&mut self, whole: bool) {
-        if self.relation == Formula::top() {
-            self.projected.clear();
+    /// blocks, in the trees of blocks that mention one of `seeds`: the others have changed in
+    /// no name and no conjunct since their last projection. The top-level conjuncts that share
+    /// an atom other than a name, or a cycle through names, form one block, so two blocks
+    /// share at most one name and the blocks and the names they share form a forest
+    /// (docs/thresholds.md, replacement 4). Each block is projected from the leaves of its tree
+    /// to the root and back, which carries every bound across the tree, and each only when one
+    /// of its parts is new or an interval or class of a name it mentions has changed since its
+    /// last projection: a test that narrows nothing costs its own blocks alone. A tree some
+    /// block of which is due after the two passes has a block whose projection lost points the
+    /// interval holds, and its conjuncts are then projected as a whole: its constraints
+    /// together, and each other conjunct with them; with `whole`, every tree is.
+    fn project(&mut self, seeds: BTreeSet<Arc<str>>, whole: bool) {
+        if self.relation.is_top() {
+            self.projected = imbl::OrdMap::new();
             return;
         }
-        let conjuncts: Vec<Formula> = match &self.relation {
-            Formula::And(gs) => gs.clone(),
-            g => vec![g.clone()],
-        };
+        // The conjuncts of the trees the seeds lie in, in the order of formulas, so that the
+        // blocks and their keys do not depend on the order the conjuncts were added in.
+        let (found, _) = conjuncts::reach(&[&self.relation], seeds, |_| true);
+        let conjuncts: Vec<&Formula> = found.iter().map(|g| &**g).collect();
         let blocks = blocks(&conjuncts);
-        let mut used: HashSet<PartKey> = HashSet::new();
         if !whole {
             for b in blocks.iter().rev().chain(&blocks) {
                 self.project_block(b);
@@ -1506,20 +1681,13 @@ impl Scope {
             // projects no block, by its conjunct as a block's part is.
             let tree = tree
                 .iter()
-                .flat_map(|b| b.conjuncts.iter().map(|&i| &conjuncts[i]));
+                .flat_map(|b| b.conjuncts.iter().map(|&i| conjuncts[i]));
             for (key, g) in split(tree) {
-                let key = if whole { key } else { (g.clone(), 0) };
+                let key = if whole { key } else { (g.clone(), None) };
                 let names = syms(&g);
                 self.project_due(&key, &g, &names);
-                used.insert(key);
             }
         }
-        used.extend(
-            blocks
-                .into_iter()
-                .flat_map(|b| b.parts.into_iter().map(|(key, _)| key)),
-        );
-        self.projected.retain(|g, _| used.contains(g));
     }
 
     /// Projects the parts of `b` that are due, then marks every part of `b` projected. A
@@ -1644,7 +1812,10 @@ impl Scope {
             .filter(|a| matches!(a, Atom::Sym(_)))
             .collect();
         let each = match presburger::project_each(&whole, &syms) {
-            Ok(each) => each,
+            Ok((each, skipped)) => {
+                self.refusals.extend(skipped);
+                each
+            }
             Err(r) => {
                 self.refusals.insert(r);
                 return;
@@ -1668,15 +1839,48 @@ impl Scope {
     }
 
     /// Enumeration: the written constraints on each small integer name, and those on static
-    /// names only. Each constraint is enumerated once for its static names.
+    /// names only. Each constraint is enumerated once for its static names. Only the written
+    /// constraints that are new, mention a name that has changed, or have left the enumerated
+    /// ones since the last enumeration are looked at, found by the persistent maps'
+    /// difference: whether a constraint is due depends on these alone.
     fn enumerate(&mut self) {
         if self.exact {
             self.enumerate_exactly();
         }
-        let pending: Vec<(Term, Vec<Arc<str>>, Enumerated)> = self
-            .written
-            .iter()
-            .filter_map(|(text, (c, free))| {
+        let now = (
+            self.names.clone(),
+            self.written.clone(),
+            self.enumerated.clone(),
+        );
+        let texts: BTreeSet<String> = match self.seen.enumeration.replace(now) {
+            None => self.written.keys().cloned().collect(),
+            Some((names, written, enumerated)) => {
+                let mut out = BTreeSet::new();
+                for d in written.diff(&self.written) {
+                    if let DiffItem::Add(k, _) | DiffItem::Update { new: (k, _), .. } = d {
+                        out.insert(k.clone());
+                    }
+                }
+                for d in names.diff(&self.names) {
+                    let (DiffItem::Add(n, _)
+                    | DiffItem::Remove(n, _)
+                    | DiffItem::Update { new: (n, _), .. }) = d;
+                    out.extend(self.written_by.of(n).cloned());
+                }
+                for d in enumerated.diff(&self.enumerated) {
+                    if let imbl::ordset::DiffItem::Remove((k, _)) = d
+                        && self.written.contains_key(k)
+                    {
+                        out.insert(k.clone());
+                    }
+                }
+                out
+            }
+        };
+        let pending: Vec<(Term, Vec<Arc<str>>, Enumerated)> = texts
+            .into_iter()
+            .filter_map(|text| {
+                let (c, free) = self.written.get(&text)?;
                 if !free.iter().all(|n| self.names.contains_key(n)) {
                     return None;
                 }
@@ -1686,10 +1890,11 @@ impl Scope {
                     .filter(|n| !statics.contains_key(*n))
                     .cloned()
                     .collect();
-                let key = (text.clone(), statics.clone().into_iter().collect());
-                let c = substitute(c, &statics);
-                (open.len() <= 1 && !self.enumerated.contains(&key) && stage::ends(&c))
-                    .then_some((c, open, key))
+                let key = (text, statics.clone().into_iter().collect());
+                (open.len() <= 1 && !self.enumerated.contains(&key))
+                    .then(|| substitute(c, &statics))
+                    .filter(stage::ends)
+                    .map(|c| (c, open, key))
             })
             .collect();
         if pending.is_empty() {
@@ -1849,7 +2054,7 @@ impl fmt::Display for Scope {
                 writeln!(f, "  {l}")?;
             }
         }
-        if self.relation != Formula::top() {
+        if !self.relation.is_top() {
             writeln!(f, "relation {}", self.relation)?;
         }
         Ok(())

@@ -371,3 +371,86 @@ fn tests_read_through_the_functions_they_call_scale() {
         },
     );
 }
+
+/// `xi - yi >= 1`, or with `or` the test `xi - yi >= 1 || yi - xi >= 1`, for `i` below `k`:
+/// tests on names that no other test mentions.
+fn apart(k: usize, or: bool) -> (Vec<std::sync::Arc<str>>, Vec<Term>) {
+    let ge = |a: &str, b: &str| prim(Prim::Ge, prim(Prim::Sub, var(a), var(b)), int(1));
+    let mut names = Vec::new();
+    let mut tests = Vec::new();
+    for i in 0..k {
+        let (x, y) = (format!("x{i}"), format!("y{i}"));
+        tests.push(if or {
+            prim(Prim::Or, ge(&x, &y), ge(&y, &x))
+        } else {
+            ge(&x, &y)
+        });
+        names.push(x.into());
+        names.push(y.into());
+    }
+    (names, tests)
+}
+
+#[test]
+fn tests_on_names_apart_narrow_in_time_near_their_number() {
+    // A test projects the names it is linked to, not the whole relation: the scope, the
+    // conjunction and the list of tests are built before the timing.
+    let conjunction = |k: usize, or: bool| {
+        let (names, tests) = apart(k, or);
+        let all = tests
+            .into_iter()
+            .reduce(|a, t| prim(Prim::And, a, t))
+            .expect("k > 0");
+        (ints(&names), all)
+    };
+    let sizes = [50, 400];
+    for or in [false, true] {
+        let built: BTreeMap<usize, (Scope, Term)> =
+            sizes.into_iter().map(|k| (k, conjunction(k, or))).collect();
+        let what = if or {
+            "a conjunction of k disjunctions on names apart"
+        } else {
+            "a conjunction of k tests on names apart"
+        };
+        scaling::check(what, 50, |k| {
+            let (s, t) = &built[&k];
+            s.assume(t, true, &Premises::new());
+        });
+    }
+    let one_by_one: BTreeMap<usize, (Scope, Vec<Term>)> = sizes
+        .into_iter()
+        .map(|k| {
+            let (names, tests) = apart(k, true);
+            (k, (ints(&names), tests))
+        })
+        .collect();
+    scaling::check(
+        "k disjunctions on names apart, assumed one by one",
+        50,
+        |k| {
+            let (s, tests) = &one_by_one[&k];
+            let p = Premises::new();
+            tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
+        },
+    );
+    // What each kind keeps: every test of the conjunction, and each point that meets them.
+    let (s, t) = conjunction(3, true);
+    let r = s.assume(&t, true, &Premises::new());
+    assert_eq!(r.relation.cons().len(), 6, "{}", r.relation);
+    let at = |v: [i64; 6]| -> BTreeMap<std::sync::Arc<str>, Value> {
+        ["x0", "y0", "x1", "y1", "x2", "y2"]
+            .into_iter()
+            .zip(v)
+            .map(|(n, v)| (n.into(), Value::Int(v)))
+            .collect()
+    };
+    assert!(r.contains(&at([1, 0, 0, 1, 5, -5])));
+    let (s, tests) = &one_by_one[&50];
+    let p = Premises::new();
+    let r = tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
+    assert!(!r.bottom);
+    let (s, t) = conjunction(3, false);
+    let r = s.assume(&t, true, &Premises::new());
+    assert!(r.contains(&at([1, 0, 1, 0, 9, 8])));
+    assert!(!r.contains(&at([0, 0, 1, 0, 9, 8])));
+}

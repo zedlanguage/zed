@@ -2458,16 +2458,24 @@ fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
 /// note): exact when one disjunction is left, a set holding them otherwise. A bound past `i64`
 /// is read as no bound.
 pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
-    project_each(f, std::slice::from_ref(sym))?.remove(0)
+    project_each(f, std::slice::from_ref(sym))?.0.remove(0)
 }
 
+/// The projections of [`project_each`], one for each symbol, and the causes for which a
+/// disjunction was left out of them.
+pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
+
 /// [`project`] onto each of `syms`, removing disjuncts once: one result for each symbol, so
-/// that a symbol whose hull is refused leaves the others projected.
-pub fn project_each(
-    f: &Formula,
-    syms: &[Atom],
-) -> Result<Vec<Result<IntervalSet, Refusal>>, Refusal> {
-    let none = || syms.iter().map(|_| Ok(IntervalSet::empty())).collect();
+/// that a symbol whose hull is refused leaves the others projected. With them, the causes for
+/// which a disjunction was left out, which leaves each hull wider but sound.
+pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    let none = || {
+        (
+            syms.iter().map(|_| Ok(IntervalSet::empty())).collect(),
+            Vec::new(),
+        )
+    };
+    let mut skipped: Vec<Refusal> = Vec::new();
     let Some(mut p) = propagate(f)? else {
         return Ok(none());
     };
@@ -2532,9 +2540,16 @@ pub fn project_each(
                 .flat_map(|r| syms_of.get(r).into_iter().flatten().copied())
                 .collect();
             let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
-            let Ok(rs) = project_each(&fd, &sub) else {
-                refused = true;
-                break;
+            let rs = match project_each(&fd, &sub) {
+                Ok((rs, more)) => {
+                    skipped.extend(more);
+                    rs
+                }
+                Err(r) => {
+                    skipped.push(r);
+                    refused = true;
+                    break;
+                }
             };
             let has_point = if ks.is_empty() {
                 !matches!(decide(&fd), Ok(false))
@@ -2546,6 +2561,9 @@ pub fn project_each(
             }
             sat += 1;
             for (j, &k) in ks.iter().enumerate() {
+                if let Err(r) = &rs[j] {
+                    skipped.push(*r);
+                }
                 let e = acc.entry(k).or_insert((Some(IntervalSet::empty()), 0));
                 e.0 =
                     e.0.take()
@@ -2575,7 +2593,9 @@ pub fn project_each(
             }
         }
     }
-    Ok(out)
+    skipped.sort_unstable();
+    skipped.dedup();
+    Ok((out, skipped))
 }
 
 /// `set`, holding every value of `sym` over `f`'s points, with each finite bound raised or

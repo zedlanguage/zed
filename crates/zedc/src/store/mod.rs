@@ -7,6 +7,7 @@
 
 pub mod affine;
 pub mod cell;
+pub mod conjuncts;
 pub mod float;
 pub mod hull;
 pub mod int;
