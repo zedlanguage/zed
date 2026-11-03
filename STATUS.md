@@ -867,31 +867,41 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BIT-words | impl attempt 1 | 2026-11-03 07:14 | kernel bits module built; unit test run (load 72.26) |
-| F44-memo | impl attempt 1 | 2026-11-03 07:14 | probe: first runs (fresh) vs least: l01_10 no memo (7.7x either way); l01_21 first run builds Db inside timing; l01_23 morphism first-run ratio 48, tuple 28 vs  |
-| HOLE-oneline | impl attempt 1 | 2026-11-03 07:14 | fmt, clippy -D warnings clean; l01_05, l01_08, m0_03, l01_07 pass; cases tool 369 cases, 2 wrong not this item's ((T,) types); check, fences OK; full suite star |
-| L1.17a | impl attempt 1 | 2026-11-03 07:14 | started |
-| LIN-cross | impl attempt 1 | 2026-11-03 05:46 | fmt and clippy clean; docs: COMPLEXITY S22, STATUS row, ledger LIN-probe added; starting run_tests.sh 4 |
-| OSP-neglit | impl attempt 1 | 2026-11-03 07:14 | correction: baseline had 6 failing pieces, all caused by my new offsets.zed and cases.txt lines written during the run (counts 53->54, 356->358); the tree at 79 |
-| R10-stack | impl attempt 1 | 2026-11-03 07:14 | negative control on main code: linked_list(10000) native on a 2 MiB thread aborts with stack overflow; 100,000-concat function overflows a test-harness thread ( |
-| S22b-rest | impl attempt 1 | 2026-11-03 07:22 | start: c - u in pa_prim and clip_at |
-| SCALE-bytes | impl attempt 1 | 2026-11-03 07:14 | counting allocator crate zed-alloc-count + bytes measure in tests/src/scaling.rs; harness unit tests 24/24 and allocator 4/4 pass |
-| ST-arms-quad | verify attempt 4 | 2026-11-03 03:16 | control B (summary cut removed): one-level test FAILS ([3..=4, 10..=10, 100..=200]); new probe 'paired' (accounts_paired recursed d deep, fresh q_i per level):  |
-| T11-S22 | merge attempt 1 (item S22a) | 2026-11-03 03:01 | lock released |
-| T2-mid | repair attempt 3 | 2026-11-03 04:26 | zir mod.rs: starting validate, Region Drop and Eq on heap stacks; load 101.66 95.15 83.65 |
-| T6 | repair attempt 7 | 2026-11-03 00:01 | comments rewritten (overlaps, TupleSplit, module doc); cofinite pinwheel scaling case added; probes removed; running K36 test, load 93.33 94.09 83.85 |
-| TD-ends | verify attempt 4 | 2026-11-03 03:52 | probes (zedc test, load 90-107): b.zed 0.09 s, g.zed 0.07 s (repair 3 fix holds); open S26 case x ** (3**e * 9**(e+1) - 3**(3e+2)): e=1e5 3.06 s, 1e6 30.6 s, 8e |
-| UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | negsssp.rs and GOR state machine + race written; utvpi unit tests pass (race, GOR, Duong on 1000 random graphs and BAD-GOR k=64); running near tests / load 87.4 |
-| WIDEN-WARN | impl attempt 1 | 2026-11-03 07:14 | start |
+| AXIOMS-fmt | impl attempt 1 | 2026-11-03 07:55 | start |
+| AXIOMS-gaps | impl attempt 1 | 2026-11-03 07:55 | started |
+| AXIOMS-order | merge attempt 1 | 2026-11-03 07:14 | lock released |
+| BIT-words | impl attempt 1 | 2026-11-03 07:14 | l01_39a step tests 32/32 pass (load 124.12); checker now reads names and constants for bit-word domains |
+| BOX-5pt | merge attempt 1 | 2026-11-03 06:34 | lock released |
+| F44-memo | impl attempt 1 | 2026-11-03 07:14 | parts test ignored pending new ledger F44-forced (Part::forced O(atoms*size), owned by T6); tradeoff comment, gaps entry written; T6 control build running |
+| HOLE-oneline | verify attempt 1 | 2026-11-03 07:14 | fmt, clippy -D warnings clean; check OK (149 parsed 0 failed), fences exit 0, cases 13 new all ok, 2 DIFF (T,) not this item's; probe: "${"""${a // c}"""}" give |
+| L1.17a | impl attempt 1 | 2026-11-03 07:14 | memory_check tests pass (35/35 in l01_17); child RLIMIT_AS tests found 3 unchecked copies (aligned %, project abs, Bound::div) now fixed; load 115.44 102.41 93. |
+| LAYER-argname | research attempt 1 | 2026-11-03 07:52 | started: orchestrator full suite (shell bky8qvrqv) on wt/layer-argname 15046f2, 67 pieces done so far |
+| LIN-cross | verify attempt 1 | 2026-11-03 05:46 | diff read; fmt/clippy/run_tests.sh 4 running in background; control worktree /home/luke/Work/wt/lin-cross-ctl (detached fe5a233) made for relation-equality dump |
+| OSP-neglit | verify attempt 1 | 2026-11-03 07:14 | started |
+| R10-stack | impl attempt 1 | 2026-11-03 07:14 | fix in: zed_rt::Stack (RAM+swap MAP_NORESERVE stack, psm switch) used by zed_native::run_at; deep_calls tests pass (10k and 80k calls on 2 MiB thread), 150k-con |
+| S22b-rest | impl attempt 1 | 2026-11-03 07:22 | clip: forward vs reflect on 2,925 single intervals: sets equal in all; rounding flag differs in 16 (c = i64::MIN with b unbounded above, c = i64::MAX with b unb |
+| S22e-quad | impl attempt 1 | 2026-11-03 07:43 | many_remainders_scales at 64/512 on base killed at 120 s (load 105-128); using 32/256 |
+| S22-merge | impl attempt 1 | 2026-11-03 08:07 | started |
+| SCALE-bytes | impl attempt 1 | 2026-11-03 07:14 | new ledger item ZIR-validate-bytes (open, needs T2-mid and SCALE-bytes, feeds T12, COMPLEXITY Z17); the two l01_33 tests check instructions only until then |
+| ST-arms-quad | repair attempt 4 | 2026-11-03 03:16 | second cause: every failed case rebuilt its names map as bottom (O(names) per failed case); now only shown scopes are emptied: paired fresh-q 2.67/5.53/11.55/24 |
+| T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
+| T2-mid | repair attempt 3 | 2026-11-03 04:26 | zir canon committed 5909cd0; l01_32 14 pass; load 103.02 94.46 90.16 |
+| T6 | verify attempt 3 | 2026-11-03 00:01 | start: verifying wt/t6 da5c7ff (repair 7); no earlier verify#3 lines to reuse; load 85.20 94.07 89.36 |
+| TD-ends | repair attempt 4 | 2026-11-03 03:52 | start: Hash/Eq comment and canonical coprime bases for equal cores (S26 3^e*9^(e+1)-3^(3e+2)) |
+| TEST-split | impl attempt 1 | 2026-11-03 07:56 | measured alone at load 99-112, timeout 60: all four pieces hit 60 s; slowest l01_25 s22::chains_of_slow_families 53.8 s, l01_16 scaling::a_call_through_a_value_ |
+| UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | three-way race wired, docs in code rewritten, clippy clean; starting tools/run_tests.sh 4 (load 106.33 99.51 92.81) |
+| WIDEN-WARN | impl attempt 1 | 2026-11-03 07:14 | scaling (pass alone, instructions, 1000 vs 8000): many warnings 16.1M->129.0M 8.01x, chain derivation 13.5M->108.6M 8.01x. Negative controls, not committed: bin |
 
 Merged into local main and not yet pushed (56 commits); the push follows one full test run on the merged tree:
 
+- 931c8ac plan_dag, STATUS: AXIOMS-order merged (spec: zed c4f4680)
 - 21a488f AXIOMS-order: the order axioms an order chain's compositions read, at int and f64
 - f129ec7 plan_dag, STATUS: BOX-5pt merged
 - 09a3ec3 BOX-5pt repair 1: scale a box point held by every row; at least four row orders per system in the naming tests
 - 94f0f2b BOX-5pt: the Presburger box stage tries five order-free points (XT3 B3)
 - 0f792ff STATUS: S22e merged
 - 15657d9 S22e: read guards on remainders class by class
+- 2df8527 STATUS: in progress as of 2026-11-03 07:44
 - 5adc3c2 STATUS: S22c merged
 - ce36748 S22c: complement_in keeps the integers past an end of i64
 - 42dca7d Merge branch 'wt/audit-gaps-plan'
