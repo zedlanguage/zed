@@ -942,221 +942,272 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ARXIV-1003-spec | impl attempt 1 | 2026-11-03 11:09 | done: zed 0f61a00 (D, A, [GArrows], L11.1a, PROGRESS 297), zed-impl 2360363 (plan_dag L11.1a); check OK 149/0, cases 85/0, fences 149; sync --check out of date  |
+| BIT-kept-ends | repair attempt 1 | 2026-11-03 13:23 | run_tests.sh 2: 312 pieces, 0 failed (load 19.54 to 43.38) |
 | BIT-words | merge attempt 1 | 2026-11-03 07:14 | lock released |
+| CANON-stable | merge attempt 1 | 2026-11-03 09:30 | lock released |
 | CAP-pow32 | merge attempt 1 | 2026-11-03 08:53 | lock released |
-| CATCHUP-cross | repair attempt 1 | 2026-11-03 11:18 | suite on b0811c3+fix: 119 pieces, 0 failed (load 47-74) |
-| GLAM-spec | impl attempt 1 | 2026-11-03 11:10 | done: zed wt/spec-glam cd724c9, zed-impl wt/plan-glam ac63f8a; check/cases/fences/sync --check exit 0; 10 plan rows (5 items incl. SPECULATE, 5 step rows); ledg |
-| L1.17a | repair attempt 2 | 2026-11-03 07:14 | also found: Collision reported instead of a refused leaf equality (prim error now yields to the refusal), and unary - and abs copied wide numbers unasked (now R |
+| EACH-collect | orchestrator attempt  | 2026-11-03 11:14 | RULING for merge#1: renumber its COMPLEXITY row to the next free S number on main at merge time (S33 is TD-ends'; check COMPLEXITY.md after the rebase), and cha |
+| F44-memo | verify attempt 2 | 2026-11-03 07:14 | merged: zed-impl main f6dd8e8 (5e32f5d, 5c39bbe, c4b9a0b, 456873c, f6dd8e8 STATUS/plan_dag), ff from 49e387c; not pushed; worktree and branch removed; lock rele |
+| L1.17a | merge attempt 1 | 2026-11-03 07:14 | start; merge lock held by T2-types, waiting |
 | LIN-probe | merge attempt 1 | 2026-11-03 07:30 | lock released |
-| S22-cross-scaling | orchestrator attempt  | 2026-11-03 11:23 | owner: CATCHUP-cross direct agent, bisecting |
+| LIN-probe-refute | impl attempt 1 | 2026-11-03 11:15 | measured cross k=96 on 49e387c: probe tests 185 disjuncts by settle (94 refuted, levels 1..47 i<=c), 187 point_with picks all fail; probe 2.2 s of 2.6 s; k=12 0 |
+| LIVE3 | merge attempt 1 | 2026-11-03 09:30 | lock released |
+| PA-affine-i128 | impl attempt 1 | 2026-11-03 10:45 | negative control 1 (fits back on the constant): 5 of 6 new tests fail; control 2 (reach fix off): product-of-literals test fails with main's unsound set; both r |
+| PLAN-hygiene | verify attempt 1 | 2026-11-03 11:35 | fmt, clippy -D warnings pass; run_tests.sh 4: 312 pieces, 4 failed, the 4 known base failures (s22 chain_cross_dead/live, l01_38 repair, l01_39a alloc-count ove |
+| S22e-wide | impl attempt 1 | 2026-11-03 11:28 | started; worktree wt/s22e-wide from c076719 |
+| SEQ-rulenames | merge attempt 1 | 2026-11-03 11:34 | started; ZED0 L3 row sorted on branch (84eae949) per orchestrator ruling; waiting for merge lock (held by T2-mid:verify#2) |
+| ST-formula-share | orchestrator attempt  | 2026-11-03 06:50 | TIP: perf is blocked; sample stacks with eu-stack instead: start the probe under timeout, take the test pid with pgrep -P <timeout pid>, then run 'eu-stack -p < |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
-| T2-mid | repair attempt 1 | 2026-11-03 04:26 | rebased on main 3626624 (STATUS rows kept both; check/mod.rs and elab.rs took the branch walks with main's Seq->Array and Op::Pow(Int) ported); builds; load 43. |
+| T2-mid | verify attempt 2 | 2026-11-03 04:26 | done: verify passes; merged, main c076719 (unpushed; rebased on f6dd8e8, 32 commits 71ad20f..c076719); fmt, clippy pass; l01_14/15/16/26/28/29/31/32/33/34, m0_0 |
+| T2-types | merge attempt 1 | 2026-11-03 08:34 | lock released |
+| T6-bound-load | merge attempt 1 | 2026-11-03 07:07 | lock released |
+| T6-payload-pinwheel | merge attempt 1 | 2026-11-03 08:25 | lock released |
+| T6-ratlit | merge attempt 1 | 2026-11-03 05:01 | lock released |
 | TERM-spec | running | 2026-11-03 11:25 | fixed: DESIGN ef80bbd (binary struct grammars, GItem gains TypeFacet*, Assumed(site) foreign obligations, PNG/gzip formats; steps L20.2a, L20.3a, L25.4a) + plan |
-| TYPE-forms | repair attempt 1 | 2026-11-03 08:16 | found O(n^2) in main's type printer (each nested part built as a String and copied into its parent; every declaration prints its signature for its origin note): |
+| TYPE-forms | verify attempt 4 | 2026-11-03 08:16 | fmt, clippy clean; result ok=false: a lambda passed for a bounded function parameter cannot use an operator on its bounded parameter (check/mod.rs fit_lambda gi |
+| UNITANNOT-fix | running | 2026-11-03 14:11 |  |
+| UNITANNOT-L7 | merge attempt 1 | 2026-11-03 07:14 | lock released |
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
+| WIDEN-WARN-tidy | verify attempt 1 | 2026-11-03 10:50 | done: ok; fmt, clippy -D warnings exit 0; run_tests.sh 4: 311 pieces, 4 failed, all known (s22 chain_cross_dead 29.1x, chain_cross_live 38.3x bytes, l01_38 poin |
 
 Merged into local main and not yet pushed (236 commits); the push follows one full test run on the merged tree:
 
-- STATUS: AXIOMS-bool merged, unpushed (tip 99fd3892)
+- 9ab26a9e STATUS: AXIOMS-bool merged, unpushed (tip 99fd3892)
 - 99fd3892 AXIOMS-bool: == and != axioms at bool
-- STATUS, plan_dag: LIVE3 merged, unpushed (tip 059f4df3)
+- 430a275b STATUS, plan_dag: LIVE3 merged, unpushed (tip 059f4df3)
 - 059f4df3 LIVE3 repair 1: thin Reeve scaling tests, bits at 64 to 512, split_at_mut, counts after HULL3
 - 128668f1 LIVE3: a part with three live variables decided completely
-- STATUS, plan_dag: UNITANNOT-L7 merged, unpushed (tip 6e0f0c69)
+- 2fc3c236 STATUS, plan_dag: UNITANNOT-L7 merged, unpushed (tip 6e0f0c69)
 - 6e0f0c69 UNITANNOT-L7: check::widen finds no root in the unit item @log(#off);
 - a12b578a UNITANNOT-L7: the step index lists l07_03_unit_log_off
-- e42f4713 UNITANNOT-L7: an annotation followed by ; is never an annotated statement, so a unit's tree is the same at every layer
-- f5e52255 UNITANNOT-L7: build the unit item @log(#off); at L7
-- STATUS: Q1-ROWBOX merged, unpushed (tip 0513b158)
+- e42f4713 UNITANNOT-L7: an annotation followed by ; is never an annotated statement, so a unit's tree is the same at every layer; tests fixed and run; COMPLEXI
+- f5e52255 UNITANNOT-L7: build the unit item @log(#off); at L7 (work of impl#1, restarted)
+- a55bbe1a STATUS: Q1-ROWBOX merged, unpushed; its Steps row moved from the top of the file into the Steps table
 - 0513b158 Q1-ROWBOX, HUB-SCALE: the box test bounds each variable by the rows in one pass (XR3 Q1)
-- STATUS, plan_dag: F44-memo done (tip 456873c)
-- 456873c F44-memo: deep_types scales_at holds its inputs and outputs in a Mutex, since each run is on a thread of its own
-- c4b9a0b F44-memo: record the known gap of the zero-byte refusal: a run that starts a bare thread allocates in starting it
-- 5c39bbe F44-memo: deep_scaling copy and key runs allocate nothing, so their bytes are not compared
-- 5e32f5d F44-memo: each scaling run on a fresh thread, so per-thread memos start empty
-- STATUS, plan_dag: TD-ends done (tip f02641a)
-- f02641a TD-ends repair 6: exact expectations, wide-base sizes past BZ, l01_39 nest stack
-- d4894aa TD-ends: exact interval ends of any size (repairs 1-5, squashed onto main)
-- 5ea42bc T6-payload-pinwheel repair 1: overlaps finds a type by structure and merges the nodes of a type met twice
-- 6ff2370 T6-payload-pinwheel: decide unions of pinwheels with payload and one-tuple ends
-- df8465c T6-bound-load: the bound walk is measured by check_order; converted keeps its doc; refused_among takes references
-- 63fa169 T6-bound-load: a decided failure of an arrow names no refused cause; cofinite rationals and floats get a value
-- 04aeb1f STATUS: T6-bound-load row; T6 row names what it fixed
-- fec5757 T6-bound-load: one bound check for every written type on every path; refused checks name their cause; declared types print through the kernel
-- 1f2e9e0 S22e-quad repair 1: the split before the first transfer is given up where the transfer reads the guards
-- 9ecb4f0 S22e-quad: classes of remainders share one reading of the guard chain, O(k log k)
-- 1d94b82 plan_dag, STATUS: T2-types done (tip 6fed5c4)
-- 6fed5c4 T2-types: ZED_PORT_GAPS names the recursive-type naming in the text loop
-- 2f4bca6 T2-types: COMPLEXITY K39 and STATUS record the recursive-type names made in the text loop and the release measured on its own thread
-- 12a004c T2-types: a recursive type's name is a rope made as an item of the text loop's stack
-- 92010db T2-types: COMPLEXITY K39 records the control on main 21bd4f8 with the final deep_types
-- ab729fa T2-types: name a recursive type apart from the text loop; time each deep operation on inputs built before
-- 5c6f425 T2-types: drop and print deep types, terms and patterns without recursion
-- 41c4af1 plan_dag, STATUS: T6-ratlit done (tip 79d9f6d)
-- 79d9f6d T6-ratlit: rat literal types hash by residues, compare the exact value, and print the one literal meKr
-- 129accb STATUS: CANON-stable done (tip 7d5d668); its COMPLEXITY row is S32, since main's S31 is ST-arms-quad
-- 7d5d668 presburger canonical(): test Codex's 6-variable system under all 720 namings; colors as a vector; cite Cardon-Crochemore and Paige-Tarjan (CANON-stable repair)
-- fd64eb4 COMPLEXITY S31, STATUS, plan_dag, ZED_PORT_GAPS: CANON-stable breadth-first order
-- cb62c1f presburger canonical(): take variables and rows breadth first in stable color order; drop the row hash (CANON-stable)
-- e224d5b COMPLEXITY S31, STATUS, plan_dag, ZED_PORT_GAPS: CANON-stable
-- 070e96d presburger canonical(), canonical.rs: cargo fmt
-- 4036a22 presburger canonical(): refine to the stable partition (CANON-stable)
-- df8e34f STATUS: in progress as of 2026-11-03 12:42
-- 7e296bf plan_dag, STATUS: UTVPI-NEAR done (tip 16d8ce6)
-- 16d8ce6 UTVPI-NEAR repair 3: test the round bound of BF-Dijkstra against Bellman-Ford; record the ruling on the union family
-- e5e34af UTVPI-NEAR repair 2: the union-family failure goes to UTVPI-union; main's numbers on that family
-- 4439523 UTVPI-NEAR repair: seed each merge's BF-Dijkstra from the tails of negative edges; count the parent walk
-- 094a40b UTVPI-NEAR: race Goldberg-Radzik, BF-Dijkstra and Duong's near-linear search for UTVPI potentials
-- 3e8b8a2 Merge branch 'wt/plan-hkt'
-- 4b117c3 plan_dag, STATUS: INFER-FIELD-desugar done (tip 23bd2ca)
-- 23bd2ca INFER-FIELD-desugar: desugar.txt already matches DESIGN; test that InferType and FieldType are refused naming L10
-- 0e8ba54 plan_dag, STATUS: BIT-words done (tip aed59e4)
-- aed59e4 L1.39a repair: test that Ck::known reads a 20,000-binding chain on an 8 MiB stack
-- 7089dbb L1.39a repair: C26 says what a complete solution needs; STATUS note on lazy binder reading
-- 867865c L1.39a repair: binder values read lazily for bit words and exponents, on an explicit stack; nest, chain and unread-constant scaling tests
-- bc75c16 L1.39a: the bit words as kernel primitives, interval transfer and checked domains
-- 3626624 STATUS: CAP-pow32 done (tip e4915df)
-- 431a77c plan_dag: HKT-2, HKT-1 and steps L2.6a, L6.5a; fences synced; two rejection rows
-- e4915df CAP-pow32 repair: count factors of a power by value while it fits in u32 and by parity
-- 7b1307b CAP-pow32: the exponent of Op::Pow is an unbounded integer
-- 79ad9e6 STATUS: LIN-probe done (tip 3cdb76c)
-- 3cdb76c LIN-probe repair: the tradeoff at probe names its tests; cross 12 to 96 kept as an ignored scaling test (ledger LIN-probe-refute); k = 256 numbers
-- 01e79bd LIN-probe: failed-literal probing keeps each disjunct a found point holds without its test
-- 311c389 fences, grammar copies synced to DESIGN after the Term spec merge; l01_07 snapshots; l01_10 count 1852
-- 2ffc784 Merge branch 'wt/plan-term'
-- 25b1a5b plan_dag: XR3 done
-- e8e381f STATUS: TEST-split done (tip 2d6c53b)
-- 19dea64 plan_dag: TERM-1, TERM-2, TERM-3 and steps L20.2a, L25.4a, L20.3a
-- 2d6c53b STATUS: TEST-split after the rebase on main 88c51bb: 1889 tests each once, 298 pieces, 2 failures also on main
-- 143b7cd tools/run_tests.sh: split l01_08, l01_16, l01_25, l01_36 and l01_38 into pieces by module, and their slow modules by test
-- 45a13be STATUS: in progress as of 2026-11-03 12:02
-- 4ef3c21 plan_dag, STATUS: SEQ-desugar done (tip 76ca195)
-- f27e00a SEQ-desugar merge: check::widen (WIDEN-WARN) names ExprKind::Array, not Seq
-- 76ca195 SEQ-desugar: array displays and [T] are rank-keyed arrays, not Seq
-- 705cf33 STATUS: in progress as of 2026-11-03 11:57
-- 05ad41b fences: sync after the Glam and arXiv 1003.5954 spec merges; l01_07 snapshots re-accepted
-- 40750ce Merge branch 'wt/plan-arxiv1003'
-- 05a620d Merge branch 'wt/plan-glam'
-- ac63f8a plan_dag: Glam study rows and SPECULATE; fences synced to DESIGN
-- 2360363 plan_dag: L11.1a (calls of declared functions in an Ast), needed by L11.3 and L22.9
-- b0811c3 plan_dag, STATUS: TD-values done (9a66958)
-- 9a66958 TD-values: each_value makes every inner type lazily, one maker per type, explicit stack
-- 5b7c3ad STATUS: in progress as of 2026-11-03 11:12
-- 404bae5 STATUS: in progress as of 2026-11-03 11:11
-- ba12343 STATUS: HULL3 done (tip c52cc3c)
-- c52cc3c HULL3: three live variables with a unit side decided by a 3-D shadow in O(m log m) (XT3 B4)
-- 676d775 dagview: directNeeds does not follow a need back into a node on the stack, so a cycle of needs ends instead of exhausting the heap; override needs rep
-- b3235ad plan_dag, STATUS: WIDEN-WARN done (tip 34e6088)
-- 34e6088 WIDEN-WARN: the sort key form of main (AXIOMS-fmt) is a later-layer form in check::widen
-- 1132193 WIDEN-WARN: only +, -, *, unary - and literals wrap under mod 2 ** k
-- 2df3b8d WIDEN-WARN: warn when widening crosses a machine word
-- 21bd4f8 plan_dag, STATUS: HOLE-oneline done (tip 4f0cc81)
-- 4f0cc81 HOLE-oneline: the holes of a """ string in a one-line hole are one-line too
-- cf3f8d1 HOLE-oneline: reject a line break in a hole of a one-line string
-- 16e9a97 STATUS: in progress as of 2026-11-03 10:47
-- 66ca165 plan_dag: ST-arms-quad, R10-stack, ADDITIVE-desugar done (catch-up 88c51bb)
-- 66945e0 plan_dag, STATUS: ADDITIVE-desugar done (merged 9b9a33f, tip aa0e65c)
-- 79c77f0 STATUS: in progress as of 2026-11-03 10:45
-- e7a6a6c STATUS: AXIOMS-gaps merged (064a9fa, tip d5b232e)
-- 88c51bb catch-up: cargo fmt
-- fa57422 Merge branch 'wt/st-arms' (ST-arms-quad, tip cd363ae) into wt/catchup
-- ec56952 Merge commit '51bdcc9' into wt/catchup
-- 44d2dee Merge branch 'wt/s22b-rest' into wt/catchup
-- 9b9a33f Merge branch 'wt/additive-desugar' into wt/catchup
-- 5254b4d Merge branch 'wt/axioms-fmt' into wt/catchup
-- 51bdcc9 S22-merge: s22 comparison counts after the parallel S22b and S22e merges
-- 064a9fa Merge branch 'wt/axioms-gaps' into wt/catchup
-- 5ca2bbc Merge branch 'wt/r10-stack' into wt/catchup
-- 1ab9e33 STATUS: in progress as of 2026-11-03 09:45
-- 4be54a5 plan_dag, STATUS: SCALE-bytes merged (3fa1fdc)
-- 3fa1fdc SCALE-bytes: scaling tests check bytes allocated next to instructions
-- 85e5b47 plan_dag: OSP-neglit done (2e145cc)
-- eeb8598 STATUS: in progress as of 2026-11-03 09:37
-- c10cacd AXIOMS-fmt: every prelude file formats to a fixed point
-- a51db93 S22b-rest: the summary reads c - u for every constant c; the clip reads c - x by reflect
-- cd363ae ST-arms-quad repair 4: two O(d²) costs on nests with a new symbol at each level
-- aa0e65c ADDITIVE-desugar: desugar.txt already matches DESIGN; test the String case of the Additive rule; STATUS row
-- 2e145cc OSP-neglit: reject a prefix - on a postfix chain whose base is a numeric literal, with both groupings and their values
-- ab26ea6 STATUS: in progress as of 2026-11-03 08:53
-- d5b232e AXIOMS-gaps: > and >= at String, != at f64 and String
-- 99deb6b plan_dag, STATUS: LIN-cross merged
-- 99987df LIN-cross: pick's repair reads each variable's bounds, not every guard on it
-- 9cdc70f R10: run native code on a stack as large as memory
-- 3b44b91 STATUS: in progress as of 2026-11-03 08:24
-- 5b78cbd plan_dag, STATUS: T6 merged
-- 9a413d5 T6 repair 7: no copies of shown values; exact overlaps keys for cofinite sets; TupleSplit and overlaps tradeoff comments
-- 80e69d5 T6 repair 6: tradeoff comments at every refusal site; Type::contains address key recorded as an exception; Bdd::apply without its unused limit
-- 75e0008 T6 repair 6: a closed tuple piece is decided by the kernel, and every refused check in a call says why
-- 4be7a96 T6 repair 6: a list of pure cycles is kept as its length (Rep::List, BigUint) and never built; residue_length picks it by conditional expectations; li
-- 3d98b6f T6: type emptiness (E/I judgments, X14 decider, witness-first search, refusals with causes, no Type::values(cap)); squash of c297afe and b9a5ca4 for t
-- 298498f Merge branch 'wt/layer-argname'
-- 89a8932 LAYER-argname: expected outputs for the DESIGN 9c85a19 grammar
-- b4a86f3 STATUS: in progress as of 2026-11-03 08:10
-- e52e433 STATUS: in progress as of 2026-11-03 08:09
-- 931c8ac plan_dag, STATUS: AXIOMS-order merged (spec: zed c4f4680)
-- 21a488f AXIOMS-order: the order axioms an order chain's compositions read, at int and f64
-- f129ec7 plan_dag, STATUS: BOX-5pt merged
-- 15046f2 zed-tools layer: skip named arguments and call references in the words table; sync DESIGN to zed 9c85a19
-- 09a3ec3 BOX-5pt repair 1: scale a box point held by every row; at least four row orders per system in the naming tests
-- 94f0f2b BOX-5pt: the Presburger box stage tries five order-free points (XT3 B3)
-- 0f792ff STATUS: S22e merged
-- 15657d9 S22e: read guards on remainders class by class
-- 2df8527 STATUS: in progress as of 2026-11-03 07:44
-- 5adc3c2 STATUS: S22c merged
-- ce36748 S22c: complement_in keeps the integers past an end of i64
-- 42dca7d Merge branch 'wt/audit-gaps-plan'
-- cc3ca08 plan_dag, STATUS: SEMIRING-kerr merged (spec only: zed 2f28234, 65e6fa6)
-- 4a2686f STATUS: S22b merged
-- 7709581 S22b: c - x reflects each piece of the demand instead of the capped forward image
-- 81516e4 plan_dag: DESIGN audit critic gaps: ledger-only needs as edges, UNITANNOT-L7 cases, L7.5a port facets
-- 70ff249 STATUS: S22d merged
-- 460cfc4 S22d: enumerate reads an empty box as exact before stage::ends
-- 2078235 ST-arms-quad repair 3: summarize reads a disjunct's disjunctions cut to their own constraints; count the parts pick tests
-- 7959661 plan_dag: rows and edges from the 2026-11-03 DESIGN audit
-- a727baa STATUS: CAP-power merged
-- aaae77e CAP-power: read any number of equal factors as a power; POWER_FACTORS removed
-- 3c8d262 STATUS: in progress as of 2026-11-03 07:10
-- 6f5fa07 STATUS: ENDS-dag merged
-- 1248aba ENDS-dag: stage::ends reads each shared part once
-- a779147 STATUS, plan_dag: UTVPI-GOR merged
-- 7c1a6fe UTVPI-GOR: Goldberg-Radzik potential search for cyclic UTVPI graphs
-- 56c2064 STATUS: XT3 out of In progress
-- 1821842 STATUS: in progress as of 2026-11-03 06:41
-- 3fab318 plan_dag, STATUS: XT3 done; add UTVPI-GOR, BOX-5pt, UTVPI-NEAR, HULL3, XR3, HULL3-GEN with edges
-- ea2e48f STATUS: S22a merged
-- 217bb0a S22a repair 1: Pa keeps values in i128 and checks each kept slice; probe over all integers and a half-line scale; comparison asserts exact narrower co
-- c462ff6 S22a: COMPLEXITY S22, STATUS and plan_dag S22-R2 for the min clip, the enumerate order and the narrowed inexact case
-- 132462e S22a: the clip reads min and max; enumerate reads the box before stage::ends; the narrowed inexact case and cross below its width get their own tests
-- e50ee14 S22a: COMPLEXITY S22 fixed for one input with round 2 open; STATUS row; plan_dag rows S22a to S22e and S22-R2; ZED_PORT_GAPS entries
-- 19b249a S22a: the reference transfer rebuilt from main's preimage.rs at fdf7918, so the comparison sees only the change of S22a
-- 0c89e54 S22a: piecewise-affine summaries and the value hull in the backward transfer
-- 9435a7f Merge branch 'wt/rename-simplex'
-- fb4b2f9 RENAME-simplex: store/simplex.rs becomes store/linear.rs; it holds Term and Q, no simplex
-- ccfd444 STATUS: in progress as of 2026-11-03 06:28
-- 873f1a8 ST-arms-quad repair 2: settle reads disjunctions as a worklist, pick walks the nest once
-- 3ee4b07 Merge branch 'wt/plan-plug'
-- 6ce67b6 plan_dag: the four new cross-level lines list 91 pairs
-- fede004 plan_dag: L1.40a, L1.40b, L1.40c, L12.3a; fences synced to DESIGN
-- 45a6e1e Merge branch 'wt/clean-presb'
-- bc8cbf4 CLEAN-presb: scaling.rs control notes name the current code; S18 says what store/simplex.rs still holds
-- c6d245b STATUS: in progress as of 2026-11-03 06:24
-- 96b792c MAP2-bound: map2 takes at most 4(k + 2) pairs, not k + m
-- d72abc8 COMPLEXITY: S1b, S2, S3, S4, S5, S11, S12 and the intro describe the current code, not removed caps
-- 2160e3b STATUS: in progress as of 2026-11-03 06:11
-- b52092d STATUS: OSP-drop2 merged
-- 3747791 OSP-drop2: scaling tests for a long chain of cheap defaulted branches and for generic calls; F59 and STATUS rows
-- 9f784f8 OSP-drop2: a generic call whose result variable is no parameter's own makes every loose atom of its value; tradeoff comment names its test and a compl
-- ebbfd94 OSP-drop2: _ is checked per flow path; a failure is named only by an else on its own path
-- 4157337 dagview: a ledger item listed as open or queued is unstarted
-- dfb35d9 STATUS: in progress as of 2026-11-03 06:02
-- 283695c dagview: a ledger line's at or ts time counts toward start and runtime
-- 140b42b STATUS: in progress as of 2026-11-03 06:01
-- 7073be1 STATUS: in progress as of 2026-11-03 05:42
-- af39546 ST-arms-quad repair 2: project_parts asks each disjunct only for the symbols it touches, and checks each bound with one decide before bisecting
-- 904eeab ST-arms-quad repair: COMPLEXITY S26 and STATUS with measurements, controls and the open causes
-- f6d11c5 ST-arms-quad repair: atom sets bottom-up and shared disjuncts in project_parts; deeper and two-choice scaling tests; relations scaling test
-- 31e6e2f ST-arms-quad: arms on a test nested d deep in near-linear time
+- c076719b STATUS: T2-mid merged, unpushed
+- f4255898 T2-mid tests: the Term drop test holds its terms in a Mutex, since F44-memo runs each measured run on a thread of its own
+- 3f42a5ba T2-mid docs: rebased commit ids; Term's Drop is main's T2-types; elab::kernel_type is the converted Elab::ty; the Bits deep test and why it stops at 
+- 85cda147 T2-mid check: the nested bit words test names the measured parse and check times that rule out 1,000,000 deep
+- 23852f07 T2-mid check: bit words nested 8,000 deep check on a 2 MiB stack through the Bits frame, linear; nested bit words take the inner values
+- 0c46c840 T2-mid kernel: Term's Drop has its own scaling test (six shapes, 12,500 against 100,000) and a 2,000,001-deep test with a shared part; F62 and STATUS
+- 94d57c11 T2-mid check: cargo fmt on the Bits frame's call to call_sig
+- bd6f4e04 T2-mid docs: the COMPLEXITY row is F62 (F60 is OSP-neglit's), references updated
+- 8909c506 T2-mid zir: Region's Debug writes the derived line from a stack; declare is bounded; Ty-bound sites go to T2-ty
+- 08aca2a8 T2-mid: rebased commit ids in STATUS; the staging scaling test fills main's new Unit warnings
+- 03583dac T2-mid docs: costs and controls for memory, text/binary and elab; the kernel's recursive Pattern and Type traits
+- f42b11ba T2-mid elab: types and else patterns are elaborated from stacks
+- 8a33fa08 T2-mid zir text/binary: values, patterns and types are written and read from stacks
+- 578fbe70 T2-mid zir memory: the planner and the machine keep their work on stacks
+- 40bda9da T2-mid docs: the ZIR passes, their tests, controls and costs; rebased commit ids
+- bb355a33 T2-mid check: format the messages taken from main's T6 refusals
+- 1ab0ba4d T2-mid zir lower: a port's state edge is brought down the regions by a loop
+- 3caae226 T2-mid zir lower: lowering, the use walk, visit, patterns and raise run on heap stacks
+- c83d67ca T2-mid zir canon: the canonicalizer's walks run on heap stacks
+- be27e33f T2-mid zir text: printing and parsing a graph run on heap stacks
+- e0e4c4a4 T2-mid zir binary: writing and reading a graph run on heap stacks
+- db33d733 T2-mid zir: checking, comparing and freeing a graph run on heap stacks
+- 30401ede T2-mid docs: commit ids after the rebase; stage::ends is main's ENDS-dag reader
+- 4cbc56a6 T2-mid docs: elaboration's walk, its tests, control and cost; rebased commit ids
+- 782eaadb T2-mid elab: elaboration's walk runs on a heap stack
+- 1fb4973e T2-mid docs: the checker's walk, its tests, control and costs; fix commit ids
+- f0b547f6 T2-mid check: the checker's walk runs on a heap stack
+- da4819d2 T2-mid docs: record the converted passes, costs and open work
+- 9c1093c1 T2-mid stage: free names, ends, effects, the index and mix walk on heap stacks
+- e689da10 T2-mid canon: canonical renaming, serialization and Term's drop walk on heap stacks
+- 60618d88 T2-mid elab tables: finding the function declarations walks on a heap stack
+- 71ad20fa T2-mid resolve: name resolution walks on a heap stack of tasks
+- f6dd8e88 plan_dag, STATUS: F44-memo done (tip 456873c)
+- 456873c2 F44-memo: deep_types scales_at holds its inputs and outputs in a Mutex, since each run is on a thread of its own
+- c4b9a0b3 F44-memo: record the known gap of the zero-byte refusal: a run that starts a bare thread allocates in starting it
+- 5c39bbed F44-memo: deep_scaling copy and key runs allocate nothing, so their bytes are not compared
+- 5e32f5d0 F44-memo: each scaling run on a fresh thread, so per-thread memos start empty
+- 49e387cf CATCHUP-cross: settle tests a disjunct near a point of the growing base before solving its groups
+- 2e788227 ALLOC-refused: a request the system refuses counts no bytes
+- 943e8626 STATUS, plan_dag: TD-ends done (tip f02641a)
+- f02641a3 TD-ends repair 6: exact expectations, wide-base sizes past BZ, l01_39 nest stack
+- d4894aaa TD-ends: exact interval ends of any size (repairs 1-5, squashed onto main)
+- fb00f797 STATUS: T6-payload-pinwheel done (tip 5ea42bc)
+- 5ea42bcd T6-payload-pinwheel repair 1: overlaps finds a type by structure and merges the nodes of a type met twice
+- 6ff23702 T6-payload-pinwheel: decide unions of pinwheels with payload and one-tuple ends
+- 1a3fd2bd plan_dag, STATUS: T6-bound-load done (tip df8465c)
+- df8465c0 T6-bound-load: the bound walk is measured by check_order; converted keeps its doc; refused_among takes references
+- 63fa169e T6-bound-load: a decided failure of an arrow names no refused cause; cofinite rationals and floats get a value
+- 04aeb1fe STATUS: T6-bound-load row; T6 row names what it fixed
+- fec57574 T6-bound-load: one bound check for every written type on every path; refused checks name their cause; declared types print through the kernel
+- ea82a624 STATUS: S22e-quad done (tip 1f2e9e0)
+- 1f2e9e00 S22e-quad repair 1: the split before the first transfer is given up where the transfer reads the guards
+- 9ecb4f0a S22e-quad: classes of remainders share one reading of the guard chain, O(k log k)
+- 1d94b82c plan_dag, STATUS: T2-types done (tip 6fed5c4)
+- 6fed5c4f T2-types: ZED_PORT_GAPS names the recursive-type naming in the text loop
+- 2f4bca67 T2-types: COMPLEXITY K39 and STATUS record the recursive-type names made in the text loop and the release measured on its own thread
+- 12a004c1 T2-types: a recursive type's name is a rope made as an item of the text loop's stack
+- 92010db2 T2-types: COMPLEXITY K39 records the control on main 21bd4f8 with the final deep_types
+- ab729fa3 T2-types: name a recursive type apart from the text loop; time each deep operation on inputs built before
+- 5c6f4250 T2-types: drop and print deep types, terms and patterns without recursion
+- 41c4af11 plan_dag, STATUS: T6-ratlit done (tip 79d9f6d)
+- 79d9f6d6 T6-ratlit: rat literal types hash by residues, compare the exact value, and print the one literal meKr
+- 129accb7 STATUS: CANON-stable done (tip 7d5d668); its COMPLEXITY row is S32, since main's S31 is ST-arms-quad
+- 7d5d6685 presburger canonical(): test Codex's 6-variable system under all 720 namings; colors as a vector; cite Cardon-Crochemore and Paige-Tarjan (CANON-stab
+- fd64eb4a COMPLEXITY S31, STATUS, plan_dag, ZED_PORT_GAPS: CANON-stable breadth-first order
+- cb62c1f5 presburger canonical(): take variables and rows breadth first in stable color order; drop the row hash (CANON-stable)
+- e224d5bb COMPLEXITY S31, STATUS, plan_dag, ZED_PORT_GAPS: CANON-stable
+- 070e96d7 presburger canonical(), canonical.rs: cargo fmt
+- 4036a225 presburger canonical(): refine to the stable partition (CANON-stable)
+- df8e34f4 STATUS: in progress as of 2026-11-03 12:42
+- 7e296bf0 plan_dag, STATUS: UTVPI-NEAR done (tip 16d8ce6)
+- 16d8ce61 UTVPI-NEAR repair 3: test the round bound of BF-Dijkstra against Bellman-Ford; record the ruling on the union family
+- e5e34af3 UTVPI-NEAR repair 2: the union-family failure goes to UTVPI-union; main's numbers on that family
+- 4439523e UTVPI-NEAR repair: seed each merge's BF-Dijkstra from the tails of negative edges; count the parent walk
+- 094a40b5 UTVPI-NEAR: race Goldberg-Radzik, BF-Dijkstra and Duong's near-linear search for UTVPI potentials
+- 3e8b8a23 Merge branch 'wt/plan-hkt'
+- 4b117c3a plan_dag, STATUS: INFER-FIELD-desugar done (tip 23bd2ca)
+- 23bd2cad INFER-FIELD-desugar: desugar.txt already matches DESIGN; test that InferType and FieldType are refused naming L10
+- 0e8ba545 plan_dag, STATUS: BIT-words done (tip aed59e4)
+- aed59e40 L1.39a repair: test that Ck::known reads a 20,000-binding chain on an 8 MiB stack
+- 7089dbb1 L1.39a repair: C26 says what a complete solution needs; STATUS note on lazy binder reading
+- 867865cf L1.39a repair: binder values read lazily for bit words and exponents, on an explicit stack; nest, chain and unread-constant scaling tests
+- bc75c161 L1.39a: the bit words as kernel primitives, interval transfer and checked domains
+- 3626624d STATUS: CAP-pow32 done (tip e4915df)
+- 431a77c0 plan_dag: HKT-2, HKT-1 and steps L2.6a, L6.5a; fences synced; two rejection rows
+- e4915df3 CAP-pow32 repair: count factors of a power by value while it fits in u32 and by parity
+- 7b1307b7 CAP-pow32: the exponent of Op::Pow is an unbounded integer
+- 79ad9e65 STATUS: LIN-probe done (tip 3cdb76c)
+- 3cdb76c5 LIN-probe repair: the tradeoff at probe names its tests; cross 12 to 96 kept as an ignored scaling test (ledger LIN-probe-refute); k = 256 numbers
+- 01e79bd6 LIN-probe: failed-literal probing keeps each disjunct a found point holds without its test
+- 311c389a fences, grammar copies synced to DESIGN after the Term spec merge; l01_07 snapshots; l01_10 count 1852
+- 2ffc7841 Merge branch 'wt/plan-term'
+- 25b1a5b7 plan_dag: XR3 done
+- e8e381f6 STATUS: TEST-split done (tip 2d6c53b)
+- 19dea647 plan_dag: TERM-1, TERM-2, TERM-3 and steps L20.2a, L25.4a, L20.3a
+- 2d6c53bc STATUS: TEST-split after the rebase on main 88c51bb: 1889 tests each once, 298 pieces, 2 failures also on main
+- 143b7cd8 tools/run_tests.sh: split l01_08, l01_16, l01_25, l01_36 and l01_38 into pieces by module, and their slow modules by test
+- 45a13be8 STATUS: in progress as of 2026-11-03 12:02
+- 4ef3c219 plan_dag, STATUS: SEQ-desugar done (tip 76ca195)
+- f27e00ac SEQ-desugar merge: check::widen (WIDEN-WARN) names ExprKind::Array, not Seq
+- 76ca1955 SEQ-desugar: array displays and [T] are rank-keyed arrays, not Seq
+- 705cf333 STATUS: in progress as of 2026-11-03 11:57
+- 05ad41bc fences: sync after the Glam and arXiv 1003.5954 spec merges; l01_07 snapshots re-accepted
+- 40750ce0 Merge branch 'wt/plan-arxiv1003'
+- 05a620d4 Merge branch 'wt/plan-glam'
+- ac63f8a0 plan_dag: Glam study rows and SPECULATE; fences synced to DESIGN
+- 23603630 plan_dag: L11.1a (calls of declared functions in an Ast), needed by L11.3 and L22.9
+- b0811c3d plan_dag, STATUS: TD-values done (9a66958)
+- 9a669586 TD-values: each_value makes every inner type lazily, one maker per type, explicit stack
+- 5b7c3ade STATUS: in progress as of 2026-11-03 11:12
+- 404bae54 STATUS: in progress as of 2026-11-03 11:11
+- ba123436 STATUS: HULL3 done (tip c52cc3c)
+- c52cc3cd HULL3: three live variables with a unit side decided by a 3-D shadow in O(m log m) (XT3 B4)
+- 676d775d dagview: directNeeds does not follow a need back into a node on the stack, so a cycle of needs ends instead of exhausting the heap; override needs re
+- b3235adb plan_dag, STATUS: WIDEN-WARN done (tip 34e6088)
+- 34e6088f WIDEN-WARN: the sort key form of main (AXIOMS-fmt) is a later-layer form in check::widen
+- 1132193f WIDEN-WARN: only +, -, *, unary - and literals wrap under mod 2 ** k
+- 2df3b8da WIDEN-WARN: warn when widening crosses a machine word
+- 21bd4f8c plan_dag, STATUS: HOLE-oneline done (tip 4f0cc81)
+- 4f0cc813 HOLE-oneline: the holes of a """ string in a one-line hole are one-line too
+- cf3f8d17 HOLE-oneline: reject a line break in a hole of a one-line string
+- 16e9a970 STATUS: in progress as of 2026-11-03 10:47
+- 66ca165d plan_dag: ST-arms-quad, R10-stack, ADDITIVE-desugar done (catch-up 88c51bb)
+- 66945e04 plan_dag, STATUS: ADDITIVE-desugar done (merged 9b9a33f, tip aa0e65c)
+- 79c77f0a STATUS: in progress as of 2026-11-03 10:45
+- e7a6a6c4 STATUS: AXIOMS-gaps merged (064a9fa, tip d5b232e)
+- 88c51bbf catch-up: cargo fmt
+- fa574224 Merge branch 'wt/st-arms' (ST-arms-quad, tip cd363ae) into wt/catchup
+- ec569528 Merge commit '51bdcc9' into wt/catchup
+- 44d2deed Merge branch 'wt/s22b-rest' into wt/catchup
+- 9b9a33fd Merge branch 'wt/additive-desugar' into wt/catchup
+- 5254b4d5 Merge branch 'wt/axioms-fmt' into wt/catchup
+- 51bdcc9b S22-merge: s22 comparison counts after the parallel S22b and S22e merges
+- 064a9fa2 Merge branch 'wt/axioms-gaps' into wt/catchup
+- 5ca2bbc3 Merge branch 'wt/r10-stack' into wt/catchup
+- 1ab9e339 STATUS: in progress as of 2026-11-03 09:45
+- 4be54a52 plan_dag, STATUS: SCALE-bytes merged (3fa1fdc)
+- 3fa1fdc6 SCALE-bytes: scaling tests check bytes allocated next to instructions
+- 85e5b476 plan_dag: OSP-neglit done (2e145cc)
+- eeb8598b STATUS: in progress as of 2026-11-03 09:37
+- c10cacd1 AXIOMS-fmt: every prelude file formats to a fixed point
+- a51db93c S22b-rest: the summary reads c - u for every constant c; the clip reads c - x by reflect
+- cd363ae5 ST-arms-quad repair 4: two O(d²) costs on nests with a new symbol at each level
+- aa0e65cd ADDITIVE-desugar: desugar.txt already matches DESIGN; test the String case of the Additive rule; STATUS row
+- 2e145ccb OSP-neglit: reject a prefix - on a postfix chain whose base is a numeric literal, with both groupings and their values
+- ab26ea60 STATUS: in progress as of 2026-11-03 08:53
+- d5b232e2 AXIOMS-gaps: > and >= at String, != at f64 and String
+- 99deb6b5 plan_dag, STATUS: LIN-cross merged
+- 99987df3 LIN-cross: pick's repair reads each variable's bounds, not every guard on it
+- 9cdc70f2 R10: run native code on a stack as large as memory
+- 3b44b915 STATUS: in progress as of 2026-11-03 08:24
+- 5b78cbd1 plan_dag, STATUS: T6 merged
+- 9a413d52 T6 repair 7: no copies of shown values; exact overlaps keys for cofinite sets; TupleSplit and overlaps tradeoff comments
+- 80e69d59 T6 repair 6: tradeoff comments at every refusal site; Type::contains address key recorded as an exception; Bdd::apply without its unused limit
+- 75e0008f T6 repair 6: a closed tuple piece is decided by the kernel, and every refused check in a call says why
+- 4be7a96a T6 repair 6: a list of pure cycles is kept as its length (Rep::List, BigUint) and never built; residue_length picks it by conditional expectations; l
+- 3d98b6f2 T6: type emptiness (E/I judgments, X14 decider, witness-first search, refusals with causes, no Type::values(cap)); squash of c297afe and b9a5ca4 for 
+- 298498f7 Merge branch 'wt/layer-argname'
+- 89a89323 LAYER-argname: expected outputs for the DESIGN 9c85a19 grammar
+- b4a86f32 STATUS: in progress as of 2026-11-03 08:10
+- e52e433a STATUS: in progress as of 2026-11-03 08:09
+- 931c8acd plan_dag, STATUS: AXIOMS-order merged (spec: zed c4f4680)
+- 21a488ff AXIOMS-order: the order axioms an order chain's compositions read, at int and f64
+- f129ec73 plan_dag, STATUS: BOX-5pt merged
+- 15046f22 zed-tools layer: skip named arguments and call references in the words table; sync DESIGN to zed 9c85a19
+- 09a3ec30 BOX-5pt repair 1: scale a box point held by every row; at least four row orders per system in the naming tests
+- 94f0f2bc BOX-5pt: the Presburger box stage tries five order-free points (XT3 B3)
+- 0f792ffc STATUS: S22e merged
+- 15657d99 S22e: read guards on remainders class by class
+- 2df85272 STATUS: in progress as of 2026-11-03 07:44
+- 5adc3c2e STATUS: S22c merged
+- ce367488 S22c: complement_in keeps the integers past an end of i64
+- 42dca7dd Merge branch 'wt/audit-gaps-plan'
+- cc3ca087 plan_dag, STATUS: SEMIRING-kerr merged (spec only: zed 2f28234, 65e6fa6)
+- 4a2686f6 STATUS: S22b merged
+- 77095810 S22b: c - x reflects each piece of the demand instead of the capped forward image
+- 81516e40 plan_dag: DESIGN audit critic gaps: ledger-only needs as edges, UNITANNOT-L7 cases, L7.5a port facets
+- 70ff2493 STATUS: S22d merged
+- 460cfc48 S22d: enumerate reads an empty box as exact before stage::ends
+- 20782359 ST-arms-quad repair 3: summarize reads a disjunct's disjunctions cut to their own constraints; count the parts pick tests
+- 7959661d plan_dag: rows and edges from the 2026-11-03 DESIGN audit
+- a727baa2 STATUS: CAP-power merged
+- aaae77e5 CAP-power: read any number of equal factors as a power; POWER_FACTORS removed
+- 3c8d2625 STATUS: in progress as of 2026-11-03 07:10
+- 6f5fa07c STATUS: ENDS-dag merged
+- 1248aba4 ENDS-dag: stage::ends reads each shared part once
+- a7791475 STATUS, plan_dag: UTVPI-GOR merged
+- 7c1a6fe8 UTVPI-GOR: Goldberg-Radzik potential search for cyclic UTVPI graphs
+- 56c2064d STATUS: XT3 out of In progress
+- 18218426 STATUS: in progress as of 2026-11-03 06:41
+- 3fab3188 plan_dag, STATUS: XT3 done; add UTVPI-GOR, BOX-5pt, UTVPI-NEAR, HULL3, XR3, HULL3-GEN with edges
+- ea2e48f0 STATUS: S22a merged
+- 217bb0a0 S22a repair 1: Pa keeps values in i128 and checks each kept slice; probe over all integers and a half-line scale; comparison asserts exact narrower c
+- c462ff6e S22a: COMPLEXITY S22, STATUS and plan_dag S22-R2 for the min clip, the enumerate order and the narrowed inexact case
+- 132462ef S22a: the clip reads min and max; enumerate reads the box before stage::ends; the narrowed inexact case and cross below its width get their own tests
+- e50ee14f S22a: COMPLEXITY S22 fixed for one input with round 2 open; STATUS row; plan_dag rows S22a to S22e and S22-R2; ZED_PORT_GAPS entries
+- 19b249aa S22a: the reference transfer rebuilt from main's preimage.rs at fdf7918, so the comparison sees only the change of S22a
+- 0c89e544 S22a: piecewise-affine summaries and the value hull in the backward transfer
+- 9435a7f0 Merge branch 'wt/rename-simplex'
+- fb4b2f90 RENAME-simplex: store/simplex.rs becomes store/linear.rs; it holds Term and Q, no simplex
+- ccfd444b STATUS: in progress as of 2026-11-03 06:28
+- 873f1a86 ST-arms-quad repair 2: settle reads disjunctions as a worklist, pick walks the nest once
+- 3ee4b078 Merge branch 'wt/plan-plug'
+- 6ce67b60 plan_dag: the four new cross-level lines list 91 pairs
+- fede0048 plan_dag: L1.40a, L1.40b, L1.40c, L12.3a; fences synced to DESIGN
+- 45a6e1e8 Merge branch 'wt/clean-presb'
+- bc8cbf43 CLEAN-presb: scaling.rs control notes name the current code; S18 says what store/simplex.rs still holds
+- c6d245bd STATUS: in progress as of 2026-11-03 06:24
+- 96b792cd MAP2-bound: map2 takes at most 4(k + 2) pairs, not k + m
+- d72abc86 COMPLEXITY: S1b, S2, S3, S4, S5, S11, S12 and the intro describe the current code, not removed caps
+- 2160e3ba STATUS: in progress as of 2026-11-03 06:11
+- b52092d4 STATUS: OSP-drop2 merged
+- 37477916 OSP-drop2: scaling tests for a long chain of cheap defaulted branches and for generic calls; F59 and STATUS rows
+- 9f784f8f OSP-drop2: a generic call whose result variable is no parameter's own makes every loose atom of its value; tradeoff comment names its test and a comp
+- ebbfd948 OSP-drop2: _ is checked per flow path; a failure is named only by an else on its own path
+- 4157337e dagview: a ledger item listed as open or queued is unstarted
+- dfb35d90 STATUS: in progress as of 2026-11-03 06:02
+- 283695c6 dagview: a ledger line's at or ts time counts toward start and runtime
+- 140b42b7 STATUS: in progress as of 2026-11-03 06:01
+- 7073be13 STATUS: in progress as of 2026-11-03 05:42
+- af395464 ST-arms-quad repair 2: project_parts asks each disjunct only for the symbols it touches, and checks each bound with one decide before bisecting
+- 904eeab9 ST-arms-quad repair: COMPLEXITY S26 and STATUS with measurements, controls and the open causes
+- f6d11c59 ST-arms-quad repair: atom sets bottom-up and shared disjuncts in project_parts; deeper and two-choice scaling tests; relations scaling test
+- 31e6e2fe ST-arms-quad: arms on a test nested d deep in near-linear time
 
 ## Open points
 
