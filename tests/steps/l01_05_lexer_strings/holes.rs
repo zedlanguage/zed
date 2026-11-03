@@ -113,11 +113,26 @@ fn a_hole_of_a_one_line_string_holds_no_line_break() {
         "\"\\\"\\\"\\\"a\": malformed string: a `\"\"\"` string in a hole of a `\"` string \
          closes on its line"
     );
-    // The `"""` string's own hole may span lines, but the one-line hole around it may not.
+    // A `"""` string in a hole of a `"` string closes on its line, so its own holes do too.
     assert_eq!(
         error("log(\"${\"\"\"${a /* c\n */}\"\"\"}\");"),
-        "\"\\\"\\\"\\\"${a /* c\": malformed string: a `\"\"\"` string in a hole of a `\"` \
-         string closes on its line"
+        "\"/* c\": malformed string: a `/* … */` comment in a hole of a `\"` string closes on \
+         its line"
+    );
+    assert_eq!(
+        error("x = \"${\"\"\"${a // c}\"\"\"}\";\n"),
+        "\"// c}\\\"\\\"\\\"}\\\";\": malformed string: a `//` comment in a hole of a `\"` string \
+         runs to the end of the line, past the `}`; write `/* … */`"
+    );
+    // A line break and a later `}"""}` do not end that `//` comment's hole either.
+    assert_eq!(
+        error("x = \"${\"\"\"${a // c\n}\"\"\"}\";"),
+        "\"// c\": malformed string: a `//` comment in a hole of a `\"` string runs to the end of \
+         the line, past the `}`; write `/* … */`"
+    );
+    assert_eq!(
+        error("x = \"${\"\"\"${a\n}\"\"\"}\";"),
+        "\"${a\": malformed string: a hole in a `\"` string closes on its line"
     );
     // A `"` string in a `"""` string's hole is one-line again.
     assert_eq!(

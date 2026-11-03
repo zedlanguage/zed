@@ -14,8 +14,9 @@
 //!
 //! A string is its parts: decoded text, and holes, each lexed into the tokens of its
 //! expression. A `"` string has no line break, its holes included: a line break in such a hole,
-//! in a block comment or a `"""` string in it, is an error, and so is a `//` comment in it,
-//! which runs to the end of the line and so past the `}`. Each of these has its own message.
+//! in a block comment or a `"""` string in it, or in a hole of that `"""` string, is an error,
+//! and so is a `//` comment in any of these holes, which runs to the end of the line and so past
+//! the `}`. Each of these has its own message.
 //!
 //! A `"""` string whose opening `"""` ends its line and whose closing `"""` begins its line
 //! after spaces and tabs only is stripped of that indentation: the line breaks after the
@@ -231,8 +232,9 @@ enum Inside {
         one_line: bool,
         depth: usize,
     },
-    /// A string in a hole.
-    Str(Scan),
+    /// A string in a hole, and whether that hole closes on its line: if it does, so do the
+    /// string and the holes in it (`String1`, `Char1`, `HoleText1`).
+    Str { scan: Scan, one_line: bool },
 }
 
 /// The position of the `}` closing the hole whose `${` is at `open`. Each hole found on the way
@@ -250,11 +252,11 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
     let mut i = open + 2;
     loop {
         match stack.last_mut().expect("the outermost hole returns") {
-            Inside::Str(scan) => match scan.next_hole(text)? {
+            Inside::Str { scan, one_line } => match scan.next_hole(text)? {
                 Some(open) => match holes.ends.get(&open) {
                     Some(&end) => scan.i = end + 1,
                     None => {
-                        let one_line = !scan.triple;
+                        let one_line = *one_line || !scan.triple;
                         stack.push(Inside::Hole {
                             open,
                             one_line,
@@ -264,11 +266,8 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                     }
                 },
                 None => {
-                    let (start, end) = (scan.pos, scan.end());
+                    let (start, end, one_line) = (scan.pos, scan.end(), *one_line);
                     stack.pop();
-                    let Some(&mut Inside::Hole { one_line, .. }) = stack.last_mut() else {
-                        unreachable!("a string here is inside a hole");
-                    };
                     // A `"` string stopped at its own line break, so this one is a `"""`.
                     if one_line && let Some(nl) = holes.first_break(start, end) {
                         return Err(bad(
@@ -293,7 +292,7 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                         stack.pop();
                         match stack.last_mut() {
                             None => return Ok(i),
-                            Some(Inside::Str(scan)) => scan.i = i + 1,
+                            Some(Inside::Str { scan, .. }) => scan.i = i + 1,
                             Some(Inside::Hole { .. }) => {
                                 unreachable!("a hole here is inside a string")
                             }
@@ -309,7 +308,11 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                         i + 1
                     }
                     Some('"') => {
-                        stack.push(Inside::Str(Scan::new(text, i)));
+                        let one_line = *one_line;
+                        stack.push(Inside::Str {
+                            scan: Scan::new(text, i),
+                            one_line,
+                        });
                         continue;
                     }
                     Some('/') if *one_line && rest.starts_with("//") => {
