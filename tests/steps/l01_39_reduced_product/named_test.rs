@@ -5,9 +5,10 @@
 //! of fallbacks on the balance `x` and the credit `y`, as long as the approval is deep. The
 //! formula of the test holds the rule's formula once at each tier, shared and not copied, so
 //! the arms take time near linear in `d` and not in `d²` (COMPLEXITY.md S31). A named
-//! conjunction of many credit limits, or a named disjunction of many exemptions, is still read
-//! once at each tier (COMPLEXITY.md S31b, open in ST-formula-wide); two ignored tests below
-//! measure it.
+//! conjunction of many credit limits, a named disjunction of many exemptions, or a named
+//! disjunction of many credit limits any one of which a tier requires, is still read once at
+//! each tier (COMPLEXITY.md S31b, open in ST-formula-wide); three ignored tests below measure
+//! it.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -161,6 +162,17 @@ fn approval_within(d: usize, k: usize, named: bool) -> Term {
     }
 }
 
+/// The approval `d` tiers deep where a small request needs any one of `k` credit limits at each
+/// tier, the limits in place of the rule.
+fn approval_any_limit(d: usize, k: usize, named: bool) -> Term {
+    let any = || limits(k).into_iter().reduce(either).expect("a limit");
+    if named {
+        let_("t", any(), approval(d, &|| var("t")))
+    } else {
+        approval(d, &any)
+    }
+}
+
 /// The approval `d` tiers deep where any one of `k` exemptions approves at each tier, beside a
 /// large request or a small one that the next tier approves.
 fn approval_exempt(d: usize, k: usize, named: bool) -> Term {
@@ -193,6 +205,8 @@ fn named_limits_and_exemptions_at_each_tier_narrow_as_if_written_out() {
         assert_eq!(within, summary(&arms_of(approval_within(d, k, false))));
         let exempt = summary(&arms_of(approval_exempt(d, k, true)));
         assert_eq!(exempt, summary(&arms_of(approval_exempt(d, k, false))));
+        let any = summary(&arms_of(approval_any_limit(d, k, true)));
+        assert_eq!(any, summary(&arms_of(approval_any_limit(d, k, false))));
     }
 }
 /// Runs the scaling check of `arms` on `family(d, d, true)` at d = 30 and 240.
@@ -233,5 +247,21 @@ fn arms_of_a_wide_named_disjunction_at_each_tier_take_time_near_linear_in_the_de
     wide_scaling(
         "arms of k = d exemptions named once, any of which approves at each of d tiers",
         approval_exempt,
+    );
+}
+
+#[test]
+#[ignore = "fails: a shared disjunction used as a conjunct is read once per place; open in ST-formula-wide (COMPLEXITY.md S31b)"]
+fn arms_of_a_wide_named_disjunction_required_at_each_tier_take_time_near_linear_in_the_depth() {
+    // Any one of k = d credit limits, named once, required of a small request at each of d
+    // tiers. Measured by ST-formula-share verify#2, in instructions at d = 30, 60, 120, 240:
+    // 2.76, 10.4, 40.2, 157.6 G (3.8 times per doubling), 0.73 to 39.6 GB allocated; written
+    // out at each tier, d = 30, 60 and 120 did not finish in 300 s together. The test fails at
+    // 54.1 times the bytes (limit 24). `Parts::of` makes the disjunction's k disjuncts once but
+    // copies its list at each place, and `settle`, `pick` and `witness` read the k disjuncts
+    // once per place (tradeoff comment at `Parts::of`).
+    wide_scaling(
+        "arms of any of k = d credit limits named once, required at each of d tiers",
+        approval_any_limit,
     );
 }

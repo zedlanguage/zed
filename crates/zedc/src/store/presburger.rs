@@ -1655,24 +1655,33 @@ impl Parts {
     /// is read without recursion (COMPLEXITY.md S27). A disjunction that the formula holds as a
     /// conjunct in more than one place, and a disjunct held in more than one place, are made
     /// once and shared, as [`Rc`]s, at each place (COMPLEXITY.md S31).
-    // Complexity tradeoff: two shapes of shared part are still read once per place, not once.
+    // Complexity tradeoff: three shapes of shared part are still read once per place, not once.
     // (1) A shared conjunction used as a conjunct: `Formula::and` has flattened it into the
     // conjunction around it, so it has no node here, and its constraints are added to the base
     // of each place, one by one. (2) A shared disjunction used as a disjunct: `Formula::or` has
     // flattened it into the disjunction around it, so its disjuncts are entered as disjuncts of
     // each place (each disjunct that is a node is made once, but the list is walked at each
-    // place). No answer is given up; the cost is. Trigger: a `let`-bound conjunction (1) or
-    // disjunction (2) of k constraints used at each of d places costs O(d k) here and in the
-    // solver after it, quadratic in the size of the program when k is about d. A shared
-    // disjunction used as a conjunct and a shared disjunct, the forms a `let`-bound test takes
-    // in `named_test`, are made once. Tests
-    // `l01_39_reduced_product::named_test::arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth`
-    // and `..._wide_named_disjunction_...` (both ignored and failing: 1.18 to 59.0 G and 0.37
-    // to 14.2 G at d = 30 to 240), COMPLEXITY.md S31b, open in item ST-formula-wide. A complete
-    // solution keeps a shared conjunction and a shared disjunction as nodes of their own in
-    // `Formula::and` and `Formula::or`, holds a shared conjunction here as a shared chunk of
-    // the base, and lets `settle`, `pick`, `witness` and `project_parts` read a chunk or a
-    // disjunction once per model and skip a chunk that the base already holds.
+    // place). (3) A shared disjunction used as a conjunct: its disjuncts are made once (`ors`
+    // below), but its list of k disjuncts is copied into each place (`done.clone()`,
+    // `ds.clone()`), and `settle`, `pick` and `witness` then read the k disjuncts once per
+    // place, as a disjunction of its own at each. No answer is given up; the cost is. Trigger:
+    // a `let`-bound conjunction (1) or disjunction (2, 3) of k parts used at each of d places
+    // costs O(d k) here and in the solver after it, quadratic in the size of the program when
+    // k is about d. A shared disjunct, and a shared disjunction of few disjuncts used as a
+    // conjunct (the form the `let`-bound rule takes in `named_test`), are made once and cost
+    // O(1) per place here. Tests in `l01_39_reduced_product::named_test`, all three ignored and
+    // failing:
+    // `arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth` (1:
+    // 1.18 to 59.0 G at d = 30 to 240), `..._wide_named_disjunction_at_each_tier_...` (2: 0.37
+    // to 14.2 G) and `..._wide_named_disjunction_required_at_each_tier_...` (3: 2.76 to 157.6 G),
+    // COMPLEXITY.md S31b, open in item ST-formula-wide. A complete solution keeps a shared
+    // conjunction and a shared disjunction as nodes of their own in `Formula::and` and
+    // `Formula::or`, holds a shared conjunction here as a shared chunk of the base and a shared
+    // disjunction as one shared list (`Rc<[Rc<Parts>]>`), and lets `settle`, `pick`, `witness`
+    // and `project_parts` read a chunk or a disjunction they have already met once per model
+    // and skip a chunk that the base already holds; reading a repeated disjunction once can
+    // change which disjuncts `pick` takes, so the models it returns must then be checked
+    // against the present ones.
     fn of(f: Formula) -> Parts {
         /// A disjunction being entered: its key when shared, its disjuncts left and those made.
         type Entering = (Option<Id>, std::vec::IntoIter<Formula>, Vec<Rc<Parts>>);
