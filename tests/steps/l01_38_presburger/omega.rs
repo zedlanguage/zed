@@ -128,18 +128,6 @@ fn each_cause_of_a_refusal_has_its_own_message() {
         Refusal::Shadows,
         "the relation has rational points but no integer point was found or ruled out",
     );
-    // A box around the origin in which x has 2 lower and 3 upper bounds and y 2 and 3.
-    refused(
-        Formula::and(vec![
-            ge(&[("x", 1), ("y", -1)], 100),
-            ge(&[("x", 1), ("y", -2)], 100),
-            ge(&[("x", -1), ("y", 2)], 100),
-            ge(&[("x", -2), ("y", 1)], 100),
-            ge(&[("x", -1), ("y", -1)], 100),
-        ]),
-        Refusal::Growth,
-        "eliminating any variable left would grow the relation",
-    );
     // Four tasks, three slots, each pair in different slots: no slot assignment, which the
     // search through the disjunctions does not show by propagation.
     let tasks = ["a", "b", "c", "d"];
@@ -161,6 +149,140 @@ fn each_cause_of_a_refusal_has_its_own_message() {
         Refusal::Coefficient.to_string(),
         "a coefficient of the relation does not fit in 128 bits"
     );
+}
+
+#[test]
+fn a_box_every_elimination_of_which_would_add_terms_is_answered() {
+    // x has 2 lower and 3 upper bounds and y 2 and 3, around the origin.
+    let f = Formula::and(vec![
+        ge(&[("x", 1), ("y", -1)], 100),
+        ge(&[("x", 1), ("y", -2)], 100),
+        ge(&[("x", -1), ("y", 2)], 100),
+        ge(&[("x", -2), ("y", 1)], 100),
+        ge(&[("x", -1), ("y", -1)], 100),
+    ]);
+    let m = satisfiable(&f).unwrap().expect("a point");
+    assert!(f.holds(&m), "{m:?}");
+}
+
+#[test]
+fn a_rational_point_with_no_integer_value_of_a_variable_is_empty() {
+    // 2x + 2y == 1 written as rows of three terms that no elimination can take without fill.
+    let f = Formula::and(vec![
+        ge(&[("x", 2), ("y", 4), ("z", 2)], -1),
+        ge(&[("x", -2), ("y", -4), ("z", -2)], 1),
+    ]);
+    assert_eq!(satisfiable(&f), Ok(None));
+    // A cycle of differences that sums below zero, with every variable on both sides.
+    let f = Formula::and(vec![
+        ge(&[("a", 1), ("b", -1)], -1),
+        ge(&[("b", 1), ("c", -1)], -1),
+        ge(&[("c", 1), ("a", -1)], 1),
+    ]);
+    assert_eq!(satisfiable(&f), Ok(None));
+}
+
+#[test]
+fn the_answer_is_the_answer_of_every_point_of_a_small_box() {
+    // Every system has at most 3 variables in -6..=6; a refusal is allowed, a wrong answer not.
+    let mut rng = Rng::new(0x1381);
+    let (mut answered, mut refused) = (0, 0);
+    for t in 0..1500 {
+        let v = 2 + t % 2;
+        let names = ["a", "b", "c"];
+        let mut rows: Vec<Vec<(usize, i128)>> = Vec::new();
+        let mut ks = Vec::new();
+        let mut fs: Vec<Formula> = names[..v]
+            .iter()
+            .flat_map(|s| [ge(&[(s, 1)], 6), ge(&[(s, -1)], 6)])
+            .collect();
+        for _ in 0..v + rng.below(3 * v) {
+            let mut row: Vec<(usize, i128)> = Vec::new();
+            for _ in 0..2 {
+                let i = rng.below(v);
+                if !row.iter().any(|p| p.0 == i) {
+                    row.push((i, [-5, -3, -2, -1, 1, 2, 3, 5][rng.below(8)]));
+                }
+            }
+            let k = rng.int(-14, 14) as i128;
+            let l: Vec<(&str, i128)> = row.iter().map(|(i, c)| (names[*i], *c)).collect();
+            fs.push(ge(&l, k));
+            rows.push(row);
+            ks.push(k);
+        }
+        let holds = |p: &[i128]| {
+            rows.iter()
+                .zip(&ks)
+                .all(|(r, k)| r.iter().map(|(i, c)| c * p[*i]).sum::<i128>() + k >= 0)
+        };
+        let box_ = -6..=6i128;
+        let truth = box_.clone().any(|a| {
+            box_.clone().any(|b| {
+                if v == 2 {
+                    holds(&[a, b, 0])
+                } else {
+                    box_.clone().any(|c| holds(&[a, b, c]))
+                }
+            })
+        });
+        let f = Formula::and(fs);
+        match satisfiable(&f) {
+            Ok(Some(m)) => {
+                assert!(truth && f.holds(&m), "{f}: {m:?}");
+                answered += 1;
+            }
+            Ok(None) => {
+                assert!(!truth, "{f}: empty, but it has a point");
+                answered += 1;
+            }
+            Err(_) => refused += 1,
+        }
+    }
+    assert!(refused * 50 < answered, "{refused} refused, {answered} answered");
+}
+
+/// `3·x[i] + 5·x[i+1] == 7`: one solution line, whose values need about n digits.
+fn euclid_chain(n: usize) -> Formula {
+    let names: Vec<String> = (0..=n).map(|i| format!("x{i:06}")).collect();
+    Formula::and(
+        names
+            .windows(2)
+            .map(|p| eq(&[(p[0].as_str(), 3), (p[1].as_str(), 5)], -7))
+            .collect(),
+    )
+}
+
+/// `6·x[i] + 10·x[i+1] + 15·x[i+2] == 7`, with no two coefficients coprime but the three.
+fn euclid_chain3(n: usize) -> Formula {
+    let names: Vec<String> = (0..=n + 1).map(|i| format!("x{i:06}")).collect();
+    Formula::and(
+        names
+            .windows(3)
+            .map(|p| eq(&[(p[0].as_str(), 6), (p[1].as_str(), 10), (p[2].as_str(), 15)], -7))
+            .collect(),
+    )
+}
+
+#[test]
+fn chains_of_equalities_cost_the_digits_of_their_values() {
+    // n values of n digits each: the output itself is quadratic in bits, and the work is too.
+    // Control: T4 took 297 times as long from 64 to 512 and over 30 s at 1024.
+    for (name, build) in [
+        ("3x + 5y == 7", euclid_chain as fn(usize) -> Formula),
+        ("6x + 10y + 15z == 7", euclid_chain3),
+    ] {
+        let n = 64;
+        let (small, large) = (build(n), build(scaling::FACTOR * n));
+        for f in [&small, &large] {
+            let m = satisfiable(f).unwrap().expect("a point");
+            assert!(f.holds(&m));
+            let digits = m.values().map(|v| v.to_string().len()).max().unwrap();
+            assert!(digits <= n * scaling::FACTOR, "{digits} digits");
+        }
+        scaling::check_order(name, n, 2, |m| {
+            drop(satisfiable(if m == n { &small } else { &large }));
+        });
+    }
 }
 
 #[test]
@@ -274,14 +396,14 @@ fn tied_sum(n: usize) -> Formula {
 
 #[test]
 fn equalities_substituted_into_a_long_row_cost_the_row_each_time() {
-    // One of the two quadratic families: as in Gaussian elimination, each of n equalities rewrites
-    // a row of up to n terms. It is held to that order; see COMPLEXITY.md, S18.
+    // The equalities are solved among themselves, and the row is rewritten once for all of them.
+    // Control: T4 took 121 times as long.
     let n = 256;
     let (small, large) = (tied_sum(n), tied_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
         assert!(satisfiable(f).unwrap().is_some());
     }
-    scaling::check_order("a long row with equalities", n, 2, |m| {
+    scaling::check_order("a long row with equalities", n, 1, |m| {
         drop(satisfiable(if m == n { &small } else { &large }));
     });
 }
@@ -297,24 +419,18 @@ fn bounded_sum(n: usize) -> Formula {
 
 #[test]
 fn eliminating_the_terms_of_a_long_row_costs_the_row_each_time() {
-    // The other quadratic family, with no equalities: each variable has one lower bound and
-    // the long row as its upper bound, and each elimination writes the row again, one term
-    // shorter. It is held to that order; see COMPLEXITY.md, S18.
+    // Every x[i] is pulled to its lower bound by the one long row, and all are fixed there at
+    // once, the row written once. Control: T4 took 38 times as long.
     let n = 128;
     let (small, large) = (bounded_sum(n), bounded_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
         let m = satisfiable(f).unwrap().expect("a point");
         assert!(f.holds(&m), "{m:?}");
     }
-    scaling::check_order("a sum of bounded terms", n, 2, |m| {
+    scaling::check_order("a sum of bounded terms", n, 1, |m| {
         drop(satisfiable(if m == n { &small } else { &large }));
     });
 }
-
-// Control for the tests held at an order, in `System::count`, at the top of its loop:
-//     std::hint::black_box(self.vars.iter().filter(|v| v.sides.lo > 0).count());
-// `bounded_sum` fails it (211 times as long, limit 192); `tied_sum` and `tied_fed_sum` are not
-// done in 60 s.
 
 /// The names of `fed_sum`: `a` sorts first, so that it is the first variable on a tie.
 fn fed_names(n: usize) -> (Vec<String>, Vec<String>) {
@@ -339,17 +455,15 @@ fn fed_sum(n: usize) -> Formula {
 
 #[test]
 fn a_value_between_a_long_sum_and_many_bounds_is_not_eliminated_first() {
-    // Every variable here adds the same rows, one fewer. `a` writes the most terms, and so goes
-    // last: it would cost n rows of n terms, rewritten n times. What is left is the quadratic
-    // cost of `bounded_sum`. Control, `(self.growth(), 0, j)` in `Sides::rank`: 518, 358 and
-    // 414 times as long.
+    // Every b[j] and c[i] is pulled to its bound; `a` then has two bounds of its own, and its
+    // elimination, n rows of n terms, is never taken.
     let n = 16;
     let (small, large) = (fed_sum(n), fed_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
         let m = satisfiable(f).unwrap().expect("a point");
         assert!(f.holds(&m), "{m:?}");
     }
-    scaling::check_order("a value below a sum", n, 2, |m| {
+    scaling::check_order("a value below a sum", n, 1, |m| {
         drop(satisfiable(if m == n { &small } else { &large }));
     });
 }
@@ -382,15 +496,15 @@ fn tied_fed_sum(n: usize) -> Formula {
 
 #[test]
 fn a_value_that_alone_removes_a_row_is_eliminated_first_at_cubic_cost() {
-    // The open cubic family: an input of size O(n) reaches n rows of n terms, each rewritten by
-    // each of n eliminations. It is held to that order; see COMPLEXITY.md, S18.
+    // Eliminating `a` first would write n rows of n terms, which is fill, and the variables with
+    // no fill go first. Control: T4 took 90 times as long, and was held at cubic.
     let n = 16;
     let (small, large) = (tied_fed_sum(n), tied_fed_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
         let m = satisfiable(f).unwrap().expect("a point");
         assert!(f.holds(&m), "{m:?}");
     }
-    scaling::check_order("a value below a tied sum", n, 3, |m| {
+    scaling::check_order("a value below a tied sum", n, 1, |m| {
         drop(satisfiable(if m == n { &small } else { &large }));
     });
 }

@@ -66,7 +66,7 @@ fn a_product_is_bounded_only_through_the_premises_on_its_factors() {
     );
     assert_eq!(
         e.to_string(),
-        "not proved: the linear reading fails at h = 0, h * w = -1"
+        "not proved: the linear reading fails at h = 0, y = 0, h * w = -1, w * y = 0"
     );
 }
 
