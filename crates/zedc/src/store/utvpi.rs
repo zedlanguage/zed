@@ -43,8 +43,8 @@ use super::negsssp;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Search {
     /// The pass in topological order when the graph has no cycle, otherwise Goldberg and
-    /// Radzik's search and Duong's one unit of work each in turn, the first to finish deciding:
-    /// what [`integer_empty`] uses.
+    /// Radzik's search, BF-Dijkstra and Duong's one unit of work each in turn, the first to finish
+    /// deciding: what [`integer_empty`] uses.
     First,
     /// Goldberg and Radzik's search alone, on every graph.
     GoldbergRadzik,
@@ -159,19 +159,27 @@ fn potential(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // or three on the tests' hubs and paths at every size, XT3) but takes up to one pass per
     // node, O(V·E), when the topological order of the edges of negative reduced cost moves one
     // step per pass, as on BAD-GOR of Cherkassky and Goldberg augmented with heavy random edges
-    // and permuted labels (Cassis et al. 2025, arXiv 2502.11999, appendix). Duong's search
-    // (`negsssp`) is O(E·log³V·log log V·log(V·W)) for the largest weight W in every case, but
-    // its constant is large: on BAD-GOR at k = 256 it does about 60 times the work of the race,
-    // so a race of these two alone grows 67 times from k = 256 to 2,048, past the limit of 24.
-    // BF-Dijkstra (Dijkstra's search with Bellman–Ford rounds, `negsssp::Rounds`) takes
-    // O((E + V log V)·r) for r the most negative edges on a shortest path, few on these graphs.
-    // The three run one unit of work each in turn and the first to finish decides, so the cost
-    // is at most three times the cheapest of the three: Duong's bound holds on every graph, and
-    // the graphs the other two settle quickly cost a small factor of what they did. The decisions
-    // agree, since every potential gives the same one (`odd_zero_cycle`). Measured on BAD-GOR
-    // from k = 256 to 2,048: 26.8M to 209M instructions, 7.8 times; Goldberg and Radzik alone
-    // 59.8 times. Tests: `l01_38_presburger::stages::bad_gor_scales` and
-    // `l01_38_presburger::near::duong_scales_alone`; COMPLEXITY.md C24.
+    // and permuted labels (Cassis et al. 2025, arXiv 2502.11999, appendix). BF-Dijkstra
+    // (Dijkstra's search with Bellman–Ford rounds, `negsssp::Rounds`) takes O((E + V log V)·r)
+    // for r the most negative edges on a shortest path, few on BAD-GOR. Duong's search
+    // (`negsssp`) is O(E·log³V·log log V·log(V·W)) for the largest weight W, but its constant is
+    // large. The three run one unit of work each in turn and the first to finish decides, so the
+    // race takes at most three times the units of the cheapest: asymptotically Duong's bound
+    // holds. In the sizes the tests reach it does not: on BAD-GOR augmented joined with a fan
+    // (a path of weight -1 edges into a hub, which makes BF-Dijkstra take k rounds of k work)
+    // both quick searches are quadratic and still cheaper than Duong's below k = 2,048, so the
+    // race grows with them: 201.9M to 12,236M instructions from k = 256 to 2,048, 60.6 times
+    // (`l01_38_presburger::stages::bad_gor_and_a_fan_scale`, ignored, failing). In units:
+    // Goldberg and Radzik 546k to 33.4M, BF-Dijkstra 344k to 19.3M, Duong 3.72M to 43.1M and
+    // 404M at k = 16,384. To pass, Duong's search would need about 2.7 units per edge per scaling
+    // step at k = 2,048, against about 14 now and about 1 for its pass over the edges alone; a
+    // cut in this constant alone cannot reach that by this count; a near-linear search with a
+    // small constant is needed.
+    // The decisions agree, since every potential gives the same one (`odd_zero_cycle`). On
+    // BAD-GOR alone, from k = 256 to 2,048, the race takes 26.8M to 209M instructions, 7.8
+    // times, and Goldberg and Radzik alone 59.8 times. Tests: `bad_gor_scales`,
+    // `bad_gor_and_a_fan_scale` and `near::duong_scales_alone` in `l01_38_presburger`;
+    // COMPLEXITY.md C24.
     let (mut gor, mut rounds) = (GoldbergRadzik::new(out), negsssp::Rounds::new(out));
     let raced = negsssp::potential(out, || match gor.step().or_else(|| rounds.step()) {
         Some(found) => Err(found),
@@ -482,10 +490,10 @@ mod tests {
     fn random_graphs_get_the_decisions_of_bellman_ford_moore() {
         // 1,000 graphs of the rows of 25 variables, so 50 literals, with 10 to 109 rows of one
         // or two literals `l1 + l2 <= k` and constants -5 to 20, built as `integer_empty`
-        // builds them. Both
-        // searches must agree on a negative cycle, give potentials that hold on every edge, and
-        // give the same parity decision; the race, Goldberg and Radzik's search alone and Duong's alone are
-        // each checked. The counts show that each answer occurs.
+        // builds them. Every search must agree on a negative cycle, give potentials that hold
+        // on every edge, and give the same parity decision; the race and Goldberg and Radzik's
+        // search, BF-Dijkstra and Duong's search, each alone, are checked. The counts show that
+        // each answer occurs.
         let (vars, mut state) = (25usize, 1u64);
         let (mut negative, mut odd, mut point) = (0, 0, 0);
         for _ in 0..1000 {

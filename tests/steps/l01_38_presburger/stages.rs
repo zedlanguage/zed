@@ -381,6 +381,56 @@ fn bad_gor_scales() {
     });
 }
 
+/// BAD-GOR augmented over `2k + 1` variables, and beside it on `2k + 2` further variables a fan:
+/// a path of `k` edges of weight -1 from `a = 2k + 1`, an edge of weight 0 from each of its
+/// first `k` nodes into a hub, edges of weight 0 from the hub to `k` leaves, and an edge of
+/// weight `k + 1 + back` from each leaf to `a`. The fan alone makes BF-Dijkstra take `k`
+/// rounds of `k` work; BAD-GOR alone makes Goldberg and Radzik's search take `k / 2` passes.
+/// With `back = -3` the fan has a cycle of weight -1.
+fn bad_gor_and_fan(k: usize, back: i64) -> (usize, Rows) {
+    let (a, mut rows) = bad_gor(k, 1);
+    let hub = a + k + 1;
+    let mut fan = Vec::new();
+    for i in 0..k {
+        fan.push((a + i, a + i + 1, -1));
+        fan.push((a + i, hub, 0));
+        fan.push((hub, hub + 1 + i, 0));
+        fan.push((hub + 1 + i, a, k as i64 + 1 + back));
+    }
+    // The row `x[v] <= x[u] + w` is `x[u] - x[v] + w >= 0`.
+    rows.extend(differences(&fan));
+    (hub + k + 1, rows)
+}
+
+#[test]
+fn bad_gor_and_a_fan_are_decided() {
+    let (n, rows) = bad_gor_and_fan(64, 0);
+    assert!(!empty(n, &rows));
+    let (n, rows) = bad_gor_and_fan(64, -3);
+    assert!(empty(n, &rows));
+}
+
+#[test]
+#[ignore = "fails: the race takes 60.6 times the work (COMPLEXITY.md C24)"]
+fn bad_gor_and_a_fan_scale() {
+    // Measured on this branch, in instructions from k = 256 to k = 2,048: the race 201.9M to
+    // 12,236M (60.6 times); Goldberg and Radzik's search alone 80.8M to 4,699M (58.2 times);
+    // BF-Dijkstra alone 62.3M to 3,708M (59.5 times); Duong's search alone 1,176M to 14,070M
+    // (12.0 times). In units of work, the race's measure: Goldberg and Radzik 546k to 33.4M,
+    // BF-Dijkstra 344k to 19.3M, Duong 3.72M to 43.1M, and Duong 404M at k = 16,384 (9.4 times
+    // its count at 2,048). Both quadratic searches are cheaper than Duong's below k = 2,048, so
+    // the race grows with them; it falls back to Duong's growth only past that size.
+    let (small, large) = (
+        bad_gor_and_fan(256, 0),
+        bad_gor_and_fan(scaling::FACTOR * 256, 0),
+    );
+    assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
+    scaling::check("BAD-GOR augmented and a fan, by k", 256, |k| {
+        let (n, rows) = if k == 256 { &small } else { &large };
+        std::hint::black_box(raced(*n, rows));
+    });
+}
+
 /// `2n` rows of up to three terms over `n` variables, as the tight family, each coefficient
 /// times `2^bits` plus a small odd number, each row holding at a fixed point with slack at most
 /// 3.

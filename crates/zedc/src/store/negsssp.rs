@@ -840,6 +840,11 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         // prefix chain of `v` at its last child up to `i`, and to its suffix chain at its first
         // child after `i`. `edges` holds each edge and the place reached in `v`'s row.
         let mut edges: Vec<(usize, usize)> = Vec::new();
+        // The copies of the tails of the edges of negative `c`. From a node at its starting label a
+        // connector offers its head the head's starting label plus `c` of its edge, and a chain
+        // edge offers its head's own starting label, so only these nodes lower a label at first:
+        // the nodes [`bf_dijkstra`] starts from.
+        let mut seeds: Vec<usize> = Vec::new();
         for (k, &u) in x.iter().enumerate() {
             edges.clear();
             edges.extend(
@@ -847,8 +852,12 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
                     .filter(|&e| self.member[g.to[e]] == id)
                     .map(|e| (e, mstart[local[g.to[e]]])),
             );
+            let tail = edges.iter().any(|&(e, _)| self.c[e].is_negative());
             for slot in mstart[k]..mstart[k + 1] {
                 let i = child[slot];
+                if tail {
+                    seeds.push(slot);
+                }
                 for (e, place) in edges.iter_mut() {
                     unit(&mut self.tick)?;
                     let kv = local[g.to[*e]];
@@ -895,7 +904,7 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         }
         // The source has an edge of weight -ζ to every node: the starting labels.
         let start: Vec<Int> = zeta.iter().map(|z| -z).collect();
-        let dist = bf_dijkstra(&astart, &ato, &aw, start, self.eta, &mut self.tick)?;
+        let dist = bf_dijkstra(&astart, &ato, &aw, start, &seeds, self.eta, &mut self.tick)?;
         Ok((0..ns)
             .map(|k| &dist[mstart[k]] + &phi[mstart[k]])
             .collect())
@@ -903,9 +912,10 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
 }
 
 /// Distances in the graph `start`, `to`, `w` in compressed rows from a source with an edge of
-/// weight `label[x]` to each node `x`, by Dijkstra's search on the edges of weight at least 0
-/// with a round of the negative edges after each ([D] Lemma l.129). After round `k` each label
-/// is at most the weight of every walk with `k` negative edges besides the source's, so a label
+/// weight `label[x]` to each node `x`, the first round started from `seeds`, by Dijkstra's
+/// search on the edges of weight at least 0 with a round of the negative edges after each ([D]
+/// Lemma l.129). After round `k` each label is at most the weight of every walk with `k`
+/// negative edges besides the source's, so a label
 /// that falls in round `eta` shows a walk shorter than all with `eta` negative edges, and the
 /// caller's negative cycle ([D] Theorem 3.1). A cycle of parent pointers is a negative cycle
 /// (the walk to the root of Cherkassky and Goldberg); it is looked for after each round, from
@@ -915,13 +925,21 @@ fn bf_dijkstra<H>(
     to: &[usize],
     w: &[Int],
     mut label: Vec<Int>,
+    seeds: &[usize],
     eta: u64,
     tick: &mut impl FnMut() -> Result<(), H>,
 ) -> Step<Vec<Int>, H> {
     let n = label.len();
     let mut parent = vec![NONE; n];
-    let mut heap: BinaryHeap<Reverse<(Int, usize)>> =
-        label.iter().cloned().zip(0..).map(Reverse).collect();
+    // The first round starts from the nodes `seeds`, which hold every node with an edge that
+    // lowers a starting label. Every other node, taken at its starting label, would lower
+    // nothing, and a path that lowers a label and starts at it is no shorter than the same path
+    // from its next node, so leaving these nodes out changes no label; it saves taking every
+    // node of the graph from a heap.
+    let mut heap: BinaryHeap<Reverse<(Int, usize)>> = seeds
+        .iter()
+        .map(|&x| Reverse((label[x].clone(), x)))
+        .collect();
     // The round in which a node was last settled, and the walk that last passed it.
     let mut settled_in = vec![0u64; n];
     let mut walked = vec![0u64; n];
@@ -980,6 +998,7 @@ fn bf_dijkstra<H>(
             walks += 1;
             let mut v = s;
             while v != NONE && walked[v] <= before {
+                unit(tick)?;
                 walked[v] = walks;
                 v = parent[v];
             }
