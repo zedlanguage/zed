@@ -823,8 +823,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-values | repair attempt 2 | 2026-11-03 03:52 | started; zed-impl main still e6900f7, wt/t6 bb1f8a7 not merged; per the 03:55 order nothing changed, returning ok=false (waits for T6) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (27 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (30 commits); the push follows one full test run on the merged tree:
 
+- b707823 ST-deep-stack: Formula walks, Drop, Clone, Eq, Ord, Hash and printing on explicit stacks
+- 8ce61e0 STATUS: in progress as of 2026-11-03 04:10
 - 42efeec STATUS: TD-docs merged
 - 5f387d6 TD-docs: COMPLEXITY rows C1-C23 for the tradeoff sites; emptiness is sound and not complete; splinters one level deep
 - e6900f7 STATUS: in progress as of 2026-11-03 03:53
