@@ -882,28 +882,32 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | L1.17a | impl attempt 1 | 2026-11-03 07:14 | Product::bound multiplies 2^e exactly (no squaring); the three child tests and the scaling test each run in under 2 s; full suite started, load 116.88 127.59 13 |
 | LIN-probe | orchestrator attempt  | 2026-11-03 07:30 | also remove the per-call model clone in Formula::holds (borrow the model; no copies for the borrow checker); state the argument that skipping disjuncts true at  |
 | LIVE3 | impl attempt 1 | 2026-11-03 09:30 | started: reading brief, SYNTHESIS, R3_CLAUDE 3.1-3.4 |
-| R10-stack | verify attempt 1 | 2026-11-03 07:14 | control: 150,000-concat test without the stack switch aborts with stack overflow (rc 134); with it passes in 115.5 s, 1.25 GB peak, load 149 |
+| R10-stack | verify attempt 1 | 2026-11-03 07:14 | done: no blocking defect; fmt and clippy -D warnings clean; non-blocking notes: tradeoff comment at stack.rs:63 lacks test/row/complete-solution parts, wide fun |
 | S22b-rest | verify attempt 1 | 2026-11-03 07:22 | negative control (4a2686f preimage.rs + new tests, /home/luke/Work/wt/s22b-rest-ctl, load ~102): constant_minus 2 of 12 fail (clip at ends of i64, reflected arm |
 | S22e-quad | repair attempt 1 | 2026-11-03 07:43 | suite BUILD FAILED: link of steps test binary, undefined llvm anon symbols (corrupt incremental cache from the killed earlier run); cargo clean -p zed-tests and |
 | S22-merge | impl attempt 1 | 2026-11-03 08:07 | l01_25 piece passes with the counts updated: 130 passed, 1 ignored, 219.7 s at load 178 (125.8 s at load 134 before the fix); starting clippy and tools/run_test |
-| ST-arms-quad | verify attempt 5 | 2026-11-03 03:16 | fmt --check and clippy -D warnings clean on cd363ae; suite running (load 134.48) |
+| SCALE-bytes | merge attempt 1 | 2026-11-03 07:14 | lock released |
+| ST-arms-quad | verify attempt 5 | 2026-11-03 03:16 | run_tests.sh 4 on cd363ae: 97 pieces, 0 failed (load 81-149); semantics of reduce_case checked: every shown scope passes through assume->reduce or bind, which e |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | orchestrator attempt  | 2026-11-03 04:26 | SCOPE CUT for repair#4: finish and commit the zir/memory.rs walks and l01_34 tests now in progress, run the suite, then return ok=true for verify and merge. Do  |
-| T2-types | impl attempt 1 | 2026-11-03 08:34 | correction: the compared texts have 24354 distinct lines, not 13k |
-| T6-bound-load | impl attempt 1 | 2026-11-03 07:07 | bound check moved to checker over all written types; refusal causes on overload, literal and need-result paths; untracked param printed by kernel printer; build |
+| T2-types | impl attempt 1 | 2026-11-03 08:34 | docs: COMPLEXITY K39, STATUS partial row, ZED_PORT_GAPS T2-types; ledger T2-types-rest queued; running tools/run_tests.sh 4 (load 101.45) |
+| T6-bound-load | impl attempt 1 | 2026-11-03 07:07 | code committed 1c40ccc; full suite started, load 100.84 |
 | T6-payload-pinwheel | impl attempt 1 | 2026-11-03 08:25 | fix 1 (exact f in narrow_tuples/morphisms, settle only for empty proof and forced): k=1 Payload/OneTuple Empty+Inhabited; k=16 Payload Empty 3.48 s, OneTuple 3. |
 | T6-ratlit | orchestrator attempt  | 2026-11-03 05:01 | REQUIREMENT for impl#2 and verify: residues mod 2^61-1 may only bucket or hash; equality, order and subtyping of rat literal types must compare the exact canoni |
-| TD-ends | verify attempt 5 | 2026-11-03 03:52 | probes on 08a8abc (ctl worktree td-ends-ctl): -(2^127 kept) == Big(-2^127) but hashes differ (Hash/Eq broken; Kept::neg leaves a kept value inside i128); least_ |
+| TD-ends | verify attempt 5 | 2026-11-03 03:52 | baseline 3dda2df int.rs: same x**3 probe 9 us/3 us/19 us at 4096/32768/262144 bits, so least_root's cubic cost is new in repair 4; -2^127 hash mismatch also on  |
 | TD-values | repair attempt 1 | 2026-11-03 03:52 | started; previous suite run ended without its summary (34 pieces, killed at return); rerunning after review and commit |
 | TEST-split | impl attempt 1 | 2026-11-03 07:56 | full run_tests.sh 4 cut at 50 min by my outer timeout with 259 pieces queued on 8 machine-wide slots at load 87-182; no summary, rerun needed; of 125 new pieces |
 | TYPE-forms | impl attempt 1 | 2026-11-03 08:16 | AST/resolve/check/format/elab For arm done; 15 bounds tests pass in l01_26; grammar cases added (365, 0 wrong) |
 | UNITANNOT-L7 | impl attempt 1 | 2026-11-03 07:14 | parser/AST/format/resolve/check built; zedc run of a unit with @log(#off); prints the same as without; building step tests (load 149.75) |
-| UTVPI-NEAR | orchestrator attempt  | 2026-11-03 06:34 | for the repair: both union probes (feasible and negative-cycle) become committed scaling tests; the eta exit needs a test that reaches it (or remove it if unrea |
+| UTVPI-NEAR | verify attempt 1 | 2026-11-03 06:34 | done ok=false: fmt, clippy pass; run_tests.sh 4 98 pieces 0 failed (load 81-162; l01_38 88 pass 45 s); BLOCKING: race fails scaling on BAD-GOR + fan union 62.3x |
 | WIDEN-WARN | repair attempt 1 | 2026-11-03 07:14 | fix applied: only + - * unary - and literals inherit wrap; new test with the 3 probes passes, widen 16/16; clippy, fmt clean; follow-up WIDEN-WARN-test added to |
 
-Merged into local main and not yet pushed (73 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (76 commits); the push follows one full test run on the merged tree:
 
+- 4be54a5 plan_dag, STATUS: SCALE-bytes merged (3fa1fdc)
 - 3fa1fdc SCALE-bytes: scaling tests check bytes allocated next to instructions
+- 85e5b47 plan_dag: OSP-neglit done (2e145cc)
+- eeb8598 STATUS: in progress as of 2026-11-03 09:37
 - 2e145cc OSP-neglit: reject a prefix - on a postfix chain whose base is a numeric literal, with both groupings and their values
 - ab26ea6 STATUS: in progress as of 2026-11-03 08:53
 - 99deb6b plan_dag, STATUS: LIN-cross merged
