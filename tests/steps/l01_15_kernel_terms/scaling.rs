@@ -1,7 +1,7 @@
 //! The printer at the rule of low complexity (DESIGN.md Part G).
 
-use std::cell::RefCell;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use zed_kernel::Term;
 use zed_kernel::print::pretty;
@@ -118,14 +118,14 @@ fn dropping_deep_and_wide_terms_scales() {
     let n = 12_500;
     zed_tests::deep::on_small_stack(|| {
         let (small_runs, large_runs) = scaling::Meter::new().runs();
-        let pools = |k: usize, runs: usize| -> Vec<(&'static str, RefCell<Vec<Term>>)> {
+        let pools = |k: usize, runs: usize| -> Vec<(&'static str, Mutex<Vec<Term>>)> {
             let built: Vec<_> = dropped_shapes(k)
                 .into_iter()
-                .map(|(what, t)| (what, RefCell::new(vec![t])))
+                .map(|(what, t)| (what, Mutex::new(vec![t])))
                 .collect();
             for _ in 1..runs {
                 for ((_, pool), (_, t)) in built.iter().zip(dropped_shapes(k)) {
-                    pool.borrow_mut().push(t);
+                    pool.lock().expect("no run panicked").push(t);
                 }
             }
             built
@@ -134,7 +134,12 @@ fn dropping_deep_and_wide_terms_scales() {
         for ((what, s), (_, l)) in small.iter().zip(&large) {
             scaling::check(&format!("dropping {what}"), n, |k| {
                 let pool = if k == n { s } else { l };
-                drop(pool.borrow_mut().pop().expect("a term built for each run"));
+                drop(
+                    pool.lock()
+                        .expect("no run panicked")
+                        .pop()
+                        .expect("a term built for each run"),
+                );
             });
         }
     });
