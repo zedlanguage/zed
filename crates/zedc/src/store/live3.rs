@@ -857,7 +857,7 @@ fn reduce(rows: &[Row3], s: &[[Q; 3]; 4]) -> Shape {
         for i in 0..3 {
             for j in 0..i {
                 mu[i][j] = ip(&asq(&b[i]), &st[j]).div(&len[j]);
-                st[i] = sub3(&st[i], &st[j].clone().map(|x| x.mul(&mu[i][j])));
+                st[i] = sub3(&st[i], &st[j].each_ref().map(|x| x.mul(&mu[i][j])));
             }
             len[i] = ip(&st[i], &st[i]);
         }
@@ -870,8 +870,8 @@ fn reduce(rows: &[Row3], s: &[[Q; 3]; 4]) -> Shape {
             let (_, _, mu) = gs(&b);
             let c = nearest(&mu[k][j]);
             if !c.is_zero() {
-                let bj = b[j].clone();
-                for (x, y) in b[k].iter_mut().zip(&bj) {
+                let (low, high) = b.split_at_mut(k);
+                for (x, y) in high[0].iter_mut().zip(&low[j]) {
                     *x = &*x - &(&c * y);
                 }
             }
@@ -939,8 +939,8 @@ fn complete(u: &[Int; 3]) -> [[Int; 3]; 3] {
         while !r[j].is_zero() {
             let c = r[0].div_floor(&r[j]);
             r[0] = &r[0] - &(&c * &r[j]);
-            let vj = v[j].clone();
-            for (x, y) in v[0].iter_mut().zip(&vj) {
+            let (first, rest) = v.split_at_mut(1);
+            for (x, y) in first[0].iter_mut().zip(&rest[j - 1]) {
                 *x = &*x - &(&c * y);
             }
             r.swap(0, j);
@@ -948,7 +948,9 @@ fn complete(u: &[Int; 3]) -> [[Int; 3]; 3] {
         }
     }
     if r[0].is_negative() {
-        v[0] = v[0].clone().map(|x| -&x);
+        for x in &mut v[0] {
+            *x = -&*x;
+        }
     }
     debug_assert!(r[0].is_unit(), "a direction with no common factor");
     v

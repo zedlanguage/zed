@@ -133,12 +133,13 @@ fn small_coefficients_over_four_variables_match_enumeration() {
     // 142). The `hull3` stage (XT3 B4), which decides three live variables with a unit side
     // exactly, decides 6 more with a point. Of the 136 systems then refused, 18 have no rational
     // point (cross-review XR3, Q1); the row test of the box stage (Q1-ROWBOX), two rows
-    // bounding one variable by rationals that cross, shows 1 of them empty. The counts measure
-    // how much is decided, not correctness, which `run` checks on every system against
-    // enumeration.
+    // bounding one variable by rationals that cross, shows 1 of them empty. `live3`, which
+    // decides every part left with three variables, decides 13 more with a point and shows one
+    // more empty: (274, 4, 122). The counts measure how much is decided, not correctness,
+    // which `run` checks on every system against enumeration.
     assert_eq!(
         (t.sat, t.unsat, t.growth, t.shadows),
-        (261, 4, 135, 0),
+        (274, 4, 122, 0),
         "{t:?}"
     );
 }
@@ -238,9 +239,10 @@ fn rows_of_three_terms_tight_at_a_corner_match_enumeration() {
     // box stage (Q1-ROWBOX) shows 14 more empty. Without the `hull3` stage it shows 23 of the
     // 64 systems with no rational point empty that design R and the five points refused
     // (2586, 9305, 109, as cross-review XR3 counted); `hull3` already decides 9 of those 23.
+    // `live3` decides 20 more with a point and shows 25 more empty: (2631, 9331, 38).
     assert_eq!(
         (t.sat, t.unsat, t.growth, t.shadows),
-        (2611, 9320, 69, 0),
+        (2631, 9331, 38, 0),
         "{t:?}"
     );
     eprintln!("three terms: {t:?}");

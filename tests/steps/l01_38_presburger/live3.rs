@@ -5,7 +5,7 @@
 //! at `B` and `8B` bits.
 
 use zed_tests::instances::Rng;
-use zed_tests::scaling::{self, Meter};
+use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::live3::{Row3, point};
 use zedc::store::presburger::{Con, Formula, Lin, satisfiable};
@@ -297,45 +297,42 @@ fn the_omega_test_decides_three_variables() {
     assert_eq!(satisfiable(&f), Ok(None));
 }
 
-/// `m` rows over three variables, each holding at a point with slack at most 3, of
-/// coefficients up to `2^bits`.
-fn held(m: usize, bits: u32, seed: u64) -> Vec<Row3> {
-    let mut rng = Rng::new(seed);
-    let wide = |rng: &mut Rng| {
-        let mut c = int(rng.int(-1 << 16, 1 << 16));
-        for _ in 1..bits / 16 {
-            c = &(&c * &int(1 << 16)) + &int(rng.int(0, 1 << 16));
-        }
-        c
-    };
-    let p = [int(3), int(-2), int(5)];
-    (0..m)
-        .map(|_| {
-            let a = [0; 3].map(|_| wide(&mut rng));
-            let v = (0..3).fold(int(0), |s, i| &s + &(&a[i] * &p[i]));
-            (a, &int(rng.int(0, 3)) - &v)
-        })
-        .collect()
+/// A random integer of `bits` bits or fewer, either sign, for `bits` a multiple of 16.
+fn wide(rng: &mut Rng, bits: u32) -> Int {
+    let mut c = int(rng.int(-1 << 16, 1 << 16));
+    for _ in 1..bits / 16 {
+        c = &(&c * &int(1 << 16)) + &int(rng.int(0, 1 << 16));
+    }
+    c
 }
 
-/// Prints the work of `point` on `small` and `large`, sizes `n` and `8n`, and the exponent of
-/// `n` it shows, then checks the work is of order `n^power`.
-fn scales(what: &str, n: usize, power: u32, small: &[Row3], large: &[Row3]) {
-    assert!(solve(small).is_some() && solve(large).is_some());
-    let mut meter = Meter::new();
-    let mut least = |rows: &[Row3]| {
-        (0..2)
-            .map(|_| meter.work(|| drop(std::hint::black_box(point(rows)))))
+/// Reeve's tetrahedron of height 7, shrunk so it holds no integer point, and `m` rows more of
+/// coefficients drawn by `coefficient`, each holding the whole unshrunk tetrahedron with slack 0 to 5.
+/// No elimination, box point or rounding center decides it, so every stage runs: the linear
+/// programs, the rounding, LLL, and `twovar` on each of the planes of the flat direction, all
+/// over every row.
+fn thin(m: usize, seed: u64, coefficient: impl Fn(&mut Rng) -> Int) -> Vec<Row3> {
+    let mut rng = Rng::new(seed);
+    let r = 7;
+    let mut rows: Vec<Row3> = reeve(r, 1).iter().map(|(a, k)| row(*a, *k)).collect();
+    let corners = [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, r]].map(|v| v.map(int));
+    for _ in 0..m {
+        let a = [0; 3].map(|_| coefficient(&mut rng));
+        let least = corners
+            .iter()
+            .map(|v| (0..3).fold(int(0), |s, i| &s + &(&a[i] * &v[i])))
             .min()
-            .expect("two runs")
-    };
-    let (a, b) = (least(small), least(large));
-    eprintln!(
-        "{what}, {n} and {}: {a} and {b} {}, exponent {:.2}",
-        scaling::FACTOR * n,
-        meter.unit(),
-        (b as f64 / a as f64).ln() / (scaling::FACTOR as f64).ln()
-    );
+            .expect("four corners");
+        rows.push((a, &int(rng.int(0, 5)) - &least));
+    }
+    rows
+}
+
+/// Checks that the work of `point` on `small` and `large`, sizes `n` and `8n`, is of order
+/// `n^power`, measuring each once.
+fn scales(what: &str, n: usize, power: u32, small: &[Row3], large: &[Row3]) {
+    assert_eq!(solve(small), None);
+    assert_eq!(solve(large), None);
     scaling::check_order(what, n, power, |m| {
         let rows = if m == n { small } else { large };
         std::hint::black_box(point(rows));
@@ -344,15 +341,22 @@ fn scales(what: &str, n: usize, power: u32, small: &[Row3], large: &[Row3]) {
 
 #[test]
 fn many_rows_scale_linearly() {
-    let (small, large) = (held(32, 16, 7), held(32 * scaling::FACTOR, 16, 7));
-    scales("rows over three variables", 32, 1, &small, &large);
+    // Coefficients up to 50; the work is O(m log m), from `twovar::point` on each plane.
+    let fifty = |rng: &mut Rng| int(rng.int(-50, 50));
+    let (small, large) = (thin(256, 7, fifty), thin(256 * scaling::FACTOR, 7, fifty));
+    scales("rows over three variables", 256, 1, &small, &large);
 }
 
 #[test]
 fn wide_coefficients_scale() {
-    // The work grows with the bits as products of the coefficients do: the linear programs
-    // compare rationals built from a few products of rows, and schoolbook products of `B`-bit
-    // integers take `B^2`, so the order is at most 2. Measured: see COMPLEXITY.md.
-    let (small, large) = (held(8, 16, 9), held(8, 16 * scaling::FACTOR as u32, 9));
-    scales("rows of wide coefficients, in bits", 16, 2, &small, &large);
+    // From 64 bits, past the `i128` fast path of `Int`, so both sizes measure big integers. A
+    // product of two `B`-bit integers is `B^2` by schoolbook, but at these sizes the sums and
+    // the products by small numbers cost more; power 1 catches an extra factor of `B`.
+    // Measured: see COMPLEXITY.md.
+    let bits = |b: u32| move |rng: &mut Rng| wide(rng, b);
+    let (small, large) = (
+        thin(8, 9, bits(64)),
+        thin(8, 9, bits(64 * scaling::FACTOR as u32)),
+    );
+    scales("rows of wide coefficients, in bits", 64, 1, &small, &large);
 }

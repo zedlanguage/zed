@@ -796,13 +796,15 @@ fn random_guarded_chains_keep_their_preimages() {
 }
 
 /// Random chains of every kind of guard, the second half. S22b changes 7 boxes of `c - x` here;
-/// two of them, inexact before and exact now, count as made exact (54 by classes of remainders,
+/// two of them, inexact before and exact now, count as made exact (53 by classes of remainders,
 /// S22e, and 2 by S22b): the chains `(if (6 < i) { (if (7 < i) { (0 - …` and
 /// `if ((i mod 3) == 1) { min(if (i >= -9) { …`, whose results are the same on main before S22e
-/// merged (5adc3c2).
+/// merged (5adc3c2). 53, was 54, since LIVE3: the transfer before, which shares the solver,
+/// now decides by `live3` the gray shadow over three variables that left it inexact on
+/// `(if ((i mod 3) == 2) { (if ((i mod 3) == 2) { (i + 0) } … < 6)`, so both are exact and alike.
 #[test]
 fn more_random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(2000, 4000, 0, 5, 56);
+    random_guarded_chains(2000, 4000, 0, 5, 55);
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
