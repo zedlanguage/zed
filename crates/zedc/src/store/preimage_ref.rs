@@ -1,6 +1,7 @@
-//! The backward transfer as it was at commit 397f1c9, before the piecewise-affine summary and
-//! the demand clip of S22a, kept unchanged so that tests can compare the whole `Preimage` of
-//! [`super::preimage`] with it. Nothing outside the tests uses it.
+//! The backward transfer as it was before the piecewise-affine summary and the demand clip of
+//! S22a (main at fdf7918, which holds the 397f1c9 transfer and later changes), kept unchanged
+//! so that tests can compare the whole `Preimage` of [`super::preimage`] with it. Nothing
+//! outside the tests uses it.
 //!
 //! The tonicity of the scalar primitives and the scalar entries of the preimage catalog
 //! (DESIGN.md sec:domains, "Backward transfer, and `@ensure`", and sec:constraints, "Both
@@ -120,6 +121,22 @@ pub enum StopKind {
     /// A call to a name that is not a lambda, or a free name that is not an input.
     Foreign(Arc<str>),
     /// A term the scalar catalog does not cover: families, folds, `fix`, patterns or ports.
+    ///
+    /// Complexity tradeoff: for `fix`, `gen` and `fold` (the other terms here are catalog
+    /// entries not yet written, with no cost reason), the transfer stops at the loop, which
+    /// it raises at the `_` arms of `back_in`, `back_prim` and `scan`; the term's answer is
+    /// the whole box (`Res::unknown`, necessary only), and the stop is reported. Why: reading
+    /// through a loop unfolds it once per iteration it may take, which need not end, as for
+    /// `StopKind::Recursion`; a fixpoint over the loop is the full analysis this transfer
+    /// avoids. Trigger: a `fix`, `gen` or `fold` term between the demand and an input. Test:
+    /// `l01_25_preimage_catalog::stops::a_term_outside_the_scalar_catalog_is_reported`
+    /// covers the stop through `sum` of a tuple; in the same module,
+    /// `a_fold_between_the_demand_and_an_input_stops_the_transfer` stops at a `fold` and
+    /// `a_fix_between_the_demand_and_an_input_stops_the_transfer` at a `fix`, both at the `_`
+    /// arm of `back_in`, and `a_gen_between_the_demand_and_an_input_stops_the_transfer` at a
+    /// `gen`, at the `_` arm of `scan`.
+    /// COMPLEXITY.md row C15. A complete solution would compute a fixpoint of the loop's
+    /// backward transfer with widening, as the forward iteration does for loops.
     Outside,
     /// A call of a lambda whose call is already being read.
     Recursion,
@@ -177,6 +194,17 @@ fn run_closed(t: &Term) -> Option<Value> {
 
 /// The most factors read as one power: an integer power past 64 of anything but -1, 0 and 1
 /// leaves `i64`.
+///
+/// Complexity tradeoff: a product of more than 64 equal factors is not read as a power, so it
+/// is read as nested products (the HC4 entry for `*`), wider than the power's exact inverse. Why
+/// given: the power would leave `i64`; that reason does not hold, since `Int` is unbounded
+/// and `x ** k` inverts by a k-th root at a cost in the bits of its bounds. Trigger: more than
+/// 64 equal factors. Test:
+/// `l01_25_preimage_catalog::scopes::equal_factors_written_twice_are_read_as_a_square`
+/// (below the constant only). COMPLEXITY.md row C19. This switches behavior at a constant
+/// size, so it violates the no-thresholds rule; to be replaced (ledger item CAP-power). A
+/// complete solution would read any count of equal factors as a power, with ends held as
+/// unbounded integers.
 const POWER_FACTORS: usize = 64;
 
 /// The preimage of `demand` under `term`, whose free names in `inputs` range over their
@@ -336,7 +364,8 @@ fn linear(
             .map(|k| presburger::Atom::Sym(k.clone()))
             .filter(|a| mentioned.contains(a))
             .collect();
-        let mut each = presburger::project_each(&whole, &syms)?.into_iter();
+        let (each, skipped) = presburger::project_each(&whole, &syms)?;
+        let mut each = each.into_iter();
         let mut out = Domains::new();
         for (k, v) in dom {
             let p = if mentioned.contains(&presburger::Atom::Sym(k.clone())) {
@@ -361,7 +390,7 @@ fn linear(
             Formula::negate(rel.body.clone()),
         ]);
         Ok(match presburger::decide(&outside) {
-            Ok(meets) => (out, !meets, None),
+            Ok(meets) => (out, !meets, skipped.first().copied()),
             Err(why) => (out, false, Some(why)),
         })
     };
@@ -1043,6 +1072,15 @@ impl<'t> Tx<'t> {
         f: impl FnOnce(&mut Self, usize) -> V,
     ) -> V {
         if let Some(&at) = self.run.active.get(&body) {
+            // Complexity tradeoff: a call of a lambda already being read (recursion) is not
+            // read again; the transfer stops there with `StopKind::Recursion`, and the inputs
+            // above it keep their forward intervals (necessary only). Why: reading through
+            // recursion unfolds the call for every depth it may reach, which need not end,
+            // and a fixpoint over the recursive summary is the full interprocedural analysis
+            // this transfer avoids. Trigger: a call cycle through the term. Test:
+            // `l01_25_preimage_catalog::stops::a_call_that_never_returns_stops_where_it_calls_itself`.
+            // COMPLEXITY.md rows S12 and S15. A complete solution would compute a fixpoint of
+            // the function's summary with widening, as the forward iteration does for loops.
             self.cx.cut = self.cx.cut.min(at);
             self.stop(StopKind::Recursion, t);
             return stopped;
@@ -1069,6 +1107,18 @@ impl<'t> Tx<'t> {
                 if !f.is_int() || f.ints.is_empty() {
                     return None;
                 }
+                // Complexity tradeoff: the argument's interval is moved out to the landmarks
+                // before it keys the summary, so the summary is taken over a wider parameter
+                // and its preimage may be wider than the call's (not exact). Why: keyed by the
+                // exact interval, a chain of k functions each calling the one before twice
+                // makes a summary per distinct interval, up to 2^k; with landmarks the keys
+                // per lambda are bounded by the landmark pairs. Trigger: an input-reading
+                // integer argument whose ends are not landmarks. Tests:
+                // `l01_25_preimage_catalog::scopes::one_function_called_twice_is_summarized_for_each_argument`,
+                // `l01_25_preimage_catalog::scaling::nested_calls_are_summarized`. COMPLEXITY.md
+                // rows S13 and S15. A complete solution would read each call in place (exact,
+                // exponential in the nesting) or key summaries by relational summaries that
+                // hold for every argument (a polyhedral or Presburger summary per function).
                 let dom = f.ints.snap(&self.run.marks);
                 sig.push(Arg::Ints(dom.clone()));
                 doms.push((i, dom));
@@ -1384,6 +1434,16 @@ impl<'t> Tx<'t> {
     /// The union, as the per-input join of the two boxes: exact when both are and the union
     /// is itself a box. A name in only one box joins to its whole domain, so the time is that
     /// of the smaller box's names.
+    ///
+    /// Complexity tradeoff: a union of boxes that is not a box is answered by its box hull,
+    /// which holds points neither side has (necessary, not exact). Why: a union of boxes kept
+    /// exactly grows with each `||` and branch, up to 2^k boxes for k of them, and every
+    /// later operation would pay for each box. Trigger: two boxes that differ in two or more
+    /// inputs (a name held by one box only counts as a difference), with neither box within
+    /// the other. Test:
+    /// `l01_25_preimage_catalog::scopes::a_union_of_boxes_is_exact_when_it_is_a_box`.
+    /// COMPLEXITY.md row C14. A complete solution would keep a list (or a decision diagram) of
+    /// boxes, exponential in the disjunctions in the worst case.
     fn union(&self, a: Res, b: Res) -> Res {
         if self.empty(&a) {
             return b;
@@ -2379,6 +2439,17 @@ impl<'t> Tx<'t> {
     }
 
     /// The HC4 projection onto each operand: necessary, not exact.
+    ///
+    /// Complexity tradeoff: each operand is narrowed alone against the other's forward
+    /// interval, so the relation between the operands is given up and the box can hold
+    /// points that fail the demand. Why: the exact preimage of a nonlinear operator is a
+    /// region that is not a box, and finding it costs the points of the box (or is
+    /// undecidable for polynomial tests over unbounded integers). Trigger: an operator with
+    /// no exact catalog entry (anything but shifts, scalings, `div` and `mod` by a constant,
+    /// `**`, and branches), or two operands that both read inputs. Test:
+    /// `l01_25_preimage_catalog::entries::a_strict_disjunction_with_a_failing_side_is_necessary_only`.
+    /// COMPLEXITY.md row C16. A complete solution is `@exact` ([`exact_preimage`]), which
+    /// searches the box at a cost in its points.
     fn project(&mut self, p: Prim, a: Tid, b: Tid, env: Eid, z: &IntervalSet) -> Res {
         let o = op(p, None).expect("binary scalar operator");
         let fa = self.fwd(a, env).ints;
@@ -2578,6 +2649,14 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
 /// between them are one piece, so the set has at most `2 * p + 1` pieces for `p` pieces of
 /// remainders, and it is exact when there is no period between them. An unbounded `within`
 /// is kept whole unless every remainder is demanded.
+///
+/// Complexity tradeoff: the periods between the first and the last are merged into one
+/// piece, so the result holds the members with other remainders there and is not exact.
+/// Why: listing every period costs pieces in the width of `within` divided by `c`, which is
+/// exponential in the bits written. Trigger: `within` spanning more than two periods of `c`.
+/// Test: `l01_25_preimage_catalog::random::a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between`.
+/// COMPLEXITY.md row C17. A complete solution would pair the interval with the congruence
+/// facet (`x mod c` in `z` as a set of classes), which the reduced product can hold exactly.
 fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> (IntervalSet, bool) {
     if c == 0 {
         return (IntervalSet::empty(), true);
@@ -2645,6 +2724,16 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
 /// points number no more than the endpoints written (docs/thresholds.md, replacement 8). The
 /// term's form must show that it ends ([`stage::ends`]). A range is left to the catalog and the
 /// linear relation.
+///
+/// Complexity tradeoff: a box with a range wider than its endpoints, with two or more inputs
+/// of several members, or with a term whose ending is not shown is not enumerated; it gets
+/// the catalog's and the linear relation's answer, which may be wider. Why: the points of a
+/// box are the product of its axes, exponential in the inputs and in the bits of each range,
+/// and a term not shown to end may not end. Trigger: those three properties of the box and
+/// the term, each relative to what is written, never a constant. Test:
+/// `l01_25_preimage_catalog::entries::a_listed_box_is_enumerated_and_a_range_is_not`.
+/// COMPLEXITY.md row C18 (thresholds.md replacement 8). A complete solution is `@exact`
+/// ([`exact_preimage`]), branch and prune over the box, at a cost in its points.
 fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
     if !stage::ends(term) {
         return None;
@@ -2725,6 +2814,16 @@ pub type Point = BTreeMap<Arc<str>, i64>;
 /// point, so it holds only the boxes on its stack, two for each halving. `None` when an input
 /// is unbounded, a point cannot be run, or the term's form does not show that it ends and the
 /// preimage alone does not decide.
+///
+/// Complexity tradeoff: an unbounded input, or a term not shown to end, gives `None` (no
+/// answer) even under `@exact`; [`exact_preimage`] likewise keeps the necessary preimage
+/// there. Why: a search over an unbounded box need not end, and finding a point of an
+/// arbitrary terminating test over unbounded integers is undecidable. Trigger: an input with
+/// an infinite end after the preimage, or a recursive or looping term. Tests:
+/// `l01_25_preimage_catalog::exact::a_witness_is_the_first_point_found_or_none`,
+/// `l01_25_preimage_catalog::exact::exact_preimages_of_ranges`. COMPLEXITY.md row S17. No
+/// complete solution exists in general; for linear terms the Presburger solver
+/// (`presburger`) decides unbounded inputs.
 pub fn witness(
     term: &Term,
     inputs: &Domains,
