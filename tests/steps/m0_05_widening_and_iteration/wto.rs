@@ -1,8 +1,8 @@
 //! The weak topological order against its declarative definition.
 //!
 //! The definition, written here without Bourdoncle's stack: run a depth-first search from
-//! the roots in order, visiting successors in source order, and number the vertices in
-//! preorder and in finish order. Group the vertices into strongly connected components by
+//! the roots in order, visiting successors in the order of their lists, and number the
+//! vertices in preorder and in finish order. Group the vertices into strongly connected components by
 //! mutual reachability; a component's head is its member with the least preorder number,
 //! and the components are listed by decreasing finish time of their heads. A component with
 //! one vertex and no self-loop is that vertex; any other is the head followed by the order
@@ -10,7 +10,7 @@
 //! and the head's successors as roots.
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
-use zedc::store::wto::{Element, show, weak_topological_order};
+use zedc::store::wto::{Element, ordered_by, show, weak_topological_order};
 
 /// The declarative order of the vertices `within` (a subset of the graph), from `roots`.
 fn declarative(succ: &[Vec<usize>], within: &[usize], roots: &[usize]) -> Vec<Element> {
@@ -178,7 +178,8 @@ fn a_parser_loop_with_an_inner_retry_nests_its_components() {
 #[test]
 fn the_traversal_order_picks_the_head() {
     // The same three-cell loop with its cells numbered two ways: the head is whichever cell
-    // the traversal reaches first, which is the first in source order.
+    // the traversal reaches first, which is the first in number;
+    // `ordered_by` numbers the vertices by their keys.
     assert_eq!(
         show(&weak_topological_order(&[vec![1], vec![2], vec![0]])),
         "(0 1 2)"
@@ -223,4 +224,36 @@ fn the_order_agrees_with_the_declarative_definition_on_larger_graphs() {
     }
     // The sample exercises nested components.
     assert!(nested > RANDOM_INSTANCES / 4, "{nested} with nesting");
+}
+
+/// The keyed order: the declarative order with the roots taken in the order of the keys and
+/// each successor list sorted by them.
+#[test]
+fn the_keyed_order_agrees_with_the_declarative_definition() {
+    let mut rng = Rng::new(0x0c5b);
+    for _ in 0..4 * RANDOM_INSTANCES {
+        let g = random_graph(&mut rng);
+        let n = g.len();
+        // Distinct keys in a random order.
+        let mut keys: Vec<u64> = (0..n as u64).map(|k| 7 * k + 3).collect();
+        for i in (1..n).rev() {
+            keys.swap(i, rng.below(i + 1));
+        }
+        let mut by: Vec<usize> = (0..n).collect();
+        by.sort_by_key(|&v| keys[v]);
+        let sorted: Vec<Vec<usize>> = g
+            .iter()
+            .map(|s| {
+                let mut s = s.clone();
+                s.sort_by_key(|&w| keys[w]);
+                s
+            })
+            .collect();
+        let all: Vec<usize> = (0..n).collect();
+        assert_eq!(
+            show(&ordered_by(&g, &keys).unwrap()),
+            show(&declarative(&sorted, &all, &by)),
+            "graph {g:?}, keys {keys:?}"
+        );
+    }
 }

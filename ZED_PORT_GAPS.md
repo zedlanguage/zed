@@ -805,3 +805,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `u64` counter in the scope that orders bindings | `Scope::bind` | Mutation | The scope is passed and returned, with the counter as a field |
 | A worklist `Vec` with a visited `BTreeSet`, then a sort by order and a right fold into nested `Term::Let` | `Scope::close` | None | A `fold` over the worklist with a set in its state, then `sort` and a fold |
 | `matches!(**e, Term::Lam(..))` on an `Arc<Term>`, and `Option::then` | `Scope::bind` | None | A pattern test `is Lam` |
+
+## Entries from OSP-order (`zedc/src/store/wto.rs`, `iterate.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::ptr::eq` on two forms as a shortcut to `Equal` before comparing them structurally | `impl Ord for VertexKey` | Identity (gap 1) | The structural comparison alone, or the runtime's `==` shortcut on shared values; the address comparison before it already leaves only nodes of one binding and one address |
+| `Ord` written by hand for a struct of three fields, so that the form, a type parameter, is compared last and only on a tie | `VertexKey::cmp` | None | A tuple `(name, address, form)`, which compares left to right (`zed/prelude/iteration.zed`, `solve`) |
+| A stack of `&mut Element` walked to rewrite vertex numbers in place in a nested tree | `wto::ordered_by` | Mutation | A map over the tree of elements that returns a renumbered tree, by an explicit stack or by recursion on the nesting depth |

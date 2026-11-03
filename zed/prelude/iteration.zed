@@ -3,10 +3,14 @@
 // the widening points, and the two-phase iteration strategy.
 // The Rust-hosted checker's copy is crates/zedc/src/store/{wto,iterate}.rs.
 //
-// A system of equations has one cell per vertex 0..n in source order; reads[v]
-// lists the cells v's projection reads, and eval(v, cells) is that projection.
-// The dependency graph has an edge from u to every cell that reads u, the
-// successors in source order.
+// A system of equations has one cell per vertex 0..n; reads[v] lists the cells
+// v's projection reads, and eval(v, cells) is that projection. The dependency
+// graph has an edge from u to every cell that reads u. key(v) is the tuple
+// (name, address, form) of DESIGN.md step M0.5: the binding name that ends the
+// cell's fact address, the content address of its static node and that node's
+// canonical form. Tuples compare left to right, so a form is compared only
+// when the names and the addresses are equal. The numbering of the cells does
+// not enter the result.
 
 // A system also has its landmarks (lattice.zed): marks(v) gives those written
 // in cell v's equation. They bound every chain of widenings and narrowings, so
@@ -19,8 +23,9 @@ dependencyGraph(positional reads) =
   for u -> _ in reads { (for v -> rs in reads { rs.contains(u) }).keys };
 
 // ---- The weak topological order [Bourdoncle 1993, figure 4] ------------------
-// The depth-first traversal starts from the vertices in source order and visits
-// successors in source order. An element is #vertex(v) or
+// The depth-first traversal starts from the vertices in the order `by` and
+// visits each vertex's successors in the order of succ[v]; solve gives both in
+// the order of the keys, never in source order. An element is #vertex(v) or
 // #component(head: h, body: [element]). A depth-first number is 0 (unvisited),
 // a positive int (on the stack), or #done, which is above every int.
 
@@ -29,9 +34,9 @@ struct V { w: W, head: Any, isLoop: bool, out: [Any] }
 
 dfnLe(positional a, positional b) = b == #done || (a != #done && a <= b);
 
-wto(positional succ) = {
+wto(positional succ, positional by) = {
   run = loop v {
-    st' = if st.w.dfn[v] == 0 { visit(succ, v, st.w, st.out) } else { st }
+    st' = if st.w.dfn[by[v]] == 0 { visit(succ, by[v], st.w, st.out) } else { st }
       with st = V(w: W(dfn: succ.map(x -> 0), num: 0, stack: []), head: 0, isLoop: false, out: []);
     while v < succ::len;
   };
@@ -100,7 +105,7 @@ componentBody(positional succ, positional v, positional i, positional s) =
 // stabilized, since its cells are then a post-fixpoint of its own equations;
 // the checker does, which makes the work of nested loops linear in their number.
 
-struct Sys { reads: Any, eval: Any, lattice: Lattice, marks: Any }
+struct Sys { reads: Any, eval: Any, lattice: Lattice, marks: Any, key: Any }
 struct State { cells: Any }
 
 // The landmarks each cell takes (COMPLEXITY.md S13): a cell in a loop takes
@@ -165,7 +170,18 @@ phase2(positional sys, positional marks, positional cells) = {
   if next == cells { cells } else { phase2(sys, marks, next) }
 };
 
+// Whether no two neighbors of `by` have one key.
+distinct(positional sys, positional by, positional i) =
+  i + 1 >= by::len || (sys.key(by[i]) != sys.key(by[i + 1]) && distinct(sys, by, i + 1));
+
+// Two cells with one key are refused: no order of the traversal tells them
+// apart, and the one they were numbered in is where they were written.
 solve(positional sys) = {
-  order = wto(dependencyGraph(sys.reads));
-  phase2(sys, scopes(sys, order, none, sys.reads.map(x -> none)), phase1(sys, order))
+  by = (for v -> _ in sys.reads { true }).keys.sort(asc v -> sys.key(v));
+  succ = dependencyGraph(sys.reads).map(s -> s.sort(asc w -> sys.key(w)));
+  if !distinct(sys, by, 0) { #sameKey }
+  else {
+    order = wto(succ, by);
+    phase2(sys, scopes(sys, order, none, sys.reads.map(x -> none)), phase1(sys, order))
+  }
 };

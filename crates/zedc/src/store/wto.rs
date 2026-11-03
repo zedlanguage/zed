@@ -2,12 +2,131 @@
 //! M0.5), computed by Bourdoncle's algorithm [Bourdoncle, "Efficient chaotic iteration
 //! strategies with widenings", 1993, figure 4].
 //!
-//! The vertices are `0..n` in source order, and each vertex's successors are listed in source
-//! order; the depth-first traversal starts from the vertices in that order and visits
-//! successors in that order. A graph has many weak topological orders, and this traversal
-//! picks one, so the order, and with it the widening points, is a function of the source.
+//! A graph has many weak topological orders, and the order of the depth-first traversal picks
+//! one, with it the head of each component and so the widening points. The traversal visits
+//! the vertices, and each vertex's successors, in the order of their keys ([`VertexKey`]): by
+//! name, then by the content address of the static node, then by that node's canonical form
+//! compared structurally. Nothing in a key says where a declaration or a binding is written,
+//! so moving one changes no head; renaming one may. [`ordered_by`] computes the order from
+//! the keys; [`weak_topological_order`] is the traversal itself, over vertices already
+//! numbered in the order to visit them.
 
+use std::cmp::Ordering;
 use std::fmt;
+
+use crate::address::ContentAddress;
+
+/// What the traversal orders a vertex by (DESIGN.md step M0.5): the binding name that ends the
+/// vertex's fact address (a node inside an expression takes its binding's), then the content
+/// address of its static node, then that node's canonical form `F` compared structurally, so
+/// the order is total without trusting a hash as identity.
+#[derive(Clone, Copy, Debug)]
+pub struct VertexKey<'a, F> {
+    /// The binding name.
+    pub name: &'a str,
+    /// The content address of the static node.
+    pub address: ContentAddress,
+    /// The static node's canonical form.
+    pub form: &'a F,
+}
+
+impl<F: Ord> Ord for VertexKey<'_, F> {
+    /// The canonical forms are compared only when the names and the addresses are equal, and
+    /// not at all when both keys hold the same form: equal references are equal forms.
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.name
+            .cmp(other.name)
+            .then_with(|| self.address.cmp(&other.address))
+            .then_with(|| {
+                if std::ptr::eq(self.form, other.form) {
+                    Ordering::Equal
+                } else {
+                    self.form.cmp(other.form)
+                }
+            })
+    }
+}
+
+impl<F: Ord> PartialOrd for VertexKey<'_, F> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<F: Ord> PartialEq for VertexKey<'_, F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl<F: Ord> Eq for VertexKey<'_, F> {}
+
+/// Two vertices whose keys are equal, by their numbers, the lower first. In a store built from
+/// a content-addressed program they are one cell; the traversal could visit them only in the
+/// order they were numbered, which is where they were written, so the order is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SameKey(pub usize, pub usize);
+
+impl fmt::Display for SameKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "vertices {} and {} have the same name, content address and canonical form, so no \
+             order of the traversal tells them apart",
+            self.0, self.1
+        )
+    }
+}
+
+impl std::error::Error for SameKey {}
+
+/// Each vertex's place in the order of `keys`: `O(n log n)` comparisons of keys, then `n - 1`
+/// more to find equal neighbors.
+pub fn ranks<K: Ord>(keys: &[K]) -> Result<Vec<usize>, SameKey> {
+    let mut by: Vec<usize> = (0..keys.len()).collect();
+    by.sort_unstable_by(|&a, &b| keys[a].cmp(&keys[b]));
+    if let Some(w) = by.windows(2).find(|w| keys[w[0]] == keys[w[1]]) {
+        return Err(SameKey(w[0].min(w[1]), w[0].max(w[1])));
+    }
+    let mut rank = vec![0; keys.len()];
+    for (i, &v) in by.iter().enumerate() {
+        rank[v] = i;
+    }
+    Ok(rank)
+}
+
+/// The weak topological order of the graph whose vertex `v` has the successors `succ[v]` and
+/// the key `keys[v]`, the traversal visiting the vertices, and each vertex's successors, in
+/// the order of the keys. The vertices are numbered by their keys, the graph is traversed so
+/// numbered, and the order is given back in the original numbers: `O(n log n)` comparisons of
+/// keys, `O(E log E)` to sort the successor lists, and the traversal.
+pub fn ordered_by<K: Ord>(succ: &[Vec<usize>], keys: &[K]) -> Result<Vec<Element>, SameKey> {
+    let rank = ranks(keys)?;
+    let mut by = vec![0; rank.len()];
+    for (v, &r) in rank.iter().enumerate() {
+        by[r] = v;
+    }
+    let numbered: Vec<Vec<usize>> = by
+        .iter()
+        .map(|&v| {
+            let mut s: Vec<usize> = succ[v].iter().map(|&w| rank[w]).collect();
+            s.sort_unstable();
+            s
+        })
+        .collect();
+    let mut order = weak_topological_order(&numbered);
+    let mut todo: Vec<&mut Element> = order.iter_mut().collect();
+    while let Some(e) = todo.pop() {
+        match e {
+            Element::Vertex(v) => *v = by[*v],
+            Element::Component { head, body } => {
+                *head = by[*head];
+                todo.extend(body.iter_mut());
+            }
+        }
+    }
+    Ok(order)
+}
 
 /// An element of a weak topological order: a vertex, or a component with its head and body.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -67,7 +186,11 @@ pub fn show(order: &[Element]) -> String {
         .join(" ")
 }
 
-/// The weak topological order of the graph whose vertex `v` has the successors `succ[v]`.
+/// The weak topological order of the graph whose vertex `v` has the successors `succ[v]`, the
+/// traversal starting from the vertices in the order of their numbers and visiting each
+/// vertex's successors in the order of its list. The numbers must be the order of the keys,
+/// as [`ordered_by`] numbers them; numbered as written, the order would depend on where each
+/// declaration is.
 ///
 /// It is the order Bourdoncle's recursive algorithm gives, computed from one depth-first
 /// traversal in `O((V + E) log V)` (the rule of low complexity, DESIGN.md Part G), where the

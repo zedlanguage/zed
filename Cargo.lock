@@ -978,6 +978,7 @@ dependencies = [
 name = "zed-tests"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "insta",
  "num-bigint",
  "num-traits",

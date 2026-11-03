@@ -14,12 +14,18 @@
 //! module is the Rust-hosted checker's copy.
 
 use super::lattice::{Landmarks, Lattice};
-use super::wto::{Element, weak_topological_order};
+use super::wto::{Element, SameKey, VertexKey, ordered_by};
 
-/// A system of equations over a lattice: one cell per vertex, `0..n` in source order.
+/// A system of equations over a lattice: one cell per vertex, `0..n`. The numbering does not
+/// enter the result: the order of iteration comes from the cells' keys.
 pub trait Equations<L: Lattice> {
-    /// For each cell, the cells its projection reads, in source order.
+    /// The canonical form of a cell's static node, the last part of its key.
+    type Form: Ord;
+    /// For each cell, the cells its projection reads.
     fn reads(&self) -> &[Vec<usize>];
+    /// What the traversal orders cell `v` by: its binding name, the content address of its
+    /// static node and that node's canonical form (DESIGN.md step M0.5).
+    fn key(&self, v: usize) -> VertexKey<'_, Self::Form>;
     /// The forward projection into cell `v` from the current cells.
     fn eval(&self, v: usize, cells: &[L]) -> L;
     /// The values written in the equation of cell `v`, where a widening or a narrowing may
@@ -28,7 +34,7 @@ pub trait Equations<L: Lattice> {
 }
 
 /// The dependency graph: an edge from `u` to every cell that reads `u`, the successors in
-/// source order.
+/// increasing number.
 pub fn dependency_graph(reads: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let mut succ = vec![Vec::new(); reads.len()];
     for (v, rs) in reads.iter().enumerate() {
@@ -43,12 +49,19 @@ pub fn dependency_graph(reads: &[Vec<usize>]) -> Vec<Vec<usize>> {
     succ
 }
 
-/// Phase 1 and then phase 2, from every cell at the bottom.
-pub fn solve<L: Lattice>(eq: &impl Equations<L>) -> Vec<L> {
-    let order = weak_topological_order(&dependency_graph(eq.reads()));
+/// The weak topological order of the system's dependency graph, the traversal visiting the
+/// cells in the order of their keys; refused when two cells have one key.
+pub fn order<L: Lattice>(eq: &impl Equations<L>) -> Result<Vec<Element>, SameKey> {
+    let keys: Vec<_> = (0..eq.reads().len()).map(|v| eq.key(v)).collect();
+    ordered_by(&dependency_graph(eq.reads()), &keys)
+}
+
+/// Phase 1 and then phase 2, from every cell at the bottom, over [`order`].
+pub fn solve<L: Lattice>(eq: &impl Equations<L>) -> Result<Vec<L>, SameKey> {
+    let order = order(eq)?;
     let mut cells = phase1(eq, &order);
     narrow(eq, &order, &mut cells);
-    cells
+    Ok(cells)
 }
 
 /// The landmarks each cell's widening and narrowing take (COMPLEXITY.md S13). A cell in a

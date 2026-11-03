@@ -10,6 +10,7 @@
 //! bound of every lattice, and `revision` on constraints from ordinary programs.
 
 mod iteration;
+mod order;
 mod revision;
 mod scaling;
 mod widening;
@@ -18,9 +19,11 @@ mod wto;
 use std::collections::BTreeSet;
 
 use zed_tests::instances::Rng;
+use zedc::address::ContentAddress;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::iterate::Equations;
 use zedc::store::lattice::Landmarks;
+use zedc::store::wto::VertexKey;
 
 /// One term of a cell's transfer: `(cell[from] ⊓ filter) + offset`.
 #[derive(Clone, Debug)]
@@ -30,8 +33,13 @@ struct Term {
     offset: i64,
 }
 
+/// The canonical form of a cell's equation, written with the names of the cells it reads and
+/// not their numbers: its initial value, then each term's cell, filter and offset.
+type Form = (String, Vec<(String, String, i64)>);
+
 /// A system of interval equations, `cell[v] = init[v] ⊔ ⋃ terms[v]`: the shape the store's
-/// equations take for loop counters, accumulators and bounds checks.
+/// equations take for loop counters, accumulators and bounds checks. Each cell has a key:
+/// its binding name, the content address of its equation and the equation's canonical form.
 #[derive(Clone, Debug)]
 struct System {
     init: Vec<IntervalSet>,
@@ -39,10 +47,21 @@ struct System {
     reads: Vec<Vec<usize>>,
     /// Whether the equations give no landmarks, as if the program wrote no bound.
     bare: bool,
+    names: Vec<String>,
+    addresses: Vec<ContentAddress>,
+    forms: Vec<Form>,
 }
 
 impl System {
+    /// The system with cell `v` named `c{v}`.
     fn new(init: Vec<IntervalSet>, terms: Vec<Vec<Term>>) -> Self {
+        let names = (0..init.len()).map(|v| format!("c{v}")).collect();
+        System::named(names, init, terms)
+    }
+
+    /// The system with the given names, which several cells may share, as the nodes of one
+    /// binding's expression do; each cell's address is the hash of its form.
+    fn named(names: Vec<String>, init: Vec<IntervalSet>, terms: Vec<Vec<Term>>) -> Self {
         let reads = terms
             .iter()
             .map(|ts| {
@@ -52,12 +71,57 @@ impl System {
                 r
             })
             .collect();
+        let forms: Vec<Form> = init
+            .iter()
+            .zip(&terms)
+            .map(|(i, ts)| {
+                let ts = ts
+                    .iter()
+                    .map(|t| (names[t.from].clone(), t.filter.to_string(), t.offset));
+                (i.to_string(), ts.collect())
+            })
+            .collect();
+        let addresses = forms
+            .iter()
+            .map(|f| ContentAddress(*blake3::hash(format!("{f:?}").as_bytes()).as_bytes()))
+            .collect();
         System {
             init,
             terms,
             reads,
             bare: false,
+            names,
+            addresses,
+            forms,
         }
+    }
+
+    /// The same system with its cells renumbered: cell `v` of the result is cell `old[v]`.
+    fn renumbered(&self, old: &[usize]) -> System {
+        let mut new = vec![0; old.len()];
+        for (v, &o) in old.iter().enumerate() {
+            new[o] = v;
+        }
+        let terms = old
+            .iter()
+            .map(|&o| {
+                self.terms[o]
+                    .iter()
+                    .map(|t| Term {
+                        from: new[t.from],
+                        ..t.clone()
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut s = System::named(
+            old.iter().map(|&o| self.names[o].clone()).collect(),
+            old.iter().map(|&o| self.init[o].clone()).collect(),
+            terms,
+        );
+        s.addresses = old.iter().map(|&o| self.addresses[o]).collect();
+        s.bare = self.bare;
+        s
     }
 
     /// The same equations with no landmarks.
@@ -135,8 +199,16 @@ fn random_filter(rng: &mut Rng) -> IntervalSet {
 }
 
 impl Equations<IntervalSet> for System {
+    type Form = Form;
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
+    }
+    fn key(&self, v: usize) -> VertexKey<'_, Form> {
+        VertexKey {
+            name: &self.names[v],
+            address: self.addresses[v],
+            form: &self.forms[v],
+        }
     }
     fn eval(&self, v: usize, cells: &[IntervalSet]) -> IntervalSet {
         self.terms[v].iter().fold(self.init[v].clone(), |acc, t| {
@@ -184,4 +256,18 @@ fn iv(lo: Option<i64>, hi: Option<i64>) -> IntervalSet {
         lo.map_or(End::NegInf, End::Fin),
         hi.map_or(End::PosInf, End::Fin),
     )
+}
+
+/// The key of cell `v` of a system whose cells are told apart by their names alone.
+fn name_key(names: &[String], v: usize) -> VertexKey<'_, ()> {
+    VertexKey {
+        name: &names[v],
+        address: ContentAddress([0; 32]),
+        form: &(),
+    }
+}
+
+/// The names `n0000`, `n0001`, …: their order is the order of the numbers.
+fn numbered_names(n: usize) -> Vec<String> {
+    (0..n).map(|v| format!("n{v:04}")).collect()
 }

@@ -3,11 +3,11 @@
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::store::interval::IntervalSet;
-use zedc::store::iterate::{Equations, Scopes, dependency_graph, narrow, phase1, solve};
+use zedc::store::iterate::{Equations, Scopes, narrow, order, phase1, solve};
 use zedc::store::lattice::{Landmarks, Lattice};
-use zedc::store::wto::{Element, weak_topological_order};
+use zedc::store::wto::{Element, VertexKey};
 
-use super::{System, Term, is_post_fixpoint, iv};
+use super::{System, Term, is_post_fixpoint, iv, name_key, numbered_names};
 
 /// One instruction of the flattened order.
 #[derive(Clone, Copy, Debug)]
@@ -43,7 +43,7 @@ fn flatten(order: &[Element], out: &mut Vec<Instr>) {
 /// holding its iteration count. A head widens at every change.
 fn machine(eq: &System) -> Vec<IntervalSet> {
     let mut program = Vec::new();
-    let order = weak_topological_order(&dependency_graph(&eq.reads));
+    let order = order(eq).unwrap();
     flatten(&order, &mut program);
     let marks = Scopes::new(eq, &order);
     let mut cells = vec![IntervalSet::empty(); eq.init.len()];
@@ -87,7 +87,7 @@ fn phase_one_agrees_with_the_stack_machine() {
             .map(|e| [e.clone(), e.bare()])
             .concat()
         {
-            let order = weak_topological_order(&dependency_graph(&eq.reads));
+            let order = order(&eq).unwrap();
             assert_eq!(phase1(&eq, &order), machine(&eq), "{eq:?}");
         }
     }
@@ -102,7 +102,7 @@ fn both_phases_end_at_a_sound_post_fixpoint() {
     for _ in 0..RANDOM_INSTANCES {
         let eq = System::random(&mut rng);
         let eq = if rng.below(2) == 0 { eq } else { eq.bare() };
-        let order = weak_topological_order(&dependency_graph(&eq.reads));
+        let order = order(&eq).unwrap();
         let mut cells = phase1(&eq, &order);
         assert!(is_post_fixpoint(&eq, &cells), "phase 1: {eq:?}");
         let before = cells.clone();
@@ -152,21 +152,22 @@ fn a_counter_stops_at_its_landmarks_in_phase_one() {
     // With no landmarks the end goes to infinity, and phase 2 brings it back: an infinite
     // end may take a finite bound once.
     assert_eq!(phase1(&counter(99).bare(), &order), vec![iv(Some(0), None)]);
-    assert_eq!(solve(&counter(99).bare()), vec![iv(Some(0), Some(99))]);
+    assert_eq!(
+        solve(&counter(99).bare()).unwrap(),
+        vec![iv(Some(0), Some(99))]
+    );
 }
 
-/// `a = 0 ⊔ c; b = a + 1; c = b ⊓ (-inf, 4]`, with the cells numbered so that `head` is
-/// cell 0.
-fn three_cell_loop(head: char) -> (System, [usize; 3]) {
-    // The cell index of a, b and c.
-    let ix = match head {
-        'a' => [0, 1, 2],
-        'b' => [2, 0, 1],
-        _ => [1, 2, 0],
-    };
+/// `a = 0 ⊔ c; b = a + 1; c = b ⊓ (-inf, 4]` of DESIGN.md sec:domains, with `a`, `b` and `c`
+/// named `names` and numbered `ix`: the numbers are the order the equations are written in.
+pub(super) fn three_cell_loop(names: [&str; 3], ix: [usize; 3]) -> System {
     let [a, b, c] = ix;
     let mut init = vec![IntervalSet::empty(); 3];
     let mut terms = vec![Vec::new(), Vec::new(), Vec::new()];
+    let mut named = vec![String::new(); 3];
+    for (k, name) in ix.iter().zip(names) {
+        named[*k] = name.to_string();
+    }
     init[a] = IntervalSet::single(0);
     terms[a].push(Term {
         from: c,
@@ -183,25 +184,26 @@ fn three_cell_loop(head: char) -> (System, [usize; 3]) {
         filter: iv(None, Some(4)),
         offset: 0,
     });
-    (System::new(init, terms), ix)
+    System::named(named, init, terms)
 }
 
 #[test]
 fn the_widening_point_changes_the_phase_one_values() {
     // Phase 1's result depends on where the loop is cut, which is why the traversal is
-    // fixed. Cut at a, the bound on c survives widening; cut at c, it does not.
-    let run = |head| {
-        let (eq, [a, b, c]) = three_cell_loop(head);
-        let order = weak_topological_order(&dependency_graph(&eq.reads));
-        let cells = phase1(&eq.clone().bare(), &order);
-        let solved = solve(&eq.bare());
+    // fixed. Cut at a, the least name, the bound on c survives widening; with c renamed `_c`,
+    // which sorts first, the loop is cut at c, and the bound does not survive.
+    let run = |names| {
+        let ix = [0, 1, 2];
+        let eq = three_cell_loop(names, ix).bare();
+        let cells = phase1(&eq, &order(&eq).unwrap());
+        let solved = solve(&eq).unwrap();
         (
-            [&cells[a], &cells[b], &cells[c]].map(|x| x.to_string()),
-            [&solved[a], &solved[b], &solved[c]].map(|x| x.to_string()),
+            ix.map(|v| cells[v].to_string()),
+            ix.map(|v| solved[v].to_string()),
         )
     };
-    let (at_a, solved_a) = run('a');
-    let (at_c, solved_c) = run('c');
+    let (at_a, solved_a) = run(["a", "b", "c"]);
+    let (at_c, solved_c) = run(["a", "b", "_c"]);
     assert_eq!(at_a, ["[0..]", "[1..]", "[1..=4]"]);
     assert_eq!(at_c, ["[0..]", "[1..]", "[1..]"]);
     // Phase 2 recovers the same values from both.
@@ -229,7 +231,7 @@ fn phase_two_runs_until_a_round_changes_nothing() {
     // With no landmarks, phase 1 leaves every cell at [0..]. Narrowing the counter takes one
     // round, and each copy one more: phase 2 runs all six rounds, with no budget to stop it.
     let eq = counter_and_copies();
-    let order = weak_topological_order(&dependency_graph(&eq.reads));
+    let order = order(&eq).unwrap();
     let mut cells = phase1(&eq, &order);
     assert!(cells.iter().all(|c| *c == iv(Some(0), None)));
     assert_eq!(narrow(&eq, &order, &mut cells), 6);
@@ -254,7 +256,7 @@ fn phase_two_ends_where_meets_alone_would_descend_forever() {
     assert!(is_post_fixpoint(&eq, &start));
     assert_eq!(start[0].meet(&eq.eval(0, &start)), iv(Some(1), None));
     let mut cells = start.clone();
-    let order = weak_topological_order(&dependency_graph(&eq.reads));
+    let order = order(&eq).unwrap();
     assert_eq!(narrow(&eq, &order, &mut cells), 0);
     assert_eq!(cells, start);
 }
@@ -266,9 +268,9 @@ fn a_loop_with_no_landmark_ends_without_a_cap() {
     // evaluations, at any bound.
     for bound in [10, 1_000_000_000] {
         let eq = counter(bound).bare();
-        let order = weak_topological_order(&dependency_graph(&eq.reads));
+        let order = order(&eq).unwrap();
         assert_eq!(phase1(&eq, &order), vec![iv(Some(0), None)]);
-        assert_eq!(solve(&eq), vec![iv(Some(0), Some(bound))]);
+        assert_eq!(solve(&eq).unwrap(), vec![iv(Some(0), Some(bound))]);
     }
 }
 
@@ -278,17 +280,21 @@ fn equations_read_through_the_trait() {
     // is its initial values.
     let eq = System::new(vec![IntervalSet::of(3, 4)], vec![vec![]]);
     assert!(eq.reads()[0].is_empty());
-    assert_eq!(solve(&eq), vec![IntervalSet::of(3, 4)]);
+    assert_eq!(solve(&eq).unwrap(), vec![IntervalSet::of(3, 4)]);
     assert_eq!(IntervalSet::bottom(), IntervalSet::empty());
 }
 
 /// `depth` nested loops, cell `k` reading the loop around it, itself and the loop inside it,
 /// and writing the literal `100·k`.
-struct Levels(Vec<Vec<usize>>);
+struct Levels(Vec<Vec<usize>>, Vec<String>);
 
 impl Equations<IntervalSet> for Levels {
+    type Form = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.0
+    }
+    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+        name_key(&self.1, v)
     }
     fn eval(&self, _: usize, _: &[IntervalSet]) -> IntervalSet {
         IntervalSet::empty()
@@ -307,8 +313,9 @@ fn a_loop_takes_the_landmarks_of_the_loops_inside_it_only() {
         (0..depth)
             .map(|k: usize| (k.saturating_sub(1)..(k + 2).min(depth)).collect())
             .collect(),
+        numbered_names(depth),
     );
-    let scopes = Scopes::new(&eq, &weak_topological_order(&dependency_graph(&eq.0)));
+    let scopes = Scopes::new(&eq, &order(&eq).unwrap());
     for k in 0..depth {
         let want: Vec<i64> = (k..depth)
             .flat_map(|j| {

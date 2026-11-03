@@ -10,13 +10,16 @@ use std::cell::Cell;
 
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet};
-use zedc::store::iterate::{Equations, dependency_graph, phase1};
+use zedc::store::iterate::{Equations, order, phase1};
 use zedc::store::lattice::Landmarks;
-use zedc::store::wto::{Element, weak_topological_order};
+use zedc::store::wto::{Element, VertexKey};
+
+use super::{name_key, numbered_names};
 
 /// `depth` nested counters; cell `k` reads itself, the loop around it and the loop inside it.
 struct Nest {
     reads: Vec<Vec<usize>>,
+    names: Vec<String>,
     evals: Cell<u64>,
 }
 
@@ -27,14 +30,19 @@ impl Nest {
             .collect();
         Nest {
             reads,
+            names: numbered_names(depth),
             evals: Cell::new(0),
         }
     }
 }
 
 impl Equations<IntervalSet> for Nest {
+    type Form = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
+    }
+    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+        name_key(&self.names, v)
     }
     fn eval(&self, k: usize, cells: &[IntervalSet]) -> IntervalSet {
         self.evals.set(self.evals.get() + 1);
@@ -71,7 +79,7 @@ fn depth_of(order: &[Element]) -> usize {
 
 fn evals(depth: usize) -> u64 {
     let eq = Nest::new(depth);
-    let order = weak_topological_order(&dependency_graph(eq.reads()));
+    let order = order(&eq).unwrap();
     assert_eq!(depth_of(&order), depth, "the loops nest: {order:?}");
     phase1(&eq, &order);
     eq.evals.get()
@@ -103,7 +111,7 @@ fn the_order_of_nested_loops_takes_time_linear_in_the_depth() {
         .stack_size(1 << 28)
         .spawn(|| {
             scaling::check("the weak topological order of nested loops", 1000, |d| {
-                weak_topological_order(&dependency_graph(Nest::new(d).reads()));
+                order(&Nest::new(d)).unwrap();
             });
         })
         .expect("a thread")
@@ -115,13 +123,18 @@ fn the_order_of_nested_loops_takes_time_linear_in_the_depth() {
 /// 10·marks.
 struct Counter {
     reads: Vec<Vec<usize>>,
+    names: Vec<String>,
     marks: i64,
     evals: Cell<u64>,
 }
 
 impl Equations<IntervalSet> for Counter {
+    type Form = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
+    }
+    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+        name_key(&self.names, v)
     }
     fn eval(&self, _: usize, cells: &[IntervalSet]) -> IntervalSet {
         self.evals.set(self.evals.get() + 1);
@@ -145,10 +158,11 @@ fn a_head_stops_at_most_once_per_landmark() {
     for marks in [1, 2, 4, 8, 16, 32, 64, 128] {
         let eq = Counter {
             reads: vec![vec![0]],
+            names: numbered_names(1),
             marks,
             evals: Cell::new(0),
         };
-        let cells = phase1(&eq, &weak_topological_order(&dependency_graph(eq.reads())));
+        let cells = phase1(&eq, &order(&eq).unwrap());
         assert_eq!(cells, vec![IntervalSet::of(0, 10 * marks)]);
         let n = eq.evals.get();
         assert!(
@@ -162,13 +176,18 @@ fn a_head_stops_at_most_once_per_landmark() {
 /// is the literal `10·k`, below the bound.
 struct Beside {
     reads: Vec<Vec<usize>>,
+    names: Vec<String>,
     bound: i64,
     evals: Cell<u64>,
 }
 
 impl Equations<IntervalSet> for Beside {
+    type Form = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
+    }
+    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+        name_key(&self.names, v)
     }
     fn eval(&self, v: usize, cells: &[IntervalSet]) -> IntervalSet {
         if v > 0 {
@@ -199,11 +218,12 @@ fn a_head_takes_only_the_landmarks_of_its_loop() {
         let mut reads = vec![vec![0]];
         reads.extend((0..marks).map(|_| Vec::new()));
         let eq = Beside {
+            names: numbered_names(reads.len()),
             reads,
             bound,
             evals: Cell::new(0),
         };
-        let cells = phase1(&eq, &weak_topological_order(&dependency_graph(eq.reads())));
+        let cells = phase1(&eq, &order(&eq).unwrap());
         assert_eq!(cells[0], IntervalSet::of(0, bound));
         let n = eq.evals.get();
         assert!(n <= 5, "{marks} literals beside the loop: {n} evaluations");

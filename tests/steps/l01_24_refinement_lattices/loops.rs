@@ -4,11 +4,13 @@
 use std::collections::BTreeSet;
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
+use zedc::address::ContentAddress;
 use zedc::store::affine::{Affine, Bounds};
 use zedc::store::interval::End;
 use zedc::store::interval::IntervalSet;
 use zedc::store::iterate::{Equations, solve};
 use zedc::store::lattice::{Landmarks, Lattice};
+use zedc::store::wto::VertexKey;
 
 use super::{WINDOW, at, envs, random_bounds};
 
@@ -27,6 +29,8 @@ struct System {
     init: Vec<Bounds>,
     terms: Vec<Vec<Term>>,
     reads: Vec<Vec<usize>>,
+    /// Cell `v` is named `c{v}`; the names alone order the traversal.
+    names: Vec<String>,
 }
 
 impl System {
@@ -38,7 +42,13 @@ impl System {
                 r.into_iter().collect()
             })
             .collect();
-        System { init, terms, reads }
+        let names = (0..init.len()).map(|v| format!("c{v}")).collect();
+        System {
+            init,
+            terms,
+            reads,
+            names,
+        }
     }
 
     /// The values each cell takes in a run at `env` that stays in the window.
@@ -72,8 +82,16 @@ impl System {
 }
 
 impl Equations<Bounds> for System {
+    type Form = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
+    }
+    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+        VertexKey {
+            name: &self.names[v],
+            address: ContentAddress([0; 32]),
+            form: &(),
+        }
     }
     fn eval(&self, v: usize, cells: &[Bounds]) -> Bounds {
         self.terms[v].iter().fold(self.init[v].clone(), |acc, t| {
@@ -128,7 +146,7 @@ fn counting_up() -> System {
 #[test]
 fn a_counting_loop_keeps_its_symbolic_bound() {
     let s = counting_up();
-    let cells = solve(&s);
+    let cells = solve(&s).unwrap();
     // After the loop the counter is `n`, or 0 when `n` is not positive.
     assert_eq!(cells[0].to_string(), "[0..=max(0, n)]");
     // In the body it is `int[0..<n]`.
@@ -153,7 +171,7 @@ fn a_loop_counting_down_keeps_its_symbolic_bound() {
             }],
         ],
     );
-    let cells = solve(&s);
+    let cells = solve(&s).unwrap();
     assert_eq!(cells[0].to_string(), "[min(0, n - 1)..=n - 1]");
     assert_eq!(cells[1].to_string(), "[1..=n - 1]");
 }
@@ -178,7 +196,7 @@ fn every_solution_holds_every_value_a_run_takes() {
             })
             .collect();
         let s = System::new(init, terms);
-        let solved = solve(&s);
+        let solved = solve(&s).unwrap();
         symbolic += solved
             .iter()
             .filter(|c| c.to_string().contains('n'))
