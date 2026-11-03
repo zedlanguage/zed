@@ -254,13 +254,80 @@ fn a_printed_bounded_type_reads_back() {
             "((((T) -> T for T in rat)) -> int)",
         ),
     ] {
-        let printed = parse_type(text)
-            .unwrap_or_else(|e| panic!("{e}"))
-            .to_string();
+        let first = parse_type(text).unwrap_or_else(|e| panic!("{e}"));
+        let printed = first.to_string();
         assert_eq!(printed, want);
         let again = parse_type(&printed).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(again, first, "{text}");
         assert_eq!(again.to_string(), printed);
     }
+}
+
+#[test]
+fn a_bounded_signature_printed_and_read_back_is_the_same_type() {
+    for text in [
+        // A clause of every carrier, one of a variable only in the result, and one per
+        // signature of a tuple and of a union.
+        "(a: T, b: T) -> bool for T in int | f64 | rat | String | bool",
+        "() -> T for T in int | f64",
+        "((x: T) -> T for T in rat, (y: U) -> String for U in String | bool)",
+        "((x: T) -> T for T in int) | int",
+        // A clause on a function parameter of a bounded signature, and two variables of one
+        // clause in written order other than the printer's.
+        "(g: ((x: U) -> U for U in f64), y: T) -> T for T in int | rat",
+        "(b: U, a: T) -> U for U in bool, T in int",
+    ] {
+        let first = parse_type(text).unwrap_or_else(|e| panic!("{e}"));
+        let printed = first.to_string();
+        let again = parse_type(&printed).unwrap_or_else(|e| panic!("{text}: {printed}: {e}"));
+        assert_eq!(again, first, "{text} printed {printed}");
+        assert_eq!(again.to_string(), printed, "{text}");
+    }
+    // The checker's own signatures, bounded on a parameter, read back to one signature that
+    // prints as the text printed (a type, unlike a signature alone, is printed in parentheses).
+    for (src, name) in [(P, "p_wide"), (L, "two"), (L, "mix"), (R, "r2")] {
+        let printed = sig(src, name);
+        let again = parse_type(&printed).unwrap_or_else(|e| panic!("{printed}: {e}"));
+        assert_eq!(again.fns.len(), 1, "{printed}");
+        assert_eq!(again.fns[0].to_string(), printed, "{name}");
+    }
+}
+
+/// A signature of `n` parameters, each of its own variable, with the clause bounding all `n`.
+fn many_bounds(n: usize) -> String {
+    let ps: Vec<String> = (0..n).map(|i| format!("x{i}: T{i}")).collect();
+    let bs: Vec<String> = (0..n)
+        .map(|i| format!("T{i} in {}", ["int | f64", "String", "rat | bool"][i % 3]))
+        .collect();
+    format!("({}) -> T0 for {}", ps.join(", "), bs.join(", "))
+}
+
+#[test]
+fn printing_and_reading_a_signature_of_many_bounds_scales() {
+    let first = parse_type(&many_bounds(3)).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        first.to_string(),
+        "((x0: T0, x1: T1, x2: T2) -> T0 for T0 in int | f64, T1 in String, T2 in rat | bool)"
+    );
+    // Each size's type and printed text built before timing; printing and reading are timed
+    // apart.
+    let n = 400;
+    let inputs: std::collections::HashMap<usize, _> = [n, zed_tests::scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let t = parse_type(&many_bounds(m)).unwrap_or_else(|e| panic!("{e}"));
+            let text = t.to_string();
+            (m, (t, text))
+        })
+        .collect();
+    zed_tests::scaling::check("printing a signature of n bounds", n, |m| {
+        let (t, _) = &inputs[&m];
+        assert_eq!(t.to_string().matches(" in ").count(), m);
+    });
+    zed_tests::scaling::check("reading back a signature of n bounds", n, |m| {
+        let (t, text) = &inputs[&m];
+        assert_eq!(&parse_type(text).unwrap_or_else(|e| panic!("{e}")), t);
+    });
 }
 
 #[test]
