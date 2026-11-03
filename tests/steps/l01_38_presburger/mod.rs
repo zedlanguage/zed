@@ -21,6 +21,7 @@ mod near;
 mod omega;
 mod oracle;
 mod preimage;
+mod probe;
 pub(crate) mod random;
 mod repair;
 pub(crate) mod scaling;

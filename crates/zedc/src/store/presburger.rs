@@ -941,40 +941,33 @@ struct Near {
 impl Near {
     /// Adds the constraint `c`, numbered `i` among those taken.
     fn add(&mut self, i: usize, c: &Con) {
-        let mut terms = c.lin.terms.iter();
-        let (Some((a, coef)), None) = (terms.next(), terms.next()) else {
+        let Some((a, lo, hi)) = one_bound(c) else {
             for a in c.lin.terms.keys() {
                 self.by_atom.entry(a.clone()).or_default().push(i);
             }
             return;
         };
-        // `coef·a + k` compared with zero.
-        let k = &c.lin.constant;
-        let m = coef.abs();
-        let (lo, hi) = match c.rel {
-            // `a >= -k / coef`, rounded up.
-            Rel::Ge if coef.is_positive() => (Some(-&k.div_floor(&m)), None),
-            // `a <= k / |coef|`, rounded down.
-            Rel::Ge => (None, Some(k.div_floor(&m))),
-            Rel::Eq if k.mod_floor(&m).is_zero() => {
-                let v = -&k.div_floor(&m);
-                let v = if coef.is_positive() { v } else { -&v };
-                (Some(v.clone()), Some(v))
-            }
-            // No integer `a` has `coef·a == -k`.
-            Rel::Eq => (Some(Int::ONE), Some(Int::ZERO)),
-        };
-        let (l, h) = self.one.entry(a.clone()).or_default();
-        if let Some(lo) = lo
-            && l.as_ref().is_none_or(|l| lo > *l)
-        {
-            *l = Some(lo);
-        }
-        if let Some(hi) = hi
-            && h.as_ref().is_none_or(|h| hi < *h)
-        {
-            *h = Some(hi);
-        }
+        self.tighten(a, lo, hi);
+    }
+
+    /// Moves the least value of `a` up to `lo` and its greatest down to `hi`, where they are
+    /// given and tighter.
+    fn tighten(&mut self, a: &Atom, lo: Option<Int>, hi: Option<Int>) {
+        narrow_to(&mut self.one, a, lo, hi);
+    }
+
+    /// Whether some constraint of one atom in `cons` leaves that atom no value within its
+    /// bounds here.
+    fn refutes(&self, cons: &[Con]) -> bool {
+        cons.iter().filter_map(one_bound).any(|(a, lo, hi)| {
+            let (l, h) = self
+                .one
+                .get(a)
+                .map_or((None, None), |(l, h)| (l.as_ref(), h.as_ref()));
+            let lo = [l, lo.as_ref()].into_iter().flatten().max();
+            let hi = [h, hi.as_ref()].into_iter().flatten().min();
+            matches!((lo, hi), (Some(lo), Some(hi)) if lo > hi)
+        })
     }
 
     /// Pushes the bounds of `a` onto `out` as constraints.
@@ -990,6 +983,32 @@ impl Near {
             out.push(Con::ge(&Lin::constant(hi.clone()), &x));
         }
     }
+}
+
+/// The atom of a constraint of one atom, with the least and the greatest value it allows that
+/// atom; a least above the greatest allows none.
+fn one_bound(c: &Con) -> Option<(&Atom, Option<Int>, Option<Int>)> {
+    let mut terms = c.lin.terms.iter();
+    let (Some((a, coef)), None) = (terms.next(), terms.next()) else {
+        return None;
+    };
+    // `coef·a + k` compared with zero.
+    let k = &c.lin.constant;
+    let m = coef.abs();
+    let (lo, hi) = match c.rel {
+        // `a >= -k / coef`, rounded up.
+        Rel::Ge if coef.is_positive() => (Some(-&k.div_floor(&m)), None),
+        // `a <= k / |coef|`, rounded down.
+        Rel::Ge => (None, Some(k.div_floor(&m))),
+        Rel::Eq if k.mod_floor(&m).is_zero() => {
+            let v = -&k.div_floor(&m);
+            let v = if coef.is_positive() { v } else { -&v };
+            (Some(v.clone()), Some(v))
+        }
+        // No integer `a` has `coef·a == -k`.
+        Rel::Eq => (Some(Int::ONE), Some(Int::ZERO)),
+    };
+    Some((a, lo, hi))
 }
 
 /// Constraints grouped by the variables they share, so that a question about a few variables
@@ -1110,13 +1129,25 @@ impl Linked {
 /// disjunct that meets the rest nowhere leaves the formula's points as they were, so a point
 /// found once is a point of every later state, and propagation, which removes a disjunct only
 /// on a proof that it has no point with the rest, never removes one that holds there. The
-/// result is the one the tests give. The points are found by [`pick`] on the parts of a test,
+/// points are found by [`pick`] on the parts of a test,
 /// trying first the disjuncts that no point found so far holds: on a chain of `k` guards
 /// `i >= j` on one input, two points (at the least and the greatest `i` the chain allows)
 /// keep every disjunct but the `O(1)` that propagation removes, where testing each of the
 /// `2k` disjuncts by a propagation of all `2k` disjunctions cost `k^2` (ledger LIN-probe).
+///
+/// A disjunct that a propagation removes is also read for its bounds of one atom by
+/// [`learn`], which finds the bounds the formula implies, and each later disjunct that breaks
+/// one of them is removed without a test: on `k` guards beyond the inputs, where the formula
+/// implies `i > c` and the `c` disjuncts `i <= j - 1` with `j <= c + 1` have no point, one
+/// search over their bounds removes them all (ledger LIN-probe-refute). Such a disjunct has no
+/// point, so the formula's points are as before; it may be one that propagation alone would
+/// have kept, so the result can have fewer disjuncts than one propagation per disjunct
+/// leaves.
 fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
     let mut points: Vec<Model> = Vec::new();
+    // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
+    // only gains constraints or stays equal from round to round, so they hold to the end.
+    let mut implied = Near::default();
     loop {
         let mut changed = false;
         // For each disjunct of each disjunction, whether a point found so far holds it.
@@ -1137,13 +1168,17 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
             let n = ds.len();
             let mut live = Vec::with_capacity(n);
             let mut live_held = Vec::with_capacity(n);
-            for (d, h) in ds.into_iter().zip(flags) {
+            for (at, (d, h)) in ds.iter().zip(flags).enumerate() {
+                let d = d.clone();
                 if h || points[since..].iter().any(|m| d.holds(m)) {
                     live.push(d);
                     live_held.push(true);
                     continue;
                 }
-                if let Some(m) = point_with(&p, &held, &d) {
+                if implied.refutes(&d.cons) {
+                    continue;
+                }
+                if let Some(m) = point_with(&p, &held, &d, &implied) {
                     for (o, hs) in p.ors.iter().zip(held.iter_mut()) {
                         for (e, h) in o.iter().zip(hs.iter_mut()) {
                             *h = *h || e.holds(&m);
@@ -1154,18 +1189,22 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                     live_held.push(true);
                     continue;
                 }
-                // Complexity tradeoff: a disjunct that no point holds is still tested by one
-                // propagation of all the parts, so `r` disjuncts that propagation removes cost
-                // `r` propagations of the whole formula, and failed-literal probing stays
-                // polynomial, not `O(n log n)`, when `r` grows with `n` (`cross` from `k = 51`
-                // to `99`, the `k - 50` guards no input meets: COMPLEXITY.md S22). Tests:
+                // Complexity tradeoff: a disjunct that no point holds and no implied bound
+                // removes is still tested by one propagation of all the parts, so `r` such
+                // disjuncts cost `r` propagations of the whole formula, and failed-literal
+                // probing is polynomial, not `O(n log n)`, when `r` grows with `n` and the
+                // disjuncts share no bound of one atom that [`learn`] finds. Why: `settle`
+                // does not report which disjuncts its proof covers, and an undoable
+                // (trail-based) propagation does not help, since on a chain each refutation's
+                // own propagation runs through the whole chain. Each refuted disjunct also
+                // costs [`learn`] one propagation of bounds and at most one more `settle`, at
+                // most twice the work before. Trigger: disjuncts without a point whose proofs
+                // differ by more than a bound of one atom. Tests:
                 // `l01_25_preimage_catalog::s22::chains_on_two_inputs_keep_their_boxes`
-                // reaches it (cross at `k = 51`), and `chain_cross_above_its_width_scales`
-                // (cross at 12 and 96, `#[ignore]`, ledger LIN-probe-refute: 256 times) measures it.
-                // Keeping the results identical needs the same proof of each removal; a
-                // removal proved once for several disjuncts would need a propagation that
-                // reports which disjuncts it refutes, which `settle` does not, or undoable
-                // (trail-based) propagation so a test costs only what it touches.
+                // reaches it (cross at `k = 51`); `chain_cross_above_its_width_scales` (cross
+                // at 12 and 96, COMPLEXITY.md S22: 40.0 times the bytes with one propagation
+                // per disjunct, 10.1 times now) and
+                // `l01_38_presburger::probe::guards_beyond_the_inputs_scale` measure it.
                 let mut q = Parts {
                     cons: p.cons.clone(),
                     ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
@@ -1176,7 +1215,11 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                 if !matches!(settle(q), Ok(None)) {
                     live.push(d);
                     live_held.push(false);
+                    continue;
                 }
+                // The disjunction without `d`, which the formula is equal to without it.
+                let rest: Vec<Rc<Parts>> = live.iter().chain(&ds[at + 1..]).cloned().collect();
+                learn(&p, rest, &d, &mut implied);
             }
             changed |= live.len() < n;
             if live.is_empty() {
@@ -1195,16 +1238,321 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
     }
 }
 
+/// After [`probe`] has found that the disjunct `d` of its parts `p` has no point, tests each
+/// bound of one atom in `d` alone: when the formula with `x <= h` has no point, it implies
+/// `x >= h + 1`, which removes without a propagation every disjunct that bounds `x` by `h` or
+/// less. Of the upper bounds on `x` that the disjuncts write, sorted, the greatest for which
+/// the formula has no point is found by an exponential and then a binary search, so that `r`
+/// disjuncts removed this way cost `O(log r)` propagations, not `r`; lower bounds likewise.
+/// The formula with a weaker bound has more points, so the bounds without a point are those
+/// up to one. `rest` is `d`'s disjunction without `d`, whose place in `p` is empty while it
+/// is tested. Each bound is first tested by [`bounds_refute`], which costs `O(n log n)`, and
+/// then by [`settle`]; a bound is recorded in `implied` only when one of them has shown that
+/// the formula has no point with its negation, so each removal it makes is proved.
+fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
+    if rest.is_empty() {
+        return;
+    }
+    let mut ors: Vec<Vec<Rc<Parts>>> = (p.ors.iter()).filter(|o| !o.is_empty()).cloned().collect();
+    ors.push(rest);
+    let f = Parts {
+        cons: p.cons.clone(),
+        ors,
+        atoms: OnceCell::new(),
+        failed: Cell::new(0),
+    };
+    for (x, lo, hi) in d.cons.iter().filter_map(one_bound) {
+        // `upper`: the bound is `x <= v`; otherwise `x >= v`. An equality is a bound both
+        // ways, and its refutation implies neither.
+        let (v, upper) = match (lo, hi) {
+            (None, Some(h)) => (h, true),
+            (Some(l), None) => (l, false),
+            _ => continue,
+        };
+        let con = |v: &Int| {
+            let (x, v) = (Lin::atom(x.clone()), Lin::constant(v.clone()));
+            if upper {
+                Con::ge(&v, &x)
+            } else {
+                Con::ge(&x, &v)
+            }
+        };
+        if implied.refutes(&[con(&v)]) {
+            continue;
+        }
+        // The bounds on `x` of the same side that are no stronger than `v`, weakest last.
+        let weaker = |w: &Int| if upper { *w >= v } else { *w <= v };
+        let mut ws: Vec<Int> = (f.ors.iter().flatten())
+            .flat_map(|e| e.cons.iter().filter_map(one_bound))
+            .filter_map(|(y, l, h)| (y == x).then_some(if upper { h } else { l }).flatten())
+            .filter(weaker)
+            .chain([v.clone()])
+            .collect();
+        ws.sort_unstable();
+        ws.dedup();
+        if !upper {
+            ws.reverse();
+        }
+        let none = |w: &Int| {
+            let c = con(w);
+            if bounds_refute(&f, x, &c) {
+                return true;
+            }
+            let mut q = f.clone();
+            q.cons.push(c);
+            matches!(settle(q), Ok(None))
+        };
+        if !none(&ws[0]) {
+            continue;
+        }
+        // `ws[good]` has no point; `ws[bad]`, when `bad < ws.len()`, has one.
+        let (mut good, mut step) = (0, 1);
+        let mut bad = loop {
+            let at = good + step;
+            if at >= ws.len() {
+                break ws.len();
+            }
+            if !none(&ws[at]) {
+                break at;
+            }
+            good = at;
+            step *= 2;
+        };
+        while bad - good > 1 {
+            let mid = good + (bad - good) / 2;
+            if none(&ws[mid]) {
+                good = mid;
+            } else {
+                bad = mid;
+            }
+        }
+        let w = &ws[good];
+        if upper {
+            implied.tighten(x, Some(w + &Int::ONE), None);
+        } else {
+            implied.tighten(x, None, Some(w - &Int::ONE));
+        }
+    }
+}
+
+/// The least and the greatest value of each atom, as [`Near::one`] keeps them; an atom absent
+/// is unbounded.
+type AtomBounds = BTreeMap<Atom, (Option<Int>, Option<Int>)>;
+
+/// A part of a formula that [`bounds_refute`] reads: a constraint, or a disjunction.
+enum Unit<'a> {
+    Con(&'a Con),
+    Or(&'a [Rc<Parts>]),
+}
+
+impl<'a> Unit<'a> {
+    /// The atoms of the part but `x`, each once.
+    fn atoms(&self, x: &Atom) -> Vec<&'a Atom> {
+        let cons: Vec<&'a Con> = match self {
+            Unit::Con(c) => vec![c],
+            Unit::Or(ds) => ds.iter().flat_map(|d| &d.cons).collect(),
+        };
+        let mut atoms: Vec<&'a Atom> = (cons.into_iter())
+            .flat_map(|c| c.lin.terms.keys())
+            .filter(|a| *a != x)
+            .collect();
+        atoms.sort_unstable();
+        atoms.dedup();
+        atoms
+    }
+}
+
+/// Whether the bounds of the atoms, propagated, show that the parts `f` with the bound `extra`
+/// on the atom `x` have no point. A constraint moves the bounds of each of its atoms by the
+/// bounds of the others. A disjunction moves each atom that all its disjuncts mention to the
+/// join of the bounds each disjunct leaves it, a disjunct's own constraints being propagated
+/// twice from the bounds so far, and a disjunct left with an atom that has no value being
+/// dropped; the disjunctions below a disjunct are not read, which leaves it more points, so
+/// every answer `true` is a proof. The parts are read once in breadth-first order from the
+/// constraints, two parts being neighbors when they share an atom other than `x`, and once in
+/// the reverse order: on a chain of definitions the first reading carries the bounds from
+/// each end to the middle and the second carries them on to the other end. `x` is left out
+/// of the neighbors because the guards on it reach every part of a chain of guards, so that
+/// every part would be one step from the constraints. The order is that of the parts'
+/// structure, not of the atoms' names. Each reading costs each constraint once, `O(n log n)`
+/// for parts of `n` terms with the map from atoms to parts.
+///
+/// Complexity tradeoff: the propagation is not repeated until no bound moves, so a proof that
+/// needs bounds carried along a chain more than twice is not found here; [`learn`] then asks
+/// [`settle`], and a disjunct no bound refutes is tested by its own propagation in [`probe`],
+/// as before. Why: propagating bounds until none moves can move a bound by one per round on a
+/// cycle of constraints with no point (`x >= y + 1`, `y >= x`), so the rounds grow with the
+/// bounds' magnitude, not with the parts. Trigger: a proof that needs a bound carried back
+/// along a chain after it was carried there. Tests:
+/// `l01_25_preimage_catalog::s22::chain_cross_above_its_width_scales` (cross at 12 and 96,
+/// COMPLEXITY.md S22) and `l01_38_presburger::probe::guards_beyond_the_inputs_scale` (guards
+/// on symbols whose names do not sort in the chain's order). A complete solution is the exact
+/// projection of the formula onto `x`, which with disjunctions is exponential in them.
+fn bounds_refute(f: &Parts, x: &Atom, extra: &Con) -> bool {
+    let units: Vec<Unit<'_>> = (f.cons.iter().map(Unit::Con))
+        .chain(f.ors.iter().map(|ds| Unit::Or(ds)))
+        .collect();
+    let atoms: Vec<Vec<&Atom>> = units.iter().map(|u| u.atoms(x)).collect();
+    let mut by_atom: BTreeMap<&Atom, Vec<usize>> = BTreeMap::new();
+    for (u, xs) in atoms.iter().enumerate() {
+        for a in xs {
+            by_atom.entry(a).or_default().push(u);
+        }
+    }
+    // Breadth first from the first part of each set of connected parts.
+    let mut seen = vec![false; units.len()];
+    let mut order: Vec<usize> = Vec::with_capacity(units.len());
+    let mut done: BTreeSet<&Atom> = BTreeSet::new();
+    let mut head = 0;
+    for start in 0..units.len() {
+        if seen[start] {
+            continue;
+        }
+        seen[start] = true;
+        order.push(start);
+        while head < order.len() {
+            for a in &atoms[order[head]] {
+                if done.insert(a) {
+                    for &v in &by_atom[a] {
+                        if !seen[v] {
+                            seen[v] = true;
+                            order.push(v);
+                        }
+                    }
+                }
+            }
+            head += 1;
+        }
+    }
+    let mut b = AtomBounds::new();
+    let first = narrow(extra, &mut b);
+    let mut read = |u: usize| match &units[u] {
+        Unit::Con(c) => narrow(c, &mut b),
+        Unit::Or(ds) => narrow_or(ds, &mut b),
+    };
+    !(first && order.iter().rev().all(|&u| read(u)) && order.iter().all(|&u| read(u)))
+}
+
+/// Moves the bounds in `b` of the atoms of the disjunction `ds` to the join of those its
+/// disjuncts leave ([`bounds_refute`]); `false` when every disjunct is left without a point.
+fn narrow_or(ds: &[Rc<Parts>], b: &mut AtomBounds) -> bool {
+    let mut join: Option<AtomBounds> = None;
+    for d in ds {
+        let mut own: AtomBounds = (d.cons.iter().flat_map(|c| c.lin.terms.keys()))
+            .map(|a| (a.clone(), b.get(a).cloned().unwrap_or_default()))
+            .collect();
+        let holds = (0..2).all(|_| d.cons.iter().all(|c| narrow(c, &mut own)));
+        if !holds {
+            continue;
+        }
+        join = Some(match join {
+            None => own,
+            // An atom one disjunct does not mention keeps its bounds there, so the join keeps
+            // only the atoms both mention.
+            Some(j) => (j.into_iter())
+                .filter_map(|(a, (l, h))| {
+                    let (ol, oh) = own.get(&a)?;
+                    let lo = l.zip(ol.as_ref()).map(|(l, o)| l.min(o.clone()));
+                    let hi = h.zip(oh.as_ref()).map(|(h, o)| h.max(o.clone()));
+                    Some((a, (lo, hi)))
+                })
+                .collect(),
+        });
+    }
+    let Some(join) = join else {
+        return false;
+    };
+    join.into_iter()
+        .all(|(a, (lo, hi))| narrow_to(b, &a, lo, hi))
+}
+
+/// Moves the bounds in `b` of the atoms of `c` by the bounds of its other atoms; `false` when
+/// an atom is left with no value, or `c` has no atom and does not hold.
+fn narrow(c: &Con, b: &mut AtomBounds) -> bool {
+    match c.rel {
+        Rel::Ge => narrow_ge(&c.lin, true, b),
+        Rel::Eq => narrow_ge(&c.lin, true, b) && narrow_ge(&c.lin, false, b),
+    }
+}
+
+/// [`narrow`] for `lin >= 0`, or for `-lin >= 0` unless `sign`.
+fn narrow_ge(lin: &Lin, sign: bool, b: &mut AtomBounds) -> bool {
+    let signed = |k: &Int| if sign { k.clone() } else { -k };
+    // The greatest value of each term `coef·x`, `None` when `x` is unbounded that way.
+    let most: Vec<Option<Int>> = (lin.terms.iter())
+        .map(|(a, coef)| {
+            let coef = signed(coef);
+            let (lo, hi) = b.get(a)?;
+            if coef.is_positive() {
+                hi.as_ref().map(|h| &coef * h)
+            } else {
+                lo.as_ref().map(|l| &coef * l)
+            }
+        })
+        .collect();
+    let unbounded = most.iter().filter(|m| m.is_none()).count();
+    let sum = (most.iter().flatten()).fold(signed(&lin.constant), |s, m| &s + m);
+    if lin.terms.is_empty() {
+        return !sum.is_negative();
+    }
+    for ((a, coef), m) in lin.terms.iter().zip(&most) {
+        let coef = &signed(coef);
+        // The greatest value of the other terms and the constant, when it is bounded.
+        let rest = match (m, unbounded) {
+            (Some(m), 0) => &sum - m,
+            (None, 1) => sum.clone(),
+            _ => continue,
+        };
+        // `coef·x >= -rest`.
+        let r = -&rest;
+        let ok = if coef.is_positive() {
+            // `x >= ceil(r / coef)`.
+            narrow_to(b, a, Some(-&(-&r).div_floor(coef)), None)
+        } else {
+            // `x <= floor(r / coef)`, `coef` below zero.
+            narrow_to(b, a, None, Some((-&r).div_floor(&-coef)))
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+/// Moves the bounds in `b` of `a` in to `lo` and `hi` where they are given and tighter;
+/// `false` when `a` is left with no value.
+fn narrow_to(b: &mut AtomBounds, a: &Atom, lo: Option<Int>, hi: Option<Int>) -> bool {
+    let (l, h) = b.entry(a.clone()).or_default();
+    if let Some(lo) = lo
+        && l.as_ref().is_none_or(|l| lo > *l)
+    {
+        *l = Some(lo);
+    }
+    if let Some(hi) = hi
+        && h.as_ref().is_none_or(|h| hi < *h)
+    {
+        *h = Some(hi);
+    }
+    !matches!((&*l, &*h), (Some(l), Some(h)) if l > h)
+}
+
 /// A point of the formula of [`probe`]'s parts `p` where the disjunct `d` holds, `d` being a
 /// disjunct of the disjunction that `p` lacks while it is tested, or `None` when [`pick`]
 /// finds none. In each other disjunction `pick` tries first the disjuncts that `held` marks as
 /// held by no point, so that the point holds as many of them as its search reaches. The point
 /// is checked against every part, so that a disjunct is kept by a point and not by trust in
 /// the search.
-fn point_with(p: &Parts, held: &[Vec<bool>], d: &Parts) -> Option<Model> {
+/// The bounds in `implied`, which the formula implies, are added to the parts, so that the
+/// search does not choose a value of an atom that no point has.
+fn point_with(p: &Parts, held: &[Vec<bool>], d: &Parts, implied: &Near) -> Option<Model> {
     let others = || p.ors.iter().zip(held).filter(|(o, _)| !o.is_empty());
+    let mut cons = p.cons.clone();
+    implied
+        .one
+        .keys()
+        .for_each(|a| implied.bounds(a, &mut cons));
     let mut q = Parts {
-        cons: p.cons.clone(),
+        cons,
         ors: others()
             .map(|(o, hs)| {
                 let new = o.iter().zip(hs).filter(|(_, h)| !**h);

@@ -34,7 +34,7 @@ fn eq(a: &Lin, b: &Lin) -> Formula {
 }
 
 /// `decide(f)` is `answer`, and `satisfiable(f)` agrees with a point that meets `f`.
-fn answers(f: &Formula, answer: bool) {
+pub(super) fn answers(f: &Formula, answer: bool) {
     assert_eq!(decide(f), Ok(answer), "{f}");
     let found = satisfiable(f).expect("answered");
     assert_eq!(found.is_some(), answer, "{f}");
@@ -102,7 +102,7 @@ fn bounds_of_one_variable_keep_their_rounding_and_sign() {
 /// The relation of `t_k`, a counter that starts at `m` and is raised once by each of the
 /// guards `i >= j`, `j = 1..k`, that fail, with `i` and `m` in `[-w, w]`; with `t_k >= 0` when
 /// `meet`, and `t_k < 0` otherwise.
-fn guards(k_: usize, w: i64, meet: bool) -> Formula {
+pub(super) fn guards(k_: usize, w: i64, meet: bool) -> Formula {
     let t = |j: usize| var(&format!("t{j}"));
     let i = var("i");
     let mut fs = vec![
@@ -129,7 +129,7 @@ fn guards(k_: usize, w: i64, meet: bool) -> Formula {
 
 /// Whether some `i` and `m` in `[-w, w]` give `m` plus the number of `j` in `1..=k` above `i`
 /// at least zero (`meet`) or below zero.
-fn guards_point(k_: usize, w: i64, meet: bool) -> bool {
+pub(super) fn guards_point(k_: usize, w: i64, meet: bool) -> bool {
     (-w..=w).any(|i| {
         (-w..=w).any(|m| {
             let t = m + (1..=k_ as i64).filter(|&j| i < j).count() as i64;

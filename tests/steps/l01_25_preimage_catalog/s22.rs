@@ -1451,11 +1451,13 @@ fn chain_cross_within_its_width_scales() {
     scales("cross", 6);
 }
 
-/// `cross` from `k = 12` to `96`: at 96 the `k - 50 = 46` guards `j > 50` that no input meets
-/// are each refuted by one full propagation in `probe` (its `// Complexity tradeoff:`), about
-/// `k (k - 50)` settles in all (2.0 G instructions at `k = 52`, 15.1 G at 72, 52.8 G at 96).
+/// `cross` from `k = 12` to `96`: at 96 the formula implies `i >= 47`, and the disjuncts
+/// `i <= j - 1` for `j` up to 47 have no point. Each was refuted by its own full propagation
+/// in `probe`, about `k (k - 50)` settles in all: 99.5 M and 3.98 G bytes, 40.0 times (ledger
+/// LIN-probe-refute). Since then one search over the bounds those disjuncts write finds
+/// `i >= 47` with `O(log k)` propagations and refutes them all: 1.00 G bytes, 10.1 times, and
+/// 3.74 G instructions against 0.30 G at 12, 12.3 times.
 #[test]
-#[ignore = "ledger LIN-probe-refute: probe refutes each disjunct no point holds with its own propagation"]
 fn chain_cross_above_its_width_scales() {
     scales("cross", 12);
 }
@@ -1467,7 +1469,8 @@ fn chain_cross_above_its_width_scales() {
 /// in all (0.26, 1.40, 7.2 and 39.4 G instructions at `k` = 10, 18, 34, 66); since LIN-probe
 /// it keeps without a propagation each disjunct that a point found so far meets (2.88 G at
 /// `k = 66`). On `cross` from `k = 51` to `99` the `k - 50` guards `j > 50` that no input meets
-/// are each still refuted by one full propagation (2.0 G at 52, was 22.9 G; 1.05 G at 48).
+/// were each still refuted by one full propagation (2.0 G at 52, was 22.9 G; 1.05 G at 48), and since
+/// LIN-probe-refute by one search over their bounds (`chain_cross_above_its_width_scales`).
 #[test]
 fn chain_cross_dead_scales() {
     scales("cross_dead", 8);
