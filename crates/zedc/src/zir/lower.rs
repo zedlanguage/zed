@@ -280,15 +280,11 @@ impl<'t> Lower<'t> {
 
     /// The current state edge of port `p` in frame `k`, taken from the enclosing regions.
     fn state(&mut self, k: usize, p: &Arc<str>) -> Result<Src, String> {
-        if let Some(s) = self.frames[k].states.get(p) {
-            return Ok(s.clone());
-        }
-        let s = if k == 0 {
-            let root = &mut self.frames[0].region;
-            root.args.push(Edge::State(p.clone()));
-            Src::Arg(root.args.len() - 1)
-        } else {
-            let kind = self.frames[k].region.kind;
+        // The frames nest as deep as the program, so the nearest frame holding `p` is found by
+        // a loop, and every frame from there up to `k` takes the edge, as the recursion did.
+        let mut from = k;
+        while from > 0 && !self.frames[from].states.contains_key(p) {
+            let kind = self.frames[from].region.kind;
             if !matches!(kind, RegionKind::Match | RegionKind::Port) {
                 return Err(format!(
                     "port `{p}` is used inside a {} region, and a state edge enters only a \
@@ -298,13 +294,25 @@ impl<'t> Lower<'t> {
                     kind_name(kind)
                 ));
             }
-            let outer = self.state(k - 1, p)?;
-            let f = &mut self.frames[k];
-            f.captures.push(outer);
-            f.region.args.push(Edge::State(p.clone()));
-            Src::Arg(f.region.args.len() - 1)
+            from -= 1;
+        }
+        let mut s = match self.frames[from].states.get(p) {
+            Some(s) => s.clone(),
+            None => {
+                let root = &mut self.frames[0].region;
+                root.args.push(Edge::State(p.clone()));
+                let s = Src::Arg(root.args.len() - 1);
+                self.frames[0].states.insert(p.clone(), s.clone());
+                s
+            }
         };
-        self.frames[k].states.insert(p.clone(), s.clone());
+        for j in from + 1..=k {
+            let f = &mut self.frames[j];
+            f.captures.push(s);
+            f.region.args.push(Edge::State(p.clone()));
+            s = Src::Arg(f.region.args.len() - 1);
+            f.states.insert(p.clone(), s.clone());
+        }
         Ok(s)
     }
 
