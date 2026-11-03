@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs every test in pieces, one test binary, step folder or very large test each, each under a
+# Runs every test in pieces, one test binary, step folder, module or slow test each, each under a
 # 60 s limit, and prints a line per piece as it ends. Usage: tools/run_tests.sh [--full] [jobs],
 # from a checkout's root. Without --full this is the local suite, which needs only the Rust
 # toolchain and runs in CI.
@@ -39,6 +39,38 @@ fi
 bins=$(sed -n "s|^ *Executable .*(\(.*\))$|$root/\1|p" "$out/build.log")
 steps=$(echo "$bins" | grep '/steps-')
 full=$(echo "$bins" | grep '/full-')
+# A step folder or module named here gets a piece for each of its modules and each of its own
+# tests instead of one piece; the rest get one piece each. Named because together they ran past
+# 60 s at load 100 (l01_25 138 s, l01_38 94 s, l01_36 89 s, l01_16 72 s, l01_08 64 s); the
+# modules are those with a test over 10 s there, so each of those tests has a process of its own.
+split="
+  l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
+  l01_25_preimage_catalog l01_25_preimage_catalog::s22
+  l01_36_cranelift l01_36_cranelift::scaling l01_36_cranelift::table
+  l01_38_presburger l01_38_presburger::oracle l01_38_presburger::omega
+  l01_38_presburger::scaling l01_38_presburger::deep
+"
+step_pieces() {
+  case " $(echo $split) " in
+    *" $1 "*) ;;
+    *)
+      echo "$1 tests $steps $1::"
+      return
+      ;;
+  esac
+  local tests
+  if ! tests=$("$steps" --list --format terse "$1::"); then
+    echo "$1 tests $steps $1::"
+    return
+  fi
+  tests=$(echo "$tests" | sed -n "s/^\($1::[^:]*\)\(.*\): test$/\1 \2/p")
+  for t in $(echo "$tests" | sed -n 's/ $//p'); do
+    echo "$t tests $steps --exact $t"
+  done
+  for m in $(echo "$tests" | sed -n 's/ ::.*//p' | sort -u); do
+    step_pieces "$m"
+  done
+}
 {
   for p in $bins; do
     n=$(basename "$p")
@@ -65,8 +97,7 @@ full=$(echo "$bins" | grep '/full-')
     esac
   done
   for d in tests/steps/*/; do
-    n=$(basename "$d")
-    echo "$n tests $steps $n::"
+    step_pieces "$(basename "$d")"
   done
   if [ -n "$full" ]; then
     for d in tests/full/*/; do
