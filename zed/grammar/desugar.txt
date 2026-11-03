@@ -167,5 +167,5 @@ ShapeDim      : one dimension of a shaped array, a size with an optional name
 GrammarBlock  : a grammar, elaborated to the parser and printer it defines, its rule recursion a fix (sec:tour_grammar)
 GAlt          : ordered choice
 GSeq          : sequence
-GItem         : an item with an optional field name, repetition and separator
+GItem         : an item with an optional field name, repetition, separator and the format facets of (sec:ffi) (sec:tour_grammar)
 GPrimary      : a literal string, a rule name or a group
