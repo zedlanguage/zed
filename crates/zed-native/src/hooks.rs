@@ -10,12 +10,12 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, KernelError, Pattern, Prim, Term, Value};
+use zed_kernel::{Evaluator, KernelError, Pattern, Prim, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
 use zedc::zir::memory::Mode;
 
-use zed_rt::{Heap, Obj, Rope, Word};
+use zed_rt::{Heap, Obj, Word};
 
 use crate::tables::{NodeInfo, Tables};
 
@@ -45,8 +45,6 @@ pub(crate) struct Run {
     pub kernel_calls: u64,
     /// For each atom node, the shape last made from constant name and field words.
     shapes: Vec<Option<(Word, Word, Shape)>>,
-    /// The rope of each string constant, made at its first use.
-    ropes: Vec<Option<Rope>>,
 }
 
 /// An atom's name, its field names sorted, and for each field the payload input it holds.
@@ -74,7 +72,6 @@ impl State {
             entries: vec![0; t.lambdas.len()],
             kernel_calls: 0,
             shapes: vec![None; t.nodes.len()],
-            ropes: vec![None; t.consts.len()],
         };
         State { t, run }
     }
@@ -269,27 +266,15 @@ fn stable(t: &Tables, w: Word) -> bool {
     }
 }
 
-/// The rope of string word `w`, when it is one.
-fn rope(t: &Tables, s: &mut Run, w: Word) -> Result<Option<Rope>, String> {
+/// The text of string word `w`, when it is one, shared.
+fn text(s: &Run, w: Word) -> Result<Option<Text>, String> {
     Ok(match w.tag {
         Word::CELL => match s.heap.obj(w)? {
             Some(Obj::Str(r)) => Some(r.clone()),
             _ => None,
         },
-        Word::VAL if stable(t, w) => {
-            let at = w.bits as usize;
-            match (&s.ropes[at], &t.consts[at]) {
-                (Some(r), _) => Some(r.clone()),
-                (None, Value::Str(x)) => {
-                    let r = Rope::leaf(x.clone().into());
-                    s.ropes[at] = Some(r.clone());
-                    Some(r)
-                }
-                (None, _) => None,
-            }
-        }
         Word::VAL => match s.heap.value_ref(w) {
-            Value::Str(x) => Some(Rope::leaf(x.clone().into())),
+            Value::Str(x) => Some(x.clone()),
             _ => None,
         },
         _ => None,
@@ -372,20 +357,18 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
             let v = kernel(t, s, ni, ins)?;
             Ok(s.heap.fresh(&v))
         }
-        Op::Prim(Prim::Concat) if ins.len() == 2 => {
-            match (rope(t, s, ins[0])?, rope(t, s, ins[1])?) {
-                (Some(a), Some(b)) => {
-                    let r = Rope::cat(&a, &b);
-                    consume(s, ni, ins)?;
-                    Ok(s.heap.alloc(Obj::Str(r)))
-                }
-                _ => slow(t, s, ni, ins),
+        Op::Prim(Prim::Concat) if ins.len() == 2 => match (text(s, ins[0])?, text(s, ins[1])?) {
+            (Some(a), Some(b)) => {
+                let r = Text::join(&a, &b);
+                consume(s, ni, ins)?;
+                Ok(s.heap.alloc(Obj::Str(r)))
             }
-        }
-        Op::Prim(Prim::Len) if ins.len() == 1 => match rope(t, s, ins[0])? {
+            _ => slow(t, s, ni, ins),
+        },
+        Op::Prim(Prim::Len) if ins.len() == 1 => match text(s, ins[0])? {
             Some(r) => {
                 consume(s, ni, ins)?;
-                Ok(Word::int(r.chars() as i64))
+                Ok(Word::int(r.char_count() as i64))
             }
             None => slow(t, s, ni, ins),
         },
@@ -741,9 +724,9 @@ mod tests {
         let (t, _) = Tables::new(&g, &plan(&g, false)).unwrap();
         install(State::new(Arc::new(t), Evaluator::new(World::new())));
         with(|_, s| {
-            let old = s.heap.alloc(Obj::Str(Rope::leaf("old".into())));
+            let old = s.heap.alloc(Obj::Str("old".into()));
             s.heap.dec(old).unwrap();
-            let new = s.heap.alloc(Obj::Str(Rope::leaf("new".into())));
+            let new = s.heap.alloc(Obj::Str("new".into()));
             (old, new)
         })
     }

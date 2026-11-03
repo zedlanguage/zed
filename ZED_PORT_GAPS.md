@@ -160,7 +160,7 @@ Confirmed: `OnceLock` or `OnceCell`, 27 matches. `Rec` (`zed-kernel/types.rs:142
 `body: OnceLock<Type>` and `make: Box<dyn Fn() -> Type>`, computes a recursive type's parts on
 first use (`Type::p`, line 392), and ties a cycle through closures. `Group::instance`
 (`types/rec.rs:296`), `Cones::free` (`zedc/elab.rs:93`), `Program::main` (`zedc/run.rs:49`),
-`Shown` (types.rs:118) and `Text::flat` (`text.rs:24`) cache in place inside a shared value.
+`Shown` (types.rs:118) and `Text::flat` (`text.rs:28`) cache in place inside a shared value. Since T14-rope the native runtime holds its strings as the same `Text` (`zed-rt/src/heap.rs`, `Obj::Str`); `zed-rt`'s own `Rope`, with a second `OnceLock`, is gone.
 
 Zed values are immutable with no cell, and a function field re-evaluates on each call. Cyclic
 data lives in two sanctioned forms, arenas or regions and id-indexed graphs `Id ->? Node`
@@ -284,7 +284,7 @@ program's input; this word would be for faults in the program itself.
 `on_stack` (`eval.rs:290`) exists only to run with a 1 GiB stack (the marker `Stack`). Both vanish.
 Depth moves to the runtime: L6.7 tests a `.fold` over a 100,000-node chain, and compiled
 recursion on input-sized depth needs a growable stack in the retained runtime (inferred; not in
-L6.13). `Drop` for `text::Node`, `Rope` and `Premises` exists to avoid deep recursion in release,
+L6.13). `Drop` for `text::Node` and `Premises` exists to avoid deep recursion in release,
 so compiled reference counting must also release iteratively.
 
 ### Gap 9. Key range queries (missing)
@@ -718,7 +718,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A thread-local `RefCell<Option<State>>` borrowed once per hook and split into `&Tables` and `&mut Run` | `hooks::with`, `with_args` | Mutation | The run is a state receiver passed to each hook; the tables are an immutable value beside it |
 | `std::mem::take` of a buffer, used as a borrowed slice, then cleared and put back | `with_args`, `matched` (`outs`) | Mutation | A state receiver; the runtime reuses a list held once |
-| `Vec<Option<_>>` filled at first use, indexed by node or constant | `Run::shapes`, `Run::ropes` | Mutation | A map in the run's state, or the shape computed once at compile time for constant names |
+| `Vec<Option<_>>` filled at first use, indexed by node or constant | `Run::shapes` (and `Run::ropes`, removed by T14-rope) | Mutation | A map in the run's state, or the shape computed once at compile time for constant names |
 
 ## Entries from LR4 (`zedc/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
 
@@ -742,3 +742,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A hash key over a shared list (`ListKey`) hashed by its first element and length, compared by `Vector::ptr_eq` before its content, so a use finds its group in O(1) | `elab::Tables::new` | Identity (gap 1) | Number each overload set when `resolve` makes it and record the number in the use, so the group is found by an integer key |
 | `<[V; 2]>::try_from(Vec)` to move both arguments out of the argument list after its length is checked | `eval::Machine::prim` | None | A tuple or list pattern of two items |
 | Join nodes numbered after the items in one `Vec<Vec<usize>>`, told apart by `index < items` | `elab::topo_joined`, `elab::place` | None | A sum type of item and join for each node, or the same numbering |
+
+## Entries from T14-rope (`zed-kernel/src/text.rs`, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| One `Arc` rope node shared by the kernel and the native heap, so a string crosses between them with no copy | `Obj::Str(Text)`, `Heap::value`, `hooks::text` | None | Zed shares values; one runtime holds one string type |
+| `OnceLock<Arc<str>>` in each join node, the text written out on the first read through `&self` | `Text::flat`, `Deref for Text` | Lazy cells (gap 3) | `String` ropes in the standard library (L6.16): the text written out by a function, its result kept by the runtime, or no cache |
+| Byte and character counts kept in each node and added at a join | `Node::len`, `Node::chars` | None | Two integer fields of the rope node |

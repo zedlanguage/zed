@@ -282,7 +282,7 @@ impl Cell {
             }
             Value::Float(x) => c.float.element = FloatClass::of(x.get()),
             Value::Str(s) => {
-                let n = s.chars().count() as i64;
+                let n = s.char_count() as i64;
                 c.length.element = Bounds::ints(IntervalSet::single(n));
             }
             _ => {}

@@ -63,7 +63,7 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         (Prim::Abs, Value::Rat(r)) if r.numer().is_negative() => Value::rat(r.neg()),
         (Prim::Abs, Value::Rat(_)) => x.clone(),
         (Prim::Abs, Value::Float(f)) => Value::float(f.get().abs()),
-        (Prim::Len, Value::Str(s)) => Value::Int(s.chars().count() as i64),
+        (Prim::Len, Value::Str(s)) => Value::Int(s.char_count() as i64),
         (Prim::Lower, Value::Str(s)) => Value::str(&s.to_lowercase()),
         (Prim::Upper, Value::Str(s)) => Value::str(&s.to_uppercase()),
         (Prim::Trim, Value::Str(s)) => Value::str(s.trim()),

@@ -8,8 +8,8 @@ use std::process::Command;
 use std::sync::Arc;
 
 use zed_kernel::term::build::{app, lit, prim};
-use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Value, World};
-use zed_rt::{Heap, Obj, Rope, Word};
+use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Text, Value, World};
+use zed_rt::{Heap, Obj, Word};
 use zed_tests::deep::{SHAPES, in_atom, in_named_atom, in_tuple, nested};
 use zed_tests::scaling;
 use zedc::zir::lower::lower;
@@ -267,16 +267,21 @@ fn an_empty_tuple_and_a_bare_atom_are_uncounted_at_any_depth() {
 }
 
 #[test]
-fn a_rope_inside_a_tuple_is_copied_once_when_read() {
+fn a_rope_inside_a_tuple_is_shared_not_copied_when_read() {
     let mut h = Heap::new();
-    let r = Rope::cat(&Rope::leaf("ab".into()), &Rope::leaf("cd".into()));
-    let s = h.alloc(Obj::Str(r));
+    let r = Text::join(&"ab".into(), &"cd".into());
+    let s = h.alloc(Obj::Str(r.clone()));
     let w = h.alloc(Obj::Tuple(vec![Word::int(1), s]));
     let want = Value::tuple(vec![Value::Int(1), Value::str("abcd")]);
+    let v = h.value(w).unwrap();
+    assert!(!r.is_written_out(), "the value holds the join itself");
+    assert_eq!(v, want);
+    assert!(
+        r.is_written_out(),
+        "comparing it wrote it out, once, for both"
+    );
     assert_eq!(h.value(w).unwrap(), want);
-    assert_eq!(h.stats.copied, 4);
-    assert_eq!(h.value(w).unwrap(), want);
-    assert_eq!(h.stats.copied, 4, "the second read copies nothing");
+    assert_eq!(h.stats.copied, 0);
 }
 
 #[test]

@@ -8,8 +8,8 @@ use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
 use zed_kernel::types::Type;
-use zed_kernel::{Pattern, Term, Value};
-use zed_rt::{Heap, Obj, Rope, Word};
+use zed_kernel::{Pattern, Term, Text, Value};
+use zed_rt::{Heap, Obj, Word};
 use zed_tests::deep::{in_tuple, nested};
 
 use super::{kernel, native};
@@ -183,7 +183,7 @@ fn a_word_kept_past_the_free_of_its_cell_is_reported_after_the_cell_is_taken_aga
 #[test]
 fn a_literal_pattern_reads_a_string_only_when_the_lengths_agree() {
     let mut h = Heap::new();
-    let r = Rope::cat(&Rope::leaf("ab".into()), &Rope::leaf("cd".into()));
+    let r = Text::join(&"ab".into(), &"cd".into());
     let s = h.alloc(Obj::Str(r));
     let is = |h: &mut Heap, l: Value| {
         h.matches(&Pattern::Lit(l), s, &mut Vec::new(), &mut Vec::new())
@@ -194,7 +194,7 @@ fn a_literal_pattern_reads_a_string_only_when_the_lengths_agree() {
     assert_eq!(h.stats.copied, 0, "neither literal needs the text");
     assert!(!is(&mut h, Value::str("abce")));
     assert!(is(&mut h, Value::str("abcd")));
-    assert_eq!(h.stats.copied, 4, "flattened once");
+    assert_eq!(h.stats.copied, 4, "written out once");
 }
 
 #[test]

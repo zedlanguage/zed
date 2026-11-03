@@ -6,7 +6,7 @@ use std::cell::RefCell;
 
 use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, Value};
-use zed_rt::{Heap, Obj, Rope, Word};
+use zed_rt::{Heap, Obj, Word};
 use zed_tests::scaling;
 
 use super::planned;
@@ -85,8 +85,8 @@ fn a_cell_freed_and_taken_again_gives_its_new_value() {
     assert_eq!(h.value(old).unwrap(), order("rush"));
     h.dec(old).unwrap();
     // The program builds a new record, whose cells take freed ones that kept values.
-    let customer = h.alloc(Obj::Str(Rope::leaf("acme".into())));
-    let note = h.alloc(Obj::Str(Rope::leaf("hold".into())));
+    let customer = h.alloc(Obj::Str("acme".into()));
+    let note = h.alloc(Obj::Str("hold".into()));
     let new = h.alloc(Obj::Tuple(vec![customer, note]));
     assert_eq!(h.cell_slots(), 8);
     assert!(
@@ -193,7 +193,7 @@ fn a_record_handed_to_the_kernel_many_times_scales() {
 fn manifest(n: usize) -> RefCell<(Heap, Word)> {
     let mut h = Heap::new();
     let lines = (0..64 * n)
-        .map(|i| h.alloc(Obj::Str(Rope::leaf(format!("crate {i}").into()))))
+        .map(|i| h.alloc(Obj::Str(format!("crate {i}").into())))
         .collect();
     let w = h.alloc(Obj::Tuple(lines));
     RefCell::new((h, w))

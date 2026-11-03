@@ -5,8 +5,8 @@
 use std::cell::RefCell;
 
 use zed_kernel::types::{Type, Universe};
-use zed_kernel::{Pattern, Value};
-use zed_rt::{Heap, Obj, Rope, Word};
+use zed_kernel::{Pattern, Text, Value};
+use zed_rt::{Heap, Obj, Word};
 use zed_tests::scaling;
 
 /// Whether `w` matches `is t`.
@@ -47,8 +47,8 @@ fn a_tuple_in_cells_is_tested_by_its_kind() {
 #[test]
 fn a_string_in_cells_is_tested_without_flattening_it() {
     let mut h = Heap::new();
-    let ab = Rope::cat(&Rope::leaf("a".into()), &Rope::leaf("b".into()));
-    let w = h.alloc(Obj::Str(ab));
+    let ab = Text::join(&"a".into(), &"b".into());
+    let w = h.alloc(Obj::Str(ab.clone()));
     assert!(is(&mut h, w, &Type::string()));
     assert!(is(&mut h, w, &Type::top()));
     assert!(!is(&mut h, w, &Type::int()));
@@ -57,7 +57,11 @@ fn a_string_in_cells_is_tested_without_flattening_it() {
     // A type holding some strings and not others reads the text.
     assert!(is(&mut h, w, &Type::lit(&Value::str("ab")).unwrap()));
     assert!(!is(&mut h, w, &Type::lit(&Value::str("ba")).unwrap()));
-    assert_eq!(h.stats.copied, 2);
+    assert!(ab.is_written_out());
+    assert_eq!(
+        h.stats.copied, 0,
+        "the kernel reads the cell's own text, not a copy"
+    );
 }
 
 #[test]

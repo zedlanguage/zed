@@ -10,7 +10,7 @@
 //! **Cells.** The heap mirrors the cells of step L1.34 one for one, so a native run makes the
 //! same allocations and count writes as the counting machine: a non-empty tuple and an atom
 //! with a payload are a cell whose parts are words, a closure a cell holding its captures, a
-//! string a cell holding a [`Rope`], and a big integer, a rational, a keypath and a family a
+//! string a cell holding its [`Text`], and a big integer, a rational, a keypath and a family a
 //! cell holding the kernel value. A cell's count is the number of references to it; at 0 it
 //! is freed, its parts dropped, and the next allocation takes it again. A cell's word carries
 //! the cell's generation, which each free advances, so a use of a word after its cell was
@@ -30,7 +30,7 @@ use zed_kernel::term::Pattern;
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::{Atom, Items, Value};
 
-use crate::rope::Rope;
+use zed_kernel::Text;
 
 /// A value as native code holds it: a tag and its payload.
 #[repr(C)]
@@ -145,7 +145,7 @@ const GENERATIONS: u32 = 1 << (64 - INDEX_BITS);
 #[derive(Clone, Debug)]
 pub enum Obj {
     /// A string.
-    Str(Rope),
+    Str(Text),
     /// A non-empty tuple.
     Tuple(Vec<Word>),
     /// An atom with a payload, its parts in the order of [`Atom::args`].
@@ -210,7 +210,7 @@ struct Entry {
 }
 
 /// The counts of one run, the same measures as the counting machine of step L1.34 keeps,
-/// and the bytes ropes copied.
+/// and the bytes strings copied when written out.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Stats {
     /// Count increments.
@@ -225,7 +225,7 @@ pub struct Stats {
     pub peak: u64,
     /// The cells whose count ever exceeded 1.
     pub shared: u64,
-    /// The bytes copied flattening ropes.
+    /// The bytes copied writing out a string that was a join, to compare it with a literal.
     pub copied: u64,
     /// The words [`Heap::value`] read to make kernel values: one for a word whose value it had
     /// already made.
@@ -496,7 +496,7 @@ impl Heap {
         match v {
             Value::Tuple(_) | Value::Atom(_) => self.uncounted(v.clone()),
             Value::Str(s) => {
-                let w = self.alloc(Obj::Str(Rope::leaf(s.clone().into())));
+                let w = self.alloc(Obj::Str(s.clone()));
                 self.cells[w.index()].value = Some(v.clone());
                 w
             }
@@ -518,10 +518,10 @@ impl Heap {
         })
     }
 
-    /// The kernel value of data word `w`; a string's rope is flattened. Each string, tuple or
-    /// atom cell keeps the value made from it until it is freed, so a cell met again, on another
-    /// path or in a later call, is read once: the value shares its parts as the cells do, and a
-    /// value handed to the kernel many times costs its size once (COMPLEXITY.md R1).
+    /// The kernel value of data word `w`; a string is shared, not written out. Each string,
+    /// tuple or atom cell keeps the value made from it until it is freed, so a cell met again,
+    /// on another path or in a later call, is read once: the value shares its parts as the cells
+    /// do, and a value handed to the kernel many times costs its size once (COMPLEXITY.md R1).
     pub fn value(&mut self, w: Word) -> Result<Value, String> {
         let mut stack = Vec::new();
         let mut made = self.read(w, &mut stack)?;
@@ -561,11 +561,7 @@ impl Heap {
             Word::VAL => self.vals[w.bits as usize].value.clone(),
             Word::CELL => match obj_in(&self.cells, w)? {
                 _ if let Some(v) = &self.cells[w.index()].value => v.clone(),
-                Some(Obj::Str(r)) => {
-                    let v = Value::Str(r.flat(&mut self.stats.copied).into());
-                    self.cells[w.index()].value = Some(v.clone());
-                    v
-                }
+                Some(Obj::Str(r)) => Value::Str(r.clone()),
                 Some(o @ (Obj::Tuple(_) | Obj::Atom { .. })) => {
                     stack.push(Reading {
                         w,
@@ -803,8 +799,11 @@ impl Heap {
                 Word::VAL => self.vals[w.bits as usize].value == *l,
                 Word::CELL => match obj_in(&self.cells, w)? {
                     Some(Obj::Str(r)) => match l {
-                        Value::Str(s) => {
-                            r.bytes() == s.len() && *r.flat(&mut self.stats.copied) == **s
+                        Value::Str(s) if r.len() == s.len() => {
+                            if !r.is_written_out() {
+                                self.stats.copied += r.len() as u64;
+                            }
+                            r == s
                         }
                         _ => false,
                     },
@@ -1122,7 +1121,7 @@ mod tests {
     #[test]
     fn a_count_at_its_most_is_an_error_at_the_inc_itself() {
         let mut h = Heap::new();
-        let w = h.alloc(Obj::Str(Rope::leaf("a".into())));
+        let w = h.alloc(Obj::Str("a".into()));
         h.cells[0].count = u32::MAX;
         let full = "runtime: cell 0 has 4294967295 references, the most a count holds";
         assert_eq!(h.inc(w).unwrap_err(), full);
@@ -1135,14 +1134,14 @@ mod tests {
     #[test]
     fn a_cell_freed_in_its_last_generation_is_not_taken_again() {
         let mut h = Heap::new();
-        let w = h.alloc(Obj::Str(Rope::leaf("a".into())));
+        let w = h.alloc(Obj::Str("a".into()));
         h.dec(w).unwrap();
-        let w = h.alloc(Obj::Str(Rope::leaf("b".into())));
+        let w = h.alloc(Obj::Str("b".into()));
         assert_eq!((w.index(), w.generation()), (0, 1));
         h.cells[0].generation = GENERATIONS - 1;
         let last = Word::cell(0, GENERATIONS - 1);
         h.dec(last).unwrap();
-        let next = h.alloc(Obj::Str(Rope::leaf("c".into())));
+        let next = h.alloc(Obj::Str("c".into()));
         assert_eq!((next.index(), next.generation()), (1, 0));
         assert_eq!(
             h.dec(last).unwrap_err(),
