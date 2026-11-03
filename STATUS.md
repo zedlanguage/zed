@@ -915,33 +915,37 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | ARXIV-1003-spec | impl attempt 1 | 2026-11-03 11:09 | done: zed 0f61a00 (D, A, [GArrows], L11.1a, PROGRESS 297), zed-impl 2360363 (plan_dag L11.1a); check OK 149/0, cases 85/0, fences 149; sync --check out of date  |
-| CANON-stable | repair attempt 1 | 2026-11-03 09:30 | start: commit 720-naming test on Codex 6-var system, fix doc, colors map, citations |
-| CATCHUP-cross | repair attempt 1 | 2026-11-03 11:18 | cause: settle (873f1a8, ST-arms-quad repair 2) merges one-disjunct disjunctions into the base within a round; each later disjunct test solves the whole grown ch |
-| F44-memo | repair attempt 5 | 2026-11-03 07:14 | committed fcd1270 on wt/f44-memo, rebased on main b0811c3 (earlier line said 5b7c3ad; the base is b0811c3); clippy -D warnings clean (l01_39 deep_condition with |
+| BIT-words | merge attempt 1 | 2026-11-03 07:14 | lock released |
+| CANON-stable | merge attempt 1 | 2026-11-03 09:30 | started; waiting for merge lock held by UTVPI-NEAR:repair#3 |
+| CAP-pow32 | merge attempt 1 | 2026-11-03 08:53 | lock released |
+| CATCHUP-cross | repair attempt 1 | 2026-11-03 11:18 | suite on b0811c3+fix: 119 pieces, 0 failed (load 47-74) |
+| F44-memo | repair attempt 5 | 2026-11-03 07:14 | done: suite 119 pieces, 3 failed (2 deep_scaling zero-byte refusals fixed in bc30039: deep_scaling 9/9 and m0_09 98/98 pass; l01_25 chain_cross = main); fmt, cl |
 | GLAM-spec | impl attempt 1 | 2026-11-03 11:10 | done: zed wt/spec-glam cd724c9, zed-impl wt/plan-glam ac63f8a; check/cases/fences/sync --check exit 0; 10 plan rows (5 items incl. SPECULATE, 5 step rows); ledg |
-| HKT-spec | impl attempt 1 | 2026-11-03 12:01 | start: weave HKT-1, HKT-2 into DESIGN and plan_dag |
-| L1.17a | repair attempt 2 | 2026-11-03 07:14 | suite: 119 pieces, 1 failed: l01_25_preimage_catalog (2 of 140 tests), load 53-86; finding out whether main has it too |
-| LIVE3 | orchestrator attempt  | 2026-11-03 09:30 | REFERENCE (XR3 Codex report /home/luke/Work/wt/xt4/codex/R3_CODEX.md Q3, lines 122-224, and Q5 lines 280-284): a second design for the same method (bounded back |
+| L1.17a | repair attempt 2 | 2026-11-03 07:14 | also found: Collision reported instead of a refused leaf equality (prim error now yields to the refusal), and unary - and abs copied wide numbers unasked (now R |
+| LIN-probe | merge attempt 1 | 2026-11-03 07:30 | lock released |
+| LIVE3 | verify attempt 1 | 2026-11-03 09:30 | full run tools/run_tests.sh 2 on 8db4217: 98 pieces, 1 failed (l01_25: s22 random_terms and more_random_guarded_chains, the two the implementer names as failing |
 | S22-cross-scaling | orchestrator attempt  | 2026-11-03 11:23 | owner: CATCHUP-cross direct agent, bisecting |
-| S22e-quad | verify attempt 2 | 2026-11-03 07:43 | start: verify wt/s22e-quad 02f907b (load 60.76 63.42 69.81) |
+| S22e-quad | verify attempt 2 | 2026-11-03 07:43 | run_tests.sh 2 on 02f907b: 98 pieces, 0 failed (load 57.7 to 91.2); l01_25 135 passed 1 ignored 84 s at load 91; running clippy and a random soundness probe nex |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
-| T2-mid | verify attempt 1 | 2026-11-03 04:26 | control worktree /home/luke/Work/wt/t2-mid-ctl at 6b28b53: Region Debug and Term Drop each scan their stack per step (quadratic); building; load 63.20 64.08 70. |
-| T2-types | repair attempt 1 | 2026-11-03 08:34 | controls: old 5c6d82b aborts the new Tree deep test and Tree scaling test with stack overflow; 3000 random types with Tree instances (10,944 text lines) byte-id |
-| T6-bound-load | verify attempt 2 | 2026-11-03 07:07 | fmt ok, clippy -D warnings rc=0; run_tests.sh 2 started; control worktree /home/luke/Work/wt/t6-bound-load-v2ctl (detached 59601e0) for a quadratic bound walk a |
-| T6-payload-pinwheel | repair attempt 1 | 2026-11-03 08:25 | fix: overlaps keys Walk.seen by Type (structure); a type met at a second node merges the two trie nodes (union-find, children merged small-to-large) instead of  |
+| T2-mid | repair attempt 1 | 2026-11-03 04:26 | rebased on main 3626624 (STATUS rows kept both; check/mod.rs and elab.rs took the branch walks with main's Seq->Array and Op::Pow(Int) ported); builds; load 43. |
+| T2-types | verify attempt 2 | 2026-11-03 08:34 | fmt --check and clippy -D warnings pass on 48c6594; control (not committed): text loop finding made texts by linear scan fails the Tree text scaling 50.0x (limi |
+| T6-bound-load | verify attempt 2 | 2026-11-03 07:07 | done ok=true: run_tests.sh 2 on 59601e0: 98 pieces, 1 failed (l01_25 s22 pair, pre-existing in base); l01_23 94, l01_29 31, l01_22 24 pass; fmt, clippy clean; p |
+| T6-payload-pinwheel | verify attempt 2 | 2026-11-03 08:25 | launching run_tests.sh 4 and clippy on 5f76fa3 in background; load 16.65 32.72 48.96 |
 | T6-ratlit | verify attempt 1 | 2026-11-03 05:01 | suite run_tests.sh 2 on 29a50e7: 119 pieces, 1 failed (l01_25 chain_cross_within_its_width_scales 26.3x instr and chain_cross_live_scales 48.6x bytes, same as m |
-| TD-ends | repair attempt 6 | 2026-11-03 03:52 | fmt clean, clippy -D warnings clean; started tools/run_tests.sh 2 / load 70.88 72.14 78.40 |
-| TERM-spec | orchestrator attempt  | 2026-11-03 11:25 | owner: direct spec agent (not a workflow), started 11:40 |
-| TYPE-forms | repair attempt 1 | 2026-11-03 08:16 | start: fixing fits_sig own-bounded vars, result-only escape, timed inputs, unbounded note |
-| UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | fmt and clippy -D warnings clean on 942fd60; starting tools/run_tests.sh 2 (load 65.80) |
-| XR3-synth | orchestrator attempt  | 2026-11-03 11:44 | owner: direct agent, started 11:43 |
+| TD-ends | merge attempt 1 | 2026-11-03 03:52 | start; merge lock held by UTVPI-NEAR:repair#3, waiting |
+| TERM-spec | running | 2026-11-03 11:25 | fixed: DESIGN ef80bbd (binary struct grammars, GItem gains TypeFacet*, Assumed(site) foreign obligations, PNG/gzip formats; steps L20.2a, L20.3a, L25.4a) + plan |
+| TYPE-forms | repair attempt 1 | 2026-11-03 08:16 | found O(n^2) in main's type printer (each nested part built as a String and copied into its parent; every declaration prints its signature for its origin note): |
+| UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | returning ok=true: 942fd60 merges cleanly into main 40750ce, spec a628181 into zed cc889a2; non-blocking: no log port yet so @log(#off); drops no line (L7.3 own |
+| UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 
 Merged into local main and not yet pushed (154 commits); the push follows one full test run on the merged tree:
 
+- 7e296bf plan_dag, STATUS: UTVPI-NEAR done (tip 16d8ce6)
 - 16d8ce6 UTVPI-NEAR repair 3: test the round bound of BF-Dijkstra against Bellman-Ford; record the ruling on the union family
 - e5e34af UTVPI-NEAR repair 2: the union-family failure goes to UTVPI-union; main's numbers on that family
 - 4439523 UTVPI-NEAR repair: seed each merge's BF-Dijkstra from the tails of negative edges; count the parent walk
 - 094a40b UTVPI-NEAR: race Goldberg-Radzik, BF-Dijkstra and Duong's near-linear search for UTVPI potentials
+- 3e8b8a2 Merge branch 'wt/plan-hkt'
 - 4b117c3 plan_dag, STATUS: INFER-FIELD-desugar done (tip 23bd2ca)
 - 23bd2ca INFER-FIELD-desugar: desugar.txt already matches DESIGN; test that InferType and FieldType are refused naming L10
 - 0e8ba54 plan_dag, STATUS: BIT-words done (tip aed59e4)
@@ -949,12 +953,21 @@ Merged into local main and not yet pushed (154 commits); the push follows one fu
 - 7089dbb L1.39a repair: C26 says what a complete solution needs; STATUS note on lazy binder reading
 - 867865c L1.39a repair: binder values read lazily for bit words and exponents, on an explicit stack; nest, chain and unread-constant scaling tests
 - bc75c16 L1.39a: the bit words as kernel primitives, interval transfer and checked domains
+- 3626624 STATUS: CAP-pow32 done (tip e4915df)
+- 431a77c plan_dag: HKT-2, HKT-1 and steps L2.6a, L6.5a; fences synced; two rejection rows
 - e4915df CAP-pow32 repair: count factors of a power by value while it fits in u32 and by parity
 - 7b1307b CAP-pow32: the exponent of Op::Pow is an unbounded integer
+- 79ad9e6 STATUS: LIN-probe done (tip 3cdb76c)
 - 3cdb76c LIN-probe repair: the tradeoff at probe names its tests; cross 12 to 96 kept as an ignored scaling test (ledger LIN-probe-refute); k = 256 numbers
 - 01e79bd LIN-probe: failed-literal probing keeps each disjunct a found point holds without its test
+- 311c389 fences, grammar copies synced to DESIGN after the Term spec merge; l01_07 snapshots; l01_10 count 1852
+- 2ffc784 Merge branch 'wt/plan-term'
+- 25b1a5b plan_dag: XR3 done
+- e8e381f STATUS: TEST-split done (tip 2d6c53b)
+- 19dea64 plan_dag: TERM-1, TERM-2, TERM-3 and steps L20.2a, L25.4a, L20.3a
 - 2d6c53b STATUS: TEST-split after the rebase on main 88c51bb: 1889 tests each once, 298 pieces, 2 failures also on main
 - 143b7cd tools/run_tests.sh: split l01_08, l01_16, l01_25, l01_36 and l01_38 into pieces by module, and their slow modules by test
+- 45a13be STATUS: in progress as of 2026-11-03 12:02
 - 4ef3c21 plan_dag, STATUS: SEQ-desugar done (tip 76ca195)
 - f27e00a SEQ-desugar merge: check::widen (WIDEN-WARN) names ExprKind::Array, not Seq
 - 76ca195 SEQ-desugar: array displays and [T] are rank-keyed arrays, not Seq
