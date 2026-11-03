@@ -426,6 +426,9 @@ fn number_cmp(a: &Value, b: &Value) -> Ordering {
         (Value::Int(x), Value::Int(y)) => x.cmp(y),
         (Value::Float(x), Value::Float(y)) => x.cmp(y),
         (Value::Rat(x), Value::Rat(y)) => x.cmp(y),
+        (Value::Big(x), Value::Big(y)) => x.cmp(y),
+        (Value::Int(x), Value::Big(y)) => BigInt::from(*x).cmp(y.as_ref()),
+        (Value::Big(x), Value::Int(y)) => x.as_ref().cmp(&BigInt::from(*y)),
         _ => a
             .exact()
             .cmp(&b.exact())

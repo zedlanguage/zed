@@ -1244,7 +1244,8 @@ impl<'t> Machine<'_, 't> {
             // Until types arrive (step L1.22), the elaboration of `v[k]` cannot tell a family
             // from a function, so a family or a lookup port applied to one key reads it.
             V::Source(_) | V::Data(Value::Family(_)) if args.len() == 1 => {
-                let mut with_family = vec![f.clone()];
+                let mut with_family = Vec::with_capacity(1 + args.len());
+                with_family.push(f.clone());
                 with_family.extend(args);
                 self.prim(Prim::Get, with_family)
             }

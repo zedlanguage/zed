@@ -1341,8 +1341,7 @@ impl Cx {
             Term::If(g, a, b) => {
                 let g = self.formula(tr, g, env)?;
                 let (la, lb) = (self.lin(tr, a, env)?, self.lin(tr, b, env)?);
-                let v = presburger::Atom::Aux(tr.defs.len() as u32);
-                let x = Lin::atom(v.clone());
+                let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
                 let def = Formula::or(vec![
                     Formula::and(vec![g.clone(), Formula::Con(Con::eq(&x, &la))]),
                     Formula::and(vec![Formula::negate(g), Formula::Con(Con::eq(&x, &lb))]),

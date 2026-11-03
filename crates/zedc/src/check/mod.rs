@@ -3433,7 +3433,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let shown = |ck: &Self| {
                 let shown: Vec<String> = path
                     .iter()
-                    .map(|p| p.as_ref().map(|p| ck.show(&p.ty())).unwrap_or("_".into()))
+                    .map(|p| p.as_ref().map_or_else(|| "_".into(), |p| ck.show(&p.ty())))
                     .collect();
                 format!("{what} does not take ({})", shown.join(", "))
             };

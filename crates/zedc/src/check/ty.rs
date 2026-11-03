@@ -670,17 +670,24 @@ impl Ty {
         let mut out = Ty::set(&self.set & &t.set);
         out.family = &self.family & &out.set;
         out.payloads = self.payloads.clone();
-        let mut have = HashSet::new();
+        let mut met = Vec::new();
         for a in &self.tuples {
             for b in &t.tuples {
                 if a.len() == b.len() {
                     let cs: Vec<Ty> = a.iter().zip(b).map(|(x, y)| x.meet(y)).collect();
-                    if cs.iter().all(|c| !c.is_empty()) && have.insert(cs.clone()) {
-                        out.tuples.push(cs);
+                    if cs.iter().all(|c| !c.is_empty()) {
+                        met.push(cs);
                     }
                 }
             }
         }
+        let mut have = HashSet::new();
+        let first: Vec<bool> = met.iter().map(|cs| have.insert(cs)).collect();
+        out.tuples.extend(
+            met.into_iter()
+                .zip(first)
+                .filter_map(|(cs, f)| f.then_some(cs)),
+        );
         if !t.fns.is_empty() {
             out.fns = self.fns.clone();
         }

@@ -18,7 +18,7 @@ use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, FuncRef, InstBuilder, MemFlagsData};
 use cranelift_codegen::ir::{Signature, StackSlotData, StackSlotKind, Value as V};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_module::{FuncId, Linkage, Module};
 
 use zed_kernel::Prim;
@@ -608,7 +608,7 @@ impl<M: Module> Gen<'_, M> {
             }
         } else {
             let b = self.get(fx, ins[1]);
-            let int = int_op(p).is_some() || int_cmp(p).is_some();
+            let int = int_op(p) || int_cmp(p).is_some();
             let float = float_op(p) || float_cmp(p).is_some();
             if int {
                 let next = fx.b.create_block();
@@ -735,15 +735,14 @@ impl<M: Module> Gen<'_, M> {
         self.jump(fx, merge, &ws);
     }
 
-    /// Dispatches on code `r`: `blocks[i]` for `i`, else the error exit.
+    /// Dispatches on code `r`: `blocks[i]` for `i`, else the error exit, by one jump table
+    /// rather than a test per block.
     fn dispatch(&mut self, fx: &mut Fx<'_>, r: V, blocks: &[Block]) {
+        let mut s = Switch::new();
         for (i, b) in blocks.iter().enumerate() {
-            let c = fx.b.ins().icmp_imm_s(IntCC::Equal, r, i as i64);
-            let next = fx.b.create_block();
-            fx.b.ins().brif(c, *b, &[], next, &[]);
-            fx.b.switch_to_block(next);
+            s.set_entry(i as u128, *b);
         }
-        fx.b.ins().jump(fx.err, &[]);
+        s.emit(&mut fx.b, r, fx.err);
     }
 
     /// The test of `if` node `id`; `early` releases the condition once an arm is chosen.
@@ -810,7 +809,7 @@ fn inline(p: Prim, n: usize) -> bool {
     match n {
         1 => matches!(p, Prim::Neg | Prim::Not),
         2 => {
-            int_op(p).is_some()
+            int_op(p)
                 || int_cmp(p).is_some()
                 || float_op(p)
                 || float_cmp(p).is_some()
@@ -820,8 +819,8 @@ fn inline(p: Prim, n: usize) -> bool {
     }
 }
 
-fn int_op(p: Prim) -> Option<()> {
-    matches!(p, Prim::Add | Prim::Sub | Prim::Mul).then_some(())
+fn int_op(p: Prim) -> bool {
+    matches!(p, Prim::Add | Prim::Sub | Prim::Mul)
 }
 
 fn int_cmp(p: Prim) -> Option<IntCC> {

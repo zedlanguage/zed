@@ -160,11 +160,11 @@ fn parse_one<'t>(
     ring: u32,
     end: Span,
 ) -> Result<Open<'t>, Error> {
-    let mut toks: Vec<(Kind, &str)> = tokens
+    let toks: Vec<(Kind, &str)> = tokens
         .iter()
         .map(|t| (kind(&t.tok), &text[t.span.start..t.span.end]))
+        .chain([(Kind::End, "")])
         .collect();
-    toks.push((Kind::End, ""));
     let span = |i: usize| tokens.get(i).map_or(end, |t| t.span);
     let mut p = Parser::new(g, ring, toks.as_slice());
     let matched = match p.rule_node(start, 0, false) {

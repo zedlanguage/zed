@@ -561,7 +561,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `next` | 6 | 46 | 0 | 0 | 52 | tokens `zedc/parse/grammar.rs:159` (6); P::string `zedc/zir/text.rs:956` (3); decode `zedc/lex/string.rs:280` (2) |
 | `skip_take` | 4 | 45 | 0 | 0 | 49 | Cx::scan `zedc/store/preimage.rs:1771` (7); children `zed-kernel/provenance.rs:186` (3); children `zedc/canon/binders.rs:107` (2) |
 | `minmax` | 9 | 60 | 0 | 1 | 70 | first_on_cycle `zed-kernel/types/rec.rs:361` (4); map2 `zedc/store/revision.rs:278` (3); backward `zedc/store/revision.rs:366` (3) |
-| `unsafe` | 0 | 0 | 2 | 0 | 2 | run `zed-native/lib.rs:70` (2) |
+| `unsafe` | 0 | 0 | 2 | 0 | 2 | run `zed-native/lib.rs:70` (2); since T14-low one in `run` and one in `Jit::drop` |
 | `extern` | 0 | 0 | 27 | 0 | 27 | addresses `zed-native/hooks.rs:112` (13); rt_arg `zed-native/hooks.rs:128` (1); rt_node `zed-native/hooks.rs:132` (1) |
 | `transmute` | 0 | 0 | 1 | 0 | 1 | run `zed-native/lib.rs:70` (1) |
 | `thread` | 6 | 1 | 1 | 0 | 8 | on_stack `zed-kernel/eval.rs:294` (2) |
@@ -627,3 +627,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A tree held as a ring of `next` and `prev` indices in preorder with a depth per node, relinked in place by index when a subtree is cut out | `utvpi::potential` | Mutation | A state receiver over a map from node to `(next, prev, depth)`, or the persistent tree of the dependency graph |
 | `VecDeque` used as a FIFO queue, `push_back` and `pop_front`, with a `Vec<bool>` of what it holds | `utvpi::potential` | Mutation | A state receiver over a list and a set, or two lists swapped at each round |
 | `Iterator::partition` of borrowed rows into two `Vec<&Row>` | `presburger::search` | None | `partition` over a list of rows, which Zed shares rather than borrows |
+
+## Entries from T14-low (`zed-native/src/lib.rs`, `codegen.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `impl Drop` on a guard holding `ManuallyDrop<JITModule>`, taken once with `ManuallyDrop::take` to call the consuming `free_memory` | `zed_native::Jit` | Foreign library | The JIT is a foreign resource: an `@ffi` handle whose release the runtime calls when its count reaches 0 |
+| `unsafe` block in `Drop` to call Cranelift's `free_memory` | `Jit::drop` | Foreign library | Inside the `@ffi` binding |
+| `#[expect(lint, reason = ...)]` | `zed_native::run`, `Jit::drop`, test `Counted` | Attributes | None needed: Zed has no lint attributes |
+| Cranelift `Switch` (a jump table over block indices) | `codegen::dispatch` | Foreign library | The code generator's own `match` lowering |
+| `AtomicUsize` counters shared through `Arc` with a memory provider trait object | test `a_failed_compile_frees_the_jit_memory` | Mutation | Test harness only: the provider returns its counts as a value |

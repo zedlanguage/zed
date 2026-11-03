@@ -104,7 +104,7 @@ fn read_rat(s: &str) -> Option<Rat> {
     }
     let digits = s.strip_prefix('-').unwrap_or(s);
     let well_formed = digits.split_once('.').is_some_and(|(w, f)| {
-        !w.is_empty() && !f.is_empty() && (w.to_owned() + f).bytes().all(|b| b.is_ascii_digit())
+        !w.is_empty() && !f.is_empty() && w.bytes().chain(f.bytes()).all(|b| b.is_ascii_digit())
     });
     if !well_formed {
         return None;
