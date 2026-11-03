@@ -257,8 +257,9 @@ struct Ck<'t, 'a> {
     alias: HashMap<usize, Span>,
     /// What the text of each expression shows of its `int` value, by its span.
     known: HashMap<Span, Known>,
-    /// What the text bound to each binder `name = e` shows of its `int` value.
-    facts: HashMap<usize, Known>,
+    /// The value of each binder `name = e`, read for what it shows of its `int` value only when
+    /// a bit word or an exponent reads the name.
+    facts: HashMap<usize, &'a Expr>,
     /// Where each binder's type comes from.
     whence: HashMap<usize, Origin>,
     /// Whether a repair is being tried, so its errors offer none.
@@ -558,8 +559,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let text = format!("`{n}` is defined as this expression, {v}");
                         self.origin(id, value.span, text, Some(value.span));
                         self.alias.insert(id, value.span);
-                        let k = self.known(value);
-                        self.facts.insert(id, k);
+                        self.facts.insert(id, value);
                         self.env.insert(id, v);
                     }
                     [Target::Wild] => {
@@ -4654,38 +4654,111 @@ impl Known {
     }
 }
 
+/// The integer operator `o` of the text, with its interval transfer and its kernel primitive.
+fn int_op(o: &str) -> Option<(Op, Prim)> {
+    match o {
+        "+" => Some((Op::Add, Prim::Add)),
+        "-" => Some((Op::Sub, Prim::Sub)),
+        "*" => Some((Op::Mul, Prim::Mul)),
+        "div" => Some((Op::Div, Prim::IntDiv)),
+        "mod" => Some((Op::Mod, Prim::Mod)),
+        _ => None,
+    }
+}
+
 impl<'a> Ck<'_, 'a> {
     /// What the text of `e` shows of its `int` value (see [`Known`]), from its literals, the
     /// names it uses, its integer operators and its calls of the bit words; any `int` for
-    /// anything else. Each expression is read once, by its span, so a nest of `n` operators
-    /// costs O(n).
+    /// anything else. A binder's value is read only when a name of it is read here, so a
+    /// constant that no bit word or exponent reads is never folded. Each expression is read
+    /// once, by its span, children before parents on an explicit stack, so a nest of `n`
+    /// operators or a chain of `n` bindings costs O(n) and no stack depth.
     ///
     /// Complexity tradeoff: the text is read, not the reduced product's cell, so an int that
-    /// only a test narrows (`if n >= 0 { popCount(n) }`) or that comes from input is read as any
-    /// int, and a bit word on it is rejected. Why: the checker runs before the store's
-    /// iteration, and asking the store at each call would run a fixpoint per call; reading the
-    /// text is O(1) per node. Trigger: an operand whose sign or width only a test, a parameter
-    /// or a component of a tuple shows. Test:
+    /// only a test narrows (`if n >= 0 { popCount(n) }`), a parameter or input is read as any
+    /// int, and a bit word on it is rejected as possibly outside its domain. Why: the checker
+    /// runs before the store's iteration, and asking the store at each call would run a
+    /// fixpoint per call; reading the text is O(1) per node. Trigger: an operand whose sign or
+    /// width only a test, a parameter or a component of a tuple shows. Test:
     /// `l01_39a_bit_words::errors::an_operand_not_shown_in_its_domain_is_rejected`. COMPLEXITY.md
-    /// row C26.
+    /// row C26. A complete solution needs int-range types on parameters and results (step
+    /// L10, ledger BIT-checker-ranges), so a signature can state the domain, or the checker
+    /// querying the reduced product's cell for the operand once the store's fixpoint has run.
     fn known(&mut self, e: &'a Expr) -> Known {
-        if let Some(k) = self.known.get(&e.span) {
-            return k.clone();
+        if !self.known.contains_key(&e.span) {
+            // Each node is entered once: the graph through binders is acyclic, as statements
+            // are checked in dependency order, and the set keeps it finite if not.
+            let mut entered = HashSet::new();
+            let mut stack = vec![(e, false)];
+            while let Some((x, ready)) = stack.pop() {
+                if ready {
+                    let k = self.known_uncached(x);
+                    self.known.insert(x.span, k);
+                } else if !self.known.contains_key(&x.span) && entered.insert(x.span) {
+                    stack.push((x, true));
+                    stack.extend(self.reads(x).into_iter().map(|c| (c, false)));
+                }
+            }
         }
-        let k = self.known_uncached(e);
-        self.known.insert(e.span, k.clone());
-        k
+        self.known[&e.span].clone()
     }
 
-    fn known_uncached(&mut self, e: &'a Expr) -> Known {
-        let op = |o: &str| match o {
-            "+" => Some((Op::Add, Prim::Add)),
-            "-" => Some((Op::Sub, Prim::Sub)),
-            "*" => Some((Op::Mul, Prim::Mul)),
-            "div" => Some((Op::Div, Prim::IntDiv)),
-            "mod" => Some((Op::Mod, Prim::Mod)),
+    /// What has been read of `e`; any `int` when it has not been.
+    fn memo(&self, e: &Expr) -> Known {
+        self.known.get(&e.span).cloned().unwrap_or_else(Known::top)
+    }
+
+    /// The expressions [`Ck::known_uncached`] reads to read `e`.
+    fn reads(&self, e: &'a Expr) -> Vec<&'a Expr> {
+        match &e.kind {
+            ExprKind::Name(_) => self.bound_value(e).into_iter().collect(),
+            ExprKind::Unary("-", a) => vec![&**a],
+            ExprKind::Binary(o, a, b) if *o == "**" || int_op(o).is_some() => vec![&**a, &**b],
+            _ => self.bit_call(e).map_or_else(Vec::new, |(_, es)| es),
+        }
+    }
+
+    /// The value bound to the name `e` by a `name = value` binder.
+    fn bound_value(&self, e: &Expr) -> Option<&'a Expr> {
+        match self.t.res.uses.get(&e.span) {
+            Some(Ref::Bound(ids)) if ids.len() == 1 => self.facts.get(&ids[0]).copied(),
             _ => None,
+        }
+    }
+
+    /// The bit word `e` calls and its operands in parameter order, when `e` is such a call.
+    fn bit_call(&self, e: &'a Expr) -> Option<(Prim, Vec<&'a Expr>)> {
+        let ExprKind::Call {
+            callee,
+            positional,
+            named,
+            curry: false,
+        } = &e.kind
+        else {
+            return None;
         };
+        let uses = &self.t.res.uses;
+        let (p, receiver) = match &callee.kind {
+            ExprKind::Name(w) if matches!(uses.get(&callee.span), Some(Ref::Prelude(_))) => {
+                (bit_prim(w)?, None)
+            }
+            ExprKind::Member {
+                of,
+                name,
+                safe: false,
+            } if !matches!(uses.get(&callee.span), Some(Ref::Bound(_)))
+                && crate::resolve::prelude_layer(name) == Some(1) =>
+            {
+                (bit_prim(name)?, Some(&**of))
+            }
+            _ => return None,
+        };
+        Some((p, bit_operands(p, receiver, positional, named)?))
+    }
+
+    /// What the text of `e` shows of its `int` value, from what has been read of the
+    /// expressions [`Ck::reads`] gives.
+    fn known_uncached(&self, e: &'a Expr) -> Known {
         let fold = |p: Prim, args: Vec<Value>| -> Option<Known> {
             let v = eval(&Term::Prim(p, args.into_iter().map(Term::Lit).collect())).ok()?;
             matches!(v, Value::Int(_) | Value::Big(_)).then(|| Known::of(v))
@@ -4696,14 +4769,11 @@ impl<'a> Ck<'_, 'a> {
                 let digits: String = digits.chars().filter(|&c| c != '_').collect();
                 Value::int_text(&digits, *radix).map_or_else(Known::top, Known::of)
             }
-            ExprKind::Name(_) => match self.t.res.uses.get(&e.span) {
-                Some(Ref::Bound(ids)) if ids.len() == 1 => {
-                    self.facts.get(&ids[0]).cloned().unwrap_or_else(Known::top)
-                }
-                _ => Known::top(),
-            },
+            ExprKind::Name(_) => self
+                .bound_value(e)
+                .map_or_else(Known::top, |v| self.memo(v)),
             ExprKind::Unary("-", a) => {
-                let a = self.known(a);
+                let a = self.memo(a);
                 match a.value {
                     Some(v) => fold(Prim::Neg, vec![v]).unwrap_or_else(Known::top),
                     None => Known {
@@ -4713,7 +4783,7 @@ impl<'a> Ck<'_, 'a> {
                 }
             }
             ExprKind::Binary("**", a, b) => {
-                let (x, n) = (self.known(a), self.known(b));
+                let (x, n) = (self.memo(a), self.memo(b));
                 if let (Some(x), Some(n)) = (&x.value, &n.value) {
                     return fold(Prim::Pow, vec![x.clone(), n.clone()]).unwrap_or_else(Known::top);
                 }
@@ -4728,9 +4798,9 @@ impl<'a> Ck<'_, 'a> {
                 };
                 Known { ints, value: None }
             }
-            ExprKind::Binary(o, a, b) => match op(o) {
+            ExprKind::Binary(o, a, b) => match int_op(o) {
                 Some((o, p)) => {
-                    let (a, b) = (self.known(a), self.known(b));
+                    let (a, b) = (self.memo(a), self.memo(b));
                     if let (Some(x), Some(y)) = (&a.value, &b.value) {
                         return fold(p, vec![x.clone(), y.clone()]).unwrap_or_else(Known::top);
                     }
@@ -4741,36 +4811,11 @@ impl<'a> Ck<'_, 'a> {
                 }
                 None => Known::top(),
             },
-            ExprKind::Call {
-                callee,
-                positional,
-                named,
-                curry: false,
-            } => {
-                let uses = &self.t.res.uses;
-                let (p, receiver) = match &callee.kind {
-                    ExprKind::Name(w)
-                        if matches!(uses.get(&callee.span), Some(Ref::Prelude(_))) =>
-                    {
-                        (bit_prim(w), None)
-                    }
-                    ExprKind::Member {
-                        of,
-                        name,
-                        safe: false,
-                    } if !matches!(uses.get(&callee.span), Some(Ref::Bound(_)))
-                        && crate::resolve::prelude_layer(name) == Some(1) =>
-                    {
-                        (bit_prim(name), Some(&**of))
-                    }
-                    _ => (None, None),
-                };
-                let Some((p, es)) =
-                    p.and_then(|p| Some((p, bit_operands(p, receiver, positional, named)?)))
-                else {
+            _ => {
+                let Some((p, es)) = self.bit_call(e) else {
                     return Known::top();
                 };
-                let ks: Vec<Known> = es.into_iter().map(|a| self.known(a)).collect();
+                let ks: Vec<Known> = es.into_iter().map(|a| self.memo(a)).collect();
                 if let Some(vs) = ks
                     .iter()
                     .map(|k| k.value.clone())
@@ -4792,7 +4837,6 @@ impl<'a> Ck<'_, 'a> {
                     value: None,
                 }
             }
-            _ => Known::top(),
         }
     }
 }
