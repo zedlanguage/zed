@@ -841,8 +841,7 @@ fn pick(p: &Parts, deep: bool) -> Result<Model, Refusal> {
                 d.cons.iter().all(|c| c.holds(&model))
             };
             if holds {
-                held.iter()
-                    .for_each(|h| take(&h.cons, &mut acc, &mut near));
+                held.iter().for_each(|h| take(&h.cons, &mut acc, &mut near));
                 continue 'next;
             }
         }

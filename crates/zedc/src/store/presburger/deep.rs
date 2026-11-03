@@ -100,7 +100,11 @@ impl Formula {
                     Formula::Con(_) => unreachable!("a constraint has no parts"),
                 };
                 if decided {
-                    value = Some(if matches!(node, Formula::Not(_)) { !v } else { v });
+                    value = Some(if matches!(node, Formula::Not(_)) {
+                        !v
+                    } else {
+                        v
+                    });
                     stack.pop();
                     continue;
                 }
