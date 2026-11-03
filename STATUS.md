@@ -813,7 +813,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CAP-bits | verify attempt 1 | 2026-11-03 03:35 | run_tests.sh 4: 97 pieces, 0 failed (load 42-53); probe: 10**10**12 div/mod 2**10**12 times out (>20 s, rem_euclid builds the divisor); 1e(10^12)r aborts in che |
 | L25.8 | impl attempt 1 | 2026-11-03 03:49 | negative control (not committed): unit elaborated again per definition makes finding_the_mutants_scales not end in 60 s (exit 124), a re-compile per mutant make |
-| L29-print | impl attempt 1 | 2026-11-03 04:06 | scaling printing n atoms with payloads: 400->3200 9.0x instructions (30776552->278147903), limit 24 |
 | OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | start |
 | PROOFS | orchestrator attempt  | 2026-11-03 04:29 | study agent started (Osprey proofs, Lean/Mathlib, Zed math library plan) |
 | S22a | orchestrator attempt  | 2026-11-03 03:01 | alive check: impl#1 running l01_25 s22 random_chains/chains_of_shared in wt/s22a; work uncommitted (preimage.rs, interval.rs, preimage_ref.rs, s22.rs) |
@@ -828,8 +827,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-values | repair attempt 2 | 2026-11-03 03:52 | started; zed-impl main still e6900f7, wt/t6 bb1f8a7 not merged; per the 03:55 order nothing changed, returning ok=false (waits for T6) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (38 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (40 commits); the push follows one full test run on the merged tree:
 
+- 6111e6c L29-print: print an atom's known payload type and read it back
+- 4ec27f7 STATUS: in progress as of 2026-11-03 04:30
 - 001e9e4 STATUS: in progress as of 2026-11-03 04:28
 - 24aad53 STATUS: TD-tests merged
 - d24cb25 STATUS: TD-tests row names back_in, where the fold and fix stops are
