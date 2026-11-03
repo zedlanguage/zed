@@ -1,6 +1,7 @@
 //! The hand-run tools of the Zed implementation. The grammar tools check the grammar and the
 //! fences of a spec checkout and report the layers of programs; `sync` copies the spec's fences
-//! and grammar into this repository; `progress` writes the spec's PROGRESS.md.
+//! and grammar into this repository; `progress` writes the spec's PROGRESS.md; `plan` checks
+//! this repository's plan DAG.
 //!
 //! Each tool is a module with a `run` function over its arguments, and a thin `main` in
 //! `src/bin/`. Grammar reading and matching are the compiler's (`zedc::parse`), so a rule of the
@@ -13,6 +14,7 @@ pub mod check;
 pub mod fences;
 pub mod fuzz;
 pub mod layer;
+pub mod plan;
 pub mod progress;
 pub mod random;
 pub mod ring;
