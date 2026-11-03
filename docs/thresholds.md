@@ -188,8 +188,8 @@ and the reduction's listing; 3c removed them.
 **3c, pieces and listings: done.** No constant bounds the pieces of a set or the members a
 reduction lists. Each former use is bounded by its own inputs instead.
 
-- *Forward revision* (`revision::map2`). For operands of k ≥ m sign parts, the one with
-  fewer is capped to ⌈(k + m)/k⌉ pieces, so at most k + m pairs are taken, and each sign
+- *Forward revision* (`revision::map2`). For operands of k ≥ m pieces, the one with
+  fewer is capped to ⌈(k + m)/k⌉ ≤ 2 pieces, and both are split at 0, so at most k + 2 parts meet at most 4, or 4(k + 2) pairs, and each sign
   region of the image (below 0, holding 0, above 0) is capped to the most pieces either
   operand has in one region. A chain of operators therefore never grows piece counts, and
   the work is linear in the operands. Candidates, measured on 2000 random pairs of 1 to 6

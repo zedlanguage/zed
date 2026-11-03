@@ -271,8 +271,8 @@ fn regions(parts: &[(End, End)]) -> [Vec<(End, End)>; 3] {
 /// piece, nothing is merged before the image is taken.
 ///
 /// Complexity tradeoff: the merged pieces fill the gaps between them, so the image can hold
-/// values no pair of operand values gives (a set of k pieces times a set of m pieces keeps at
-/// most k + m pairs, not k·m). Why: the exact image has up to k·m pieces, and a chain of n
+/// values no pair of operand values gives (for k ≥ m pieces, at most 4(k + 2) pairs are taken,
+/// not k·m). Why: the exact image has up to k·m pieces, and a chain of n
 /// operators up to k^n. Trigger: two operands of more than one piece each, or an image with
 /// more pieces in a sign region than either operand has there; the limits are relative to
 /// the operands, never constants. Tests:
