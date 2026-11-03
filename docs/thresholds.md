@@ -288,8 +288,7 @@ is undone, so each ends; the reduction rounds of the scope are meets (replacemen
 A refused question leaves the written constraint in place, which is sound; the answer names
 its cause (`Refusal`, DESIGN.md sec:diagnostics). What is refused: a problem between the
 shadows (Pugh's example, `l01_38_presburger::controls`), a system every elimination of which
-would grow it, a disjunction where greedy search and one level of lookahead both fail, and a
-term with a coefficient past 128 bits.
+would grow it, and a disjunction where greedy search and one level of lookahead both fail.
 
 | Candidate | Measured | Score | Reasoning |
 |---|---|---|---|

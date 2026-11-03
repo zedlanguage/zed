@@ -376,7 +376,7 @@ which 196 inside a loop body; `?` 1015, of which 276 in a loop; `continue` 110; 
 
 ### Further points of cost
 
-- **Overflow as refusal.** Since T4 the Omega test, the simplex, `twovar` and `utvpi` compute in
+- **Overflow as refusal.** Since T4 the Omega test, `twovar` and `utvpi` compute in
   `store::int::Int`, unbounded with i128 while a value fits, and no coefficient refuses a
   question; in Zed this is `int`, and `store::int` goes at the port. `checked_*` remain elsewhere
   (`MAX_BITS`, `num.rs:19`, is still a bound to port as an explicit test).

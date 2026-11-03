@@ -17,6 +17,7 @@ mod oracle;
 mod preimage;
 pub(crate) mod random;
 pub(crate) mod scaling;
+mod stages;
 mod tight;
 
 use std::collections::BTreeMap;

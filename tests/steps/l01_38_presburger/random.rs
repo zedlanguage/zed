@@ -1,9 +1,9 @@
 //! The linear-relation domain against the interpreter on random terms over `x` and `y`: the
 //! translation of a test holds at exactly the points where the interpreter gives `true`; the
 //! Omega test finds a point of the window exactly when one exists, and its model is one; the
-//! projection of a relation holds every value a point takes, within the hull of those
-//! values; and rung 2 proves no entailment the window refutes, and refutes only with a real
-//! countermodel.
+//! projection of a relation holds every value a point takes, and all but one of the 60 lie
+//! within the hull of those values; and rung 2 proves no entailment the window refutes, and
+//! refutes only with a real countermodel.
 
 use std::sync::Arc;
 
@@ -139,12 +139,15 @@ fn check_model(found: Option<Vec<i64>>, t: &Term, names: &[Arc<str>]) -> Result<
     }
 }
 
-/// Each claimed projection holds every value the points of `t` take, within their hull.
-fn check_projection(claimed: &[IntervalSet], t: &Term, names: &[Arc<str>]) -> Result<(), String> {
+/// Each claimed projection holds every value the points of `t` take; whether every one also
+/// lies within their hull. Past one disjunction a projection is only a set holding the values
+/// (presburger.rs, module note), and a bound it cannot show moves stays where it is.
+fn check_projection(claimed: &[IntervalSet], t: &Term, names: &[Arc<str>]) -> Result<bool, String> {
     let points: Vec<Vec<i64>> = window(names.len(), LO, HI)
         .into_iter()
         .filter(|p| holds(t, names, p))
         .collect();
+    let mut exact = true;
     for ((n, c), want) in names
         .iter()
         .zip(claimed)
@@ -154,13 +157,14 @@ fn check_projection(claimed: &[IntervalSet], t: &Term, names: &[Arc<str>]) -> Re
             Some((lo, hi)) => IntervalSet::range(lo, hi),
             None => IntervalSet::empty(),
         };
-        if !want.is_subset(c) || !c.is_subset(&hull) {
+        if !want.is_subset(c) {
             return Err(format!(
                 "{t}: `{n}` takes {want}, and the projection is {c}"
             ));
         }
+        exact &= c.is_subset(&hull);
     }
-    Ok(())
+    Ok(exact)
 }
 
 /// No point of the window refutes a proved entailment from `p` to `g`, and a countermodel
@@ -210,7 +214,7 @@ fn window_term(names: &[Arc<str>]) -> Term {
 fn random_tests_agree_with_the_interpreter() {
     let mut rng = Rng::new(0x1_38);
     let ns = names();
-    let (mut checked, mut models, mut entailments) = (0, 0, 0);
+    let (mut checked, mut models, mut entailments, mut wider) = (0, 0, 0, 0);
     while checked < 60 {
         let t = bool_term(&mut rng, 2);
         let Some(rs) = relations(&[&t], &ns, false) else {
@@ -229,7 +233,7 @@ fn random_tests_agree_with_the_interpreter() {
             .iter()
             .map(|n| project(&f, &Atom::Sym(n.clone())).expect("answered"))
             .collect();
-        check_projection(&claimed, &inside, &ns).unwrap();
+        wider += usize::from(!check_projection(&claimed, &inside, &ns).unwrap());
         // Rung 2 from the window and this test to a second one.
         let g = bool_term(&mut rng, 1);
         let rs = relations(&[&inside, &g], &ns, false).expect("in the domain");
@@ -238,6 +242,12 @@ fn random_tests_agree_with_the_interpreter() {
         entailments += usize::from(matches!(e, Entailment::Proved(_)));
         checked += 1;
     }
+    // Option A (STATUS.md, L1.38): one projection of the 60, of `y` on a term with `div`, `mod`,
+    // `min` and `if`, is [-4..=5] where the points take [0..=5]. A question it asks of a disjunct
+    // is refused, so the bound below stays where no question showed it can move. The linear
+    // program before design R decided that question; this count measures that strength, not
+    // correctness, which the check above holds for every projection.
+    assert_eq!(wider, 1, "projections wider than the hull of their values");
     // Both answers occur, so neither check passes by never being asked.
     assert!(models > 10 && models < 55, "{models} of 60 satisfiable");
     assert!(

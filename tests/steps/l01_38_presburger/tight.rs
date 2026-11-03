@@ -1,18 +1,15 @@
-//! The family on which the general simplex is above O(N log N) (COMPLEXITY.md, S18, "Not
-//! fixed"), kept so that the hard-algorithm cross-review xt and the later fix measure the same
-//! systems. Ignored: at 64 variables it takes about 10 s. Run it with
-//! `cargo test -p zed-tests --test steps tight -- --ignored --nocapture`.
-
-use std::time::Instant;
+//! The family on which the general simplex was above O(N log N) (COMPLEXITY.md, S18): rows of
+//! three terms that no elimination keeps, refused with Growth after one pass over their terms
+//! (the box of their bounds and its point nearest zero), at n and 8n.
 
 use zed_tests::instances::Rng;
-use zedc::store::presburger::{Con, Formula, Lin, decide};
+use zedc::store::presburger::{Con, Formula, Lin, Refusal};
 
-use super::scaling::x;
+use super::scaling::{decides, x};
 
 /// `2n` rows of up to three terms over `n` variables, coefficients in `-5..=5`, each holding at
 /// a random point with slack at most 3: no elimination keeps the rows, so the last step is the
-/// simplex, and the point is tight on many rows.
+/// box of the bounds, and the point is tight on many rows.
 fn tight(n: usize, seed: u64) -> Formula {
     let mut g = Rng::new(seed);
     let p: Vec<i64> = (0..n).map(|_| g.int(-50, 50)).collect();
@@ -36,12 +33,11 @@ fn tight(n: usize, seed: u64) -> Formula {
 }
 
 #[test]
-#[ignore = "cross-review xt: the general simplex on this family takes about 10 s at 64 variables"]
-fn the_tight_three_term_family() {
-    for n in [16, 32, 48, 64] {
-        let f = tight(n, 0xfeed_beef_1380);
-        let t = Instant::now();
-        let a = decide(&f);
-        eprintln!("{n} variables: {a:?} in {:.3} s", t.elapsed().as_secs_f64());
-    }
+fn the_tight_three_term_family_scales() {
+    decides(
+        "the tight three-term family",
+        64,
+        Err(Refusal::Growth),
+        |n| tight(n, 0xfeed_beef_1380),
+    );
 }

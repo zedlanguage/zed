@@ -21,22 +21,30 @@
 //! step removes a variable and the terms never pass the input's count. An elimination is
 //! exact when every lower or every upper coefficient of the variable is a unit.
 //!
-//! Two cases are decided exactly whatever the eliminations would do. Rows over two variables
-//! or fewer are decided by counting the integer points under each piece of their upper and
-//! lower envelopes ([`super::twovar`]). Rows `±x ± y + k >= 0` are decided by the parity test
-//! on the zero-weight cycles of their tight constraint graph ([`super::utvpi`]); once they are
-//! shown to have a point, exact eliminations that add terms are allowed, since each keeps that
-//! form, and they are taken only when a model is wanted.
+//! Before the parts are split, variables whose columns are multiples of one column are merged
+//! into one variable ([`quotient`]), a unimodular change of variables that keeps every
+//! integer point. Two cases are then decided exactly whatever the eliminations would do. Rows
+//! over two variables or fewer are decided by counting the integer points under each piece of
+//! their upper and lower envelopes ([`super::twovar`]). Rows `±x ± y + k >= 0` are decided by
+//! the parity test on the zero-weight cycles of their tight constraint graph
+//! ([`super::utvpi`]); once they are shown to have a point, exact eliminations that add terms
+//! are allowed, since each keeps that form, and they are taken only when a model is wanted.
 //!
-//! At the first inexact elimination the real shadow is tested once, by the simplex
-//! ([`super::simplex`]): empty over the rationals, it shows the problem empty. From there on
-//! the dark shadow is solved, whose points are points of the problem. When it has none, the
-//! splinters of each dark elimination are searched [Omega, sec. 2.3]: for each lower row
-//! `a·x + l >= 0` of the eliminated `x` and `m` its largest upper coefficient, the problem with
-//! `a·x + l == k` for a fresh variable `0 <= k <= (a·m - a - m) / m`. The problem has a point
-//! exactly when the dark shadow or a splinter has one. A splinter that itself takes a dark
-//! shadow with no point is not split again: that, and a system every elimination of which
-//! would add terms, are the refusals ([`Refusal`]), each a property of the system's shape. A
+//! When every elimination left would add terms, the box test decides what it can, in one pass
+//! over the terms and with no linear program: each variable's bounds are tightened once by
+//! every row from the bounds its bound rows give ([`bounds`]); the rows are empty when one of
+//! them is below zero at every point of that box, have a point when the point of the box
+//! nearest zero holds every row, and are refused otherwise. At the first inexact elimination
+//! the real shadow is tested once ([`relaxed_empty`]): real-shadow eliminations are taken
+//! while each adds no terms, and the box test ends it; empty, it shows the problem empty. From
+//! there on the dark shadow is solved, whose points are points of the problem. When it has
+//! none, the splinters of each dark elimination are searched [Omega, sec. 2.3]: for each lower
+//! row `a·x + l >= 0` of the eliminated `x` and `m` its largest upper coefficient, the problem
+//! with `a·x + l == k` for a fresh variable `0 <= k <= (a·m - a - m) / m`. The problem has a
+//! point exactly when the dark shadow or a splinter has one. A splinter that itself takes a
+//! dark shadow with no point is not split again: that, and a system every elimination of which
+//! would add terms and which the box test does not decide, are the refusals ([`Refusal`]),
+//! each a property of the system's shape. A
 //! satisfiable problem yields a model, built only when one is wanted: each eliminated variable
 //! takes the value nearest zero that its bounds allow under the values of the variables
 //! eliminated after it.
@@ -74,7 +82,7 @@ use std::sync::Arc;
 
 use super::int::Int;
 use super::interval::{End, IntervalSet};
-use super::simplex::{Simplex, Term};
+use super::simplex::Term;
 use super::{twovar, utvpi};
 
 /// The projection onto each symbol, in order; an error where it is refused.
@@ -118,7 +126,8 @@ impl fmt::Display for Atom {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Refusal {
     /// Every elimination of a variable would enlarge the system, which has three variables or
-    /// more, is not of the form `±x ± y + k >= 0`, and has rational points.
+    /// more and is not of the form `±x ± y + k >= 0`; no row is below zero over the box its
+    /// bounds give its variables, and the point of that box nearest zero misses some row.
     Growth,
     /// The integer points could lie only in a splinter of a splinter: a gray shadow within a
     /// gray shadow, whose search is exponential in the variables.
@@ -136,9 +145,8 @@ impl fmt::Display for Refusal {
                  is not decided"
             }
             Refusal::Shadows => {
-                "the integer constraints have rational points, and an integer point could lie \
-                 only in a splinter of a splinter of their projection, so whether one exists is \
-                 not decided"
+                "an integer point of the integer constraints could lie only in a splinter of a \
+                 splinter of their projection, so whether one exists is not decided"
             }
             Refusal::Disjuncts => {
                 "no choice among the disjunctions of the integer constraints was settled"
@@ -1076,7 +1084,7 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
         let a = sum.into_iter().filter(|(_, c)| !c.is_zero()).collect();
         base.push((Row { a, k }, c.rel));
     }
-    let Some(vals) = parts(atoms.len(), base, want)? else {
+    let Some(vals) = quotient(atoms.len(), base, want)? else {
         return Ok(None);
     };
     if !want {
@@ -1091,6 +1099,132 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
         }
     }
     Ok(Some(model))
+}
+
+/// Variables whose columns are multiples of one column, merged into one variable: the
+/// greatest common divisor of their multiples, and for each, by place, the Bézout factors
+/// `(j, s, t)` of the step that took it in, `s` on the divisor before and `t` on its own
+/// multiple.
+struct Merged {
+    gcd: Int,
+    links: Vec<(usize, Int, Int)>,
+}
+
+/// `(g, s, t)` with `g` the greatest common divisor of `a` and `b` and `s·a + t·b == g`, for
+/// `a` not below zero, by the extended Euclidean algorithm.
+fn bezout(a: &Int, b: &Int) -> (Int, Int, Int) {
+    let (mut r, mut next) = (a.clone(), b.abs());
+    let (mut s, mut ns) = (Int::ONE, Int::ZERO);
+    let (mut t, mut nt) = (Int::ZERO, Int::ONE);
+    while !next.is_zero() {
+        let q = r.div_floor(&next);
+        let rem = &r - &(&q * &next);
+        r = std::mem::replace(&mut next, rem);
+        let ns2 = &s - &(&q * &ns);
+        s = std::mem::replace(&mut ns, ns2);
+        let nt2 = &t - &(&q * &nt);
+        t = std::mem::replace(&mut nt, nt2);
+    }
+    if b.is_negative() {
+        t = -&t;
+    }
+    (r, s, t)
+}
+
+/// [`parts`] on `base` with the variables whose columns are multiples of one primitive column
+/// merged. Where `x[j]` and `x[l]` enter every row as `c·p` and `d·p`, the rows see only
+/// `c·x[j] + d·x[l]`, whose values over the integers are the multiples of `gcd(c, d)`; so
+/// one variable `y` with column `gcd(c, d)·p` has a point exactly when they have one, and a
+/// point of `y` lifts by the Bézout factors `s·c + t·d == gcd(c, d)` to `x[j] = s·y`,
+/// `x[l] = t·y`. The substitution is unimodular on each group, so no integer point is lost or
+/// added. A primitive column has coprime entries and its first entry above zero; columns are
+/// grouped by sorting them, O(T log T) comparisons for T terms, and the factors grow by
+/// O(log² C) bits for coefficients of C. With no two columns grouped, `base` goes on as it is.
+fn quotient(vars: usize, base: Vec<(Row, Rel)>, want: bool) -> Result<Option<Vec<Int>>, Refusal> {
+    // Each column, as its signed content and its primitive part, by row.
+    let mut cols: Vec<Vec<(usize, &Int)>> = vec![Vec::new(); vars];
+    for (i, (r, _)) in base.iter().enumerate() {
+        for (j, c) in r.a.iter() {
+            cols[*j].push((i, c));
+        }
+    }
+    let split: Vec<Option<(Int, Vec<Term>)>> = cols
+        .iter()
+        .map(|col| {
+            let &(_, first) = col.first()?;
+            let g = col.iter().fold(Int::ZERO, |g, (_, c)| g.gcd(c));
+            let prim = col
+                .iter()
+                .map(|(i, c)| {
+                    let q = c.div_floor(&g);
+                    (*i, if first.is_negative() { -&q } else { q })
+                })
+                .collect();
+            Some((if first.is_negative() { -&g } else { g }, prim))
+        })
+        .collect();
+    drop(cols);
+    // The groups in the order of their first variable, each with that variable.
+    let mut group: BTreeMap<&[Term], usize> = BTreeMap::new();
+    let mut groups: Vec<(usize, Merged)> = Vec::new();
+    for (j, (content, prim)) in split
+        .iter()
+        .enumerate()
+        .filter_map(|(j, s)| Some((j, s.as_ref()?)))
+    {
+        let id = *group.entry(prim).or_insert_with(|| {
+            groups.push((
+                j,
+                Merged {
+                    gcd: Int::ZERO,
+                    links: Vec::new(),
+                },
+            ));
+            groups.len() - 1
+        });
+        let m = &mut groups[id].1;
+        let (g, s, t) = bezout(&m.gcd, content);
+        m.gcd = g;
+        m.links.push((j, s, t));
+    }
+    if groups.iter().all(|(_, m)| m.links.len() == 1) {
+        return parts(vars, base, want);
+    }
+    let mut rows: Vec<Vec<Term>> = vec![Vec::new(); base.len()];
+    for (id, (first, m)) in groups.iter().enumerate() {
+        let (_, prim) = split[*first].as_ref().expect("a group's first column");
+        for (i, p) in prim {
+            rows[*i].push((id, p * &m.gcd));
+        }
+    }
+    let reduced = base
+        .into_iter()
+        .zip(rows)
+        .map(|((r, rel), a)| {
+            (
+                Row {
+                    a: a.into(),
+                    k: r.k,
+                },
+                rel,
+            )
+        })
+        .collect();
+    let Some(y) = parts(groups.len(), reduced, want)? else {
+        return Ok(None);
+    };
+    if !want {
+        return Ok(Some(Vec::new()));
+    }
+    let mut x = vec![Int::ZERO; vars];
+    for ((_, m), value) in groups.iter().zip(y) {
+        let mut carry = value;
+        for (j, s, t) in m.links.iter().rev() {
+            x[*j] = t * &carry;
+            carry = s * &carry;
+        }
+    }
+    Ok(Some(x))
 }
 
 /// A part of a system: its variables, and its rows.
@@ -1715,8 +1849,8 @@ impl System {
 }
 
 /// Whether the inequalities have no rational point once each row is normalized, which keeps
-/// every integer point: real shadows while an elimination adds no terms, and the simplex on
-/// what is left.
+/// every integer point: real shadows while an elimination adds no terms, and the box test of
+/// [`box_empty`] on what is left.
 fn relaxed_empty(gs: &System) -> bool {
     let mut sys = System::new(gs.vars.len());
     for (a, r) in &gs.rows {
@@ -1731,12 +1865,104 @@ fn relaxed_empty(gs: &System) -> bool {
             return false;
         };
         if fill > 0 {
-            let rows = sys.rows.iter().map(|(a, h)| (&**a, &h.k));
-            return !Simplex::new(sys.vars.len(), rows).feasible();
+            return box_empty(&sys);
         }
         sys.eliminate(j, false);
     }
     true
+}
+
+/// The lower and the upper bound of each variable, where it has one.
+type Bounds = (Vec<Option<Int>>, Vec<Option<Int>>);
+
+/// The bounds of each variable: those of its bound rows, each then tightened once by every
+/// wide row `Σ a[i]·x[i] + k >= 0` from those bounds, all rows at the same time, so the
+/// result does not depend on the order of the rows. With each other term at its largest value
+/// in the box, the row leaves `a[i]·x[i] >= -rest`, a bound every integer point keeps; `rest`
+/// is known when at most `x[i]` itself lacks the bound the row needs. `None` when some
+/// variable is left with no value, which shows the rows empty. One pass over the terms.
+fn bounds(sys: &System) -> Option<Bounds> {
+    let n = sys.vars.len();
+    let lo: Vec<Option<Int>> = (0..n).map(|j| sys.bound(j, false)).collect();
+    let hi: Vec<Option<Int>> = (0..n).map(|j| sys.bound(j, true)).collect();
+    let (mut tlo, mut thi) = (lo.clone(), hi.clone());
+    for (a, held) in sys.rows.iter().filter(|(a, _)| a.len() > 1) {
+        // The largest value of `c·x[i]` in the box.
+        let top = |i: usize, c: &Int| {
+            if c.is_positive() { &hi[i] } else { &lo[i] }
+                .as_ref()
+                .map(|b| c * b)
+        };
+        let mut sum = held.k.clone();
+        let mut open: Vec<usize> = Vec::new();
+        for (i, c) in a.iter() {
+            match top(*i, c) {
+                Some(m) => sum = &sum + &m,
+                None => open.push(*i),
+            }
+        }
+        for (i, c) in a.iter() {
+            let rest = match (open.as_slice(), top(*i, c)) {
+                ([], Some(m)) => &sum - &m,
+                ([o], None) if o == i => sum.clone(),
+                _ => continue,
+            };
+            if c.is_positive() {
+                let b = -&rest.div_floor(c);
+                if tlo[*i].as_ref().is_none_or(|l| *l < b) {
+                    tlo[*i] = Some(b);
+                }
+            } else {
+                let b = rest.div_floor(&-c);
+                if thi[*i].as_ref().is_none_or(|h| b < *h) {
+                    thi[*i] = Some(b);
+                }
+            }
+        }
+    }
+    let empty = (0..n).any(|j| matches!((&tlo[j], &thi[j]), (Some(l), Some(h)) if h < l));
+    (!empty).then_some((tlo, thi))
+}
+
+/// Whether some wide row `Σ a[i]·x[i] + k >= 0` is below zero at every point of the box
+/// `lo`, `hi`: its largest value there, `k` plus each `a[i]` times the upper bound of `x[i]`
+/// when `a[i]` is above zero and the lower one when below, is negative. Every point of the
+/// rows lies in the box, so such a row shows them empty.
+fn box_empty_in(sys: &System, lo: &[Option<Int>], hi: &[Option<Int>]) -> bool {
+    sys.rows.iter().any(|(a, held)| {
+        a.len() > 1
+            && a.iter()
+                .try_fold(held.k.clone(), |m, (i, c)| {
+                    let b = if c.is_positive() { &hi[*i] } else { &lo[*i] }.as_ref()?;
+                    Some(&m + &(c * b))
+                })
+                .is_some_and(|m| m.is_negative())
+    })
+}
+
+/// Whether the rows are empty by [`bounds`] or by [`box_empty_in`] in the box it gives.
+fn box_empty(sys: &System) -> bool {
+    bounds(sys).is_none_or(|(lo, hi)| box_empty_in(sys, &lo, &hi))
+}
+
+/// The point at which each variable takes the value nearest zero in the box `lo`, `hi`, if
+/// it holds every row. It depends on the rows alone.
+fn box_point(sys: &System, lo: &[Option<Int>], hi: &[Option<Int>]) -> Option<Vec<Int>> {
+    let v: Vec<Int> = lo
+        .iter()
+        .zip(hi)
+        .map(|b| match b {
+            (Some(l), _) if l.is_positive() => l.clone(),
+            (_, Some(h)) if h.is_negative() => h.clone(),
+            _ => Int::ZERO,
+        })
+        .collect();
+    let holds = sys.rows.iter().all(|(a, held)| {
+        !a.iter()
+            .fold(held.k.clone(), |s, (i, c)| &s + &(c * &v[*i]))
+            .is_negative()
+    });
+    holds.then_some(v)
 }
 
 /// The shadow row of the lower bound `a·x + l >= 0` and the upper bound `-b·x + u >= 0` on
@@ -1948,7 +2174,7 @@ impl Omega {
                 continue;
             }
             if let Some(j) = self.sys.inexact_step() {
-                // An empty real shadow, over the rationals, shows the problem empty; from here
+                // An empty real shadow, which keeps every integer point, shows the problem empty; from here
                 // on the dark shadow is solved, whose points are points of the problem, and
                 // the splinters of each dark elimination hold the points it misses.
                 if !self.tested {
@@ -1966,17 +2192,19 @@ impl Omega {
                 self.steps.push(Step::Chosen(j, rows));
                 continue;
             }
-            // Every elimination left adds terms. A rational vertex of the rows that is an
-            // integer point is a point of them; with none, the question is refused.
-            let n = self.sys.vars.len();
-            let mut lp = Simplex::new(n, self.sys.rows.iter().map(|(a, h)| (&**a, &h.k)));
-            if !lp.feasible() {
+            // Every elimination left adds terms. The rows are empty when the box of their
+            // bounds shows it, and have a point when the point of the box nearest zero holds
+            // them; otherwise the question is refused.
+            let Some((lo, hi)) = bounds(&self.sys) else {
+                return Leaf::Empty;
+            };
+            if box_empty_in(&self.sys, &lo, &hi) {
                 return Leaf::Empty;
             }
-            if !lp.val[..n].iter().all(|v| v.d.is_unit()) {
+            let Some(v) = box_point(&self.sys, &lo, &hi) else {
                 return Leaf::Refused(Refusal::Growth);
-            }
-            start = lp.val[..n].iter().map(|v| v.n.clone()).collect();
+            };
+            start = v;
             break;
         }
         if !self.want {
@@ -2644,5 +2872,52 @@ mod tests {
         ]);
         let m = satisfiable(&shifted).unwrap().unwrap();
         assert!(shifted.holds(&m), "{m:?}");
+    }
+
+    fn row(a: &[(usize, i128)], k: i128) -> Row {
+        Row {
+            a: a.iter().map(|(j, c)| (*j, Int::from(*c))).collect(),
+            k: Int::from(k),
+        }
+    }
+
+    #[test]
+    fn columns_of_opposite_signs_merge_and_lift_by_bezout() {
+        // `2x - 3y == 1` sees `x` and `y` only through `2x - 3y`, which takes every integer:
+        // one variable with column 1, and its point lifted to `x` and `y`.
+        let r = row(&[(0, 2), (1, -3)], -1);
+        let point = quotient(2, vec![(r.clone(), Rel::Eq)], true)
+            .expect("decided")
+            .expect("a point");
+        assert_eq!(r.eval(&point), Int::ZERO);
+    }
+
+    #[test]
+    fn merged_columns_take_only_the_multiples_of_their_divisor() {
+        // `2x + 4y` is even, so `2x + 4y == 1` has no point, though it has rational ones.
+        let r = row(&[(0, 2), (1, 4)], -1);
+        assert_eq!(quotient(2, vec![(r, Rel::Eq)], true), Ok(None));
+    }
+
+    #[test]
+    fn bezout_factors_give_the_divisor() {
+        for (a, b) in [
+            (0, 5),
+            (0, -5),
+            (12, 18),
+            (12, -18),
+            (7, 1),
+            (1, -7),
+            (6, 35),
+        ] {
+            let (g, s, t) = bezout(&Int::from(a), &Int::from(b));
+            let want = Int::from(a).gcd(&Int::from(b));
+            assert_eq!(g, want, "{a} {b}");
+            assert_eq!(
+                &(&s * &Int::from(a)) + &(&t * &Int::from(b)),
+                want,
+                "{a} {b}"
+            );
+        }
     }
 }

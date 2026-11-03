@@ -117,8 +117,8 @@ fn each_cause_of_a_refusal_has_its_own_message() {
         assert_eq!(e, Entailment::Refused(why));
         assert_eq!(e.to_string(), format!("refused: {text}"));
     };
-    // Every elimination of each variable adds terms, the rows have rational points, and the
-    // vertex the simplex reaches is not an integer point.
+    // Every elimination of each variable adds terms, no row is below zero over the box of the
+    // bounds, and the point of that box nearest zero misses a row.
     refused(
         Formula::and(vec![
             ge(&[("x", 4), ("w", -12), ("y", -10), ("z", -12)], 11),
@@ -139,9 +139,8 @@ fn each_cause_of_a_refusal_has_its_own_message() {
             ge(&[("x", 2), ("y", 3), ("z", 3)], -24),
         ]),
         Refusal::Shadows,
-        "the integer constraints have rational points, and an integer point could lie only \
-         in a splinter of a splinter of their projection, so whether one exists is not \
-         decided",
+        "an integer point of the integer constraints could lie only in a splinter of a \
+         splinter of their projection, so whether one exists is not decided",
     );
     // Four tasks, three slots, each pair in different slots: no slot assignment, which the
     // search through the disjunctions does not show by propagation.

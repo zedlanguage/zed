@@ -14,11 +14,13 @@
 //! `-x` weighs `p(-x) - p(+x)`. The test is then one shortest-path search and one strongly
 //! connected components pass over the tight edges. No rational arithmetic is needed.
 //!
-//! The search is the Bellman–Ford–Moore queue with Tarjan's subtree disassembly [BFCT]: when a
-//! node's distance falls, the subtree below it in the shortest-path tree is taken out of the
-//! tree, since each of its distances will fall with it, and the edge's tail lying in that
-//! subtree closes a negative cycle. The work is at most the nodes times the edges, and in
-//! the tests near the edges.
+//! When the graph has no cycle the distances are taken in one pass over its nodes in topological
+//! order, in time linear in the nodes and edges. Otherwise the search is the Bellman–Ford–Moore
+//! queue with Tarjan's subtree disassembly [BFCT]: when a node's distance falls, the subtree
+//! below it in the shortest-path tree is taken out of the tree, since each of its distances will
+//! fall with it, and the edge's tail lying in that subtree closes a negative cycle. Its work is
+//! at most the nodes times the edges, and in the tests near the edges; a near-linear bound for
+//! graphs with cycles is open (COMPLEXITY.md, S18).
 //!
 //! [UTVPI]: S. K. Lahiri and M. Musuvathi, "An Efficient Decision Procedure for UTVPI
 //! Constraints", FroCoS 2005.
@@ -32,7 +34,7 @@ use super::simplex::Term;
 
 /// Whether the rows, each of one or two terms with unit coefficients, over `n` variables, have
 /// no integer point.
-pub(crate) fn integer_empty(n: usize, rows: &[(&[Term], &Int)]) -> bool {
+pub fn integer_empty(n: usize, rows: &[(&[Term], &Int)]) -> bool {
     // The literal `-c·x` of a term `c·x`, as a node.
     let lit = |(j, c): &Term| if c.is_negative() { 2 * j } else { 2 * j + 1 };
     let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); 2 * n];
@@ -74,6 +76,42 @@ pub(crate) fn integer_empty(n: usize, rows: &[(&[Term], &Int)]) -> bool {
 /// cycle: the distances from a source joined to each node by an edge of weight 0.
 fn potential(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     let n = out.len();
+    // When the graph has no cycle, its nodes in topological order (Kahn) relax each edge once,
+    // whatever the signs of the weights, in O(V + E). Whether there is a cycle depends only on
+    // the graph, so the search below is taken exactly when one exists.
+    let mut indegree = vec![0usize; n];
+    for edges in out {
+        for (v, _) in edges {
+            indegree[*v] += 1;
+        }
+    }
+    let mut ready: VecDeque<usize> = indegree
+        .iter()
+        .enumerate()
+        .filter_map(|(v, &degree)| (degree == 0).then_some(v))
+        .collect();
+    let mut order = Vec::with_capacity(n);
+    while let Some(u) = ready.pop_front() {
+        order.push(u);
+        for (v, _) in &out[u] {
+            indegree[*v] -= 1;
+            if indegree[*v] == 0 {
+                ready.push_back(*v);
+            }
+        }
+    }
+    if order.len() == n {
+        let mut distance = vec![Int::ZERO; n];
+        for u in order {
+            for (v, weight) in &out[u] {
+                let candidate = &distance[u] + weight;
+                if candidate < distance[*v] {
+                    distance[*v] = candidate;
+                }
+            }
+        }
+        return Some(distance);
+    }
     let root = n;
     let mut d = vec![Int::ZERO; n];
     // The shortest-path tree in preorder, as a ring through `next` and `prev`, the source
@@ -178,4 +216,28 @@ fn components(out: &[Vec<usize>]) -> Vec<usize> {
         }
     }
     comp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Int, potential};
+
+    #[test]
+    fn acyclic_signed_edges_have_an_exact_potential() {
+        let graph = vec![
+            vec![(1, Int::from(-7)), (2, Int::from(-1))],
+            vec![(2, Int::from(-3))],
+            vec![],
+        ];
+        let distance = potential(&graph).expect("an acyclic graph has no negative cycle");
+        assert_eq!(distance, vec![Int::ZERO, Int::from(-7), Int::from(-10)]);
+    }
+
+    #[test]
+    fn a_negative_cycle_is_still_rejected() {
+        let graph = vec![vec![(1, Int::from(-1))], vec![(0, Int::ZERO)]];
+        assert!(potential(&graph).is_none());
+        let feasible = vec![vec![(1, Int::from(-1))], vec![(0, Int::ONE)]];
+        assert!(potential(&feasible).is_some());
+    }
 }

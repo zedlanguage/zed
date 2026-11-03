@@ -677,6 +677,35 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   example inside a chain is refused with Shadows, though it has no integer point. The general
   simplex on the `tight` family is unchanged and goes to cross-review xt; its test is
   `l01_38_presburger::tight`, ignored. A fill rule measured for xt is in COMPLEXITY.md, S18.
+- L1.38, XT-R (design R of the xt round-2 synthesis): the simplex is gone, and with it
+  `Q::mul`, `lt` and `abs`; `simplex.rs` keeps only `Q` and `Term`. A system the Omega test
+  cannot eliminate goes to box stages: each variable's bounds are tightened once per row from
+  the original bounds, an empty box shows the rows empty, and the point of the box nearest
+  zero, checked against every row, is a model; otherwise the answer is Growth. Before the
+  Omega test, `quotient` merges proportional columns by a unimodular substitution and lifts a
+  model back by the Bézout factors. `utvpi` finds potentials in topological order when the
+  unit rows form a DAG, O(V+E), and by Bellman–Ford–Moore otherwise; the cyclic case is
+  O(V·E) and open (cyclic hub 42.5 times the work from n to 8n; XT3 in docs/plan_dag.md).
+  Decisions lost, option A: the linear program decided questions that design R refuses. The
+  oracle's 400 four-variable systems with coefficients up to 7 go from 229 sat, 21 unsat,
+  150 Growth to 213, 3, 184; in `random.rs` one projection of the 60, of `y` on a term with
+  `div`, `mod`, `min` and `if`, is [-4..=5] where the points take [0..=5], since a question
+  it asks of a disjunct is refused. The two asserts that counted these
+  (`oracle.rs`, small coefficients; `random.rs`, projections within the hull) were changed to
+  the new counts, with the reason in their comments: they measured the LP's strength, not
+  correctness, and every answer given is still checked against enumeration. Other refusals
+  of systems that have a point, each asserted: the checker's question in `checker.rs`
+  (the rows hold at (4,0,1,0)); Codex's regular 8-variable system, refused under all 40,320
+  namings, so the same answer; x0 fixed at 1 to 6 with the others in [-2,2]
+  (`stages.rs`); three variables in many rows tight at (3,-2,5). Answers do not depend on
+  names or row order on 48,000 reorderings. The 12,000 systems tight at a corner (seed
+  0x38_3b) give no wrong answer: 2,550 sat, 9,282 unsat, 168 Growth. Negative controls, run
+  once and not committed: without the DAG path the acyclic hub fails (52.6 times the work);
+  without the quotient 3 tests fail; with the box test reverted to Growth 4 tests fail and
+  the corner oracle's refusals go from 168 to 5,074, which no wrong answer showed, so its
+  counts are now asserted. Flaw named, not fixed here: `Scope.refusals` in `product.rs` is
+  written (`:1011`, `:1239`, `:1247`) and joined (`:864`) but never read (no reader in `crates`
+  or `tests`); the xe round 3 item owns it.
 - LR1: the failures of the last, failed expansion stay in `far` and `expected`. That pass reaches the operator a flat `*` loop stops at, so it records what the loop records; dropping them would lose operators from the messages. docs/plan_dag.md's wording says the opposite and its aim, unchanged messages, is met: with `Additive` and `Multiplicative` made left-recursive in a trial copy, `errors.rs` passed, and 3 of the 323 bracketing cases differed, each a flat chain now nested to the left. On that trial copy a parse took the same time per token as the flat rules (5.2 µs). The real grammar with no left recursion is no slower than before LR1 (3.8 to 5.1 µs per token against 4.1 to 5.2 µs, under load).
 - LR1, for LR2: as in the paper, `E = E '+' E | N` gives a right-associative tree, so a rung must use the form `E = E '+' T | T`. A loop written in a left-recursive rule before a token that fails is walked again at each growth, so such a prefix must be a rule of its own (COMPLEXITY.md F35). A left-recursive cycle of two or more rules under a long list makes the same quadratic walk at each growth at the list's own token, so each rung must be directly left-recursive. The first alternative that matches ends a growth: with `Sum = Attempt | Sum '+' INT` and `Attempt = Sum 'q'`, a match of `Attempt` is kept on the next growth, so `Sum '+' INT` is not tried after it (a case in `leftrec.txt`).
 - LR1: an entry that reads no seed is no longer matched again, which changes one thing: a rule first matched inside `!` keeps no failures, so a later read of its entry records none, as in a parser with no left recursion. As first built, a growth at that token re-recorded them. On random grammars 0.06% of error reports lost expected items or moved `far` back, never forward, and trees did not change; with no `!` in the grammars, 6.24 million comparisons showed no difference. The real grammar parses in the same time as before (4.4 to 5.9 µs per token against 4.4 to 5.7 µs, alternating runs under load).
@@ -752,7 +781,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T14-hooks | impl attempt 1 | 2026-11-03 00:06 | started |
 | T14-provenance | verify attempt 2 | 2026-11-02 23:25 | started; reading diff main..24929b1 |
 | T6 | impl attempt 1 | 2026-11-03 00:01 | read split_bdw2 helpers and family generators; writing types/bes.rs port / load 18.93 34.15 36.18 |
-| XT | running | 2026-11-02 21:13 | cross-review xt round 2 (simplex on the tight family, Growth refusals): Claude, Codex and Gemini reviewers running in wt/xt2 |
+| XT | impl XT-R attempt 1 | 2026-11-03 03:10 | round 2 synthesized; design R built on wt/xt-r (simplex removed: box stages, column quotient, UTVPI DAG potential); cyclic UTVPI and the lost decisions go to XT3 |
 
 Merged into local main and not yet pushed (6 commits); the push follows one full test run on the merged tree:
 

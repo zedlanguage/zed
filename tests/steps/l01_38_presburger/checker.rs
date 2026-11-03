@@ -46,7 +46,10 @@ fn pughs_example_is_decided_and_its_arm_is_unreachable() {
 }
 
 #[test]
-fn a_question_with_no_elimination_that_keeps_the_rows_is_rejected() {
+fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
+    // The rows hold at (x, y, z, w) = (4, 0, 1, 0), where they are 15, 1, 0 and 10, so `ok` can
+    // hold; the refusal claims only that this is not decided, since every elimination would add
+    // terms and the box of the bounds and its point nearest zero settle nothing.
     let src = program(
         "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y \
          - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y \
@@ -73,9 +76,9 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
     );
     assert_eq!(
         rejection("shadows", &src),
-        "1:1: whether `ok` can hold is not decided: the integer constraints have rational \
-         points, and an integer point could lie only in a splinter of a splinter of their \
-         projection, so whether one exists is not decided\n  \
+        "1:1: whether `ok` can hold is not decided: an integer point of the integer \
+         constraints could lie only in a splinter of a splinter of their projection, so \
+         whether one exists is not decided\n  \
          [1] 1:15: the constraints: 2 * x + 3 * y + 6 * z <= 4 && 4 * x + 6 * z <= -22 && x + \
          4 * z >= y - 36 && 2 * x + 3 * y + 3 * z >= 24"
     );

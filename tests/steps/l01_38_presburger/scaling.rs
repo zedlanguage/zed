@@ -146,9 +146,9 @@ fn row(t: &[(usize, i64)], k: i64, shifted: bool) -> Formula {
 }
 
 /// Three rows of three variables at each `i`, cyclically, shifted: the family on which Bland's
-/// rule alone takes about 2^(0.7n) pivots. No elimination keeps the rows, so the answer is the
-/// refusal [`Refusal::Growth`], given once the simplex finds the rational vertex and it is not
-/// an integer point; the work is the simplex's.
+/// rule alone took about 2^(0.7n) pivots. No elimination keeps the rows, so the answer is the
+/// refusal [`Refusal::Growth`], given once the box of the bounds shows no row empty and its
+/// point nearest zero misses a row.
 fn sparse(n: usize) -> Formula {
     let mut r = Vec::new();
     for i in 0..n {
@@ -208,7 +208,12 @@ fn pugh_pairs(n: usize) -> Formula {
 
 /// Times `decide` on the formulas of `make` at `n` and 8n, built first, each first checked to
 /// give `answer`.
-fn decides(what: &str, n: usize, answer: Result<bool, Refusal>, make: impl Fn(usize) -> Formula) {
+pub(super) fn decides(
+    what: &str,
+    n: usize,
+    answer: Result<bool, Refusal>,
+    make: impl Fn(usize) -> Formula,
+) {
     let (small, large) = (make(n), make(scaling::FACTOR * n));
     for f in [&small, &large] {
         assert_eq!(decide(f), answer, "{what}");
