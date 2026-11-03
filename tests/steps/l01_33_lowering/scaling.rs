@@ -396,7 +396,7 @@ fn lowering_and_raising_a_deep_term_is_linear_in_its_depth() {
 
 /// `if 0 < 1 then (if ... push stdout 0 ...) else 0`, `d` deep: the push at the bottom takes
 /// the state edge through every region above it.
-fn push_under_ifs(d: usize) -> Term {
+pub(crate) fn push_under_ifs(d: usize) -> Term {
     use zed_kernel::Prim;
     use zed_kernel::term::build::{if_, prim};
     (0..d).fold(push("stdout", lit(0i64)), |t, _| {

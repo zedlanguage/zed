@@ -8,6 +8,7 @@ mod cells;
 mod checks;
 mod corpus;
 mod fusion;
+mod scaling;
 
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{Evaluator, Prim, Term, World};

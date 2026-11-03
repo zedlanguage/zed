@@ -49,7 +49,6 @@
 //! drop, a use after free and a value kept past its last use are each an error, and at the
 //! end only the result is live.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::rc::Rc;
@@ -134,15 +133,37 @@ impl Stats {
 }
 
 /// The memory plan of graph `g`.
+///
+/// Regions nest as deep as the program, so the planner keeps its work on the heap: the regions
+/// still to plan on a list, and the questions a mode asks of the regions under it (whether an
+/// arm or a lambda body consumes an argument) on a stack (step T2-mid). Its contexts are the
+/// chain of regions from the root to the one being planned, then those a question has entered.
 pub fn plan(g: &Region, fuse: bool) -> Plan {
-    let p = Planner::default();
-    let root = Ctx {
-        r: g,
-        path: "r".into(),
-        up: None,
+    let mut p = Planner {
+        ctxs: vec![Ctx {
+            r: g,
+            path: "r".into(),
+            up: None,
+        }],
+        params: HashMap::new(),
     };
     let mut regions = BTreeMap::new();
-    p.region(&root, vec![Mode::Borrowed; g.args.len()], &mut regions);
+    // Each region still to plan: the context of the region holding it (the last of the chain
+    // when it is planned, since the list is taken last in first out), the node and region it
+    // is, and how its arguments are held.
+    let mut todo: Vec<(usize, usize, usize, Vec<Mode>)> = Vec::new();
+    p.region(
+        0,
+        vec![Mode::Borrowed; g.args.len()],
+        &mut regions,
+        &mut todo,
+    );
+    while let Some((c, k, i, args)) = todo.pop() {
+        p.ctxs.truncate(c + 1);
+        let ctx = p.sub_ctx(c, k, i);
+        p.ctxs.push(ctx);
+        p.region(c + 1, args, &mut regions, &mut todo);
+    }
     Plan { regions, fuse }
 }
 
@@ -154,9 +175,9 @@ struct Ctx<'a> {
 }
 
 /// Where a region's captures come from: argument `first_arg` on is the node's input
-/// `first_input` on, in the enclosing region.
+/// `first_input` on, in the enclosing region, context `ctx` of the planner.
 struct Up<'a> {
-    ctx: &'a Ctx<'a>,
+    ctx: usize,
     node: &'a Node,
     first_arg: usize,
     first_input: usize,
@@ -221,100 +242,388 @@ impl Uses {
     }
 }
 
-#[derive(Default)]
-struct Planner {
-    params: RefCell<HashMap<String, Vec<Mode>>>,
+struct Planner<'a> {
+    /// The contexts: the chain from the root to the region being planned, then the regions
+    /// the questions being answered have entered, each taken off when its question ends.
+    ctxs: Vec<Ctx<'a>>,
+    /// How each lambda body, by path, takes its parameters.
+    params: HashMap<String, Vec<Mode>>,
 }
 
-impl Planner {
+/// A question the planner answers: how the use at input `j` of node `k` of region `ctx`
+/// takes an edge (`Owned` is true), whether region `ctx` consumes its argument `a` when it
+/// owns it, or how the lambda body `body` takes its parameters (the answer goes in
+/// `Planner::params`).
+enum Ask {
+    Mode {
+        ctx: usize,
+        k: usize,
+        j: usize,
+        owned: bool,
+        last: bool,
+    },
+    Consumes {
+        ctx: usize,
+        a: usize,
+    },
+    Params {
+        body: usize,
+    },
+}
+
+/// A question waiting for the answer to one it asked.
+enum Wait<'a> {
+    /// Whether region `ctx` consumes argument `a`: use `next` on is still to ask about.
+    Consumes {
+        ctx: usize,
+        a: usize,
+        uses: Uses,
+        next: usize,
+        last: Option<usize>,
+    },
+    /// The mode of argument `j` of an `apply` whose callee is the lambda body at context
+    /// `body`, the last.
+    Callee { body: usize, j: usize },
+    /// The mode of capture `j` of the `if` or `match` at node `k` of region `ctx`, with `n`
+    /// arms: arm `i` on is still to ask; the arm asked last was entered at context `mark`.
+    Arms {
+        ctx: usize,
+        k: usize,
+        j: usize,
+        i: usize,
+        n: usize,
+        mark: usize,
+    },
+    /// The mode of the scrutinee of the `match` at node `k` of region `ctx`: binder `b` on of
+    /// arm `i` is still to ask; the arm, when entered, is at context `mark`, with its uses.
+    Scrutinee {
+        ctx: usize,
+        k: usize,
+        ps: &'a [Pattern],
+        i: usize,
+        b: usize,
+        arm: Option<Uses>,
+        mark: usize,
+    },
+    /// How lambda body `body` takes its parameters: parameter `modes.len()` on, of `k`, is
+    /// still to ask.
+    Params {
+        body: usize,
+        k: usize,
+        modes: Vec<Mode>,
+    },
+}
+
+/// What a question does next: answer, or ask another first.
+enum Step {
+    Done(bool),
+    Ask(Ask),
+}
+
+fn mode_of(b: bool) -> Mode {
+    if b { Mode::Owned } else { Mode::Borrowed }
+}
+
+impl<'a> Planner<'a> {
     /// How the use at input `j` of node `k` takes an edge that is `owned` or not, the node
     /// being its `last` use or not.
-    fn mode(&self, ctx: &Ctx<'_>, k: usize, j: usize, owned: bool, last: bool) -> Mode {
-        let node = &ctx.r.nodes[k];
-        let take = |b: bool| if b { Mode::Owned } else { Mode::Borrowed };
-        match &node.op {
-            Op::Prim(Prim::Tuple) | Op::Lambda => Mode::Owned,
-            Op::Prim(Prim::Atom) => take(j >= 2),
-            Op::Push(_) => take(j == 1),
-            Op::Apply | Op::If if j == 0 => Mode::Borrowed,
-            Op::Apply => match resolve(ctx, &node.inputs[0]) {
-                Some((c, n)) => self.params(c, n).get(j - 1).copied().unwrap_or(Mode::Owned),
-                None => Mode::Owned,
-            },
-            Op::If | Op::Match(_) if !(owned && last) => Mode::Borrowed,
-            Op::Match(ps) if j == 0 => take(ps.iter().enumerate().any(|(i, p)| {
-                let arm = arm_ctx(ctx, node, k, i);
-                let u = Uses::of(arm.r);
-                (0..binds(p)).any(|b| !u.uses[b].is_empty() && self.consumes(&arm, b))
-            })),
-            Op::If => take((0..2).any(|i| self.consumes(&arm_ctx(ctx, node, k, i), j - 1))),
-            Op::Match(ps) => take(
-                ps.iter()
-                    .enumerate()
-                    .any(|(i, p)| self.consumes(&arm_ctx(ctx, node, k, i), binds(p) + j - 1)),
-            ),
-            _ => Mode::Borrowed,
-        }
-    }
-
-    /// Whether region `ctx` consumes its argument `a` when it owns it.
-    fn consumes(&self, ctx: &Ctx<'_>, a: usize) -> bool {
-        let u = Uses::of(ctx.r);
-        let last = u.last(a);
-        u.uses[a].iter().any(|at| match at {
-            At::Result(_) => true,
-            At::Node(k, j) => self.mode(ctx, *k, *j, true, last == Some(*k)) == Mode::Owned,
-        })
+    fn mode(&mut self, ctx: usize, k: usize, j: usize, owned: bool, last: bool) -> Mode {
+        mode_of(self.answer(Ask::Mode {
+            ctx,
+            k,
+            j,
+            owned,
+            last,
+        }))
     }
 
     /// How the lambda at node `n` of region `ctx` takes its parameters.
-    fn params(&self, ctx: &Ctx<'_>, n: usize) -> Vec<Mode> {
-        let body = lambda_ctx(ctx, n);
-        if let Some(m) = self.params.borrow().get(&body.path) {
-            return m.clone();
-        }
-        let k = body.up.as_ref().map_or(0, |u| u.first_arg);
-        // A state argument holds no value, so it is borrowed, as in an arm.
-        let m: Vec<Mode> = (0..k)
-            .map(
-                |i| match !body.r.args[i].is_state() && self.consumes(&body, i) {
-                    true => Mode::Owned,
-                    false => Mode::Borrowed,
-                },
-            )
-            .collect();
-        self.params
-            .borrow_mut()
-            .insert(body.path.clone(), m.clone());
+    fn params(&mut self, ctx: usize, n: usize) -> Vec<Mode> {
+        let mark = self.ctxs.len();
+        let body = self.sub_ctx(ctx, n, 0);
+        self.ctxs.push(body);
+        self.answer(Ask::Params { body: mark });
+        let m = self.params[&self.ctxs[mark].path].clone();
+        self.ctxs.truncate(mark);
         m
     }
 
-    /// Plans region `ctx`, its arguments held as `args`, and the regions it holds.
-    fn region(&self, ctx: &Ctx<'_>, args: Vec<Mode>, out: &mut BTreeMap<String, RegionPlan>) {
-        let r = ctx.r;
+    /// Answers `ask` on a stack of the questions waiting: questions about the regions under a
+    /// node go as deep as the regions nest.
+    fn answer(&mut self, ask: Ask) -> bool {
+        let mut waits: Vec<Wait<'a>> = Vec::new();
+        let mut step = self.open(ask, &mut waits);
+        loop {
+            step = match step {
+                Step::Ask(ask) => self.open(ask, &mut waits),
+                Step::Done(b) => match waits.pop() {
+                    None => return b,
+                    Some(w) => self.resume(w, Some(b), &mut waits),
+                },
+            };
+        }
+    }
+
+    /// Starts question `ask`.
+    fn open(&mut self, ask: Ask, waits: &mut Vec<Wait<'a>>) -> Step {
+        match ask {
+            Ask::Mode {
+                ctx,
+                k,
+                j,
+                owned,
+                last,
+            } => {
+                let node: &'a Node = &self.ctxs[ctx].r.nodes[k];
+                match &node.op {
+                    Op::Prim(Prim::Tuple) | Op::Lambda => Step::Done(true),
+                    Op::Prim(Prim::Atom) => Step::Done(j >= 2),
+                    Op::Push(_) => Step::Done(j == 1),
+                    Op::Apply | Op::If if j == 0 => Step::Done(false),
+                    Op::Apply => match self.resolve(ctx, &node.inputs[0]) {
+                        Some((c, n)) => {
+                            let mark = self.ctxs.len();
+                            let body = self.sub_ctx(c, n, 0);
+                            self.ctxs.push(body);
+                            waits.push(Wait::Callee { body: mark, j });
+                            Step::Ask(Ask::Params { body: mark })
+                        }
+                        None => Step::Done(true),
+                    },
+                    Op::If | Op::Match(_) if !(owned && last) => Step::Done(false),
+                    Op::Match(ps) if j == 0 => {
+                        let w = Wait::Scrutinee {
+                            ctx,
+                            k,
+                            ps,
+                            i: 0,
+                            b: 0,
+                            arm: None,
+                            mark: self.ctxs.len(),
+                        };
+                        self.resume(w, None, waits)
+                    }
+                    Op::If | Op::Match(_) => {
+                        let n = match &node.op {
+                            Op::Match(ps) => ps.len(),
+                            _ => 2,
+                        };
+                        let mark = self.ctxs.len();
+                        let w = Wait::Arms {
+                            ctx,
+                            k,
+                            j,
+                            i: 0,
+                            n,
+                            mark,
+                        };
+                        self.resume(w, None, waits)
+                    }
+                    _ => Step::Done(false),
+                }
+            }
+            Ask::Consumes { ctx, a } => {
+                let uses = Uses::of(self.ctxs[ctx].r);
+                let last = uses.last(a);
+                let w = Wait::Consumes {
+                    ctx,
+                    a,
+                    uses,
+                    next: 0,
+                    last,
+                };
+                self.resume(w, None, waits)
+            }
+            Ask::Params { body } => {
+                if self.params.contains_key(&self.ctxs[body].path) {
+                    return Step::Done(false);
+                }
+                let k = self.ctxs[body].up.as_ref().map_or(0, |u| u.first_arg);
+                let w = Wait::Params {
+                    body,
+                    k,
+                    modes: Vec::with_capacity(k),
+                };
+                self.resume(w, None, waits)
+            }
+        }
+    }
+
+    /// Goes on with question `w`, given the answer `got` to the question it asked last, if
+    /// any: asks the next one, putting `w` back on `waits`, or answers.
+    fn resume(&mut self, w: Wait<'a>, got: Option<bool>, waits: &mut Vec<Wait<'a>>) -> Step {
+        match w {
+            Wait::Consumes {
+                ctx,
+                a,
+                uses,
+                mut next,
+                last,
+            } => {
+                if got == Some(true) {
+                    return Step::Done(true);
+                }
+                let Some(&at) = uses.uses[a].get(next) else {
+                    return Step::Done(false);
+                };
+                next += 1;
+                match at {
+                    At::Result(_) => Step::Done(true),
+                    At::Node(k, j) => {
+                        waits.push(Wait::Consumes {
+                            ctx,
+                            a,
+                            uses,
+                            next,
+                            last,
+                        });
+                        Step::Ask(Ask::Mode {
+                            ctx,
+                            k,
+                            j,
+                            owned: true,
+                            last: last == Some(k),
+                        })
+                    }
+                }
+            }
+            Wait::Callee { body, j } => {
+                let m = self.params[&self.ctxs[body].path]
+                    .get(j - 1)
+                    .copied()
+                    .unwrap_or(Mode::Owned);
+                self.ctxs.truncate(body);
+                Step::Done(m == Mode::Owned)
+            }
+            Wait::Arms {
+                ctx,
+                k,
+                j,
+                mut i,
+                n,
+                mark,
+            } => {
+                self.ctxs.truncate(mark);
+                if got == Some(true) {
+                    return Step::Done(true);
+                }
+                if i == n {
+                    return Step::Done(false);
+                }
+                let arm = self.sub_ctx(ctx, k, i);
+                let a = arm.up.as_ref().map_or(0, |u| u.first_arg) + j - 1;
+                self.ctxs.push(arm);
+                i += 1;
+                waits.push(Wait::Arms {
+                    ctx,
+                    k,
+                    j,
+                    i,
+                    n,
+                    mark,
+                });
+                Step::Ask(Ask::Consumes { ctx: mark, a })
+            }
+            Wait::Scrutinee {
+                ctx,
+                k,
+                ps,
+                mut i,
+                mut b,
+                mut arm,
+                mark,
+            } => {
+                if got == Some(true) {
+                    self.ctxs.truncate(mark);
+                    return Step::Done(true);
+                }
+                loop {
+                    let Some(u) = &arm else {
+                        if i == ps.len() {
+                            return Step::Done(false);
+                        }
+                        let c = self.sub_ctx(ctx, k, i);
+                        arm = Some(Uses::of(c.r));
+                        self.ctxs.push(c);
+                        b = 0;
+                        continue;
+                    };
+                    if b < binds(&ps[i]) {
+                        b += 1;
+                        if u.uses[b - 1].is_empty() {
+                            continue;
+                        }
+                        waits.push(Wait::Scrutinee {
+                            ctx,
+                            k,
+                            ps,
+                            i,
+                            b,
+                            arm,
+                            mark,
+                        });
+                        return Step::Ask(Ask::Consumes {
+                            ctx: mark,
+                            a: b - 1,
+                        });
+                    }
+                    self.ctxs.truncate(mark);
+                    arm = None;
+                    i += 1;
+                }
+            }
+            Wait::Params { body, k, mut modes } => {
+                if let Some(g) = got {
+                    modes.push(mode_of(g));
+                }
+                // A state argument holds no value, so it is borrowed, as in an arm.
+                while modes.len() < k && self.ctxs[body].r.args[modes.len()].is_state() {
+                    modes.push(Mode::Borrowed);
+                }
+                if modes.len() < k {
+                    let a = modes.len();
+                    waits.push(Wait::Params { body, k, modes });
+                    return Step::Ask(Ask::Consumes { ctx: body, a });
+                }
+                self.params.insert(self.ctxs[body].path.clone(), modes);
+                Step::Done(false)
+            }
+        }
+    }
+
+    /// Plans region `ctx`, its arguments held as `args`, and puts the regions it holds on
+    /// `todo`.
+    fn region(
+        &mut self,
+        ctx: usize,
+        args: Vec<Mode>,
+        out: &mut BTreeMap<String, RegionPlan>,
+        todo: &mut Vec<(usize, usize, usize, Vec<Mode>)>,
+    ) {
+        let r: &'a Region = self.ctxs[ctx].r;
         let u = Uses::of(r);
         let owned = |e: usize| !u.state[e] && args.get(e).is_none_or(|m| *m == Mode::Owned);
-        let mut nodes: Vec<NodePlan> = r
-            .nodes
-            .iter()
-            .enumerate()
-            .map(|(k, n)| NodePlan {
-                modes: (0..n.inputs.len())
-                    .map(|j| match u.slot(&n.inputs[j]) {
-                        Some(e) if u.state[e] => Mode::Borrowed,
-                        Some(e) => self.mode(ctx, k, j, owned(e), u.last(e) == Some(k)),
-                        None => self.mode(ctx, k, j, false, false),
-                    })
-                    .collect(),
-                callee: match (&n.op, n.inputs.first()) {
-                    (Op::Apply, Some(f)) => {
-                        resolve(ctx, f).map(|(c, m)| format!("{}.{m}/0", c.path))
-                    }
-                    _ => None,
-                },
+        let mut nodes: Vec<NodePlan> = Vec::with_capacity(r.nodes.len());
+        for (k, n) in r.nodes.iter().enumerate() {
+            let modes = (0..n.inputs.len())
+                .map(|j| match u.slot(&n.inputs[j]) {
+                    Some(e) if u.state[e] => Mode::Borrowed,
+                    Some(e) => self.mode(ctx, k, j, owned(e), u.last(e) == Some(k)),
+                    None => self.mode(ctx, k, j, false, false),
+                })
+                .collect();
+            let callee = match (&n.op, n.inputs.first()) {
+                (Op::Apply, Some(f)) => self
+                    .resolve(ctx, f)
+                    .map(|(c, m)| format!("{}.{m}/0", self.ctxs[c].path)),
+                _ => None,
+            };
+            nodes.push(NodePlan {
+                modes,
+                callee,
                 ..NodePlan::default()
-            })
-            .collect();
+            });
+        }
         let mut plan = RegionPlan {
             args: args.clone(),
             entry_drops: Vec::new(),
@@ -372,90 +681,87 @@ impl Planner {
                 }
             }
         }
+        // The regions under this one go on `todo` last first, so they are planned in order.
+        let mut subs = Vec::new();
         for (k, n) in r.nodes.iter().enumerate() {
             let m = &nodes[k].modes;
             match &n.op {
                 Op::Lambda => {
-                    let body = lambda_ctx(ctx, k);
                     let mut a = self.params(ctx, k);
-                    a.resize(body.r.args.len(), Mode::Borrowed);
-                    self.region(&body, a, out);
+                    a.resize(n.regions[0].args.len(), Mode::Borrowed);
+                    subs.push((ctx, k, 0, a));
                 }
                 Op::If | Op::Match(_) => {
                     for i in 0..n.regions.len() {
-                        let arm = arm_ctx(ctx, n, k, i);
-                        let au = Uses::of(arm.r);
-                        let b = arm.up.as_ref().map_or(0, |u| u.first_arg);
+                        let arm = &n.regions[i];
+                        let au = Uses::of(arm);
+                        let b = match &n.op {
+                            Op::Match(ps) => binds(&ps[i]),
+                            _ => 0,
+                        };
                         let mut a: Vec<Mode> = (0..b)
-                            .map(|x| match m[0] == Mode::Owned && !au.uses[x].is_empty() {
-                                true => Mode::Owned,
-                                false => Mode::Borrowed,
-                            })
+                            .map(|x| mode_of(m[0] == Mode::Owned && !au.uses[x].is_empty()))
                             .collect();
                         a.extend(m[1..].iter().copied());
-                        for (x, e) in arm.r.args.iter().enumerate() {
+                        for (x, e) in arm.args.iter().enumerate() {
                             if e.is_state() {
                                 a[x] = Mode::Borrowed;
                             }
                         }
-                        self.region(&arm, a, out);
+                        subs.push((ctx, k, i, a));
                     }
                 }
                 _ => {}
             }
         }
+        todo.extend(subs.into_iter().rev());
         plan.nodes = nodes;
-        out.insert(ctx.path.clone(), plan);
+        out.insert(self.ctxs[ctx].path.clone(), plan);
     }
-}
 
-/// The body of the lambda at node `n` of region `ctx`.
-fn lambda_ctx<'a>(ctx: &'a Ctx<'a>, n: usize) -> Ctx<'a> {
-    let node = &ctx.r.nodes[n];
-    let body = &node.regions[0];
-    Ctx {
-        r: body,
-        path: format!("{}.{n}/0", ctx.path),
-        up: Some(Up {
-            ctx,
-            node,
-            first_arg: body.args.len().saturating_sub(node.inputs.len()),
-            first_input: 0,
-        }),
-    }
-}
-
-/// Arm `i` of the `if` or `match` at node `k` of region `ctx`.
-fn arm_ctx<'a>(ctx: &'a Ctx<'a>, node: &'a Node, k: usize, i: usize) -> Ctx<'a> {
-    let first_arg = match &node.op {
-        Op::Match(ps) => binds(&ps[i]),
-        _ => 0,
-    };
-    Ctx {
-        r: &node.regions[i],
-        path: format!("{}.{k}/{i}", ctx.path),
-        up: Some(Up {
-            ctx,
-            node,
-            first_arg,
-            first_input: 1,
-        }),
-    }
-}
-
-/// The lambda node `s` is, as its region and index, when the plan can see it.
-fn resolve<'a>(ctx: &'a Ctx<'a>, s: &Src) -> Option<(&'a Ctx<'a>, usize)> {
-    match s {
-        Src::Out(n, 0) if matches!(ctx.r.nodes[*n].op, Op::Lambda) => Some((ctx, *n)),
-        Src::Arg(i) => {
-            let up = ctx.up.as_ref()?;
-            let s = up
-                .node
-                .inputs
-                .get(up.first_input + i.checked_sub(up.first_arg)?)?;
-            resolve(up.ctx, s)
+    /// The context of region `i` of node `k` of region `ctx`: a lambda's body, or an arm of
+    /// an `if` or a `match`.
+    fn sub_ctx(&self, ctx: usize, k: usize, i: usize) -> Ctx<'a> {
+        let c = &self.ctxs[ctx];
+        let node: &'a Node = &c.r.nodes[k];
+        let (first_arg, first_input) = match &node.op {
+            Op::Lambda => (
+                node.regions[0].args.len().saturating_sub(node.inputs.len()),
+                0,
+            ),
+            Op::Match(ps) => (binds(&ps[i]), 1),
+            _ => (0, 1),
+        };
+        Ctx {
+            r: &node.regions[i],
+            path: format!("{}.{k}/{i}", c.path),
+            up: Some(Up {
+                ctx,
+                node,
+                first_arg,
+                first_input,
+            }),
         }
-        _ => None,
+    }
+
+    /// The lambda node `s` of region `ctx` is, as its region and index, when the plan can see
+    /// it. A capture is followed out through the regions holding it, in a loop.
+    fn resolve(&self, mut ctx: usize, mut s: &'a Src) -> Option<(usize, usize)> {
+        loop {
+            let c = &self.ctxs[ctx];
+            match s {
+                Src::Out(n, 0) if matches!(c.r.nodes[*n].op, Op::Lambda) => return Some((ctx, *n)),
+                Src::Arg(i) => {
+                    let up = c.up.as_ref()?;
+                    s = up
+                        .node
+                        .inputs
+                        .get(up.first_input + i.checked_sub(up.first_arg)?)?;
+                    ctx = up.ctx;
+                }
+                _ => return None,
+            }
+        }
     }
 }
 
@@ -472,6 +778,21 @@ struct Clo<'g> {
     node: &'g Node,
     path: String,
     caps: Vec<Mv<'g>>,
+}
+
+/// Closures capture closures as deep as the program, so a closure's last reference drops
+/// the closures it alone holds through a list, not by recursion (step T2-mid).
+impl Drop for Clo<'_> {
+    fn drop(&mut self) {
+        let mut caps = std::mem::take(&mut self.caps);
+        while let Some(m) = caps.pop() {
+            if let Mv::Clo(rc) = m
+                && let Ok(mut c) = Rc::try_unwrap(rc)
+            {
+                caps.append(&mut c.caps);
+            }
+        }
+    }
 }
 
 /// A value in the machine.
@@ -534,7 +855,7 @@ pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats)
         alone: HashMap::new(),
     };
     let args = g.args.iter().map(|_| (Mv::State, false)).collect();
-    let mut out = m.region(g, "r", args)?;
+    let mut out = m.region(g, args)?;
     let v = out.swap_remove(0);
     m.push_frame(vec![Some((v.clone(), true))]);
     m.check("the end of the run")?;
@@ -552,16 +873,95 @@ pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats)
     }
 }
 
+/// A part waiting in [`Machine::release`]: one to drop, or one with the paths kept inside it.
+enum Part<'p> {
+    Drop(Option<usize>),
+    Keep(Option<usize>, Vec<&'p [usize]>),
+}
+
+/// A region the machine is running: its plan, under its path, its edges' uses, the node it is
+/// at, that node's path, and whether that node, an `apply`, holds a frame of the arguments it
+/// passes owned to a callee that borrows them.
+struct Running<'g> {
+    r: &'g Region,
+    path: &'g str,
+    rp: &'g RegionPlan,
+    u: Uses,
+    k: usize,
+    at: String,
+    held: bool,
+}
+
+/// What a node gives: its outputs, or a region to run whose results are its outputs.
+enum Out<'g> {
+    Done(Vec<Mv<'g>>),
+    Call {
+        r: &'g Region,
+        path: &'g str,
+        rp: &'g RegionPlan,
+        args: Vec<(Mv<'g>, bool)>,
+        held: bool,
+    },
+}
+
 impl<'g> Machine<'g, '_> {
-    fn region(
+    /// Runs region `r` on `args`, and the regions its nodes call, on a stack of running
+    /// regions: calls and arms nest as deep as the program and its run (step T2-mid).
+    fn region(&mut self, r: &'g Region, args: Vec<(Mv<'g>, bool)>) -> Result<Vec<Mv<'g>>, String> {
+        let (path, rp) = self.plan_of("r")?;
+        let mut stack = vec![self.enter(r, path, rp, args)?];
+        loop {
+            let top = stack.last_mut().expect("a running region");
+            if top.k == top.r.nodes.len() {
+                let outs = self.leave(top)?;
+                stack.pop();
+                match stack.last_mut() {
+                    None => return Ok(outs),
+                    Some(caller) => self.returned(caller, outs)?,
+                }
+                continue;
+            }
+            let ins = self.inputs(top)?;
+            let node = &top.r.nodes[top.k];
+            match self.node(node, &top.rp.nodes[top.k], &top.at, ins)? {
+                Out::Done(outs) => self.finish(top, outs)?,
+                Out::Call {
+                    r,
+                    path,
+                    rp,
+                    args,
+                    held,
+                } => {
+                    top.held = held;
+                    let callee = self.enter(r, path, rp, args)?;
+                    stack.push(callee);
+                }
+            }
+        }
+    }
+
+    /// The plan of the region at `path`, with the path as the plan holds it.
+    fn plan_of(&self, path: &str) -> Result<(&'g str, &'g RegionPlan), String> {
+        let plan: &'g Plan = self.plan;
+        plan.regions
+            .get_key_value(path)
+            .map(|(p, rp)| (p.as_str(), rp))
+            .ok_or_else(|| {
+                format!(
+                    "memory: region `{path}` has no plan; only the root, lambda bodies and arms do"
+                )
+            })
+    }
+
+    /// Enters region `r`, at `path` under plan `rp`, on `args`: checks how they arrive, and
+    /// makes its frame.
+    fn enter(
         &mut self,
         r: &'g Region,
-        path: &str,
+        path: &'g str,
+        rp: &'g RegionPlan,
         args: Vec<(Mv<'g>, bool)>,
-    ) -> Result<Vec<Mv<'g>>, String> {
-        let rp = self.plan.regions.get(path).ok_or_else(|| {
-            format!("memory: region `{path}` has no plan; only the root, lambda bodies and arms do")
-        })?;
+    ) -> Result<Running<'g>, String> {
         for (i, (_, owned)) in args.iter().enumerate() {
             if !r.args[i].is_state() && *owned != (rp.args[i] == Mode::Owned) {
                 return Err(format!(
@@ -582,52 +982,94 @@ impl<'g> Machine<'g, '_> {
             self.dec(v.cell())?;
         }
         self.check(&format!("the entry of `{path}`"))?;
-        for (k, node) in r.nodes.iter().enumerate() {
-            let at = format!("{path}.{k}");
-            let np = &rp.nodes[k];
-            let mut ins = Vec::new();
-            for s in &node.inputs {
-                ins.push(self.read(&u, s, &at)?);
+        Ok(Running {
+            r,
+            path,
+            rp,
+            u,
+            k: 0,
+            at: String::new(),
+            held: false,
+        })
+    }
+
+    /// Reads the inputs of the node region `run` is at, as its plan takes them.
+    fn inputs(&mut self, run: &mut Running<'g>) -> Result<Vec<Mv<'g>>, String> {
+        run.at = format!("{}.{}", run.path, run.k);
+        let (node, np, u, at) = (&run.r.nodes[run.k], &run.rp.nodes[run.k], &run.u, &run.at);
+        let mut ins = Vec::new();
+        for s in &node.inputs {
+            ins.push(self.read(u, s, at)?);
+        }
+        let mut dup = vec![false; node.inputs.len()];
+        for &j in &np.dups {
+            dup[j] = true;
+            self.inc(ins[j].cell());
+        }
+        for (j, s) in node.inputs.iter().enumerate() {
+            if np.modes[j] == Mode::Owned && !dup[j] && u.slot(s).is_some() {
+                self.take(u, s, at, &format!("input {j}, taken owned"))?;
             }
-            let mut dup = vec![false; node.inputs.len()];
-            for &j in &np.dups {
-                dup[j] = true;
-                self.inc(ins[j].cell());
-            }
-            for (j, s) in node.inputs.iter().enumerate() {
-                if np.modes[j] == Mode::Owned && !dup[j] && u.slot(s).is_some() {
-                    self.take(&u, s, &at, &format!("input {j}, taken owned"))?;
-                }
-            }
-            let outs = self.node(node, np, &at, ins)?;
-            for (p, v) in outs.into_iter().enumerate() {
-                let owned = !node.outputs[p].is_state();
-                self.set(u.base[k] + p, Some((v, owned)));
-            }
-            for s in &np.drops {
-                let (v, _) = self.take(&u, s, &at, "a drop")?;
+        }
+        Ok(ins)
+    }
+
+    /// The region that the node `caller` is at called has given `outs`.
+    fn returned(&mut self, caller: &mut Running<'g>, outs: Vec<Mv<'g>>) -> Result<(), String> {
+        if caller.held {
+            caller.held = false;
+            let held = self.pop_frame();
+            for (v, _) in held.into_iter().flatten() {
                 self.dec(v.cell())?;
             }
-            for s in &np.last {
-                let e = u.slot(s).expect("an edge");
-                if let Some((_, true)) = &self.frames.last().expect("frame")[e] {
-                    return Err(format!(
-                        "memory: {at}: edge {} is still owned after its last use, a leak",
-                        show_src(s)
-                    ));
-                }
-                self.set(e, None);
-            }
-            self.check(&format!("node {at}"))?;
         }
+        self.finish(caller, outs)
+    }
+
+    /// Stores the outputs `outs` of the node region `run` is at, drops what its plan drops
+    /// after it, checks the counts, and moves to the next node.
+    fn finish(&mut self, run: &mut Running<'g>, outs: Vec<Mv<'g>>) -> Result<(), String> {
+        let (k, node, np, u, at) = (
+            run.k,
+            &run.r.nodes[run.k],
+            &run.rp.nodes[run.k],
+            &run.u,
+            &run.at,
+        );
+        for (p, v) in outs.into_iter().enumerate() {
+            let owned = !node.outputs[p].is_state();
+            self.set(u.base[k] + p, Some((v, owned)));
+        }
+        for s in &np.drops {
+            let (v, _) = self.take(u, s, at, "a drop")?;
+            self.dec(v.cell())?;
+        }
+        for s in &np.last {
+            let e = u.slot(s).expect("an edge");
+            if let Some((_, true)) = &self.frames.last().expect("frame")[e] {
+                return Err(format!(
+                    "memory: {at}: edge {} is still owned after its last use, a leak",
+                    show_src(s)
+                ));
+            }
+            self.set(e, None);
+        }
+        self.check(&format!("node {at}"))?;
+        run.k += 1;
+        Ok(())
+    }
+
+    /// Leaves region `run`, all its nodes run: gives its results and drops its frame.
+    fn leave(&mut self, run: &Running<'g>) -> Result<Vec<Mv<'g>>, String> {
+        let (r, rp, u, path) = (run.r, run.rp, &run.u, run.path);
         let dup: HashSet<usize> = rp.result_dups.iter().copied().collect();
         let mut out = Vec::new();
         for (i, s) in r.results.iter().enumerate() {
-            let v = self.read(&u, s, &format!("{path} result {i}"))?;
+            let v = self.read(u, s, &format!("{path} result {i}"))?;
             if dup.contains(&i) {
                 self.inc(v.cell());
             } else if u.slot(s).is_some() && !u.state[u.slot(s).expect("an edge")] {
-                self.take(&u, s, path, &format!("result {i}"))?;
+                self.take(u, s, path, &format!("result {i}"))?;
             }
             out.push(v);
         }
@@ -647,9 +1089,9 @@ impl<'g> Machine<'g, '_> {
         np: &NodePlan,
         at: &str,
         ins: Vec<Mv<'g>>,
-    ) -> Result<Vec<Mv<'g>>, String> {
+    ) -> Result<Out<'g>, String> {
         let data = |m: &Mv<'g>| matches!(m, Mv::Data(..));
-        Ok(match &node.op {
+        Ok(Out::Done(match &node.op {
             Op::Prim(p) if ins.is_empty() && p.arity().is_some() => vec![Mv::Prim(*p)],
             Op::Prim(Prim::Tuple) if ins.iter().all(data) && !ins.is_empty() => {
                 let vals = ins.iter().map(value).collect();
@@ -717,7 +1159,7 @@ impl<'g> Machine<'g, '_> {
                             c.path
                         ));
                     }
-                    let rp = &self.plan.regions[&c.path];
+                    let (path, rp) = self.plan_of(&c.path)?;
                     let mut args = Vec::new();
                     let mut held = Vec::new();
                     for (i, v) in ins[1..].iter().enumerate() {
@@ -739,13 +1181,14 @@ impl<'g> Machine<'g, '_> {
                     }
                     args.extend(c.caps.iter().map(|v| (v.clone(), false)));
                     self.push_frame(held);
-                    let out = self.region(&c.node.regions[0], &c.path, args);
-                    let held = self.pop_frame();
-                    let out = out?;
-                    for (v, _) in held.into_iter().flatten() {
-                        self.dec(v.cell())?;
-                    }
-                    out
+                    let callee: &'g Node = c.node;
+                    return Ok(Out::Call {
+                        r: &callee.regions[0],
+                        path,
+                        rp,
+                        args,
+                        held: true,
+                    });
                 }
                 _ => {
                     let v = self.kernel(node, &ins)?;
@@ -776,12 +1219,19 @@ impl<'g> Machine<'g, '_> {
                         let args = (1..ins.len())
                             .map(|j| (ins[j].clone(), np.modes[j] == Mode::Owned))
                             .collect();
-                        self.region(&node.regions[i], &format!("{at}/{i}"), args)?
+                        let (path, rp) = self.plan_of(&format!("{at}/{i}"))?;
+                        return Ok(Out::Call {
+                            r: &node.regions[i],
+                            path,
+                            rp,
+                            args,
+                            held: false,
+                        });
                     }
                     Err(v) => self.failed(node, np, &ins, v)?,
                 }
             }
-            Op::Match(ps) => self.matched(node, ps, np, at, ins)?,
+            Op::Match(ps) => return self.matched(node, ps, np, at, ins),
             Op::Read(p) => {
                 let v = match self.ev.world.inputs.get(&**p) {
                     Some(v) => {
@@ -806,7 +1256,7 @@ impl<'g> Machine<'g, '_> {
                 self.consume(np, &ins)?;
                 vec![self.fresh(v)]
             }
-        })
+        }))
     }
 
     /// A `match`: the kernel picks the arm and binds its values, and the machine finds the
@@ -818,7 +1268,7 @@ impl<'g> Machine<'g, '_> {
         np: &NodePlan,
         at: &str,
         ins: Vec<Mv<'g>>,
-    ) -> Result<Vec<Mv<'g>>, String> {
+    ) -> Result<Out<'g>, String> {
         let mut lets = Lets::default();
         let s = self.term(&ins[0], &mut lets)?;
         let mut arms = Vec::new();
@@ -844,10 +1294,10 @@ impl<'g> Machine<'g, '_> {
                 };
                 (i as usize, xs)
             }
-            v => return self.failed(node, np, &ins, v),
+            v => return self.failed(node, np, &ins, v).map(Out::Done),
         };
         let path = format!("{at}/{i}");
-        let arm = &self.plan.regions[&path];
+        let (key, arm) = self.plan_of(&path)?;
         let mut paths = Vec::new();
         if let Mv::Data(v, _) = &ins[0] {
             binder_paths(&ps[i], v, &mut Vec::new(), &mut paths);
@@ -888,7 +1338,13 @@ impl<'g> Machine<'g, '_> {
             }
         }
         args.extend((1..ins.len()).map(|j| (ins[j].clone(), np.modes[j] == Mode::Owned)));
-        self.region(&node.regions[i], &path, args)
+        Ok(Out::Call {
+            r: &node.regions[i],
+            path: key,
+            rp: arm,
+            args,
+            held: false,
+        })
     }
 
     /// An `if` or `match` whose decision is a failure value `v`: the value is the result,
@@ -907,36 +1363,49 @@ impl<'g> Machine<'g, '_> {
     }
 
     /// Fused release of the scrutinee `cell`, keeping the cells at `kept`.
+    ///
+    /// The scrutinee nests as deep as the program, so the parts still to drop or release wait
+    /// on a stack, in order (step T2-mid).
     fn release(&mut self, cell: Option<usize>, kept: &[&[usize]]) -> Result<(), String> {
-        let Some(c) = cell else { return Ok(()) };
-        if kept.iter().any(|p| p.is_empty()) {
-            return Ok(());
-        }
-        if self.heap[c].count == 1 {
-            self.heap[c].count = 0;
-            self.stats.frees += 1;
-            self.live -= 1;
-            self.touched.push(c);
-            let kids = std::mem::take(&mut self.heap[c].kids);
-            for k in kids.iter().flatten() {
-                self.refs[*k] -= 1;
-                self.touched.push(*k);
-            }
-            for (i, k) in kids.into_iter().enumerate() {
-                let sub: Vec<&[usize]> =
-                    kept.iter().filter(|p| p[0] == i).map(|p| &p[1..]).collect();
-                if sub.is_empty() {
-                    self.dec(k)?;
-                } else {
-                    self.release(k, &sub)?;
+        let mut stack = vec![Part::Keep(cell, kept.to_vec())];
+        while let Some(part) = stack.pop() {
+            let (cell, kept) = match part {
+                Part::Drop(cell) => {
+                    self.dec(cell)?;
+                    continue;
                 }
+                Part::Keep(cell, kept) => (cell, kept),
+            };
+            let Some(c) = cell else { continue };
+            if kept.iter().any(|p| p.is_empty()) {
+                continue;
             }
-        } else {
-            for p in kept {
-                let k = self.cell_at(cell, p);
-                self.inc(k);
+            if self.heap[c].count == 1 {
+                self.heap[c].count = 0;
+                self.stats.frees += 1;
+                self.live -= 1;
+                self.touched.push(c);
+                let kids = std::mem::take(&mut self.heap[c].kids);
+                for k in kids.iter().flatten() {
+                    self.refs[*k] -= 1;
+                    self.touched.push(*k);
+                }
+                for (i, k) in kids.into_iter().enumerate().rev() {
+                    let sub: Vec<&[usize]> =
+                        kept.iter().filter(|p| p[0] == i).map(|p| &p[1..]).collect();
+                    stack.push(if sub.is_empty() {
+                        Part::Drop(k)
+                    } else {
+                        Part::Keep(k, sub)
+                    });
+                }
+            } else {
+                for p in &kept {
+                    let k = self.cell_at(cell, p);
+                    self.inc(k);
+                }
+                self.dec(cell)?;
             }
-            self.dec(cell)?;
         }
         Ok(())
     }
@@ -984,26 +1453,35 @@ impl<'g> Machine<'g, '_> {
     }
 
     /// The kernel term for `v`; a lookup port is read once, by a `let` in `lets`.
+    ///
+    /// Closures capture closures as deep as the program, so the closures entered wait on a
+    /// stack with the terms of their captures so far.
     fn term(&mut self, v: &Mv<'g>, lets: &mut Lets) -> Result<Term, String> {
-        Ok(match v {
-            Mv::Data(v, _) => Term::Lit(v.clone()),
-            Mv::Prim(p) => Term::PrimFn(*p),
-            Mv::State => Term::Lit(Value::tuple(Vec::new())),
-            Mv::Source(p) => {
-                if lets.seen.insert(p.clone()) {
-                    lets.order.push(p.clone());
-                }
-                Term::Var(port_var(p))
-            }
+        let mut stack: Vec<(Rc<Clo<'g>>, Vec<Term>)> = Vec::new();
+        let mut got = match v {
             Mv::Clo(c) => {
-                let c = c.clone();
-                let mut terms = Vec::new();
-                for v in &c.caps {
-                    terms.push(self.term(v, lets)?);
-                }
-                raise_with(self.alone(c.node), &terms)?
+                stack.push((c.clone(), Vec::new()));
+                None
             }
-        })
+            v => Some(flat_term(v, lets)),
+        };
+        loop {
+            let Some((c, terms)) = stack.last_mut() else {
+                return Ok(got.expect("a term"));
+            };
+            terms.extend(got.take());
+            match c.caps.get(terms.len()) {
+                Some(Mv::Clo(d)) => {
+                    let d = d.clone();
+                    stack.push((d, Vec::new()));
+                }
+                Some(v) => got = Some(flat_term(v, lets)),
+                None => {
+                    let (c, terms) = stack.pop().expect("a closure");
+                    got = Some(raise_with(self.alone(c.node), &terms)?);
+                }
+            }
+        }
     }
 
     fn read(&self, u: &Uses, s: &Src, at: &str) -> Result<Mv<'g>, String> {
@@ -1073,21 +1551,44 @@ impl<'g> Machine<'g, '_> {
         Mv::Data(v, c)
     }
 
+    /// The cells of `v`, each part's before its whole's, on a stack of the tuples and atoms
+    /// entered with the cells of their parts so far: values nest as deep as the program.
     fn tree(&mut self, v: &Value) -> Option<usize> {
-        match v {
-            Value::Bool(_) | Value::Int(_) | Value::Float(_) => None,
-            Value::Tuple(xs) if xs.is_empty() => None,
-            Value::Atom(a) if a.args.is_empty() => None,
-            Value::Tuple(xs) => {
-                let kids = xs.iter().map(|x| self.tree(x)).collect();
-                Some(self.alloc(kids))
-            }
-            Value::Atom(a) => {
-                let kids = a.args.iter().map(|x| self.tree(x)).collect();
-                Some(self.alloc(kids))
-            }
-            Value::Str(_) | Value::Big(_) | Value::Rat(_) | Value::Path(_) | Value::Family(_) => {
-                Some(self.alloc(Vec::new()))
+        let mut stack: Vec<(&[Value], Vec<Option<usize>>)> = Vec::new();
+        let mut next = v;
+        loop {
+            let mut got = match next {
+                Value::Bool(_) | Value::Int(_) | Value::Float(_) => None,
+                Value::Tuple(xs) if xs.is_empty() => None,
+                Value::Atom(a) if a.args.is_empty() => None,
+                Value::Tuple(xs) => {
+                    stack.push((xs, Vec::with_capacity(xs.len())));
+                    next = &xs[0];
+                    continue;
+                }
+                Value::Atom(a) => {
+                    stack.push((&a.args, Vec::with_capacity(a.args.len())));
+                    next = &a.args[0];
+                    continue;
+                }
+                Value::Str(_)
+                | Value::Big(_)
+                | Value::Rat(_)
+                | Value::Path(_)
+                | Value::Family(_) => Some(self.alloc(Vec::new())),
+            };
+            loop {
+                let Some((xs, kids)) = stack.last_mut() else {
+                    return got;
+                };
+                let xs: &[Value] = xs;
+                kids.push(got);
+                if let Some(x) = xs.get(kids.len()) {
+                    next = x;
+                    break;
+                }
+                let (_, kids) = stack.pop().expect("a tuple or atom");
+                got = Some(self.alloc(kids));
             }
         }
     }
@@ -1104,23 +1605,25 @@ impl<'g> Machine<'g, '_> {
         }
     }
 
+    /// Drops a reference to `c`; a freed cell drops its parts', in order, before the next
+    /// cell's, on a stack of the cells still to drop: values nest as deep as the program.
     fn dec(&mut self, c: Option<usize>) -> Result<(), String> {
-        let Some(c) = c else { return Ok(()) };
-        self.stats.decrements += 1;
-        if self.heap[c].count == 0 {
-            return Err(format!("memory: cell {c} is dropped after it was freed"));
-        }
-        self.touched.push(c);
-        self.heap[c].count -= 1;
-        if self.heap[c].count == 0 {
-            self.stats.frees += 1;
-            self.live -= 1;
-            let kids = std::mem::take(&mut self.heap[c].kids);
-            for k in kids.iter().flatten() {
-                self.refs[*k] -= 1;
+        let mut stack: Vec<usize> = c.into_iter().collect();
+        while let Some(c) = stack.pop() {
+            self.stats.decrements += 1;
+            if self.heap[c].count == 0 {
+                return Err(format!("memory: cell {c} is dropped after it was freed"));
             }
-            for k in kids {
-                self.dec(k)?;
+            self.touched.push(c);
+            self.heap[c].count -= 1;
+            if self.heap[c].count == 0 {
+                self.stats.frees += 1;
+                self.live -= 1;
+                let kids = std::mem::take(&mut self.heap[c].kids);
+                for k in kids.iter().flatten() {
+                    self.refs[*k] -= 1;
+                }
+                stack.extend(kids.into_iter().rev().flatten());
             }
         }
         Ok(())
@@ -1242,44 +1745,70 @@ struct Lets {
     order: Vec<Arc<str>>,
 }
 
-/// The path of child indices to each binder of `p` inside `v`, which `p` matches, in
-/// preorder.
-fn binder_paths(p: &Pattern, v: &Value, at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
-    let mut sub = |i: usize, q: &Pattern, x: &Value, out: &mut Vec<Vec<usize>>| {
-        at.push(i);
-        binder_paths(q, x, at, out);
-        at.pop();
-    };
-    match (p, v) {
-        (Pattern::Bind(_), _) => out.push(at.clone()),
-        (Pattern::Tuple(ps), Value::Tuple(xs)) => {
-            for (i, (q, x)) in ps.iter().zip(xs).enumerate() {
-                sub(i, q, x, out);
+/// The kernel term for `v`, which is not a closure; a lookup port is read once, by a `let`
+/// in `lets`.
+fn flat_term(v: &Mv<'_>, lets: &mut Lets) -> Term {
+    match v {
+        Mv::Data(v, _) => Term::Lit(v.clone()),
+        Mv::Prim(p) => Term::PrimFn(*p),
+        Mv::State => Term::Lit(Value::tuple(Vec::new())),
+        Mv::Source(p) => {
+            if lets.seen.insert(p.clone()) {
+                lets.order.push(p.clone());
             }
+            Term::Var(port_var(p))
         }
-        (Pattern::Atom(_, ps), Value::Atom(a)) => {
-            for (i, (q, x)) in ps.iter().zip(&a.args).enumerate() {
-                sub(i, q, x, out);
-            }
-        }
-        (Pattern::Fields(_, fs), Value::Atom(a)) => {
-            for (f, q) in fs {
-                if let Ok(i) = a.fields.binary_search(f) {
-                    sub(i, q, &a.args[i], out);
-                }
-            }
-        }
-        _ => {}
+        Mv::Clo(_) => unreachable!("a closure's term is built on the stack of `term`"),
     }
 }
 
-/// Renames each binder of `p`, in preorder, to what `f` gives.
+/// The path of child indices to each binder of `p` inside `v`, which `p` matches, in
+/// preorder, appended to `at`.
+///
+/// Patterns nest as deep as the program, so the parts still to visit wait on a stack, each
+/// with the length of the path above it and its index (step T2-mid).
+fn binder_paths(p: &Pattern, v: &Value, at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+    let base = at.len();
+    let mut stack: Vec<(usize, Option<usize>, &Pattern, &Value)> = vec![(base, None, p, v)];
+    while let Some((len, i, p, v)) = stack.pop() {
+        at.truncate(len);
+        at.extend(i);
+        let len = at.len();
+        match (p, v) {
+            (Pattern::Bind(_), _) => out.push(at.clone()),
+            (Pattern::Tuple(ps), Value::Tuple(xs)) => {
+                let parts = ps.iter().zip(xs.iter()).enumerate();
+                stack.extend(parts.rev().map(|(i, (q, x))| (len, Some(i), q, x)));
+            }
+            (Pattern::Atom(_, ps), Value::Atom(a)) => {
+                let parts = ps.iter().zip(a.args.iter()).enumerate();
+                stack.extend(parts.rev().map(|(i, (q, x))| (len, Some(i), q, x)));
+            }
+            (Pattern::Fields(_, fs), Value::Atom(a)) => {
+                let parts = fs.iter().filter_map(|(f, q)| {
+                    let i = a.fields.binary_search(f).ok()?;
+                    Some((len, Some(i), q, &a.args[i]))
+                });
+                let parts: Vec<_> = parts.collect();
+                stack.extend(parts.into_iter().rev());
+            }
+            _ => {}
+        }
+    }
+    at.truncate(base);
+}
+
+/// Renames each binder of `p`, in preorder, to what `f` gives, on a stack of the parts still
+/// to visit: patterns nest as deep as the program.
 fn rename(p: &mut Pattern, f: &mut dyn FnMut() -> Arc<str>) {
-    match p {
-        Pattern::Bind(x) => *x = f(),
-        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter_mut().for_each(|q| rename(q, f)),
-        Pattern::Fields(_, fs) => fs.iter_mut().for_each(|(_, q)| rename(q, f)),
-        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+    let mut stack = vec![p];
+    while let Some(p) = stack.pop() {
+        match p {
+            Pattern::Bind(x) => *x = f(),
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => stack.extend(ps.iter_mut().rev()),
+            Pattern::Fields(_, fs) => stack.extend(fs.iter_mut().rev().map(|(_, q)| q)),
+            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+        }
     }
 }
 
