@@ -9,11 +9,15 @@
 //! added when two are joined, so `len` is `O(1)` and never writes the text out (COMPLEXITY.md
 //! R4, R5). The tree is not balanced: every walk over it, writing out and dropping, keeps its
 //! own stack, so its depth is the length of a chain of joins and costs no machine stack.
+//!
+//! A node written out lets go of its two parts, so it holds only its own text. Reading every
+//! step of a chain of joins, the accumulator each time, so holds the latest text only, not
+//! one copy per step, `O(n²)` bytes in all.
 
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::Deref;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// A string's text, shared.
 #[derive(Clone)]
@@ -26,8 +30,18 @@ struct Node {
     chars: usize,
     /// The text, once written out.
     flat: OnceLock<Arc<str>>,
-    /// The two parts of a join; `None` for text made whole.
-    parts: Option<(Text, Text)>,
+    /// The two parts of a join; `None` for text made whole and for a join once written out.
+    parts: Mutex<Option<(Text, Text)>>,
+}
+
+impl Node {
+    /// The two parts of a join not yet written out, shared.
+    fn parts(&self) -> Option<(Text, Text)> {
+        self.parts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
 }
 
 impl Text {
@@ -43,7 +57,7 @@ impl Text {
             len: a.0.len + b.0.len,
             chars: a.0.chars + b.0.chars,
             flat: OnceLock::new(),
-            parts: Some((a.clone(), b.clone())),
+            parts: Mutex::new(Some((a.clone(), b.clone()))),
         }))
     }
 
@@ -71,15 +85,18 @@ impl Text {
     /// out read whole. The walk keeps its own stack, so a join nested a million deep is safe.
     fn write_out(&self) -> Arc<str> {
         let mut out = String::with_capacity(self.0.len);
-        let mut todo = vec![self];
+        let mut todo = vec![self.clone()];
         while let Some(t) = todo.pop() {
-            match (t.0.flat.get(), &t.0.parts) {
-                (Some(s), _) => out.push_str(s),
-                (None, Some((a, b))) => {
-                    todo.push(b);
-                    todo.push(a);
-                }
-                (None, None) => unreachable!("text made whole is written out when made"),
+            if let Some(s) = t.0.flat.get() {
+                out.push_str(s);
+            } else if let Some((a, b)) = t.0.parts() {
+                todo.push(b);
+                todo.push(a);
+            } else {
+                // Another thread wrote this part out and let go of its parts since `flat` was
+                // read above; its text is there now.
+                let s = t.0.flat.get();
+                out.push_str(s.expect("a node lets go of its parts only once written out"));
             }
         }
         out.into()
@@ -89,13 +106,18 @@ impl Text {
 impl Drop for Node {
     /// Drops a chain of joins one node at a time, not by a recursion as deep as the chain.
     fn drop(&mut self) {
-        let mut todo: Vec<Text> = match self.parts.take() {
+        let parts = self.parts.get_mut().unwrap_or_else(PoisonError::into_inner);
+        let mut todo: Vec<Text> = match parts.take() {
             Some((a, b)) => vec![a, b],
             None => return,
         };
         while let Some(t) = todo.pop() {
             if let Ok(mut node) = Arc::try_unwrap(t.0)
-                && let Some((a, b)) = node.parts.take()
+                && let Some((a, b)) = node
+                    .parts
+                    .get_mut()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take()
             {
                 todo.push(a);
                 todo.push(b);
@@ -107,7 +129,20 @@ impl Drop for Node {
 impl Deref for Text {
     type Target = str;
     fn deref(&self) -> &str {
-        self.0.flat.get_or_init(|| self.write_out())
+        if let Some(s) = self.0.flat.get() {
+            return s;
+        }
+        let s = self.0.flat.get_or_init(|| self.write_out());
+        // The text is in `flat` now, so the parts are not read again; once let go of, a part
+        // nothing else holds is freed.
+        let parts = self
+            .0
+            .parts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        drop(parts);
+        s
     }
 }
 
@@ -123,7 +158,7 @@ impl From<Arc<str>> for Text {
             len: s.len(),
             chars: s.chars().count(),
             flat: OnceLock::from(s),
-            parts: None,
+            parts: Mutex::new(None),
         }))
     }
 }
@@ -251,5 +286,33 @@ mod tests {
         assert_eq!(t.char_count(), PIECE * 1_000_000);
         assert!(t.bytes().all(|b| b == b'z'));
         drop(t);
+        // A chain never read keeps all its nodes, and drops them one at a time.
+        let mut t = Text::from("");
+        for _ in 0..1_000_000 {
+            t = Text::join(&t, &piece);
+        }
+        assert!(!t.is_written_out());
+        drop(t);
+    }
+
+    #[test]
+    fn a_log_read_after_every_line_keeps_only_its_latest_text() {
+        // An accumulator read at every step, as a log printed line by line is: each step,
+        // once read, holds its own text and not the step before, so the steps not held
+        // elsewhere are freed and memory stays that of the latest text.
+        let line = long('l');
+        let mut log = Text::from("log:");
+        for i in 1..=100 {
+            let before = log.clone();
+            log = Text::join(&log, &line);
+            assert_eq!(log.len(), 4 + PIECE * i);
+            assert!(log.ends_with(&*line));
+            assert!(log.0.parts().is_none(), "the parts are let go of once read");
+            assert_eq!(
+                Arc::strong_count(&before.0),
+                1,
+                "only this test holds the step before"
+            );
+        }
     }
 }

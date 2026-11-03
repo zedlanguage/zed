@@ -53,7 +53,7 @@ fn a_string_in_cells_is_tested_without_flattening_it() {
     assert!(is(&mut h, w, &Type::top()));
     assert!(!is(&mut h, w, &Type::int()));
     assert!(!is(&mut h, w, &Type::universe(Universe::Tuple)));
-    assert_eq!(h.stats.copied, 0, "no test above reads the text");
+    assert!(!ab.is_written_out(), "no test above reads the text");
     // A type holding some strings and not others reads the text.
     assert!(is(&mut h, w, &Type::lit(&Value::str("ab")).unwrap()));
     assert!(!is(&mut h, w, &Type::lit(&Value::str("ba")).unwrap()));

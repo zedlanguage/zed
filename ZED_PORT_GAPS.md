@@ -750,3 +750,4 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | One `Arc` rope node shared by the kernel and the native heap, so a string crosses between them with no copy | `Obj::Str(Text)`, `Heap::value`, `hooks::text` | None | Zed shares values; one runtime holds one string type |
 | `OnceLock<Arc<str>>` in each join node, the text written out on the first read through `&self` | `Text::flat`, `Deref for Text` | Lazy cells (gap 3) | `String` ropes in the standard library (L6.16): the text written out by a function, its result kept by the runtime, or no cache |
 | Byte and character counts kept in each node and added at a join | `Node::len`, `Node::chars` | None | Two integer fields of the rope node |
+| `Mutex<Option<(Text, Text)>>` for a join's parts, taken through `&self` once the text is written out | `Node::parts`, `Deref for Text` | Lazy cells (gap 3) | The rope's written-out form replaces the node in the runtime's cache, or no cache |
