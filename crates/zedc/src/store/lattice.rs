@@ -297,8 +297,8 @@ impl Lattice for Congruence {
     /// keeps the old one, so a loop that shows `0 mod 4` after `0 mod 2` keeps `0 mod 2`.
     /// Why: without this, a descending chain need not end. Trigger: a narrowing from a class of
     /// modulus other than 1 to a class of a larger modulus. Test:
-    /// `m0_05_widening_and_iteration::widening::a_congruence_narrows_at_most_three_times`. No
-    /// COMPLEXITY.md row. The limit of the chain is not computable in general; a closer rule
+    /// `m0_05_widening_and_iteration::widening::a_congruence_narrows_at_most_three_times`.
+    /// COMPLEXITY.md row C9. The limit of the chain is not computable in general; a closer rule
     /// would accept a refinement whose modulus is among the program's literals (a landmark
     /// rule, as the interval narrowing has), which keeps each chain finite.
     fn narrow(&self, next: &Self, _: &Landmarks) -> Self {

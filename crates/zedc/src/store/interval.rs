@@ -49,8 +49,8 @@ impl End {
     /// Why: machine integers make each endpoint operation O(1), where unbounded integers cost
     /// time in their bits. Trigger: an endpoint whose magnitude exceeds `i64`. Tests:
     /// `l01_25_preimage_catalog::entries::bounds_past_i64_keep_the_box`,
-    /// `l01_38_presburger::omega::a_bound_past_i64_is_searched_within_i64`. No COMPLEXITY.md
-    /// row. This switches behavior at a magnitude, so it violates the no-thresholds rule; to
+    /// `l01_38_presburger::omega::a_bound_past_i64_is_searched_within_i64`. COMPLEXITY.md
+    /// row C7. This switches behavior at a magnitude, so it violates the no-thresholds rule; to
     /// be replaced. A complete solution would make `End::Fin` hold an unbounded integer
     /// (`store::int`).
     pub fn from_i128(x: i128) -> End {
@@ -407,7 +407,7 @@ impl IntervalSet {
     /// `next` with an end of `self` or a landmark beyond it on its side. Tests:
     /// `m0_05_widening_and_iteration::widening::a_narrowing_keeps_old_ends_and_takes_a_bound_for_an_infinite_one`,
     /// `m0_05_widening_and_iteration::widening::interval_narrowing_chains_stay_on_the_first_ends_and_the_landmarks`.
-    /// No COMPLEXITY.md row of its own (S13 measures the widening phase). A complete solution
+    /// COMPLEXITY.md row C8 (S13 measures the widening phase). A complete solution
     /// would compute the greatest fixpoint below the widened one, which needs the loop's
     /// recurrence solved exactly (acceleration): possible for affine loops only, undecidable
     /// in general.

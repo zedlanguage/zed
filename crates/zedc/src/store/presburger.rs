@@ -2764,7 +2764,7 @@ fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
 /// (`interval::End::Fin(i64)`), whose arithmetic costs O(1) where unbounded integers cost
 /// time in their length. Trigger: a bound whose magnitude exceeds `i64`. Tests:
 /// `l01_38_presburger::omega::a_bound_past_i64_is_searched_within_i64`,
-/// `l01_38_presburger::omega::a_model_may_hold_values_past_128_bits`. No COMPLEXITY.md row.
+/// `l01_38_presburger::omega::a_model_may_hold_values_past_128_bits`. COMPLEXITY.md row C1.
 /// This switches behavior at a magnitude, so it violates the no-thresholds rule; to be
 /// replaced. A complete solution would keep interval ends as unbounded integers
 /// (`store::int`), at a cost in their bits.
@@ -2930,7 +2930,7 @@ fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Ref
 /// variables (cylindrical algebraic decomposition). Trigger: a product atom in the premises
 /// or the goal. Test:
 /// `l01_38_presburger::entailment::a_product_is_bounded_only_through_the_premises_on_its_factors`.
-/// No COMPLEXITY.md row. No complete solution exists for integers; a stronger sound one would
+/// COMPLEXITY.md row C2. No complete solution exists for integers; a stronger sound one would
 /// add higher-degree products of premises (Positivstellensatz certificates), at a cost
 /// polynomial of growing degree.
 fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusal> {

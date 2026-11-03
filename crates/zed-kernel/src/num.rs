@@ -22,7 +22,7 @@ use num_traits::{One, Signed, Zero};
 /// as `x ** e` builds a result whose size is exponential in the bits of `e`, so one short
 /// expression could take all memory and time. Trigger: a result (or, for a power, a predicted
 /// result) of more than `MAX_BITS` bits. Test:
-/// `m0_09_kernel_evaluator::a_power_by_a_huge_exponent`. No COMPLEXITY.md row. This switches
+/// `m0_09_kernel_evaluator::a_power_by_a_huge_exponent`. COMPLEXITY.md row C23. This switches
 /// behavior at a constant size, so it violates the no-thresholds rule; to be replaced (ledger
 /// item CAP-bits). A complete solution would build any result that fits in the memory
 /// available and report the allocation failure as such, or keep huge powers symbolic.

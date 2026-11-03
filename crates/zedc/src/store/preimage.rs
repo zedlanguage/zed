@@ -117,16 +117,16 @@ pub enum StopKind {
     Foreign(Arc<str>),
     /// A term the scalar catalog does not cover: families, folds, `fix`, patterns or ports.
     ///
-    /// Complexity tradeoff (for `fix`, `gen` and `fold`; the other terms here are catalog
-    /// entries not yet written, with no cost reason): the transfer stops at the loop, which
-    /// it raises at the `_` arms of `back_at`, `back_prim` and `scan`; the term's answer is
+    /// Complexity tradeoff: for `fix`, `gen` and `fold` (the other terms here are catalog
+    /// entries not yet written, with no cost reason), the transfer stops at the loop, which
+    /// it raises at the `_` arms of `back_in`, `back_prim` and `scan`; the term's answer is
     /// the whole box (`Res::unknown`, necessary only), and the stop is reported. Why: reading
     /// through a loop unfolds it once per iteration it may take, which need not end, as for
     /// `StopKind::Recursion`; a fixpoint over the loop is the full analysis this transfer
     /// avoids. Trigger: a `fix`, `gen` or `fold` term between the demand and an input. Test:
     /// `l01_25_preimage_catalog::stops::a_term_outside_the_scalar_catalog_is_reported`
     /// covers the stop through `sum` of a tuple; no test yet stops at `fix`, `gen` or `fold`.
-    /// No COMPLEXITY.md row. A complete solution would compute a fixpoint of the loop's
+    /// COMPLEXITY.md row C15. A complete solution would compute a fixpoint of the loop's
     /// backward transfer with widening, as the forward iteration does for loops.
     Outside,
     /// A call of a lambda whose call is already being read.
@@ -192,7 +192,7 @@ fn run_closed(t: &Term) -> Option<Value> {
 /// and `x ** k` inverts by a k-th root at a cost in the bits of its bounds. Trigger: more than
 /// 64 equal factors. Test:
 /// `l01_25_preimage_catalog::scopes::equal_factors_written_twice_are_read_as_a_square`
-/// (below the constant only). No COMPLEXITY.md row. This switches behavior at a constant
+/// (below the constant only). COMPLEXITY.md row C19. This switches behavior at a constant
 /// size, so it violates the no-thresholds rule; to be replaced (ledger item CAP-power). A
 /// complete solution would read any count of equal factors as a power, with ends held as
 /// unbounded integers.
@@ -1432,8 +1432,8 @@ impl<'t> Tx<'t> {
     /// later operation would pay for each box. Trigger: two boxes that differ in two or more
     /// inputs (a name held by one box only counts as a difference), with neither box within
     /// the other. Test:
-    /// `l01_25_preimage_catalog::scopes::a_union_of_boxes_is_exact_when_it_is_a_box`. No
-    /// COMPLEXITY.md row. A complete solution would keep a list (or a decision diagram) of
+    /// `l01_25_preimage_catalog::scopes::a_union_of_boxes_is_exact_when_it_is_a_box`.
+    /// COMPLEXITY.md row C14. A complete solution would keep a list (or a decision diagram) of
     /// boxes, exponential in the disjunctions in the worst case.
     fn union(&self, a: Res, b: Res) -> Res {
         if self.empty(&a) {
@@ -2439,7 +2439,7 @@ impl<'t> Tx<'t> {
     /// no exact catalog entry (anything but shifts, scalings, `div` and `mod` by a constant,
     /// `**`, and branches), or two operands that both read inputs. Test:
     /// `l01_25_preimage_catalog::entries::a_strict_disjunction_with_a_failing_side_is_necessary_only`.
-    /// No COMPLEXITY.md row. A complete solution is `@exact` ([`exact_preimage`]), which
+    /// COMPLEXITY.md row C16. A complete solution is `@exact` ([`exact_preimage`]), which
     /// searches the box at a cost in its points.
     fn project(&mut self, p: Prim, a: Tid, b: Tid, env: Eid, z: &IntervalSet) -> Res {
         let o = op(p, None).expect("binary scalar operator");
@@ -2646,7 +2646,7 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
 /// Why: listing every period costs pieces in the width of `within` divided by `c`, which is
 /// exponential in the bits written. Trigger: `within` spanning more than two periods of `c`.
 /// Test: `l01_25_preimage_catalog::random::a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between`.
-/// No COMPLEXITY.md row. A complete solution would pair the interval with the congruence
+/// COMPLEXITY.md row C17. A complete solution would pair the interval with the congruence
 /// facet (`x mod c` in `z` as a set of classes), which the reduced product can hold exactly.
 fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> (IntervalSet, bool) {
     if c == 0 {
@@ -2722,8 +2722,8 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
 /// box are the product of its axes, exponential in the inputs and in the bits of each range,
 /// and a term not shown to end may not end. Trigger: those three properties of the box and
 /// the term, each relative to what is written, never a constant. Test:
-/// `l01_25_preimage_catalog::entries::a_listed_box_is_enumerated_and_a_range_is_not`. No
-/// COMPLEXITY.md row (thresholds.md replacement 8). A complete solution is `@exact`
+/// `l01_25_preimage_catalog::entries::a_listed_box_is_enumerated_and_a_range_is_not`.
+/// COMPLEXITY.md row C18 (thresholds.md replacement 8). A complete solution is `@exact`
 /// ([`exact_preimage`]), branch and prune over the box, at a cost in its points.
 fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
     if !stage::ends(term) {

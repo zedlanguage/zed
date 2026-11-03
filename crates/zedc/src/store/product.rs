@@ -148,8 +148,8 @@ impl Lattice for Type {
     /// forever), so the fixpoint needs a widening; keeping members would need a landmark set
     /// of types and a test per member. Trigger: a widening at which `next` has a value in a
     /// base type part that `self` lacks. Test:
-    /// `l01_39_reduced_product::controls::a_type_widens_to_its_whole_base_type`. No
-    /// COMPLEXITY.md row. A complete solution would compute the loop's least fixpoint over
+    /// `l01_39_reduced_product::controls::a_type_widens_to_its_whole_base_type`.
+    /// COMPLEXITY.md row C3. A complete solution would compute the loop's least fixpoint over
     /// types, which is undecidable in general. A more precise widening, still not complete,
     /// would stop first at the loop's written type literals (type landmarks, as intervals do
     /// with integer landmarks), at a cost of one subtype test per landmark.
@@ -171,7 +171,7 @@ impl Lattice for Type {
     /// step need not end; with this rule each part changes at most once. Trigger: a part of
     /// `self` that is neither empty nor the whole base type or universe part. Test:
     /// `l01_39_reduced_product::controls::a_type_widens_to_its_whole_base_type` (its narrowing
-    /// cases). No COMPLEXITY.md row. A complete solution would compute the greatest fixpoint
+    /// cases). COMPLEXITY.md row C4. A complete solution would compute the greatest fixpoint
     /// below the widened type, which needs the loop's effect on its values solved exactly:
     /// undecidable in general.
     fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
@@ -355,7 +355,7 @@ impl Product {
             // exceed twice its pieces, a measure relative to the written endpoints and not a
             // constant. Test:
             // `l01_39_reduced_product::controls::a_listed_set_is_enumerated_and_a_range_is_not`.
-            // No COMPLEXITY.md row. A complete solution would let the type language hold
+            // COMPLEXITY.md row C5. A complete solution would let the type language hold
             // integer ranges, so that the interval enters the type without listing.
             let x = self.ints();
             let vs: Option<Vec<Value>> = match (&self.ty.element & &int).listed() {
@@ -1821,8 +1821,8 @@ impl Scope {
     /// not shown may not end at all (deciding that is the halting problem). Trigger: two or
     /// more open names, a constraint that calls itself or loops, or a range not listed. Tests:
     /// `l01_39_reduced_product::controls::enumeration_keeps_the_members_a_written_constraint_holds_at`,
-    /// `l01_39_reduced_product::controls::a_listed_set_is_enumerated_and_a_range_is_not`. No
-    /// COMPLEXITY.md row. A complete solution would enumerate the product of the open names
+    /// `l01_39_reduced_product::controls::a_listed_set_is_enumerated_and_a_range_is_not`.
+    /// COMPLEXITY.md row C6. A complete solution would enumerate the product of the open names
     /// (`@exact` does, by branch and prune), at a cost exponential in the open names, and a
     /// termination proof stronger than the form of the term (size-change termination,
     /// PSPACE-complete in the call graph).

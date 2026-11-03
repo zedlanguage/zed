@@ -158,10 +158,10 @@ fn children(t: &Term) -> Vec<&Term> {
 /// switch behavior at a size. Trigger: any of those forms in the term or in a function it
 /// calls. Tests:
 /// `l01_28_staging::mix::a_term_whose_form_does_not_show_it_ends_is_left_to_run`,
-/// `l01_28_staging::mix::a_term_whose_form_shows_it_ends_is_built_with_no_fuel`. No
-/// COMPLEXITY.md row (docs/thresholds.md replacement 6). A complete solution cannot exist; a
-/// stronger sound one would add a termination proof by decreasing measures (size-change
-/// termination, PSPACE-complete in the call graph).
+/// `l01_28_staging::mix::a_term_whose_form_shows_it_ends_is_built_with_no_fuel`.
+/// COMPLEXITY.md row C20 (docs/thresholds.md replacement 6). A complete solution cannot
+/// exist; a stronger sound one would add a termination proof by decreasing measures
+/// (size-change termination, PSPACE-complete in the call graph).
 pub fn ends(t: &Term) -> bool {
     ends_in(t, &mut Around::default())
 }

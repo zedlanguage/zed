@@ -245,14 +245,17 @@ The plan above was to eliminate a variable only where elimination does not add r
 is what was built, with the input's row count as the bound, plus the dark shadow, and a
 formula with disjunctions is no longer split into all its conjunctions:
 
-- **Elimination** (replaces `INTERMEDIATE`, `VARIABLES`, the splinters). The Omega test
+- **Elimination** (replaces `INTERMEDIATE`, `VARIABLES`; the splinters stay, one level deep). The Omega test
   eliminates, at each step, the variable that leaves the fewest rows, exact eliminations
   first, among those that leave no more rows than the problem was given. Each step removes
   a variable and the rows never pass the input's count, so the work is polynomial in the
   input. An inexact elimination decides the problem when the real shadow, tested once at the
-  first such step, is empty (no point), or the dark shadow has a point (that point); between
-  the two shadows, and when no variable qualifies, the question is refused. The splinters, which solved one problem
-  per value in a gap, are gone.
+  first such step, is empty (no point), or the dark shadow has a point (that point). Between
+  the two shadows, the splinters of each dark elimination are searched one level deep, those
+  of the side with fewer bounds, one problem per value in a gap (`presburger::search`); a
+  splinter that itself leaves a gray shadow is not searched, and the question is refused
+  (`Refusal::Shadows`; the Complexity tradeoff comment there, COMPLEXITY.md S18). When no
+  variable qualifies, the question is refused (`Refusal::Growth`).
 - **Disjunctions** (replaces `KEPT_CONJUNCTIONS`, `ATOMS`). The formula is put in negation
   normal form; its top-level constraints are the base. A disjunct whose own top-level
   constraints meet the base nowhere is removed, and a disjunction with one disjunct left
@@ -286,9 +289,11 @@ Termination: every loop removes a disjunct, a variable, or halves a step, and no
 is undone, so each ends; the reduction rounds of the scope are meets (replacement 3).
 
 A refused question leaves the written constraint in place, which is sound; the answer names
-its cause (`Refusal`, DESIGN.md sec:diagnostics). What is refused: a problem between the
-shadows (Pugh's example, `l01_38_presburger::controls`), a system every elimination of which
-would grow it, and a disjunction where greedy search and one level of lookahead both fail.
+its cause (`Refusal`, DESIGN.md sec:diagnostics). What is refused: a problem whose point
+could lie only in a splinter of a splinter (Pugh's example, which was refused here, is now
+decided: two-variable parts are decided exactly, `l01_38_presburger::controls`), a system
+every elimination of which would grow it, and a disjunction where greedy search and one
+level of lookahead both fail.
 
 | Candidate | Measured | Score | Reasoning |
 |---|---|---|---|
@@ -576,8 +581,12 @@ the nodes a walk over a diagram's paths visits (65536), and the splits of produc
 emptiness query (4096). Past each, `is_empty` answered `false`, "may have a value": sound,
 but a subtype query on a union of 13 differences of tuple types was not shown to hold.
 
-Now no count stops anything, and `is_empty` is exact apart from the union of negated
-morphism types (`empty.rs`, unchanged):
+Now no count stops anything. `is_empty` is sound and not complete: it never calls an
+inhabited type empty, but a tuple or morphism part that only a split of the box in two or
+more components at once proves empty counts as inhabited, so a subtyping check that needs it
+fails and its error names the types (the Complexity tradeoff comment in `empty.rs`;
+`l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key`, four pigeons in three
+holes). The diagrams are built and walked as follows:
 
 - A union or intersection keeps its diagram when the diagram has no more nodes than its
   two operands together, and otherwise keeps the expression (`Part::Expr`), built in
@@ -594,8 +603,9 @@ morphism types (`empty.rs`, unchanged):
 - The products of a tuple clause are split with no cap.
 - A type's display lists every clause.
 
-Emptiness of Boolean combinations of tuple types is coNP-hard, so the time of an exact
-answer can still be exponential in the tuple types written. The memory is one path and one
+Emptiness of Boolean combinations of tuple types is coNP-hard, which is why the check above
+is not complete; a complete one (a split in every component, or a SAT solver) would take
+time exponential in the tuple types written. The memory is one path and one
 split at a time. Running out of time or memory is a failed build, never a different
 answer. A diagram of `O(C)` nodes, such as the parity of `C` tuple types, has `2^(C-1)`
 paths, so its display can be exponential in what was written; showing the diagram's nodes
@@ -603,7 +613,7 @@ with shared subdiagrams named would bound it by the nodes, and is not built.
 
 | Candidate | Measured | Score | Reasoning |
 |---|---|---|---|
-| Diagrams no larger than their operands, exact paths with shared-subexpression expansion and pruning by the positive atoms | `the_parts_scale`: `b <: b \| a` 4 µs at every `C` from 4 to 14 (was 87 ms at 14, ×4 per +2 without the shared expansion); `!b & a` on tuples 1.7 ms at 14 (was 181 ms without pruning); 3000 random parts with shared operands against evaluation of all 64 assignments (`the_paths_of_a_part_are_its_assignments`, which fails if the shared expansion pairs a cofactor with the wrong side); `deep_combinations_are_decided_exactly`; `passing_over_disjoint_negated_types_scales` (no split cap; fails at ratio 1,540 against 192 when disjoint negated types are split on) | 9 | no constant; exact; exponential only where the problem is |
+| Diagrams no larger than their operands, exact paths with shared-subexpression expansion and pruning by the positive atoms | `the_parts_scale`: `b <: b \| a` 4 µs at every `C` from 4 to 14 (was 87 ms at 14, ×4 per +2 without the shared expansion); `!b & a` on tuples 1.7 ms at 14 (was 181 ms without pruning); 3000 random parts with shared operands against evaluation of all 64 assignments (`the_paths_of_a_part_are_its_assignments`, which fails if the shared expansion pairs a cofactor with the wrong side); `deep_combinations_are_decided_exactly`; `passing_over_disjoint_negated_types_scales` (no split cap; fails at ratio 1,540 against 192 when disjoint negated types are split on) | 9 | no constant; sound, not complete (a part proved empty only by a split in two or more components counts as inhabited) |
 | The same without the shared expansion and pruning | measured above | 5 | exact, but `b <: b \| a` is `2^C` |
 | Decide exactly where tuple parts share no component, keep operands otherwise | not built | 4 | a structural rule, but answers "may have a value" for the rest, as the budget did |
 | Keep the budgets | the old behavior | 0 | constants whose crossing changes the answer |

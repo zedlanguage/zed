@@ -379,7 +379,7 @@ impl Bounds {
     /// Complexity tradeoff: the dropped bound is the `i64` end rule of `interval::End`; it
     /// switches behavior at a magnitude, so it violates the no-thresholds rule; to be replaced.
     /// The reasons, test and complete solution are at `End::from_i128`. Test:
-    /// `l01_24_refinement_lattices::bounds::an_offset_moves_every_member`. No COMPLEXITY.md row.
+    /// `l01_24_refinement_lattices::bounds::an_offset_moves_every_member`. COMPLEXITY.md row C10.
     pub fn offset(&self, c: i64) -> Bounds {
         let shift = |s: &BTreeSet<Bound>, end: fn(i128) -> End| {
             s.iter()
@@ -487,8 +487,8 @@ impl Lattice for Bounds {
     /// per side). Why: symbolic bounds form infinite ascending chains (`n`, `n + 1`, …), so
     /// keeping new ones would not end. Trigger: a bound of `next` that `self` lacks. Tests:
     /// `l01_24_refinement_lattices::bounds::widening_chains_are_finite`,
-    /// `l01_24_refinement_lattices::loops::a_counting_loop_keeps_its_symbolic_bound`. No
-    /// COMPLEXITY.md row. A complete solution would find loop invariants over the symbols
+    /// `l01_24_refinement_lattices::loops::a_counting_loop_keeps_its_symbolic_bound`.
+    /// COMPLEXITY.md row C12. A complete solution would find loop invariants over the symbols
     /// (polyhedra or acceleration of affine loops), at exponential cost in the symbols.
     fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
         if *self == Bounds::bottom() {
@@ -512,7 +512,7 @@ impl Lattice for Bounds {
     /// `l01_24_refinement_lattices::loops::a_counting_loop_keeps_its_symbolic_bound`,
     /// `l01_24_refinement_lattices::loops::a_loop_counting_down_keeps_its_symbolic_bound`
     /// (both reach their symbolic bound through this narrowing after the widening drops it).
-    /// No COMPLEXITY.md row. A complete solution would find the loop's invariants over the
+    /// COMPLEXITY.md row C13. A complete solution would find the loop's invariants over the
     /// symbols (polyhedra or acceleration of affine loops), at exponential cost in the symbols.
     fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
         let side =
@@ -534,7 +534,7 @@ impl Lattice for Bounds {
     /// this check costs time linear in the bounds. Trigger: bounds of `other` whose terms no
     /// bound of `self` has. Test:
     /// `l01_24_refinement_lattices::bounds::the_order_is_sound_and_holds_of_meets_and_joins`.
-    /// No COMPLEXITY.md row. A complete solution would ask `presburger::entails` under the
+    /// COMPLEXITY.md row C11. A complete solution would ask `presburger::entails` under the
     /// premises on the symbols, with its refusals.
     fn leq(&self, other: &Self) -> bool {
         let implied = |side: Side| {

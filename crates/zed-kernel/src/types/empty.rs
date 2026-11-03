@@ -32,7 +32,7 @@
 //! answers "none found", never "empty"). Test:
 //! `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key` (four pigeons in three
 //! holes, empty and not proved so). COMPLEXITY.md rows K1 and K2, and the Kept row
-//! "emptiness and subtyping of tuple and morphism parts", which still calls the check exact.
+//! "emptiness and subtyping of tuple and morphism parts".
 //! A complete solution would split the box in every component (a DPLL search over the tuple
 //! types, exponential in them), or hand the part to a SAT solver.
 //!

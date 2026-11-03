@@ -617,8 +617,8 @@ impl Type {
     /// nothing about a type with more values. Why: a tuple type's values are the product of
     /// its components', exponential in the components. Trigger: more than `cap` values, or a
     /// path with more than `cap` rows. Test:
-    /// `l01_23_subtyping::scaling::listing_values_past_the_cap_stops_early`. No COMPLEXITY.md
-    /// row. The cap is a size given by the caller, so this switches behavior at a size and
+    /// `l01_23_subtyping::scaling::listing_values_past_the_cap_stops_early`. COMPLEXITY.md
+    /// row C21. The cap is a size given by the caller, so this switches behavior at a size and
     /// violates the no-thresholds rule; to be replaced. Only tests call it; [`Type::listed`]
     /// is the structural rule. A complete solution is that rule (list when the list is no
     /// longer than the type), or a lazy enumeration of the values.
@@ -638,7 +638,7 @@ impl Type {
     /// list; the measure is the written type, not a constant. Tests:
     /// `l01_23_subtyping::scaling::listing_a_diagram_with_exponentially_many_paths_scales`,
     /// `l01_28_staging::trick::a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept`.
-    /// No COMPLEXITY.md row. A complete solution would list lazily, paying only for the values
+    /// COMPLEXITY.md row C22. A complete solution would list lazily, paying only for the values
     /// a caller reads.
     pub fn listed(&self) -> Option<Vec<Value>> {
         self.list(usize::MAX, false)

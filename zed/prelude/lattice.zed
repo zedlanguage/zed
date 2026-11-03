@@ -135,8 +135,8 @@ intervalWiden(positional old, positional new, positional marks) =
 // landmark beyond it on its side. Tests:
 // m0_05_widening_and_iteration::widening::a_narrowing_keeps_old_ends_and_takes_a_bound_for_an_infinite_one,
 // m0_05_widening_and_iteration::widening::interval_narrowing_chains_stay_on_the_first_ends_and_the_landmarks
-// (they test the Rust copy until this unit runs). No COMPLEXITY.md row of its
-// own (S13 measures the widening phase). A complete solution would compute the
+// (they test the Rust copy until this unit runs). COMPLEXITY.md row C8
+// (S13 measures the widening phase). A complete solution would compute the
 // greatest fixpoint below the widened one, which needs the loop's recurrence
 // solved exactly (acceleration): possible for affine loops only, undecidable in
 // general.
@@ -212,7 +212,7 @@ congruenceLattice = Lattice(
 // narrowing from a class of modulus other than 1 to a class of a larger
 // modulus. Test:
 // m0_05_widening_and_iteration::widening::a_congruence_narrows_at_most_three_times.
-// No COMPLEXITY.md row. The limit of the chain is not computable in general; a
+// COMPLEXITY.md row C9. The limit of the chain is not computable in general; a
 // closer rule would accept a refinement whose modulus is among the program's
 // literals (a landmark rule, as the interval narrowing has), which keeps each
 // chain finite.
