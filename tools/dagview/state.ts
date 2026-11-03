@@ -208,9 +208,13 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     if (!planned.has(id) && !bookkeeping(id)) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
   }
   // Edges come from the overrides and from ledger lines, so an agent adds them by appending.
+  // An override's needs replace the needs of the item's own ledger lines, so a wrong one can be corrected.
+  const corrected = (id: string) => Array.isArray(inp.overrides[id]?.needs);
   const edges: [string, { needs?: string[]; feeds?: string[] }][] = [
     ...Object.entries(inp.overrides),
-    ...[...ledger].flatMap(([id, es]) => es.map((e): [string, LedgerEntry] => [id, e])),
+    ...[...ledger].flatMap(([id, es]) =>
+      es.map((e): [string, LedgerEntry] => [id, corrected(id) ? { ...e, needs: undefined } : e]),
+    ),
   ];
   const own = new Map<string, string[]>();
   const fed = new Map<string, string[]>();
@@ -320,20 +324,26 @@ export function buildNodes(inp: Inputs): ViewNode[] {
 
 // Edges to draw when only direct dependencies are wanted: a need that another
 // need already implies is left out. Ancestors are built once per node, in
-// topological order, so each node is visited once.
+// topological order, so each node is visited once. A need back into a node
+// still on the stack closes a cycle and is not followed.
 export function directNeeds(nodes: { id: string; needs: string[] }[]): Map<string, string[]> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const ancestors = new Map<string, Set<string>>();
+  const onStack = new Set<string>();
   const pending: { id: string; next: number }[] = [];
   for (const root of nodes) {
     if (ancestors.has(root.id)) continue;
     pending.push({ id: root.id, next: 0 });
+    onStack.add(root.id);
     while (pending.length > 0) {
       const top = pending[pending.length - 1];
       const needs = (byId.get(top.id)?.needs ?? []).filter((n) => byId.has(n));
       if (top.next < needs.length) {
         const need = needs[top.next++];
-        if (!ancestors.has(need)) pending.push({ id: need, next: 0 });
+        if (!ancestors.has(need) && !onStack.has(need)) {
+          pending.push({ id: need, next: 0 });
+          onStack.add(need);
+        }
         continue;
       }
       const all = new Set<string>();
@@ -342,6 +352,7 @@ export function directNeeds(nodes: { id: string; needs: string[] }[]): Map<strin
         for (const a of ancestors.get(need) ?? []) all.add(a);
       }
       ancestors.set(top.id, all);
+      onStack.delete(top.id);
       pending.pop();
     }
   }

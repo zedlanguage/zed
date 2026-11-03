@@ -158,6 +158,16 @@ test("directNeeds on a shared chain visits each node once", () => {
   assert.deepEqual(directNeeds(nodes).get("n2999"), ["n2998"]);
 });
 
+test("directNeeds ends on a cycle of needs", () => {
+  const d = directNeeds([
+    { id: "a", needs: ["b"] },
+    { id: "b", needs: ["a"] },
+    { id: "c", needs: ["a", "b"] },
+  ]);
+  assert.deepEqual(d.get("a"), ["b"]);
+  assert.deepEqual(d.get("b"), ["a"]);
+});
+
 test("override needs and feeds connect an added item", () => {
   const inp = inputs("2026-11-02 10:00:00 | X:impl#1 | start\n", "");
   inp.overrides = { X: { needs: ["A"], feeds: ["C"] } };
@@ -165,6 +175,14 @@ test("override needs and feeds connect an added item", () => {
   assert.deepEqual(nodes.get("X")!.needs, ["A"]);
   assert.deepEqual(nodes.get("C")!.needs, ["B", "A", "X"]);
   assert.equal(nodes.get("C")!.ready, false);
+});
+
+test("override needs replace the needs of the item's own ledger lines, not its feeds", () => {
+  const inp = inputs("", '{"id":"X","state":"open","needs":["A","C"],"feeds":["B"]}\n');
+  inp.overrides = { X: { needs: ["A"] } };
+  const nodes = by(buildNodes(inp));
+  assert.deepEqual(nodes.get("X")!.needs, ["A"]);
+  assert.ok(nodes.get("B")!.needs.includes("X"));
 });
 
 test("a label with no attempt is a line of its item, and bookkeeping draws no box", () => {
