@@ -246,8 +246,9 @@ fn random_tests_agree_with_the_interpreter() {
     // `min` and `if`, is [-4..=5] where the points take [0..=5]. A question it asks of a disjunct
     // is refused, so the bound below stays where no question showed it can move. The linear
     // program before design R decided that question; this count measures that strength, not
-    // correctness, which the check above holds for every projection.
-    assert_eq!(wider, 1, "projections wider than the hull of their values");
+    // correctness, which the check above holds for every projection. Since HULL3 (XT3 B4), the
+    // only change, that projection is [0..=5]: every projection is the hull of its values.
+    assert_eq!(wider, 0, "projections wider than the hull of their values");
     // Both answers occur, so neither check passes by never being asked.
     assert!(models > 10 && models < 55, "{models} of 60 satisfiable");
     assert!(

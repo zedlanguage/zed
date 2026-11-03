@@ -14,6 +14,7 @@ mod checker;
 mod controls;
 mod deep;
 mod entailment;
+mod hull3;
 mod omega;
 mod oracle;
 mod preimage;

@@ -462,16 +462,14 @@ fn three_rows(m: usize) -> Formula {
 
 #[test]
 fn three_variables_in_many_rows_scale() {
-    // The rows hold at (3, -2, 5), and design R refuses them: no elimination keeps them, and
-    // none of the five points of the box of their bounds meets every row (option A, STATUS.md,
-    // L1.38).
-    // The refusal costs time linear in the rows.
-    decides(
-        "three variables in many rows",
-        64,
-        Err(Refusal::Growth),
-        three_rows,
-    );
+    // The rows hold at (3, -2, 5). No elimination keeps them from growing and none of the
+    // five points of the box meets every row, but `x2` has a unit coefficient in every row:
+    // the `hull3` stage replaces its rows by the O(m) pairs of the edges of the polyhedron
+    // and `twovar` decides the rest, in O(m log m) (XT3 B4).
+    decides("three variables in many rows", 64, Ok(true), three_rows);
+    let f = three_rows(64);
+    let m = satisfiable(&f).expect("answered").expect("a point");
+    assert!(f.holds(&m), "{m:?}");
 }
 
 /// Three variables in `[-10, 10]` and `m` rows `c·x + k >= 0` with coefficients up to a
@@ -500,4 +498,16 @@ fn a_box_point_held_by_many_rows_scales() {
         Ok(true),
         rows_held_in_a_box,
     );
+}
+
+#[test]
+fn twice_a_variable_odd_has_no_point() {
+    // 2·x2 = 2·x0 + 1 has a real point for every x0 in -5..5 and no integer one. `x2` has
+    // coefficient 2 on both sides, no unit side, so the `hull3` stage, whose projection is
+    // the real one, does not take it (XT3 B4, the unit condition).
+    let mut r = vec![ge(&[(2, 2), (0, -2)], -1), ge(&[(2, -2), (0, 2)], 1)];
+    r.extend(within(0, -5, 5));
+    r.extend(within(1, -5, 5));
+    r.push(ge(&[(0, 1), (1, 3), (2, -1)], 20));
+    answers(&Formula::and(r), Ok(false));
 }
