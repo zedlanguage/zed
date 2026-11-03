@@ -197,6 +197,9 @@ fn preimage_of(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
 /// read without the transfer around it (and without [`Tx::fits`], which turns the summary off
 /// for a term whose ends may pass `i64`), or `None` when the summary of `term` or its
 /// inversion is given up: for the tests that check where the summary exists and what it says.
+/// Meant for domains with finite ends strictly inside `i64`: an unbounded domain is read with an
+/// end of `i64` standing for its infinity, and without [`Tx::fits`] that end may be read as an
+/// input.
 #[doc(hidden)]
 pub fn summary_preimage(term: &Term, inputs: &Domains, z: &IntervalSet) -> Option<Domains> {
     on_stack(|| {
