@@ -49,6 +49,10 @@ in docs/layout.md.
 - Done: **L1.16**, elaboration of the L1 surface to kernel terms (`zedc::elab`).
 - Done: **L1.17**, value representation: unbounded integers, rationals, the natural order
   across number kinds, IEEE `==`, atom payloads by name (`zed_kernel::num`, `Value`).
+- Done: **L1.17a**, the memory check on the remaining number builds: ordering or rounding
+  two numbers that agree to within their width, and printing a number inside a tuple, list or
+  family, ask the system for memory first and stop the run with an error naming the operation
+  and the width (`num::Watch`, `Rat::try_cmp`, `words::room_to_print`; 809fbe9e..bd36e1b8).
 - Done: **L1.18**, the interpreter's scalar tier: the L1 prelude words (`zedc::interp`,
   `zed_kernel::words`), the `#errs` merge, float printing with the exact round trip.
 - Done: **L1.19**, whole-file ports (`zedc::run`, `zedc run` and `zedc replay`): `Lines` and
@@ -953,7 +957,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CANON-stable | merge attempt 1 | 2026-11-03 09:30 | lock released |
 | CAP-pow32 | merge attempt 1 | 2026-11-03 08:53 | lock released |
 | F44-memo | verify attempt 2 | 2026-11-03 07:14 | merged: zed-impl main f6dd8e8 (5e32f5d, 5c39bbe, c4b9a0b, 456873c, f6dd8e8 STATUS/plan_dag), ff from 49e387c; not pushed; worktree and branch removed; lock rele |
-| L1.17a | merge attempt 1 | 2026-11-03 07:14 | start; merge lock held by T2-types, waiting |
 | LIN-probe | merge attempt 1 | 2026-11-03 07:30 | lock released |
 | LIN-probe-refute | impl attempt 1 | 2026-11-03 11:15 | learn() + bounds propagation over a breadth-first tree of the parts: guards(8k,3k/4) 11.0x bytes at k=8,16,32 (old 31.0x,41.7x,50.8x); one learn, one settle tes |
 | LIVE3 | merge attempt 1 | 2026-11-03 09:30 | lock released |
@@ -972,8 +975,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UNITANNOT-L7 | merge attempt 1 | 2026-11-03 07:14 | lock released |
 | UTVPI-NEAR | repair attempt 3 | 2026-11-03 06:34 | done: main 7e296bf; known l01_25 chain_cross pair failing (CATCHUP-cross); UTVPI-union open |
 
-Merged into local main and not yet pushed (2 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (9 commits); the push follows one full test run on the merged tree:
 
+- bd36e1b8 L1.17a repair: order of two kinds borrows wide numbers; casts share digits; - and abs ask first; refusals name their test (match, fix, family leaves)
+- 0980d134 L1.17a repair: COMPLEXITY K30 repair 4, STATUS row, ZED_PORT_GAPS rows
+- 3073c164 L1.17a: String asks for its whole text; == asks before copying to align; plain rationals order with a checked product
+- 6aeeae30 L1.17a: bound 2^e exactly with no squaring; test the plan example; COMPLEXITY, STATUS and port-gap notes
+- 809fbe9e L1.17a: ask for memory before ordering close numbers, rounding near a boundary, and printing composites
 - f2c93318 STATUS: EACH-collect merged, unpushed (tip d9baae5a)
 - d9baae5a EACH-collect: a held finite set is kept by membership, not by listing the type's values
 
