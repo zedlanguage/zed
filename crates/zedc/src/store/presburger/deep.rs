@@ -8,7 +8,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::slice;
 
-use super::{Con, Formula};
+use super::{Con, Formula, Model};
 
 impl Con {
     /// The constraint, moved out of `c`, with `c` left the constraint `0 >= 0` of no atoms.
@@ -79,6 +79,43 @@ impl Formula {
             }
         }
         results.pop().expect("the root's result")
+    }
+
+    /// [`Formula::holds`]: a conjunction is read up to its first part that fails and a
+    /// disjunction up to its first part that holds, so a part decided early is not walked
+    /// through.
+    pub(super) fn holds_as(&self, vs: &Model) -> bool {
+        if let Formula::Con(c) = self {
+            return c.holds(vs);
+        }
+        // The nodes being read, each with the parts left, and the value of the part just read.
+        let mut stack = vec![(self, self.kids().iter())];
+        let mut value: Option<bool> = None;
+        while let Some((node, left)) = stack.last_mut() {
+            if let Some(v) = value.take() {
+                let decided = match node {
+                    Formula::And(_) => !v,
+                    Formula::Or(_) => v,
+                    Formula::Not(_) => true,
+                    Formula::Con(_) => unreachable!("a constraint has no parts"),
+                };
+                if decided {
+                    value = Some(if matches!(node, Formula::Not(_)) { !v } else { v });
+                    stack.pop();
+                    continue;
+                }
+            }
+            match left.next() {
+                Some(Formula::Con(c)) => value = Some(c.holds(vs)),
+                Some(g) => stack.push((g, g.kids().iter())),
+                // Every part read and none decided: a conjunction holds, a disjunction fails.
+                None => {
+                    value = Some(matches!(node, Formula::And(_)));
+                    stack.pop();
+                }
+            }
+        }
+        value.expect("the root's value")
     }
 
     /// Calls `f` on each constraint, in order.
@@ -174,6 +211,10 @@ impl Ord for Formula {
     /// The order the derived one would give: the variants in the order they are declared,
     /// then the constraints, or the parts in order with a prefix first.
     fn cmp(&self, other: &Formula) -> Ordering {
+        // A formula compared with itself is equal at once (COMPLEXITY.md S31).
+        if std::ptr::eq(self, other) {
+            return Ordering::Equal;
+        }
         match self.cmp_node(other) {
             Ordering::Equal => {}
             o => return o,
@@ -210,6 +251,10 @@ impl PartialOrd for Formula {
 
 impl PartialEq for Formula {
     fn eq(&self, other: &Formula) -> bool {
+        // A formula compared with itself is equal at once (COMPLEXITY.md S31).
+        if std::ptr::eq(self, other) {
+            return true;
+        }
         let mut stack = Vec::new();
         let (mut a, mut b) = (self, other);
         loop {
