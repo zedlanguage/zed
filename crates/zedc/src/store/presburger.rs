@@ -772,6 +772,28 @@ fn local_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> Optio
     Some(m)
 }
 
+/// Whether `extra` is shown to meet the constraints taken so far nowhere by a part of them:
+/// `extra`, the bounds of its atoms, and the constraints taken so far whose atoms are all
+/// atoms of `extra`. When these have no point, neither has the whole; `false` shows nothing.
+/// The cost is that of [`local_repair`]'s constraints, not of the groups `extra` touches.
+fn local_refute(acc: &[Con], near: &Near, extra: &[Con]) -> bool {
+    let seed: BTreeSet<&Atom> = extra.iter().flat_map(|c| c.lin.terms.keys()).collect();
+    let mut ids = BTreeSet::new();
+    let mut bounds = Vec::new();
+    for a in &seed {
+        if let Some(v) = near.by_atom.get(*a) {
+            let within = |i: &usize| acc[*i].lin.terms.keys().all(|b| seed.contains(b));
+            ids.extend(v.iter().copied().filter(within));
+        }
+        near.bounds(a, &mut bounds);
+    }
+    let local: Vec<&Con> = (extra.iter())
+        .chain(&bounds)
+        .chain(ids.into_iter().map(|i| &acc[i]))
+        .collect();
+    matches!(solve(&local, false), Ok(None))
+}
+
 thread_local! {
     /// The parts [`Parts::witness`] has tested on this thread since [`parts_tested`] was last
     /// called.
@@ -811,18 +833,6 @@ fn pick(p: &Parts, deep: bool) -> Result<Model, Refusal> {
     let mut model = solve(&p.cons, true)?.ok_or(Refusal::Disjuncts)?;
     let mut acc = Linked::default();
     let mut near = Near::default();
-    // Adds the constraints of a disjunct taken, a bound taken again kept once ([`Linked::meet`]).
-    // A bound on one atom that [`Linked::meet`] puts in the place of a weaker one still tightens
-    // that atom's bounds in `near`; a constraint of more atoms put in place keeps its atoms, so
-    // its entries in `near` stand.
-    fn take(cons: &[Con], acc: &mut Linked, near: &mut Near) {
-        for c in cons {
-            let i = acc.cons.len();
-            if acc.meet(c.clone()) || c.lin.terms.len() == 1 {
-                near.add(i, c);
-            }
-        }
-    }
     take(&p.cons, &mut acc, &mut near);
     // The disjunctions left, read in place: only the disjuncts taken are entered.
     let mut queue: Vec<&[Rc<Parts>]> = p.ors.iter().map(Vec::as_slice).collect();
@@ -903,7 +913,20 @@ fn pick(p: &Parts, deep: bool) -> Result<Model, Refusal> {
     Ok(model)
 }
 
-/// The constraints taken so far by [`pick`], indexed for [`local_repair`]: each constraint of
+/// Adds the constraints of a disjunct taken, a bound taken again kept once ([`Linked::meet`]).
+/// A bound on one atom that [`Linked::meet`] puts in the place of a weaker one still tightens
+/// that atom's bounds in `near`; a constraint of more atoms put in place keeps its atoms, so
+/// its entries in `near` stand.
+fn take(cons: &[Con], acc: &mut Linked, near: &mut Near) {
+    for c in cons {
+        let i = acc.cons.len();
+        if acc.meet(c.clone()) || c.lin.terms.len() == 1 {
+            near.add(i, c);
+        }
+    }
+}
+
+/// The constraints taken so far by [`pick`] or [`settle`], indexed for [`local_repair`]: each constraint of
 /// two or more atoms under each of its atoms, and the constraints of one atom as that atom's
 /// bounds. A repair then costs the constraints that link its atoms to others and two bounds
 /// for each atom, not every constraint an atom has had alone: on a chain of `k` guards
@@ -988,15 +1011,6 @@ impl Linked {
     fn of(cons: Vec<Con>) -> Linked {
         let mut l = Linked::default();
         cons.into_iter().for_each(|c| l.add(c));
-        l
-    }
-
-    /// [`Linked::of`] with each constraint added by [`Linked::meet`].
-    fn reduced(cons: Vec<Con>) -> Linked {
-        let mut l = Linked::default();
-        cons.into_iter().for_each(|c| {
-            l.meet(c);
-        });
         l
     }
 
@@ -1471,14 +1485,30 @@ fn propagate(f: &Formula) -> Result<Option<Parts>, Refusal> {
 }
 
 /// [`propagate`] from parts.
+///
+/// A disjunct is kept when its constraints hold at a point of the base or when its own atoms
+/// re-solved with the base's other atoms held at that point have a point ([`local_repair`]);
+/// it is removed when its constraints with its atoms' bounds and the base's constraints over
+/// its atoms alone have none ([`local_refute`]); only when all of these fail are the base
+/// groups it touches solved with it. Each answer is exact. The base grows within a round as
+/// disjunctions left with one disjunct join it, and on a nest those groups are one chain as
+/// long as the nest: solving it for each disjunct cost the disjuncts times the chain (chain
+/// family `cross_live` at `k = 256`: 1022 solves of 261 constraints in one call). The local
+/// tests cost the constraints that link the disjunct's atoms to others and their bounds, so
+/// the point is kept a point of the base as it grows, repaired the same way when a disjunct
+/// that joins it does not hold there (COMPLEXITY S22, tests
+/// `l01_25_preimage_catalog::s22::chain_cross_live_scales` and
+/// `chain_cross_within_its_width_scales`).
 fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
     // The base, with a bound written again (at each level of a nest, say) kept once
     // ([`Linked::meet`]), so that the groups a disjunct is tested with do not grow with the
-    // depth.
-    let mut base = Linked::reduced(std::mem::take(&mut p.cons));
+    // depth, and indexed for [`local_repair`].
+    let mut base = Linked::default();
+    let mut near = Near::default();
+    take(&std::mem::take(&mut p.cons), &mut base, &mut near);
     loop {
-        // A point of the base serves only to keep, unasked, the disjuncts whose own constraints
-        // hold at it, so none is built when no disjunction is left.
+        // A point of the base serves only to keep, unasked, the disjuncts that meet the base,
+        // so none is built when no disjunction is left.
         let Some(model) = solve(&base.cons, !p.ors.is_empty())? else {
             return Ok(None);
         };
@@ -1486,6 +1516,9 @@ fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
             p.cons = base.cons;
             return Ok(Some(p));
         }
+        // A point of the base as it is now, or `None` once the solver refuses to find one, after
+        // which each disjunct is solved with its groups.
+        let mut point = Some(model);
         let mut changed = false;
         // The disjunctions to test, with those of a disjunct added to the base appended, so
         // that a chain of disjunctions each left with one disjunct is read in one round, not
@@ -1502,8 +1535,14 @@ fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                     // The question below is of the disjunct's own constraints, so the point
                     // answers it when they hold there, whatever holds below them; reading
                     // only them keeps a nest from being read once for each level above it.
-                    if d.cons.iter().all(|c| c.holds(&model)) {
+                    if let Some(pt) = &point
+                        && (d.cons.iter().all(|c| c.holds(pt))
+                            || local_repair(&base.cons, &near, pt, &d.cons).is_some())
+                    {
                         return true;
+                    }
+                    if local_refute(&base.cons, &near, &d.cons) {
+                        return false;
                     }
                     let mut cs = base.around(&d.cons);
                     cs.extend(d.cons.iter());
@@ -1515,9 +1554,23 @@ fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                 0 => return Ok(None),
                 1 => {
                     let d = live.pop().expect("one");
-                    d.cons.iter().for_each(|c| {
-                        base.meet(c.clone());
-                    });
+                    let repaired = match &point {
+                        Some(pt) if d.cons.iter().all(|c| c.holds(pt)) => None,
+                        Some(pt) => Some(local_repair(&base.cons, &near, pt, &d.cons)),
+                        None => None,
+                    };
+                    take(&d.cons, &mut base, &mut near);
+                    match (repaired, &mut point) {
+                        (Some(Some(m)), Some(pt)) => pt.extend(m),
+                        // No point of the base near the old one: one of the whole base, or
+                        // none, in which case the formula has none either.
+                        (Some(None), _) => match solve(&base.cons, true) {
+                            Ok(Some(m)) => point = Some(m),
+                            Ok(None) => return Ok(None),
+                            Err(_) => point = None,
+                        },
+                        _ => {}
+                    }
                     todo.extend(d.ors.iter().cloned());
                 }
                 _ => p.ors.push(live),
