@@ -3482,15 +3482,18 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
         return None;
     }
     // The box is read first: `ends` walks the term as a tree, so it costs the term unshared
-    // (ledger ENDS-dag), and a box that cannot be listed needs no answer from it.
-    if !stage::ends(term) {
-        return None;
-    }
+    // (ledger ENDS-dag), and a box that cannot be listed needs no answer from it. An empty box
+    // holds no point to run, so it is exact whether or not the term ends; the transfer leaves
+    // one inexact when it rounded, as `3 * t - 1` repeated 37 times on `i <= -21` does, and
+    // asking `ends` first cost `2^37` steps there.
     if axes.iter().any(|(_, vs)| vs.is_empty()) {
         return Some(Whole {
             dom: dom.clone(),
             exact: true,
         });
+    }
+    if !stage::ends(term) {
+        return None;
     }
     on_stack(|| enumerate_on(term, &axes, demand))
 }

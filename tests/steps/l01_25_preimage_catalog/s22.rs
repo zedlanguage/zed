@@ -249,6 +249,16 @@ fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
             let arm = |_, t| prim(Prim::Sub, prim(Prim::Mul, t, int(3)), int(1));
             (ge0(chain(k, var("i"), ge_i, arm)), narrow(), yes)
         }
+        "t3_gaps" | "t3_gaps_no" | "t3_gaps_five" | "t3_gaps_five_no" => {
+            let arm = |_, t| prim(Prim::Sub, prim(Prim::Mul, t, int(3)), int(1));
+            let mut ps = vec![(-24, -21), (-15, -4)];
+            if name.contains("five") {
+                ps.push((5, 5));
+            }
+            let ds = over(&[("i", pieces(&ps))]);
+            let d = Demand::Bool(!name.ends_with("_no"));
+            (ge0(chain(k, var("i"), ge_i, arm)), ds, d)
+        }
         "min" => {
             let arm = |_, t| prim(Prim::Min, prim(Prim::Add, t, int(1)), int(100));
             (ge0(chain(k, var("i"), ge_i, arm)), narrow(), yes)
@@ -1079,4 +1089,65 @@ fn a_chain_on_two_inputs_below_its_domains_width_ends() {
         assert_eq!(p.domains["i"], IntervalSet::of(-50, 50));
         assert_eq!(p.domains["m"], IntervalSet::of(-40, 50));
     });
+}
+
+/// `3 * t - 1` in every else arm, over `i` in `[-24, -21]` and `[-15, -4]` (and `5` in the
+/// `five` cases), where every guard `i >= j` with `j >= 1` fails on the negative inputs, so
+/// `t_k = 3^k i - (3^k - 1) / 2`. At `i = -24` that leaves `i64` from `k = 37`, and the
+/// transfer rounds there. Its empty preimage of `t_k >= 0` was called inexact for the rounding,
+/// so the preimage went on to list the box, and asked `stage::ends`, which walks the shared
+/// term as a tree, before it saw that the box is empty: over 60 s at `k = 37`. An empty box is
+/// now read as exact before `ends` is asked; it is the one box here that is listed.
+#[test]
+fn a_chain_that_leaves_i64_keeps_its_exact_preimage() {
+    on_big_stack(|| {
+        let negative = pieces(&[(-24, -21), (-15, -4)]);
+        for k in [36, 37, 38, 40, 64, 256] {
+            for (name, want) in [
+                ("t3_gaps", IntervalSet::empty()),
+                ("t3_gaps_no", negative.clone()),
+                ("t3_gaps_five", IntervalSet::of(5, 5)),
+                ("t3_gaps_five_no", negative.clone()),
+            ] {
+                let (t, ds, d) = family(name, k);
+                let p = preimage(&t, &ds, &d);
+                assert_eq!(p.domains["i"], want, "{name} k={k}: {p:?}");
+                assert!(p.exact, "{name} k={k}: {p:?}");
+                assert_eq!(p.enumerated, k >= 37 && name == "t3_gaps", "{name} k={k}");
+                assert!(
+                    p.stops.is_empty() && p.relation.is_none() && p.refusal.is_none(),
+                    "{name} k={k}: {p:?}"
+                );
+                check(&t, &ds, &d, &p, (-30, 30));
+            }
+        }
+    });
+}
+
+/// The same chains where they stay in `i64`, compared with the transfer before, which from
+/// `k = 37` takes `2^k` steps on `t3_gaps`.
+#[test]
+fn chains_that_stay_in_i64_keep_their_preimages() {
+    on_big_stack(|| {
+        let mut diffs = Diffs::default();
+        for name in ["t3_gaps", "t3_gaps_no", "t3_gaps_five", "t3_gaps_five_no"] {
+            for k in (0..=36).step_by(4).chain([35, 36]) {
+                let (t, ds, d) = family(name, k);
+                diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
+            }
+        }
+        diffs.none(44, 0);
+    });
+}
+
+/// The chain that leaves `i64`, with no point meeting `t_k >= 0`.
+#[test]
+fn chain_t3_gaps_scales() {
+    scales("t3_gaps", 256);
+}
+
+/// The chain that leaves `i64`, with the negative inputs meeting `t_k < 0`.
+#[test]
+fn chain_t3_gaps_five_no_scales() {
+    scales("t3_gaps_five_no", 256);
 }
