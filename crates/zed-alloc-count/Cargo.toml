@@ -6,7 +6,11 @@ license-file.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# The workspace forbids `unsafe`; a global allocator is an unsafe trait, implemented once here.
+[dependencies]
+libc = "0.2.191"
+
+# The workspace forbids `unsafe`; a global allocator is an unsafe trait, implemented once here,
+# with the pthread_create that gives each thread the count of the thread that started it.
 [lints.rust]
 missing_docs = "warn"
 unsafe_code = "deny"

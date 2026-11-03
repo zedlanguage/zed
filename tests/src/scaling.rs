@@ -28,18 +28,16 @@
 //! Its ratio is held to the same limit. It sees what the instruction count misses: a copy is a
 //! few instructions per 32 bytes, so the old `resolve`, which copied a list of `k` overloads into
 //! each of `k` uses, took 10.2 times the instructions at 8,000 against 1,000 but 51.8 times the
-//! processor time. The count is kept per thread, so tests running beside a run do not change it;
-//! a thread the run starts adds its count to the run's when it ends, which [`on_a_thread`] and
-//! `deep::on_main_sized_stack` do and a bare `std::thread::spawn` inside the run does not. A test
+//! processor time. The count is of the run's thread and every thread it starts, however it starts
+//! them, and the threads those start, as the instruction count is; tests running beside a run
+//! have counts of their own and do not change it (zed-alloc-count gives each new thread the count
+//! of the thread that started it). A test
 //! whose bytes grow faster than its order for a reason recorded in COMPLEXITY.md uses
 //! [`check_instructions_only`], with a comment naming the item that fixes it. A larger run whose
 //! thread counts no bytes is refused, since its bytes cannot be compared, and a count lost to 0
 //! would otherwise pass unmeasured; a run that allocates nothing uses [`check_instructions_only`].
-//! The refusal cannot catch a run that starts a bare thread of its own: starting the thread
-//! allocates on the run's thread, so its count is not 0, though the started thread's bytes are
-//! lost.
 //!
-//! Each run is on a new thread of its own (`alone`, by [`on_a_thread`], so its bytes count), so
+//! Each run is on a new thread of its own (`alone`, by [`on_a_thread`]), so
 //! the memos a thread keeps start empty in every run: zed-kernel keeps its tables of diagram
 //! nodes and its emptiness results per thread. Run on one thread, every run after the first read
 //! the first's results: the union of 16 and 128 morphism differences
@@ -66,8 +64,8 @@ pub const TRIES: usize = 3;
 /// Runs `f` on a new thread and waits for it, so that every memo a thread keeps starts empty. The
 /// thread's stack is what is left of the caller's, less about 5 KiB of the thread's own, so a
 /// test that sets the stack of the thread it checks on, or sets none, sets it for its runs too.
-/// It returns the bytes the thread allocated, which it adds to this thread's count, as
-/// [`on_a_thread`] does. A panic in `f` goes on in the caller.
+/// It returns the bytes the thread and the threads it started allocated, which count in this
+/// thread's count too. A panic in `f` goes on in the caller.
 fn alone(f: &(impl Fn() + Sync)) -> u64 {
     let stack = stacker::remaining_stack().expect("the size of this thread's stack");
     counted_on_a_thread(stack, f).1
@@ -208,8 +206,8 @@ fn spin(n: u64) {
     }
 }
 
-/// Runs `f` on a thread of its own with a stack of `stack` bytes, and adds the bytes the thread
-/// allocates to this thread's count, so a run that measures it counts them.
+/// Runs `f` on a thread of its own with a stack of `stack` bytes. The bytes the thread allocates
+/// count in this thread's count, as those of every thread it starts do.
 pub fn on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> T {
     counted_on_a_thread(stack, f).0
 }
@@ -230,7 +228,6 @@ fn counted_on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (
         run.join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     });
-    zed_alloc_count::add(bytes);
     (out, bytes)
 }
 
@@ -313,17 +310,14 @@ fn compare_by(
     let mut seen = Vec::new();
     for _ in 0..meter.repeats().1 {
         let small = meter.least(|| _ = alone(&small));
-        // The most bytes a run of the larger size allocated on its own thread. A run that starts
-        // a bare thread allocates in starting it, so its count is not 0 and is not refused,
-        // though the started thread's bytes are lost (a known gap).
+        // The most bytes a run of the larger size allocated, on its thread and those it started.
         let large_bytes = std::cell::Cell::new(0);
         let large = meter.least(|| large_bytes.set(large_bytes.get().max(alone(&large))));
         if measures == Measures::Both && large_bytes.get() == 0 {
             panic!(
-                "{what}: the larger run allocated no bytes on its thread, so its bytes cannot be \
-                 compared. A run that allocates on a thread it starts adds that thread's bytes \
-                 by on_a_thread; a run that allocates nothing is checked by \
-                 check_instructions_only"
+                "{what}: the larger run allocated no bytes, on its thread or any thread it \
+                 started, so its bytes cannot be compared. A run that allocates nothing is \
+                 checked by check_instructions_only"
             );
         }
         let bytes = large.bytes as f64 / small.bytes as f64;
@@ -536,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bytes_of_a_thread_a_run_starts_count_when_it_adds_them() {
+    fn the_bytes_of_a_thread_a_run_starts_by_on_a_thread_count() {
         let on_a_thread = |n| on_a_thread(1 << 20, || square_of_bytes(n));
         assert!(fails(|| check("n² bytes on a thread", 1000, on_a_thread)));
         let cpu = &mut Meter::of_cpu_time();
@@ -553,8 +547,9 @@ mod tests {
     #[test]
     fn the_bytes_of_a_run_do_not_depend_on_tests_running_beside_it() {
         let stop = std::sync::atomic::AtomicBool::new(false);
-        let mut meter = Meter::new();
         std::thread::scope(|s| {
+            // Four threads beside the measured one, as tests running beside it are: none of them
+            // started by it.
             for _ in 0..4 {
                 s.spawn(|| {
                     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -562,9 +557,13 @@ mod tests {
                     }
                 });
             }
-            let bytes: Vec<u64> = (0..20)
-                .map(|_| meter.work(|| linear_bytes(1000)).bytes)
-                .collect();
+            let measured = s.spawn(|| {
+                let mut meter = Meter::new();
+                (0..20)
+                    .map(|_| meter.work(|| linear_bytes(1000)).bytes)
+                    .collect::<Vec<u64>>()
+            });
+            let bytes = measured.join().unwrap();
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
             // 1000 words in lists of 4, 8, ..., 1024 of them.
             assert_eq!(bytes, vec![8 * (2048 - 4); 20]);
@@ -585,16 +584,35 @@ mod tests {
         assert!(zed_alloc_count::allocated() - before >= 8 * (2048 - 4));
     }
 
-    /// Known gap: the refusal cannot catch a run that allocates only on a bare thread it starts
-    /// itself, since starting a thread allocates on the run's thread, so the run's count is not 0
-    /// though the bytes of the thread it started are lost.
     #[test]
     fn a_larger_run_that_allocates_no_bytes_on_its_thread_is_refused() {
         let message = message_of(|| check("linear work", 1000, |n| work(n, 1, 10)));
         assert!(
-            message.contains("allocated no bytes on its thread"),
+            message.contains("allocated no bytes, on its thread"),
             "{message}"
         );
+    }
+
+    /// A run that does its work on a thread it starts with a bare `std::thread::spawn`, or on a
+    /// thread that one starts, counts those threads' bytes; one that works on its own thread
+    /// counts the same as before.
+    #[test]
+    fn the_bytes_of_a_bare_thread_a_run_starts_count() {
+        // 1000 words in lists of 4, 8, ..., 1024 of them.
+        let list = 8 * (2048 - 4);
+        assert_eq!(alone(&|| linear_bytes(1000)), list);
+        let spawned = || std::thread::spawn(|| linear_bytes(1000)).join().unwrap();
+        let joined = alone(&spawned);
+        assert!(joined >= list, "{joined}");
+        let nested = alone(&|| std::thread::spawn(spawned).join().unwrap());
+        assert!(nested > joined, "{nested} {joined}");
+        let bare = |n| {
+            std::thread::spawn(move || square_of_bytes(n))
+                .join()
+                .unwrap()
+        };
+        let message = message_of(|| check("n² bytes on a bare thread", 1000, bare));
+        assert!(message.contains("times the bytes"), "{message}");
     }
 
     thread_local! {

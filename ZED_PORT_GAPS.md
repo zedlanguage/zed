@@ -1053,9 +1053,16 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `#[global_allocator]` and `unsafe impl GlobalAlloc` forwarding to `System` | `zed_alloc_count::Counting` | Foreign library | Test harness only: the Zed runtime's allocator counts the bytes itself, read through an `@ffi` binding |
-| `thread_local!` with a `const` `Cell<u64>`, added to through `&self` | `zed_alloc_count::BYTES`, `add`, `allocated` | Mutation | A count kept by the runtime per thread and read as a value |
+| `thread_local!` with a `const` `Cell<u64>`, added to through `&self` | `zed_alloc_count::OWN`, `allocated` (`BYTES` and `add` until SCALE-threads) | Mutation | A count kept by the runtime per thread and read as a value |
 | `#[expect(unsafe_code, reason = ...)]` and a crate lint table that denies `unsafe_code` instead of forbidding it | `zed-alloc-count` | Attributes | None needed: Zed has no lint attributes |
 | `std::thread::scope` with a stack size, returning the closure's value and its thread's count | `scaling::on_a_thread` | None | A task with its own stack, as in T2-eval |
+
+## Entries from SCALE-threads (`zed-alloc-count/src/lib.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `#[unsafe(no_mangle)] extern "C" fn pthread_create` in place of the C library's, found again by `libc::dlsym(RTLD_NEXT, ...)`, so a new thread gets the count of the thread that started it | `zed_alloc_count::pthread_create`, `create`, `start` | Foreign library | None needed: the Zed runtime starts its tasks itself and gives each its parent's count |
+| `Arc<Count>` chain of `AtomicU64` counts, one per thread, each holding its parent's, and a `thread_local!` raw pointer to this thread's | `zed_alloc_count::Count`, `COUNT`, `count` | Shared tables across pure calls (gap 2) | A count per task that adds to its parent's, kept by the runtime |
 
 ## Entries from R10-stack (`zed-rt/src/stack.rs`, `zed-native/src/lib.rs`)
 
