@@ -5,8 +5,9 @@
 //!
 //! Each of these overflowed the 2 MiB stack at depth 100,000 when dropping, comparing or
 //! printing was a recursion (COMPLEXITY.md K39). Deciding whether a deep type is empty is still
-//! a recursion, and is not tested here.
+//! a recursion, and is not tested here (ledger item T2-types-rest).
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use zed_kernel::types::Type;
@@ -188,21 +189,97 @@ fn random(s: &mut u64, d: u32, print: bool) -> Type {
     t
 }
 
+/// Checks that `run` scales as n log n at sizes [`N`] and 8 times it. Each run takes an input of
+/// its own, `make(n, i)` for the `i`-th run at size `n`, all built before any run is timed, and
+/// what it returns is kept until the check ends, so its release is not timed either.
+fn scales<I, O>(what: &str, make: impl Fn(usize, usize) -> I, run: impl Fn(usize, I) -> O) {
+    let (small, large) = scaling::Meter::new().runs();
+    let pool = |n: usize, runs: usize| (n, RefCell::new((0..runs).map(|i| make(n, i)).collect()));
+    let pools: [(usize, RefCell<Vec<I>>); 2] = [pool(N, small), pool(scaling::FACTOR * N, large)];
+    let kept = RefCell::new(Vec::new());
+    scaling::check(what, N, |n| {
+        let (_, inputs) = pools.iter().find(|(m, _)| *m == n).expect("a size checked");
+        let input = inputs.borrow_mut().pop().expect("one input per run");
+        let out = run(n, input);
+        kept.borrow_mut().push(out);
+    });
+}
+
+/// A list type `d` deep on the literal `leaf`: types built on different leaves share no part,
+/// so no run finds the parts or texts of another made already.
+fn list_on(leaf: usize, d: usize) -> Type {
+    let leaf = Type::lit(&Value::Int(leaf as i64)).expect("an integer literal is a type");
+    (0..d).fold(leaf, |t, _| Type::tuple(vec![t, Type::int()]))
+}
+
 #[test]
-fn building_printing_and_releasing_a_deep_type_scales() {
-    scaling::check("a list type n deep, built and released", N, |d| {
-        drop(list(d))
-    });
-    scaling::check("a list type n deep, built and printed", N, |d| {
-        assert!(list(d).to_string().len() > d);
-    });
-    scaling::check("a numeral type n deep, built and released", N, |d| {
-        drop(numeral(d));
-    });
-    scaling::check("a block of n lets, built and released", N, |d| {
-        drop(block(d))
-    });
-    scaling::check("a definition body n deep, built and released", N, |d| {
-        drop(bodies(d));
-    });
+fn building_a_deep_type_scales() {
+    scales("a list type n deep, built", |_, i| i, |n, i| list_on(i, n));
+}
+
+#[test]
+fn printing_a_deep_type_scales() {
+    scales(
+        "the text of a list type n deep",
+        |n, i| list_on(i, n),
+        |n, t| {
+            let text = t.to_string();
+            assert!(text.len() > n);
+            (t, text)
+        },
+    );
+}
+
+#[test]
+fn releasing_deep_types_terms_and_patterns_scales() {
+    scales(
+        "a list type n deep, released",
+        |n, i| list_on(i, n),
+        |_, t| drop(t),
+    );
+    scales(
+        "a numeral type n deep, released",
+        |n, i| {
+            let leaf = Type::lit(&Value::Int(i as i64)).expect("an integer literal is a type");
+            (0..n).fold(leaf, |t, _| Type::atom_with("succ", &Type::tuple(vec![t])))
+        },
+        |_, t| drop(t),
+    );
+    scales(
+        "a block of n lets, released",
+        |n, _| block(n),
+        |_, t| drop(t),
+    );
+    scales(
+        "a pattern n deep, released",
+        |n, _| pattern(n),
+        |_, p| drop(p),
+    );
+    scales(
+        "a definition body n deep, released",
+        |n, _| bodies(n),
+        |_, b| drop(b),
+    );
+}
+
+#[test]
+fn a_recursive_type_inside_a_type_is_named_with_its_arguments() {
+    // `type Tree(A) = #leaf(A) | #fork(Tree(A), Tree(A))` at a type whose text is not made yet.
+    // The name of `Tree(…)` prints its argument while the text of the tuple around it is being
+    // made, and must print it in full.
+    use zed_kernel::types::rec::{Def, Group};
+    let t = || Expr::Ref(0, vec![Expr::Param(0)]);
+    let tree = Group::new(vec![Def {
+        name: "Tree".into(),
+        params: vec!["A".into()],
+        body: Expr::Union(vec![
+            Expr::Atom("leaf".into(), vec![Expr::Param(0)]),
+            Expr::Atom("fork".into(), vec![t(), t()]),
+        ]),
+    }])
+    .unwrap();
+    let arg = &Type::lit(&Value::Int(12_345)).unwrap() | &Type::string();
+    let member = tree.instance(vec![arg]).remove(0);
+    let pair = Type::tuple(vec![member, Type::int()]);
+    assert_eq!(pair.to_string(), "(tuple Tree((| 12345 String)) int)");
 }

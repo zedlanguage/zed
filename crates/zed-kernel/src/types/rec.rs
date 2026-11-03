@@ -21,12 +21,11 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-
-use crate::deep;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use super::bes::{Answer, Bes, Kind, decide};
 use super::{Type, Verdict};
+use crate::deep;
 
 /// A type expression in a definition's body.
 #[derive(Clone, PartialEq, Eq, Debug)]

@@ -258,6 +258,19 @@ impl Rec {
     fn name(&self) -> &str {
         self.name.get_or_init(|| (self.naming)())
     }
+
+    /// The name, made apart from any text under way on this thread: a name prints the types of its
+    /// arguments, and inside the loop of [`Type::rope`] a type whose text is not made yet prints
+    /// as a placeholder, which the name would keep.
+    fn name_apart(&self) -> &str {
+        if let Some(n) = self.name.get() {
+            return n;
+        }
+        let outer = SHOWING.with_borrow_mut(Option::take);
+        let name = self.name();
+        SHOWING.with_borrow_mut(|s| *s = outer);
+        name
+    }
 }
 
 impl fmt::Debug for Rec {
@@ -1476,7 +1489,7 @@ impl Type {
     fn rope(&self) -> Rope {
         let shown = match &*self.0 {
             Node::Parts(_, shown) => shown,
-            Node::Rec(r) => return rope![r.name()],
+            Node::Rec(r) => return rope![r.name_apart()],
         };
         if let Some(r) = shown.0.get() {
             return r.clone();
@@ -1534,7 +1547,7 @@ impl Type {
         }
         match &*self.0 {
             Node::Parts(_, shown) => shown.0.get().expect("the loop made the text").clone(),
-            Node::Rec(r) => rope![r.name()],
+            Node::Rec(r) => rope![r.name_apart()],
         }
     }
 

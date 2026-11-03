@@ -3,7 +3,6 @@
 //! thread (COMPLEXITY.md R9). No test here sets a stack size, and no depth is refused.
 
 use std::cell::RefCell;
-use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
 use zed_kernel::term::build::{app, lam, lit, prim, var};
@@ -37,24 +36,23 @@ fn order() -> Value {
     .unwrap()
 }
 
-/// `bottom` inside `depth` patterns of `(_, p)`. A pattern drops by recursion in the kernel, so
-/// it is never dropped here.
-fn in_tuples(depth: usize, bottom: Pattern) -> ManuallyDrop<Pattern> {
-    ManuallyDrop::new((0..depth).fold(bottom, |p, _| Pattern::Tuple(vec![Pattern::Wild, p])))
+/// `bottom` inside `depth` patterns of `(_, p)`.
+fn in_tuples(depth: usize, bottom: Pattern) -> Pattern {
+    (0..depth).fold(bottom, |p, _| Pattern::Tuple(vec![Pattern::Wild, p]))
 }
 
 /// `bottom` inside `depth` patterns of `#cons(_, p)`.
-fn in_atoms(depth: usize, bottom: Pattern) -> ManuallyDrop<Pattern> {
-    ManuallyDrop::new((0..depth).fold(bottom, |p, _| {
+fn in_atoms(depth: usize, bottom: Pattern) -> Pattern {
+    (0..depth).fold(bottom, |p, _| {
         Pattern::Atom("cons".into(), vec![Pattern::Wild, p])
-    }))
+    })
 }
 
 /// `bottom` inside `depth` patterns of `#node(next: p)`.
-fn in_fields(depth: usize, bottom: Pattern) -> ManuallyDrop<Pattern> {
-    ManuallyDrop::new((0..depth).fold(bottom, |p, _| {
+fn in_fields(depth: usize, bottom: Pattern) -> Pattern {
+    (0..depth).fold(bottom, |p, _| {
         Pattern::Fields("node".into(), vec![("next".into(), p)])
-    }))
+    })
 }
 
 fn bind(x: &str) -> Pattern {
@@ -98,10 +96,7 @@ fn each_shape_of_deep_value_enters_and_leaves_the_heap() {
 
 #[test]
 fn a_deep_pattern_binds_the_last_element() {
-    type Case = (
-        fn(usize, Value) -> Value,
-        fn(usize, Pattern) -> ManuallyDrop<Pattern>,
-    );
+    type Case = (fn(usize, Value) -> Value, fn(usize, Pattern) -> Pattern);
     let list: fn(usize, Value) -> Value = |d, b| nested(in_tuple, d, b);
     let atoms: fn(usize, Value) -> Value = |d, b| nested(in_atom, d, b);
     let records: fn(usize, Value) -> Value = |d, b| nested(in_named_atom, d, b);
