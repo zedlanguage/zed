@@ -822,21 +822,35 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| BOX-5pt | impl attempt 1 | 2026-11-03 06:34 | five-point box_point in; L1.38 74 pass, 4 fail exactly as XT3 B3 predicted: oracle 255/3/142, corner 2586/9282/132, REGULAR Ok(true), stages x0=4 Ok(true) (load |
+| DESIGN-audit | orchestrator attempt  | 2026-11-03 06:08 | started: workflow wf_5753dfe3-b04 (11 auditors, 11 verifiers); zed wt/t6-spec merged as 83770d9 |
 | ENDS-dag | impl attempt 1 | 2026-11-03 05:46 | negative control (visited check removed): plain 16.5M,66M,264M,1.05G,4.2G instr at k=12..20 (x4 per +2, 2^k); two_names 28.5M..7.25G; both scaling tests killed  |
-| ST-arms-quad | repair attempt 2 | 2026-11-03 03:16 | done: 873f1a8 on wt/st-arms (not pushed); run_tests.sh 4: 97 pieces, 0 failed, load 66-89; fmt and clippy clean; profiling artifacts removed |
-| T2-mid | repair attempt 1 | 2026-11-03 04:26 | deep checker tests time out at 12.5k (check costs ~0.2 ms per node at load 85); control worktree t2-mid-ctl at 2d0d512 made to compare |
+| LIN-cross | impl attempt 1 | 2026-11-03 05:46 | started |
+| S22b | impl attempt 1 | 2026-11-03 06:39 | started |
+| S22c | impl attempt 1 | 2026-11-03 06:39 | started |
+| S22d | impl attempt 1 | 2026-11-03 06:39 | started: 3t - 1 chain over 60 s at k = 37 |
+| S22e | impl attempt 1 | 2026-11-03 06:39 | started; worktree /home/luke/Work/wt/s22e on main ea2e48f |
+| ST-arms-quad | verify attempt 3 | 2026-11-03 03:16 | precision probe P2 (top: 100<=x<=200 // (0<=x<=10 && (q>=0 && (x<=0&&y>=1 // x>=10&&y<=-1) // q<=-1&&3<=x<=4) && (y>=1&&x>=5 // q<=-1))): then-arm x at 873f1a8  |
+| T11-S22 | merge attempt 1 (item S22a) | 2026-11-03 03:01 | lock released |
+| T2-mid | repair attempt 1 | 2026-11-03 04:26 | checker pass: fmt and clippy clean; full suite 98 pieces, 0 failed (baseline 98/0), load 36.2 to 45.2 |
 | T6 | repair attempt 6 | 2026-11-03 00:01 | rebased wt/t6 on main 7073be1 (both commits squashed first; T6's K30 renamed K37, CAP-bits owns K30) and wt/t6-spec on zed 1025886; fences resynced, l01_07/l01_ |
-| TD-ends | verify attempt 3 | 2026-11-03 03:52 | probe zedc test 'f(x: int) = x ** (3 ** 100000000 + 5 ** 100000000);' >60 s (main binary 0.03 s); '+ 1' 0.08 s, '3**1e8 * 5**1e8' 0.03 s: a sum of unrelated cor |
+| TD-ends | repair attempt 3 | 2026-11-03 03:52 | start: fix kept sum/difference of unrelated cores (int.rs:1326) and the 11 incomplete tradeoff comments |
+| UTVPI-GOR | impl attempt 1 | 2026-11-03 06:34 | started |
+| XT3 | orchestrator attempt  | 2026-11-03 03:08 | report saved to wt/xt3/REPORT.md; items UTVPI-GOR, BOX-5pt (ready), UTVPI-NEAR, HULL3, XR3, HULL3-GEN added |
 
-Merged into local main and not yet pushed (25 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (29 commits); the push follows one full test run on the merged tree:
 
-- STATUS: S22a merged (this commit)
-- 217bb0a S22a repair 1: Pa keeps values in i128 and checks each kept slice; probe over all integers and a half-line scale
+- 3fab318 plan_dag, STATUS: XT3 done; add UTVPI-GOR, BOX-5pt, UTVPI-NEAR, HULL3, XR3, HULL3-GEN with edges
+- ea2e48f STATUS: S22a merged
+- 217bb0a S22a repair 1: Pa keeps values in i128 and checks each kept slice; probe over all integers and a half-line scale; comparison asserts exact narrower co
 - c462ff6 S22a: COMPLEXITY S22, STATUS and plan_dag S22-R2 for the min clip, the enumerate order and the narrowed inexact case
-- 132462e S22a: the clip reads min and max; enumerate reads the box before stage::ends
-- e50ee14 S22a: COMPLEXITY S22 fixed for one input with round 2 open; STATUS row; plan_dag rows S22a to S22e and S22-R2
-- 19b249a S22a: the reference transfer rebuilt from main's preimage.rs at fdf7918
+- 132462e S22a: the clip reads min and max; enumerate reads the box before stage::ends; the narrowed inexact case and cross below its width get their own tests
+- e50ee14 S22a: COMPLEXITY S22 fixed for one input with round 2 open; STATUS row; plan_dag rows S22a to S22e and S22-R2; ZED_PORT_GAPS entries
+- 19b249a S22a: the reference transfer rebuilt from main's preimage.rs at fdf7918, so the comparison sees only the change of S22a
 - 0c89e54 S22a: piecewise-affine summaries and the value hull in the backward transfer
+- 9435a7f Merge branch 'wt/rename-simplex'
+- fb4b2f9 RENAME-simplex: store/simplex.rs becomes store/linear.rs; it holds Term and Q, no simplex
+- ccfd444 STATUS: in progress as of 2026-11-03 06:28
 - 3ee4b07 Merge branch 'wt/plan-plug'
 - 6ce67b6 plan_dag: the four new cross-level lines list 91 pairs
 - fede004 plan_dag: L1.40a, L1.40b, L1.40c, L12.3a; fences synced to DESIGN
