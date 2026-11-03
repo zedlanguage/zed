@@ -74,11 +74,14 @@
 //! and a refusal met in narrowing is kept with the scope and reported by the checker. Every
 //! integer, written or derived, is unbounded.
 
+use std::cell::OnceCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
+
+use imbl::OrdSet;
 
 use super::int::Int;
 use super::interval::{End, IntervalSet};
@@ -341,6 +344,16 @@ impl Con {
         Con {
             lin: a.minus(b),
             rel: Rel::Eq,
+        }
+    }
+
+    /// Whether the constraint holds at `values` ([`Formula::holds`]).
+    fn holds(&self, values: &Model) -> bool {
+        let v = self.lin.eval(values);
+        if self.rel == Rel::Eq {
+            v.is_zero()
+        } else {
+            !v.is_negative()
         }
     }
 }
@@ -621,14 +634,7 @@ impl Formula {
     /// [`Formula::holds`].
     fn holds_as(&self, vs: &Model) -> bool {
         match self {
-            Formula::Con(c) => {
-                let v = c.lin.eval(vs);
-                if c.rel == Rel::Eq {
-                    v.is_zero()
-                } else {
-                    !v.is_negative()
-                }
-            }
+            Formula::Con(c) => c.holds(vs),
             Formula::Not(g) => !g.holds_as(vs),
             Formula::And(gs) => gs.iter().all(|g| g.holds_as(vs)),
             Formula::Or(gs) => gs.iter().any(|g| g.holds_as(vs)),
@@ -800,7 +806,8 @@ fn local_repair(
 fn pick(p: &Parts) -> Result<Model, Refusal> {
     let mut model = solve(&p.cons, true)?.ok_or(Refusal::Disjuncts)?;
     let mut acc = Linked::of(p.cons.clone());
-    let mut queue = p.ors.clone();
+    // The disjunctions left, read in place: only the disjuncts taken are entered.
+    let mut queue: Vec<&[Rc<Parts>]> = p.ors.iter().map(Vec::as_slice).collect();
     let mut by_atom: BTreeMap<Atom, Vec<usize>> = BTreeMap::new();
     for (i, c) in acc.cons.iter().enumerate() {
         for a in c.lin.terms.keys() {
@@ -808,18 +815,23 @@ fn pick(p: &Parts) -> Result<Model, Refusal> {
         }
     }
     while let Some(ds) = queue.pop() {
-        let mut taken = None;
+        let mut taken: Option<(&Parts, Option<Model>)> = None;
         let mut why = Refusal::Disjuncts;
-        for d in &ds {
+        // Not fixed (COMPLEXITY S26): `holds` walks the whole nest under `d`, and `settle`
+        // calls `pick` once for each level, so a nest `d` deep that holds at the model costs
+        // O(d²) evaluations, with a small constant (about 2.3x per doubling of `d` up to
+        // 8000). Testing only `d.cons` here makes `pick` fail where it now succeeds and
+        // sends the nest to `probe`, which is far slower; a fix needs a model kept per level.
+        for d in ds {
             if d.holds(&model) {
-                taken = Some((d.clone(), None));
+                taken = Some((d, None));
                 break;
             }
         }
         if taken.is_none() {
-            for d in &ds {
-                if let Some(m) = local_repair(&acc.cons, &by_atom, &model, &lits(d)) {
-                    taken = Some((d.clone(), Some(m)));
+            for d in ds {
+                if let Some(m) = local_repair(&acc.cons, &by_atom, &model, &d.cons) {
+                    taken = Some((d, Some(m)));
                     break;
                 }
             }
@@ -828,9 +840,8 @@ fn pick(p: &Parts) -> Result<Model, Refusal> {
             if taken.is_some() {
                 break;
             }
-            let mut cs = acc.around(&lits(&d));
-            let more = lits(&d);
-            cs.extend(more.iter());
+            let mut cs = acc.around(&d.cons);
+            cs.extend(d.cons.iter());
             match solve(&cs, true) {
                 Ok(Some(m)) => {
                     taken = Some((d, Some(m)));
@@ -844,16 +855,14 @@ fn pick(p: &Parts) -> Result<Model, Refusal> {
             return Err(why);
         };
         model.extend(m.into_iter().flatten());
-        let mut q = Parts::default();
-        q.add(d);
-        for c in q.cons {
+        for c in &d.cons {
             let i = acc.cons.len();
             for a in c.lin.terms.keys() {
                 by_atom.entry(a.clone()).or_default().push(i);
             }
-            acc.add(c);
+            acc.add(c.clone());
         }
-        queue.extend(q.ors);
+        queue.extend(d.ors.iter().map(Vec::as_slice));
     }
     Ok(model)
 }
@@ -944,14 +953,15 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
         for i in 0..p.ors.len() {
             let ds = std::mem::take(&mut p.ors[i]);
             let n = ds.len();
-            let live: Vec<Formula> = ds
+            let live: Vec<Rc<Parts>> = ds
                 .into_iter()
                 .filter(|d| {
                     let mut q = Parts {
                         cons: p.cons.clone(),
                         ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
+                        ..Parts::default()
                     };
-                    q.add(d.clone());
+                    q.put(d);
                     !matches!(settle(q), Ok(None))
                 })
                 .collect();
@@ -972,40 +982,98 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
 }
 
 /// A formula in negation normal form as its top-level constraints and its top-level
-/// disjunctions, each a list of disjuncts.
+/// disjunctions, each a list of disjuncts, each disjunct the parts of it. A disjunct is shared,
+/// not copied, when it is handed to a search or a level below, so that a disjunction nested
+/// `d` deep is copied at no level above it.
 #[derive(Clone, Default)]
 struct Parts {
     cons: Vec<Con>,
-    ors: Vec<Vec<Formula>>,
+    ors: Vec<Vec<Rc<Parts>>>,
+    /// The atoms of the parts, found the first time they are asked for ([`Parts::atoms`]).
+    /// They are asked only of a disjunct, which is not changed once it is made.
+    atoms: OnceCell<OrdSet<Atom>>,
 }
 
 impl Parts {
-    /// Adds a formula in negation normal form.
-    fn add(&mut self, f: Formula) {
-        match f {
-            Formula::Con(c) => self.cons.push(c),
-            Formula::And(gs) => gs.into_iter().for_each(|g| self.add(g)),
-            Formula::Or(gs) => self.ors.push(gs),
-            Formula::Not(_) => unreachable!("a formula in negation normal form"),
-        }
-    }
-
-    /// The parts of `f`, in negation normal form already, sorted at the top as [`nnf`] would
-    /// sort them; below the top they are sorted by the [`nnf`] that made them.
-    fn of_nnf(mut f: Formula) -> Parts {
-        if let Formula::And(gs) | Formula::Or(gs) = &mut f {
-            gs.sort();
-        }
+    /// The parts of a formula in negation normal form.
+    fn of(f: Formula) -> Parts {
         let mut p = Parts::default();
         p.add(f);
         p
     }
 
+    /// Adds a formula in negation normal form.
+    fn add(&mut self, f: Formula) {
+        match f {
+            Formula::Con(c) => self.cons.push(c),
+            Formula::And(gs) => gs.into_iter().for_each(|g| self.add(g)),
+            Formula::Or(gs) => self
+                .ors
+                .push(gs.into_iter().map(|g| Rc::new(Parts::of(g))).collect()),
+            Formula::Not(_) => unreachable!("a formula in negation normal form"),
+        }
+    }
+
+    /// Adds the parts of the disjunct `d`, sharing its disjunctions.
+    fn put(&mut self, d: &Parts) {
+        self.cons.extend(d.cons.iter().cloned());
+        self.ors.extend(d.ors.iter().cloned());
+    }
+
     /// The formula the parts make.
     fn to_formula(&self) -> Formula {
         let cons = self.cons.iter().map(|c| Formula::Con(c.clone()));
-        let ors = self.ors.iter().map(|ds| Formula::Or(ds.clone()));
+        let ors = self
+            .ors
+            .iter()
+            .map(|ds| Formula::Or(ds.iter().map(|d| d.to_formula()).collect()));
         Formula::and(cons.chain(ors).collect())
+    }
+
+    /// Whether the parts hold at `values` ([`Formula::holds`]); a disjunction is read until a
+    /// disjunct holds.
+    fn holds(&self, values: &Model) -> bool {
+        self.cons.iter().all(|c| c.holds(values))
+            && self.ors.iter().all(|ds| ds.iter().any(|d| d.holds(values)))
+    }
+
+    /// The atoms of the parts. Each disjunct's set is found once, from its disjuncts' sets:
+    /// it starts as the largest of them, shared, and the atoms of the others and of its own
+    /// constraints are added to it. An atom is then added only to a set at least twice the
+    /// size of the one it came from, so the sets of a nest of `n` constraints cost
+    /// O(n log² n) together, however deep it is, and asking again costs nothing.
+    fn atoms(&self) -> &OrdSet<Atom> {
+        // An explicit stack, since a nest can be deeper than a thread's stack allows; a
+        // disjunct shared by two disjunctions is found once, its set marking it as visited.
+        let mut stack: Vec<&Parts> = vec![self];
+        while let Some(&p) = stack.last() {
+            if p.atoms.get().is_some() {
+                stack.pop();
+                continue;
+            }
+            let open = stack.len();
+            let below = p.ors.iter().flatten().map(|d| &**d);
+            stack.extend(below.filter(|d| d.atoms.get().is_none()));
+            if stack.len() > open {
+                continue;
+            }
+            stack.pop();
+            let mut sets: Vec<&OrdSet<Atom>> = (p.ors.iter().flatten())
+                .map(|d| d.atoms.get().expect("a set found below"))
+                .collect();
+            let largest = (0..sets.len()).max_by_key(|&i| sets[i].len());
+            let mut set = largest.map_or_else(OrdSet::new, |i| sets.swap_remove(i).clone());
+            for a in sets.into_iter().flatten() {
+                set.insert(a.clone());
+            }
+            for c in &p.cons {
+                for a in c.lin.terms.keys() {
+                    set.insert(a.clone());
+                }
+            }
+            let _ = p.atoms.set(set);
+        }
+        self.atoms.get().expect("the set just found")
     }
 }
 
@@ -1039,30 +1107,19 @@ fn nnf(f: &Formula, sign: bool) -> Formula {
     out
 }
 
-/// The top-level constraints of a formula in negation normal form.
-fn lits(f: &Formula) -> Vec<Con> {
-    match f {
-        Formula::Con(c) => vec![c.clone()],
-        Formula::And(gs) => gs.iter().flat_map(lits).collect(),
-        _ => Vec::new(),
-    }
-}
-
 /// The formula's base and disjunctions once no disjunct can be removed, or `None` when it has
 /// no point. A disjunct is removed when its top-level constraints meet the base nowhere; a
 /// disjunction left with one disjunct adds it to the base. Each round but the last removes a
 /// disjunct, so there are at most as many rounds as disjuncts, each a test of every disjunct.
 fn propagate(f: &Formula) -> Result<Option<Parts>, Refusal> {
-    let mut p = Parts::default();
-    p.add(nnf(f, true));
-    settle(p)
+    settle(Parts::of(nnf(f, true)))
 }
 
 /// [`propagate`] from parts.
 fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
     loop {
-        // A point of the base serves only to keep, unasked, the disjuncts that hold at it, so
-        // none is built when no disjunction is left.
+        // A point of the base serves only to keep, unasked, the disjuncts whose own constraints
+        // hold at it, so none is built when no disjunction is left.
         let Some(model) = solve(&p.cons, !p.ors.is_empty())? else {
             return Ok(None);
         };
@@ -1075,15 +1132,17 @@ fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
         let mut more = Vec::new();
         for ds in std::mem::take(&mut p.ors) {
             let n = ds.len();
-            let mut live: Vec<Formula> = ds
+            let mut live: Vec<Rc<Parts>> = ds
                 .into_iter()
                 .filter(|d| {
-                    if d.holds(&model) {
+                    // The question below is of the disjunct's own constraints, so the point
+                    // answers it when they hold there, whatever holds below them; reading
+                    // only them keeps a nest from being read once for each level above it.
+                    if d.cons.iter().all(|c| c.holds(&model)) {
                         return true;
                     }
-                    let own = lits(d);
-                    let mut cs = base.around(&own);
-                    cs.extend(own.iter());
+                    let mut cs = base.around(&d.cons);
+                    cs.extend(d.cons.iter());
                     !matches!(solve(&cs, false), Ok(None))
                 })
                 .collect();
@@ -1091,10 +1150,9 @@ fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
             match live.len() {
                 0 => return Ok(None),
                 1 => {
-                    let mut q = Parts::default();
-                    q.add(live.pop().expect("one"));
-                    more.extend(q.cons);
-                    kept.extend(q.ors);
+                    let d = live.pop().expect("one");
+                    more.extend(d.cons.iter().cloned());
+                    kept.extend(d.ors.iter().cloned());
                 }
                 _ => kept.push(live),
             }
@@ -2558,9 +2616,9 @@ fn no_points(syms: &[Atom]) -> Each {
 }
 
 /// [`project_each`] of the settled parts `p` of a formula, which is `whole` when it is given.
-/// A disjunct is projected from the parts of it and the base groups it touches, moved, not
-/// copied, and not brought to negation normal form again, so that a chain of disjunctions
-/// nested to depth `d` costs each disjunct once, not once for each level above it.
+/// A disjunct is projected from the parts of it, shared, not copied, and the base groups it
+/// touches, found from its atoms, which are found once ([`Parts::atoms`]), so that a nest of
+/// disjunctions `d` deep costs each disjunct once, not once for each level above it.
 fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result<Each, Refusal> {
     let none = || no_points(syms);
     let mut skipped: Vec<Refusal> = Vec::new();
@@ -2579,11 +2637,11 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
     // in them, the others keeping the base's hull. A projection then costs the groups each
     // disjunct touches, not the whole base for each disjunct and each symbol.
     // With two disjunctions or more, the hulls are tightened over the whole formula; below the
-    // top it is rebuilt from the parts, which costs no more than a tightening.
-    let rebuilt = (whole.is_none() && p.ors.len() > 1).then(|| p.to_formula());
-    let whole = whole.or(rebuilt.as_ref());
+    // top it is rebuilt from the parts, and only when a hull has two finite bounds, the only
+    // hull a tightening moves. The disjunctions are kept for that, shared.
     let ors = std::mem::take(&mut p.ors);
     let n_ors = ors.len();
+    let kept_ors = (whole.is_none() && n_ors > 1).then(|| ors.clone());
     let linked = Linked::of(std::mem::take(&mut p.cons));
     let bases: HashMap<usize, Formula> = (0..linked.held.len())
         .filter(|r| !linked.held[*r].is_empty())
@@ -2619,39 +2677,48 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
         let mut acc: HashMap<usize, (Option<IntervalSet>, usize)> = HashMap::new();
         let (mut sat, mut refused) = (0usize, false);
         for d in ds {
+            // Not fixed (COMPLEXITY S26): each level reads every atom below it here and
+            // returns a hull for every symbol they touch, so a nest `d` deep that names new
+            // symbols at each level costs O(d²) (about 3.7x per doubling of `d`, as at the base
+            // commit). A fix needs hulls passed up only for the symbols a level changes.
             let mut roots: Vec<usize> = d.atoms().iter().filter_map(&group).collect();
             roots.sort_unstable();
             roots.dedup();
+            // The disjunct's parts with the base groups it touches, its constraints sorted as
+            // [`nnf`] sorts them and its disjunctions shared.
             let mut fs: Vec<Formula> = roots.iter().map(|r| base_of(*r).clone()).collect();
-            fs.push(d);
-            let fd = Formula::and(fs);
+            fs.extend(d.cons.iter().cloned().map(Formula::Con));
+            let mut q = Parts::of(Formula::and(fs));
+            q.cons.sort();
+            q.ors.extend(d.ors.iter().cloned());
             let ks: Vec<usize> = roots
                 .iter()
                 .flat_map(|r| syms_of.get(r).into_iter().flatten().copied())
                 .collect();
             let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
-            // A disjunct that touches no symbol is decided as a whole, so it is kept for that.
-            // Complexity tradeoff: that copy, and `d.atoms()` above, walk the disjunct at each
-            // level, O(d²) over a chain nested `d` deep; small beside the rest (COMPLEXITY S26).
-            let kept = ks.is_empty().then(|| fd.clone());
-            let projected = settle(Parts::of_nnf(fd)).and_then(|p| match p {
-                Some(p) => project_parts(p, &sub, None),
-                None => Ok(no_points(&sub)),
+            // A disjunct that touches no symbol is only asked whether it has a point, as
+            // [`decide`] asks it.
+            let found_rs = settle(q).and_then(|q| match q {
+                None => Ok((no_points(&sub), false)),
+                Some(q) if ks.is_empty() => {
+                    let point = q.ors.is_empty() || !matches!(found(q), Ok(None));
+                    Ok(((Vec::new(), Vec::new()), point))
+                }
+                Some(q) => project_parts(q, &sub, None).map(|e| {
+                    let point = e.0.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()));
+                    (e, point)
+                }),
             });
-            let rs = match projected {
-                Ok((rs, more)) => {
+            let (rs, has_point) = match found_rs {
+                Ok(((rs, more), point)) => {
                     skipped.extend(more);
-                    rs
+                    (rs, point)
                 }
                 Err(r) => {
                     skipped.push(r);
                     refused = true;
                     break;
                 }
-            };
-            let has_point = match &kept {
-                Some(fd) => !matches!(decide(fd), Ok(false)),
-                None => rs.iter().any(|r| !matches!(r, Ok(s) if s.is_empty())),
             };
             if !has_point {
                 continue;
@@ -2683,7 +2750,26 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
             }
         }
     }
-    if let Some(f) = whole.filter(|_| n_ors > 1) {
+    let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if matches!(s.bounds(), Some((End::Fin(_), End::Fin(_)))));
+    if n_ors > 1 && out.iter().any(finite) {
+        // Not fixed (COMPLEXITY S26): below the top the formula is rebuilt, and each
+        // tightening asks `decide` of the whole of it, so a nest `d` deep with two
+        // disjunctions or more and a hull with two finite bounds at each level costs
+        // O(d² log w), `w` the hull's width (about 4x per doubling of `d`, as at the base
+        // commit). A fix needs a decision procedure that keeps the levels below as it adds a
+        // bound.
+        let rebuilt = kept_ors.map(|ors| {
+            let cons = linked.cons.clone();
+            Parts {
+                cons,
+                ors,
+                ..Parts::default()
+            }
+            .to_formula()
+        });
+        let f = whole
+            .or(rebuilt.as_ref())
+            .expect("the formula, given or rebuilt");
         for (o, sym) in out.iter_mut().zip(syms) {
             if let Ok(s) = o {
                 *o = tighten(f, sym, s.clone());

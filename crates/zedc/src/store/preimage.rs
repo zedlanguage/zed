@@ -1286,8 +1286,8 @@ impl<'t> Tx<'t> {
         logged: impl FnOnce(K) -> Logged,
         f: impl FnOnce(&mut Self) -> Option<Formula>,
     ) -> Option<Formula> {
-        // Complexity tradeoff: a term asked for twice is translated twice, a constant factor,
-        // so that a deep formula is not copied once for each level above each part.
+        // A term asked for twice is translated twice, a constant factor, so that a deep
+        // formula is not copied once for each level above each part.
         if table(&mut self.run.memo).contains_key(&k)
             || !asked(&mut self.run.memo).insert(k.clone())
         {
