@@ -127,37 +127,46 @@ impl Provenance {
             Some(set) => set.keys().cloned().collect(),
             None => BTreeSet::from([v.clone()]),
         };
-        // The members each fact reached holds, its value walked once: each member's search
-        // walked every value it tested, an `#errs` of up to all the members.
+        // One backward pass over the facts, newest first: a fact's inputs completed before it,
+        // so every fact that reaches `j` is taken before `j`. `traced[j]` holds the members
+        // whose search reaches fact `j`; the search of member `m` goes on to each input that
+        // holds `m`, and `j` is an origin of `m` when no input holds it. A search per member
+        // tested every input of a fact once per member that reached it, `O(n²)` at a fact
+        // that read `n` operands, each holding one member.
+        let mut traced: BTreeMap<usize, BTreeSet<&Value>> =
+            BTreeMap::from([(i, members.iter().collect())]);
+        // The members each input holds, its value walked once.
         let mut held: BTreeMap<usize, BTreeSet<&Value>> = BTreeMap::new();
         let mut out = BTreeSet::new();
-        for m in &members {
-            let mut stack = vec![i];
-            let mut seen = BTreeSet::new();
-            while let Some(j) = stack.pop() {
-                if !seen.insert(j) {
-                    continue;
-                }
-                let from: Vec<usize> = self.facts[j]
-                    .inputs
+        while let Some((j, at_j)) = traced.pop_last() {
+            let mut found: BTreeSet<&Value> = BTreeSet::new();
+            for &k in &self.facts[j].inputs {
+                debug_assert!(k < j, "a fact reads only facts completed before it");
+                let has = held.entry(k).or_insert_with(|| {
+                    let mut has = BTreeSet::new();
+                    if let Some(v) = &self.facts[k].value {
+                        holds(v, &members, &mut has);
+                    }
+                    has
+                });
+                // The common members, by a walk of the smaller set.
+                let (small, large) = if has.len() <= at_j.len() {
+                    (&*has, &at_j)
+                } else {
+                    (&at_j, &*has)
+                };
+                let common: Vec<&Value> = small
                     .iter()
                     .copied()
-                    .filter(|&k| {
-                        held.entry(k)
-                            .or_insert_with(|| {
-                                let mut found = BTreeSet::new();
-                                if let Some(v) = &self.facts[k].value {
-                                    holds(v, &members, &mut found);
-                                }
-                                found
-                            })
-                            .contains(m)
-                    })
+                    .filter(|m| large.contains(m))
                     .collect();
-                if from.is_empty() {
-                    out.insert(j);
+                if !common.is_empty() {
+                    found.extend(&common);
+                    traced.entry(k).or_default().extend(common);
                 }
-                stack.extend(from);
+            }
+            if found.len() < at_j.len() {
+                out.insert(j);
             }
         }
         out

@@ -663,3 +663,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `std::slice::from_ref` to see one name as a list of one | `stage::kids` | None | A list of one name |
 | A struct borrowing the checker's findings (`&'a Info`) for its lifetime | `Elab` | None | The findings passed as a value, which Zed shares |
 | `std::mem::take` of the mixer's report after each split | `Specializer::split` | Mutation | The split returns the report it built, and the mixer is a state receiver |
+
+## Entries from T14-provenance (`zed-kernel/src/provenance.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `BTreeMap::pop_last` as a worklist taken in descending key order, each step adding entries at smaller keys | `Provenance::origins` | Key range queries (gap 9), mutation | `.last` and a `patch` removing that key on an ordered map, in a state receiver; or a fold over the fact indices from `i` down to 0, which visits facts the pass would skip |
+| `BTreeMap::entry(k).or_insert_with` as a memo filled during the pass | `Provenance::origins` | Mutation | A state receiver over a map, or the members each fact holds computed for all facts before the pass |

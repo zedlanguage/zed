@@ -16,6 +16,7 @@ use zed_tests::kernel::*;
 use zed_tests::scaling::check_order;
 
 mod deep;
+mod provenance;
 mod scaling;
 mod shared;
 
