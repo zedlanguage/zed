@@ -4,7 +4,8 @@ use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
 
 /// Every documentation unit that builds resolves, or fails only on what a fragment leaves to
-/// the text around it: a name or type it does not bind, or a rebinding the fence marks ✗.
+/// the text around it: a name or type it does not bind, or a rebinding the fence marks ✗; or
+/// on a form of layer L2 that the parser builds and a later step compiles.
 #[test]
 fn every_building_fence_resolves_but_for_its_free_names() {
     let (mut resolved, mut built) = (0, 0);
@@ -21,7 +22,8 @@ fn every_building_fence_resolves_but_for_its_free_names() {
                 for e in es {
                     let free = e.contains("is not defined [");
                     let marked = e.contains("already bound") && f.text.contains('✗');
-                    assert!(free || marked, "{}: {e}", f.at);
+                    let later = e.contains(" is compiled from step L2.");
+                    assert!(free || marked || later, "{}: {e}", f.at);
                 }
             }
         }

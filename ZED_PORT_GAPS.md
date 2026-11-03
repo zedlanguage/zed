@@ -620,6 +620,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A generic struct over a trait with an unsized `Self` (`Parser<I: Input + ?Sized>` on `[char]` and on `Tokens`) | `zedc::parse::engine` | Unsized types | An interface over a value, passed as a parameter |
 | `env!("CARGO_MANIFEST_DIR")`, a path fixed when the tool is built | `zed_tools::impl_root` | Build-time environment | A parameter of the tool |
 
+## Entries from L2.1 (`zedc/src/ast/`, `format.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `HashMap<&'a str, Span>` borrowing names from the source text, filled while a list is built | `Builder::once` and its callers (struct fields, display entries, `with` paths, type parameters) | None | A map from name to span over shared strings |
+| `let … else { unreachable!() }` on an enum variant that an earlier pass has ruled out | `elab.rs`, `check/mod.rs` (the L2 forms resolution refuses) | Partial match | A total match whose L2 arm returns the refusal, or a narrower type from resolution |
+
 ## Entries from T4 (`zedc/src/store/utvpi.rs`, `presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |

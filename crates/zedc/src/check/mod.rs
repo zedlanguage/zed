@@ -487,6 +487,9 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     fn stmt(&mut self, s: &'a Stmt) {
         match &s.kind {
+            StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {
+                unreachable!("resolve rejects the forms of layer L2")
+            }
             StmtKind::Bind { targets, value } => {
                 let v = self.expr(value);
                 match &targets[..] {
@@ -1533,6 +1536,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
         }
         match &e.kind {
+            ExprKind::Record(_) | ExprKind::With { .. } | ExprKind::This => {
+                unreachable!("resolve rejects the forms of layer L2")
+            }
             // A `rat` literal is decorated and keeps its carrier; a literal past the size
             // limit is elaboration's error.
             ExprKind::Rat(s) => match Rat::decimal(s) {
@@ -1659,7 +1665,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             fields,
             items,
             span,
-        } = p;
+        } = p
+        else {
+            unreachable!("resolve rejects the forms of layer L2")
+        };
         let atom: Arc<str> = name.as_str().into();
         let slots = fields
             .iter()
@@ -2845,6 +2854,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// reports it.
     fn ty_of(&mut self, t: &Type) -> Ty {
         match &t.kind {
+            TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
+                unreachable!("resolve rejects the forms of layer L2")
+            }
             TypeKind::Name(n) => match n.as_str() {
                 "int" => Ty::carrier(Carrier::Int),
                 "rat" => Ty::carrier(Carrier::Rat),

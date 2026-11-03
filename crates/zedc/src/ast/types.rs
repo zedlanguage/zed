@@ -1,9 +1,13 @@
 //! Type expressions, parameter lists and atom patterns (step L1.10): what an `is` test, a
-//! lambda's parameters and an `else` pattern are written with.
+//! lambda's parameters and an `else` pattern are written with. Step L2.1 adds the applied
+//! types `Tree(T)` and `#node(l: T)`, the record type `{x: int}`, the tuple-destructuring
+//! parameter `(a, b)`, and the patterns that destructure a struct, `Point(x:, y: b)`, with the
+//! name, `_` and tuple patterns they hold.
 
+use std::collections::HashMap;
 use std::mem;
 
-use super::{Builder, Built, Error, Expr};
+use super::{Builder, Built, Error, Expr, Target};
 use crate::lex::{Span, Tok};
 
 /// A type expression and its span.
@@ -38,6 +42,14 @@ pub enum TypeKind {
         /// The result.
         result: Box<Type>,
     },
+    /// A type applied to arguments, `Tree(T)` or `geometry.Grid(int)`: its name, its unit path
+    /// included, and the arguments.
+    Apply(String, Vec<TypeParam>),
+    /// An atom with a payload type, `#node(left: Tree, right: Tree)` or `#pair(int, int)`:
+    /// the atom, without its `#`, and the payload's components.
+    AtomApply(String, Vec<TypeParam>),
+    /// A record type `{x: int, y: f64}`, its fields in written order.
+    Record(Vec<(String, Type)>),
 }
 
 /// A parameter of a function type: `int`, `x: int` or `positional x: int`.
@@ -54,8 +66,13 @@ pub struct TypeParam {
 /// A parameter of a lambda or a declaration.
 #[derive(Debug)]
 pub struct Param {
-    /// Its name.
+    /// Its name. A tuple-destructuring parameter `(a, b)` has none in the source; its name is
+    /// its text, `(a, b)`, which no identifier spells, so it names the fresh parameter of the
+    /// desugaring (`let a = p[0]`, `let b = p[1]` in the body) and meets no other name.
     pub name: String,
+    /// The targets of a tuple-destructuring parameter `(a, b)`, in order; such a parameter is
+    /// positional.
+    pub tuple: Option<Vec<Target>>,
     /// Whether it is written `positional`.
     pub positional: bool,
     /// Its type, if written.
@@ -66,8 +83,25 @@ pub struct Param {
     pub span: Span,
 }
 
-/// A pattern. At L1 the only patterns are atom patterns, which `else` takes.
+/// A pattern: an atom pattern, which `else` takes at L1, and from step L2.1 the patterns a
+/// struct is destructured with, which a payload or a `match` arm holds.
 pub enum Pattern {
+    /// `Point(x:, y: b)`: a struct's fields matched by name; `x:` (no pattern) binds the field
+    /// to the name `x`.
+    Struct {
+        /// The struct's name.
+        name: String,
+        /// The fields matched, in written order.
+        fields: Vec<(String, Option<Pattern>)>,
+        /// Its text.
+        span: Span,
+    },
+    /// A name, bound to the value matched.
+    Name(String, Span),
+    /// `_`, matching any value and binding nothing.
+    Wild(Span),
+    /// `(p, q, …)`, a tuple's components matched by position.
+    Tuple(Vec<Pattern>, Span),
     /// `#name`, `#name(f: p, g:)` or `#name(p, q)`.
     Atom {
         /// The atom, without its `#`.
@@ -79,6 +113,16 @@ pub enum Pattern {
         /// Its text.
         span: Span,
     },
+}
+
+impl Pattern {
+    /// Its text.
+    pub fn span(&self) -> Span {
+        match self {
+            Pattern::Struct { span, .. } | Pattern::Atom { span, .. } => *span,
+            Pattern::Name(_, span) | Pattern::Wild(span) | Pattern::Tuple(_, span) => *span,
+        }
+    }
 }
 
 impl Builder<'_> {
@@ -146,6 +190,39 @@ impl Builder<'_> {
                 TypeKind::Atom(a.clone())
             }
             "TupleType" => TypeKind::Tuple(self.types(kids)?),
+            "TypeApply" => {
+                let path = &self.tree.nodes[kids[0]];
+                let name = (path.start..path.end)
+                    .step_by(2)
+                    .map(|i| self.word(i))
+                    .collect::<Vec<_>>()
+                    .join(".");
+                let args = kids[1..]
+                    .iter()
+                    .map(|&k| self.type_param(k))
+                    .collect::<Result<_, _>>()?;
+                TypeKind::Apply(name, args)
+            }
+            "AtomApply" => {
+                let Tok::Atom(a) = &self.tokens[node.start].tok else {
+                    unreachable!("an ATOM token")
+                };
+                let args = kids
+                    .iter()
+                    .map(|&k| self.type_param(k))
+                    .collect::<Result<_, _>>()?;
+                TypeKind::AtomApply(a.clone(), args)
+            }
+            "RecordType" => {
+                let mut fields = Vec::with_capacity(kids.len() / 2);
+                let mut seen = HashMap::new();
+                for &[n, t] in kids.as_chunks::<2>().0 {
+                    let name = self.word(self.tree.nodes[n].start);
+                    self.once(&mut seen, name, n, "field", "declared")?;
+                    fields.push((name.to_string(), self.ty(t)?));
+                }
+                TypeKind::Record(fields)
+            }
             "GroupType" => {
                 let mut t = self.ty(kids[0])?;
                 t.span = span;
@@ -229,10 +306,30 @@ impl Builder<'_> {
     fn param(&mut self, n: usize) -> Result<Param, Error> {
         let node = &self.tree.nodes[n];
         if self.tree.name(n) == "TupleParam" {
-            return Err(self.later(n));
+            let (targets, ty) = match node.kids.split_last() {
+                Some((&t, targets)) if self.tree.name(t) == "Type" => (targets, Some(t)),
+                _ => (&node.kids[..], None),
+            };
+            let targets: Vec<Target> = targets.iter().map(|&t| self.target(t)).collect();
+            let text: Vec<&str> = targets
+                .iter()
+                .map(|t| match t {
+                    Target::Name(n) => n.as_str(),
+                    Target::Wild => "_",
+                })
+                .collect();
+            return Ok(Param {
+                name: format!("({})", text.join(", ")),
+                tuple: Some(targets),
+                positional: true,
+                ty: ty.map(|t| self.ty(t)).transpose()?,
+                default: None,
+                span: self.span(n),
+            });
         }
         let mut p = Param {
             name: self.word(self.tree.nodes[node.kids[0]].start).into(),
+            tuple: None,
             positional: self.tree.name(n) == "PositionalParam",
             ty: None,
             default: None,
@@ -257,19 +354,37 @@ impl Builder<'_> {
         }
     }
 
-    /// The pattern of node `n`, an `AtomPattern`.
+    /// The pattern of node `n`, of a rule `AtomPattern`, `CtorPat`, `NamePat`, `WildPat` or
+    /// `TuplePat`.
     pub(super) fn make_pattern(&mut self, n: usize) -> Result<Pattern, Error> {
         let node = &self.tree.nodes[n];
+        let span = self.span(n);
+        match self.tree.name(n) {
+            "NamePat" => return Ok(Pattern::Name(self.word(node.start).into(), span)),
+            "WildPat" => return Ok(Pattern::Wild(span)),
+            "TuplePat" => {
+                let items = node.kids.iter().map(|&k| self.pattern(k));
+                return Ok(Pattern::Tuple(items.collect::<Result<_, _>>()?, span));
+            }
+            "CtorPat" => {
+                let (&name, fields) = node.kids.split_first().expect("CtorPat = Name '(' …");
+                let out = fields.iter().map(|&k| self.field_pattern(k));
+                let out = out.collect::<Result<_, _>>()?;
+                return Ok(Pattern::Struct {
+                    name: self.word(self.tree.nodes[name].start).into(),
+                    fields: out,
+                    span,
+                });
+            }
+            _ => {}
+        }
         let Tok::Atom(name) = &self.tokens[node.start].tok else {
             unreachable!("AtomPattern = ATOM …")
         };
         let (mut fields, mut items) = (Vec::new(), Vec::new());
         for &k in &node.kids {
             if self.tree.name(k) == "FieldPat" {
-                let kids = self.kids(k);
-                let field = self.word(self.tree.nodes[kids[0]].start).to_string();
-                let p = kids.get(1).map(|&p| self.pattern(p)).transpose()?;
-                fields.push((field, p));
+                fields.push(self.field_pattern(k)?);
             } else {
                 items.push(self.pattern(k)?);
             }
@@ -280,5 +395,13 @@ impl Builder<'_> {
             items,
             span: self.span(n),
         })
+    }
+
+    /// The field and its pattern of node `n`, a `FieldPat`: `f: p`, or `f:` with none.
+    fn field_pattern(&mut self, n: usize) -> Result<(String, Option<Pattern>), Error> {
+        let kids = self.kids(n);
+        let field = self.word(self.tree.nodes[kids[0]].start).to_string();
+        let p = kids.get(1).map(|&p| self.pattern(p)).transpose()?;
+        Ok((field, p))
     }
 }

@@ -292,7 +292,11 @@ impl Resolver {
                         .map(|p| p.ty.as_ref().map(|t| t.to_string()));
                     self.bind(&f.name, s.span, Kind::Function, Some(signature.collect()));
                 }
-                StmtKind::Return(_) | StmtKind::Push { .. } => {}
+                StmtKind::Return(_)
+                | StmtKind::Push { .. }
+                | StmtKind::Struct(_)
+                | StmtKind::Type(_)
+                | StmtKind::Method(_) => {}
             }
         }
         for s in stmts {
@@ -314,13 +318,28 @@ impl Resolver {
                     }
                     self.function(&f.params, ports, &f.body);
                 }
+                StmtKind::Struct(_) => self.later(s.span, "a struct declaration", "L2.4"),
+                StmtKind::Method(_) => self.later(s.span, "a method", "L2.4"),
+                StmtKind::Type(_) => self.later(s.span, "a type declaration", "L2.5"),
             }
         }
+    }
+
+    /// The form `what`, which the parser builds, has its meaning from step `step`.
+    fn later(&mut self, span: Span, what: &str, step: &str) {
+        self.errors.push(Error {
+            span,
+            message: format!("{what} is compiled from step {step}"),
+            notes: Vec::new(),
+        });
     }
 
     /// A function's or lambda's parameters, ports and body: one scope, which a body block's
     /// statements share.
     fn function(&mut self, params: &[Param], ports: &[Port], body: &Expr) {
+        if let Some(p) = params.iter().find(|p| p.tuple.is_some()) {
+            return self.later(p.span, "a tuple-destructuring parameter", "L2.4");
+        }
         self.open();
         for p in params {
             self.bind(&p.name, p.span, Kind::Param, None);
@@ -415,6 +434,9 @@ impl Resolver {
                     self.out.uses.insert(e.span, Ref::Bound(ids));
                 }
             }
+            ExprKind::Record(_) => self.later(e.span, "a record display", "L2.4"),
+            ExprKind::With { .. } => self.later(e.span, "a `with` clause", "L2.4"),
+            ExprKind::This => self.later(e.span, "`this`", "L2.4"),
         }
     }
 
@@ -425,7 +447,10 @@ impl Resolver {
             items,
             span,
             ..
-        } = p;
+        } = p
+        else {
+            return self.later(p.span(), "a struct, name, `_` or tuple pattern", "L2.4");
+        };
         for (f, sub) in fields {
             match sub {
                 Some(sub) => self.pattern(sub),
@@ -457,6 +482,9 @@ impl Resolver {
                 params.iter().for_each(|p| self.ty(&p.ty));
                 self.ty(result);
             }
+            TypeKind::Apply(..) => self.later(t.span, "an applied type", "L2.5"),
+            TypeKind::AtomApply(..) => self.later(t.span, "an atom type with a payload", "L2.5"),
+            TypeKind::Record(_) => self.later(t.span, "a record type", "L2.5"),
         }
     }
 }

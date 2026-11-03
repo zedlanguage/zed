@@ -41,6 +41,7 @@ l01_36_cranelift
 l01_37_oracle
 l01_38_presburger
 l01_39_reduced_product
+l02_01_parser_structs
 m0_01_scaffolding
 m0_03_grammar_tools
 m0_04_corpus_references

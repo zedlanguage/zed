@@ -10,8 +10,13 @@
 //! `x.f(a)` stays a call of the member `x.f`, since whether `f` is a field or a function is
 //! known only after name resolution (step L1.14). A lambda keeps its parameters as written;
 //! an `else` chain is built left to right. A block is its statements, one of them its export.
-//! A unit is its declarations and statements. A form of a later layer is an error naming that
-//! layer.
+//! A unit is its declarations and statements. The forms of layer L2 (step L2.1) are built
+//! here too: a struct and its fields, a record display `{ x: 1 }` (in a block's place the
+//! separator decides between a block and a display), a `with` clause and its update paths, a
+//! method `T.m`, `this`, struct, name, `_` and tuple patterns, the tuple-destructuring
+//! parameter `((a, b)) -> e`, `type` declarations, and record, applied and atom-payload types.
+//! A name written twice in one struct, display, `with` clause or type parameter list is an
+//! error. A form of a later layer is an error naming that layer.
 
 mod drop;
 mod show;
@@ -22,7 +27,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::OnceLock;
 
-pub use stmts::{Function, Port, Stmt, StmtKind, Target};
+pub use stmts::{Field, Function, Method, Port, Stmt, StmtKind, Struct, Target, TypeDecl};
 pub use types::{Param, Pattern, Type, TypeKind, TypeParam};
 
 use crate::lex::{Part, Span, Tok, Token};
@@ -126,6 +131,28 @@ pub enum ExprKind {
         /// Whether it is `?.`, which passes an atom member of the value's type through.
         safe: bool,
     },
+    /// A record display `{x: 1, y:}`: its fields in written order; `y:` is `y: y`.
+    Record(Vec<(String, Expr)>),
+    /// A struct update `e with { x = 1, c.y = 2 }`.
+    With {
+        /// The value updated.
+        of: Box<Expr>,
+        /// The updates, in written order.
+        updates: Vec<Update>,
+    },
+    /// `this`, a method's receiver.
+    This,
+}
+
+/// One update of a `with`: a field path, `c.y`, and its new value.
+#[derive(Debug)]
+pub struct Update {
+    /// The fields of the path, outermost first.
+    pub path: Vec<String>,
+    /// The new value.
+    pub value: Expr,
+    /// Its text.
+    pub span: Span,
 }
 
 /// A part of a string expression.
@@ -278,12 +305,13 @@ fn forms() -> &'static [Form] {
         let form = |name: &str| match name {
             "Expr" | "Lambda" | "Expr12" | "Or" | "And" | "Additive" | "Multiplicative"
             | "Equality" | "Compare" | "IsTest" | "Reduce" | "Range" | "Prefix" | "Power"
-            | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If" | "Literal" => {
-                Form::Expr
-            }
+            | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If" | "Literal"
+            | "Display" | "This" => Form::Expr,
             "Type" | "TypePostfix" | "Arrow" | "TypeDiff" | "TypeOr" | "TypeAnd" | "TypeName"
-            | "AtomType" | "TupleType" | "GroupType" => Form::Type,
-            "AtomPattern" => Form::Pattern,
+            | "AtomType" | "TupleType" | "GroupType" | "TypeApply" | "AtomApply" | "RecordType" => {
+                Form::Type
+            }
+            "AtomPattern" | "CtorPat" | "NamePat" | "WildPat" | "TuplePat" => Form::Pattern,
             "Item" => Form::Item,
             _ => Form::Part,
         };
@@ -487,10 +515,11 @@ impl<'a> Builder<'a> {
                     span,
                 })
             }
-            "Reduce" if self.tree.nodes[kids[0]].rule == self.tree.nodes[n].rule => {
-                self.body(kids[0])
+            "Reduce" => {
+                let of = self.node(kids[0])?;
+                self.reduce_tail(of, kids[1])
             }
-            "Reduce" | "Range" => Err(self.later(kids[1])),
+            "Range" => Err(self.later(kids[1])),
             "Prefix" => {
                 let op = self.op(self.tree.nodes[n].start);
                 let e = self.node(kids[0])?;
@@ -537,6 +566,11 @@ impl<'a> Builder<'a> {
                 span: self.span(n),
             }),
             "Literal" => self.literal(n),
+            "Display" => self.display(n),
+            "This" => Ok(Expr {
+                kind: ExprKind::This,
+                span: self.span(n),
+            }),
             _ => unreachable!("make builds only these rules as expressions"),
         }
     }
@@ -569,6 +603,7 @@ impl<'a> Builder<'a> {
             [_] => Vec::new(),
             [p, _] if self.tree.name(*p) == "Name" => vec![Param {
                 name: self.word(self.tree.nodes[*p].start).into(),
+                tuple: None,
                 positional: false,
                 ty: None,
                 default: None,
@@ -639,6 +674,117 @@ impl<'a> Builder<'a> {
             _ => return Err(self.later(s)),
         };
         Ok(Expr { kind, span })
+    }
+
+    /// `of` followed by the `ReduceTail` node `t`: a struct update `with { … }` and the suffixes
+    /// after it, which apply to the updated value.
+    fn reduce_tail(&mut self, of: Expr, t: usize) -> Result<Expr, Error> {
+        if self.tree.layer(t) != 2 {
+            return Err(self.later(t));
+        }
+        let mut updates = Vec::new();
+        let mut paths: HashMap<Vec<&str>, Span> = HashMap::new();
+        let mut kids = self.kids(t).iter().peekable();
+        while let Some(&u) = kids.next_if(|&&k| self.tree.name(k) == "Update") {
+            if self.tree.layer(u) != 2 {
+                return Err(self.later(u));
+            }
+            let (&value, names) = self.kids(u).split_last().expect("Update ends in its value");
+            let path: Vec<&str> = (names.iter())
+                .map(|&k| self.word(self.tree.nodes[k].start))
+                .collect();
+            let span = self.span(u);
+            if let Some(&first) = paths.get(&path) {
+                let path = path.join(".");
+                return Err(Error {
+                    span,
+                    message: format!("the field `{path}` is updated twice"),
+                    notes: vec![Note {
+                        span: first,
+                        text: format!("the first update of `{path}`"),
+                    }],
+                });
+            }
+            updates.push(Update {
+                path: path.iter().map(|&p| p.to_string()).collect(),
+                value: self.node(value)?,
+                span,
+            });
+            paths.insert(path, span);
+        }
+        let suffixes: Vec<usize> = kids.copied().collect();
+        // The `with` ends at its `}`, the token before the first suffix.
+        let end = match suffixes.first() {
+            Some(&s) => self.tokens[self.tree.nodes[s].start - 1].span.end,
+            None => self.span(t).end,
+        };
+        let mut e = Expr {
+            span: Span {
+                start: of.span.start,
+                end,
+            },
+            kind: ExprKind::With {
+                of: Box::new(of),
+                updates,
+            },
+        };
+        for s in suffixes {
+            e = self.suffix(e, s)?;
+        }
+        Ok(e)
+    }
+
+    /// The record display of node `n`, a `Display`: `{x: 1, y:}`, `y:` being `y: y`. The other
+    /// displays, of sets and maps, are of layer L3.
+    fn display(&mut self, n: usize) -> Result<Expr, Error> {
+        if self.tree.layer(n) != 2 {
+            return Err(self.later(n));
+        }
+        let mut fields: Vec<(String, Expr)> = Vec::new();
+        let mut seen = HashMap::new();
+        for &k in self.kids(n) {
+            if self.tree.name(k) == "Name" {
+                let name = self.word(self.tree.nodes[k].start);
+                self.once(&mut seen, name, k, "field", "given")?;
+                // Until a value follows, the field is the variable of its name.
+                fields.push((name.into(), self.body(k)?));
+            } else {
+                let value = self.node(k)?;
+                fields
+                    .last_mut()
+                    .expect("a value follows its field's name")
+                    .1 = value;
+            }
+        }
+        Ok(Expr {
+            kind: ExprKind::Record(fields),
+            span: self.span(n),
+        })
+    }
+
+    /// Records the `what` named `name`, written at node `n`, in `seen`, or the error that it
+    /// is `done` twice, with a note at the first.
+    fn once(
+        &self,
+        seen: &mut HashMap<&'a str, Span>,
+        name: &'a str,
+        n: usize,
+        what: &str,
+        done: &str,
+    ) -> Result<(), Error> {
+        let span = self.span(n);
+        if let Some(&first) = seen.get(name) {
+            return Err(Error {
+                span,
+                message: format!("the {what} `{name}` is {done} twice"),
+                notes: vec![Note {
+                    span: first,
+                    text: format!("the first {what} `{name}`"),
+                }],
+            });
+        }
+        seen.insert(name, span);
+        Ok(())
     }
 
     #[allow(clippy::type_complexity)]

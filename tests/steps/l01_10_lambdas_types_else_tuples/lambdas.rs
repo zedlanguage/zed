@@ -31,19 +31,13 @@ fn parameters_are_a_name_or_a_list() {
 fn a_brace_after_the_arrow_is_a_block() {
     check(&[
         ("x -> { x }", "(fn (x) (block (return x)))"),
-        // A record display after the arrow is parenthesized; displays arrive at L2.
-        (
-            "p -> ({ x: p.x })",
-            "error: this form (Display) is built from layer L2",
-        ),
+        // A record display after the arrow is parenthesized (step L2.1).
+        ("p -> ({ x: p.x })", "(fn (p) (record (x: (. p x))))"),
         ("p -> { x: p.x }", "syntax"),
     ]);
 }
 
 #[test]
 fn a_tuple_parameter_is_destructured_from_layer_2() {
-    check(&[(
-        "((s, c)) -> s.region",
-        "error: this form (TupleParam) is built from layer L2",
-    )]);
+    check(&[("((s, c)) -> s.region", "(fn ((s, c)) (. s region))")]);
 }

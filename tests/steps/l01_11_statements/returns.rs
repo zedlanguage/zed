@@ -1,4 +1,4 @@
-//! `return e;` exports a value and `return a, b;` a tuple; a record display is L2.
+//! `return e;` exports a value and `return a, b;` a tuple; a record display is L2 (step L2.1).
 
 use super::check;
 
@@ -16,7 +16,7 @@ fn return_forms() {
         ("xs -> { return xs.min, xs.max, }", "syntax"),
         (
             "xs -> { return { lo: xs.min }; }",
-            "error: this form (Display) is built from layer L2",
+            "(fn (xs) (block (return (record (lo: (. xs min))))))",
         ),
         ("xs -> { return; }", "syntax"),
     ]);

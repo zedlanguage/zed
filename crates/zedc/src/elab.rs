@@ -252,6 +252,7 @@ impl<'a> Tables<'a> {
                     self.collect_in(value)
                 }
                 StmtKind::Return(es) => es.iter().for_each(|e| self.collect_in(e)),
+                StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {}
             }
         }
     }
@@ -337,6 +338,9 @@ impl<'a> Tables<'a> {
                 .collect(),
             StmtKind::Function(f) => vec![self.id(s.span, &f.name)],
             StmtKind::Push { .. } | StmtKind::Return(_) => Vec::new(),
+            StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {
+                unreachable!("resolve rejects the forms of layer L2")
+            }
         }
     }
 
@@ -559,6 +563,9 @@ impl<'a> Elab<'a> {
 
     fn stmt(&mut self, s: &'a Stmt, top: bool, out: &mut Vec<Bind>) -> Option<()> {
         match &s.kind {
+            StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {
+                unreachable!("resolve rejects the forms of layer L2")
+            }
             StmtKind::Bind { targets, value } => {
                 let v = self.expr(value)?;
                 match &targets[..] {
@@ -725,6 +732,9 @@ impl<'a> Elab<'a> {
         }
         let lit = |v: Value| Some(Term::Lit(v));
         match &e.kind {
+            ExprKind::Record(_) | ExprKind::With { .. } | ExprKind::This => {
+                unreachable!("resolve rejects the forms of layer L2")
+            }
             ExprKind::Int { radix, digits } => {
                 let digits: String = digits.chars().filter(|&c| c != '_').collect();
                 lit(Value::int_text(&digits, *radix).expect("the lexer's digits"))
@@ -1424,6 +1434,9 @@ impl<'a> Elab<'a> {
             ts.into_iter().collect()
         };
         Some(match &t.kind {
+            TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
+                unreachable!("resolve rejects the forms of layer L2")
+            }
             TypeKind::Name(n) => match n.as_str() {
                 "int" => KType::int(),
                 "rat" => KType::rat(),
@@ -1474,7 +1487,10 @@ impl<'a> Elab<'a> {
             fields,
             items,
             span,
-        } = p;
+        } = p
+        else {
+            unreachable!("resolve rejects the forms of layer L2")
+        };
         if fields.is_empty() {
             let items: Option<Vec<KPattern>> = items.iter().map(|i| self.pattern(i)).collect();
             return Some(KPattern::Atom(name.as_str().into(), items?));
@@ -1523,6 +1539,9 @@ fn what(s: &Stmt) -> String {
         StmtKind::Function(f) => format!("`{}`", f.name),
         StmtKind::Push { port, .. } => format!("the push to `{port}`"),
         StmtKind::Return(_) => "the export".into(),
+        StmtKind::Struct(_) | StmtKind::Type(_) | StmtKind::Method(_) => {
+            unreachable!("resolve rejects the forms of layer L2")
+        }
     }
 }
 

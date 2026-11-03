@@ -22,7 +22,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         ("constructor-called-by-position", "pass"),
         (
             "dot-never-mutates",
-            "2: this form (Struct) is built from layer L2",
+            "8: this form (ResultType) is built from layer L10",
         ),
         (
             "nullable-column-missing-none",
@@ -33,8 +33,10 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "25: the line is marked ✗ and has no diagnostic",
         ),
         (
+            // The `type` declaration parses (step L2.1); the parse stops at `match` (L2.2), and
+            // the marked line comes first.
             "payload-built-by-position",
-            "3: this form (TypeDecl) is built from layer L2",
+            "5: the line is marked ✗ and has no diagnostic",
         ),
         // Passes the mark check because its marked line does not parse at L1.
         ("taint-reaches-clean-sink", "pass"),
@@ -44,7 +46,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         ),
         (
             "two-writers-of-one-generation",
-            "2: this form (Struct) is built from layer L2",
+            "8: this form (ResultType) is built from layer L10",
         ),
         (
             "unit-mismatch-force-energy",
@@ -56,7 +58,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         ),
         (
             "value-binding-has-no-next-generation",
-            "2: this form (Struct) is built from layer L2",
+            "8: this form (ResultType) is built from layer L10",
         ),
     ];
     let names: Vec<String> = std::fs::read_dir(DIR)

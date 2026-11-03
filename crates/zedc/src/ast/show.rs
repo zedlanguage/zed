@@ -3,7 +3,10 @@
 
 use std::fmt;
 
-use super::{Expr, ExprKind, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type, TypeKind};
+use super::{
+    Expr, ExprKind, Field, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
+    TypeKind, TypeParam,
+};
 
 /// What is left to write.
 enum Show<'a> {
@@ -50,7 +53,8 @@ fn each<'a, T: 'a>(
 }
 
 /// An s-expression: `(call f 1 (x: 2) ...)`, `(index m k)`, `(. p x)`, `(?. p x)`, `(+ a b)`,
-/// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`.
+/// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`, `(record (x: 1))`,
+/// `(with p (= c.x 1))`.
 fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
     let at = |e: &'a Expr| Show::Expr(e);
     match &e.kind {
@@ -155,6 +159,27 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
             Text(name),
             Text(")"),
         ]),
+        ExprKind::Record(fields) => {
+            out.push(Text("(record"));
+            for (n, v) in fields {
+                out.extend([Text(" ("), Text(n), Text(": "), at(v), Text(")")]);
+            }
+            out.push(Text(")"));
+        }
+        ExprKind::With { of, updates } => {
+            out.extend([Text("(with "), at(of)]);
+            for u in updates {
+                out.push(Text(" (= "));
+                let mut sep = "";
+                for p in &u.path {
+                    out.extend([Text(sep), Text(p)]);
+                    sep = ".";
+                }
+                out.extend([Text(" "), at(&u.value), Text(")")]);
+            }
+            out.push(Text(")"));
+        }
+        ExprKind::This => out.push(Text("this")),
     }
 }
 
@@ -166,8 +191,10 @@ fn params_spaced<'a>(params: &'a [Param], out: &mut Vec<Show<'a>>) {
     }
 }
 
-/// `(= (a b) e)`, `(= (_) e)`, `(return a b)`, `(<- p e)`, and a function
-/// `(def f (x (y: int)) (-> (stdout: Lines)) = e (test (a b) …))`, the `=` for an equation.
+/// `(= (a b) e)`, `(= (_) e)`, `(return a b)`, `(<- p e)`, a function
+/// `(def f (x (y: int)) (-> (stdout: Lines)) = e (test (a b) …))`, the `=` for an equation,
+/// a method `(method T.m (k) = e)`, or `(method T.m = e)` without parentheses, a struct
+/// `(struct P (x: f64) (y: f64 = 0.0) (import a.B))` and a type `(type T (A) (| A #b))`.
 fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
     match &s.kind {
         StmtKind::Bind { targets, value } => {
@@ -201,42 +228,96 @@ fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
             out.extend([Text("(def "), Text(&func.name), Text(" (")]);
             params_spaced(&func.params, out);
             out.push(Text(")"));
-            if let Some(ports) = &func.ports {
-                out.push(Text(" (->"));
-                for p in ports {
-                    out.extend([
-                        Text(" ("),
-                        Text(&p.name),
-                        Text(": "),
-                        Show::Type(&p.ty),
-                        Text(")"),
-                    ]);
-                }
+            function(func, out);
+        }
+        StmtKind::Method(m) => {
+            let func = &m.function;
+            out.extend([
+                Text("(method "),
+                Text(&m.receiver),
+                Text("."),
+                Text(&func.name),
+            ]);
+            if m.called {
+                out.push(Text(" ("));
+                params_spaced(&func.params, out);
                 out.push(Text(")"));
             }
-            out.extend([
-                Text(if func.equation { " = " } else { " " }),
-                Show::Expr(&func.body),
-            ]);
-            if !func.tests.is_empty() {
-                out.push(Text(" (test"));
-                for (a, b) in &func.tests {
-                    out.extend([
-                        Text(" ("),
-                        Show::Expr(a),
-                        Text(" "),
-                        Show::Expr(b),
-                        Text(")"),
-                    ]);
+            function(func, out);
+        }
+        StmtKind::Struct(st) => {
+            out.extend([Text("(struct "), Text(&st.name)]);
+            for f in &st.fields {
+                match f {
+                    Field::Typed {
+                        name, ty, default, ..
+                    } => {
+                        out.extend([Text(" ("), Text(name), Text(": "), Show::Type(ty)]);
+                        if let Some(d) = default {
+                            out.extend([Text(" = "), Show::Expr(d)]);
+                        }
+                        out.push(Text(")"));
+                    }
+                    Field::Import { path, .. } => {
+                        out.extend([Text(" (import "), Text(path), Text(")")]);
+                    }
                 }
-                out.push(Text(")"));
             }
             out.push(Text(")"));
+        }
+        StmtKind::Type(t) => {
+            out.extend([Text("(type "), Text(&t.name)]);
+            if !t.params.is_empty() {
+                out.push(Text(" ("));
+                let mut sep = "";
+                for p in &t.params {
+                    out.extend([Text(sep), Text(p)]);
+                    sep = " ";
+                }
+                out.push(Text(")"));
+            }
+            out.extend([Text(" "), Show::Type(&t.ty), Text(")")]);
         }
     }
 }
 
-/// `int`, `#none`, `(tuple A B)`, `(| A B)`, `(& A B)`, `(\ A B)`, `(-> (A (x: B)) R)`.
+/// The rest of a function after its parameters: its ports, body and tests, and the `)`.
+fn function<'a>(func: &'a Function, out: &mut Vec<Show<'a>>) {
+    if let Some(ports) = &func.ports {
+        out.push(Text(" (->"));
+        for p in ports {
+            out.extend([
+                Text(" ("),
+                Text(&p.name),
+                Text(": "),
+                Show::Type(&p.ty),
+                Text(")"),
+            ]);
+        }
+        out.push(Text(")"));
+    }
+    out.extend([
+        Text(if func.equation { " = " } else { " " }),
+        Show::Expr(&func.body),
+    ]);
+    if !func.tests.is_empty() {
+        out.push(Text(" (test"));
+        for (a, b) in &func.tests {
+            out.extend([
+                Text(" ("),
+                Show::Expr(a),
+                Text(" "),
+                Show::Expr(b),
+                Text(")"),
+            ]);
+        }
+        out.push(Text(")"));
+    }
+    out.push(Text(")"));
+}
+
+/// `int`, `#none`, `(tuple A B)`, `(| A B)`, `(& A B)`, `(\ A B)`, `(-> (A (x: B)) R)`,
+/// `(Tree T)`, `(#node (l: T))`, `(record (x: int))`.
 fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
     let mut list = |head, ts: &'a [Type]| {
         out.push(Text(head));
@@ -262,37 +343,62 @@ fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
             result,
         } => {
             out.push(Text(if *partial { "(->? (" } else { "(-> (" }));
-            let mut sep = "";
-            for p in params {
-                out.push(Text(sep));
-                sep = " ";
-                match (&p.name, p.positional) {
-                    (Some(n), true) => out.extend([
-                        Text("(positional "),
-                        Text(n),
-                        Text(": "),
-                        Show::Type(&p.ty),
-                        Text(")"),
-                    ]),
-                    (Some(n), false) => {
-                        out.extend([Text("("), Text(n), Text(": "), Show::Type(&p.ty), Text(")")])
-                    }
-                    (None, _) => out.push(Show::Type(&p.ty)),
-                }
-            }
+            type_params(params, "", out);
             out.extend([Text(") "), Show::Type(result), Text(")")]);
+        }
+        TypeKind::Apply(name, params) => {
+            out.extend([Text("("), Text(name)]);
+            type_params(params, " ", out);
+            out.push(Text(")"));
+        }
+        TypeKind::AtomApply(name, params) => {
+            out.extend([Text("(#"), Text(name)]);
+            type_params(params, " ", out);
+            out.push(Text(")"));
+        }
+        TypeKind::Record(fields) => {
+            out.push(Text("(record"));
+            for (n, t) in fields {
+                out.extend([Text(" ("), Text(n), Text(": "), Show::Type(t), Text(")")]);
+            }
+            out.push(Text(")"));
+        }
+    }
+}
+
+/// The parameters of a function type or the arguments of an applied type, each after `first`
+/// or a space.
+fn type_params<'a>(params: &'a [TypeParam], first: &'a str, out: &mut Vec<Show<'a>>) {
+    let mut sep = first;
+    for p in params {
+        out.push(Text(sep));
+        sep = " ";
+        match (&p.name, p.positional) {
+            (Some(n), true) => out.extend([
+                Text("(positional "),
+                Text(n),
+                Text(": "),
+                Show::Type(&p.ty),
+                Text(")"),
+            ]),
+            (Some(n), false) => {
+                out.extend([Text("("), Text(n), Text(": "), Show::Type(&p.ty), Text(")")])
+            }
+            (None, _) => out.push(Show::Type(&p.ty)),
         }
     }
 }
 
 /// `x`, or `(positional x: int = 0)` with what is written.
 fn param<'a>(p: &'a Param, out: &mut Vec<Show<'a>>) {
-    if !p.positional && p.ty.is_none() && p.default.is_none() {
+    // A tuple-destructuring parameter is positional by its form, and its name is `(a, b)`.
+    let positional = p.positional && p.tuple.is_none();
+    if !positional && p.ty.is_none() && p.default.is_none() {
         out.push(Text(&p.name));
         return;
     }
     out.push(Text("("));
-    if p.positional {
+    if positional {
         out.push(Text("positional "));
     }
     out.push(Text(&p.name));
@@ -305,18 +411,30 @@ fn param<'a>(p: &'a Param, out: &mut Vec<Show<'a>>) {
     out.push(Text(")"));
 }
 
-/// `#name`, `#name(f: p, g:)`, `#name(p, q)`.
+/// `#name`, `#name(f: p, g:)`, `#name(p, q)`, `Point(x:, y: b)`, `n`, `_`, `(p, q)`: as
+/// written, which the formatter relies on.
 fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
-    let Pattern::Atom {
-        name,
-        fields,
-        items,
-        ..
-    } = p;
-    out.extend([Text("#"), Text(name)]);
-    if fields.is_empty() && items.is_empty() {
-        return;
-    }
+    let (fields, items) = match p {
+        Pattern::Atom {
+            name,
+            fields,
+            items,
+            ..
+        } => {
+            out.extend([Text("#"), Text(name)]);
+            if fields.is_empty() && items.is_empty() {
+                return;
+            }
+            (&fields[..], &items[..])
+        }
+        Pattern::Struct { name, fields, .. } => {
+            out.push(Text(name));
+            (&fields[..], &[][..])
+        }
+        Pattern::Name(n, _) => return out.push(Text(n)),
+        Pattern::Wild(_) => return out.push(Text("_")),
+        Pattern::Tuple(items, _) => (&[][..], &items[..]),
+    };
     out.push(Text("("));
     let mut sep = "";
     for (n, p) in fields {

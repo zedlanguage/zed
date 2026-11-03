@@ -17,7 +17,10 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use crate::ast::{Expr, ExprKind, Param, Port, Stmt, StmtKind, Target, Type, TypeKind, TypeParam};
+use crate::ast::{
+    Expr, ExprKind, Field, Function, Param, Port, Stmt, StmtKind, Target, Type, TypeKind,
+    TypeParam, Update,
+};
 use crate::lex::{self, Span, Token};
 use crate::parse::{TOP, parse};
 use crate::{ast, source};
@@ -65,11 +68,12 @@ const ELSE: u8 = 1;
 const OR: u8 = 2;
 const EQUALITY: u8 = 4;
 const RELATION: u8 = 5;
-const ADDITIVE: u8 = 6;
-const PREFIX: u8 = 8;
-const POWER: u8 = 9;
-const POSTFIX: u8 = 10;
-const PRIMARY: u8 = 11;
+const REDUCE: u8 = 6;
+const ADDITIVE: u8 = 7;
+const PREFIX: u8 = 9;
+const POWER: u8 = 10;
+const POSTFIX: u8 = 11;
+const PRIMARY: u8 = 12;
 
 fn level(e: &Expr) -> u8 {
     match &e.kind {
@@ -77,6 +81,7 @@ fn level(e: &Expr) -> u8 {
         ExprKind::Else { .. } => ELSE,
         ExprKind::Binary(op, ..) => binary_level(op),
         ExprKind::Is { .. } => RELATION,
+        ExprKind::With { .. } => REDUCE,
         ExprKind::Unary(..) => PREFIX,
         ExprKind::Call { .. } | ExprKind::Index(..) | ExprKind::Member { .. } => POSTFIX,
         _ => PRIMARY,
@@ -96,17 +101,18 @@ fn binary_level(op: &str) -> u8 {
     }
 }
 
-/// Whether `e`'s text starts with a block, which a lambda's body or an `else` default that is
-/// not itself a block may not.
+/// Whether `e`'s text starts with a block or a record display, which a lambda's body or an
+/// `else` default that is not itself a block may not.
 fn starts_with_block(mut e: &Expr) -> bool {
     loop {
         match &e.kind {
-            ExprKind::Block(_) => return true,
+            ExprKind::Block(_) | ExprKind::Record(_) => return true,
             ExprKind::Binary(_, of, _)
             | ExprKind::Call { callee: of, .. }
             | ExprKind::Index(of, _)
             | ExprKind::Member { of, .. }
             | ExprKind::Is { of, .. }
+            | ExprKind::With { of, .. }
             | ExprKind::Else { of, .. } => e = of,
             _ => return false,
         }
@@ -124,6 +130,7 @@ fn head_unsafe(e: &Expr) -> bool {
             ExprKind::Binary(_, a, b) => stack.extend([&**a, &**b]),
             ExprKind::Unary(_, a)
             | ExprKind::Is { of: a, .. }
+            | ExprKind::With { of: a, .. }
             | ExprKind::Call { callee: a, .. }
             | ExprKind::Index(a, _)
             | ExprKind::Member { of: a, .. } => stack.push(a),
@@ -224,12 +231,18 @@ enum Job<'a> {
         min: u8,
         ind: usize,
     },
-    /// Named arguments, with `, ` between; `comma` says one goes before the first.
+    /// Named arguments or a display's fields, each value at level `min`, with `, ` between;
+    /// `comma` says one goes before the first.
     Named {
         args: &'a [(String, Expr)],
+        min: u8,
         comma: bool,
         ind: usize,
     },
+    /// The updates of a `with`, with `, ` between.
+    Updates { updates: &'a [Update], ind: usize },
+    /// A struct's fields, with `, ` between.
+    Fields { fields: &'a [Field], ind: usize },
     /// `test` cases, with `, ` between.
     Cases {
         cases: &'a [(Expr, Expr)],
@@ -247,8 +260,10 @@ enum Job<'a> {
         min: u8,
         sep: &'static str,
     },
-    /// Parameters of a function type, with `, ` between.
+    /// Parameters of a function type or arguments of an applied type, with `, ` between.
     TypeParams(&'a [TypeParam]),
+    /// The fields of a record type, with `, ` between.
+    RecordType(&'a [(String, Type)]),
 }
 
 /// Pushes jobs to run in the order written.
@@ -433,13 +448,19 @@ impl<'a> Formatter<'a> {
                     stack.push(Job::Expr { e, min, ind });
                 }
             }
-            Job::Named { args, comma, ind } => {
+            Job::Named {
+                args,
+                min,
+                comma,
+                ind,
+            } => {
                 if let Some(((n, v), rest)) = args.split_first() {
                     if comma {
                         self.put(", ");
                     }
                     stack.push(Job::Named {
                         args: rest,
+                        min,
                         comma: true,
                         ind,
                     });
@@ -447,12 +468,45 @@ impl<'a> Formatter<'a> {
                         ExprKind::Name(m) if m == n => self.put(format!("{n}:")),
                         _ => {
                             self.put(format!("{n}: "));
-                            stack.push(Job::Expr {
-                                e: v,
-                                min: LAMBDA,
-                                ind,
-                            });
+                            stack.push(Job::Expr { e: v, min, ind });
                         }
+                    }
+                }
+            }
+            Job::Updates { updates, ind } => {
+                if let Some((u, rest)) = updates.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(", "), Job::Updates { updates: rest, ind }];
+                    }
+                    self.put(format!("{} = ", u.path.join(".")));
+                    stack.push(Job::Expr {
+                        e: &u.value,
+                        min: LAMBDA,
+                        ind,
+                    });
+                }
+            }
+            Job::Fields { fields, ind } => {
+                if let Some((f, rest)) = fields.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(", "), Job::Fields { fields: rest, ind }];
+                    }
+                    match f {
+                        Field::Typed {
+                            name, ty, default, ..
+                        } => {
+                            self.put(format!("{name}: "));
+                            if let Some(e) = default {
+                                then![stack;
+                                    Job::Ty { t: ty, min: 0 },
+                                    put(" = "),
+                                    Job::Expr { e, min: LAMBDA, ind },
+                                ];
+                            } else {
+                                stack.push(Job::Ty { t: ty, min: 0 });
+                            }
+                        }
+                        Field::Import { path, .. } => self.put(format!("import {path}")),
                     }
                 }
             }
@@ -473,7 +527,7 @@ impl<'a> Formatter<'a> {
                     if !rest.is_empty() {
                         then![stack; put(", "), Job::Params { params: rest, ind }];
                     }
-                    if p.positional {
+                    if p.positional && p.tuple.is_none() {
                         self.put("positional ");
                     }
                     self.put(p.name.as_str());
@@ -523,6 +577,15 @@ impl<'a> Formatter<'a> {
                         None => {}
                     }
                     stack.push(Job::Ty { t: &p.ty, min: 0 });
+                }
+            }
+            Job::RecordType(fields) => {
+                if let Some(((n, t), rest)) = fields.split_first() {
+                    if !rest.is_empty() {
+                        then![stack; put(", "), Job::RecordType(rest)];
+                    }
+                    self.put(format!("{n}: "));
+                    stack.push(Job::Ty { t, min: 0 });
                 }
             }
         }
@@ -612,44 +675,83 @@ impl<'a> Formatter<'a> {
             }
             StmtKind::Function(f) => {
                 self.put(format!("{}(", f.name));
-                let mut jobs = vec![
-                    Job::Params {
-                        params: &f.params,
-                        ind,
-                    },
-                    put(")"),
+                self.function(f, true, ind, stack);
+            }
+            StmtKind::Method(m) => {
+                self.put(format!("{}.{}", m.receiver, m.function.name));
+                if m.called {
+                    self.put("(");
+                }
+                self.function(&m.function, m.called, ind, stack);
+            }
+            StmtKind::Struct(st) if st.fields.is_empty() => {
+                self.put(format!("struct {} {{}}", st.name));
+            }
+            StmtKind::Struct(st) => {
+                self.put(format!("struct {} {{ ", st.name));
+                then![stack;
+                    Job::Fields { fields: &st.fields, ind },
+                    put(" }"),
                 ];
-                if let Some(ports) = &f.ports {
-                    jobs.extend([put(" -> ("), Job::Ports(ports), put(")")]);
+            }
+            StmtKind::Type(t) => {
+                self.put(format!("type {}", t.name));
+                if !t.params.is_empty() {
+                    self.put(format!("({})", t.params.join(", ")));
                 }
-                if f.equation {
-                    jobs.extend([put(" = "), value(&f.body)]);
-                    if f.tests.is_empty() {
-                        jobs.push(put(";"));
-                    }
-                } else {
-                    jobs.extend([
-                        put(" "),
-                        Job::Block {
-                            e: &f.body,
-                            ind,
-                            place: Place::Body,
-                        },
-                    ]);
-                }
-                if !f.tests.is_empty() {
-                    jobs.extend([
-                        put(format!("\n{}test {{ ", indent(ind + 1))),
-                        Job::Cases {
-                            cases: &f.tests,
-                            ind,
-                        },
-                        put(" }"),
-                    ]);
-                }
-                stack.extend(jobs.into_iter().rev());
+                self.put(" = ");
+                then![stack; Job::Ty { t: &t.ty, min: 0 }, put(";")];
             }
         }
+    }
+
+    /// A function's text after its name and `(`: its parameters and `)` when `called`, then its
+    /// ports, body and tests.
+    fn function(&mut self, f: &'a Function, called: bool, ind: usize, stack: &mut Vec<Job<'a>>) {
+        let value = |e| Job::Expr {
+            e,
+            min: LAMBDA,
+            ind,
+        };
+        let mut jobs = Vec::new();
+        if called {
+            jobs.extend([
+                Job::Params {
+                    params: &f.params,
+                    ind,
+                },
+                put(")"),
+            ]);
+        }
+        if let Some(ports) = &f.ports {
+            jobs.extend([put(" -> ("), Job::Ports(ports), put(")")]);
+        }
+        if f.equation {
+            jobs.extend([put(" = "), value(&f.body)]);
+            if f.tests.is_empty() {
+                jobs.push(put(";"));
+            }
+        } else {
+            jobs.extend([
+                put(" "),
+                Job::Block {
+                    e: &f.body,
+                    ind,
+                    place: Place::Body,
+                },
+            ]);
+        }
+        if !f.tests.is_empty() {
+            jobs.extend([
+                put(format!("\n{}test {{ ", indent(ind + 1))),
+                Job::Cases {
+                    cases: &f.tests,
+                    ind,
+                },
+                put(" }"),
+            ]);
+        }
+        stack.extend(jobs.into_iter().rev());
     }
 
     fn raw(&mut self, e: &'a Expr, ind: usize, stack: &mut Vec<Job<'a>>) {
@@ -701,7 +803,7 @@ impl<'a> Formatter<'a> {
                     Job::Postfix { of: callee, ind },
                     put("("),
                     Job::Exprs { exprs: positional, min: LAMBDA, ind },
-                    Job::Named { args: named, comma, ind },
+                    Job::Named { args: named, min: LAMBDA, comma, ind },
                     put(dots),
                     put(")"),
                 ];
@@ -745,7 +847,7 @@ impl<'a> Formatter<'a> {
             ExprKind::Is { of, ty: t, negated } => {
                 let not = if *negated { "not " } else { "" };
                 then![stack;
-                    at(of, ADDITIVE),
+                    at(of, REDUCE),
                     put(format!(" is {not}")),
                     Job::Ty { t, min: 1 },
                 ];
@@ -765,6 +867,22 @@ impl<'a> Formatter<'a> {
                 ];
             }
             ExprKind::Block(_) => self.block(e, ind, Place::Operand, stack),
+            ExprKind::Record(fields) => {
+                self.put("{ ");
+                then![stack;
+                    Job::Named { args: fields, min: ELSE, comma: false, ind },
+                    put(" }"),
+                ];
+            }
+            ExprKind::With { of, updates } => {
+                then![stack;
+                    at(of, REDUCE),
+                    put(" with { "),
+                    Job::Updates { updates, ind },
+                    put(" }"),
+                ];
+            }
+            ExprKind::This => self.put("this"),
             ExprKind::If {
                 cond,
                 then,
@@ -875,6 +993,18 @@ impl<'a> Formatter<'a> {
                         then![stack; Job::TypeParams(ps), put(")")];
                     }
                 }
+            }
+            TypeKind::Apply(name, ps) => {
+                self.put(format!("{name}("));
+                then![stack; Job::TypeParams(ps), put(")")];
+            }
+            TypeKind::AtomApply(name, ps) => {
+                self.put(format!("#{name}("));
+                then![stack; Job::TypeParams(ps), put(")")];
+            }
+            TypeKind::Record(fields) => {
+                self.put("{ ");
+                then![stack; Job::RecordType(fields), put(" }")];
             }
         }
     }

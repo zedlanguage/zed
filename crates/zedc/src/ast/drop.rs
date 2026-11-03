@@ -3,7 +3,10 @@
 
 use std::mem;
 
-use super::{Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Type, TypeKind};
+use super::{
+    Expr, ExprKind, Field, Function, Method, Param, Pattern, Stmt, StmtKind, StrPart, Struct, Type,
+    TypeKind,
+};
 
 impl Drop for Expr {
     fn drop(&mut self) {
@@ -23,7 +26,8 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
         | ExprKind::Rat(_)
         | ExprKind::Bool(_)
         | ExprKind::Atom(_)
-        | ExprKind::Name(_) => {}
+        | ExprKind::Name(_)
+        | ExprKind::This => {}
         ExprKind::Str(parts) => out.extend(parts.into_iter().filter_map(|p| match p {
             StrPart::Hole(e) => Some(e),
             StrPart::Text(_) => None,
@@ -59,26 +63,43 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
                 match kind {
                     StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => out.push(value),
                     StmtKind::Return(mut es) => out.append(&mut es),
-                    StmtKind::Function(Function {
-                        params,
-                        body,
-                        tests,
-                        ..
-                    }) => {
-                        param_kids(params, out);
-                        out.push(body);
-                        for (a, b) in tests {
-                            out.extend([a, b]);
-                        }
+                    StmtKind::Function(f) | StmtKind::Method(Method { function: f, .. }) => {
+                        function_kids(f, out)
                     }
+                    StmtKind::Struct(Struct { fields, .. }) => {
+                        out.extend(fields.into_iter().filter_map(|f| match f {
+                            Field::Typed { default, .. } => default,
+                            Field::Import { .. } => None,
+                        }))
+                    }
+                    StmtKind::Type(_) => {}
                 }
             }
+        }
+        ExprKind::Record(fields) => out.extend(fields.into_iter().map(|(_, e)| e)),
+        ExprKind::With { of, updates } => {
+            out.push(*of);
+            out.extend(updates.into_iter().map(|u| u.value));
         }
         ExprKind::If {
             cond,
             then,
             otherwise,
         } => out.extend([*cond, *then, *otherwise]),
+    }
+}
+
+fn function_kids(f: Function, out: &mut Vec<Expr>) {
+    let Function {
+        params,
+        body,
+        tests,
+        ..
+    } = f;
+    param_kids(params, out);
+    out.push(body);
+    for (a, b) in tests {
+        out.extend([a, b]);
     }
 }
 
@@ -111,6 +132,10 @@ fn type_kids(kind: &mut TypeKind, out: &mut Vec<Type>) {
             out.extend(params.into_iter().map(|p| p.ty));
             out.push(*result);
         }
+        TypeKind::Apply(_, params) | TypeKind::AtomApply(_, params) => {
+            out.extend(params.into_iter().map(|p| p.ty));
+        }
+        TypeKind::Record(fields) => out.extend(fields.into_iter().map(|(_, t)| t)),
     }
 }
 
@@ -126,7 +151,15 @@ impl Drop for Pattern {
 
 /// Moves the patterns directly in `p` to `out`.
 fn pattern_kids(p: &mut Pattern, out: &mut Vec<Pattern>) {
-    let Pattern::Atom { fields, items, .. } = p;
-    out.append(items);
-    out.extend(mem::take(fields).into_iter().filter_map(|(_, p)| p));
+    match p {
+        Pattern::Atom { fields, items, .. } => {
+            out.append(items);
+            out.extend(mem::take(fields).into_iter().filter_map(|(_, p)| p));
+        }
+        Pattern::Struct { fields, .. } => {
+            out.extend(mem::take(fields).into_iter().filter_map(|(_, p)| p));
+        }
+        Pattern::Tuple(items, _) => out.append(items),
+        Pattern::Name(..) | Pattern::Wild(_) => {}
+    }
 }
