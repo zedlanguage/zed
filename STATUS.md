@@ -877,48 +877,59 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ADDITIVE-desugar | repair attempt 1 | 2026-11-03 07:14 | cargo clippy -D warnings passes (7m42s at load ~150) |
-| AXIOMS-fmt | verify attempt 1 | 2026-11-03 07:55 | full suite started on c10cacd (load 121); control worktree /home/luke/Work/wt/axioms-fmt-ctl made |
-| BIT-words | impl attempt 1 | 2026-11-03 07:14 | run_tests.sh 4: 99 pieces, 1 failed (m0_01 step-folder name l01_39a rejected by is_step_name; fixing), l01_39a 32 pass 6.7 s (load 69-136) |
-| CANON-stable | impl attempt 1 | 2026-11-03 09:30 | start |
-| CAP-pow32 | impl attempt 1 | 2026-11-03 08:53 | negative control on main ab26ea6: 3 of 13 powers tests fail (past-u32 shared count at depth 32, parity at k=u32::MAX+1, nested-square scaling), 10 pass; probe n |
-| F44-memo | impl attempt 2 | 2026-11-03 07:14 | rebased wt/f44-memo on main ab26ea6 (T6 merged): stale Part::forced tradeoff comment dropped, the_parts_scale un-ignored, x13.rs and scaling.rs unit test Cell-> |
-| HOLE-oneline | impl attempt 2 | 2026-11-03 07:14 | continuing repair#1's uncommitted fix; fmt, clippy -D warnings clean; check OK (149 parsed), fences exit 0, cases 372 with 2 wrong ((T,) types, not this item's) |
-| L1.17a | impl attempt 1 | 2026-11-03 07:14 | Product::bound multiplies 2^e exactly (no squaring); the three child tests and the scaling test each run in under 2 s; full suite started, load 116.88 127.59 13 |
-| LIN-probe | orchestrator attempt  | 2026-11-03 07:30 | also remove the per-call model clone in Formula::holds (borrow the model; no copies for the borrow checker); state the argument that skipping disjuncts true at  |
-| LIVE3 | impl attempt 1 | 2026-11-03 09:30 | started: reading brief, SYNTHESIS, R3_CLAUDE 3.1-3.4 |
-| R10-stack | verify attempt 1 | 2026-11-03 07:14 | done: no blocking defect; fmt and clippy -D warnings clean; non-blocking notes: tradeoff comment at stack.rs:63 lacks test/row/complete-solution parts, wide fun |
-| S22b-rest | verify attempt 1 | 2026-11-03 07:22 | negative control (4a2686f preimage.rs + new tests, /home/luke/Work/wt/s22b-rest-ctl, load ~102): constant_minus 2 of 12 fail (clip at ends of i64, reflected arm |
-| S22e-quad | repair attempt 1 | 2026-11-03 07:43 | suite BUILD FAILED: link of steps test binary, undefined llvm anon symbols (corrupt incremental cache from the killed earlier run); cargo clean -p zed-tests and |
-| S22-merge | impl attempt 1 | 2026-11-03 08:07 | l01_25 piece passes with the counts updated: 130 passed, 1 ignored, 219.7 s at load 178 (125.8 s at load 134 before the fix); starting clippy and tools/run_test |
-| SCALE-bytes | merge attempt 1 | 2026-11-03 07:14 | lock released |
-| ST-arms-quad | verify attempt 5 | 2026-11-03 03:16 | run_tests.sh 4 on cd363ae: 97 pieces, 0 failed (load 81-149); semantics of reduce_case checked: every shown scope passes through assume->reduce or bind, which e |
+| ADDITIVE-desugar | verify attempt 1 | 2026-11-03 07:14 | clippy -D warnings exit 0, fmt check exit 0; desugar Additive line equals DESIGN 3619 (zed 3dd26f0); non-String ++ refused with span diagnostic; returning ok=tr |
+| BIT-words | orchestrator attempt  | 2026-11-03 07:14 | NOTE for repair#1: main is now 88c51bb; rebase onto it. The new lazy Ck::known must not recurse on expression depth: T2-mid (still in repair) tests binders 100, |
+| CANON-stable | impl attempt 1 | 2026-11-03 09:30 | docs committed (COMPLEXITY S31, STATUS, plan_dag row+note, ZED_PORT_GAPS); full suites running on branch and on main baseline (load 123.18) |
+| CAP-pow32 | verify attempt 1 | 2026-11-03 08:53 | clippy -D warnings and fmt clean on f6e2feb; suite (run_tests.sh 2, load ~90-105) running; reading Tx::joined: exact Int count stored per product node is O(d) b |
+| F44-forced | running | 2026-11-03 08:09 |  |
+| F44-memo | orchestrator attempt  | 2026-11-03 07:14 | REQUIREMENT for verify#2: (1) impl marked ledger item F44-forced fixed: confirm F44-forced's plan row and tests are covered by 1739add, or say what is missing;  |
+| HOLE-oneline | verify attempt 2 | 2026-11-03 07:14 | clippy -D warnings clean, fmt clean; check OK (149 parsed 0 failed), fences exit 0, cases 372 with 2 DIFF ((T,) types, not this item's), all 16 new ok; 10 lexer |
+| L1.17a | verify attempt 1 | 2026-11-03 07:14 | started; no earlier verify lines for this item |
+| LIN-probe | verify attempt 1 | 2026-11-03 07:30 | control worktree /home/luke/Work/wt/lin-probe-ctl at f57061a (detached) for k=32->256 measurement and the main-probe negative control |
+| LIVE3 | orchestrator attempt  | 2026-11-03 09:30 | REFERENCE (XR3 Codex report /home/luke/Work/wt/xt4/codex/R3_CODEX.md Q3, lines 122-224, and Q5 lines 280-284): a second design for the same method (bounded back |
+| R10-stack | merge attempt 1 | 2026-11-03 07:14 | lock released |
+| S22e-quad | verify attempt 1 | 2026-11-03 07:43 | control worktree wt/s22e-quad-ctl removed; probe code kept at /home/luke/Work/wt/s22e-quad-verify-probe.diff (65 lines) for the repair |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
-| T2-mid | orchestrator attempt  | 2026-11-03 04:26 | SCOPE CUT for repair#4: finish and commit the zir/memory.rs walks and l01_34 tests now in progress, run the suite, then return ok=true for verify and merge. Do  |
-| T2-types | impl attempt 1 | 2026-11-03 08:34 | docs: COMPLEXITY K39, STATUS partial row, ZED_PORT_GAPS T2-types; ledger T2-types-rest queued; running tools/run_tests.sh 4 (load 101.45) |
-| T6-bound-load | impl attempt 1 | 2026-11-03 07:07 | code committed 1c40ccc; full suite started, load 100.84 |
-| T6-payload-pinwheel | impl attempt 1 | 2026-11-03 08:25 | fix 1 (exact f in narrow_tuples/morphisms, settle only for empty proof and forced): k=1 Payload/OneTuple Empty+Inhabited; k=16 Payload Empty 3.48 s, OneTuple 3. |
-| T6-ratlit | orchestrator attempt  | 2026-11-03 05:01 | REQUIREMENT for impl#2 and verify: residues mod 2^61-1 may only bucket or hash; equality, order and subtyping of rat literal types must compare the exact canoni |
-| TD-ends | verify attempt 5 | 2026-11-03 03:52 | baseline 3dda2df int.rs: same x**3 probe 9 us/3 us/19 us at 4096/32768/262144 bits, so least_root's cubic cost is new in repair 4; -2^127 hash mismatch also on  |
-| TD-values | repair attempt 1 | 2026-11-03 03:52 | started; previous suite run ended without its summary (34 pieces, killed at return); rerunning after review and commit |
-| TEST-split | impl attempt 1 | 2026-11-03 07:56 | full run_tests.sh 4 cut at 50 min by my outer timeout with 259 pieces queued on 8 machine-wide slots at load 87-182; no summary, rerun needed; of 125 new pieces |
-| TYPE-forms | impl attempt 1 | 2026-11-03 08:16 | AST/resolve/check/format/elab For arm done; 15 bounds tests pass in l01_26; grammar cases added (365, 0 wrong) |
-| UNITANNOT-L7 | impl attempt 1 | 2026-11-03 07:14 | parser/AST/format/resolve/check built; zedc run of a unit with @log(#off); prints the same as without; building step tests (load 149.75) |
-| UTVPI-NEAR | verify attempt 1 | 2026-11-03 06:34 | done ok=false: fmt, clippy pass; run_tests.sh 4 98 pieces 0 failed (load 81-162; l01_38 88 pass 45 s); BLOCKING: race fails scaling on BAD-GOR + fan union 62.3x |
-| WIDEN-WARN | repair attempt 1 | 2026-11-03 07:14 | fix applied: only + - * unary - and literals inherit wrap; new test with the 3 probes passes, widen 16/16; clippy, fmt clean; follow-up WIDEN-WARN-test added to |
+| T2-mid | orchestrator attempt  | 2026-11-03 04:26 | MERGE NOTE: main is now 88c51bb (catch-up). Rebase onto it. COMPLEXITY F60 is OSP-neglit's and F61 is AXIOMS-fmt's: renumber T2-mid's F60 to F62 and update STAT |
+| T2-types | repair attempt 2 | 2026-11-03 08:34 | start; continuing wt/t2-types from 3caae19 |
+| T6-bound-load | impl attempt 1 | 2026-11-03 07:07 | 86f1255: per-arrow refused cause, kernel cofinite rat/float witness; full suite started, load 91.18 |
+| T6-payload-pinwheel | impl attempt 2 | 2026-11-03 08:25 | negative control (fold unions restored, not committed): OneTuple with middle k64->512 156.3M->3930.3M instr, 25.1x > 24, test fails; fixed: Payload empty 1319-> |
+| T6-ratlit | impl attempt 3 | 2026-11-03 05:01 | meKr print in place, l01_22 32 pass, fmt and clippy clean; scaling N=2^20 vs 2^23: 2,951,041 vs 2,949,632 instructions, 414 kB both; exponent of 200 vs 1600 dig |
+| TD-ends | repair attempt 5 | 2026-11-03 03:52 | least_root now 2-adic root per odd prime + residue filters: Num::from(2^n+3).pow(3) 1.4/2.2/4.4/9.7/89 ms at n=4096/8192/16384/32768/262144 (was 69 s at 32768); |
+| TD-values | verify attempt 1 | 2026-11-03 03:52 | 26ac522 on main 1ab9e33: fmt clean, clippy -D warnings clean; suite running (run_tests.sh 2), load 94.64 |
+| TEST-split | repair attempt 2 | 2026-11-03 07:56 | start; load 77.54 79.97 89.47 |
+| TYPE-forms | orchestrator attempt  | 2026-11-03 08:16 | LOAD REQUIREMENT (user, 09:57): the machine is at load 110 on 32 cores; target is about 32. From now on build with CARGO_BUILD_JOBS=4, run the suite as tools/ru |
+| UNITANNOT-L7 | repair attempt 1 | 2026-11-03 07:14 | suite build failed: link of the steps test binary had undefined references inside its own codegen units (stale incremental state left by the killed run); remove |
+| UTVPI-NEAR | repair attempt 1 | 2026-11-03 06:34 | reproduced verifier: union k=256->2048 race 62.3x; units alone at k=256 GOR 546k, BFD 344k, Duong 4.54M; Duong 52.5M at 2048; per-site unit counts show ~14 unit |
+| WIDEN-WARN | verify attempt 2 | 2026-11-03 07:14 | diff read; probes via zedc run: nested mod 2**32 inside mod 2**64, unary - and mod 1 give no warning; ** , if and mod 1000 inside mod 2**64 warn; mod 2**65 warn |
 
 Merged into local main and not yet pushed (99 commits); the push follows one full test run on the merged tree:
 
-- 064a9fa Merge branch 'wt/axioms-gaps' into wt/catchup (AXIOMS-gaps, tip d5b232e)
-- d5b232e AXIOMS-gaps: > and >= at String, != at f64 and String
+- e7a6a6c STATUS: AXIOMS-gaps merged (064a9fa, tip d5b232e)
+- 88c51bb catch-up: cargo fmt
+- fa57422 Merge branch 'wt/st-arms' (ST-arms-quad, tip cd363ae) into wt/catchup
+- ec56952 Merge commit '51bdcc9' into wt/catchup
+- 44d2dee Merge branch 'wt/s22b-rest' into wt/catchup
+- 9b9a33f Merge branch 'wt/additive-desugar' into wt/catchup
+- 5254b4d Merge branch 'wt/axioms-fmt' into wt/catchup
+- 51bdcc9 S22-merge: s22 comparison counts after the parallel S22b and S22e merges
+- 064a9fa Merge branch 'wt/axioms-gaps' into wt/catchup
+- 5ca2bbc Merge branch 'wt/r10-stack' into wt/catchup
+- 1ab9e33 STATUS: in progress as of 2026-11-03 09:45
 - 4be54a5 plan_dag, STATUS: SCALE-bytes merged (3fa1fdc)
 - 3fa1fdc SCALE-bytes: scaling tests check bytes allocated next to instructions
 - 85e5b47 plan_dag: OSP-neglit done (2e145cc)
 - eeb8598 STATUS: in progress as of 2026-11-03 09:37
+- c10cacd AXIOMS-fmt: every prelude file formats to a fixed point
+- a51db93 S22b-rest: the summary reads c - u for every constant c; the clip reads c - x by reflect
+- cd363ae ST-arms-quad repair 4: two O(d²) costs on nests with a new symbol at each level
+- aa0e65c ADDITIVE-desugar: desugar.txt already matches DESIGN; test the String case of the Additive rule; STATUS row
 - 2e145cc OSP-neglit: reject a prefix - on a postfix chain whose base is a numeric literal, with both groupings and their values
 - ab26ea6 STATUS: in progress as of 2026-11-03 08:53
+- d5b232e AXIOMS-gaps: > and >= at String, != at f64 and String
 - 99deb6b plan_dag, STATUS: LIN-cross merged
 - 99987df LIN-cross: pick's repair reads each variable's bounds, not every guard on it
+- 9cdc70f R10: run native code on a stack as large as memory
 - 3b44b91 STATUS: in progress as of 2026-11-03 08:24
 - 5b78cbd plan_dag, STATUS: T6 merged
 - 9a413d5 T6 repair 7: no copies of shown values; exact overlaps keys for cofinite sets; TupleSplit and overlaps tradeoff comments
@@ -948,6 +959,7 @@ Merged into local main and not yet pushed (99 commits); the push follows one ful
 - 81516e4 plan_dag: DESIGN audit critic gaps: ledger-only needs as edges, UNITANNOT-L7 cases, L7.5a port facets
 - 70ff249 STATUS: S22d merged
 - 460cfc4 S22d: enumerate reads an empty box as exact before stage::ends
+- 2078235 ST-arms-quad repair 3: summarize reads a disjunct's disjunctions cut to their own constraints; count the parts pick tests
 - 7959661 plan_dag: rows and edges from the 2026-11-03 DESIGN audit
 - a727baa STATUS: CAP-power merged
 - aaae77e CAP-power: read any number of equal factors as a power; POWER_FACTORS removed
@@ -969,6 +981,7 @@ Merged into local main and not yet pushed (99 commits); the push follows one ful
 - 9435a7f Merge branch 'wt/rename-simplex'
 - fb4b2f9 RENAME-simplex: store/simplex.rs becomes store/linear.rs; it holds Term and Q, no simplex
 - ccfd444 STATUS: in progress as of 2026-11-03 06:28
+- 873f1a8 ST-arms-quad repair 2: settle reads disjunctions as a worklist, pick walks the nest once
 - 3ee4b07 Merge branch 'wt/plan-plug'
 - 6ce67b6 plan_dag: the four new cross-level lines list 91 pairs
 - fede004 plan_dag: L1.40a, L1.40b, L1.40c, L12.3a; fences synced to DESIGN
@@ -987,6 +1000,10 @@ Merged into local main and not yet pushed (99 commits); the push follows one ful
 - 283695c dagview: a ledger line's at or ts time counts toward start and runtime
 - 140b42b STATUS: in progress as of 2026-11-03 06:01
 - 7073be1 STATUS: in progress as of 2026-11-03 05:42
+- af39546 ST-arms-quad repair 2: project_parts asks each disjunct only for the symbols it touches, and checks each bound with one decide before bisecting
+- 904eeab ST-arms-quad repair: COMPLEXITY S26 and STATUS with measurements, controls and the open causes
+- f6d11c5 ST-arms-quad repair: atom sets bottom-up and shared disjuncts in project_parts; deeper and two-choice scaling tests; relations scaling test
+- 31e6e2f ST-arms-quad: arms on a test nested d deep in near-linear time
 
 ## Open points
 
