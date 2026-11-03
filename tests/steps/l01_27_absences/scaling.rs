@@ -153,3 +153,76 @@ fn a_chain_of_many_defaulted_branches_scales() {
             .unwrap()
     })
 }
+
+/// `_ = if c { y else #ok } else if c { … } … else { y else #ok };` in a function of `c`, after
+/// `y = lookup(1);`: `n` branches, each naming the miss of the one name `y`. Each branch costs
+/// the checker little, so a walk over each `if`'s branches, even one that only counts them,
+/// costs more than the rest of the check at these sizes.
+fn defaulted_names(n: usize) -> String {
+    let mut t = String::from("lookup(positional k: int) = if k > 0 { k } else { #notFound };\n");
+    let arms = vec!["if c { y else #ok }"; n];
+    t.push_str(&format!(
+        "f(positional c: bool) = {{\n  y = lookup(1);\n  _ = {} else {{ y else #ok }};\n  0\n}};\n",
+        arms.join(" else ")
+    ));
+    t
+}
+
+#[test]
+fn a_long_chain_of_defaulted_names_scales() {
+    // A check that walks each `if`'s branches again costs O(n²) here: a walk that only counts
+    // the nodes under each `if` took 28.6 times the work from 2000 to 16000 branches.
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(1 << 29)
+            .spawn_scoped(s, || {
+                let units: BTreeMap<usize, Ready> = [2000, FACTOR * 2000]
+                    .into_iter()
+                    .map(|n| (n, ready(&defaulted_names(n))))
+                    .collect();
+                scaling::check_order(
+                    "an `if` of n branches, each naming the miss of one name",
+                    2000,
+                    1,
+                    |n| {
+                        let u = &units[&n];
+                        let found = check(&u.stmts, &u.res).errors;
+                        assert!(found.is_empty(), "{found:?}");
+                    },
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    })
+}
+
+/// `n` statements, each dropping the value of a generic call: `apply`, whose result variable
+/// is no parameter's own, with a default on its value, and `id`, which passes on its
+/// argument, with a default on the argument.
+fn generic_calls(n: usize) -> String {
+    let mut t = String::from(
+        "lookup(positional k: int) = if k > 0 { k } else { #notFound };\n\
+         apply(positional g, positional x) = g(x);\n\
+         id(positional x) = x;\n",
+    );
+    for i in 0..n {
+        t.push_str(&format!(
+            "_ = apply(lookup, {i}) else #ok;\n_ = id(lookup({i}) else #ok);\n"
+        ));
+    }
+    t
+}
+
+#[test]
+fn many_dropped_generic_calls_scale() {
+    let units: BTreeMap<usize, Ready> = [500, FACTOR * 500]
+        .into_iter()
+        .map(|n| (n, ready(&generic_calls(n))))
+        .collect();
+    scaling::check_order("n dropped generic calls", 500, 1, |n| {
+        let u = &units[&n];
+        let found = check(&u.stmts, &u.res).errors;
+        assert!(found.is_empty(), "{found:?}");
+    });
+}

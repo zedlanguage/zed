@@ -677,7 +677,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `_` is rejected with the error of `discard`, never accepted wrongly. Why: the memo of
         // `is_empty` is a map ordered by contents, and `passed` tests the operand's atoms, an
         // equal set built apart, so each lookup compares the two sets in full, `O(n)`, and a
-        // chain of `n` failures costs `O(n²)` (COMPLEXITY.md F32 and F57). Trigger: a value
+        // chain of `n` failures costs `O(n²)` (COMPLEXITY.md F32 and F59). Trigger: a value
         // whose type writes an empty payload type that was not reduced to the empty type. Test
         // of the cost: `l01_27_absences::scaling::a_chain_of_many_failure_atoms_scales` (with
         // `is_empty` here it fails at 40.2 times per 8 times the size); no test writes such a
