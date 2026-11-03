@@ -1055,3 +1055,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | An enum of the solver's `Int`, the kernel's `Arc<Rat>` (an unbuilt prime power) and a parity alone for a count of factors past `u32::MAX`, read only by `is_zero`, `is_odd` and `to_u32` | `revision::Exponent` | None | Zed's `int` is one type, so the exponent is an `int` or a parity; a port must keep the kernel's unbuilt form or `10 ** 10 ** 9` is built |
 | `Option<u32>` with `checked_add` and `zip`, a count that is `None` past `u32::MAX` | `preimage::Count` | Fixed-width integers | `Option<u32>`, or an `int` compared with `2 ** 32`, as it is O(1) only while bounded |
 | `Op` no longer `Copy`, passed as `&Op` to `tonicity`, `forward` and `backward` | `revision`, `preimage`, `preimage_ref`, `product`, `check` | None | Values are shared in Zed; the reference goes |
+
+## Entries from CANON-stable (`zedc/src/store/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A struct of dense `Vec<usize>` and `Vec<Vec<usize>>` arrays written by index in a loop (color, position in class, counts, the stack of refining colors) | `presburger::Refine` | Mutation (gap 11) | A state receiver whose arrays are reused in place by provable last use (L6.13); a copy per write would make the O((n+m) log n) refinement quadratic |
+| `Vec::swap_remove` with the moved element's position fixed by hand, and `mem::take` of a scratch vector | `Refine::split`, `Refine::run` | Mutation (gap 11) | The same writes as a `patch` on the threaded state |

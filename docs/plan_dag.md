@@ -64,6 +64,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 2 | HULL3 | Done: XT3 B4: three live variables with a unit side decided exactly by 3-D halfspace intersection, O(m log m), and `twovar` | L | no | BOX-5pt | `crates/zedc/src/store/hull3.rs`, `crates/zedc/src/store/presburger.rs` |
 | 2 | XR3 | Done: Cross-review xt round 3, scoped: P2-unsat (rational emptiness of the 18 systems without an LP), P3 (naming invariance: proof or counterexample), P4(b) (general three variables, the live = 3 dispatch) | M | yes | BOX-5pt | |
 | 3 | HULL3-GEN | XT3 B5: general three variables by Clarkson sampling with a Lenstra/Eisenbrand base case, as XR3 decides | L | yes | XR3 | `crates/zedc/src/store/presburger.rs` |
+| 3 | CANON-stable | Done: `presburger::canonical` refines to the stable partition (Berkholz–Bonsma–Grohe, Hopcroft's rule, colors by sorting) instead of log n + 1 hashed rounds; pipeline of 64 stages 17 → 64 colors; 8.27 and 8.72 times from n to 8n | S | no | XR3 | `crates/zedc/src/store/presburger.rs`, `tests/steps/l01_38_presburger/canonical.rs` |
 | 2 | S22b | Done: `c - x` is falsely exact through the `map2` piece cap (`revision.rs:266-303`): the transfer before claims an exact box the interpreter refutes; fix by `shift(negate(z), c)` | S | no | S22a | `crates/zedc/src/store/revision.rs`, `crates/zedc/src/store/preimage.rs` |
 | 3 | S22b-rest | Done: the summary reads `c - u` for every constant `c` (`pa_prim`), and the clip reads `c - x` by `reflect` (no rounding flag at `c = i64::MIN` or `MAX`); j−t live 63.4 → 10.6 times at 256 and 2,048 | S | no | S22b | `crates/zedc/src/store/preimage.rs`, `tests/steps/l01_25_preimage_catalog/` |
 | 2 | S22c | Done: `y + (MAX - 3) == MAX` is unsound by overflow in the backward transfer | S | no | S22a | `crates/zedc/src/store/preimage.rs`, `crates/zedc/src/store/revision.rs` |
@@ -944,6 +945,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **UTVPI-GOR.** XT3: B1 is its method and probe. *Note:* Added 2026-11-03. Feeds UTVPI-NEAR and L1.40.
 - **BOX-5pt.** XT3: B3 is its method and probe. *Note:* Added 2026-11-03. Feeds HULL3, XR3 and L1.40.
 - **UTVPI-NEAR.** UTVPI-GOR: races against the GOR it replaces in the worst case. *Note:* Added 2026-11-03.
+- **CANON-stable.** XR3: P3 (naming invariance) found the size-dependent round count in `canonical`; the colors must be stable before NAME-ties breaks ties among equal classes. *Note:* Added 2026-11-03. Feeds NAME-ties.
 - **HULL3.** BOX-5pt: edits the same dispatch in presburger.rs; a three-live-variable class is a structural dispatch like D1, not a size switch. *Note:* Added 2026-11-03.
 - **XR3.** BOX-5pt: the round reviews the five-point stage as built. *Note:* Added 2026-11-03. Models Opus 5.5 medium, gpt-6.1-sol medium, gemini-4-argon high.
 - **HULL3-GEN.** XR3: the round decides the method. *Note:* Added 2026-11-03.
