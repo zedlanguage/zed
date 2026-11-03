@@ -1,8 +1,8 @@
 //! The forms of this step at the rule of low complexity (DESIGN.md Part G): building,
 //! formatting, refusing in name resolution and dropping a unit is linear in its size, for a
-//! match of `n` arms, `n` imports, a pattern nested `n` deep and `n` annotations. Each input is
-//! lexed and parsed before timing, so the work measured is this step's, which the parser's own
-//! cost would otherwise hide.
+//! match of `n` arms, `n` imports, one import of `n` names, a pattern nested `n` deep and `n`
+//! annotations. Each input is lexed and parsed before timing, so the work measured is this
+//! step's, which the parser's own cost would otherwise hide.
 
 use std::collections::HashMap;
 
@@ -81,6 +81,18 @@ fn imports(n: usize) -> String {
 #[test]
 fn many_imports_scale() {
     linear("n imports", 1000, imports);
+}
+
+/// `import lib.u.{a0, a1, …};`, one selective import of `n` names. At 1000 against 8000, a scan
+/// of the names already seen in place of the duplicate check failed (58.4 times the work).
+fn one_import(n: usize) -> String {
+    let names: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
+    format!("import lib.u.{{{}}};\n", names.join(", "))
+}
+
+#[test]
+fn one_import_of_many_names_scales() {
+    linear("one import of n names", 1000, one_import);
 }
 
 /// `f(t) = match t { #node(left: #node(left: … #leaf …, right: n is int), right: _) -> 0 };`,
