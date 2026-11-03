@@ -89,6 +89,20 @@ fn using_many_overloads_scales() {
             .filter(|f| matches!(f, Ref::Bound(ids) if ids.len() == k));
         assert_eq!(sets.count(), k);
     });
+    // The timing alone does not tell a shared list from `k` copies at these sizes, so check
+    // the sharing itself: every use holds the one list of overloads, not a copy of it.
+    // (A list of three is stored inline and copied, which costs no more than a pointer.)
+    let r = zedc::resolve::resolve(&small).unwrap();
+    let lists: Vec<_> = r
+        .uses
+        .values()
+        .filter_map(|f| match f {
+            Ref::Bound(ids) if ids.len() == n => Some(ids),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lists.len(), n);
+    assert!(lists.iter().all(|ids| ids.ptr_eq(lists[0])));
     // Each use of the overloaded name is bound to every overload, in declaration order; the
     // types in the parameters are the prelude's.
     let r = zedc::resolve::resolve(&built(3)).unwrap();
