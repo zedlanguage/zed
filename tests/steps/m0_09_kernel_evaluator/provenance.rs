@@ -160,7 +160,10 @@ fn two_uses_of_a_cloned_term_in_one_scope_are_two_facts() {
 #[test]
 fn the_origins_of_a_failure_read_through_a_wide_tuple_scale() {
     // The runs are recorded before the timing, which covers the walk alone. A search per
-    // member tested each of the tuple's `n` inputs once per member: `O(n²)`.
+    // member tested each of the tuple's `n` inputs once per member: `O(n²)`. The pass reads
+    // every value of the run graph once, each node with a search of the members, `O(W log n)`;
+    // here the products' `#errs` sets make `W` itself `n log n`, so the work is `n log² n`:
+    // 500, 4000, 32000 readings took 12.5 and then 11.5 times the work (COMPLEXITY.md K25).
     let n = 500;
     let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
         .into_iter()
@@ -194,6 +197,52 @@ fn a_term_shared_by_both_branches_of_each_level_scales() {
         |m| {
             let (_, t) = terms.iter().find(|(size, _)| *size == m).expect("built");
             assert_eq!(trace(t).0, Value::Int(1));
+        },
+    );
+}
+
+/// `let row = (#missing0, …) in ((row.0 * row.1) * row.2) * …`: the readings multiplied one
+/// at a time, as a fold over a list does. The `k`-th product holds `k` members.
+fn missing_chain(n: usize) -> Term {
+    let row = prim(
+        Prim::Tuple,
+        (0..n)
+            .map(|i| lit(Value::atom(&format!("missing{i}"))))
+            .collect(),
+    );
+    let product = (1..n).fold(nth(var("row"), 0), |acc, i| {
+        mul(acc, nth(var("row"), i as i64))
+    });
+    let_("row", row, product)
+}
+
+#[test]
+fn each_missing_reading_of_a_chain_is_traced_to_its_literal() {
+    let (v, p) = trace(&missing_chain(4));
+    assert_eq!(v.errs().map(|e| e.len()), Some(4), "{v}");
+    assert_eq!(
+        origin_terms(&p),
+        ["#missing0", "#missing1", "#missing2", "#missing3"]
+    );
+}
+
+#[test]
+#[ignore = "open: origins reads each product's #errs set whole, n²/2 members on a chain; see COMPLEXITY.md K25"]
+fn the_origins_of_a_failure_built_one_reading_at_a_time_scale() {
+    // The `k`-th product's `#errs` set shares all but one member with the one before it, and
+    // the pass tests every member of each: `O(n² log n)`. The runs are recorded before timing.
+    let n = 200;
+    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, trace(&missing_chain(m)).1))
+        .collect();
+    scaling::check_order(
+        "the origins of a chain of n missing readings, by n",
+        n,
+        1,
+        |m| {
+            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
+            assert_eq!(p.origins(p.result()).len(), m);
         },
     );
 }
