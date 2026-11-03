@@ -4,9 +4,13 @@
 
 use std::collections::BTreeMap;
 
+use std::sync::Arc;
 use zed_tests::scaling::{self, FACTOR};
-use zedc::elab::Unit;
-use zedc::stage::{Domain, Specializer, passed};
+
+use zed_kernel::term::build::{if_, lam, let_, lit, prim, var};
+use zed_kernel::term::{Prim, Term};
+use zedc::elab::{Def, Unit};
+use zedc::stage::{Domain, Specializer, Stage, color, ends, free, mix, passed};
 
 use super::{out, staged};
 use crate::l01_16_elaboration::elab;
@@ -136,6 +140,65 @@ fn splitting_many_functions_of_one_unit_scales() {
         for i in 0..n {
             let (lam, _) = s.split(&format!("f{i}"), 0, &d).unwrap();
             assert!(matches!(lam, zed_kernel::Term::Lam(..)));
+        }
+    });
+}
+
+/// `main(p) = t` for each run-stage shape `t`, `n` deep, with the build-stage sum
+/// `0 + 1 + … + 1` of `n` terms whose form shows that it ends.
+fn deep_units(n: usize) -> Vec<(&'static str, Unit, Term)> {
+    let x = |i: usize| format!("x{i}");
+    let chain = (0..n).rev().fold(var(&x(n - 1)), |body, i| {
+        let e = match i {
+            0 => var("p"),
+            _ => prim(Prim::Add, vec![var(&x(i - 1)), lit(1)]),
+        };
+        let_(&x(i), e, body)
+    });
+    let sum = (0..n).fold(var("p"), |a, _| prim(Prim::Add, vec![a, lit(1)]));
+    let ifs = (0..n).fold(lit(0), |b, _| if_(var("p"), lit(1), b));
+    let lams = (0..n).rev().fold(var("p"), |body, i| lam(&[&x(i)], body));
+    let unit = |t: Term| Unit {
+        defs: vec![Def {
+            name: "main".into(),
+            kernel: "main".into(),
+            term: Arc::new(lam(&["p"], t)),
+            first_order: false,
+        }],
+        tests: Arc::new([]),
+    };
+    // Built once per shape: cloning a term recursed (step T2-types).
+    let ends = || (0..n).fold(lit(0), |a, _| prim(Prim::Add, vec![a, lit(1)]));
+    vec![
+        ("a `let` chain", unit(chain), ends()),
+        ("a left-nested sum", unit(sum), ends()),
+        ("`if`s nested in their `else`", unit(ifs), ends()),
+        ("nested lambdas", unit(lams), ends()),
+    ]
+}
+
+#[test]
+fn terms_100000_deep_are_staged_on_a_2_mib_stack() {
+    // Reading the free names, the effects and whether a term ends, indexing it and mixing it
+    // each recursed once per level of the term, and overflowed this stack near 10,000 levels.
+    let n = 12_500;
+    let deep = 8 * n;
+    zed_tests::deep::on_small_stack(|| {
+        let small = deep_units(n);
+        let large = deep_units(deep);
+        for ((what, s, se), (_, l, le)) in small.into_iter().zip(large) {
+            let pick = |k: usize| if k == n { (&s, &se) } else { (&l, &le) };
+            scaling::check_order(&format!("mixing {what}"), n, 1, |k| {
+                let (mixed, report) = mix(pick(k).0, &["main"]);
+                assert!(report.left.is_empty(), "{what}");
+                assert!(free(&mixed.defs[0].term).is_empty(), "{what}");
+            });
+            scaling::check_order(&format!("coloring {what}"), n, 1, |k| {
+                assert_eq!(color(pick(k).0), [("main".to_string(), Stage::Build)]);
+            });
+            scaling::check_order("deciding that a sum ends", n, 1, |k| {
+                assert!(ends(pick(k).1));
+            });
         }
     });
 }

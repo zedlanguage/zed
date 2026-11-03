@@ -145,7 +145,7 @@ fn children(t: &Term) -> Vec<&Term> {
 }
 
 /// Calls `f` on each subterm of a term that binds nothing, in order.
-fn each_child<'t>(t: &'t Term, mut f: impl FnMut(&'t Term)) {
+pub(crate) fn each_child<'t>(t: &'t Term, mut f: impl FnMut(&'t Term)) {
     match t {
         Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
         Term::App(g, args) => {
@@ -182,7 +182,7 @@ fn each_child<'t>(t: &'t Term, mut f: impl FnMut(&'t Term)) {
 }
 
 /// `t` with each child replaced by `f(child)`, for a term that binds nothing.
-fn map_children(t: &Term, f: &mut impl FnMut(&Term) -> Term) -> Term {
+pub(crate) fn map_children(t: &Term, f: &mut impl FnMut(&Term) -> Term) -> Term {
     let a = |t: &Arc<Term>, f: &mut dyn FnMut(&Term) -> Term| Arc::new(f(t));
     match t {
         Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => t.clone(),

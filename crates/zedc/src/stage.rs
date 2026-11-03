@@ -24,6 +24,7 @@ use std::sync::Arc;
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Term, Value, World};
 
+use crate::canon::binders::{each_child, map_children};
 use crate::elab::{Def, Unit};
 use crate::interp;
 
@@ -47,75 +48,103 @@ pub struct Report {
     pub left: Vec<(String, String)>,
 }
 
-/// The names `t` reads and does not bind.
+/// The names `t` reads and does not bind. The subterms still to read wait on a heap stack, so
+/// a deep term does not grow the thread's stack; the order they are read in does not change
+/// the set.
 pub fn free(t: &Term) -> BTreeSet<Arc<str>> {
+    /// A step of the walk.
+    enum Job<'t> {
+        Read(&'t Term),
+        Bind(&'t Arc<str>),
+        Unbind(&'t Arc<str>),
+    }
+    /// The jobs that read `t` with `names` bound around it, pushed so that they run in order.
+    fn under<'t>(todo: &mut Vec<Job<'t>>, names: &[&'t Arc<str>], t: &'t Term) {
+        todo.extend(names.iter().map(|x| Job::Unbind(x)));
+        todo.push(Job::Read(t));
+        todo.extend(names.iter().map(|x| Job::Bind(x)));
+    }
     let mut out = BTreeSet::new();
-    free_in(t, &mut BTreeMap::new(), &mut out);
+    // The names bound around the subterm read, each with how many binders bind it.
+    let mut bound: BTreeMap<Arc<str>, usize> = BTreeMap::new();
+    let mut todo = vec![Job::Read(t)];
+    while let Some(job) = todo.pop() {
+        let t = match job {
+            Job::Read(t) => t,
+            Job::Bind(x) => {
+                *bound.entry(x.clone()).or_default() += 1;
+                continue;
+            }
+            Job::Unbind(x) => {
+                match bound.get_mut(x) {
+                    Some(1) => {
+                        bound.remove(x);
+                    }
+                    Some(k) => *k -= 1,
+                    None => unreachable!("bound above"),
+                }
+                continue;
+            }
+        };
+        match t {
+            Term::Lit(_) | Term::PrimFn(_) | Term::Read(_) => {}
+            Term::Var(x) => {
+                if !bound.contains_key(x) {
+                    out.insert(x.clone());
+                }
+            }
+            Term::Lam(ps, b) => {
+                let names: Vec<&Arc<str>> = ps.iter().collect();
+                under(&mut todo, &names, b);
+            }
+            Term::Let(x, e, b) => {
+                under(&mut todo, &[x], b);
+                todo.push(Job::Read(e));
+            }
+            Term::Match(s, arms) => {
+                for (p, a) in arms {
+                    let names = pattern_names(p);
+                    under(&mut todo, &names, a);
+                }
+                todo.push(Job::Read(s));
+            }
+            Term::Fam { domain, var, body } => {
+                under(&mut todo, &[var], body);
+                todo.push(Job::Read(domain));
+            }
+            Term::Fix {
+                init,
+                step,
+                this,
+                key,
+                kind,
+                ..
+            } => {
+                if let zed_kernel::FixKind::Lattice { join } = kind {
+                    under(&mut todo, &[this, key], join);
+                }
+                under(&mut todo, &[this, key], step);
+                todo.push(Job::Read(init));
+            }
+            _ => each_child(t, |c| todo.push(Job::Read(c))),
+        }
+    }
     out
 }
 
-/// The names bound around a subterm, each with how many binders bind it.
-type Bound = BTreeMap<Arc<str>, usize>;
-
-fn free_in(t: &Term, bound: &mut Bound, out: &mut BTreeSet<Arc<str>>) {
-    let mut under = |names: &[Arc<str>], t: &Term, bound: &mut Bound| {
-        for x in names {
-            *bound.entry(x.clone()).or_default() += 1;
-        }
-        free_in(t, bound, out);
-        for x in names {
-            match bound.get_mut(x) {
-                Some(1) => {
-                    bound.remove(x);
-                }
-                Some(k) => *k -= 1,
-                None => unreachable!("bound above"),
-            }
-        }
-    };
-    match t {
-        Term::Lit(_) | Term::PrimFn(_) | Term::Read(_) => {}
-        Term::Var(x) => {
-            if !bound.contains_key(x) {
-                out.insert(x.clone());
-            }
-        }
-        Term::Lam(ps, b) => under(ps, b, bound),
-        Term::Let(x, e, b) => {
-            under(&[], e, bound);
-            under(std::slice::from_ref(x), b, bound);
-        }
-        Term::Match(s, arms) => {
-            under(&[], s, bound);
-            for (p, a) in arms {
-                under(&binds(p), a, bound);
-            }
-        }
-        Term::Fam { domain, var, body } => {
-            under(&[], domain, bound);
-            under(std::slice::from_ref(var), body, bound);
-        }
-        Term::Fix {
-            init,
-            step,
-            this,
-            key,
-            kind,
-            ..
-        } => {
-            under(&[], init, bound);
-            let names = [this.clone(), key.clone()];
-            under(&names, step, bound);
-            if let zed_kernel::FixKind::Lattice { join } = kind {
-                under(&names, join, bound);
-            }
-        }
-        _ => {
-            for c in children(t) {
-                under(&[], c, bound);
-            }
+/// The names `p` binds, left to right, borrowed from it.
+fn pattern_names(p: &Pattern) -> Vec<&Arc<str>> {
+    let mut out = Vec::new();
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
+        match p {
+            Pattern::Bind(x) => out.push(x),
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, p)| p)),
+            _ => {}
         }
     }
+    out
 }
 
 /// The subterms of a term that binds nothing.
@@ -596,26 +625,28 @@ fn each_part<'t>(t: &'t Term, todo: &mut Vec<(&'t Term, bool)>) {
 
 /// The names `p` binds.
 fn binds(p: &Pattern) -> Vec<Arc<str>> {
-    match p {
-        Pattern::Bind(x) => vec![x.clone()],
-        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => ps.iter().flat_map(binds).collect(),
-        Pattern::Fields(_, fs) => fs.iter().flat_map(|(_, p)| binds(p)).collect(),
-        _ => Vec::new(),
-    }
+    pattern_names(p).into_iter().cloned().collect()
 }
 
-/// Whether `t` reads or writes a port.
+/// Whether `t` reads or writes a port. The subterms still to read wait on a heap stack.
 fn effects(t: &Term) -> bool {
-    match t {
-        Term::Read(_) | Term::Push(..) => true,
-        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) => false,
-        Term::Lam(_, b) => effects(b),
-        Term::Let(_, e, b) => effects(e) || effects(b),
-        Term::Match(s, arms) => effects(s) || arms.iter().any(|(_, a)| effects(a)),
-        Term::Fam { domain, body, .. } => effects(domain) || effects(body),
-        Term::Fix { init, step, .. } => effects(init) || effects(step),
-        _ => children(t).into_iter().any(effects),
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        match t {
+            Term::Read(_) | Term::Push(..) => return true,
+            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) => {}
+            Term::Lam(_, b) => todo.push(b),
+            Term::Let(_, e, b) => todo.extend([b, e].map(|t| &**t)),
+            Term::Match(s, arms) => {
+                todo.extend(arms.iter().rev().map(|(_, a)| a));
+                todo.push(s);
+            }
+            Term::Fam { domain, body, .. } => todo.extend([body, domain].map(|t| &**t)),
+            Term::Fix { init, step, .. } => todo.extend([step, init].map(|t| &**t)),
+            _ => each_child(t, |c| todo.push(c)),
+        }
     }
+    false
 }
 
 /// The stage of each definition of `unit`, by source name, in order.
@@ -1065,60 +1096,75 @@ struct Index {
 }
 
 impl Index {
+    /// The index of `t`, read in preorder. The subterms still to read wait on a heap stack, so
+    /// a deep term does not grow the thread's stack.
     fn new(t: &Term, scope: &Scope) -> Self {
+        /// A step of the walk.
+        enum Walk<'t> {
+            /// Read `t`, inside the join of a lattice recursion when `join`.
+            Enter(&'t Term, bool),
+            /// Bind `names` to the binder at position `at` and read `t` under them.
+            Kid(&'t Term, Names<'t>, bool, usize),
+            /// Unbind `names`.
+            Unbind(Names<'t>),
+            /// The subterm at `at` is read: record its size.
+            Close(usize),
+        }
         let mut ix = Index::default();
         let mut values = Vec::new();
-        ix.walk(t, scope, &mut BTreeMap::new(), false, &mut values);
-        ix.mins = Some(Mins::new(values));
-        ix
-    }
-
-    fn walk(
-        &mut self,
-        t: &Term,
-        scope: &Scope,
-        bound: &mut BTreeMap<Arc<str>, Vec<usize>>,
-        join: bool,
-        values: &mut Vec<i64>,
-    ) {
-        let at = self.size.len();
-        self.size.push(0);
-        self.binder.push(None);
-        values.push(i64::MAX);
-        match t {
-            Term::Var(x) => match bound.get(x).and_then(|b| b.last()) {
-                Some(&b) => {
-                    self.binder[at] = Some(b);
-                    self.reads.entry(b).or_default().push(at);
-                    values[at] = b as i64;
+        let mut bound: BTreeMap<Arc<str>, Vec<usize>> = BTreeMap::new();
+        let mut todo = vec![Walk::Enter(t, false)];
+        while let Some(w) = todo.pop() {
+            match w {
+                Walk::Enter(t, join) => {
+                    let at = ix.size.len();
+                    ix.size.push(0);
+                    ix.binder.push(None);
+                    values.push(i64::MAX);
+                    match t {
+                        Term::Var(x) => match bound.get(x).and_then(|b| b.last()) {
+                            Some(&b) => {
+                                ix.binder[at] = Some(b);
+                                ix.reads.entry(b).or_default().push(at);
+                                values[at] = b as i64;
+                            }
+                            None => {
+                                let known = match scope.lookup(x) {
+                                    Some(t) => t.is_some(),
+                                    None => interp::word(x),
+                                };
+                                if !known {
+                                    values[at] = RUN;
+                                }
+                            }
+                        },
+                        Term::Read(_) | Term::Push(..) if !join => values[at] = RUN,
+                        _ => {}
+                    }
+                    todo.push(Walk::Close(at));
+                    let kids = kids(t).into_iter().rev();
+                    todo.extend(kids.map(|(c, names, j)| Walk::Kid(c, names, join || j, at)));
                 }
-                None => {
-                    let known = match scope.lookup(x) {
-                        Some(t) => t.is_some(),
-                        None => interp::word(x),
-                    };
-                    if !known {
-                        values[at] = RUN;
+                Walk::Kid(c, names, join, at) => {
+                    for x in names.iter() {
+                        bound.entry(x.clone()).or_default().push(at);
+                    }
+                    todo.extend([Walk::Unbind(names), Walk::Enter(c, join)]);
+                }
+                Walk::Unbind(names) => {
+                    for x in names.iter() {
+                        let b = bound.get_mut(x).expect("pushed above");
+                        b.pop();
+                        if b.is_empty() {
+                            bound.remove(x);
+                        }
                     }
                 }
-            },
-            Term::Read(_) | Term::Push(..) if !join => values[at] = RUN,
-            _ => {}
-        }
-        for (c, names, in_join) in kids(t) {
-            for x in names.iter() {
-                bound.entry(x.clone()).or_default().push(at);
-            }
-            self.walk(c, scope, bound, join || in_join, values);
-            for x in names.iter() {
-                let b = bound.get_mut(x).expect("pushed above");
-                b.pop();
-                if b.is_empty() {
-                    bound.remove(x);
-                }
+                Walk::Close(at) => ix.size[at] = ix.size.len() - at,
             }
         }
-        self.size[at] = self.size.len() - at;
+        ix.mins = Some(Mins::new(values));
+        ix
     }
 
     fn build(&self, at: usize) -> bool {
@@ -1235,8 +1281,90 @@ impl Mixer {
     }
 
     /// The subterm `t` at position `at` of the term `mix_top` is mixing, with its
-    /// build-stage subterms evaluated.
+    /// build-stage subterms evaluated. The subterms still to mix and the terms to build from
+    /// them wait on heap stacks, so a deep term does not grow the thread's stack; the walk
+    /// meets the subterms in the order of the recursion it replaces, so the scope, the index
+    /// and the report change in the same order.
     fn mix(&mut self, t: &Term, at: usize) -> Term {
+        let a = |t: Term| Arc::new(t);
+        let mut todo = vec![Mix::Term(t, at)];
+        let mut done: Vec<Term> = Vec::new();
+        while let Some(job) = todo.pop() {
+            match job {
+                Mix::Term(t, at) => self.enter(t, at, &mut todo, &mut done),
+                Mix::Under(names, t, at) => {
+                    let n = self.scope.len();
+                    self.unknown(&names);
+                    todo.extend([Mix::Truncate(n), Mix::Term(t, at)]);
+                }
+                Mix::Truncate(n) => self.scope.truncate(n),
+                Mix::Let(t, at, k) => {
+                    let Term::Let(x, _, b) = t else {
+                        unreachable!("only a `let` binds its name")
+                    };
+                    let e = a(done.pop().expect("the bound term"));
+                    let stage = self.known(&e);
+                    self.bind(x.clone(), stage, &e);
+                    if stage == Stage::Build {
+                        self.index.known(at);
+                    }
+                    todo.extend([Mix::LetBody(x, at, e), Mix::Term(b, k)]);
+                }
+                Mix::LetBody(x, at, e) => {
+                    let body = done.pop().expect("the body");
+                    self.scope.pop();
+                    done.push(
+                        if matches!(*e, Term::Lit(_)) && !self.index.kept.contains_key(&at) {
+                            body
+                        } else {
+                            Term::Let(x.clone(), e, a(body))
+                        },
+                    );
+                }
+                Mix::If(t, kx, ky) => {
+                    let Term::If(_, x, y) = t else {
+                        unreachable!("only an `if` has branches")
+                    };
+                    match done.pop().expect("the condition") {
+                        Term::Lit(Value::Bool(true)) => todo.push(Mix::Term(x, kx)),
+                        Term::Lit(Value::Bool(false)) => todo.push(Mix::Term(y, ky)),
+                        atom @ Term::Lit(Value::Atom(_)) => done.push(atom),
+                        c => todo.extend([Mix::IfBranches(c), Mix::Term(y, ky), Mix::Term(x, kx)]),
+                    }
+                }
+                Mix::IfBranches(c) => {
+                    let y = done.pop().expect("the second branch");
+                    let x = done.pop().expect("the first branch");
+                    done.push(Term::If(a(c), a(x), a(y)));
+                }
+                Mix::Build(t, k) => {
+                    let mut kids = done.drain(done.len() - k..);
+                    let mut next = || kids.next().expect("each subterm, mixed");
+                    let built = match t {
+                        Term::Lam(ps, _) => Term::Lam(ps.clone(), a(next())),
+                        Term::Match(_, arms) => {
+                            let s = a(next());
+                            Term::Match(s, arms.iter().map(|(p, _)| (p.clone(), next())).collect())
+                        }
+                        Term::Fam { var, .. } => Term::Fam {
+                            domain: a(next()),
+                            var: var.clone(),
+                            body: a(next()),
+                        },
+                        _ => map_children(t, &mut |_| next()),
+                    };
+                    drop(kids);
+                    done.push(built);
+                }
+            }
+        }
+        done.pop().expect("the mixed term")
+    }
+
+    /// Mixes the subterm `t` at position `at`: puts it on `done` when it is a leaf or is
+    /// evaluated here, and otherwise puts on `todo` the steps that mix its subterms and build
+    /// it from them.
+    fn enter<'t>(&mut self, t: &'t Term, at: usize, todo: &mut Vec<Mix<'t>>, done: &mut Vec<Term>) {
         let function = |t: &Term| matches!(t, Term::Lam(..) | Term::PrimFn(_));
         let value = match t {
             Term::Lit(_) | Term::PrimFn(_) | Term::Lam(..) => false,
@@ -1244,121 +1372,83 @@ impl Mixer {
             _ => true,
         };
         if value && self.index.build(at) {
-            return match self.eval(t) {
+            done.push(match self.eval(t) {
                 Ok(v) => Term::Lit(v),
                 Err(why) => {
                     self.report.left.push((t.to_string(), why));
                     self.index.keep(at);
                     t.clone()
                 }
-            };
+            });
+            return;
         }
         let k = self.index.kids(at, kids(t).len());
-        let under = |m: &mut Mixer, names: &[Arc<str>], t: &Term, at: usize| {
-            let n = m.scope.len();
-            m.unknown(names);
-            let out = m.mix(t, at);
-            m.scope.truncate(n);
-            out
-        };
-        let a = |t: Term| Arc::new(t);
         match t {
             // A name kept here is bound to no literal (one bound to a literal was computed
             // above), so it does not keep a definition `Let` would drop.
-            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => t.clone(),
-            Term::Lam(ps, b) => Term::Lam(ps.clone(), a(under(self, ps, b, k[0]))),
+            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => done.push(t.clone()),
+            Term::Lam(ps, b) => todo.extend([
+                Mix::Build(t, 1),
+                Mix::Under(Cow::Borrowed(&ps[..]), b, k[0]),
+            ]),
             Term::Let(x, e, b) => {
                 if self.index.build(k[0]) && !self.index.reads.contains_key(&at) {
                     self.report.unread.push(x.to_string());
-                    return self.mix(b, k[1]);
+                    todo.push(Mix::Term(b, k[1]));
+                } else {
+                    todo.extend([Mix::Let(t, at, k[1]), Mix::Term(e, k[0])]);
                 }
-                let e = a(self.mix(e, k[0]));
-                let stage = self.known(&e);
-                self.bind(x.clone(), stage, &e);
-                if stage == Stage::Build {
-                    self.index.known(at);
-                }
-                let body = self.mix(b, k[1]);
-                self.scope.pop();
-                if matches!(*e, Term::Lit(_)) && !self.index.kept.contains_key(&at) {
-                    return body;
-                }
-                Term::Let(x.clone(), e, a(body))
             }
-            Term::If(c, x, y) => match self.mix(c, k[0]) {
-                Term::Lit(Value::Bool(true)) => self.mix(x, k[1]),
-                Term::Lit(Value::Bool(false)) => self.mix(y, k[2]),
-                atom @ Term::Lit(Value::Atom(_)) => atom,
-                c => Term::If(a(c), a(self.mix(x, k[1])), a(self.mix(y, k[2]))),
-            },
-            Term::App(f, args) => Term::App(
-                a(self.mix(f, k[0])),
-                args.iter()
-                    .zip(&k[1..])
-                    .map(|(x, &p)| self.mix(x, p))
-                    .collect(),
-            ),
-            Term::Prim(p, args) => Term::Prim(
-                *p,
-                args.iter().zip(&k).map(|(x, &p)| self.mix(x, p)).collect(),
-            ),
-            Term::Match(s, arms) => Term::Match(
-                a(self.mix(s, k[0])),
-                arms.iter()
-                    .zip(&k[1..])
-                    .map(|((p, x), &at)| (p.clone(), under(self, &binds(p), x, at)))
-                    .collect(),
-            ),
-            Term::Fam { domain, var, body } => Term::Fam {
-                domain: a(self.mix(domain, k[0])),
-                var: var.clone(),
-                body: a(under(self, std::slice::from_ref(var), body, k[1])),
-            },
-            Term::Reindex {
-                family,
-                kf,
-                vf,
-                witness,
-            } => Term::Reindex {
-                family: a(self.mix(family, k[0])),
-                kf: a(self.mix(kf, k[1])),
-                vf: a(self.mix(vf, k[2])),
-                witness: witness.clone(),
-            },
-            Term::Discard { family, sel } => Term::Discard {
-                family: a(self.mix(family, k[0])),
-                sel: a(self.mix(sel, k[1])),
-            },
-            Term::Fold {
-                family,
-                op,
-                identity,
-                depth,
-                ev,
-            } => Term::Fold {
-                family: a(self.mix(family, k[0])),
-                op: a(self.mix(op, k[1])),
-                identity: identity.as_ref().map(|i| a(self.mix(i, k[2]))),
-                depth: *depth,
-                ev: ev.clone(),
-            },
-            Term::Gen {
-                init,
-                step,
-                guard,
-                pos,
-            } => Term::Gen {
-                init: a(self.mix(init, k[0])),
-                step: a(self.mix(step, k[1])),
-                guard: a(self.mix(guard, k[2])),
-                pos: *pos,
-            },
+            Term::If(c, ..) => todo.extend([Mix::If(t, k[1], k[2]), Mix::Term(c, k[0])]),
+            Term::Match(s, arms) => {
+                todo.push(Mix::Build(t, 1 + arms.len()));
+                for ((p, x), &at) in arms.iter().zip(&k[1..]).rev() {
+                    todo.push(Mix::Under(Cow::Owned(binds(p)), x, at));
+                }
+                todo.push(Mix::Term(s, k[0]));
+            }
+            Term::Fam { domain, var, body } => todo.extend([
+                Mix::Build(t, 2),
+                Mix::Under(Cow::Borrowed(std::slice::from_ref(var)), body, k[1]),
+                Mix::Term(domain, k[0]),
+            ]),
             // A recursion's binders are left as written; recursion arrives at L6.
             Term::Fix { .. } => {
                 self.index.keep(at);
-                t.clone()
+                done.push(t.clone());
             }
-            Term::Push(port, x) => Term::Push(port.clone(), a(self.mix(x, k[0]))),
+            _ => {
+                todo.push(Mix::Build(t, k.len()));
+                let start = todo.len();
+                let mut at = k.iter();
+                each_child(t, |c| {
+                    todo.push(Mix::Term(c, *at.next().expect("a position per subterm")))
+                });
+                todo[start..].reverse();
+            }
         }
     }
+}
+
+/// A step of [`Mixer::mix`], on its heap stack.
+enum Mix<'t> {
+    /// Mix the subterm `t` at the position.
+    Term(&'t Term, usize),
+    /// Mix the subterm `t` at the position with `names` bound to values not known at build.
+    Under(Names<'t>, &'t Term, usize),
+    /// Unbind all but the first `n` names in scope.
+    Truncate(usize),
+    /// The bound term of the `let` `t` at the position, mixed, is on the results: bind its
+    /// name and mix the body, at the second position.
+    Let(&'t Term, usize, usize),
+    /// The body of the `let` at the position, binding the name to the mixed term, is on the
+    /// results: unbind the name and build the `let`, or drop it when nothing reads it.
+    LetBody(&'t Arc<str>, usize, Arc<Term>),
+    /// The condition of the `if` `t`, mixed, is on the results: mix the branch it chooses, or
+    /// both, at the positions.
+    If(&'t Term, usize, usize),
+    /// Both branches of an `if` with the condition, mixed, are on the results: build it.
+    IfBranches(Term),
+    /// The `k` subterms of `t`, mixed, are on the results: build it.
+    Build(&'t Term, usize),
 }
