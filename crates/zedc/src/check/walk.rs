@@ -1688,7 +1688,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.put(Undo::Call(span, Some(sig.clone())));
         if curry {
             let args = Args::of(positional, named);
-            return self.call_sig(m, sig, true, receiver.map(|r| r.0), args, true, span, w.into());
+            return self.call_sig(
+                m,
+                sig,
+                true,
+                receiver.map(|r| r.0),
+                args,
+                true,
+                span,
+                w.into(),
+            );
         }
         let mut slots = vec![None; sig.params.len()];
         let first = usize::from(receiver.is_some());
