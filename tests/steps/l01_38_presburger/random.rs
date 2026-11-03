@@ -87,7 +87,7 @@ pub(super) fn boxed(names: &[Arc<str>]) -> Formula {
     Formula::and(
         names
             .iter()
-            .map(|n| member(&Atom::Sym(n.clone()), &IntervalSet::of(LO, HI)).expect("in budget"))
+            .map(|n| member(&Atom::Sym(n.clone()), &IntervalSet::of(LO, HI)).expect("answered"))
             .collect(),
     )
 }
@@ -111,7 +111,7 @@ fn check_points(r: &Relation, t: &Term, names: &[Arc<str>]) -> Result<(), String
                 .collect(),
         );
         let f = Formula::and(vec![r.defined(), r.body.clone(), at]);
-        let sat = satisfiable(&f).map_err(|_| format!("{t}: past the budget at {p:?}"))?;
+        let sat = satisfiable(&f).map_err(|_| format!("{t}: refused at {p:?}"))?;
         if sat.is_some() != holds(t, names, &p) {
             return Err(format!(
                 "{t} at {p:?}: the interpreter gives {}, and the relation {r} {}",
@@ -181,7 +181,7 @@ fn check_entailment(e: &Entailment, p: &Term, g: &Term, names: &[Arc<str>]) -> R
                 Err(format!("{p} to {g}: the countermodel {q:?} is none"))
             }
         }
-        (Entailment::NotProved(_) | Entailment::Undecided, _) => Err(format!(
+        (Entailment::NotProved(_) | Entailment::Refused(_), _) => Err(format!(
             "{p} to {g}: {e}, which a linear question never gives"
         )),
         (Entailment::Proved(_), None) => Ok(()),
@@ -227,7 +227,7 @@ fn random_tests_agree_with_the_interpreter() {
         models += usize::from(m.is_some());
         let claimed: Vec<IntervalSet> = ns
             .iter()
-            .map(|n| project(&f, &Atom::Sym(n.clone())).expect("in budget"))
+            .map(|n| project(&f, &Atom::Sym(n.clone())).expect("answered"))
             .collect();
         check_projection(&claimed, &inside, &ns).unwrap();
         // Rung 2 from the window and this test to a second one.

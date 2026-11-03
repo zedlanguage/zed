@@ -8,26 +8,34 @@
 //! that defines an auxiliary variable is kept apart from the body, since it fixes the variable
 //! for each value of the symbols, so that negating the body never negates a definition.
 //!
-//! Satisfiability is decided by the Omega test [Omega] on the fragment it settles in
-//! polynomial time, with no budget (docs/thresholds.md, replacement 4). Equalities are
-//! solved, with Pugh's symmetric remainder where no coefficient is a unit. An
-//! inequality-only problem eliminates one variable at a time, and only while the system
-//! holds no more rows than it was given: each step removes a variable and the rows never
-//! pass the input's count. An elimination is exact when every lower or every upper
-//! coefficient of the variable is a unit; otherwise a point of the dark shadow is a point of
-//! the problem and an empty real shadow, read over the rationals, shows the problem empty, and
-//! between the two the question is undecided. A satisfiable problem yields a model: each
-//! eliminated variable takes the value nearest zero that its bounds allow under the values of
-//! the variables eliminated after it.
+//! Satisfiability is decided by the Omega test [Omega] on the fragment it settles in a number
+//! of steps polynomial in the rows, though not in the bit length of the coefficients, with no
+//! budget (docs/thresholds.md, replacement 4), in one loop over a
+//! system that holds each set of coefficients once and knows each variable's rows and bound
+//! counts, so that a step touches only the rows of the variable it removes. Arithmetic is
+//! exact, over unbounded integers. Equalities are solved, with Pugh's symmetric remainder
+//! where no coefficient is a unit; two opposite rows that meet become an equality; a variable
+//! bounded on one side only is dropped with its rows. Otherwise the variable whose elimination
+//! adds the fewest rows, of those the one that writes the fewest terms, is eliminated, exact
+//! eliminations first, and only while the system
+//! holds no more rows than it was given: each step removes a variable and the rows never pass
+//! the input's count. An elimination is exact when every lower or every upper coefficient of
+//! the variable is a unit. At the first inexact elimination the real shadow is tested once:
+//! empty over the rationals, it shows the problem empty. From there on the dark shadow is
+//! solved, whose points are points of the problem, and an empty dark shadow is a refusal, as
+//! is a system every elimination of which would grow it ([`Refusal`]). A satisfiable problem
+//! yields a model: each eliminated variable takes the value nearest zero that its bounds allow
+//! under the values of the variables eliminated after it.
 //!
 //! A formula with disjunctions is not split into all its conjunctions. Its top-level
 //! constraints are the base; a disjunct whose own top-level constraints meet the base nowhere
 //! is removed, and a disjunction with one disjunct left adds it to the base, until nothing is
 //! removed: each round removes a disjunct, so the rounds are at most the disjuncts. No
 //! disjunct left is no point. A point is then sought by taking, for each disjunction in turn,
-//! the first disjunct that meets the base with the disjuncts already taken. Where none does,
+//! the first disjunct that meets the base with the disjuncts already taken, disjuncts and
+//! disjunctions being sorted first, so that the order they are written in changes nothing. Where none does,
 //! each disjunct whose addition to the base empties it by the rule above is removed, until
-//! none is, and the search runs again; where it fails again, the question is undecided. A
+//! none is, and the search runs again; where it fails again, the question is refused. A
 //! projection is the meet, over the disjunctions, of the union over each one's disjuncts of
 //! the projection of the base with that disjunct; with two disjunctions or more left, each
 //! finite bound is then moved inward by halving the step, only where the formula with the
@@ -39,17 +47,22 @@
 //! multiplied in pairs, once: a premise on a symbol is a top-level linear inequality of the
 //! premises that mentions it, or a bound on the symbol that the linear premises imply.
 //!
-//! An undecided question, or a coefficient past `i128`, leaves the relation unused, which is
-//! sound: the written constraint is kept.
+//! A refused question leaves the relation unused, which is sound: the written constraint is
+//! kept, and [`Entailment::Refused`] carries the cause. No compiler path calls [`entails`] yet,
+//! and narrowing drops the refusal, so that nothing reports it to the author so far. A term written with a coefficient past `i128` is
+//! refused; the solver's own rows and models are unbounded.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::rc::Rc;
 use std::sync::Arc;
 
+use super::int::Int;
 use super::interval::{End, IntervalSet};
 
-/// The projection onto each symbol, in order; `Err(Over)` where it is undecided.
-type Projections = Vec<Result<IntervalSet, Over>>;
+/// The projection onto each symbol, in order; an error where it is refused.
+type Projections = Vec<Result<IntervalSet, Refusal>>;
 
 /// A variable of a relation.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -83,16 +96,40 @@ impl fmt::Display for Atom {
     }
 }
 
-/// Past a budget: the relation is dropped.
+/// Why a question lies outside the fragment decided in polynomial time. Each is reported in
+/// its own words (sec:diagnostics); narrowing keeps the written constraint, which is sound.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Over;
-
-fn add(a: i128, b: i128) -> Result<i128, Over> {
-    a.checked_add(b).ok_or(Over)
+pub enum Refusal {
+    /// A coefficient or constant of a written term does not fit in `i128`.
+    Coefficient,
+    /// The real shadow holds a point and the dark shadow holds none, so that only the
+    /// splinters, which are exponential in the variables, would settle the question.
+    Shadows,
+    /// The elimination of every variable left would leave more rows than the question has.
+    Growth,
+    /// The search through the disjunctions found no point and removed no disjunct.
+    Disjuncts,
 }
 
-fn mul(a: i128, b: i128) -> Result<i128, Over> {
-    a.checked_mul(b).ok_or(Over)
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Refusal::Coefficient => "a coefficient of the relation does not fit in 128 bits",
+            Refusal::Shadows => {
+                "the relation has rational points but no integer point was found or ruled out"
+            }
+            Refusal::Growth => "eliminating any variable left would grow the relation",
+            Refusal::Disjuncts => "no choice among the relation's disjunctions was settled",
+        })
+    }
+}
+
+fn add(a: i128, b: i128) -> Result<i128, Refusal> {
+    a.checked_add(b).ok_or(Refusal::Coefficient)
+}
+
+fn mul(a: i128, b: i128) -> Result<i128, Refusal> {
+    a.checked_mul(b).ok_or(Refusal::Coefficient)
 }
 
 /// A linear term: each atom times its coefficient, plus a constant. No coefficient is zero.
@@ -122,7 +159,7 @@ impl Lin {
     }
 
     /// `self + other`.
-    pub fn plus(&self, other: &Lin) -> Result<Lin, Over> {
+    pub fn plus(&self, other: &Lin) -> Result<Lin, Refusal> {
         let mut out = self.clone();
         for (a, c) in &other.terms {
             let v = add(*out.terms.get(a).unwrap_or(&0), *c)?;
@@ -137,7 +174,7 @@ impl Lin {
     }
 
     /// `self * k`.
-    pub fn times(&self, k: i128) -> Result<Lin, Over> {
+    pub fn times(&self, k: i128) -> Result<Lin, Refusal> {
         if k == 0 {
             return Ok(Lin::default());
         }
@@ -152,7 +189,7 @@ impl Lin {
     }
 
     /// `self - other`.
-    pub fn minus(&self, other: &Lin) -> Result<Lin, Over> {
+    pub fn minus(&self, other: &Lin) -> Result<Lin, Refusal> {
         self.plus(&other.times(-1)?)
     }
 
@@ -163,7 +200,7 @@ impl Lin {
 
     /// The product of two terms, its products of two symbols as atoms; `None` when neither
     /// is a constant and either holds an atom that is not a symbol.
-    pub fn product(&self, other: &Lin) -> Option<Result<Lin, Over>> {
+    pub fn product(&self, other: &Lin) -> Option<Result<Lin, Refusal>> {
         if self.terms.is_empty() {
             return Some(other.times(self.constant));
         }
@@ -174,7 +211,7 @@ impl Lin {
         if !syms(self) || !syms(other) {
             return None;
         }
-        let go = || -> Result<Lin, Over> {
+        let go = || -> Result<Lin, Refusal> {
             let mut out = self.times(other.constant)?;
             for (a, c) in &other.terms {
                 let Atom::Sym(x) = a else {
@@ -194,12 +231,14 @@ impl Lin {
     }
 
     /// The value at `values`, each atom absent from it zero.
-    fn eval(&self, values: &BTreeMap<Atom, i128>) -> Result<i128, Over> {
-        let mut v = self.constant;
+    fn eval(&self, values: &Model) -> Int {
+        let mut v = Int::from(self.constant);
         for (a, c) in &self.terms {
-            v = add(v, mul(*c, *values.get(a).unwrap_or(&0))?)?;
+            if let Some(x) = values.get(a) {
+                v = &v + &(&Int::from(*c) * x);
+            }
         }
-        Ok(v)
+        v
     }
 }
 
@@ -252,7 +291,7 @@ pub struct Con {
 
 impl Con {
     /// `a >= b`.
-    pub fn ge(a: &Lin, b: &Lin) -> Result<Con, Over> {
+    pub fn ge(a: &Lin, b: &Lin) -> Result<Con, Refusal> {
         Ok(Con {
             lin: a.minus(b)?,
             rel: Rel::Ge,
@@ -260,7 +299,7 @@ impl Con {
     }
 
     /// `a == b`.
-    pub fn eq(a: &Lin, b: &Lin) -> Result<Con, Over> {
+    pub fn eq(a: &Lin, b: &Lin) -> Result<Con, Refusal> {
         Ok(Con {
             lin: a.minus(b)?,
             rel: Rel::Eq,
@@ -305,7 +344,7 @@ impl fmt::Display for Con {
 }
 
 /// A quantifier-free formula over linear constraints.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Formula {
     /// A constraint.
     Con(Con),
@@ -486,42 +525,32 @@ impl Formula {
 
     /// Whether the formula holds at `values`; an absent atom is zero, and a product atom is
     /// read as the product of its symbols' values.
-    pub fn holds(&self, values: &BTreeMap<Atom, i128>) -> Result<bool, Over> {
+    pub fn holds(&self, values: &Model) -> bool {
         let mut vs = values.clone();
         for a in self.atoms() {
             if let Atom::Product(x, y) = &a {
-                let v = |s: &Arc<str>| *values.get(&Atom::Sym(s.clone())).unwrap_or(&0);
-                vs.insert(a.clone(), mul(v(x), v(y))?);
+                let v = |s: &Arc<str>| values.get(&Atom::Sym(s.clone())).unwrap_or(&Int::ZERO);
+                vs.insert(a.clone(), v(x) * v(y));
             }
         }
         self.holds_as(&vs)
     }
 
     /// Whether the formula holds at `values`, each atom read as its value there.
-    fn holds_as(&self, vs: &BTreeMap<Atom, i128>) -> Result<bool, Over> {
-        Ok(match self {
+    fn holds_as(&self, vs: &Model) -> bool {
+        match self {
             Formula::Con(c) => {
-                let v = c.lin.eval(vs)?;
-                if c.rel == Rel::Eq { v == 0 } else { v >= 0 }
-            }
-            Formula::Not(g) => !g.holds_as(vs)?,
-            Formula::And(gs) => {
-                for g in gs {
-                    if !g.holds_as(vs)? {
-                        return Ok(false);
-                    }
+                let v = c.lin.eval(vs);
+                if c.rel == Rel::Eq {
+                    v.is_zero()
+                } else {
+                    !v.is_negative()
                 }
-                true
             }
-            Formula::Or(gs) => {
-                for g in gs {
-                    if g.holds_as(vs)? {
-                        return Ok(true);
-                    }
-                }
-                false
-            }
-        })
+            Formula::Not(g) => !g.holds_as(vs),
+            Formula::And(gs) => gs.iter().all(|g| g.holds_as(vs)),
+            Formula::Or(gs) => gs.iter().any(|g| g.holds_as(vs)),
+        }
     }
 
     /// The top-level conjuncts.
@@ -605,10 +634,10 @@ impl fmt::Display for Relation {
 }
 
 /// A satisfying assignment, each atom absent from it zero.
-pub type Model = BTreeMap<Atom, i128>;
+pub type Model = BTreeMap<Atom, Int>;
 
 /// Whether `f` holds somewhere, and where.
-pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Over> {
+pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
     let Some(p) = propagate(f)? else {
         return Ok(None);
     };
@@ -622,22 +651,27 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Over> {
 }
 
 /// A point of `p`, taking for each disjunction in turn the first disjunct that meets the
-/// constraints taken so far, or `Over` when none does.
-fn pick(p: &Parts) -> Result<Model, Over> {
-    let mut model = solve(&p.cons)?.ok_or(Over)?;
+/// constraints taken so far, or a refusal when none does.
+fn pick(p: &Parts) -> Result<Model, Refusal> {
+    let mut model = solve(&p.cons)?.ok_or(Refusal::Disjuncts)?;
     let (mut acc, mut queue) = (p.cons.clone(), p.ors.clone());
     while let Some(ds) = queue.pop() {
         let mut taken = None;
+        let mut why = Refusal::Disjuncts;
         for d in ds {
             let mut cs = acc.clone();
             cs.extend(lits(&d));
-            if let Ok(Some(m)) = solve(&cs) {
-                taken = Some((d, m));
-                break;
+            match solve(&cs) {
+                Ok(Some(m)) => {
+                    taken = Some((d, m));
+                    break;
+                }
+                Ok(None) => {}
+                Err(r) => why = r,
             }
         }
         let Some((d, m)) = taken else {
-            return Err(Over);
+            return Err(why);
         };
         model = m;
         let mut q = Parts::default();
@@ -651,7 +685,7 @@ fn pick(p: &Parts) -> Result<Model, Over> {
 /// `p` with each disjunct removed whose addition, propagated, leaves no point, until none is
 /// removed, or `None` when `p` has no point. Each round but the last removes a disjunct, and
 /// each tests every disjunct by one propagation, so the work is polynomial in the disjuncts.
-fn probe(mut p: Parts) -> Result<Option<Parts>, Over> {
+fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
     loop {
         let mut changed = false;
         for i in 0..p.ors.len() {
@@ -705,9 +739,11 @@ impl Parts {
 }
 
 /// `f`, negated when `!sign`, with each negation pushed to the constraints: not `t >= 0` is
-/// `-t - 1 >= 0`, and not `t == 0` is `t >= 1 || -t >= 1`.
-fn nnf(f: &Formula, sign: bool) -> Result<Formula, Over> {
-    Ok(match (f, sign) {
+/// `-t - 1 >= 0`, and not `t == 0` is `t >= 1 || -t >= 1`. The parts of each conjunction and
+/// disjunction are sorted, so that the search through them, which takes the first that serves,
+/// does not depend on the order they are written in.
+fn nnf(f: &Formula, sign: bool) -> Result<Formula, Refusal> {
+    let mut out = match (f, sign) {
         (Formula::Not(g), s) => nnf(g, !s)?,
         (Formula::And(gs), true) | (Formula::Or(gs), false) => {
             Formula::and(gs.iter().map(|g| nnf(g, sign)).collect::<Result<_, _>>()?)
@@ -725,7 +761,11 @@ fn nnf(f: &Formula, sign: bool) -> Result<Formula, Over> {
                 Formula::or(vec![Formula::Con(Con::ge(&c.lin, &one)?), neg])
             }
         }
-    })
+    };
+    if let Formula::And(gs) | Formula::Or(gs) = &mut out {
+        gs.sort();
+    }
+    Ok(out)
 }
 
 /// The top-level constraints of a formula in negation normal form.
@@ -741,14 +781,14 @@ fn lits(f: &Formula) -> Vec<Con> {
 /// no point. A disjunct is removed when its top-level constraints meet the base nowhere; a
 /// disjunction left with one disjunct adds it to the base. Each round but the last removes a
 /// disjunct, so there are at most as many rounds as disjuncts, each a test of every disjunct.
-fn propagate(f: &Formula) -> Result<Option<Parts>, Over> {
+fn propagate(f: &Formula) -> Result<Option<Parts>, Refusal> {
     let mut p = Parts::default();
     p.add(nnf(f, true)?);
     settle(p)
 }
 
 /// [`propagate`] from parts.
-fn settle(mut p: Parts) -> Result<Option<Parts>, Over> {
+fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
     loop {
         if solve(&p.cons)?.is_none() {
             return Ok(None);
@@ -785,7 +825,7 @@ fn settle(mut p: Parts) -> Result<Option<Parts>, Over> {
 }
 
 /// Whether a conjunction of constraints holds somewhere, and where.
-fn solve(cons: &[Con]) -> Result<Option<Model>, Over> {
+fn solve(cons: &[Con]) -> Result<Option<Model>, Refusal> {
     let atoms: Vec<Atom> = cons
         .iter()
         .flat_map(|c| c.lin.terms.keys().cloned())
@@ -793,37 +833,46 @@ fn solve(cons: &[Con]) -> Result<Option<Model>, Over> {
         .into_iter()
         .collect();
     let index: BTreeMap<&Atom, usize> = atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
-    let (eqs, ges): (Vec<Row>, Vec<Row>) = cons
-        .iter()
-        .map(|c| Row {
-            a: c.lin.terms.iter().map(|(a, k)| (index[a], *k)).collect(),
-            k: c.lin.constant,
-            eq: c.rel == Rel::Eq,
-        })
-        .partition(|r| r.eq);
-    let mut omega = Omega {
-        next: atoms.len(),
+    // Sorted, so that the answer does not depend on the order the constraints are given in.
+    let mut sorted: Vec<&Con> = cons.iter().collect();
+    sorted.sort();
+    let mut sys = System::new(atoms.len());
+    let mut es = Equalities::new(atoms.len());
+    for c in sorted {
+        let r = Row {
+            a: c.lin
+                .terms
+                .iter()
+                .map(|(a, k)| (index[a], Int::from(*k)))
+                .collect(),
+            k: Int::from(c.lin.constant),
+        };
+        match c.rel {
+            Rel::Eq => es.push(r, &mut sys),
+            Rel::Ge => sys.add(r),
+        }
+    }
+    let omega = Omega {
+        sys,
+        es,
+        steps: Vec::new(),
         room: cons.len(),
     };
-    let found = omega.solve(eqs, ges)?;
-    Ok(found.map(|m| {
-        atoms
-            .iter()
-            .enumerate()
-            .filter_map(|(i, a)| m.get(&i).map(|v| (a.clone(), *v)))
-            .collect()
-    }))
+    omega.run(&atoms)
 }
 
-/// The values of the solver's variables, each absent one zero.
-type Vals = BTreeMap<usize, i128>;
+/// A coefficient at a variable.
+type Term = (usize, Int);
 
-/// `Σ a[i]·x[i] + k`, compared with zero by `==` or `>=`.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+/// The coefficients of a row, nonzero, in variable order. Rows are shared, not copied, among
+/// the system, its index and the steps.
+type Coefs = Rc<[Term]>;
+
+/// `Σ a[i]·x[i] + k`, compared with zero by `>=`, or by `==` among the equalities.
+#[derive(Clone)]
 struct Row {
-    a: BTreeMap<usize, i128>,
-    k: i128,
-    eq: bool,
+    a: Coefs,
+    k: Int,
 }
 
 /// What normalizing a row gives.
@@ -833,414 +882,579 @@ enum Norm {
     Row(Row),
 }
 
-fn gcd(a: i128, b: i128) -> i128 {
-    let (mut a, mut b) = (a.abs(), b.abs());
-    while b != 0 {
-        (a, b) = (b, a % b);
+/// `f·x + g·y`, without the variable `skip`.
+fn merge(x: &[Term], f: &Int, y: &[Term], g: &Int, skip: usize) -> Coefs {
+    let mut out = Vec::with_capacity(x.len() + y.len());
+    let (mut xs, mut ys) = (x.iter().peekable(), y.iter().peekable());
+    loop {
+        let order = match (xs.peek(), ys.peek()) {
+            (Some(p), Some(q)) => p.0.cmp(&q.0),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => break,
+        };
+        let (v, c) = match order {
+            Ordering::Less => {
+                let (v, c) = xs.next().expect("peeked");
+                (*v, c * f)
+            }
+            Ordering::Greater => {
+                let (v, d) = ys.next().expect("peeked");
+                (*v, d * g)
+            }
+            Ordering::Equal => {
+                let (v, c) = xs.next().expect("peeked");
+                let (_, d) = ys.next().expect("peeked");
+                (*v, &(c * f) + &(d * g))
+            }
+        };
+        if v != skip && !c.is_zero() {
+            out.push((v, c));
+        }
     }
-    a
+    out.into()
+}
+
+/// The coefficients of the opposite row.
+fn opposite(a: &[Term]) -> Vec<Term> {
+    a.iter().map(|(i, c)| (*i, -c)).collect()
 }
 
 impl Row {
-    fn eval(&self, m: &Vals) -> Result<i128, Over> {
-        let mut v = self.k;
-        for (i, c) in &self.a {
-            v = add(v, mul(*c, *m.get(i).unwrap_or(&0))?)?;
-        }
-        Ok(v)
+    /// The coefficient at `x[j]`, which the row holds.
+    fn at(&self, j: usize) -> &Int {
+        let i = self.a.binary_search_by_key(&j, |t| t.0);
+        &self.a[i.expect("the row holds the variable")].1
+    }
+
+    fn eval(&self, m: &[Int]) -> Int {
+        self.a
+            .iter()
+            .fold(self.k.clone(), |v, (i, c)| &v + &(c * &m[*i]))
     }
 
     /// The row divided by the gcd of its coefficients, an inequality's constant rounded down.
-    fn normal(mut self) -> Norm {
-        let g = self.a.values().fold(0, |g, c| gcd(g, *c));
-        if g == 0 {
-            return match (self.eq, self.k) {
-                (true, 0) => Norm::True,
-                (false, k) if k >= 0 => Norm::True,
-                _ => Norm::False,
-            };
-        }
-        if self.eq && self.k % g != 0 {
-            return Norm::False;
-        }
-        for c in self.a.values_mut() {
-            *c /= g;
-        }
-        self.k = self.k.div_euclid(g);
-        Norm::Row(self)
-    }
-
-    /// The row with `x[j]` replaced by `def`.
-    fn subst(&self, j: usize, def: &Row) -> Result<Row, Over> {
-        let Some(&c) = self.a.get(&j) else {
-            return Ok(self.clone());
-        };
-        let mut out = self.clone();
-        out.a.remove(&j);
-        for (i, d) in &def.a {
-            let v = add(*out.a.get(i).unwrap_or(&0), mul(c, *d)?)?;
-            if v == 0 {
-                out.a.remove(i);
-            } else {
-                out.a.insert(*i, v);
+    fn normal(self, eq: bool) -> Norm {
+        let mut g = Int::ZERO;
+        for (_, c) in self.a.iter() {
+            g = g.gcd(c);
+            if g.is_unit() {
+                return Norm::Row(self);
             }
         }
-        out.k = add(out.k, mul(c, def.k)?)?;
-        Ok(out)
+        if g.is_zero() {
+            let holds = if eq {
+                self.k.is_zero()
+            } else {
+                !self.k.is_negative()
+            };
+            return if holds { Norm::True } else { Norm::False };
+        }
+        if eq && !self.k.mod_floor(&g).is_zero() {
+            return Norm::False;
+        }
+        Norm::Row(Row {
+            a: self.a.iter().map(|(i, c)| (*i, c.div_floor(&g))).collect(),
+            k: self.k.div_floor(&g),
+        })
     }
 
-    /// The row without `x[j]`.
-    fn rest(&self, j: usize) -> Row {
-        let mut r = self.clone();
-        r.a.remove(&j);
-        r
+    /// The row, which holds `x[j]`, with `x[j]` replaced by `def`.
+    fn subst(&self, j: usize, def: &Row) -> Row {
+        let c = self.at(j);
+        Row {
+            a: merge(&self.a, &Int::ONE, &def.a, c, j),
+            k: &self.k + &(c * &def.k),
+        }
     }
 }
 
 /// Pugh's symmetric remainder: `a - m·floor(a/m + 1/2)`.
-fn mod_hat(a: i128, m: i128) -> i128 {
-    let r = a.rem_euclid(m);
-    if 2 * r >= m { r - m } else { r }
+fn mod_hat(a: &Int, m: &Int) -> Int {
+    let r = a.mod_floor(m);
+    if &(&r + &r) >= m { &r - m } else { r }
 }
 
-/// The Omega test.
+/// How a variable occurs in the inequalities: as a lower or an upper bound, and how often with
+/// a coefficient that is not a unit.
+#[derive(Default)]
+struct Sides {
+    lo: usize,
+    hi: usize,
+    lo_wide: usize,
+    hi_wide: usize,
+    /// The terms of its rows on each side.
+    lo_terms: usize,
+    hi_terms: usize,
+}
+
+impl Sides {
+    /// Whether no elimination of the variable is exact.
+    fn inexact(&self) -> bool {
+        self.lo_wide > 0 && self.hi_wide > 0
+    }
+
+    /// The rows its elimination adds less the rows it removes.
+    fn growth(&self) -> isize {
+        (self.lo * self.hi) as isize - (self.lo + self.hi) as isize
+    }
+
+    /// The terms its elimination writes.
+    fn written(&self) -> usize {
+        self.lo * self.hi_terms + self.hi * self.lo_terms
+    }
+
+    /// Where the variable stands among those to eliminate: by rows added, then terms written.
+    fn rank(&self, j: usize) -> Rank {
+        (self.growth(), self.written(), j)
+    }
+}
+
+/// The growth of a variable's elimination, the terms it writes, and the variable.
+type Rank = (isize, usize, usize);
+
+/// A row of a [`System`]: its constant, and its place in the system's list.
+struct Held {
+    k: Int,
+    id: usize,
+}
+
+/// A variable of a [`System`]: its rows, by place, and how it occurs in them.
+#[derive(Default)]
+struct Var {
+    rows: BTreeSet<usize>,
+    sides: Sides,
+}
+
+/// A system of inequalities, kept normalized as rows are added and removed: each set of
+/// coefficients is held once, with its least constant, and each variable knows its rows and
+/// how it occurs in them, so that a step touches only the rows of the variable it eliminates.
+struct System {
+    rows: BTreeMap<Coefs, Held>,
+    /// The coefficients of each row ever added, by place, while it is held.
+    ids: Vec<Option<Coefs>>,
+    vars: Vec<Var>,
+    /// The variables whose elimination is exact, by rank.
+    exact: BTreeSet<Rank>,
+    /// The variables whose elimination is inexact, likewise.
+    inexact: BTreeSet<Rank>,
+    /// The variables bounded on one side only.
+    one_sided: BTreeSet<usize>,
+    /// The lesser coefficients of two opposite rows whose constants sum to zero; a pair may
+    /// since have changed, and is checked when taken.
+    meets: BTreeSet<Coefs>,
+    /// Whether a row is false, or two opposite rows meet nowhere.
+    empty: bool,
+}
+
+impl System {
+    fn new(vars: usize) -> System {
+        System {
+            rows: BTreeMap::new(),
+            ids: Vec::new(),
+            vars: std::iter::repeat_with(Var::default).take(vars).collect(),
+            exact: BTreeSet::new(),
+            inexact: BTreeSet::new(),
+            one_sided: BTreeSet::new(),
+            meets: BTreeSet::new(),
+            empty: false,
+        }
+    }
+
+    fn add(&mut self, r: Row) {
+        let r = match r.normal(false) {
+            Norm::False => {
+                self.empty = true;
+                return;
+            }
+            Norm::True => return,
+            Norm::Row(r) => r,
+        };
+        if let Some(old) = self.rows.get_mut(&r.a) {
+            if old.k <= r.k {
+                return;
+            }
+            old.k = r.k.clone();
+        } else {
+            let id = self.ids.len();
+            self.ids.push(Some(r.a.clone()));
+            self.count(&r.a, id, true);
+            let k = r.k.clone();
+            self.rows.insert(r.a.clone(), Held { k, id });
+        }
+        let opp = opposite(&r.a);
+        if let Some((key, o)) = self.rows.get_key_value(opp.as_slice()) {
+            let s = &r.k + &o.k;
+            if s.is_negative() {
+                self.empty = true;
+            } else if s.is_zero() {
+                let lesser = if r.a < *key { r.a } else { key.clone() };
+                self.meets.insert(lesser);
+            }
+        }
+    }
+
+    /// Counts the row `a` at place `id` in, or out when `!add`, at each of its variables.
+    fn count(&mut self, a: &Coefs, id: usize, add: bool) {
+        for (i, c) in a.iter() {
+            let v = &mut self.vars[*i];
+            let set = if v.sides.inexact() {
+                &mut self.inexact
+            } else {
+                &mut self.exact
+            };
+            set.remove(&v.sides.rank(*i));
+            self.one_sided.remove(i);
+            let s = &mut v.sides;
+            let (side, wide, terms) = if c.is_positive() {
+                (&mut s.lo, &mut s.lo_wide, &mut s.lo_terms)
+            } else {
+                (&mut s.hi, &mut s.hi_wide, &mut s.hi_terms)
+            };
+            if add {
+                *side += 1;
+                *wide += usize::from(!c.is_unit());
+                *terms += a.len();
+                v.rows.insert(id);
+            } else {
+                *side -= 1;
+                *wide -= usize::from(!c.is_unit());
+                *terms -= a.len();
+                v.rows.remove(&id);
+            }
+            if s.lo + s.hi == 0 {
+                continue;
+            }
+            let set = if s.inexact() {
+                &mut self.inexact
+            } else {
+                &mut self.exact
+            };
+            set.insert(s.rank(*i));
+            if s.lo == 0 || s.hi == 0 {
+                self.one_sided.insert(*i);
+            }
+        }
+    }
+
+    /// Removes the held row at place `id`, and returns it.
+    fn remove(&mut self, id: usize) -> Row {
+        let a = self.ids[id].take().expect("a row held");
+        let k = self.rows.remove(&a).expect("a row held").k;
+        self.count(&a, id, false);
+        Row { a, k }
+    }
+
+    /// Removes the rows that hold `x[j]`, and returns them.
+    fn take(&mut self, j: usize) -> Vec<Row> {
+        let ids = std::mem::take(&mut self.vars[j].rows);
+        ids.into_iter().map(|id| self.remove(id)).collect()
+    }
+
+    /// One of two opposite rows that meet in an equality, both removed.
+    fn meeting(&mut self) -> Option<Row> {
+        while let Some(a) = self.meets.pop_first() {
+            let opp = opposite(&a);
+            if let (Some(r), Some(o)) = (self.rows.get(&a), self.rows.get(opp.as_slice()))
+                && (&r.k + &o.k).is_zero()
+            {
+                let (r, o) = (r.id, o.id);
+                self.remove(o);
+                return Some(self.remove(r));
+            }
+        }
+        None
+    }
+
+    /// Whether the elimination is inexact and the variable of least growth among the exact
+    /// eliminations, or failing that the inexact ones, the first on a tie, whose elimination
+    /// leaves no more than `room` rows.
+    fn best(&self, room: usize) -> Option<(bool, usize)> {
+        let fits = |&&(g, _, _): &&Rank| self.rows.len() as isize + g <= room as isize;
+        let exact = self.exact.first().filter(fits).map(|r| (false, r.2));
+        exact.or_else(|| self.inexact.first().filter(fits).map(|r| (true, r.2)))
+    }
+
+    /// Eliminates `x[j]` by its real shadow, or its dark one when `dark`; returns its rows.
+    fn eliminate(&mut self, j: usize, dark: bool) -> Vec<Row> {
+        let with = self.take(j);
+        let (lowers, uppers): (Vec<&Row>, Vec<&Row>) =
+            with.iter().partition(|r| r.at(j).is_positive());
+        for lo in &lowers {
+            for hi in &uppers {
+                self.add(combine(lo, hi, j, dark));
+            }
+        }
+        with
+    }
+}
+
+/// The shadow row of the lower bound `a·x + l >= 0` and the upper bound `-b·x + u >= 0` on
+/// `x = x[j]`: the real shadow `a·u + b·l >= 0`, or the dark one
+/// `a·u + b·l >= (a - 1)(b - 1)` when `dark`.
+fn combine(lo: &Row, hi: &Row, j: usize, dark: bool) -> Row {
+    let (a, b) = (lo.at(j), &-hi.at(j));
+    let k = &(&hi.k * a) + &(&lo.k * b);
+    Row {
+        a: merge(&hi.a, a, &lo.a, b, j),
+        k: if dark {
+            &k - &(&(a - &Int::ONE) * &(b - &Int::ONE))
+        } else {
+            k
+        },
+    }
+}
+
+/// The equalities as a stack, a slot emptied when its row holds everywhere, with the slots of
+/// each variable.
+struct Equalities {
+    rows: Vec<Option<Row>>,
+    of: Vec<BTreeSet<usize>>,
+}
+
+impl Equalities {
+    fn new(vars: usize) -> Equalities {
+        Equalities {
+            rows: Vec::new(),
+            of: vec![BTreeSet::new(); vars],
+        }
+    }
+
+    /// The slot of the last equality, if any.
+    fn last(&mut self) -> Option<usize> {
+        while matches!(self.rows.last(), Some(None)) {
+            self.rows.pop();
+        }
+        self.rows.len().checked_sub(1)
+    }
+
+    fn push(&mut self, r: Row, sys: &mut System) {
+        self.rows.push(None);
+        self.put(self.rows.len() - 1, r, sys);
+    }
+
+    fn put(&mut self, s: usize, r: Row, sys: &mut System) {
+        match r.normal(true) {
+            Norm::False => sys.empty = true,
+            Norm::True => {}
+            Norm::Row(r) => {
+                for (i, _) in r.a.iter() {
+                    self.of[*i].insert(s);
+                }
+                self.rows[s] = Some(r);
+            }
+        }
+    }
+
+    /// Empties the slot `s`, and returns its row.
+    fn clear(&mut self, s: usize) -> Row {
+        let r = self.rows[s].take().expect("a slot in use");
+        for (i, _) in r.a.iter() {
+            self.of[*i].remove(&s);
+        }
+        r
+    }
+
+    /// Replaces `x[j]` by `def` in each equality that holds it.
+    fn subst(&mut self, j: usize, def: &Row, sys: &mut System) {
+        for s in std::mem::take(&mut self.of[j]) {
+            let r = self.clear(s);
+            self.put(s, r.subst(j, def), sys);
+        }
+    }
+}
+
+/// A step the model is built back through, last step first.
+enum Step {
+    /// `x[j]` defined by an equality.
+    Defined(usize, Row),
+    /// `x[j]` chosen within the rows that held it.
+    Chosen(usize, Vec<Row>),
+}
+
+/// The Omega test. Each step solves an equality, turns two opposite rows that meet into one,
+/// drops a variable bounded on one side only, or eliminates a variable, until no row is left;
+/// the model is then built back through the steps.
 struct Omega {
-    /// The next fresh variable.
-    next: usize,
+    sys: System,
+    es: Equalities,
+    steps: Vec<Step>,
     /// The most rows an elimination may leave: the rows of the problem as given.
     room: usize,
 }
 
 impl Omega {
-    fn solve(&mut self, eqs: Vec<Row>, ges: Vec<Row>) -> Result<Option<Vals>, Over> {
-        let mut es = Vec::new();
-        for r in eqs {
-            match r.normal() {
-                Norm::False => return Ok(None),
-                Norm::True => {}
-                Norm::Row(r) => es.push(r),
-            }
-        }
-        let mut gs = Vec::new();
-        for r in ges {
-            match r.normal() {
-                Norm::False => return Ok(None),
-                Norm::True => {}
-                Norm::Row(r) => gs.push(r),
-            }
-        }
-        if let Some(e) = es.pop() {
-            return self.equality(e, es, gs);
-        }
-        self.inequalities(gs)
-    }
-
-    fn equality(&mut self, e: Row, es: Vec<Row>, gs: Vec<Row>) -> Result<Option<Vals>, Over> {
-        if let Some((&j, &aj)) = e.a.iter().find(|(_, c)| c.abs() == 1) {
-            // `aj·x + rest == 0`, so `x = -aj·rest`.
-            let rest = e.rest(j);
-            let def = Row {
-                a: rest.a.iter().map(|(i, c)| (*i, -aj * c)).collect(),
-                k: -aj * rest.k,
-                eq: true,
-            };
-            let es = es
-                .iter()
-                .map(|r| r.subst(j, &def))
-                .collect::<Result<_, _>>()?;
-            let gs = gs
-                .iter()
-                .map(|r| r.subst(j, &def))
-                .collect::<Result<_, _>>()?;
-            let Some(mut m) = self.solve(es, gs)? else {
-                return Ok(None);
-            };
-            let v = def.eval(&m)?;
-            m.insert(j, v);
-            return Ok(Some(m));
-        }
-        // No unit coefficient: Pugh's step with a fresh variable `s`, whose new equality has
-        // a unit coefficient at the variable with the least coefficient.
-        let (_, &least) = e.a.iter().min_by_key(|(_, c)| c.abs()).expect("a variable");
-        let m = add(least.abs(), 1)?;
-        let s = self.next;
-        self.next += 1;
-        let mut a: BTreeMap<usize, i128> =
-            e.a.iter()
-                .map(|(i, c)| (*i, mod_hat(*c, m)))
-                .filter(|(_, c)| *c != 0)
-                .collect();
-        a.insert(s, -m);
-        let hat = Row {
-            a,
-            k: mod_hat(e.k, m),
-            eq: true,
-        };
-        let mut es = es;
-        es.push(e);
-        es.push(hat);
-        self.solve(es, gs)
-    }
-
-    fn inequalities(&mut self, gs: Vec<Row>) -> Result<Option<Vals>, Over> {
-        // Of two rows with one set of coefficients, the tighter; a row and its opposite
-        // meet in an equality, or nowhere.
-        let mut tight: BTreeMap<BTreeMap<usize, i128>, i128> = BTreeMap::new();
-        for r in gs {
-            let k = tight.entry(r.a).or_insert(r.k);
-            *k = (*k).min(r.k);
-        }
-        for (a, k) in &tight {
-            let opp: BTreeMap<usize, i128> = a.iter().map(|(i, c)| (*i, -c)).collect();
-            if let Some(k2) = tight.get(&opp) {
-                let s = add(*k, *k2)?;
-                if s < 0 {
-                    return Ok(None);
-                }
-                if s == 0 {
-                    let eq = Row {
-                        a: a.clone(),
-                        k: *k,
-                        eq: true,
-                    };
-                    let rest: Vec<Row> = tight
-                        .iter()
-                        .filter(|(b, _)| *b != a && **b != opp)
-                        .map(|(b, k)| Row {
-                            a: b.clone(),
-                            k: *k,
-                            eq: false,
-                        })
-                        .collect();
-                    return self.solve(vec![eq], rest);
-                }
-            }
-        }
-        let gs: Vec<Row> = tight
-            .into_iter()
-            .map(|(a, k)| Row { a, k, eq: false })
-            .collect();
-        if gs.is_empty() {
-            return Ok(Some(Vals::new()));
-        }
-        let vars: BTreeSet<usize> = gs.iter().flat_map(|r| r.a.keys().copied()).collect();
-        // A variable bounded on one side only: its rows can always be met.
-        for &j in &vars {
-            let signs: BTreeSet<bool> = gs
-                .iter()
-                .filter_map(|r| r.a.get(&j).map(|c| *c > 0))
-                .collect();
-            if signs.len() == 1 {
-                let (with, without): (Vec<Row>, Vec<Row>) =
-                    gs.into_iter().partition(|r| r.a.contains_key(&j));
-                let Some(mut m) = self.solve(Vec::new(), without)? else {
-                    return Ok(None);
+    fn run(mut self, atoms: &[Atom]) -> Result<Option<Model>, Refusal> {
+        // Below an inexact elimination only the dark shadow is solved, so an empty problem
+        // there is not shown empty, and the real shadow is tried once, at the first.
+        let mut dark = false;
+        loop {
+            if self.sys.empty {
+                return if dark {
+                    Err(Refusal::Shadows)
+                } else {
+                    Ok(None)
                 };
-                let v = choose(&with, j, &m)?;
-                m.insert(j, v);
-                return Ok(Some(m));
             }
-        }
-        // Eliminate the variable that leaves the fewest rows, exact before inexact, among those
-        // that leave no more rows than the problem was given.
-        let cost = |j: usize| {
-            let lo: Vec<i128> = gs
-                .iter()
-                .filter_map(|r| r.a.get(&j).filter(|c| **c > 0).copied())
-                .collect();
-            let hi: Vec<i128> = gs
-                .iter()
-                .filter_map(|r| r.a.get(&j).filter(|c| **c < 0).map(|c| -c))
-                .collect();
-            let exact = lo.iter().all(|c| *c == 1) || hi.iter().all(|c| *c == 1);
-            let rows = gs.len() - lo.len() - hi.len() + lo.len() * hi.len();
-            (!exact, rows, j)
-        };
-        let Some((inexact, _, j)) = vars
-            .iter()
-            .map(|j| cost(*j))
-            .filter(|(_, rows, _)| *rows <= self.room)
-            .min()
-        else {
-            return Err(Over);
-        };
-        let (with, others): (Vec<Row>, Vec<Row>) =
-            gs.iter().cloned().partition(|r| r.a.contains_key(&j));
-        let lowers: Vec<&Row> = with.iter().filter(|r| r.a[&j] > 0).collect();
-        let uppers: Vec<&Row> = with.iter().filter(|r| r.a[&j] < 0).collect();
-        // Lower `a·x + l >= 0` and upper `-b·x + u >= 0` give `a·u + b·l >= 0`, and the dark
-        // shadow `a·u + b·l >= (a - 1)(b - 1)`.
-        let shadow = |dark: bool| -> Result<Vec<Row>, Over> {
-            let mut out = others.clone();
-            for lo in &lowers {
-                for hi in &uppers {
-                    let (a, b) = (lo.a[&j], -hi.a[&j]);
-                    let mut r = Row {
-                        a: BTreeMap::new(),
-                        k: 0,
-                        eq: false,
-                    };
-                    for (src, f) in [(hi.rest(j), a), (lo.rest(j), b)] {
-                        for (i, c) in &src.a {
-                            let v = add(*r.a.get(i).unwrap_or(&0), mul(*c, f)?)?;
-                            if v == 0 {
-                                r.a.remove(i);
-                            } else {
-                                r.a.insert(*i, v);
-                            }
-                        }
-                        r.k = add(r.k, mul(src.k, f)?)?;
-                    }
-                    if dark {
-                        r.k = add(r.k, -mul(a - 1, b - 1)?)?;
-                    }
-                    out.push(r);
+            if let Some(s) = self.es.last() {
+                self.equality(s);
+                continue;
+            }
+            if let Some(r) = self.sys.meeting() {
+                self.es.push(r, &mut self.sys);
+                continue;
+            }
+            if self.sys.rows.is_empty() {
+                break;
+            }
+            if let Some(&j) = self.sys.one_sided.first() {
+                let rows = self.sys.take(j);
+                self.steps.push(Step::Chosen(j, rows));
+                continue;
+            }
+            let (inexact, j) = self.sys.best(self.room).ok_or(Refusal::Growth)?;
+            if inexact && !dark {
+                // An empty real shadow, over the rationals, shows the problem empty; a point of
+                // the dark shadow, which lies within the real one, is a point of it. Between
+                // them the question is refused: the splinters that would settle it recurse once
+                // per value of a coefficient at each variable, which is exponential in the
+                // variables.
+                if relaxed_empty(&self.sys) {
+                    return Ok(None);
                 }
+                dark = true;
             }
-            Ok(out)
+            let rows = self.sys.eliminate(j, inexact);
+            self.steps.push(Step::Chosen(j, rows));
+        }
+        let mut vals = vec![Int::ZERO; self.sys.vars.len()];
+        let mut model = Model::new();
+        for step in self.steps.iter().rev() {
+            let (j, v) = match step {
+                Step::Defined(j, def) => (*j, def.eval(&vals)),
+                Step::Chosen(j, rows) => (*j, choose(rows, *j, &vals)),
+            };
+            if let Some(a) = atoms.get(j) {
+                model.insert(a.clone(), v.clone());
+            }
+            vals[j] = v;
+        }
+        Ok(Some(model))
+    }
+
+    /// Solves the equality in slot `s`: by a unit coefficient where it has one, or else by Pugh's
+    /// step. That step takes the variable `x[j]` with the least coefficient, the first on a tie,
+    /// and `m`, one above it; with a fresh `t`, the equality of the coefficients `mod_hat(a, m)`
+    /// and `-m` at `t` has a unit at `x[j]`, and defines `x[j]`. By Pugh's argument this shrinks
+    /// the coefficients of the equality in the slot, by about 5/6 each time, so the steps end.
+    fn equality(&mut self, s: usize) {
+        let e = self.es.clear(s);
+        if let Some((j, _)) = e.a.iter().find(|(_, c)| c.is_unit()) {
+            self.define(*j, &e);
+            return;
+        }
+        let (j, least) =
+            e.a.iter()
+                .map(|(i, c)| (*i, c.abs()))
+                .min_by(|p, q| p.1.cmp(&q.1))
+                .expect("a row has a variable");
+        let m = &least + &Int::ONE;
+        let t = self.sys.vars.len();
+        self.sys.vars.push(Var::default());
+        self.es.of.push(BTreeSet::new());
+        let mut a: Vec<Term> =
+            e.a.iter()
+                .map(|(i, c)| (*i, mod_hat(c, &m)))
+                .filter(|(_, c)| !c.is_zero())
+                .collect();
+        a.push((t, -&m));
+        let hat = Row {
+            a: a.into(),
+            k: mod_hat(&e.k, &m),
         };
-        let pick = |m: Option<Vals>| -> Result<Option<Vals>, Over> {
-            let Some(mut m) = m else { return Ok(None) };
-            let v = choose(&with, j, &m)?;
-            m.insert(j, v);
-            Ok(Some(m))
+        self.es.put(s, e, &mut self.sys);
+        self.define(j, &hat);
+    }
+
+    /// Replaces `x[j]` everywhere by what the equality `e`, whose coefficient there is a unit,
+    /// makes it.
+    fn define(&mut self, j: usize, e: &Row) {
+        // `aj·x + rest == 0`, so `x = -aj·rest`.
+        let f = -e.at(j);
+        let def = Row {
+            a: merge(&e.a, &f, &[], &Int::ZERO, j),
+            k: &e.k * &f,
         };
-        if !inexact {
-            let r = self.solve(Vec::new(), shadow(false)?)?;
-            return pick(r);
+        for r in self.sys.take(j) {
+            self.sys.add(r.subst(j, &def));
         }
-        // An empty real shadow, over the rationals, shows the problem empty; a point of the dark
-        // shadow, which lies within the real one, is a point of it. Between them the question
-        // is undecided: the splinters that would settle it recurse once per value of a
-        // coefficient at each variable, which is exponential in the variables.
-        if relaxed_empty(&gs) {
-            return Ok(None);
-        }
-        match self.solve(Vec::new(), shadow(true)?) {
-            Ok(Some(m)) => pick(Some(m)),
-            _ => Err(Over),
-        }
+        self.es.subst(j, &def, &mut self.sys);
+        self.steps.push(Step::Defined(j, def));
     }
 }
 
 /// Whether the inequalities have no rational point, by Fourier–Motzkin elimination with the
 /// real shadow alone, each row normalized (which keeps every integer point). A `false` is
-/// "not shown": a variable whose elimination would leave more rows than `gs` holds, or an
-/// overflow, stops it. One pass eliminates each variable once.
-fn relaxed_empty(gs: &[Row]) -> bool {
-    let mut rows: Vec<Row> = gs.to_vec();
-    let room = gs.len();
-    loop {
-        let mut tight: BTreeMap<BTreeMap<usize, i128>, i128> = BTreeMap::new();
-        for r in rows {
-            match r.normal() {
-                Norm::False => return true,
-                Norm::True => {}
-                Norm::Row(r) => {
-                    let k = tight.entry(r.a).or_insert(r.k);
-                    *k = (*k).min(r.k);
-                }
-            }
-        }
-        for (a, k) in &tight {
-            let opp: BTreeMap<usize, i128> = a.iter().map(|(i, c)| (*i, -c)).collect();
-            if tight
-                .get(&opp)
-                .is_some_and(|k2| k.checked_add(*k2).is_some_and(|s| s < 0))
-            {
-                return true;
-            }
-        }
-        let gs: Vec<Row> = tight
-            .into_iter()
-            .map(|(a, k)| Row { a, k, eq: false })
-            .collect();
-        let mut sides: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
-        for r in &gs {
-            for (i, c) in &r.a {
-                let e = sides.entry(*i).or_default();
-                if *c > 0 { e.0 += 1 } else { e.1 += 1 }
-            }
-        }
-        let n = gs.len();
-        let Some((_, j)) = sides
-            .iter()
-            .map(|(j, (lo, hi))| (n - lo - hi + lo * hi, *j))
-            .min()
-        else {
+/// "not shown": a variable whose elimination would leave more rows than `gs` holds stops it.
+/// Each step eliminates the variable of least rank.
+fn relaxed_empty(gs: &System) -> bool {
+    let mut sys = System::new(gs.vars.len());
+    for (a, r) in &gs.rows {
+        sys.add(Row {
+            a: a.clone(),
+            k: r.k.clone(),
+        });
+    }
+    let room = sys.rows.len() as isize;
+    while !sys.empty {
+        let least = sys.exact.first().into_iter().chain(sys.inexact.first());
+        let Some(&(growth, _, j)) = least.min() else {
             return false;
         };
-        if n - sides[&j].0 - sides[&j].1 + sides[&j].0 * sides[&j].1 > room {
+        if sys.rows.len() as isize + growth > room {
             return false;
         }
-        let (with, mut out): (Vec<Row>, Vec<Row>) =
-            gs.into_iter().partition(|r| r.a.contains_key(&j));
-        for l in with.iter().filter(|r| r.a[&j] > 0) {
-            for u in with.iter().filter(|r| r.a[&j] < 0) {
-                let (a, b) = (l.a[&j], -u.a[&j]);
-                let mut r = Row {
-                    a: BTreeMap::new(),
-                    k: 0,
-                    eq: false,
-                };
-                for (src, f) in [(u, a), (l, b)] {
-                    for (i, c) in src.a.iter().filter(|(i, _)| **i != j) {
-                        let Some(v) = c
-                            .checked_mul(f)
-                            .and_then(|v| v.checked_add(*r.a.get(i).unwrap_or(&0)))
-                        else {
-                            return false;
-                        };
-                        if v == 0 {
-                            r.a.remove(i);
-                        } else {
-                            r.a.insert(*i, v);
-                        }
-                    }
-                    let Some(k) = src.k.checked_mul(f).and_then(|v| v.checked_add(r.k)) else {
-                        return false;
-                    };
-                    r.k = k;
-                }
-                out.push(r);
-            }
-        }
-        rows = out;
+        sys.eliminate(j, false);
     }
+    true
 }
 
-/// The value nearest zero for `x[j]` that the rows allow at the values `m` of the others.
-fn choose(rows: &[Row], j: usize, m: &Vals) -> Result<i128, Over> {
-    let (mut lo, mut hi) = (None::<i128>, None::<i128>);
+/// The value nearest zero for `x[j]` that the rows allow at the values `m` of the variables
+/// chosen after it, `m[j]` being zero still.
+fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
+    let (mut lo, mut hi) = (None::<Int>, None::<Int>);
     for r in rows {
-        let c = r.a[&j];
-        let rest = r.rest(j).eval(m)?;
+        let c = r.at(j);
+        let rest = r.eval(m);
         // `c·x + rest >= 0`.
-        if c > 0 {
-            let b = (-rest).div_euclid(c) + i128::from((-rest).rem_euclid(c) != 0);
-            lo = Some(lo.map_or(b, |l| l.max(b)));
+        if c.is_positive() {
+            let b = -&rest.div_floor(c);
+            lo = Some(lo.map_or(b.clone(), |l| l.max(b)));
         } else {
-            let b = rest.div_euclid(-c);
-            hi = Some(hi.map_or(b, |h| h.min(b)));
+            let b = rest.div_floor(&-c);
+            hi = Some(hi.map_or(b.clone(), |h| h.min(b)));
         }
     }
-    Ok(match (lo, hi) {
-        (Some(l), _) if l > 0 => l,
-        (_, Some(h)) if h < 0 => h,
-        _ => 0,
-    })
+    match (lo, hi) {
+        (Some(l), _) if l.is_positive() => l,
+        (_, Some(h)) if h.is_negative() => h,
+        _ => Int::ZERO,
+    }
 }
 
 /// The values of a symbol over the formula's points, as a union of intervals (see the module
 /// note): exact when one disjunction is left, a set holding them otherwise. A bound past `i64`
 /// is read as no bound.
-pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Over> {
+pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
     project_each(f, std::slice::from_ref(sym))?.remove(0)
 }
 
 /// [`project`] onto each of `syms`, removing disjuncts once: one result for each symbol, so
-/// that a symbol whose hull is undecided leaves the others projected.
-pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Vec<Result<IntervalSet, Over>>, Over> {
+/// that a symbol whose hull is refused leaves the others projected.
+pub fn project_each(
+    f: &Formula,
+    syms: &[Atom],
+) -> Result<Vec<Result<IntervalSet, Refusal>>, Refusal> {
     let none = || syms.iter().map(|_| Ok(IntervalSet::empty())).collect();
     let Some(mut p) = propagate(f)? else {
         return Ok(none());
@@ -1256,7 +1470,7 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Vec<Result<IntervalSet
     };
     let base = Formula::and(p.cons.iter().cloned().map(Formula::Con).collect());
     // Each disjunct's projections with the base, a level of disjunctions fewer than `f`; an
-    // undecided one is `None`.
+    // refused one is `None`.
     let mut parts: Vec<Vec<Option<Projections>>> = Vec::new();
     for ds in &p.ors {
         let mut each = Vec::new();
@@ -1292,8 +1506,8 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Vec<Result<IntervalSet
 
 /// `set`, holding every value of `sym` over `f`'s points, with each finite bound raised or
 /// lowered by bisection to the nearest value at which `f` with `sym` past it is shown to have
-/// no point. A bound moves only on such a proof, so an undecided question leaves it sound.
-fn tighten(f: &Formula, sym: &Atom, set: IntervalSet) -> Result<IntervalSet, Over> {
+/// no point. A bound moves only on such a proof, so a refused question leaves it sound.
+fn tighten(f: &Formula, sym: &Atom, set: IntervalSet) -> Result<IntervalSet, Refusal> {
     let Some((End::Fin(lo), End::Fin(hi))) = set.bounds() else {
         return Ok(set);
     };
@@ -1335,7 +1549,7 @@ fn tighten(f: &Formula, sym: &Atom, set: IntervalSet) -> Result<IntervalSet, Ove
 }
 
 /// The least and greatest values of a symbol over a conjunction.
-fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Over> {
+fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
     match satisfiable(c)? {
         Some(m) => hull_from(c, sym, &m),
         None => Ok(IntervalSet::empty()),
@@ -1346,22 +1560,26 @@ fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Over> {
 /// point with the symbol at most `v`" and "at least `v`". Each bound is searched outward
 /// from the point's value with steps that double, then by bisection, so it takes O(log d)
 /// questions for a bound at distance d, and one when the symbol is unbounded that way.
-fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Over> {
+fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal> {
     let x = Lin::atom(sym.clone());
-    let at = *m.get(sym).unwrap_or(&0);
-    let with = |con: Con| -> Result<bool, Over> {
+    let (min, max) = (i128::from(i64::MIN), i128::from(i64::MAX));
+    // The point's value, within the range the search covers.
+    let at = m.get(sym).map_or(0, |v| {
+        let past = if v.is_negative() { min } else { max };
+        v.to_i128().unwrap_or(past).clamp(min, max)
+    });
+    let with = |con: Con| -> Result<bool, Refusal> {
         Ok(satisfiable(&Formula::and(vec![c.clone(), Formula::Con(con)]))?.is_some())
     };
     let below = |v: i128| with(Con::ge(&Lin::constant(v), &x)?);
     let above = |v: i128| with(Con::ge(&x, &Lin::constant(v))?);
-    let (min, max) = (i128::from(i64::MIN), i128::from(i64::MAX));
     // The last value of the monotone `holds` that is true, moving from `start` (true) by
     // `dir` toward `end` (false).
-    let edge = |holds: &dyn Fn(i128) -> Result<bool, Over>,
+    let edge = |holds: &dyn Fn(i128) -> Result<bool, Refusal>,
                 start: i128,
                 end: i128,
                 dir: i128|
-     -> Result<i128, Over> {
+     -> Result<i128, Refusal> {
         let (mut good, mut step) = (start, 1i128);
         let bad = loop {
             let next = good + dir * step;
@@ -1395,12 +1613,12 @@ fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Over> {
 }
 
 /// The set `s` of a symbol as a formula: the disjunction of its pieces.
-pub fn member(sym: &Atom, s: &IntervalSet) -> Result<Formula, Over> {
+pub fn member(sym: &Atom, s: &IntervalSet) -> Result<Formula, Refusal> {
     within(&Lin::atom(sym.clone()), s)
 }
 
 /// The values of the term `l` in the set `s`, as a formula.
-pub fn within(l: &Lin, s: &IntervalSet) -> Result<Formula, Over> {
+pub fn within(l: &Lin, s: &IntervalSet) -> Result<Formula, Refusal> {
     let mut pieces = Vec::new();
     for &(lo, hi) in s.pieces() {
         let mut both = Vec::new();
@@ -1426,8 +1644,8 @@ pub enum Entailment {
     /// The premises with the products, read linearly, hold at these values with the goal
     /// failing, but the values of the product atoms are not the products of the symbols'.
     NotProved(Model),
-    /// The question lies outside the fragment the test decides (see the module note).
-    Undecided,
+    /// The question lies outside the fragment decided in polynomial time.
+    Refused(Refusal),
 }
 
 impl fmt::Display for Entailment {
@@ -1449,19 +1667,17 @@ impl fmt::Display for Entailment {
                 write!(f, "not proved: the linear reading fails at ")?;
                 model(m, f)
             }
-            Entailment::Undecided => {
-                write!(f, "undecided: outside the fragment the Omega test decides")
-            }
+            Entailment::Refused(r) => write!(f, "refused: {r}"),
         }
     }
 }
 
 /// Whether `premises` entail `goal` (rung 2).
 pub fn entails(premises: &Relation, goal: &Relation) -> Entailment {
-    entails_inner(premises, goal).unwrap_or(Entailment::Undecided)
+    entails_inner(premises, goal).unwrap_or_else(Entailment::Refused)
 }
 
-fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Over> {
+fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Refusal> {
     let defs = Formula::and(vec![premises.defined(), goal.defined()]);
     let mut ps = vec![premises.body.clone()];
     ps.extend(products(premises, goal)?);
@@ -1484,9 +1700,9 @@ fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Ove
     let syms: Model = m
         .iter()
         .filter(|(a, _)| !matches!(a, Atom::Product(..)))
-        .map(|(a, v)| (a.clone(), *v))
+        .map(|(a, v)| (a.clone(), v.clone()))
         .collect();
-    if real.holds(&syms)? {
+    if real.holds(&syms) {
         let shown = syms
             .into_iter()
             .filter(|(a, _)| matches!(a, Atom::Sym(_)))
@@ -1498,7 +1714,7 @@ fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Ove
 
 /// For each product the formulas mention, the products in pairs of the premises on its two
 /// factors, each `>= 0`.
-fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Over> {
+fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusal> {
     let mut wanted = BTreeSet::new();
     for f in [&premises.body, &goal.body] {
         for a in f.atoms() {
@@ -1608,7 +1824,7 @@ mod tests {
     }
 
     #[test]
-    fn the_dark_shadow_decides_integer_points_and_the_gap_is_undecided() {
+    fn the_dark_shadow_decides_integer_points_and_the_gap_is_refused() {
         // 2x = 2y + 1 has real points and no integer point.
         let f = Formula::Con(Con {
             lin: lin(&[("x", 2), ("y", -2)], -1),
@@ -1631,7 +1847,7 @@ mod tests {
             ge(&[("x", 7), ("y", -9)], 10),
             ge(&[("x", -7), ("y", 9)], 4),
         ]);
-        assert_eq!(satisfiable(&pugh), Err(Over));
+        assert_eq!(satisfiable(&pugh), Err(Refusal::Shadows));
         // Shifted to hold the point (2, 1), the dark shadow finds a point.
         let shifted = Formula::and(vec![
             ge(&[("x", 11), ("y", 13)], -27),
@@ -1640,6 +1856,6 @@ mod tests {
             ge(&[("x", -7), ("y", 9)], 5),
         ]);
         let m = satisfiable(&shifted).unwrap().unwrap();
-        assert!(shifted.holds(&m).unwrap(), "{m:?}");
+        assert!(shifted.holds(&m), "{m:?}");
     }
 }

@@ -1,0 +1,396 @@
+//! The Omega test's corner cases: each cause of a refusal with its own message, values past
+//! `i128`, equalities with no unit coefficient, opposite rows that meet, and an answer that does
+//! not depend on the order of the constraints.
+
+use std::sync::Arc;
+
+use zed_tests::{instances::Rng, scaling};
+use zedc::store::interval::{End, IntervalSet};
+use zedc::store::presburger::{
+    Atom, Con, Entailment, Formula, Lin, Refusal, Relation, entails, project, satisfiable,
+};
+
+fn sym(s: &str) -> Atom {
+    Atom::Sym(Arc::from(s))
+}
+
+/// `Σ c·s + k`.
+fn lin(terms: &[(&str, i128)], k: i128) -> Lin {
+    terms.iter().fold(Lin::constant(k), |l, (s, c)| {
+        l.plus(&Lin::atom(sym(s)).times(*c).unwrap()).unwrap()
+    })
+}
+
+fn ge(terms: &[(&str, i128)], k: i128) -> Formula {
+    Formula::Con(Con::ge(&lin(terms, k), &Lin::constant(0)).unwrap())
+}
+
+fn eq(terms: &[(&str, i128)], k: i128) -> Formula {
+    Formula::Con(Con::eq(&lin(terms, k), &Lin::constant(0)).unwrap())
+}
+
+#[test]
+fn a_ledger_equation_with_no_unit_coefficient_is_solved() {
+    // Pugh's example: 7a + 12b + 31c == 17 and 3a + 5b + 14c == 7, with a in 1..=40 and b in
+    // -50..=50, has integer points, reached through his symmetric remainder.
+    let f = Formula::and(vec![
+        eq(&[("a", 7), ("b", 12), ("c", 31)], -17),
+        eq(&[("a", 3), ("b", 5), ("c", 14)], -7),
+        ge(&[("a", 1)], -1),
+        ge(&[("a", -1)], 40),
+        ge(&[("b", 1)], 50),
+        ge(&[("b", -1)], 50),
+    ]);
+    let m = satisfiable(&f).unwrap().expect("a point");
+    assert!(f.holds(&m), "{m:?}");
+    // 6 boxes and 10 crates hold an even count; 6a + 10b == 7 has no point at all.
+    assert_eq!(satisfiable(&eq(&[("a", 6), ("b", 10)], -7)), Ok(None));
+    // With a third size of 15 every count can be reached, again without a unit coefficient.
+    let g = eq(&[("a", 6), ("b", 10), ("c", 15)], -7);
+    let m = satisfiable(&g).unwrap().expect("a point");
+    assert!(g.holds(&m), "{m:?}");
+}
+
+#[test]
+fn opposite_rows_meet_in_an_equality_or_nowhere() {
+    // Rent split so that 3 shares and 5 extras are at least and at most 7: exactly 7.
+    let f = Formula::and(vec![
+        ge(&[("s", 3), ("e", 5)], -7),
+        ge(&[("s", -3), ("e", -5)], 7),
+        ge(&[("e", 1)], 0),
+    ]);
+    let m = satisfiable(&f).unwrap().expect("a point");
+    assert!(f.holds(&m), "{m:?}");
+    // Meeting at a value the coefficients cannot reach: 2x == 1.
+    let f = Formula::and(vec![ge(&[("x", 2)], -1), ge(&[("x", -2)], 1)]);
+    assert_eq!(satisfiable(&f), Ok(None));
+    // Crossing: x >= 3 and x <= 2.
+    let f = Formula::and(vec![ge(&[("x", 1)], -3), ge(&[("x", -1)], 2)]);
+    assert_eq!(satisfiable(&f), Ok(None));
+}
+
+/// `3·x[i+1] >= 2·x[i] + 1` and `2·x[i] + 3 >= 3·x[i+1]`, which holds only with values growing
+/// by half at each step back from the last.
+fn growing(v: usize) -> Formula {
+    let name = |i: usize| format!("x{i}");
+    let rows = (0..v).flat_map(|i| {
+        let (a, b) = (name(i), name(i + 1));
+        [
+            ge(&[(b.as_str(), 3), (a.as_str(), -2)], -1),
+            ge(&[(a.as_str(), 2), (b.as_str(), -3)], 3),
+        ]
+    });
+    Formula::and(rows.collect())
+}
+
+#[test]
+fn a_model_may_hold_values_past_128_bits() {
+    let f = growing(1024);
+    let m = satisfiable(&f).unwrap().expect("a point");
+    assert!(f.holds(&m));
+    assert!(m.values().any(|v| v.to_i128().is_none()));
+    // The projection is read through such a point; its bounds lie past `i64`, as no bound.
+    let hull = project(&f, &sym("x0")).unwrap();
+    assert!(hull.bounds().is_some(), "{hull:?}");
+}
+
+#[test]
+fn a_bound_past_i64_is_searched_within_i64() {
+    // One value, 2^70: a point past the 64-bit range still gives a set holding it.
+    let v = 1i128 << 70;
+    let f = Formula::and(vec![ge(&[("x", 1)], -v), ge(&[("x", -1)], v + 5)]);
+    let hull = project(&f, &sym("x")).unwrap();
+    assert_eq!(hull.bounds().map(|(_, hi)| hi), Some(End::PosInf));
+    assert_ne!(hull, IntervalSet::empty());
+}
+
+/// `a != b`, as a disjunction.
+fn differ(a: &str, b: &str) -> Formula {
+    Formula::or(vec![ge(&[(a, 1), (b, -1)], -1), ge(&[(b, 1), (a, -1)], -1)])
+}
+
+#[test]
+fn each_cause_of_a_refusal_has_its_own_message() {
+    let refused = |f: Formula, why: Refusal, text: &str| {
+        assert_eq!(satisfiable(&f), Err(why));
+        let e = entails(&Relation::of(f), &Relation::of(Formula::bottom()));
+        assert_eq!(e, Entailment::Refused(why));
+        assert_eq!(e.to_string(), format!("refused: {text}"));
+    };
+    // Pugh's example: rational points, no integer point, and only the splinters would show it.
+    refused(
+        Formula::and(vec![
+            ge(&[("x", 11), ("y", 13)], -27),
+            ge(&[("x", -11), ("y", -13)], 45),
+            ge(&[("x", 7), ("y", -9)], 10),
+            ge(&[("x", -7), ("y", 9)], 4),
+        ]),
+        Refusal::Shadows,
+        "the relation has rational points but no integer point was found or ruled out",
+    );
+    // A box around the origin in which x has 2 lower and 3 upper bounds and y 2 and 3.
+    refused(
+        Formula::and(vec![
+            ge(&[("x", 1), ("y", -1)], 100),
+            ge(&[("x", 1), ("y", -2)], 100),
+            ge(&[("x", -1), ("y", 2)], 100),
+            ge(&[("x", -2), ("y", 1)], 100),
+            ge(&[("x", -1), ("y", -1)], 100),
+        ]),
+        Refusal::Growth,
+        "eliminating any variable left would grow the relation",
+    );
+    // Four tasks, three slots, each pair in different slots: no slot assignment, which the
+    // search through the disjunctions does not show by propagation.
+    let tasks = ["a", "b", "c", "d"];
+    let mut rows = Vec::new();
+    for (i, t) in tasks.iter().enumerate() {
+        rows.push(ge(&[(t, 1)], 0));
+        rows.push(ge(&[(t, -1)], 2));
+        rows.extend(tasks[..i].iter().map(|s| differ(s, t)));
+    }
+    refused(
+        Formula::and(rows),
+        Refusal::Disjuncts,
+        "no choice among the relation's disjunctions was settled",
+    );
+    // A written coefficient past `i128`.
+    let top = Lin::constant(i128::MAX);
+    assert_eq!(top.plus(&Lin::constant(1)), Err(Refusal::Coefficient));
+    assert_eq!(
+        Refusal::Coefficient.to_string(),
+        "a coefficient of the relation does not fit in 128 bits"
+    );
+}
+
+#[test]
+fn a_disjunct_refused_by_the_solver_is_reported_by_its_own_cause() {
+    let pugh = Formula::and(vec![
+        ge(&[("x", 11), ("y", 13)], -27),
+        ge(&[("x", -11), ("y", -13)], 45),
+        ge(&[("x", 7), ("y", -9)], 10),
+        ge(&[("x", -7), ("y", 9)], 4),
+    ]);
+    let f = Formula::or(vec![pugh.clone(), pugh]);
+    assert_eq!(satisfiable(&f), Err(Refusal::Shadows));
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_constraints() {
+    let rows = vec![
+        eq(&[("a", 7), ("b", 12), ("c", 31)], -17),
+        eq(&[("a", 3), ("b", 5), ("c", 14)], -7),
+        ge(&[("a", 1)], -1),
+        ge(&[("a", -1)], 40),
+        ge(&[("b", 1)], 50),
+        ge(&[("b", -1)], 50),
+        ge(&[("a", 3), ("d", -2)], 4),
+        ge(&[("d", 3), ("a", -2)], 9),
+    ];
+    let first = satisfiable(&Formula::and(rows.clone())).unwrap();
+    assert!(first.is_some());
+    // Every rotation, and every rotation reversed.
+    for i in 0..rows.len() {
+        let mut turned = rows.clone();
+        turned.rotate_left(i);
+        assert_eq!(satisfiable(&Formula::and(turned.clone())).unwrap(), first);
+        turned.reverse();
+        assert_eq!(satisfiable(&Formula::and(turned)).unwrap(), first);
+    }
+}
+
+/// A random constraint on `a`, `b` and `c`, with a small box's worth of coefficients.
+fn random_con(rng: &mut Rng) -> Formula {
+    let c = |rng: &mut Rng| rng.int(-3, 3) as i128;
+    let terms = [("a", c(rng)), ("b", c(rng)), ("c", c(rng))];
+    let terms: Vec<_> = terms.into_iter().filter(|t| t.1 != 0).collect();
+    if rng.below(4) == 0 {
+        eq(&terms, c(rng))
+    } else {
+        ge(&terms, 2 * c(rng))
+    }
+}
+
+/// A random formula with disjunctions and negations, of depth at most `d`.
+fn random_formula(rng: &mut Rng, d: u32) -> Formula {
+    if d == 0 || rng.below(3) == 0 {
+        return random_con(rng);
+    }
+    let parts: Vec<Formula> = (0..2 + rng.below(3))
+        .map(|_| random_formula(rng, d - 1))
+        .collect();
+    match rng.below(5) {
+        0 => Formula::negate(Formula::and(parts)),
+        1 | 2 => Formula::and(parts),
+        _ => Formula::or(parts),
+    }
+}
+
+/// `f` with the parts of every conjunction and disjunction in a random order.
+fn shuffled(f: &Formula, rng: &mut Rng) -> Formula {
+    let mut turned = |gs: &[Formula]| {
+        let mut gs: Vec<Formula> = gs.iter().map(|g| shuffled(g, rng)).collect();
+        for i in (1..gs.len()).rev() {
+            gs.swap(i, rng.below(i + 1));
+        }
+        gs
+    };
+    match f {
+        Formula::Con(_) => f.clone(),
+        Formula::Not(g) => Formula::Not(Box::new(turned(std::slice::from_ref(&**g)).remove(0))),
+        Formula::And(gs) => Formula::And(turned(gs)),
+        Formula::Or(gs) => Formula::Or(turned(gs)),
+    }
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_disjuncts() {
+    // A proof rule that held on one spelling of `a < 0 || b < 0` and not on `b < 0 || a < 0`
+    // would change with a reformatting of the source.
+    let mut rng = Rng::new(0x1380);
+    let mut disjunctive = 0;
+    for _ in 0..2000 {
+        let f = random_formula(&mut rng, 3);
+        let g = shuffled(&f, &mut rng);
+        disjunctive += usize::from(f != g);
+        assert_eq!(satisfiable(&f), satisfiable(&g), "{f} and {g}");
+        for s in ["a", "b", "c"] {
+            assert_eq!(project(&f, &sym(s)), project(&g, &sym(s)), "{f} and {g}");
+        }
+    }
+    assert!(disjunctive > 1000, "{disjunctive} of 2000 reordered");
+}
+
+/// `Σ x[i] >= 0` with `x[i] == x[i+1] + 1`: one long row, each equality substituted into it.
+fn tied_sum(n: usize) -> Formula {
+    let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    let sum: Vec<(&str, i128)> = names.iter().map(|s| (s.as_str(), 1)).collect();
+    let mut rows = vec![ge(&sum, 0)];
+    for p in names.windows(2) {
+        rows.push(eq(&[(p[0].as_str(), 1), (p[1].as_str(), -1)], -1));
+    }
+    Formula::and(rows)
+}
+
+#[test]
+fn equalities_substituted_into_a_long_row_cost_the_row_each_time() {
+    // One of the two quadratic families: as in Gaussian elimination, each of n equalities rewrites
+    // a row of up to n terms. It is held to that order; see COMPLEXITY.md, S18.
+    let n = 256;
+    let (small, large) = (tied_sum(n), tied_sum(scaling::FACTOR * n));
+    for f in [&small, &large] {
+        assert!(satisfiable(f).unwrap().is_some());
+    }
+    scaling::check_order("a long row with equalities", n, 2, |m| {
+        drop(satisfiable(if m == n { &small } else { &large }));
+    });
+}
+
+/// `Σ x[i] <= 49` with `x[i] >= 0`: a budget shared among n counts.
+fn bounded_sum(n: usize) -> Formula {
+    let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    let sum: Vec<(&str, i128)> = names.iter().map(|s| (s.as_str(), -1)).collect();
+    let mut rows = vec![ge(&sum, 49)];
+    rows.extend(names.iter().map(|s| ge(&[(s.as_str(), 1)], 0)));
+    Formula::and(rows)
+}
+
+#[test]
+fn eliminating_the_terms_of_a_long_row_costs_the_row_each_time() {
+    // The other quadratic family, with no equalities: each variable has one lower bound and
+    // the long row as its upper bound, and each elimination writes the row again, one term
+    // shorter. It is held to that order; see COMPLEXITY.md, S18.
+    let n = 128;
+    let (small, large) = (bounded_sum(n), bounded_sum(scaling::FACTOR * n));
+    for f in [&small, &large] {
+        let m = satisfiable(f).unwrap().expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    }
+    scaling::check_order("a sum of bounded terms", n, 2, |m| {
+        drop(satisfiable(if m == n { &small } else { &large }));
+    });
+}
+
+// Control for the tests held at an order, in `System::count`, at the top of its loop:
+//     std::hint::black_box(self.vars.iter().filter(|v| v.sides.lo > 0).count());
+// `bounded_sum` fails it (211 times as long, limit 192); `tied_sum` and `tied_fed_sum` are not
+// done in 60 s.
+
+/// The names of `fed_sum`: `a` sorts first, so that it is the first variable on a tie.
+fn fed_names(n: usize) -> (Vec<String>, Vec<String>) {
+    let names = |p: &str| (0..n).map(|i| format!("{p}{i:06}")).collect();
+    (names("b"), names("c"))
+}
+
+/// `a <= Σ b[j]`, `a >= -c[i]`, `b[j] <= 5` and `c[i] <= 7`: one value between a long sum and n
+/// lower bounds, size O(n). Eliminating `a` first gives n rows of n terms.
+fn fed_sum(n: usize) -> Formula {
+    let (bs, cs) = fed_names(n);
+    let mut sum: Vec<(&str, i128)> = bs.iter().map(|s| (s.as_str(), 1)).collect();
+    sum.push(("a", -1));
+    let mut rows = vec![ge(&sum, 0)];
+    for (b, c) in bs.iter().zip(&cs) {
+        rows.push(ge(&[("a", 1), (c.as_str(), 1)], 0));
+        rows.push(ge(&[(b.as_str(), -1)], 5));
+        rows.push(ge(&[(c.as_str(), -1)], 7));
+    }
+    Formula::and(rows)
+}
+
+#[test]
+fn a_value_between_a_long_sum_and_many_bounds_is_not_eliminated_first() {
+    // Every variable here adds the same rows, one fewer. `a` writes the most terms, and so goes
+    // last: it would cost n rows of n terms, rewritten n times. What is left is the quadratic
+    // cost of `bounded_sum`. Control, `(self.growth(), 0, j)` in `Sides::rank`: 518, 358 and
+    // 414 times as long.
+    let n = 16;
+    let (small, large) = (fed_sum(n), fed_sum(scaling::FACTOR * n));
+    for f in [&small, &large] {
+        let m = satisfiable(f).unwrap().expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    }
+    scaling::check_order("a value below a sum", n, 2, |m| {
+        drop(satisfiable(if m == n { &small } else { &large }));
+    });
+}
+
+/// `fed_sum` with each `b[j]` and `c[i]` tied to others so that each has two lower and two upper
+/// bounds, and every other variable too, and with boxes that give the rows room: `a` is now the
+/// one variable whose elimination removes a row, and goes first.
+fn tied_fed_sum(n: usize) -> Formula {
+    let (bs, cs) = fed_names(n);
+    let mut rows = vec![fed_sum(n)];
+    for (i, (b, c)) in bs.iter().zip(&cs).enumerate() {
+        let (p, q, r) = (format!("d{i:06}"), format!("e{i:06}"), format!("f{i:06}"));
+        let (b, c, p, q, r) = (b.as_str(), c.as_str(), p.as_str(), q.as_str(), r.as_str());
+        rows.push(ge(&[(c, 1), (p, 1)], 3));
+        rows.push(ge(&[(c, -1), (p, 1)], 9));
+        rows.push(ge(&[(b, 1), (q, 1)], 3));
+        rows.push(ge(&[(b, -1), (q, 1)], 9));
+        rows.push(ge(&[(p, -1), (r, 1)], 3));
+        rows.push(ge(&[(p, -1), (r, -1)], 9));
+        rows.push(ge(&[(q, -1), (r, 1)], 2));
+        rows.push(ge(&[(q, -1), (r, -1)], 8));
+        for k in 0..12 {
+            let y = format!("g{i:06}{k:02}");
+            rows.push(ge(&[(y.as_str(), 1)], 9));
+            rows.push(ge(&[(y.as_str(), -1)], 9));
+        }
+    }
+    Formula::and(rows)
+}
+
+#[test]
+fn a_value_that_alone_removes_a_row_is_eliminated_first_at_cubic_cost() {
+    // The open cubic family: an input of size O(n) reaches n rows of n terms, each rewritten by
+    // each of n eliminations. It is held to that order; see COMPLEXITY.md, S18.
+    let n = 16;
+    let (small, large) = (tied_fed_sum(n), tied_fed_sum(scaling::FACTOR * n));
+    for f in [&small, &large] {
+        let m = satisfiable(f).unwrap().expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    }
+    scaling::check_order("a value below a tied sum", n, 3, |m| {
+        drop(satisfiable(if m == n { &small } else { &large }));
+    });
+}

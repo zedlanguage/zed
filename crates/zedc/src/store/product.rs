@@ -46,6 +46,7 @@ use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
 use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
 use super::hull::Hull;
+use super::int::Int;
 use super::interval::{End, IntervalSet};
 use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
 use super::preimage::{Classes, Demand, Domains, Point, preimage, relations, witness};
@@ -773,14 +774,14 @@ impl Scope {
             match &a {
                 Atom::Sym(n) => match env.get(n) {
                     Some(Value::Int(v)) => {
-                        point.insert(a.clone(), *v as i128);
+                        point.insert(a.clone(), Int::from(i128::from(*v)));
                     }
                     _ => return true,
                 },
                 _ => return true,
             }
         }
-        self.relation.holds(&point).unwrap_or(true)
+        self.relation.holds(&point)
     }
 
     /// The least scope above both.
@@ -1198,7 +1199,7 @@ impl Scope {
     /// Meets each name `part` mentions with its projection, within every interval.
     fn project_part(&mut self, part: &Formula) {
         let mentioned = part.atoms();
-        let within: Result<Vec<Formula>, presburger::Over> = mentioned
+        let within: Result<Vec<Formula>, presburger::Refusal> = mentioned
             .iter()
             .filter_map(|a| match a {
                 Atom::Sym(n) => Some(presburger::member(a, self.get(n).ints())),

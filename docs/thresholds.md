@@ -249,9 +249,9 @@ formula with disjunctions is no longer split into all its conjunctions:
   eliminates, at each step, the variable that leaves the fewest rows, exact eliminations
   first, among those that leave no more rows than the problem was given. Each step removes
   a variable and the rows never pass the input's count, so the work is polynomial in the
-  input. An inexact elimination decides the problem when the real shadow is empty (no
-  point) or the dark shadow has a point (that point); between the two shadows, and when no
-  variable qualifies, the question is undecided. The splinters, which solved one problem
+  input. An inexact elimination decides the problem when the real shadow, tested once at the
+  first such step, is empty (no point), or the dark shadow has a point (that point); between
+  the two shadows, and when no variable qualifies, the question is refused. The splinters, which solved one problem
   per value in a gap, are gone.
 - **Disjunctions** (replaces `KEPT_CONJUNCTIONS`, `ATOMS`). The formula is put in negation
   normal form; its top-level constraints are the base. A disjunct whose own top-level
@@ -285,14 +285,15 @@ formula with disjunctions is no longer split into all its conjunctions:
 Termination: every loop removes a disjunct, a variable, or halves a step, and none of these
 is undone, so each ends; the reduction rounds of the scope are meets (replacement 3).
 
-An undecided question leaves the written constraint in place, which is sound; the error
-reports it as "undecided: outside the fragment the Omega test decides". What is still
-undecided: a problem between the shadows (Pugh's example, `l01_38_presburger::controls`),
-and a disjunction where greedy search and one level of lookahead both fail.
+A refused question leaves the written constraint in place, which is sound; the answer names
+its cause (`Refusal`, DESIGN.md sec:diagnostics). What is refused: a problem between the
+shadows (Pugh's example, `l01_38_presburger::controls`), a system every elimination of which
+would grow it, a disjunction where greedy search and one level of lookahead both fail, and a
+term with a coefficient past 128 bits.
 
 | Candidate | Measured | Score | Reasoning |
 |---|---|---|---|
-| Elimination bounded by the input's rows, dark shadow, disjunctions pruned and searched greedily with one-level lookahead, scope parts projected again only when their names change | 40-symbol sum and 200 constraints decided (`controls.rs`); k nested tests 0.72 s at k = 64; k clauses of two disjunctions: solves 953 → 8917 for k = 8 → 64 (linear) | 8 | no constant; polynomial; undecided cases are named and keep the written constraint |
+| Elimination bounded by the input's rows, dark shadow, disjunctions pruned and searched greedily with one-level lookahead, scope parts projected again only when their names change | 40-symbol sum and 200 constraints decided (`controls.rs`); k nested tests 0.72 s at k = 64; k clauses of two disjunctions: solves 953 → 8917 for k = 8 → 64 (linear) | 8 | no constant; polynomial; refused cases are named and keep the written constraint |
 | The same, every part projected in every round | k clauses: 64–74× time for 8× k (COMPLEXITY.md S16) | 4 | correct but quadratic in the clauses |
 | Split into all conjunctions, no cap | exponential in the disjunctions | 1 | exact on more problems but not polynomial |
 | Keep the budgets | the old behavior | 0 | constants whose crossing changes the answer |

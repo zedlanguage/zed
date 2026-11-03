@@ -1004,6 +1004,7 @@ dependencies = [
  "blake3",
  "imbl",
  "num-bigint",
+ "num-integer",
  "unicode-ident",
  "unicode-normalization",
  "unicode-script",

@@ -1,4 +1,4 @@
-//! Relations of any size and the undecided fragment.
+//! Relations of any size and the refused fragment.
 
 use std::sync::Arc;
 
@@ -6,13 +6,12 @@ use zed_kernel::{Prim, Term, Value};
 use zedc::store::interval::IntervalSet;
 use zedc::store::preimage::{Demand, preimage};
 use zedc::store::presburger::{
-    Atom, Con, Entailment, Formula, Lin, Relation, entails, satisfiable,
+    Atom, Con, Entailment, Formula, Lin, Refusal, Relation, entails, satisfiable,
 };
 
 fn lit(n: i64) -> Term {
     Term::Lit(Value::Int(n))
 }
-
 #[test]
 fn a_relation_of_any_size_is_decided() {
     // The sum of 40 symbols: there is no limit on the atoms.
@@ -24,7 +23,7 @@ fn a_relation_of_any_size_is_decided() {
         rel: zedc::store::presburger::Rel::Ge,
     });
     let m = satisfiable(&sum).unwrap().unwrap();
-    assert!(sum.holds(&m).unwrap());
+    assert!(sum.holds(&m));
     let r = Relation::of(sum.clone());
     assert!(matches!(entails(&r, &r), Entailment::Proved(_)));
     // 200 constraints over one symbol, and the last one false with them.
@@ -57,7 +56,7 @@ fn a_relation_of_any_size_is_decided() {
 }
 
 #[test]
-fn a_question_between_the_shadows_is_undecided_and_the_written_constraint_kept() {
+fn a_question_between_the_shadows_is_refused_and_the_written_constraint_kept() {
     // Pugh's example: 27 <= 11x + 13y <= 45, -10 <= 7x - 9y <= 4 has no integer point, its
     // dark shadow is empty and its real shadow is not.
     let l = |a: i128, b: i128, k: i128| {
@@ -79,9 +78,9 @@ fn a_question_between_the_shadows_is_undecided_and_the_written_constraint_kept()
     assert!(satisfiable(&pugh).is_err());
     let r = Relation::of(pugh);
     let goal = Relation::of(Formula::bottom());
-    assert_eq!(entails(&r, &goal), Entailment::Undecided);
+    assert_eq!(entails(&r, &goal), Entailment::Refused(Refusal::Shadows));
     assert_eq!(
         entails(&r, &goal).to_string(),
-        "undecided: outside the fragment the Omega test decides"
+        "refused: the relation has rational points but no integer point was found or ruled out"
     );
 }

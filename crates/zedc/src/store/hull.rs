@@ -18,7 +18,7 @@ use std::sync::Arc;
 use imbl::OrdMap;
 use imbl::ordmap::DiffItem;
 
-use super::presburger::{Atom, Con, Formula, Lin, Over, Rel};
+use super::presburger::{Atom, Con, Formula, Lin, Refusal, Rel};
 
 /// The affine hull of a set of points, as the equalities that hold on it.
 #[derive(Clone, Debug, Default)]
@@ -61,12 +61,14 @@ impl Hull {
     /// suffices, since no row mentions another's pivot. The result's coefficients have no
     /// common factor: a `>=` constant is rounded down, and an equality whose constant the
     /// factor does not divide is `false`.
-    pub fn reduce(&self, c: &Con) -> Result<Formula, Over> {
+    pub fn reduce(&self, c: &Con) -> Result<Formula, Refusal> {
         let mut lin = c.lin.clone();
         for a in c.lin.terms.keys() {
             if let Some(t) = self.rows.get(a) {
                 let k = t.terms[a];
-                let s = lin.terms[a].checked_mul(k.signum()).ok_or(Over)?;
+                let s = lin.terms[a]
+                    .checked_mul(k.signum())
+                    .ok_or(Refusal::Coefficient)?;
                 lin = lin.times(k.abs())?.minus(&t.times(s)?)?;
             }
         }
@@ -98,10 +100,10 @@ impl Hull {
         if self.is_empty {
             return self.clone();
         }
-        self.and_checked(t).unwrap_or_else(|Over| Hull::all())
+        self.and_checked(t).unwrap_or_else(|_| Hull::all())
     }
 
-    fn and_checked(&self, t: &Lin) -> Result<Hull, Over> {
+    fn and_checked(&self, t: &Lin) -> Result<Hull, Refusal> {
         let mut r = t.clone();
         for a in t.terms.keys() {
             if let Some(p) = self.rows.get(a) {
@@ -172,7 +174,7 @@ impl Hull {
         // The common rows are reduced against each other already.
         match intersect(&a, &b) {
             Ok(ts) => ts.iter().fold(out, |h, t| h.and(t)),
-            Err(Over) => Hull::all(),
+            Err(_) => Hull::all(),
         }
     }
 }
@@ -212,7 +214,7 @@ fn used(
 
 /// `r` with the atom `a` removed by adding a multiple of `p`, whose coefficient of `a` is
 /// positive.
-fn eliminate(r: &Lin, p: &Lin, a: &Atom) -> Result<Lin, Over> {
+fn eliminate(r: &Lin, p: &Lin, a: &Atom) -> Result<Lin, Refusal> {
     match r.terms.get(a) {
         None => Ok(r.clone()),
         Some(&c) => Ok(primitive(r.times(p.terms[a])?.minus(&p.times(c)?)?)),
@@ -257,7 +259,7 @@ fn primitive(t: Lin) -> Lin {
 /// the pair `(t, t)` and each of `b` as `(t, 0)`, and the pairs are brought to echelon form on
 /// their first halves; the second half of a pair whose first half becomes zero is a sum of
 /// terms of `a` that is also a sum of terms of `b`.
-fn intersect(a: &[Arc<Lin>], b: &[Arc<Lin>]) -> Result<Vec<Lin>, Over> {
+fn intersect(a: &[Arc<Lin>], b: &[Arc<Lin>]) -> Result<Vec<Lin>, Refusal> {
     if a.is_empty() || b.is_empty() {
         return Ok(Vec::new());
     }

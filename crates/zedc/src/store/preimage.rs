@@ -72,7 +72,7 @@ use zed_kernel::{Evaluator, Prim, Term, Value, World, eval, on_stack};
 
 use super::interval::{self, End, IntervalSet};
 use super::lattice::{Congruence, Landmarks, Lattice};
-use super::presburger::{self, Con, Formula, Lin, Over, Relation};
+use super::presburger::{self, Con, Formula, Lin, Refusal, Relation};
 use super::revision::{self, Op, Tonicity, reduce_congruence};
 use crate::stage;
 use End::{Fin, NegInf, PosInf};
@@ -260,7 +260,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 
 /// The linear stage: the relation of the demand over the box `dom`, the box narrowed to its
 /// projections, whether the box entails the relation, and the relation. `None` when the term
-/// is outside the domain or a budget is passed.
+/// is outside the domain or the relation is refused.
 fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool, Relation)> {
     let cx = Cx::new(dom, Landmarks::none());
     let mut tr = Tr {
@@ -282,8 +282,8 @@ fn linear(term: &Term, dom: &Domains, demand: &Demand) -> Option<(Domains, bool,
         body,
         defs: tr.defs,
     };
-    let go = || -> Result<(Domains, bool), Over> {
-        let within = |d: &Domains| -> Result<Formula, Over> {
+    let go = || -> Result<(Domains, bool), Refusal> {
+        let within = |d: &Domains| -> Result<Formula, Refusal> {
             let parts = d
                 .iter()
                 .map(|(k, v)| presburger::member(&presburger::Atom::Sym(k.clone()), v))

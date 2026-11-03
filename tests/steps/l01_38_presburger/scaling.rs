@@ -1,9 +1,8 @@
-//! The Omega test at the rule of low complexity (DESIGN.md Part G). An inexact elimination
-//! has two shadows that both recurse, so the order and the checks before them decide whether
-//! the work doubles with each variable: the dark shadow is solved first, since a point of it
-//! settles the problem, and an empty problem is first tried by the real shadows alone. Each
-//! family below doubles without one of the two: `chain(v, 3)` without the order, `rising`
-//! without the real shadows (it passes the step budget at 15 variables).
+//! The Omega test at the rule of low complexity (DESIGN.md Part G). The solver is one loop, and
+//! a step touches only the rows of the variable it removes, so the work follows the rows
+//! rather than doubling with each variable: `chain(v, 3)` is solved by the dark shadow after one
+//! test of the real shadow, and the empty `chain(v, 0)` and `rising(v)` are shown empty by that
+//! test alone. Each formula is built before it is timed.
 
 use std::sync::Arc;
 
@@ -55,9 +54,9 @@ fn rising(v: usize) -> Formula {
 #[test]
 fn chains_of_inexact_eliminations_are_answered() {
     for v in 1..=15 {
-        let m = satisfiable(&chain(v, 3)).expect("within the budget");
+        let m = satisfiable(&chain(v, 3)).expect("answered");
         let m = m.unwrap_or_else(|| panic!("the chain of {v} has a point"));
-        assert!(chain(v, 3).holds(&m).unwrap(), "{m:?}");
+        assert!(chain(v, 3).holds(&m), "{m:?}");
         assert_eq!(
             satisfiable(&chain(v, 0)),
             Ok(None),
@@ -71,27 +70,69 @@ fn chains_of_inexact_eliminations_are_answered() {
     }
 }
 
-/// A family of problems by their number of variables.
-type Family = fn(usize) -> Formula;
+/// Times `satisfiable` on the formulas of `make` at `n` and 8n variables, built first, each
+/// first checked to have a point or none as `point` says: a refusal would be quick and wrong.
+fn scales(what: &str, n: usize, point: bool, make: impl Fn(usize) -> Formula) {
+    let (small, large) = (make(n), make(scaling::FACTOR * n));
+    for f in [&small, &large] {
+        let found = satisfiable(f).expect("answered");
+        assert_eq!(found.is_some(), point, "{what}");
+    }
+    scaling::check(what, n, |m| {
+        let f = if m == n { &small } else { &large };
+        drop(satisfiable(f));
+    });
+}
 
 #[test]
-fn a_chain_of_inexact_eliminations_does_not_double() {
-    // The variables are bounded by the budget of 16, so the n-against-8n test of
-    // `zed_tests::scaling` does not apply; a chain of 15 against one of 7 tells doubling (256
-    // times the work) from the polynomial cost of the eliminations (about 10 times).
-    let cases: [(&str, Family); 3] = [
-        ("the chain with a point", |v| chain(v, 3)),
-        ("the empty chain", |v| chain(v, 0)),
-        ("the rising chain", rising),
-    ];
-    for (what, f) in cases {
-        let run = |v| drop(satisfiable(&f(v)));
-        scaling::compare(
-            &format!("{what}: 7 and 15 variables"),
-            "doubling with each variable would be 256 times",
-            scaling::RATIO,
-            || run(7),
-            || run(15),
-        );
-    }
+fn a_chain_of_inexact_eliminations_with_a_point_scales() {
+    scales("the chain with a point", 32, true, |v| chain(v, 3));
+}
+
+#[test]
+fn an_empty_chain_scales() {
+    scales("the empty chain", 256, false, |v| chain(v, 0));
+}
+
+#[test]
+fn a_rising_chain_scales() {
+    scales("the rising chain", 128, false, rising);
+}
+
+// A cost quadratic with a small constant stays below the limit at the sizes above and shows at
+// these. Controls, each a patch to `crates/zedc/src/store/presburger.rs`, run on all six tests;
+// COMPLEXITY.md, S18, has what each gave.
+//
+// Rows rescanned, in `System::take`, in place of `std::mem::take(&mut self.vars[j].rows)`:
+//     let held = |a: &Coefs| a.binary_search_by_key(&j, |t| t.0).is_ok();
+//     let ids: Vec<usize> = (0..self.ids.len())
+//         .filter(|&id| self.ids[id].as_ref().is_some_and(held))
+//         .collect();
+//
+// A row looked up by scanning, in `System::add`, in place of `self.rows.get_mut(&r.a)`:
+//     if let Some((_, old)) = self.rows.iter_mut().find(|(a, _)| **a == r.a) {
+//
+// The rows copied at each elimination, as a step that builds its rows anew would, at the start
+// of `System::eliminate`:
+//     drop(self.rows.iter().map(|(a, r)| (a.to_vec(), r.k.clone())).collect::<Vec<_>>());
+//
+// Variables rescanned, in `System::best`: `self.exact.iter().rev().last()` for
+// `self.exact.first()` and `self.inexact.iter().rev().last()` for `self.inexact.first()`.
+//
+// The real shadow tested at every inexact step, in `Omega::run`: `if inexact` for
+// `if inexact && !dark`.
+
+#[test]
+fn a_long_chain_with_a_point_scales() {
+    scales("the long chain with a point", 4096, true, |v| chain(v, 3));
+}
+
+#[test]
+fn a_long_empty_chain_scales() {
+    scales("the long empty chain", 2048, false, |v| chain(v, 0));
+}
+
+#[test]
+fn a_long_rising_chain_scales() {
+    scales("the long rising chain", 2048, false, rising);
 }

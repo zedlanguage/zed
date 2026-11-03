@@ -5,11 +5,13 @@
 //! `y * w + x < h * w` follows from `0 <= y < h` and `0 <= x < w`, and not from `y <= h`.
 //! `preimage` checks the z3 fixtures and the relation a non-box preimage keeps. `random`
 //! checks the translation, the Omega test, the projection and entailment against the
-//! interpreter at every point of a window, and `controls` checks relations of any size
-//! and the undecided fragment.
+//! interpreter at every point of a window, and `controls` checks that a relation of any size is decided, that a question outside
+//! the polynomial fragment is refused, and that each check of `random` rejects a wrong
+//! answer. `omega` holds the solver's corner cases.
 
 mod controls;
 mod entailment;
+mod omega;
 mod preimage;
 pub(crate) mod random;
 mod scaling;
@@ -18,6 +20,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use zed_kernel::{Term, Value, eval};
+use zedc::store::int::Int;
 use zedc::store::interval::IntervalSet;
 use zedc::store::preimage::relations;
 use zedc::store::presburger::{Atom, Model, Relation};
@@ -52,8 +55,9 @@ fn point(m: &Model, names: &[Arc<str>]) -> Vec<i64> {
     names
         .iter()
         .map(|n| {
-            let v = *m.get(&Atom::Sym(n.clone())).unwrap_or(&0);
-            i64::try_from(v).expect("a model value within i64")
+            let v = m.get(&Atom::Sym(n.clone())).map_or(Some(0), Int::to_i128);
+            v.and_then(|v| i64::try_from(v).ok())
+                .expect("a model value within i64")
         })
         .collect()
 }
