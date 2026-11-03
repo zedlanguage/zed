@@ -121,7 +121,7 @@ fn check_load(what: &'static str, n: usize, power: u32, src: impl Fn(usize) -> S
 fn the_checker_reads_each_operand_of_a_nest_once() {
     // `x = bitAnd(bitAnd(…bitAnd(1, 1)…, 1), 1);`, `n` calls deep. Each call checks its
     // operands' domains from what their text shows; each expression is read once, so the nest
-    // is checked in O(n). Read again at each call, it is O(n²): 37 times the work at 300 and
+    // is checked in O(n). Read again at each call, it is O(n²): 42 times the work at 300 and
     // 2400 against 8 times.
     check_load("checking a nest of n bit-word calls", 300, 1, |n| {
         with_main(format!(
