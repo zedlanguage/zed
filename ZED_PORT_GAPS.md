@@ -854,3 +854,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Moving parts out of a value whose type has `Drop` by `mem::take` and `mem::replace` through `&mut` (`into_parts`, `into_negated`, `Con::take`), since Rust forbids moving fields out of such a value by a pattern | `Formula::and`, `or`, `negate`, `Parts::add`, `Conjuncts::and_held` | Workaround | A pattern that binds the parts; with no `Drop` in Zed the workaround goes |
 | Hand-written `Clone`, `PartialEq`, `Ord`, `Hash`, `Debug` and `Display` over explicit stacks, giving what the derived forms give | `presburger/deep.rs` | Missing | Structural equality, order, hashing and printing are the runtime's, which must not recurse on depth |
 | A generic post-order fold with a context passed down, results kept on one `Vec` and split off per node | `Formula::fold`, used by `map_cons`, `forget`, `holds_as`, `nnf` and `Clone` | None | A recursive function, once the machine keeps frames on the heap; or a state receiver over a list |
+
+## Entries from OSP-drop (`zedc/src/check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An explicit stack with a visited `HashSet<Span>`, both mutated while walking back from the bound value to where each dropped atom enters | `Ck::entries` | Mutation (gap 11) | A fold over the worklist with the visited set in its state |
+| An explicit stack over nested `else` nodes, with an `if let` guard in a match arm to tell an atom default from any other | `named_defaults` | None | A loop over the `else` chain, and a nested `match` on the default in place of the guard |
+| `Src::Call` holding a borrowed `&'a Expr` beside the function id, so the walk can reach the call's arguments | `Src`, `Ck::entries` | None | The call node itself as the source, a shared value |

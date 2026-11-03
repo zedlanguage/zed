@@ -579,6 +579,13 @@ impl Ty {
         &self.atoms() - &self.family
     }
 
+    /// What `_` would drop of a value of it (DESIGN.md sec:tour_methods): its loose atoms,
+    /// less `named`, the atoms that an `else` in the bound expression writes as its default.
+    /// A family's atoms are data, and `_` drops data freely.
+    pub fn dropped(&self, named: &KType) -> KType {
+        &self.loose() - named
+    }
+
     /// It without its loose atoms, as `e else d` narrows `e`: what is not an atom, and the
     /// family's atoms. Each step complements only a set that lists no atom names or the
     /// family's, so it costs `O(f log n)` for `f` family atoms of `n`, where `set − loose`

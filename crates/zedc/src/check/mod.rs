@@ -189,8 +189,8 @@ type Facts = Vec<(usize, Ty, Span)>;
 enum Src<'a> {
     /// A name, by its binder.
     Name(usize),
-    /// A call of a declared function, by its binder.
-    Call(usize),
+    /// A call of a declared function, by its binder, and the call.
+    Call(usize, &'a Expr),
     /// Anything else: its parts' derivations continue it.
     Other(&'a Expr),
 }
@@ -375,7 +375,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     next.push(note(span, format!("`{name}` is {ty} here")));
                     *id
                 }
-                Src::Call(id) => {
+                Src::Call(id, _) => {
                     let name = &self.t.res.binders[*id].name;
                     next.push(note(span, format!("this call of `{name}` gives {ty}")));
                     *id
@@ -523,15 +523,36 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.origin(id, value.span, text, Some(value.span));
                         self.env.insert(id, v);
                     }
-                    [Target::Wild] => {}
+                    [Target::Wild] => self.discard(&v, value, None, s.span),
                     _ => {
+                        let n = targets.len();
+                        // The atoms of the whole value reach every component, so they are
+                        // dropped only when no target names them.
+                        if targets.iter().all(|t| *t == Target::Wild) {
+                            self.discard(&Ty::set(v.loose()), value, None, s.span);
+                        }
+                        let items = match &value.kind {
+                            ExprKind::Tuple(items) if items.len() == n => Some(items),
+                            _ => None,
+                        };
                         for (i, target) in targets.iter().enumerate() {
-                            let c = self.component(&v, i, targets.len(), value.span);
-                            if let Target::Name(n) = target {
-                                let id = self.id(s.span, n);
-                                let text = format!("`{n}` is component {i} of this, {c}");
-                                self.origin(id, value.span, text, Some(value.span));
-                                self.env.insert(id, c);
+                            let c = self.component(&v, i, n, value.span);
+                            match target {
+                                Target::Name(name) => {
+                                    let id = self.id(s.span, name);
+                                    let text = format!("`{name}` is component {i} of this, {c}");
+                                    self.origin(id, value.span, text, Some(value.span));
+                                    self.env.insert(id, c);
+                                }
+                                Target::Wild => {
+                                    let own = v
+                                        .tuples
+                                        .iter()
+                                        .filter(|cs| cs.len() == n)
+                                        .fold(Ty::empty(), |a, cs| a.union(&cs[i]));
+                                    let part = items.map_or(value, |items| &items[i]);
+                                    self.discard(&own, part, Some(i), s.span);
+                                }
                             }
                         }
                     }
@@ -578,6 +599,96 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
             }
+        }
+        out
+    }
+
+    /// `_` bound to `v`, the value of `e`, or its component `i`, in the binding at `span`
+    /// (DESIGN.md sec:tour_methods): `_` drops a loose failure only where the text names it,
+    /// as the default an `else` writes, so any other loose atom of `v` is an error. The error
+    /// names the atoms, where each enters the value, the derivation, and the repairs.
+    fn discard(&mut self, v: &Ty, e: &'a Expr, i: Option<usize>, span: Span) {
+        let dropped = v.dropped(&named_defaults(e));
+        if dropped.is_empty() {
+            return;
+        }
+        let atoms = Ty::set(dropped.clone());
+        let what = match i {
+            None => "this value".to_string(),
+            Some(i) => format!("component {i} of this value"),
+        };
+        let mut notes = self.entries(e.span, &dropped);
+        self.derive_into(&[e.span], &mut notes);
+        let menu = [
+            "repair: write a default for the value, as `_ = … else #ok;`, so the text names what it drops".to_string(),
+            "repair: handle each failure with a `match` on the value".to_string(),
+            "repair: bind the value to a name, and use the name".to_string(),
+        ];
+        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        self.error_with(
+            span,
+            format!("`_` drops a loose failure {what} may be, {atoms}"),
+            notes,
+        );
+    }
+
+    /// Where the atoms of `wanted` enter the value at `root`: a note at each expression, or
+    /// at the origin of each name, whose loose atoms hold some of `wanted` that its parts'
+    /// do not. The walk descends only into parts that hold some of `wanted`, visits each
+    /// expression once, and keeps its own stack, since a chain of definitions can be as long
+    /// as the program; atoms it places nowhere enter at `root`. Each step costs set
+    /// operations on the types it meets, as the derivation that follows prints them.
+    fn entries(&self, root: Span, wanted: &KType) -> Vec<Note> {
+        let mut out = Vec::new();
+        let mut left = wanted.clone();
+        let mut visited = HashSet::new();
+        let mut stack = vec![root];
+        while let Some(span) = stack.pop() {
+            if !visited.insert(span) {
+                continue;
+            }
+            let Some((ty, src)) = self.seen.get(&span) else {
+                continue;
+            };
+            let here = &ty.loose() & wanted;
+            if here.is_empty() {
+                continue;
+            }
+            // The parts the atoms may come from, and where they enter if none holds them.
+            let (parts, site) = match src {
+                Src::Name(id) => {
+                    let mut parts = Vec::new();
+                    let mut o = self.whence.get(id);
+                    let site = o.map_or(self.t.res.binders[*id].span, |o| o.span);
+                    while let Some(origin) = o {
+                        parts.extend(origin.from);
+                        o = origin.then.as_deref();
+                    }
+                    (parts, site)
+                }
+                Src::Call(_, e) | Src::Other(e) => (sources(e), span),
+            };
+            let mut from = KType::empty();
+            // Pushed reversed, so the parts are visited in written order.
+            for p in parts.into_iter().rev() {
+                if let Some((t, _)) = self.seen.get(&p) {
+                    let l = &t.loose() & wanted;
+                    if !l.is_empty() {
+                        from = &from | &l;
+                        stack.push(p);
+                    }
+                }
+            }
+            let new = &(&here - &from) & &left;
+            if !new.is_empty() {
+                left = &left - &new;
+                let text = format!("the loose failure {} enters here", Ty::set(new));
+                out.push(Note { span: site, text });
+            }
+        }
+        if !left.is_empty() {
+            let text = format!("the loose failure {} enters here", Ty::set(left));
+            out.push(Note { span: root, text });
         }
         out
     }
@@ -1565,7 +1676,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => Src::Other(e),
             },
             ExprKind::Call { callee, .. } => match self.declared(callee) {
-                Some(id) => Src::Call(id),
+                Some(id) => Src::Call(id, e),
                 None => Src::Other(e),
             },
             _ => Src::Other(e),
@@ -3768,6 +3879,64 @@ impl Ck<'_, '_> {
             self.set(w);
         }
         self.info.errors.truncate(m.errors);
+    }
+}
+
+/// The atoms that the `else` defaults of `e` write as atom literals, `#ok` or `#ok(…)`, each
+/// with any payload: the loose failures the text names, which `_` may drop. It reads each
+/// `else` at the top of `e`, and those its values and defaults are, on its own stack.
+fn named_defaults(e: &Expr) -> KType {
+    let mut out = KType::empty();
+    let mut stack = vec![e];
+    while let Some(e) = stack.pop() {
+        let ExprKind::Else { of, default, .. } = &e.kind else {
+            continue;
+        };
+        stack.push(of);
+        match &default.kind {
+            ExprKind::Atom(a) => out = &out | &any_payload(a),
+            ExprKind::Call { callee, .. } if let ExprKind::Atom(a) = &callee.kind => {
+                out = &out | &any_payload(a)
+            }
+            _ => stack.push(default),
+        }
+    }
+    out
+}
+
+/// The parts of `e` whose loose atoms `e` passes on: the operands, the arguments, the
+/// branches, a block's export, what an `else` keeps of its value and its default. A tuple's
+/// components are not among them, since an atom in a component is not one of the tuple's.
+fn sources(e: &Expr) -> Vec<Span> {
+    match &e.kind {
+        ExprKind::Unary(_, a) => vec![a.span],
+        ExprKind::Binary(_, a, b) => vec![a.span, b.span],
+        ExprKind::Call {
+            positional, named, ..
+        } => positional
+            .iter()
+            .chain(named.iter().map(|(_, a)| a))
+            .map(|a| a.span)
+            .collect(),
+        ExprKind::Index(of, _) | ExprKind::Member { of, .. } => vec![of.span],
+        // The plain form strips every loose atom of its value.
+        ExprKind::Else {
+            pattern: None,
+            default,
+            ..
+        } => vec![default.span],
+        ExprKind::Else { of, default, .. } => vec![of.span, default.span],
+        ExprKind::If {
+            then, otherwise, ..
+        } => vec![then.span, otherwise.span],
+        ExprKind::Block(stmts) => stmts
+            .iter()
+            .filter_map(|s| match &s.kind {
+                StmtKind::Return(es) if es.len() == 1 => Some(es[0].span),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
