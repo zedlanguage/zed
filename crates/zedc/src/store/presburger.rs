@@ -71,9 +71,9 @@
 //!
 //! A refused question leaves the relation unused, which is sound: the written constraint is
 //! kept, and [`Entailment::Refused`] carries the cause. No compiler path calls [`entails`] yet,
-//! and a refusal met in narrowing is kept in `product::Scope::refusals`, which nothing reads
-//! yet, so it widens the scope with no report from there (docs/reviews/tradeoffs.md). Every
-//! integer, written or derived, is unbounded.
+//! and a refusal met in narrowing is kept in `product::Scope::refusals`, which
+//! `product::Scope::warnings` reports as one warning each, with the constraint it was asked of.
+//! Every integer, written or derived, is unbounded.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};

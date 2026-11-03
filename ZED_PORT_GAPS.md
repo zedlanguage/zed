@@ -862,3 +862,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | An explicit stack with a visited `HashSet<Span>`, both mutated while walking back from the bound value to where each dropped atom enters | `Ck::entries` | Mutation (gap 11) | A fold over the worklist with the visited set in its state |
 | An explicit stack over nested `else` nodes, with an `if let` guard in a match arm to tell an atom default from any other | `named_defaults` | None | A loop over the `else` chain, and a nested `match` on the default in place of the guard |
 | `Src::Call` holding a borrowed `&'a Expr` beside the function id, so the walk can reach the call's arguments | `Src`, `Ck::entries` | None | The call node itself as the source, a shared value |
+
+## Entries from TD-refusals (`zedc/src/store/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An `FnMut` closure that prints the constraint once into a captured `Option<Arc<str>>` (`get_or_insert_with`) and is called at each refused question of one projection | `Scope::project_part` (`refuse`) | Mutation (gap 11) | The text is printed before the projection when it may be needed, or each call returns the text with the refusal; printing once per refused part costs the same |
+| A struct whose derived `Ord` (field order: constraint, how it was asked, cause) is the order of the warnings, kept in an `imbl::OrdSet` | `Refused`, `Scope::warnings` | None | A record in a set ordered by its fields in that order |

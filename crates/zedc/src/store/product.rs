@@ -477,17 +477,20 @@ pub struct Scope {
     /// Under `@exact`, each group of written constraints that share names, by their texts with
     /// the static values substituted, with a point that meets them all.
     pub exactly: imbl::OrdMap<Vec<String>, Point>,
-    /// The causes for which the integer solver left a question undecided while this scope was
-    /// narrowed or projected; each one leaves the scope sound but wider than it could be.
+    /// Each question the integer solver left undecided while this scope was narrowed or
+    /// projected, with the constraint it was asked of and how the scope came to ask it; each
+    /// one leaves the scope sound but wider than it could be. [`Scope::warnings`] reports them.
     ///
     /// Complexity tradeoff: a refused question (`presburger::Refusal`, whose costs and
     /// triggers are documented where each is raised) leaves the relation's narrowing out, so
-    /// the scope is wider. Only the join of two scopes reads this set, to unite it, so the
-    /// widening is silent: no warning names it (a flaw, docs/reviews/tradeoffs.md). Test: no
-    /// test yet.
-    /// COMPLEXITY.md row S18 for the solver. A complete solution would decide every question
-    /// (see `presburger`), or at least report this set as a warning at the scope.
-    pub refusals: imbl::OrdSet<presburger::Refusal>,
+    /// the scope is wider, and a warning names each one ([`Scope::warnings`]). Why: deciding
+    /// every question needs a complete Presburger procedure, exponential in the worst case.
+    /// Trigger: a test or a part of the relation whose question is refused. Tests:
+    /// `l01_39_reduced_product::refused::a_refused_test_gives_one_warning_at_its_test`,
+    /// `…::two_refused_arms_joined_give_both_warnings_in_one_order`,
+    /// `…::warnings_of_many_refused_tests_scale`. COMPLEXITY.md rows S18 (the solver) and S26
+    /// (this report). A complete solution would decide every question (see `presburger`).
+    pub refusals: imbl::OrdSet<Refused>,
     /// Each name a `let` of the walk bound, with the order of its binding and, for a function,
     /// its lambda: a test that calls a function is closed over it before its preimage is taken
     /// ([`Scope::close`]). Shared between the scopes of a walk's arms, not copied.
@@ -663,6 +666,90 @@ pub enum Unbind {
     Fresh(Arc<str>),
     /// The scope as it was before.
     Saved(Box<Scope>),
+}
+
+/// A question the integer solver left undecided while a scope was narrowed or projected: the
+/// constraint it was asked of, as printed, how the scope came to ask it, and the cause. The
+/// order of the fields is the order of the reports: by constraint, then by how it was asked,
+/// then by cause, so that it does not depend on the order the questions were met in.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct Refused {
+    /// The test or the part of the linear relation the question was asked of.
+    pub constraint: Arc<str>,
+    /// How the scope came to ask it.
+    pub asked: Asked,
+    /// Why the solver left it undecided.
+    pub cause: presburger::Refusal,
+}
+
+/// How a scope came to ask a question of the integer solver.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Asked {
+    /// The preimage of a test's outcome, to narrow the test's names.
+    Test {
+        /// The outcome assumed.
+        outcome: bool,
+    },
+    /// The projection of a part of the linear relation onto each name it mentions.
+    Projection,
+    /// The same projection, which left out a disjunction whose projection was refused.
+    Disjunct,
+    /// The same projection onto one name.
+    Onto(Arc<str>),
+}
+
+/// A warning about a scope: its message, then each step of its derivation in order.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Warning {
+    /// What the warning says.
+    pub message: String,
+    /// Each constraint and step that led to it, in the order the compiler met them.
+    pub steps: Vec<String>,
+}
+
+impl fmt::Display for Warning {
+    /// `warning: <message>`, then each step numbered on its own line.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "warning: {}", self.message)?;
+        for (i, s) in self.steps.iter().enumerate() {
+            write!(f, "\n  [{}] {s}", i + 1)?;
+        }
+        Ok(())
+    }
+}
+
+impl Refused {
+    /// The warning that reports this refusal, with its derivation.
+    fn warning(&self) -> Warning {
+        let c = &self.constraint;
+        let cause = self.cause;
+        let (given, asked, kept) = match &self.asked {
+            Asked::Test { outcome } => (
+                format!("the test `{c}` is assumed {outcome}"),
+                format!("whether its names can take each value is not decided: {cause}"),
+                "the names of the test are not narrowed by it",
+            ),
+            Asked::Projection => (
+                format!("the constraints `{c}` hold in the scope"),
+                format!("their projection onto their names is not decided: {cause}"),
+                "the names of the constraints are not narrowed by them",
+            ),
+            Asked::Disjunct => (
+                format!("the constraints `{c}` hold in the scope"),
+                format!("a disjunction among them is left out of their projection: {cause}"),
+                "the names of the constraints are narrowed without that disjunction",
+            ),
+            Asked::Onto(n) => (
+                format!("the constraints `{c}` hold in the scope"),
+                format!("their projection onto `{n}` is not decided: {cause}"),
+                "that name is not narrowed by them",
+            ),
+        };
+        Warning {
+            message: "the scope is wider than its constraints make it".to_string(),
+            steps: vec![given, asked, kept.to_string()],
+        }
+    }
 }
 
 impl Scope {
@@ -844,6 +931,13 @@ impl Scope {
         self.names.get(name).cloned().unwrap_or_else(Product::top)
     }
 
+    /// A warning for each question the integer solver left undecided while this scope was
+    /// narrowed or projected, joined scopes included, in the order of [`Refused`]: by
+    /// constraint, how it was asked, then cause, whatever order they were met in.
+    pub fn warnings(&self) -> Vec<Warning> {
+        self.refusals.iter().map(Refused::warning).collect()
+    }
+
     /// The names with one value each, and their values.
     pub fn statics(&self) -> BTreeMap<Arc<str>, Value> {
         self.names
@@ -998,7 +1092,7 @@ impl Scope {
         let mut refusals = self.refusals.clone();
         for d in self.refusals.diff(&other.refusals) {
             if let imbl::ordset::DiffItem::Add(r) = d {
-                refusals.insert(*r);
+                refusals.insert(r.clone());
             }
         }
         Scope {
@@ -1400,8 +1494,12 @@ impl Scope {
                 .collect();
             let pre = preimage(t, &doms, &Demand::Bool(outcome));
             exact = pre.exact;
-            if let Some(r) = pre.refusal {
-                self.refusals.insert(r);
+            if let Some(cause) = pre.refusal {
+                self.refusals.insert(Refused {
+                    constraint: t.to_string().into(),
+                    asked: Asked::Test { outcome },
+                    cause,
+                });
             }
             for (n, d) in &pre.domains {
                 if let Some(p) = self.names.get_mut(n) {
@@ -1781,21 +1879,35 @@ impl Scope {
             .into_iter()
             .filter(|a| matches!(a, Atom::Sym(_)))
             .collect();
+        // The text of `part`, printed once, and only when a question about it is refused.
+        let mut text: Option<Arc<str>> = None;
+        let mut refuse = |refusals: &mut imbl::OrdSet<Refused>, asked: Asked, cause| {
+            let constraint = text.get_or_insert_with(|| part.to_string().into()).clone();
+            refusals.insert(Refused {
+                constraint,
+                asked,
+                cause,
+            });
+        };
         let each = match presburger::project_each(&whole, &syms) {
             Ok((each, skipped)) => {
-                self.refusals.extend(skipped);
+                for cause in skipped {
+                    refuse(&mut self.refusals, Asked::Disjunct, cause);
+                }
                 each
             }
-            Err(r) => {
-                self.refusals.insert(r);
+            Err(cause) => {
+                refuse(&mut self.refusals, Asked::Projection, cause);
                 return;
             }
         };
         for (a, x) in syms.iter().zip(each) {
             let x = match x {
                 Ok(x) => x,
-                Err(r) => {
-                    self.refusals.insert(r);
+                Err(cause) => {
+                    if let Atom::Sym(n) = a {
+                        refuse(&mut self.refusals, Asked::Onto(n.clone()), cause);
+                    }
                     continue;
                 }
             };
