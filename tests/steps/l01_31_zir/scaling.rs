@@ -9,7 +9,7 @@ use zed_kernel::Value;
 use zed_kernel::types::Type;
 use zed_tests::deep::on_small_stack;
 use zed_tests::scaling::check_order;
-use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, validate};
+use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, binary, text, validate};
 
 /// `if true then (if true then ... 0 else 0) else 0`, `depth` branches deep, built from the
 /// bottom up.
@@ -83,6 +83,54 @@ fn checking_a_deep_graph_is_linear_in_its_depth() {
                 (&large, &twins.1)
             };
             assert!(g == h);
+        });
+    });
+}
+
+#[test]
+fn a_graph_nested_100000_deep_is_written_and_read_in_binary_on_a_2_mib_stack() {
+    on_small_stack(|| {
+        let g = nested_ifs(100_000);
+        assert_eq!(binary::decode(&binary::encode(&g)), Ok(g));
+    });
+}
+
+#[test]
+fn writing_and_reading_a_deep_graph_in_binary_is_linear_in_its_depth() {
+    on_small_stack(|| {
+        let (small, large) = (nested_ifs(12_500), nested_ifs(100_000));
+        check_order("writing nested `if` regions in binary", 12_500, 1, |k| {
+            binary::encode(if k == 12_500 { &small } else { &large });
+        });
+        let (small, large) = (binary::encode(&small), binary::encode(&large));
+        check_order("reading nested `if` regions in binary", 12_500, 1, |k| {
+            binary::decode(if k == 12_500 { &small } else { &large }).unwrap();
+        });
+    });
+}
+
+// Each line of the text form names its node or region by its whole path, so the text of a
+// graph `d` deep holds O(d^2) bytes, 80 MB at depth 4,000; these tests go as deep as that.
+
+#[test]
+fn a_graph_nested_4000_deep_is_written_and_read_as_text_on_a_2_mib_stack() {
+    on_small_stack(|| {
+        let g = nested_ifs(4_000);
+        assert_eq!(text::parse(&text::print(&g)), Ok(g));
+    });
+}
+
+#[test]
+fn writing_and_reading_a_deep_graph_as_text_is_linear_in_the_text() {
+    on_small_stack(|| {
+        let (small, large) = (nested_ifs(250), nested_ifs(2_000));
+        // Power 2: the text grows as the square of the depth.
+        check_order("writing nested `if` regions as text", 250, 2, |k| {
+            text::print(if k == 250 { &small } else { &large });
+        });
+        let (small, large) = (text::print(&small), text::print(&large));
+        check_order("reading nested `if` regions as text", 250, 2, |k| {
+            text::parse(if k == 250 { &small } else { &large }).unwrap();
         });
     });
 }

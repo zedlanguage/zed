@@ -180,31 +180,61 @@ const KINDS: [RegionKind; 5] = [
 /// The text form of the graph rooted at `root`.
 pub fn print(root: &Region) -> String {
     let mut out = format!("zir {VERSION}\n");
-    region_lines(root, "r", &mut out);
+    region_lines(root, &mut out);
     out
 }
 
-fn region_lines(r: &Region, path: &str, out: &mut String) {
-    let _ = writeln!(
-        out,
-        "{path} region {} ({})",
-        kind_name(r.kind),
-        edges(&r.args)
-    );
-    for (k, n) in r.nodes.iter().enumerate() {
-        let at = format!("{path}.{k}");
-        let _ = writeln!(
-            out,
-            "{at} {} ({}) -> ({})",
-            op(&n.op),
-            srcs(&n.inputs, path),
-            edges(&n.outputs)
-        );
-        for (j, sub) in n.regions.iter().enumerate() {
-            region_lines(sub, &format!("{at}/{j}"), out);
+/// Writes the lines of the graph rooted at `root` from a stack of what is left to write: a
+/// region's header, each node's line followed by its regions' lines, and the region's results.
+/// One path buffer grows by a step on the way down and is cut back to the step a job starts
+/// from, so a line costs the length of its own path.
+fn region_lines(root: &Region, out: &mut String) {
+    /// Each job holds the length of the path of the region or node it lies in.
+    enum Job<'a> {
+        /// Region `j` of the node, or the root.
+        Region(&'a Region, usize, Option<usize>),
+        /// Node `k` of the region.
+        Node(&'a Node, usize, usize),
+        Results(&'a Region, usize),
+    }
+    let mut path = String::from("r");
+    let mut jobs = vec![Job::Region(root, path.len(), None)];
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::Region(r, at, j) => {
+                path.truncate(at);
+                if let Some(j) = j {
+                    let _ = write!(path, "/{j}");
+                }
+                let _ = writeln!(
+                    out,
+                    "{path} region {} ({})",
+                    kind_name(r.kind),
+                    edges(&r.args)
+                );
+                jobs.push(Job::Results(r, path.len()));
+                let nodes = r.nodes.iter().enumerate().rev();
+                jobs.extend(nodes.map(|(k, n)| Job::Node(n, path.len(), k)));
+            }
+            Job::Node(n, base, k) => {
+                path.truncate(base);
+                let _ = write!(path, ".{k}");
+                let _ = writeln!(
+                    out,
+                    "{path} {} ({}) -> ({})",
+                    op(&n.op),
+                    srcs(&n.inputs, &path[..base]),
+                    edges(&n.outputs)
+                );
+                let subs = n.regions.iter().enumerate().rev();
+                jobs.extend(subs.map(|(j, sub)| Job::Region(sub, path.len(), Some(j))));
+            }
+            Job::Results(r, base) => {
+                path.truncate(base);
+                let _ = writeln!(out, "{path} results ({})", srcs(&r.results, &path));
+            }
         }
     }
-    let _ = writeln!(out, "{path} results ({})", srcs(&r.results, path));
 }
 
 fn edges(es: &[Edge]) -> String {
@@ -350,7 +380,7 @@ pub fn parse(text: &str) -> Result<Region, String> {
         }
     }
     let mut lines = lines.into_iter().peekable();
-    let root = build(&mut lines, &[])?;
+    let root = build(&mut lines)?;
     if let Some((l, no)) = lines.peek() {
         return Err(format!(
             "line {no}: {} is not in the graph: its parent or an earlier sibling has no line",
@@ -449,9 +479,111 @@ impl Line {
 /// The sorted lines, each taken once, in order, by the region it belongs to.
 type Lines = std::iter::Peekable<std::vec::IntoIter<(Line, usize)>>;
 
-/// The region at `path`, from its header line to its results line. Each line's contents move
-/// into the region, so nothing is copied.
-fn build(lines: &mut Lines, path: &[usize]) -> Result<Region, String> {
+/// A region or node whose lines are being read.
+enum Open {
+    Region(Region),
+    Node(Node),
+}
+
+/// The graph whose lines are `lines`, from each region's header line to its results line.
+/// Each line's contents move into the graph, so nothing is copied. The walk keeps the regions
+/// and nodes begun and not yet ended on a stack, and one path: a region's, while the region is
+/// on top, and a node's extended by the index of the region looked for next, while the node is.
+fn build(lines: &mut Lines) -> Result<Region, String> {
+    let mut path: Path = Vec::new();
+    let mut open = vec![head(lines, &path)?];
+    loop {
+        match open
+            .last_mut()
+            .expect("the loop returns when the root ends")
+        {
+            Open::Region(r) => {
+                let k = r.nodes.len();
+                let at = path.len();
+                if let Some((
+                    Line {
+                        body: Body::Node(op, inputs, outputs),
+                        ..
+                    },
+                    _,
+                )) = lines.next_if(|(l, _)| {
+                    let p = &l.path;
+                    matches!(l.body, Body::Node(..))
+                        && p.len() == at + 1
+                        && p[..at] == *path
+                        && p[at] == k
+                }) {
+                    path.extend([k, 0]);
+                    open.push(Open::Node(Node {
+                        op,
+                        inputs,
+                        outputs,
+                        regions: Vec::new(),
+                    }));
+                    continue;
+                }
+                let results =
+                    |(l, _): &(Line, usize)| l.path == path && matches!(l.body, Body::Results(_));
+                let Some((
+                    Line {
+                        body: Body::Results(results),
+                        ..
+                    },
+                    _,
+                )) = lines.next_if(results)
+                else {
+                    return Err(match lines.peek() {
+                        Some((l, no)) if l.path.starts_with(&path) => format!(
+                            "line {no}: {} is not in the graph: region {} has {} before it, \
+                             numbered from 0",
+                            l.what(),
+                            show(&path),
+                            match k {
+                                1 => "1 node".to_string(),
+                                n => format!("{n} nodes"),
+                            }
+                        ),
+                        _ => format!("region {} has no results line", show(&path)),
+                    });
+                };
+                r.results = results;
+                let Some(Open::Region(r)) = open.pop() else {
+                    unreachable!("the top is this region")
+                };
+                match open.last_mut() {
+                    Some(Open::Node(n)) => {
+                        n.regions.push(Arc::new(r));
+                        *path
+                            .last_mut()
+                            .expect("a node's path ends in a region index") = n.regions.len();
+                    }
+                    Some(Open::Region(_)) => unreachable!("a region lies in a node"),
+                    None => return Ok(r),
+                }
+            }
+            Open::Node(_) => {
+                if lines
+                    .peek()
+                    .is_some_and(|(l, _)| l.path == path && matches!(l.body, Body::Header(..)))
+                {
+                    open.push(head(lines, &path)?);
+                    continue;
+                }
+                let Some(Open::Node(n)) = open.pop() else {
+                    unreachable!("the top is this node")
+                };
+                path.truncate(path.len() - 2);
+                match open.last_mut() {
+                    Some(Open::Region(r)) => r.nodes.push(n),
+                    _ => unreachable!("a node lies in a region"),
+                }
+            }
+        }
+    }
+}
+
+/// The region at `path`, opened by its header line.
+fn head(lines: &mut Lines, path: &[usize]) -> Result<Open, String> {
     let header = |(l, _): &(Line, usize)| l.path == path && matches!(l.body, Body::Header(..));
     let Some((
         Line {
@@ -463,66 +595,12 @@ fn build(lines: &mut Lines, path: &[usize]) -> Result<Region, String> {
     else {
         return Err(format!("region {} has no header line", show(path)));
     };
-    let mut nodes = Vec::new();
-    while let Some((
-        Line {
-            path: p,
-            body: Body::Node(op, inputs, outputs),
-        },
-        _,
-    )) = lines.next_if(|(l, _)| {
-        let p = &l.path;
-        matches!(l.body, Body::Node(..))
-            && p.len() == path.len() + 1
-            && p[..path.len()] == *path
-            && p[path.len()] == nodes.len()
-    }) {
-        // The node's path, extended by the index of the region looked for next.
-        let mut sub = p;
-        sub.push(0);
-        let mut regions = Vec::new();
-        while lines
-            .peek()
-            .is_some_and(|(l, _)| l.path == sub && matches!(l.body, Body::Header(..)))
-        {
-            regions.push(Arc::new(build(lines, &sub)?));
-            *sub.last_mut().expect("the index pushed above") = regions.len();
-        }
-        nodes.push(Node {
-            op,
-            inputs,
-            outputs,
-            regions,
-        });
-    }
-    let results = |(l, _): &(Line, usize)| l.path == path && matches!(l.body, Body::Results(_));
-    let Some((
-        Line {
-            body: Body::Results(results),
-            ..
-        },
-        _,
-    )) = lines.next_if(results)
-    else {
-        return Err(match lines.peek() {
-            Some((l, no)) if l.path.starts_with(path) => format!(
-                "line {no}: {} is not in the graph: region {} has {} before it, numbered from 0",
-                l.what(),
-                show(path),
-                match nodes.len() {
-                    1 => "1 node".to_string(),
-                    n => format!("{n} nodes"),
-                }
-            ),
-            _ => format!("region {} has no results line", show(path)),
-        });
-    };
-    Ok(Region {
+    Ok(Open::Region(Region {
         kind,
         args,
-        nodes,
-        results,
-    })
+        nodes: Vec::new(),
+        results: Vec::new(),
+    }))
 }
 
 /// A cursor over one line.
