@@ -84,6 +84,23 @@ fn concatenation_and_interpolation() {
     assert_eq!(term(src, "msg"), "(\"n = \" ++ String((n + 1)))");
 }
 
+/// The `Additive` rule for `++` on String: the offset concatenation, the right operand's
+/// characters placed after the left's. Empty operands are the identity on either side, and a
+/// chain nests to the left; `++` stays its own primitive, never `+`.
+#[test]
+fn string_concatenation_is_the_offset_concatenation() {
+    let src = "path = \"usr\" ++ \"/\" ++ \"bin\";\nleft = \"\" ++ \"tmp\";\n\
+               right = \"tmp\" ++ \"\";\nnone = \"\" ++ \"\";\n";
+    assert_eq!(term(src, "path"), "((\"usr\" ++ \"/\") ++ \"bin\")");
+    assert_eq!(value(src, "path"), "\"usr/bin\"");
+    assert_eq!(value(src, "left"), "\"tmp\"");
+    assert_eq!(value(src, "right"), "\"tmp\"");
+    assert_eq!(value(src, "none"), "\"\"");
+    // Multi-byte characters keep their order across the join.
+    let src = "word = \"naï\" ++ \"ve\";\n";
+    assert_eq!(value(src, "word"), "\"naïve\"");
+}
+
 #[test]
 fn if_chains() {
     let src = "grade(positional score) = if score >= 90 { #a } else if score >= 80 { #b } \
