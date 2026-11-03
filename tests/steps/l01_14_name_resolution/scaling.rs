@@ -1,5 +1,7 @@
 //! Name resolution at the rule of low complexity (DESIGN.md Part G).
 
+use zedc::resolve::Ref;
+
 use super::{at, errors, run};
 
 /// Blocks nested `n` deep, each binding a name, the innermost reading the top-level `c` `n`
@@ -59,5 +61,48 @@ fn declaring_many_overloads_scales() {
              [f(y: int) = 1;]; the first `f` with these parameter types [f(x: int) = x;]",
             "`g` is already bound in this scope [g(x) = x;]; the first binding of `g` [g = 1;]",
         ]
+    );
+}
+
+#[test]
+fn using_many_overloads_scales() {
+    // Each use of `f` copied the list of all `k` overloads, so `k` uses cost `k²`.
+    let src = |k: usize| {
+        // One tuple of `k` uses, so that little but the lookup is done for each.
+        overloads(k) + "g = (" + &vec!["f"; k].join(", ") + ");\n"
+    };
+    // The statements are built before the timing, so only resolution is measured.
+    let built = |k: usize| {
+        let text = src(k);
+        let tokens = zedc::lex::lex_fence(&text).unwrap();
+        let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).unwrap();
+        zedc::ast::unit(&text, &tokens, &tree).unwrap()
+    };
+    let n = 1000;
+    let (small, large) = (built(n), built(zed_tests::scaling::FACTOR * n));
+    zed_tests::scaling::check_order("k overloads of one function used k times", n, 1, |k| {
+        let stmts = if k == n { &small } else { &large };
+        let r = zedc::resolve::resolve(stmts).unwrap();
+        let sets = r
+            .uses
+            .values()
+            .filter(|f| matches!(f, Ref::Bound(ids) if ids.len() == k));
+        assert_eq!(sets.count(), k);
+    });
+    // Each use of the overloaded name is bound to every overload, in declaration order; the
+    // types in the parameters are the prelude's.
+    let r = zedc::resolve::resolve(&built(3)).unwrap();
+    let sets: Vec<Vec<usize>> = r
+        .uses
+        .values()
+        .filter_map(|f| match f {
+            Ref::Bound(ids) => Some(ids.iter().copied().collect()),
+            Ref::Prelude(_) => None,
+        })
+        .collect();
+    assert_eq!(sets.len(), 3);
+    assert!(
+        sets.iter()
+            .all(|v| v.len() == 3 && v.is_sorted() && *v == sets[0])
     );
 }

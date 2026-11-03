@@ -40,6 +40,7 @@
 //! region a lambda body or a match arm. Evaluating the raised term gives the original term's
 //! value, which is how the tests check the lowering against the interpreter.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -1043,13 +1044,13 @@ pub fn raise(g: &Region) -> Result<Term, String> {
     }
     let units = vec![unit(); g.args.len()];
     let mut n = 0;
-    raise_region(g, &units, &mut n, "r")
+    raise_region(g, (&units, &[]), &mut n, "r")
 }
 
 /// The term region `r` computes, its arguments being `args`: [`raise`] for a region that is
 /// not a root, such as a function's body with its captured values (step L1.34).
 pub fn raise_with(r: &Region, args: &[Term]) -> Result<Term, String> {
-    raise_region(r, args, &mut 0, "r")
+    raise_region(r, (args, &[]), &mut 0, "r")
 }
 
 fn unit() -> Term {
@@ -1061,18 +1062,29 @@ fn fresh_name(fresh: &mut usize) -> Arc<str> {
     format!("\0raise{fresh}").into()
 }
 
-fn raise_region(r: &Region, args: &[Term], fresh: &mut usize, path: &str) -> Result<Term, String> {
+/// The term region `r` computes, its arguments being those of `args.0` and then those of `args.1`:
+/// a region's own arguments and the inputs it captures, read where they are, not copied into one
+/// list.
+fn raise_region(
+    r: &Region,
+    args: (&[Term], &[Term]),
+    fresh: &mut usize,
+    path: &str,
+) -> Result<Term, String> {
     let mut lets: Vec<(Arc<str>, Term)> = Vec::new();
     let mut outs: Vec<Arc<str>> = Vec::new();
     let term_of = |s: &Src, outs: &[Arc<str>]| match s {
-        Src::Arg(i) => args[*i].clone(),
+        Src::Arg(i) => match args.0.get(*i) {
+            Some(t) => t.clone(),
+            None => args.1[*i - args.0.len()].clone(),
+        },
         Src::Out(n, p) if r.nodes[*n].outputs[*p].is_state() => unit(),
         Src::Out(n, _) => Term::Var(outs[*n].clone()),
         Src::Const(v) => Term::Lit(v.clone()),
     };
     for (k, node) in r.nodes.iter().enumerate() {
         let ins: Vec<Term> = node.inputs.iter().map(|s| term_of(s, &outs)).collect();
-        let t = node_term(node, &ins, fresh, &format!("{path}.{k}"))?;
+        let t = node_term(node, Cow::Owned(ins), fresh, &format!("{path}.{k}"))?;
         let x = fresh_name(fresh);
         lets.push((x.clone(), t));
         outs.push(x);
@@ -1088,22 +1100,33 @@ fn raise_region(r: &Region, args: &[Term], fresh: &mut usize, path: &str) -> Res
 /// no copy of them, so a caller holding a node of any depth pays only for the node's own
 /// inputs and, when the term runs, what it raises.
 pub fn raise_node(node: &Node, ins: &[Term]) -> Result<Term, String> {
-    node_term(node, ins, &mut 0, "r.0")
+    node_term(node, Cow::Borrowed(ins), &mut 0, "r.0")
 }
 
-fn node_term(node: &Node, ins: &[Term], fresh: &mut usize, at: &str) -> Result<Term, String> {
+/// The term `node` computes, its inputs being `ins`: moved into the term when they are owned,
+/// copied only when the caller keeps them.
+fn node_term(
+    node: &Node,
+    ins: Cow<'_, [Term]>,
+    fresh: &mut usize,
+    at: &str,
+) -> Result<Term, String> {
     let a = |i: usize| Arc::new(ins[i].clone());
     let sub = |i: usize, fixed: Vec<Term>, from: usize, fresh: &mut usize| {
-        let mut xs = fixed;
-        xs.extend(ins[from..].iter().cloned());
-        raise_region(&node.regions[i], &xs, fresh, &format!("{at}/{i}"))
+        let args = (fixed.as_slice(), &ins[from..]);
+        raise_region(&node.regions[i], args, fresh, &format!("{at}/{i}"))
     };
     Ok(match &node.op {
         Op::Prim(p) if ins.is_empty() && p.arity().is_some() => Term::PrimFn(*p),
-        Op::Prim(p) => Term::Prim(*p, ins.to_vec()),
+        Op::Prim(p) => Term::Prim(*p, ins.into_owned()),
         // A state edge has no term: the kernel orders effects by evaluation. The states
         // are the last inputs, one for each output after the value.
-        Op::Apply => Term::App(a(0), ins[1..ins.len() + 1 - node.outputs.len()].to_vec()),
+        Op::Apply => {
+            let mut ins = ins.into_owned();
+            ins.truncate(ins.len() + 1 - node.outputs.len());
+            let f = ins.remove(0);
+            Term::App(Arc::new(f), ins)
+        }
         Op::Lambda => {
             let lead = &node.regions[0].args[..node.regions[0].args.len() - ins.len()];
             let mut ps: Vec<Arc<str>> = Vec::new();

@@ -707,3 +707,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 ## Entries from LR4 (`zedc/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
 
 - No new gap. `Builder::make_expr`, arm `"Expr12"`, reads its two children with `let [l, t] = kids[..] else { unreachable!(..) }`, a slice pattern in a `let … else`; both are rows of the appendix (`let_else`, slice patterns) with the rewrite already listed: test the length, then index.
+
+## Entries from T11-fix-rest (`resolve.rs`, `parse/engine.rs`, `zir/text.rs`, `zir/lower.rs`, `zir/canon.rs`, `zed-kernel/src/eval.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `imbl::Vector<usize>`, a persistent vector, so that every use of an overload set shares one list | `resolve::Ref::Bound`, `Found::Bound`, `Bound.ids` | None | Zed lists are shared values already |
+| `std::mem::take` of the expected set into the saved stack at a `!`, and `mem::replace` with an empty domain that allocates nothing while the rules hold an edge's facts | `parse::engine` (`saved`), `zir::canon::normal_edge` | Mutation | The parser state and the edge are state receivers; the rules take the facts and return the new ones |
+| `Peekable` over an owning iterator, with `next_if` to move each line's parts out | `zir::text::build` | Mutation, iterators | A recursive descent over the list of lines that returns the rest of the list |
+| `Cow<'_, [Term]>`, inputs moved into a term when owned and copied when borrowed | `zir::lower::node_term` | None | Zed shares lists, so the term holds the inputs |
+| A pair of slices read as one list (`args.0` then `args.1`) | `zir::lower::raise_region` | None | `++` of two shared lists, or the index split the same way |
+| A cursor (`next: usize`) into a sorted `Box<[Value]>` held in an `Rc`, and `binary_search` for membership | `eval::Pull`, `Definedness::domain` | Mutation | A fold over the domain's keys, and a sorted set's membership |

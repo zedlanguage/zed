@@ -337,10 +337,12 @@ impl<'a> Tables<'a> {
             .range(from..to)
             .filter(|(u, _)| u.end <= span.end)
             .filter(|(u, _)| !skip.iter().any(|s| s.start <= u.start && u.end <= s.end))
-            .flat_map(|(_, r)| match r {
-                Ref::Bound(ids) => ids.clone(),
-                Ref::Prelude(_) => Vec::new(),
+            .filter_map(|(_, r)| match r {
+                Ref::Bound(ids) => Some(ids),
+                Ref::Prelude(_) => None,
             })
+            .flatten()
+            .copied()
             .collect()
     }
 

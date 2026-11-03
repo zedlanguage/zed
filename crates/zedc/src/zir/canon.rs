@@ -101,7 +101,16 @@ fn normal_shell(n: &mut Node) {
 /// An edge in normal form: the first rule in priority order that applies, until none does.
 fn normal_edge(e: &mut Edge) {
     if let Edge::Value(v) = e {
-        let mut d = def(v);
+        // The facts are moved into the definition and back, not copied: the empty interval
+        // left behind meanwhile allocates nothing.
+        let empty =
+            crate::canon::domain::Domain::ints(crate::store::interval::IntervalSet::empty());
+        let mut d = Def {
+            name: "".into(),
+            domain: Some(std::mem::replace(&mut v.domain, empty)),
+            facets: std::mem::take(&mut v.facets),
+            body: Term::Lit(Value::tuple(Vec::new())),
+        };
         while RULES[1..].iter().any(|rule| (rule.apply)(&mut d)) {}
         v.domain = d.domain.expect("an edge has a domain");
         v.facets = d.facets;

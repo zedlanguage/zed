@@ -216,7 +216,9 @@ pub struct Parser<'g, I: Input + ?Sized> {
     pub far: usize,
     /// What was expected there.
     pub expected: BTreeSet<Expected<'g>>,
-    /// `far` and `expected` as each open `!` found them.
+    /// `far` and `expected` as each open `!` found them. The set is moved here, not copied:
+    /// what the `!` adds to the empty set left behind is dropped when the `!` ends, and nothing
+    /// reads `expected` before the parse ends.
     saved: Vec<(usize, BTreeSet<Expected<'g>>)>,
 }
 
@@ -546,7 +548,8 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                         e = x;
                     }
                     Expr::Not(x) => {
-                        self.saved.push((self.far, self.expected.clone()));
+                        self.saved
+                            .push((self.far, std::mem::take(&mut self.expected)));
                         let mark = self.kids.len();
                         stack.push(Frame::Not { pos, mark });
                         e = x;

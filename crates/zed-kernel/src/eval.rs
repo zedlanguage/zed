@@ -636,10 +636,11 @@ struct Rounds<'t> {
     sees: u64,
 }
 
-/// A definedness `fix` running by demand: the keys not yet demanded.
+/// A definedness `fix` running by demand: the keys from `next` on, in the order of its domain,
+/// are not yet demanded.
 struct Pull<'t> {
     fix: Rc<Definedness<'t>>,
-    keys: std::vec::IntoIter<Value>,
+    next: usize,
 }
 
 /// What an attempt at an entry goes back to.
@@ -647,7 +648,18 @@ enum By<'t> {
     Round(Box<Rounds<'t>>),
     Pull(Box<Pull<'t>>),
     /// A read in another attempt, with the trace state that attempt had.
-    Demand(Option<Saved>),
+    Demand(Rc<Definedness<'t>>, Option<Saved>),
+}
+
+impl<'t> By<'t> {
+    /// The `fix` whose entry is attempted.
+    fn fix(&self) -> &Rc<Definedness<'t>> {
+        match self {
+            By::Round(st) => &st.fix,
+            By::Pull(st) => &st.fix,
+            By::Demand(fix, _) => fix,
+        }
+    }
 }
 
 /// The part of [`Trace`] an entry demanded where it is read swaps for that of its `fix`.
@@ -659,10 +671,9 @@ struct Saved {
     args: Vec<Option<usize>>,
 }
 
-/// An attempt at the entry at `k` of `fix`. `mark` holds the lengths of the trace's facts,
-/// calls and keys when it began.
+/// An attempt at the entry at `k` of the `fix` of `by`. `mark` holds the lengths of the trace's
+/// facts, calls and keys when it began.
 struct Entry<'t> {
-    fix: Rc<Definedness<'t>>,
     k: Value,
     mark: Option<(usize, usize, usize)>,
     by: By<'t>,
@@ -1283,7 +1294,7 @@ impl<'t> Machine<'_, 't> {
             };
             return match found {
                 Some(v) => give(v),
-                None if !fix.domain.contains(&*k) => give(Value::atom("notFound")),
+                None if fix.domain.binary_search(&*k).is_err() => give(Value::atom("notFound")),
                 None if self.ev.schedule == Schedule::Pull
                     && !fix.busy.borrow().contains(&*k)
                     && !fix.stalled.borrow().contains(&*k) =>
@@ -1529,8 +1540,7 @@ impl<'t> Machine<'_, 't> {
         key: &'t str,
         env: Env<'t>,
     ) -> R<Step<'t>> {
-        let domain: BTreeSet<Value> = family(init)?.keys().cloned().collect();
-        let keys: Vec<Value> = domain.iter().cloned().collect();
+        let domain: Box<[Value]> = family(init)?.keys().cloned().collect();
         self.ev.fixes += 1;
         let (calls, trace_keys) = match &self.ev.trace {
             Some(t) => (t.calls.clone(), t.keys.clone()),
@@ -1553,46 +1563,42 @@ impl<'t> Machine<'_, 't> {
         let rng = match self.ev.schedule {
             Schedule::Rounds => None,
             Schedule::Chaotic(seed) => Some(SplitMix(seed)),
-            Schedule::Pull => {
-                let keys = keys.into_iter();
-                return self.pull(Box::new(Pull { fix, keys }));
-            }
+            Schedule::Pull => return self.pull(Box::new(Pull { fix, next: 0 })),
         };
+        // The first round tries every entry; the work list is the rounds' own, since later
+        // rounds refill it.
+        let ready = fix.domain.to_vec();
         self.round(Box::new(Rounds {
             fix,
             rng,
             waiting: BTreeMap::new(),
             queue: Vec::new().into_iter(),
-            ready: keys,
+            ready,
             defined: Vec::new(),
             round: 1,
             sees: 0,
         }))
     }
 
-    /// Begins an attempt at the entry at `k` against the entries defined before `round`.
-    fn attempt(
-        &mut self,
-        fix: Rc<Definedness<'t>>,
-        round: u64,
-        k: Value,
-        by: By<'t>,
-    ) -> R<Step<'t>> {
+    /// Begins an attempt at the entry at `k` of the `fix` of `by` against the entries defined
+    /// before `round`.
+    fn attempt(&mut self, round: u64, k: Value, by: By<'t>) -> R<Step<'t>> {
+        let fix = by.fix();
         let part = V::Partial(Rc::new(Partial {
             of: fix.clone(),
             round,
         }));
         let env = bind(fix.env.clone(), fix.this, part, None);
         let env = bind(env, fix.key, V::Data(k.clone()), None);
+        let body = fix.body;
         let mark = self
             .ev
             .trace
             .as_ref()
             .map(|t| (t.facts.len(), t.calls.len(), t.keys.len()));
         self.ev.enter(std::slice::from_ref(&k));
-        let body = fix.body;
         self.frames
-            .push(Frame::Entry(Box::new(Entry { fix, k, mark, by })));
+            .push(Frame::Entry(Box::new(Entry { k, mark, by })));
         Ok(Step::Eval(body, env))
     }
 
@@ -1601,12 +1607,13 @@ impl<'t> Machine<'_, 't> {
     /// is not a fact: what it recorded is dropped, and the entry's fact is the attempt that
     /// defines it.
     fn entry_ended(&mut self, entry: Entry<'t>, out: R<V<'t>>) -> R<Step<'t>> {
-        let Entry { fix, k, mark, by } = entry;
+        let Entry { k, mark, by } = entry;
+        let id = by.fix().id;
         self.ev.leave(1);
         let attempt = match out {
             Ok(V::Data(v)) => Ok(Ok(v)),
             Ok(_) => type_err("a fix entry is a function"),
-            Err(Stop::Undefined { fix: id, key }) if id == fix.id => {
+            Err(Stop::Undefined { fix, key }) if fix == id => {
                 if let (Some(t), Some((facts, calls, keys))) = (&mut self.ev.trace, mark) {
                     t.facts.truncate(facts);
                     t.calls.truncate(calls);
@@ -1621,7 +1628,7 @@ impl<'t> Machine<'_, 't> {
                 match attempt? {
                     Ok(v) => {
                         let round = st.round;
-                        fix.defined.borrow_mut().insert(k.clone(), (v, round));
+                        st.fix.defined.borrow_mut().insert(k.clone(), (v, round));
                         st.defined.push(k);
                     }
                     Err(read) => st.waiting.entry(read).or_default().push(k),
@@ -1629,18 +1636,18 @@ impl<'t> Machine<'_, 't> {
                 self.next_entry(st)
             }
             By::Pull(st) => {
-                fix.busy.borrow_mut().remove(&k);
+                st.fix.busy.borrow_mut().remove(&k);
                 match attempt? {
                     Ok(v) => {
-                        fix.defined.borrow_mut().insert(k, (v, 0));
+                        st.fix.defined.borrow_mut().insert(k, (v, 0));
                     }
                     Err(_) => {
-                        fix.stalled.borrow_mut().insert(k);
+                        st.fix.stalled.borrow_mut().insert(k);
                     }
                 }
                 self.pull(st)
             }
-            By::Demand(saved) => {
+            By::Demand(fix, saved) => {
                 fix.busy.borrow_mut().remove(&k);
                 if let (Some(t), Some(s)) = (&mut self.ev.trace, saved) {
                     (t.calls, t.keys, t.reads, t.site, t.args) =
@@ -1686,8 +1693,8 @@ impl<'t> Machine<'_, 't> {
 
     fn next_entry(&mut self, mut st: Box<Rounds<'t>>) -> R<Step<'t>> {
         if let Some(k) = st.queue.next() {
-            let (fix, sees) = (st.fix.clone(), st.sees);
-            return self.attempt(fix, sees, k, By::Round(st));
+            let sees = st.sees;
+            return self.attempt(sees, k, By::Round(st));
         }
         if st.defined.is_empty() {
             return rounds_end(&st.fix);
@@ -1708,14 +1715,15 @@ impl<'t> Machine<'_, 't> {
     /// demanded or had stalled: that entry is on a cycle or waits on one, and so does the
     /// attempt, whose entry stalls.
     fn pull(&mut self, mut st: Box<Pull<'t>>) -> R<Step<'t>> {
-        for k in st.keys.by_ref() {
-            if st.fix.defined.borrow().contains_key(&k) || st.fix.stalled.borrow().contains(&k) {
+        while let Some(k) = st.fix.domain.get(st.next) {
+            st.next += 1;
+            if st.fix.defined.borrow().contains_key(k) || st.fix.stalled.borrow().contains(k) {
                 continue;
             }
             self.ev.burn()?;
+            let k = k.clone();
             st.fix.busy.borrow_mut().insert(k.clone());
-            let fix = st.fix.clone();
-            return self.attempt(fix, u64::MAX, k, By::Pull(st));
+            return self.attempt(u64::MAX, k, By::Pull(st));
         }
         finish_fix(&st.fix, st.fix.stalled.take().into_iter().collect())
     }
@@ -1733,7 +1741,7 @@ impl<'t> Machine<'_, 't> {
             args: std::mem::take(&mut t.args),
         });
         fix.busy.borrow_mut().insert(k.clone());
-        self.attempt(fix, u64::MAX, k, By::Demand(saved))
+        self.attempt(u64::MAX, k, By::Demand(fix, saved))
     }
 
     /// The step making generation `t` runs at coordinate `t`, reading the fact of the frame
@@ -1827,7 +1835,9 @@ fn finish_fix<'t>(fix: &Definedness<'t>, stalled: Vec<Value>) -> R<Step<'t>> {
 /// those stalled.
 struct Definedness<'t> {
     id: u64,
-    domain: BTreeSet<Value>,
+    /// The keys of the initial family, distinct and in order: a pull walks them by index, and
+    /// a read finds a key by binary search.
+    domain: Box<[Value]>,
     defined: RefCell<Defined>,
     body: &'t Term,
     this: &'t str,

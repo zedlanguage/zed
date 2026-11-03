@@ -18,6 +18,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
+use imbl::Vector;
+
 use crate::ast::{Error, Expr, ExprKind, Param, Pattern, Port, Stmt, StmtKind, StrPart, Target};
 use crate::ast::{Note, Type, TypeKind};
 use crate::lex::Span;
@@ -51,8 +53,10 @@ pub struct Binder {
 /// What a use of a name names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ref {
-    /// Binders of the unit, by index: one, or the arrows of an overload set.
-    Bound(Vec<usize>),
+    /// Binders of the unit, by index: one, or the arrows of an overload set. The list is
+    /// persistent, so every use of a set of `K` arrows shares it: `U` uses cost `O(U)`, not
+    /// `O(U·K)`.
+    Bound(Vector<usize>),
     /// A prelude word of layer L1.
     Prelude(String),
 }
@@ -147,7 +151,7 @@ pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
 
 /// What a name is found to be: binders of the unit, or a prelude word of a layer.
 enum Found {
-    Bound(Vec<usize>),
+    Bound(Vector<usize>),
     Word(u32),
 }
 
@@ -166,7 +170,7 @@ struct Resolver {
 struct Bound {
     /// How many scopes are open around the scope, itself included.
     level: usize,
-    ids: Vec<usize>,
+    ids: Vector<usize>,
     /// The written parameter types of each, which tell an overload's arrows apart: a set, so
     /// declaring `K` overloads costs `O(K)`, not `O(K²)`.
     signatures: HashSet<Option<Vec<Option<String>>>>,
@@ -215,13 +219,13 @@ impl Resolver {
         if v.last().is_none_or(|b| b.level != level) {
             v.push(Bound {
                 level,
-                ids: Vec::new(),
+                ids: Vector::new(),
                 signatures: HashSet::new(),
             });
             self.scopes.last_mut().expect("a scope").push(name.into());
         }
         let b = v.last_mut().expect("pushed above");
-        b.ids.push(id);
+        b.ids.push_back(id);
         b.signatures.insert(signature);
         self.out.binders.push(Binder {
             name: name.into(),

@@ -279,7 +279,7 @@ pub fn parse(text: &str) -> Result<Region, String> {
     if !header {
         return Err(format!("the text is empty, and starts `zir {VERSION}`"));
     }
-    lines.sort_by_key(|a| a.0.key());
+    lines.sort_by_cached_key(|a| a.0.key());
     for w in lines.windows(2) {
         if w[0].0.key() == w[1].0.key() {
             return Err(format!(
@@ -290,9 +290,9 @@ pub fn parse(text: &str) -> Result<Region, String> {
             ));
         }
     }
-    let mut i = 0;
-    let root = build(&lines, &mut i, &[])?;
-    if let Some((l, no)) = lines.get(i) {
+    let mut lines = lines.into_iter().peekable();
+    let root = build(&mut lines, &[])?;
+    if let Some((l, no)) = lines.peek() {
         return Err(format!(
             "line {no}: {} is not in the graph: its parent or an earlier sibling has no line",
             l.what()
@@ -387,18 +387,23 @@ impl Line {
     }
 }
 
-fn build(lines: &[(Line, usize)], i: &mut usize, path: &[usize]) -> Result<Region, String> {
-    let (kind, args) = match lines.get(*i) {
-        Some((
-            Line {
-                path: p,
-                body: Body::Header(kind, args),
-            },
-            _,
-        )) if p == path => (*kind, args.clone()),
-        _ => return Err(format!("region {} has no header line", show(path))),
+/// The sorted lines, each taken once, in order, by the region it belongs to.
+type Lines = std::iter::Peekable<std::vec::IntoIter<(Line, usize)>>;
+
+/// The region at `path`, from its header line to its results line. Each line's contents move
+/// into the region, so nothing is copied.
+fn build(lines: &mut Lines, path: &[usize]) -> Result<Region, String> {
+    let header = |(l, _): &(Line, usize)| l.path == path && matches!(l.body, Body::Header(..));
+    let Some((
+        Line {
+            body: Body::Header(kind, args),
+            ..
+        },
+        _,
+    )) = lines.next_if(header)
+    else {
+        return Err(format!("region {} has no header line", show(path)));
     };
-    *i += 1;
     let mut nodes = Vec::new();
     while let Some((
         Line {
@@ -406,39 +411,42 @@ fn build(lines: &[(Line, usize)], i: &mut usize, path: &[usize]) -> Result<Regio
             body: Body::Node(op, inputs, outputs),
         },
         _,
-    )) = lines.get(*i)
-    {
-        if p.len() != path.len() + 1 || p[..path.len()] != *path || p[path.len()] != nodes.len() {
-            break;
-        }
-        *i += 1;
+    )) = lines.next_if(|(l, _)| {
+        let p = &l.path;
+        matches!(l.body, Body::Node(..))
+            && p.len() == path.len() + 1
+            && p[..path.len()] == *path
+            && p[path.len()] == nodes.len()
+    }) {
+        // The node's path, extended by the index of the region looked for next.
+        let mut sub = p;
+        sub.push(0);
         let mut regions = Vec::new();
-        loop {
-            let sub = [p.as_slice(), &[regions.len()]].concat();
-            match lines.get(*i) {
-                Some((l, _)) if l.path == sub && matches!(l.body, Body::Header(..)) => {
-                    regions.push(Arc::new(build(lines, i, &sub)?));
-                }
-                _ => break,
-            }
+        while lines
+            .peek()
+            .is_some_and(|(l, _)| l.path == sub && matches!(l.body, Body::Header(..)))
+        {
+            regions.push(Arc::new(build(lines, &sub)?));
+            *sub.last_mut().expect("the index pushed above") = regions.len();
         }
         nodes.push(Node {
-            op: op.clone(),
-            inputs: inputs.clone(),
-            outputs: outputs.clone(),
+            op,
+            inputs,
+            outputs,
             regions,
         });
     }
-    let results = match lines.get(*i) {
-        Some((
-            Line {
-                path: p,
-                body: Body::Results(rs),
-            },
-            _,
-        )) if p == path => rs.clone(),
-        Some((l, no)) if l.path.starts_with(path) => {
-            return Err(format!(
+    let results = |(l, _): &(Line, usize)| l.path == path && matches!(l.body, Body::Results(_));
+    let Some((
+        Line {
+            body: Body::Results(results),
+            ..
+        },
+        _,
+    )) = lines.next_if(results)
+    else {
+        return Err(match lines.peek() {
+            Some((l, no)) if l.path.starts_with(path) => format!(
                 "line {no}: {} is not in the graph: region {} has {} before it, numbered from 0",
                 l.what(),
                 show(path),
@@ -446,11 +454,10 @@ fn build(lines: &[(Line, usize)], i: &mut usize, path: &[usize]) -> Result<Regio
                     1 => "1 node".to_string(),
                     n => format!("{n} nodes"),
                 }
-            ));
-        }
-        _ => return Err(format!("region {} has no results line", show(path))),
+            ),
+            _ => format!("region {} has no results line", show(path)),
+        });
     };
-    *i += 1;
     Ok(Region {
         kind,
         args,
