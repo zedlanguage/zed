@@ -653,6 +653,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Arc::get_mut` with `mem::replace` to take a part out of a uniquely held node | `Term::take_parts` | Identity, mutation | Removed with the drop above |
 | A machine of `Job`s and `Frame`s on a `Vec`, each frame taking its child's result from one register (`Ret`, read by `take_ty`, `take_arg`, `take_cond`, `take_sig`), large frames boxed to keep the enum small | `check::walk` | Mutation | A state receiver holding the list and the register; a sum type of frames, with no boxing |
 | `Rc<Origin>` chains with an `impl Drop` that unwraps each link by `Rc::try_unwrap` in a loop | `check::Origin` | Identity, mutation | Removed: the runtime shares and frees values, and must free a long chain without recursion itself |
+| The `check::walk` machine again, with a list frame (`SeqF`) that runs a list of expressions and stops at the first failure when asked, as `collect::<Option<_>>` does; a call frame (`FillF`) holding an `Option<HashMap<&str, usize>>` built at the first named argument (`get_or_insert_with`) | `elab::walk` | Mutation | A state receiver holding the list and the register; a fold over the arguments that stops on the first failure; the name map as a lazily built value |
 
 ## Entries from L2.1 (`zedc/src/ast/`, `format.rs`)
 
