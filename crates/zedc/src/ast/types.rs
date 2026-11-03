@@ -163,7 +163,7 @@ impl Pattern {
     }
 }
 
-impl Builder<'_> {
+impl Builder<'_, '_> {
     /// The type node `n` built to.
     pub(super) fn ty(&mut self, n: usize) -> Result<Type, Error> {
         match self.take(n) {

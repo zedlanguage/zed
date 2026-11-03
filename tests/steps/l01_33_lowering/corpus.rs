@@ -41,8 +41,8 @@ fn every_row_passes_through_zir() {
     }
     // The seven units of L1 hold 41 checks, which evaluate 58 closed terms; the 11 waves
     // among them lower to port regions. L25.8's unit adds 7 checks and 7 closed terms, and
-    // no wave. The two rejection units add 5 marked lines, which run nothing. A runner that skipped the map would pass the
+    // no wave. The three rejection units add 6 marked lines, which run nothing. A runner that skipped the map would pass the
     // comparison above.
-    assert_eq!(rows, 53);
+    assert_eq!(rows, 54);
     assert_eq!((lowered.get(), ported.get()), (65, 11));
 }

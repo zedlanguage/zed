@@ -27,6 +27,11 @@ pub fn word(name: &str) -> bool {
     WORDS.iter().any(|(w, _)| *w == name)
 }
 
+/// The primitive of the prelude word `name`, if it is one.
+pub fn prim(name: &str) -> Option<Prim> {
+    WORDS.iter().find(|(w, _)| *w == name).map(|&(_, p)| p)
+}
+
 /// `body` under the prelude: each word it may read bound to its primitive.
 pub fn prelude(body: Term) -> Term {
     WORDS.iter().rev().fold(body, |body, (name, p)| {

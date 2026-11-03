@@ -45,7 +45,7 @@ fn every_bracketing_case_gives_its_tree() {
             ));
         }
     }
-    assert_eq!(n, 359, "the number of cases");
+    assert_eq!(n, 361, "the number of cases");
     assert!(
         wrong.is_empty(),
         "{} wrong:\n{}",

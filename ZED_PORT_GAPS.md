@@ -964,3 +964,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `BTreeMap<Type, BigUint>` of the rest types met, cleared in place after the length left is cut to its remainder modulo the steps between | `empty::Search::list_member` | Mutation | A loop whose state (type, length left, persistent map of types met) is passed to the next round, the map replaced by an empty one after the cut |
 | `Option<Option<KType>>` filled on first use inside an `all` closure (`get_or_insert_with`), so the kernel type of the target is built only when some piece needs it | `zedc` `check/ty.rs` `Ty::sub` | Laziness, mutation | A lazy local bound before the fold, forced on first use |
 | Address of a shared slice (`xs.as_ptr().addr()`) with its length as the memo key of one membership test, held while the value is borrowed and never iterated | `types::Type::contains` | Identity | A hash-consed id of the value, as for `deep::walk`; the recorded exception at `Type::contains` |
+
+## Entries from OSP-neglit (`zedc/src/ast/neglit.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `OnceCell<HashSet<&str>>` of the names written bare, shared by every builder of one source and filled on the first rejection through `&self` | `Builder::written_bare`, `ast::with_holes` | Lazy cells (gap 3) | The set made in one pass before building, or threaded through as a state receiver that is filled on first use |
+| A `HashSet<&str>` borrowed from the source text | `bare_names` | Borrowed keys | A set of names; strings are values, so no borrow is needed |

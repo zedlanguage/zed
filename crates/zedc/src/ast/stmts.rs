@@ -272,7 +272,7 @@ impl StmtKind {
     }
 }
 
-impl Builder<'_> {
+impl Builder<'_, '_> {
     /// The block of node `n`, a `Block`: its statements, of which at most one is a `return`.
     /// The statements are stored in the order the formatter writes them (`StmtKind::place`):
     /// the `while` guards first, then the `until` guards and the export last; the order of the

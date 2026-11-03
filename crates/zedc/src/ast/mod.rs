@@ -22,6 +22,7 @@
 //! like any other here. A form of a later layer is an error naming that layer.
 
 mod drop;
+mod neglit;
 mod show;
 mod stmts;
 mod types;
@@ -364,7 +365,7 @@ fn with_holes<'t, R>(
     text: &str,
     tokens: &'t [Token],
     tree: &'t Tree,
-    top: impl FnOnce(&mut Builder<'_>) -> R,
+    top: impl FnOnce(&mut Builder<'_, '_>) -> R,
 ) -> R {
     let mut list = vec![Level {
         tokens,
@@ -392,15 +393,16 @@ fn with_holes<'t, R>(
         }
         i += 1;
     }
+    let bare = neglit::Bare::new();
     let mut done: Vec<Option<Result<Expr, Error>>> = Vec::new();
     done.resize_with(list.len(), || None);
     for (i, l) in list.iter().enumerate().skip(1).rev() {
-        let mut b = Builder::new(text, l, &mut done);
+        let mut b = Builder::new(text, l, &mut done, &bare);
         b.fill(l.tree.root);
         let e = b.node(l.tree.root);
         done[i] = Some(e);
     }
-    top(&mut Builder::new(text, &list[0], &mut done))
+    top(&mut Builder::new(text, &list[0], &mut done, &bare))
 }
 
 /// A tree to build from: a text's, or a string hole's.
@@ -452,8 +454,8 @@ fn forms() -> &'static [Form] {
     })
 }
 
-struct Builder<'a> {
-    text: &'a str,
+struct Builder<'a, 's: 'a> {
+    text: &'s str,
     tokens: &'a [Token],
     tree: &'a Tree,
     /// For each token, the index in `tree.holes` of its first hole.
@@ -470,14 +472,17 @@ struct Builder<'a> {
     /// Where in the walk of `fill` each node is, and where the walk has reached.
     place: Vec<usize>,
     front: usize,
+    /// The names written in the source other than after a `.`, listed on first use.
+    bare: &'a neglit::Bare<'s>,
 }
 
-impl<'a> Builder<'a> {
+impl<'a, 's> Builder<'a, 's> {
     fn new(
-        text: &'a str,
+        text: &'s str,
         level: &Level<'a>,
         done: &'a mut [Option<Result<Expr, Error>>],
-    ) -> Builder<'a> {
+        bare: &'a neglit::Bare<'s>,
+    ) -> Builder<'a, 's> {
         let mut holes = Vec::with_capacity(level.tokens.len());
         let mut count = 0;
         for t in level.tokens {
@@ -499,6 +504,7 @@ impl<'a> Builder<'a> {
             live: VecDeque::new(),
             place: Vec::new(),
             front: 0,
+            bare,
         }
     }
 
@@ -698,6 +704,9 @@ impl<'a> Builder<'a> {
             "Prefix" => {
                 let op = self.op(self.tree.nodes[n].start);
                 let e = self.node(kids[0])?;
+                if let Some(err) = self.negated_literal_chain(n, &e) {
+                    return Err(err);
+                }
                 Ok(Expr {
                     kind: ExprKind::Unary(op, Box::new(e)),
                     span: self.span(n),

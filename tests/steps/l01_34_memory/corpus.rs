@@ -42,9 +42,9 @@ fn every_row_passes_through_the_machine() {
             assert_eq!(got, want, "{} (fuse {fuse})", path.display());
             rows += got.len();
         }
-        // 48 checks of table rows (7 of them in L25.8's unit), and the 5 marked lines of the two
+        // 48 checks of table rows (7 of them in L25.8's unit), and the 6 marked lines of the three
         // rejection units.
-        assert_eq!(rows, 53);
+        assert_eq!(rows, 54);
         // The seven units of L1 evaluate 58 closed terms, which allocate 108 cells, and L25.8's
         // unit 7 terms and 9 cells; fusion saves 26 count writes.
         let want = if fuse { 121 } else { 147 };

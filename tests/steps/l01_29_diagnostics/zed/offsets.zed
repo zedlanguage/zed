@@ -1,0 +1,9 @@
+// Calibration offsets for a thermometer. The first is written as a negative literal and then
+// made absolute, which reads as `(-1).abs` but is `-(1.abs)`: the row is "Prefix `-` on a
+// numeric literal's postfix chain", and both groupings are written out below.
+drift = -1.abs;            // ✗ Prefix `-` on a numeric literal's postfix chain: -(1.abs) is -1
+lowest = (-1).abs;
+negated = -(1.abs);
+grouped = -(1).abs;
+reading = 3;
+scaled = -reading.abs;

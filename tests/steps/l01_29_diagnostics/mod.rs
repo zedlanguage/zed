@@ -6,6 +6,7 @@
 mod batch;
 mod derivations;
 mod layout;
+mod neglit;
 mod printed;
 mod repairs;
 mod scaling;

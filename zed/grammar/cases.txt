@@ -78,6 +78,8 @@ Expr ::: x -> y -> x + y ::: (x -> (y -> (x + y)))
 Expr ::: f(x -> x else 0, 1) ::: (f (( ((x -> (x (else 0))) , 1) )))
 Expr ::: a else b else c ::: ((a (else b)) (else c))
 Expr ::: -x.abs ::: (- (x (. abs)))
+Expr ::: -1.abs ::: (- (1 (. abs)))
+Expr ::: -(1).abs ::: (- ((( 1 )) (. abs)))
 Expr ::: if x { a } ::: ERROR
 Expr ::: { x: int = 1; x } ::: ({ (x : int = 1 ;) x })
 Expr ::: { k -> (x -> x) } ::: ({ (k -> (( (x -> x) ))) })
