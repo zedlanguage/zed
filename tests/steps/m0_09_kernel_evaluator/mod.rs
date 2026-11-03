@@ -1070,3 +1070,42 @@ fn a_sum_too_large_to_build_is_an_error_naming_its_size() {
         );
     }
 }
+
+/// Printing a number builds its digits. `String(2 ** 2 ** 100)` would need `2^100` bits, so
+/// it is an error naming that size, given before any digit is built; `2 ** 2 ** 16` prints
+/// all of its 19729 digits, and `10 ** 10 ** 6` its million zeros.
+#[test]
+fn printing_a_number_too_large_to_build_is_an_error_naming_its_size() {
+    let show = |t: Term| prim(Prim::Show, vec![t]);
+    let pow = |a: Term, b: Term| bin(Prim::Pow, a, b);
+    let huge = pow(lit(2), pow(lit(2), lit(100)));
+    let err = eval(&show(huge.clone())).unwrap_err();
+    assert!(
+        matches!(&err, KernelError::NumberTooLarge { op: "String", .. }),
+        "{err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "`String` must build a number of up to 1267650600228229401496703205378 bits in full, \
+         and the system refused the memory for it; the number is exact and has no size limit, \
+         but this machine cannot hold its digits"
+    );
+    // A rational with a huge denominator is refused the same way.
+    let rat = |t: Term| prim(Prim::CastRat, vec![t]);
+    let tiny = bin(Prim::Div, rat(lit(3)), rat(huge));
+    let err = eval(&show(tiny)).unwrap_err();
+    assert!(
+        matches!(&err, KernelError::NumberTooLarge { op: "String", .. }),
+        "{err:?}"
+    );
+    let Value::Str(s) = eval(&show(pow(lit(2), pow(lit(2), lit(16))))).unwrap() else {
+        panic!("a string")
+    };
+    assert_eq!(s.char_count(), 19729);
+    assert!(s.starts_with("2003529930406846464979"));
+    let Value::Str(s) = eval(&show(pow(lit(10), pow(lit(10), lit(6))))).unwrap() else {
+        panic!("a string")
+    };
+    assert_eq!(s.char_count(), 1_000_001);
+    assert!(s.starts_with("10") && s[1..].bytes().all(|b| b == b'0'));
+}

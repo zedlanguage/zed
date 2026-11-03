@@ -20,6 +20,16 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
     let out = match (p, x) {
         (Prim::Show, Value::Str(_)) => x.clone(),
         (Prim::Show, Value::Float(f)) => Value::str(&show_f64(f.get())),
+        // Printing a number builds its digits; the system is asked for that memory first.
+        (Prim::Show, Value::Big(n) | Value::Rat(n)) => match n.text_room() {
+            Ok(()) => Value::str(&x.to_string()),
+            Err(e) => {
+                return Err(KernelError::NumberTooLarge {
+                    op: "String",
+                    bits: e.bits,
+                });
+            }
+        },
         (Prim::Show, _) => Value::str(&x.to_string()),
         (Prim::CastInt, Value::Str(s)) => match read_int(s) {
             Some(n) => Value::int(n),

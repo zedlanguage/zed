@@ -42,7 +42,7 @@ pub enum KernelError {
     /// system refused the memory for it (sec:domains says when a number is built). The number
     /// is a value of the language; this evaluator cannot run the program on this machine.
     NumberTooLarge {
-        /// The operator: `+`, `-`, `div`, `mod` or `**`.
+        /// The operator: `+`, `-`, `div`, `mod`, `**`, or `String` printing a number.
         op: &'static str,
         /// At most this many bits: the size of the number to build.
         bits: num_bigint::BigUint,

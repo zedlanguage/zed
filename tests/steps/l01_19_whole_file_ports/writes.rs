@@ -88,6 +88,24 @@ fn a_number_too_large_to_build_stops_the_run() {
     assert_eq!(out.stdout, "");
 }
 
+/// Printing `2 ** 2 ** 100` must build its `2^100` bits: the run stops with an error naming
+/// that size, at once, and the process does not abort.
+#[test]
+fn printing_a_number_too_large_to_build_stops_the_run() {
+    let src = "main() -> (stdout: Lines) {\n  stdout <- String(2 ** 2 ** 100);\n}\n";
+    let out = run("print_too_large", src, "", &[]);
+    assert_eq!(out.status, 1, "{}", out.stderr);
+    assert!(
+        out.stderr.contains(
+            "`String` must build a number of up to 1267650600228229401496703205378 bits in \
+             full, and the system refused the memory for it"
+        ),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(out.stdout, "");
+}
+
 #[test]
 fn only_strings_are_written_as_lines() {
     let src = "main() -> (stdout: Lines) {\n  stdout <- 42;\n}\n";

@@ -205,6 +205,23 @@ impl Rat {
         format!("{sign}{}", digits(self.num.magnitude(), pows.collect()))
     }
 
+    /// `Ok` when the system gives the memory to write its digits: the number built, of at
+    /// most `bits` bits, and its text, at most `bits * log10(2) + 2` bytes; else [`TooLarge`]
+    /// naming `bits`, before anything is built.
+    pub fn text_room(&self) -> Result<(), TooLarge> {
+        let side = |coef: &BigInt, sign: Sign| {
+            let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
+            width(coef, pows.map(|(p, e)| (*p, e.magnitude())))
+        };
+        let bits = side(&self.num, Sign::Plus) + side(&self.den, Sign::Minus);
+        // `log10(2) < 1234 / 4096`; a digit is one byte.
+        let text = ((&bits * 1234u32) >> 12u32) + 2u32;
+        match given(&(&bits + (text << 3u32))) {
+            true => Ok(()),
+            false => Err(TooLarge { bits }),
+        }
+    }
+
     /// The denominator's digits.
     pub fn denom_text(&self) -> String {
         let pows = self
@@ -682,14 +699,18 @@ pub struct TooLarge {
 /// A build that would ask for more than the system gives is reported before it starts, where
 /// num-bigint would abort the process.
 fn room(bits: BigUint) -> Result<(), TooLarge> {
-    let words = (&bits + 63u32) >> 6u32;
-    let given = words
-        .to_usize()
-        .is_some_and(|w| Vec::<u64>::new().try_reserve_exact(w).is_ok());
-    match given {
+    match given(&bits) {
         true => Ok(()),
         false => Err(TooLarge { bits }),
     }
+}
+
+/// Whether the allocator gives `bits` bits at once, asked and freed at once.
+fn given(bits: &BigUint) -> bool {
+    let words = (bits + 63u32) >> 6u32;
+    words
+        .to_usize()
+        .is_some_and(|w| Vec::<u64>::new().try_reserve_exact(w).is_ok())
 }
 
 /// The digits of `coef * prod pows`. The power of 10 they share is written as zeros, so a
