@@ -2,7 +2,7 @@
 //! variables until the partition is stable, with no count of rounds that depends on the size,
 //! and the colors depend on the structure of the rows only, not on the names. The solver takes
 //! the variables breadth first over the rows, and the colors along that order do not depend on
-//! the names either.
+//! the names either, except among variables of one color, where the names break the tie.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -81,6 +81,75 @@ fn distinct(c: &BTreeMap<Atom, u64>) -> usize {
     c.values().collect::<BTreeSet<_>>().len()
 }
 
+/// All k! permutations of 0..k, the j-th by the factorial digits of j.
+fn permutations(k: usize) -> Vec<Vec<usize>> {
+    let count: usize = (1..=k).product();
+    let perms: Vec<Vec<usize>> = (0..count)
+        .map(|mut j: usize| {
+            let mut left: Vec<usize> = (0..k).collect();
+            let mut p = Vec::new();
+            for f in (1..=k).rev() {
+                let fact: usize = (1..f).product();
+                p.push(left.remove(j / fact));
+                j %= fact;
+            }
+            p
+        })
+        .collect();
+    assert_eq!(perms.iter().collect::<BTreeSet<_>>().len(), count);
+    perms
+}
+
+/// `sys` with `base[i]` renamed to `base[p[i]]`, and its rows reversed.
+fn renamed(sys: &[Con], base: &[String], p: &[usize]) -> (Vec<Con>, impl Fn(&Atom) -> Atom) {
+    let rename = move |a: &Atom| match a {
+        Atom::Sym(s) => {
+            let i = base
+                .iter()
+                .position(|b| **b == **s)
+                .expect("a named variable");
+            var(&base[p[i]])
+        }
+        other => other.clone(),
+    };
+    let mut out: Vec<Con> = sys
+        .iter()
+        .map(|c| Con {
+            lin: Lin {
+                terms: c
+                    .lin
+                    .terms
+                    .iter()
+                    .map(|(a, k)| (rename(a), k.clone()))
+                    .collect(),
+                constant: c.lin.constant.clone(),
+            },
+            rel: c.rel,
+        })
+        .collect();
+    out.reverse();
+    (out, rename)
+}
+
+/// The colors of `sys` follow its variables under every renaming of `base` (with the rows
+/// reversed too), and the colors along the solver's order stay the same.
+fn same_colors_under_every_naming(sys: &[Con], base: &[String], perms: &[Vec<usize>]) {
+    let first = colors(sys);
+    let first_order: Vec<u64> = order(sys).iter().map(|a| first[a]).collect();
+    for p in perms {
+        let (other, rename) = renamed(sys, base, p);
+        let got = colors(&other);
+        let got_order: Vec<u64> = order(&other).iter().map(|a| got[a]).collect();
+        assert_eq!(
+            got_order, first_order,
+            "{sys:?} renamed by {p:?}: the order"
+        );
+        for (a, k) in &first {
+            assert_eq!(got[&rename(a)], *k, "{sys:?} renamed by {p:?}");
+        }
+    }
+}
+
 #[test]
 fn every_stage_of_a_long_pipeline_gets_its_own_color() {
     // Control: the old count of rounds, log n + 1, gave 17 colors at 64 and 23 at 512.
@@ -119,67 +188,56 @@ fn colors_do_not_depend_on_the_names_or_the_order_of_the_rows() {
     // the colors along the order the solver takes the variables stay the same.
     let mut rng = Rng::new(0xCA_0001);
     let base = names(5, "x");
-    // The k-th permutation, by its factorial digits.
-    let perms: Vec<Vec<usize>> = (0..120)
-        .map(|mut k: usize| {
-            let mut left: Vec<usize> = (0..5).collect();
-            let mut p = Vec::new();
-            for f in (1..=5).rev() {
-                let fact: usize = (1..f).product();
-                p.push(left.remove(k / fact));
-                k %= fact;
-            }
-            p
-        })
-        .collect();
-    assert_eq!(perms.iter().collect::<BTreeSet<_>>().len(), 120);
+    let perms = permutations(5);
     let mut ties = 0;
     for _ in 0..40 {
         let rows = 2 + rng.below(5);
         let sys = random(&mut rng, 5, rows, "x");
-        let first = colors(&sys);
-        let first_order: Vec<u64> = order(&sys).iter().map(|a| first[a]).collect();
-        ties += usize::from(distinct(&first) < first.len());
-        for p in &perms {
-            let rename = |a: &Atom| match a {
-                Atom::Sym(s) => {
-                    let i = base
-                        .iter()
-                        .position(|b| **b == **s)
-                        .expect("a named variable");
-                    var(&base[p[i]])
-                }
-                other => other.clone(),
-            };
-            let mut renamed: Vec<Con> = sys
-                .iter()
-                .map(|c| Con {
-                    lin: Lin {
-                        terms: c
-                            .lin
-                            .terms
-                            .iter()
-                            .map(|(a, k)| (rename(a), k.clone()))
-                            .collect(),
-                        constant: c.lin.constant.clone(),
-                    },
-                    rel: c.rel,
-                })
-                .collect();
-            renamed.reverse();
-            let got = colors(&renamed);
-            let got_order: Vec<u64> = order(&renamed).iter().map(|a| got[a]).collect();
-            assert_eq!(
-                got_order, first_order,
-                "{sys:?} renamed by {p:?}: the order"
-            );
-            for (a, k) in &first {
-                assert_eq!(got[&rename(a)], *k, "{sys:?} renamed by {p:?}");
-            }
-        }
+        ties += usize::from(distinct(&colors(&sys)) < 5);
+        same_colors_under_every_naming(&sys, &base, &perms);
     }
     // The renamings must reach systems where some variables share a color.
     assert!(ties > 0, "no system with a tie");
+}
+
+#[test]
+fn coefficients_one_and_minus_two_are_told_apart() {
+    // Codex's six-variable system from cross-review round 3: each row is `a·x + k >= 0`, with
+    // every variable in -3..=3. A hash of the coefficients that sent 1 and -2 to one key gave
+    // some of these variables one color; refinement by the coefficients themselves gives each
+    // its own, under all 720 namings.
+    let x = names(6, "x");
+    let rows: [([i128; 6], i128); 6] = [
+        ([0, -2, 1, 1, 0, 0], 0),
+        ([-2, 1, 0, -2, 0, 0], 0),
+        ([0, 0, -2, 0, -2, -2], -1),
+        ([1, -2, 0, 0, 1, 0], -1),
+        ([-2, 0, 0, -2, 0, 1], -1),
+        ([0, 0, -2, 0, -2, -2], 0),
+    ];
+    let mut sys: Vec<Con> = rows
+        .iter()
+        .map(|(a, k)| {
+            let t: Vec<(&str, i128)> = x
+                .iter()
+                .zip(a)
+                .filter(|(_, k)| **k != 0)
+                .map(|(v, k)| (v.as_str(), *k))
+                .collect();
+            row(&t, *k, false)
+        })
+        .collect();
+    for v in &x {
+        sys.push(row(&[(v, 1)], 3, false));
+        sys.push(row(&[(v, -1)], 3, false));
+    }
+    assert_eq!(distinct(&colors(&sys)), 6);
+    same_colors_under_every_naming(&sys, &x, &permutations(6));
+    // The smallest case: one row with coefficients 1 and -2.
+    assert_eq!(
+        distinct(&colors(&[row(&[("a", 1), ("b", -2)], 0, false)])),
+        2
+    );
 }
 
 /// The partition of the variables that rounds of plain refinement reach when run until the

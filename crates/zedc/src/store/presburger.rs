@@ -1921,9 +1921,10 @@ impl Ties {
 }
 
 /// `atoms`, in name order, put in the order the solver takes them; the places in `cons` of the
-/// rows in the order it takes them; and the colors of the atoms in the coarsest stable coloring
-/// of the system ([`stable_colors`]). Both orders are breadth first over the rows, so that
-/// variables that share a row stand near each other, and so do rows that share a variable:
+/// rows in the order it takes them; and the color of each atom of that order in the coarsest
+/// stable coloring of the system ([`stable_colors`]). Both orders are breadth first over the
+/// rows, so that variables that share a row stand near each other, and so do rows that share a
+/// variable:
 /// from the variable of least color not yet placed, each placed variable's rows not yet taken
 /// are taken in the order of their colors, and each row's variables not yet placed in the
 /// order of theirs. Rows with no variable come last, by color. Names, and the order of
@@ -1931,7 +1932,7 @@ impl Ties {
 /// rows of one color are equal, so the orders depend on the structure alone. O(n + m + t log t)
 /// for n variables, m rows and t terms, with the sorts of each row's terms and each variable's
 /// rows.
-fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> (Vec<Atom>, Vec<usize>, BTreeMap<Atom, u64>) {
+fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> (Vec<Atom>, Vec<usize>, Vec<usize>) {
     let n = atoms.len();
     let color = stable_colors(&atoms, cons);
     let by_color = |v: &usize| (color[*v], *v);
@@ -1989,11 +1990,7 @@ fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> (Vec<Atom>, Vec<usize>, BTreeMa
     let mut bare: Vec<usize> = (0..cons.len()).filter(|&r| !taken[r]).collect();
     bare.sort_by_key(|&r| (color[n + r], r));
     rows.extend(bare);
-    let keys = atoms
-        .iter()
-        .zip(&color)
-        .map(|(a, &k)| (a.clone(), k as u64))
-        .collect();
+    let keys = order.iter().map(|&x| color[x]).collect();
     let mut atoms: Vec<Option<Atom>> = atoms.into_iter().map(Some).collect();
     let order = order
         .into_iter()
@@ -2015,6 +2012,11 @@ pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
         .into_iter()
         .collect();
     let (order, _, colors) = canonical(atoms, &cons);
+    let colors = order
+        .iter()
+        .zip(colors)
+        .map(|(a, k)| (a.clone(), k as u64))
+        .collect();
     (order, colors)
 }
 
@@ -2033,8 +2035,15 @@ pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
 /// 2017; arXiv:1509.08251), section 3, with edge colors by the subdivision of their
 /// edge-colored theorem, which is the term vertex here. A popped color class R refines every
 /// class by the number of neighbors in R each of its vertices has. After a split, the largest
-/// new class is not pushed unless the old one was waiting (Hopcroft's rule), so a vertex is in
-/// O(log N) refining classes in all. New colors are numbered in the increasing order of
+/// new class is not pushed unless the old one was waiting (Hopcroft's rule, "process the smaller
+/// half"), so a vertex is in O(log N) refining classes in all. The coarsest stable coloring is
+/// Cardon and Crochemore's "coarsest regular congruence", an equivalence in which any two equal
+/// vertices have the same number of successors by each type of arc in each class ("Partitioning
+/// a graph in O(|A| log2 |V|)", Theoret. Comput. Sci. 19, 1982, 85-98), and Paige and Tarjan's
+/// coarsest size-stable refinement, which they compute by queueing every new block but the
+/// largest, in O(m log n) time because a vertex lies in at most log2 n + 1 of the blocks taken
+/// from the queue ("Three partition refinement algorithms", SIAM J. Comput. 16(6), 1987,
+/// 973-989, end of section 3). New colors are numbered in the increasing order of
 /// (old color, number of neighbors), never by a hash, so equal colors mean equal structure and
 /// the numbers depend on the structure alone, not on the names or the order of the rows.
 /// O((n + m + t) log(n + m + t)) for n variables, m rows and t terms, with the sorts of the
