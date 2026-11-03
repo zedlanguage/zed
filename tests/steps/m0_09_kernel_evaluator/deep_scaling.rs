@@ -13,6 +13,12 @@ const SCALING_DEPTH: usize = 160_000;
 /// Times `op` on two values holding every shape, built before any is timed, so that a shape
 /// walked in more than linear time shows however few of the levels it is.
 fn timed(what: &str, op: impl Fn(&Value, &Value) + Sync) {
+    timed_by(what, true, op);
+}
+
+/// [`timed`], its bytes compared only when `allocates`: an `op` that allocates nothing has no
+/// bytes to compare.
+fn timed_by(what: &str, allocates: bool, op: impl Fn(&Value, &Value) + Sync) {
     let n = SCALING_DEPTH;
     let build = |d| {
         (
@@ -21,10 +27,15 @@ fn timed(what: &str, op: impl Fn(&Value, &Value) + Sync) {
         )
     };
     let (small, large) = (build(n), build(8 * n));
-    scaling::check(what, n, |d| {
+    let run = |d| {
         let (a, b) = if d == n { &small } else { &large };
         op(a, b);
-    });
+    };
+    if allocates {
+        scaling::check(what, n, run);
+    } else {
+        scaling::check_instructions_only(what, n, 1, run);
+    }
 }
 
 #[test]
@@ -48,7 +59,8 @@ fn surface_equality_scales_with_depth() {
 
 #[test]
 fn a_copy_and_its_end_scale_with_depth() {
-    on_main_sized_stack(|| timed("copy and free, by depth", |a, _| drop(a.clone())));
+    // A copy shares the value's `Arc`s, so it allocates nothing.
+    on_main_sized_stack(|| timed_by("copy and free, by depth", false, |a, _| drop(a.clone())));
 }
 
 #[test]
@@ -65,7 +77,8 @@ fn debug_printing_scales_with_depth() {
 
 #[test]
 fn the_key_scales_with_depth() {
-    on_main_sized_stack(|| timed("the key, by depth", |a, _| drop(a.key())));
+    // The values hold no -0.0, so each is its own key, a copy that allocates nothing.
+    on_main_sized_stack(|| timed_by("the key, by depth", false, |a, _| drop(a.key())));
 }
 
 #[test]
