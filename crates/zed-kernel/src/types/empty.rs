@@ -231,6 +231,13 @@ enum Rep {
 
 impl Search {
     fn empty(&mut self, t: &Type) -> bool {
+        // A scalar in the type is a value of it, read off before the type is looked up, so a
+        // meet or difference of literal sets costs no comparison with the types decided.
+        let p = t.p();
+        let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
+        if p.bools != 0 || lits.iter().any(|l| l.cofinite || !l.values.is_empty()) {
+            return false;
+        }
         if let Some(b) = MEMO.with(|m| m.borrow().get(t).copied()) {
             return b;
         }
@@ -369,18 +376,16 @@ impl Search {
     }
 
     /// Tests each changed component of the box against its open cells that have a tuple type
-    /// of `f` not yet known to miss the box, and closes those it settles. A tuple type that
-    /// misses a component is out of the part, so whether it holds the others is not tested:
-    /// every changed component is tested for cells that miss it before any is tested for
-    /// cells that hold it, and a cell only such tuple types have is not tested.
-    fn retest(&mut self, g: &mut Region, f: &Part<Row>) {
+    /// not yet known to miss the box, and closes those it settles. A tuple type that misses a
+    /// component is out of the part, so whether it holds the others is not tested: every
+    /// changed component is tested for cells that miss it before any is tested for cells that
+    /// hold it, and a cell only such tuple types have is not tested. Tuple types the part no
+    /// longer has are not looked up: that costs the size of the part at each call, more than
+    /// the tests it saves.
+    fn retest(&mut self, g: &mut Region) {
         let changed: Vec<usize> = (0..g.r.len()).filter(|&j| g.changed[j]).collect();
         if changed.is_empty() {
             return;
-        }
-        let mut live = vec![false; g.atoms.len()];
-        for a in f.distinct_atoms() {
-            live[g.index[&a]] = true;
         }
         for &j in &changed {
             g.changed[j] = false;
@@ -390,7 +395,7 @@ impl Search {
             for &j in &changed {
                 for c in 0..g.cells[j].len() {
                     let cell = &g.cells[j][c];
-                    if !cell.open || !cell.rows.iter().any(|&k| live[k] && g.missed[k] == 0) {
+                    if !cell.open || !cell.rows.iter().any(|&k| g.missed[k] == 0) {
                         continue;
                     }
                     let settled = if missed {
@@ -414,14 +419,13 @@ impl Search {
             if g.r.iter().any(|t| self.empty(t)) {
                 return true;
             }
-            self.retest(g, f);
+            self.retest(g);
             *f = f.restrict(&|a| g.stand(a)).settle();
             if let Some(b) = f.is_leaf() {
                 return !b;
             }
             let (taken, refused) = f.forced();
-            // The components changed in this pass, against which a refused tuple type's
-            // standing is tested before it is used.
+            // The components changed in this pass.
             let mut shrunk = BTreeSet::new();
             // A component narrowed to a tuple type's own holds it, and one that takes a tuple
             // type out misses it, so its cell there is closed without a test.
@@ -435,21 +439,14 @@ impl Search {
                     }
                 }
             }
-            'refused: for a in &refused {
+            // The changed components are tested again cell by cell, so where a refused tuple
+            // type stands is read off the table, not tested for each tuple type.
+            if !shrunk.is_empty() {
+                self.retest(g);
+            }
+            for a in &refused {
                 let k = g.index[a];
-                let (mut loose, mut at) = g.loose[k];
-                for &j in &shrunk {
-                    if !g.is_open(k, j) {
-                        continue;
-                    }
-                    if self.empty(&(&g.r[j] & &a[j])) {
-                        continue 'refused;
-                    }
-                    if self.empty(&(&g.r[j] - &a[j])) {
-                        loose -= 1;
-                        at -= j;
-                    }
-                }
+                let (loose, at) = g.loose[k];
                 if g.missed[k] == 0 && loose == 1 {
                     g.shrink(at, &g.r[at] - &a[at]);
                     if g.is_open(k, at) {
@@ -802,7 +799,7 @@ mod tests {
         // tuple types at once, and leaves `0` to be tested again.
         h.shrink(2, lit(0));
         let mut s = Search::default();
-        s.retest(&mut h, f);
+        s.retest(&mut h);
         for (k, a) in h.atoms.iter().enumerate() {
             assert_eq!(h.missed[k], usize::from(a[2] == lit(1)), "{k}");
         }
