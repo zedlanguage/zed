@@ -899,7 +899,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     );
                     (t, text)
                 }
-                (Some(a), Some(t)) => (t, format!("`{}` is declared `{a}`", p.name)),
+                (Some(a), Some(t)) => {
+                    // A name is shown as written; any other type as the checker prints it.
+                    let shown = match &a.kind {
+                        TypeKind::Name(n) => n.clone(),
+                        _ => self.show(&t),
+                    };
+                    let text = format!("`{}` is declared `{shown}`", p.name);
+                    (t, text)
+                }
                 (None, Some(t)) => {
                     let text = format!("`{}` is {t}, the carrier of its default", p.name);
                     (t, text)
@@ -1415,7 +1423,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             if !ok {
                 let p = self.show(&piece.ty());
-                self.error(span, format!("{what} does not take {p}, which is not {ty}"));
+                let why = on.of_piece(&piece).refused(ty);
+                self.error(
+                    span,
+                    format!("{what} does not take {p}, which is not {ty}{why}"),
+                );
             }
         }
     }
@@ -3395,18 +3407,27 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.rejected_at(what, args, None)
     }
 
-    /// [`Self::rejected`], with argument `i` shown as the piece `p` of it that failed.
-    fn rejected_at(&self, what: &str, args: &[Option<Arg>], at: Option<(usize, &Piece)>) -> String {
+    /// [`Self::rejected`], with argument `i` shown as the piece `p` of it that failed at the
+    /// parameter of type `q`, and the cause when that check was refused.
+    fn rejected_at(
+        &self,
+        what: &str,
+        args: &[Option<Arg>],
+        at: Option<(usize, &Piece, &Ty)>,
+    ) -> String {
         let shown: Vec<String> = args
             .iter()
             .enumerate()
             .map(|(i, a)| match (a, at) {
-                (_, Some((j, p))) if i == j => self.show(&p.ty()),
+                (_, Some((j, p, _))) if i == j => self.show(&p.ty()),
                 (Some(a), _) => self.show(&a.ty),
                 (None, _) => "_".into(),
             })
             .collect();
-        format!("{what} does not take ({})", shown.join(", "))
+        let why = at
+            .and_then(|(i, p, q)| Some(args[i].as_ref()?.ty.of_piece(p).refused(q)))
+            .unwrap_or_default();
+        format!("{what} does not take ({}){why}", shown.join(", "))
     }
 
     /// [`Self::apply`] of a signature of one arrow. The arguments at the parameters that are
@@ -3568,7 +3589,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     },
                 };
                 if !ok {
-                    return Err(self.rejected_at(what, args, Some((i, &piece))));
+                    return Err(self.rejected_at(what, args, Some((i, &piece, p))));
                 }
             }
         }

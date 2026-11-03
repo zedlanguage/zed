@@ -280,3 +280,83 @@ fn equal_plain_definitions_of_different_groups_are_one_type() {
     assert_eq!(a[0], b[1]);
     assert!(a[1].subtype(&b[0]) && !b[0].subtype(&a[1]));
 }
+
+/// `g` takes the triples of seven boxes, which cover every triple of `#a`, `#b` and `#c` only
+/// together; without the last box, `(#c, #a, #b)` is outside them.
+fn box_program(boxes: usize) -> String {
+    let all = [
+        "(#a | #b, #a | #b, #a | #b)",
+        "(#a | #c, #a | #c, #a | #c)",
+        "(#b | #c, #a | #b, #a | #c)",
+        "(#b | #c, #c, #a | #c)",
+        "(#c, #a | #b, #b | #c)",
+        "(#a | #c, #b | #c, #a | #b)",
+        "(#a | #b, #b | #c, #b | #c)",
+    ];
+    format!(
+        "g(x: {}) = x;\nh(y: (#a | #b | #c, #a | #b | #c, #a | #b | #c)) = g(x: y);\nmain() = 0;\n",
+        all[..boxes].join(" | ")
+    )
+}
+
+/// The first line of the diagnostics of `src`, which must be rejected.
+fn rejected(src: &str) -> String {
+    match zedc::run::load(src.as_bytes()) {
+        Ok(_) => panic!("accepted:\n{src}"),
+        Err(e) => e.lines().next().unwrap_or_default().to_string(),
+    }
+}
+
+#[test]
+fn a_call_whose_check_was_refused_says_why() {
+    let triple = "(#a | #b | #c, #a | #b | #c, #a | #b | #c)";
+    assert_eq!(
+        rejected(&box_program(7)),
+        format!(
+            "2:52: `g` does not take ({triple}) (not decided: {})",
+            Refusal::TupleSplit.message()
+        )
+    );
+    // A decided failure names no cause.
+    assert_eq!(
+        rejected(&box_program(6)),
+        format!("2:52: `g` does not take ({triple})")
+    );
+    // The declared type is printed as it is written.
+    let Err(all) = zedc::run::load(box_program(7).as_bytes()) else {
+        panic!("accepted")
+    };
+    assert!(
+        all.contains(&format!("`y` is declared `{triple}`")),
+        "{all}"
+    );
+}
+
+#[test]
+fn a_tuple_that_shapes_hold_only_together_is_taken() {
+    // No one shape holds `(#a | #b, #c)`, and the kernel decides that the two do.
+    let src = "g(x: (#a, #c) | (#b, #c)) = x;\nh(y: (#a | #b, #c)) = g(x: y);\nmain() = 0;\n";
+    assert!(zedc::run::load(src.as_bytes()).is_ok(), "{src}");
+    let src = "g(x: ((#a, #c) | (#b, #c),)) = x;\nh(y: ((#a | #b, #c),)) = g(x: y);\nmain() = 0;\n";
+    assert!(zedc::run::load(src.as_bytes()).is_ok(), "{src}");
+    let src = "g(x: (#a, #c) | (#b, #c)) = x;\nh(y: (#a | #b | #c, #c)) = g(x: y);\nmain() = 0;\n";
+    assert_eq!(
+        rejected(src),
+        "2:28: `g` does not take ((#a | #b | #c, #c))"
+    );
+}
+
+#[test]
+fn a_morphism_type_whose_bound_check_was_refused_says_why() {
+    // A function into `#a | #b` that gives both is in neither union member, but the kernel
+    // shows no family against a morphism type before L2, and splits no function part.
+    let src = "f(x) = x is ((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int);";
+    assert_eq!(
+        crate::l01_16_elaboration::errors(src),
+        [format!(
+            "the guarantee (left of `..`) of this morphism type is not within its permission \
+             (right of `..`) (not decided: {}) [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]",
+            Refusal::MorphismSplit.message()
+        )]
+    );
+}

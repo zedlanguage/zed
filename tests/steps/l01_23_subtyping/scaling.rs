@@ -601,3 +601,42 @@ fn a_list_of_two_cycles_is_shown_in_the_size_of_its_type() {
         assert_eq!(t.verdict(), zed_kernel::types::Verdict::Inhabited);
     });
 }
+
+#[test]
+fn a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union() {
+    // `g` takes `(#a_i, #c)` for each of `n` atoms, and `h` passes it `(#a_0 | … | #a_n-1,
+    // #c)`, which no one shape holds: the checker builds each side's kernel type once and
+    // the kernel decides it by splitting the first component.
+    let program = |n: usize| {
+        let atoms: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();
+        let shapes: Vec<String> = atoms.iter().map(|a| format!("({a}, #c)")).collect();
+        format!(
+            "g(x: {}) = x;\nh(y: ({}, #c)) = g(x: y);\nmain() = 0;\n",
+            shapes.join(" | "),
+            atoms.join(" | ")
+        )
+    };
+    scaling::check("a tuple held by n shapes together, by n", 64, |n| {
+        Type::forget_emptiness();
+        assert!(zedc::run::load(program(n).as_bytes()).is_ok());
+    });
+}
+
+#[test]
+fn a_tuple_that_no_shapes_hold_is_rejected_in_the_size_of_the_union() {
+    // As above, with `#d` for `#c`: the kernel shows a value outside every shape, so the
+    // shapes are not each tried, which costs every shape times the components.
+    let program = |n: usize| {
+        let atoms: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();
+        let shapes: Vec<String> = atoms.iter().map(|a| format!("({a}, #c)")).collect();
+        format!(
+            "g(x: {}) = x;\nh(y: ({}, #d)) = g(x: y);\nmain() = 0;\n",
+            shapes.join(" | "),
+            atoms.join(" | ")
+        )
+    };
+    scaling::check("a tuple held by no shape, by n", 64, |n| {
+        Type::forget_emptiness();
+        assert!(zedc::run::load(program(n).as_bytes()).is_err());
+    });
+}

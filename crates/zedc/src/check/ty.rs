@@ -682,7 +682,51 @@ impl Ty {
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
     pub fn sub(&self, other: &Ty, binds: &mut Binds) -> bool {
+        // `other` as a kernel type, built at most once, when a tuple piece needs it.
+        let mut whole: Option<Option<KType>> = None;
+        self.pieces().iter().all(|p| {
+            // A tuple piece of a type with no variable, function or unknown is decided by the
+            // kernel, which sees shapes that hold it only together. Trying each shape in turn
+            // costs every shape times the components; the kernel splits the components once.
+            // The rule of one shape is sound, so it is tried only when the kernel refused.
+            let decided = match p {
+                Piece::Tuple(cs) => Ty::tuple(cs.clone()).kernel().and_then(|a| {
+                    let b = whole.get_or_insert_with(|| other.kernel()).as_ref()?;
+                    match a.subtype_verdict(b) {
+                        Verdict::Empty => Some(true),
+                        Verdict::Inhabited => Some(false),
+                        Verdict::Refused(_) => None,
+                    }
+                }),
+                _ => None,
+            };
+            decided.unwrap_or_else(|| accepts(other, p, self, binds))
+        })
+    }
+
+    /// [`Self::sub`] with each tuple piece held by one tuple shape of `other`: the rule for the
+    /// components of a tuple, whose joint check is the kernel's on the whole tuple.
+    fn sub_by_shape(&self, other: &Ty, binds: &mut Binds) -> bool {
         self.pieces().iter().all(|p| accepts(other, p, self, binds))
+    }
+
+    /// The kernel type of its values, when it holds no function, variable or unknown at any
+    /// depth: its scalars and atoms, and its tuple shapes. A tuple piece that no one shape of
+    /// a union holds may still be in the union (boxes that cover a box only together); the
+    /// kernel decides that, or refuses with its cause.
+    pub fn kernel(&self) -> Option<KType> {
+        if !self.fns.is_empty() || !self.vars.is_empty() || self.dynamic {
+            return None;
+        }
+        let shapes = self.tuples.iter().map(|cs| {
+            let cs = cs.iter().map(Ty::kernel).collect::<Option<Vec<_>>>()?;
+            Some(KType::tuple(cs))
+        });
+        // Joined in pairs: one at a time costs the size of the union so far for each shape.
+        let shapes = shapes.collect::<Option<Vec<_>>>()?;
+        Some(KType::union_all(
+            std::iter::once(self.set.clone()).chain(shapes),
+        ))
     }
 
     /// Whether every value of `self` is in `other`, with no variable bound.
@@ -692,10 +736,15 @@ impl Ty {
     }
 
     /// When `self <: other` failed: the clause that says why it was not decided, if the check of
-    /// its scalar sets was refused, and nothing if it was decided. A refusal claims nothing
-    /// about the types, so a message that reads as a counterexample would be wrong.
+    /// its kernel types (its scalar sets, when either holds a function, variable or unknown)
+    /// was refused, and nothing if it was decided. A refusal claims nothing about the types,
+    /// so a message that reads as a counterexample would be wrong.
     pub fn refused(&self, other: &Ty) -> String {
-        match self.set.subtype_verdict(&other.set) {
+        let verdict = match (self.kernel(), other.kernel()) {
+            (Some(a), Some(b)) => a.subtype_verdict(&b),
+            _ => self.set.subtype_verdict(&other.set),
+        };
+        match verdict {
             Verdict::Refused(r) if !other.dynamic => format!(" (not decided: {})", r.message()),
             _ => String::new(),
         }
@@ -930,7 +979,7 @@ fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds) -> bool {
         Piece::Tuple(cs) => t.tuples.iter().any(|ds| {
             ds.len() == cs.len() && {
                 let mut b = binds.clone();
-                let ok = cs.iter().zip(ds).all(|(c, d)| c.sub(d, &mut b));
+                let ok = cs.iter().zip(ds).all(|(c, d)| c.sub_by_shape(d, &mut b));
                 if ok {
                     *binds = b;
                 }
