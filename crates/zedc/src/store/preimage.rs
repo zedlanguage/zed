@@ -3214,9 +3214,9 @@ impl<'t> Tx<'t> {
                     // infinities, which keeps each treap operation O(1) per node; values of any
                     // size would cost time in their bits at every node. Trigger: a value of a
                     // kept arm outside `i64` on the inputs where the guard keeps that arm. Test:
-                    // `l01_25_preimage_catalog::constant_minus::reflected_arms_at_the_ends_of_i64`
-                    // (the domain `[-60, 60]`). COMPLEXITY.md S22. A complete solution would hold
-                    // the treap's values as `Num`.
+                    // `l01_25_preimage_catalog::s22::a_chain_that_leaves_i64_keeps_its_exact_preimage`
+                    // (`t_k` at `i = -24` from `k = 37`). COMPLEXITY.md S22. A complete solution
+                    // would hold the treap's values as `Num`.
                     fits(s.vals.0)?;
                     fits(s.vals.1)?;
                     slices.push((key(lo), s));
