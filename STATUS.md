@@ -791,35 +791,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ST2 | verify attempt 6 (item ST) | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
 | ST | verify attempt 6 | 2026-11-02 21:50 | probes (not committed, wt/st-ctl vs base wt/st-ctl0=b54d2a6): complement rule sound, 13091 true of 200000 random disjunctions all hold on a 19x19 window; Blocks |
 | T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | started; reading brief, SYNTH_R1, S22a_BRIEF, verifier reports |
-| T14-cell-len:merge (orchestrator) | running | 2026-11-03 02:51 | lock released |
-| T6 | repair attempt 2 | 2026-11-03 00:01 | committed 1321097 6410fe9 a52c9aa (X13 fixes+tests, checker refusal messages, docs); rebasing on main |
+| T6 | repair attempt 2 | 2026-11-03 00:01 | done, ok=false: refusals before a witness (fork, residues) and no input for TupleSplit/NoWitness remain; branch wt/t6 62c6877, spec wt/t6-spec 5cd9de6 |
+| XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
-Merged into local main and not yet pushed (25 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (2 commits); the push follows one full test run on the merged tree:
 
+- 7fe4783 STATUS, plan_dag: OSP-order merged and marked done
 - b62a249 OSP-order: the weak topological order follows the cells' keys
-- 2374236 STATUS: in progress as of 2026-11-03 03:10
-- 092410d STATUS, plan_dag: merged items marked done; In progress and the unpushed list rewritten from the ledger
-- 0870948 XT-R: design R for S18: box stages replace the simplex; column quotient; UTVPI DAG potential
-- 1e8f357 T-zone: arm tests are closed over the functions they call before the preimage; integer names stay names in atom
-- 9543a53 OSP-lit: correctly rounded float literals with range errors, #ioError(op, path, why) on read and write failures, unknown escapes list the valid ones, 
-- 241d535 L6.1: STATUS row and notes, COMPLEXITY F51-F53, ZED_PORT_GAPS entries; nested-loop formatting checked at the order of its text
-- 95e0a03 L6.1: parser, formatter and refusals for the forms of layer L6
-- b63fd40 P14-MST: reference 14 single linkage in O(n log n) by Delaunay
-- 877fc86 T14-occ-id: Items loses its id; provenance keys sequences by address while the facts are borrowed
-- bcd83d2 plan_dag: steps from the Victor and FRP studies
-- e24bb5c T14-cell-len: a string literal's length in the store converts char_count with i64::try_from; past i64::MAX it is the ray [i64::MAX..], not a wrapped n
-- 51db8ee T14-rope-len: COMPLEXITY R5, STATUS row, ZED_PORT_GAPS entries, plan_dag row
-- 5102843 T14-rope-len: the lengths test joins one Text per piece ten times, so the chain shares it
-- 96726c6 T14-rope-len: ++ refuses a join whose length in bytes passes usize::MAX (KernelError::StringTooLong), natively and in the kernel; len past i64::MAX is
-- b5bdf25 zed-testgen follow-up: plan row L2.13 (coverage report), L2 gate renumbered to L2.14, L2.12 carries the unreachable-arm warning; fences synced; l01_07
-- 594ac07 Osprey follow-up: plan rows OSP-order, OSP-lit and OSP-diag for the requirements added to done steps; L1.41 needs them; fences synced to DESIGN 891ebe
-- ea12173 plan_dag: steps L7.14 and L25.8 from the Osprey study; OSPREY done
-- 1f50505 T14-occ repair: Provenance::repeated finds addresses by hash, not by position order (chain of products 54.7x -> 8.0x); scaling test; K25 and STATUS sa
-- 8c5cccc T14-occ: provenance does its work once per distinct node
-- 02a8cdb L3.1: parser for the L3 forms
-- f09648f T14-rope repair: a written-out join lets go of its parts (no O(n²) bytes); kinds test asserts the text is not written out; zed-rt doc says strings are
-- 43bafef T14-rope: one rope for the kernel and the native runtime; counts kept per node, so len is O(1) and a join is written out once (COMPLEXITY R4, R5)
-- 32952a8 T11-uses-of: elaboration stores each use of an overload set once and orders through one join node per set, U + K not U·K (COMPLEXITY F49); eval.rs pri
 
 ## Open points
 
