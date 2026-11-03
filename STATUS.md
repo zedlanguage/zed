@@ -869,30 +869,39 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| AXIOMS-fmt | impl attempt 1 | 2026-11-03 07:55 | start |
-| AXIOMS-gaps | impl attempt 1 | 2026-11-03 07:55 | 9 axioms added (106 total), M0.11 group 17/17 pass at load 93; controls: != f64 irreflexive fails every_axiom_holds on nan; deleting > String transitive fails 4 |
-| BIT-words | impl attempt 1 | 2026-11-03 07:14 | l01_39a step tests 32/32 pass (load 124.12); checker now reads names and constants for bit-word domains |
-| F44-memo | impl attempt 1 | 2026-11-03 07:14 | T6 control (24ad3e4 + new harness): the_parts_scale passes; morphism is_empty 3.67M/28.6M/229.7M at c=16/128/1024 (7.8x, 8.0x); load 122 |
+| ADDITIVE-desugar | impl attempt 1 | 2026-11-03 07:14 | started |
+| AXIOMS-fmt | impl attempt 1 | 2026-11-03 07:55 | negative controls run, not committed: old 'law' field in axioms.zed -> prelude test fails at axioms.zed:15:3; blank lines among moved comments dropped -> 2 l01_ |
+| AXIOMS-gaps | verify attempt 1 | 2026-11-03 07:55 | started |
+| BIT-words | impl attempt 1 | 2026-11-03 07:14 | run_tests.sh 4: 99 pieces, 1 failed (m0_01 step-folder name l01_39a rejected by is_step_name; fixing), l01_39a 32 pass 6.7 s (load 69-136) |
+| F44-memo | verify attempt 1 | 2026-11-03 07:14 | T6 merged to main 08:25 before impl commit 08:33; trial merge of wt/f44-memo onto main 3b44b91 in /home/luke/Work/wt/f44-memo-ctl: bdd.rs auto-merges leaving th |
 | HOLE-oneline | repair attempt 1 | 2026-11-03 07:14 | fix: Inside::Str carries its hole's one_line; inner hole one_line = outer // !triple; l01_05 19/19 pass; 3 new grammar cases ok (372 cases, the 2 old DIFFs rema |
 | L1.17a | impl attempt 1 | 2026-11-03 07:14 | negative control (k += 64 in bound::cmp, n=2^18): 57.9x work at 8n (2.21e9 -> 1.28e11 instr), limit 24 -> FAILS as expected; real code at n=2^18 passes in 0.02  |
-| OSP-neglit | verify attempt 1 | 2026-11-03 07:14 | started |
-| R10-stack | impl attempt 1 | 2026-11-03 07:14 | fix in: zed_rt::Stack (RAM+swap MAP_NORESERVE stack, psm switch) used by zed_native::run_at; deep_calls tests pass (10k and 80k calls on 2 MiB thread), 150k-con |
-| S22b-rest | impl attempt 1 | 2026-11-03 07:22 | fix in: pa_prim reads c - u as affine(-1, c); clip_at reflects; jt_range_live 10.6x at 256->2048 (main 63.4x), l01_25 group 127 pass 0 fail, comparison with pre |
-| S22e-quad | impl attempt 1 | 2026-11-03 07:43 | ByClass summary compiles; building steps tests (load 84.52) |
-| S22-merge | impl attempt 1 | 2026-11-03 08:07 | started |
-| SCALE-bytes | impl attempt 1 | 2026-11-03 07:14 | new ledger item ZIR-validate-bytes (open, needs T2-mid and SCALE-bytes, feeds T12, COMPLEXITY Z17); the two l01_33 tests check instructions only until then |
+| OSP-neglit | verify attempt 1 | 2026-11-03 07:14 | done ok: a63de84 verified; merge with impl main 3b44b91 has text conflicts in STATUS.md, ZED_PORT_GAPS.md and l01_08 cases.rs (case count: main 359, merged shou |
+| R10-stack | verify attempt 1 | 2026-11-03 07:14 | start; reviewing 9cdc70f on wt/r10-stack |
+| S22b-rest | repair attempt 1 | 2026-11-03 07:22 | start: run1.txt ended without its summary (killed); rerunning full suite on the uncommitted fix |
+| S22e-quad | impl attempt 1 | 2026-11-03 07:43 | pre-existing on base 0f792ff (fix disabled, same result): s22::random_terms_keep_their_preimages expects 1 reflected 0 exact, gets 0/1; case ((5 mod (3 - x)) mo |
+| S22-merge | impl attempt 1 | 2026-11-03 08:07 | cause confirmed, no code bug: at pre-S22e main 5adc3c2 the 8 S22b reflected cases (random_terms 1, more_random_guarded_chains 7) give byte-identical now/before  |
+| SCALE-bytes | verify attempt 1 | 2026-11-03 07:14 | started |
 | ST-arms-quad | repair attempt 4 | 2026-11-03 03:16 | control B (failed cases emptied again): new paired test fails 1.454/22.158 G at d=120/960, 15.2x > 11.47; accounts test passes; load 77 |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
-| T2-mid | repair attempt 3 | 2026-11-03 04:26 | zir lower committed d537273; l01_31-36 pass; load 85.84 |
-| T6 | merge attempt 1 | 2026-11-03 00:01 | lock released |
-| TD-ends | repair attempt 4 | 2026-11-03 03:52 | baseline: kept_forms_compute_as_their_values_written_out takes 43.0 s on 3dda2df int.rs vs 37-48 s with the fix (load 80); not a regression |
+| T2-mid | repair attempt 3 | 2026-11-03 04:26 | per-file negative controls on d537273, one old file each: old binary.rs, text.rs, canon.rs, lower.rs each overflow their deep test on 2 MiB (exit 134); old recu |
+| T2-types | impl attempt 1 | 2026-11-03 08:34 | started |
+| T6-bound-load | impl attempt 1 | 2026-11-03 07:07 | started |
+| T6-payload-pinwheel | impl attempt 1 | 2026-11-03 08:25 | reproduced on main 3b44b91 (load 156): full pinwheels with payload ends Refused(NoWitness) k1 166 ms, k16 24.3 s; one-tuple ends NoWitness k1 379 ms, k16 11.6 s |
+| T6-ratlit | impl attempt 1 | 2026-11-03 05:01 | started |
+| TD-ends | repair attempt 4 | 2026-11-03 03:52 | fmt and clippy clean; starting tools/run_tests.sh 4; load 84.15 86.49 92.05 |
+| TD-values | impl attempt 1 | 2026-11-03 03:52 | T6 already removed Type::values(cap) and Type::listed (main 9a413d5); each_value still collects inner types eagerly (types.rs:676). Control on main code: first  |
 | TEST-split | impl attempt 1 | 2026-11-03 07:56 | measured alone at load 99-112, timeout 60: all four pieces hit 60 s; slowest l01_25 s22::chains_of_slow_families 53.8 s, l01_16 scaling::a_call_through_a_value_ |
+| TYPE-forms | impl attempt 1 | 2026-11-03 08:16 | started |
+| UNITANNOT-L7 | impl attempt 1 | 2026-11-03 07:14 | found: grammar reads `@log(#off);` as `@log` on the statement `(#off);` (Annotated is tried before UnitAnnot, at rings 6+); fixing by trying UnitAnnot first, sp |
 | UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | run_tests.sh 4 cut by my outer timeout 900 at load ~100 (30 pieces ok, no summary); rerunning (load 68.77 88.48 95.69) |
-| WIDEN-WARN | impl attempt 1 | 2026-11-03 07:14 | scaling (pass alone, instructions, 1000 vs 8000): many warnings 16.1M->129.0M 8.01x, chain derivation 13.5M->108.6M 8.01x. Negative controls, not committed: bin |
+| WIDEN-WARN | verify attempt 1 | 2026-11-03 07:14 | negative control (not committed): a scan of all nodes per warning fails many_warnings_scale at 46.6x (52.2M -> 2433.5M instructions, limit 24), chain test passe |
 
 Merged into local main and not yet pushed (70 commits); the push follows one full test run on the merged tree:
 
+- 99deb6b plan_dag, STATUS: LIN-cross merged
 - 99987df LIN-cross: pick's repair reads each variable's bounds, not every guard on it
+- 3b44b91 STATUS: in progress as of 2026-11-03 08:24
 - 5b78cbd plan_dag, STATUS: T6 merged
 - 9a413d5 T6 repair 7: no copies of shown values; exact overlaps keys for cofinite sets; TupleSplit and overlaps tradeoff comments
 - 80e69d5 T6 repair 6: tradeoff comments at every refusal site; Type::contains address key recorded as an exception; Bdd::apply without its unused limit
