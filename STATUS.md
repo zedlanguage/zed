@@ -827,7 +827,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | BOX-5pt | impl attempt 1 | 2026-11-03 06:34 | five-point box_point in; L1.38 74 pass, 4 fail exactly as XT3 B3 predicted: oracle 255/3/142, corner 2586/9282/132, REGULAR Ok(true), stages x0=4 Ok(true) (load |
 | DESIGN-audit | orchestrator attempt  | 2026-11-03 06:08 | started: workflow wf_5753dfe3-b04 (11 auditors, 11 verifiers); zed wt/t6-spec merged as 83770d9 |
-| ENDS-dag | impl attempt 1 | 2026-11-03 05:46 | negative control (visited check removed): plain 16.5M,66M,264M,1.05G,4.2G instr at k=12..20 (x4 per +2, 2^k); two_names 28.5M..7.25G; both scaling tests killed  |
 | LIN-cross | impl attempt 1 | 2026-11-03 05:46 | started |
 | S22b | impl attempt 1 | 2026-11-03 06:39 | started |
 | S22c | impl attempt 1 | 2026-11-03 06:39 | started |
@@ -839,8 +838,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T6 | repair attempt 6 | 2026-11-03 00:01 | rebased wt/t6 on main 7073be1 (both commits squashed first; T6's K30 renamed K37, CAP-bits owns K30) and wt/t6-spec on zed 1025886; fences resynced, l01_07/l01_ |
 | TD-ends | repair attempt 3 | 2026-11-03 03:52 | start: fix kept sum/difference of unrelated cores (int.rs:1326) and the 11 incomplete tradeoff comments |
 
-Merged into local main and not yet pushed (33 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (35 commits); the push follows one full test run on the merged tree:
 
+- 1248aba ENDS-dag: stage::ends reads each shared part once
 - 7c1a6fe UTVPI-GOR: Goldberg-Radzik potential search for cyclic UTVPI graphs
 - 3fab318 plan_dag, STATUS: XT3 done; add UTVPI-GOR, BOX-5pt, UTVPI-NEAR, HULL3, XR3, HULL3-GEN with edges
 - ea2e48f STATUS: S22a merged
