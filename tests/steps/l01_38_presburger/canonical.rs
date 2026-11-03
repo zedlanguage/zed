@@ -1,13 +1,15 @@
 //! The order in which the solver takes the variables (item CANON-stable): `colors` refines the
 //! variables until the partition is stable, with no count of rounds that depends on the size,
-//! and the colors depend on the structure of the rows only, not on the names.
+//! and the colors depend on the structure of the rows only, not on the names. The solver takes
+//! the variables breadth first over the rows, and the colors along that order do not depend on
+//! the names either.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
-use zedc::store::presburger::{Atom, Con, Lin, Rel, colors};
+use zedc::store::presburger::{self, Atom, Con, Lin, Rel};
 
 fn var(name: &str) -> Atom {
     Atom::Sym(Arc::from(name))
@@ -22,6 +24,16 @@ fn row(terms: &[(&str, i128)], c: i128, eq: bool) -> Con {
         },
         rel: if eq { Rel::Eq } else { Rel::Ge },
     }
+}
+
+/// The colors of the variables of `cons`.
+fn colors(cons: &[Con]) -> BTreeMap<Atom, u64> {
+    presburger::colors(cons).1
+}
+
+/// The variables of `cons` in the order the solver takes them.
+fn order(cons: &[Con]) -> Vec<Atom> {
+    presburger::colors(cons).0
 }
 
 fn names(n: usize, prefix: &str) -> Vec<String> {
@@ -76,6 +88,13 @@ fn every_stage_of_a_long_pipeline_gets_its_own_color() {
         let c = colors(&pipeline(n));
         assert_eq!(c.len(), n);
         assert_eq!(distinct(&c), n, "pipeline of {n} stages");
+        // The solver takes the stages along the pipeline, from one end.
+        let s: Vec<Atom> = names(n, "stage").iter().map(|x| var(x)).collect();
+        let o = order(&pipeline(n));
+        assert!(
+            o == s || o.iter().rev().eq(&s),
+            "pipeline of {n} stages: {o:?}"
+        );
     }
 }
 
@@ -96,7 +115,8 @@ fn every_buffer_of_a_ring_keeps_one_color() {
 
 #[test]
 fn colors_do_not_depend_on_the_names_or_the_order_of_the_rows() {
-    // Each system of five variables, under all 120 namings: a variable's color follows it.
+    // Each system of five variables, under all 120 namings: a variable's color follows it, and
+    // the colors along the order the solver takes the variables stay the same.
     let mut rng = Rng::new(0xCA_0001);
     let base = names(5, "x");
     // The k-th permutation, by its factorial digits.
@@ -118,6 +138,7 @@ fn colors_do_not_depend_on_the_names_or_the_order_of_the_rows() {
         let rows = 2 + rng.below(5);
         let sys = random(&mut rng, 5, rows, "x");
         let first = colors(&sys);
+        let first_order: Vec<u64> = order(&sys).iter().map(|a| first[a]).collect();
         ties += usize::from(distinct(&first) < first.len());
         for p in &perms {
             let rename = |a: &Atom| match a {
@@ -147,6 +168,11 @@ fn colors_do_not_depend_on_the_names_or_the_order_of_the_rows() {
                 .collect();
             renamed.reverse();
             let got = colors(&renamed);
+            let got_order: Vec<u64> = order(&renamed).iter().map(|a| got[a]).collect();
+            assert_eq!(
+                got_order, first_order,
+                "{sys:?} renamed by {p:?}: the order"
+            );
             for (a, k) in &first {
                 assert_eq!(got[&rename(a)], *k, "{sys:?} renamed by {p:?}");
             }

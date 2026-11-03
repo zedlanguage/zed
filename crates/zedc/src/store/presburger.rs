@@ -1540,16 +1540,16 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let (atoms, keys) = canonical(atoms, &cons);
+    let (atoms, rows, _) = canonical(atoms, &cons);
     let index: BTreeMap<&Atom, usize> = atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
-    // Sorted, so that neither the order of the constraints nor the names of the variables
-    // decide the order of the work, except among variables that refinement cannot tell apart.
-    let mut sorted: Vec<(u64, &Con)> = cons.iter().map(|c| (row_key(c, &keys), *c)).collect();
-    sorted.sort();
+    // In the order of `canonical`, so that neither the order of the constraints nor the names of
+    // the variables decide the order of the work, except among variables that refinement cannot
+    // tell apart.
+    let sorted: Vec<&Con> = rows.into_iter().map(|r| cons[r]).collect();
     // Each equality `x - y == d` ties `x` to `y`: every row is written over one variable of
     // each tied class, the others being offsets from it, so no row is rewritten for them.
     let mut ties = Ties::new(atoms.len());
-    for (_, c) in &sorted {
+    for c in &sorted {
         if c.rel != Rel::Eq || c.lin.terms.len() != 2 {
             continue;
         }
@@ -1565,7 +1565,7 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
         }
     }
     let mut base: Vec<(Row, Rel)> = Vec::with_capacity(sorted.len());
-    for (_, c) in sorted {
+    for c in sorted {
         let mut sum: BTreeMap<usize, Int> = BTreeMap::new();
         let mut k = c.lin.constant.clone();
         for (a, coef) in &c.lin.terms {
@@ -1920,52 +1920,93 @@ impl Ties {
     }
 }
 
-fn xv_mix(mut z: u64) -> u64 {
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
-    z ^ (z >> 31)
-}
-
-/// A key of an integer of any size, the same for equal integers.
-fn int_key(k: &Int) -> u64 {
-    match k.to_i128() {
-        Some(v) => (v as u64) ^ ((v >> 64) as u64),
-        None => {
-            let mut h = std::hash::DefaultHasher::new();
-            std::hash::Hash::hash(k, &mut h);
-            std::hash::Hasher::finish(&h)
+/// `atoms`, in name order, put in the order the solver takes them; the places in `cons` of the
+/// rows in the order it takes them; and the colors of the atoms in the coarsest stable coloring
+/// of the system ([`stable_colors`]). Both orders are breadth first over the rows, so that
+/// variables that share a row stand near each other, and so do rows that share a variable:
+/// from the variable of least color not yet placed, each placed variable's rows not yet taken
+/// are taken in the order of their colors, and each row's variables not yet placed in the
+/// order of theirs. Rows with no variable come last, by color. Names, and the order of
+/// `cons`, break ties between equal colors only; when every variable's color is distinct, two
+/// rows of one color are equal, so the orders depend on the structure alone. O(n + m + t log t)
+/// for n variables, m rows and t terms, with the sorts of each row's terms and each variable's
+/// rows.
+fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> (Vec<Atom>, Vec<usize>, BTreeMap<Atom, u64>) {
+    let n = atoms.len();
+    let color = stable_colors(&atoms, cons);
+    let by_color = |v: &usize| (color[*v], *v);
+    let mut rows_of: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let vars_of: Vec<Vec<usize>> = cons
+        .iter()
+        .enumerate()
+        .map(|(r, c)| {
+            let mut xs: Vec<usize> = c
+                .lin
+                .terms
+                .keys()
+                .map(|a| atoms.binary_search(a).expect("an atom of the system"))
+                .collect();
+            for &x in &xs {
+                rows_of[x].push(n + r);
+            }
+            xs.sort_by_key(by_color);
+            xs
+        })
+        .collect();
+    for rs in &mut rows_of {
+        rs.sort_by_key(by_color);
+    }
+    let mut seeds: Vec<usize> = (0..n).collect();
+    seeds.sort_by_key(by_color);
+    let mut placed = vec![false; n];
+    let mut taken = vec![false; cons.len()];
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    let mut rows: Vec<usize> = Vec::with_capacity(cons.len());
+    for s in seeds {
+        if placed[s] {
+            continue;
+        }
+        placed[s] = true;
+        order.push(s);
+        let mut head = order.len() - 1;
+        while head < order.len() {
+            for &r in &rows_of[order[head]] {
+                if taken[r - n] {
+                    continue;
+                }
+                taken[r - n] = true;
+                rows.push(r - n);
+                for &x in &vars_of[r - n] {
+                    if !placed[x] {
+                        placed[x] = true;
+                        order.push(x);
+                    }
+                }
+            }
+            head += 1;
         }
     }
-}
-
-fn row_key(c: &Con, keys: &BTreeMap<Atom, u64>) -> u64 {
-    let mut t: Vec<(u64, u64)> = c
-        .lin
-        .terms
+    let mut bare: Vec<usize> = (0..cons.len()).filter(|&r| !taken[r]).collect();
+    bare.sort_by_key(|&r| (color[n + r], r));
+    rows.extend(bare);
+    let keys = atoms
         .iter()
-        .map(|(a, k)| (int_key(k), keys[a]))
+        .zip(&color)
+        .map(|(a, &k)| (a.clone(), k as u64))
         .collect();
-    t.sort();
-    let mut h = xv_mix(int_key(&c.lin.constant) ^ (c.rel == Rel::Eq) as u64);
-    for (k, v) in t {
-        h = xv_mix(h ^ k).wrapping_add(v);
-    }
-    h
-}
-/// `atoms`, in name order, sorted by their colors in the coarsest stable coloring of the
-/// system ([`stable_colors`]), names breaking ties between equal colors; with the colors.
-fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
-    let colors = stable_colors(&atoms, cons);
-    let mut order: Vec<(u64, Atom)> = colors.into_iter().zip(atoms).collect();
-    order.sort();
-    let keys = order.iter().map(|(k, a)| (a.clone(), *k)).collect();
-    (order.into_iter().map(|(_, a)| a).collect(), keys)
+    let mut atoms: Vec<Option<Atom>> = atoms.into_iter().map(Some).collect();
+    let order = order
+        .into_iter()
+        .map(|x| atoms[x].take().expect("each variable placed once"))
+        .collect();
+    (order, rows, keys)
 }
 
-/// The colors of the variables of the conjunction `cons`, by which the solver orders them:
-/// two variables have one color exactly when the structure of the rows does not tell them
-/// apart, and the numbers depend on that structure only, not on the names.
-pub fn colors(cons: &[Con]) -> BTreeMap<Atom, u64> {
+/// The variables of the conjunction `cons` in the order the solver takes them, and their
+/// colors, by which it orders them: two variables have one color exactly when the structure
+/// of the rows does not tell them apart, and the numbers depend on that structure only, not on
+/// the names.
+pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
     let cons: Vec<&Con> = cons.iter().collect();
     let atoms: Vec<Atom> = cons
         .iter()
@@ -1973,13 +2014,15 @@ pub fn colors(cons: &[Con]) -> BTreeMap<Atom, u64> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    canonical(atoms, &cons).1
+    let (order, _, colors) = canonical(atoms, &cons);
+    (order, colors)
 }
 
-/// The color of each of `atoms` (sorted, each in some row of `cons`) in the coarsest stable
-/// coloring of the system's graph. The graph has a vertex for each variable, each row and each
-/// term of a row, a term joined to its row and to its variable. A row starts colored by its
-/// relation and constant, a term by its coefficient, and every variable alike. A coloring is
+/// The color of each of `atoms` (sorted, each in some row of `cons`), then of each row of
+/// `cons`, in the coarsest stable coloring of the system's graph. The graph has a vertex for
+/// each variable, each row and each term of a row, a term joined to its row and to its
+/// variable. A row starts colored by its relation and constant, a term by its coefficient, and
+/// every variable alike. A coloring is
 /// stable when any two vertices of one color have, for every color, as many neighbors of that
 /// color. So two variables keep one color exactly when no number of rounds of comparing the
 /// multisets of (row color, coefficient) of their rows tells them apart: refinement runs until
@@ -1996,7 +2039,7 @@ pub fn colors(cons: &[Con]) -> BTreeMap<Atom, u64> {
 /// the numbers depend on the structure alone, not on the names or the order of the rows.
 /// O((n + m + t) log(n + m + t)) for n variables, m rows and t terms, with the sorts of the
 /// starting colors.
-fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<u64> {
+fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<usize> {
     let (n, m) = (atoms.len(), cons.len());
     let mut terms: Vec<(usize, usize, &Int)> = Vec::new();
     for (r, c) in cons.iter().enumerate() {
@@ -2057,7 +2100,8 @@ fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<u64> {
         .unwrap_or(0);
     let mut refine = Refine::new(color, next, degree);
     refine.run(&start, &adj);
-    refine.color[..n].iter().map(|&c| c as u64).collect()
+    refine.color.truncate(n + m);
+    refine.color
 }
 
 /// The state of [`stable_colors`]' refinement, after Berkholz, Bonsma and Grohe's

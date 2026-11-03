@@ -697,7 +697,10 @@ fn chains_of_slow_families_keep_their_preimages() {
                 diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
             }
         }
-        diffs.none_but(83, 0, 0, 7);
+        // 1, not 7, since CANON-stable: the solver takes the variables and rows breadth first
+        // in the order of their stable colors, and the transfer before, which shares it, no
+        // longer refuses `mod7` at k = 3 to 8 by its shadows, so both are exact and alike there.
+        diffs.none_but(83, 0, 0, 1);
     });
 }
 
