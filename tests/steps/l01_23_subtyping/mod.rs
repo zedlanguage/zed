@@ -8,6 +8,7 @@
 mod admission;
 mod bes;
 mod bes_families;
+mod bound_paths;
 mod cases;
 mod cells;
 mod judgments;

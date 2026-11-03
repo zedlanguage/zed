@@ -349,14 +349,93 @@ fn a_tuple_that_shapes_hold_only_together_is_taken() {
 #[test]
 fn a_morphism_type_whose_bound_check_was_refused_says_why() {
     // A function into `#a | #b` that gives both is in neither union member, but the kernel
-    // shows no family against a morphism type before L2, and splits no function part.
+    // shows no family against a morphism type before L2, and splits no function part. The
+    // `is` is an error of its own: the bound check no longer stops elaboration of the type.
     let src = "f(x) = x is ((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int);";
     assert_eq!(
         crate::l01_16_elaboration::errors(src),
-        [format!(
-            "the guarantee (left of `..`) of this morphism type is not within its permission \
+        [
+            "`is` cannot test a value against a function type at run time \
+             [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]"
+                .to_string(),
+            format!(
+                "the guarantee (left of `..`) of this morphism type is not within its permission \
              (right of `..`) (not decided: {}) [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]",
-            Refusal::MorphismSplit.message()
-        )]
+                Refusal::MorphismSplit.message()
+            )
+        ]
+    );
+}
+
+/// The errors of the operator `op` applied to `args`, through the checker's `apply`.
+fn operator_errors(op: &str, args: &[Ty]) -> Vec<String> {
+    zedc::check::operator(op, args).1
+}
+
+#[test]
+fn an_overload_whose_check_was_refused_says_why() {
+    // No source program reaches these paths with a refused check: the arrows of operators
+    // and prelude words take carriers, and the checker's own types hold no difference of
+    // tuples. The kernel types are given to the checker's `apply` directly. `neg`, `+` and
+    // `<` have several arrows, `!` one. The seven-box cover's emptiness is refused
+    // (`TupleSplit`); the six-box cover is inhabited, so its checks are decided.
+    let cover6 = [
+        [3, 3, 3],
+        [5, 5, 5],
+        [6, 3, 5],
+        [6, 4, 5],
+        [4, 3, 6],
+        [5, 6, 3],
+    ]
+    .iter()
+    .fold(Type::tuple(vec![small(7); 3]), |t, b| {
+        &t - &Type::tuple(b.iter().map(|&m| small(m)).collect())
+    });
+    for (op, n) in [("neg", 1), ("+", 2), ("<", 2), ("!", 1)] {
+        for (t, why) in [
+            // No arrow meets the argument ...
+            (box_cover(), Some(Refusal::TupleSplit)),
+            (morphism_between(), Some(Refusal::NoWitness)),
+            // ... and an arrow meets it and does not take it. The one arrow of `!` takes
+            // `bool`, and `int` is a decided witness against it.
+            (
+                &box_cover() | &Type::int(),
+                (op != "!").then_some(Refusal::TupleSplit),
+            ),
+            (cover6.clone(), None),
+            (&cover6 | &Type::int(), None),
+        ] {
+            Type::forget_emptiness();
+            let errors = operator_errors(op, &vec![Ty::set(t.clone()); n]);
+            let first = errors.first().unwrap_or_else(|| panic!("`{op}` took {t}"));
+            assert!(
+                first.starts_with(&format!("`{op}` does not take (")),
+                "{first}"
+            );
+            match why {
+                Some(r) => {
+                    let tail = format!(" (not decided: {})", r.message());
+                    assert!(first.ends_with(&tail), "{op} on {t}: {first}");
+                }
+                None => assert!(!first.contains("not decided"), "{op} on {t}: {first}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn a_literal_argument_and_a_need_result_name_no_cause_when_decided() {
+    // A literal's check is of a scalar against the parameter, whose tuple and morphism parts
+    // it does not meet: it is always decided, so no refused input reaches this path.
+    assert_eq!(
+        rejected("g(x: #a | (int, int)) = x;\nmain() = g(x: 1);\n"),
+        "2:10: `g` does not take (1)"
+    );
+    // What a use of an argument gives against what the use needs: decided here. The
+    // checker's own types hold no difference of tuples (a written `\` of tuples is dropped
+    // from them), so no refused check reaches this path from a program.
+    assert_eq!(
+        rejected("f(x) = x[1] + 1;\nmain() = f(x: (1, \"s\"));\n"),
+        "2:10: `f` gives \"s\" here, which is not int"
     );
 }

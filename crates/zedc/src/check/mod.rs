@@ -111,6 +111,7 @@ pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
 pub(crate) fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     KType::forget_emptiness();
     let mut ck = Ck::new(t);
+    ck.bounds();
     ck.scope(unit, true);
     ck.finish();
     ck.info
@@ -323,6 +324,44 @@ impl<'t, 'a> Ck<'t, 'a> {
             open: Vec::new(),
             defer: BTreeSet::new(),
             applied: None,
+        }
+    }
+
+    /// Checks that the guarantee of every `L .. U -> V` in the unit's written types is within
+    /// its permission ([`crate::elab::kernel_type`]). Every way of checking a program comes
+    /// here once, so the check runs on each bound once. The walk keeps its own stack, as a
+    /// written type nests as deep as its text; each outermost bound is read whole, with the
+    /// bounds inside it, so each node of a written type is read once.
+    fn bounds(&mut self) {
+        let t = self.t;
+        let (mut ports, mut bad) = (Vec::new(), Vec::new());
+        let mut stack: Vec<&Type> = Vec::new();
+        for &root in &t.written {
+            stack.push(root);
+            while let Some(ty) = stack.pop() {
+                match &ty.kind {
+                    TypeKind::Bounded { .. } => {
+                        crate::elab::kernel_type(ty, &mut ports, Some(&mut bad));
+                        ports.clear();
+                    }
+                    TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => {
+                        stack.extend(ts);
+                    }
+                    TypeKind::Diff(a, b) => stack.extend([&**a, &**b]),
+                    TypeKind::Arrow { params, result, .. } => {
+                        stack.extend(params.iter().map(|p| &p.ty));
+                        stack.push(result);
+                    }
+                    TypeKind::Name(_) | TypeKind::Atom(_) => {}
+                    TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
+                        unreachable!("resolve rejects the forms of layer L2")
+                    }
+                    TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
+                }
+            }
+        }
+        for (span, message) in bad {
+            self.error(span, message);
         }
     }
 
@@ -902,8 +941,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         for ((id, p), g) in ids.iter().zip(&f.params).zip(given) {
             let (t, text) = match (&p.ty, g) {
                 (Some(a), Some(t)) if t == Ty::dynamic() => {
+                    let shown = declared_text(a).unwrap_or_else(|| self.show(&t));
                     let text = format!(
-                        "`{}` is declared `{a}`, whose values the checker does not track: \
+                        "`{}` is declared `{shown}`, whose values the checker does not track: \
                          it takes `{}` as unknown, _",
                         p.name, p.name
                     );
@@ -1396,7 +1436,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             // argument, and one it leaves unbound gives nothing.
             if let Some(r) = &n.result {
                 if !got.sub(r, binds) {
-                    self.error(span, format!("{what} gives {got} here, which is not {r}"));
+                    let why = got.refused(r);
+                    self.error(
+                        span,
+                        format!("{what} gives {got} here, which is not {r}{why}"),
+                    );
                 }
                 for v in &r.vars {
                     binds.entry(v.clone()).or_insert_with(Ty::empty);
@@ -3750,7 +3794,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     None => a.ty.clone(),
                 };
                 if !t.sub(p, &mut binds) {
-                    return fail(self);
+                    let why = t.refused(p);
+                    return Err(format!("{}{why}", self.rejected(what, args)));
                 }
                 continue;
             }
@@ -3960,7 +4005,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .iter()
                     .map(|p| p.as_ref().map_or_else(|| "_".into(), |p| ck.show(&p.ty())))
                     .collect();
-                format!("{what} does not take ({})", shown.join(", "))
+                let pieces: Vec<Option<Ty>> =
+                    path.iter().map(|p| p.as_ref().map(Piece::ty)).collect();
+                let why = refused_among(sig, &kept, &pieces);
+                format!("{what} does not take ({}){why}", shown.join(", "))
             };
             let at: Vec<usize> = (0..n)
                 .filter(|&i| path[i].as_ref().is_some_and(|p| self.class_of(p).is_some()))
@@ -4078,7 +4126,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.error(s, m);
                 return Ok(None);
             }
-            return Err(self.rejected(what, args));
+            // No arrow met an argument, which may rest on a refused check that it is empty.
+            let tys: Vec<Option<Ty>> = args
+                .iter()
+                .map(|a| a.as_ref().filter(|a| a.lit.is_none()).map(|a| a.ty.clone()))
+                .collect();
+            let all: Vec<usize> = (0..sig.arrows.len()).collect();
+            let why = refused_among(sig, &all, &tys);
+            return Err(format!("{}{why}", self.rejected(what, args)));
         };
         for (s, v) in need {
             let neg = args
@@ -4098,6 +4153,26 @@ impl<'t, 'a> Ck<'t, 'a> {
 
 /// The type of the one-parameter word `sig` applied to `t`, its atoms passing through; none
 /// when a piece of `t` fits no arrow, an unknown one fitting only an arrow that takes any.
+/// The written type `a` as the kernel prints it, which parses back as itself: how a message
+/// shows a declared type the checker does not track. `None` for a type that holds a port,
+/// which has no kernel type.
+pub fn declared_text(a: &Type) -> Option<String> {
+    crate::elab::kernel_type(a, &mut Vec::new(), None).map(|k| k.surface().to_string())
+}
+
+/// When an application of the arrows `arrows` of `sig` to arguments of the types `args` was
+/// rejected: the cause of the first check of an argument against an arrow's parameter that
+/// was refused, which the rejection may rest on, and nothing if every check was decided. On
+/// the error path only: arrows times arguments checks.
+fn refused_among(sig: &Sig, arrows: &[usize], args: &[Option<Ty>]) -> String {
+    arrows
+        .iter()
+        .flat_map(|&j| args.iter().zip(&sig.arrows[j].params))
+        .filter_map(|(a, q)| a.as_ref().map(|a| a.refused(q)))
+        .find(|w| !w.is_empty())
+        .unwrap_or_default()
+}
+
 fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
     let mut out = t.loose_ty();
     for p in t.without_loose().pieces() {

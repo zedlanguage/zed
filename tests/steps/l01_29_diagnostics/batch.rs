@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use zedc::run::load;
 
-/// Every `.zed` unit of the corpus and of the steps' tests, and two rejected programs.
+/// Every `.zed` unit of the corpus and of the steps' tests, and three rejected programs.
 fn units() -> Vec<(String, Vec<u8>)> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut dirs = vec![root.join("../zed/corpus")];
@@ -35,6 +35,10 @@ fn units() -> Vec<(String, Vec<u8>)> {
         "a negative exponent".into(),
         b"f(x: int, n: int[-2..3]) -> int = x ** n;\n".to_vec(),
     ));
+    out.push((
+        "a parameter's morphism type outside its bound".into(),
+        b"f(x: #a .. #b -> int) = 0;\nmain() = 0;\n".to_vec(),
+    ));
     out
 }
 
@@ -54,7 +58,7 @@ fn batch_and_single_file_checking_agree() {
             std::thread::spawn(move || answer(&src)).join().unwrap()
         })
         .collect();
-    assert!(alone.iter().filter(|a| a.is_some()).count() >= 2);
+    assert!(alone.iter().filter(|a| a.is_some()).count() >= 3);
     let batch: Vec<Option<String>> = units.iter().map(|(_, src)| answer(src)).collect();
     let mut reversed: Vec<Option<String>> =
         units.iter().rev().map(|(_, src)| answer(src)).collect();
@@ -66,4 +70,16 @@ fn batch_and_single_file_checking_agree() {
             "{name}: alone, then in a reversed batch"
         );
     }
+    // The bound check of a parameter's morphism type runs on this path too.
+    let at = units
+        .iter()
+        .position(|(name, _)| name == "a parameter's morphism type outside its bound")
+        .expect("the unit");
+    assert_eq!(
+        batch[at].as_deref(),
+        Some(
+            "1:6: the guarantee (left of `..`) of this morphism type is not within its \
+             permission (right of `..`)"
+        )
+    );
 }

@@ -283,6 +283,9 @@ pub(crate) struct Tables<'a> {
     uses: Vec<Uses>,
     /// The groups of `uses` naming each binder.
     groups_of: Vec<Vec<usize>>,
+    /// Every written type of the unit, each once, in the order of the text: a parameter's, a
+    /// lambda parameter's and an `is` test's. The checker checks their bounds.
+    pub(crate) written: Vec<&'a Type>,
 }
 
 /// The uses of one list of binders.
@@ -362,12 +365,14 @@ impl<'a> Tables<'a> {
             funcs: HashMap::new(),
             uses,
             groups_of,
+            written: Vec::new(),
         };
         t.collect_functions(unit);
         t
     }
 
-    /// Records every function declaration of `stmts` and of the blocks inside them.
+    /// Records every function declaration and written type of `stmts` and of the blocks
+    /// inside them.
     fn collect_functions(&mut self, stmts: &'a [Stmt]) {
         for s in stmts {
             match &s.kind {
@@ -375,12 +380,12 @@ impl<'a> Tables<'a> {
                     if let Some(&id) = self.ids.get(&(s.span, f.name.as_str())) {
                         self.funcs.insert(id, f);
                     }
-                    for p in &f.params {
-                        if let Some(d) = &p.default {
-                            self.collect_in(d);
-                        }
-                    }
+                    self.collect_params(&f.params);
                     self.collect_in(&f.body);
+                    for (a, b) in &f.tests {
+                        self.collect_in(a);
+                        self.collect_in(b);
+                    }
                 }
                 StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => {
                     self.collect_in(value)
@@ -400,6 +405,17 @@ impl<'a> Tables<'a> {
         }
     }
 
+    fn collect_params(&mut self, params: &'a [Param]) {
+        for p in params {
+            if let Some(t) = &p.ty {
+                self.written.push(t);
+            }
+            if let Some(d) = &p.default {
+                self.collect_in(d);
+            }
+        }
+    }
+
     fn collect_in(&mut self, e: &'a Expr) {
         match &e.kind {
             ExprKind::Block(stmts) => self.collect_functions(stmts),
@@ -408,8 +424,10 @@ impl<'a> Tables<'a> {
                     self.collect_in(h)
                 }
             }),
-            ExprKind::Unary(_, a) | ExprKind::Member { of: a, .. } | ExprKind::Is { of: a, .. } => {
-                self.collect_in(a)
+            ExprKind::Unary(_, a) | ExprKind::Member { of: a, .. } => self.collect_in(a),
+            ExprKind::Is { of, ty, .. } => {
+                self.collect_in(of);
+                self.written.push(ty);
             }
             ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
                 self.collect_in(a);
@@ -426,7 +444,10 @@ impl<'a> Tables<'a> {
                 named.iter().for_each(|(_, a)| self.collect_in(a));
             }
             ExprKind::Tuple(items) => items.iter().for_each(|i| self.collect_in(i)),
-            ExprKind::Lambda { body, .. } => self.collect_in(body),
+            ExprKind::Lambda { params, body } => {
+                self.collect_params(params);
+                self.collect_in(body);
+            }
             ExprKind::Else { of, default, .. } => {
                 self.collect_in(of);
                 self.collect_in(default);
@@ -1731,80 +1752,15 @@ impl<'a> Elab<'a> {
         Some(Term::Lam(names, Arc::new(body)))
     }
 
-    /// The type a type expression denotes. A function type is curried, one level per
-    /// parameter, and `->?` makes each level partial; `() -> V` has the empty tuple as its
-    /// one key.
+    /// The type a type expression denotes ([`kernel_type`]); each name of a port in it is an
+    /// error. Its bounds were checked by the checker, which reads every written type.
     fn ty(&mut self, t: &Type) -> Option<KType> {
-        let all = |b: &mut Self, ts: &[Type]| -> Option<Vec<KType>> {
-            let ts: Vec<Option<KType>> = ts.iter().map(|t| b.ty(t)).collect();
-            ts.into_iter().collect()
-        };
-        Some(match &t.kind {
-            TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
-                unreachable!("resolve rejects the forms of layer L2")
-            }
-            TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
-            TypeKind::Name(n) => match n.as_str() {
-                "int" => KType::int(),
-                "rat" => KType::rat(),
-                "f64" => KType::f64(),
-                "bool" => KType::bool(),
-                "String" => KType::string(),
-                _ => {
-                    return self.error(
-                        t.span,
-                        format!("`{n}` is the type of a port, and no value has it"),
-                    );
-                }
-            },
-            TypeKind::Atom(a) => KType::atom(a),
-            TypeKind::Tuple(ts) => KType::tuple(all(self, ts)?),
-            TypeKind::Union(ts) => KType::union_all(all(self, ts)?),
-            TypeKind::And(ts) => KType::meet_all(all(self, ts)?),
-            TypeKind::Diff(a, b) => {
-                let (a, b) = (self.ty(a), self.ty(b));
-                a? - &b?
-            }
-            TypeKind::Arrow {
-                params,
-                partial,
-                result,
-            } => {
-                let keys: Vec<Option<KType>> = params.iter().map(|p| self.ty(&p.ty)).collect();
-                let result = self.ty(result);
-                let mut keys: Vec<KType> = keys.into_iter().collect::<Option<_>>()?;
-                if keys.is_empty() {
-                    keys.push(KType::tuple(Vec::new()));
-                }
-                let level = if *partial {
-                    KType::partial
-                } else {
-                    KType::exact
-                };
-                keys.into_iter().rev().fold(result?, |v, k| level(k, v))
-            }
-            TypeKind::Bounded {
-                lower,
-                upper,
-                result,
-            } => {
-                let (l, u, v) = (self.ty(lower), self.ty(upper), self.ty(result));
-                let (l, u) = (l?, u?);
-                if !l.subtype(&u) {
-                    let why = match l.subtype_verdict(&u) {
-                        zed_kernel::types::Verdict::Refused(r) => {
-                            format!(" (not decided: {})", r.message())
-                        }
-                        _ => String::new(),
-                    };
-                    return self.error(
-                        t.span,
-                        format!("the guarantee (left of `..`) of this morphism type is not within its permission (right of `..`){why}"),
-                    );
-                }
-                KType::morphism(l, u, v?)
-            }
-        })
+        let mut ports = Vec::new();
+        let k = kernel_type(t, &mut ports, None);
+        for (span, message) in ports {
+            self.error::<()>(span, message);
+        }
+        k
     }
 
     /// An `else` pattern: an atom, its payload matched by position or by name; a field
@@ -1839,6 +1795,105 @@ impl<'a> Elab<'a> {
         }
         Some(KPattern::Fields(name.as_str().into(), out))
     }
+}
+
+/// The kernel type a written type denotes. A function type is curried, one level per
+/// parameter, and `->?` makes each level partial; `() -> V` has the empty tuple as its one key.
+/// A name of a port denotes no type: it is an error in `ports`, and the type is `None`. With
+/// `bounds`, each `L .. U -> V` whose guarantee `L` is not within its permission `U` is an
+/// error there, with the cause when that check was refused; the checker passes it once for
+/// each written type of a program (`Ck::written`), so every way a program is checked runs this
+/// check, and runs it once. One pass over the type.
+pub(crate) fn kernel_type(
+    t: &Type,
+    ports: &mut Vec<(Span, String)>,
+    mut bounds: Option<&mut Vec<(Span, String)>>,
+) -> Option<KType> {
+    let mut all = |ts: &[Type]| -> Option<Vec<KType>> {
+        let ts: Vec<Option<KType>> = ts
+            .iter()
+            .map(|t| kernel_type(t, ports, bounds.as_deref_mut()))
+            .collect();
+        ts.into_iter().collect()
+    };
+    Some(match &t.kind {
+        TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
+            unreachable!("resolve rejects the forms of layer L2")
+        }
+        TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
+        TypeKind::Name(n) => match n.as_str() {
+            "int" => KType::int(),
+            "rat" => KType::rat(),
+            "f64" => KType::f64(),
+            "bool" => KType::bool(),
+            "String" => KType::string(),
+            _ => {
+                ports.push((
+                    t.span,
+                    format!("`{n}` is the type of a port, and no value has it"),
+                ));
+                return None;
+            }
+        },
+        TypeKind::Atom(a) => KType::atom(a),
+        TypeKind::Tuple(ts) => KType::tuple(all(ts)?),
+        TypeKind::Union(ts) => KType::union_all(all(ts)?),
+        TypeKind::And(ts) => KType::meet_all(all(ts)?),
+        TypeKind::Diff(a, b) => {
+            let a = kernel_type(a, ports, bounds.as_deref_mut());
+            let b = kernel_type(b, ports, bounds.as_deref_mut());
+            a? - &b?
+        }
+        TypeKind::Arrow {
+            params,
+            partial,
+            result,
+        } => {
+            let keys: Vec<Option<KType>> = params
+                .iter()
+                .map(|p| kernel_type(&p.ty, ports, bounds.as_deref_mut()))
+                .collect();
+            let result = kernel_type(result, ports, bounds.as_deref_mut());
+            let mut keys: Vec<KType> = keys.into_iter().collect::<Option<_>>()?;
+            if keys.is_empty() {
+                keys.push(KType::tuple(Vec::new()));
+            }
+            let level = if *partial {
+                KType::partial
+            } else {
+                KType::exact
+            };
+            keys.into_iter().rev().fold(result?, |v, k| level(k, v))
+        }
+        TypeKind::Bounded {
+            lower,
+            upper,
+            result,
+        } => {
+            let l = kernel_type(lower, ports, bounds.as_deref_mut());
+            let u = kernel_type(upper, ports, bounds.as_deref_mut());
+            let v = kernel_type(result, ports, bounds.as_deref_mut());
+            let (l, u) = (l?, u?);
+            if let Some(bounds) = bounds
+                && !l.subtype(&u)
+            {
+                let why = match l.subtype_verdict(&u) {
+                    zed_kernel::types::Verdict::Refused(r) => {
+                        format!(" (not decided: {})", r.message())
+                    }
+                    _ => String::new(),
+                };
+                bounds.push((
+                    t.span,
+                    format!(
+                        "the guarantee (left of `..`) of this morphism type is not within its \
+                         permission (right of `..`){why}"
+                    ),
+                ));
+            }
+            KType::morphism(l, u, v?)
+        }
+    })
 }
 
 /// A name that occurs twice in `names`.
