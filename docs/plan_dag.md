@@ -573,7 +573,7 @@ Each pair below is at one level and shares a file. Under the rule of 2026-11-02 
 
 ## File conflicts across levels
 
-These 1369 pairs, and the 92 in the last four lines (added on 2026-11-03 for L1.40a, L1.40b, L1.40c and L12.3a, not counting files under `tests/`), are at different levels, have no directed path between them, and share a file, so the same rule applies: they may run in parallel, and the merge resolves the overlap. Pairs that became unordered only because an edge was dropped on 2026-11-02 are not listed; the overlaps among them that matter are named in [Why each item waits](#why-each-item-waits). Each line gives an item and the items it conflicts with in this way. Most of these pairs are far apart in the schedule and will not meet in practice; check this list when scheduling an item ahead of its level.
+These 1369 pairs, and the 91 in the last four lines (added on 2026-11-03 for L1.40a, L1.40b, L1.40c and L12.3a, not counting files under `tests/`), are at different levels, have no directed path between them, and share a file, so the same rule applies: they may run in parallel, and the merge resolves the overlap. Pairs that became unordered only because an edge was dropped on 2026-11-02 are not listed; the overlaps among them that matter are named in [Why each item waits](#why-each-item-waits). Each line gives an item and the items it conflicts with in this way. Most of these pairs are far apart in the schedule and will not meet in practice; check this list when scheduling an item ahead of its level.
 
 - T2-eval: ST2, ST1, T6, T11-fix-store
 - T4: LR2, T6
