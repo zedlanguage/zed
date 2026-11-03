@@ -153,7 +153,7 @@ fn a_shared_tail_stays_for_its_other_owner() {
     let mut h = Heap::new();
     let name = h.fresh(&Value::str("Ada"));
     let tail = h.alloc(Obj::Tuple(vec![name, Word::int(1)]));
-    h.inc(tail);
+    h.inc(tail).unwrap();
     let head = h.alloc(Obj::Tuple(vec![Word::int(0), tail]));
     h.release(head, &[&[1, 0]]).unwrap();
     assert_eq!(h.live(), 2, "the head goes; the tail and the name stay");

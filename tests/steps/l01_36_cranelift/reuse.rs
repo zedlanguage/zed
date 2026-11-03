@@ -171,16 +171,10 @@ fn a_word_kept_past_the_free_of_its_cell_is_reported_after_the_cell_is_taken_aga
         "runtime: cell 0 is dropped after it was freed"
     );
     assert_eq!(
-        h.try_inc(old).unwrap_err(),
+        h.inc(old).unwrap_err(),
         "runtime: cell 0 is shared after it was freed"
     );
     assert_eq!(h.value(new).unwrap(), Value::str("new"));
-    // `inc` cannot return the error; the next drop gives it, and drops nothing.
-    h.inc(old);
-    assert_eq!(
-        h.dec(new).unwrap_err(),
-        "runtime: cell 0 is shared after it was freed"
-    );
     assert_eq!(h.live(), 1);
     h.dec(new).unwrap();
     assert_eq!(h.live(), 0);
@@ -278,7 +272,7 @@ fn a_value_whose_parts_share_one_cell_is_read_once_per_cell() {
     let mut w = h.fresh(&Value::str("total 12"));
     let mut want = Value::str("total 12");
     for _ in 0..64 {
-        h.inc(w);
+        h.inc(w).unwrap();
         w = h.alloc(Obj::Tuple(vec![w, w]));
         want = Value::tuple(vec![want.clone(), want]);
     }

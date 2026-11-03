@@ -175,8 +175,14 @@ extern "C" fn rt_node(id: i64) -> Word {
     })
 }
 
+/// An error is recorded here, as at every other hook: generated code does not check after an
+/// `inc`, and no `dec` need follow it.
 extern "C" fn rt_inc(tag: i64, bits: i64) {
-    with(|_, s| s.heap.inc(Word { tag, bits }));
+    with(|_, s| {
+        if let Err(e) = s.heap.inc(Word { tag, bits }) {
+            s.err.get_or_insert(e);
+        }
+    });
 }
 
 extern "C" fn rt_dec(tag: i64, bits: i64) {
@@ -360,7 +366,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
                 && let Some(kid) = usize::try_from(ins[1].bits).ok().and_then(|i| xs.get(i))
             {
                 let kid = *kid;
-                s.heap.inc(kid);
+                s.heap.inc(kid)?;
                 return Ok(kid);
             }
             let v = kernel(t, s, ni, ins)?;
@@ -604,7 +610,7 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
             s.heap.release(scrut, &kept_paths)?;
         } else {
             for b in &kept {
-                s.heap.inc(binders[*b].0);
+                s.heap.inc(binders[*b].0)?;
             }
             s.heap.dec(scrut)?;
         }
@@ -726,6 +732,49 @@ mod tests {
         }
         assert_eq!(depth, DEPTH);
         assert_eq!(at.to_string(), "7");
+    }
+
+    /// A run of the program `0` installed, with a string cell already freed: a word of it kept
+    /// past its free, as a wrong plan would keep it, and a live string.
+    fn with_a_freed_cell() -> (Word, Word) {
+        let g = Arc::new(lower(&Term::Lit(Value::Int(0))).unwrap());
+        let (t, _) = Tables::new(&g, &plan(&g, false)).unwrap();
+        install(State::new(Arc::new(t), Evaluator::new(World::new())));
+        with(|_, s| {
+            let old = s.heap.alloc(Obj::Str(Rope::leaf("old".into())));
+            s.heap.dec(old).unwrap();
+            let new = s.heap.alloc(Obj::Str(Rope::leaf("new".into())));
+            (old, new)
+        })
+    }
+
+    const SHARED_AFTER_FREE: &str = "runtime: cell 0 is shared after it was freed";
+
+    #[test]
+    fn an_inc_that_fails_as_the_last_write_ends_the_run_with_its_error() {
+        let (old, new) = with_a_freed_cell();
+        // The result is dropped first; the failing `inc` is the run's last write, and the run
+        // ends with no result word, so `finish` drops nothing.
+        rt_dec(new.tag, new.bits);
+        rt_inc(old.tag, old.bits);
+        let mut s = remove();
+        assert_eq!(
+            finish(&mut s.run, Word::err()).unwrap_err(),
+            SHARED_AFTER_FREE
+        );
+    }
+
+    #[test]
+    fn an_inc_that_fails_before_a_dec_is_the_error_and_the_dec_still_drops() {
+        let (old, new) = with_a_freed_cell();
+        rt_inc(old.tag, old.bits);
+        rt_dec(new.tag, new.bits);
+        let mut s = remove();
+        assert_eq!(s.run.heap.live(), 0, "the drop was written");
+        assert_eq!(
+            finish(&mut s.run, Word::int(0)).unwrap_err(),
+            SHARED_AFTER_FREE
+        );
     }
 
     #[test]

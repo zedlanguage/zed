@@ -703,8 +703,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `BTreeMap<Value, usize>` that interns the empty tuple and bare atoms across calls | `Heap::uncounted` (`bare`) | Shared tables across pure calls | A map in the heap's state receiver |
 | `Option<Value>` in each cell, set at the first read and cleared when the cell is freed (T14-R1) | `Cell::value`, `Heap::value`, `Heap::fresh`, `Heap::free_cell` | Lazy cells (gap 3), Mutation | A map from cell to value in the heap's state receiver, its entry removed when the cell is freed |
 | A `match` arm guarded by `if let` on the cell's kept value | `Heap::read` | None | An `is` test before the `match` |
-| `Option<String>` kept by `inc`, which cannot return an error, and taken by the next `dec` | `Heap::inc`, `Heap::dec` | Early exit | `inc` returns the error as a value |
+| `Result<(), String>` from `inc`, passed on by `?`; `rt_inc` records it in the run with `get_or_insert` (was an `Option<String>` kept until the next `dec`, changed in T14-heap-rest) | `Heap::inc`, `hooks::rt_inc` | Early exit | `inc` returns the error as a value |
 | An `enum` whose variants borrow the heap's cells or table (`Shape<'h>`) while a `match` reads them | `Heap::shape` | None | A value returned by the read |
+
+## Entries from T14-heap-rest (`zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `return` from inside the arms of a `match` that otherwise yields a value | `Heap::is_in` | Early exit | Each arm yields an `Option` of the answer, or the kind is a separate function |
 
 ## Entries from T14-hooks (`zed-native/src/hooks.rs`)
 

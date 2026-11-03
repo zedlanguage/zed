@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::{mem, slice};
 
 use zed_kernel::term::Pattern;
-use zed_kernel::types::Type;
+use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::{Atom, Items, Value};
 
 use crate::rope::Rope;
@@ -323,8 +323,6 @@ pub struct Heap {
     live: u64,
     /// The stack of words [`Heap::dec`] still has to drop, empty between calls.
     todo: Vec<Word>,
-    /// An error [`Heap::inc`] met, which it cannot return; the next [`Heap::dec`] returns it.
-    fault: Option<String>,
 }
 
 impl Heap {
@@ -583,17 +581,10 @@ impl Heap {
         }))
     }
 
-    /// Adds a reference to `w`, when it is a cell. An error, which this cannot return, is
-    /// kept, and the next [`Heap::dec`] returns it; [`Heap::try_inc`] returns it at once.
-    pub fn inc(&mut self, w: Word) {
-        if let Err(e) = self.try_inc(w) {
-            self.fault.get_or_insert(e);
-        }
-    }
-
     /// Adds a reference to `w`, when it is a cell: an error for a cell already freed, and for
-    /// one whose count is at the most it can hold.
-    pub fn try_inc(&mut self, w: Word) -> Result<(), String> {
+    /// one whose count is at the most it can hold. The error is returned here, so it does not
+    /// wait for a later write that may never come.
+    pub fn inc(&mut self, w: Word) -> Result<(), String> {
         if w.tag != Word::CELL {
             return Ok(());
         }
@@ -621,12 +612,8 @@ impl Heap {
 
     /// Drops a reference to `w`, when it is a cell, freeing it and dropping its parts at 0.
     /// Work beyond the one count write happens only when a cell with parts is freed, and that
-    /// work is paid for by the parts' allocation. An error a [`Heap::inc`] kept is returned
-    /// first, and nothing is dropped.
+    /// work is paid for by the parts' allocation.
     pub fn dec(&mut self, w: Word) -> Result<(), String> {
-        if let Some(e) = self.fault.take() {
-            return Err(e);
-        }
         let Some(obj) = self.drop_ref(w)? else {
             return Ok(());
         };
@@ -718,7 +705,7 @@ impl Heap {
         } else {
             for p in kept {
                 let part = self.at(w, p)?;
-                self.try_inc(part)?;
+                self.inc(part)?;
             }
             self.dec(w)?;
         }
@@ -856,13 +843,26 @@ impl Heap {
     }
 
     /// Whether data word `w` is in `t`. A constant and a value the kernel holds are read in
-    /// place; a tuple or an atom in cells is made a value, which `t` reads whole.
+    /// place. A string, tuple or atom in cells is decided by its kind alone when `t` holds
+    /// every value of that kind or none, so its text and parts are not read; otherwise it is
+    /// made a value, which `t` reads whole.
     fn is_in(&mut self, w: Word, t: &Type) -> Result<bool, String> {
         if w.tag == Word::VAL {
             return Ok(t.contains(&self.vals[w.bits as usize].value));
         }
-        if let Some(Obj::Data(v)) = self.obj(w)? {
-            return Ok(t.contains(v));
+        let kind = match self.obj(w)? {
+            Some(Obj::Data(v)) => return Ok(t.contains(v)),
+            Some(Obj::Str(_)) => Type::string(),
+            Some(Obj::Tuple(_)) => Type::universe(Universe::Tuple),
+            Some(Obj::Atom { name, .. }) => Type::atom(name) | Type::atom_with(name, &Type::top()),
+            Some(Obj::Clo { .. }) | None => return Ok(t.contains(&self.value(w)?)),
+        };
+        let held = t & &kind;
+        if held == kind {
+            return Ok(true);
+        }
+        if held == Type::empty() {
+            return Ok(false);
         }
         Ok(t.contains(&self.value(w)?))
     }
@@ -1034,7 +1034,7 @@ mod tests {
         );
         // A shared string, then the last reference to it.
         let s = h.fresh(&Value::str("a"));
-        h.inc(s);
+        h.inc(s).unwrap();
         h.dec(s).unwrap();
         assert_eq!((h.stats.decrements, h.live()), (1, 1));
         h.dec(s).unwrap();
@@ -1089,7 +1089,7 @@ mod tests {
         let mut h = Heap::new();
         let k = h.uncounted(Value::tuple(vec![Value::Int(1), Value::str("x")]));
         let t = h.alloc(Obj::Tuple(vec![k, Word::int(2)]));
-        h.inc(t);
+        h.inc(t).unwrap();
         h.release(t, &[&[0, 1]]).unwrap();
         assert_eq!((h.stats.increments, h.stats.decrements), (1, 1));
         assert_eq!(h.live(), 1);
@@ -1099,7 +1099,7 @@ mod tests {
     fn a_path_into_a_scalar_is_an_error() {
         let mut h = Heap::new();
         let t = h.alloc(Obj::Tuple(vec![Word::int(1)]));
-        h.inc(t);
+        h.inc(t).unwrap();
         assert_eq!(
             h.release(t, &[&[0, 0]]).unwrap_err(),
             "runtime: a word tagged 0 has no parts"
@@ -1120,15 +1120,14 @@ mod tests {
     }
 
     #[test]
-    fn a_count_at_its_most_is_an_error_and_inc_reports_it_at_the_next_dec() {
+    fn a_count_at_its_most_is_an_error_at_the_inc_itself() {
         let mut h = Heap::new();
         let w = h.alloc(Obj::Str(Rope::leaf("a".into())));
         h.cells[0].count = u32::MAX;
         let full = "runtime: cell 0 has 4294967295 references, the most a count holds";
-        assert_eq!(h.try_inc(w).unwrap_err(), full);
-        h.inc(w);
-        assert_eq!(h.dec(w).unwrap_err(), full);
+        assert_eq!(h.inc(w).unwrap_err(), full);
         assert_eq!(h.cells[0].count, u32::MAX);
+        // A drop after the fault is an ordinary drop: the fault was not kept for it.
         h.dec(w).unwrap();
         assert_eq!(h.cells[0].count, u32::MAX - 1);
     }

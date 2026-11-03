@@ -10,11 +10,13 @@ mod corpus;
 mod drops;
 mod hooks;
 mod kernel_inputs;
+mod kinds;
 mod ports;
 mod reuse;
 mod scalars;
 mod scaling;
 mod strings;
+mod table;
 
 use std::sync::Arc;
 

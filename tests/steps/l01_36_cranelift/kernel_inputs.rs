@@ -131,7 +131,7 @@ fn a_record_built_again_from_new_parts_between_two_runs_of_the_kernel_gives_the_
 fn a_cell_shared_by_two_tuples_is_read_once() {
     let mut h = Heap::new();
     let lines = h.fresh(&order("rush"));
-    h.inc(lines);
+    h.inc(lines).unwrap();
     let a = h.alloc(Obj::Tuple(vec![lines, Word::int(1)]));
     let b = h.alloc(Obj::Tuple(vec![lines, Word::int(2)]));
     let va = h.value(a).unwrap();

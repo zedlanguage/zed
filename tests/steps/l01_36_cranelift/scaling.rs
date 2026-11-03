@@ -473,7 +473,7 @@ fn paired(depth: usize) -> (Heap, Word) {
     let mut h = Heap::new();
     let mut w = h.fresh(&Value::str("total 12"));
     for _ in 0..depth {
-        h.inc(w);
+        h.inc(w).unwrap();
         w = h.alloc(Obj::Tuple(vec![w, w]));
     }
     (h, w)
@@ -529,16 +529,17 @@ pub(super) fn unused(n: usize) -> Term {
     )
 }
 
-/// The native run of `make` in `world` at `n` and `8n`, planned before the timing, against
-/// the counting machine's value and counts at `n`.
-fn check_run(what: &str, n: usize, make: fn(usize) -> Term, world: fn(usize) -> World) {
+/// The native run of `make` in `world` at `n` and `8n`, planned and with its world built
+/// before the timing, against the counting machine's value and counts at `n`. The timed run
+/// clones the world, which copies the ports' maps and shares their values.
+pub(super) fn check_run(what: &str, n: usize, make: fn(usize) -> Term, world: fn(usize) -> World) {
     on_big_stack(|| {
         assert!(!counted_in(&make(n), world(n)).is_empty());
-        let at = |m: usize| planned(&make(m));
+        let at = |m: usize| (planned(&make(m)), world(m));
         let (small, large) = (at(n), at(8 * n));
         scaling::check(what, n, |m| {
-            let (g, p) = if m == n { &small } else { &large };
-            let o = zed_native::run(g, p, &mut Evaluator::new(world(m))).unwrap();
+            let ((g, p), w) = if m == n { &small } else { &large };
+            let o = zed_native::run(g, p, &mut Evaluator::new(w.clone())).unwrap();
             std::hint::black_box(o);
         });
     });

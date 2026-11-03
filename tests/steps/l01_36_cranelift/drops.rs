@@ -38,7 +38,7 @@ fn shared(n: usize) -> (Heap, Word) {
         w = h.fresh(&Value::str("a"));
     }
     for _ in 0..n {
-        h.inc(w);
+        h.inc(w).unwrap();
     }
     (h, w)
 }

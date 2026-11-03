@@ -34,6 +34,10 @@ pub struct Outcome {
     pub stats: Stats,
     /// How many nodes the kernel ran for the runtime.
     pub kernel_calls: u64,
+    /// The entries of the heap's table of uncounted values when the run ends.
+    pub table: usize,
+    /// The cells the heap holds when the run ends, live or free.
+    pub cells: usize,
 }
 
 fn isa(pic: bool) -> Result<Arc<dyn cranelift_codegen::isa::TargetIsa>, String> {
@@ -105,6 +109,8 @@ pub fn run(g: &Arc<Region>, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, 
         value: r?,
         stats: s.run.heap.stats,
         kernel_calls: s.run.kernel_calls,
+        table: s.run.heap.table_len(),
+        cells: s.run.heap.cell_slots(),
     })
 }
 
