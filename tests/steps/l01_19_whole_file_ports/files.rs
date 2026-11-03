@@ -152,5 +152,8 @@ fn a_bare_io_error_pattern_narrows_the_payload_away() {
     let src = "main(fs: Files) -> (stdout: Lines) {\n  \
                stdout <- fs[\"app.conf\"] else #notFound -> \"missing\";\n}\n";
     let e = load(src.as_bytes()).err().unwrap();
-    assert!(e.contains("#ioError(_)"), "{e}");
+    assert!(
+        e.contains("#ioError(op: String, path: String, why: String)"),
+        "{e}"
+    );
 }

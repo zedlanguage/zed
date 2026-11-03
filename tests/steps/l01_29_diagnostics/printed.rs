@@ -8,7 +8,7 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::{Rat, Value};
 use zed_tests::scaling;
 use zedc::check::read::parse_type;
-use zedc::check::ty::{Carrier, Ty, Vars, printed};
+use zedc::check::ty::{Carrier, Shape, Ty, Vars, printed};
 
 /// Each program the check reads: its place and text.
 fn programs() -> Vec<(String, String)> {
@@ -48,15 +48,18 @@ fn printed_by(text: &str) -> (Vec<(Ty, String)>, String) {
     (printed::take(), out)
 }
 
-/// What type syntax states of `t`: the atoms a named family holds, the payloads the atoms were
-/// built with, a positional parameter's name, a default, a body's needs, the variables a
-/// signature binds and whether it is a family are not written in a type.
+/// What type syntax states of `t`: the atoms a named family holds, a positional parameter's name,
+/// a default, a body's needs, the variables a signature binds and whether it is a family are
+/// not written in a type. The payloads of atoms are (L29-print).
 fn stated(t: &Ty) -> Ty {
     let mut t = t.clone();
     let mut stack = vec![&mut t];
     while let Some(t) = stack.pop() {
         t.family = KType::empty();
-        t.payloads.clear();
+        for s in t.payloads.values_mut().flatten().flatten() {
+            stack.extend(s.items.iter_mut());
+            stack.extend(s.fields.values_mut());
+        }
         for cs in t.tuples.iter_mut() {
             stack.extend(cs.iter_mut());
         }
@@ -151,6 +154,54 @@ fn the_forms_of_layer_l1_read_back() {
     assert_eq!(f.fns[0].to_string(), "(int, name: String) -> ()");
 }
 
+/// A port's failure is printed with its payload type, as DESIGN.md sec:ports writes it, and
+/// reads back to the atom with that payload: not to the bare `#ioError`, which has none.
+#[test]
+fn an_atom_with_a_payload_reads_back() {
+    let io = "#ioError(op: String, path: String, why: String)";
+    let fields = ["op", "path", "why"]
+        .into_iter()
+        .map(|f| (f.into(), Ty::carrier(Carrier::Str)))
+        .collect();
+    let mut want = Ty::set(KType::atom_with("ioError", &KType::top()));
+    want.payloads.insert(
+        "ioError".into(),
+        Some(vec![Shape {
+            items: Vec::new(),
+            fields,
+        }]),
+    );
+    assert_eq!(back(io), want);
+    assert_eq!(back(io).to_string(), io);
+    assert_ne!(back(io), back("#ioError"));
+    // Components by position, then fields by name, and a payload within a payload.
+    let t = back("#pair(int, #box(String), tag: #a)");
+    assert_eq!(t.to_string(), "#pair(int, #box(String), tag: #a)");
+    assert_eq!(
+        t.payloads["pair"].as_ref().expect("a known payload")[0]
+            .items
+            .len(),
+        2
+    );
+    // What the checker prints for a lookup in a `Files` port, and for the lines of a `Lines`
+    // port, reads back to the type printed.
+    for src in [
+        "main(fs: Files) -> (stdout: Lines) {\n  stdout <- fs[\"a\"] else #notFound -> \"\";\n}\n",
+        "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- stdin;\n}\n",
+    ] {
+        let (seen, out) = printed_by(src);
+        assert!(out.contains(io), "{src}: {out}");
+        let io: Vec<_> = seen
+            .iter()
+            .filter(|(_, s)| s.contains("#ioError"))
+            .collect();
+        assert!(!io.is_empty(), "{src}: no printed #ioError");
+        for (t, s) in io {
+            assert_eq!(mismatch(t, s), None, "{src}");
+        }
+    }
+}
+
 #[test]
 fn the_three_leaves_of_layer_l10_read_back() {
     assert_eq!(back("_"), Ty::dynamic());
@@ -186,7 +237,7 @@ fn what_is_no_printed_type_is_an_error() {
     let cases = [
         ("$0", "`$0`: no token starts with '$' (U+0024)"),
         ("!int", "`!int`: `!` stands before no `_`"),
-        ("#e(int)", "`#e(int)` holds a form of layer L2"),
+        ("{x: int}", "`{x: int}` holds a form of layer L2"),
         ("[int]", "`[int]` holds a form of layer L3"),
         (
             "(T) -> T for T in widget",
@@ -241,4 +292,37 @@ fn reading_a_printed_type_back_scales() {
             assert_eq!(back(tuple).tuples[0].len(), size);
         },
     );
+}
+
+/// Printing a union of `n` atoms, each with its payload type, and reading the text back, each
+/// timed alone: the printer takes the payload atoms out of the kernel set in one difference.
+#[test]
+fn printing_atoms_with_payloads_scales() {
+    let n = 400;
+    let built = |n: usize| {
+        let text = (0..n)
+            .map(|i| format!("#a{i}(int, f: String)"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        back(&text)
+    };
+    let inputs = [n, 8 * n].map(|m| {
+        let t = built(m);
+        let text = t.to_string();
+        (m, t, text)
+    });
+    let input = |size: usize| {
+        inputs
+            .iter()
+            .find(|(m, ..)| *m == size)
+            .expect("a built size")
+    };
+    scaling::check("printing a union of n atoms with payloads", n, |size| {
+        let text = input(size).1.to_string();
+        assert_eq!(text.matches("(int, f: String)").count(), size);
+    });
+    scaling::check("reading back a union of n atoms with payloads", n, |size| {
+        let (_, t, text) = input(size);
+        assert_eq!(&back(text), t);
+    });
 }

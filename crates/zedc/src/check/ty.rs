@@ -56,6 +56,14 @@ impl Shape {
         }
     }
 
+    /// The type of the atom `#name` with this payload: `#name(int, f: String)`.
+    fn text(&self, name: &str) -> String {
+        let items = self.items.iter().map(|t| t.to_string());
+        let fields = self.fields.iter().map(|(f, t)| format!("{f}: {t}"));
+        let parts: Vec<String> = items.chain(fields).collect();
+        format!("#{name}({})", parts.join(", "))
+    }
+
     /// It with `f` applied to each component and field.
     fn map(&self, f: impl Fn(&Ty) -> Ty) -> Shape {
         Shape {
@@ -586,15 +594,29 @@ impl Ty {
         &self.loose() - named
     }
 
+    /// The type of its loose atoms, with their payloads.
+    pub fn loose_ty(&self) -> Ty {
+        self.of_piece(&Piece::Set(self.loose()))
+    }
+
     /// It without its loose atoms, as `e else d` narrows `e`: what is not an atom, and the
     /// family's atoms. Each step complements only a set that lists no atom names or the
     /// family's, so it costs `O(f log n)` for `f` family atoms of `n`, where `set − loose`
     /// would complement every loose atom.
     pub fn without_loose(&self) -> Ty {
-        Ty {
+        let mut out = Ty {
             set: &(&self.set - &atoms()) | &(&self.set & &self.family),
             ..self.clone()
-        }
+        };
+        out.prune_payloads();
+        out
+    }
+
+    /// Drops the payloads of the atoms its set no longer holds (L29-print: a type narrowed to
+    /// `String` kept the payload of the `#ioError` it lost, so it differed from `String`).
+    fn prune_payloads(&mut self) {
+        let set = &self.set;
+        self.payloads.retain(|n, _| holds_payload(set, n));
     }
 
     /// Its pieces: the scalars split by carrier, then the atoms and the other scalars, the
@@ -710,6 +732,7 @@ impl Ty {
         let mut out = self.clone();
         out.set = &self.set - &t.set;
         out.family = &self.family - &t.set;
+        out.prune_payloads();
         out.tuples.retain(|a| {
             !Ty::tuple(a.clone()).subtype(&Ty {
                 set: KType::empty(),
@@ -1051,8 +1074,26 @@ impl Ty {
     /// Its text, in type syntax.
     fn text(&self) -> String {
         let mut items: Vec<String> = Vec::new();
-        if !self.set.is_empty() {
-            items.push(surface(&self.set.to_string()));
+        // An atom whose payloads are known prints each payload's type, `#ioError(op: String,
+        // path: String, why: String)` (L29-print); the kernel set holds it with any payload.
+        let shaped: Vec<(&Arc<str>, &Vec<Shape>)> = self
+            .payloads
+            .iter()
+            .filter_map(|(n, ss)| Some((n, ss.as_ref()?)))
+            .filter(|(n, _)| holds_payload(&self.set, n))
+            .collect();
+        let rest = (!shaped.is_empty()).then(|| {
+            let listed = shaped
+                .iter()
+                .map(|(n, _)| KType::atom_with(n, &KType::top()));
+            &self.set - &KType::union_all(listed)
+        });
+        let set = rest.as_ref().unwrap_or(&self.set);
+        if !set.is_empty() {
+            items.push(surface(&set.to_string()));
+        }
+        for (n, ss) in shaped {
+            items.extend(ss.iter().map(|s| s.text(n)));
         }
         for cs in &self.tuples {
             let cs: Vec<String> = cs.iter().map(|c| c.to_string()).collect();

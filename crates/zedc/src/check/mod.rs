@@ -1911,7 +1911,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 format!("{what} does not take {}", Ty::set(t.family.clone())),
             );
         }
-        Ty::set(t.loose())
+        t.loose_ty()
     }
 
     /// `e` checked with the binders of `facts` narrowed.
@@ -2673,7 +2673,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
     ) -> Ty {
         let mut x = self.arg(of, None);
-        let atoms = x.ty.loose();
+        let atoms = x.ty.loose_ty();
         if safe {
             x = Arg::of(x.ty.without_loose());
         }
@@ -2703,7 +2703,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
         };
         match safe {
-            true => out.union(&Ty::set(atoms)),
+            true => out.union(&atoms),
             false => out,
         }
     }
@@ -3138,7 +3138,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .iter()
                 .flatten()
                 .filter(|a| a.lit.is_none())
-                .map(|a| Ty::set(a.ty.loose()))
+                .map(|a| a.ty.loose_ty())
                 .collect();
             passed(&mut out, atoms.iter());
             for a in args.iter_mut().flatten() {
@@ -3157,7 +3157,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if loose.is_empty() || !self.refuses(sig, i, &loose) {
                     continue;
                 }
-                atoms.push(Ty::set(loose));
+                atoms.push(a.ty.loose_ty());
                 a.ty = a.ty.without_loose();
                 let mut v = self.info.passes.get(&span).cloned().unwrap_or_default();
                 if !v.contains(&at) {
@@ -3613,7 +3613,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if follows {
                         out = out.union(&Ty::var(format!("${r}").into()));
                         for a in &rel {
-                            out = out.union(&Ty::set(a.result.atoms()));
+                            out = out.union(&a.result.of_piece(&Piece::Set(a.result.atoms())));
                         }
                     } else {
                         for a in &rel {
@@ -3718,7 +3718,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 /// The type of the one-parameter word `sig` applied to `t`, its atoms passing through; none
 /// when a piece of `t` fits no arrow, an unknown one fitting only an arrow that takes any.
 fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
-    let mut out = Ty::set(t.loose());
+    let mut out = t.loose_ty();
     for p in t.without_loose().pieces() {
         let arrow = sig.arrows.iter().find(|a| match p {
             Piece::Dyn | Piece::Var(_) => a.params[0].dynamic,
@@ -3729,15 +3729,15 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
     Some(out)
 }
 
-/// `out` with the atoms of `ts` added: when two of them hold atoms, also `#errs`, which two
-/// distinct failures merge into.
+/// `out` with the atoms of `ts` added, with their payloads: when two of them hold atoms, also
+/// `#errs`, which two distinct failures merge into.
 fn passed<'t>(out: &mut Ty, ts: impl Iterator<Item = &'t Ty>) {
     let mut n = 0;
     for t in ts {
         let a = t.atoms();
         if !a.is_empty() {
             n += 1;
-            *out = out.union(&Ty::set(a));
+            *out = out.union(&t.of_piece(&Piece::Set(a)));
         }
     }
     if n > 1 {
@@ -4302,8 +4302,27 @@ pub fn denoted(t: &Type) -> Ty {
 pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
     let denoted = |t: &Type| denoted_with(t, leaves);
     match &t.kind {
-        TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
+        TypeKind::Apply(..) | TypeKind::Record(_) => {
             unreachable!("resolve rejects the forms of layer L2")
+        }
+        // Resolve rejects a written one until L2.5; the reader of printed types reads one, since
+        // the checker builds atoms with payloads from L1 on (L29-print).
+        TypeKind::AtomApply(a, ps) => {
+            let mut shape = Shape {
+                items: Vec::new(),
+                fields: BTreeMap::new(),
+            };
+            for p in ps {
+                match &p.name {
+                    Some(n) if !p.positional => {
+                        shape.fields.insert(n.as_str().into(), denoted(&p.ty));
+                    }
+                    _ => shape.items.push(denoted(&p.ty)),
+                }
+            }
+            let mut t = Ty::set(KType::atom_with(a, &KType::top()));
+            t.payloads.insert(a.as_str().into(), Some(vec![shape]));
+            t
         }
         TypeKind::Seq(_) => unreachable!("resolve rejects the forms of layer L3"),
         TypeKind::Name(n) if leaves.contains_key(n.as_str()) => leaves[n.as_str()].clone(),
