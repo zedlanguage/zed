@@ -221,6 +221,11 @@ fn type_kids(kind: &mut TypeKind, out: &mut Vec<Type>) {
             out.extend(params.into_iter().map(|p| p.ty));
             out.push(*result);
         }
+        TypeKind::Bounded {
+            lower,
+            upper,
+            result,
+        } => out.extend([*lower, *upper, *result]),
         TypeKind::Apply(_, params) | TypeKind::AtomApply(_, params) => {
             out.extend(params.into_iter().map(|p| p.ty));
         }

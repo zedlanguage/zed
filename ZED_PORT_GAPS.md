@@ -939,3 +939,24 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `c - v` computed in `i128` and turned into an end by `End::lower` and `End::upper`, which set the global `ROUNDED` flag when the end leaves `i64` | `reflect` | Machine integers; Mutation, global state | Zed's `int` is unbounded, so `c - v` needs no wider type and no rounding flag |
+
+## Entries from T6 (`zed-kernel/src/types/bes.rs`, `rec.rs`, `empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Vec<u32>` stamps and marks overwritten in place, reset by advancing a counter | `bes::Stamp`, `bes::Scratch` | Mutation | A persistent array per pass, or a map from node to the pass that marked it; the counter trick needs mutable arrays |
+| A closure `Box<dyn Fn() -> Option<bool> + Send + Sync>` stored in a recursive type node, computed once through `OnceLock` | `types::Rec::judge`, `rec::Env::judged` | Laziness | A lazy field of the group's instance, forced on first use |
+| Explicit work stack of `(node id, &Arc<Node>)` pairs filling a graph allocated ahead | `rec::judge`, `rec::kids` | Mutation | A fold over the body tree that returns the nodes it adds |
+| `impl Iterator for Values` holding an odometer `Vec<usize>` advanced in place, and a `BTreeSet` of the tuples given | `types::Values::next` | Mutation, laziness | A lazy stream whose state (box, positions, tuples given) is passed from one value to the next |
+| `std::mem::take` of the lists out of one iterator into the next, in `each_value` | `Type::each_value` | Moves | The lists threaded through a fold over the types in order |
+| Explicit stacks of `Step::Enter`/`Step::Leave` and of slice iterators, with `Vec<Option<Item>>` taken in place as each node is visited | `print::Printer::walk`, `print::Printer::write` | Mutation | A fold over the graph in post-order returning the texts and the order, with the visited set as a persistent map threaded through it |
+| `&dyn Fn(&mut Printer, &A) -> Text` callbacks that borrow the printer mutably, so one diagram walk serves tuple and morphism parts | `print::Printer::part` | Generic closures over mutable state | A function generic over the literal kind, returning the texts and the nodes found instead of writing them into shared state |
+| Explicit post-order stack over the expression graph with `HashMap` memos keyed by node id, holding `Option<imbl::OrdSet>` sets merged smaller into larger | `bdd::Part::forced` | Mutation | A fold over the graph in post-order with a persistent map keyed by the node id, returning the two sets |
+| A counter of open needs per simulation pair decremented in place, and a worklist of failed pairs | `empty::Simulation::holds` | Mutation | A fold over the failures that returns the new counts as a persistent map |
+| `self.cycles` entries written for every type on a walked path (`Vec` path and `BTreeMap` of positions) | `empty::Search::find_cycle` | Mutation | The walk returns the path and the result; the caller folds them into a persistent map |
+| A region shrunk to a piece in place, the search run on it, and the region put back; a counter `give_ups` read before and after to learn whether the search showed a value | `empty::Search::refine` | Mutation | The search takes the piece as an argument and returns whether it showed a value with the verdict |
+| A global atomic counter giving each diagram node and expression its id at construction | `bdd::NEXT`, `Bdd::node`, `Part::expr` | Global mutable state | Ids from hash-consing in a persistent table threaded through construction, or content digests |
+| `Vec<OnceLock<Type>>` members set in two rounds (recursive members, then plain members in post-order) before they are read | `rec::Group::instance`, `rec::eval` | Mutation, laziness | A fold over the plain members in post-order building a persistent map from index to type, after the recursive members |
+| A `wide` array of the universes in which some type has a cofinite set, set in a first pass over the types | `empty::overlaps` | Mutation | A first fold returning the six flags as a tuple |
+| Union-find with path halving: `parent` links rewritten in place while a root is found | `empty::overlaps` | Mutation | A persistent map from key to the first type holding it, folded over the types, joining a type to the classes of its keys |
+| A `Vec<bool>` window of steps marked in place by each negated class, the window doubled | `empty::least_length` | Mutation | A fold over the classes returning the set of held steps in the window, as a persistent bit set |

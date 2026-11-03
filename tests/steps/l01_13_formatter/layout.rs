@@ -130,3 +130,12 @@ fn imports_and_annotations_stay_on_one_line() {
         "import geometry.shapes as gs;\nimport io.{read, write};\n@memoized fib(n) = n;\n",
     );
 }
+
+#[test]
+fn a_one_tuple_keeps_its_comma_and_two_bounds_their_dots() {
+    check("f(x)=x is (int ,);\n", "f(x) = x is (int,);\n");
+    check(
+        "f(m)=m is (#a..#a|#b->(#c|#d)..#c|#d->int);\n",
+        "f(m) = m is (#a .. #a | #b -> #c | #d .. #c | #d -> int);\n",
+    );
+}

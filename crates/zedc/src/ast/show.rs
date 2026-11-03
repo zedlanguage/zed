@@ -523,6 +523,19 @@ fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
             type_params(params, "", out);
             out.extend([Text(") "), Show::Type(result), Text(")")]);
         }
+        TypeKind::Bounded {
+            lower,
+            upper,
+            result,
+        } => out.extend([
+            Text("(.. "),
+            Show::Type(lower),
+            Text(" "),
+            Show::Type(upper),
+            Text(" "),
+            Show::Type(result),
+            Text(")"),
+        ]),
         TypeKind::Apply(name, params) => {
             out.extend([Text("("), Text(name)]);
             type_params(params, " ", out);

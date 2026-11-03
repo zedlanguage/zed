@@ -45,6 +45,11 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
                 stack.extend(params.iter().map(|p| &p.ty));
                 stack.push(result);
             }
+            TypeKind::Bounded {
+                lower,
+                upper,
+                result,
+            } => stack.extend([&**lower, &**upper, &**result]),
         }
     }
     let mut ty = denoted_with(&t, &binds);

@@ -402,3 +402,40 @@ fn products_of_recursive_types() {
         }
     }
 }
+
+/// `Type::contains` keeps each test by the address of the sequence it reads, which names one
+/// sequence while the value is borrowed. A tree whose two halves are one shared value at every
+/// level has `2^d` paths and `d` sequences: each is tested once, so depth 60 is decided at
+/// once. The answers agree with those on copies built apart, whose sequences are all distinct,
+/// and do not change when the values are rebuilt elsewhere in memory.
+#[test]
+fn membership_by_sequence_address_is_deterministic() {
+    let t = tree().instance(vec![Type::int()]).remove(0);
+    let shared = |d: usize, x: Value| (0..d).fold(x, |v, _| fork(v.clone(), v));
+    fn apart(d: usize, x: &Value) -> Value {
+        match d {
+            0 => x.clone(),
+            _ => fork(apart(d - 1, x), apart(d - 1, x)),
+        }
+    }
+    let bad = || leaf(Value::str("x"));
+    // One bad leaf at the right end, under a left half that is shared and good.
+    let right_bad = |d: usize| (0..d).fold(bad(), |v, i| fork(shared(i, leaf(Value::Int(1))), v));
+    for round in 0..3 {
+        // Values built in each round sit at new addresses.
+        let _spacer: Vec<Value> = (0..round * 7).map(|i| leaf(Value::Int(i as i64))).collect();
+        assert!(t.contains(&shared(60, leaf(Value::Int(1)))));
+        assert!(!t.contains(&shared(60, bad())));
+        assert!(!t.contains(&right_bad(60)));
+        for d in [0, 1, 5, 10] {
+            for x in [leaf(Value::Int(1)), bad()] {
+                assert_eq!(
+                    t.contains(&shared(d, x.clone())),
+                    t.contains(&apart(d, &x)),
+                    "depth {d}"
+                );
+            }
+            assert!(!t.contains(&right_bad(d)), "depth {d}");
+        }
+    }
+}

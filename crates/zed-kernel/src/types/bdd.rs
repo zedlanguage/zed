@@ -38,6 +38,10 @@ use std::sync::atomic::{AtomicU64, Ordering as Atomic};
 
 use super::{Morphism, Op, Row, mix};
 
+/// The next node id. Diagram nodes and expressions take their ids from one counter, so an id
+/// names one node among both; ids key the maps of a walk, never addresses.
+static NEXT: AtomicU64 = AtomicU64::new(2);
+
 #[derive(Clone)]
 pub(super) enum Bdd<A> {
     Leaf(bool),
@@ -53,6 +57,9 @@ pub(super) struct Branch<A> {
 }
 
 type Table<A> = BTreeMap<(A, u64, u64), Arc<Branch<A>>>;
+
+/// A node's id, atom, `hi` and `lo`.
+pub(super) type NodeView<'a, A> = (u64, &'a A, &'a Bdd<A>, &'a Bdd<A>);
 
 /// The atoms of a universe, each kind with its thread's table of nodes.
 pub(super) trait Literal: Ord + Clone + 'static {
@@ -105,7 +112,6 @@ impl<A: Literal> Bdd<A> {
     }
 
     fn node(atom: A, hi: Bdd<A>, lo: Bdd<A>) -> Bdd<A> {
-        static NEXT: AtomicU64 = AtomicU64::new(2);
         if hi == lo {
             return hi;
         }
@@ -126,25 +132,49 @@ impl<A: Literal> Bdd<A> {
 
     /// The union or intersection, or `None` when it would have more nodes than the two
     /// operands together.
-    pub(super) fn zip(&self, other: &Bdd<A>, op: Op) -> Option<Bdd<A>> {
+    pub(super) fn zip(&self, other: &Bdd<A>, op: Op) -> Bdd<A> {
         let mut made = HashSet::new();
-        self.apply(
-            other,
-            op,
-            &mut HashMap::new(),
-            &mut made,
-            self.size() + other.size(),
-        )
+        self.apply(other, op, &mut HashMap::new(), &mut made, usize::MAX)
+            .expect("no limit is set")
     }
 
-    /// The number of nodes.
-    fn size(&self) -> usize {
-        let mut n = 0;
-        self.atoms(&mut |_| {
-            n += 1;
-            true
-        });
-        n
+    /// Whether the diagram is one atom or its complement.
+    fn is_literal(&self) -> bool {
+        matches!(self, Bdd::Node(n) if matches!(n.hi, Bdd::Leaf(_)) && matches!(n.lo, Bdd::Leaf(_)))
+    }
+
+    /// Whether the diagram is a chain under `op`: a meet of literals under `And`, a union of
+    /// them under `Or`.
+    fn is_chain(&self, op: Op) -> bool {
+        let out = op == Op::Or;
+        let mut b = self;
+        loop {
+            match b {
+                Bdd::Leaf(v) => return *v != out,
+                Bdd::Node(n) => match (&n.hi, &n.lo) {
+                    (Bdd::Leaf(v), x) | (x, Bdd::Leaf(v)) if *v == out => b = x,
+                    _ => return false,
+                },
+            }
+        }
+    }
+
+    /// A chain under `op` of two or more literals, as its first literal and the rest.
+    fn split(&self, op: Op) -> Option<(Bdd<A>, Bdd<A>)> {
+        let Bdd::Node(n) = self else { return None };
+        if self.is_literal() || !self.is_chain(op) {
+            return None;
+        }
+        let out = op == Op::Or;
+        let atom = Bdd::literal(n.atom.clone());
+        Some(match &n.lo {
+            Bdd::Leaf(v) if *v == out => (atom.not_if(out), n.hi.clone()),
+            _ => (atom.not_if(!out), n.lo.clone()),
+        })
+    }
+
+    fn not_if(self, b: bool) -> Bdd<A> {
+        if b { self.not() } else { self }
     }
 
     fn apply(
@@ -231,16 +261,21 @@ impl<A: Literal> Bdd<A> {
         r
     }
 
-    /// The atoms every value takes, and those every value refuses. The atoms are ordered, so an
-    /// atom is free in some value when a path to `true` passes its place in the order without
-    /// testing it, or tests it and goes on to `true` both ways. One pass over the nodes that
-    /// reach `true` marks the places each edge passes over and the ways each node goes on; the
-    /// atoms are then sorted, so the time is `O(n log n)` in the nodes.
+    /// The atoms every value takes, and those every value refuses: [`Bdd::forced_to`] `true`.
     fn forced(&self) -> (Vec<A>, Vec<A>) {
+        self.forced_to(true)
+    }
+
+    /// The atoms taken, and those refused, on every path to the leaf `leaf`. The atoms are
+    /// ordered, so an atom is free when a path to `leaf` passes its place in the order without
+    /// testing it, or tests it and goes on to `leaf` both ways. One pass over the nodes that reach
+    /// `leaf` marks the places each edge passes over and the ways each node goes on; the atoms are
+    /// then sorted, so the time is `O(n log n)` in the nodes.
+    fn forced_to(&self, leaf: bool) -> (Vec<A>, Vec<A>) {
         let Bdd::Node(root) = self else {
             return (Vec::new(), Vec::new());
         };
-        // The nodes from which `true` is reached, each once.
+        // The nodes from which `leaf` is reached, each once.
         let mut reaches: HashMap<u64, bool> = HashMap::new();
         let mut live: Vec<&Arc<Branch<A>>> = Vec::new();
         let mut stack = vec![(root, false)];
@@ -260,7 +295,7 @@ impl<A: Literal> Bdd<A> {
                 continue;
             }
             let r = [&n.hi, &n.lo].into_iter().any(|c| match c {
-                Bdd::Leaf(v) => *v,
+                Bdd::Leaf(v) => *v == leaf,
                 Bdd::Node(m) => reaches[&m.id],
             });
             reaches.insert(n.id, r);
@@ -294,8 +329,8 @@ impl<A: Literal> Bdd<A> {
             let i = place(&n.atom);
             for (c, v) in [(&n.hi, true), (&n.lo, false)] {
                 let to = match c {
-                    Bdd::Leaf(true) => count,
-                    Bdd::Leaf(false) => continue,
+                    Bdd::Leaf(v) if *v == leaf => count,
+                    Bdd::Leaf(_) => continue,
                     Bdd::Node(m) if reaches[&m.id] => place(&m.atom),
                     Bdd::Node(_) => continue,
                 };
@@ -334,6 +369,14 @@ impl<A: Literal> Bdd<A> {
 }
 
 impl<A> Bdd<A> {
+    /// The node's id, atom, `hi` and `lo`, or the leaf's value.
+    pub(super) fn branch(&self) -> Result<NodeView<'_, A>, bool> {
+        match self {
+            Bdd::Leaf(b) => Err(*b),
+            Bdd::Node(n) => Ok((n.id, &n.atom, &n.hi, &n.lo)),
+        }
+    }
+
     /// Whether `f` holds of every atom, each node visited once.
     pub(super) fn atoms(&self, f: &mut impl FnMut(&A) -> bool) -> bool {
         fn go<A>(b: &Bdd<A>, seen: &mut HashSet<u64>, f: &mut impl FnMut(&A) -> bool) -> bool {
@@ -474,8 +517,12 @@ pub(super) enum Part<A: Ord> {
 }
 
 pub(super) struct Expr<A: Ord> {
+    /// The node's id, unique among the nodes of the process.
+    id: u64,
     digest: u64,
     form: Form<A>,
+    /// The complement, made once, so that a chain of choices is negated in steps, not walked.
+    complement: std::sync::OnceLock<Part<A>>,
 }
 
 #[derive(Debug)]
@@ -516,16 +563,33 @@ impl<A: Literal> Part<A> {
             Form::Or(a, b) => mix(mix(9, a.digest()), b.digest()),
             Form::And(a, b) => mix(mix(10, a.digest()), b.digest()),
         };
-        Part::Expr(Arc::new(Expr { digest, form }))
+        Part::Expr(Arc::new(Expr {
+            id: NEXT.fetch_add(1, Atomic::Relaxed),
+            digest,
+            form,
+            complement: std::sync::OnceLock::new(),
+        }))
     }
 
     pub(super) fn not(&self) -> Part<A> {
         match self {
             Part::Bdd(b) => Part::Bdd(b.not()),
-            Part::Expr(e) => match &e.form {
-                Form::Not(p) => p.clone(),
-                _ => Part::expr(Form::Not(self.clone())),
-            },
+            Part::Expr(e) => e
+                .complement
+                .get_or_init(|| {
+                    let n = if let Form::Not(p) = &e.form {
+                        p.clone()
+                    } else if let Some((c, x, y)) = self.choice() {
+                        Part::choose(&c, &x.not(), &y.not())
+                    } else {
+                        Part::expr(Form::Not(self.clone()))
+                    };
+                    if let Part::Expr(m) = &n {
+                        let _ = m.complement.set(self.clone());
+                    }
+                    n
+                })
+                .clone(),
         }
     }
 
@@ -539,14 +603,128 @@ impl<A: Literal> Part<A> {
             (_, Some(_)) => return self.clone(),
             _ => {}
         }
-        if let (Part::Bdd(a), Part::Bdd(b)) = (self, other)
-            && let Some(r) = a.zip(b, op)
-        {
-            return Part::Bdd(r);
+        if self == other {
+            return self.clone();
         }
+        if self.same_as_not(other) {
+            return Part::leaf(absorbs);
+        }
+        // Only chains grow a diagram, so each diagram is a decision list: the latest literal
+        // that fires gives the value. Atoms read so far leave at most one function per literal
+        // that fired, so a level has at most `n + 1` nodes and a diagram at most `n(n + 1)` on
+        // `n` atoms, in any atom order.
+        if let (Part::Bdd(a), Part::Bdd(b)) = (self, other)
+            && (a.is_chain(op) || b.is_chain(op))
+        {
+            return Part::Bdd(a.zip(b, op));
+        }
+        // Choices on one condition meet branch by branch.
+        if let (Some((c, x, y)), Some((d, u, v))) = (self.choice(), other.choice())
+            && c == d
+        {
+            return Part::choose(&c, &x.zip(&u, op), &y.zip(&v, op));
+        }
+        // `c&x | !c&y` and `(!c|x) & (c|y)` are one choice.
+        if let Some((c, x, y)) = Part::choice_of(self, other, op) {
+            return Part::choose(&c, &x, &y);
+        }
+        let (a, b) = if self.digest() <= other.digest() {
+            (self, other)
+        } else {
+            (other, self)
+        };
         Part::expr(match op {
-            Op::Or => Form::Or(self.clone(), other.clone()),
-            Op::And => Form::And(self.clone(), other.clone()),
+            Op::Or => Form::Or(a.clone(), b.clone()),
+            Op::And => Form::And(a.clone(), b.clone()),
+        })
+    }
+
+    /// Whether `self` is the complement of `other`, as built.
+    fn same_as_not(&self, other: &Part<A>) -> bool {
+        match (self, other) {
+            (Part::Bdd(a), Part::Bdd(b)) => a.is_literal() && a.not() == *b,
+            (Part::Expr(a), _) => {
+                a.complement.get().is_some_and(|c| c == other) || self.not() == *other
+            }
+            _ => other.not() == *self,
+        }
+    }
+
+    /// The condition of a choice, of `c` and `!c` the one whose digest is smaller.
+    fn condition(c: &Part<A>) -> (Part<A>, bool) {
+        let n = c.not();
+        if c.digest() <= n.digest() {
+            (c.clone(), true)
+        } else {
+            (n, false)
+        }
+    }
+
+    /// The choice `c&x | !c&y`, in the one form each choice has.
+    fn choose(c: &Part<A>, x: &Part<A>, y: &Part<A>) -> Part<A> {
+        if x == y {
+            return x.clone();
+        }
+        let (c, same) = Part::condition(c);
+        let (x, y) = if same { (x, y) } else { (y, x) };
+        match (x.is_leaf(), y.is_leaf()) {
+            (Some(false), Some(false)) => return Part::leaf(false),
+            (Some(true), Some(false)) => return c,
+            (Some(false), Some(true)) => return c.not(),
+            _ => {}
+        }
+        let parts = [c.zip(x, Op::And), c.not().zip(y, Op::And)];
+        let [a, b] = if parts[0].digest() <= parts[1].digest() {
+            parts
+        } else {
+            let [p, q] = parts;
+            [q, p]
+        };
+        Part::expr(Form::Or(a, b))
+    }
+
+    /// The operands of an `And` or an `Or`, under `op`.
+    fn operands(&self, op: Op) -> Option<[Part<A>; 2]> {
+        match (self, op) {
+            (Part::Expr(e), Op::And) => match &e.form {
+                Form::And(a, b) => Some([a.clone(), b.clone()]),
+                _ => None,
+            },
+            (Part::Expr(e), Op::Or) => match &e.form {
+                Form::Or(a, b) => Some([a.clone(), b.clone()]),
+                _ => None,
+            },
+            (Part::Bdd(b), _) => b.split(op).map(|(x, y)| [Part::Bdd(x), Part::Bdd(y)]),
+        }
+    }
+
+    /// `(c, x, y)` when `a op b` is a choice: under `Or`, `c&x | !c&y`; under `And`,
+    /// `(!c|x) & (c|y)`.
+    fn choice_of(a: &Part<A>, b: &Part<A>, op: Op) -> Option<(Part<A>, Part<A>, Part<A>)> {
+        let inner = if op == Op::Or { Op::And } else { Op::Or };
+        let [p, q] = a.operands(inner)?;
+        let [r, s] = b.operands(inner)?;
+        for (c, x) in [(&p, &q), (&q, &p)] {
+            for (n, y) in [(&r, &s), (&s, &r)] {
+                if c.same_as_not(n) {
+                    return Some(if op == Op::Or {
+                        (c.clone(), x.clone(), y.clone())
+                    } else {
+                        // `(c|x) & (!c|y)` takes `y` when `c`.
+                        (c.clone(), y.clone(), x.clone())
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// The choice this part is in its one form.
+    fn choice(&self) -> Option<(Part<A>, Part<A>, Part<A>)> {
+        let [a, b] = self.operands(Op::Or)?;
+        Part::choice_of(&a, &b, Op::Or).map(|(c, x, y)| {
+            let (d, same) = Part::condition(&c);
+            if same { (d, x, y) } else { (d, y, x) }
         })
     }
 
@@ -555,13 +733,13 @@ impl<A: Literal> Part<A> {
         fn go<A: Literal>(
             p: &Part<A>,
             holds: &impl Fn(&A) -> bool,
-            memo: &mut HashMap<*const Expr<A>, bool>,
+            memo: &mut HashMap<u64, bool>,
         ) -> bool {
             let e = match p {
                 Part::Bdd(b) => return b.eval(holds),
                 Part::Expr(e) => e,
             };
-            if let Some(v) = memo.get(&Arc::as_ptr(e)) {
+            if let Some(v) = memo.get(&e.id) {
                 return *v;
             }
             let v = match &e.form {
@@ -569,7 +747,7 @@ impl<A: Literal> Part<A> {
                 Form::Or(a, b) => go(a, holds, memo) || go(b, holds, memo),
                 Form::And(a, b) => go(a, holds, memo) && go(b, holds, memo),
             };
-            memo.insert(Arc::as_ptr(e), v);
+            memo.insert(e.id, v);
             v
         }
         go(self, holds, &mut HashMap::new())
@@ -587,7 +765,7 @@ impl<A: Literal> Part<A> {
     fn eval3_pinned(
         &self,
         holds: &impl Fn(&A) -> Option<bool>,
-        pins: &HashMap<*const Expr<A>, bool>,
+        pins: &HashMap<u64, bool>,
     ) -> Option<bool> {
         fn bdd<A>(
             b: &Bdd<A>,
@@ -617,7 +795,7 @@ impl<A: Literal> Part<A> {
             v
         }
         let mut nodes = HashMap::new();
-        let mut memo: HashMap<*const Expr<A>, Option<bool>> =
+        let mut memo: HashMap<u64, Option<bool>> =
             pins.iter().map(|(e, v)| (*e, Some(*v))).collect();
         let mut stack = vec![self.clone()];
         // Each expression is evaluated after its operands, on a stack of parts still to do.
@@ -629,17 +807,16 @@ impl<A: Literal> Part<A> {
                 }
                 Part::Expr(e) => e,
             };
-            let key = Arc::as_ptr(e);
+            let key = e.id;
             if memo.contains_key(&key) {
                 continue;
             }
-            let value =
-                |q: &Part<A>,
-                 nodes: &mut HashMap<u64, Option<bool>>,
-                 memo: &HashMap<*const Expr<A>, Option<bool>>| match q {
-                    Part::Bdd(b) => Some(bdd(b, holds, nodes)),
-                    Part::Expr(x) => memo.get(&Arc::as_ptr(x)).copied(),
-                };
+            let value = |q: &Part<A>,
+                         nodes: &mut HashMap<u64, Option<bool>>,
+                         memo: &HashMap<u64, Option<bool>>| match q {
+                Part::Bdd(b) => Some(bdd(b, holds, nodes)),
+                Part::Expr(x) => memo.get(&x.id).copied(),
+            };
             let operands: Vec<&Part<A>> = match &e.form {
                 Form::Not(a) => vec![a],
                 Form::Or(a, b) | Form::And(a, b) => vec![a, b],
@@ -675,7 +852,7 @@ impl<A: Literal> Part<A> {
         }
         match self {
             Part::Bdd(b) => bdd(b, holds, &mut nodes),
-            Part::Expr(e) => memo[&Arc::as_ptr(e)],
+            Part::Expr(e) => memo[&e.id],
         }
     }
 
@@ -687,17 +864,157 @@ impl<A: Literal> Part<A> {
     pub(super) fn settle(&self) -> Part<A> {
         let mut p = self.clone();
         loop {
+            let pins = p.pins();
+            if pins.is_empty() {
+                return p;
+            }
+            p = p.substitute_all(&pins);
+        }
+    }
+
+    /// The pins of one round of [`Part::settle`]. Each trial value is carried up from the
+    /// expression through the operators it changes, and stops at the first it leaves alone, so
+    /// that a trial reads what it changes, not the whole part.
+    fn pins(&self) -> HashMap<u64, bool> {
+        // The expressions; those shared, in the order the walk finds them shared, so that the
+        // pins taken do not depend on the expressions' ids.
+        let mut ids: HashMap<u64, usize> = HashMap::new();
+        let mut exprs: Vec<Arc<Expr<A>>> = Vec::new();
+        let mut uses: Vec<usize> = Vec::new();
+        let mut shared = Vec::new();
+        let mut stack = vec![self.clone()];
+        while let Some(q) = stack.pop() {
+            let Part::Expr(e) = q else { continue };
+            if let Some(&i) = ids.get(&e.id) {
+                uses[i] += 1;
+                if uses[i] == 2 {
+                    shared.push(i);
+                }
+                continue;
+            }
+            ids.insert(e.id, exprs.len());
+            exprs.push(e.clone());
+            uses.push(1);
+            match &e.form {
+                Form::Not(a) => stack.push(a.clone()),
+                // The first operand is pushed last, so it is walked first.
+                Form::Or(a, b) | Form::And(a, b) => {
+                    stack.push(b.clone());
+                    stack.push(a.clone());
+                }
+            }
+        }
+        let Part::Expr(root) = self else {
+            return HashMap::new();
+        };
+        let root = ids[&root.id];
+        let id = |q: &Part<A>| match q {
+            Part::Expr(x) => Some(ids[&x.id]),
+            Part::Bdd(_) => None,
+        };
+        let operands = |e: &Expr<A>| match &e.form {
+            Form::Not(a) => [Some(a.clone()), None],
+            Form::Or(a, b) | Form::And(a, b) => [Some(a.clone()), Some(b.clone())],
+        };
+        let mut parents = vec![Vec::new(); exprs.len()];
+        let mut waiting = vec![0; exprs.len()];
+        for (i, e) in exprs.iter().enumerate() {
+            for q in operands(e).iter().flatten() {
+                if let Some(c) = id(q) {
+                    parents[c].push(i);
+                    waiting[i] += 1;
+                }
+            }
+        }
+        // Every atom unknown: a diagram is known only when it is a leaf.
+        let step = |e: &Expr<A>, read: &dyn Fn(usize) -> Option<bool>| {
+            let value = |q: &Part<A>| match q {
+                Part::Expr(x) => read(ids[&x.id]),
+                Part::Bdd(b) => match b {
+                    Bdd::Leaf(v) => Some(*v),
+                    Bdd::Node(_) => None,
+                },
+            };
+            match &e.form {
+                Form::Not(a) => value(a).map(|v| !v),
+                Form::Or(a, b) => match (value(a), value(b)) {
+                    (Some(true), _) | (_, Some(true)) => Some(true),
+                    (Some(false), Some(false)) => Some(false),
+                    _ => None,
+                },
+                Form::And(a, b) => match (value(a), value(b)) {
+                    (Some(false), _) | (_, Some(false)) => Some(false),
+                    (Some(true), Some(true)) => Some(true),
+                    _ => None,
+                },
+            }
+        };
+        let mut known: Vec<Option<bool>> = vec![None; exprs.len()];
+        let mut ready: Vec<usize> = (0..exprs.len()).filter(|&i| waiting[i] == 0).collect();
+        while let Some(i) = ready.pop() {
+            let v = step(&exprs[i], &|c| known[c]);
+            known[i] = v;
+            for &q in &parents[i] {
+                waiting[q] -= 1;
+                if waiting[q] == 0 {
+                    ready.push(q);
+                }
+            }
+        }
+        let mut fixed = vec![false; exprs.len()];
+        let carry = |i: usize,
+                     v: bool,
+                     known: &[Option<bool>],
+                     fixed: &[bool]|
+         -> HashMap<usize, Option<bool>> {
+            let mut changed = HashMap::from([(i, Some(v))]);
+            let mut work = vec![i];
+            while let Some(n) = work.pop() {
+                for &q in &parents[n] {
+                    if fixed[q] {
+                        continue;
+                    }
+                    let now = step(&exprs[q], &|c| changed.get(&c).copied().unwrap_or(known[c]));
+                    if now != changed.get(&q).copied().unwrap_or(known[q]) {
+                        changed.insert(q, now);
+                        work.push(q);
+                    }
+                }
+            }
+            changed
+        };
+        let mut pins = HashMap::new();
+        for i in shared {
+            for v in [true, false] {
+                let trial = carry(i, !v, &known, &fixed);
+                if trial.get(&root).copied().unwrap_or(known[root]) == Some(false) {
+                    pins.insert(exprs[i].id, v);
+                    fixed[i] = true;
+                    for (n, x) in carry(i, v, &known, &fixed) {
+                        known[n] = x;
+                    }
+                    break;
+                }
+            }
+        }
+        pins
+    }
+
+    #[cfg(test)]
+    fn settle_by_scans(&self) -> Part<A> {
+        let mut p = self.clone();
+        loop {
             // The shared subexpressions, in the order the walk finds them shared, so that the
-            // pins taken do not depend on where the expressions are in memory.
-            let mut uses: HashMap<*const Expr<A>, usize> = HashMap::new();
+            // pins taken do not depend on the expressions' ids.
+            let mut uses: HashMap<u64, usize> = HashMap::new();
             let mut shared = Vec::new();
             let mut stack = vec![p.clone()];
             while let Some(q) = stack.pop() {
                 let Part::Expr(e) = q else { continue };
-                let n = uses.entry(Arc::as_ptr(&e)).or_insert(0);
+                let n = uses.entry(e.id).or_insert(0);
                 *n += 1;
                 if *n == 2 {
-                    shared.push(Arc::as_ptr(&e));
+                    shared.push(e.id);
                 }
                 if *n > 1 {
                     continue;
@@ -730,16 +1047,16 @@ impl<A: Literal> Part<A> {
     }
 
     /// The part with each expression in `pins` replaced by its value, each rebuilt once.
-    fn substitute_all(&self, pins: &HashMap<*const Expr<A>, bool>) -> Part<A> {
+    fn substitute_all(&self, pins: &HashMap<u64, bool>) -> Part<A> {
         fn go<A: Literal>(
             p: &Part<A>,
-            pins: &HashMap<*const Expr<A>, bool>,
-            memo: &mut HashMap<*const Expr<A>, Part<A>>,
+            pins: &HashMap<u64, bool>,
+            memo: &mut HashMap<u64, Part<A>>,
         ) -> Part<A> {
             let Part::Expr(e) = p else {
                 return p.clone();
             };
-            let key = Arc::as_ptr(e);
+            let key = e.id;
             if let Some(v) = pins.get(&key) {
                 return Part::leaf(*v);
             }
@@ -764,13 +1081,13 @@ impl<A: Literal> Part<A> {
             p: &Part<A>,
             fix: &impl Fn(&A) -> Option<bool>,
             nodes: &mut HashMap<u64, Bdd<A>>,
-            memo: &mut HashMap<*const Expr<A>, Part<A>>,
+            memo: &mut HashMap<u64, Part<A>>,
         ) -> Part<A> {
             let e = match p {
                 Part::Bdd(b) => return Part::Bdd(b.restrict(fix, nodes)),
                 Part::Expr(e) => e,
             };
-            if let Some(r) = memo.get(&Arc::as_ptr(e)) {
+            if let Some(r) = memo.get(&e.id) {
                 return r.clone();
             }
             let r = match &e.form {
@@ -778,7 +1095,7 @@ impl<A: Literal> Part<A> {
                 Form::Or(a, b) => go(a, fix, nodes, memo).zip(&go(b, fix, nodes, memo), Op::Or),
                 Form::And(a, b) => go(a, fix, nodes, memo).zip(&go(b, fix, nodes, memo), Op::And),
             };
-            memo.insert(Arc::as_ptr(e), r.clone());
+            memo.insert(e.id, r.clone());
             r
         }
         go(self, fix, &mut HashMap::new(), &mut HashMap::new())
@@ -787,15 +1104,102 @@ impl<A: Literal> Part<A> {
     /// The atoms in every value of the part (`.0`) and those in none (`.1`), among the atoms
     /// in it: for a diagram, those taken or refused on every path to `true`; for an expression,
     /// each atom whose refusal, or whose taking, makes the part `false` by three-valued logic.
+    ///
+    /// One pass finds, for each expression and diagram, the settings of one atom, every other
+    /// atom unknown, that make it `false` and those that make it `true`: an `or` is `false`
+    /// under a setting that makes both sides `false`, an `and` under one that makes either side
+    /// `false`, and a diagram under an atom taken or refused on every path to `true`. The sets
+    /// are persistent and a union adds the smaller to the larger, so the time is `O(n log n)`
+    /// in the nodes when the sets stay small, and at most the nodes times the atoms.
     pub(super) fn forced(&self) -> (Vec<A>, Vec<A>) {
-        if let Part::Bdd(b) = self {
-            return b.forced();
+        // Settings `(atom, value)`; `None` is every setting.
+        type Set<A> = Option<imbl::OrdSet<(A, bool)>>;
+        fn union<A: Literal>(x: &Set<A>, y: &Set<A>) -> Set<A> {
+            let (x, y) = (x.as_ref()?, y.as_ref()?);
+            let (big, small) = if x.len() >= y.len() { (x, y) } else { (y, x) };
+            let mut out = big.clone();
+            for s in small {
+                out.insert(s.clone());
+            }
+            Some(out)
         }
+        fn meet<A: Literal>(x: &Set<A>, y: &Set<A>) -> Set<A> {
+            match (x, y) {
+                (None, z) | (z, None) => z.clone(),
+                (Some(x), Some(y)) => {
+                    let (big, small) = if x.len() >= y.len() { (x, y) } else { (y, x) };
+                    Some(small.iter().filter(|&s| big.contains(s)).cloned().collect())
+                }
+            }
+        }
+        // The settings that make `b` `false`, and those that make it `true`.
+        fn of_bdd<A: Literal>(b: &Bdd<A>) -> (Set<A>, Set<A>) {
+            let settings = |(taken, refused): (Vec<A>, Vec<A>)| {
+                let off = taken.into_iter().map(|a| (a, false));
+                Some(off.chain(refused.into_iter().map(|a| (a, true))).collect())
+            };
+            match b {
+                Bdd::Leaf(false) => (None, Some(imbl::OrdSet::new())),
+                Bdd::Leaf(true) => (Some(imbl::OrdSet::new()), None),
+                Bdd::Node(_) => (settings(b.forced_to(true)), settings(b.forced_to(false))),
+            }
+        }
+        let root = match self {
+            Part::Bdd(b) => return b.forced(),
+            Part::Expr(e) => e,
+        };
+        let mut exprs: HashMap<u64, (Set<A>, Set<A>)> = HashMap::new();
+        let mut nodes: HashMap<u64, (Set<A>, Set<A>)> = HashMap::new();
+        let mut stack = vec![(root.clone(), false)];
+        while let Some((e, expanded)) = stack.pop() {
+            if exprs.contains_key(&e.id) {
+                continue;
+            }
+            let operands: Vec<&Part<A>> = match &e.form {
+                Form::Not(a) => vec![a],
+                Form::Or(a, b) | Form::And(a, b) => vec![a, b],
+            };
+            if !expanded {
+                stack.push((e.clone(), true));
+                for q in operands {
+                    match q {
+                        Part::Expr(x) => stack.push((x.clone(), false)),
+                        Part::Bdd(b @ Bdd::Node(n)) => {
+                            nodes.entry(n.id).or_insert_with(|| of_bdd(b));
+                        }
+                        Part::Bdd(Bdd::Leaf(_)) => {}
+                    }
+                }
+                continue;
+            }
+            let get = |q: &Part<A>| match q {
+                Part::Expr(x) => exprs[&x.id].clone(),
+                Part::Bdd(Bdd::Node(n)) => nodes[&n.id].clone(),
+                Part::Bdd(b) => of_bdd(b),
+            };
+            let sets = match &e.form {
+                Form::Not(a) => {
+                    let (off, on) = get(a);
+                    (on, off)
+                }
+                Form::Or(a, b) => {
+                    let ((fa, ta), (fb, tb)) = (get(a), get(b));
+                    (meet(&fa, &fb), union(&ta, &tb))
+                }
+                Form::And(a, b) => {
+                    let ((fa, ta), (fb, tb)) = (get(a), get(b));
+                    (union(&fa, &fb), meet(&ta, &tb))
+                }
+            };
+            exprs.insert(e.id, sets);
+        }
+        let off = &exprs[&root.id].0;
+        let makes_false = |a: &A, v: bool| off.as_ref().is_none_or(|s| s.contains(&(a.clone(), v)));
         let (mut taken, mut refused) = (Vec::new(), Vec::new());
         for a in self.distinct_atoms() {
-            if self.eval3(&|x| (*x == a).then_some(false)) == Some(false) {
+            if makes_false(&a, false) {
                 taken.push(a);
-            } else if self.eval3(&|x| (*x == a).then_some(true)) == Some(false) {
+            } else if makes_false(&a, true) {
                 refused.push(a);
             }
         }
@@ -806,14 +1210,14 @@ impl<A: Literal> Part<A> {
     pub(super) fn atoms(&self, f: &mut impl FnMut(&A) -> bool) -> bool {
         fn go<A: Literal>(
             p: &Part<A>,
-            seen: &mut HashSet<*const Expr<A>>,
+            seen: &mut HashSet<u64>,
             f: &mut impl FnMut(&A) -> bool,
         ) -> bool {
             let e = match p {
                 Part::Bdd(b) => return b.atoms(f),
                 Part::Expr(e) => e,
             };
-            if !seen.insert(Arc::as_ptr(e)) {
+            if !seen.insert(e.id) {
                 return true;
             }
             match &e.form {
@@ -837,6 +1241,36 @@ impl<A: Literal> Part<A> {
         atoms
     }
 
+    /// The atoms, if the part is their union and nothing else.
+    pub(super) fn union_rows(&self) -> Option<Vec<A>> {
+        fn go<A: Literal>(p: &Part<A>, seen: &mut HashSet<u64>, out: &mut Vec<A>) -> bool {
+            match p {
+                Part::Expr(e) => match &e.form {
+                    _ if !seen.insert(e.id) => true,
+                    Form::Or(a, b) => go(a, seen, out) && go(b, seen, out),
+                    _ => false,
+                },
+                Part::Bdd(b) => {
+                    let mut x = b;
+                    loop {
+                        match x {
+                            Bdd::Leaf(b) => return !b,
+                            Bdd::Node(n) => {
+                                if !matches!(n.hi, Bdd::Leaf(true)) {
+                                    return false;
+                                }
+                                out.push(n.atom.clone());
+                                x = &n.lo;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        go(self, &mut HashSet::new(), &mut out).then_some(out)
+    }
+
     /// The diagram, or the connective of an expression.
     pub(super) fn view(&self) -> Result<&Bdd<A>, &Form<A>> {
         match self {
@@ -852,12 +1286,12 @@ enum Step<'a, A: Ord> {
     Bdds(&'a Bdd<A>, &'a Bdd<A>),
     Exprs(&'a Expr<A>, &'a Expr<A>),
     Parts(&'a Part<A>, &'a Part<A>),
-    Equal(usize, usize),
+    Equal(u64, u64),
 }
 
 /// The order of the pair in `first`: by digest, then by atom or connective, then by `hi` and
 /// `lo` or by operands, a diagram before an expression. Two nodes or expressions found equal are
-/// kept by address and not compared again, so the cost is one step per pair of nodes compared,
+/// kept by node id and not compared again, so the cost is one step per pair of nodes compared,
 /// not one per path to them, and linear in the size when the two are equal. A loop with its own
 /// stack, as a part can be deeper than the call stack.
 fn order<A: Ord>(first: Step<'_, A>) -> Ordering {
@@ -883,7 +1317,7 @@ fn order<A: Ord>(first: Step<'_, A>) -> Ordering {
             Step::Bdds(Bdd::Leaf(_), Bdd::Node(_)) => Ordering::Less,
             Step::Bdds(Bdd::Node(_), Bdd::Leaf(_)) => Ordering::Greater,
             Step::Bdds(Bdd::Node(a), Bdd::Node(b)) => {
-                let key = (Arc::as_ptr(a) as usize, Arc::as_ptr(b) as usize);
+                let key = (a.id, b.id);
                 if key.0 == key.1 || equal.contains(&key) {
                     continue;
                 }
@@ -899,10 +1333,7 @@ fn order<A: Ord>(first: Step<'_, A>) -> Ordering {
                 c
             }
             Step::Exprs(a, b) => {
-                let key = (
-                    std::ptr::from_ref(a) as usize,
-                    std::ptr::from_ref(b) as usize,
-                );
+                let key = (a.id, b.id);
                 if key.0 == key.1 || equal.contains(&key) {
                     continue;
                 }
@@ -1089,6 +1520,7 @@ mod tests {
             exprs += usize::from(matches!(p, Part::Expr(_)));
             let holds =
                 |set: u32| move |t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
+            assert!(p.settle() == p.settle_by_scans(), "settling changed");
             let inside: Vec<u32> = (0..64).filter(|&set| p.eval(&holds(set))).collect();
             let (known, fixed) = (k % 64, (k / 64) % 64);
             let fix = |t: &Row| {
@@ -1120,6 +1552,16 @@ mod tests {
             }
             let (taken, refused) = p.forced();
             forced += taken.len() + refused.len();
+            // The one pass finds what trying each atom alone by three-valued logic finds.
+            let (mut on, mut off) = (Vec::new(), Vec::new());
+            for a in p.distinct_atoms() {
+                if p.eval3(&|x| (*x == a).then_some(false)) == Some(false) {
+                    on.push(a);
+                } else if p.eval3(&|x| (*x == a).then_some(true)) == Some(false) {
+                    off.push(a);
+                }
+            }
+            assert_eq!((&taken, &refused), (&on, &off), "{p:?}");
             for a in &taken {
                 let i = (0..6).find(|&i| *a == atom(i)).unwrap();
                 assert!(inside.iter().all(|s| s & (1 << i) != 0), "{p:?} takes {i}");

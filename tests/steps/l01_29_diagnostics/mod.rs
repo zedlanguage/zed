@@ -3,6 +3,7 @@
 //! and signatures it met, every failing combination of a signature search, and the repairs
 //! the checker discharges.
 
+mod batch;
 mod derivations;
 mod layout;
 mod printed;

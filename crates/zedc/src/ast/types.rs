@@ -44,6 +44,15 @@ pub enum TypeKind {
         /// The result.
         result: Box<Type>,
     },
+    /// A morphism type with its two domain bounds, `L .. U -> V`.
+    Bounded {
+        /// The guarantee `L`, the keys certainly present.
+        lower: Box<Type>,
+        /// The permission `U`, the keys possibly present.
+        upper: Box<Type>,
+        /// The value type `V`.
+        result: Box<Type>,
+    },
     /// A type applied to arguments, `Tree(T)` or `geometry.Grid(int)`: its name, its unit path
     /// included, and the arguments.
     Apply(String, Vec<TypeParam>),
@@ -182,6 +191,11 @@ impl Builder<'_> {
                 let params = self.arrow_params(kids[0])?;
                 self.arrow(params, kids[0], kids[1])?
             }
+            "Arrow" if kids.len() == 3 => TypeKind::Bounded {
+                lower: Box::new(self.ty(kids[0])?),
+                upper: Box::new(self.ty(kids[1])?),
+                result: Box::new(self.ty(kids[2])?),
+            },
             "Arrow" => {
                 let ty = self.ty(kids[0])?;
                 let param = TypeParam {

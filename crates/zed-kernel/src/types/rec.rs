@@ -9,17 +9,22 @@
 //!   has finitely many components;
 //! - *monotone in emptiness*: no recursive occurrence stands under a complement, to the right
 //!   of `\`, or in the guarantee of a morphism type whose value type may be empty or mentions
-//!   the group, since `type T = (T) -> (#a & #b)` is inhabited exactly when it is empty.
+//!   the group, since `type T = (T) -> (#a & #b)` is inhabited exactly when it is empty; nor
+//!   in the guarantee of a morphism type whose guarantee and permission differ, or that stands
+//!   under `&`, `\`, a complement or differing domain bounds, directly or through a definition
+//!   named there (cross-review X14: `W = (W) -> int` is accepted, `((W) -> int) & top` and
+//!   `R0 = (R1) -> int; R1 = (int, R0 & ((empty) -> int))` are not).
 //!
 //! A value type that mentions a parameter may be empty when that parameter is: it counts as
 //! possibly empty when it is empty with every parameter empty, or has a parameter under a
 //! complement or to the right of `\`, where a larger argument shrinks it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
-use super::Type;
+use super::bes::{Answer, Bes, Kind, decide};
+use super::{Type, Verdict};
 
 /// A type expression in a definition's body.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -86,6 +91,17 @@ pub struct Def {
     pub body: Expr,
 }
 
+/// The instances made so far: one equal group at equal arguments gives one set of types, so that
+/// equal definitions meet as equal types however often they were written. The text of the
+/// definitions picks a bucket; `Def` equality, and the arguments' equality, pick the entry.
+static INSTANCES: LazyLock<Mutex<HashMap<String, Vec<Instance>>>> = LazyLock::new(Mutex::default);
+
+struct Instance {
+    group: Group,
+    args: Vec<Type>,
+    members: Vec<Type>,
+}
+
 /// A checked group of mutually recursive definitions.
 #[derive(Clone, Debug)]
 pub struct Group(Arc<Checked>);
@@ -95,6 +111,12 @@ struct Checked {
     defs: Vec<Def>,
     /// Each body as a shared tree.
     bodies: Vec<Arc<Node>>,
+    /// Whether each definition is plain: on no cycle of the group and naming only plain
+    /// definitions. A plain member is its unfolding, built as an ordinary type, so equal plain
+    /// members of groups built apart are one type.
+    plain: Vec<bool>,
+    /// The plain definitions, each after those it names.
+    order: Vec<usize>,
 }
 
 /// An expression as a shared tree, each node knowing whether it mentions the group, so that a
@@ -102,6 +124,8 @@ struct Checked {
 #[derive(PartialEq, Debug)]
 struct Node {
     recursive: bool,
+    /// Whether the node names a definition that is not plain.
+    open: bool,
     e: Shape,
 }
 
@@ -120,23 +144,29 @@ enum Shape {
 }
 
 impl Node {
-    fn of(e: &Expr) -> Arc<Node> {
-        let all = |xs: &[Expr]| xs.iter().map(Node::of).collect::<Vec<_>>();
+    /// The tree of `e`, given which definitions are plain; an index outside `plain` is not.
+    fn of(e: &Expr, plain: &[bool]) -> Arc<Node> {
+        let of = |x: &Expr| Node::of(x, plain);
+        let all = |xs: &[Expr]| xs.iter().map(of).collect::<Vec<_>>();
         let e = match e {
             Expr::Param(i) => Shape::Param(*i),
             Expr::Ref(i, xs) => Shape::Ref(*i, all(xs)),
             Expr::Type(t) => Shape::Type(t.clone()),
             Expr::Union(xs) => Shape::Union(all(xs)),
             Expr::And(xs) => Shape::And(all(xs)),
-            Expr::Not(a) => Shape::Not(Node::of(a)),
-            Expr::Diff(a, b) => Shape::Diff(Node::of(a), Node::of(b)),
+            Expr::Not(a) => Shape::Not(of(a)),
+            Expr::Diff(a, b) => Shape::Diff(of(a), of(b)),
             Expr::Tuple(xs) => Shape::Tuple(all(xs)),
             Expr::Atom(name, xs) => Shape::Atom(name.clone(), all(xs)),
-            Expr::Morphism(l, u, v) => Shape::Morphism(Node::of(l), Node::of(u), Node::of(v)),
+            Expr::Morphism(l, u, v) => Shape::Morphism(of(l), of(u), of(v)),
         };
         let recursive =
             matches!(e, Shape::Ref(..)) || e.children().into_iter().any(|c| c.recursive);
-        Arc::new(Node { recursive, e })
+        let open = match &e {
+            Shape::Ref(i, _) => !plain.get(*i).copied().unwrap_or(false),
+            _ => e.children().into_iter().any(|c| c.open),
+        };
+        Arc::new(Node { recursive, open, e })
     }
 }
 
@@ -168,8 +198,14 @@ pub struct Rejection {
 impl Group {
     /// The group of `defs`, if it is contractive, regular and monotone in emptiness.
     pub fn new(defs: Vec<Def>) -> Result<Group, Rejection> {
-        let bodies = defs.iter().map(|d| Node::of(&d.body)).collect();
-        let g = Group(Arc::new(Checked { defs, bodies }));
+        let (plain, order) = plain(&defs);
+        let bodies = defs.iter().map(|d| Node::of(&d.body, &plain)).collect();
+        let g = Group(Arc::new(Checked {
+            defs,
+            bodies,
+            plain,
+            order,
+        }));
         g.regular()?;
         g.contractive()?;
         g.monotone()?;
@@ -243,8 +279,27 @@ impl Group {
     }
 
     fn monotone(&self) -> Result<(), Rejection> {
-        for (i, body) in self.0.bodies.iter().enumerate() {
-            if let Some(why) = self.flipped(body) {
+        let bodies = &self.0.bodies;
+        // A definition is constrained when it is named under `&`, `\`, a complement or the
+        // domain bounds of a morphism type whose guarantee and permission differ, or is named
+        // anywhere in a constrained definition: there a domain that is exact everywhere else
+        // is narrowed, so the group's emptiness can flip.
+        let mut constrained = vec![false; bodies.len()];
+        let mut names: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); bodies.len()];
+        for (i, body) in bodies.iter().enumerate() {
+            refs(body, false, &mut constrained, &mut names[i]);
+        }
+        let mut stack: Vec<usize> = (0..bodies.len()).filter(|&i| constrained[i]).collect();
+        while let Some(i) = stack.pop() {
+            for &j in &names[i] {
+                if !constrained[j] {
+                    constrained[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+        for (i, body) in bodies.iter().enumerate() {
+            if let Some(why) = self.flipped(body, constrained[i]) {
                 return Err(self.reject(i, format!("is not monotone in emptiness: {why}")));
             }
         }
@@ -252,8 +307,9 @@ impl Group {
     }
 
     /// Where in `e` a recursive occurrence stands at a place that makes emptiness not
-    /// monotone, if one does.
-    fn flipped(&self, e: &Node) -> Option<String> {
+    /// monotone, if one does. `constrained` says whether `e` stands under `&`, `\`, a
+    /// complement or differing domain bounds, here or where its definition is named.
+    fn flipped(&self, e: &Node, constrained: bool) -> Option<String> {
         match &e.e {
             Shape::Not(a) if a.recursive => {
                 Some("a recursive occurrence stands under a complement".into())
@@ -268,7 +324,38 @@ impl Group {
                         .into(),
                 )
             }
-            _ => e.e.children().into_iter().find_map(|c| self.flipped(c)),
+            Shape::Morphism(l, u, _) if l.recursive && !same(l, u) => Some(
+                "a recursive occurrence stands in the guaranteed domain of a morphism type \
+                 whose guarantee and permission differ"
+                    .into(),
+            ),
+            Shape::Morphism(l, ..) if l.recursive && constrained => Some(
+                "a recursive occurrence stands in the domain of a morphism type that stands \
+                 under `&`, `\\`, a complement or differing domain bounds, or in a definition \
+                 named there"
+                    .into(),
+            ),
+            Shape::Morphism(l, u, v) => {
+                let inner = constrained || bounded(l, u);
+                self.flipped(l, inner)
+                    .or_else(|| self.flipped(u, inner))
+                    .or_else(|| self.flipped(v, constrained))
+            }
+            Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => {
+                e.e.children()
+                    .into_iter()
+                    .find_map(|c| self.flipped(c, true))
+            }
+            Shape::Param(_)
+            | Shape::Ref(..)
+            | Shape::Type(_)
+            | Shape::Union(_)
+            | Shape::Tuple(_)
+            | Shape::Atom(..) => {
+                e.e.children()
+                    .into_iter()
+                    .find_map(|c| self.flipped(c, constrained))
+            }
         }
     }
 
@@ -279,7 +366,7 @@ impl Group {
     }
 
     /// The group's types at `args`, one per definition. Each is a recursive node that unfolds
-    /// to its body.
+    /// to its body, except that a plain definition is its body, built as an ordinary type.
     ///
     /// # Panics
     ///
@@ -290,24 +377,57 @@ impl Group {
             self.0.defs[0].params.len(),
             "one argument per parameter"
         );
+        let same = |d: &[Def]| {
+            d.len() == self.0.defs.len()
+                && d.iter()
+                    .zip(&self.0.defs)
+                    .all(|(a, b)| a.name == b.name && a.params == b.params && a.body == b.body)
+        };
+        let key = format!("{:?}", self.0.defs);
+        let mut table = INSTANCES
+            .lock()
+            .expect("no thread panics holding the table");
+        let bucket = table.entry(key).or_default();
+        if let Some(i) = bucket
+            .iter()
+            .find(|i| same(&i.group.0.defs) && i.args == args)
+        {
+            return i.members.clone();
+        }
+        let kept = args.clone();
         let env = Arc::new(Env {
             group: Some(self.clone()),
             args,
-            members: OnceLock::new(),
+            members: (0..self.0.defs.len()).map(|_| OnceLock::new()).collect(),
+            judged: OnceLock::new(),
         });
-        let members: Vec<Type> = (0..self.0.defs.len())
-            .map(|i| {
-                let e = env.clone();
-                let named = e.clone();
-                Type::rec(
-                    move || named.name(i),
-                    move || eval(&e.group().0.bodies[i], &e),
-                )
-            })
+        let plain = &self.0.plain;
+        for i in (0..self.0.defs.len()).filter(|&i| !plain[i]) {
+            let e = env.clone();
+            let named = e.clone();
+            let j = e.clone();
+            let t = Type::rec_judged(
+                move || named.name(i),
+                move || eval(&e.group().0.bodies[i], &e),
+                move || j.judged.get_or_init(|| judge(&j))[i],
+            );
+            env.members[i].set(t).expect("a member is set once");
+        }
+        // A plain member names only plain members, each set before it.
+        for &i in &self.0.order {
+            let t = eval(&self.0.bodies[i], &env);
+            env.members[i].set(t).expect("a member is set once");
+        }
+        let members: Vec<Type> = env
+            .members
+            .iter()
+            .map(|m| m.get().expect("every member is set").clone())
             .collect();
-        env.members
-            .set(members.clone())
-            .expect("the members are set once");
+        bucket.push(Instance {
+            group: self.clone(),
+            args: kept,
+            members: members.clone(),
+        });
         members
     }
 
@@ -317,10 +437,48 @@ impl Group {
             defs: &self.0.defs,
             params: &self.0.defs[def].params,
             args: None,
-            e: &Node::of(e),
+            e: &Node::of(e, &[]),
         }
         .to_string()
     }
+}
+/// Records in `names` each definition `e` names, and in `out` each it names at a constrained
+/// place (`Group::flipped`); `constrained` says whether `e` itself stands at one.
+fn refs(e: &Node, constrained: bool, out: &mut [bool], names: &mut BTreeSet<usize>) {
+    let inner = match &e.e {
+        Shape::Ref(i, _) => {
+            names.insert(*i);
+            out[*i] |= constrained;
+            constrained
+        }
+        Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => true,
+        Shape::Morphism(l, u, v) => {
+            let dom = constrained || bounded(l, u);
+            refs(l, dom, out, names);
+            refs(u, dom, out, names);
+            refs(v, constrained, out, names);
+            return;
+        }
+        Shape::Param(_) | Shape::Type(_) | Shape::Union(_) | Shape::Tuple(_) | Shape::Atom(..) => {
+            constrained
+        }
+    };
+    for c in e.e.children() {
+        refs(c, inner, out, names);
+    }
+}
+
+/// Whether the domain bounds `l` and `u` are written the same.
+fn same(l: &Arc<Node>, u: &Arc<Node>) -> bool {
+    Arc::ptr_eq(l, u) || l == u
+}
+
+/// Whether the domain bounds `l .. u` narrow the domain: they differ, the guarantee is not
+/// `empty` and the permission is not `top`.
+fn bounded(l: &Arc<Node>, u: &Arc<Node>) -> bool {
+    let empty = matches!(&l.e, Shape::Type(t) if t.is_empty());
+    let top = matches!(&u.e, Shape::Type(t) if Type::top().subtype(t));
+    !same(l, u) && !empty && !top
 }
 
 /// Whether a parameter in `e` stands under a complement or to the right of `\\`, where a larger
@@ -334,14 +492,19 @@ fn shrinks(e: &Node, under: bool) -> bool {
     }
 }
 
-/// The lowest vertex of `edges` on a cycle, if one is: Tarjan's strongly connected components,
-/// each edge read once, with an explicit stack. A search from each vertex in turn read the
-/// graph once per vertex.
+/// The lowest vertex of `edges` on a cycle, if one is.
 fn first_on_cycle(edges: &[Vec<usize>]) -> Option<usize> {
+    on_cycle(edges).iter().position(|&c| c)
+}
+
+/// Whether each vertex of `edges` is on a cycle: Tarjan's strongly connected components, each
+/// edge read once, with an explicit stack. A search from each vertex in turn read the graph once
+/// per vertex.
+fn on_cycle(edges: &[Vec<usize>]) -> Vec<bool> {
     const NEW: usize = usize::MAX;
     let n = edges.len();
     let (mut index, mut low, mut on) = (vec![NEW; n], vec![0; n], vec![false; n]);
-    let (mut stack, mut next, mut first) = (Vec::new(), 0, None);
+    let (mut stack, mut next, mut cyclic) = (Vec::new(), 0, vec![false; n]);
     for s in 0..n {
         if index[s] != NEW {
             continue;
@@ -376,16 +539,62 @@ fn first_on_cycle(edges: &[Vec<usize>]) -> Option<usize> {
                     }
                 }
                 if component.len() > 1 || edges[v].contains(&v) {
-                    let m = component
-                        .into_iter()
-                        .min()
-                        .expect("a component has a vertex");
-                    first = Some(first.map_or(m, |f: usize| f.min(m)));
+                    for w in component {
+                        cyclic[w] = true;
+                    }
                 }
             }
         }
     }
-    first
+    cyclic
+}
+
+/// Whether each of `defs` is plain: on no cycle and naming only plain definitions; and the
+/// plain definitions, each after those it names. A depth-first search with an explicit stack
+/// settles each definition after those it names, reading each edge once.
+fn plain(defs: &[Def]) -> (Vec<bool>, Vec<usize>) {
+    let edges: Vec<Vec<usize>> = defs
+        .iter()
+        .map(|d| {
+            let mut out = BTreeSet::new();
+            d.body.walk(&mut |e| {
+                if let Expr::Ref(i, _) = e {
+                    out.insert(*i);
+                }
+            });
+            out.into_iter().collect()
+        })
+        .collect();
+    let cyclic = on_cycle(&edges);
+    let (mut plain, mut order) = (vec![None; defs.len()], Vec::new());
+    for s in 0..defs.len() {
+        let mut calls = vec![(s, 0)];
+        while let Some((v, k)) = calls.last_mut() {
+            let v = *v;
+            if plain[v].is_some() {
+                calls.pop();
+                continue;
+            }
+            // A definition on no cycle is not on the stack of calls when its names are read.
+            match edges[v].get(*k) {
+                Some(&w) if !cyclic[v] => {
+                    *k += 1;
+                    if plain[w].is_none() {
+                        calls.push((w, 0));
+                    }
+                }
+                _ => {
+                    let p = !cyclic[v] && edges[v].iter().all(|&w| plain[w] == Some(true));
+                    plain[v] = Some(p);
+                    if p {
+                        order.push(v);
+                    }
+                    calls.pop();
+                }
+            }
+        }
+    }
+    (plain.into_iter().map(|p| p == Some(true)).collect(), order)
 }
 
 /// The definitions `e` names outside every constructor.
@@ -407,7 +616,10 @@ fn unguarded(e: &Expr, out: &mut BTreeSet<usize>) {
 struct Env {
     group: Option<Group>,
     args: Vec<Type>,
-    members: OnceLock<Vec<Type>>,
+    /// Each member's type, set when the group is instantiated.
+    members: Vec<OnceLock<Type>>,
+    /// Each member's emptiness as the group decides it ([`judge`]), when first asked.
+    judged: OnceLock<Vec<Option<bool>>>,
 }
 
 impl Env {
@@ -415,7 +627,8 @@ impl Env {
         Env {
             group: None,
             args,
-            members: OnceLock::new(),
+            members: Vec::new(),
+            judged: OnceLock::new(),
         }
     }
 
@@ -443,7 +656,10 @@ fn eval(e: &Node, env: &Arc<Env>) -> Type {
     let parts = |xs: &[Arc<Node>]| Type::tuple(xs.iter().map(|x| component(x, env)).collect());
     match &e.e {
         Shape::Param(i) => env.args[*i].clone(),
-        Shape::Ref(i, _) => env.members.get().expect("members are set before use")[*i].clone(),
+        Shape::Ref(i, _) => env.members[*i]
+            .get()
+            .expect("a member is set before use")
+            .clone(),
         Shape::Type(t) => t.clone(),
         Shape::Union(xs) => Type::union_all(all(xs)),
         Shape::And(xs) => Type::meet_all(all(xs)),
@@ -457,11 +673,11 @@ fn eval(e: &Node, env: &Arc<Env>) -> Type {
     }
 }
 
-/// `e` in a constructor: when it mentions the group and is more than one occurrence, it is
-/// kept as a node evaluated on first use, since evaluating it now could need the parts of the
-/// type being built.
+/// `e` in a constructor: when it names a definition that is not plain and is more than one
+/// occurrence, it is kept as a node evaluated on first use, since evaluating it now could need
+/// the parts of the type being built.
 fn component(e: &Arc<Node>, env: &Arc<Env>) -> Type {
-    if matches!(e.e, Shape::Ref(..)) || !e.recursive {
+    if matches!(e.e, Shape::Ref(..)) || !e.open {
         return eval(e, env);
     }
     let (named, at) = (e.clone(), env.clone());
@@ -528,4 +744,89 @@ impl fmt::Display for Show<'_> {
             Shape::Morphism(l, u, v) => write!(f, "({} ⊆ dom ⊆ {}) -> {}", sub(l), sub(u), sub(v)),
         }
     }
+}
+
+/// Each member's emptiness at `env`'s arguments, as the group's fixed points decide it (module
+/// `bes`, cross-review X14): a union is an `Or` node, a tuple or atom payload an `And` node, a
+/// morphism type whose guarantee lies within its permission and is inhabited a `Mor` node of
+/// its value type, and a part that does not mention the group `Top` or `Bot` by its own
+/// emptiness. A cycle through a tuple is then empty and one through a morphism's value type
+/// inhabited. `None` for each member when a recursive occurrence stands under `&`, `\` or a
+/// complement, which the decider does not take, and for a member the decider refuses; the
+/// coinductive search of module `empty` decides those. Time linear in the bodies, besides the
+/// emptiness of their closed parts.
+fn judge(env: &Arc<Env>) -> Vec<Option<bool>> {
+    let bodies = &env.group().0.bodies;
+    let refused = || vec![None; bodies.len()];
+    let mut b = Bes::new();
+    let mut stack = Vec::new();
+    for e in bodies {
+        stack.push((b.add(Kind::Bot, vec![]), e));
+    }
+    // A closed part is read by its verdict, never by `is_empty`, whose "inhabited" may be a
+    // check that gave up: a member judged on it could be judged empty when it is not.
+    while let Some((v, e)) = stack.pop() {
+        let (kind, children) = match &e.e {
+            _ if !e.recursive => match eval(e, env).verdict() {
+                Verdict::Empty => (Kind::Bot, vec![]),
+                Verdict::Inhabited => (Kind::Top, vec![]),
+                Verdict::Refused(_) => return refused(),
+            },
+            Shape::Ref(i, _) => (Kind::Or, vec![*i as u32]),
+            Shape::Union(xs) => (Kind::Or, kids(&mut b, &mut stack, xs)),
+            Shape::Tuple(xs) | Shape::Atom(_, xs) => (Kind::And, kids(&mut b, &mut stack, xs)),
+            Shape::Morphism(l, u, val) if l.recursive || u.recursive => {
+                // Admitted only with equal bounds and a value type that is not empty.
+                if val.recursive || eval(val, env).verdict() != Verdict::Inhabited {
+                    return refused();
+                }
+                (Kind::Top, vec![])
+            }
+            Shape::Morphism(l, u, val) => {
+                let (l, u) = (eval(l, env), eval(u, env));
+                // A key promised and not permitted leaves no morphism; with no key promised the
+                // empty morphism is one.
+                match (l.subtype_verdict(&u), l.verdict()) {
+                    (Verdict::Refused(_), _) | (_, Verdict::Refused(_)) => return refused(),
+                    (Verdict::Inhabited, _) => (Kind::Bot, vec![]),
+                    (Verdict::Empty, Verdict::Empty) => (Kind::Top, vec![]),
+                    (Verdict::Empty, Verdict::Inhabited) => {
+                        (Kind::Mor, kids(&mut b, &mut stack, [val]))
+                    }
+                }
+            }
+            Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => return refused(),
+            Shape::Param(_) | Shape::Type(_) => unreachable!("a closed part is not recursive"),
+        };
+        b.set(v, kind, children);
+    }
+    b.seal();
+    decide(&b).answers[..bodies.len()]
+        .iter()
+        .map(|a| match a {
+            Answer::Empty => Some(true),
+            Answer::Inhabited => Some(false),
+            Answer::Refused => None,
+        })
+        .collect()
+}
+
+/// The node of each of `xs`: a member's own for a recursive occurrence, so that the graph has
+/// the group's shape and the decider's refusals do not depend on how a body is written; else a
+/// new node, queued on `stack` to be set from its expression.
+fn kids<'a>(
+    b: &mut Bes,
+    stack: &mut Vec<(u32, &'a Arc<Node>)>,
+    xs: impl IntoIterator<Item = &'a Arc<Node>>,
+) -> Vec<u32> {
+    xs.into_iter()
+        .map(|x| {
+            if let Shape::Ref(i, _) = x.e {
+                return i as u32;
+            }
+            let c = b.add(Kind::Bot, vec![]);
+            stack.push((c, x));
+            c
+        })
+        .collect()
 }

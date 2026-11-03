@@ -36,10 +36,10 @@ fn a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept() {
         trick(&Domain::Ints(Some(0), None), &ints(&[3])),
         Choice::Keep("an unbounded integer domain is infinite".into())
     );
-    assert!(matches!(
+    assert_eq!(
         trick(&Domain::Type(Type::int()), &ints(&[3])),
-        Choice::Keep(_)
-    ));
+        Choice::Keep("the domain `int` is not known to be finite".into())
+    );
     assert!(matches!(
         trick(&Domain::Type(Type::string()), &[Value::str("a")].into()),
         Choice::Keep(_)

@@ -936,7 +936,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => {
                     let dt = self.expr_at(d, Some(t));
                     if !dt.subtype(t) {
-                        self.error(d.span, format!("{what} is {dt}, not {t}"));
+                        let why = dt.refused(t);
+                        self.error(d.span, format!("{what} is {dt}, not {t}{why}"));
                     }
                 }
             }
@@ -1358,12 +1359,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let first = got;
                         got = self.meet(n, &on, binds, span);
                         if !got.subtype(&first) {
+                            let why = got.refused(&first);
                             self.error(
                                 span,
                                 format!(
                                     "{what} needs this of its argument again inside its own \
                                      check, and the result is not settled: it gives {got} \
-                                     where the use inside gave {first}"
+                                     where the use inside gave {first}{why}"
                                 ),
                             );
                         }
@@ -2229,7 +2231,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         let zero = Value::Int(0);
-        let listed = ns.listed();
+        let listed = ns.ints_listed();
         let at_least_zero = interval(e).is_subset(&IntervalSet::range(Fin(0), PosInf))
             || listed.is_some_and(|vs| {
                 vs.iter().all(|v| {
@@ -3069,10 +3071,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if let Some(a) = &p.ty {
                         let a = denoted(a);
                         if !t.subtype(&a) {
+                            let why = t.refused(&a);
                             self.error(
                                 p.span,
                                 format!(
-                                    "the lambda's parameter `{}` is {a}, and `{e}` passes {t}",
+                                    "the lambda's parameter `{}` is {a}, and `{e}` passes {t}{why}",
                                     p.name
                                 ),
                             );
@@ -3091,9 +3094,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let r = self.body(body, Some(&arrow.result));
             if !r.subtype(&arrow.result) {
+                let why = r.refused(&arrow.result);
                 self.error(
                     body.span,
-                    format!("the lambda returns {r}, and `{e}` returns {}", arrow.result),
+                    format!(
+                        "the lambda returns {r}, and `{e}` returns {}{why}",
+                        arrow.result
+                    ),
                 );
             }
         }
@@ -4523,6 +4530,19 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
                 })
                 .collect();
             Ty::func(Arc::new(Sig::one(names, tys, result)))
+        }
+        // This checker keeps one domain per function: the permission.
+        TypeKind::Bounded { upper, result, .. } => {
+            let names = vec![SParam {
+                name: String::new().into(),
+                positional: true,
+                default: None,
+            }];
+            Ty::func(Arc::new(Sig::one(
+                names,
+                vec![denoted(upper)],
+                denoted(result),
+            )))
         }
     }
 }

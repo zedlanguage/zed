@@ -726,12 +726,12 @@ pub enum Choice {
 }
 
 /// The Trick: split on the members of `d` among `passed` only when `d` is finite. A type is
-/// finite here when it lists its values no longer than it is written ([`Type::listed`]).
+/// finite here when it is known finite ([`Type::finite`]).
 pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
     let within: Vec<Value> = match d {
         Domain::Type(t) => {
-            if t.listed().is_none() {
-                return Choice::Keep(format!("the domain `{t}` is not a finite list"));
+            if !t.finite() {
+                return Choice::Keep(format!("the domain `{t}` is not known to be finite"));
             }
             passed.iter().filter(|v| t.contains(v)).cloned().collect()
         }

@@ -4,7 +4,9 @@
 //! `reps` holds one value of each region, so a type is empty exactly when no value of `reps`
 //! is in it, and `a <: b` exactly when every value of `reps` in `a` is in `b`.
 
-use zed_kernel::types::{Type, Universe};
+use std::collections::BTreeMap;
+
+use zed_kernel::types::{Type, Universe, Verdict};
 use zed_kernel::{Family, Value};
 use zed_tests::instances::Rng;
 
@@ -250,4 +252,61 @@ fn deep_combinations_are_decided_exactly() {
         assert_eq!(build(&a).subtype(&t), want, "{a:?} <: {e:?}");
     }
     assert!(empty > 300 && inhabited > 300, "{empty} {inhabited}");
+}
+
+#[test]
+fn verdicts_agree_with_the_oracle_in_any_order() {
+    // `Empty` is claimed only of empty types and `Inhabited` only of inhabited ones, for a type
+    // and for a pair compared; a refusal claims nothing. Each verdict is a function of the type
+    // alone: the verdicts read in reverse order with nothing kept are the same.
+    let reps = reps();
+    let mut r = Rng::new(41);
+    let mut asked = Vec::new();
+    for i in 0..3000 {
+        let e = if i % 2 == 0 {
+            random(&mut r)
+        } else {
+            deep(&mut r)
+        };
+        let want = !reps.iter().any(|v| holds(&e, v));
+        asked.push((build(&e), want));
+    }
+    let (mut empty, mut inhabited, mut refused) = (0, 0, BTreeMap::new());
+    Type::forget_emptiness();
+    let first: Vec<Verdict> = asked.iter().map(|(t, _)| t.verdict()).collect();
+    for ((t, want), v) in asked.iter().zip(&first) {
+        match v {
+            Verdict::Empty => {
+                assert!(*want, "{t} is inhabited, not empty");
+                empty += 1;
+            }
+            Verdict::Inhabited => {
+                assert!(!*want, "{t} is empty, not inhabited");
+                assert!(!t.is_empty(), "{t}");
+                inhabited += 1;
+            }
+            Verdict::Refused(why) => *refused.entry(format!("{why:?}")).or_insert(0) += 1,
+        }
+    }
+    Type::forget_emptiness();
+    let again: Vec<Verdict> = asked.iter().rev().map(|(t, _)| t.verdict()).collect();
+    assert!(first.iter().eq(again.iter().rev()));
+    println!("verdicts: {empty} empty, {inhabited} inhabited, refused {refused:?}");
+    assert!(
+        empty > 300 && inhabited > 300,
+        "{empty} {inhabited} {refused:?}"
+    );
+    for pair in asked.chunks(2) {
+        let (a, b) = (&pair[0].0, &pair[1].0);
+        let a = a & b;
+        match a.subtype_verdict(b) {
+            Verdict::Empty => assert!(a.subtype(b), "{a} <: {b}"),
+            v => panic!("{a} <: {b} holds, and its verdict is {v:?}"),
+        }
+        match b.subtype_verdict(&a) {
+            Verdict::Empty => assert!(b.subtype(&a), "{b} <: {a}"),
+            Verdict::Inhabited => assert!(!b.subtype(&a), "{b} <: {a}"),
+            Verdict::Refused(_) => {}
+        }
+    }
 }

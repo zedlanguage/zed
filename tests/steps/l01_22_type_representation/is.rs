@@ -46,3 +46,21 @@ fn port_types_and_function_bounds_are_rejected() {
         ["`is` cannot test a value against a function type at run time [(int, String ->? int)]"]
     );
 }
+
+#[test]
+fn a_one_tuple_and_a_morphism_type_with_two_bounds_elaborate() {
+    let t = term("f(x) = x is (int,);", "f");
+    assert!(t.contains("(is (tuple int)) -> true"), "{t}");
+    // The guarantee lies within the permission: a morphism type, which `is` cannot test.
+    assert_eq!(
+        elab("f(x) = x is (#a .. #a | #b -> int);").unwrap_err(),
+        ["`is` cannot test a value against a function type at run time [(#a .. #a | #b -> int)]"]
+    );
+    // A guarantee outside its permission promises keys the type forbids.
+    assert_eq!(
+        elab("f(x) = x is (#a | #c .. #a | #b -> int);").unwrap_err(),
+        [
+            "the guarantee (left of `..`) of this morphism type is not within its permission (right of `..`) [(#a | #c .. #a | #b -> int)]"
+        ]
+    );
+}

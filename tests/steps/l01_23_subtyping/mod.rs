@@ -5,8 +5,16 @@
 //! definitions the plan names are written here as kernel definition groups: `type`
 //! declarations, which elaborate to them, join at L2.
 
+mod admission;
+mod bes;
+mod bes_families;
 mod cases;
 mod cells;
+mod judgments;
+mod listing;
 mod oracle;
 mod rec;
+mod refusals;
 mod scaling;
+mod witnesses;
+mod x13;

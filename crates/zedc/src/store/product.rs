@@ -358,7 +358,7 @@ impl Product {
             // COMPLEXITY.md row C5. A complete solution would let the type language hold
             // integer ranges, so that the interval enters the type without listing.
             let x = self.ints();
-            let vs: Option<Vec<Value>> = match (&self.ty.element & &int).listed() {
+            let vs: Option<Vec<Value>> = match self.ty.element.ints_listed() {
                 Some(vs) => Some(
                     vs.into_iter()
                         .filter(|v| !matches!(v, Value::Int(n) if !x.contains(*n)))
@@ -395,10 +395,10 @@ impl Product {
             }
         }
         // The other domains from the type.
-        if let Some(vs) = self.ty.element.listed() {
+        if let Some(vs) = self.ty.element.each_value() {
             self.cell.finite.meet(&FiniteSet::of(vs), &prem);
         }
-        if let Some(vs) = (&self.ty.element & &int).listed()
+        if let Some(vs) = self.ty.element.ints_listed()
             && !vs.is_empty()
             && self.ty.element.subtype(&int)
         {

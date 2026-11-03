@@ -1387,7 +1387,8 @@ impl<'a> Formatter<'a> {
             TypeKind::Atom(a) => self.put(format!("#{a}")),
             TypeKind::Tuple(ts) => {
                 self.put("(");
-                then![stack; list(ts, 0, ", "), put(")")];
+                let close = if ts.len() == 1 { ",)" } else { ")" };
+                then![stack; list(ts, 0, ", "), put(close)];
             }
             TypeKind::Union(ts) => stack.push(list(ts, 2, " | ")),
             TypeKind::And(ts) => stack.push(list(ts, 3, " & ")),
@@ -1427,6 +1428,19 @@ impl<'a> Formatter<'a> {
                     }
                 }
             }
+            TypeKind::Bounded {
+                lower,
+                upper,
+                result,
+            } => {
+                then![stack;
+                    Job::Ty { t: lower, min: 1 },
+                    put(" .. "),
+                    Job::Ty { t: upper, min: 1 },
+                    put(" -> "),
+                    Job::Ty { t: result, min: 0 },
+                ];
+            }
             TypeKind::Apply(name, ps) => {
                 self.put(format!("{name}("));
                 then![stack; Job::TypeParams(ps), put(")")];
@@ -1450,7 +1464,7 @@ impl<'a> Formatter<'a> {
 /// Type precedence levels: an arrow, a union or difference, an intersection, a primary.
 fn type_level(t: &Type) -> u8 {
     match t.kind {
-        TypeKind::Arrow { .. } => 0,
+        TypeKind::Arrow { .. } | TypeKind::Bounded { .. } => 0,
         TypeKind::Union(_) | TypeKind::Diff(..) => 1,
         TypeKind::And(_) => 2,
         _ => 5,

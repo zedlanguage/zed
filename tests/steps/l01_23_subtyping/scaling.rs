@@ -309,27 +309,6 @@ fn literal_and_atom_sets_combine_exactly() {
     assert_eq!(&(&a - &b) | &both, a);
 }
 
-#[test]
-fn listing_values_past_the_cap_stops_early() {
-    // `(S, S)` for a set `S` of `n` literals has `n²` values, past a cap of `n`. The product of
-    // the components' values was built before it was compared with the cap: `n²` rows.
-    scaling::check("the values of a square past the cap, by n", 200, |n| {
-        let s = Type::union_all((0..n).map(lit));
-        let square = Type::tuple(vec![s.clone(), s.clone()]);
-        assert_eq!(square.values(n), None, "n = {n}");
-        assert_eq!(s.values(n).map(|v| v.len()), Some(n));
-    });
-    let s = Type::union_all((0..3).map(lit));
-    let square = Type::tuple(vec![s.clone(), s]);
-    assert_eq!(square.values(9).map(|v| v.len()), Some(9));
-    assert_eq!(square.values(8), None);
-    // A path is listed when the product of its positive parts is within the cap, before the
-    // negated tuples are taken out, so 8 values from a product of 9 need a cap of 9.
-    let rest = &square - &Type::tuple(vec![lit(0), lit(0)]);
-    assert_eq!(rest.values(8), None);
-    assert_eq!(rest.values(9).map(|v| v.len()), Some(8));
-}
-
 /// The exclusive or of `c` tuple types `(b + i, _)`, `(b + i, b + i)` among them: a diagram of
 /// about `2c` nodes with `2^(c - 1)` paths to `true`, holding `c` values.
 fn odd_tuples(c: usize, b: usize) -> Type {
@@ -344,7 +323,7 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
     // Listing walked every path of the diagram: `2^(c - 1)` at `c` tuple types.
     for c in [1, 2, 7] {
         assert_eq!(
-            odd_tuples(c, 0).listed().map(|v| v.len()),
+            odd_tuples(c, 0).each_value().map(|v| v.count()),
             Some(c),
             "c = {c}"
         );
@@ -360,7 +339,7 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
         64,
         2,
         |c| {
-            assert_eq!(built[&c].listed().map(|v| v.len()), Some(c));
+            assert_eq!(built[&c].each_value().map(|v| v.count()), Some(c));
         },
     );
 }
@@ -506,4 +485,128 @@ fn a_key_past_many_excluded_tuples_is_found_and_scales() {
             assert!(built[&c].is_empty());
         },
     );
+}
+
+/// The pinwheel on `b + 1`, `b + 2` and `b + 3`: the square of them less four boxes around its
+/// middle `(b + 2, b + 2)`, and less the middle too when `full`, which makes it empty.
+fn pinwheel(b: i64, full: bool) -> Type {
+    let set = |m: u8| {
+        Type::union_all(
+            (1..=3)
+                .filter(|i| m >> (i - 1) & 1 == 1)
+                .map(|i| lit_i(b + i)),
+        )
+    };
+    let boxes: &[[u8; 2]] = match full {
+        false => &[[3, 1], [4, 3], [6, 4], [1, 6]],
+        true => &[[3, 1], [4, 3], [6, 4], [1, 6], [2, 2]],
+    };
+    let square = Type::tuple(vec![set(7); 2]);
+    &square
+        - &Type::union_all(
+            boxes
+                .iter()
+                .map(|b| Type::tuple(b.iter().map(|&m| set(m)).collect())),
+        )
+}
+
+fn lit_i(i: i64) -> Type {
+    Type::lit(&Value::Int(i)).unwrap()
+}
+
+/// The union of `k` pinwheels on disjoint integers.
+fn pinwheels(k: usize, full: bool) -> Type {
+    Type::union_all((0..k).map(|i| pinwheel(10 * i as i64, full)))
+}
+
+#[test]
+fn a_union_of_disjoint_pinwheels_is_decided_piece_by_piece() {
+    // No component splits the pinwheels' boxes into disjoint pieces, so each was decided, and
+    // its value sought, against the whole union: 27.7 times the work from k = 16 to 128. Their
+    // cells on the first component fall into one class per pinwheel, sharing no integer, and
+    // the halves of the classes are decided and searched apart.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            scaling::check("k disjoint pinwheels, empty, by k", 64, |k| {
+                Type::forget_emptiness();
+                assert!(pinwheels(k, true).is_empty());
+            });
+            scaling::check("k disjoint pinwheels with a middle, by k", 64, |k| {
+                Type::forget_emptiness();
+                let t = pinwheels(k, false);
+                assert!(!t.is_empty());
+                assert_eq!(t.verdict(), zed_kernel::types::Verdict::Inhabited);
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn a_union_of_disjoint_pinwheels_is_decided() {
+    for k in [1, 2, 3, 5] {
+        let (full, open) = (pinwheels(k, true), pinwheels(k, false));
+        assert_eq!(full.verdict(), zed_kernel::types::Verdict::Empty, "k = {k}");
+        assert_eq!(
+            open.verdict(),
+            zed_kernel::types::Verdict::Inhabited,
+            "k = {k}"
+        );
+        // The middles are the values of the union outside the full one.
+        let middles =
+            Type::union_all((0..k).map(|i| Type::tuple(vec![lit_i(10 * i as i64 + 2); 2])));
+        assert!((&open - &full).equiv(&middles), "k = {k}");
+        assert!(
+            middles.subtype(&open) && (&middles & &full).is_empty(),
+            "k = {k}"
+        );
+        assert!(full.subtype(&open) && !open.subtype(&full), "k = {k}");
+    }
+}
+
+/// The lists of integers whose length is `k` modulo `p`.
+fn period(p: usize, k: usize) -> Type {
+    use zed_kernel::types::rec::{Def, Expr, Group};
+    let defs = (0..p)
+        .map(|i| {
+            let cons = Expr::Atom(
+                "cons".into(),
+                vec![Expr::Type(Type::int()), Expr::Ref((i + 1) % p, vec![])],
+            );
+            let body = match i == k {
+                true => Expr::Union(vec![Expr::Type(Type::atom("nil")), cons]),
+                false => cons,
+            };
+            Def {
+                name: format!("P{i}"),
+                params: vec![],
+                body,
+            }
+        })
+        .collect();
+    Group::new(defs).unwrap().instance(vec![]).remove(0)
+}
+
+#[test]
+fn the_shortest_list_of_pure_cycles_is_built_in_its_length() {
+    // The lists whose length is -1 modulo `n` and modulo `n + 1`: the shortest has `n * (n + 1)
+    // - 1` links. Its length is found by the Chinese remainder theorem and a sieve over the
+    // steps of the lcm, so the work is the links built, order `n^2`. Scanning each length from
+    // 1 in turn and testing every class against it is also within the order here, since the
+    // first class fails at most lengths; the negative control rescanned the steps from the
+    // first at each new one.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            scaling::check_order("lengths -1 modulo n and n + 1, by n", 16, 2, |n| {
+                Type::forget_emptiness();
+                let t = &period(n, n - 1) & &period(n + 1, n);
+                assert_eq!(t.verdict(), zed_kernel::types::Verdict::Inhabited);
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

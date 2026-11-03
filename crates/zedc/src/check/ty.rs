@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-use zed_kernel::types::Type as KType;
+use zed_kernel::types::{Type as KType, Verdict};
 use zed_kernel::{Universe, Value};
 
 use crate::lex::Span;
@@ -691,6 +691,16 @@ impl Ty {
         self.sub(other, &mut b) && b.is_empty()
     }
 
+    /// When `self <: other` failed: the clause that says why it was not decided, if the check of
+    /// its scalar sets was refused, and nothing if it was decided. A refusal claims nothing
+    /// about the types, so a message that reads as a counterexample would be wrong.
+    pub fn refused(&self, other: &Ty) -> String {
+        match self.set.subtype_verdict(&other.set) {
+            Verdict::Refused(r) if !other.dynamic => format!(" (not decided: {})", r.message()),
+            _ => String::new(),
+        }
+    }
+
     /// The meet with `t`, as an `is` test narrows: what of `self` is also in `t`.
     pub fn meet(&self, t: &Ty) -> Ty {
         if t.dynamic {
@@ -1090,7 +1100,7 @@ impl Ty {
         });
         let set = rest.as_ref().unwrap_or(&self.set);
         if !set.is_empty() {
-            items.push(surface(&set.to_string()));
+            items.push(set.surface_in_union().to_string());
         }
         for (n, ss) in shaped {
             items.extend(ss.iter().map(|s| s.text(n)));
@@ -1160,125 +1170,6 @@ impl Sig {
             out = format!("{out} for {}", bounds.join(", "));
         }
         out
-    }
-}
-
-/// A kernel type's prefix form, in surface syntax: `(| a b)` is `a | b`, `(\ int 3)` is
-/// `int \ 3`, `(#a _)` is `#a(_)`, `(tuple A B)` is `(A, B)`, `(! X)` is `!X`, `(& X Y)` is
-/// `X & Y`.
-pub fn surface(prefix: &str) -> String {
-    let toks = tokens(prefix);
-    let mut i = 0;
-    let s = sexpr(&toks, &mut i);
-    show(&s, 0)
-}
-
-enum S {
-    Atom(String),
-    List(Vec<S>),
-}
-
-fn tokens(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let cs: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while i < cs.len() {
-        match cs[i] {
-            ' ' => i += 1,
-            '(' | ')' => {
-                out.push(cs[i].to_string());
-                i += 1;
-            }
-            '"' => {
-                let start = i;
-                i += 1;
-                while i < cs.len() && cs[i] != '"' {
-                    i += if cs[i] == '\\' { 2 } else { 1 };
-                }
-                i += 1;
-                out.push(cs[start..i.min(cs.len())].iter().collect());
-            }
-            _ => {
-                let start = i;
-                while i < cs.len() && !matches!(cs[i], ' ' | '(' | ')') {
-                    i += 1;
-                }
-                out.push(cs[start..i].iter().collect());
-            }
-        }
-    }
-    out
-}
-
-fn sexpr(toks: &[String], i: &mut usize) -> S {
-    let t = &toks[*i];
-    *i += 1;
-    if t != "(" {
-        return S::Atom(t.clone());
-    }
-    let mut items = Vec::new();
-    while *i < toks.len() && toks[*i] != ")" {
-        items.push(sexpr(toks, i));
-    }
-    *i += 1;
-    S::List(items)
-}
-
-/// `s` in surface syntax, parenthesized when its operator binds looser than `prec`: 0 for
-/// `|`, 1 for `&`, 2 for `\`, 3 for an operand.
-fn show(s: &S, prec: u8) -> String {
-    let S::List(items) = s else {
-        let S::Atom(a) = s else { unreachable!() };
-        return a.clone();
-    };
-    let (head, rest) = match items.split_first() {
-        Some((S::Atom(h), rest)) => (h.as_str(), rest),
-        _ => return "!_".into(),
-    };
-    let wrap = |p: u8, text: String| match prec > p {
-        true => format!("({text})"),
-        false => text,
-    };
-    match head {
-        "|" if rest.is_empty() => "!_".into(),
-        "|" => wrap(
-            0,
-            rest.iter()
-                .map(|r| show(r, 1))
-                .collect::<Vec<_>>()
-                .join(" | "),
-        ),
-        "&" => wrap(
-            1,
-            rest.iter()
-                .map(|r| show(r, 2))
-                .collect::<Vec<_>>()
-                .join(" & "),
-        ),
-        "\\" => {
-            let taken: Vec<String> = rest[1..].iter().map(|r| show(r, 3)).collect();
-            let taken = match taken.len() {
-                1 => taken[0].clone(),
-                _ => format!("({})", taken.join(" | ")),
-            };
-            wrap(2, format!("{} \\ {taken}", show(&rest[0], 3)))
-        }
-        "!" => format!("!{}", show(&rest[0], 3)),
-        "tuple" => {
-            let cs: Vec<String> = rest.iter().map(|r| show(r, 0)).collect();
-            match cs.len() {
-                1 => format!("({},)", cs[0]),
-                _ => format!("({})", cs.join(", ")),
-            }
-        }
-        h if h.starts_with('#') => format!("{h}({})", show(&rest[0], 0)),
-        h => format!(
-            "({h} {})",
-            rest.iter()
-                .map(|r| show(r, 3))
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
     }
 }
 

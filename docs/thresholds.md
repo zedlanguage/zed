@@ -214,8 +214,9 @@ reduction lists. Each former use is bounded by its own inputs instead.
 - *Reduction listings* (`product.rs`). The type is narrowed to an interval's members only
   when they number at most two a piece, so the list is no longer than the interval; a type's
   own integer literals are filtered by the interval at any count, since the type already
-  writes them; and `Type::listed` lists a type's values only where a tuple's rows are no
-  more than its components' values (`Type::values` without a cap would multiply them).
+  writes them; and a type known finite (`Type::finite`) gives its values one at a time
+  (`Type::each_value`, T6), with no size rule: the earlier rule that a tuple's rows be no
+  more than its components' values changed the answer with the size and is removed.
   The enumeration's kept values are no longer capped, since they were already listed.
 
 Tests: `l01_24_refinement_lattices::scaling` (every result of six operators is in the image,
@@ -395,7 +396,7 @@ domain. `stage::passed` mixes the unit and reads, in the residual definitions, e
 the function by its kernel name whose argument there is a literal, and each test case of
 the function whose argument there is a literal. `trick` keeps those values that lie in the
 parameter's domain, and requires the domain to be finite: a bounded integer interval, or a
-type that lists its values no longer than it is written (`Type::listed`, which has no cap).
+type known finite (`Type::finite`, T6; no size rule).
 The split has one arm per distinct value, so at most one per call site and test case, and
 the general body stays last. A call whose arguments are all build-stage is computed by the
 build and leaves no call, so it adds no arm.

@@ -22,12 +22,17 @@
 //! Whether a type is empty, and so subtyping, is decided in module `empty`.
 
 mod bdd;
+pub mod bes;
 mod empty;
+pub use empty::{Refusal, Verdict};
+mod print;
 pub mod rec;
+
+pub use print::Surface;
 
 use imbl::{OrdMap, OrdSet};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::ops::{BitAnd, BitOr, Not, Sub};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -156,6 +161,8 @@ struct Rec {
     naming: Box<dyn Fn() -> String + Send + Sync>,
     body: OnceLock<Type>,
     make: Box<dyn Fn() -> Type + Send + Sync>,
+    /// The emptiness its group decides for it, if the group is decided (module `bes`).
+    judge: Option<Box<dyn Fn() -> Option<bool> + Send + Sync>>,
 }
 
 impl PartialEq for Rec {
@@ -381,14 +388,46 @@ impl Type {
         naming: impl Fn() -> String + Send + Sync + 'static,
         make: impl Fn() -> Type + Send + Sync + 'static,
     ) -> Type {
+        Type::rec_with(Box::new(naming), Box::new(make), None)
+    }
+
+    /// The node of [`Type::rec`], with its emptiness given by `judge` when there is one.
+    fn rec_with(
+        naming: Box<dyn Fn() -> String + Send + Sync>,
+        make: Box<dyn Fn() -> Type + Send + Sync>,
+        judge: Option<Box<dyn Fn() -> Option<bool> + Send + Sync>>,
+    ) -> Type {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         Type(Arc::new(Node::Rec(Rec {
             id: NEXT.fetch_add(1, Ordering::Relaxed),
             name: OnceLock::new(),
-            naming: Box::new(naming),
+            naming,
             body: OnceLock::new(),
-            make: Box::new(make),
+            make,
+            judge,
         })))
+    }
+
+    /// [`Type::rec`], with `judge()` giving its emptiness when its group decides it.
+    pub(crate) fn rec_judged(
+        naming: impl Fn() -> String + Send + Sync + 'static,
+        make: impl Fn() -> Type + Send + Sync + 'static,
+        judge: impl Fn() -> Option<bool> + Send + Sync + 'static,
+    ) -> Type {
+        Type::rec_with(Box::new(naming), Box::new(make), Some(Box::new(judge)))
+    }
+
+    /// The emptiness the group of a recursive node decides for it, if any.
+    pub(crate) fn judged(&self) -> Option<bool> {
+        match &*self.0 {
+            Node::Parts(..) => None,
+            Node::Rec(r) => r.judge.as_ref().and_then(|j| j()),
+        }
+    }
+
+    /// Whether this is a recursive type by name, not its unfolding.
+    fn is_recursive(&self) -> bool {
+        matches!(&*self.0, Node::Rec(_))
     }
 
     /// The parts, unfolding a recursive node.
@@ -607,154 +646,137 @@ impl Type {
         self.p().morphisms.is_leaf() == Some(true)
     }
 
-    /// Every value of `self`, when there are at most `cap` of them and each can be listed:
-    /// bools, finite literal sets, bare atoms, and tuples of such components. `None` for a
-    /// type with more values, an infinite part, a payload, a struct or a function, and for a
-    /// tuple type one of whose tuple types, met with the tuple types taken on the paths to it,
-    /// has more than `cap` rows before the diagram's other tuple types are taken into account.
-    ///
-    /// Complexity tradeoff: past `cap` values the list is given up (`None`), so a caller learns
-    /// nothing about a type with more values. Why: a tuple type's values are the product of
-    /// its components', exponential in the components. Trigger: more than `cap` values, or a
-    /// path with more than `cap` rows. Test:
-    /// `l01_23_subtyping::scaling::listing_values_past_the_cap_stops_early`. COMPLEXITY.md
-    /// row C21. The cap is a size given by the caller, so this switches behavior at a size and
-    /// violates the no-thresholds rule; to be replaced. Only tests call it; [`Type::listed`]
-    /// is the structural rule. A complete solution is that rule (list when the list is no
-    /// longer than the type), or a lazy enumeration of the values.
-    pub fn values(&self, cap: usize) -> Option<Vec<Value>> {
-        self.list(cap, true)
+    /// Whether `self` is known to have finitely many values: it holds only bools, finite
+    /// literal sets, bare atoms, and tuples whose boxes ([`Type::boxes`]) hold only types known
+    /// finite. A recursive type, a payload, a struct or a function is not known finite, and a
+    /// box is read as written, so `(int, 0) & (0, 0)` is not known finite although it has one
+    /// value. No size is compared: the answer depends on the type alone.
+    pub fn finite(&self) -> bool {
+        self.finite_order().is_some()
     }
 
-    /// Every value of `self` when the list is no longer than the type: as [`Type::values`],
-    /// except that a tuple path is listed only when its rows are no more than the values its
-    /// components list, so listing never multiplies what the type writes.
-    ///
-    /// Complexity tradeoff: a type whose values outnumber what it writes (a tuple of `n`
-    /// literals by `n` literals has `n²` values) is not listed (`None`), so its users (the
-    /// Trick in `zedc::stage`, the type facet in `zedc::store::product`) treat it as not
-    /// finite. Why: the values of a tuple type are the product of its components', exponential
-    /// in the components. Trigger: a tuple path whose rows exceed the values its components
-    /// list; the measure is the written type, not a constant. Tests:
-    /// `l01_23_subtyping::scaling::listing_a_diagram_with_exponentially_many_paths_scales`,
-    /// `l01_28_staging::trick::a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept`.
-    /// COMPLEXITY.md row C22. A complete solution would list lazily, paying only for the values
-    /// a caller reads.
-    pub fn listed(&self) -> Option<Vec<Value>> {
-        self.list(usize::MAX, false)
-    }
-
-    /// [`Type::values`], with `spread` false for [`Type::listed`].
-    fn list(&self, cap: usize, spread: bool) -> Option<Vec<Value>> {
-        if !matches!(&*self.0, Node::Parts(..)) {
-            return None;
-        }
+    /// The integers of `self`, when they are a finite set of literals.
+    pub fn ints_listed(&self) -> Option<Vec<Value>> {
         let p = self.p();
-        if p.structs || p.morphisms.is_leaf() != Some(false) || p.atoms.cofinite || p.tuples.rest {
+        (!p.ints.cofinite).then(|| p.ints.values.iter().cloned().collect())
+    }
+
+    /// Each value of `self` once, when `self` is [`Type::finite`]: its scalars and bare atoms,
+    /// then its tuples, length by length and box by box. The types inside the boxes are listed
+    /// in full first; `self`'s own tuples are made one at a time, so a caller pays per value it
+    /// takes. Between two values the iterator can try every tuple of a box that the type does
+    /// not hold, which can be exponential in the type's size: listing the values of a tuple
+    /// type in time polynomial in their number would decide satisfiability.
+    pub fn each_value(&self) -> Option<Values> {
+        let mut order = self.finite_order()?;
+        let (top, boxes) = order.pop().expect("`self` is last in its own order");
+        let (mut lists, mut index) = (Vec::new(), HashMap::new());
+        for (t, boxes) in order {
+            let mut each = Values::new(t, boxes, lists, index);
+            let vs: Vec<Value> = each.by_ref().collect();
+            (lists, index) = (
+                std::mem::take(&mut each.lists),
+                std::mem::take(&mut each.index),
+            );
+            index.insert(each.ty, lists.len());
+            lists.push(vs);
+        }
+        Some(Values::new(top, boxes, lists, index))
+    }
+
+    /// The types `self`'s values are built from, each with its boxes and after the types in
+    /// them, `self` last, when every one is known finite. One visit per type, kept in a visited
+    /// set, and an explicit stack, since the nesting depth follows the input.
+    fn finite_order(&self) -> Option<Vec<(Type, Vec<Row>)>> {
+        let mut order = Vec::new();
+        let mut seen: HashSet<Type> = HashSet::new();
+        let mut stack: Vec<(Type, Option<Vec<Row>>)> = vec![(self.clone(), None)];
+        while let Some((t, done)) = stack.pop() {
+            if let Some(boxes) = done {
+                order.push((t, boxes));
+                continue;
+            }
+            if !seen.insert(t.clone()) {
+                continue;
+            }
+            let boxes = t.boxes()?;
+            let below: Vec<Type> = boxes
+                .iter()
+                .flat_map(|r| r.iter())
+                .filter(|c| !seen.contains(*c))
+                .cloned()
+                .collect();
+            stack.push((t, Some(boxes)));
+            stack.extend(below.into_iter().map(|c| (c, None)));
+        }
+        Some(order)
+    }
+
+    /// Tuple types, the boxes, whose union holds every tuple of `self`, when the rest of
+    /// `self` is finite and every tuple of it is in a tuple type the diagram takes; `None`
+    /// otherwise. A value of a diagram is in the last tuple type its path takes, and in the
+    /// meet of those the path took before; so each node of the diagram gives the box of its
+    /// tuple type met with the union of the meets on the paths to it, one pass over the
+    /// nodes, never over the paths. An expression gives each of its tuple types.
+    fn boxes(&self) -> Option<Vec<Row>> {
+        let Node::Parts(p, _) = &*self.0 else {
+            return None;
+        };
+        if p.structs
+            || p.morphisms.is_leaf() != Some(false)
+            || p.atoms.cofinite
+            || p.tuples.rest
+            || [&p.ints, &p.rats, &p.floats, &p.strings]
+                .iter()
+                .any(|l| l.cofinite)
+            || p.atoms.names.values().any(|a| a.payload != Type::empty())
+        {
             return None;
         }
-        let mut out = BTreeSet::new();
-        let add = |v: Value, out: &mut BTreeSet<Value>| {
-            out.insert(v);
-            out.len() <= cap
-        };
-        for b in [false, true] {
-            if p.bools & (1 << u8::from(b)) != 0 && !add(Value::Bool(b), &mut out) {
-                return None;
-            }
-        }
-        for lits in [&p.ints, &p.rats, &p.floats, &p.strings] {
-            if lits.cofinite {
-                return None;
-            }
-            for v in &lits.values {
-                if !add(v.clone(), &mut out) {
-                    return None;
-                }
-            }
-        }
-        for (name, part) in &p.atoms.names {
-            if part.payload != Type::empty() {
-                return None;
-            }
-            if part.bare && !add(Value::atom(name), &mut out) {
-                return None;
-            }
-        }
+        let meet =
+            |r: &Row, s: &Row| Row::new(r.iter().zip(s.iter()).map(|(x, y)| x & y).collect());
+        let mut out = Vec::new();
         for (len, part) in &p.tuples.lens {
-            let Part::Bdd(b) = part else {
-                return None;
-            };
-            // A value of the part is in every tuple type its path takes, so in the last one, which
-            // the path takes from the node of that tuple type. The path that takes none would
-            // hold the values outside every tuple type of the part, which are not listed.
-            if b.eval(|_| false) {
+            // The tuples outside every tuple type of the part are not listed.
+            if part.eval(&|_| false) {
                 return None;
             }
-            let rows = |r: &Row| -> Option<Vec<Vec<Value>>> {
-                let mut found = vec![Vec::new()];
-                let mut written = 0usize;
-                for item in r.iter() {
-                    let vs = item.list(cap, spread)?;
-                    written = written.saturating_add(vs.len());
-                    if !spread && found.len().saturating_mul(vs.len()) > written {
-                        return None;
-                    }
-                    // Compared with the cap before the product is built, which can be `cap²`.
-                    if found.len().saturating_mul(vs.len()) > cap {
-                        return None;
-                    }
-                    found = found
-                        .iter()
-                        .flat_map(|r| {
-                            vs.iter().map(move |v| {
-                                let mut r = r.clone();
-                                r.push(v.clone());
-                                r
-                            })
-                        })
-                        .collect();
+            match part {
+                Part::Bdd(b) => {
+                    b.reaching(
+                        Row::new(vec![Type::top(); *len]),
+                        meet,
+                        |r, s| Row::new(r.iter().zip(s.iter()).map(|(x, y)| x | y).collect()),
+                        |a, r| {
+                            out.push(meet(a, r));
+                            true
+                        },
+                    );
                 }
-                Some(found)
-            };
-            // Each node's tuple type is listed alone, or else met with the union of the meets
-            // of the tuple types taken on the paths to the node, kept a component at a time,
-            // and each row is kept when the diagram holds it: one pass over the nodes, never
-            // over the paths, whose number can be exponential in the nodes.
-            let listed = b.reaching(
-                Row::new(vec![Type::top(); *len]),
-                |r, a| Row::new(r.iter().zip(a.iter()).map(|(x, y)| x & y).collect()),
-                |r, s| Row::new(r.iter().zip(s.iter()).map(|(x, y)| x | y).collect()),
-                |a, r| {
-                    let Some(found) = rows(a).or_else(|| {
-                        rows(&Row::new(
-                            a.iter().zip(r.iter()).map(|(x, y)| x & y).collect(),
-                        ))
-                    }) else {
-                        return false;
-                    };
-                    found.into_iter().all(|r| {
-                        let fits = |t: &Row| t.iter().zip(&r).all(|(t, v)| t.contains(v));
-                        !b.eval(fits) || add(Value::tuple(r), &mut out)
-                    })
-                },
-            );
-            if !listed {
-                return None;
+                Part::Expr(_) => {
+                    part.atoms(&mut |a| {
+                        out.push(a.clone());
+                        true
+                    });
+                }
             }
         }
-        Some(out.into_iter().collect())
+        Some(out)
     }
 
     /// Whether `v` is in `self`, for a decidable `self`. Each tuple and payload of `v` is tested
     /// once against each component type it meets, innermost first, so the cost follows the
-    /// size of `v` and its depth is limited by memory alone.
+    /// size of `v` and its depth is limited by memory alone. A test is kept under the type, by
+    /// its contents, and the sequence of `v` it reads, by the sequence's address and length as
+    /// `Items::addr` does: `v` is borrowed for the call, so no sequence is freed and an address
+    /// names one sequence while the call runs, and the kept tests are never iterated, so the
+    /// answer does not depend on where `v` is in memory.
     pub fn contains(&self, v: &Value) -> bool {
         let first = match self.member(v) {
             Member::Known(b) => return b,
             Member::Tuple(ty, xs) => (ty, xs),
         };
-        let key = |t: &Type, xs: &[Value]| (Arc::as_ptr(&t.0), xs.as_ptr(), xs.len());
+        let key = |t: &Type, xs: &[Value]| (t.clone(), xs.as_ptr().addr(), xs.len());
         let mut known = HashMap::new();
         let mut todo = vec![first];
         loop {
@@ -833,6 +855,28 @@ impl Type {
             morphisms: a.morphisms.zip(&b.morphisms, op),
         })
     }
+
+    /// Whether `self & other`, or `self - other` when `both` is false, is empty, when neither
+    /// type holds anything but scalars; `None` otherwise. Nothing is built.
+    fn scalar_cell(&self, other: &Type, both: bool) -> Option<bool> {
+        let (a, b) = (self.p(), other.p());
+        if !a.scalars_only() || !b.scalars_only() {
+            return None;
+        }
+        Some(if both {
+            a.bools & b.bools == 0
+                && a.ints.disjoint(&b.ints)
+                && a.rats.disjoint(&b.rats)
+                && a.floats.disjoint(&b.floats)
+                && a.strings.disjoint(&b.strings)
+        } else {
+            a.bools & !b.bools == 0
+                && a.ints.within(&b.ints)
+                && a.rats.within(&b.rats)
+                && a.floats.within(&b.floats)
+                && a.strings.within(&b.strings)
+        })
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -841,7 +885,41 @@ enum Op {
     And,
 }
 
+impl Parts {
+    fn scalars_only(&self) -> bool {
+        self.atoms == Atoms::default()
+            && self.tuples == Tuples::default()
+            && !self.structs
+            && self.morphisms.is_leaf() == Some(false)
+    }
+}
+
 impl Lits {
+    /// Whether no literal is in both sets.
+    fn disjoint(&self, other: &Lits) -> bool {
+        let (a, b) = (self, other);
+        match (a.cofinite, b.cofinite) {
+            (false, false) if a.values.len() > b.values.len() => {
+                !b.values.iter().any(|v| a.values.contains(v))
+            }
+            (false, false) => !a.values.iter().any(|v| b.values.contains(v)),
+            (false, true) => a.values.iter().all(|v| b.values.contains(v)),
+            (true, false) => b.values.iter().all(|v| a.values.contains(v)),
+            (true, true) => false,
+        }
+    }
+
+    /// Whether every literal of `self` is in `other`.
+    fn within(&self, other: &Lits) -> bool {
+        let (a, b) = (self, other);
+        match (a.cofinite, b.cofinite) {
+            (false, false) => a.values.iter().all(|v| b.values.contains(v)),
+            (false, true) => !a.values.iter().any(|v| b.values.contains(v)),
+            (true, false) => false,
+            (true, true) => b.values.iter().all(|v| a.values.contains(v)),
+        }
+    }
+
     fn contains(&self, v: &Value) -> bool {
         self.values.contains(v) != self.cofinite
     }
@@ -1398,4 +1476,101 @@ fn clauses<A: bdd::Literal>(
     });
     found.sort();
     items.extend(found);
+}
+
+/// The values of a finite type, one at a time, from [`Type::each_value`].
+pub struct Values {
+    ty: Type,
+    scalars: std::vec::IntoIter<Value>,
+    boxes: std::vec::IntoIter<Row>,
+    /// The box being listed: its row, the list of each of its components, and the position in
+    /// each list; `None` between boxes.
+    at: Option<(Row, Vec<usize>, Vec<usize>)>,
+    /// The values of the types inside the boxes, and the list of each type. A type is looked
+    /// up once per box, never per value: two equal types built apart compare by their contents.
+    lists: Vec<Vec<Value>>,
+    index: HashMap<Type, usize>,
+    /// The tuples given so far, since two boxes can share a tuple.
+    sent: BTreeSet<Value>,
+}
+
+impl Values {
+    fn new(
+        ty: Type,
+        boxes: Vec<Row>,
+        lists: Vec<Vec<Value>>,
+        index: HashMap<Type, usize>,
+    ) -> Values {
+        let p = ty.p();
+        let mut scalars: Vec<Value> = [false, true]
+            .into_iter()
+            .filter(|&b| p.bools & (1 << u8::from(b)) != 0)
+            .map(Value::Bool)
+            .collect();
+        for lits in [&p.ints, &p.rats, &p.floats, &p.strings] {
+            scalars.extend(lits.values.iter().cloned());
+        }
+        scalars.extend(
+            p.atoms
+                .names
+                .iter()
+                .filter(|(_, a)| a.bare)
+                .map(|(name, _)| Value::atom(name)),
+        );
+        Values {
+            ty,
+            scalars: scalars.into_iter(),
+            boxes: boxes.into_iter(),
+            at: None,
+            lists,
+            index,
+            sent: BTreeSet::new(),
+        }
+    }
+}
+
+impl Iterator for Values {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Value> {
+        if let Some(v) = self.scalars.next() {
+            return Some(v);
+        }
+        loop {
+            let Some((row, cols, pos)) = &mut self.at else {
+                let row = self.boxes.next()?;
+                let cols: Vec<usize> = row.iter().map(|c| self.index[c]).collect();
+                if cols.iter().all(|&c| !self.lists[c].is_empty()) {
+                    let n = cols.len();
+                    self.at = Some((row, cols, vec![0; n]));
+                }
+                continue;
+            };
+            let v: Vec<Value> = cols
+                .iter()
+                .zip(pos.iter())
+                .map(|(&c, &i)| self.lists[c][i].clone())
+                .collect();
+            // The next position, the last component fastest; past the last, the next box.
+            let more = (0..pos.len()).rev().any(|k| {
+                pos[k] += 1;
+                if pos[k] < self.lists[cols[k]].len() {
+                    return true;
+                }
+                pos[k] = 0;
+                false
+            });
+            let fits = |t: &Row| t.iter().zip(&v).all(|(t, x)| t.contains(x));
+            let holds = self.ty.p().tuples.lens[&row.len()].eval(&fits);
+            if !more {
+                self.at = None;
+            }
+            if holds {
+                let v = Value::tuple(v);
+                if self.sent.insert(v.clone()) {
+                    return Some(v);
+                }
+            }
+        }
+    }
 }

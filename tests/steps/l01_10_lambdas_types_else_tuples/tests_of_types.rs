@@ -57,3 +57,23 @@ fn function_types_have_one_level_per_parameter() {
         ("f is int -> int", "syntax"),
     ]);
 }
+
+#[test]
+fn a_one_tuple_and_a_morphism_type_with_two_bounds() {
+    check(&[
+        // A one-tuple has a trailing comma; without it the parentheses only group.
+        ("p is (int,)", "(is p (tuple int))"),
+        ("p is (int)", "(is p int)"),
+        ("p is (int, String,)", "(is p (tuple int String))"),
+        // `L .. U -> V`: keys in `L` certainly present, keys outside `U` absent.
+        (
+            "m is (#a .. #a | #b -> int)",
+            "(is m (.. #a (| #a #b) int))",
+        ),
+        (
+            "m is (#a .. #a | #b -> #c .. #c | #d -> int)",
+            "(is m (.. #a (| #a #b) (.. #c (| #c #d) int)))",
+        ),
+        ("m is (#a .. #b ->? int)", "syntax"),
+    ]);
+}

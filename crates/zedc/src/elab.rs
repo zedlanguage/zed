@@ -1777,6 +1777,27 @@ impl<'a> Elab<'a> {
                 };
                 keys.into_iter().rev().fold(result?, |v, k| level(k, v))
             }
+            TypeKind::Bounded {
+                lower,
+                upper,
+                result,
+            } => {
+                let (l, u, v) = (self.ty(lower), self.ty(upper), self.ty(result));
+                let (l, u) = (l?, u?);
+                if !l.subtype(&u) {
+                    let why = match l.subtype_verdict(&u) {
+                        zed_kernel::types::Verdict::Refused(r) => {
+                            format!(" (not decided: {})", r.message())
+                        }
+                        _ => String::new(),
+                    };
+                    return self.error(
+                        t.span,
+                        format!("the guarantee (left of `..`) of this morphism type is not within its permission (right of `..`){why}"),
+                    );
+                }
+                KType::morphism(l, u, v?)
+            }
         })
     }
 

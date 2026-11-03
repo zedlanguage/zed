@@ -108,6 +108,13 @@ impl Meter {
         }
     }
 
+    /// How many times [`compare`] runs the smaller and the larger size, so that a test can build
+    /// a fresh input for each run before any is timed.
+    pub fn runs(&self) -> (usize, usize) {
+        let (least, measurements) = self.repeats();
+        (1 + least * measurements, least * measurements)
+    }
+
     /// The least work of the runs of `f`.
     fn least(&mut self, f: impl Fn()) -> u64 {
         (0..self.repeats().0)
@@ -270,6 +277,22 @@ mod tests {
             small,
             large
         )));
+    }
+
+    #[test]
+    fn a_comparison_runs_each_size_as_often_as_the_meter_says() {
+        let (small, large) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+        let mut meter = Meter::new();
+        let runs = meter.runs();
+        compare_by(
+            &mut meter,
+            "counted runs",
+            "the limit is 24",
+            24.0,
+            || small.set(small.get() + 1),
+            || large.set(large.get() + 1),
+        );
+        assert_eq!((small.get(), large.get()), runs);
     }
 
     #[test]
