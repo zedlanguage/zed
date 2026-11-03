@@ -830,21 +830,35 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BOX-5pt | verify attempt 1 | 2026-11-03 06:34 | run_tests.sh 4 on 97cbd72: 98 pieces, 0 failed, l01_38 79 pass in 49.0 s (load 63-80); control: box_point row scan made quadratic still passes three_variables_i |
-| DESIGN-audit | plan attempt  | 2026-11-03 06:08 | start: schedule audit findings B and new DESIGN steps in zed-impl plan_dag, STATUS, COMPLEXITY, ZED_PORT_GAPS; worktree wt/audit-plan |
-| LIN-cross | impl attempt 1 | 2026-11-03 05:46 | cause found: pick()'s local_repair lists every one-atom constraint on the shared input i (guards i >= j), so each of the 2k disjunctions costs k (local sizes 89 |
-| S22e | impl attempt 1 | 2026-11-03 06:39 | started; worktree /home/luke/Work/wt/s22e on main ea2e48f |
-| ST-arms-quad | repair attempt 4 | 2026-11-03 03:16 | parts_tested counter + test (<= 48 per level at d=60,480; heavy 40, moving 24): stamp disabled gives heavy 516/d at 60 and 3876/d at 480, test fails; summary cu |
+| AXIOMS-order | verify attempt 1 | 2026-11-03 07:14 | start |
+| BIT-words | impl attempt 1 | 2026-11-03 07:14 | kernel bits module built; unit test run (load 72.26) |
+| BOX-5pt | verify attempt 2 | 2026-11-03 06:34 | fmt check clean, clippy -D warnings exit 0 on 82e755e; run_tests.sh 4 running (load ~90) |
+| F44-memo | impl attempt 1 | 2026-11-03 07:14 | probe: first runs (fresh) vs least: l01_10 no memo (7.7x either way); l01_21 first run builds Db inside timing; l01_23 morphism first-run ratio 48, tuple 28 vs  |
+| HOLE-oneline | impl attempt 1 | 2026-11-03 07:14 | fmt, clippy -D warnings clean; l01_05, l01_08, m0_03, l01_07 pass; cases tool 369 cases, 2 wrong not this item's ((T,) types); check, fences OK; full suite star |
+| L1.17a | impl attempt 1 | 2026-11-03 07:14 | started |
+| LIN-cross | impl attempt 1 | 2026-11-03 05:46 | fmt and clippy clean; docs: COMPLEXITY S22, STATUS row, ledger LIN-probe added; starting run_tests.sh 4 |
+| OSP-neglit | impl attempt 1 | 2026-11-03 07:14 | correction: baseline had 6 failing pieces, all caused by my new offsets.zed and cases.txt lines written during the run (counts 53->54, 356->358); the tree at 79 |
+| R10-stack | impl attempt 1 | 2026-11-03 07:14 | negative control on main code: linked_list(10000) native on a 2 MiB thread aborts with stack overflow; 100,000-concat function overflows a test-harness thread ( |
+| S22b-rest | impl attempt 1 | 2026-11-03 07:22 | start: c - u in pa_prim and clip_at |
+| S22e | verify attempt 1 | 2026-11-03 06:39 | done: run_tests.sh 4 98/98 pieces pass (load 61-112); fmt and clippy -D warnings clean; control and probes as logged; ok=true, non-blocking notes: O(d n log n)  |
+| SCALE-bytes | impl attempt 1 | 2026-11-03 07:14 | counting allocator crate zed-alloc-count + bytes measure in tests/src/scaling.rs; harness unit tests 24/24 and allocator 4/4 pass |
+| ST-arms-quad | verify attempt 4 | 2026-11-03 03:16 | control B (summary cut removed): one-level test FAILS ([3..=4, 10..=10, 100..=200]); new probe 'paired' (accounts_paired recursed d deep, fresh q_i per level):  |
 | T11-S22 | merge attempt 1 (item S22a) | 2026-11-03 03:01 | lock released |
-| T2-mid | repair attempt 2 | 2026-11-03 04:26 | full suite on rebased branch (base 56c2064, resolve/elab tables/canon/stage/check walk): 98 pieces, 0 failed |
-| T6 | repair attempt 7 | 2026-11-03 00:01 | rebased wt/t6 onto main 56c2064 (now 24ad3e4); STATUS/ZED_PORT_GAPS conflicts kept both sides; fence-copy commit dropped as main already has the merged spec cop |
-| TD-ends | repair attempt 3 | 2026-11-03 03:52 | start: fix kept sum/difference of unrelated cores (int.rs:1326) and the 11 incomplete tradeoff comments |
-| UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | start: reading brief, XT3 report B2, utvpi.rs |
+| T2-mid | repair attempt 3 | 2026-11-03 04:26 | zir mod.rs: starting validate, Region Drop and Eq on heap stacks; load 101.66 95.15 83.65 |
+| T6 | repair attempt 7 | 2026-11-03 00:01 | comments rewritten (overlaps, TupleSplit, module doc); cofinite pinwheel scaling case added; probes removed; running K36 test, load 93.33 94.09 83.85 |
+| TD-ends | verify attempt 4 | 2026-11-03 03:52 | probes (zedc test, load 90-107): b.zed 0.09 s, g.zed 0.07 s (repair 3 fix holds); open S26 case x ** (3**e * 9**(e+1) - 3**(3e+2)): e=1e5 3.06 s, 1e6 30.6 s, 8e |
+| UTVPI-NEAR | impl attempt 1 | 2026-11-03 06:34 | negsssp.rs and GOR state machine + race written; utvpi unit tests pass (race, GOR, Duong on 1000 random graphs and BAD-GOR k=64); running near tests / load 87.4 |
+| WIDEN-WARN | impl attempt 1 | 2026-11-03 07:14 | start |
 
 Merged into local main and not yet pushed (48 commits); the push follows one full test run on the merged tree:
 
+- 5adc3c2 STATUS: S22c merged
 - ce36748 S22c: complement_in keeps the integers past an end of i64
+- 42dca7d Merge branch 'wt/audit-gaps-plan'
+- cc3ca08 plan_dag, STATUS: SEMIRING-kerr merged (spec only: zed 2f28234, 65e6fa6)
+- 4a2686f STATUS: S22b merged
 - 7709581 S22b: c - x reflects each piece of the demand instead of the capped forward image
+- 81516e4 plan_dag: DESIGN audit critic gaps: ledger-only needs as edges, UNITANNOT-L7 cases, L7.5a port facets
 - 70ff249 STATUS: S22d merged
 - 460cfc4 S22d: enumerate reads an empty box as exact before stage::ends
 - 7959661 plan_dag: rows and edges from the 2026-11-03 DESIGN audit
