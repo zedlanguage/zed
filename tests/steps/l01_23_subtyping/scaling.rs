@@ -7,6 +7,7 @@
 //! types are disjoint. A product of tuple types covered by many negated ones is split into disjoint pieces, and
 //! a negated type disjoint from a piece is passed over.
 
+use std::sync::atomic::Ordering::Relaxed;
 use zed_kernel::Value;
 use zed_kernel::types::{Type, Universe, Verdict};
 use zed_tests::scaling;
@@ -78,10 +79,10 @@ fn a_product_covered_by_its_cells_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 28)
         .spawn(|| {
-            let fresh = std::cell::Cell::new(1);
+            let fresh = std::sync::atomic::AtomicUsize::new(1);
             scaling::check("a grid and its cells, by cell count", 512, |c| {
                 let n = (c as f64).sqrt().round() as usize;
-                let (p, cells) = grid(n, 10_000 * fresh.replace(fresh.get() + 1));
+                let (p, cells) = grid(n, 10_000 * fresh.fetch_add(1, Relaxed));
                 assert!(
                     (&p - &cells).is_empty(),
                     "the cells cover the grid at n = {n}"
@@ -147,10 +148,9 @@ fn passing_over_disjoint_negated_types_scales() {
                     (k, (u, (0..k).map(|i| bits(k, i)).collect()))
                 })
                 .collect();
-            let next = std::cell::Cell::new(0);
+            let next = std::sync::atomic::AtomicUsize::new(0);
             scaling::check_order("decoys passed over, by count", 2, 2, |k| {
-                next.set(next.get() + 100);
-                let b = 1_000_000 + next.get();
+                let b = 1_000_100 + next.fetch_add(100, Relaxed);
                 let (u, bs) = &made[&k];
                 let p = Type::tuple(vec![u.clone(), lit(b)]);
                 let decoys = Type::union_all(
@@ -187,9 +187,9 @@ fn many_negated_types_passed_over_scale() {
     std::thread::Builder::new()
         .stack_size(1 << 28)
         .spawn(|| {
-            let fresh = std::cell::Cell::new(1);
+            let fresh = std::sync::atomic::AtomicUsize::new(1);
             scaling::check("a product less n tuples passed over, by n", 1000, |n| {
-                let b = 100_000 * fresh.replace(fresh.get() + 1);
+                let b = 100_000 * fresh.fetch_add(1, Relaxed);
                 let meets = |i: usize| (0..5).map(move |k| lit(b + 10_000 * k + i));
                 let p = Type::tuple(
                     (0..5)
@@ -226,9 +226,9 @@ fn nested_tuples_scale() {
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {
-            let fresh = std::cell::Cell::new(1);
+            let fresh = std::sync::atomic::AtomicUsize::new(1);
             scaling::check("a nested tuple and a query on it, by depth", 400, |d| {
-                let b = 100_000 * fresh.replace(fresh.get() + 1);
+                let b = 100_000 * fresh.fetch_add(1, Relaxed);
                 let x = nested(d, b);
                 assert!(x.subtype(&(&nested(d, b) | &lit(1))), "at depth {d}");
                 assert!(!x.subtype(&nested(d, b + 1)), "at depth {d}");
@@ -375,9 +375,9 @@ fn a_decision_tree_is_decided_in_polynomial_time() {
     std::thread::Builder::new()
         .stack_size(1 << 28)
         .spawn(|| {
-            let fresh = std::cell::Cell::new(1);
+            let fresh = std::sync::atomic::AtomicUsize::new(1);
             scaling::check_order("a decision tree, by column count", 16, 2, |c| {
-                let (p, rows) = decision_tree(c, 1000 * fresh.replace(fresh.get() + 1));
+                let (p, rows) = decision_tree(c, 1000 * fresh.fetch_add(1, Relaxed));
                 assert!(
                     (&p - &Type::union_all(rows)).is_empty(),
                     "the rows cover the product at c = {c}"

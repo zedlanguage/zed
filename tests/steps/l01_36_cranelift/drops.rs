@@ -1,8 +1,8 @@
 //! The runtime's drop of a reference: one count write when the cell stays live, and work
 //! linear in the cells freed otherwise (COMPLEXITY.md R8).
 
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use zed_kernel::Value;
 use zed_rt::{Heap, Obj, Word};
@@ -49,13 +49,13 @@ fn scales(what: &str, n: usize, make: fn(usize) -> (Heap, Word), run: fn(&mut He
         .into_iter()
         .map(|m| (m, (0..RUNS).map(|_| make(m)).collect()))
         .collect();
-    let heaps = RefCell::new(heaps);
+    let heaps = Mutex::new(heaps);
     // Each heap is freed after the timing ends.
-    let used = RefCell::new(Vec::new());
+    let used = Mutex::new(Vec::new());
     scaling::check(what, n, |m| {
-        let (mut h, w) = heaps.borrow_mut().get_mut(&m).unwrap().pop().unwrap();
+        let (mut h, w) = heaps.lock().unwrap().get_mut(&m).unwrap().pop().unwrap();
         run(&mut h, w, m);
-        used.borrow_mut().push(h);
+        used.lock().unwrap().push(h);
     });
 }
 

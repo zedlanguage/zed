@@ -2,7 +2,6 @@
 //! of every definition of the unit and run under all of them as lets, so a unit of `n`
 //! functions with a row each took `O(n²)`; a row now reads only the definitions it reaches.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use zed_tests::scaling;
@@ -23,21 +22,22 @@ fn tables(n: usize) -> String {
 
 #[test]
 fn running_the_rows_of_many_tables_scales() {
-    // The front end's result for each size, made once, so that the rows alone are timed.
-    let warm: RefCell<BTreeMap<usize, (String, Db)>> = RefCell::default();
-    scaling::check("running n functions' rows", 100, |n| {
-        let (text, mut db) = {
-            let mut warm = warm.borrow_mut();
-            let (text, db) = warm.entry(n).or_insert_with(|| {
-                let text = tables(n);
-                let mut db = Db::new();
-                db.front(&text);
-                (text, db)
-            });
-            (text.clone(), db.clone())
-        };
-        let got = test_in(&mut db, &text);
-        assert_eq!(got.len(), n);
+    // The front end's result for each size, made before the timing, so that the rows alone are
+    // timed. Each run runs them on a copy, which holds the front end's results and no row's.
+    let n = 100;
+    let warm: BTreeMap<usize, (String, Db)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let text = tables(m);
+            let mut db = Db::new();
+            db.front(&text);
+            (m, (text, db))
+        })
+        .collect();
+    scaling::check("running n functions' rows", n, |m| {
+        let (text, db) = &warm[&m];
+        let got = test_in(&mut db.clone(), text);
+        assert_eq!(got.len(), m);
         assert!(
             got.iter().all(|o| o.failure.is_none()),
             "{:?}",

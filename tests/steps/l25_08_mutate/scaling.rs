@@ -1,8 +1,8 @@
 //! The rule of low complexity (DESIGN.md Part G): finding the mutants reads each node once,
 //! and a mutant costs its definition and the rows that reach it, not the unit.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use zed_tests::deep::on_main_sized_stack;
 use zed_tests::scaling;
@@ -29,10 +29,10 @@ fn chain(n: usize) -> String {
 }
 
 /// The front end's result for each size, made once, so that only the mutants are timed.
-type Warm = RefCell<BTreeMap<usize, (String, Db)>>;
+type Warm = Mutex<BTreeMap<usize, (String, Db)>>;
 
 fn warm(warm: &Warm, n: usize, make: fn(usize) -> String) -> (String, Db) {
-    let mut warm = warm.borrow_mut();
+    let mut warm = warm.lock().unwrap();
     let (text, db) = warm.entry(n).or_insert_with(|| {
         let text = make(n);
         let mut db = Db::new();

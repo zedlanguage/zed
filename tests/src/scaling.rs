@@ -32,7 +32,17 @@
 //! a thread the run starts adds its count to the run's when it ends, which [`on_a_thread`] and
 //! `deep::on_main_sized_stack` do and a bare `std::thread::spawn` inside the run does not. A test
 //! whose bytes grow faster than its order for a reason recorded in COMPLEXITY.md uses
-//! [`check_instructions_only`], with a comment naming the item that fixes it.
+//! [`check_instructions_only`], with a comment naming the item that fixes it. A larger run whose
+//! thread counts no bytes is refused, since its bytes cannot be compared, and a count lost to 0
+//! would otherwise pass unmeasured; a run that allocates nothing uses [`check_instructions_only`].
+//!
+//! Each run is on a new thread of its own (`alone`, by [`on_a_thread`], so its bytes count), so
+//! the memos a thread keeps start empty in every run: zed-kernel keeps its tables of diagram
+//! nodes and its emptiness results per thread. Run on one thread, every run after the first read
+//! the first's results: the union of 16 and 128 morphism differences
+//! (`l01_23_subtyping::scaling`) took 7.0 times the work from the second run and 48.0 times from
+//! a fresh start (F44). Memos a run's input holds, such as a `Db`'s results or a type's printed
+//! text, are the test's to make fresh.
 
 use std::hint::black_box;
 use std::time::Duration;
@@ -49,6 +59,16 @@ pub const RATIO: f64 = 24.0;
 
 /// How many measurements of processor time must all be over the limit before the test fails.
 pub const TRIES: usize = 3;
+
+/// Runs `f` on a new thread and waits for it, so that every memo a thread keeps starts empty. The
+/// thread's stack is what is left of the caller's, less about 5 KiB of the thread's own, so a
+/// test that sets the stack of the thread it checks on, or sets none, sets it for its runs too.
+/// It returns the bytes the thread allocated, which it adds to this thread's count, as
+/// [`on_a_thread`] does. A panic in `f` goes on in the caller.
+fn alone(f: &(impl Fn() + Sync)) -> u64 {
+    let stack = stacker::remaining_stack().expect("the size of this thread's stack");
+    counted_on_a_thread(stack, f).1
+}
 
 /// The processor time this thread has used, which time spent waiting for a processor does not
 /// add to. For a limit on the time of one run that starts no thread; a comparison of two runs
@@ -188,6 +208,12 @@ fn spin(n: u64) {
 /// Runs `f` on a thread of its own with a stack of `stack` bytes, and adds the bytes the thread
 /// allocates to this thread's count, so a run that measures it counts them.
 pub fn on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> T {
+    counted_on_a_thread(stack, f).0
+}
+
+/// [`on_a_thread`], returning the bytes the thread allocated too. A panic in `f` goes on in the
+/// caller, with its own message.
+fn counted_on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (T, u64) {
     let (out, bytes) = std::thread::scope(|scope| {
         let thread = std::thread::Builder::new().stack_size(stack);
         let counted = || {
@@ -195,30 +221,34 @@ pub fn on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> T {
             let out = f();
             (out, zed_alloc_count::allocated() - start)
         };
-        thread.spawn_scoped(scope, counted).unwrap().join().unwrap()
+        let run = thread
+            .spawn_scoped(scope, counted)
+            .expect("starting the thread of a run");
+        run.join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     });
     zed_alloc_count::add(bytes);
-    out
+    (out, bytes)
 }
 
 /// [`check_order`] for work of order `n` or `n log n`: every pass of the compiler and runtime.
-pub fn check(what: &str, n: usize, run: impl Fn(usize)) {
+pub fn check(what: &str, n: usize, run: impl Fn(usize) + Sync) {
     check_order(what, n, 1, run)
 }
 
 /// Runs `run` at sizes `n` and `FACTOR * n` and panics when the larger does more than
 /// `RATIO * FACTOR^(power - 1)` times the work, or allocates more than that many times the
-/// bytes. `power` is the power of n in the order the work is defined to have: for a Zed program,
-/// that of its own algorithm, so an O(n) operation in an O(n) loop has power 2. `what` names the
-/// pass and its size.
-pub fn check_order(what: &str, n: usize, power: u32, run: impl Fn(usize)) {
+/// bytes, or allocates none on its thread. `power` is the power of n in the order the work is
+/// defined to have: for a Zed program, that of its own algorithm, so an O(n) operation in an
+/// O(n) loop has power 2. `what` names the pass and its size.
+pub fn check_order(what: &str, n: usize, power: u32, run: impl Fn(usize) + Sync) {
     check_by(&mut Meter::new(), Measures::Both, what, n, power, run)
 }
 
-/// [`check_order`] without the bytes allocated, for a test whose bytes grow faster than its order
-/// for a known cause, recorded in COMPLEXITY.md with the item that fixes it; the call site names
-/// that item in a comment.
-pub fn check_instructions_only(what: &str, n: usize, power: u32, run: impl Fn(usize)) {
+/// [`check_order`] without the bytes allocated, for a run that allocates nothing, or for a test
+/// whose bytes grow faster than its order for a known cause, recorded in COMPLEXITY.md with the
+/// item that fixes it; the call site names that item in a comment.
+pub fn check_instructions_only(what: &str, n: usize, power: u32, run: impl Fn(usize) + Sync) {
     check_by(&mut Meter::new(), Measures::WorkOnly, what, n, power, run)
 }
 
@@ -229,7 +259,7 @@ fn check_by(
     what: &str,
     n: usize,
     power: u32,
-    run: impl Fn(usize),
+    run: impl Fn(usize) + Sync,
 ) {
     let limit = RATIO * (FACTOR as f64).powi(power as i32 - 1);
     let why = format!(
@@ -242,9 +272,15 @@ fn check_by(
 }
 
 /// Panics when `large` does more than `limit` times the work of `small`, or allocates more than
-/// `limit` times its bytes, for sizes that are not `n` and `8n`. `why` says where the limit comes
-/// from.
-pub fn compare(what: &str, why: &str, limit: f64, small: impl Fn(), large: impl Fn()) {
+/// `limit` times its bytes, or allocates none on its thread, for sizes that are not `n` and
+/// `8n`. `why` says where the limit comes from.
+pub fn compare(
+    what: &str,
+    why: &str,
+    limit: f64,
+    small: impl Fn() + Sync,
+    large: impl Fn() + Sync,
+) {
     compare_by(
         &mut Meter::new(),
         Measures::Both,
@@ -256,25 +292,35 @@ pub fn compare(what: &str, why: &str, limit: f64, small: impl Fn(), large: impl 
     )
 }
 
-/// [`compare`] by the given meter and measures. The least of two runs leaves out what the first
-/// run builds and the second reuses; counts of instructions need no more than that and one
-/// measurement, and processor time needs the fastest of five and three measurements. The bytes
-/// do not change with load, so the first measurement over the limit fails.
+/// [`compare`] by the given meter and measures. Each run is [`alone`]; a first run builds what
+/// the process keeps once for all threads, such as the grammar. Counts of instructions need the
+/// least of two runs and one measurement, and processor time the fastest of five and three
+/// measurements. The bytes do not change with load, so the first measurement over the limit
+/// fails.
 fn compare_by(
     meter: &mut Meter,
     measures: Measures,
     what: &str,
     why: &str,
     limit: f64,
-    small: impl Fn(),
-    large: impl Fn(),
+    small: impl Fn() + Sync,
+    large: impl Fn() + Sync,
 ) {
-    // A first run warms caches.
-    small();
+    alone(&small);
     let mut seen = Vec::new();
     for _ in 0..meter.repeats().1 {
-        let small = meter.least(&small);
-        let large = meter.least(&large);
+        let small = meter.least(|| _ = alone(&small));
+        // The most bytes a run of the larger size allocated on its own thread.
+        let large_bytes = std::cell::Cell::new(0);
+        let large = meter.least(|| large_bytes.set(large_bytes.get().max(alone(&large))));
+        if measures == Measures::Both && large_bytes.get() == 0 {
+            panic!(
+                "{what}: the larger run allocated no bytes on its thread, so its bytes cannot be \
+                 compared. A run that allocates on a thread it starts adds that thread's bytes \
+                 by on_a_thread; a run that allocates nothing is checked by \
+                 check_instructions_only"
+            );
+        }
         let bytes = large.bytes as f64 / small.bytes as f64;
         if measures == Measures::Both && bytes > limit {
             panic!(
@@ -313,28 +359,36 @@ mod tests {
 
     #[test]
     fn work_of_the_order_given_passes() {
-        check("linear work", 1000, |n| work(n, 1, 10));
-        check_order("quadratic work", 100, 2, |n| work(n, 2, 2));
+        check_instructions_only("linear work", 1000, 1, |n| work(n, 1, 10));
+        check_instructions_only("quadratic work", 100, 2, |n| work(n, 2, 2));
     }
 
     #[test]
     fn work_a_power_of_n_above_the_order_given_fails() {
-        assert!(fails(|| check("quadratic work", 100, |n| work(n, 2, 2))));
-        assert!(fails(|| check_order("cubic work", 10, 2, |n| work(
-            n, 3, 20
-        ))));
+        assert!(fails(|| check_instructions_only(
+            "quadratic work",
+            100,
+            1,
+            |n| work(n, 2, 2)
+        )));
+        assert!(fails(|| check_instructions_only(
+            "cubic work",
+            10,
+            2,
+            |n| work(n, 3, 20)
+        )));
     }
 
     #[test]
     fn processor_time_tells_the_orders_apart_too() {
         let mut meter = Meter::of_cpu_time();
         let cpu = &mut meter;
-        check_by(cpu, Measures::Both, "linear work", 100_000, 1, |n| {
+        check_by(cpu, Measures::WorkOnly, "linear work", 100_000, 1, |n| {
             work(n, 1, 10)
         });
         assert!(fails(|| check_by(
             cpu,
-            Measures::Both,
+            Measures::WorkOnly,
             "quadratic work",
             1000,
             1,
@@ -350,15 +404,16 @@ mod tests {
     #[test]
     fn the_work_of_a_thread_a_run_starts_counts() {
         let quadratic = |n| on_a_bare_thread(|| work(n, 2, 2));
-        assert!(fails(|| check(
+        assert!(fails(|| check_instructions_only(
             "quadratic work on a thread",
             1000,
+            1,
             quadratic
         )));
         let cpu = &mut Meter::of_cpu_time();
         assert!(fails(|| check_by(
             cpu,
-            Measures::Both,
+            Measures::WorkOnly,
             "quadratic, by time",
             1000,
             1,
@@ -368,7 +423,8 @@ mod tests {
 
     #[test]
     fn a_comparison_holds_two_sizes_to_the_limit_given() {
-        let (small, large) = (|| spin(100_000), || spin(1_600_000));
+        // Lists of 2^17 and 2^21 words at most: 16 times the work and the bytes.
+        let (small, large) = (|| linear_bytes(100_000), || linear_bytes(1_600_000));
         compare("16 times", "the limit is 24", 24.0, small, large);
         assert!(fails(|| compare(
             "16 times",
@@ -381,19 +437,20 @@ mod tests {
 
     #[test]
     fn a_comparison_runs_each_size_as_often_as_the_meter_says() {
-        let (small, large) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+        use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+        let (small, large) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let mut meter = Meter::new();
         let runs = meter.runs();
         compare_by(
             &mut meter,
-            Measures::Both,
+            Measures::WorkOnly,
             "counted runs",
             "the limit is 24",
             24.0,
-            || small.set(small.get() + 1),
-            || large.set(large.get() + 1),
+            || _ = small.fetch_add(1, Relaxed),
+            || _ = large.fetch_add(1, Relaxed),
         );
-        assert_eq!((small.get(), large.get()), runs);
+        assert_eq!((small.into_inner(), large.into_inner()), runs);
     }
 
     #[test]
@@ -507,5 +564,59 @@ mod tests {
             // 1000 words in lists of 4, 8, ..., 1024 of them.
             assert_eq!(bytes, vec![8 * (2048 - 4); 20]);
         });
+    }
+
+    /// The message of the panic of `run`, which must panic.
+    fn message_of(run: impl FnOnce()) -> String {
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+        *failed.unwrap_err().downcast::<String>().unwrap()
+    }
+
+    #[test]
+    fn a_run_alone_counts_the_bytes_its_thread_allocates() {
+        let before = zed_alloc_count::allocated();
+        // 1000 words in lists of 4, 8, ..., 1024 of them.
+        assert_eq!(alone(&|| linear_bytes(1000)), 8 * (2048 - 4));
+        assert!(zed_alloc_count::allocated() - before >= 8 * (2048 - 4));
+    }
+
+    #[test]
+    fn a_larger_run_that_allocates_no_bytes_on_its_thread_is_refused() {
+        let message = message_of(|| check("linear work", 1000, |n| work(n, 1, 10)));
+        assert!(
+            message.contains("allocated no bytes on its thread"),
+            "{message}"
+        );
+    }
+
+    thread_local! {
+        /// Whether a run on this thread has filled its memo, as zed-kernel's tables are filled.
+        static FILLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Fails if the runs share a thread, for then each run after the first finds the memo the
+    /// first filled (F44).
+    #[test]
+    fn each_run_starts_with_empty_thread_memos() {
+        use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+        let fresh = AtomicUsize::new(0);
+        let run = || {
+            if !FILLED.replace(true) {
+                fresh.fetch_add(1, Relaxed);
+            }
+        };
+        let mut meter = Meter::new();
+        let (small, large) = meter.runs();
+        let only = Measures::WorkOnly;
+        compare_by(
+            &mut meter,
+            only,
+            "memo runs",
+            "the limit is 24",
+            24.0,
+            run,
+            run,
+        );
+        assert_eq!(fresh.into_inner(), small + large);
     }
 }

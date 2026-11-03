@@ -12,7 +12,7 @@ const SCALING_DEPTH: usize = 160_000;
 
 /// Times `op` on two values holding every shape, built before any is timed, so that a shape
 /// walked in more than linear time shows however few of the levels it is.
-fn timed(what: &str, op: impl Fn(&Value, &Value)) {
+fn timed(what: &str, op: impl Fn(&Value, &Value) + Sync) {
     let n = SCALING_DEPTH;
     let build = |d| {
         (

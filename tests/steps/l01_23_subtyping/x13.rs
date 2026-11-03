@@ -9,8 +9,9 @@
 //! chain did not build in 60 s at `d = 23`, and the union of `nth_from_end(1..=4)` was not
 //! decided in 60 s.
 
-use std::cell::{Cell, RefCell};
 use std::hint::black_box;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use zed_kernel::Value;
 use zed_kernel::types::Type;
@@ -148,11 +149,10 @@ fn e4b_scales() {
     // Input Θ(n). Neither of `nth_from_end(n)` and `nth_from_end(n + 1)` contains the other.
     // A chain of plain lists was walked once from each of its definitions, Θ(n²) in all.
     big(|| {
-        let tag = Cell::new(0);
+        let tag = AtomicUsize::new(0);
         scaling::check_order("E4b, by n", 64, 1, |n| {
             Type::forget_emptiness();
-            tag.set(tag.get() + 1);
-            let tag = format!("_{}", tag.get());
+            let tag = format!("_{}", tag.fetch_add(1, Relaxed) + 1);
             let (a, b) = (nth_from_end_named(n, &tag), nth_from_end_named(n + 1, &tag));
             assert!(!a.subtype(&b) && !b.subtype(&a));
         })
@@ -167,10 +167,9 @@ const NTH_WHY: &str = "the input has 8.04 times the definitions; for work of ord
 fn the_union_of_nth_from_end_is_built_in_its_size() {
     // The input is Θ(n²) definitions; the build reads each once.
     big(|| {
-        let ((n, m), tag) = (NTH_SIZES, Cell::new(0));
+        let ((n, m), tag) = (NTH_SIZES, AtomicUsize::new(0));
         let build = |k: usize| {
-            tag.set(tag.get() + 1);
-            black_box(nth_pair(k, &format!("_b{}", tag.get())));
+            black_box(nth_pair(k, &format!("_b{}", tag.fetch_add(1, Relaxed) + 1)));
         };
         let (small, large) = (nth_pair_size(n), nth_pair_size(m));
         assert!((8.0..8.1).contains(&(large as f64 / small as f64)));
@@ -194,11 +193,15 @@ fn the_union_of_nth_from_end_is_decided_in_its_size() {
         let (runs_small, runs_large) = scaling::Meter::new().runs();
         let pool = |k: usize, runs: usize| {
             let pairs = (0..runs).map(|i| nth_pair(k, &format!("_{k}_{i}")));
-            RefCell::new(pairs.collect::<Vec<_>>())
+            Mutex::new(pairs.collect::<Vec<_>>())
         };
         let (small_pairs, large_pairs) = (pool(n, runs_small), pool(m, runs_large));
-        let decide = |pairs: &RefCell<Vec<(Type, Type)>>| {
-            let (t, v) = pairs.borrow_mut().pop().expect("one pair per run");
+        let decide = |pairs: &Mutex<Vec<(Type, Type)>>| {
+            let (t, v) = pairs
+                .lock()
+                .expect("the pool of pairs")
+                .pop()
+                .expect("one pair per run");
             Type::forget_emptiness();
             assert!(t.subtype(&v));
             assert!(!v.subtype(&t));

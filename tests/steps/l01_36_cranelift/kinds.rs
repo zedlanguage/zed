@@ -2,7 +2,7 @@
 //! or none of them, the runtime heap answers from the kind, without reading the text or the
 //! parts, so the cost of the test does not grow with the value (COMPLEXITY.md R13).
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::{Pattern, Text, Value};
@@ -86,11 +86,11 @@ fn an_atom_in_cells_is_tested_by_its_name() {
 fn testing_the_kind_of_a_large_tuple_scales() {
     const TESTS: usize = 64;
     let n = 2000;
-    let small = RefCell::new(tuple_of_strings(n));
-    let large = RefCell::new(tuple_of_strings(scaling::FACTOR * n));
+    let small = Mutex::new(tuple_of_strings(n));
+    let large = Mutex::new(tuple_of_strings(scaling::FACTOR * n));
     let types = [Type::universe(Universe::Tuple), Type::int(), Type::string()];
-    let run = |hw: &RefCell<(Heap, Word)>| {
-        let (h, w) = &mut *hw.borrow_mut();
+    let run = |hw: &Mutex<(Heap, Word)>| {
+        let (h, w) = &mut *hw.lock().unwrap();
         for i in 0..TESTS {
             let t = &types[i % types.len()];
             std::hint::black_box(is(h, *w, t));

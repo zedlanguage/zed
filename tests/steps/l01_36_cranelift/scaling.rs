@@ -4,9 +4,9 @@
 //! their number (COMPLEXITY.md Z14); so do the runtime heap's match of a deep constant, many
 //! matches of one, and the value of cells that share their parts (COMPLEXITY.md R3).
 
-use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Value, World};
@@ -409,19 +409,24 @@ const RUNS: usize = 1 + 5 * scaling::TRIES;
 
 /// `make(m)` for each run at each of `n` and `8n`, built before any timing starts; `run` is timed
 /// on one of them per run, and each is dropped after the timing ends (COMPLEXITY.md R3).
-fn heap_scales<T>(what: &str, n: usize, make: impl Fn(usize) -> T, run: impl Fn(&mut T, usize)) {
-    let made = RefCell::new(
+fn heap_scales<T: Send>(
+    what: &str,
+    n: usize,
+    make: impl Fn(usize) -> T,
+    run: impl Fn(&mut T, usize) + Sync,
+) {
+    let made = Mutex::new(
         [n, scaling::FACTOR * n].map(|m| (m, (0..RUNS).map(|_| make(m)).collect::<Vec<_>>())),
     );
-    let used = RefCell::new(Vec::new());
+    let used = Mutex::new(Vec::new());
     scaling::check_order(what, n, 1, |m| {
         let mut x = {
-            let mut made = made.borrow_mut();
+            let mut made = made.lock().unwrap();
             let at = made.iter_mut().find(|(k, _)| *k == m).unwrap();
             at.1.pop().expect("a heap for each run")
         };
         run(&mut x, m);
-        used.borrow_mut().push(x);
+        used.lock().unwrap().push(x);
     });
 }
 

@@ -19,3 +19,4 @@ num-traits = "0.2"
 rustix.workspace = true
 perf-event2.workspace = true
 zed-alloc-count.workspace = true
+stacker.workspace = true

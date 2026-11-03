@@ -2,7 +2,7 @@
 //! or string cell keeps the kernel value read from it until the cell is freed, so an order
 //! record checked against many rules is read once, not once per rule (COMPLEXITY.md R1).
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 
 use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, Value};
@@ -190,13 +190,13 @@ fn a_record_handed_to_the_kernel_many_times_scales() {
 
 /// A heap holding a shipping manifest the program built, `64n` lines in their own cells, and
 /// its word.
-fn manifest(n: usize) -> RefCell<(Heap, Word)> {
+fn manifest(n: usize) -> Mutex<(Heap, Word)> {
     let mut h = Heap::new();
     let lines = (0..64 * n)
         .map(|i| h.alloc(Obj::Str(format!("crate {i}").into())))
         .collect();
     let w = h.alloc(Obj::Tuple(lines));
-    RefCell::new((h, w))
+    Mutex::new((h, w))
 }
 
 /// A record whose cells the program built, not the kernel, keeps its value from its first read:
@@ -209,7 +209,7 @@ fn a_record_the_program_built_read_many_times_scales() {
         "the value of a tuple of 64n strings, read n times",
         n,
         |m| {
-            let mut at = if m == n { &small } else { &large }.borrow_mut();
+            let mut at = if m == n { &small } else { &large }.lock().unwrap();
             let (h, w) = &mut *at;
             for _ in 0..m {
                 std::hint::black_box(h.value(*w).unwrap());

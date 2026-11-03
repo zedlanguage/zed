@@ -54,6 +54,7 @@ zed-native = { workspace = true, features = ["counts"] }
 zed-rt = { workspace = true, features = ["counts"] }
 rustix.workspace = true
 perf-event2.workspace = true
+stacker.workspace = true
 unicode-normalization = "0.1.26"
 num-bigint = "0.4.8"
 num-integer = "0.1"

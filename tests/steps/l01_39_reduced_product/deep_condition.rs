@@ -337,7 +337,7 @@ fn arms_of_a_chain_of_accounts_take_time_near_linear_in_its_depth() {
 /// Panics when `run` at `8n` does more than `8 ln(8n) / ln(n)` times its work at `n`, the
 /// ratio work of order `n log n` has. The rule's limit of 24 times does not tell `n log n`
 /// from a small `n²` term at these sizes.
-fn within_n_log_n(what: &str, n: usize, run: impl Fn(usize)) {
+fn within_n_log_n(what: &str, n: usize, run: impl Fn(usize) + Sync) {
     let limit = 8.0 * (8.0 * n as f64).ln() / (n as f64).ln();
     scaling::compare(
         &format!("{what}: sizes {n} and {}", 8 * n),

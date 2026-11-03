@@ -2,8 +2,8 @@
 //! from a port, matched down to its last element and released, on the default stack of a test
 //! thread (COMPLEXITY.md R9). No test here sets a stack size, and no depth is refused.
 
-use std::cell::RefCell;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use zed_kernel::term::build::{app, lam, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Text, Value, World};
@@ -324,32 +324,32 @@ fn list_heap(n: usize) -> (Heap, Word) {
 #[test]
 fn making_a_deep_value_scales() {
     let lists = [N, scaling::FACTOR * N].map(|n| (n, nested(in_tuple, n, Value::Int(0))));
-    let used = RefCell::new(Vec::new());
+    let used = Mutex::new(Vec::new());
     scaling::check("Heap::fresh on a list", N, |n| {
         let v = &lists.iter().find(|(m, _)| *m == n).unwrap().1;
         let mut h = Heap::new();
         h.fresh(v);
-        used.borrow_mut().push(h);
+        used.lock().unwrap().push(h);
     });
 }
 
 #[test]
 fn reading_a_deep_value_scales() {
-    let heaps = RefCell::new([N, scaling::FACTOR * N].map(|n| (n, list_heap(n))));
-    let used = RefCell::new(Vec::new());
+    let heaps = Mutex::new([N, scaling::FACTOR * N].map(|n| (n, list_heap(n))));
+    let used = Mutex::new(Vec::new());
     scaling::check("Heap::value on a list", N, |n| {
-        let mut heaps = heaps.borrow_mut();
+        let mut heaps = heaps.lock().unwrap();
         let (_, (h, w)) = heaps.iter_mut().find(|(m, _)| *m == n).unwrap();
-        used.borrow_mut().push(h.value(*w).unwrap());
+        used.lock().unwrap().push(h.value(*w).unwrap());
     });
 }
 
 #[test]
 fn matching_a_deep_pattern_scales() {
-    let heaps = RefCell::new([N, scaling::FACTOR * N].map(|n| (n, list_heap(n))));
+    let heaps = Mutex::new([N, scaling::FACTOR * N].map(|n| (n, list_heap(n))));
     let patterns = [N, scaling::FACTOR * N].map(|n| (n, in_tuples(n, Pattern::Wild)));
     scaling::check("Heap::matches on a list", N, |n| {
-        let mut heaps = heaps.borrow_mut();
+        let mut heaps = heaps.lock().unwrap();
         let (_, (h, w)) = heaps.iter_mut().find(|(m, _)| *m == n).unwrap();
         let p = &patterns.iter().find(|(m, _)| *m == n).unwrap().1;
         assert!(h.matches(p, *w, &mut Vec::new(), &mut Vec::new()).unwrap());
@@ -359,14 +359,14 @@ fn matching_a_deep_pattern_scales() {
 #[test]
 fn releasing_a_deep_value_scales() {
     let paths = [N, scaling::FACTOR * N].map(|n| (n, vec![1; n]));
-    let heaps = RefCell::new(
+    let heaps = Mutex::new(
         [N, scaling::FACTOR * N].map(|n| (n, (0..RUNS).map(|_| list_heap(n)).collect::<Vec<_>>())),
     );
-    let used = RefCell::new(Vec::new());
+    let used = Mutex::new(Vec::new());
     scaling::check("Heap::release on a list", N, |n| {
         let path = &paths.iter().find(|(m, _)| *m == n).unwrap().1;
         let (mut h, w) = {
-            let mut heaps = heaps.borrow_mut();
+            let mut heaps = heaps.lock().unwrap();
             heaps
                 .iter_mut()
                 .find(|(m, _)| *m == n)
@@ -376,7 +376,7 @@ fn releasing_a_deep_value_scales() {
                 .unwrap()
         };
         h.release(w, &[path]).unwrap();
-        used.borrow_mut().push(h);
+        used.lock().unwrap().push(h);
     });
 }
 

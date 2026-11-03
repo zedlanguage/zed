@@ -2,8 +2,9 @@
 //! types was built one type at a time, and each tuple type joined to a decision diagram of the
 //! ones before it, so `n` tuple types of one length took `O(n²)`; they are now joined in pairs.
 
-use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use zed_kernel::types::Type;
 use zed_kernel::value::Value;
@@ -26,10 +27,10 @@ fn the_text_of_a_deeply_nested_type_scales() {
     // Each type's text was made from copies of the texts of the types inside it. Each run
     // makes new types, whose texts are not yet made. The text is made in a loop, so the test
     // runs on the stack of a test thread.
-    let b = Cell::new(0);
+    let b = AtomicUsize::new(0);
     scaling::check("the text of a tuple nested n deep", 600, |d| {
-        b.set(b.get() + 1_000_000);
-        assert!(chain(d, b.get()).to_string().len() > 1000 * d);
+        let b = b.fetch_add(1_000_000, Relaxed) + 1_000_000;
+        assert!(chain(d, b).to_string().len() > 1000 * d);
     });
     assert!(chain(2, 0).to_string().starts_with("(tuple (tuple \"sss"));
 }
@@ -58,20 +59,22 @@ fn union(n: usize) -> String {
 
 #[test]
 fn a_union_of_many_tuple_types_scales() {
-    let texts: RefCell<BTreeMap<usize, String>> = RefCell::default();
+    let texts: Mutex<BTreeMap<usize, String>> = Mutex::default();
     scaling::check("is against a union of n pairs", 250, |n| {
         let text = texts
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .entry(n)
             .or_insert_with(|| union(n))
             .clone();
         let u = elab(&text).unwrap_or_else(|e| panic!("{e:?}"));
         assert!(u.get("f").unwrap().to_string().contains("(is (| "));
     });
-    let built: RefCell<BTreeMap<usize, Vec<Type>>> = RefCell::default();
+    let built: Mutex<BTreeMap<usize, Vec<Type>>> = Mutex::default();
     let get = |n| {
         built
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .entry(n)
             .or_insert_with(|| pairs(n))
             .clone()

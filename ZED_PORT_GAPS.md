@@ -1098,3 +1098,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `BigInt` from `num-bigint` behind both | `store::int` | External crate | Goes with `num-bigint` (see the external crates above) |
 | `u64` residues multiplied in `u128` and reduced (`pow_mod`), and big integers reduced modulo a power of 2 by a bit mask (`odd_root_mod_pow2`, `pow_mod_pow2`, `inverse_mod_pow2`) | `store::int::{pow_mod, odd_root_mod_pow2, pow_mod_pow2, inverse_mod_pow2}` | Machine integers; bit operations on `int` | `int` products and `%` (the runtime keeps them in a word while they fit), and a mask as `x % 2 ** k` unless Zed gains bit operations on `int` |
 | The S22a summary's pieces as `i128` values with the ends of `i64` standing for the infinities, entered only when every finite end lies strictly inside `i64` (`in_i64`, `small`), and nodes copied whole with `..(**node).clone()` now that an end is not `Copy` | `store::preimage::{in_i64, small, key, input, apply_tag}` | Machine integers; struct update syntax | Vanishes: ends are `int` and the summary holds them as they are |
+
+## Entries from F44-memo (`tests/src/scaling.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::thread::scope` and `Builder::spawn_scoped` with a stack size, joined at once, so each run starts with empty thread-local memos | `scaling::alone` by `scaling::counted_on_a_thread` | Shared tables across pure calls (gap 2) | None needed: a Zed memo is a value threaded through the run, so a run that starts from an empty one is fresh |
+| `stacker::remaining_stack` to give the run's thread what is left of the caller's stack | `scaling::alone` | Foreign library | The runtime's own stack size for a task |
+| `std::panic::resume_unwind` to carry a run's panic into the caller | `scaling::counted_on_a_thread` (so `alone`, `on_a_thread` and `deep::on_main_sized_stack`) | Early exit (gap 12) | A failed run is a failure value returned to the caller |
+| `AtomicUsize::fetch_add` and `Mutex` in place of `Cell` and `RefCell` in test closures, because a run on another thread needs `Sync` | `l01_22`, `l01_23` (with `x13.rs`), `l01_36`, `l25_08` scaling tests, and the unit tests `a_comparison_runs_each_size_as_often_as_the_meter_says` and `each_run_starts_with_empty_thread_memos` | Mutation (gap 11) | A state receiver holding the counter or the cache of built inputs |
