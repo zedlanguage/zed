@@ -317,26 +317,78 @@ fn evidence(ev: &Evidence) -> String {
 }
 
 /// The text form of a pattern.
+///
+/// Patterns nest as deep as the program, so the parts still to write wait on a stack, with
+/// the text between them (step T2-mid).
 pub fn pattern(p: &Pattern) -> String {
-    let list = |ps: &[Pattern]| ps.iter().map(pattern).collect::<Vec<_>>().join(", ");
-    match p {
-        Pattern::Wild => "_".into(),
-        Pattern::Bind(x) => x.to_string(),
-        Pattern::Lit(v) => format!("={v}"),
-        Pattern::Atom(name, ps) if ps.is_empty() => format!("#{name}"),
-        Pattern::Atom(name, ps) => format!("#{name}({})", list(ps)),
-        Pattern::Fields(name, fs) => {
-            let fs: Vec<String> = fs
-                .iter()
-                .map(|(k, p)| format!("{k}: {}", pattern(p)))
-                .collect();
-            format!("#{name}({})", fs.join(", "))
-        }
-        Pattern::Tuple(ps) if ps.len() == 1 => format!("({},)", pattern(&ps[0])),
-        Pattern::Tuple(ps) => format!("({})", list(ps)),
-        Pattern::AnyAtom => "#_".into(),
-        Pattern::Is(t) => format!("(is {t})"),
+    enum Job<'p> {
+        Pat(&'p Pattern),
+        Text(&'p str),
     }
+    let mut out = String::new();
+    let mut jobs = vec![Job::Pat(p)];
+    // Each part of a list, `sep` between them, then `close`: put on `jobs`, the first on top.
+    fn list<'p>(
+        jobs: &mut Vec<Job<'p>>,
+        close: &'p str,
+        parts: Vec<(Option<&'p str>, &'p Pattern)>,
+    ) {
+        jobs.push(Job::Text(close));
+        for (i, (k, q)) in parts.into_iter().enumerate().rev() {
+            jobs.push(Job::Pat(q));
+            if let Some(k) = k {
+                jobs.push(Job::Text(": "));
+                jobs.push(Job::Text(k));
+            }
+            if i > 0 {
+                jobs.push(Job::Text(", "));
+            }
+        }
+    }
+    while let Some(job) = jobs.pop() {
+        let p = match job {
+            Job::Text(t) => {
+                out.push_str(t);
+                continue;
+            }
+            Job::Pat(p) => p,
+        };
+        match p {
+            Pattern::Wild => out.push('_'),
+            Pattern::Bind(x) => out.push_str(x),
+            Pattern::Lit(v) => {
+                let _ = write!(out, "={v}");
+            }
+            Pattern::Atom(name, ps) if ps.is_empty() => {
+                let _ = write!(out, "#{name}");
+            }
+            Pattern::Atom(name, ps) => {
+                let _ = write!(out, "#{name}(");
+                list(&mut jobs, ")", ps.iter().map(|q| (None, q)).collect());
+            }
+            Pattern::Fields(name, fs) => {
+                let _ = write!(out, "#{name}(");
+                list(
+                    &mut jobs,
+                    ")",
+                    fs.iter().map(|(k, q)| (Some(&**k), q)).collect(),
+                );
+            }
+            Pattern::Tuple(ps) if ps.len() == 1 => {
+                out.push('(');
+                list(&mut jobs, ",)", vec![(None, &ps[0])]);
+            }
+            Pattern::Tuple(ps) => {
+                out.push('(');
+                list(&mut jobs, ")", ps.iter().map(|q| (None, q)).collect());
+            }
+            Pattern::AnyAtom => out.push_str("#_"),
+            Pattern::Is(t) => {
+                let _ = write!(out, "(is {t})");
+            }
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -944,57 +996,37 @@ impl<'a> P<'a> {
         }
     }
 
+    /// A type, from a stack of the forms `(head …)` begun and not yet ended: types nest as
+    /// deep as the program (step T2-mid).
     fn ty(&mut self) -> Result<Type, String> {
-        self.ws();
-        if self.eat("(") {
-            let head = self.token("();,");
-            let items = |p: &mut Self| -> Result<Vec<Type>, String> {
-                let mut out = Vec::new();
-                while !p.eat(")") {
-                    if p.rest().is_empty() {
+        let mut open: Vec<(&'a str, Vec<Type>)> = Vec::new();
+        loop {
+            self.ws();
+            let mut got = if self.eat("(") {
+                open.push((self.token("();,"), Vec::new()));
+                None
+            } else {
+                Some(self.ty_leaf()?)
+            };
+            loop {
+                let Some((_, ts)) = open.last_mut() else {
+                    return Ok(got.expect("a type read"));
+                };
+                ts.extend(got.take());
+                if !self.eat(")") {
+                    if self.rest().is_empty() {
                         return Err("expected `)`, found the end of the line".into());
                     }
-                    out.push(p.ty()?);
+                    break;
                 }
-                Ok(out)
-            };
-            let ts = items(self)?;
-            let arity = |n: usize| -> Result<(), String> {
-                match ts.len() == n {
-                    true => Ok(()),
-                    false => Err(format!(
-                        "`({head} …)` takes {n} types, and has {}",
-                        ts.len()
-                    )),
-                }
-            };
-            return Ok(match head {
-                "|" => Type::union_all(ts.iter().cloned()),
-                "&" => Type::meet_all(ts.iter().cloned()),
-                "!" => {
-                    arity(1)?;
-                    !&ts[0]
-                }
-                "\\" if !ts.is_empty() => ts[1..].iter().fold(ts[0].clone(), |a, t| &a - t),
-                "tuple" => Type::tuple(ts),
-                "->" if ts.len() == 2 => {
-                    Type::morphism(ts[0].clone(), ts[0].clone(), ts[1].clone())
-                }
-                "->" => {
-                    arity(3)?;
-                    Type::morphism(ts[0].clone(), ts[1].clone(), ts[2].clone())
-                }
-                "->?" => {
-                    arity(2)?;
-                    Type::morphism(Type::empty(), ts[0].clone(), ts[1].clone())
-                }
-                h if h.len() > 1 && h.starts_with('#') => {
-                    arity(1)?;
-                    Type::atom_with(&h[1..], &ts[0])
-                }
-                h => return Err(format!("`({h} …)` is not a type form")),
-            });
+                let (head, ts) = open.pop().expect("the top");
+                got = Some(ty_form(head, ts)?);
+            }
         }
+    }
+
+    /// A type that is not a form `(head …)`.
+    fn ty_leaf(&mut self) -> Result<Type, String> {
         match self.peek() {
             Some('"') => return lit(self.value()?),
             Some(c) if c.is_ascii_digit() || c == '-' => return lit(self.value()?),
@@ -1029,69 +1061,140 @@ impl<'a> P<'a> {
         })
     }
 
+    /// A value, from a stack of the atoms, tuples, paths and families begun and not yet
+    /// ended: values nest as deep as the program (step T2-mid).
     fn value(&mut self) -> Result<Value, String> {
+        let mut open: Vec<OpenValue<'a>> = Vec::new();
+        loop {
+            let mut got = self.value_start(&mut open)?;
+            loop {
+                let Some(top) = open.last_mut() else {
+                    if let Some(v) = got {
+                        return Ok(v);
+                    }
+                    unreachable!("a value opened is on the stack");
+                };
+                let Some(v) = got.take() else { break };
+                if !self.value_part(top, v)? {
+                    break;
+                }
+                got = Some(open.pop().expect("the top").close()?);
+            }
+        }
+    }
+
+    /// A value with no parts; or `None`, when a value with parts is opened on `open`, with
+    /// what comes before its first part read.
+    fn value_start(&mut self, open: &mut Vec<OpenValue<'a>>) -> Result<Option<Value>, String> {
         self.ws();
-        match self.peek() {
-            Some('"') => self.string().map(|s| Value::str(&s)),
+        Ok(Some(match self.peek() {
+            Some('"') => Value::str(&self.string()?),
             Some('#') => {
                 self.i += 1;
                 let name = self.word()?;
                 if self.peek() != Some('(') {
-                    return Ok(Value::atom(name));
+                    return Ok(Some(Value::atom(name)));
+                }
+                self.expect("(")?;
+                if self.eat(")") {
+                    return Ok(Some(Value::atom_with(name, Vec::new())));
                 }
                 let mut fields = Vec::new();
-                let args = self.list("(", ")", ",", |p| {
-                    p.ws();
-                    let save = p.i;
-                    if let Ok(f) = p.word()
-                        && p.rest().starts_with(": ")
-                    {
-                        p.i += 1;
-                        fields.push(f.into());
-                        return p.value();
-                    }
-                    p.i = save;
-                    p.value()
-                })?;
-                if fields.is_empty() {
-                    return Ok(Value::atom_with(name, args));
-                }
-                if fields.len() != args.len() {
-                    return Err(format!("atom `#{name}` mixes named and positional payload"));
-                }
-                Value::atom_named(name, fields.into_iter().zip(args).collect())
-                    .ok_or_else(|| format!("atom `#{name}` names a field twice"))
+                self.field(&mut fields);
+                open.push(OpenValue::Atom {
+                    name,
+                    fields,
+                    args: Vec::new(),
+                });
+                return Ok(None);
             }
-            Some('(') => Ok(Value::tuple(self.list("(", ")", ",", Self::value)?)),
-            Some('[') => Ok(Value::path(self.list("[", "]", "->", Self::value)?)),
+            Some(c @ ('(' | '[')) => {
+                let path = c == '[';
+                self.expect(if path { "[" } else { "(" })?;
+                if self.eat(if path { "]" } else { ")" }) {
+                    return Ok(Some(match path {
+                        false => Value::tuple(Vec::new()),
+                        true => Value::path(Vec::new()),
+                    }));
+                }
+                open.push(OpenValue::Items {
+                    path,
+                    items: Vec::new(),
+                });
+                return Ok(None);
+            }
             Some('{') => {
                 self.expect("{")?;
                 if self.eat("}") {
-                    return Ok(Value::Family(Family::new()));
+                    return Ok(Some(Value::Family(Family::new())));
                 }
-                let first = self.value()?;
-                let map = self.eat("->");
-                let mut entries = Vec::new();
-                let mut item = first;
-                loop {
-                    let v = if map { self.value()? } else { item.clone() };
-                    entries.push((item, v));
-                    if self.eat("}") {
-                        break;
-                    }
-                    self.expect(",")?;
-                    item = self.value()?;
-                    if map {
-                        self.expect("->")?;
-                    }
-                }
-                Ok(Value::Family(Family::of(entries)))
+                open.push(OpenValue::Family {
+                    map: None,
+                    entries: Vec::new(),
+                    key: None,
+                });
+                return Ok(None);
             }
             _ => {
                 let t = self.token("()[]{},;^");
-                number(t).ok_or_else(|| format!("expected a value, found `{t}`"))
+                number(t).ok_or_else(|| format!("expected a value, found `{t}`"))?
+            }
+        }))
+    }
+
+    /// The name of an atom's next part, `f: `, when it has one, pushed on `fields`.
+    fn field(&mut self, fields: &mut Vec<Arc<str>>) {
+        self.ws();
+        let save = self.i;
+        if let Ok(f) = self.word()
+            && self.rest().starts_with(": ")
+        {
+            self.i += 1;
+            fields.push(f.into());
+            return;
+        }
+        self.i = save;
+    }
+
+    /// Puts part `v` in `top` and reads what follows it: true when `top` ends there.
+    fn value_part(&mut self, top: &mut OpenValue<'a>, v: Value) -> Result<bool, String> {
+        match top {
+            OpenValue::Atom { fields, args, .. } => {
+                args.push(v);
+                if self.eat(")") {
+                    return Ok(true);
+                }
+                self.expect(",")?;
+                self.field(fields);
+            }
+            OpenValue::Items { path, items } => {
+                items.push(v);
+                if self.eat(if *path { "]" } else { ")" }) {
+                    return Ok(true);
+                }
+                self.expect(if *path { "->" } else { "," })?;
+            }
+            OpenValue::Family { map, entries, key } => {
+                // The first part says whether the family is a map: `{k -> v, …}` or `{k, …}`.
+                let map = *map.get_or_insert_with(|| self.eat("->"));
+                match key.take() {
+                    None if map => {
+                        if !entries.is_empty() {
+                            self.expect("->")?;
+                        }
+                        *key = Some(v);
+                        return Ok(false);
+                    }
+                    None => entries.push((v.clone(), v)),
+                    Some(k) => entries.push((k, v)),
+                }
+                if self.eat("}") {
+                    return Ok(true);
+                }
+                self.expect(",")?;
             }
         }
+        Ok(false)
     }
 
     fn string(&mut self) -> Result<String, String> {
@@ -1137,61 +1240,216 @@ impl<'a> P<'a> {
         Err("the string has no closing `\"`".into())
     }
 
+    /// A pattern, from a stack of the patterns with parts begun and not yet ended: patterns
+    /// nest as deep as the program (step T2-mid).
     fn pattern(&mut self) -> Result<Pattern, String> {
+        let mut open: Vec<OpenPattern> = Vec::new();
+        loop {
+            let mut got = self.pattern_start(&mut open)?;
+            loop {
+                let Some(top) = open.last_mut() else {
+                    if let Some(p) = got {
+                        return Ok(p);
+                    }
+                    unreachable!("a pattern opened is on the stack");
+                };
+                let Some(p) = got.take() else { break };
+                if !self.pattern_part(top, p)? {
+                    break;
+                }
+                got = Some(open.pop().expect("the top").close());
+            }
+        }
+    }
+
+    /// A pattern with no parts; or `None`, when a pattern with parts is opened on `open`,
+    /// with what comes before its first part read.
+    fn pattern_start(&mut self, open: &mut Vec<OpenPattern>) -> Result<Option<Pattern>, String> {
         self.ws();
         if self.eat("=") {
-            return self.value().map(Pattern::Lit);
+            return self.value().map(|v| Some(Pattern::Lit(v)));
         }
         if self.eat_word("#_") {
-            return Ok(Pattern::AnyAtom);
+            return Ok(Some(Pattern::AnyAtom));
         }
         if self.eat("#") {
-            let name: std::sync::Arc<str> = self.word()?.into();
+            let name: Arc<str> = self.word()?.into();
             if self.peek() != Some('(') {
-                return Ok(Pattern::Atom(name, Vec::new()));
+                return Ok(Some(Pattern::Atom(name, Vec::new())));
             }
             if self.rest().starts_with("()") {
                 self.i += 2;
-                return Ok(Pattern::Fields(name, Vec::new()));
+                return Ok(Some(Pattern::Fields(name, Vec::new())));
             }
             let save = self.i;
             self.i += 1;
             let named = self.word().is_ok() && self.rest().starts_with(": ");
             self.i = save;
-            return Ok(match named {
-                true => Pattern::Fields(
-                    name,
-                    self.list("(", ")", ",", |p| {
-                        let f = p.word()?.into();
-                        p.expect(":")?;
-                        Ok((f, p.pattern()?))
-                    })?,
-                ),
-                false => Pattern::Atom(name, self.list("(", ")", ",", Self::pattern)?),
+            self.expect("(")?;
+            if self.eat(")") {
+                return Ok(Some(match named {
+                    true => Pattern::Fields(name, Vec::new()),
+                    false => Pattern::Atom(name, Vec::new()),
+                }));
+            }
+            open.push(match named {
+                true => OpenPattern::Fields(name, Vec::new(), self.field_name()?),
+                false => OpenPattern::Atom(name, Vec::new()),
             });
+            return Ok(None);
         }
         if self.eat("(") {
             if self.eat_word("is") {
                 let t = self.ty()?;
                 self.expect(")")?;
-                return Ok(Pattern::Is(t));
+                return Ok(Some(Pattern::Is(t)));
             }
-            let mut ps = Vec::new();
-            while !self.eat(")") {
-                ps.push(self.pattern()?);
-                if !self.eat(",") {
-                    self.expect(")")?;
-                    break;
-                }
+            if self.eat(")") {
+                return Ok(Some(Pattern::Tuple(Vec::new())));
             }
-            return Ok(Pattern::Tuple(ps));
+            open.push(OpenPattern::Tuple(Vec::new()));
+            return Ok(None);
         }
         let w = self.word()?;
-        Ok(match w {
+        Ok(Some(match w {
             "_" => Pattern::Wild,
             w => Pattern::Bind(w.into()),
-        })
+        }))
     }
+
+    /// `f:`, the name of the next part of a fields pattern.
+    fn field_name(&mut self) -> Result<Arc<str>, String> {
+        let f = self.word()?.into();
+        self.expect(":")?;
+        Ok(f)
+    }
+
+    /// Puts part `p` in `top` and reads what follows it: true when `top` ends there.
+    fn pattern_part(&mut self, top: &mut OpenPattern, p: Pattern) -> Result<bool, String> {
+        match top {
+            OpenPattern::Atom(_, ps) => {
+                ps.push(p);
+                if self.eat(")") {
+                    return Ok(true);
+                }
+                self.expect(",")?;
+            }
+            OpenPattern::Fields(_, fs, key) => {
+                fs.push((key.clone(), p));
+                if self.eat(")") {
+                    return Ok(true);
+                }
+                self.expect(",")?;
+                *key = self.field_name()?;
+            }
+            OpenPattern::Tuple(ps) => {
+                ps.push(p);
+                if !self.eat(",") {
+                    self.expect(")")?;
+                    return Ok(true);
+                }
+                if self.eat(")") {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// An atom, a tuple or path (`path`), or a family whose parts are being read.
+enum OpenValue<'a> {
+    Atom {
+        name: &'a str,
+        fields: Vec<Arc<str>>,
+        args: Vec<Value>,
+    },
+    Items {
+        path: bool,
+        items: Vec<Value>,
+    },
+    /// `map` is known once the first part is read; `key` is the key of the entry being read.
+    Family {
+        map: Option<bool>,
+        entries: Vec<(Value, Value)>,
+        key: Option<Value>,
+    },
+}
+
+impl OpenValue<'_> {
+    /// The value, all its parts read.
+    fn close(self) -> Result<Value, String> {
+        match self {
+            OpenValue::Atom { name, fields, args } => {
+                if fields.is_empty() {
+                    return Ok(Value::atom_with(name, args));
+                }
+                if fields.len() != args.len() {
+                    return Err(format!("atom `#{name}` mixes named and positional payload"));
+                }
+                Value::atom_named(name, fields.into_iter().zip(args).collect())
+                    .ok_or_else(|| format!("atom `#{name}` names a field twice"))
+            }
+            OpenValue::Items { path: false, items } => Ok(Value::tuple(items)),
+            OpenValue::Items { path: true, items } => Ok(Value::path(items)),
+            OpenValue::Family { entries, .. } => Ok(Value::Family(Family::of(entries))),
+        }
+    }
+}
+
+/// An atom, fields or tuple pattern whose parts are being read; a fields pattern holds the
+/// name of the part being read.
+enum OpenPattern {
+    Atom(Arc<str>, Vec<Pattern>),
+    Fields(Arc<str>, Vec<(Arc<str>, Pattern)>, Arc<str>),
+    Tuple(Vec<Pattern>),
+}
+
+impl OpenPattern {
+    fn close(self) -> Pattern {
+        match self {
+            OpenPattern::Atom(name, ps) => Pattern::Atom(name, ps),
+            OpenPattern::Fields(name, fs, _) => Pattern::Fields(name, fs),
+            OpenPattern::Tuple(ps) => Pattern::Tuple(ps),
+        }
+    }
+}
+
+/// The type `(head ts…)`.
+fn ty_form(head: &str, ts: Vec<Type>) -> Result<Type, String> {
+    let arity = |n: usize| -> Result<(), String> {
+        match ts.len() == n {
+            true => Ok(()),
+            false => Err(format!(
+                "`({head} …)` takes {n} types, and has {}",
+                ts.len()
+            )),
+        }
+    };
+    Ok(match head {
+        "|" => Type::union_all(ts.iter().cloned()),
+        "&" => Type::meet_all(ts.iter().cloned()),
+        "!" => {
+            arity(1)?;
+            !&ts[0]
+        }
+        "\\" if !ts.is_empty() => ts[1..].iter().fold(ts[0].clone(), |a, t| &a - t),
+        "tuple" => Type::tuple(ts),
+        "->" if ts.len() == 2 => Type::morphism(ts[0].clone(), ts[0].clone(), ts[1].clone()),
+        "->" => {
+            arity(3)?;
+            Type::morphism(ts[0].clone(), ts[1].clone(), ts[2].clone())
+        }
+        "->?" => {
+            arity(2)?;
+            Type::morphism(Type::empty(), ts[0].clone(), ts[1].clone())
+        }
+        h if h.len() > 1 && h.starts_with('#') => {
+            arity(1)?;
+            Type::atom_with(&h[1..], &ts[0])
+        }
+        h => return Err(format!("`({h} …)` is not a type form")),
+    })
 }
 
 /// The type of the one value `v`.

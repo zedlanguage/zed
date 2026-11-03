@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use zed_kernel::Value;
+use zed_kernel::term::Pattern;
 use zed_kernel::types::Type;
 use zed_tests::deep::on_small_stack;
 use zed_tests::scaling::check_order;
@@ -131,6 +132,144 @@ fn writing_and_reading_a_deep_graph_as_text_is_linear_in_the_text() {
         let (small, large) = (text::print(&small), text::print(&large));
         check_order("reading nested `if` regions as text", 250, 2, |k| {
             text::parse(if k == 250 { &small } else { &large }).unwrap();
+        });
+    });
+}
+
+// The values, patterns and types inside a graph nest as deep as the program, so the text and
+// binary forms write and read them from stacks of their own (step T2-mid).
+
+/// A value `d` deep whose levels take turns being a pair, a named atom, a positional atom and
+/// a path.
+fn deep_value(d: usize) -> Value {
+    (0..d).fold(Value::Int(0), |v, i| match i % 4 {
+        0 => Value::tuple(vec![v, Value::Int(1)]),
+        1 => Value::atom_named("n", vec![("a".into(), Value::Int(2)), ("b".into(), v)]).unwrap(),
+        2 => Value::atom_with("p", vec![v]),
+        _ => Value::path(vec![Value::Int(3), v]),
+    })
+}
+
+/// A pattern `d` deep whose levels take turns being a pair, an atom and a fields pattern.
+fn deep_pattern(d: usize) -> Pattern {
+    (0..d).fold(Pattern::Bind("x".into()), |p, i| match i % 3 {
+        0 => Pattern::Tuple(vec![p, Pattern::Wild]),
+        1 => Pattern::Atom("a".into(), vec![p]),
+        _ => Pattern::Fields("f".into(), vec![("k".into(), p)]),
+    })
+}
+
+/// A graph of one node, a `match` on a constant: the value `value` deep and the pattern
+/// `pattern` deep.
+fn holding(value: usize, pattern: usize) -> Region {
+    Region {
+        kind: RegionKind::Function,
+        args: Vec::new(),
+        nodes: vec![Node {
+            op: Op::Match(vec![deep_pattern(pattern)]),
+            inputs: vec![Src::Const(deep_value(value))],
+            outputs: vec![Edge::value(Type::int())],
+            regions: Vec::new(),
+        }],
+        results: vec![Src::Out(0, 0)],
+    }
+}
+
+#[test]
+fn a_value_100000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_stack() {
+    on_small_stack(|| {
+        let g = holding(100_000, 1);
+        assert_eq!(binary::decode(&binary::encode(&g)).as_ref(), Ok(&g));
+        let Src::Const(v) = &g.nodes[0].inputs[0] else {
+            unreachable!("a constant")
+        };
+        assert_eq!(text::parse_value(&v.to_string()).as_ref(), Ok(v));
+    });
+}
+
+// The kernel's `Pattern` drops, clones and compares by recursion, so a pattern 100,000 deep
+// overflows a 2 MiB stack whatever reads it (ZED_PORT_GAPS.md); these patterns are 10,000
+// deep, five times the depth at which the recursive writers and readers overflowed.
+
+#[test]
+fn a_pattern_10000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_stack() {
+    on_small_stack(|| {
+        let g = holding(1, 10_000);
+        let bytes = binary::encode(&g);
+        assert_eq!(binary::encode(&binary::decode(&bytes).unwrap()), bytes);
+        let Op::Match(ps) = &g.nodes[0].op else {
+            unreachable!("a match")
+        };
+        let s = text::pattern(&ps[0]);
+        assert_eq!(text::pattern(&text::parse_pattern(&s).unwrap()), s);
+    });
+}
+
+/// `(tuple (tuple … int …) int)`, `d` deep.
+fn deep_type_text(d: usize) -> String {
+    let mut s = "(tuple ".repeat(d);
+    s.push_str("int");
+    s.push_str(&" int)".repeat(d));
+    s
+}
+
+#[test]
+fn a_type_100000_deep_is_read_as_text_on_a_2_mib_stack() {
+    // The kernel's `Type` drops its parts by recursion (ZED_PORT_GAPS.md), so a type this deep
+    // overflows when dropped, whatever the parser does; the test keeps it.
+    on_small_stack(|| {
+        std::mem::forget(text::parse_type(&deep_type_text(100_000)).unwrap());
+    });
+}
+
+#[test]
+fn writing_and_reading_deep_values_patterns_and_types_is_linear_in_their_depth() {
+    on_small_stack(|| {
+        let (small, large) = (holding(12_500, 1_000), holding(100_000, 8_000));
+        let pick = |k: usize| if k == 12_500 { &small } else { &large };
+        check_order(
+            "writing deep values and patterns in binary",
+            12_500,
+            1,
+            |k| {
+                binary::encode(pick(k));
+            },
+        );
+        let (bs, bl) = (binary::encode(&small), binary::encode(&large));
+        check_order(
+            "reading deep values and patterns in binary",
+            12_500,
+            1,
+            |k| {
+                binary::decode(if k == 12_500 { &bs } else { &bl }).unwrap();
+            },
+        );
+        let text_of = |g: &Region| {
+            let Src::Const(v) = &g.nodes[0].inputs[0] else {
+                unreachable!("a constant")
+            };
+            v.to_string()
+        };
+        let (vs, vl) = (text_of(&small), text_of(&large));
+        check_order("reading a deep value as text", 12_500, 1, |k| {
+            text::parse_value(if k == 12_500 { &vs } else { &vl }).unwrap();
+        });
+        let pattern_of = |g: &Region| {
+            let Op::Match(ps) = &g.nodes[0].op else {
+                unreachable!("a match")
+            };
+            text::pattern(&ps[0])
+        };
+        check_order("writing a deep pattern as text", 1_000, 1, |k| {
+            pattern_of(if k == 1_000 { &small } else { &large });
+        });
+        let (ps, pl) = (pattern_of(&small), pattern_of(&large));
+        check_order("reading a deep pattern as text", 1_000, 1, |k| {
+            text::parse_pattern(if k == 1_000 { &ps } else { &pl }).unwrap();
+        });
+        let (ts, tl) = (deep_type_text(250), deep_type_text(2_000));
+        check_order("reading a deep type as text", 250, 1, |k| {
+            text::parse_type(if k == 250 { &ts } else { &tl }).unwrap();
         });
     });
 }

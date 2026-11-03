@@ -138,7 +138,17 @@ impl W {
         }
     }
 
+    /// Writes `v` from a stack of the values left to write, in the order a recursive writer
+    /// would: values nest as deep as the program (step T2-mid).
     fn value(&mut self, v: &Value) {
+        let mut jobs = vec![v];
+        while let Some(v) = jobs.pop() {
+            self.value_head(v, &mut jobs);
+        }
+    }
+
+    /// Writes the tag and scalars of `v`, and puts its parts on `jobs`, the first on top.
+    fn value_head<'v>(&mut self, v: &'v Value, jobs: &mut Vec<&'v Value>) {
         match v {
             Value::Bool(b) => {
                 self.tag(0);
@@ -170,23 +180,27 @@ impl W {
                 self.tag(6);
                 self.s(&a.name);
                 self.many(&a.fields, |w, f| w.s(f));
-                self.many(&a.args, Self::value);
+                self.n(a.args.len() as u64);
+                jobs.extend(a.args.iter().rev());
             }
             Value::Tuple(vs) => {
                 self.tag(7);
-                self.many(vs, Self::value);
+                self.n(vs.len() as u64);
+                jobs.extend(vs.iter().rev());
             }
             Value::Path(vs) => {
                 self.tag(8);
-                self.many(vs, Self::value);
+                self.n(vs.len() as u64);
+                jobs.extend(vs.iter().rev());
             }
             Value::Family(f) => {
                 self.tag(9);
                 let entries: Vec<_> = f.iter().collect();
-                self.many(&entries, |w, (k, v)| {
-                    w.value(k);
-                    w.value(v);
-                });
+                self.n(entries.len() as u64);
+                for (k, v) in entries.into_iter().rev() {
+                    jobs.push(v);
+                    jobs.push(k);
+                }
             }
         }
     }
@@ -255,38 +269,47 @@ impl W {
         }
     }
 
+    /// Writes `p` from a stack of the patterns left to write, each with the field name written
+    /// before it, in the order a recursive writer would: patterns nest as deep as the program
+    /// (step T2-mid).
     fn pattern(&mut self, p: &Pattern) {
-        match p {
-            Pattern::Wild => self.tag(0),
-            Pattern::Bind(x) => {
-                self.tag(1);
-                self.s(x);
+        let mut jobs: Vec<(Option<&str>, &Pattern)> = vec![(None, p)];
+        while let Some((field, p)) = jobs.pop() {
+            if let Some(k) = field {
+                self.s(k);
             }
-            Pattern::Lit(v) => {
-                self.tag(2);
-                self.value(v);
-            }
-            Pattern::Atom(name, ps) => {
-                self.tag(3);
-                self.s(name);
-                self.many(ps, Self::pattern);
-            }
-            Pattern::Fields(name, fs) => {
-                self.tag(4);
-                self.s(name);
-                self.many(fs, |w, (k, p)| {
-                    w.s(k);
-                    w.pattern(p);
-                });
-            }
-            Pattern::Tuple(ps) => {
-                self.tag(5);
-                self.many(ps, Self::pattern);
-            }
-            Pattern::AnyAtom => self.tag(6),
-            Pattern::Is(t) => {
-                self.tag(7);
-                self.s(&t.to_string());
+            match p {
+                Pattern::Wild => self.tag(0),
+                Pattern::Bind(x) => {
+                    self.tag(1);
+                    self.s(x);
+                }
+                Pattern::Lit(v) => {
+                    self.tag(2);
+                    self.value(v);
+                }
+                Pattern::Atom(name, ps) => {
+                    self.tag(3);
+                    self.s(name);
+                    self.n(ps.len() as u64);
+                    jobs.extend(ps.iter().rev().map(|q| (None, q)));
+                }
+                Pattern::Fields(name, fs) => {
+                    self.tag(4);
+                    self.s(name);
+                    self.n(fs.len() as u64);
+                    jobs.extend(fs.iter().rev().map(|(k, q)| (Some(&**k), q)));
+                }
+                Pattern::Tuple(ps) => {
+                    self.tag(5);
+                    self.n(ps.len() as u64);
+                    jobs.extend(ps.iter().rev().map(|q| (None, q)));
+                }
+                Pattern::AnyAtom => self.tag(6),
+                Pattern::Is(t) => {
+                    self.tag(7);
+                    self.s(&t.to_string());
+                }
             }
         }
     }
@@ -481,9 +504,40 @@ impl<'a> R<'a> {
             .or_else(|_| self.err(at, format!("`{s}` is not an integer")))
     }
 
+    /// Reads a value from a stack of the tuples, paths, atoms and families begun and not yet
+    /// ended, in the order [`W::value`] writes it: values nest as deep as the program (step
+    /// T2-mid).
     fn value(&mut self) -> Result<Value, String> {
+        let mut open: Vec<OpenValue> = Vec::new();
+        loop {
+            let mut got = match self.value_head()? {
+                Ok(v) => Some(v),
+                Err(o) => {
+                    open.push(o);
+                    None
+                }
+            };
+            loop {
+                let Some(top) = open.last_mut() else {
+                    return Ok(got.expect("a value read"));
+                };
+                if let Some(v) = got.take() {
+                    top.put(v);
+                }
+                if top.left() > 0 {
+                    break;
+                }
+                let o = open.pop().expect("the top");
+                got = Some(self.close_value(o)?);
+            }
+        }
+    }
+
+    /// A value with no parts, or a value whose parts are still to read.
+    fn value_head(&mut self) -> Result<Result<Value, OpenValue>, String> {
         let at = self.i;
-        Ok(match self.tag(9, "a value")? {
+        let t = self.tag(9, "a value")?;
+        Ok(Ok(match t {
             0 => Value::Bool(self.tag(1, "a boolean")? == 1),
             1 => Value::Int(self.n()? as i64),
             2 => Value::int(self.big()?),
@@ -499,7 +553,37 @@ impl<'a> R<'a> {
             6 => {
                 let name = self.s()?;
                 let fields: Vec<String> = self.many(Self::s)?;
-                let args = self.many(Self::value)?;
+                let left = self.len()?;
+                return Ok(Err(OpenValue::Atom {
+                    at,
+                    name,
+                    fields,
+                    args: Vec::with_capacity(left),
+                    left,
+                }));
+            }
+            7 | 8 => {
+                let path = t == 8;
+                let left = self.len()?;
+                return Ok(Err(OpenValue::Items(path, Vec::with_capacity(left), left)));
+            }
+            _ => {
+                let left = self.len()?;
+                return Ok(Err(OpenValue::Family(Vec::with_capacity(left), None, left)));
+            }
+        }))
+    }
+
+    /// The value `o`, all its parts read.
+    fn close_value(&self, o: OpenValue) -> Result<Value, String> {
+        Ok(match o {
+            OpenValue::Atom {
+                at,
+                name,
+                fields,
+                args,
+                ..
+            } => {
                 if fields.windows(2).any(|w| w[0] >= w[1]) {
                     return self.err(
                         at,
@@ -522,12 +606,9 @@ impl<'a> R<'a> {
                     args: args.into(),
                 })
             }
-            7 => Value::tuple(self.many(Self::value)?),
-            8 => Value::path(self.many(Self::value)?),
-            _ => {
-                let entries = self.many(|r| Ok((r.value()?, r.value()?)))?;
-                Value::Family(Family::of(entries))
-            }
+            OpenValue::Items(false, vs, _) => Value::tuple(vs),
+            OpenValue::Items(true, vs, _) => Value::path(vs),
+            OpenValue::Family(entries, _, _) => Value::Family(Family::of(entries)),
         })
     }
 
@@ -571,17 +652,66 @@ impl<'a> R<'a> {
         })
     }
 
+    /// Reads a pattern from a stack of the patterns begun and not yet ended, in the order
+    /// [`W::pattern`] writes it: patterns nest as deep as the program (step T2-mid).
     fn pattern(&mut self) -> Result<Pattern, String> {
-        Ok(match self.tag(7, "a pattern")? {
+        let mut open: Vec<OpenPattern> = Vec::new();
+        loop {
+            let mut got = match self.pattern_head()? {
+                Ok(p) => Some(p),
+                Err(o) => {
+                    open.push(o);
+                    None
+                }
+            };
+            loop {
+                let Some(top) = open.last_mut() else {
+                    return Ok(got.expect("a pattern read"));
+                };
+                if let Some(p) = got.take() {
+                    top.put(p);
+                }
+                if top.left() > 0 {
+                    // A field pattern's part follows its name.
+                    if let OpenPattern::Fields(_, _, key @ None, _) = top {
+                        *key = Some(self.s()?.into());
+                    }
+                    break;
+                }
+                got = Some(open.pop().expect("the top").close());
+            }
+        }
+    }
+
+    /// A pattern with no parts, or a pattern whose parts are still to read.
+    fn pattern_head(&mut self) -> Result<Result<Pattern, OpenPattern>, String> {
+        let t = self.tag(7, "a pattern")?;
+        Ok(Ok(match t {
             0 => Pattern::Wild,
             1 => Pattern::Bind(self.s()?.into()),
             2 => Pattern::Lit(self.value()?),
-            3 => Pattern::Atom(self.s()?.into(), self.many(Self::pattern)?),
-            4 => Pattern::Fields(
-                self.s()?.into(),
-                self.many(|r| Ok((r.s()?.into(), r.pattern()?)))?,
-            ),
-            5 => Pattern::Tuple(self.many(Self::pattern)?),
+            3 | 5 => {
+                let name = match t {
+                    3 => Some(self.s()?.into()),
+                    _ => None,
+                };
+                let left = self.len()?;
+                return Ok(Err(OpenPattern::Items(
+                    name,
+                    Vec::with_capacity(left),
+                    left,
+                )));
+            }
+            4 => {
+                let name = self.s()?.into();
+                let left = self.len()?;
+                return Ok(Err(OpenPattern::Fields(
+                    name,
+                    Vec::with_capacity(left),
+                    None,
+                    left,
+                )));
+            }
             6 => Pattern::AnyAtom,
             _ => {
                 let at = self.i;
@@ -591,6 +721,82 @@ impl<'a> R<'a> {
                         .or_else(|e| self.err(at, format!("the type `{s}`: {e}")))?,
                 )
             }
-        })
+        }))
+    }
+}
+
+/// A tuple or path (`true`), an atom, or a family whose parts are being read, with the number
+/// of parts, or of entries, still to read.
+enum OpenValue {
+    Atom {
+        at: usize,
+        name: String,
+        fields: Vec<String>,
+        args: Vec<Value>,
+        left: usize,
+    },
+    Items(bool, Vec<Value>, usize),
+    /// The entries read, and the key of the entry being read.
+    Family(Vec<(Value, Value)>, Option<Value>, usize),
+}
+
+impl OpenValue {
+    fn left(&self) -> usize {
+        match self {
+            OpenValue::Atom { left, .. } | OpenValue::Items(_, _, left) => *left,
+            OpenValue::Family(_, _, left) => *left,
+        }
+    }
+
+    fn put(&mut self, v: Value) {
+        match self {
+            OpenValue::Atom { args, left, .. } | OpenValue::Items(_, args, left) => {
+                args.push(v);
+                *left -= 1;
+            }
+            OpenValue::Family(entries, key, left) => match key.take() {
+                None => *key = Some(v),
+                Some(k) => {
+                    entries.push((k, v));
+                    *left -= 1;
+                }
+            },
+        }
+    }
+}
+
+/// An atom pattern (named) or a tuple pattern, or a fields pattern with the field of the part
+/// being read, whose parts are being read, with the number still to read.
+enum OpenPattern {
+    Items(Option<Arc<str>>, Vec<Pattern>, usize),
+    Fields(Arc<str>, Vec<(Arc<str>, Pattern)>, Option<Arc<str>>, usize),
+}
+
+impl OpenPattern {
+    fn left(&self) -> usize {
+        match self {
+            OpenPattern::Items(_, _, left) | OpenPattern::Fields(_, _, _, left) => *left,
+        }
+    }
+
+    fn put(&mut self, p: Pattern) {
+        match self {
+            OpenPattern::Items(_, ps, left) => {
+                ps.push(p);
+                *left -= 1;
+            }
+            OpenPattern::Fields(_, fs, key, left) => {
+                fs.push((key.take().expect("the field read"), p));
+                *left -= 1;
+            }
+        }
+    }
+
+    fn close(self) -> Pattern {
+        match self {
+            OpenPattern::Items(Some(name), ps, _) => Pattern::Atom(name, ps),
+            OpenPattern::Items(None, ps, _) => Pattern::Tuple(ps),
+            OpenPattern::Fields(name, fs, _, _) => Pattern::Fields(name, fs),
+        }
     }
 }
