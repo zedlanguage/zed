@@ -805,14 +805,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| S22a | impl attempt 1 | 2026-11-03 03:01 | Pa (treap with subtree value range and gap flag, no size switch) and clip integrated in preimage.rs; building |
-| T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | Pa (treap with subtree value range and gap flag, no size switch) and clip integrated in preimage.rs; building |
-| T6 | repair attempt 3 | 2026-11-03 00:01 | start: rebase wt/t6 (62c6877) and wt/t6-spec (5cd9de6) on main, then items (a)-(i) |
+| OSP-drop | impl attempt 1 | 2026-11-03 03:39 | started: reading briefs, DESIGN and l01_27 code |
+| S22a | impl attempt 1 | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
+| ST | merge attempt 1 | 2026-11-02 21:50 | lock released |
+| T11-fix-store | impl attempt 1 | 2026-11-03 03:35 | started |
+| T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
+| T6 | repair attempt 3 | 2026-11-03 00:01 | (b) TupleSplit and NoWitness reachable, tests added; witnesses for pure cycles and greedy box refinement; controls fail |
+| TRADEOFF-DOC | repair attempt 1 | 2026-11-03 03:21 | control: Bounds::narrow keeping self only fails loops::a_counting_loop_keeps_its_symbolic_bound and a_loop_counting_down (2 of 3); reverted; load 30.61 |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
 Merged into local main and not yet pushed (17 commits); the push follows one full test run on the merged tree:
 
-- STATUS, plan_dag, docs.rs: OSP-diag merged and marked done; OSP-lit doc errors carry no rejection row (this commit)
+- fcc8e80 STATUS, plan_dag: OSP-diag merged and marked done; OSP-lit doc errors carry no rejection row
 - abf477c OSP-diag repair: rows for a positional item after a named one; full test removes its directory
 - 4d82672 OSP-diag: rejection rows on diagnostics, zedc test exit codes, printed types read back, runtime counts
 - ed87e4c plan_dag: OSP-drop and T6-kinds (author decisions, 2026-11-03)
