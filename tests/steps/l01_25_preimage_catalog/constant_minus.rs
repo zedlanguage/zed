@@ -5,6 +5,8 @@
 //! (`revision::map2`), so pieces moved across zero were merged and the merged box was still
 //! marked exact.
 
+use std::sync::Arc;
+
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet};
@@ -179,4 +181,157 @@ fn a_comb_of_pieces_scales() {
         let p = preimage(t, ds, d);
         assert_eq!(p.domains["x"].pieces().len(), 2 * k);
     });
+}
+
+// Plan item S22b-rest: the summary of a term of one input (`Pa`) reads `c - u` as the affine
+// map `-1 * u + c` for every constant `c`; before, it read only `0 - u`, so an `if` chain with
+// an arm `c - t` was left to the transfer level by level (`s22::chain_jt_range_live_scales`).
+// The clip, the hull of a term's values met with each integer demand, reads `c - x` by the
+// same reflection as the transfer; the forward image it used before gave the same set for the
+// one interval a clip is, but raised the rounding flag for `i64::MIN - x` with `x` unbounded
+// above and `i64::MAX - x` with `x` unbounded below, so the clip gave up there.
+
+fn times(fs: &[i64]) -> Term {
+    let mut it = fs.iter().map(|&f| int(f));
+    let first = it.next().expect("a factor");
+    it.fold(first, |a, b| Term::Prim(Prim::Mul, vec![a, b]))
+}
+
+/// `i64::MAX` and `i64::MIN` as products of small factors. The summary and the clip read a
+/// term only when the magnitudes of its literals summed stay within `i64` (`Tx::fits`), so a
+/// literal `i64::MAX` would turn them off.
+fn max_c() -> Term {
+    times(&[49, 73, 127, 337, 92737, 649657])
+}
+
+fn min_c() -> Term {
+    times(&[-2147483648, 4294967296])
+}
+
+/// `if i >= 0 { c - i } else { c - (i + 3) }`: both arms reflect the one input, so the `if` is
+/// summarized and the demand inverted through it.
+fn reflected_arms(c: Term) -> Term {
+    reflected_by(c, 3)
+}
+
+/// `if i >= 0 { c - i } else { c - (i + s) }`.
+fn reflected_by(c: Term, s: i64) -> Term {
+    let i = || var("i");
+    let shifted = Term::Prim(Prim::Add, vec![i(), int(s)]);
+    Term::If(
+        Arc::new(Term::Prim(Prim::Ge, vec![i(), int(0)])),
+        Arc::new(Term::Prim(Prim::Sub, vec![c.clone(), i()])),
+        Arc::new(Term::Prim(Prim::Sub, vec![c, shifted])),
+    )
+}
+
+/// The preimage of `z` under `t` over `i` in `[-60, 60]`, checked against the interpreter and
+/// printed; every one here is exact.
+fn summarized(t: &Term, z: IntervalSet) -> String {
+    summarized_over(t, fin(&[(-60, 60)]), z)
+}
+
+/// [`summarized`] over `i` in `dom`.
+fn summarized_over(t: &Term, dom: IntervalSet, z: IntervalSet) -> String {
+    let ds: Domains = [("i".into(), dom)].into_iter().collect();
+    let d = Demand::Ints(z);
+    let p = preimage(t, &ds, &d);
+    check(t, &ds, &d, &p, (-60, 60));
+    assert!(p.exact, "{t}: {}", shown(&p));
+    shown(&p)
+}
+
+/// A demand of pieces on both sides of zero through `5 - i` and `5 - (i + 3)`: each piece is
+/// kept, reflected in the arm whose guard holds there.
+#[test]
+fn reflected_arms_keep_every_piece_of_the_demand() {
+    let t = reflected_arms(int(5));
+    let z = fin(&[(-30, -20), (-1, 1), (4, 9)]);
+    assert_eq!(
+        summarized(&t, z),
+        "i [-7..=-2, 0..=1, 4..=6, 25..=35]; exact"
+    );
+    // c = 0, the one case the summary read before.
+    let t = reflected_arms(int(0));
+    let z = fin(&[(-30, -20), (-1, 1), (4, 9)]);
+    assert_eq!(
+        summarized(&t, z),
+        "i [-12..=-7, -4..=-2, 0..=1, 20..=30]; exact"
+    );
+}
+
+/// One point, the empty demand and every integer.
+#[test]
+fn reflected_arms_under_a_point_nothing_and_everything() {
+    let t = reflected_arms(int(-7));
+    assert_eq!(summarized(&t, fin(&[(0, 0)])), "i [-10..=-10]; exact");
+    assert_eq!(
+        summarized(&t, fin(&[(-9, -9)])),
+        "i [-1..=-1, 2..=2]; exact"
+    );
+    assert_eq!(summarized(&t, fin(&[(-4, -4)])), "i [-6..=-6]; exact");
+    assert_eq!(summarized(&t, IntervalSet::empty()), "i []; exact");
+    assert_eq!(summarized(&t, IntervalSet::top()), "i [-60..=60]; exact");
+}
+
+/// `i64::MAX - i` with the else arm `i64::MAX - (i + 3)`, and `i64::MIN - i` with the else arm
+/// `i64::MIN - (i - 3)`. Over the inputs where both arms stay in `i64`, `[-3, 60]` and
+/// `[-60, 0]`, the `if` is summarized with `c` at an end of `i64`: no value lies near a demand
+/// near zero, and every integer takes the whole domain. Over `[-60, 60]` an arm leaves `i64`,
+/// the summary gives up on the `if` and the box of the transfer is listed; a value past `i64`
+/// meets a demand only when the demand is unbounded on its side.
+#[test]
+fn reflected_arms_at_the_ends_of_i64() {
+    let z = fin(&[(-30, -20), (-1, 1), (4, 9)]);
+    let all = IntervalSet::top();
+    let (max_in, min_in) = (fin(&[(-3, 60)]), fin(&[(-60, 0)]));
+    let (max_t, min_t) = (reflected_by(max_c(), 3), reflected_by(min_c(), -3));
+    let got = [
+        summarized_over(&max_t, max_in.clone(), z.clone()),
+        summarized_over(&min_t, min_in.clone(), z.clone()),
+        summarized_over(&max_t, max_in, all.clone()),
+        summarized_over(&min_t, min_in, all.clone()),
+        summarized(&max_t, z.clone()),
+        summarized(&min_t, z),
+        summarized(&max_t, all.clone()),
+        summarized(&min_t, all),
+    ];
+    let (none, listed) = ("i []; exact", "i []; exact; enumerated");
+    let whole = "i [-60..=60]; exact";
+    assert_eq!(
+        got,
+        [
+            none,
+            none,
+            "i [-3..=60]; exact",
+            "i [-60..=0]; exact",
+            listed,
+            listed,
+            whole,
+            whole
+        ]
+    );
+}
+
+/// The clip of `i64::MIN - x` for `x >= 0` and of `i64::MAX - x` for `x <= 0`: one point of
+/// each, `x = 0`, has a value in `i64`, at an end of it, and no point meets a demand near zero.
+/// The clip is the exact hull, `[.., i64::MIN]` and `[i64::MAX, ..]`, and the empty preimage is
+/// exact at once. Before, the forward image raised the rounding flag at the split point `c - 1`
+/// or `c + 1`, the clip gave up, and the box was listed to find it empty.
+#[test]
+fn the_clip_of_a_reflection_at_the_ends_of_i64() {
+    let cases = [
+        (min_c(), doms(&[("x", Some(0), None)])),
+        (max_c(), doms(&[("x", None, Some(0))])),
+    ];
+    for (c, ds) in cases {
+        let t = Term::Prim(Prim::Sub, vec![c, var("x")]);
+        for z in [fin(&[(-5, 5)]), fin(&[(0, 0)]), IntervalSet::empty()] {
+            let d = Demand::Ints(z);
+            let p = preimage(&t, &ds, &d);
+            check(&t, &ds, &d, &p, (-60, 60));
+            assert!(p.exact, "{t}: {}", shown(&p));
+            assert_eq!(shown(&p), "x []; exact");
+        }
+    }
 }

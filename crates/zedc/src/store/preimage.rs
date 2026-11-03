@@ -2176,10 +2176,7 @@ impl<'t> Tx<'t> {
                     (Prim::Add, Some(c), None) => Some(shift(&self.clip(b, env)?, c as i128)),
                     (Prim::Add, None, Some(c)) => Some(shift(&self.clip(a, env)?, c as i128)),
                     (Prim::Sub, None, Some(c)) => Some(shift(&self.clip(a, env)?, -(c as i128))),
-                    (Prim::Sub, Some(c), None) => {
-                        let fb = self.clip(b, env)?;
-                        Some(revision::forward(Op::Sub, &IntervalSet::single(c), &fb))
-                    }
+                    (Prim::Sub, Some(c), None) => Some(reflect(&self.clip(b, env)?, c as i128)),
                     _ => None,
                 }
             }
@@ -2778,7 +2775,7 @@ impl<'t> Tx<'t> {
         })
     }
 
-    /// `-u`, `u + c`, `c + u`, `u - c`, `0 - u` and `c * u` for a summarized `u` and a
+    /// `-u`, `u + c`, `c + u`, `u - c`, `c - u` and `c * u` for a summarized `u` and a
     /// constant `c`; the arity was checked by the caller.
     fn pa_prim(&mut self, t: Tid, p: Prim, args: Span, env: Eid) -> Option<Pa> {
         let a = self.arg(args, 0);
@@ -2797,11 +2794,8 @@ impl<'t> Tx<'t> {
                 if let Some(c) = self.constant_int(b, env) {
                     return self.pa(a, env)?.affine(1, -i128::from(c));
                 }
-                // `c - u` for `c` other than 0 is left to the transfer (S22b).
-                if self.constant_int(a, env)? != 0 {
-                    return None;
-                }
-                self.pa(b, env)?.affine(-1, 0)
+                let c = self.constant_int(a, env)?;
+                self.pa(b, env)?.affine(-1, c.into())
             }
             Prim::Mul => {
                 if self.power(t, env).is_some() {
@@ -3307,7 +3301,9 @@ fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
 /// piece reflected and moved by `c`, in one step in `i128` so that only an end past `i64` is
 /// rounded (negating first would round the end `-i64::MIN`). The pieces stay apart and the
 /// result is exact; the forward image of `{c} - z` would cap the pieces of each sign region
-/// (`revision::map2`) and merge the pieces it moves across zero (plan item S22b).
+/// (`revision::map2`) and merge the pieces it moves across zero (plan item S22b). The clip
+/// reads `c - x` by it too: on its one interval the forward image gave the same set but raised
+/// the rounding flag at a split point past `i64` (plan item S22b-rest).
 fn reflect(z: &IntervalSet, c: i128) -> IntervalSet {
     let lower = |e: End| match e {
         Fin(v) => End::lower(c - v as i128),

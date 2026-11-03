@@ -123,6 +123,8 @@ fn bits(k: usize, lo: i64, hi: i64) -> Domains {
 /// - guards `i != j`, `abs(i) >= j` and `i mod 7 == j mod 7`;
 /// - else arms that are not translations: `j - t`, `3t - 1`, `min(t + 1, 100)`, `-2t`,
 ///   `0 - (t + 1)`;
+/// - `jt_range` and `five_range`: else arms `j - t` and `5 - t` with the integer demand
+///   `tk` in `[-3, 7]`, `_live` over `[-k, k]` (plan item S22b-rest: the summary reads `c - t`);
 /// - chains of independent guards on bits, `indep` and `subset`, and the `abs` chain
 ///   `s_j = abs(s_(j-1)) - 2^(k+1-j)`.
 fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
@@ -248,6 +250,20 @@ fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
         "jt" => {
             let t = chain(k, var("i"), ge_i, |j, t| prim(Prim::Sub, int(j), t));
             (ge0(t), narrow(), yes)
+        }
+        "jt_range" | "jt_range_live" => {
+            let t = chain(k, var("i"), ge_i, |j, t| prim(Prim::Sub, int(j), t));
+            let ds = if name == "jt_range" { narrow() } else { live() };
+            (t, ds, ints(-3, 7))
+        }
+        "five_range" | "five_range_live" => {
+            let t = chain(k, var("i"), ge_i, |_, t| prim(Prim::Sub, int(5), t));
+            let ds = if name == "five_range" {
+                narrow()
+            } else {
+                live()
+            };
+            (t, ds, ints(-3, 7))
         }
         "t3" => {
             let arm = |_, t| prim(Prim::Sub, prim(Prim::Mul, t, int(3)), int(1));
@@ -596,6 +612,10 @@ fn chains_of_shared_terms_keep_their_preimages() {
             ("ne_guard", &[]),
             ("abs_guard", &[]),
             ("jt", &[]),
+            ("jt_range", &[256]),
+            ("jt_range_live", &[64, 128]),
+            ("five_range", &[]),
+            ("five_range_live", &[64]),
             ("min", &[]),
             ("neg", &[]),
         ],
@@ -1098,6 +1118,26 @@ fn chain_pow2_scales() {
 #[test]
 fn chain_jt_scales() {
     scales("jt", 256);
+}
+
+#[test]
+fn chain_jt_range_scales() {
+    scales("jt_range", 256);
+}
+
+/// The chain whose else arms reflect, `j - t`, over `[-k, k]` with `tk` in `[-3, 7]`: each
+/// level reflects the demands of the one above about a new constant. The summary reads `c - t`
+/// since plan item S22b-rest and inverts the demand once: 10.6 times the instructions at
+/// `k` = 256 and 2,048, and 8.8 and 21 ms at 256 and 512. Before, the transfer read the chain
+/// level by level: 63.4 times, and 3.36 and 8.64 s at 256 and 512 (load about 85 to 110).
+#[test]
+fn chain_jt_range_live_scales() {
+    scales("jt_range_live", 256);
+}
+
+#[test]
+fn chain_five_range_live_scales() {
+    scales("five_range_live", 256);
 }
 
 #[test]
