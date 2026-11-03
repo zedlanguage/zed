@@ -156,7 +156,7 @@ export function shortLabel(title: string): string {
 
 function ledgerTime(started: string | undefined, fallbackDay: string): number | null {
   if (!started) return null;
-  const full = /^\d{4}-\d\d-\d\d \d\d:\d\d/.test(started) ? started : `${fallbackDay} ${started}`;
+  const full = /^\d{4}-\d\d-\d\d[ T]\d\d:\d\d/.test(started) ? started : `${fallbackDay} ${started}`;
   const at = Date.parse(full.replace(" ", "T"));
   return Number.isNaN(at) ? null : at;
 }
@@ -202,7 +202,7 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     let s: NodeState = "unstarted";
     if (ov) s = ov;
     else if (r.title.startsWith("Done:")) s = "done";
-    else if (last?.state === "fixed") s = "done";
+    else if (last?.state === "fixed" || last?.state === "done") s = "done";
     else if (last?.state === "fixing") s = "active";
     else if (last?.state === "abandoned") s = "unstarted";
     else if (lines.some((l) => l.entry.role === "merge" && /\bon main\b|merged/.test(l.entry.text))) s = "done";
@@ -243,7 +243,8 @@ export function buildNodes(inp: Inputs): ViewNode[] {
 
     const last = lines.at(-1)?.entry;
     const note = inp.overrides[r.id]?.note ?? lastLedger?.note ?? "";
-    const commit = lastLedger?.state === "fixed" ? lastLedger.commit : undefined;
+    // A "done" line after the batch test names no commit; the merge's "fixed" line before it does.
+    const commit = state === "done" ? ledgerLines.findLast((e) => e.commit)?.commit : undefined;
     const noCommit = state === "done" && !commit;
     const onOrigin = commit ? inp.onOrigin(commit) : noCommit;
     return {

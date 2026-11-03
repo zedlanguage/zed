@@ -85,6 +85,21 @@ test("a merged commit not on origin is done but not pushed", () => {
   assert.equal(n.awaitingBatch, true);
 });
 
+test("a done line after the batch test keeps the fixed line's commit, and git says pushed", () => {
+  const led = '{"id":"A","state":"fixed","commit":"c1","note":"awaiting batch test"}\n{"id":"A","state":"done","note":"pushed"}\n';
+  const n = by(buildNodes(inputs("2026-11-02 10:00:00 | A:merge#1 | lock taken\n", led, (c) => c === "c1"))).get("A")!;
+  assert.equal(n.state, "done");
+  assert.equal(n.pushed, true);
+  assert.equal(n.note, "pushed");
+  const behind = by(buildNodes(inputs("", led, () => false))).get("A")!;
+  assert.equal(behind.awaitingBatch, true);
+});
+
+test("a ledger time in ISO form with a zone counts", () => {
+  const led = '{"id":"A","state":"fixed","commit":"c1","started":"2026-11-02T10:00:00Z"}\n';
+  assert.equal(by(buildNodes(inputs("", led))).get("A")!.startedAt, Date.parse("2026-11-02T10:00:00Z"));
+});
+
 test("a repair after a fixed line makes the node active again", () => {
   const led = '{"id":"A","state":"fixed","commit":"c1"}\n{"id":"A","state":"fixing"}\n';
   assert.equal(by(buildNodes(inputs("", led))).get("A")!.state, "active");
