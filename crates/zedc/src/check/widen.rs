@@ -19,9 +19,12 @@
 //! Complexity tradeoff (COMPLEXITY.md C-WIDEN): intervals come from the syntax, with no narrowing by a test, so a
 //! value a test bounds is any `int` here and its operations are not reported, and an
 //! interval is taken without regard to how operands are related, so `x - x` is as wide as
-//! `x + x` and may be reported though it is 0. Why: the store's
-//! forward transfer over the definition graph, which narrows by tests, replaces this walk at
-//! step L1.40b. Tests: `l01_29_diagnostics::widen::a_parameter_is_not_bounded_and_does_not_warn`,
+//! `x + x` and may be reported though it is 0. Why: narrowing by a test needs the facts that
+//! hold on each path, and relating operands such as `x - x` needs a relational domain over
+//! the names in scope, whose cost per operation grows with the number of names (and is
+//! exponential in the worst case for Presburger formulas), where an interval costs O(1). A
+//! complete solution is the Presburger store's forward transfer over the definition graph,
+//! which narrows by tests and relates operands; it replaces this walk at step L1.40b. Tests: `l01_29_diagnostics::widen::a_parameter_is_not_bounded_and_does_not_warn`,
 //! `a_difference_of_a_value_with_itself_is_read_as_a_range`.
 //!
 //! Each node is evaluated once, in an order that puts each binding before its uses (an
@@ -258,9 +261,11 @@ impl<'t, 'a> Walk<'t, 'a> {
             (n.root, n.wrap)
         };
         let first = u32::try_from(self.nodes.len()).expect("a unit has fewer than 2^32 nodes");
+        // Only `+`, `-`, `*`, unary `-` and literals wrap; any other child of a wrapping
+        // node is computed exactly, and so reported.
         let kids = |w: &mut Self, es: &[&'a Expr], wrap: bool| {
             for c in es {
-                w.node(c, Some(root), wrap);
+                w.node(c, Some(root), wrap && wraps(c));
             }
         };
         let kind = match &e.kind {
@@ -285,7 +290,8 @@ impl<'t, 'a> Walk<'t, 'a> {
                         Kind::Ring(r)
                     }
                     (None, "mod", Some(k)) => {
-                        kids(self, &[a, b], true);
+                        kids(self, &[a], true);
+                        self.node(b, Some(root), true);
                         Kind::Wrap(k)
                     }
                     (None, "mod", None) => {
@@ -429,7 +435,7 @@ impl<'t, 'a> Walk<'t, 'a> {
     }
 
     /// The nodes whose values node `i`'s value is computed from.
-    fn deps(&self, i: u32) -> impl Iterator<Item = u32> + '_ {
+    fn deps(&self, i: u32) -> impl DoubleEndedIterator<Item = u32> + '_ {
         let n = &self.nodes[i as usize];
         let kids = match n.kind {
             Kind::Ring(_) | Kind::Div | Kind::Mod | Kind::Pow => 2,
@@ -635,10 +641,18 @@ impl<'t, 'a> Walk<'t, 'a> {
                 span: n.e.span,
                 text,
             });
-            let deps: Vec<u32> = self.deps(j).collect();
-            stack.extend(deps.into_iter().rev());
+            stack.extend(self.deps(j).rev());
         }
     }
+}
+
+/// Whether `e` is computed in wrapping arithmetic when it is inside the left operand of
+/// `mod 2 ** k`: `+`, `-`, `*`, unary `-` and literals (sec:domains).
+fn wraps(e: &Expr) -> bool {
+    matches!(
+        e.kind,
+        ExprKind::Binary("+" | "-" | "*", ..) | ExprKind::Unary("-", _) | ExprKind::Int { .. }
+    )
 }
 
 /// The digits of an integer literal as a number, if it fits in 128 bits.

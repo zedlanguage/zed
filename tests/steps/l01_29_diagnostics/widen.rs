@@ -154,6 +154,29 @@ fn a_reduction_that_does_not_wrap_still_warns() {
 }
 
 #[test]
+fn a_power_or_a_quotient_inside_a_wrapping_reduction_still_warns() {
+    // Only `+`, `-`, `*`, unary `-` and literals wrap under `mod 2 ** k`; a `**` or a `div`
+    // there is computed exactly first, so its crossing is reported.
+    let src = main_with(
+        "  a = (3 ** 50 + 1) mod 2 ** 64;\n  \
+         c = (3 ** 50) mod 2 ** 64;\n  \
+         b = ((-9223372036854775807 - 1) div -1) mod 2 ** 64;\n",
+        "0",
+    );
+    assert_eq!(
+        messages(&src),
+        [
+            "2:8: `a` widens past a machine word: this `**` of an i8 and an i8 gives a big \
+             integer",
+            "3:7: `c` widens past a machine word: this `**` of an i8 and an i8 gives a big \
+             integer",
+            "4:7: `b` widens past a machine word: this `div` of an i64 and an i8 gives a big \
+             integer",
+        ]
+    );
+}
+
+#[test]
 fn a_value_already_past_the_word_warns_once() {
     let src = main_with(
         "  big = 9223372036854775807 + 1;\n  more = big * 2;\n  most = more + big;\n",
