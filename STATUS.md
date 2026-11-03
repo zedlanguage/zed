@@ -921,14 +921,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | T6-ratlit | verify attempt 1 | 2026-11-03 05:01 | suite run_tests.sh 2 on 29a50e7: 119 pieces, 1 failed (l01_25 chain_cross_within_its_width_scales 26.3x instr and chain_cross_live_scales 48.6x bytes, same as m |
 | TD-ends | repair attempt 6 | 2026-11-03 03:52 | fmt clean, clippy -D warnings clean; started tools/run_tests.sh 2 / load 70.88 72.14 78.40 |
 | TERM-spec | orchestrator attempt  | 2026-11-03 11:25 | owner: direct spec agent (not a workflow), started 11:40 |
-| TEST-split | verify attempt 1 | 2026-11-03 07:56 | run_tests.sh 4 on 80808c6: 298 pieces, 2 failed (s22 chain_cross_within_its_width 26.2x instr, chain_cross_live 48.6x bytes; same numbers as repair#2, steps sou |
 | TYPE-forms | repair attempt 1 | 2026-11-03 08:16 | start: fixing fits_sig own-bounded vars, result-only escape, timed inputs, unbounded note |
 | UNITANNOT-L7 | verify attempt 1 | 2026-11-03 07:14 | fmt and clippy -D warnings clean on 942fd60; starting tools/run_tests.sh 2 (load 65.80) |
 | UTVPI-NEAR | verify attempt 2 | 2026-11-03 06:34 | fmt rc=0, clippy -D warnings rc=0 on a18cf9e; diff read (negsssp.rs, utvpi.rs race, tests, docs); suite run_tests.sh 2 running; open from verify#1 not addressed |
 | XR3-synth | orchestrator attempt  | 2026-11-03 11:44 | owner: direct agent, started 11:43 |
 
-Merged into local main and not yet pushed (126 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (128 commits); the push follows one full test run on the merged tree:
 
+- 2d6c53b STATUS: TEST-split after the rebase on main 88c51bb: 1889 tests each once, 298 pieces, 2 failures also on main
+- 143b7cd tools/run_tests.sh: split l01_08, l01_16, l01_25, l01_36 and l01_38 into pieces by module, and their slow modules by test
 - 4ef3c21 plan_dag, STATUS: SEQ-desugar done (tip 76ca195)
 - f27e00a SEQ-desugar merge: check::widen (WIDEN-WARN) names ExprKind::Array, not Seq
 - 76ca195 SEQ-desugar: array displays and [T] are rank-keyed arrays, not Seq
