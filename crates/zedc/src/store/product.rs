@@ -908,13 +908,9 @@ impl Scope {
         // are grouped.
         let (a, b) = (self.stated(&mine, &theirs), other.stated(&theirs, &mine));
         let mut relation = self.relation.clone();
-        for g in &mine {
-            relation.remove(g);
-        }
-        relation.and(Formula::either(&a, &b, &reduce));
-        for k in kept {
-            relation.and(k);
-        }
+        let mut added = vec![Formula::either(&a, &b, &reduce)];
+        added.extend(kept);
+        relation.swap(&mine, Formula::and(added));
         // The written and enumerated constraints both sides hold.
         let (mut written, mut written_by) = (self.written.clone(), self.written_by.clone());
         for d in self.written.diff(&other.written) {
@@ -1049,16 +1045,36 @@ impl Scope {
             return;
         }
         let (tree, pol) = Tree::of(test);
-        let body = match tree.nodes[0].kind {
-            Kind::Nest(..) | Kind::If(_) => self.relation_of(&tree.term(), outcome == pol),
+        self.narrow_linear(&tree, 0, outcome == pol, prem);
+    }
+
+    /// Narrows by node `n` of `tree` giving `value`, keeping the linear relation of the node's
+    /// test when it has cases ([`Scope::narrow`]). A nest the value forces whose test has no
+    /// such relation, as when one side holds a `mod`, is narrowed side by side, each side
+    /// keeping its own: so `a && b` narrows as `a` then `b` do. This is done at the root alone,
+    /// where a side of a forced nest is not a forced nest, which would be one node with it
+    /// ([`Tree::of`]); so the terms taken are the root's and its sides', twice the test's size.
+    fn narrow_linear(&mut self, tree: &Tree, n: usize, value: bool, prem: &Premises) {
+        if self.bottom {
+            return;
+        }
+        let body = match &tree.nodes[n].kind {
+            Kind::Nest(..) | Kind::If(_) => self.relation_of(&tree.term_at(n), value),
             Kind::Lit(_) | Kind::Atom => None,
         };
         let Some(body) = body else {
-            self.narrow_node(&tree, 0, outcome == pol, prem);
+            match &tree.nodes[n].kind {
+                Kind::Nest(and, sides) if *and == value && n == 0 => {
+                    for &(k, p) in sides {
+                        self.narrow_linear(tree, k, value == p, prem);
+                    }
+                }
+                _ => self.narrow_node(tree, n, value, prem),
+            }
             return;
         };
         let before = self.relation.clone();
-        self.narrow_node(&tree, 0, outcome == pol, prem);
+        self.narrow_node(tree, n, value, prem);
         // The relation the narrowing gives is implied by the one before, the test's and the
         // products: each case adds the relations of its tests and bounds its products hold.
         // So the test's relation replaces it, but for the equalities of two atoms or more the
@@ -1391,7 +1407,7 @@ impl Scope {
             changed(last, names).any(|(_, p)| p.is_empty())
         };
         loop {
-            if self.bottom || empty(&self.names, &last) {
+            if self.bottom || self.relation.is_bottom() || empty(&self.names, &last) {
                 self.bottom = true;
                 break;
             }
@@ -1554,9 +1570,14 @@ impl Scope {
         let mut queued: BTreeSet<BlockId> = work.iter().copied().collect();
         // The names whose move put each block on the worklist.
         let mut cause: BTreeMap<BlockId, BTreeSet<Arc<str>>> = BTreeMap::new();
+        // The trees projected as a whole after an echo, whose blocks are not projected again.
+        let mut whole_trees: BTreeSet<BlockId> = BTreeSet::new();
         while let Some(b) = work.pop_front() {
             queued.remove(&b);
             let from = cause.remove(&b).unwrap_or_default();
+            if whole_trees.contains(&blocks.tree(b)) {
+                continue;
+            }
             let block = Block::of(&relation, b);
             let before = self.snapshot(&block.names);
             self.project_block(&block);
@@ -1586,13 +1607,14 @@ impl Scope {
             // intervals, such as a parity, so two blocks may pass a bound back and forth by one
             // value at a time. When a block moves the name whose move put it on the worklist,
             // its tree's conjuncts are projected together once, which gives the fixed point the
-            // steps tend to, and the worklist stops, as in a block ([`Scope::project_block`]).
+            // steps tend to, and the tree's other blocks on the worklist are dropped, as in a
+            // block ([`Scope::project_block`]); the blocks of other trees go on.
             // In a tree a bound comes back to a block only through the name it left by, so
             // passing a bound along the tree without such an echo costs each block once.
             if echo {
                 let (tree, _) = conjuncts::reach(&[&relation], block.names, |_| true);
                 self.project_part(&Formula::and(tree.iter().map(|g| (**g).clone()).collect()));
-                break;
+                whole_trees.insert(blocks.tree(b));
             }
         }
         self.relation = relation;
@@ -2147,10 +2169,10 @@ impl<'a> Tree<'a> {
         (Tree { nodes }, pol)
     }
 
-    /// The root's test with each nest written as `&&` or `||` over its sides, nested in a
+    /// The test of node `n` with each nest written as `&&` or `||` over its sides, nested in a
     /// balanced way, and each `if` with a boolean arm as its connective: a term the size of the
-    /// tree, and of depth logarithmic in the length of each nest.
-    fn term(&self) -> Term {
+    /// node's subtree, and of depth logarithmic in the length of each nest.
+    fn term_at(&self, n: usize) -> Term {
         fn signed(t: Term, pol: bool) -> Term {
             if pol {
                 t
@@ -2158,15 +2180,27 @@ impl<'a> Tree<'a> {
                 Term::Prim(Prim::Not, vec![t])
             }
         }
-        let mut terms: Vec<Option<Term>> = Vec::with_capacity(self.nodes.len());
-        terms.resize_with(self.nodes.len(), || None);
-        for i in (0..self.nodes.len()).rev() {
-            let n = &self.nodes[i];
+        // The nodes below `n`, each once: a node is a side or an arm of one node.
+        let mut below = vec![n];
+        let mut at = 0;
+        while let Some(&i) = below.get(at) {
+            match &self.nodes[i].kind {
+                Kind::Nest(_, sides) => below.extend(sides.iter().map(|s| s.0)),
+                Kind::If(arms) => below.extend(arms.iter().map(|s| s.0)),
+                Kind::Lit(_) | Kind::Atom => {}
+            }
+            at += 1;
+        }
+        // Each node after the nodes below it, which come after it in the tree.
+        below.sort_unstable();
+        let mut terms: BTreeMap<usize, Term> = BTreeMap::new();
+        for &i in below.iter().rev() {
+            let node = &self.nodes[i];
             let mut take = |(k, p): (usize, bool)| {
-                signed(terms[k].take().expect("a node below is built first"), p)
+                signed(terms.remove(&k).expect("a node below is built first"), p)
             };
-            let t = match &n.kind {
-                Kind::Lit(_) | Kind::Atom => n.term.clone(),
+            let t = match &node.kind {
+                Kind::Lit(_) | Kind::Atom => node.term.clone(),
                 Kind::Nest(and, sides) => {
                     let p = if *and { Prim::And } else { Prim::Or };
                     let mut level: Vec<Term> = sides.iter().map(|&s| take(s)).collect();
@@ -2186,9 +2220,9 @@ impl<'a> Tree<'a> {
                     Term::If(c, a, b)
                 }
             };
-            terms[i] = Some(t);
+            terms.insert(i, t);
         }
-        terms[0].take().expect("the root is built")
+        terms.remove(&n).expect("the node is built")
     }
 
     /// Whether node `n` is split into cases under some value: a nest or an `if`.

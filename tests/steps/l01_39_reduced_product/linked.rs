@@ -254,11 +254,38 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
                     log.push(format!("forget {x}"));
                     c.forget(&x);
                 }
+                // As a join does: one or two conjuncts go, and a new one comes, now and then
+                // a constraint on the same term as one that goes, which takes its place.
+                2 if !c.is_top() => {
+                    let gs: Vec<Arc<Formula>> = c.set().iter().cloned().collect();
+                    let mut gone = vec![r.pick(&gs)];
+                    if r.below(2) == 0 {
+                        gone.push(r.pick(&gs));
+                    }
+                    let g = match &*gone[0] {
+                        Formula::Con(k) if r.below(2) == 0 => {
+                            Formula::Con(Con::ge(&k.lin, &Lin::constant(r.int(-2, 2))))
+                        }
+                        _ => conjunct(&mut r),
+                    };
+                    log.push(format!("swap {gone:?} for {g}"));
+                    c.swap(&gone, g);
+                }
                 _ => {
                     let g = conjunct(&mut r);
                     log.push(format!("and {g}"));
                     c.and(g);
                 }
+            }
+            // A conjunct of no names, such as `-1 >= 0` when every coefficient drawn is zero,
+            // is decided when added: a false one makes the conjunction `false`, which has no
+            // blocks. The case then goes on from `true`.
+            if c.is_bottom() {
+                assert_eq!(c.set().len(), 1, "case {case}");
+                assert!(c.blocks().all().next().is_none(), "case {case}");
+                c = Conjuncts::default();
+                log.push("false; from true again".into());
+                continue;
             }
             let got = partition(&c);
             mixed += usize::from(got.len() > 1 && got.iter().any(|b| b.len() > 1));
@@ -280,4 +307,48 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
         }
     }
     assert!(mixed > 500, "{mixed} states with mixed blocks");
+}
+
+#[test]
+fn if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their_number() {
+    // x0 - x1 >= 1, x1 - x2 >= 1, … then, for each link, an `if x_i - x_{i+1} >= 2` whose two
+    // arms are joined. The arms differ in the link's conjunct, which the join replaces in its
+    // block; removing it first would cut the chain in two and build its blocks again, which
+    // made the joins quadratic (COMPLEXITY.md S20).
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [50, 400]
+        .into_iter()
+        .map(|k| {
+            let (s, chain) = shape("chain", k);
+            let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+            let n = named(k + 1, "x");
+            let tests = (0..k).map(|i| ge(&n[i], &n[i + 1], 2)).collect();
+            (k, (s, tests))
+        })
+        .collect();
+    scaling::check_order("if statements joined on a chain", 50, 1, |k| {
+        let (s, tests) = &built[&k];
+        tests.iter().fold(s.clone(), |s, t| {
+            let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
+            j.reduce();
+            j
+        });
+    });
+}
+
+#[test]
+fn if_statements_joined_on_a_chain_keep_the_chain() {
+    // Each join keeps `x_i - x_{i+1} >= 1`, which both arms hold, so `x0 - x20 >= 20`.
+    let p = Premises::new();
+    let (s, chain) = shape("bounded chain", 20);
+    let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let n = named(21, "x");
+    let s = (0..20).fold(s, |s, i| {
+        let t = ge(&n[i], &n[i + 1], 2);
+        let mut j = s.assume(&t, true, &p).join(&s.assume(&t, false, &p));
+        j.reduce();
+        j
+    });
+    assert!(!s.bottom, "{s}");
+    assert_eq!(s.names["x20"].ints().to_string(), "[..=999999980]", "{s}");
 }

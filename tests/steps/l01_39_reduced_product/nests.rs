@@ -460,3 +460,110 @@ fn a_walk_through_a_shared_name_reaches_the_fixed_point_in_quadratic_time() {
         s.assume(clauses, true, &p).assume(&start, true, &p);
     });
 }
+
+#[test]
+fn a_test_no_value_meets_gives_an_empty_scope_however_it_is_written() {
+    // `x != x` is `!(0 == 0)` once `x - x` is taken as 0: a conjunct of no names, which no
+    // projection reads, so it is decided when it joins the relation.
+    let p = Premises::new();
+    let s = boxed(&["x", "y"], 6);
+    let never = [
+        prim(Prim::Ne, var("x"), var("x")),
+        prim(Prim::Lt, var("y"), var("y")),
+        and(
+            Term::Prim(Prim::Not, vec![prim(Prim::Eq, var("y"), var("y"))]),
+            prim(Prim::Lt, var("x"), var("y")),
+        ),
+    ];
+    for t in &never {
+        assert!(s.assume(t, true, &p).bottom, "{t}");
+    }
+    // `x == x` holds everywhere and narrows nothing.
+    let always = s.assume(&prim(Prim::Eq, var("x"), var("x")), true, &p);
+    assert!(!always.bottom);
+    assert_eq!(xs(&always, 6), (-6..=6).collect::<Vec<_>>());
+}
+
+/// `t` with `x` and `y` renamed `u` and `v`.
+fn renamed(t: &Term) -> Term {
+    match t {
+        Term::Var(x) if &**x == "x" => var("u"),
+        Term::Var(x) if &**x == "y" => var("v"),
+        Term::Prim(p, a) => Term::Prim(*p, a.iter().map(renamed).collect()),
+        Term::If(c, a, b) => if_(renamed(c), renamed(a), renamed(b)),
+        t => t.clone(),
+    }
+}
+
+/// The values in `-6..=6` that the scope holds for each name; none when it is empty.
+fn shown(s: &Scope) -> Vec<Vec<i64>> {
+    ["x", "y", "u", "v"]
+        .iter()
+        .map(|n| {
+            (-6..=6)
+                .filter(|v| !s.bottom && s.get(n).contains(&Value::Int(*v)))
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_other() {
+    // `a && b`, with `a` on `x` and `y` and `b` on `u` and `v`, says no more than `a` and `b`
+    // apart, so it narrows as `a` then `b` do. `a && b` once lost one side: a side whose test
+    // has a `mod` or an `if` of integers has no linear relation of the whole test, and the
+    // side with cases then kept only the join of its cases.
+    let p = Premises::new();
+    let s = boxed(&["x", "y", "u", "v"], 6);
+    let one = (
+        Term::Prim(
+            Prim::Ne,
+            vec![
+                Term::Prim(Prim::Mod, vec![var("y"), int(2)]),
+                Term::Prim(
+                    Prim::Neg,
+                    vec![Term::Prim(Prim::Add, vec![var("x"), var("x")])],
+                ),
+            ],
+        ),
+        Term::Prim(
+            Prim::Not,
+            vec![if_(
+                prim(Prim::Ne, var("u"), var("u")),
+                prim(Prim::Ge, var("u"), var("v")),
+                prim(Prim::Eq, var("u"), var("u")),
+            )],
+        ),
+    );
+    let mut r = Rng::new(0xd15);
+    let mut cases = vec![one];
+    for _ in 0..400 {
+        let a = crate::l01_38_presburger::random::bool_term(&mut r, 2);
+        let b = renamed(&crate::l01_38_presburger::random::bool_term(&mut r, 2));
+        cases.push((a, b));
+    }
+    let mut narrowed = 0;
+    let mut same = 0;
+    for (a, b) in &cases {
+        let both = s.assume(&and(a.clone(), b.clone()), true, &p);
+        let apart = s.assume(a, true, &p).assume(b, true, &p);
+        // Never wider; it may be narrower, since inside the conjunction a test such as `y != 3`
+        // joins the relation, which cuts the hole that the test alone does not.
+        let (w, n) = (shown(&both), shown(&apart));
+        assert!(
+            w.iter()
+                .zip(&n)
+                .all(|(w, n)| w.iter().all(|v| n.contains(v))),
+            "{a} && {b}: {w:?} is wider than {n:?}"
+        );
+        same += usize::from(w == n);
+        narrowed += usize::from(shown(&both) != shown(&s));
+    }
+    assert!(
+        cases[0..1]
+            .iter()
+            .all(|(a, b)| s.assume(&and(a.clone(), b.clone()), true, &p).bottom)
+    );
+    assert!(narrowed > 200, "{narrowed} of {} narrow", cases.len());
+    assert!(same > 350, "{same} of {} are the same", cases.len());
+}

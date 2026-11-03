@@ -14,7 +14,7 @@ use std::sync::Arc;
 use imbl::{OrdMap, OrdSet};
 
 use super::int::Int;
-use super::presburger::{Atom, Con, Formula, Rel};
+use super::presburger::{Atom, Con, Formula, Lin, Model, Rel};
 
 /// The values of a set kept for each name, in a persistent map.
 #[derive(Clone, PartialEq, Debug)]
@@ -55,6 +55,9 @@ impl<T: Ord + Clone> Uses<T> {
 
 /// The key of a constraint for the rule that keeps the tighter of two: its term and relation.
 type Tight = (BTreeMap<Atom, Int>, Rel);
+
+/// Conjuncts removed from every index but the blocks, by their atoms ([`Conjuncts::swap`]).
+type Held = BTreeMap<BTreeSet<Atom>, Vec<Arc<Formula>>>;
 
 /// A conjunction of formulas, `true` when empty.
 #[derive(Clone, Debug, Default)]
@@ -99,6 +102,11 @@ impl Conjuncts {
         self.set.is_empty()
     }
 
+    /// Whether the conjunction is `false`.
+    pub fn is_bottom(&self) -> bool {
+        self.set.iter().next().is_some_and(|f| is_false(f))
+    }
+
     /// The conjuncts, in the order of formulas.
     pub fn set(&self) -> &OrdSet<Arc<Formula>> {
         &self.set
@@ -136,26 +144,70 @@ impl Conjuncts {
 
     /// The conjunction with `f`: a conjunction's parts are added each, `true` is dropped and
     /// `false` absorbs, and of two constraints on one term with one relation the tighter
-    /// alone is kept, as [`Formula::and`] does.
+    /// alone is kept, as [`Formula::and`] does. A conjunct of no atoms, such as the `!(0 == 0)`
+    /// of a test `x != x`, is decided at once: it is `true` or `false`, since no block holds
+    /// it and no projection would read it.
     pub fn and(&mut self, f: Formula) {
-        match f {
-            Formula::And(gs) => gs.into_iter().for_each(|g| self.and_one(g)),
-            g => self.and_one(g),
+        self.and_held(f, &mut Held::new());
+    }
+
+    /// The conjunction without the conjuncts `gone` and with `f`, in time near theirs: `f` is
+    /// added before `gone` leave the blocks, and a conjunct of `f` of the same atoms as one of
+    /// `gone` takes its place in its block ([`Blocks::replace`]). So the join of two cases that
+    /// differ in a conjunct of a chain replaces it, where removing it first would cut the chain
+    /// and build the blocks of the rest again.
+    pub fn swap(&mut self, gone: &[Arc<Formula>], f: Formula) {
+        let mut held = Held::new();
+        for g in gone {
+            if self.unindex(g) {
+                held.entry(g.atoms()).or_default().push(g.clone());
+            }
+        }
+        self.and_held(f, &mut held);
+        let rest: Vec<Arc<Formula>> = held.into_values().flatten().collect();
+        if !rest.is_empty() && !self.is_bottom() {
+            self.blocks.remove(&rest);
         }
     }
 
-    fn and_one(&mut self, g: Formula) {
-        if self.set.iter().next().is_some_and(|f| is_false(f)) {
+    fn and_held(&mut self, f: Formula, held: &mut Held) {
+        match f {
+            Formula::And(gs) => gs.into_iter().for_each(|g| self.and_one(g, held)),
+            g => self.and_one(g, held),
+        }
+    }
+
+    fn and_one(&mut self, g: Formula, held: &mut Held) {
+        if self.is_bottom() {
             return;
         }
         match &g {
             Formula::Or(gs) if gs.is_empty() => {
                 *self = Conjuncts::default();
                 self.set.insert(Arc::new(g));
+                held.clear();
                 return;
             }
-            Formula::And(_) => return self.and(g),
+            Formula::And(_) => return self.and_held(g, held),
             _ => {}
+        }
+        // `!(t >= 0)` is the constraint `-t - 1 >= 0` on the integers, which is projected with
+        // every part of its block ([`Formula::cons`]), where its negation would be a part alone.
+        let g = match g {
+            Formula::Not(n) => match *n {
+                Formula::Con(c) if c.rel == Rel::Ge => Formula::Con(Con {
+                    lin: Lin::constant(-1).minus(&c.lin),
+                    rel: Rel::Ge,
+                }),
+                n => Formula::Not(Box::new(n)),
+            },
+            g => g,
+        };
+        if g.atoms().is_empty() {
+            if !g.holds(&Model::new()) {
+                self.and_one(Formula::bottom(), held);
+            }
+            return;
         }
         // The looser constraint on the same term, which `g` replaces in its block.
         let mut looser = None;
@@ -170,7 +222,7 @@ impl Conjuncts {
                 self.unindex(&old);
                 looser = Some(old);
             } else if c.rel == Rel::Eq && c.lin.constant != o.lin.constant {
-                self.and_one(Formula::bottom());
+                self.and_one(Formula::bottom(), held);
                 return;
             } else {
                 return;
@@ -186,7 +238,16 @@ impl Conjuncts {
         if let Formula::Con(c) = &*g {
             self.tight.insert((c.lin.terms.clone(), c.rel), g.clone());
         }
-        match looser {
+        // Else a conjunct of the same atoms [`Conjuncts::swap`] removes, `g` itself first.
+        let old = looser.or_else(|| {
+            let same = held.get_mut(&g.atoms())?;
+            let i = same
+                .iter()
+                .position(|h| *h == g)
+                .or(same.len().checked_sub(1))?;
+            Some(same.swap_remove(i))
+        });
+        match old {
             Some(old) => self.blocks.replace(&old, &g),
             None => self.blocks.add(&g),
         }
