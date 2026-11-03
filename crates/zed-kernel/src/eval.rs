@@ -2058,9 +2058,14 @@ fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
 }
 
 /// The error of a primitive during which a comparison of two numbers was refused its memory:
-/// an order operator's own, or a key order's for a primitive that reads a family.
+/// an order operator's own, an equality's, or a key order's for a primitive that reads a
+/// family.
 fn order_too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
     let op = match p {
+        Prim::Eq | Prim::Ne => {
+            let op = if p == Prim::Eq { "==" } else { "!=" };
+            return KernelError::EqualityTooLarge { op, bits: e.bits };
+        }
         Prim::Lt => "<",
         Prim::Le => "<=",
         Prim::Gt => ">",

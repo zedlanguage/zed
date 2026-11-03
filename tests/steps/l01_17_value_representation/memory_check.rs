@@ -119,8 +119,8 @@ fn show(t: Term) -> Term {
     prim(Prim::Show, vec![t])
 }
 
-/// Two numbers that agree in their first `2^30` bits, compared with `<`, `min` and `max`
-/// when the system has too little memory left to tell them apart.
+/// Two numbers that agree in their first `2^30` bits, compared with each order operator, `min`
+/// and `max` when the system has too little memory left to tell them apart.
 #[test]
 fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
     if !in_child("ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short") {
@@ -129,7 +129,14 @@ fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
     let a = num(built_above(WIDE));
     let b = num(two_to(WIDE));
     lower_limit();
-    for (p, op) in [(Prim::Lt, "<"), (Prim::Min, "min"), (Prim::Max, "max")] {
+    for (p, op) in [
+        (Prim::Lt, "<"),
+        (Prim::Le, "<="),
+        (Prim::Gt, ">"),
+        (Prim::Ge, ">="),
+        (Prim::Min, "min"),
+        (Prim::Max, "max"),
+    ] {
         let err = eval(&bin(p, a.clone(), b.clone())).unwrap_err();
         let KernelError::OrderTooLarge { op: o, bits } = &err else {
             panic!("{op}: {err:?}")
@@ -145,7 +152,8 @@ fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
             )
         );
     }
-    // Equality reads the normal forms and builds nothing, so it still answers.
+    // `2^n + 1` is odd, so no power of 2 moves out of it: equality reads the normal forms and
+    // builds nothing, so it still answers.
     assert_eq!(
         eval(&bin(Prim::Eq, a.clone(), b.clone())).unwrap(),
         Value::Bool(false)
@@ -153,6 +161,88 @@ fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
     // Numbers apart in their leading bits still order at once.
     assert_eq!(
         eval(&bin(Prim::Lt, num(two_to(WIDE - 1)), a)).unwrap(),
+        Value::Bool(true)
+    );
+}
+
+/// Two plain rationals of `2^30`-bit numerators are ordered by cross-multiplying, which needs
+/// a product wider than the memory left.
+#[test]
+fn ordering_wide_rationals_is_refused_when_memory_is_short() {
+    if !in_child("ordering_wide_rationals_is_refused_when_memory_is_short") {
+        return;
+    }
+    let thirds = |k: u32| {
+        let r = Rat::new((BigInt::from(1u32) << WIDE) + k, BigInt::from(3)).unwrap();
+        lit(Value::rat(r))
+    };
+    // `2^n` is 1 more than a multiple of 3, so `(2^n + 1) / 3` and `(2^n + 4) / 3` are reduced.
+    let (a, b) = (thirds(1), thirds(4));
+    lower_limit();
+    let err = eval(&bin(Prim::Lt, a, b)).unwrap_err();
+    let KernelError::OrderTooLarge { op: "<", bits } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(*bits, BigUint::from(WIDE + 3));
+}
+
+/// `==` of a built multiple of 3 and a kept power of 3 moves the 3 out of the built one, which
+/// copies it; when the system refuses that copy, `==` and `!=` stop with their own error.
+#[test]
+fn equality_that_must_copy_a_wide_number_is_refused_when_memory_is_short() {
+    if !in_child("equality_that_must_copy_a_wide_number_is_refused_when_memory_is_short") {
+        return;
+    }
+    let built = num(Rat::int(
+        BigInt::from(3) * ((BigInt::from(1u32) << WIDE) + 1u32),
+    ));
+    let kept = num(int(3).pow(&BigUint::from(1u32 << 20)).unwrap());
+    lower_limit();
+    for (p, op) in [(Prim::Eq, "=="), (Prim::Ne, "!=")] {
+        let err = eval(&bin(p, built.clone(), kept.clone())).unwrap_err();
+        let KernelError::EqualityTooLarge { op: o, bits } = &err else {
+            panic!("{op}: {err:?}")
+        };
+        assert_eq!(*o, op);
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "`{op}` must compare two numbers in the same normal form, which moves a prime \
+                 one keeps as a power out of the other's digits and needs up to {bits} bits, \
+                 and the system refused the memory for it; the numbers are exact and have no \
+                 size limit, but this machine cannot hold enough of their digits to compare them"
+            )
+        );
+    }
+}
+
+/// With memory to spare, a built power of 3 equals the same power kept, and a built multiple
+/// of 3 that is not a power of 3 does not; wide plain rationals order exactly.
+#[test]
+fn equality_and_order_of_wide_numbers_are_exact_when_memory_is_given() {
+    let k = 1u32 << 16;
+    let kept = int(3).pow(&BigUint::from(k)).unwrap();
+    let built = Rat::int(BigInt::from(3).pow(k));
+    let other = Rat::int(BigInt::from(3) * ((BigInt::from(1u32) << k) + 1u32));
+    for (p, a, b, want) in [
+        (Prim::Eq, &built, &kept, true),
+        (Prim::Ne, &built, &kept, false),
+        (Prim::Eq, &other, &kept, false),
+        (Prim::Ne, &other, &kept, true),
+    ] {
+        assert_eq!(
+            eval(&bin(p, num(a.clone()), num(b.clone()))).unwrap(),
+            Value::Bool(want),
+            "{p:?}"
+        );
+    }
+    let thirds = |j: u32| Rat::new((BigInt::from(1u32) << k) + j, BigInt::from(3)).unwrap();
+    let (a, b) = (thirds(1), thirds(4));
+    assert_eq!(a.try_cmp(&b), Ok(std::cmp::Ordering::Less));
+    assert_eq!(b.neg().try_cmp(&a.neg()), Ok(std::cmp::Ordering::Less));
+    assert_eq!(a.try_cmp(&a), Ok(std::cmp::Ordering::Equal));
+    assert_eq!(
+        eval(&bin(Prim::Gt, lit(Value::rat(b)), lit(Value::rat(a)))).unwrap(),
         Value::Bool(true)
     );
 }
@@ -305,14 +395,42 @@ fn printing_a_composite_of_numbers_that_fit_writes_each_number() {
     );
 }
 
-/// The memory check reads a sequence shared many times once: `n` copies of one tuple of `n`
-/// numbers, the last too large to build, is refused after reading `2n` values, not `n^2`.
+/// Printing a tuple of many copies of one mid-sized number writes all their digits at once:
+/// the whole text is asked for, not each number's digits one at a time.
+#[test]
+fn printing_many_copies_of_a_number_asks_for_the_whole_text() {
+    if !in_child("printing_many_copies_of_a_number_asks_for_the_whole_text") {
+        return;
+    }
+    // 40,000 copies of a 2^14-bit number of 4,933 digits: about 197 MB of text.
+    let x = Value::integer(Rat::int((BigInt::from(1u32) << (1u32 << 14)) - 1u32));
+    let t = show(lit(Value::tuple(vec![x; 40_000])));
+    lower_limit();
+    let err = eval(&t).unwrap_err();
+    let KernelError::TextTooLarge { bytes: Some(n) } = &err else {
+        panic!("{err:?}")
+    };
+    assert!((40_000 * 4_933..40_000 * 4_950).contains(n), "{n}");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "`String` must write a text of up to {n} bytes, counting each number inside it at \
+             its widest, and the system refused the memory for it; the value has no size \
+             limit, but this machine cannot hold its text"
+        )
+    );
+}
+
+/// The memory check reads a sequence shared many times once: a number too large to build,
+/// read last, after `n` copies of one tuple of `n` numbers, is refused after reading `2n`
+/// values, not `n^2`.
 #[test]
 fn a_shared_tuple_is_checked_once_before_printing() {
     let shared = |n: usize| {
-        let mut items = vec![Value::Int(7); n - 1];
-        items.push(Value::integer(beyond_any_memory()));
-        show(lit(Value::tuple(vec![Value::tuple(items); n])))
+        let row = Value::tuple(vec![Value::Int(7); n]);
+        let mut outer = vec![Value::integer(beyond_any_memory())];
+        outer.extend(std::iter::repeat_n(row, n));
+        show(lit(Value::tuple(outer)))
     };
     let n = 1 << 12;
     let inputs = [(n, shared(n)), (8 * n, shared(8 * n))];

@@ -47,6 +47,13 @@ pub enum KernelError {
         /// At most this many bits: the size of the number to build.
         bits: num_bigint::BigUint,
     },
+    /// `String` of a tuple, keypath, atom or family must write a text of up to `bytes` bytes,
+    /// the digits of the numbers inside it counted at their widest, and the system refused the
+    /// memory for it, with the widest number's build; `None` for more than `u128::MAX` bytes.
+    TextTooLarge {
+        /// At most this many bytes: the length of the text.
+        bytes: Option<u128>,
+    },
     /// Two numbers agree in so many leading bits that ordering them, for `<`, `<=`, `>`,
     /// `>=`, `min` or `max`, needs bounds of up to `bits` bits, or the two in full, and the
     /// system refused the memory for it.
@@ -54,6 +61,15 @@ pub enum KernelError {
         /// The operator.
         op: &'static str,
         /// At most this many bits: the size of the widest bound or number to build.
+        bits: num_bigint::BigUint,
+    },
+    /// `==` or `!=` of two numbers, one of whose coefficients is divisible by a prime the other
+    /// keeps as a power, must copy and divide the coefficients to compare their normal forms,
+    /// which needs up to `bits` bits, and the system refused the memory for it.
+    EqualityTooLarge {
+        /// The operator.
+        op: &'static str,
+        /// At most this many bits: the size of the copy and the division.
         bits: num_bigint::BigUint,
     },
     /// Two numbers among a family's keys, or a key looked up and one in the family, agree in
@@ -117,12 +133,35 @@ impl fmt::Display for KernelError {
                  refused the memory for it; the number is exact and has no size limit, but this \
                  machine cannot hold its digits"
             ),
+            KernelError::TextTooLarge { bytes } => {
+                match bytes {
+                    Some(n) => write!(f, "`String` must write a text of up to {n} bytes")?,
+                    None => write!(
+                        f,
+                        "`String` must write a text of more than {} bytes",
+                        u128::MAX
+                    )?,
+                }
+                write!(
+                    f,
+                    ", counting each number inside it at its widest, and the system refused the \
+                     memory for it; the value has no size limit, but this machine cannot hold \
+                     its text"
+                )
+            }
             KernelError::OrderTooLarge { op, bits } => write!(
                 f,
                 "`{op}` must compare two numbers that agree in their leading digits, which \
                  needs up to {bits} bits of each, and the system refused the memory for it; \
                  the numbers are exact and have no size limit, but this machine cannot hold \
                  enough of their digits to order them"
+            ),
+            KernelError::EqualityTooLarge { op, bits } => write!(
+                f,
+                "`{op}` must compare two numbers in the same normal form, which moves a prime \
+                 one keeps as a power out of the other's digits and needs up to {bits} bits, \
+                 and the system refused the memory for it; the numbers are exact and have no \
+                 size limit, but this machine cannot hold enough of their digits to compare them"
             ),
             KernelError::KeyOrderTooLarge { bits } => write!(
                 f,

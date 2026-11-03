@@ -217,6 +217,16 @@ impl Rat {
     /// most `bits` bits, and its text, at most `bits * log10(2) + 2` bytes; else [`TooLarge`]
     /// naming `bits`, before anything is built.
     pub fn text_room(&self) -> Result<(), TooLarge> {
+        let (bits, text) = self.text_size();
+        match given(&(&bits + (text << 3u32))) {
+            true => Ok(()),
+            false => Err(TooLarge { bits }),
+        }
+    }
+
+    /// What writing its digits builds: the number, of at most the first many bits, and its
+    /// digits, numerator's and denominator's, at most the second many bytes.
+    pub(crate) fn text_size(&self) -> (BigUint, BigUint) {
         let side = |coef: &BigInt, sign: Sign| {
             let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
             width(coef, pows.map(|(p, e)| (*p, e.magnitude())))
@@ -224,10 +234,7 @@ impl Rat {
         let bits = side(&self.num, Sign::Plus) + side(&self.den, Sign::Minus);
         // `log10(2) < 1234 / 4096`; a digit is one byte.
         let text = ((&bits * 1234u32) >> 12u32) + 2u32;
-        match given(&(&bits + (text << 3u32))) {
-            true => Ok(()),
-            false => Err(TooLarge { bits }),
-        }
+        (bits, text)
     }
 
     /// The denominator's digits.
@@ -352,8 +359,8 @@ impl Rat {
         // `a_sum_too_large_to_build_is_an_error_naming_its_size` (COMPLEXITY.md K30).
         // A complete solution would keep a sum of terms unbuilt, ordered and projected by
         // bounds as products are.
-        let a = self.aligned(&b.pows);
-        let b = b.aligned(&self.pows);
+        let a = self.aligned(&b.pows, true)?;
+        let b = b.aligned(&self.pows, true)?;
         let mut common = Vec::new();
         let mut rest_a = Vec::new();
         let mut rest_b = Vec::new();
@@ -566,8 +573,10 @@ impl Rat {
         self.div(m).expect("the divisor is not zero").is_integer()
     }
 
-    /// The same number, with each prime of `others` moved out of `num` and `den` too.
-    fn aligned(&self, others: &[(u64, BigInt)]) -> std::borrow::Cow<'_, Rat> {
+    /// The same number, with each prime of `others` moved out of `num` and `den` too. When one
+    /// of them divides a coefficient, the coefficients are copied and divided; when `check`,
+    /// [`TooLarge`] first if the system refuses the memory for that.
+    fn aligned(&self, others: &[(u64, BigInt)], check: bool) -> Result<Cow<'_, Rat>, TooLarge> {
         let listed = |p: u64| self.pows.binary_search_by_key(&p, |(q, _)| *q).is_ok();
         let divides = |p: u64| divides(self.num.magnitude(), p) || divides(self.den.magnitude(), p);
         let new: Vec<u64> = others
@@ -576,12 +585,22 @@ impl Rat {
             .filter(|&p| !listed(p) && divides(p))
             .collect();
         if new.is_empty() {
-            return std::borrow::Cow::Borrowed(self);
+            return Ok(Cow::Borrowed(self));
+        }
+        if check {
+            // The copy of both coefficients, and while a power of `p` is divided out of one
+            // (`valuation`), its quotient, its remainder and the powers of `p` up to the square
+            // of the widest that divides it: at most eight times their width.
+            room(BigUint::from(self.num.bits() + self.den.bits()) << 3u32)?;
         }
         let mut pows = self.pows.to_vec();
         pows.extend(new.into_iter().map(|p| (p, BigInt::zero())));
         pows.sort_unstable_by_key(|(p, _)| *p);
-        Cow::Owned(Rat::extract(self.num.clone(), self.den.clone(), pows))
+        Ok(Cow::Owned(Rat::extract(
+            self.num.clone(),
+            self.den.clone(),
+            pows,
+        )))
     }
 
     /// `|self|` as the quotient of two products of positive powers.
@@ -698,7 +717,15 @@ fn pow_mod(p: u64, e: &BigUint) -> u64 {
 
 /// `num / den` reduced, with `den` positive.
 fn reduce(num: BigInt, den: BigInt) -> (BigInt, BigInt) {
-    let g = num.gcd(&den);
+    // num-bigint's gcd, Stein's algorithm, costs the product of the two widths even when one is
+    // a word, so the wider is first reduced modulo the narrower by one division, linear in the
+    // wider when the narrower is a word, and the gcd then runs at the narrower width.
+    let (n, d) = (num.magnitude().bits(), den.magnitude().bits());
+    let g = match n.cmp(&d) {
+        Ordering::Greater => den.gcd(&(&num % &den)),
+        Ordering::Less if !num.is_zero() => num.gcd(&(&den % &num)),
+        _ => num.gcd(&den),
+    };
     let sign = if den.is_negative() { -1 } else { 1 };
     (sign * (num / &g), sign * (den / g))
 }
@@ -825,7 +852,7 @@ pub struct TooLarge {
 /// itself and freed at once, so the answer is the machine's and the evaluator sets no limit.
 /// A build that would ask for more than the system gives is reported before it starts, where
 /// num-bigint would abort the process.
-fn room(bits: BigUint) -> Result<(), TooLarge> {
+pub(crate) fn room(bits: BigUint) -> Result<(), TooLarge> {
     match given(&bits) {
         true => Ok(()),
         false => Err(TooLarge { bits }),
@@ -935,6 +962,12 @@ pub(crate) fn refused() -> Option<TooLarge> {
     REFUSED.take()
 }
 
+/// Records the refusal `e` for [`refused`], after any recorded before it.
+fn record(e: TooLarge) {
+    let first = REFUSED.take().unwrap_or(e);
+    REFUSED.set(Some(first));
+}
+
 impl Rat {
     /// The order of the two by value, or [`TooLarge`] when they agree in so many leading bits
     /// that the system refuses the memory to tell them apart: each doubling of the precision
@@ -950,7 +983,16 @@ impl Rat {
             if self.den.is_one() && other.den.is_one() {
                 return Ok(self.num.cmp(&other.num));
             }
-            return Ok((&self.num * &other.den).cmp(&(&other.num * &self.den)));
+            let sign = self.num.sign().cmp(&other.num.sign());
+            if sign != Ordering::Equal || self.is_zero() {
+                return Ok(sign);
+            }
+            let n = times(self.num.magnitude(), other.den.magnitude(), check)?;
+            let d = times(other.num.magnitude(), self.den.magnitude(), check)?;
+            return Ok(match self.is_negative() {
+                true => d.cmp(&n),
+                false => n.cmp(&d),
+            });
         }
         let sign = self.num.sign().cmp(&other.num.sign());
         if sign != Ordering::Equal || self.is_zero() {
@@ -958,8 +1000,8 @@ impl Rat {
         }
         // With both coprime to every listed prime, the two are equal exactly when their
         // coefficients and exponents are, and otherwise one side holds a prime the other lacks.
-        let a = self.aligned(&other.pows);
-        let b = other.aligned(&self.pows);
+        let a = self.aligned(&other.pows, check)?;
+        let b = other.aligned(&self.pows, check)?;
         let n = times(a.num.magnitude(), b.den.magnitude(), check)?;
         let d = times(b.num.magnitude(), a.den.magnitude(), check)?;
         let f = merge(&a.pows, &b.pows, |x, y| x - y);
@@ -998,7 +1040,9 @@ impl Rat {
 
 /// Equal exactly when the values are. Both sides are aligned to every prime either lists, and
 /// then the two are equal exactly when their coefficients and exponents are, by unique
-/// factorization, so equality builds nothing.
+/// factorization. Aligning copies the coefficients when a prime the other lists divides one;
+/// under a [`Watch`], that copy asks the system for its memory first, and a refusal is
+/// recorded for [`refused`] and the two are compared by their normal forms, as [`Ord`] does.
 impl PartialEq for Rat {
     fn eq(&self, other: &Self) -> bool {
         if self.is_plain() && other.is_plain() {
@@ -1007,9 +1051,17 @@ impl PartialEq for Rat {
         if self.num.sign() != other.num.sign() {
             return false;
         }
-        let a = self.aligned(&other.pows);
-        let b = other.aligned(&self.pows);
-        a.num == b.num && a.den == b.den && a.pows == b.pows
+        let check = WATCHED.get();
+        match (
+            self.aligned(&other.pows, check),
+            other.aligned(&self.pows, check),
+        ) {
+            (Ok(a), Ok(b)) => a.num == b.num && a.den == b.den && a.pows == b.pows,
+            (Err(e), _) | (_, Err(e)) => {
+                record(e);
+                self.form_cmp(other) == Ordering::Equal
+            }
+        }
     }
 }
 
@@ -1023,8 +1075,7 @@ impl Ord for Rat {
         match self.order(other, WATCHED.get()) {
             Ok(o) => o,
             Err(e) => {
-                let first = REFUSED.take().unwrap_or(e);
-                REFUSED.set(Some(first));
+                record(e);
                 self.form_cmp(other)
             }
         }

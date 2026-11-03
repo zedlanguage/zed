@@ -500,7 +500,8 @@ fn number_cmp(a: &Value, b: &Value) -> Ordering {
 }
 
 /// Whether two numbers are the same: of one kind and one value, two floats bitwise. Two exact
-/// numbers are compared by their normal forms, which builds nothing ([`Rat`]'s `==`).
+/// numbers are compared by their normal forms ([`Rat`]'s `==`), which builds nothing unless a
+/// coefficient is divisible by a prime the other keeps as a power.
 pub(crate) fn number_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x == y,

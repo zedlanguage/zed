@@ -192,8 +192,9 @@ fn step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
                 o => Step::Ends(o),
             }
         }
-        // Two numbers are equal by their normal forms, which builds nothing; only the order
-        // reads bounds on their values.
+        // Two numbers are equal by their normal forms, which reads no bounds on their values;
+        // only a coefficient divisible by a prime the other keeps as a power is copied, and
+        // under a watched run that copy asks for its memory first (`Rat`'s `==`).
         (_, _, Relation::Identity | Relation::SurfaceEq)
             if a.number_kind().is_some() && b.number_kind().is_some() =>
         {
