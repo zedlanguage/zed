@@ -93,7 +93,7 @@ fn later_parts_name_their_layer() {
         ),
         (
             "f(m) = for x in m { g(x); };",
-            "error: this form (ExprStmt) is built from layer L6",
+            "error: this block exports nothing: end it with an expression or `return e;`",
         ),
     ]);
 }

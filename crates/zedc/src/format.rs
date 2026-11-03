@@ -18,8 +18,8 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    Annot, Arm, Expr, ExprKind, Field, Function, ImportKind, Param, Pattern, Port, Stmt, StmtKind,
-    Target, Type, TypeKind, TypeParam, Update,
+    Annot, Arm, BoundaryItem, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param,
+    Pattern, Port, Stmt, StmtKind, Target, Type, TypeKind, TypeParam, Update,
 };
 use crate::lex::{self, Span, Token};
 use crate::parse::{TOP, parse};
@@ -78,7 +78,7 @@ const PRIMARY: u8 = 13;
 
 fn level(e: &Expr) -> u8 {
     match &e.kind {
-        ExprKind::Lambda { .. } => LAMBDA,
+        ExprKind::Lambda { .. } | ExprKind::Break(_) => LAMBDA,
         ExprKind::Else { .. } => ELSE,
         ExprKind::Binary(op, ..) => binary_level(op),
         ExprKind::Is { .. } | ExprKind::In { .. } => RELATION,
@@ -88,6 +88,7 @@ fn level(e: &Expr) -> u8 {
         ExprKind::Call { .. }
         | ExprKind::Index(..)
         | ExprKind::Member { .. }
+        | ExprKind::Spread { .. }
         | ExprKind::Read { .. } => POSTFIX,
         ExprKind::Int { .. }
         | ExprKind::Float(_)
@@ -105,7 +106,9 @@ fn level(e: &Expr) -> u8 {
         | ExprKind::Section(_)
         | ExprKind::Seq(_)
         | ExprKind::Set(_)
-        | ExprKind::Map(_) => PRIMARY,
+        | ExprKind::Map(_)
+        // A `loop` has no head, so like a block it takes a suffix as written: `loop { … }.v`.
+        | ExprKind::Loop { .. } => PRIMARY,
         // A `for` is a primary of the grammar, but its body block ends it, so as the operand of
         // an operator it is written in parentheses: `(for x in xs { x }).rank`.
         ExprKind::For { .. } => ELSE,
@@ -141,6 +144,7 @@ fn starts_with_block(mut e: &Expr) -> bool {
             | ExprKind::Call { callee: of, .. }
             | ExprKind::Index(of, _)
             | ExprKind::Member { of, .. }
+            | ExprKind::Spread { of, .. }
             | ExprKind::Is { of, .. }
             | ExprKind::With { of, .. }
             | ExprKind::Else { of, .. } => e = of,
@@ -156,7 +160,7 @@ fn head_unsafe(e: &Expr) -> bool {
     let mut stack = vec![e];
     while let Some(e) = stack.pop() {
         match &e.kind {
-            ExprKind::Block(_) | ExprKind::For { .. } => return true,
+            ExprKind::Block(_) | ExprKind::For { .. } | ExprKind::Loop { .. } => return true,
             ExprKind::Else { of, default, .. } => stack.extend([&**of, &**default]),
             ExprKind::Binary(_, a, b)
             | ExprKind::In { of: a, set: b, .. }
@@ -171,11 +175,35 @@ fn head_unsafe(e: &Expr) -> bool {
             | ExprKind::Call { callee: a, .. }
             | ExprKind::Index(a, _)
             | ExprKind::Member { of: a, .. }
+            | ExprKind::Spread { of: a, .. }
             | ExprKind::Read { of: a, .. } => stack.push(a),
             _ => {}
         }
     }
     false
+}
+
+/// Whether the text of `e` starts with a non-negated `in`, which as an index key `x[k]` would
+/// be read as the key `i in s`: such a key is written in parentheses.
+fn starts_with_in(mut e: &Expr) -> bool {
+    loop {
+        match &e.kind {
+            ExprKind::In { negated: false, .. } => return true,
+            ExprKind::Binary(_, of, _)
+            | ExprKind::Range(of, _)
+            | ExprKind::In { of, .. }
+            | ExprKind::Reduce { of, .. }
+            | ExprKind::Read { of, .. }
+            | ExprKind::Call { callee: of, .. }
+            | ExprKind::Index(of, _)
+            | ExprKind::Member { of, .. }
+            | ExprKind::Spread { of, .. }
+            | ExprKind::Is { of, .. }
+            | ExprKind::With { of, .. }
+            | ExprKind::Else { of, .. } => e = of,
+            _ => return false,
+        }
+    }
 }
 
 /// The jobs that write `e` as a `head(…)` of the grammar, at level `ELSE`: in parentheses when
@@ -329,6 +357,14 @@ enum Job<'a> {
     },
     /// Annotations, each followed by a space.
     Annots { annots: &'a [Annot], ind: usize },
+    /// Index keys, each `[k]`.
+    Keys { keys: &'a [IndexKey], ind: usize },
+    /// A boundary's items, `sep` before the first and `, ` before each other.
+    Boundary {
+        items: &'a [BoundaryItem],
+        sep: &'static str,
+        ind: usize,
+    },
 }
 
 /// Pushes jobs to run in the order written.
@@ -536,6 +572,48 @@ impl<'a> Formatter<'a> {
                             stack.push(Job::Expr { e: v, min, ind });
                         }
                     }
+                }
+            }
+            Job::Keys { keys, ind } => {
+                if let Some((k, rest)) = keys.split_first() {
+                    then![stack; put("]"), Job::Keys { keys: rest, ind }];
+                    match k {
+                        IndexKey::In { name, set } => {
+                            self.put(format!("[{name} in "));
+                            stack.push(Job::Expr {
+                                e: set,
+                                min: LAMBDA,
+                                ind,
+                            });
+                        }
+                        IndexKey::At(e) if starts_with_in(e) => {
+                            self.put("[(");
+                            then![stack; Job::Expr { e, min: LAMBDA, ind }, put(")")];
+                        }
+                        IndexKey::At(e) => {
+                            self.put("[");
+                            stack.push(Job::Expr {
+                                e,
+                                min: LAMBDA,
+                                ind,
+                            });
+                        }
+                    }
+                }
+            }
+            Job::Boundary { items, sep, ind } => {
+                if let Some((b, rest)) = items.split_first() {
+                    stack.push(Job::Boundary {
+                        items: rest,
+                        sep: ", ",
+                        ind,
+                    });
+                    self.put(format!("{sep}{}", b.name));
+                    then![stack;
+                        Job::Keys { keys: &b.keys, ind },
+                        put(" = "),
+                        Job::Expr { e: &b.value, min: LAMBDA, ind },
+                    ];
                 }
             }
             Job::Updates { updates, ind } => {
@@ -825,10 +903,9 @@ impl<'a> Formatter<'a> {
                 trailing,
             });
         }
-        let (exports, mut entries): (Vec<_>, Vec<_>) = entries
-            .into_iter()
-            .partition(|e| matches!(e.stmt.kind, StmtKind::Return(_)));
-        entries.extend(exports);
+        // The `while` guards go first and the `until` guards and the export last, in the
+        // order the builder stores them.
+        entries.sort_by_key(|e| e.stmt.kind.place());
         stack.push(Job::Rest {
             prev,
             region,
@@ -856,8 +933,17 @@ impl<'a> Formatter<'a> {
             min: LAMBDA,
             ind,
         };
+        let with = |items| Job::Boundary {
+            items,
+            sep: " with ",
+            ind,
+        };
         match &s.kind {
-            StmtKind::Bind { targets, value: v } => {
+            StmtKind::Bind {
+                targets,
+                value: v,
+                boundary,
+            } => {
                 let ts: Vec<&str> = targets
                     .iter()
                     .map(|t| match t {
@@ -867,8 +953,40 @@ impl<'a> Formatter<'a> {
                     .collect();
                 self.put(ts.join(", "));
                 self.put(" = ");
-                then![stack; value(v), put(";")];
+                then![stack; value(v), with(boundary), put(";")];
             }
+            StmtKind::Mutable(decl) => {
+                self.put("mutable ");
+                stack.push(Job::Stmt {
+                    s: decl,
+                    ind,
+                    bare: false,
+                });
+            }
+            StmtKind::IndexedDef(d) => {
+                self.put(d.name.as_str());
+                then![stack;
+                    Job::Keys { keys: &d.keys, ind },
+                    put(" = "),
+                    value(&d.value),
+                    with(&d.boundary),
+                    put(";"),
+                ];
+            }
+            StmtKind::While(c) => {
+                self.put("while ");
+                then![stack; value(c), put(";")];
+            }
+            StmtKind::Until(c) => {
+                self.put("until ");
+                then![stack; value(c), put(";")];
+            }
+            // A statement that starts with `{` would be read as a block or a display.
+            StmtKind::Expr(e) if starts_with_block(e) => {
+                self.put("(");
+                then![stack; value(e), put(");")];
+            }
+            StmtKind::Expr(e) => then![stack; value(e), put(";")],
             StmtKind::Return(es) if bare && es.len() == 1 => stack.push(value(&es[0])),
             StmtKind::Return(es) => {
                 self.put("return ");
@@ -1153,6 +1271,24 @@ impl<'a> Formatter<'a> {
             }
             ExprKind::Read { of, name } => {
                 then![stack; Job::Postfix { of, ind }, put(format!("::{name}"))];
+            }
+            ExprKind::Spread { of, name } => {
+                then![stack; Job::Postfix { of, ind }, put(format!("*.{name}"))];
+            }
+            ExprKind::Break(of) => {
+                self.put("break ");
+                stack.push(at(of, ELSE));
+            }
+            ExprKind::Loop { label, body } => {
+                match label {
+                    Some(t) => self.put(format!("loop {t} ")),
+                    None => self.put("loop "),
+                }
+                stack.push(Job::Block {
+                    e: body,
+                    ind,
+                    place: Place::Branch,
+                });
             }
             ExprKind::Section(op) => self.put(format!("({op})")),
             ExprKind::Seq(items) => {

@@ -42,10 +42,11 @@ fn the_semicolon_rule() {
     check(&[
         // A statement without its `;` does not parse.
         ("x -> { y = x y }", "syntax"),
-        // The trailing expression takes none; an expression statement is layer L6.
+        // The trailing expression takes none: with one, it is an expression statement, and
+        // the block exports nothing.
         (
             "x -> { y = x; y; }",
-            "error: this form (ExprStmt) is built from layer L6",
+            "error: this block exports nothing: end it with an expression or `return e;`",
         ),
         // A brace holding only an expression is a display (`{ x }` is a set), not a block.
         ("({ x })", "(set x)"),
@@ -82,8 +83,8 @@ fn a_statement_of_a_later_layer_names_that_layer() {
             "error: this form (TypedBinding) is built from layer L10",
         ),
         (
-            "x -> { y = x with z = 1; y }",
-            "error: this form (Boundary) is built from layer L6",
+            "x -> { y[x + 1] <- 1; y }",
+            "error: this form (KeyedPush) is built from layer L7",
         ),
         (
             "x -> { local y = x; y }",

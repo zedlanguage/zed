@@ -236,13 +236,13 @@ fn deep_blocks_of_lines_are_written_at_the_order_of_their_text() {
 /// A form of a later layer at the bottom of a deep nest is reported, with its own place.
 #[test]
 fn an_error_at_the_bottom_of_a_deep_nest_is_reported() {
-    let text = nest("(", "x*.a", ")", DEEP);
+    let text = nest("(", "x >< f unordered", ")", DEEP);
     let tokens = lex(&text).unwrap();
     let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
     let e = build(&text, &tokens, &tree).unwrap_err();
-    // The spread suffix starts after the `x`.
-    assert_eq!(e.span.start, DEEP + 1);
-    assert_eq!(e.message, "this form (SpreadSuffix) is built from layer L6");
+    // The `unordered` starts 7 bytes after the `x`.
+    assert_eq!(e.span.start, DEEP + 7);
+    assert_eq!(e.message, "this form (Unordered) is built from layer L9");
 }
 
 /// The block at the bottom exports nothing; each block around it exports it.
@@ -258,11 +258,11 @@ fn a_block_with_no_export_at_the_bottom_of_a_deep_nest_is_reported() {
 
 #[test]
 fn an_error_in_a_deep_string_hole_is_reported() {
-    let text = nest("\"${", "x*.a", "}\"", DEEP);
+    let text = nest("\"${", "x >< f unordered", "}\"", DEEP);
     let tokens = lex(&text).unwrap();
     let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
     let e = build(&text, &tokens, &tree).unwrap_err();
-    assert_eq!(e.span.start, 3 * DEEP + 1);
+    assert_eq!(e.span.start, 3 * DEEP + 7);
 }
 
 #[test]

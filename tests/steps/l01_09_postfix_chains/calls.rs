@@ -79,10 +79,6 @@ fn a_form_of_a_later_layer_names_that_layer() {
             "this form (Unordered) is built from layer L9",
         ),
         (
-            "rows*.price",
-            "this form (SpreadSuffix) is built from layer L6",
-        ),
-        (
             "sort(desc score)",
             "this form (SortArg) is built from layer L5",
         ),

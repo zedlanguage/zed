@@ -221,6 +221,9 @@ struct Bound {
 impl Resolver {
     /// Binds `name` in the innermost scope; `signature` is a function's parameter types.
     fn bind(&mut self, name: &str, span: Span, kind: Kind, signature: Option<Vec<Option<String>>>) {
+        if name.ends_with('\'') {
+            return self.primed(name, span);
+        }
         let id = self.out.binders.len();
         let level = self.scopes.len();
         let here = (self.visible.get(name))
@@ -301,6 +304,9 @@ impl Resolver {
 
     /// Records the use of `name` at `span`, or the error that it names nothing at L1.
     fn name(&mut self, name: &str, span: Span) {
+        if name.ends_with('\'') {
+            return self.primed(name, span);
+        }
         let message = match self.find(name) {
             Some(Found::Bound(ids)) => {
                 self.out.uses.insert(span, Ref::Bound(ids));
@@ -322,43 +328,70 @@ impl Resolver {
 
     /// The statements of the innermost scope: their binders first, since order has no meaning.
     fn stmts(&mut self, stmts: &[Stmt]) {
+        let mut families = HashSet::new();
         for s in stmts {
-            let s = match &s.kind {
-                StmtKind::Annotated { decl, .. } => decl,
-                _ => s,
-            };
-            match &s.kind {
-                StmtKind::Bind { targets, .. } => {
-                    for t in targets {
-                        if let Target::Name(n) = t {
-                            self.bind(n, s.span, Kind::Binding, None);
-                        }
-                    }
-                }
-                StmtKind::Function(f) => {
-                    let signature = f
-                        .params
-                        .iter()
-                        .map(|p| p.ty.as_ref().map(|t| t.to_string()));
-                    self.bind(&f.name, s.span, Kind::Function, Some(signature.collect()));
-                }
-                StmtKind::Return(_)
-                | StmtKind::Push { .. }
-                | StmtKind::Struct(_)
-                | StmtKind::Type(_)
-                | StmtKind::Method(_)
-                | StmtKind::Import(_)
-                | StmtKind::Annotated { .. } => {}
-            }
+            self.declare(s, false, &mut families);
         }
         stmts.iter().for_each(|s| self.stmt(s));
+    }
+
+    /// Binds the names the statement `s` declares. Resolution refuses the forms of layer L6
+    /// whole, but binds their names, so that a use of one is not reported as well; in such a
+    /// statement (`whole`) a primed name, a loop step's output, is not bound. The pieces of one
+    /// indexed family bind its name once: `families` holds the families bound in this scope.
+    fn declare<'s>(&mut self, s: &'s Stmt, whole: bool, families: &mut HashSet<&'s str>) {
+        match &s.kind {
+            StmtKind::Bind {
+                targets, boundary, ..
+            } => {
+                let whole = whole || !boundary.is_empty();
+                for t in targets {
+                    match t {
+                        Target::Name(n) if whole && n.ends_with('\'') => {}
+                        Target::Name(n) => self.bind(n, s.span, Kind::Binding, None),
+                        Target::Wild => {}
+                    }
+                }
+            }
+            StmtKind::Function(f) => {
+                let signature = f
+                    .params
+                    .iter()
+                    .map(|p| p.ty.as_ref().map(|t| t.to_string()));
+                self.bind(&f.name, s.span, Kind::Function, Some(signature.collect()));
+            }
+            // The declaration is not annotated again, and a `mutable` holds a binding, so this
+            // recursion is one level deep.
+            StmtKind::Annotated { decl, .. } => self.declare(decl, whole, families),
+            StmtKind::Mutable(decl) => self.declare(decl, true, families),
+            StmtKind::IndexedDef(d) => {
+                if !d.name.ends_with('\'') && families.insert(d.name.as_str()) {
+                    self.bind(&d.name, s.span, Kind::Binding, None);
+                }
+            }
+            StmtKind::Return(_)
+            | StmtKind::Push { .. }
+            | StmtKind::Struct(_)
+            | StmtKind::Type(_)
+            | StmtKind::Method(_)
+            | StmtKind::Import(_)
+            | StmtKind::While(_)
+            | StmtKind::Until(_)
+            | StmtKind::Expr(_) => {}
+        }
     }
 
     /// The statement `s`, whose binders its scope has.
     fn stmt(&mut self, s: &Stmt) {
         match &s.kind {
+            StmtKind::Bind { boundary, .. } if !boundary.is_empty() => {
+                self.later(s.span, "a boundary `with`", "L6.2")
+            }
             StmtKind::Bind { value, .. } => self.expr(value),
             StmtKind::Return(es) => es.iter().for_each(|e| self.expr(e)),
+            StmtKind::Push { port, .. } if port.ends_with('\'') => {
+                self.later(s.span, "a generation push `x' <- e`", "L6.3")
+            }
             StmtKind::Push { port, value } => {
                 self.name(port, s.span);
                 self.expr(value);
@@ -375,9 +408,19 @@ impl Resolver {
                 self.function(&f.params, ports, &f.body);
             }
             StmtKind::Struct(_) => self.later(s.span, "a struct declaration", "L2.4"),
+            // A primed name is of layer L6 wherever it stands (DESIGN.md sec:grammar).
+            StmtKind::Method(m) if m.receiver.ends_with('\'') => self.primed(&m.receiver, s.span),
+            StmtKind::Method(m) if m.function.name.ends_with('\'') => {
+                self.primed(&m.function.name, s.span)
+            }
             StmtKind::Method(_) => self.later(s.span, "a method", "L2.4"),
             StmtKind::Type(_) => self.later(s.span, "a type declaration", "L2.5"),
             StmtKind::Import(_) => self.later(s.span, "an import", "L2.3"),
+            StmtKind::Mutable(_) => self.later(s.span, "a `mutable` binding", "L6.3"),
+            StmtKind::IndexedDef(_) => self.later(s.span, "an indexed definition", "L6.2"),
+            StmtKind::While(_) => self.later(s.span, "a `while` guard", "L6.3"),
+            StmtKind::Until(_) => self.later(s.span, "an `until` guard", "L6.3"),
+            StmtKind::Expr(_) => self.later(s.span, "an expression statement", "L6.3"),
             StmtKind::Annotated { annots, decl } => {
                 annots.iter().for_each(|a| self.annotation(a));
                 self.stmt(decl);
@@ -402,6 +445,11 @@ impl Resolver {
             message,
             notes: Vec::new(),
         });
+    }
+
+    /// The primed name `name`, which names a loop step's output.
+    fn primed(&mut self, name: &str, span: Span) {
+        self.later(span, &format!("the primed name `{name}`"), "L6.3");
     }
 
     /// The form `what`, which the parser builds, has its meaning from step `step`.
@@ -509,6 +557,9 @@ impl Resolver {
             }
             ExprKind::Member { of, name, .. } => {
                 self.expr(of);
+                if name.ends_with('\'') {
+                    return self.later(e.span, &format!("the primed field `{name}`"), "L6.3");
+                }
                 if let Some(Found::Bound(ids)) = self.find(name) {
                     self.out.uses.insert(e.span, Ref::Bound(ids));
                 }
@@ -526,6 +577,11 @@ impl Resolver {
             ExprKind::Set(_) => self.later(e.span, "a set display", "L3.2"),
             ExprKind::Map(_) => self.later(e.span, "a map display", "L3.2"),
             ExprKind::For { .. } => self.later(e.span, "a `for`", "L3.2"),
+            ExprKind::Loop { .. } => self.later(e.span, "a `loop`", "L6.3"),
+            ExprKind::Break(_) => self.later(e.span, "a `break`", "L6.3"),
+            ExprKind::Spread { .. } => {
+                self.later(e.span, "a call `*.` that writes its receiver", "L6.3")
+            }
         }
     }
 

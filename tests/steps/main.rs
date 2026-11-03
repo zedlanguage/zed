@@ -42,6 +42,7 @@ mod l01_39_reduced_product;
 mod l02_01_parser_structs;
 mod l02_02_parser_match_imports;
 mod l03_01_parser;
+mod l06_01_parser;
 mod m0_01_scaffolding;
 mod m0_03_grammar_tools;
 mod m0_04_corpus_references;

@@ -494,7 +494,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
-            StmtKind::Bind { targets, value } => {
+            StmtKind::Mutable(_)
+            | StmtKind::IndexedDef(_)
+            | StmtKind::While(_)
+            | StmtKind::Until(_)
+            | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
+            StmtKind::Bind { targets, value, .. } => {
                 let v = self.expr(value);
                 match &targets[..] {
                     [Target::Name(n)] => {
@@ -1555,6 +1560,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             | ExprKind::Set(_)
             | ExprKind::Map(_)
             | ExprKind::For { .. } => unreachable!("resolve rejects the forms of layer L3"),
+            ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
+                unreachable!("resolve rejects the forms of layer L6")
+            }
             // A `rat` literal is decorated and keeps its carrier; a literal past the size
             // limit is elaboration's error.
             ExprKind::Rat(s) => match Rat::decimal(s) {

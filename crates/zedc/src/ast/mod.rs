@@ -16,7 +16,10 @@
 //! method `T.m`, `this`, struct, name, `_` and tuple patterns, the tuple-destructuring
 //! parameter `((a, b)) -> e`, `type` declarations, and record, applied and atom-payload types.
 //! A name written twice in one struct, display, `with` clause or type parameter list is an
-//! error. A form of a later layer is an error naming that layer.
+//! error. From step L6.1 the generation forms are built: `loop`, `break`, the call `c*.m`,
+//! and in `stmts` the guards `while` and `until`, `mutable`, indexed definitions, boundary
+//! `with` clauses and expression statements. A primed name `x'` is one token, so it is a name
+//! like any other here. A form of a later layer is an error naming that layer.
 
 mod drop;
 mod show;
@@ -28,8 +31,8 @@ use std::fmt;
 use std::sync::OnceLock;
 
 pub use stmts::{
-    Annot, Field, Function, Import, ImportKind, Method, Port, Stmt, StmtKind, Struct, Target,
-    TypeDecl,
+    Annot, BoundaryItem, Field, Function, Import, ImportKind, IndexKey, IndexedDef, Method, Port,
+    Stmt, StmtKind, Struct, Target, TypeDecl,
 };
 pub use types::{Param, Pattern, Type, TypeKind, TypeParam};
 
@@ -198,6 +201,22 @@ pub enum ExprKind {
         /// The block run for each entry.
         body: Box<Expr>,
     },
+    /// `loop t { … }`: a body run once per generation, `t` naming the step index if written.
+    Loop {
+        /// The name of the step index, if written.
+        label: Option<String>,
+        /// The body, a block that need not export.
+        body: Box<Expr>,
+    },
+    /// `break e`: ends the loop, `e` its result.
+    Break(Box<Expr>),
+    /// `c*.m`: the member `m` of `c` called so that it writes `c'`.
+    Spread {
+        /// The receiver.
+        of: Box<Expr>,
+        /// The member's name.
+        name: String,
+    },
 }
 
 /// How a range ends: below `b` (`..<b`), through `b` (`..=b`), or not at all (`..`).
@@ -302,8 +321,9 @@ pub fn expr(text: &str, tokens: &[Token], tree: &Tree, n: usize) -> Result<Expr,
     })
 }
 
-/// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, in written order. A
-/// unit's top level exports its declarations, so `return` there is an error.
+/// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, in written order but
+/// for guards, which are ordered as in a block (`StmtKind::place`). A unit's top level exports
+/// its declarations, so `return` there is an error.
 pub fn unit(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Error> {
     with_holes(text, tokens, tree, |b| {
         b.fill(tree.root);
@@ -320,6 +340,7 @@ pub fn unit(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Erro
             }
             out.push(s);
         }
+        out.sort_by_key(|s| s.kind.place());
         Ok(out)
     })
 }
@@ -405,9 +426,8 @@ fn forms() -> &'static [Form] {
             "Expr" | "Lambda" | "Expr12" | "Or" | "And" | "Additive" | "Multiplicative"
             | "Equality" | "Compare" | "IsTest" | "Reduce" | "Range" | "Prefix" | "Power"
             | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If" | "Literal"
-            | "Display" | "This" | "Match" | "InTest" | "OpFunction" | "SeqExpr" | "For" => {
-                Form::Expr
-            }
+            | "Display" | "This" | "Match" | "InTest" | "OpFunction" | "SeqExpr" | "For"
+            | "Loop" | "Break" => Form::Expr,
             "Type" | "TypePostfix" | "Arrow" | "TypeDiff" | "TypeOr" | "TypeAnd" | "TypeName"
             | "AtomType" | "TupleType" | "GroupType" | "TypeApply" | "AtomApply" | "RecordType"
             | "SeqType" => Form::Type,
@@ -713,6 +733,23 @@ impl<'a> Builder<'a> {
                 span: self.span(n),
             }),
             "Match" => self.matching(n),
+            // The body is a block that may export nothing: a loop's value is its last frame.
+            "Loop" => {
+                let (&body, label) = kids.split_last().expect("Loop ends in its block");
+                Ok(Expr {
+                    kind: ExprKind::Loop {
+                        label: label
+                            .first()
+                            .map(|&l| self.word(self.tree.nodes[l].start).into()),
+                        body: Box::new(self.body(body)?),
+                    },
+                    span: self.span(n),
+                })
+            }
+            "Break" => Ok(Expr {
+                kind: ExprKind::Break(Box::new(self.node(kids[0])?)),
+                span: self.span(n),
+            }),
             _ => unreachable!("make builds only these rules as expressions"),
         }
     }
@@ -814,6 +851,10 @@ impl<'a> Builder<'a> {
                 safe: name == "SafeSuffix",
             },
             "ReadSuffix" => ExprKind::Read {
+                of,
+                name: self.word(node.end - 1).into(),
+            },
+            "SpreadSuffix" => ExprKind::Spread {
                 of,
                 name: self.word(node.end - 1).into(),
             },

@@ -4,8 +4,8 @@
 use std::fmt;
 
 use super::{
-    Expr, ExprKind, Field, Function, ImportKind, Param, Pattern, Stmt, StmtKind, StrPart, Target,
-    Type, TypeKind, TypeParam,
+    BoundaryItem, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param, Pattern, Stmt,
+    StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
 };
 
 /// What is left to write.
@@ -58,7 +58,8 @@ fn each<'a, T: 'a>(
 /// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`, `(record (x: 1))`,
 /// `(with p (= c.x 1))`, `(match x (-> p e) (-> q (where c) f))`; from layer L3 `(..< a b)`,
 /// `(.. a)`, `(in x s)`, `(not in x s)`, `(>< m op)`, `(:: xs len)`, `(section +)`, `(seq a b)`,
-/// `(set a b)`, `(map (-> k v))`, and `(for (k v) m (where c) body)`.
+/// `(set a b)`, `(map (-> k v))`, and `(for (k v) m (where c) body)`; from layer L6 `(loop t body)`,
+/// `(break e)` and `(*. c m)`.
 fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
     let at = |e: &'a Expr| Show::Expr(e);
     match &e.kind {
@@ -251,6 +252,17 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
             }
             out.extend([at(body), Text(")")]);
         }
+        ExprKind::Loop { label, body } => {
+            out.push(Text("(loop "));
+            if let Some(l) = label {
+                out.extend([Text(l), Text(" ")]);
+            }
+            out.extend([at(body), Text(")")]);
+        }
+        ExprKind::Break(e) => out.extend([Text("(break "), at(e), Text(")")]),
+        ExprKind::Spread { of, name } => {
+            out.extend([Text("(*. "), at(of), Text(" "), Text(name), Text(")")]);
+        }
     }
 }
 
@@ -259,6 +271,40 @@ fn target(t: &Target) -> &str {
         Target::Name(n) => n,
         Target::Wild => "_",
     }
+}
+
+/// The keys of an indexed definition or a boundary value: `((in i s) (at k))`.
+fn keys<'a>(keys: &'a [IndexKey], out: &mut Vec<Show<'a>>) {
+    out.push(Text("("));
+    let mut sep = "";
+    for k in keys {
+        match k {
+            IndexKey::In { name, set } => {
+                out.extend([Text(sep), Text("(in "), Text(name), Text(" ")]);
+                out.extend([Show::Expr(set), Text(")")]);
+            }
+            IndexKey::At(e) => out.extend([Text(sep), Text("(at "), Show::Expr(e), Text(")")]),
+        }
+        sep = " ";
+    }
+    out.push(Text(")"));
+}
+
+/// ` (with (= x e) (= x ((at k)) e))` for boundary values, nothing for none.
+fn boundary_items<'a>(items: &'a [BoundaryItem], out: &mut Vec<Show<'a>>) {
+    if items.is_empty() {
+        return;
+    }
+    out.push(Text(" (with"));
+    for b in items {
+        out.extend([Text(" (= "), Text(&b.name), Text(" ")]);
+        if !b.keys.is_empty() {
+            keys(&b.keys, out);
+            out.push(Text(" "));
+        }
+        out.extend([Show::Expr(&b.value), Text(")")]);
+    }
+    out.push(Text(")"));
 }
 
 fn params_spaced<'a>(params: &'a [Param], out: &mut Vec<Show<'a>>) {
@@ -275,18 +321,38 @@ fn params_spaced<'a>(params: &'a [Param], out: &mut Vec<Show<'a>>) {
 /// `(struct P (x: f64) (y: f64 = 0.0) (import a.B))`, a type `(type T (A) (| A #b))`, an import
 /// `(import a.b)`, `(import a.b as c)` or `(import a.b (x y) @hash(…))`, and an annotated
 /// declaration `(annotated @log (@cost n (k: 1)) (def …))`, a bare annotation without
-/// parentheses.
+/// parentheses; from layer L6, a binding with boundary values
+/// `(= (x') e (with (= x 0)))`, `(mutable (= (c) e))`, an indexed definition
+/// `(indexed x ((in i s) (at k)) e (with (= x ((at -1)) 0)))`, `(while c)`, `(until c)`, and an
+/// expression statement `(do e)`.
 fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
     match &s.kind {
-        StmtKind::Bind { targets, value } => {
+        StmtKind::Bind {
+            targets,
+            value,
+            boundary,
+        } => {
             out.push(Text("(= ("));
             let mut sep = "";
             for t in targets {
                 out.extend([Text(sep), Text(target(t))]);
                 sep = " ";
             }
-            out.extend([Text(") "), Show::Expr(value), Text(")")]);
+            out.extend([Text(") "), Show::Expr(value)]);
+            boundary_items(boundary, out);
+            out.push(Text(")"));
         }
+        StmtKind::Mutable(decl) => out.extend([Text("(mutable "), Show::Stmt(decl), Text(")")]),
+        StmtKind::IndexedDef(d) => {
+            out.extend([Text("(indexed "), Text(&d.name), Text(" ")]);
+            keys(&d.keys, out);
+            out.extend([Text(" "), Show::Expr(&d.value)]);
+            boundary_items(&d.boundary, out);
+            out.push(Text(")"));
+        }
+        StmtKind::While(c) => out.extend([Text("(while "), Show::Expr(c), Text(")")]),
+        StmtKind::Until(c) => out.extend([Text("(until "), Show::Expr(c), Text(")")]),
+        StmtKind::Expr(e) => out.extend([Text("(do "), Show::Expr(e), Text(")")]),
         StmtKind::Return(es) => {
             out.push(Text("(return"));
             each(out, es, Show::Expr);

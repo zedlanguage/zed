@@ -4,8 +4,8 @@
 use std::mem;
 
 use super::{
-    Annot, Expr, ExprKind, Field, Function, Method, Param, Pattern, RangeEnd, Stmt, StmtKind,
-    StrPart, Struct, Type, TypeKind,
+    Annot, BoundaryItem, Expr, ExprKind, Field, Function, IndexKey, IndexedDef, Method, Param,
+    Pattern, RangeEnd, Stmt, StmtKind, StrPart, Struct, Type, TypeKind,
 };
 
 impl Drop for Expr {
@@ -36,7 +36,10 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
         ExprKind::Unary(_, a)
         | ExprKind::Is { of: a, .. }
         | ExprKind::Member { of: a, .. }
-        | ExprKind::Read { of: a, .. } => out.push(*a),
+        | ExprKind::Read { of: a, .. }
+        | ExprKind::Loop { body: a, .. }
+        | ExprKind::Break(a)
+        | ExprKind::Spread { of: a, .. } => out.push(*a),
         ExprKind::Binary(_, a, b)
         | ExprKind::Index(a, b)
         | ExprKind::In { of: a, set: b, .. }
@@ -114,7 +117,28 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
 /// Moves the expressions directly in the statement `kind` to `out`.
 fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
     match kind {
-        StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => out.push(value),
+        StmtKind::Bind {
+            value, boundary, ..
+        } => {
+            out.push(value);
+            boundary_kids(boundary, out);
+        }
+        StmtKind::Push { value, .. }
+        | StmtKind::While(value)
+        | StmtKind::Until(value)
+        | StmtKind::Expr(value) => out.push(value),
+        StmtKind::IndexedDef(IndexedDef {
+            keys,
+            value,
+            boundary,
+            ..
+        }) => {
+            key_kids(keys, out);
+            out.push(value);
+            boundary_kids(boundary, out);
+        }
+        // A `mutable` holds a binding, so this recursion is one level deep.
+        StmtKind::Mutable(decl) => stmt_kids(decl.kind, out),
         StmtKind::Return(mut es) => out.append(&mut es),
         StmtKind::Function(f) | StmtKind::Method(Method { function: f, .. }) => {
             function_kids(f, out)
@@ -137,6 +161,20 @@ fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
             }
             stmt_kids(decl.kind, out);
         }
+    }
+}
+
+fn key_kids(keys: Vec<IndexKey>, out: &mut Vec<Expr>) {
+    out.extend(keys.into_iter().map(|k| match k {
+        IndexKey::In { set, .. } => set,
+        IndexKey::At(e) => e,
+    }));
+}
+
+fn boundary_kids(items: Vec<BoundaryItem>, out: &mut Vec<Expr>) {
+    for b in items {
+        key_kids(b.keys, out);
+        out.push(b.value);
     }
 }
 

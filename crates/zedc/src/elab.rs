@@ -315,7 +315,12 @@ impl<'a> Tables<'a> {
                 | StmtKind::Type(_)
                 | StmtKind::Method(_)
                 | StmtKind::Import(_)
-                | StmtKind::Annotated { .. } => {}
+                | StmtKind::Annotated { .. }
+                | StmtKind::Mutable(_)
+                | StmtKind::IndexedDef(_)
+                | StmtKind::While(_)
+                | StmtKind::Until(_)
+                | StmtKind::Expr(_) => {}
             }
         }
     }
@@ -410,6 +415,11 @@ impl<'a> Tables<'a> {
             | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
+            StmtKind::Mutable(_)
+            | StmtKind::IndexedDef(_)
+            | StmtKind::While(_)
+            | StmtKind::Until(_)
+            | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
         }
     }
 
@@ -670,7 +680,12 @@ impl<'a> Elab<'a> {
             | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
-            StmtKind::Bind { targets, value } => {
+            StmtKind::Mutable(_)
+            | StmtKind::IndexedDef(_)
+            | StmtKind::While(_)
+            | StmtKind::Until(_)
+            | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
+            StmtKind::Bind { targets, value, .. } => {
                 let v = self.expr(value)?;
                 match &targets[..] {
                     [Target::Name(n)] => {
@@ -852,6 +867,9 @@ impl<'a> Elab<'a> {
             | ExprKind::Set(_)
             | ExprKind::Map(_)
             | ExprKind::For { .. } => unreachable!("resolve rejects the forms of layer L3"),
+            ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
+                unreachable!("resolve rejects the forms of layer L6")
+            }
             ExprKind::Int { radix, digits } => {
                 let digits: String = digits.chars().filter(|&c| c != '_').collect();
                 lit(Value::int_text(&digits, *radix).expect("the lexer's digits"))
@@ -1664,6 +1682,11 @@ fn what(s: &Stmt) -> String {
         | StmtKind::Annotated { .. } => {
             unreachable!("resolve rejects the forms of layer L2")
         }
+        StmtKind::Mutable(_)
+        | StmtKind::IndexedDef(_)
+        | StmtKind::While(_)
+        | StmtKind::Until(_)
+        | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
     }
 }
 

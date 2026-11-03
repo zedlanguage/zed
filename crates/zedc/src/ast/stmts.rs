@@ -2,7 +2,9 @@
 //! declarations (step L1.12): functions with their `test` tables, and the push `p <- e`; and
 //! from step L2.1, the declarations of structs, of types, and of methods `T.m`; and from step
 //! L2.2, imports with their `@hash` pins, and the annotations `@name` written before a
-//! declaration.
+//! declaration; and from step L6.1, the guards `while c;` and `until c;`, `mutable x = e;`,
+//! indexed definitions `x[i in s] = e;`, boundary values `with x = e0` after a binding or an
+//! indexed definition, and expression statements `e;`.
 
 use std::collections::HashMap;
 
@@ -22,13 +24,27 @@ pub struct Stmt {
 /// The kinds of statement.
 #[derive(Debug)]
 pub enum StmtKind {
-    /// `a = e;`, or `a, b = e;` destructuring a tuple.
+    /// `a = e;`, or `a, b = e;` destructuring a tuple, each followed by its boundary values
+    /// `with x = e0` if written.
     Bind {
         /// The targets, in order.
         targets: Vec<Target>,
         /// The value.
         value: Expr,
+        /// The boundary values, in written order; empty when there is no `with`.
+        boundary: Vec<BoundaryItem>,
     },
+    /// `mutable x = e;`: the binding, whose variable carries forward when a step leaves it
+    /// unassigned.
+    Mutable(Box<Stmt>),
+    /// `x[i in s] = e;` or `x[i] = e;`, an indexed definition, one piece of a piecewise one.
+    IndexedDef(IndexedDef),
+    /// `while c;`, the guard tested before each step.
+    While(Expr),
+    /// `until c;`, the guard tested after each step.
+    Until(Expr),
+    /// `e;`, an expression statement, which may write a generation, as `c*.tick();` does.
+    Expr(Expr),
     /// `return e;` or `return a, b;`, the block's export; a trailing expression is `return e;`.
     Return(Vec<Expr>),
     /// A function declaration.
@@ -181,6 +197,46 @@ pub struct Port {
     pub span: Span,
 }
 
+/// An indexed definition `x[i in s][j] = e with x[-1] = 0;`.
+#[derive(Debug)]
+pub struct IndexedDef {
+    /// The family defined.
+    pub name: String,
+    /// Its keys, outermost first.
+    pub keys: Vec<IndexKey>,
+    /// The value at those keys.
+    pub value: Expr,
+    /// The boundary values, in written order; empty when there is no `with`.
+    pub boundary: Vec<BoundaryItem>,
+}
+
+/// A key of an indexed definition or a boundary value.
+#[derive(Debug)]
+pub enum IndexKey {
+    /// `i in s`: the name `i` bound over the domain `s`.
+    In {
+        /// The name bound.
+        name: String,
+        /// The domain.
+        set: Expr,
+    },
+    /// `e`: the key `e`.
+    At(Expr),
+}
+
+/// A boundary value `x = e` or `x[-1] = e` of a `with` clause.
+#[derive(Debug)]
+pub struct BoundaryItem {
+    /// The variable.
+    pub name: String,
+    /// Its keys, outermost first; none for a generation variable.
+    pub keys: Vec<IndexKey>,
+    /// The value.
+    pub value: Expr,
+    /// Its text.
+    pub span: Span,
+}
+
 /// A binding target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -190,9 +246,36 @@ pub enum Target {
     Wild,
 }
 
+impl StmtKind {
+    /// Where the statement stands among those of its block, which the builder and the
+    /// formatter both order by it, keeping the written order among equals: a `while` guard,
+    /// tested before a step, first; an `until` guard, tested after it, last but for the
+    /// export (DESIGN.md sec:generations). Order has no meaning, so this is only where the
+    /// text shows the timing the keyword fixes.
+    pub fn place(&self) -> u8 {
+        match self {
+            StmtKind::While(_) => 0,
+            StmtKind::Bind { .. }
+            | StmtKind::Mutable(_)
+            | StmtKind::IndexedDef(_)
+            | StmtKind::Push { .. }
+            | StmtKind::Expr(_)
+            | StmtKind::Function(_)
+            | StmtKind::Method(_)
+            | StmtKind::Struct(_)
+            | StmtKind::Type(_)
+            | StmtKind::Import(_)
+            | StmtKind::Annotated { .. } => 1,
+            StmtKind::Until(_) => 2,
+            StmtKind::Return(_) => 3,
+        }
+    }
+}
+
 impl Builder<'_> {
     /// The block of node `n`, a `Block`: its statements, of which at most one is a `return`.
-    /// The export is stored last, where the formatter writes it (step L1.13); the order of the
+    /// The statements are stored in the order the formatter writes them (`StmtKind::place`):
+    /// the `while` guards first, then the `until` guards and the export last; the order of the
     /// others is kept. Whether it must export is for what takes it (`Builder::node`).
     pub(super) fn block(&mut self, n: usize) -> Result<Expr, Error> {
         let mut stmts = Vec::new();
@@ -222,13 +305,7 @@ impl Builder<'_> {
             }
             stmts.push(s);
         }
-        if let Some(i) = stmts
-            .iter()
-            .position(|s| matches!(s.kind, StmtKind::Return(_)))
-        {
-            let export = stmts.remove(i);
-            stmts.push(export);
-        }
+        stmts.sort_by_key(|s| s.kind.place());
         Ok(Expr {
             kind: ExprKind::Block(stmts),
             span: self.span(n),
@@ -418,12 +495,33 @@ impl Builder<'_> {
                     .collect::<Result<_, _>>()?,
             ),
             "PlainBinding" => {
+                let (kids, boundary) = self.boundary(kids)?;
                 let (&value, targets) = kids.split_last().expect("PlainBinding ends in a value");
                 StmtKind::Bind {
                     targets: targets.iter().map(|&t| self.target(t)).collect(),
                     value: self.node(value)?,
+                    boundary,
                 }
             }
+            "Mutable" => StmtKind::Mutable(Box::new(Stmt {
+                kind: self.decl(kids[0])?,
+                span: self.span(kids[0]),
+            })),
+            "IndexedDef" => {
+                let (kids, boundary) = self.boundary(kids)?;
+                let [name, keys @ .., value] = kids else {
+                    unreachable!("IndexedDef = Name ('[' IndexKey ']')+ '=' Expr Boundary? ';'")
+                };
+                StmtKind::IndexedDef(IndexedDef {
+                    name: self.word(self.tree.nodes[*name].start).into(),
+                    keys: self.keys(keys)?,
+                    value: self.node(*value)?,
+                    boundary,
+                })
+            }
+            "While" => StmtKind::While(self.node(kids[0])?),
+            "Until" => StmtKind::Until(self.node(kids[0])?),
+            "ExprStmt" => StmtKind::Expr(self.node(kids[0])?),
             "Function" => StmtKind::Function(self.function(d, 0)?),
             "Method" => StmtKind::Method(Method {
                 receiver: self.word(self.tree.nodes[kids[0]].start).into(),
@@ -455,6 +553,49 @@ impl Builder<'_> {
             "Import" => StmtKind::Import(self.import(d)?),
             _ => return Err(self.later(d)),
         })
+    }
+
+    /// The kids of a declaration that may end in a `Boundary`, without it, and the boundary
+    /// values it holds.
+    fn boundary<'k>(
+        &mut self,
+        kids: &'k [usize],
+    ) -> Result<(&'k [usize], Vec<BoundaryItem>), Error> {
+        let Some((&b, rest)) = kids
+            .split_last()
+            .filter(|&(&b, _)| self.tree.name(b) == "Boundary")
+        else {
+            return Ok((kids, Vec::new()));
+        };
+        let mut items = Vec::new();
+        for &item in self.kids(b) {
+            let [name, keys @ .., value] = self.kids(item) else {
+                unreachable!("BoundaryItem = Name ('[' IndexKey ']')* '=' Expr")
+            };
+            items.push(BoundaryItem {
+                name: self.word(self.tree.nodes[*name].start).into(),
+                keys: self.keys(keys)?,
+                value: self.node(*value)?,
+                span: self.span(item),
+            });
+        }
+        Ok((rest, items))
+    }
+
+    /// The keys of `IndexKey` nodes: `i in s`, or a key expression.
+    fn keys(&mut self, keys: &[usize]) -> Result<Vec<IndexKey>, Error> {
+        keys.iter()
+            .map(|&k| {
+                Ok(match *self.kids(k) {
+                    [name, set] => IndexKey::In {
+                        name: self.word(self.tree.nodes[name].start).into(),
+                        set: self.node(set)?,
+                    },
+                    [e] => IndexKey::At(self.node(e)?),
+                    _ => unreachable!("IndexKey = Name 'in' Expr | Expr"),
+                })
+            })
+            .collect()
     }
 
     /// The target of node `n`, a `Target`: a name or `_`.

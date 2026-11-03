@@ -45,22 +45,35 @@ fn every_corpus_program_that_builds_formats_to_a_fixed_point() {
     // (it builds from step L2.2, its `import`); from step L3.1, which builds `for`, `><`, `::`
     // and displays, the others align the `=` of consecutive bindings and their trailing
     // comments, 11-csv-split.zed and 23-join-zoo.zed also wrap long lines, and 23-join-zoo.zed
-    // writes a `match` on one line.
+    // writes a `match` on one line. From step L6.1, which builds `loop`, indexed definitions and
+    // their `with`, the programs that use them also break long `if` chains and definitions by
+    // hand, align, write a `loop` or a `match` on one line, or keep parentheses the grammar
+    // does not need; 15-spreadsheet.zed, 24-weighted-pick.zed and 28-precedence-climbing.zed
+    // write a `while` guard after the step, where the formatter writes it first.
     differ.sort();
     assert_eq!(
         differ,
         [
             "01-word-count.zed",
             "02-histogram.zed",
+            "03-edit-distance.zed",
             "04-running-variance.zed",
             "05-max-prefix-sum.zed",
             "06-matrix-multiply.zed",
+            "08-utf8-percent.zed",
             "10-regex-matcher.zed",
             "11-csv-split.zed",
+            "12-cyk-table.zed",
             "13-union-find.zed",
+            "15-spreadsheet.zed",
             "17-sensor-pipeline.zed",
             "23-join-zoo.zed",
+            "24-weighted-pick.zed",
+            "26-heat-stencil.zed",
+            "27-parent-chain.zed",
+            "28-precedence-climbing.zed",
             "29-late-dedup.zed",
+            "31-typechecker.zed",
         ]
     );
 }
