@@ -159,6 +159,11 @@ impl Product<'_> {
     fn bound(&self, k: u64, up: bool) -> Bound {
         let mut b = Bound::of(&self.coef, k, up);
         for (p, e) in &self.pows {
+            if *p == 2 {
+                // `2^e` is a bound exactly: the exponent moves and nothing is rounded or squared.
+                b.e += BigInt::from(e.clone());
+                continue;
+            }
             let base = Bound::exact(BigUint::from(*p));
             let mut power = Bound::exact(BigUint::one());
             for i in (0..e.bits()).rev() {

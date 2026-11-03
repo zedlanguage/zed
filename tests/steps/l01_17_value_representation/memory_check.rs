@@ -352,3 +352,24 @@ fn comparing_numbers_that_agree_in_n_bits_costs_order_n() {
         assert!(a > b);
     });
 }
+
+/// The plan's example `2 ** 2 ** 40 + 1 < 2 ** 2 ** 40 + 2` stops before the comparison: each
+/// sum needs `2^40` bits, and CAP-bits refuses the sum `+` itself.
+#[test]
+fn the_plan_example_is_refused_at_the_sum() {
+    if !in_child("the_plan_example_is_refused_at_the_sum") {
+        return;
+    }
+    let big = || num(two_to(1 << 40));
+    let t = bin(
+        Prim::Lt,
+        bin(Prim::Add, big(), lit(1)),
+        bin(Prim::Add, big(), lit(2)),
+    );
+    lower_limit();
+    let err = eval(&t).unwrap_err();
+    let KernelError::NumberTooLarge { op, .. } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(*op, "+");
+}

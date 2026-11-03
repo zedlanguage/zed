@@ -1130,3 +1130,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `stacker::remaining_stack` to give the run's thread what is left of the caller's stack | `scaling::alone` | Foreign library | The runtime's own stack size for a task |
 | `std::panic::resume_unwind` to carry a run's panic into the caller | `scaling::counted_on_a_thread` (so `alone`, `on_a_thread` and `deep::on_main_sized_stack`) | Early exit (gap 12) | A failed run is a failure value returned to the caller |
 | `AtomicUsize::fetch_add` and `Mutex` in place of `Cell` and `RefCell` in test closures, because a run on another thread needs `Sync` | `l01_22` (with `deep_types.rs`), `l01_23` (with `x13.rs`), `l01_36`, `l25_08` scaling tests, and the unit tests `a_comparison_runs_each_size_as_often_as_the_meter_says` and `each_run_starts_with_empty_thread_memos` | Mutation (gap 11) | A state receiver holding the counter or the cache of built inputs |
+
+## Entries from L1.17a (`zed-kernel/src/num.rs`, `num/bound.rs`, `words.rs`, `eval.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `thread_local!` cells, a flag and a slot for the first refusal, set by an infallible `Ord` and read after each primitive | `num::WATCHED`, `num::REFUSED`, `Machine::prim` | Mutation, identity | The order returns its refusal as a value (`try_cmp`) and the family's key order is a fallible function of the run |
+| A guard struct whose `Drop` restores the outer flag and record when a run ends, on every exit path | `num::Watch`, `Evaluator::run` | Mutation | The run passes its own state; nothing to restore |
+| `Vec::try_reserve_exact` to ask the allocator for a block and free it at once | `num::room`, `num::given` (from CAP-bits) | Missing (no allocator query) | A runtime primitive that answers whether a block of a size can be given |
+| `Cow<'a, BigUint>` for a coefficient borrowed from a number or built as a product | `bound::Product`, `num::times` | None | Zed shares values, so the field holds the number itself |
+| A `let held;` declared before a `match` so one arm can borrow a value built in another | `words::word`, the casts | None | A plain binding of the number |
+| `rustix::process::setrlimit(Resource::As, …)` in a test child process | `tests/.../memory_check.rs` | Missing (process limits) | A test-harness facility, not the language |
