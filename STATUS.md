@@ -886,7 +886,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | S22b-rest | verify attempt 1 | 2026-11-03 07:22 | negative control (4a2686f preimage.rs + new tests, /home/luke/Work/wt/s22b-rest-ctl, load ~102): constant_minus 2 of 12 fail (clip at ends of i64, reflected arm |
 | S22e-quad | repair attempt 1 | 2026-11-03 07:43 | suite BUILD FAILED: link of steps test binary, undefined llvm anon symbols (corrupt incremental cache from the killed earlier run); cargo clean -p zed-tests and |
 | S22-merge | impl attempt 1 | 2026-11-03 08:07 | l01_25 piece passes with the counts updated: 130 passed, 1 ignored, 219.7 s at load 178 (125.8 s at load 134 before the fix); starting clippy and tools/run_test |
-| SCALE-bytes | merge attempt 1 | 2026-11-03 07:14 | waiting: merge.lock held by OSP-neglit since 08:53 (38 min, over 30; not broken; its last line 09:05 says rebuilding) |
 | ST-arms-quad | verify attempt 5 | 2026-11-03 03:16 | fmt --check and clippy -D warnings clean on cd363ae; suite running (load 134.48) |
 | T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | T2-mid | orchestrator attempt  | 2026-11-03 04:26 | SCOPE CUT for repair#4: finish and commit the zir/memory.rs walks and l01_34 tests now in progress, run the suite, then return ok=true for verify and merge. Do  |
@@ -902,8 +901,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | UTVPI-NEAR | orchestrator attempt  | 2026-11-03 06:34 | for the repair: both union probes (feasible and negative-cycle) become committed scaling tests; the eta exit needs a test that reaches it (or remove it if unrea |
 | WIDEN-WARN | repair attempt 1 | 2026-11-03 07:14 | fix applied: only + - * unary - and literals inherit wrap; new test with the 3 probes passes, widen 16/16; clippy, fmt clean; follow-up WIDEN-WARN-test added to |
 
-Merged into local main and not yet pushed (72 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (73 commits); the push follows one full test run on the merged tree:
 
+- 3fa1fdc SCALE-bytes: scaling tests check bytes allocated next to instructions
 - 2e145cc OSP-neglit: reject a prefix - on a postfix chain whose base is a numeric literal, with both groupings and their values
 - ab26ea6 STATUS: in progress as of 2026-11-03 08:53
 - 99deb6b plan_dag, STATUS: LIN-cross merged
@@ -983,7 +983,7 @@ Merged into local main and not yet pushed (72 commits); the push follows one ful
   by vector moves (T11-fix-rest, F46): the old `resolve` took 10.2 times the instructions at
   8 times the size, but 51.8 times the processor time. A scaling test of code whose cost is
   copying memory needs a second measure, such as bytes allocated or copied (ledger item
-  SCALE-bytes).
+  SCALE-bytes). Done: SCALE-bytes (3fa1fdc) checks bytes allocated next to instructions.
 - After T14-occ (COMPLEXITY.md K25): `Provenance::origins` reads a family entry by entry when
   no family it was made from, or made from it, has been read, at the cost of the set of
   failures each entry holds, so `n` entries holding one set of `m` failures cost `n·m` (no
