@@ -347,3 +347,104 @@ fn arms_of_a_capped_test_take_time_near_linear_in_its_depth() {
         });
     });
 }
+
+/// At each level `i` of `d`: `(100 <= x <= 200 && w >= i) || (0 <= x <= 10 && (x >= 5 ||
+/// y >= 0) && (y <= -1 || x >= 7) && level i + 1)`, the last level `w >= d`. Inside each level
+/// `x` is in `5..=10`, though each choice alone allows `0..=10`, so the hull of `x` moves
+/// inward at every level.
+fn moving(d: usize) -> Term {
+    let ge = |n, v: usize| cmp(Prim::Ge, n, v as i64);
+    let le = |n, v: i64| cmp(Prim::Le, n, v);
+    (0..d).rev().fold(ge("w", d), |inner, i| {
+        let body = all(vec![
+            ge("x", 0),
+            le("x", 10),
+            either(ge("x", 5), ge("y", 0)),
+            either(le("y", -1), ge("x", 7)),
+            inner,
+        ]);
+        either(all(vec![ge("x", 100), le("x", 200), ge("w", i)]), body)
+    })
+}
+
+/// At each level `i` of `d`: `(100 <= x <= 200 && v >= i) || ((y >= 0 || z >= 0) && ((20 <= x
+/// <= 30 && w >= i) || (0 <= x <= 10 && level i + 1)))`, the last level `w >= d`. The small
+/// choice `20..=30` misses the bound `10` that the deep choice holds, so a point at that bound
+/// is found only below every level.
+fn heavy(d: usize) -> Term {
+    let ge = |n, v: usize| cmp(Prim::Ge, n, v as i64);
+    let le = |n, v: i64| cmp(Prim::Le, n, v);
+    (0..d).rev().fold(ge("w", d), |inner, i| {
+        let deep = all(vec![ge("x", 0), le("x", 10), inner]);
+        let small = all(vec![ge("x", 20), le("x", 30), ge("w", i)]);
+        let body = all(vec![either(ge("y", 0), ge("z", 0)), either(small, deep)]);
+        either(all(vec![ge("x", 100), le("x", 200), ge("v", i)]), body)
+    })
+}
+
+/// The names `moving` and `heavy` use.
+fn level_names() -> Vec<Arc<str>> {
+    ["x", "y", "z", "w", "v"].map(Into::into).into()
+}
+
+/// The hull of `x` in the then and else arms of `if test then 1 else 2`.
+fn x_hulls(test: Term) -> [String; 2] {
+    let a = arms(&if_(test, lit(1), lit(2)), &ints(&level_names()));
+    assert_eq!(a.len(), 2);
+    [0, 1].map(|k| a[k].scope.get("x").ints().to_string())
+}
+
+#[test]
+fn arms_of_a_test_whose_bound_moves_at_each_level_keep_the_inner_bound() {
+    for d in [1, 2, 5, 40] {
+        assert_eq!(
+            x_hulls(moving(d)),
+            ["[5..=10, 100..=200]", "[..]"].map(String::from),
+            "d = {d}"
+        );
+    }
+}
+
+#[test]
+fn arms_of_a_test_whose_small_choice_misses_the_bound_keep_every_range() {
+    for d in [1, 2, 5, 40] {
+        assert_eq!(
+            x_hulls(heavy(d)),
+            ["[0..=10, 20..=30, 100..=200]", "[..]"].map(String::from),
+            "d = {d}"
+        );
+    }
+}
+
+#[test]
+fn arms_of_a_test_whose_bound_moves_at_each_level_take_time_near_linear_in_its_depth() {
+    // Each level tightens the hull of `x`; a tightening over the whole nest below each level,
+    // or a search that reads again the nest below each level, would cost its depth.
+    on_a_deep_stack(|| {
+        let tests: BTreeMap<usize, Term> = [60, 480]
+            .map(|d| (d, if_(moving(d), lit(1), lit(2))))
+            .into();
+        let scope = ints(&level_names());
+        scaling::check("arms of a test whose bound moves at each level", 60, |d| {
+            std::hint::black_box(arms(&tests[&d], &scope));
+        });
+    });
+}
+
+#[test]
+fn arms_of_a_test_whose_small_choice_misses_the_bound_take_time_near_linear_in_its_depth() {
+    // A point at the bound is found only below every level, so a search that read the nest
+    // below each level again would cost its depth.
+    on_a_deep_stack(|| {
+        let tests: BTreeMap<usize, Term> =
+            [60, 480].map(|d| (d, if_(heavy(d), lit(1), lit(2)))).into();
+        let scope = ints(&level_names());
+        scaling::check(
+            "arms of a test whose small choice misses the bound",
+            60,
+            |d| {
+                std::hint::black_box(arms(&tests[&d], &scope));
+            },
+        );
+    });
+}
