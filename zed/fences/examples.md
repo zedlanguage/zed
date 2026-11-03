@@ -191,11 +191,11 @@ seven = add5(2);
 g3   = greet("Al", ...);                // currying leaves out named parameters: called g3(punct: "?") or g3()
 add1 = add[1];                          // brackets index one level: the section b -> add(1, b)
 add1b = b -> add(1, b);                 // the lambda spelling, always available
-g4   = greet();                         // ✗ arity: name has no default. The menu names greet[…] and the lambda
-g5   = greet(name: "Al");               // ✗ name is positional, so it is passed by position
+g4   = greet();                         // ✗ Missing argument: name has no default. The menu names greet[…] and the lambda
+g5   = greet(name: "Al");               // ✗ Argument in the wrong form: name is positional, so it is passed by position
 onKey(positional k, handler: (key: String) -> String) = handler(key: k);
 shout = onKey("a", handler: key -> key ++ "!");  // the type names key, so the lambda's key is named
-bad  = onKey("a", handler: s -> s);     // ✗ the type names the parameter key. The menu renames s to key
+bad  = onKey("a", handler: s -> s);     // ✗ Function whose parameter kinds do not fit the expected function type: the type names the parameter key. The menu renames s to key
 ```
 
 <!-- EXAMPLES.md:230 layer L3: ring L3, word L3 (map), label none -->
@@ -299,7 +299,7 @@ ages4 = ages.patch({ "cy" -> #insert(40) });
 <!-- EXAMPLES.md:331 layer L5: ring L1, word L5 (maxBy), label none -->
 ```zed
 // [d4] sec:grouping, sec:tour_collections — keys that are not unique group; keys that are, rekey
-byId    = users.rekey(u -> u.id);          // ✗ unless u.id is witnessed injective
+byId    = users.rekey(u -> u.id);          // ✗ Collision: unless u.id is witnessed injective
 byId2   = users.group(u -> u.id);          // Id ->? (UserKey -> User)
 byLower = words.group(w -> w.lower);       // Lower ->? (i -> w)
 counts  = byLower.count;                   // Lower ->? int
@@ -478,7 +478,7 @@ struct Fahrenheit { deg: f64 }
 type Temp = Celsius | Fahrenheit;        // = { deg: f64 }: the union collapses
 show(positional t: Temp) = match t {
   Celsius(deg: d)    -> "${d} C",
-  Fahrenheit(deg: d) -> "${d} F",             // ✗ unreachable: every Temp already matched the first arm
+  Fahrenheit(deg: d) -> "${d} F",             // ✗ Unreachable `match` arm: every Temp already matched the first arm
 };
 type Temp2 = #c(f64) | #f(f64);          // ✓ the atom is the identity
 ```
@@ -827,7 +827,7 @@ variance = m.sumSq / rat(m.n) - mean * mean;                                    
 <!-- EXAMPLES.md:857 layer L15: ring L10, word L15 (@ensure), label none -->
 ```zed
 // [d4] sec:domains, sec:kernel (law 16) — `@ensure`: the refinement is deleted by the preimage or the build fails; never a hidden run-time check
-@ensure scaledOdd(x: int[0..=100]) = (x * 2 + 1).refine(v -> v < 100);   // ✗ int[0..=100] does not entail the preimage; the menu prints `x: int[0..=49]`
+@ensure scaledOdd(x: int[0..=100]) = (x * 2 + 1).refine(v -> v < 100);   // ✗ Undischargeable `@ensure`: int[0..=100] does not entail the preimage; the menu prints `x: int[0..=49]`
 @ensure odd(positional x) = (x * 2 + 1).refine(v -> v < 100);              // inferred: x <= 49 — the obligation moves to the callers
 a = odd(12);                                                              // 25: a literal is a static frontier, decided here
 b = odd(60);                                                              // ✗ 60 is outside x <= 49; the call is rejected, and nothing runs to find out
