@@ -244,6 +244,9 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     else if (last?.state === "fixed" || last?.state === "done") s = "active";
     else if (last?.state === "fixing") s = "active";
     else if (last?.state === "abandoned") s = "unstarted";
+    // An item the ledger lists as waiting is not active, whatever the log says about it.
+    else if (last?.state === "open" || last?.state === "queued") s = "unstarted";
+    else if (last?.state === "running" || last?.state === "started" || last?.state === "active") s = "active";
     else if (lines.some((l) => l.entry.role === "merge" && /\bon main\b|merged/.test(l.entry.text))) s = "done";
     else if (lines.length > 0) s = "active";
     states.set(r.id, s);

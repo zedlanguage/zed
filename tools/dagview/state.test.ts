@@ -202,3 +202,9 @@ test("a ledger line's own time counts toward the runtime", () => {
   assert.equal(a.startedAt, Date.parse("2026-11-02T10:00:00Z"));
   assert.equal(a.lastAt, Date.parse("2026-11-02T11:00:00Z"));
 });
+
+test("an item the ledger lists as open stays unstarted though the log mentions it", () => {
+  const log = "2026-11-02 10:00:01 | A:orchestrator | waits for B\n";
+  const led = '{"id":"A","state":"open","needs":["B"]}\n';
+  assert.equal(by(buildNodes(inputs(log, led))).get("A")!.state, "unstarted");
+});
