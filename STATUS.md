@@ -811,24 +811,29 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CAP-bits | verify attempt 1 | 2026-11-03 03:35 | started; no earlier verify lines found; reading diff 37dd1e5 vs main |
-| L25.8 | impl attempt 1 | 2026-11-03 03:49 | step tests l25_08_mutate 18/18 pass (examples, order, command, scaling n/8n) / load 40.58 43.48 35.70 |
-| L29-print | impl attempt 1 | 2026-11-03 04:06 | printer prints known payloads (#ioError(op: String, path: String, why: String)); reader reads #a(T, f: U); 7 checker sites that dropped payloads (Ty::set(t.loos |
+| L25.8 | impl attempt 1 | 2026-11-03 03:49 | negative control (not committed): unit elaborated again per definition makes finding_the_mutants_scales not end in 60 s (exit 124), a re-compile per mutant make |
+| L29-print | impl attempt 1 | 2026-11-03 04:06 | negative control (printer prints #a(_) for known payloads): 3 printed tests fail, 25 mismatches; reverted |
+| OSP-drop2 | impl attempt 1 | 2026-11-03 04:27 | start |
 | S22a | impl attempt 1 | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
 | SEMIRING | orchestrator attempt  | 2026-11-03 04:11 | report saved; adopting best-first fix, SCC closure, nonlinear bound note; spec agent starting |
 | ST-arms-quad | repair attempt 1 | 2026-11-03 03:35 | start, continuing wt/st-arms at 31e6e2f |
 | T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
+| T2-mid | impl attempt 1 | 2026-11-03 04:27 | started; worktree /home/luke/Work/wt/t2-mid on main b9115b2 |
 | T6 | repair attempt 4 | 2026-11-03 00:01 | baseline after rebase on 42efeec: 2 failing pieces; l01_08 case count (T6 adds 3 cases, fixed to 353); l01_29 printed-types #ioError(_) fails identically on mai |
-| TD-ends | impl attempt 2 | 2026-11-03 03:52 | all targets build; Landmarks widened to Num (big literals and domain ends stay landmarks); omega test asserts exact 2^70 hull |
-| TD-refusals | impl attempt 2 | 2026-11-03 03:52 | resuming impl#1's uncommitted work (product.rs Refused/Warning, refused.rs tests; last edit 04:03; workflow resumed 04:06, no process in worktree) |
+| TD-ends | impl attempt 2 | 2026-11-03 03:52 | corner tests pass (ends.rs, 2^200 literal, offset round trips, exact 2^63 string length); big literals now integers in preimage fwd |
+| TD-refusals | impl attempt 2 | 2026-11-03 03:52 | refused tests: 4 pass; scaling of join of refused scopes fails 418x (64->512, limit 24); probing whether join or warnings is superlinear; load 28-45 |
 | TD-values | repair attempt 2 | 2026-11-03 03:52 | started; zed-impl main still e6900f7, wt/t6 bb1f8a7 not merged; per the 03:55 order nothing changed, returning ok=false (waits for T6) |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
 Merged into local main and not yet pushed (37 commits); the push follows one full test run on the merged tree:
 
+- 24aad53 STATUS: TD-tests merged
 - d24cb25 STATUS: TD-tests row names back_in, where the fold and fix stops are
 - fc4686d TD-tests: preimage stops at fold, gen and fix; zed-native OptLevel and run_at, opt_level none tested against speed
+- b9115b2 STATUS, plan_dag: OSP-drop merged and marked done
 - 7d0993b OSP-drop: the drop error is a case of Row::WritesNothing; else defaults in if branches and a block's export count as named
 - 3645925 OSP-drop: _ binds no loose failure; an else default or a match names a dropped failure
+- b7cb5fe STATUS: in progress as of 2026-11-03 04:25
 - 79008d6 STATUS: ST-deep-stack merged
 - b707823 ST-deep-stack: Formula walks, Drop, Clone, Eq, Ord, Hash and printing on explicit stacks
 - 8ce61e0 STATUS: in progress as of 2026-11-03 04:10
