@@ -450,14 +450,28 @@ fn long_shared_values() {
     long_relations("`if`s whose arms read one shared term", 256, shared_values);
 }
 
-/// The preimage of [`shared_values`]: the shared term below level `j` is asked for `t >= -d`
-/// for each `d` up to `k - j`, and the backward transfer keeps one result for each term and
-/// demand, so it does `k^2 / 2` transfers: 598,546,859 and 35,138,463,041 instructions at
-/// sizes 256 and 2048, 58.7 times. Whether a join of the demands at a shared term can keep
-/// the preimage exact is open: COMPLEXITY.md S22, cross-review.
+/// The preimage of [`shared_values`]: its value is `i + k` below 1, `k` up to `k` and `i`
+/// above, so `t >= 0` holds exactly on `i >= -k`. The summary of the shared term as one
+/// piecewise-affine function answers each demand once (COMPLEXITY.md S22).
 #[test]
-#[ignore = "open: S22, demands on a shared term, cross-review"]
 fn long_shared_values_preimage() {
+    let answers = || {
+        for k in [1, 7, 20, 49, 50, 51, 256, 2048] {
+            let (t, ds) = (shared_values(k), one(k));
+            let p = preimage(&t, &ds, &Demand::Bool(true));
+            assert!(p.exact, "k={k}: {}", shown(&p));
+            let lo = (-(k as i64)).max(-50);
+            assert_eq!(
+                p.domains["i"],
+                IntervalSet::of(lo, 50),
+                "k={k}: {}",
+                shown(&p)
+            );
+            super::check(&t, &ds, &Demand::Bool(true), &p, (-50, 50));
+        }
+    };
+    let thread = std::thread::Builder::new().stack_size(1 << 28);
+    thread.spawn(answers).unwrap().join().unwrap();
     long_at(
         "the preimage of `if`s whose arms read one shared term",
         256,

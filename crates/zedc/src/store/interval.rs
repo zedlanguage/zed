@@ -25,6 +25,12 @@ pub fn rounded() -> bool {
     ROUNDED.replace(false)
 }
 
+/// Sets the flag [`rounded`] reads, to restore it after a computation whose rounding does not
+/// bear on the result being built.
+pub fn set_rounded(r: bool) {
+    ROUNDED.set(r);
+}
+
 /// An endpoint: an integer or one of the two infinities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum End {

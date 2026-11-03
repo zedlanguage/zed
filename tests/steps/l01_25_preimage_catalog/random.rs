@@ -26,7 +26,7 @@ fn prim(p: Prim, args: Vec<Term>) -> Term {
 }
 
 /// A random integer term over `x` and `y`, of depth at most `d`.
-fn int_term(rng: &mut Rng, d: u32) -> Term {
+pub(super) fn int_term(rng: &mut Rng, d: u32) -> Term {
     if d == 0 || rng.below(4) == 0 {
         return match rng.below(5) {
             0 | 1 => Term::Var("x".into()),
@@ -70,7 +70,7 @@ fn int_term(rng: &mut Rng, d: u32) -> Term {
 }
 
 /// A random test over `x` and `y`, of depth at most `d`.
-fn bool_term(rng: &mut Rng, d: u32) -> Term {
+pub(super) fn bool_term(rng: &mut Rng, d: u32) -> Term {
     let cmp = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge, Prim::Eq, Prim::Ne];
     if d == 0 || rng.below(3) != 0 {
         let a = int_term(rng, d.saturating_sub(1));
@@ -125,7 +125,7 @@ fn over_v(t: &Term) -> Term {
 
 /// A random term over `x` and `y` that calls the functions `g0` to `g{FUNCTIONS - 1}`, each a
 /// random term over its parameter `v` and `y` that may call the ones before it.
-fn with_functions(rng: &mut Rng, t: &Term) -> Term {
+pub(super) fn with_functions(rng: &mut Rng, t: &Term) -> Term {
     const FUNCTIONS: usize = 3;
     let mut out = with_calls(rng, t, FUNCTIONS);
     let bodies: Vec<Term> = (0..FUNCTIONS)
@@ -155,7 +155,7 @@ fn domain(rng: &mut Rng) -> IntervalSet {
 
 /// Random domains of `x` and `y`; one case in two is a listed box: `x` listed, its values
 /// apart from one another, and `y` one value.
-fn domains(rng: &mut Rng) -> Domains {
+pub(super) fn domains(rng: &mut Rng) -> Domains {
     let point = |v: i64| IntervalSet::from_pieces(vec![(End::Fin(v), End::Fin(v))]);
     let (x, y) = if rng.below(2) == 0 {
         let lo = rng.int(-15, 10);
@@ -174,7 +174,7 @@ fn domains(rng: &mut Rng) -> Domains {
 }
 
 /// A random demand on an integer term: up to two intervals.
-fn int_demand(rng: &mut Rng) -> Demand {
+pub(super) fn int_demand(rng: &mut Rng) -> Demand {
     let mut pieces = Vec::new();
     for _ in 0..rng.int(1, 2) {
         let lo = rng.int(-30, 30);

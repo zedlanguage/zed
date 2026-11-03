@@ -851,6 +851,13 @@ struct Memo {
     constant: HashMap<At, Option<Value>>,
     fwd: HashMap<At, Fwd>,
     back: HashMap<(At, Demand), Res>,
+    /// The piecewise-affine summary of an integer term of one input ([`Tx::pa`]).
+    pa: HashMap<At, Option<Pa>>,
+    /// The interval an integer demand on a term is met with before it is read ([`Tx::clip`]).
+    clip: HashMap<At, Option<IntervalSet>>,
+    /// How far reading a term can move an end, which bounds where the summary and the clip
+    /// are read ([`Tx::reach`]).
+    reach: HashMap<At, i128>,
     scan: HashSet<At>,
     lin: HashMap<At, Option<Lin>>,
     formula: HashMap<At, Option<Formula>>,
@@ -882,6 +889,8 @@ type Table<K, V> = fn(&mut Memo) -> &mut HashMap<K, V>;
 /// it is within.
 struct Cx {
     inputs: Sets,
+    /// The largest magnitude of a finite end of an input's domain.
+    widest: i128,
     /// The lowest place on the stack of lambdas being read whose lambda a call stopped at,
     /// since the result being computed began. A result is remembered only when that place is
     /// not below the stack's height when it began: otherwise it depends on where it was
@@ -910,6 +919,7 @@ impl<'t> Tx<'t> {
             run: Run::default(),
             cx: Cx {
                 inputs: Sets::new(),
+                widest: 0,
                 cut: usize::MAX,
             },
         }
@@ -927,6 +937,7 @@ impl<'t> Tx<'t> {
                 .iter()
                 .map(|(k, v)| (k.clone(), Rc::new(v.clone())))
                 .collect(),
+            widest: inputs.values().map(widest).max().unwrap_or(0),
             cut: usize::MAX,
         };
     }
@@ -1178,6 +1189,7 @@ impl<'t> Tx<'t> {
             e = self.bind(e, p, to);
         }
         let cx = Cx {
+            widest: inputs.values().map(|s| widest(s)).max().unwrap_or(0),
             inputs,
             cut: usize::MAX,
         };
@@ -2072,6 +2084,116 @@ impl<'t> Tx<'t> {
         }
     }
 
+    // ---- Clipping demands ---------------------------------------------------------------
+
+    /// An interval that holds every integer value of the term, for a term whose backward
+    /// result under an integer demand `z` is its result under `z` met with the interval:
+    /// an input, a literal, a name bound to such a term, a constant added to or subtracted
+    /// from one, and a choice between two of them. `None` for any other term, and for a hull
+    /// whose computation rounds an end; the rounding flag is left as it was.
+    fn clip(&mut self, t: Tid, env: Eid) -> Option<IntervalSet> {
+        self.cached(
+            |m| &mut m.clip,
+            (t, env),
+            |s| {
+                let before = interval::rounded();
+                interval::set_rounded(false);
+                let hull = s.clip_at(t, env).filter(|_| !interval::rounded());
+                interval::set_rounded(before);
+                hull
+            },
+        )
+    }
+
+    fn clip_at(&mut self, t: Tid, env: Eid) -> Option<IntervalSet> {
+        if let Node::Var(x) = self.node(t) {
+            return match self.lookup(env, x) {
+                Some((bt, be)) => self.clip(bt, be),
+                None => self.cx.inputs.get(self.name(x)).map(|dom| dom.hull()),
+            };
+        }
+        // As in [`Tx::back_in`], a term that reads no input is decided by running it.
+        match self.constant(t, env) {
+            Some(Value::Int(n)) => return Some(IntervalSet::single(n)),
+            Some(_) => return None,
+            None => {}
+        }
+        match self.node(t) {
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.clip(b, inner)
+            }
+            Node::If(_, a, b) => {
+                let fa = self.clip(a, env)?;
+                let fb = self.clip(b, env)?;
+                Some(fa.join(&fb).hull())
+            }
+            Node::Prim(p @ (Prim::Add | Prim::Sub), args) if args.len() == 2 => {
+                let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+                match (p, self.constant_int(a, env), self.constant_int(b, env)) {
+                    (Prim::Add, Some(c), None) => Some(shift(&self.clip(b, env)?, c as i128)),
+                    (Prim::Add, None, Some(c)) => Some(shift(&self.clip(a, env)?, c as i128)),
+                    (Prim::Sub, None, Some(c)) => Some(shift(&self.clip(a, env)?, -(c as i128))),
+                    (Prim::Sub, Some(c), None) => {
+                        let fb = self.clip(b, env)?;
+                        Some(revision::forward(Op::Sub, &IntervalSet::single(c), &fb))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// How far reading the term can move an end of a demand or of an input's domain: the
+    /// magnitudes of its integer literals summed, plus one at each primitive, through the
+    /// names it reads. `i128::MAX` for a term holding a call of a lambda or a term the
+    /// summary and the clip do not read. Every end the transfer computes from an end `e`
+    /// while it reads the term lies within `|e| + reach` of zero.
+    fn reach(&mut self, t: Tid, env: Eid) -> i128 {
+        self.cached(|m| &mut m.reach, (t, env), |s| s.reach_at(t, env))
+    }
+
+    fn reach_at(&mut self, t: Tid, env: Eid) -> i128 {
+        match self.node(t) {
+            Node::Int(c) => i128::from(c).abs(),
+            Node::Bool(_) => 0,
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.reach(bt, be),
+                None => 0,
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.reach(b, inner)
+            }
+            Node::If(g, a, b) => {
+                let r = self.reach(g, env).max(self.reach(a, env));
+                r.max(self.reach(b, env))
+            }
+            Node::App(f, args) => match self.callee(f, env) {
+                Ok(Callee::Prim(p)) => {
+                    let c = self.terms.call(t, p, args);
+                    self.reach(c, env)
+                }
+                _ => i128::MAX,
+            },
+            Node::Prim(_, args) => (0..args.len()).fold(1, |r: i128, i| {
+                r.saturating_add(self.reach(self.arg(args, i), env))
+            }),
+            _ => i128::MAX,
+        }
+    }
+
+    /// Whether the summary and the clip may read the term under the integer demand `z`: no
+    /// end the transfer computes from the ends of `z` and of the domains leaves `i64`. The
+    /// transfer they replace would then round no end, and the result is the one it gives,
+    /// rounding flag included.
+    fn fits(&mut self, t: Tid, env: Eid, z: &IntervalSet) -> bool {
+        let r = self.reach(t, env);
+        let w = self.cx.widest.saturating_add(widest(z));
+        r.saturating_add(w) < i64::MAX as i128
+    }
+
     // ---- Backward transfer ------------------------------------------------------------
 
     fn back(&mut self, t: Tid, env: Eid, d: &Demand) -> Res {
@@ -2079,6 +2201,22 @@ impl<'t> Tx<'t> {
     }
 
     fn back_at(&mut self, t: Tid, env: Eid, d: &Demand) -> Res {
+        // An integer demand is read as its meet with the term's values, so that demands that
+        // differ only outside them are one.
+        let met;
+        let d = match d {
+            Demand::Ints(z) if self.fits(t, env, z) => {
+                let clip = self.clip(t, env);
+                match clip {
+                    Some(f) => {
+                        met = Demand::Ints(z.meet(&f));
+                        &met
+                    }
+                    None => d,
+                }
+            }
+            _ => d,
+        };
         self.cached(
             |m| &mut m.back,
             ((t, env), d.clone()),
@@ -2132,6 +2270,12 @@ impl<'t> Tx<'t> {
                 self.back_at(b, inner, d)
             }
             Node::If(g, a, b) => {
+                if let Demand::Ints(z) = d
+                    && self.fits(t, env, z)
+                    && let Some(r) = self.pa(t, env).and_then(|pa| self.invert_pa(&pa, z))
+                {
+                    return r;
+                }
                 let gt = self.back_at(g, env, &Demand::Bool(true));
                 let at = self.back_at(a, env, d);
                 let gf = self.back_at(g, env, &Demand::Bool(false));
@@ -2466,6 +2610,542 @@ impl<'t> Tx<'t> {
         r.exact = self.empty(&r);
         r
     }
+
+    // ---- Piecewise-affine summaries -----------------------------------------------------
+
+    /// The value of the term as a piecewise-affine function of one input ([`Pa`]), or `None`
+    /// when it is not one, when it reads more than one input, or when a value on the input's
+    /// domain leaves `i64`. Keyed on the term alone, so an `if` chain whose arms read one
+    /// shared term is summarized once, whatever demands reach it.
+    fn pa(&mut self, t: Tid, env: Eid) -> Option<Pa> {
+        if self.run.void {
+            return None;
+        }
+        self.cached(|m| &mut m.pa, (t, env), |s| s.pa_at(t, env))
+    }
+
+    fn pa_at(&mut self, t: Tid, env: Eid) -> Option<Pa> {
+        if !matches!(self.node(t), Node::Var(_))
+            && let Some(v) = self.constant(t, env)
+        {
+            return match v {
+                Value::Int(c) => Some(Pa::Const(c)),
+                _ => None,
+            };
+        }
+        match self.node(t) {
+            Node::Int(c) => Some(Pa::Const(c)),
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.pa(bt, be),
+                None => {
+                    let name = self.name(x);
+                    self.cx.inputs.contains_key(name).then(|| Pa::Linear {
+                        var: name.clone(),
+                        a: 1,
+                        b: 0,
+                    })
+                }
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.pa(b, inner)
+            }
+            Node::App(f, args) => match self.callee(f, env) {
+                Ok(Callee::Prim(p)) => {
+                    let c = self.terms.call(t, p, args);
+                    self.pa(c, env)
+                }
+                _ => None,
+            },
+            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
+                self.pa_prim(t, p, args, env)
+            }
+            Node::If(g, a, b) => self.pa_if(g, a, b, env),
+            _ => None,
+        }
+    }
+
+    /// An `if` whose guard narrows at most the one input its arms read: the arms' treaps
+    /// sliced to the inputs that take each arm, joined in order. Exact, since both guard
+    /// results must be.
+    fn pa_if(&mut self, g: Tid, a: Tid, b: Tid, env: Eid) -> Option<Pa> {
+        let gt = self.back_at(g, env, &Demand::Bool(true));
+        let gf = self.back_at(g, env, &Demand::Bool(false));
+        if !gt.exact || !gf.exact {
+            return None;
+        }
+        let pa = self.pa(a, env)?;
+        let pb = self.pa(b, env)?;
+        let (yes, no) = (!self.empty(&gt), !self.empty(&gf));
+        if gt.dom.len() > 1 || gf.dom.len() > 1 {
+            return None;
+        }
+        let mut var: Option<&Arc<str>> = None;
+        for name in gt
+            .dom
+            .keys()
+            .chain(gf.dom.keys())
+            .chain(pa.var())
+            .chain(pb.var())
+        {
+            match var {
+                Some(v) if v != name => return None,
+                _ => var = Some(name),
+            }
+        }
+        let Some(var) = var else {
+            // Neither the guard nor the arms read an input: one arm is taken everywhere.
+            return match (yes, no) {
+                (true, false) => Some(pa),
+                (false, true) => Some(pb),
+                _ => None,
+            };
+        };
+        let dom = self.cx.inputs.get(var)?;
+        let mut slices = Vec::new();
+        for (taken, r, arm) in [(yes, &gt, &pa), (no, &gf, &pb)] {
+            if !taken {
+                continue;
+            }
+            let set = r.dom.get(var).map_or(&**dom, |s| &**s);
+            let tree = arm.to_treap(dom)?;
+            for &(lo, hi) in set.pieces() {
+                if let Some(s) = slice_treap(tree.clone(), lo, hi)? {
+                    slices.push((lo, s));
+                }
+            }
+        }
+        slices.sort_by_key(|&(lo, _)| lo);
+        let mut root = None;
+        for (_, s) in slices {
+            root = join_treap(root, Some(s))?;
+        }
+        Some(Pa::Piecewise {
+            var: var.clone(),
+            root,
+        })
+    }
+
+    /// `-u`, `u + c`, `c + u`, `u - c`, `0 - u` and `c * u` for a summarized `u` and a
+    /// constant `c`; the arity was checked by the caller.
+    fn pa_prim(&mut self, t: Tid, p: Prim, args: Span, env: Eid) -> Option<Pa> {
+        let a = self.arg(args, 0);
+        match p {
+            Prim::Neg => self.pa(a, env)?.affine(-1, 0),
+            Prim::Add => {
+                let b = self.arg(args, 1);
+                if let Some(c) = self.constant_int(a, env) {
+                    return self.pa(b, env)?.affine(1, c.into());
+                }
+                let c = self.constant_int(b, env)?;
+                self.pa(a, env)?.affine(1, c.into())
+            }
+            Prim::Sub => {
+                let b = self.arg(args, 1);
+                if let Some(c) = self.constant_int(b, env) {
+                    return self.pa(a, env)?.affine(1, -i128::from(c));
+                }
+                // `c - u` for `c` other than 0 is left to the transfer (S22b).
+                if self.constant_int(a, env)? != 0 {
+                    return None;
+                }
+                self.pa(b, env)?.affine(-1, 0)
+            }
+            Prim::Mul => {
+                if self.power(t, env).is_some() {
+                    return None;
+                }
+                let b = self.arg(args, 1);
+                let (c, u) = match self.constant_int(a, env) {
+                    Some(c) => (c, b),
+                    None => (self.constant_int(b, env)?, a),
+                };
+                if c == 0 {
+                    return None;
+                }
+                self.pa(u, env)?.affine(c.into(), 0)
+            }
+            _ => None,
+        }
+    }
+
+    /// The inputs on which `pa` takes a value in `z`, or `None` when an intermediate value
+    /// leaves `i128` and the caller reads the `if` as before.
+    fn invert_pa(&self, pa: &Pa, z: &IntervalSet) -> Option<Res> {
+        let (var, dom) = match pa {
+            Pa::Const(c) => {
+                return Some(if z.contains(*c) {
+                    Res::all()
+                } else {
+                    Res::none()
+                });
+            }
+            Pa::Linear { var, .. } | Pa::Piecewise { var, .. } => (var, self.cx.inputs.get(var)?),
+        };
+        let root = pa.to_treap(dom)?;
+        let mut pieces = Vec::new();
+        invert_treap(&root, (1, 0), z, &mut pieces)?;
+        // The pieces are exact; merging two that meet at `i64::MAX` would raise the rounding
+        // flag for an end it does not round.
+        let before = interval::rounded();
+        let met = IntervalSet::from_pieces(pieces).meet(dom);
+        interval::set_rounded(before);
+        if met.is_empty() {
+            return Some(Res::none());
+        }
+        let mut r = Res::all();
+        if met != **dom {
+            r.dom.insert(var.clone(), Rc::new(met));
+        }
+        Some(r)
+    }
+}
+
+/// An integer term as a function of one input `var`, each value in `i64` (R1_GEMINI
+/// Thm 3.1: the value of a term built from one input by `if`s on that input, constants,
+/// negation, adding a constant and multiplying by one is affine on each of finitely many
+/// intervals of the input, cut at the domain's and the guards' ends).
+#[derive(Clone)]
+enum Pa {
+    /// The constant `c` everywhere.
+    Const(i64),
+    /// `a * var + b` over the whole domain of `var`.
+    Linear { var: Arc<str>, a: i128, b: i128 },
+    /// Disjoint intervals of `var`, on each of which the value is affine; a gap is a part of
+    /// the domain where the term has no integer value.
+    Piecewise { var: Arc<str>, root: Tree },
+}
+
+impl Pa {
+    fn var(&self) -> Option<&Arc<str>> {
+        match self {
+            Pa::Const(_) => None,
+            Pa::Linear { var, .. } | Pa::Piecewise { var, .. } => Some(var),
+        }
+    }
+
+    /// `mul * self + add`, or `None` when a value leaves `i64`.
+    fn affine(&self, mul: i128, add: i128) -> Option<Pa> {
+        match self {
+            Pa::Const(c) => {
+                let v = i128::from(*c).checked_mul(mul)?.checked_add(add)?;
+                Some(Pa::Const(i64::try_from(v).ok()?))
+            }
+            Pa::Linear { var, a, b } => Some(Pa::Linear {
+                var: var.clone(),
+                a: fits(a.checked_mul(mul)?)?,
+                b: fits(b.checked_mul(mul)?.checked_add(add)?)?,
+            }),
+            Pa::Piecewise { var, root } => Some(Pa::Piecewise {
+                var: var.clone(),
+                root: match root {
+                    Some(r) => Some(apply_tag(r, (mul, add))?),
+                    None => None,
+                },
+            }),
+        }
+    }
+
+    /// The treap over `dom`, the domain of the input; `None` when a value leaves `i64`.
+    fn to_treap(&self, dom: &IntervalSet) -> Option<Tree> {
+        let (a, b) = match self {
+            Pa::Piecewise { root, .. } => return Some(root.clone()),
+            Pa::Const(c) => (0, i128::from(*c)),
+            Pa::Linear { a, b, .. } => (*a, *b),
+        };
+        let mut root = None;
+        for &(lo, hi) in dom.pieces() {
+            root = join_treap(root, Some(make_node(lo, hi, a, b, None, None)?))?;
+        }
+        Some(root)
+    }
+}
+
+/// A persistent treap of the pieces of a [`Pa`], in the order of the input, each node
+/// shared by every summary built from it. Splitting, joining and a change of every value
+/// by an affine map each take `O(log n)` expected time.
+type Tree = Option<Rc<PaNode>>;
+
+/// One piece of a [`Pa`] and the subtree it roots.
+#[derive(Clone)]
+struct PaNode {
+    /// The piece: the inputs `lo..=hi`, on which the value is `a * x + b`.
+    lo: End,
+    hi: End,
+    a: i128,
+    b: i128,
+    /// The least and the greatest input in the subtree.
+    span: (End, End),
+    /// The least and the greatest value in the subtree, so that inverting skips a subtree
+    /// whose values miss the demand.
+    vals: (i128, i128),
+    /// Whether the subtree's pieces cover `span` with no gap, so that a subtree whose values
+    /// lie in one piece of the demand is taken whole.
+    dense: bool,
+    /// A heap priority, fixed by the piece's ends, so the shape does not depend on the order
+    /// of the operations that built it.
+    prio: u64,
+    /// The affine map `(mul, add)` still to be applied to both children: `a`, `b` and `vals`
+    /// of this node already include it.
+    tag: (i128, i128),
+    left: Tree,
+    right: Tree,
+}
+
+/// `x` when it lies in `i64`.
+fn fits(x: i128) -> Option<i128> {
+    i64::try_from(x).is_ok().then_some(x)
+}
+
+/// An end as a number: the infinities lie past every `i64`.
+fn key(e: End) -> i128 {
+    match e {
+        NegInf => i128::MIN,
+        Fin(v) => v.into(),
+        PosInf => i128::MAX,
+    }
+}
+
+/// An end of an input's domain as an input: the infinities are the ends of `i64`.
+fn input(e: End) -> i128 {
+    match e {
+        NegInf => i64::MIN.into(),
+        Fin(v) => v.into(),
+        PosInf => i64::MAX.into(),
+    }
+}
+
+/// `(lo, hi)` mapped by `x -> mul * x + add`, in order, each in `i64`.
+fn map_vals((lo, hi): (i128, i128), (mul, add): (i128, i128)) -> Option<(i128, i128)> {
+    let f = |v: i128| fits(v.checked_mul(mul)?.checked_add(add)?);
+    if mul >= 0 {
+        Some((f(lo)?, f(hi)?))
+    } else {
+        Some((f(hi)?, f(lo)?))
+    }
+}
+
+/// The map `inner` followed by `outer`.
+fn compose(inner: (i128, i128), outer: (i128, i128)) -> Option<(i128, i128)> {
+    let mul = inner.0.checked_mul(outer.0)?;
+    let add = inner.1.checked_mul(outer.0)?.checked_add(outer.1)?;
+    Some((mul, add))
+}
+
+/// A deterministic splitmix64 priority from the piece's ends.
+fn prio_of(lo: End, hi: End) -> u64 {
+    let code = |e: End| -> u64 {
+        match e {
+            NegInf => 0,
+            Fin(v) => (v as u64).wrapping_add(1) ^ 0x5555_5555_5555_5555,
+            PosInf => u64::MAX,
+        }
+    };
+    let mut z = code(lo).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ code(hi);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// The node for the piece `lo..=hi` with value `a * x + b` over two subtrees with no tag
+/// above them; `None` when a value of the piece leaves `i64`.
+fn make_node(lo: End, hi: End, a: i128, b: i128, left: Tree, right: Tree) -> Option<Rc<PaNode>> {
+    let at = |x: End| fits(a.checked_mul(input(x))?.checked_add(b)?);
+    let (u, v) = (at(lo)?, at(hi)?);
+    let mut vals = (u.min(v), u.max(v));
+    let mut span = (lo, hi);
+    let mut dense = true;
+    let next =
+        |x: End, y: End| matches!((x, y), (Fin(x), Fin(y)) if i128::from(x) + 1 == i128::from(y));
+    if let Some(l) = &left {
+        vals = (vals.0.min(l.vals.0), vals.1.max(l.vals.1));
+        span.0 = l.span.0;
+        dense &= l.dense && next(l.span.1, lo);
+    }
+    if let Some(r) = &right {
+        vals = (vals.0.min(r.vals.0), vals.1.max(r.vals.1));
+        span.1 = r.span.1;
+        dense &= r.dense && next(hi, r.span.0);
+    }
+    Some(Rc::new(PaNode {
+        lo,
+        hi,
+        a,
+        b,
+        span,
+        vals,
+        dense,
+        prio: prio_of(lo, hi),
+        tag: (1, 0),
+        left,
+        right,
+    }))
+}
+
+/// The subtree with every value mapped by `x -> mul * x + add`, in `O(1)`.
+fn apply_tag(node: &Rc<PaNode>, f: (i128, i128)) -> Option<Rc<PaNode>> {
+    if f == (1, 0) {
+        return Some(node.clone());
+    }
+    let (mul, add) = f;
+    Some(Rc::new(PaNode {
+        a: fits(node.a.checked_mul(mul)?)?,
+        b: fits(node.b.checked_mul(mul)?.checked_add(add)?)?,
+        vals: map_vals(node.vals, f)?,
+        tag: compose(node.tag, f)?,
+        left: node.left.clone(),
+        right: node.right.clone(),
+        ..**node
+    }))
+}
+
+/// The two children with the node's tag applied.
+fn push_down(node: &PaNode) -> Option<(Tree, Tree)> {
+    let tagged = |c: &Tree| match c {
+        Some(c) => apply_tag(c, node.tag).map(Some),
+        None => Some(None),
+    };
+    Some((tagged(&node.left)?, tagged(&node.right)?))
+}
+
+/// The pieces of `left`, then those of `right`, which all lie above them.
+fn join_treap(left: Tree, right: Tree) -> Option<Tree> {
+    match (left, right) {
+        (None, r) => Some(r),
+        (l, None) => Some(l),
+        (Some(l), Some(r)) => {
+            if l.prio >= r.prio {
+                let (ll, lr) = push_down(&l)?;
+                let nr = join_treap(lr, Some(r))?;
+                make_node(l.lo, l.hi, l.a, l.b, ll, nr).map(Some)
+            } else {
+                let (rl, rr) = push_down(&r)?;
+                let nl = join_treap(Some(l), rl)?;
+                make_node(r.lo, r.hi, r.a, r.b, nl, rr).map(Some)
+            }
+        }
+    }
+}
+
+/// The inputs below `cut`, and the rest. A piece that holds `cut - 1` and `cut` is cut in
+/// two; both lie in `i64`, since `cut` is above the piece's lower end.
+fn split_at(root: Tree, cut: i128) -> Option<(Tree, Tree)> {
+    let Some(node) = root else {
+        return Some((None, None));
+    };
+    if cut <= key(node.span.0) {
+        return Some((None, Some(node)));
+    }
+    if cut > key(node.span.1) {
+        return Some((Some(node), None));
+    }
+    let (left, right) = push_down(&node)?;
+    let (lo, hi, a, b) = (node.lo, node.hi, node.a, node.b);
+    if cut <= key(lo) {
+        let (ll, lr) = split_at(left, cut)?;
+        Some((ll, Some(make_node(lo, hi, a, b, lr, right)?)))
+    } else if cut > key(hi) {
+        let (rl, rr) = split_at(right, cut)?;
+        Some((Some(make_node(lo, hi, a, b, left, rl)?), rr))
+    } else {
+        let below = Fin(i64::try_from(cut - 1).ok()?);
+        let above = Fin(i64::try_from(cut).ok()?);
+        let l = join_treap(left, Some(make_node(lo, below, a, b, None, None)?))?;
+        let r = join_treap(Some(make_node(above, hi, a, b, None, None)?), right)?;
+        Some((l, r))
+    }
+}
+
+/// The pieces of `root` within `lo..=hi`. The ends of `i64` stand for the infinities, so
+/// no cut is made past them.
+fn slice_treap(root: Tree, lo: End, hi: End) -> Option<Tree> {
+    let root = match lo {
+        Fin(v) if v > i64::MIN => split_at(root, v.into())?.1,
+        _ => root,
+    };
+    match hi {
+        Fin(v) if v < i64::MAX => Some(split_at(root, i128::from(v) + 1)?.0),
+        _ => Some(root),
+    }
+}
+
+/// Appends to `out` the inputs of `node`'s subtree whose value, mapped by `f` (the tags
+/// above it), lies in `z`. A subtree whose values miss `z` is skipped, and one whose values
+/// lie in one piece of `z` and whose pieces leave no gap is taken whole, so the time is
+/// `O((m + 1) log n)` for `m` pieces met.
+fn invert_treap(
+    node: &Tree,
+    f: (i128, i128),
+    z: &IntervalSet,
+    out: &mut Vec<(End, End)>,
+) -> Option<()> {
+    let Some(n) = node else {
+        return Some(());
+    };
+    let (lo, hi) = map_vals(n.vals, f)?;
+    let zs = z.pieces();
+    let i = zs.partition_point(|&(_, zhi)| key(zhi) < lo);
+    let Some(&(zlo, zhi)) = zs.get(i) else {
+        return Some(());
+    };
+    if key(zlo) > hi {
+        return Some(());
+    }
+    if n.dense && key(zlo) <= lo && hi <= key(zhi) {
+        out.push(n.span);
+        return Some(());
+    }
+    let below = compose(n.tag, f)?;
+    invert_treap(&n.left, below, z, out)?;
+    let (a, b) = compose((n.a, n.b), f)?;
+    invert_piece(n.lo, n.hi, a, b, z, out)?;
+    invert_treap(&n.right, below, z, out)
+}
+
+/// Appends to `out` the inputs `x` in `lo..=hi` with `a * x + b` in `z`, each value of the
+/// piece lying in `i64`. Exact, so no end is rounded.
+fn invert_piece(
+    lo: End,
+    hi: End,
+    a: i128,
+    b: i128,
+    z: &IntervalSet,
+    out: &mut Vec<(End, End)>,
+) -> Option<()> {
+    let (x0, x1) = (input(lo), input(hi));
+    let at = |x: i128| fits(a.checked_mul(x)?.checked_add(b)?);
+    let (u, v) = (at(x0)?, at(x1)?);
+    let (vlo, vhi) = (u.min(v), u.max(v));
+    let zs = z.pieces();
+    let start = zs.partition_point(|&(_, zhi)| key(zhi) < vlo);
+    for &(zlo, zhi) in &zs[start..] {
+        if key(zlo) > vhi {
+            break;
+        }
+        // The values met, both in `i64`.
+        let (zl, zh) = (key(zlo).max(vlo), key(zhi).min(vhi));
+        let (xl, xh) = match a.signum() {
+            0 => (x0, x1),
+            1 => (ceil_div(zl - b, a), floor_div(zh - b, a)),
+            _ => (ceil_div(b - zh, -a), floor_div(b - zl, -a)),
+        };
+        let (xl, xh) = (xl.max(x0), xh.min(x1));
+        if xl <= xh {
+            let end = |x: i128, e: End, at: i128| if x == at { e } else { Fin(x as i64) };
+            out.push((end(xl, lo, x0), end(xh, hi, x1)));
+        }
+    }
+    Some(())
+}
+
+/// `n / d` rounded down, for `d > 0`.
+fn floor_div(n: i128, d: i128) -> i128 {
+    n.div_euclid(d)
+}
+
+/// `n / d` rounded up, for `d > 0`.
+fn ceil_div(n: i128, d: i128) -> i128 {
+    -(-n).div_euclid(d)
 }
 
 /// The names bound within a term being closed ([`Tx::close`]).
@@ -3223,4 +3903,17 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<i64>)], demand: &Demand) -> 
             point[j] = 0;
         }
     }
+}
+
+/// The largest magnitude of a finite end of `z`, or 0.
+fn widest(z: &IntervalSet) -> i128 {
+    z.pieces()
+        .iter()
+        .flat_map(|&(lo, hi)| [lo, hi])
+        .filter_map(|e| match e {
+            Fin(v) => Some(i128::from(v).abs()),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
 }

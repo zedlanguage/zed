@@ -1,0 +1,1002 @@
+//! COMPLEXITY.md S22: the backward transfer through `if` chains whose arms read one shared
+//! term. The transfer reads such a chain through a piecewise-affine summary of each term in
+//! one input, and meets each integer demand with the hull of the term's values first. Neither
+//! may change a preimage, so each one here is compared, whole (domains, exactness,
+//! enumeration, stops, relation and refusal), with the transfer as it was before
+//! (`zedc::store::preimage_ref`, commit 397f1c9); the scaling tests then check that the
+//! chains cost `O(n log n)`.
+
+use std::sync::Arc;
+
+use zed_kernel::{Prim, Term, Value};
+use zed_tests::instances::Rng;
+use zed_tests::scaling;
+use zedc::store::interval::{End, IntervalSet};
+use zedc::store::lattice::Congruence;
+use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage};
+use zedc::store::preimage_ref as before;
+
+use super::check;
+use super::random::{bool_term, domains, int_demand, int_term, with_functions};
+
+fn var(x: &str) -> Term {
+    Term::Var(x.into())
+}
+
+fn int(n: i64) -> Term {
+    Term::Lit(Value::Int(n))
+}
+
+fn prim(p: Prim, a: Term, b: Term) -> Term {
+    Term::Prim(p, vec![a, b])
+}
+
+fn ints(lo: i64, hi: i64) -> Demand {
+    Demand::Ints(IntervalSet::of(lo, hi))
+}
+
+fn pieces(ps: &[(i64, i64)]) -> IntervalSet {
+    IntervalSet::from_pieces(
+        ps.iter()
+            .map(|&(a, b)| (End::Fin(a), End::Fin(b)))
+            .collect(),
+    )
+}
+
+/// The domains `name: set`.
+fn over(ds: &[(&str, IntervalSet)]) -> Domains {
+    ds.iter().map(|(n, s)| (Arc::from(*n), s.clone())).collect()
+}
+
+/// `i` in `[lo, hi]`.
+fn i_in(lo: i64, hi: i64) -> Domains {
+    over(&[("i", IntervalSet::of(lo, hi))])
+}
+
+/// `t0 = base; tj = if guard(j) { t(j-1) } else { arm(j, t(j-1)) }`, both arms reading the one
+/// term `t(j-1)`.
+fn chain(
+    k: usize,
+    base: Term,
+    guard: impl Fn(i64) -> Term,
+    arm: impl Fn(i64, Term) -> Term,
+) -> Term {
+    (1..=k as i64).fold(base, |t, j| {
+        let t = Arc::new(t);
+        let other = arm(j, (*t).clone());
+        Term::If(Arc::new(guard(j)), t, Arc::new(other))
+    })
+}
+
+fn ge_i(j: i64) -> Term {
+    prim(Prim::Ge, var("i"), int(j))
+}
+
+/// The else arm `t + c(j)`.
+fn plus(c: impl Fn(i64) -> i64) -> impl Fn(i64, Term) -> Term {
+    move |j, t| prim(Prim::Add, t, int(c(j)))
+}
+
+/// The chain over `i` with guard `i >= j` and else arm `t + c(j)`.
+fn adds(k: usize, c: impl Fn(i64) -> i64) -> Term {
+    chain(k, var("i"), ge_i, plus(c))
+}
+
+/// `t0 = z; tj = if bj >= 1 { t(j-1) } else { t(j-1) + c(j) }`, over `z` and the bits `bj`.
+fn independent(k: usize, c: impl Fn(i64) -> i64) -> Term {
+    chain(
+        k,
+        var("z"),
+        |j| prim(Prim::Ge, var(&format!("b{j}")), int(1)),
+        plus(c),
+    )
+}
+
+fn bits(k: usize, lo: i64, hi: i64) -> Domains {
+    let mut d = over(&[("z", IntervalSet::of(lo, hi))]);
+    for j in 1..=k {
+        d.insert(format!("b{j}").into(), IntervalSet::of(0, 1));
+    }
+    d
+}
+
+/// The families of chains, by name, at size `k`: the term, its domains and the demand.
+///
+/// - `probe`: else `t + 1`, `i` in `[-50, 50]`, `tk >= 0`; `live` the same with `i` in
+///   `[-k, k]`, so that no demand merges with another;
+/// - else arms `t + c_j` for `c_j` = `±1`, `j`, `±j`, `2^((j-1) mod 40)`;
+/// - roots `tk == 0`, `tk != 0`, `tk` in `[-3, 7]` (an integer demand) and the same as a
+///   conjunction;
+/// - the probe spelled otherwise: guard `i > j-1`, `j <= i`, `i < j` with the arms swapped,
+///   `1 + t`, `t - (-1)`, an input the chain does not read;
+/// - `conj`: `t1 >= 0 && ... && tk >= 0`, every term of the chain asked;
+/// - `cross`: `t0 = m` with the guards on `i`, two inputs;
+/// - guards `i != j`, `abs(i) >= j` and `i mod 7 == j mod 7`;
+/// - else arms that are not translations: `j - t`, `3t - 1`, `min(t + 1, 100)`, `-2t`,
+///   `0 - (t + 1)`;
+/// - chains of independent guards on bits, `indep` and `subset`, and the `abs` chain
+///   `s_j = abs(s_(j-1)) - 2^(k+1-j)`.
+fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
+    let ki = k as i64;
+    let narrow = || i_in(-50, 50);
+    let live = || i_in(-ki, ki);
+    let ge0 = |t| prim(Prim::Ge, t, int(0));
+    let yes = Demand::Bool(true);
+    let alt = |j: i64| if j % 2 == 0 { 1 } else { -1 };
+    let altj = |j: i64| if j % 2 == 0 { j } else { -j };
+    match name {
+        "probe" => (ge0(adds(k, |_| 1)), narrow(), yes),
+        "live" => (ge0(adds(k, |_| 1)), live(), yes),
+        "alt" => (ge0(adds(k, alt)), narrow(), yes),
+        "alt_live" => (ge0(adds(k, alt)), live(), yes),
+        "cj" => (ge0(adds(k, |j| j)), narrow(), yes),
+        "cj_live" => (ge0(adds(k, |j| j)), live(), yes),
+        "altj" => (ge0(adds(k, altj)), narrow(), yes),
+        "altj_live" => (ge0(adds(k, altj)), live(), yes),
+        "pow2" => (ge0(adds(k, |j| 1 << ((j - 1) % 40))), narrow(), yes),
+        "eq0" => (prim(Prim::Eq, adds(k, |_| 1), int(0)), narrow(), yes),
+        "eq0_live" => (prim(Prim::Eq, adds(k, |_| 1), int(0)), live(), yes),
+        "ne0" => (prim(Prim::Ne, adds(k, |_| 1), int(0)), narrow(), yes),
+        "range" => (adds(k, |_| 1), narrow(), ints(-3, 7)),
+        "range_live" => (adds(k, |_| 1), live(), ints(-3, 7)),
+        "rangeand" => {
+            let t = adds(k, |_| 1);
+            let lo = prim(Prim::Ge, t.clone(), int(-3));
+            (
+                prim(Prim::And, lo, prim(Prim::Le, t, int(7))),
+                narrow(),
+                yes,
+            )
+        }
+        "gt" => {
+            let t = chain(
+                k,
+                var("i"),
+                |j| prim(Prim::Gt, var("i"), int(j - 1)),
+                plus(|_| 1),
+            );
+            (ge0(t), narrow(), yes)
+        }
+        "le" => {
+            let t = chain(
+                k,
+                var("i"),
+                |j| prim(Prim::Le, int(j), var("i")),
+                plus(|_| 1),
+            );
+            (ge0(t), narrow(), yes)
+        }
+        "swapped" => {
+            let t = (1..=ki).fold(var("i"), |t, j| {
+                let t = Arc::new(t);
+                let more = prim(Prim::Add, (*t).clone(), int(1));
+                Term::If(
+                    Arc::new(prim(Prim::Lt, var("i"), int(j))),
+                    Arc::new(more),
+                    t,
+                )
+            });
+            (ge0(t), narrow(), yes)
+        }
+        "constfirst" => {
+            let t = chain(k, var("i"), ge_i, |_, t| prim(Prim::Add, int(1), t));
+            (ge0(t), narrow(), yes)
+        }
+        "sub" => {
+            let t = chain(k, var("i"), ge_i, |_, t| prim(Prim::Sub, t, int(-1)));
+            (ge0(t), narrow(), yes)
+        }
+        "twoin" => {
+            let ds = over(&[
+                ("i", IntervalSet::of(-50, 50)),
+                ("u", IntervalSet::of(0, 5)),
+            ]);
+            (ge0(adds(k, |_| 1)), ds, yes)
+        }
+        "conj" | "conj_live" => {
+            let mut t = var("i");
+            let mut all: Option<Term> = None;
+            for j in 1..=ki {
+                let prev = Arc::new(t);
+                let more = prim(Prim::Add, (*prev).clone(), int(1));
+                t = Term::If(Arc::new(ge_i(j)), prev, Arc::new(more));
+                let tj = ge0(t.clone());
+                all = Some(all.map_or(tj.clone(), |a| prim(Prim::And, a, tj)));
+            }
+            let all = all.unwrap_or(Term::Lit(Value::Bool(true)));
+            let ds = if name == "conj" { narrow() } else { live() };
+            (all, ds, yes)
+        }
+        "cross" | "cross_live" => {
+            let w = if name == "cross" { 50 } else { ki };
+            let ds = over(&[("i", IntervalSet::of(-w, w)), ("m", IntervalSet::of(-w, w))]);
+            (ge0(chain(k, var("m"), ge_i, plus(|_| 1))), ds, yes)
+        }
+        "ne_guard" => {
+            let t = chain(
+                k,
+                var("i"),
+                |j| prim(Prim::Ne, var("i"), int(j)),
+                plus(|_| 1),
+            );
+            (ge0(t), narrow(), yes)
+        }
+        "abs_guard" => {
+            let abs = || Term::Prim(Prim::Abs, vec![var("i")]);
+            let t = chain(k, var("i"), |j| prim(Prim::Ge, abs(), int(j)), plus(|_| 1));
+            (ge0(t), narrow(), yes)
+        }
+        "mod7" => {
+            let g = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(7)), int(j % 7));
+            (ge0(chain(k, var("i"), g, plus(|_| 1))), narrow(), yes)
+        }
+        "jt" => {
+            let t = chain(k, var("i"), ge_i, |j, t| prim(Prim::Sub, int(j), t));
+            (ge0(t), narrow(), yes)
+        }
+        "t3" => {
+            let arm = |_, t| prim(Prim::Sub, prim(Prim::Mul, t, int(3)), int(1));
+            (ge0(chain(k, var("i"), ge_i, arm)), narrow(), yes)
+        }
+        "min" => {
+            let arm = |_, t| prim(Prim::Min, prim(Prim::Add, t, int(1)), int(100));
+            (ge0(chain(k, var("i"), ge_i, arm)), narrow(), yes)
+        }
+        "mul" => {
+            let t = chain(k, var("i"), ge_i, |_, t| prim(Prim::Mul, int(-2), t));
+            (t, narrow(), Demand::Ints(pieces(&[(-40, -5), (3, 30)])))
+        }
+        "neg" => {
+            let arm = |_, t| prim(Prim::Sub, int(0), prim(Prim::Add, t, int(1)));
+            let t = chain(k, var("i"), ge_i, arm);
+            (t, narrow(), Demand::Ints(pieces(&[(-10, -2), (4, 9)])))
+        }
+        "indep_2j" => (
+            independent(k, |j| 2 * j),
+            bits(k, -ki * (ki + 1), 0),
+            ints(0, 0),
+        ),
+        "indep_1" => (independent(k, |_| 1), bits(k, -ki, ki), ints(0, 0)),
+        "subset" => {
+            let cs: Vec<i64> = (1..=ki)
+                .map(|j| (1 << 40) + 2 * ((j * 0x9e37_79b9) % (1 << 30)))
+                .collect();
+            let target: i64 = cs.iter().step_by(2).sum();
+            (
+                independent(k, |j| cs[j as usize - 1]),
+                bits(k, 0, 0),
+                ints(target, target),
+            )
+        }
+        "abs_chain" => {
+            let t = (1..=ki).fold(var("i"), |t, j| {
+                let abs = Term::Prim(Prim::Abs, vec![t]);
+                prim(Prim::Sub, abs, int(1 << (ki + 1 - j)))
+            });
+            let r = 1 << (ki + 2);
+            (t, i_in(-r, r), ints(0, 0))
+        }
+        _ => panic!("no family {name}"),
+    }
+}
+
+fn old(d: &Demand) -> before::Demand {
+    match d {
+        Demand::Ints(z) => before::Demand::Ints(z.clone()),
+        Demand::Bool(b) => before::Demand::Bool(*b),
+    }
+}
+
+/// Runs `f` on a thread with a stack deep enough for chains of thousands of terms.
+fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|s| {
+        let thread = std::thread::Builder::new().stack_size(1 << 28);
+        thread.spawn_scoped(s, f).unwrap().join().unwrap()
+    })
+}
+
+/// The cases compared, the differences found, each shown, and the cases where the transfer
+/// before gave a preimage the interpreter refutes and the new one does not.
+#[derive(Default)]
+struct Diffs {
+    cases: usize,
+    found: Vec<String>,
+    fixed: usize,
+    narrower: usize,
+}
+
+/// Whether the interpreter refutes `domains` as the preimage of `d` under `t` over `ds` on
+/// the points within (-60, 60): a point that meets `d` lies outside, or, when `exact`, a point
+/// inside fails `d`.
+fn refuted(t: &Term, ds: &Domains, d: &Demand, domains: &Domains, exact: bool) -> bool {
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    super::points(ds, &names, (-60, 60)).iter().any(|pt| {
+        let inside = names
+            .iter()
+            .zip(pt)
+            .all(|(n, &v)| domains.get(n).is_none_or(|s| s.contains(v)));
+        let meets = super::meets(t, &names, pt, d);
+        (meets && !inside) || (!meets && exact && inside)
+    })
+}
+
+impl Diffs {
+    /// Compares the preimage of `d` under `t` over `ds` with the one before. A difference
+    /// counts as fixed when the interpreter refutes the one before and not the new one: the
+    /// transfer before is falsely exact through `c - x` (plan_dag S22b). A difference counts as
+    /// narrower when only the box differs, both are inexact, and the new box is a sound subset
+    /// of the one before.
+    fn preimage(&mut self, what: &str, t: &Term, ds: &Domains, d: &Demand) {
+        let (now, then) = (preimage(t, ds, d), before::preimage(t, ds, &old(d)));
+        let (new, old) = (format!("{now:?}"), format!("{then:?}"));
+        if new != old
+            && refuted(t, ds, d, &then.domains, then.exact)
+            && !refuted(t, ds, d, &now.domains, now.exact)
+        {
+            self.cases += 1;
+            self.fixed += 1;
+            return;
+        }
+        // Both inexact and alike but for the box, and the new box lies inside the one before
+        // and holds every point the interpreter finds: the clip narrows a result the map2 cap
+        // widened, so Lemma 4's equality does not hold there.
+        macro_rules! rest {
+            ($p:expr) => {
+                format!(
+                    "{:?} {:?} {:?} {:?} {:?}",
+                    $p.exact, $p.enumerated, $p.stops, $p.relation, $p.refusal
+                )
+            };
+        }
+        let inside = |s: &IntervalSet, o: &IntervalSet| {
+            s.pieces()
+                .iter()
+                .all(|&(lo, hi)| o.pieces().iter().any(|&(l, h)| l <= lo && hi <= h))
+        };
+        if new != old
+            && !now.exact
+            && rest!(now) == rest!(then)
+            && now.domains.keys().eq(then.domains.keys())
+            && now.domains.iter().all(|(n, s)| inside(s, &then.domains[n]))
+            && !refuted(t, ds, d, &now.domains, now.exact)
+        {
+            self.cases += 1;
+            self.narrower += 1;
+            return;
+        }
+        self.note(what, t, ds, d, new, old);
+    }
+
+    /// Compares the exact preimage of `d` under `t` over `ds` and `cs` with the one before.
+    fn exact(&mut self, what: &str, t: &Term, ds: &Domains, cs: &Classes, d: &Demand) {
+        let new = format!("{:?}", exact_preimage(t, ds, cs, d));
+        let old = format!("{:?}", before::exact_preimage(t, ds, cs, &old(d)));
+        self.note(what, t, ds, d, new, old);
+    }
+
+    fn note(&mut self, what: &str, t: &Term, ds: &Domains, d: &Demand, new: String, old: String) {
+        self.cases += 1;
+        if new != old {
+            // The families' terms are too large to show; their names and sizes say which.
+            let t = if what.contains(" k=") {
+                String::new()
+            } else {
+                t.to_string()
+            };
+            self.found.push(format!(
+                "{what}: {t} over {ds:?}, demand {d:?}\n  now    {new}\n  before {old}"
+            ));
+        }
+    }
+
+    /// Panics, showing the first differences, when there are any, or when fewer than `least`
+    /// cases were compared.
+    fn none(self, least: usize) {
+        assert!(
+            self.found.is_empty(),
+            "{} of {} preimages differ from the transfer before:\n{}",
+            self.found.len(),
+            self.cases,
+            self.found[..self.found.len().min(5)].join("\n")
+        );
+        assert!(self.cases >= least, "only {} cases compared", self.cases);
+        eprintln!(
+            "{} cases, {} where the transfer before is refuted, {} with a narrower inexact box",
+            self.cases, self.fixed, self.narrower
+        );
+    }
+}
+
+/// A random domain of `i`: all integers, a half-line, or one to three intervals apart.
+fn chain_domain(rng: &mut Rng) -> IntervalSet {
+    match rng.below(6) {
+        0 => IntervalSet::top(),
+        1 => IntervalSet::range(End::Fin(rng.int(-20, 5)), End::PosInf),
+        2 => IntervalSet::range(End::NegInf, End::Fin(rng.int(-5, 20))),
+        _ => {
+            let mut lo = rng.int(-25, -5);
+            let mut ps = Vec::new();
+            for _ in 0..rng.int(1, 3) {
+                let hi = lo + rng.int(0, 12);
+                ps.push((End::Fin(lo), End::Fin(hi)));
+                lo = hi + rng.int(2, 6);
+            }
+            IntervalSet::from_pieces(ps)
+        }
+    }
+}
+
+/// A random chain of up to four `if`s over `i` whose arms read one shared term, each arm
+/// the term, a translation, a reflection, a multiple, a `min` or a sum of the term with itself.
+fn random_chain(rng: &mut Rng) -> Term {
+    let mut t = if rng.below(4) == 0 {
+        prim(Prim::Add, var("i"), int(rng.int(-5, 5)))
+    } else {
+        var("i")
+    };
+    for _ in 0..rng.int(1, 4) {
+        let c = rng.int(-10, 10);
+        let g = match rng.below(7) {
+            0 => prim(Prim::Ge, var("i"), int(c)),
+            1 => prim(Prim::Le, var("i"), int(c)),
+            2 => prim(Prim::Lt, int(c), var("i")),
+            3 => prim(Prim::Eq, var("i"), int(c)),
+            4 => prim(Prim::Ne, var("i"), int(c)),
+            5 => prim(
+                Prim::Eq,
+                prim(Prim::Mod, var("i"), int(3)),
+                int(c.rem_euclid(3)),
+            ),
+            _ => prim(
+                Prim::Ge,
+                Term::Prim(Prim::Abs, vec![var("i")]),
+                int(c.abs()),
+            ),
+        };
+        let shared = Arc::new(t);
+        let mut arm = || {
+            let s = (*shared).clone();
+            let c = rng.int(-6, 6);
+            match rng.below(10) {
+                0 => s,
+                1 => prim(Prim::Add, s, int(c)),
+                2 => prim(Prim::Sub, s, int(c)),
+                3 => prim(Prim::Sub, int(c), s),
+                4 => prim(Prim::Sub, int(0), s),
+                5 => Term::Prim(Prim::Neg, vec![s]),
+                6 => prim(Prim::Mul, s, int(c)),
+                7 => prim(Prim::Mul, int(c), s),
+                8 => prim(Prim::Min, s, int(c)),
+                _ => prim(Prim::Add, s.clone(), s),
+            }
+        };
+        let (a, b) = (arm(), arm());
+        t = Term::If(Arc::new(g), Arc::new(a), Arc::new(b));
+    }
+    t
+}
+
+/// A random demand on `t`: on its value, one or two intervals or a half-line, or a comparison
+/// of it with a constant asked true or false.
+fn chain_demand(rng: &mut Rng, t: Term) -> (Term, Demand) {
+    let a = rng.int(-30, 30);
+    let b = rng.below(2) == 0;
+    let cmp = |p| prim(p, t.clone(), int(a));
+    match rng.below(10) {
+        0 => (t, ints(a, a)),
+        1 => (t, ints(a, a + rng.int(0, 15))),
+        2 => (
+            t,
+            Demand::Ints(IntervalSet::range(End::NegInf, End::Fin(a))),
+        ),
+        3 => (
+            t,
+            Demand::Ints(IntervalSet::range(End::Fin(a), End::PosInf)),
+        ),
+        4 => (t, Demand::Ints(pieces(&[(a, a + 1), (a + 5, a + 6)]))),
+        5 => (cmp(Prim::Ge), Demand::Bool(b)),
+        6 => (cmp(Prim::Lt), Demand::Bool(b)),
+        7 => (cmp(Prim::Eq), Demand::Bool(b)),
+        8 => (cmp(Prim::Le), Demand::Bool(b)),
+        _ => (cmp(Prim::Gt), Demand::Bool(b)),
+    }
+}
+
+/// The families in `sets` at sizes on both sides of the domain's width (50), where the hull of
+/// a term starts to merge demands, and each under three more domains of `i`; the extra sizes
+/// of each family follow its name.
+fn chain_families(sets: &[(&str, &[usize])], least: usize) {
+    on_big_stack(|| {
+        let wide = (0..=8).chain([13, 16, 21, 32, 49, 50, 51, 64]);
+        let mut diffs = Diffs::default();
+        for &(name, more) in sets {
+            for k in wide.clone().chain(more.iter().copied()) {
+                let (t, ds, d) = family(name, k);
+                diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
+                if !ds.contains_key("i") {
+                    continue;
+                }
+                let mut rng = Rng::new(k as u64 * 31 + name.len() as u64);
+                for _ in 0..3 {
+                    let mut ds = ds.clone();
+                    ds.insert("i".into(), chain_domain(&mut rng));
+                    diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
+                }
+            }
+        }
+        diffs.none(least);
+    });
+}
+
+/// The families with one guard each, at the sizes above.
+#[test]
+fn chains_of_shared_terms_keep_their_preimages() {
+    chain_families(
+        &[
+            ("probe", &[256]),
+            ("live", &[64, 128]),
+            ("alt", &[256]),
+            ("alt_live", &[64, 128]),
+            ("eq0", &[256]),
+            ("eq0_live", &[64, 128]),
+            ("ne0", &[]),
+            ("range", &[256]),
+            ("range_live", &[64, 128]),
+            ("rangeand", &[]),
+            ("gt", &[]),
+            ("le", &[]),
+            ("swapped", &[]),
+            ("constfirst", &[]),
+            ("sub", &[]),
+            ("twoin", &[]),
+            ("conj", &[]),
+            ("conj_live", &[]),
+            ("ne_guard", &[]),
+            ("abs_guard", &[]),
+            ("jt", &[]),
+            ("min", &[]),
+            ("neg", &[]),
+        ],
+        1612,
+    );
+}
+
+/// The families whose constants grow with the chain (`c_j = j`), at the sizes above.
+#[test]
+fn chains_of_growing_constants_keep_their_preimages() {
+    chain_families(
+        &[
+            ("cj", &[]),
+            ("cj_live", &[24]),
+            ("altj", &[]),
+            ("altj_live", &[24]),
+        ],
+        280,
+    );
+}
+
+/// Families whose transfer is slow or whose values leave `i64` at larger sizes.
+#[test]
+fn chains_of_slow_families_keep_their_preimages() {
+    on_big_stack(|| {
+        let small = (0..=8).chain([13, 16, 21, 32]);
+        let mut diffs = Diffs::default();
+        for (name, ks) in [
+            ("cross", small.clone().take(10).collect::<Vec<_>>()),
+            ("cross_live", small.clone().take(10).collect()),
+            ("mod7", small.clone().take(9).collect()),
+            ("pow2", small.clone().take(10).collect()),
+            ("t3", small.clone().take(9).collect()),
+            ("mul", small.clone().collect()),
+            ("indep_2j", vec![1, 2, 3, 5, 8]),
+            ("indep_1", vec![1, 2, 3, 5, 8, 12]),
+            ("subset", vec![1, 2, 3, 5, 8, 10]),
+            ("abs_chain", vec![1, 2, 3, 5, 8]),
+        ] {
+            for k in ks {
+                let (t, ds, d) = family(name, k);
+                diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
+            }
+        }
+        diffs.none(83);
+    });
+}
+
+/// Random chains of shared terms, under random domains of one to three pieces and random
+/// demands on the chain or on a comparison of it.
+#[test]
+fn random_chains_of_shared_terms_keep_their_preimages() {
+    on_big_stack(|| {
+        let mut diffs = Diffs::default();
+        // Guards `i >= c` and translations, as the summary reads them.
+        let mut rng = Rng::new(0x9e37_79b9_7f4a_7c15);
+        for _ in 0..4000 {
+            let mut t = var("i");
+            for _ in 0..rng.int(0, 12) {
+                let prev = Arc::new(t);
+                let g = ge_i(rng.int(-25, 25));
+                let c = rng.int(-6, 6);
+                let more = if rng.below(10) == 0 {
+                    prim(Prim::Sub, (*prev).clone(), int(-c))
+                } else {
+                    prim(Prim::Add, (*prev).clone(), int(c))
+                };
+                t = Term::If(Arc::new(g), prev, Arc::new(more));
+            }
+            let lo = rng.int(-30, 5);
+            let mut ds = i_in(lo, lo + rng.int(0, 40));
+            if rng.below(10) == 0 {
+                ds.insert("y".into(), IntervalSet::of(0, 3));
+            }
+            let (t, d) = chain_demand(&mut rng, t);
+            diffs.preimage("translations", &t, &ds, &d);
+        }
+        diffs.none(4000);
+    });
+}
+
+/// Every kind of guard and arm the summary reads, and some it does not: the cases `from..to`
+/// of one sequence, split in two tests so they run in parallel.
+fn random_guarded_chains(from: usize, to: usize) {
+    on_big_stack(|| {
+        let mut diffs = Diffs::default();
+        let mut rng = Rng::new(22);
+        for i in 0..to {
+            let t = random_chain(&mut rng);
+            let ds = over(&[("i", chain_domain(&mut rng))]);
+            let (t, d) = if rng.below(3) == 0 {
+                let p = rng.pick(&[Prim::Ge, Prim::Le, Prim::Eq, Prim::Ne, Prim::Lt]);
+                (
+                    prim(p, t, int(rng.int(-10, 10))),
+                    Demand::Bool(rng.below(2) == 0),
+                )
+            } else {
+                (t, int_demand(&mut rng))
+            };
+            if i >= from {
+                diffs.preimage("random chain", &t, &ds, &d);
+            }
+        }
+        diffs.none(to - from);
+    });
+}
+
+/// Random chains of every kind of guard, the first half.
+#[test]
+fn random_guarded_chains_keep_their_preimages() {
+    random_guarded_chains(0, 2000);
+}
+
+/// Random chains of every kind of guard, the second half.
+#[test]
+fn more_random_guarded_chains_keep_their_preimages() {
+    random_guarded_chains(2000, 4000);
+}
+
+/// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
+#[test]
+fn random_terms_keep_their_preimages() {
+    on_big_stack(|| {
+        let mut diffs = Diffs::default();
+        let seeds = [
+            (25, 250, false, false),
+            (2025, 250, true, false),
+            (7, 400, false, true),
+        ];
+        let more = [
+            (77, 400, true, true),
+            (777, 1500, false, true),
+            (31337, 1500, true, true),
+        ];
+        for (seed, cases, test, calls) in seeds.into_iter().chain(more) {
+            let mut rng = Rng::new(seed);
+            for case in 0..cases {
+                let test = test && (seed < 777 || case % 2 == 1);
+                let (t, d) = if test {
+                    (bool_term(&mut rng, 3), Demand::Bool(rng.below(2) == 0))
+                } else {
+                    (int_term(&mut rng, 3), int_demand(&mut rng))
+                };
+                let t = if calls && case % 3 == 0 {
+                    with_functions(&mut rng, &t)
+                } else {
+                    t
+                };
+                let ds = domains(&mut rng);
+                diffs.preimage("random term", &t, &ds, &d);
+            }
+        }
+        for seed in 1000..1010 {
+            let mut rng = Rng::new(seed);
+            for _ in 0..200 {
+                let (t, d) = if rng.below(2) == 0 {
+                    (bool_term(&mut rng, 4), Demand::Bool(rng.below(2) == 0))
+                } else {
+                    (int_term(&mut rng, 4), int_demand(&mut rng))
+                };
+                let ds = domains(&mut rng);
+                diffs.preimage("random term, depth 4", &t, &ds, &d);
+            }
+        }
+        for (seed, test) in [(7, false), (77, true)] {
+            let mut rng = Rng::new(seed);
+            for _ in 0..250 {
+                let (t, d) = if test {
+                    (bool_term(&mut rng, 3), Demand::Bool(rng.below(2) == 0))
+                } else {
+                    (int_term(&mut rng, 3), int_demand(&mut rng))
+                };
+                let mut bounded = || {
+                    let lo = rng.int(-15, 10);
+                    IntervalSet::of(lo, (lo + rng.int(0, 20)).min(15))
+                };
+                let ds = over(&[("x", bounded()), ("y", bounded())]);
+                let mut cs = Classes::new();
+                if rng.below(3) == 0 {
+                    let m = rng.int(2, 4);
+                    cs.insert("x".into(), Congruence::new(m as u64, rng.int(0, m - 1)));
+                }
+                diffs.exact("exact", &t, &ds, &cs, &d);
+            }
+        }
+        diffs.none(6800);
+    });
+}
+
+/// Guards, domains, offsets and demands at the two ends of `i64`, values that leave `i64`
+/// inside a chain, reflections under several demands, products, and empty demands.
+#[test]
+fn ends_of_i64_and_other_corners_keep_their_preimages() {
+    use End::{Fin, NegInf, PosInf};
+    const MIN: i64 = i64::MIN;
+    const MAX: i64 = i64::MAX;
+    on_big_stack(|| {
+        let mut diffs = Diffs::default();
+        let ends = [MIN, MIN + 1, MIN + 2, -1, 0, 1, MAX - 2, MAX - 1, MAX];
+        let doms = [(-2, 2), (MIN, MIN + 3), (MAX - 3, MAX), (MIN, MAX)];
+        let demands = [
+            Demand::Ints(IntervalSet::single(0)),
+            Demand::Ints(IntervalSet::range(Fin(MAX - 1), PosInf)),
+            Demand::Ints(IntervalSet::range(NegInf, Fin(MIN + 1))),
+            Demand::Ints(IntervalSet::from_pieces(vec![
+                (NegInf, Fin(MIN + 2)),
+                (Fin(MAX - 2), PosInf),
+            ])),
+        ];
+        let guards: [fn(i64) -> Term; 3] = [
+            ge_i,
+            |b| prim(Prim::Le, var("i"), int(b)),
+            |b| prim(Prim::Gt, var("i"), int(b)),
+        ];
+        for b in ends {
+            for c in [-2, -1, 1, 2, MAX, MIN] {
+                for (lo, hi) in doms {
+                    for d in &demands {
+                        for g in guards {
+                            let t = chain(1, var("i"), |_| g(b), plus(|_| c));
+                            diffs.preimage("ends", &t, &i_in(lo, hi), d);
+                            // Two levels, the second guard at the other end.
+                            let t = chain(
+                                2,
+                                var("i"),
+                                |j| g(if j == 1 { b } else { -b.saturating_add(1) }),
+                                plus(|_| c),
+                            );
+                            diffs.preimage("ends, two levels", &t, &i_in(lo, hi), d);
+                        }
+                    }
+                }
+            }
+        }
+        // Sums that leave `i64` on some inputs and not others, deep in a chain.
+        for c in [MAX / 2, MAX / 3, MIN / 2, MAX - 5] {
+            for k in [2, 3, 5, 8] {
+                for (lo, hi) in [(0, 10), (-10, 10), (MAX - 20, MAX), (MIN, MIN + 20)] {
+                    let t = adds(k, |_| c);
+                    for d in &demands {
+                        diffs.preimage("overflow", &t, &i_in(lo, hi), d);
+                    }
+                    diffs.preimage(
+                        "overflow",
+                        &prim(Prim::Ge, t.clone(), int(0)),
+                        &i_in(lo, hi),
+                        &Demand::Bool(true),
+                    );
+                    let t = chain(k, var("i"), ge_i, |_, t| prim(Prim::Mul, t, int(c)));
+                    diffs.preimage("overflow, product", &t, &i_in(lo, hi), &ints(-5, 5));
+                }
+            }
+        }
+        // Reflections and products under demands of several pieces on both signs.
+        let neg = |t: Term| Term::Prim(Prim::Neg, vec![t]);
+        let arms: [(Term, Term); 7] = [
+            (prim(Prim::Sub, int(0), var("i")), var("i")),
+            (neg(var("i")), var("i")),
+            (
+                prim(Prim::Sub, int(0), prim(Prim::Add, var("i"), int(12))),
+                var("i"),
+            ),
+            (var("i"), prim(Prim::Sub, int(0), var("i"))),
+            (prim(Prim::Sub, int(7), var("i")), var("i")),
+            (
+                prim(Prim::Mul, var("i"), int(3)),
+                prim(Prim::Mul, int(-2), var("i")),
+            ),
+            (
+                prim(Prim::Mul, int(-1), var("i")),
+                prim(Prim::Add, var("i"), int(4)),
+            ),
+        ];
+        let zs = [
+            pieces(&[(-10, 0), (10, 25)]),
+            pieces(&[(-25, -20), (-10, -5), (3, 4), (10, 12)]),
+            pieces(&[(-30, -28), (-20, -18), (-9, -7), (-3, -2)]),
+            pieces(&[(2, 3), (6, 7), (11, 12), (20, 21)]),
+            pieces(&[(-60, 60)]),
+            IntervalSet::empty(),
+        ];
+        for (b, (yes, no)) in [0, 5, -3]
+            .into_iter()
+            .zip(arms.iter().cycle())
+            .chain(arms.iter().enumerate().map(|(n, a)| (n as i64 - 3, a)))
+        {
+            let t = Term::If(
+                Arc::new(ge_i(b)),
+                Arc::new(yes.clone()),
+                Arc::new(no.clone()),
+            );
+            for z in &zs {
+                for ds in [
+                    i_in(-30, 30),
+                    over(&[("i", pieces(&[(-30, -20), (-5, 5), (12, 40)]))]),
+                ] {
+                    diffs.preimage("reflection", &t, &ds, &Demand::Ints(z.clone()));
+                }
+            }
+        }
+        // An empty demand on each family.
+        for name in ["probe", "alt", "range", "cross", "twoin", "neg", "mul"] {
+            for k in [1, 4, 60] {
+                let (t, ds, _) = family(name, k);
+                diffs.preimage(
+                    &format!("empty demand {name} k={k}"),
+                    &t,
+                    &ds,
+                    &Demand::Ints(IntervalSet::empty()),
+                );
+            }
+        }
+        diffs.none(4000);
+    });
+}
+
+/// Chains of guarded translations, checked with the interpreter: their preimages are exact,
+/// not enumerated, and stop nowhere.
+#[test]
+fn guarded_translation_chains_match_the_interpreter() {
+    let mut rng = Rng::new(2201);
+    for _ in 0..120 {
+        let mut t = var("x");
+        for _ in 0..rng.int(1, 16) {
+            let prev = Arc::new(t);
+            let g = prim(Prim::Ge, var("x"), int(rng.int(-10, 10)));
+            let more = prim(Prim::Add, (*prev).clone(), int(rng.int(-4, 4)));
+            t = Term::If(Arc::new(g), prev, Arc::new(more));
+        }
+        let lo = rng.int(-20, 20);
+        let d = ints(lo, lo + rng.int(0, 10));
+        let ds = over(&[("x", IntervalSet::of(-15, 15))]);
+        let p = preimage(&t, &ds, &d);
+        assert!(p.exact && !p.enumerated, "{t}: {p:?}");
+        assert!(
+            p.stops.is_empty() && p.relation.is_none() && p.refusal.is_none(),
+            "{t}: {p:?}"
+        );
+        check(&t, &ds, &d, &p, (-15, 15));
+    }
+}
+
+/// [`scaling::check`] on the preimage of a family, its sizes built before they are timed.
+fn scales(name: &'static str, n: usize) {
+    on_big_stack(|| {
+        let (a, b) = (family(name, n), family(name, n * scaling::FACTOR));
+        scaling::check(
+            &format!("the preimage of the chain family {name}"),
+            n,
+            |k| {
+                let (t, ds, d) = if k == n { &a } else { &b };
+                preimage(t, ds, d);
+            },
+        );
+    });
+}
+
+#[test]
+fn chain_probe_scales() {
+    scales("probe", 256);
+}
+
+#[test]
+fn chain_live_scales() {
+    scales("live", 256);
+}
+
+#[test]
+fn chain_alt_scales() {
+    scales("alt", 256);
+}
+
+#[test]
+fn chain_cj_scales() {
+    scales("cj", 256);
+}
+
+#[test]
+fn chain_eq0_scales() {
+    scales("eq0", 256);
+}
+
+#[test]
+fn chain_range_scales() {
+    scales("range", 256);
+}
+
+#[test]
+fn chain_gt_scales() {
+    scales("gt", 256);
+}
+
+#[test]
+fn chain_swapped_scales() {
+    scales("swapped", 256);
+}
+
+#[test]
+fn chain_constfirst_scales() {
+    scales("constfirst", 256);
+}
+
+#[test]
+fn chain_sub_scales() {
+    scales("sub", 256);
+}
+
+#[test]
+fn chain_twoin_scales() {
+    scales("twoin", 256);
+}
+
+#[test]
+fn chain_conj_scales() {
+    scales("conj", 256);
+}
+
+#[test]
+fn chain_conj_live_scales() {
+    scales("conj_live", 256);
+}
+
+#[test]
+fn chain_cross_scales() {
+    scales("cross", 256);
+}
+
+#[test]
+fn chain_abs_guard_scales() {
+    scales("abs_guard", 256);
+}
+
+#[test]
+fn chain_ne_guard_scales() {
+    scales("ne_guard", 256);
+}
+
+#[test]
+fn chain_pow2_scales() {
+    scales("pow2", 256);
+}
+
+#[test]
+fn chain_jt_scales() {
+    scales("jt", 256);
+}

@@ -12,6 +12,7 @@
 mod entries;
 mod exact;
 mod random;
+mod s22;
 mod scaling;
 mod scopes;
 mod stops;
