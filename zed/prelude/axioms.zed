@@ -83,8 +83,13 @@ axioms = [
   Axiom(op: "==", carrier: #string, law: #transitive),
   Axiom(op: "!=", carrier: #int, law: #irreflexive),
   Axiom(op: "!=", carrier: #int, law: #symmetric),
+  // `!=` at `f64` is only symmetric: `NaN != NaN` is true, so it is not irreflexive.
+  Axiom(op: "!=", carrier: #f64, law: #symmetric),
+  Axiom(op: "!=", carrier: #string, law: #irreflexive),
+  Axiom(op: "!=", carrier: #string, law: #symmetric),
   // The comparisons are the total order of values at every carrier but `f64`, where they are
   // IEEE 754 comparisons: a strict order, and `<=` only transitive, since a NaN compares false.
+  // Strings compare by code point, which is the byte order of their UTF-8 (sec:order).
   Axiom(op: "<", carrier: #int, law: #irreflexive),
   Axiom(op: "<", carrier: #int, law: #transitive),
   Axiom(op: "<", carrier: #f64, law: #irreflexive),
@@ -104,11 +109,17 @@ axioms = [
   Axiom(op: ">", carrier: #int, law: #transitive),
   Axiom(op: ">", carrier: #f64, law: #irreflexive),
   Axiom(op: ">", carrier: #f64, law: #transitive),
+  Axiom(op: ">", carrier: #string, law: #irreflexive),
+  Axiom(op: ">", carrier: #string, law: #transitive),
   Axiom(op: ">=", carrier: #int, law: #reflexive),
   Axiom(op: ">=", carrier: #int, law: #antisymmetric),
   Axiom(op: ">=", carrier: #int, law: #transitive),
   Axiom(op: ">=", carrier: #int, law: #total),
   Axiom(op: ">=", carrier: #f64, law: #transitive),
+  Axiom(op: ">=", carrier: #string, law: #reflexive),
+  Axiom(op: ">=", carrier: #string, law: #antisymmetric),
+  Axiom(op: ">=", carrier: #string, law: #transitive),
+  Axiom(op: ">=", carrier: #string, law: #total),
   // How `<` and `<=`, and `>` and `>=`, relate, which the compositions of an order chain read
   // (sec:verification): `#implies(q)` is `op(a, b)` implies `q(a, b)`, and `#composes(q, r)` is
   // `op(a, b)` and `q(b, c)` imply `r(a, c)`. They hold at `f64` too: a comparison with a NaN is

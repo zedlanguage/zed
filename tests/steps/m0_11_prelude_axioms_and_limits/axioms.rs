@@ -75,7 +75,11 @@ fn le(a: &Value, b: &Value) -> bool {
 
 /// Checks `a` on every instance; returns how many were run, or the first counterexample.
 fn check(a: &Axiom) -> Result<usize, String> {
-    let vs = values(a.carrier);
+    check_on(a, &values(a.carrier))
+}
+
+/// Checks `a` on the values `vs` of its carrier.
+fn check_on(a: &Axiom, vs: &[Value]) -> Result<usize, String> {
     let mut n = 0;
     let mut eq = |what: String, l: Term, r: Term| {
         n += 1;
@@ -107,13 +111,13 @@ fn check(a: &Axiom) -> Result<usize, String> {
             }
         }
         Law::Idempotent => {
-            for x in &vs {
+            for x in vs {
                 eq(format!("{x}"), call(op, vec![v(x), v(x)]), v(x))?;
             }
         }
         Law::Identity(e) | Law::Zero(e) => {
             let e = constant(e);
-            for x in &vs {
+            for x in vs {
                 let out = if matches!(a.law, Law::Identity(_)) {
                     x
                 } else {
@@ -132,7 +136,7 @@ fn check(a: &Axiom) -> Result<usize, String> {
             }
         }
         Law::Inverse(g) => {
-            for x in &vs {
+            for x in vs {
                 eq(
                     format!("{g} after, {x}"),
                     call(g, vec![call(op, vec![v(x)])]),
@@ -203,7 +207,7 @@ fn check(a: &Axiom) -> Result<usize, String> {
             }
         }
         Law::Reflexive | Law::Irreflexive => {
-            for x in &vs {
+            for x in vs {
                 n += 1;
                 if holds(op, &[x, x]) != matches!(a.law, Law::Reflexive) {
                     return Err(format!("{x}"));
@@ -261,7 +265,7 @@ fn every_axiom_holds_on_the_harness_instances() {
             Err(why) => panic!("{} at {:?}: {:?} fails on {why}", a.op, a.carrier, a.law),
         }
     }
-    assert_eq!(AXIOMS.len(), 97);
+    assert_eq!(AXIOMS.len(), 106);
     assert!(total > 50_000, "{total} instances");
 }
 
@@ -293,6 +297,10 @@ fn a_false_claim_of_each_kind_is_refuted() {
         claim("<", F64, Law::Composes(">", "<")), // 0.0 < 1.0 > 0.0 but not 0.0 < 0.0
         claim("<=", F64, Law::Implies("==")), // 0.0 <= 1.0
         claim("<=", F64, Law::Composes(">=", "<=")), // 0.0 <= 2.0 >= 1.0 but not 2.0 <= 1.0
+        claim("!=", F64, Law::Irreflexive),  // NaN != NaN
+        claim("!=", F64, Law::Transitive),   // 0.0 != 1.0 != 0.0 but not 0.0 != 0.0
+        claim(">=", String, Law::Implies(">")), // "a" >= "a" but not "a" > "a"
+        claim(">", String, Law::Total),      // neither "a" > "a"
     ];
     for c in &controls {
         assert!(
@@ -384,6 +392,14 @@ fn the_compositions_an_order_chain_needs_are_axioms() {
         assert!(!has("<=", c, Law::Implies("<")));
         assert!(!has("<=", c, Law::Composes("<=", "<")));
     }
+    // At `String` a chain of one comparison composes by transitivity, `<` and `>` alike. No
+    // carrier makes `!=` transitive: `a != b` and `b != a` do not give `a != a`.
+    for op in ["<", "<=", ">", ">="] {
+        assert!(has(op, Carrier::String, Law::Transitive), "{op}");
+    }
+    for c in [Carrier::Int, Carrier::F64, Carrier::Bool, Carrier::String] {
+        assert!(!has("!=", c, Law::Transitive), "{c:?}");
+    }
 }
 
 /// The float instances the order axioms are checked on hold a NaN, both zeros and both
@@ -403,10 +419,69 @@ fn the_float_instances_hold_the_ieee_corner_values() {
     let nan = Value::float(f64::NAN);
     assert!(!holds("<=", &[&nan, &nan]));
     assert!(!holds("<", &[&nan, &Value::float(1.0)]));
-    // And `!=` is not irreflexive at `f64`, which is why the table gives it no law there.
+    // And `!=` is not irreflexive at `f64`, which is why the table gives it only `#symmetric`
+    // there: `NaN != NaN`, and both ways round with any other float.
     assert!(holds("!=", &[&nan, &nan]));
+    let one = Value::float(1.0);
+    assert!(holds("!=", &[&nan, &one]) && holds("!=", &[&one, &nan]));
+    let (inf, ninf) = (Value::float(f64::INFINITY), Value::float(f64::NEG_INFINITY));
+    assert!(holds("!=", &[&inf, &ninf]) && holds("!=", &[&ninf, &inf]));
+    assert!(!holds("!=", &[&inf, &inf]));
     // At the zeros, `-0.0 <= 0.0` and `0.0 <= -0.0` but neither `<` the other.
     let (z, nz) = (Value::float(0.0), Value::float(-0.0));
     assert!(le(&nz, &z) && le(&z, &nz));
     assert!(!holds("<", &[&nz, &z]) && !holds("<", &[&z, &nz]));
+    // and `-0.0 != 0.0` is false both ways, as `==` holds between them.
+    assert!(!holds("!=", &[&nz, &z]) && !holds("!=", &[&z, &nz]));
+    assert!(holds(">=", &[&nz, &z]) && !holds(">", &[&z, &nz]));
+}
+
+/// Strings compare by code point, which is the byte order of their UTF-8 (sec:order): a proper
+/// prefix first, `"é"` (U+00E9) after `"z"`, and U+E000 before U+10000, which UTF-16 code units
+/// would put the other way. The evaluator's comparisons agree with that order on strings the
+/// harness's `a`, `b` instances lack, and every `String` axiom of `!=` and the comparisons
+/// holds on them.
+#[test]
+fn strings_compare_by_code_point() {
+    let words = [
+        "",
+        "a",
+        "ab",
+        "abc",
+        "b",
+        "z",
+        "Z",
+        "é",
+        "e\u{301}",
+        "\u{E000}",
+        "\u{10000}",
+        "a\u{0}",
+    ];
+    let vs: Vec<Value> = words.iter().map(|s| Value::str(s)).collect();
+    for (x, sx) in vs.iter().zip(words) {
+        for (y, sy) in vs.iter().zip(words) {
+            let by_char = sx.chars().cmp(sy.chars());
+            assert_eq!(sx.as_bytes().cmp(sy.as_bytes()), by_char, "{sx:?}, {sy:?}");
+            for (op, want) in [
+                ("<", by_char.is_lt()),
+                ("<=", by_char.is_le()),
+                (">", by_char.is_gt()),
+                (">=", by_char.is_ge()),
+                ("!=", by_char.is_ne()),
+            ] {
+                assert_eq!(holds(op, &[x, y]), want, "{sx:?} {op} {sy:?}");
+            }
+        }
+    }
+    let mut n = 0;
+    for a in AXIOMS
+        .iter()
+        .filter(|a| a.carrier == Carrier::String && a.op != "++")
+    {
+        match check_on(a, &vs) {
+            Ok(k) => n += k,
+            Err(why) => panic!("{} at String: {:?} fails on {why}", a.op, a.law),
+        }
+    }
+    assert!(n > 9_000, "{n} instances");
 }
