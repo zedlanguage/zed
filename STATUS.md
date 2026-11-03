@@ -806,16 +806,25 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| OSP-drop | impl attempt 1 | 2026-11-03 03:39 | started: reading briefs, DESIGN and l01_27 code |
+| CAP-bits | impl attempt 1 | 2026-11-03 03:35 | survey done; writing symbolic prime-power Rat in num.rs |
+| L25.8 | impl attempt 1 | 2026-11-03 03:49 | started |
+| OSP-drop | impl attempt 1 | 2026-11-03 03:39 | check written (check/mod.rs discard+entries, Ty::dropped); 12 l01_27 discard tests and 2 scaling tests pass, load 21 |
 | S22a | impl attempt 1 | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
+| ST-arms-quad | impl attempt 1 | 2026-11-03 03:35 | cause found: not in arms() itself; (1) preimage.rs Tx::cached clones every Formula into the memo at insert, O(n*depth) in relation_of (35/134/438 ms at d=125/25 |
+| ST-deep-stack | impl attempt 1 | 2026-11-03 03:35 | Formula Drop/Clone/Eq/Ord/Hash/Debug/Display, fold, map_cons, forget, walk, holds_as, nnf on explicit stacks; deep tests pass; scaling 12500->100000 levels 193. |
 | ST | merge attempt 1 | 2026-11-02 21:50 | lock released |
 | T11-S22 | impl attempt 1 (item S22a) | 2026-11-03 03:01 | baseline tools/run_tests.sh 4 on main 059aafa: 97 pieces, 0 failed; load 13.55 14.65 24.29 |
 | T6 | repair attempt 3 | 2026-11-03 00:01 | (b) TupleSplit and NoWitness reachable, tests added; witnesses for pure cycles and greedy box refinement; controls fail |
+| TD-docs | impl attempt 1 | 2026-11-03 03:52 | started |
+| TD-ends | impl attempt 1 | 2026-11-03 03:52 | started |
+| TD-refusals | impl attempt 1 | 2026-11-03 03:52 | started |
+| TD-tests | impl attempt 1 | 2026-11-03 03:52 | start: StopKind::Outside tests at fold/gen/fix, zed-native opt_level none test |
+| TD-values | impl attempt 1 | 2026-11-03 03:52 | start: Type::values without a cap |
 | XT3 | running |  | orchestrator: own attempt first, cross-review xt round 3 only if no solution |
 
 Merged into local main and not yet pushed (24 commits); the push follows one full test run on the merged tree:
 
-- STATUS, plan_dag: T11-fix-store merged and marked done (this commit)
+- d6f3f05 STATUS, plan_dag: T11-fix-store merged and marked done
 - 6328164 T11-fix-store: borrow-checker copies in the store
 - 90695ef dagview: edges for items outside the plan; plan_dag: none for two needs cells
 - f6c2444 STATUS: TRADEOFF-DOC merged
