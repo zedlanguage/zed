@@ -3206,7 +3206,17 @@ impl<'t> Tx<'t> {
             }
             for (lo, hi) in set.pieces() {
                 if let Some(s) = slice_treap(tree.clone(), lo, hi)? {
-                    // A value the arm takes on these inputs leaves `i64`: give up the summary.
+                    // Complexity tradeoff: when a value the kept arm takes on these inputs
+                    // leaves `i64`, the summary of this `if` is given up (`None`), and the `if`
+                    // is read arm by arm by the transfer before: exact, at the cost of the
+                    // per-arm transfer. Why: the treap's values are compared with the demand's
+                    // ends as machine integers, with the ends of `i64` standing for the
+                    // infinities, which keeps each treap operation O(1) per node; values of any
+                    // size would cost time in their bits at every node. Trigger: a value of a
+                    // kept arm outside `i64` on the inputs where the guard keeps that arm. Test:
+                    // `l01_25_preimage_catalog::constant_minus::reflected_arms_at_the_ends_of_i64`
+                    // (the domain `[-60, 60]`). COMPLEXITY.md S22. A complete solution would hold
+                    // the treap's values as `Num`.
                     fits(s.vals.0)?;
                     fits(s.vals.1)?;
                     slices.push((key(lo), s));
@@ -4012,6 +4022,15 @@ fn invert_piece(
     out: &mut Vec<(End, End)>,
 ) -> Option<()> {
     let (x0, x1) = (input(lo), input(hi));
+    // Complexity tradeoff: when a value of the piece at one of its ends leaves `i64`, the
+    // inversion gives up (`None`), and `invert_pa`'s caller reads the term by the transfer
+    // before: exact, at the cost of that transfer. Why: the values are met with the demand's
+    // ends as machine integers, with the ends of `i64` standing for the infinities, which keeps
+    // each piece O(1) plus the demand pieces it meets; values of any size would cost time in
+    // their bits. Trigger: a piece whose value `a * x + b` at an end `x` of its inputs lies
+    // outside `i64`. Test:
+    // `l01_25_preimage_catalog::wide_constants::a_value_at_an_end_of_i64_is_kept` (its `wider`
+    // domains). COMPLEXITY.md S22. A complete solution would hold the treap's values as `Num`.
     let at = |x: i128| fits(a.checked_mul(x)?.checked_add(b)?);
     let (u, v) = (at(x0)?, at(x1)?);
     let (vlo, vhi) = (u.min(v), u.max(v));
