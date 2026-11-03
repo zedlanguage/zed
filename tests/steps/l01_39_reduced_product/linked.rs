@@ -395,6 +395,92 @@ fn a_disjunction_of_a_constraint_and_its_complement_is_true() {
     );
 }
 
+/// `x >= d - 1 || (y >= d - 1 && (x >= d - 2 || (y >= d - 2 && … (x >= 0 || y >= 0))))`, as
+/// written by a nest of `d` conditions `if x >= i || (y >= i && …)`, built by `Formula::or` and
+/// `Formula::and` from the given constraints, innermost first.
+fn nested(xs: &[Formula], ys: &[Formula]) -> Formula {
+    let first = Formula::or(vec![xs[0].clone(), ys[0].clone()]);
+    xs.iter().zip(ys).skip(1).fold(first, |f, (x, y)| {
+        Formula::or(vec![x.clone(), Formula::and(vec![y.clone(), f])])
+    })
+}
+
+#[test]
+fn a_compound_disjunct_and_its_negation_are_kept_as_written() {
+    // `(x >= y + 3 && y >= z) || !(x >= y + 3 && y >= z)` holds at every point, but only a
+    // constraint and its negation are looked up (the tradeoff at `Formula::complementary`).
+    let g = Formula::and(vec![diff("x", "y", 3), diff("y", "z", 0)]);
+    let not_g = Formula::negate(g.clone());
+    assert_eq!(
+        Formula::or(vec![g.clone(), not_g.clone()]),
+        Formula::Or(vec![g, not_g])
+    );
+    // Inside a nest, a constraint and its negation are still found at any depth.
+    let inner = Formula::or(vec![diff("x", "y", 3), Formula::negate(diff("x", "y", 3))]);
+    let nest = Formula::or(vec![
+        diff("z", "w", 0),
+        Formula::and(vec![diff("y", "z", 1), inner]),
+    ]);
+    assert_eq!(
+        nest,
+        Formula::or(vec![diff("z", "w", 0), diff("y", "z", 1)])
+    );
+}
+
+#[test]
+fn a_nested_or_and_formula_keeps_every_case() {
+    let at = |n: &str| Lin::atom(Atom::Sym(n.into()));
+    let xs: Vec<Formula> = (0..6)
+        .map(|i| Formula::Con(Con::ge(&at("x"), &Lin::constant(i))))
+        .collect();
+    let ys: Vec<Formula> = (0..6)
+        .map(|i| Formula::Con(Con::ge(&at("y"), &Lin::constant(i))))
+        .collect();
+    let f = nested(&xs, &ys);
+    // Mapping every constraint to itself gives the formula back.
+    assert_eq!(f.map_cons(&|c| Formula::Con(c.clone())), f);
+    assert_eq!(f.cons().len(), 12);
+    // At (x, y): the nest of six holds when x >= 5, or y >= 5 and the nest of five holds, …
+    for x in -1..7i64 {
+        for y in -1..7i64 {
+            let mut want = x >= 0 || y >= 0;
+            for i in 1..6 {
+                want = x >= i || y >= i && want;
+            }
+            let model = [
+                (Atom::Sym("x".into()), x.into()),
+                (Atom::Sym("y".into()), y.into()),
+            ]
+            .into();
+            assert_eq!(f.holds(&model), want, "({x}, {y}): {f}");
+        }
+    }
+}
+
+#[test]
+fn a_nested_or_and_formula_is_built_and_mapped_in_time_near_its_size() {
+    // Each `Formula::or` looks up only the constraints among its disjuncts, never a compound
+    // disjunct through its depth, so building and mapping a nest of depth d costs O(d).
+    let at = |n: &str| Lin::atom(Atom::Sym(n.into()));
+    let built: BTreeMap<usize, (Vec<Formula>, Vec<Formula>)> = [250, 2000]
+        .into_iter()
+        .map(|d| {
+            let side = |n: &str| -> Vec<Formula> {
+                (0..d as i64)
+                    .map(|i| Formula::Con(Con::ge(&at(n), &Lin::constant(i))))
+                    .collect()
+            };
+            (d, (side("x"), side("y")))
+        })
+        .collect();
+    let shift = |c: &Con| Formula::Con(Con::ge(&c.lin, &Lin::constant(1)));
+    scaling::check_order("a nested or/and formula built and mapped", 250, 1, |d| {
+        let (xs, ys) = &built[&d];
+        let f = nested(xs, ys);
+        std::hint::black_box(f.map_cons(&shift));
+    });
+}
+
 #[test]
 fn an_if_on_a_chain_whose_arms_cover_every_value_leaves_no_disjunction() {
     // x_i - x_{i+1} >= 1 along the chain, then `if x_i - x_{i+2} >= 3`: the arms differ in
