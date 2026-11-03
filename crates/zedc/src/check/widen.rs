@@ -410,7 +410,8 @@ impl<'t, 'a> Walk<'t, 'a> {
             | ExprKind::For { .. }
             | ExprKind::Loop { .. }
             | ExprKind::Break(_)
-            | ExprKind::Spread { .. } => Kind::Top,
+            | ExprKind::Spread { .. }
+            | ExprKind::SortKey { .. } => Kind::Top,
         };
         let n = &mut self.nodes[at as usize];
         n.kind = kind;
