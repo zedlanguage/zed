@@ -16,6 +16,7 @@ pub mod interval;
 pub mod iterate;
 pub mod lattice;
 pub mod linear;
+pub mod negsssp;
 pub mod preimage;
 /// The backward transfer before S22a, which tests compare [`preimage`] with.
 #[doc(hidden)]

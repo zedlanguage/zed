@@ -666,6 +666,16 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Vec` of `(node, next edge)` frames as an explicit stack for a depth-first search, the top frame's edge place advanced through `last_mut` | `utvpi::potential` | Mutation | A state receiver, as for the parser's machine |
 | Distances in a `Vec<Int>` lowered in place while the edges are relaxed | `utvpi::potential` | Mutation | A state receiver over a map from node to distance |
 
+## Entries from UTVPI-NEAR (`zedc/src/store/negsssp.rs`, `utvpi.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A search held as a struct with an `enum` of where it stands, advanced one unit of work per `step()` call, so that three searches can take turns | `utvpi::GoldbergRadzik::step`, `negsssp::Rounds::step` | Coroutines | A coroutine or generator per search, resumed in turn; without one, the same state machine as a state receiver |
+| A caller's `FnMut() -> Result<(), H>` called once per unit of work, its error ending a deep recursion through `?` | `negsssp::potential`, `Solver` | Early exit | An effect handler or an exception that unwinds the recursion; or the coroutine above |
+| `PhantomData<fn() -> H>` and `Infallible` to type the stop of a search run alone | `negsssp::Solver`, `potential_alone` | None | Not needed: Zed infers the error type, and a run alone has none |
+| `BinaryHeap<Reverse<(Int, usize)>>` with stale entries skipped at the pop instead of a decrease-key | `negsssp::Search`, `bf_dijkstra`, `Rounds`, `Solver::run` | Mutation | A persistent priority queue (a pairing or leftist heap) in a state receiver |
+| Labels, stamps and ball membership in `Vec`s written in place and shared by every node of the recursion, each node marked with a fresh stamp so no set is cleared | `negsssp::Solver` | Mutation | A state receiver over maps from vertex to stamp and label |
+
 ## Entries from T14-low (`zed-native/src/lib.rs`, `codegen.rs`)
 
 | Rust construct | Sites | Gap | At the port |

@@ -15,6 +15,7 @@ mod controls;
 mod deep;
 mod entailment;
 mod hull3;
+mod near;
 mod omega;
 mod oracle;
 mod preimage;

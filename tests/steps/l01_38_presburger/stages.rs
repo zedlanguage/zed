@@ -11,7 +11,7 @@ use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, Refusal, decide, satisfiable};
-use zedc::store::utvpi::integer_empty;
+use zedc::store::utvpi::{Search, integer_empty, integer_empty_by};
 
 use super::scaling::{decides, x};
 
@@ -208,9 +208,25 @@ fn differences(rows: &[(usize, usize, i64)]) -> Vec<(Vec<(usize, Int)>, Int)> {
         .collect()
 }
 
-fn empty(n: usize, rows: &[(Vec<(usize, Int)>, Int)]) -> bool {
+/// Whether the rows have no integer point, by the race of the searches for a potential.
+fn raced(n: usize, rows: &[(Vec<(usize, Int)>, Int)]) -> bool {
     let rows: Vec<(&[(usize, Int)], &Int)> = rows.iter().map(|(t, k)| (&t[..], k)).collect();
     integer_empty(n, &rows)
+}
+
+/// [`raced`], after checking that each search for a potential, run to its end alone, gives the
+/// same answer.
+fn empty(n: usize, rows: &[(Vec<(usize, Int)>, Int)]) -> bool {
+    let terms: Vec<(&[(usize, Int)], &Int)> = rows.iter().map(|(t, k)| (&t[..], k)).collect();
+    let answer = raced(n, rows);
+    for search in [Search::GoldbergRadzik, Search::BfDijkstra, Search::Duong] {
+        assert_eq!(
+            integer_empty_by(n, &terms, search),
+            answer,
+            "{search:?} on {rows:?}"
+        );
+    }
+    answer
 }
 
 #[test]
@@ -278,10 +294,10 @@ fn hub(n: usize, cyclic: bool) -> Vec<(Vec<(usize, Int)>, Int)> {
 fn the_acyclic_hub_scales() {
     // Through the parity test itself: through `decide` the work around it hides the search's.
     let (small, large) = (hub(512, false), hub(scaling::FACTOR * 512, false));
-    assert!(!empty(512, &small) && !empty(scaling::FACTOR * 512, &large));
+    assert!(!raced(512, &small) && !raced(scaling::FACTOR * 512, &large));
     scaling::check("the acyclic hub", 512, |n| {
         let rows = if n == 512 { &small } else { &large };
-        std::hint::black_box(empty(n, rows));
+        std::hint::black_box(raced(n, rows));
     });
 }
 
@@ -344,23 +360,24 @@ fn the_cyclic_hub_scales() {
     // Goldberg and Radzik's search takes three passes at both sizes; Bellman–Ford–Moore took
     // 41.9 times the work (measured on this branch; XT3 measured 42.5).
     let (small, large) = (hub(512, true), hub(scaling::FACTOR * 512, true));
-    assert!(!empty(512, &small) && !empty(scaling::FACTOR * 512, &large));
+    assert!(!raced(512, &small) && !raced(scaling::FACTOR * 512, &large));
     scaling::check("the cyclic hub", 512, |n| {
         let rows = if n == 512 { &small } else { &large };
-        std::hint::black_box(empty(n, rows));
+        std::hint::black_box(raced(n, rows));
     });
 }
 
 #[test]
-#[ignore = "fails: the worst case of the potential search, O(V·E), open in item UTVPI-NEAR (COMPLEXITY.md C24)"]
 fn bad_gor_scales() {
-    // 129 passes at k = 256 and 1,026 at k = 2,048: 58.4 times the work
-    // measured on this branch (XT3 measured 62), above the limit of 24.
+    // Goldberg and Radzik's search alone takes 129 passes at k = 256 and 1,026 at k = 2,048:
+    // 59.8 times the work (78.2M to 4.68G instructions, measured on this branch as the negative
+    // control and not kept; XT3 measured 62). The race with BF-Dijkstra and Duong's search
+    // takes 26.8M to 209M instructions, 7.8 times (COMPLEXITY.md C24).
     let (small, large) = (bad_gor(256, 1), bad_gor(scaling::FACTOR * 256, 1));
-    assert!(!empty(small.0, &small.1) && !empty(large.0, &large.1));
+    assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
     scaling::check("BAD-GOR augmented, by k", 256, |k| {
         let (n, rows) = if k == 256 { &small } else { &large };
-        std::hint::black_box(empty(*n, rows));
+        std::hint::black_box(raced(*n, rows));
     });
 }
 
