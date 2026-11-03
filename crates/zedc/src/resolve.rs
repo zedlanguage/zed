@@ -517,6 +517,15 @@ impl Resolver {
             ExprKind::With { .. } => self.later(e.span, "a `with` clause", "L2.4"),
             ExprKind::This => self.later(e.span, "`this`", "L2.4"),
             ExprKind::Match { .. } => self.later(e.span, "a `match`", "L2.4"),
+            ExprKind::Range(..) => self.later(e.span, "a range", "L3.2"),
+            ExprKind::In { .. } => self.later(e.span, "an `in` test", "L3.2"),
+            ExprKind::Reduce { .. } => self.later(e.span, "a reduction `><`", "L3.2"),
+            ExprKind::Read { .. } => self.later(e.span, "a metadata read `::`", "L3.2"),
+            ExprKind::Section(_) => self.later(e.span, "an operator section", "L3.2"),
+            ExprKind::Seq(_) => self.later(e.span, "a sequence display", "L3.2"),
+            ExprKind::Set(_) => self.later(e.span, "a set display", "L3.2"),
+            ExprKind::Map(_) => self.later(e.span, "a map display", "L3.2"),
+            ExprKind::For { .. } => self.later(e.span, "a `for`", "L3.2"),
         }
     }
 
@@ -532,6 +541,7 @@ impl Resolver {
             let what = match p {
                 Pattern::Is { .. } => "a type pattern `n is T`",
                 Pattern::Lit(_) => "a literal pattern",
+                Pattern::Range { .. } => return self.later(p.span(), "a range pattern", "L3.2"),
                 _ => "a struct, name, `_` or tuple pattern",
             };
             return self.later(p.span(), what, "L2.4");
@@ -570,6 +580,7 @@ impl Resolver {
             TypeKind::Apply(..) => self.later(t.span, "an applied type", "L2.5"),
             TypeKind::AtomApply(..) => self.later(t.span, "an atom type with a payload", "L2.5"),
             TypeKind::Record(_) => self.later(t.span, "a record type", "L2.5"),
+            TypeKind::Seq(_) => self.later(t.span, "a family type `[T]`", "L3.2"),
         }
     }
 }

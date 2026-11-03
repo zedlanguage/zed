@@ -843,6 +843,15 @@ impl<'a> Elab<'a> {
             | ExprKind::Match { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
+            ExprKind::Range(..)
+            | ExprKind::In { .. }
+            | ExprKind::Reduce { .. }
+            | ExprKind::Read { .. }
+            | ExprKind::Section(_)
+            | ExprKind::Seq(_)
+            | ExprKind::Set(_)
+            | ExprKind::Map(_)
+            | ExprKind::For { .. } => unreachable!("resolve rejects the forms of layer L3"),
             ExprKind::Int { radix, digits } => {
                 let digits: String = digits.chars().filter(|&c| c != '_').collect();
                 lit(Value::int_text(&digits, *radix).expect("the lexer's digits"))
@@ -1545,6 +1554,7 @@ impl<'a> Elab<'a> {
             TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
+            TypeKind::Seq(_) => unreachable!("resolve rejects the forms of layer L3"),
             TypeKind::Name(n) => match n.as_str() {
                 "int" => KType::int(),
                 "rat" => KType::rat(),

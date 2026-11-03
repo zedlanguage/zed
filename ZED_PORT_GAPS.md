@@ -751,3 +751,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `OnceLock<Arc<str>>` in each join node, the text written out on the first read through `&self` | `Text::flat`, `Deref for Text` | Lazy cells (gap 3) | `String` ropes in the standard library (L6.16): the text written out by a function, its result kept by the runtime, or no cache |
 | Byte and character counts kept in each node and added at a join | `Node::len`, `Node::chars` | None | Two integer fields of the rope node |
 | `Mutex<Option<(Text, Text)>>` for a join's parts, taken through `&self` once the text is written out | `Node::parts`, `Deref for Text` | Lazy cells (gap 3) | The rope's written-out form replaces the node in the runtime's cache, or no cache |
+
+## Entries from L3.1 (`zedc/src/ast/`, `format.rs`, `resolve.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A generic enum `RangeEnd<T>` with a method returning `Option<&T>`, used for both expressions and patterns | `ast::RangeEnd`, `ExprKind::Range`, `Pattern::Range` | None | A union of atoms with a payload of the type parameter: `#below(T) \| #through(T) \| #open` |
+| A generic method taking `impl FnOnce(&mut Self, usize) -> Result<T, Error>`, so one helper builds the end of a range for both expressions and patterns | `Builder::range_end` | Mutation | The builder is a state receiver; the function argument returns the new builder with the result |
+| `match (layer, kids)` on a tuple of an integer and a slice pattern (`&[op]`, `&[_, unordered]`) | `Builder::reduce_tail` | Slice patterns | Test the length, then index (the appendix's row for slice patterns) |
+| `unreachable!` arms for the L3 forms that resolution refuses | `elab.rs`, `check/mod.rs` | Partial match | As for L2.1: a total match whose L3 arm returns the refusal, or a narrower type from resolution |

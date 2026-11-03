@@ -72,24 +72,12 @@ fn a_display_field_given_twice_is_an_error() {
 }
 
 #[test]
-fn other_displays_are_of_layer_3() {
+fn other_displays_are_sets_and_maps() {
     check(&[
-        (
-            "s = { 1, 2 };",
-            "error: this form (Display) is built from layer L3",
-        ),
-        (
-            "s = {};",
-            "error: this form (Display) is built from layer L3",
-        ),
-        (
-            "m = { \"a\" -> 1 };",
-            "error: this form (Display) is built from layer L3",
-        ),
+        ("s = { 1, 2 };", "(= (s) (set 1 2))"),
+        ("s = {};", "(= (s) (map))"),
+        ("m = { \"a\" -> 1 };", "(= (m) (map (-> (str \"a\") 1)))"),
         // One entry without a name and a colon is the singleton set.
-        (
-            "s = { x };",
-            "error: this form (Display) is built from layer L3",
-        ),
+        ("s = { x };", "(= (s) (set x))"),
     ]);
 }

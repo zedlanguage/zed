@@ -56,7 +56,9 @@ fn each<'a, T: 'a>(
 
 /// An s-expression: `(call f 1 (x: 2) ...)`, `(index m k)`, `(. p x)`, `(?. p x)`, `(+ a b)`,
 /// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`, `(record (x: 1))`,
-/// `(with p (= c.x 1))`, `(match x (-> p e) (-> q (where c) f))`.
+/// `(with p (= c.x 1))`, `(match x (-> p e) (-> q (where c) f))`; from layer L3 `(..< a b)`,
+/// `(.. a)`, `(in x s)`, `(not in x s)`, `(>< m op)`, `(:: xs len)`, `(section +)`, `(seq a b)`,
+/// `(set a b)`, `(map (-> k v))`, and `(for (k v) m (where c) body)`.
 fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
     let at = |e: &'a Expr| Show::Expr(e);
     match &e.kind {
@@ -193,6 +195,69 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
             }
             out.push(Text(")"));
         }
+        ExprKind::Range(from, to) => {
+            out.extend([Text("("), Text(to.op()), Text(" "), at(from)]);
+            if let Some(b) = to.bound() {
+                out.extend([Text(" "), at(b)]);
+            }
+            out.push(Text(")"));
+        }
+        ExprKind::In { of, set, negated } => out.extend([
+            Text(if *negated { "(not in " } else { "(in " }),
+            at(of),
+            Text(" "),
+            at(set),
+            Text(")"),
+        ]),
+        ExprKind::Reduce { of, op } => {
+            out.extend([Text("(>< "), at(of), Text(" "), at(op), Text(")")]);
+        }
+        ExprKind::Read { of, name } => {
+            out.extend([Text("(:: "), at(of), Text(" "), Text(name), Text(")")]);
+        }
+        ExprKind::Section(op) => out.extend([Text("(section "), Text(op), Text(")")]),
+        ExprKind::Seq(es) => {
+            out.push(Text("(seq"));
+            each(out, es, Show::Expr);
+            out.push(Text(")"));
+        }
+        ExprKind::Set(es) => {
+            out.push(Text("(set"));
+            each(out, es, Show::Expr);
+            out.push(Text(")"));
+        }
+        ExprKind::Map(entries) => {
+            out.push(Text("(map"));
+            for (k, v) in entries {
+                out.extend([Text(" (-> "), at(k), Text(" "), at(v), Text(")")]);
+            }
+            out.push(Text(")"));
+        }
+        ExprKind::For {
+            binders,
+            source,
+            guard,
+            body,
+        } => {
+            out.push(Text("(for ("));
+            let mut sep = "";
+            for b in binders {
+                out.extend([Text(sep), Text(target(b))]);
+                sep = " ";
+            }
+            out.extend([Text(") "), at(source), Text(" ")]);
+            if let Some(g) = guard {
+                out.extend([Text("(where "), at(g), Text(") ")]);
+            }
+            out.extend([at(body), Text(")")]);
+        }
+    }
+}
+
+fn target(t: &Target) -> &str {
+    match t {
+        Target::Name(n) => n,
+        Target::Wild => "_",
     }
 }
 
@@ -217,13 +282,7 @@ fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
             out.push(Text("(= ("));
             let mut sep = "";
             for t in targets {
-                out.extend([
-                    Text(sep),
-                    Text(match t {
-                        Target::Name(n) => n,
-                        Target::Wild => "_",
-                    }),
-                ]);
+                out.extend([Text(sep), Text(target(t))]);
                 sep = " ";
             }
             out.extend([Text(") "), Show::Expr(value), Text(")")]);
@@ -369,7 +428,7 @@ fn function<'a>(func: &'a Function, out: &mut Vec<Show<'a>>) {
 }
 
 /// `int`, `#none`, `(tuple A B)`, `(| A B)`, `(& A B)`, `(\ A B)`, `(-> (A (x: B)) R)`,
-/// `(Tree T)`, `(#node (l: T))`, `(record (x: int))`.
+/// `(Tree T)`, `(#node (l: T))`, `(record (x: int))`, `(seq T)`.
 fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
     let mut list = |head, ts: &'a [Type]| {
         out.push(Text(head));
@@ -408,6 +467,7 @@ fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
             type_params(params, " ", out);
             out.push(Text(")"));
         }
+        TypeKind::Seq(t) => out.extend([Text("(seq "), Show::Type(t), Text(")")]),
         TypeKind::Record(fields) => {
             out.push(Text("(record"));
             for (n, t) in fields {
@@ -464,7 +524,8 @@ fn param<'a>(p: &'a Param, out: &mut Vec<Show<'a>>) {
 }
 
 /// `#name`, `#name(f: p, g:)`, `#name(p, q)`, `Point(x:, y: b)`, `n`, `_`, `(p, q)` as written;
-/// a type pattern `(is n T)` or `(is T)`, and a literal as an expression is shown.
+/// a type pattern `(is n T)` or `(is T)`, a literal as an expression is shown, and a range
+/// pattern `(..< 0 10)` or `(.. 0)`.
 fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
     let (fields, items) = match p {
         Pattern::Atom {
@@ -494,6 +555,13 @@ fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
             return out.extend([Show::Type(ty), Text(")")]);
         }
         Pattern::Lit(e) => return out.push(Show::Expr(e)),
+        Pattern::Range { from, to, .. } => {
+            out.extend([Text("("), Text(to.op()), Text(" "), Show::Pattern(from)]);
+            if let Some(b) = to.bound() {
+                out.extend([Text(" "), Show::Pattern(b)]);
+            }
+            return out.push(Text(")"));
+        }
     };
     out.push(Text("("));
     let mut sep = "";

@@ -48,10 +48,7 @@ fn the_semicolon_rule() {
             "error: this form (ExprStmt) is built from layer L6",
         ),
         // A brace holding only an expression is a display (`{ x }` is a set), not a block.
-        (
-            "({ x })",
-            "error: this form (Display) is built from layer L3",
-        ),
+        ("({ x })", "(set x)"),
     ]);
 }
 

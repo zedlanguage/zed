@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::mem;
 
-use super::{Builder, Built, Error, Expr, ExprKind, Target};
+use super::{Builder, Built, Error, Expr, ExprKind, RangeEnd, Target};
 use crate::lex::{Span, Tok};
 
 /// A type expression and its span.
@@ -51,6 +51,8 @@ pub enum TypeKind {
     AtomApply(String, Vec<TypeParam>),
     /// A record type `{x: int, y: f64}`, its fields in written order.
     Record(Vec<(String, Type)>),
+    /// The family type `[T]`, a sequence of `T` keyed by its rank.
+    Seq(Box<Type>),
 }
 
 /// A parameter of a function type: `int`, `x: int` or `positional x: int`.
@@ -125,6 +127,16 @@ pub enum Pattern {
     },
     /// A literal, `-1`, `"a"` or `true`, matching the value equal to it.
     Lit(Box<Expr>),
+    /// A range pattern `0..<10`, `1..=9` or `0..`, matching the values in the range; its ends
+    /// are literal patterns.
+    Range {
+        /// The first value.
+        from: Box<Pattern>,
+        /// The end.
+        to: RangeEnd<Box<Pattern>>,
+        /// Its text.
+        span: Span,
+    },
 }
 
 impl Pattern {
@@ -133,7 +145,8 @@ impl Pattern {
         match self {
             Pattern::Struct { span, .. }
             | Pattern::Atom { span, .. }
-            | Pattern::Is { span, .. } => *span,
+            | Pattern::Is { span, .. }
+            | Pattern::Range { span, .. } => *span,
             Pattern::Lit(e) => e.span,
             Pattern::Name(_, span) | Pattern::Wild(span) | Pattern::Tuple(_, span) => *span,
         }
@@ -238,6 +251,7 @@ impl Builder<'_> {
                 }
                 TypeKind::Record(fields)
             }
+            "SeqType" => TypeKind::Seq(Box::new(self.ty(kids[0])?)),
             "GroupType" => {
                 let mut t = self.ty(kids[0])?;
                 t.span = span;
@@ -403,6 +417,13 @@ impl Builder<'_> {
                 })));
             }
             "SignedLit" => return Ok(Pattern::Lit(Box::new(self.literal_at(node.start, span)?))),
+            "RangePat" => {
+                let op = self.tree.nodes[node.kids[0]].end;
+                let from = Box::new(self.pattern(node.kids[0])?);
+                let bound = node.kids.get(1).copied();
+                let to = self.range_end(op, bound, |b, k| b.pattern(k).map(Box::new))?;
+                return Ok(Pattern::Range { from, to, span });
+            }
             "CtorPat" => {
                 let (&name, fields) = node.kids.split_first().expect("CtorPat = Name '(' …");
                 let out = fields.iter().map(|&k| self.field_pattern(k));

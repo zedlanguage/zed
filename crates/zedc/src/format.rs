@@ -69,22 +69,46 @@ const OR: u8 = 2;
 const EQUALITY: u8 = 4;
 const RELATION: u8 = 5;
 const REDUCE: u8 = 6;
-const ADDITIVE: u8 = 7;
-const PREFIX: u8 = 9;
-const POWER: u8 = 10;
-const POSTFIX: u8 = 11;
-const PRIMARY: u8 = 12;
+const RANGE: u8 = 7;
+const ADDITIVE: u8 = 8;
+const PREFIX: u8 = 10;
+const POWER: u8 = 11;
+const POSTFIX: u8 = 12;
+const PRIMARY: u8 = 13;
 
 fn level(e: &Expr) -> u8 {
     match &e.kind {
         ExprKind::Lambda { .. } => LAMBDA,
         ExprKind::Else { .. } => ELSE,
         ExprKind::Binary(op, ..) => binary_level(op),
-        ExprKind::Is { .. } => RELATION,
-        ExprKind::With { .. } => REDUCE,
+        ExprKind::Is { .. } | ExprKind::In { .. } => RELATION,
+        ExprKind::With { .. } | ExprKind::Reduce { .. } => REDUCE,
+        ExprKind::Range(..) => RANGE,
         ExprKind::Unary(..) => PREFIX,
-        ExprKind::Call { .. } | ExprKind::Index(..) | ExprKind::Member { .. } => POSTFIX,
-        _ => PRIMARY,
+        ExprKind::Call { .. }
+        | ExprKind::Index(..)
+        | ExprKind::Member { .. }
+        | ExprKind::Read { .. } => POSTFIX,
+        ExprKind::Int { .. }
+        | ExprKind::Float(_)
+        | ExprKind::Rat(_)
+        | ExprKind::Str(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Atom(_)
+        | ExprKind::Name(_)
+        | ExprKind::Tuple(_)
+        | ExprKind::Block(_)
+        | ExprKind::If { .. }
+        | ExprKind::Record(_)
+        | ExprKind::This
+        | ExprKind::Match { .. }
+        | ExprKind::Section(_)
+        | ExprKind::Seq(_)
+        | ExprKind::Set(_)
+        | ExprKind::Map(_) => PRIMARY,
+        // A `for` is a primary of the grammar, but its body block ends it, so as the operand of
+        // an operator it is written in parentheses: `(for x in xs { x }).rank`.
+        ExprKind::For { .. } => ELSE,
     }
 }
 
@@ -106,8 +130,14 @@ fn binary_level(op: &str) -> u8 {
 fn starts_with_block(mut e: &Expr) -> bool {
     loop {
         match &e.kind {
-            ExprKind::Block(_) | ExprKind::Record(_) => return true,
+            ExprKind::Block(_) | ExprKind::Record(_) | ExprKind::Set(_) | ExprKind::Map(_) => {
+                return true;
+            }
             ExprKind::Binary(_, of, _)
+            | ExprKind::Range(of, _)
+            | ExprKind::In { of, .. }
+            | ExprKind::Reduce { of, .. }
+            | ExprKind::Read { of, .. }
             | ExprKind::Call { callee: of, .. }
             | ExprKind::Index(of, _)
             | ExprKind::Member { of, .. }
@@ -119,25 +149,44 @@ fn starts_with_block(mut e: &Expr) -> bool {
     }
 }
 
-/// Whether `e`, as an `if` condition, holds a block outside any bracket, which the grammar's
-/// `HEAD` forbids there, since the condition's `{` opens the branch.
+/// Whether `e`, as an `if` condition or a `for` source or guard, holds a block outside any
+/// bracket, which the grammar's `HEAD` forbids there, since the head's `{` opens the branch;
+/// a `for` there is also written in parentheses, which the grammar allows without them.
 fn head_unsafe(e: &Expr) -> bool {
     let mut stack = vec![e];
     while let Some(e) = stack.pop() {
         match &e.kind {
-            ExprKind::Block(_) => return true,
+            ExprKind::Block(_) | ExprKind::For { .. } => return true,
             ExprKind::Else { of, default, .. } => stack.extend([&**of, &**default]),
-            ExprKind::Binary(_, a, b) => stack.extend([&**a, &**b]),
+            ExprKind::Binary(_, a, b)
+            | ExprKind::In { of: a, set: b, .. }
+            | ExprKind::Reduce { of: a, op: b } => stack.extend([&**a, &**b]),
+            ExprKind::Range(a, b) => {
+                stack.push(a);
+                stack.extend(b.bound().map(|b| &**b));
+            }
             ExprKind::Unary(_, a)
             | ExprKind::Is { of: a, .. }
             | ExprKind::With { of: a, .. }
             | ExprKind::Call { callee: a, .. }
             | ExprKind::Index(a, _)
-            | ExprKind::Member { of: a, .. } => stack.push(a),
+            | ExprKind::Member { of: a, .. }
+            | ExprKind::Read { of: a, .. } => stack.push(a),
             _ => {}
         }
     }
     false
+}
+
+/// The jobs that write `e` as a `head(…)` of the grammar, at level `ELSE`: in parentheses when
+/// it holds a block outside any bracket.
+fn head(e: &Expr, ind: usize) -> Vec<Job<'_>> {
+    let job = Job::Expr { e, min: ELSE, ind };
+    if head_unsafe(e) {
+        vec![put("("), job, put(")")]
+    } else {
+        vec![job]
+    }
 }
 
 /// Where a block stands: a block as an operand must open with a statement, a branch (of an
@@ -740,6 +789,10 @@ impl<'a> Formatter<'a> {
                 stack.push(Job::Ty { t: ty, min: 1 });
             }
             Pattern::Lit(e) => self.raw(e, 0, stack),
+            Pattern::Range { from, to, .. } => {
+                stack.extend(to.bound().map(|b| Job::Pattern(b)));
+                then![stack; Job::Pattern(from), put(to.op())];
+            }
         }
     }
 
@@ -1087,6 +1140,69 @@ impl<'a> Formatter<'a> {
                     put(format!("\n{}}}", indent(ind))),
                 ];
             }
+            ExprKind::Range(from, to) => {
+                stack.extend(to.bound().map(|b| at(b, ADDITIVE)));
+                then![stack; at(from, ADDITIVE), put(to.op())];
+            }
+            ExprKind::In { of, set, negated } => {
+                let op = if *negated { " not in " } else { " in " };
+                then![stack; at(of, REDUCE), put(op), at(set, REDUCE)];
+            }
+            ExprKind::Reduce { of, op } => {
+                then![stack; at(of, REDUCE), put(" >< "), at(op, POSTFIX)];
+            }
+            ExprKind::Read { of, name } => {
+                then![stack; Job::Postfix { of, ind }, put(format!("::{name}"))];
+            }
+            ExprKind::Section(op) => self.put(format!("({op})")),
+            ExprKind::Seq(items) => {
+                self.put("[");
+                then![stack;
+                    Job::Exprs { exprs: items, min: ELSE, ind },
+                    put("]"),
+                ];
+            }
+            ExprKind::Set(items) => {
+                self.put("{ ");
+                then![stack;
+                    Job::Exprs { exprs: items, min: ELSE, ind },
+                    put(" }"),
+                ];
+            }
+            ExprKind::Map(entries) if entries.is_empty() => self.put("{}"),
+            ExprKind::Map(entries) => {
+                self.put("{ ");
+                then![stack; Job::Cases { cases: entries, ind }, put(" }")];
+            }
+            ExprKind::For {
+                binders,
+                source,
+                guard,
+                body,
+            } => {
+                let binders: Vec<&str> = binders
+                    .iter()
+                    .map(|t| match t {
+                        Target::Name(n) => n.as_str(),
+                        Target::Wild => "_",
+                    })
+                    .collect();
+                self.put(format!("for {} in ", binders.join(" -> ")));
+                let mut jobs = head(source, ind);
+                if let Some(g) = guard {
+                    jobs.push(put(" where "));
+                    jobs.extend(head(g, ind));
+                }
+                jobs.extend([
+                    put(" "),
+                    Job::Block {
+                        e: body,
+                        ind,
+                        place: Place::Branch,
+                    },
+                ]);
+                stack.extend(jobs.into_iter().rev());
+            }
         }
     }
 
@@ -1182,6 +1298,10 @@ impl<'a> Formatter<'a> {
             TypeKind::AtomApply(name, ps) => {
                 self.put(format!("#{name}("));
                 then![stack; Job::TypeParams(ps), put(")")];
+            }
+            TypeKind::Seq(t) => {
+                self.put("[");
+                then![stack; Job::Ty { t, min: 0 }, put("]")];
             }
             TypeKind::Record(fields) => {
                 self.put("{ ");

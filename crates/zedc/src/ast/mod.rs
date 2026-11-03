@@ -152,6 +152,82 @@ pub enum ExprKind {
         /// The arms.
         arms: Vec<Arm>,
     },
+    /// A range `a..<b`, `a..=b` or `a..`: its first value and its end.
+    Range(Box<Expr>, RangeEnd<Box<Expr>>),
+    /// A membership test `e in s`, or `e not in s` when `negated`.
+    In {
+        /// The value tested.
+        of: Box<Expr>,
+        /// The family whose domain it is tested against.
+        set: Box<Expr>,
+        /// Whether it is `not in`.
+        negated: bool,
+    },
+    /// A reduction `m >< op`, which folds `op` over the innermost level of `m`.
+    Reduce {
+        /// The family reduced.
+        of: Box<Expr>,
+        /// The operator.
+        op: Box<Expr>,
+    },
+    /// A metadata read `e::name`, such as `xs::len` or `m::domain`.
+    Read {
+        /// The value read.
+        of: Box<Expr>,
+        /// The metadata's name.
+        name: String,
+    },
+    /// An operator section `(+)`: the binary operator as a function.
+    Section(&'static str),
+    /// A sequence display `[a, b, c]`, its elements in written order.
+    Seq(Vec<Expr>),
+    /// A set display `{a, b}`, its elements in written order.
+    Set(Vec<Expr>),
+    /// A map display `{k -> v, …}`, its entries in written order. `{}` is the empty family,
+    /// built as the map with no entries: a set is a map from each element to itself.
+    Map(Vec<(Expr, Expr)>),
+    /// `for k -> v in m where c { … }`: a family with one frame per entry of the source.
+    For {
+        /// The binders of the keypath pattern, outermost level first; a bare name binds the
+        /// value.
+        binders: Vec<Target>,
+        /// The family iterated.
+        source: Box<Expr>,
+        /// The `where` restriction of the source's domain, if written.
+        guard: Option<Box<Expr>>,
+        /// The block run for each entry.
+        body: Box<Expr>,
+    },
+}
+
+/// How a range ends: below `b` (`..<b`), through `b` (`..=b`), or not at all (`..`).
+#[derive(Debug)]
+pub enum RangeEnd<T> {
+    /// `..<b`.
+    Below(T),
+    /// `..=b`.
+    Through(T),
+    /// `..`.
+    Open,
+}
+
+impl<T> RangeEnd<T> {
+    /// The operator written.
+    pub fn op(&self) -> &'static str {
+        match self {
+            RangeEnd::Below(_) => "..<",
+            RangeEnd::Through(_) => "..=",
+            RangeEnd::Open => "..",
+        }
+    }
+
+    /// The last value, or the bound below it, if written.
+    pub fn bound(&self) -> Option<&T> {
+        match self {
+            RangeEnd::Below(b) | RangeEnd::Through(b) => Some(b),
+            RangeEnd::Open => None,
+        }
+    }
 }
 
 /// An arm of a `match`: a pattern, a guard `where c` if written, and the arm's value.
@@ -329,13 +405,14 @@ fn forms() -> &'static [Form] {
             "Expr" | "Lambda" | "Expr12" | "Or" | "And" | "Additive" | "Multiplicative"
             | "Equality" | "Compare" | "IsTest" | "Reduce" | "Range" | "Prefix" | "Power"
             | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If" | "Literal"
-            | "Display" | "This" | "Match" => Form::Expr,
-            "Type" | "TypePostfix" | "Arrow" | "TypeDiff" | "TypeOr" | "TypeAnd" | "TypeName"
-            | "AtomType" | "TupleType" | "GroupType" | "TypeApply" | "AtomApply" | "RecordType" => {
-                Form::Type
+            | "Display" | "This" | "Match" | "InTest" | "OpFunction" | "SeqExpr" | "For" => {
+                Form::Expr
             }
+            "Type" | "TypePostfix" | "Arrow" | "TypeDiff" | "TypeOr" | "TypeAnd" | "TypeName"
+            | "AtomType" | "TupleType" | "GroupType" | "TypeApply" | "AtomApply" | "RecordType"
+            | "SeqType" => Form::Type,
             "AtomPattern" | "CtorPat" | "NamePat" | "WildPat" | "TuplePat" | "IsPat"
-            | "SignedLit" => Form::Pattern,
+            | "SignedLit" | "RangePat" => Form::Pattern,
             "Item" => Form::Item,
             _ => Form::Part,
         };
@@ -540,11 +617,50 @@ impl<'a> Builder<'a> {
                     span,
                 })
             }
+            "InTest" => {
+                let of = self.node(kids[0])?;
+                let set = self.node(kids[1])?;
+                let not = self.tree.nodes[kids[0]].end;
+                let span = Span {
+                    start: of.span.start,
+                    end: set.span.end,
+                };
+                Ok(Expr {
+                    kind: ExprKind::In {
+                        of: Box::new(of),
+                        set: Box::new(set),
+                        negated: self.word(not) == "not",
+                    },
+                    span,
+                })
+            }
             "Reduce" => {
                 let of = self.node(kids[0])?;
                 self.reduce_tail(of, kids[1])
             }
-            "Range" => Err(self.later(kids[1])),
+            "Range" => {
+                let from = self.node(kids[0])?;
+                let t = kids[1];
+                let (op, bound) = (self.tree.nodes[t].start, self.kids(t).first().copied());
+                let end = self.range_end(op, bound, |b, k| b.node(k).map(Box::new))?;
+                Ok(Expr {
+                    kind: ExprKind::Range(Box::new(from), end),
+                    span: self.span(n),
+                })
+            }
+            "OpFunction" => Ok(Expr {
+                kind: ExprKind::Section(self.op(self.tree.nodes[n].start + 1)),
+                span: self.span(n),
+            }),
+            "SeqExpr" => Ok(Expr {
+                kind: ExprKind::Seq(
+                    kids.iter()
+                        .map(|&k| self.node(k))
+                        .collect::<Result<_, _>>()?,
+                ),
+                span: self.span(n),
+            }),
+            "For" => self.for_expr(n),
             "Prefix" => {
                 let op = self.op(self.tree.nodes[n].start);
                 let e = self.node(kids[0])?;
@@ -697,16 +813,37 @@ impl<'a> Builder<'a> {
                 name: self.word(node.end - 1).into(),
                 safe: name == "SafeSuffix",
             },
+            "ReadSuffix" => ExprKind::Read {
+                of,
+                name: self.word(node.end - 1).into(),
+            },
             _ => return Err(self.later(s)),
         };
         Ok(Expr { kind, span })
     }
 
-    /// `of` followed by the `ReduceTail` node `t`: a struct update `with { … }` and the suffixes
-    /// after it, which apply to the updated value.
+    /// `of` followed by the `ReduceTail` node `t`: a reduction `>< op`, or a struct update
+    /// `with { … }` and the suffixes after it, which apply to the updated value.
     fn reduce_tail(&mut self, of: Expr, t: usize) -> Result<Expr, Error> {
-        if self.tree.layer(t) != 2 {
-            return Err(self.later(t));
+        match (self.tree.layer(t), self.kids(t)) {
+            (2, _) => {}
+            (3, &[op]) => {
+                let op = self.node(op)?;
+                let span = Span {
+                    start: of.span.start,
+                    end: op.span.end,
+                };
+                return Ok(Expr {
+                    kind: ExprKind::Reduce {
+                        of: Box::new(of),
+                        op: Box::new(op),
+                    },
+                    span,
+                });
+            }
+            // `unordered`, of layer L9.
+            (3, &[_, unordered]) => return Err(self.later(unordered)),
+            _ => return Err(self.later(t)),
         }
         let mut updates = Vec::new();
         let mut paths: HashMap<Vec<&str>, Span> = HashMap::new();
@@ -760,11 +897,11 @@ impl<'a> Builder<'a> {
         Ok(e)
     }
 
-    /// The record display of node `n`, a `Display`: `{x: 1, y:}`, `y:` being `y: y`. The other
-    /// displays, of sets and maps, are of layer L3.
+    /// The display of node `n`, a `Display`: a record `{x: 1, y:}`, `y:` being `y: y`, or from
+    /// layer L3 a set `{a, b}`, a map `{k -> v}`, or `{}`.
     fn display(&mut self, n: usize) -> Result<Expr, Error> {
         if self.tree.layer(n) != 2 {
-            return Err(self.later(n));
+            return self.family(n);
         }
         let mut fields: Vec<(String, Expr)> = Vec::new();
         let mut seen = HashMap::new();
@@ -787,6 +924,100 @@ impl<'a> Builder<'a> {
         Ok(Expr {
             kind: ExprKind::Record(fields),
             span: self.span(n),
+        })
+    }
+
+    /// The set or map display of node `n`, a `Display` of layer L3, whose children are its
+    /// `Entry` nodes: `k -> v` of a map, or an element of a set. One display holds one kind.
+    fn family(&mut self, n: usize) -> Result<Expr, Error> {
+        let entries = self.kids(n);
+        let Some(&first) = entries.first() else {
+            return Ok(Expr {
+                kind: ExprKind::Map(Vec::new()),
+                span: self.span(n),
+            });
+        };
+        let map = self.kids(first).len() == 2;
+        if let Some(&odd) = entries.iter().find(|&&e| (self.kids(e).len() == 2) != map) {
+            let (this, that) = if map {
+                ("a set element", "map entry `k -> v`")
+            } else {
+                ("a map entry `k -> v`", "set element")
+            };
+            return Err(Error {
+                span: self.span(odd),
+                message: format!(
+                    "{this} in a display whose first entry is a {that}: a display is a set \
+                     or a map, not both"
+                ),
+                notes: vec![Note {
+                    span: self.span(first),
+                    text: format!("the first entry, a {that}"),
+                }],
+            });
+        }
+        let kind = if map {
+            let mut out = Vec::with_capacity(entries.len());
+            for &e in entries {
+                let &[k, v] = self.kids(e) else {
+                    unreachable!("Entry = Expr12 '->' Expr12")
+                };
+                out.push((self.node(k)?, self.node(v)?));
+            }
+            ExprKind::Map(out)
+        } else {
+            let elems = entries.iter().map(|&e| self.node(self.kids(e)[0]));
+            ExprKind::Set(elems.collect::<Result<_, _>>()?)
+        };
+        Ok(Expr {
+            kind,
+            span: self.span(n),
+        })
+    }
+
+    /// The `for` of node `n`: its generator, a `MoreGen` (of layer L5) for each further
+    /// generator, its `where` guard if written, and its block. The generator holds the
+    /// `InPattern`, whose `Binder`s are names or `_`, and the source.
+    fn for_expr(&mut self, n: usize) -> Result<Expr, Error> {
+        let kids = self.kids(n);
+        let (&generator, rest) = kids.split_first().expect("For = 'for' Generator …");
+        let (&body, rest) = rest.split_last().expect("For ends in its block");
+        if let Some(&more) = rest.iter().find(|&&k| self.tree.name(k) == "MoreGen") {
+            return Err(self.later(more));
+        }
+        let &[pattern, source] = self.kids(generator) else {
+            unreachable!("Generator = InPattern 'in' head(Expr12)")
+        };
+        let binders = self.kids(pattern).iter().map(|&b| self.target(b)).collect();
+        let source = Box::new(self.node(source)?);
+        let guard = match rest {
+            [] => None,
+            [g] => Some(Box::new(self.node(*g)?)),
+            _ => unreachable!("one `where` guard"),
+        };
+        Ok(Expr {
+            kind: ExprKind::For {
+                binders,
+                source,
+                guard,
+                body: Box::new(self.node(body)?),
+            },
+            span: self.span(n),
+        })
+    }
+
+    /// The end of a range whose operator is token `op`, its bound node `bound` built by `f`.
+    fn range_end<T>(
+        &mut self,
+        op: usize,
+        bound: Option<usize>,
+        f: impl FnOnce(&mut Self, usize) -> Result<T, Error>,
+    ) -> Result<RangeEnd<T>, Error> {
+        Ok(match (self.word(op), bound) {
+            ("..<", Some(b)) => RangeEnd::Below(f(self, b)?),
+            ("..=", Some(b)) => RangeEnd::Through(f(self, b)?),
+            ("..", None) => RangeEnd::Open,
+            _ => unreachable!("RangeTail = '..<' Additive | '..=' Additive | '..'"),
         })
     }
 

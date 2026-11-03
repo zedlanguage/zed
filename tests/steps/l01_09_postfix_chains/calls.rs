@@ -74,7 +74,10 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
 #[test]
 fn a_form_of_a_later_layer_names_that_layer() {
     let cases = [
-        ("data::len", "this form (ReadSuffix) is built from layer L3"),
+        (
+            "data >< f unordered",
+            "this form (Unordered) is built from layer L9",
+        ),
         (
             "rows*.price",
             "this form (SpreadSuffix) is built from layer L6",

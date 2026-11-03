@@ -1546,6 +1546,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             | ExprKind::Match { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
+            ExprKind::Range(..)
+            | ExprKind::In { .. }
+            | ExprKind::Reduce { .. }
+            | ExprKind::Read { .. }
+            | ExprKind::Section(_)
+            | ExprKind::Seq(_)
+            | ExprKind::Set(_)
+            | ExprKind::Map(_)
+            | ExprKind::For { .. } => unreachable!("resolve rejects the forms of layer L3"),
             // A `rat` literal is decorated and keeps its carrier; a literal past the size
             // limit is elaboration's error.
             ExprKind::Rat(s) => match Rat::decimal(s) {
@@ -2864,6 +2873,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
+            TypeKind::Seq(_) => unreachable!("resolve rejects the forms of layer L3"),
             TypeKind::Name(n) => match n.as_str() {
                 "int" => Ty::carrier(Carrier::Int),
                 "rat" => Ty::carrier(Carrier::Rat),

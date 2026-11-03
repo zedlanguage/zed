@@ -4,8 +4,8 @@
 use std::mem;
 
 use super::{
-    Annot, Expr, ExprKind, Field, Function, Method, Param, Pattern, Stmt, StmtKind, StrPart,
-    Struct, Type, TypeKind,
+    Annot, Expr, ExprKind, Field, Function, Method, Param, Pattern, RangeEnd, Stmt, StmtKind,
+    StrPart, Struct, Type, TypeKind,
 };
 
 impl Drop for Expr {
@@ -27,16 +27,20 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
         | ExprKind::Bool(_)
         | ExprKind::Atom(_)
         | ExprKind::Name(_)
-        | ExprKind::This => {}
+        | ExprKind::This
+        | ExprKind::Section(_) => {}
         ExprKind::Str(parts) => out.extend(parts.into_iter().filter_map(|p| match p {
             StrPart::Hole(e) => Some(e),
             StrPart::Text(_) => None,
         })),
-        ExprKind::Unary(_, a) | ExprKind::Is { of: a, .. } | ExprKind::Member { of: a, .. } => {
-            out.push(*a)
-        }
+        ExprKind::Unary(_, a)
+        | ExprKind::Is { of: a, .. }
+        | ExprKind::Member { of: a, .. }
+        | ExprKind::Read { of: a, .. } => out.push(*a),
         ExprKind::Binary(_, a, b)
         | ExprKind::Index(a, b)
+        | ExprKind::In { of: a, set: b, .. }
+        | ExprKind::Reduce { of: a, op: b }
         | ExprKind::Else {
             of: a, default: b, ..
         } => {
@@ -53,7 +57,31 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
             out.append(&mut positional);
             out.extend(named.into_iter().map(|(_, e)| e));
         }
-        ExprKind::Tuple(mut es) => out.append(&mut es),
+        ExprKind::Tuple(mut es) | ExprKind::Seq(mut es) | ExprKind::Set(mut es) => {
+            out.append(&mut es)
+        }
+        ExprKind::Map(entries) => {
+            for (k, v) in entries {
+                out.extend([k, v]);
+            }
+        }
+        ExprKind::Range(from, to) => {
+            out.push(*from);
+            match to {
+                RangeEnd::Below(b) | RangeEnd::Through(b) => out.push(*b),
+                RangeEnd::Open => {}
+            }
+        }
+        ExprKind::For {
+            source,
+            guard,
+            body,
+            ..
+        } => {
+            out.push(*source);
+            out.extend(guard.map(|g| *g));
+            out.push(*body);
+        }
         ExprKind::Lambda { params, body } => {
             param_kids(params, out);
             out.push(*body);
@@ -159,6 +187,7 @@ fn type_kids(kind: &mut TypeKind, out: &mut Vec<Type>) {
             out.extend(params.into_iter().map(|p| p.ty));
         }
         TypeKind::Record(fields) => out.extend(fields.into_iter().map(|(_, t)| t)),
+        TypeKind::Seq(t) => out.push(*t),
     }
 }
 
@@ -183,7 +212,12 @@ fn pattern_kids(p: &mut Pattern, out: &mut Vec<Pattern>) {
             out.extend(mem::take(fields).into_iter().filter_map(|(_, p)| p));
         }
         Pattern::Tuple(items, _) => out.append(items),
-        // A type and an expression drop by their own work lists.
-        Pattern::Name(..) | Pattern::Wild(_) | Pattern::Is { .. } | Pattern::Lit(_) => {}
+        // A type and an expression drop by their own work lists, and a range pattern holds
+        // two literal patterns.
+        Pattern::Name(..)
+        | Pattern::Wild(_)
+        | Pattern::Is { .. }
+        | Pattern::Lit(_)
+        | Pattern::Range { .. } => {}
     }
 }
