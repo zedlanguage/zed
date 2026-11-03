@@ -399,8 +399,19 @@ impl Product {
             }
         }
         // The other domains from the type.
-        if let Some(vs) = self.ty.element.each_value() {
-            self.cell.finite.meet(&FiniteSet::of(vs), &prem);
+        // A finite set already held is kept where the type holds each member, so the type's
+        // values are not listed: the cost is one membership test per member. With no finite
+        // set, the type's values become it, and every one is listed, since the set holds them
+        // all (COMPLEXITY.md row S34).
+        if self.ty.element.finite() {
+            let ty = &self.ty.element;
+            let kept = match &self.cell.finite.element {
+                FiniteSet::Set(vs) => FiniteSet::of(vs.iter().filter(|v| ty.contains(v)).cloned()),
+                FiniteSet::Top => {
+                    FiniteSet::of(ty.each_value().expect("a finite type lists its values"))
+                }
+            };
+            self.cell.finite.meet(&kept, &prem);
         }
         if let Some(vs) = self.ty.element.ints_listed()
             && !vs.is_empty()

@@ -12,6 +12,7 @@ mod controls;
 mod deep_condition;
 mod disjoint;
 mod exact;
+mod finite_from_type;
 mod helpers;
 mod hull;
 mod linked;
