@@ -1,6 +1,6 @@
 # Plan DAG
 
-This file lists the remaining work on Zed and the order it must run in. It has 265 items, 1120 edges and 69 levels (0 to 68). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
+This file lists the remaining work on Zed and the order it must run in. It has 266 items, 1120 edges and 69 levels (0 to 68). It covers the TODO items, the store fixes, the left-recursion work, the T14 and T11 findings and every unchecked step in `../zed/PROGRESS.md`.
 
 **Needs relaxed on 2026-11-02.** Items now run in parallel in their own worktrees, and a merge resolves a small overlap in a file. So the `needs` column keeps only three kinds of edge: code (one item uses or changes code the other writes), measure (one item measures code the other changes) and files-heavy (both rewrite the same functions). Edges of the other kinds were dropped: files-light (the same file, different functions), order (a preferred order with no technical cause), docs (one item only reads the other's text) and none (no reason found). Of the 1134 edges classified, 907 were code, 109 measure, 13 files-heavy, 52 files-light, 35 order, 3 docs and 15 none. Where the reviewer of the classification disagreed, its judgment was used. T11-fix was split into T11-fix-store and T11-fix-rest, X14 was added, and edges found missing were added after reading the cited code.
 
@@ -29,6 +29,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 
 | Level | Id | Title | Size | Hard | Needs | Paths |
 |---|---|---|---|---|---|---|
+| 0 | OSPREY | Study of the Osprey language (ospreylang.dev) against the Zed spec; key ideas proposed as DESIGN text and plan steps | M | no | — | `DESIGN.md`, `docs/plan_dag.md` |
 | 0 | T2-eval | Done: Reference evaluator as an explicit-stack machine; remove on_stack, the Stack proof type and the 1 GiB thread (eval.rs:296) | L | no | none | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/lib.rs`, `crates/zed-kernel/src/error.rs`, `crates/zedc/src/store/product.rs`, `crates/zedc/src/store/preimage.rs`, `tests/steps/m0_09_kernel_evaluator/`, `tests/steps/m0_10_finite_model_harness/scaling.rs`, `tests/steps/l01_18_scalar_interpreter/scaling.rs`, `tests/steps/l01_39_reduced_product/random.rs` |
 | 0 | TIMING | Done: tests no longer fail on time under load: scaling checks count instructions, large tests get their own process, checkouts share slots, the piece limit follows the load | M | no | none | `tests/src/scaling.rs`, `tools/run_tests.sh`, `.github/workflows/ci.yml`, `tests/steps/l01_25_preimage_catalog/exact.rs`, `tests/steps/l01_39_reduced_product/exact.rs`, `tests/steps/l01_38_presburger/scaling.rs`, `tests/steps/m0_11_prelude_axioms_and_limits/limits.rs`, `tests/steps/m0_09_kernel_evaluator/binary.rs` |
 | 0 | DART-RS | Done: the Dart tools rewritten in Rust (`crates/zed-tools`, `zed/corpus/ref`), all Dart removed from both repositories | L | no | none | `crates/zed-tools/`, `zed/corpus/ref/`, `crates/zedc/src/parse/`, `tests/steps/m0_03_grammar_tools/`, `tests/steps/m0_04_corpus_references/`, `.github/workflows/ci.yml`, `.gitignore`, `docs/layout.md` |
@@ -1044,3 +1045,4 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **L33.1.** L32.5 and L31.5: placed last, once Zed and its standard library are complete. *Note:* Added 2026-11-03 at the author's request. Adds no form. Each library is written as L2.11 writes the standard library: from a comparison of implementations, with a test for each defect found.
 - **L33.2.** L33.1: the Python list done first, as the author ordered.
 - **L33.3.** L33.1 and L33.2: the layer's work.
+- **OSPREY.** No needs. *Note:* Added 2026-11-03 at the author's request. A research worker reads every page of ospreylang.dev and writes wt/osprey/REPORT.md; the orchestrator checks it and makes the DESIGN and plan edits, adding a step for each idea worth building.
