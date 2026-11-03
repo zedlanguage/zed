@@ -813,3 +813,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `std::ptr::eq` on two forms as a shortcut to `Equal` before comparing them structurally | `impl Ord for VertexKey` | Identity (gap 1) | The structural comparison alone, or the runtime's `==` shortcut on shared values; the address comparison before it already leaves only nodes of one binding and one address |
 | `Ord` written by hand for a struct of three fields, so that the form, a type parameter, is compared last and only on a tie | `VertexKey::cmp` | None | A tuple `(name, address, form)`, which compares left to right (`zed/prelude/iteration.zed`, `solve`) |
 | A stack of `&mut Element` walked to rewrite vertex numbers in place in a nested tree | `wto::ordered_by` | Mutation | A map over the tree of elements that returns a renumbered tree, by an explicit stack or by recursion on the nesting depth |
+
+## Entries from ST (`zedc/src/store/product.rs`, `presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `imbl::OrdMap::diff`, which skips subtrees the two maps share, to find the names a join or a reduce must visit | `Scope::join`, `changed`, `Scope::reduce_with` | Missing | Zed's maps are values but have no structural difference; it needs a `diff` word that the runtime answers in time proportional to what differs, or the scope keeps its own list of changed names |
+| A cache field whose `PartialEq` always holds, so that comparing scopes ignores it | `Reduced` | None | A field left out of the comparison the port writes for `Scope` |
+| `std::mem::take` of the cache at the start of a reduce, put back at the end | `Scope::reduce_with` | Mutation | A state receiver, or the cache returned with the scope |

@@ -35,6 +35,7 @@
 //! [`Time::Run`] for one known only when it runs; a meet takes the earlier and a join the
 //! later.
 
+use imbl::ordmap::DiffItem;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -414,8 +415,9 @@ fn listed(p: &Product) -> Option<Vec<i64>> {
 /// constraints that hold.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Scope {
-    /// One product per name.
-    pub names: BTreeMap<Arc<str>, Product>,
+    /// One product per name, in a persistent map, so that a case of a nest copies it in O(1) and
+    /// two scopes that share most of it are compared and joined in the names that differ.
+    pub names: imbl::OrdMap<Arc<str>, Product>,
     /// The relation the integer names meet, with no auxiliary variable.
     pub relation: Formula,
     /// The written constraints that hold, a test and its negations by printed text, each
@@ -432,7 +434,7 @@ pub struct Scope {
     /// mentions at that projection, which are all a projection reads of them. A part is
     /// projected again only when one of these has changed since
     /// (docs/thresholds.md, replacement 4).
-    pub projected: std::collections::HashMap<Formula, Projected>,
+    pub projected: std::collections::HashMap<PartKey, Projected>,
     /// Whether the scope is under `@exact`.
     pub exact: bool,
     /// Under `@exact`, each group of written constraints that share names, by their texts with
@@ -447,6 +449,9 @@ pub struct Scope {
     bindings: imbl::OrdMap<Arc<str>, Binding>,
     /// The order the next binding gets.
     clock: u64,
+    /// The names as the last reduction left them, each product then at its own fixed point:
+    /// a reduction reduces only the names that differ from these.
+    reduced: Reduced,
 }
 
 /// A name's `let` binding in a [`Scope`].
@@ -458,8 +463,36 @@ struct Binding {
     function: Option<Arc<Term>>,
 }
 
+/// The names as a reduction left them: a cache, equal in every scope, so that two scopes are
+/// equal when their names, relation and constraints are.
+#[derive(Clone, Default)]
+struct Reduced(imbl::OrdMap<Arc<str>, Product>);
+
+impl PartialEq for Reduced {
+    fn eq(&self, _: &Reduced) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for Reduced {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("..")
+    }
+}
+
 /// The intervals and classes of a part's names when it was last projected.
 pub type Projected = Vec<(Arc<str>, IntervalSet, Congruence)>;
+
+/// The names of `now` that are not in `then` or differ from it there, with their products.
+fn changed<'a>(
+    then: &'a imbl::OrdMap<Arc<str>, Product>,
+    now: &'a imbl::OrdMap<Arc<str>, Product>,
+) -> impl Iterator<Item = (&'a Arc<str>, &'a Product)> {
+    then.diff(now).filter_map(|d| match d {
+        DiffItem::Add(n, p) | DiffItem::Update { new: (n, p), .. } => Some((n, p)),
+        DiffItem::Remove(..) => None,
+    })
+}
 
 /// The names a formula mentions.
 fn syms(f: &Formula) -> Vec<Arc<str>> {
@@ -472,19 +505,40 @@ fn syms(f: &Formula) -> Vec<Arc<str>> {
         .collect()
 }
 
+/// What a part of the relation is projected for: its conjunct, and a hash of the equalities
+/// among the constraints it is projected with. A part is projected again when an equality
+/// joins or leaves them; a new inequality alone does not make it due (a known limit of
+/// precision, COMPLEXITY.md), so that a part costs its conjunct and not the constraints.
+pub type PartKey = (Formula, u64);
+
 /// Each of `conjuncts` that is not a constraint, with the constraints, and the constraints
-/// alone when there are any; each part with the conjunct it is projected for, or the
+/// alone when there are any; each part with its key, the conjunct it is projected for, or the
 /// constraints for theirs.
-fn split<'a>(conjuncts: impl Iterator<Item = &'a Formula>) -> Vec<(Formula, Formula)> {
+fn split<'a>(conjuncts: impl Iterator<Item = &'a Formula>) -> Vec<(PartKey, Formula)> {
+    use std::hash::{Hash, Hasher};
     let (cons, others): (Vec<&Formula>, Vec<&Formula>) =
         conjuncts.partition(|g| matches!(g, Formula::Con(_)));
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for g in &cons {
+        if let Formula::Con(c) = g
+            && c.rel == Rel::Eq
+        {
+            c.hash(&mut h);
+        }
+    }
+    let eqs = h.finish();
     let base = Formula::and(cons.into_iter().cloned().collect());
-    let mut parts: Vec<(Formula, Formula)> = others
+    let mut parts: Vec<(PartKey, Formula)> = others
         .into_iter()
-        .map(|g| (g.clone(), Formula::and(vec![g.clone(), base.clone()])))
+        .map(|g| {
+            (
+                (g.clone(), eqs),
+                Formula::and(vec![g.clone(), base.clone()]),
+            )
+        })
         .collect();
     if base != Formula::top() {
-        parts.push((base.clone(), base));
+        parts.push(((base.clone(), eqs), base));
     }
     parts
 }
@@ -494,7 +548,7 @@ struct Block {
     /// What is projected: each conjunct that is not a constraint, with the constraints, and
     /// the constraints alone, each with the conjunct it is projected for ([`split`]). A new
     /// conjunct then costs its own part, not the block's.
-    parts: Vec<(Formula, Formula)>,
+    parts: Vec<(PartKey, Formula)>,
     /// The conjuncts, by their places.
     conjuncts: Vec<usize>,
     /// The names they mention.
@@ -698,6 +752,7 @@ impl Scope {
             refusals: BTreeSet::new(),
             bindings: imbl::OrdMap::new(),
             clock: 0,
+            reduced: Reduced::default(),
         };
         s.reduce();
         s
@@ -738,9 +793,11 @@ impl Scope {
         self.names.insert(x.clone(), p);
         if self.names[x].is_empty() {
             self.bottom = true;
-            for p in self.names.values_mut() {
-                *p = Product::bottom();
-            }
+            self.names = self
+                .names
+                .keys()
+                .map(|n| (n.clone(), Product::bottom()))
+                .collect();
         }
         saved
     }
@@ -862,12 +919,23 @@ impl Scope {
         if other.bottom {
             return self.clone();
         }
+        // A name both sides share unchanged is its own join; the others are found by the
+        // persistent maps' difference, which skips what they share.
         let mut names = self.names.clone();
-        for (n, p) in names.iter_mut() {
-            p.join(&other.get(n));
-        }
-        for n in other.names.keys() {
-            names.entry(n.clone()).or_insert_with(Product::top);
+        for d in self.names.diff(&other.names) {
+            match d {
+                DiffItem::Update {
+                    old: (n, p),
+                    new: (_, q),
+                } => {
+                    let mut j = p.clone();
+                    j.join(q);
+                    names.insert(n.clone(), j);
+                }
+                DiffItem::Add(n, _) | DiffItem::Remove(n, _) => {
+                    names.insert(n.clone(), Product::top());
+                }
+            }
         }
         // The equalities of two or more atoms that hold on both sides (Karr's join), which the
         // disjunction of the relations holds but no projection of one of its parts finds. Each
@@ -886,7 +954,12 @@ impl Scope {
                 })
             })
             .collect();
-        let mut relation = vec![Formula::either(&self.relation, &other.relation, &reduce)];
+        // Each side states the bounds of the names the other's relation mentions and its own
+        // does not, which its products hold and its relation leaves out: otherwise a side of
+        // relation `true` makes the disjunction `true`, and the join depends on how the cases
+        // are grouped.
+        let (a, b) = (self.stated(&other.relation), other.stated(&self.relation));
+        let mut relation = vec![Formula::either(&a, &b, &reduce)];
         relation.extend(kept);
         Scope {
             relation: Formula::and(relation),
@@ -933,7 +1006,36 @@ impl Scope {
             bindings: self.bindings.clone(),
             clock: self.clock.max(other.clock),
             names,
+            // This side's reduced names: the join's differ from them in the names it changed.
+            reduced: self.reduced.clone(),
         }
+    }
+
+    /// The relation with the finite bounds of each name `other` mentions and the relation
+    /// does not.
+    fn stated(&self, other: &Formula) -> Formula {
+        let own: HashSet<Arc<str>> = syms(&self.relation).into_iter().collect();
+        let mut out = Vec::new();
+        for n in syms(other) {
+            if own.contains(&n) {
+                continue;
+            }
+            let Some((lo, hi)) = self.names.get(&n).and_then(|p| p.ints().bounds()) else {
+                continue;
+            };
+            let x = Lin::atom(Atom::Sym(n));
+            if let End::Fin(v) = lo {
+                out.push(Formula::Con(Con::ge(&x, &Lin::constant(v))));
+            }
+            if let End::Fin(v) = hi {
+                out.push(Formula::Con(Con::ge(&Lin::constant(v), &x)));
+            }
+        }
+        if out.is_empty() {
+            return self.relation.clone();
+        }
+        out.push(self.relation.clone());
+        Formula::and(out)
     }
 
     /// The affine hull of the scope's points: the equalities among the relation's top-level
@@ -969,49 +1071,180 @@ impl Scope {
         s
     }
 
+    /// Narrows by `test` giving `outcome`. The test is read as a [`Tree`]; when it has cases,
+    /// the linear relation of the whole test, taken before any narrowing, is kept with the
+    /// join of the cases, which keeps only what the cases share.
     fn narrow(&mut self, test: &Term, outcome: bool, prem: &Premises) {
         if self.bottom {
             return;
         }
-        match test {
-            Term::Lit(Value::Bool(b)) => {
-                if *b != outcome {
+        let (tree, pol) = Tree::of(test);
+        let body = match tree.nodes[0].kind {
+            Kind::Nest(..) | Kind::If(_) => self.relation_of(&tree.term(), outcome == pol),
+            Kind::Lit(_) | Kind::Atom => None,
+        };
+        let Some(body) = body else {
+            self.narrow_node(&tree, 0, outcome == pol, prem);
+            return;
+        };
+        let before = self.relation.clone();
+        self.narrow_node(&tree, 0, outcome == pol, prem);
+        // The relation the narrowing gives is implied by the one before, the test's and the
+        // products: each case adds the relations of its tests and bounds its products hold.
+        // So the test's relation replaces it, but for the equalities of two atoms or more the
+        // join of the cases states at the top (Karr's join), which a projection of the test's
+        // relation onto each name does not find.
+        if !self.bottom {
+            let mut all = vec![before, body];
+            let gs = match std::mem::replace(&mut self.relation, Formula::top()) {
+                Formula::And(gs) => gs,
+                g => vec![g],
+            };
+            all.extend(gs.into_iter().filter(
+                |g| matches!(g, Formula::Con(c) if c.rel == Rel::Eq && c.lin.terms.len() > 1),
+            ));
+            self.relation = Formula::and(all);
+        }
+    }
+
+    /// The linear relation of `test` giving `outcome`, with the static names' values, when the
+    /// test mentions two integer names or more and nothing else, and needs no auxiliary
+    /// variable.
+    fn relation_of(&self, test: &Term, outcome: bool) -> Option<Formula> {
+        let t = substitute(test, &self.statics_of(&stage::free(test)));
+        let free = stage::free(&t);
+        let int = Type::int();
+        let inputs: Vec<Arc<str>> = free
+            .iter()
+            .filter(|n| {
+                self.names
+                    .get(*n)
+                    .is_some_and(|p| p.ty.element.subtype(&int))
+            })
+            .cloned()
+            .collect();
+        if inputs.len() < 2 || inputs.len() != free.len() {
+            return None;
+        }
+        let r = relations(&[&t], &inputs, false)?.into_iter().next()?;
+        if !r.defs.is_empty() {
+            return None;
+        }
+        Some(if outcome {
+            r.body
+        } else {
+            Formula::negate(r.body)
+        })
+    }
+
+    /// Narrows by node `n` of `tree` giving `value`. A nest the value forces narrows by each
+    /// side; any other nest or `if` is split into its cases, which are joined.
+    fn narrow_node(&mut self, tree: &Tree, n: usize, value: bool, prem: &Premises) {
+        if self.bottom {
+            return;
+        }
+        let node = &tree.nodes[n];
+        match &node.kind {
+            Kind::Lit(b) => {
+                if *b != value {
                     self.bottom = true;
                 }
             }
-            Term::Prim(Prim::Not, a) if a.len() == 1 => self.narrow(&a[0], !outcome, prem),
-            Term::Prim(p @ (Prim::And | Prim::Or), a) if a.len() == 2 => {
-                // Both sides hold when the connective's outcome forces them; otherwise the
-                // cases join.
-                let forced = (*p == Prim::And) == outcome;
-                if forced {
-                    self.narrow(&a[0], outcome, prem);
-                    self.narrow(&a[1], outcome, prem);
-                } else {
-                    let mut l = self.clone();
-                    l.narrow(&a[0], outcome, prem);
-                    l.reduce();
-                    let mut r = self.clone();
-                    r.narrow(&a[0], !outcome, prem);
-                    r.narrow(&a[1], outcome, prem);
-                    r.reduce();
-                    *self = l.join(&r);
+            Kind::Atom => self.atom(node.term, value, prem),
+            Kind::Nest(and, sides) if *and == value => {
+                for &(k, p) in sides {
+                    self.narrow_node(tree, k, value == p, prem);
                 }
             }
-            Term::If(c, a, b) if is_bool_lit(a) || is_bool_lit(b) || (is_test(a) && is_test(b)) => {
-                let mut t = self.clone();
-                t.narrow(c, true, prem);
-                t.reduce();
-                t.narrow(a, outcome, prem);
-                t.reduce();
-                let mut f = self.clone();
-                f.narrow(c, false, prem);
-                f.reduce();
-                f.narrow(b, outcome, prem);
-                f.reduce();
-                *self = t.join(&f);
+            Kind::Nest(..) | Kind::If(_) => match self.cases(tree, n, value, prem) {
+                Some(s) => *self = s,
+                None => self.bottom = true,
+            },
+        }
+    }
+
+    /// The join of the cases of node `n` giving `value`, or `None` when every case is bottom.
+    /// A nest the value does not force has a case per side, each starting from this scope
+    /// with the sides before it excluded from the names' products ([`Scope::exclude`]); an
+    /// `if` has the case of each arm. A nest the value forces narrows by each side but the one
+    /// of the most nodes that has cases, whose cases are the nest's: so a chain of nests is
+    /// one list of cases, joined in pairs ([`join_cases`]), and only a side of at most half a
+    /// nest's nodes is narrowed by a call within this one.
+    fn cases(&self, tree: &Tree, n: usize, value: bool, prem: &Premises) -> Option<Scope> {
+        let mut out = Vec::new();
+        let mut work = vec![(self.clone(), n, value)];
+        while let Some((mut s, n, v)) = work.pop() {
+            if s.bottom {
+                continue;
             }
-            _ => self.atom(test, outcome, prem),
+            match &tree.nodes[n].kind {
+                Kind::Nest(and, sides) if *and != v => {
+                    for &(k, p) in sides {
+                        work.push((s.clone(), k, v == p));
+                        s.exclude(tree, k, v != p, prem);
+                        if s.bottom {
+                            break;
+                        }
+                    }
+                }
+                Kind::Nest(_, sides) => {
+                    let heavy = sides
+                        .iter()
+                        .filter(|(k, _)| tree.splits(*k))
+                        .max_by_key(|(k, _)| (tree.nodes[*k].size, std::cmp::Reverse(*k)))
+                        .copied();
+                    for &(k, p) in sides {
+                        if Some((k, p)) != heavy {
+                            s.narrow_node(tree, k, v == p, prem);
+                        }
+                    }
+                    s.reduce();
+                    match heavy {
+                        Some((k, p)) => work.push((s, k, v == p)),
+                        None => out.push(s),
+                    }
+                }
+                Kind::If([c, a, b]) => {
+                    let mut t = s.clone();
+                    t.narrow_node(tree, c.0, c.1, prem);
+                    t.reduce();
+                    work.push((t, a.0, v == a.1));
+                    s.narrow_node(tree, c.0, !c.1, prem);
+                    s.reduce();
+                    work.push((s, b.0, v == b.1));
+                }
+                Kind::Lit(_) | Kind::Atom => {
+                    s.narrow_node(tree, n, v, prem);
+                    s.reduce();
+                    out.push(s);
+                }
+            }
+        }
+        out.retain(|s| !s.bottom);
+        (!out.is_empty()).then(|| join_cases(out))
+    }
+
+    /// Narrows the names' products, and nothing else, by node `n` giving `value`: what a later
+    /// case of a nest knows of the sides before it. The relation and the written constraints
+    /// are left as they are, so a case costs its own side and not the sides before it.
+    fn exclude(&mut self, tree: &Tree, n: usize, value: bool, prem: &Premises) {
+        let node = &tree.nodes[n];
+        match &node.kind {
+            Kind::Lit(b) => {
+                if *b != value {
+                    self.bottom = true;
+                }
+            }
+            Kind::Atom => {
+                let t = substitute(node.term, &self.statics_of(&stage::free(node.term)));
+                self.atom_names(&t, value, true, prem);
+            }
+            Kind::Nest(and, sides) if *and == value => {
+                for &(k, p) in sides {
+                    self.exclude(tree, k, value == p, prem);
+                }
+            }
+            Kind::Nest(..) | Kind::If(_) => {}
         }
     }
 
@@ -1022,80 +1255,14 @@ impl Scope {
         // An integer name keeps its place: its interval holds its one value, and the
         // preimage reads the name where substituting it would leave terms it cannot cancel.
         let int = Type::int();
-        let free = stage::free(test);
-        let statics = self.statics_of(free.iter().filter(|n| {
+        let statics = self.statics_of(stage::free(test).iter().filter(|n| {
             !self
                 .names
                 .get(*n)
                 .is_some_and(|p| p.ty.element.subtype(&int))
         }));
         let t = substitute(test, &statics);
-        // A bare name of bool type.
-        if let Term::Var(x) = &t
-            && let Some(p) = self.names.get_mut(x)
-        {
-            let v = Value::Bool(outcome);
-            let lit = Type::lit(&v).expect("a bool literal type");
-            p.ty.meet(&lit, prem);
-            p.cell.finite.meet(&FiniteSet::of([v]), prem);
-        }
-        // An equality with a literal, and the congruence of `x mod c == r`.
-        if let Term::Prim(op @ (Prim::Eq | Prim::Ne), a) = &t
-            && a.len() == 2
-        {
-            let equal = (*op == Prim::Eq) == outcome;
-            for (l, r) in [(&a[0], &a[1]), (&a[1], &a[0])] {
-                match (l, r) {
-                    (Term::Var(x), Term::Lit(v)) => {
-                        if let Some(p) = self.names.get_mut(x) {
-                            equality(p, v, equal, prem);
-                        }
-                    }
-                    (Term::Prim(Prim::Mod, m), Term::Lit(Value::Int(r))) if equal => {
-                        if let [Term::Var(x), Term::Lit(Value::Int(c))] = &m[..]
-                            && *c != 0
-                            && let Some(p) = self.names.get_mut(x)
-                        {
-                            let k = c.unsigned_abs();
-                            if *r < 0 || r.unsigned_abs() >= k {
-                                p.ty.meet(&!&Type::int(), prem);
-                            } else {
-                                p.cell.congruence.meet(&Congruence::new(k, *r), prem);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        let free = stage::free(&t);
-        let inputs: Vec<Arc<str>> = free
-            .iter()
-            .filter(|n| {
-                self.names
-                    .get(*n)
-                    .is_some_and(|p| p.ty.element.subtype(&int))
-            })
-            .cloned()
-            .collect();
-        // The preimage of the outcome.
-        let mut exact = false;
-        if !inputs.is_empty() {
-            let doms: Domains = inputs
-                .iter()
-                .map(|n| (n.clone(), self.get(n).ints().clone()))
-                .collect();
-            let pre = preimage(&t, &doms, &Demand::Bool(outcome));
-            exact = pre.exact;
-            if let Some(r) = pre.refusal {
-                self.refusals.insert(r);
-            }
-            for (n, d) in &pre.domains {
-                if let Some(p) = self.names.get_mut(n) {
-                    p.meet_ints(d, prem);
-                }
-            }
-        }
+        let (exact, inputs, free) = self.atom_names(&t, outcome, false, prem);
         // The linear relation, when the test needs no auxiliary variable and says more than
         // the intervals: a test of one name whose preimage is exact is the interval itself.
         if !inputs.is_empty()
@@ -1125,6 +1292,94 @@ impl Scope {
         }
     }
 
+    /// Narrows the names' products by the atomic test `t`, its static names substituted,
+    /// giving `outcome`: a bare name of bool type, an equality with a literal, the congruence
+    /// of `x mod c == r`, and the preimage of the outcome. Gives whether the preimage is exact,
+    /// the test's integer names, and its free names. With `convex`, as for what a later case
+    /// knows of the cases before it, each name keeps a convex hull: the complement of a value
+    /// is not taken, and a preimage gives only its hull, so that a case of a nest of `k` sides
+    /// holds no more pieces than one side gives.
+    fn atom_names(
+        &mut self,
+        t: &Term,
+        outcome: bool,
+        convex: bool,
+        prem: &Premises,
+    ) -> (bool, Vec<Arc<str>>, BTreeSet<Arc<str>>) {
+        // A bare name of bool type.
+        if let Term::Var(x) = &t
+            && let Some(p) = self.names.get_mut(x)
+        {
+            let v = Value::Bool(outcome);
+            let lit = Type::lit(&v).expect("a bool literal type");
+            p.ty.meet(&lit, prem);
+            p.cell.finite.meet(&FiniteSet::of([v]), prem);
+        }
+        // An equality with a literal, and the congruence of `x mod c == r`.
+        if let Term::Prim(op @ (Prim::Eq | Prim::Ne), a) = &t
+            && a.len() == 2
+        {
+            let equal = (*op == Prim::Eq) == outcome;
+            for (l, r) in [(&a[0], &a[1]), (&a[1], &a[0])] {
+                match (l, r) {
+                    (Term::Var(x), Term::Lit(v)) if equal || !convex => {
+                        if let Some(p) = self.names.get_mut(x) {
+                            equality(p, v, equal, prem);
+                        }
+                    }
+                    (Term::Prim(Prim::Mod, m), Term::Lit(Value::Int(r))) if equal => {
+                        if let [Term::Var(x), Term::Lit(Value::Int(c))] = &m[..]
+                            && *c != 0
+                            && let Some(p) = self.names.get_mut(x)
+                        {
+                            let k = c.unsigned_abs();
+                            if *r < 0 || r.unsigned_abs() >= k {
+                                p.ty.meet(&!&Type::int(), prem);
+                            } else {
+                                p.cell.congruence.meet(&Congruence::new(k, *r), prem);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let int = Type::int();
+        let free = stage::free(t);
+        let inputs: Vec<Arc<str>> = free
+            .iter()
+            .filter(|n| {
+                self.names
+                    .get(*n)
+                    .is_some_and(|p| p.ty.element.subtype(&int))
+            })
+            .cloned()
+            .collect();
+        // The preimage of the outcome.
+        let mut exact = false;
+        if !inputs.is_empty() {
+            let doms: Domains = inputs
+                .iter()
+                .map(|n| (n.clone(), self.get(n).ints().clone()))
+                .collect();
+            let pre = preimage(t, &doms, &Demand::Bool(outcome));
+            exact = pre.exact;
+            if let Some(r) = pre.refusal {
+                self.refusals.insert(r);
+            }
+            for (n, d) in &pre.domains {
+                if let Some(p) = self.names.get_mut(n) {
+                    if convex {
+                        p.meet_ints(&d.hull(), prem);
+                    } else {
+                        p.meet_ints(d, prem);
+                    }
+                }
+            }
+        }
+        (exact, inputs, free)
+    }
+
     /// Passes information between the domains of every product, the relation and the written
     /// constraints until nothing changes. This ends with no bound on the rounds
     /// (docs/thresholds.md, replacement 3). Every pass only narrows. The relation is projected
@@ -1146,33 +1401,64 @@ impl Scope {
     }
 
     fn reduce_with(&mut self, whole: bool) {
-        let mut projected: Option<BTreeMap<Arc<str>, Product>> = None;
+        let mut projected: Option<imbl::OrdMap<Arc<str>, Product>> = None;
+        // The names as last reduced. A product's own reduction depends on it alone, so one
+        // that has not changed since is at its fixed point, and only the names that differ
+        // from these are reduced again or can have become empty: a reduction costs the names
+        // that changed, found by the persistent maps' difference.
+        let mut last = std::mem::take(&mut self.reduced.0);
+        let empty = |names: &imbl::OrdMap<Arc<str>, Product>, last: &imbl::OrdMap<_, _>| {
+            changed(last, names).any(|(_, p)| p.is_empty())
+        };
         loop {
-            if self.bottom || self.names.values().any(Product::is_empty) {
+            if self.bottom || empty(&self.names, &last) {
+                self.bottom = true;
                 break;
             }
             let before = self.names.clone();
+            // The names as projected are those before the projection, so that a projection that
+            // moves a bound is followed by another, until none moves one.
             if projected.as_ref() != Some(&self.names) {
-                self.project(whole);
                 projected = Some(self.names.clone());
+                self.project(whole);
             }
-            for p in self.names.values_mut() {
-                p.reduce_domains();
+            let dirty: Vec<Arc<str>> = changed(&last, &self.names)
+                .map(|(n, _)| n.clone())
+                .collect();
+            for n in &dirty {
+                if let Some(p) = self.names.get_mut(n) {
+                    p.reduce_domains();
+                }
+            }
+            last = self.names.clone();
+            if dirty
+                .iter()
+                .any(|n| self.names.get(n).is_some_and(Product::is_empty))
+            {
+                self.bottom = true;
+                break;
             }
             self.enumerate();
             debug_assert!(
-                self.names.iter().all(|(n, p)| p.leq(&before[n])),
+                before.diff(&self.names).all(|d| matches!(
+                    d,
+                    DiffItem::Update { old: (_, a), new: (_, b) } if b.leq(a)
+                )),
                 "a reduction rose"
             );
             if self.names == before {
                 break;
             }
         }
-        if self.bottom || self.names.values().any(Product::is_empty) {
+        if self.bottom || empty(&self.names, &last) {
             self.bottom = true;
-            for p in self.names.values_mut() {
-                *p = Product::bottom();
-            }
+            self.names = self
+                .names
+                .keys()
+                .map(|n| (n.clone(), Product::bottom()))
+                .collect();
+        } else {
+            self.reduced.0 = last;
         }
     }
 
@@ -1197,7 +1483,7 @@ impl Scope {
             g => vec![g.clone()],
         };
         let blocks = blocks(&conjuncts);
-        let mut used: HashSet<Formula> = HashSet::new();
+        let mut used: HashSet<PartKey> = HashSet::new();
         if !whole {
             for b in blocks.iter().rev().chain(&blocks) {
                 self.project_block(b);
@@ -1222,7 +1508,7 @@ impl Scope {
                 .iter()
                 .flat_map(|b| b.conjuncts.iter().map(|&i| &conjuncts[i]));
             for (key, g) in split(tree) {
-                let key = if whole { key } else { g.clone() };
+                let key = if whole { key } else { (g.clone(), 0) };
                 let names = syms(&g);
                 self.project_due(&key, &g, &names);
                 used.insert(key);
@@ -1236,22 +1522,66 @@ impl Scope {
         self.projected.retain(|g, _| used.contains(g));
     }
 
-    /// Projects the parts of `b` that are due, then marks every part of `b` projected: a bound
-    /// one part gives another in the block waits for the next narrowing, so that a narrowing
-    /// costs the block's due parts and not every part again.
+    /// Projects the parts of `b` that are due, then marks every part of `b` projected. A
+    /// part is due when it is new or its names' intervals or classes have changed since its
+    /// last projection, and a projection that moves a name's bound makes due again the other
+    /// parts that mention the name, so a bound passes along a chain of parts. When one name's
+    /// bound moves a second time, the parts may pass it back and forth by steps as small as
+    /// one value; the block's conjuncts are then projected together once, which gives the
+    /// fixed point the steps tend to, and the worklist stops. That is an event of the
+    /// projection, not a count of steps or a size.
     fn project_block(&mut self, b: &Block) {
         let at = self.snapshot(&b.names);
-        let due: Vec<&Formula> = b
+        let mut work: std::collections::VecDeque<usize> = b
             .parts
             .iter()
-            .filter(|(key, _)| self.projected.get(key) != Some(&at))
-            .map(|(_, g)| g)
+            .enumerate()
+            .filter(|(_, (key, _))| self.projected.get(key) != Some(&at))
+            .map(|(i, _)| i)
             .collect();
-        if due.is_empty() {
+        if work.is_empty() {
             return;
         }
-        for g in due {
-            self.project_part(g);
+        let names: Vec<Vec<Arc<str>>> = b.parts.iter().map(|(_, g)| syms(g)).collect();
+        let mut users: BTreeMap<&Arc<str>, Vec<usize>> = BTreeMap::new();
+        for (i, ns) in names.iter().enumerate() {
+            for n in ns {
+                users.entry(n).or_default().push(i);
+            }
+        }
+        let mut queued = vec![false; b.parts.len()];
+        for &i in &work {
+            queued[i] = true;
+        }
+        let mut moved: BTreeSet<&Arc<str>> = BTreeSet::new();
+        while let Some(i) = work.pop_front() {
+            queued[i] = false;
+            let before = self.snapshot(&names[i]);
+            self.project_part(&b.parts[i].1);
+            let mut again = false;
+            let mut empty = false;
+            for (n, old) in names[i].iter().zip(&before) {
+                let p = self.get(n);
+                if (p.ints(), p.cell.congruence.element) == (&old.1, old.2) {
+                    continue;
+                }
+                empty |= p.ints().is_empty();
+                again |= !moved.insert(n);
+                for &j in &users[n] {
+                    if j != i && !queued[j] {
+                        queued[j] = true;
+                        work.push_back(j);
+                    }
+                }
+            }
+            if empty {
+                break;
+            }
+            if again {
+                let all = Formula::and(b.parts.iter().map(|(_, g)| g.clone()).collect());
+                self.project_part(&all);
+                break;
+            }
         }
         let at = self.snapshot(&b.names);
         for (key, _) in &b.parts {
@@ -1262,7 +1592,7 @@ impl Scope {
     /// Projects `part`, which mentions `names`, when `key` is new or one of their intervals
     /// or classes has changed since its last projection. A part keyed by its conjunct alone
     /// is not projected again when only the constraints it is projected with have grown.
-    fn project_due(&mut self, key: &Formula, part: &Formula, names: &[Arc<str>]) {
+    fn project_due(&mut self, key: &PartKey, part: &Formula, names: &[Arc<str>]) {
         if self.projected.get(key) == Some(&self.snapshot(names)) {
             return;
         }
@@ -1526,9 +1856,255 @@ impl fmt::Display for Scope {
     }
 }
 
-/// Whether `t` is a boolean literal.
-fn is_bool_lit(t: &Term) -> bool {
-    matches!(t, Term::Lit(Value::Bool(_)))
+/// A test read as a tree of connectives, built once per narrowing. `!` is a polarity on the
+/// edge to a node, `true` for the node's test and `false` for its negation; a nest of one
+/// connective is one node however it is nested, after De Morgan's laws; and an `if` with a
+/// boolean arm is the connective it stands for. The sides of a nest are in an order that does
+/// not depend on the order they are written in, so neither does the narrowing.
+struct Tree<'a> {
+    /// The nodes, the root first, each before the nodes below it.
+    nodes: Vec<Node<'a>>,
+}
+
+/// A node of a [`Tree`].
+struct Node<'a> {
+    /// The test.
+    term: &'a Term,
+    kind: Kind,
+    /// A hash of the node, equal for two tests that differ only in the order of the sides of
+    /// their nests.
+    key: u64,
+    /// The number of nodes in the tree below it, itself included.
+    size: usize,
+    /// Where the node stands among the sides of a nest ([`rank`]).
+    rank: u8,
+}
+
+/// What a [`Node`] is.
+enum Kind {
+    /// A boolean literal.
+    Lit(bool),
+    /// A test that is not taken apart.
+    Atom,
+    /// A nest of `&&` (`true`) or `||` (`false`): its sides, each with its polarity, in the
+    /// order of their keys and polarities, those equal kept once.
+    Nest(bool, Vec<(usize, bool)>),
+    /// `if c { a } else { b }` with tests as arms: `c`, `a` and `b`, each with its polarity.
+    If([(usize, bool); 3]),
+}
+
+/// Where a node stands among the sides of a nest, before its key: a later case knows the
+/// sides before it through the names' products alone ([`Scope::exclude`]), so the sides
+/// those products hold exactly come first. A literal, then a comparison of a name with a
+/// literal, then any other comparison, then any other test, then a nest or an `if`.
+fn rank(n: &Node) -> u8 {
+    match (&n.kind, n.term) {
+        (Kind::Lit(_), _) => 0,
+        (Kind::Atom, Term::Prim(p, a)) if is_comparison(*p) && a.len() == 2 => {
+            match (&a[0], &a[1]) {
+                (Term::Var(_), Term::Lit(_)) | (Term::Lit(_), Term::Var(_)) => 1,
+                _ => 2,
+            }
+        }
+        (Kind::Atom, _) => 3,
+        (Kind::Nest(..) | Kind::If(_), _) => 4,
+    }
+}
+
+/// Whether `p` compares two values.
+fn is_comparison(p: Prim) -> bool {
+    matches!(
+        p,
+        Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
+    )
+}
+
+/// `t` without its outer `!`s, and whether their number is even.
+fn strip(mut t: &Term) -> (&Term, bool) {
+    let mut pol = true;
+    while let Term::Prim(Prim::Not, a) = t
+        && a.len() == 1
+    {
+        t = &a[0];
+        pol = !pol;
+    }
+    (t, pol)
+}
+
+/// The connective `t` is, `&&` (`true`) or `||` (`false`), with its two sides and their
+/// polarities: `if c { true } else { b }` is `c || b`, `if c { false } else { b }` is
+/// `!c && b`, `if c { a } else { true }` is `!c || a`, and `if c { a } else { false }` is
+/// `c && a`.
+fn connective(t: &Term) -> Option<(bool, [(&Term, bool); 2])> {
+    match t {
+        Term::Prim(p @ (Prim::And | Prim::Or), a) if a.len() == 2 => {
+            Some((*p == Prim::And, [(&a[0], true), (&a[1], true)]))
+        }
+        Term::If(c, a, b) => match (&**a, &**b) {
+            (Term::Lit(Value::Bool(v)), _) => Some((!v, [(&**c, *v), (&**b, true)])),
+            (_, Term::Lit(Value::Bool(v))) => Some((!v, [(&**c, !v), (&**a, true)])),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+impl<'a> Tree<'a> {
+    /// The tree of `test`, and the polarity of its root.
+    fn of(test: &'a Term) -> (Tree<'a>, bool) {
+        let leaf = |term| Node {
+            term,
+            kind: Kind::Atom,
+            key: 0,
+            size: 1,
+            rank: 0,
+        };
+        let (root, pol) = strip(test);
+        let mut nodes = vec![leaf(root)];
+        let mut work = vec![0];
+        while let Some(i) = work.pop() {
+            let t = nodes[i].term;
+            let mut add = |nodes: &mut Vec<Node<'a>>, (u, q): (&'a Term, bool)| {
+                nodes.push(leaf(u));
+                work.push(nodes.len() - 1);
+                (nodes.len() - 1, q)
+            };
+            nodes[i].kind = if let Term::Lit(Value::Bool(b)) = t {
+                Kind::Lit(*b)
+            } else if let Some((and, pair)) = connective(t) {
+                // The sides of the nest: a side that is the same connective, after De
+                // Morgan's laws, is taken apart in turn.
+                let mut sides = Vec::new();
+                let mut flat = pair.to_vec();
+                while let Some((u, q)) = flat.pop() {
+                    let (u, s) = strip(u);
+                    let q = q == s;
+                    match connective(u) {
+                        Some((and2, pair2)) if (and2 == q) == and => {
+                            flat.extend(pair2.into_iter().map(|(x, px)| (x, px == q)));
+                        }
+                        _ => sides.push(add(&mut nodes, (u, q))),
+                    }
+                }
+                Kind::Nest(and, sides)
+            } else if let Term::If(c, a, b) = t
+                && is_test(a)
+                && is_test(b)
+            {
+                Kind::If([c, a, b].map(|x| add(&mut nodes, strip(x))))
+            } else {
+                Kind::Atom
+            };
+        }
+        // Keys and sizes, each node after the nodes below it.
+        for i in (0..nodes.len()).rev() {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            let mut kind = std::mem::replace(&mut nodes[i].kind, Kind::Atom);
+            let mut size = 1;
+            match &mut kind {
+                Kind::Lit(b) => (0u8, *b).hash(&mut h),
+                Kind::Atom => (1u8, nodes[i].term.to_string()).hash(&mut h),
+                Kind::Nest(and, sides) => {
+                    sides.sort_by_key(|&(k, p)| (nodes[k].rank, nodes[k].key, p));
+                    sides.dedup_by(|x, y| {
+                        x.1 == y.1
+                            && nodes[x.0].key == nodes[y.0].key
+                            && nodes[x.0].term == nodes[y.0].term
+                    });
+                    (2u8, *and).hash(&mut h);
+                    for &(k, p) in sides.iter() {
+                        (nodes[k].key, p).hash(&mut h);
+                        size += nodes[k].size;
+                    }
+                }
+                Kind::If(arms) => {
+                    3u8.hash(&mut h);
+                    for &(k, p) in arms.iter() {
+                        (nodes[k].key, p).hash(&mut h);
+                        size += nodes[k].size;
+                    }
+                }
+            }
+            nodes[i].kind = kind;
+            nodes[i].key = h.finish();
+            nodes[i].size = size;
+            nodes[i].rank = rank(&nodes[i]);
+        }
+        (Tree { nodes }, pol)
+    }
+
+    /// The root's test with each nest written as `&&` or `||` over its sides, nested in a
+    /// balanced way, and each `if` with a boolean arm as its connective: a term the size of the
+    /// tree, and of depth logarithmic in the length of each nest.
+    fn term(&self) -> Term {
+        fn signed(t: Term, pol: bool) -> Term {
+            if pol {
+                t
+            } else {
+                Term::Prim(Prim::Not, vec![t])
+            }
+        }
+        let mut terms: Vec<Option<Term>> = Vec::with_capacity(self.nodes.len());
+        terms.resize_with(self.nodes.len(), || None);
+        for i in (0..self.nodes.len()).rev() {
+            let n = &self.nodes[i];
+            let mut take = |(k, p): (usize, bool)| {
+                signed(terms[k].take().expect("a node below is built first"), p)
+            };
+            let t = match &n.kind {
+                Kind::Lit(_) | Kind::Atom => n.term.clone(),
+                Kind::Nest(and, sides) => {
+                    let p = if *and { Prim::And } else { Prim::Or };
+                    let mut level: Vec<Term> = sides.iter().map(|&s| take(s)).collect();
+                    while level.len() > 1 {
+                        let mut it = std::mem::take(&mut level).into_iter();
+                        while let Some(l) = it.next() {
+                            level.push(match it.next() {
+                                Some(r) => Term::Prim(p, vec![l, r]),
+                                None => l,
+                            });
+                        }
+                    }
+                    level.pop().expect("a nest has a side")
+                }
+                Kind::If([c, a, b]) => {
+                    let [c, a, b] = [*c, *a, *b].map(|s| Arc::new(take(s)));
+                    Term::If(c, a, b)
+                }
+            };
+            terms[i] = Some(t);
+        }
+        terms[0].take().expect("the root is built")
+    }
+
+    /// Whether node `n` is split into cases under some value: a nest or an `if`.
+    fn splits(&self, n: usize) -> bool {
+        matches!(self.nodes[n].kind, Kind::Nest(..) | Kind::If(_))
+    }
+}
+
+/// The join of `cases`, each reduced, in pairs, so that no case is copied through more than
+/// `log k` joins of `k` cases. A join that is joined again is reduced first; the last is left
+/// as it is.
+fn join_cases(mut cases: Vec<Scope>) -> Scope {
+    while cases.len() > 1 {
+        let last = cases.len() == 2;
+        let mut it = std::mem::take(&mut cases).into_iter();
+        while let Some(l) = it.next() {
+            cases.push(match it.next() {
+                Some(r) => {
+                    let mut j = l.join(&r);
+                    if !last {
+                        j.reduce();
+                    }
+                    j
+                }
+                None => l,
+            });
+        }
+    }
+    cases.pop().expect("a test has a case")
 }
 
 /// Whether `t` is a comparison, a connective or a boolean literal.

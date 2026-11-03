@@ -75,7 +75,7 @@
 //! integer, written or derived, is unbounded.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -84,9 +84,6 @@ use super::int::Int;
 use super::interval::{End, IntervalSet};
 use super::simplex::Term;
 use super::{twovar, utvpi};
-
-/// The projection onto each symbol, in order; an error where it is refused.
-type Projections = Vec<Result<IntervalSet, Refusal>>;
 
 /// A variable of a relation.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -2483,40 +2480,102 @@ pub fn project_each(
     let Some(model) = solve(&p.cons, true)? else {
         return Ok(none());
     };
-    let base = Formula::and(p.cons.iter().cloned().map(Formula::Con).collect());
-    // Each disjunct's projections with the base, a level of disjunctions fewer than `f`; an
-    // refused one is `None`.
-    let mut parts: Vec<Vec<Option<Projections>>> = Vec::new();
-    for ds in &p.ors {
-        let mut each = Vec::new();
-        for d in ds {
-            each.push(project_each(&Formula::and(vec![base.clone(), d.clone()]), syms).ok());
-        }
-        parts.push(each);
-    }
-    Ok(syms
-        .iter()
-        .enumerate()
-        .map(|(k, sym)| {
-            let mut out = hull_from(&base, sym, &model)?;
-            for ds in &parts {
-                let mut u = Some(IntervalSet::empty());
-                for d in ds {
-                    u = match (u, d) {
-                        (Some(u), Some(r)) => r[k].as_ref().ok().map(|h| u.join(h)),
-                        _ => None,
-                    };
-                }
-                if let Some(u) = u {
-                    out = out.meet(&u);
-                }
-            }
-            if p.ors.len() > 1 {
-                out = tighten(f, sym, out)?;
-            }
-            Ok(out)
+    // The base's constraints in groups linked by shared atoms ([`Linked`]). The base has a
+    // point, so its groups are independent: a symbol's hull over the base is its hull over its
+    // own group, and a disjunct is projected with the groups its atoms touch, onto the symbols
+    // in them, the others keeping the base's hull. A projection then costs the groups each
+    // disjunct touches, not the whole base for each disjunct and each symbol.
+    let ors = std::mem::take(&mut p.ors);
+    let linked = Linked::of(std::mem::take(&mut p.cons));
+    let bases: HashMap<usize, Formula> = (0..linked.held.len())
+        .filter(|r| !linked.held[*r].is_empty())
+        .map(|r| {
+            let cs = linked.held[r]
+                .iter()
+                .map(|i| Formula::Con(linked.cons[*i].clone()));
+            (r, Formula::and(cs.collect()))
         })
-        .collect())
+        .collect();
+    // The group of an atom: a symbol no constraint mentions is a group of its own, numbered
+    // past the linked atoms.
+    let index: HashMap<&Atom, usize> = syms.iter().enumerate().map(|(k, s)| (s, k)).collect();
+    let group = |a: &Atom| match linked.ids.get(a) {
+        Some(i) => Some(linked.root(*i)),
+        None => index.get(a).map(|k| linked.parent.len() + k),
+    };
+    let mut syms_of: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (k, s) in syms.iter().enumerate() {
+        let g = group(s).expect("a symbol's group");
+        syms_of.entry(g).or_default().push(k);
+    }
+    let top = Formula::top();
+    let base_of = |r: usize| bases.get(&r).unwrap_or(&top);
+    let mut out: Vec<Result<IntervalSet, Refusal>> = syms
+        .iter()
+        .map(|s| hull_from(base_of(group(s).expect("a symbol's group")), s, &model))
+        .collect();
+    for ds in &ors {
+        // For each symbol, the join of its projections over the satisfiable disjuncts that
+        // touch it (`None` once one is refused), and how many touch it; a satisfiable disjunct
+        // that does not touch it gives the base's hull, which leaves it as it is.
+        let mut acc: HashMap<usize, (Option<IntervalSet>, usize)> = HashMap::new();
+        let (mut sat, mut refused) = (0usize, false);
+        for d in ds {
+            let mut roots: Vec<usize> = d.atoms().iter().filter_map(&group).collect();
+            roots.sort_unstable();
+            roots.dedup();
+            let mut fs: Vec<Formula> = roots.iter().map(|r| base_of(*r).clone()).collect();
+            fs.push(d.clone());
+            let fd = Formula::and(fs);
+            let ks: Vec<usize> = roots
+                .iter()
+                .flat_map(|r| syms_of.get(r).into_iter().flatten().copied())
+                .collect();
+            let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
+            let Ok(rs) = project_each(&fd, &sub) else {
+                refused = true;
+                break;
+            };
+            let has_point = if ks.is_empty() {
+                !matches!(decide(&fd), Ok(false))
+            } else {
+                rs.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()))
+            };
+            if !has_point {
+                continue;
+            }
+            sat += 1;
+            for (j, &k) in ks.iter().enumerate() {
+                let e = acc.entry(k).or_insert((Some(IntervalSet::empty()), 0));
+                e.0 =
+                    e.0.take()
+                        .and_then(|u| rs[j].as_ref().ok().map(|h| u.join(h)));
+                e.1 += 1;
+            }
+        }
+        if refused {
+            continue;
+        }
+        if sat == 0 {
+            return Ok(none());
+        }
+        for (k, (u, touched)) in acc {
+            if touched == sat
+                && let Some(u) = u
+                && let Ok(o) = &mut out[k]
+            {
+                *o = o.meet(&u);
+            }
+        }
+    }
+    if ors.len() > 1 {
+        for (o, sym) in out.iter_mut().zip(syms) {
+            if let Ok(s) = o {
+                *o = tighten(f, sym, s.clone());
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// `set`, holding every value of `sym` over `f`'s points, with each finite bound raised or

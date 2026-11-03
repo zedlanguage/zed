@@ -43,8 +43,24 @@ fn a_scope_keeps_every_clause_of_a_relation() {
     let s = ints(&["x".into(), "y".into()]);
     for k in [1, 4, 40] {
         let r = s.assume(&clauses(k), true, &Premises::new());
+        // Each clause's two sides once each: the relation of the whole test, taken before the
+        // scope is narrowed, holds no copy of a side that a case of the split adds again.
         let n = r.relation.cons().len();
-        assert!(n == 3 * k, "{k} clauses: {n} constraints in {}", r.relation);
+        assert!(n == 2 * k, "{k} clauses: {n} constraints in {}", r.relation);
+        let mut got: Vec<String> = r.relation.cons().iter().map(|c| c.to_string()).collect();
+        got.sort();
+        let mut want: Vec<String> = (0..k)
+            .flat_map(|j| {
+                let diff = if j == 0 {
+                    "x >= y".to_string()
+                } else {
+                    format!("x >= y + {j}")
+                };
+                [format!("x + y >= {j}"), diff]
+            })
+            .collect();
+        want.sort();
+        assert_eq!(got, want, "{k} clauses");
         // Every point that meets the test is in the scope.
         for (x, y) in [(40, 0), (0, -40), (39, 0)] {
             let env = [("x".into(), Value::Int(x)), ("y".into(), Value::Int(y))].into();
