@@ -8,7 +8,7 @@
 //! a recursion, and is not tested here (ledger item T2-types-rest).
 
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use zed_kernel::types::Type;
 use zed_kernel::types::rec::{Def, Expr, Group};
@@ -211,26 +211,34 @@ fn random_in(s: &mut u64, d: u32, print: bool, tree: Option<&Trees>) -> Type {
 /// Checks that `run` scales as n log n at sizes [`N`] and 8 times it. Each run takes an input of
 /// its own, `make(n, i)` for the `i`-th run at size `n`, all built before any run is timed, and
 /// what it returns is kept until the check ends, so its release is not timed either.
-fn scales<I, O>(what: &str, make: impl Fn(usize, usize) -> I, run: impl Fn(usize, I) -> O) {
+fn scales<I: Send, O: Send>(
+    what: &str,
+    make: impl Fn(usize, usize) -> I,
+    run: impl Fn(usize, I) -> O + Sync,
+) {
     scales_at(what, N, make, run);
 }
 
 /// [`scales`] at sizes `n` and 8 times it.
-fn scales_at<I, O>(
+fn scales_at<I: Send, O: Send>(
     what: &str,
     n: usize,
     make: impl Fn(usize, usize) -> I,
-    run: impl Fn(usize, I) -> O,
+    run: impl Fn(usize, I) -> O + Sync,
 ) {
     let (small, large) = scaling::Meter::new().runs();
-    let pool = |n: usize, runs: usize| (n, RefCell::new((0..runs).map(|i| make(n, i)).collect()));
-    let pools: [(usize, RefCell<Vec<I>>); 2] = [pool(n, small), pool(scaling::FACTOR * n, large)];
-    let kept = RefCell::new(Vec::new());
+    let pool = |n: usize, runs: usize| (n, Mutex::new((0..runs).map(|i| make(n, i)).collect()));
+    let pools: [(usize, Mutex<Vec<I>>); 2] = [pool(n, small), pool(scaling::FACTOR * n, large)];
+    let kept = Mutex::new(Vec::new());
     scaling::check(what, n, |n| {
         let (_, inputs) = pools.iter().find(|(m, _)| *m == n).expect("a size checked");
-        let input = inputs.borrow_mut().pop().expect("one input per run");
+        let input = inputs
+            .lock()
+            .expect("the inputs of a size")
+            .pop()
+            .expect("one input per run");
         let out = run(n, input);
-        kept.borrow_mut().push(out);
+        kept.lock().expect("the outputs kept").push(out);
     });
 }
 
