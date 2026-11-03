@@ -130,12 +130,9 @@ impl<A: Literal> Bdd<A> {
         Bdd::Node(n)
     }
 
-    /// The union or intersection, or `None` when it would have more nodes than the two
-    /// operands together.
+    /// The union or intersection.
     pub(super) fn zip(&self, other: &Bdd<A>, op: Op) -> Bdd<A> {
-        let mut made = HashSet::new();
-        self.apply(other, op, &mut HashMap::new(), &mut made, usize::MAX)
-            .expect("no limit is set")
+        self.apply(other, op, &mut HashMap::new())
     }
 
     /// Whether the diagram is one atom or its complement.
@@ -177,28 +174,21 @@ impl<A: Literal> Bdd<A> {
         if b { self.not() } else { self }
     }
 
-    fn apply(
-        &self,
-        other: &Bdd<A>,
-        op: Op,
-        memo: &mut HashMap<(u64, u64), Bdd<A>>,
-        made: &mut HashSet<u64>,
-        most: usize,
-    ) -> Option<Bdd<A>> {
+    fn apply(&self, other: &Bdd<A>, op: Op, memo: &mut HashMap<(u64, u64), Bdd<A>>) -> Bdd<A> {
         match (op, self, other) {
             (Op::And, Bdd::Leaf(false), _) | (Op::And, _, Bdd::Leaf(false)) => {
-                return Some(Bdd::Leaf(false));
+                return Bdd::Leaf(false);
             }
             (Op::Or, Bdd::Leaf(true), _) | (Op::Or, _, Bdd::Leaf(true)) => {
-                return Some(Bdd::Leaf(true));
+                return Bdd::Leaf(true);
             }
-            (_, Bdd::Leaf(_), x) | (_, x, Bdd::Leaf(_)) => return Some(x.clone()),
-            _ if self.id() == other.id() => return Some(self.clone()),
+            (_, Bdd::Leaf(_), x) | (_, x, Bdd::Leaf(_)) => return x.clone(),
+            _ if self.id() == other.id() => return self.clone(),
             _ => {}
         }
         let key = (self.id(), other.id());
         if let Some(r) = memo.get(&key) {
-            return Some(r.clone());
+            return r.clone();
         }
         let (Bdd::Node(a), Bdd::Node(b)) = (self, other) else {
             unreachable!("both leaves were handled")
@@ -206,29 +196,22 @@ impl<A: Literal> Bdd<A> {
         let r = match a.atom.cmp(&b.atom) {
             Ordering::Equal => Bdd::node(
                 a.atom.clone(),
-                a.hi.apply(&b.hi, op, memo, made, most)?,
-                a.lo.apply(&b.lo, op, memo, made, most)?,
+                a.hi.apply(&b.hi, op, memo),
+                a.lo.apply(&b.lo, op, memo),
             ),
             Ordering::Less => Bdd::node(
                 a.atom.clone(),
-                a.hi.apply(other, op, memo, made, most)?,
-                a.lo.apply(other, op, memo, made, most)?,
+                a.hi.apply(other, op, memo),
+                a.lo.apply(other, op, memo),
             ),
             Ordering::Greater => Bdd::node(
                 b.atom.clone(),
-                self.apply(&b.hi, op, memo, made, most)?,
-                self.apply(&b.lo, op, memo, made, most)?,
+                self.apply(&b.hi, op, memo),
+                self.apply(&b.lo, op, memo),
             ),
         };
-        // The result's nodes are among those made by this union or intersection.
-        if let Bdd::Node(n) = &r
-            && made.insert(n.id)
-            && made.len() > most
-        {
-            return None;
-        }
         memo.insert(key, r.clone());
-        Some(r)
+        r
     }
 
     pub(super) fn not(&self) -> Bdd<A> {

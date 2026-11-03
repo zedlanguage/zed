@@ -191,6 +191,17 @@ impl Type {
             // Before a refusal, a value is sought by a search that does not stop at a fork.
             Verdict::Inhabited
         } else {
+            // Complexity tradeoff: a type the search neither proved empty nor showed inhabited by
+            // a built value is refused, never called empty or inhabited, so a verdict is never
+            // wrong; it gives up the answer itself. Why: the search is incomplete (the tradeoffs
+            // at the Fork, Residues, TupleSplit and MorphismSplit sites), and the value builder
+            // shows only values it can check, so a closure of a morphism type is not built before
+            // L2. Trigger: no refusal was named, and neither search built a value. Tests:
+            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`morphism_between`) and
+            // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length`. COMPLEXITY.md
+            // Kept row "emptiness and subtyping of tuple and morphism parts". A complete solution
+            // needs a value builder for every kind of type (closures included, L2) and a
+            // complete search.
             Verdict::Refused(s.refused.or(s.gave_up).unwrap_or(Refusal::NoWitness))
         };
         VERDICTS.with(|m| m.borrow_mut().insert(self.clone(), v));
@@ -489,6 +500,11 @@ enum Lengths {
 /// split on its own, so the work is polynomial in the classes; what no single split decides is
 /// refused. The lengths of lists of integers whose length is not 0 modulo 2 or 3, nor 1 or 5
 /// modulo 6, are none: the even ones are 0 modulo 2, and the odd ones are 0, 1 or 2 modulo 3.
+///
+/// Complexity tradeoff: one prime split at a time, never several at once, so what only a
+/// joint split decides is `Refused`; the covering problem for residues is NP-hard. Trigger,
+/// tests, row and a complete solution: the comment at the `Refusal::Residues` site in
+/// `Search::decide`.
 fn residues_meet(all: &[(u64, u64)], none: &[(u64, u64)]) -> Lengths {
     residue_classes(all, none).0
 }
@@ -1029,6 +1045,16 @@ impl Search {
                 false
             }
             Some(Lengths::Refused) => {
+                // Complexity tradeoff: the lengths whose emptiness only a split on two or more
+                // primes at once decides are refused (counted inhabited by `is_empty`), so the
+                // work stays polynomial in the residue classes. Why: whether residue classes
+                // cover the lengths is the covering problem for residues, NP-hard. Trigger:
+                // `residues_meet` answers `Refused`. Tests:
+                // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`erdos_cover`) and
+                // `covering_residues_are_decided_by_a_split_on_one_prime`. COMPLEXITY.md K34 and
+                // the Kept row "emptiness and subtyping of tuple and morphism parts". A complete
+                // solution needs a backtracking split over several primes at once, exponential in
+                // the primes, or a SAT encoding of the cover.
                 self.give_up(Refusal::Residues);
                 false
             }
@@ -1307,6 +1333,16 @@ impl Search {
             }
             let open: Vec<usize> = f.distinct_atoms().iter().map(|a| g.index[a]).collect();
             if self.refuse_forks && !self.seeding && (0..g.r.len()).any(|j| g.forks(&open, j)) {
+                // Complexity tradeoff: `verdict` refuses a part in which two open tuple types
+                // differ in a recursive component on one box, instead of following both. Why:
+                // following both is the subset construction, exponential in the recursive types;
+                // `is_empty` goes on and counts what it cannot settle as inhabited. Trigger: a
+                // component on which the open tuple types fork, outside seeding. Tests:
+                // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`fork_empty`) and
+                // `a_value_is_sought_before_a_refusal` (`fork`). COMPLEXITY.md K26 and the Kept
+                // row "emptiness and subtyping of tuple and morphism parts". A complete solution
+                // needs the subset construction over the forked rows (a tree automaton
+                // determinized on demand), exponential in the rows of the fork.
                 self.refused = Some(Refusal::Fork);
                 return true;
             }
@@ -2149,6 +2185,16 @@ impl Search {
                     .iter()
                     .all(|a| self.morphisms(meet(&r, a), f.clone(), false));
             }
+            // Complexity tradeoff: a morphism part that neither the meets it forces nor one split
+            // into its morphism types decides is counted inhabited and refused by `verdict`. Why:
+            // emptiness of Boolean combinations of morphism types is coNP-hard, like that of
+            // tuple types, and one split per branch keeps the search polynomial. Trigger: no atom
+            // is forced and the split was spent or does not apply. Tests:
+            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`morphism_split`) and
+            // `a_morphism_type_whose_bound_check_was_refused_says_why`. COMPLEXITY.md Kept row
+            // "emptiness and subtyping of tuple and morphism parts". A complete solution needs a
+            // split of the guarantee, permission and value type in every combination (exponential
+            // in the morphism types), or a SAT encoding.
             self.give_up(Refusal::MorphismSplit);
             return false;
         }

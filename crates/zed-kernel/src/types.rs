@@ -771,6 +771,16 @@ impl Type {
     /// `Items::addr` does: `v` is borrowed for the call, so no sequence is freed and an address
     /// names one sequence while the call runs, and the kept tests are never iterated, so the
     /// answer does not depend on where `v` is in memory.
+    ///
+    /// Exception to keying by content (deterministic checking): the address is the
+    /// occurrence id of a shared sequence. A content key would hash a sequence in full at
+    /// each test, O(size) per node, and a value whose halves are one shared value at every
+    /// level has `2^d` paths and `d` sequences, so its content is exponential to read while
+    /// the address keeps the work linear in the sequences. Two sequences equal in content at
+    /// different addresses are tested twice, which costs time and never changes the answer.
+    /// Test: `l01_23_subtyping::rec::membership_by_sequence_address_is_deterministic` (shared
+    /// against apart, three allocation orders, one thread against a fresh thread per query).
+    /// At the port: a hash-consed id of the value (ZED_PORT_GAPS.md, the `deep::walk` row).
     pub fn contains(&self, v: &Value) -> bool {
         let first = match self.member(v) {
             Member::Known(b) => return b,

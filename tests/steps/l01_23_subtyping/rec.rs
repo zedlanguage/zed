@@ -438,4 +438,42 @@ fn membership_by_sequence_address_is_deterministic() {
             assert!(!t.contains(&right_bad(d)), "depth {d}");
         }
     }
+    // The same queries in one batch on one thread, and each alone on a fresh thread, whose
+    // allocations and kept results start empty, agree.
+    let queries = || -> Vec<(Type, Value)> {
+        let mut q = Vec::new();
+        for d in [0, 3, 8] {
+            for x in [leaf(Value::Int(1)), bad()] {
+                q.push((t.clone(), shared(d, x.clone())));
+                q.push((t.clone(), apart(d, &x)));
+            }
+            q.push((t.clone(), right_bad(d)));
+        }
+        q
+    };
+    let batch: Vec<bool> = queries().iter().map(|(t, v)| t.contains(v)).collect();
+    let alone: Vec<bool> = (0..batch.len())
+        .map(|i| {
+            std::thread::spawn(move || {
+                let t = tree().instance(vec![Type::int()]).remove(0);
+                let shared = |d: usize, x: Value| (0..d).fold(x, |v, _| fork(v.clone(), v));
+                let bad = || leaf(Value::str("x"));
+                let right_bad =
+                    |d: usize| (0..d).fold(bad(), |v, i| fork(shared(i, leaf(Value::Int(1))), v));
+                let (d, k) = ([0, 3, 8][i / 5], i % 5);
+                let v = match k {
+                    0 => shared(d, leaf(Value::Int(1))),
+                    1 => apart(d, &leaf(Value::Int(1))),
+                    2 => shared(d, bad()),
+                    3 => apart(d, &bad()),
+                    _ => right_bad(d),
+                };
+                t.contains(&v)
+            })
+            .join()
+            .expect("a query thread")
+        })
+        .collect();
+    assert_eq!(batch, alone);
+    assert_eq!(batch.iter().filter(|&&b| b).count(), 6);
 }
