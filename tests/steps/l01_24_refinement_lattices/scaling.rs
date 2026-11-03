@@ -104,7 +104,7 @@ fn sum_chain(k: usize) -> IntervalSet {
     let mut acc = sparse(&mut rng);
     for _ in 0..k {
         let next = sparse(&mut rng);
-        acc = revision::forward(Op::Add, &acc, &next);
+        acc = revision::forward(&Op::Add, &acc, &next);
         assert!(acc.pieces().len() <= 8, "{acc}");
     }
     acc
@@ -116,7 +116,7 @@ fn a_chain_of_operators_keeps_to_its_operands_pieces() {
     let a = IntervalSet::from_pieces(vec![(Fin(0), Fin(0)), (Fin(10), Fin(10))]);
     let mut acc = a.clone();
     for _ in 0..6 {
-        acc = revision::forward(Op::Add, &acc, &a);
+        acc = revision::forward(&Op::Add, &acc, &a);
     }
     for v in (0..=70).step_by(10) {
         assert!(acc.contains(v), "{acc} has {v}");
@@ -157,7 +157,7 @@ fn small(rng: &mut Rng) -> IntervalSet {
 
 const OPS: [Op; 6] = [Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Min, Op::Max];
 
-fn apply(op: Op, a: i64, b: i64) -> Option<i64> {
+fn apply(op: &Op, a: i64, b: i64) -> Option<i64> {
     Some(match op {
         Op::Add => a + b,
         Op::Sub => a - b,
@@ -175,7 +175,7 @@ fn an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region() {
     let mut checked = 0;
     for _ in 0..600 {
         let (a, b) = (small(&mut rng), small(&mut rng));
-        for op in OPS {
+        for op in &OPS {
             let z = revision::forward(op, &a, &b);
             for x in -44..=44 {
                 for y in -44..=44 {
@@ -215,7 +215,7 @@ fn an_image_with_a_one_piece_operand_is_the_join_of_the_pieces_images() {
         let a = small(&mut rng);
         let lo = rng.int(-40, 40);
         let b = IntervalSet::range(Fin(lo), Fin(lo + rng.int(0, 9)));
-        for op in OPS {
+        for op in &OPS {
             let join = a.pieces().iter().fold(IntervalSet::empty(), |j, &p| {
                 j.join(&revision::forward(
                     op,
@@ -249,7 +249,7 @@ fn the_interval_operations_scale() {
     });
     scaling::check("the forward `*` of two sets of n pieces", 4000, |n| {
         let (a, b) = sets(n);
-        let z = revision::forward(Op::Mul, &a, &b.neg());
+        let z = revision::forward(&Op::Mul, &a, &b.neg());
         assert!(!z.is_empty());
     });
     scaling::check("joining two sets of n pieces", 4000, |n| {

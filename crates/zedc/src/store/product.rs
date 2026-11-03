@@ -2587,7 +2587,7 @@ fn forward_prim(op: Prim, args: &[Term], scope: &mut Scope) -> Product {
             .get(1)
             .map_or_else(IntervalSet::top, |x| x.ints().clone());
         p.ty.element = Type::int();
-        p.cell.ints.element = Bounds::ints(revision::forward(op, xs[0].ints(), &y));
+        p.cell.ints.element = Bounds::ints(revision::forward(&op, xs[0].ints(), &y));
         p.reduce_domains();
     }
     p

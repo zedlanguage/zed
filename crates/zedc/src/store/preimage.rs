@@ -73,7 +73,7 @@ use super::int::Int;
 use super::interval::{self, End, IntervalSet};
 use super::lattice::{Congruence, Landmarks, Lattice};
 use super::presburger::{self, Con, Formula, Lin, Refusal, Relation};
-use super::revision::{self, Op, Tonicity, reduce_congruence};
+use super::revision::{self, Exponent, Op, Tonicity, reduce_congruence};
 use crate::stage;
 use End::{Fin, NegInf, PosInf};
 
@@ -513,7 +513,7 @@ pub fn tonicity(p: Prim, arg: usize) -> Option<Tonicity> {
     use Prim::*;
     let t = match (p, arg) {
         (Add | Sub | Mul | Min | Max, _) | (IntDiv, _) | (Mod, _) | (Neg | Abs, 0) => {
-            revision::tonicity(op(p, None)?, arg)
+            revision::tonicity(&op(p, None)?, arg)
         }
         (Lt | Le, 0) | (Gt | Ge, 1) | (Not, 0) => Tonicity::Down,
         (Lt | Le, 1) | (Gt | Ge, 0) | (And | Or, _) => Tonicity::Up,
@@ -523,7 +523,7 @@ pub fn tonicity(p: Prim, arg: usize) -> Option<Tonicity> {
 }
 
 /// The revision table's operator for a primitive, with the constant exponent of `**`.
-fn op(p: Prim, exponent: Option<u32>) -> Option<Op> {
+fn op(p: Prim, exponent: Option<Exponent>) -> Option<Op> {
     Some(match p {
         Prim::Add => Op::Add,
         Prim::Sub => Op::Sub,
@@ -558,7 +558,7 @@ type At = (Tid, Eid);
 /// How a product reads as a power: its first factor, the scope that factor is read in, and the
 /// number of factors; `None` when two factors differ. A term that is not a product is its own
 /// one factor.
-type Power = Option<(Tid, Eid, u32)>;
+type Power = Option<(Tid, Eid, Int)>;
 
 /// A run of consecutive numbers in [`Terms::kids`] or [`Terms::params`].
 #[derive(Clone, Copy)]
@@ -1804,6 +1804,16 @@ impl<'t> Tx<'t> {
         }
     }
 
+    /// The constant exponent `t` of a `**`, when it is an integer at least 0, of any size: a
+    /// kernel integer past the 64-bit range is kept as the kernel holds it, unbuilt.
+    fn exponent(&mut self, t: Tid, env: Eid) -> Option<Exponent> {
+        match self.constant(t, env)? {
+            Value::Int(n) if n >= 0 => Some(Int::from(n).into()),
+            Value::Big(k) if !k.is_negative() => Some(Exponent::Big(k)),
+            _ => None,
+        }
+    }
+
     /// The function a call reaches, with the scope its body is read in. Each name is looked
     /// up in the scope its binding was made in, which was built before that binding, so the
     /// walk ends.
@@ -1825,10 +1835,13 @@ impl<'t> Tx<'t> {
     /// The product `t` as a power, when it multiplies two or more factors that are all the same
     /// term: that factor, the scope it is read in, and the number of factors. Any number of
     /// factors is read (DESIGN.md sec:constraints, "How a constraint reaches the domains").
-    fn power(&mut self, t: Tid, env: Eid) -> Option<(Tid, Eid, u32)> {
+    fn power(&mut self, t: Tid, env: Eid) -> Option<(Tid, Eid, Int)> {
         let at = self.followed(t, env);
         self.read_powers(at);
-        self.powers[&at].filter(|&(_, _, k)| k >= 2)
+        match &self.powers[&at] {
+            Some((f, fe, k)) if *k > Int::ONE => Some((*f, *fe, k.clone())),
+            _ => None,
+        }
     }
 
     /// The term and scope that `t`, read in `env`, stands for once its names are followed.
@@ -1859,14 +1872,14 @@ impl<'t> Tx<'t> {
                 Node::Prim(Prim::Mul, args) if args.len() == 2 => args,
                 _ => {
                     todo.pop();
-                    self.powers.insert(at, Some((t, env, 1)));
+                    self.powers.insert(at, Some((t, env, Int::ONE)));
                     continue;
                 }
             };
             let a = self.followed(self.arg(args, 0), env);
             let b = self.followed(self.arg(args, 1), env);
             match (self.powers.get(&a), self.powers.get(&b)) {
-                (Some(&pa), Some(&pb)) => {
+                (Some(pa), Some(pb)) => {
                     todo.pop();
                     let p = self.joined(pa, pb);
                     self.powers.insert(at, p);
@@ -1886,20 +1899,24 @@ impl<'t> Tx<'t> {
 
     /// The product of two powers: one power when their factors are the same term. A free name
     /// is the same input in every scope; any other factor must also be read in the same scope.
-    /// A count past `u32::MAX`, which only shared operands reach, is not read as a power: the
-    /// revision table's `**` holds its exponent in a `u32`, as it does for `x ** k` written
-    /// out, and the product is then read by the entry for `*` from its two operands, each
-    /// still a power.
-    fn joined(&self, a: Power, b: Power) -> Power {
-        let ((s, se, j), (u, ue, k)) = (a?, b?);
-        let alike = match (self.node(s), self.node(u)) {
+    /// The count is an unbounded integer, since shared operands double it at each name: `x1 =
+    /// i * i; x2 = x1 * x1; …` reaches `2^64` factors at the 64th name. Adding two counts costs
+    /// time in their bits, which is at most the number of products reached.
+    // Complexity tradeoff: the count is kept exactly, so `d` nested squaring names cost O(d^2 /
+    // 64) word additions in all, not O(d). The revision table reads only whether the count is
+    // 0, its parity and its value when it fits in `u32`, so a summary of those three would be
+    // O(1) per name; the exact count keeps the reading the power written out, and from depth
+    // 4096 to 32768 the work grows 8.65 times, as from 512 to 4096 (COMPLEXITY.md S30b).
+    fn joined(&self, a: &Power, b: &Power) -> Power {
+        let ((s, se, j), (u, ue, k)) = (a.as_ref()?, b.as_ref()?);
+        let alike = match (self.node(*s), self.node(*u)) {
             (Node::Var(x), Node::Var(y)) if x == y => true,
-            _ => se == ue && self.same(s, u),
+            _ => se == ue && self.same(*s, *u),
         };
         if !alike {
             return None;
         }
-        Some((s, se, j.checked_add(k)?))
+        Some((*s, *se, j + k))
     }
 
     // ---- Into the linear-relation domain ------------------------------------------------
@@ -2244,26 +2261,26 @@ impl<'t> Tx<'t> {
             && let Some((base, be, k)) = self.power(t, env)
         {
             let b = self.fwd(base, be);
-            return self.arith(Op::Pow(k), &b, &b, false);
+            return self.arith(&Op::Pow(k.into()), &b, &b, false);
         }
         let fwd = |s: &mut Self, i: usize| s.fwd(s.arg(args, i), env);
         match p {
             Neg | Abs => {
                 let a = fwd(self, 0);
-                self.arith(op(p, None).expect("scalar"), &a, &a, false)
+                self.arith(&op(p, None).expect("scalar"), &a, &a, false)
             }
-            Pow => match self.constant_int(self.arg(args, 1), env).map(u32::try_from) {
-                Some(Ok(k)) => {
+            Pow => match self.exponent(self.arg(args, 1), env) {
+                Some(k) => {
                     let a = fwd(self, 0);
-                    self.arith(Op::Pow(k), &a, &a, false)
+                    self.arith(&Op::Pow(k), &a, &a, false)
                 }
-                _ => Fwd::top(),
+                None => Fwd::top(),
             },
             Add | Sub | Mul | IntDiv | Mod | Min | Max => {
                 let a = fwd(self, 0);
                 let b = fwd(self, 1);
                 let by_zero = matches!(p, IntDiv | Mod) && b.ints.contains(0);
-                self.arith(op(p, None).expect("scalar"), &a, &b, by_zero)
+                self.arith(&op(p, None).expect("scalar"), &a, &b, by_zero)
             }
             Lt | Le | Gt | Ge | Eq | Ne => {
                 let a = fwd(self, 0);
@@ -2306,7 +2323,7 @@ impl<'t> Tx<'t> {
     }
 
     /// An integer operator over its operands' forward values.
-    fn arith(&self, o: Op, a: &Fwd, b: &Fwd, by_zero: bool) -> Fwd {
+    fn arith(&self, o: &Op, a: &Fwd, b: &Fwd, by_zero: bool) -> Fwd {
         Fwd {
             ints: revision::forward(o, &a.ints, &b.ints),
             fails: !a.is_int() || !b.is_int() || by_zero,
@@ -2722,17 +2739,17 @@ impl<'t> Tx<'t> {
         if p == Mul
             && let Some((base, be, k)) = self.power(t, env)
         {
-            return self.back_unary(Op::Pow(k), base, be, z);
+            return self.back_unary(&Op::Pow(k.into()), base, be, z);
         }
         let a = self.arg(args, 0);
         match p {
             Neg | Abs => {
-                return self.back_unary(op(p, None).expect("scalar"), a, env, z);
+                return self.back_unary(&op(p, None).expect("scalar"), a, env, z);
             }
             Pow => {
                 let b = self.arg(args, 1);
-                return match self.constant_int(b, env).map(u32::try_from) {
-                    Some(Ok(k)) => self.back_unary(Op::Pow(k), a, env, z),
+                return match self.exponent(b, env) {
+                    Some(k) => self.back_unary(&Op::Pow(k), a, env, z),
                     // A variable exponent: only the points where both operands are integers.
                     _ => self.both_ints(a, b, env),
                 };
@@ -2813,8 +2830,10 @@ impl<'t> Tx<'t> {
 
     /// `op(c)` in `z`, for an operator the revision table inverts exactly within the forward
     /// interval of `c`.
-    fn back_unary(&mut self, o: Op, c: Tid, env: Eid, z: &IntervalSet) -> Res {
-        if o == Op::Pow(0) {
+    fn back_unary(&mut self, o: &Op, c: Tid, env: Eid, z: &IntervalSet) -> Res {
+        if let Op::Pow(k) = o
+            && k.is_zero()
+        {
             // `c ** 0` is 1 wherever `c` is an integer.
             return if z.contains(1) {
                 self.back_at(c, env, &Demand::Ints(IntervalSet::top()))
@@ -2843,8 +2862,8 @@ impl<'t> Tx<'t> {
         let o = op(p, None).expect("binary scalar operator");
         let fa = self.fwd(a, env).ints;
         let fb = self.fwd(b, env).ints;
-        let za = revision::backward(o, 0, &fa, &fb, z);
-        let zb = revision::backward(o, 1, &fa, &fb, z);
+        let za = revision::backward(&o, 0, &fa, &fb, z);
+        let zb = revision::backward(&o, 1, &fa, &fb, z);
         let ra = self.back_at(a, env, &Demand::Ints(za));
         let rb = self.back_at(b, env, &Demand::Ints(zb));
         let mut r = self.meet(ra, rb);

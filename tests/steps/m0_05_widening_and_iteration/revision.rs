@@ -17,23 +17,23 @@ fn top() -> IntervalSet {
 #[test]
 fn the_tonicity_table_follows_the_sign_of_the_other_argument() {
     use Tonicity::*;
-    assert_eq!(tonicity(Op::Add, 1), Up);
-    assert_eq!(tonicity(Op::Sub, 0), Up);
-    assert_eq!(tonicity(Op::Sub, 1), Down);
-    assert_eq!(tonicity(Op::Mul, 0), UpWhereOtherNonneg);
-    assert_eq!(tonicity(Op::Abs, 0), DownThenUp);
-    assert_eq!(tonicity(Op::Pow(2), 0), DownThenUp);
-    assert_eq!(tonicity(Op::Pow(3), 0), Up);
-    assert_eq!(tonicity(Op::Mod, 0), Tonicity::None);
+    assert_eq!(tonicity(&Op::Add, 1), Up);
+    assert_eq!(tonicity(&Op::Sub, 0), Up);
+    assert_eq!(tonicity(&Op::Sub, 1), Down);
+    assert_eq!(tonicity(&Op::Mul, 0), UpWhereOtherNonneg);
+    assert_eq!(tonicity(&Op::Abs, 0), DownThenUp);
+    assert_eq!(tonicity(&Op::Pow(2u32.into()), 0), DownThenUp);
+    assert_eq!(tonicity(&Op::Pow(3u32.into()), 0), Up);
+    assert_eq!(tonicity(&Op::Mod, 0), Tonicity::None);
     // A product whose factors straddle 0 is split at 0 and the parts' images joined:
     // (-3..=2) * (-1..=4) has extremes -3*4 and 2*4.
     assert_eq!(
-        forward(Op::Mul, &IntervalSet::of(-3, 2), &IntervalSet::of(-1, 4)),
+        forward(&Op::Mul, &IntervalSet::of(-3, 2), &IntervalSet::of(-1, 4)),
         IntervalSet::of(-12, 8)
     );
     // 0 times an unbounded factor is 0, not undefined.
     assert_eq!(
-        forward(Op::Mul, &IntervalSet::single(0), &top()),
+        forward(&Op::Mul, &IntervalSet::single(0), &top()),
         IntervalSet::single(0)
     );
 }
@@ -43,14 +43,14 @@ fn an_order_total_bounds_the_quantity() {
     // `total = price * qty` with prices from 10 to 20 cents and a total of at most 50: the
     // quantity is at most 5, and is unchanged where it was already smaller.
     let (price, qty) = (IntervalSet::of(10, 20), IntervalSet::of(0, 100));
-    let total = forward(Op::Mul, &price, &qty).meet(&iv(None, Some(50)));
+    let total = forward(&Op::Mul, &price, &qty).meet(&iv(None, Some(50)));
     assert_eq!(
-        backward(Op::Mul, 1, &price, &qty, &total),
+        backward(&Op::Mul, 1, &price, &qty, &total),
         IntervalSet::of(0, 5)
     );
     // A free price that may be 0 gives the quantity no bound.
     let free = IntervalSet::of(0, 20);
-    assert_eq!(backward(Op::Mul, 1, &free, &qty, &total), qty);
+    assert_eq!(backward(&Op::Mul, 1, &free, &qty, &total), qty);
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn a_minute_count_bounds_the_seconds() {
     // `minutes = seconds div 60` with 2 or 3 minutes: 120 to 239 seconds.
     let sixty = IntervalSet::single(60);
     let got = backward(
-        Op::Div,
+        &Op::Div,
         0,
         &iv(Some(0), None),
         &sixty,
@@ -67,15 +67,15 @@ fn a_minute_count_bounds_the_seconds() {
     assert_eq!(got, IntervalSet::of(120, 239));
     // `hour = t mod 24`: any hour without more, and the shifted range when t spans no wrap.
     assert_eq!(
-        forward(Op::Mod, &top(), &IntervalSet::single(24)),
+        forward(&Op::Mod, &top(), &IntervalSet::single(24)),
         IntervalSet::of(0, 23)
     );
     assert_eq!(
-        forward(Op::Mod, &IntervalSet::of(25, 30), &IntervalSet::single(24)),
+        forward(&Op::Mod, &IntervalSet::of(25, 30), &IntervalSet::single(24)),
         IntervalSet::of(1, 6)
     );
     assert_eq!(
-        forward(Op::Mod, &IntervalSet::of(20, 30), &IntervalSet::single(24)),
+        forward(&Op::Mod, &IntervalSet::of(20, 30), &IntervalSet::single(24)),
         IntervalSet::of(0, 23)
     );
 }
@@ -84,21 +84,34 @@ fn a_minute_count_bounds_the_seconds() {
 fn a_tolerance_on_a_difference_gives_one_or_two_pieces() {
     // `abs(delta) <= 5` and `abs(delta) >= 3`.
     assert_eq!(
-        backward(Op::Abs, 0, &top(), &top(), &IntervalSet::of(0, 5)),
+        backward(&Op::Abs, 0, &top(), &top(), &IntervalSet::of(0, 5)),
         IntervalSet::of(-5, 5)
     );
     assert_eq!(
-        backward(Op::Abs, 0, &top(), &top(), &iv(Some(3), None)).to_string(),
+        backward(&Op::Abs, 0, &top(), &top(), &iv(Some(3), None)).to_string(),
         "[..=-3, 3..]"
     );
     // `x ** 2` between 10 and 50: x is 4 to 7 in either sign.
     assert_eq!(
-        backward(Op::Pow(2), 0, &top(), &top(), &IntervalSet::of(10, 50)).to_string(),
+        backward(
+            &Op::Pow(2u32.into()),
+            0,
+            &top(),
+            &top(),
+            &IntervalSet::of(10, 50)
+        )
+        .to_string(),
         "[-7..=-4, 4..=7]"
     );
     // `x ** 3` up to -8: x at most -2.
     assert_eq!(
-        backward(Op::Pow(3), 0, &top(), &top(), &iv(None, Some(-8))),
+        backward(
+            &Op::Pow(3u32.into()),
+            0,
+            &top(),
+            &top(),
+            &iv(None, Some(-8))
+        ),
         iv(None, Some(-2))
     );
 }
@@ -109,19 +122,19 @@ fn a_minimum_bounds_both_arguments_from_below_and_one_from_above() {
     let (stock, ordered) = (IntervalSet::of(0, 50), IntervalSet::of(0, 9));
     let z = iv(Some(3), None);
     assert_eq!(
-        backward(Op::Min, 0, &stock, &ordered, &z),
+        backward(&Op::Min, 0, &stock, &ordered, &z),
         IntervalSet::of(3, 50)
     );
     // `min(stock, ordered) <= 2` with at least 5 ordered: the stock is at most 2.
     let ordered = IntervalSet::of(5, 9);
     let z = IntervalSet::of(0, 2);
     assert_eq!(
-        backward(Op::Min, 0, &stock, &ordered, &z),
+        backward(&Op::Min, 0, &stock, &ordered, &z),
         IntervalSet::of(0, 2)
     );
     // `max(a, b) <= 10` bounds both from above.
     assert_eq!(
-        backward(Op::Max, 1, &top(), &top(), &IntervalSet::of(0, 10)),
+        backward(&Op::Max, 1, &top(), &top(), &IntervalSet::of(0, 10)),
         iv(None, Some(10))
     );
 }
@@ -171,13 +184,13 @@ fn operands() -> Vec<IntervalSet> {
     out
 }
 
-fn apply(op: Op, x: i64, y: i64) -> Option<i64> {
+fn apply(op: &Op, x: i64, y: i64) -> Option<i64> {
     match op {
         Op::Add => Some(x + y),
         Op::Sub => Some(x - y),
         Op::Neg => Some(-x),
         Op::Mul => Some(x * y),
-        Op::Pow(k) => Some(x.pow(k)),
+        Op::Pow(k) => Some(x.pow(k.to_u32()?)),
         Op::Div => (y != 0).then(|| x.div_euclid(y)),
         Op::Mod => (y != 0).then(|| x.rem_euclid(y)),
         Op::Abs => Some(x.abs()),
@@ -186,19 +199,21 @@ fn apply(op: Op, x: i64, y: i64) -> Option<i64> {
     }
 }
 
-const OPS: [Op; 11] = [
-    Op::Add,
-    Op::Sub,
-    Op::Neg,
-    Op::Mul,
-    Op::Pow(2),
-    Op::Pow(3),
-    Op::Div,
-    Op::Mod,
-    Op::Abs,
-    Op::Min,
-    Op::Max,
-];
+fn ops() -> [Op; 11] {
+    [
+        Op::Add,
+        Op::Sub,
+        Op::Neg,
+        Op::Mul,
+        Op::Pow(2u32.into()),
+        Op::Pow(3u32.into()),
+        Op::Div,
+        Op::Mod,
+        Op::Abs,
+        Op::Min,
+        Op::Max,
+    ]
+}
 
 #[test]
 fn one_round_of_revision_never_loses_a_solution() {
@@ -207,7 +222,7 @@ fn one_round_of_revision_never_loses_a_solution() {
     // Members are taken from -9..=9, which every finite endpoint lies inside.
     let window = -9..=9i64;
     let mut kept = 0usize;
-    for op in OPS {
+    for op in &ops() {
         for x in operands() {
             for y in operands() {
                 for z in operands().into_iter().step_by(4) {

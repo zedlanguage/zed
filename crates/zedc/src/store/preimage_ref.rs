@@ -434,7 +434,7 @@ pub fn tonicity(p: Prim, arg: usize) -> Option<Tonicity> {
     use Prim::*;
     let t = match (p, arg) {
         (Add | Sub | Mul | Min | Max, _) | (IntDiv, _) | (Mod, _) | (Neg | Abs, 0) => {
-            revision::tonicity(op(p, None)?, arg)
+            revision::tonicity(&op(p, None)?, arg)
         }
         (Lt | Le, 0) | (Gt | Ge, 1) | (Not, 0) => Tonicity::Down,
         (Lt | Le, 1) | (Gt | Ge, 0) | (And | Or, _) => Tonicity::Up,
@@ -455,7 +455,7 @@ fn op(p: Prim, exponent: Option<u32>) -> Option<Op> {
         Prim::Abs => Op::Abs,
         Prim::Min => Op::Min,
         Prim::Max => Op::Max,
-        Prim::Pow => Op::Pow(exponent?),
+        Prim::Pow => Op::Pow(exponent?.into()),
         _ => return None,
     })
 }
@@ -2007,7 +2007,7 @@ impl<'t> Tx<'t> {
             && let Some((base, be, k)) = self.power(t, env)
         {
             let b = self.fwd(base, be);
-            return self.arith(Op::Pow(k), &b, &b, false);
+            return self.arith(Op::Pow(k.into()), &b, &b, false);
         }
         let fwd = |s: &mut Self, i: usize| s.fwd(s.arg(args, i), env);
         match p {
@@ -2018,7 +2018,7 @@ impl<'t> Tx<'t> {
             Pow => match self.constant_int(self.arg(args, 1), env).map(u32::try_from) {
                 Some(Ok(k)) => {
                     let a = fwd(self, 0);
-                    self.arith(Op::Pow(k), &a, &a, false)
+                    self.arith(Op::Pow(k.into()), &a, &a, false)
                 }
                 _ => Fwd::top(),
             },
@@ -2071,7 +2071,7 @@ impl<'t> Tx<'t> {
     /// An integer operator over its operands' forward values.
     fn arith(&self, o: Op, a: &Fwd, b: &Fwd, by_zero: bool) -> Fwd {
         Fwd {
-            ints: revision::forward(o, &a.ints, &b.ints),
+            ints: revision::forward(&o, &a.ints, &b.ints),
             fails: !a.is_int() || !b.is_int() || by_zero,
             ..Fwd::none()
         }
@@ -2347,7 +2347,7 @@ impl<'t> Tx<'t> {
         if p == Mul
             && let Some((base, be, k)) = self.power(t, env)
         {
-            return self.back_unary(Op::Pow(k), base, be, z);
+            return self.back_unary(Op::Pow(k.into()), base, be, z);
         }
         let a = self.arg(args, 0);
         match p {
@@ -2357,7 +2357,7 @@ impl<'t> Tx<'t> {
             Pow => {
                 let b = self.arg(args, 1);
                 return match self.constant_int(b, env).map(u32::try_from) {
-                    Some(Ok(k)) => self.back_unary(Op::Pow(k), a, env, z),
+                    Some(Ok(k)) => self.back_unary(Op::Pow(k.into()), a, env, z),
                     // A variable exponent: only the points where both operands are integers.
                     _ => self.both_ints(a, b, env),
                 };
@@ -2374,7 +2374,7 @@ impl<'t> Tx<'t> {
                 self.back_at(a, env, &ints(shift(z, c)))
             }
             (Sub, Some(c), _) => {
-                let r = revision::forward(Op::Sub, &IntervalSet::single(c), z);
+                let r = revision::forward(&Op::Sub, &IntervalSet::single(c), z);
                 self.back_at(b, env, &ints(r))
             }
             (Mul, Some(c), _) => self.back_at(b, env, &ints(times_pre(z, c))),
@@ -2425,7 +2425,7 @@ impl<'t> Tx<'t> {
     /// `op(c)` in `z`, for an operator the revision table inverts exactly within the forward
     /// interval of `c`.
     fn back_unary(&mut self, o: Op, c: Tid, env: Eid, z: &IntervalSet) -> Res {
-        if o == Op::Pow(0) {
+        if matches!(&o, Op::Pow(k) if k.is_zero()) {
             // `c ** 0` is 1 wherever `c` is an integer.
             return if z.contains(1) {
                 self.back_at(c, env, &Demand::Ints(IntervalSet::top()))
@@ -2434,7 +2434,7 @@ impl<'t> Tx<'t> {
             };
         }
         let fc = self.fwd(c, env).ints;
-        let zc = revision::backward(o, 0, &fc, &fc, z);
+        let zc = revision::backward(&o, 0, &fc, &fc, z);
         self.back_at(c, env, &Demand::Ints(zc))
     }
 
@@ -2454,8 +2454,8 @@ impl<'t> Tx<'t> {
         let o = op(p, None).expect("binary scalar operator");
         let fa = self.fwd(a, env).ints;
         let fb = self.fwd(b, env).ints;
-        let za = revision::backward(o, 0, &fa, &fb, z);
-        let zb = revision::backward(o, 1, &fa, &fb, z);
+        let za = revision::backward(&o, 0, &fa, &fb, z);
+        let zb = revision::backward(&o, 1, &fa, &fb, z);
         let ra = self.back_at(a, env, &Demand::Ints(za));
         let rb = self.back_at(b, env, &Demand::Ints(zb));
         let mut r = self.meet(ra, rb);

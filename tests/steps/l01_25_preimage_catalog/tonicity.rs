@@ -166,7 +166,7 @@ fn each_claimed_tonicity_holds_when_the_primitive_is_run() {
 #[test]
 fn each_power_with_a_constant_exponent_has_its_tonicity() {
     for k in 0..=5u32 {
-        let t = revision::tonicity(Op::Pow(k), 0);
+        let t = revision::tonicity(&Op::Pow(k.into()), 0);
         let vs: Vec<i64> = (-W..=W).collect();
         for &a in &vs {
             for &b in &vs {

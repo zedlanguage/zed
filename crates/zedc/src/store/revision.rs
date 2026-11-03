@@ -13,13 +13,17 @@
 
 use std::cmp::Ordering;
 use std::ops::Neg;
+use std::sync::Arc;
 
+use zed_kernel::num::Rat;
+
+use super::int::Int;
 use super::interval::{End, IntervalSet};
 use super::lattice::{Congruence, FiniteSet, Lattice};
 use End::{Fin, NegInf, PosInf};
 
 /// An integer operator of the revision table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug)]
 pub enum Op {
     /// `x + y`.
     Add,
@@ -29,8 +33,11 @@ pub enum Op {
     Neg,
     /// `x * y`.
     Mul,
-    /// `x ** k` for a constant `k`.
-    Pow(u32),
+    /// `x ** k` for a constant `k >= 0` of any size. Every entry reads `k` in O(1) time
+    /// whatever its size: whether it is 0, its parity, and its value only when it fits in
+    /// `u32`, since a base other than 0, 1 and -1 raised past 127 leaves `i128`, so the
+    /// endpoint is then infinite whatever the exponent ([`checked_pow`]).
+    Pow(Exponent),
     /// `x div y`, Euclidean: the remainder is in `0..abs(y)`.
     Div,
     /// `x mod y`, Euclidean.
@@ -41,6 +48,56 @@ pub enum Op {
     Min,
     /// `max(x, y)`.
     Max,
+}
+
+/// The constant exponent `k >= 0` of `x ** k`, of any size, held exactly.
+#[derive(Clone, Debug)]
+pub enum Exponent {
+    /// A solver integer: a constant in the 64-bit range, or the number of factors of a
+    /// product of one value (S30), which a sum of counts can take past any fixed width.
+    Int(Int),
+    /// A kernel integer past the 64-bit range ([`Value::Big`](zed_kernel::Value::Big)), kept
+    /// as the kernel holds it, prime powers unbuilt: `10 ** 10 ** 9` is two pairs of numbers
+    /// there and 3.3·10^9 bits built, so it is read without being built.
+    Big(Arc<Rat>),
+}
+
+impl Exponent {
+    /// Whether `k` is 0.
+    pub fn is_zero(&self) -> bool {
+        match self {
+            Exponent::Int(k) => k.is_zero(),
+            Exponent::Big(_) => false,
+        }
+    }
+
+    /// Whether `k` is odd, in O(1) time.
+    pub fn is_odd(&self) -> bool {
+        match self {
+            Exponent::Int(k) => k.is_odd(),
+            Exponent::Big(k) => !k.is_even(),
+        }
+    }
+
+    /// `k` when it fits in `u32`; a kernel integer past the 64-bit range never does.
+    pub fn to_u32(&self) -> Option<u32> {
+        match self {
+            Exponent::Int(k) => u32::try_from(k.to_i128()?).ok(),
+            Exponent::Big(_) => None,
+        }
+    }
+}
+
+impl From<Int> for Exponent {
+    fn from(k: Int) -> Exponent {
+        Exponent::Int(k)
+    }
+}
+
+impl From<u32> for Exponent {
+    fn from(k: u32) -> Exponent {
+        Exponent::Int(Int::from(i64::from(k)))
+    }
 }
 
 /// How an operator's result moves with one argument, the others fixed.
@@ -63,15 +120,15 @@ pub enum Tonicity {
 }
 
 /// The tonicity table: the entry of operator `op` in argument `arg` (0 or 1).
-pub fn tonicity(op: Op, arg: usize) -> Tonicity {
+pub fn tonicity(op: &Op, arg: usize) -> Tonicity {
     use Tonicity::*;
     match (op, arg) {
         (Op::Add, _) | (Op::Min, _) | (Op::Max, _) => Up,
         (Op::Sub, 0) => Up,
         (Op::Sub, _) | (Op::Neg, _) => Down,
         (Op::Mul, _) => UpWhereOtherNonneg,
-        (Op::Pow(0), _) => Const,
-        (Op::Pow(k), _) if k % 2 == 1 => Up,
+        (Op::Pow(k), _) if k.is_zero() => Const,
+        (Op::Pow(k), _) if k.is_odd() => Up,
         (Op::Pow(_), _) | (Op::Abs, _) => DownThenUp,
         // Euclidean `x div y` rises with x where y > 0 and falls where y < 0; in y it falls
         // where x >= 0 and rises where x < 0, on either side of y = 0.
@@ -82,7 +139,7 @@ pub fn tonicity(op: Op, arg: usize) -> Tonicity {
 }
 
 /// The number of arguments.
-pub fn arity(op: Op) -> usize {
+pub fn arity(op: &Op) -> usize {
     match op {
         Op::Neg | Op::Pow(_) | Op::Abs => 1,
         _ => 2,
@@ -98,7 +155,7 @@ enum Dir {
 
 /// `op` at two endpoints, rounded outward in `dir` where the result is not an integer or not
 /// defined by a limit, such as `inf - inf`.
-fn at(op: Op, a: End, b: End, dir: Dir) -> End {
+fn at(op: &Op, a: End, b: End, dir: Dir) -> End {
     let outward = if dir == Dir::Down { NegInf } else { PosInf };
     let end = |x: i128| {
         if dir == Dir::Down {
@@ -117,22 +174,21 @@ fn at(op: Op, a: End, b: End, dir: Dir) -> End {
         (Op::Add, NegInf, PosInf) | (Op::Add, PosInf, NegInf) => outward,
         (Op::Add, Fin(_), e) | (Op::Add, e, _) => e,
         (Op::Sub, Fin(x), Fin(y)) => end(x as i128 - y as i128),
-        (Op::Sub, _, _) => at(Op::Add, a, b.neg(), dir),
+        (Op::Sub, _, _) => at(&Op::Add, a, b.neg(), dir),
         (Op::Neg, Fin(x), _) => end(-(x as i128)),
         (Op::Neg, _, _) => a.neg(),
         (Op::Mul, Fin(x), Fin(y)) => end(x as i128 * y as i128),
         // 0 times an unbounded operand: every product with a finite member is 0.
         (Op::Mul, _, _) => inf(a.signum() * b.signum()),
-        (Op::Pow(k), Fin(x), _) => (x as i128)
-            .checked_pow(k)
+        (Op::Pow(k), Fin(x), _) => checked_pow(x as i128, k)
             .map(end)
-            .unwrap_or(inf(if k % 2 == 0 { 1 } else { x.signum() as i8 })),
-        (Op::Pow(0), _, _) => Fin(1),
+            .unwrap_or(inf(if k.is_odd() { x.signum() as i8 } else { 1 })),
+        (Op::Pow(k), _, _) if k.is_zero() => Fin(1),
         (Op::Pow(k), e, _) => {
-            if k % 2 == 0 {
-                PosInf
-            } else {
+            if k.is_odd() {
                 e
+            } else {
+                PosInf
             }
         }
         (Op::Abs, Fin(x), _) => end((x as i128).abs()),
@@ -159,7 +215,7 @@ fn at(op: Op, a: End, b: End, dir: Dir) -> End {
 
 /// The image of the box of two pieces, each of one sign, under an operator monotone or
 /// antitone in each argument there: the interval between two corners.
-fn corners(op: Op, a: (End, End), b: (End, End)) -> (End, End) {
+fn corners(op: &Op, a: (End, End), b: (End, End)) -> (End, End) {
     let dir = |arg: usize, own: (End, End), other: (End, End)| -> Tonicity {
         let nonneg = |p: (End, End)| p.0 >= Fin(0);
         match tonicity(op, arg) {
@@ -189,7 +245,7 @@ fn corners(op: Op, a: (End, End), b: (End, End)) -> (End, End) {
 /// Forward transfer: an interval containing `op` of every choice of members of the operands.
 /// For every operator but `mod`, the hull of the result is the hull of the exact image when
 /// each operand is one interval.
-pub fn forward(op: Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
+pub fn forward(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
     let (xs, ys) = (x.sign_parts(), y.sign_parts());
     let one = [(Fin(0), Fin(0))];
     match op {
@@ -373,7 +429,7 @@ fn quotient(z: End, y: End, dir: Dir) -> End {
 /// `z` with the other operand in its interval. The result is contained in the operand's
 /// interval, and contains every member that can give a result in `z`.
 pub fn backward(
-    op: Op,
+    op: &Op,
     arg: usize,
     x: &IntervalSet,
     y: &IntervalSet,
@@ -382,9 +438,9 @@ pub fn backward(
     let own = if arg == 0 { x } else { y };
     let other = if arg == 0 { y } else { x };
     let narrowed = match (op, arg) {
-        (Op::Add, _) => forward(Op::Sub, z, other),
-        (Op::Sub, 0) => forward(Op::Add, z, y),
-        (Op::Sub, _) => forward(Op::Sub, x, z),
+        (Op::Add, _) => forward(&Op::Sub, z, other),
+        (Op::Sub, 0) => forward(&Op::Add, z, y),
+        (Op::Sub, _) => forward(&Op::Sub, x, z),
         (Op::Neg, _) => z.neg(),
         (Op::Mul, _) => {
             if z.contains(0) && other.contains(0) {
@@ -410,7 +466,7 @@ pub fn backward(
                 })
             }
         }
-        (Op::Pow(0), _) => IntervalSet::top(),
+        (Op::Pow(k), _) if k.is_zero() => IntervalSet::top(),
         (Op::Pow(k), _) => z.lift1(|(lo, hi)| roots(k, lo, hi)),
         (Op::Abs, _) => z.lift1(|(lo, hi)| {
             let lo = lo.max(Fin(0));
@@ -428,9 +484,9 @@ pub fn backward(
         },
         // x = q * y + r with q in z and r in 0..abs(y).
         (Op::Div, 0) => {
-            let largest = forward(Op::Abs, y, y).bounds().map_or(Fin(0), |b| b.1);
+            let largest = forward(&Op::Abs, y, y).bounds().map_or(Fin(0), |b| b.1);
             let rest = IntervalSet::range(Fin(0), largest.pred());
-            forward(Op::Add, &forward(Op::Mul, z, y), &rest)
+            forward(&Op::Add, &forward(&Op::Mul, z, y), &rest)
         }
         // A remainder r needs abs(y) > r.
         (Op::Mod, 1) => match z.bounds() {
@@ -447,14 +503,14 @@ pub fn backward(
 }
 
 /// The members of `x` with `x ** k` in `lo..=hi`, for `k >= 1`, as at most two pieces.
-fn roots(k: u32, lo: End, hi: End) -> Vec<(End, End)> {
+fn roots(k: &Exponent, lo: End, hi: End) -> Vec<(End, End)> {
     // The largest r >= 0 with r ** k <= v, for v >= 0.
     let floor_root = |v: End| -> End {
         let Fin(v) = v else { return PosInf };
         let (mut a, mut b) = (0i128, (v as i128).max(1) + 1);
         while b - a > 1 {
             let m = (a + b) / 2;
-            match m.checked_pow(k) {
+            match checked_pow(m, k) {
                 Some(p) if p <= v as i128 => a = m,
                 _ => b = m,
             }
@@ -465,11 +521,11 @@ fn roots(k: u32, lo: End, hi: End) -> Vec<(End, End)> {
     let ceil_root = |v: End| -> End {
         match floor_root(v) {
             Fin(r)
-                if (r as i128).pow(k)
-                    == match v {
+                if checked_pow(r as i128, k)
+                    == Some(match v {
                         Fin(v) => v as i128,
                         _ => 0,
-                    } =>
+                    }) =>
             {
                 Fin(r)
             }
@@ -477,7 +533,7 @@ fn roots(k: u32, lo: End, hi: End) -> Vec<(End, End)> {
             e => e,
         }
     };
-    if k % 2 == 1 {
+    if k.is_odd() {
         // Odd powers are increasing, and odd about 0.
         let up = |v: End| {
             if v >= Fin(0) {
@@ -500,6 +556,19 @@ fn roots(k: u32, lo: End, hi: End) -> Vec<(End, End)> {
     }
     let (r_lo, r_hi) = (ceil_root(lo.max(Fin(0))), floor_root(hi));
     vec![(r_hi.neg_lower(), r_lo.neg()), (r_lo, r_hi)]
+}
+
+/// `x ** k` when it fits in `i128`, in O(1) time for a `k >= 0` of any size: 0, 1 and -1 by
+/// whether `k` is 0 and its parity, and any other base by `i128::checked_pow` (at most 32
+/// squarings), which overflows for every `k` above 127, so a `k` past `u32` overflows without
+/// being read further.
+fn checked_pow(x: i128, k: &Exponent) -> Option<i128> {
+    match x {
+        0 => Some(if k.is_zero() { 1 } else { 0 }),
+        1 => Some(1),
+        -1 => Some(if k.is_odd() { -1 } else { 1 }),
+        _ => x.checked_pow(k.to_u32()?),
+    }
 }
 
 /// The reduction between an interval and a congruence (sec:constraints): each piece's
@@ -584,13 +653,13 @@ mod tests {
         WINDOW.filter(|&v| s.contains(v)).collect()
     }
 
-    fn apply(op: Op, x: i64, y: i64) -> Option<i64> {
+    fn apply(op: &Op, x: i64, y: i64) -> Option<i64> {
         match op {
             Op::Add => Some(x + y),
             Op::Sub => Some(x - y),
             Op::Neg => Some(-x),
             Op::Mul => Some(x * y),
-            Op::Pow(k) => Some(x.pow(k)),
+            Op::Pow(k) => Some(x.pow(k.to_u32()?)),
             Op::Div => (y != 0).then(|| x.div_euclid(y)),
             Op::Mod => (y != 0).then(|| x.rem_euclid(y)),
             Op::Abs => Some(x.abs()),
@@ -599,24 +668,26 @@ mod tests {
         }
     }
 
-    const OPS: [Op; 12] = [
-        Op::Add,
-        Op::Sub,
-        Op::Neg,
-        Op::Mul,
-        Op::Pow(0),
-        Op::Pow(2),
-        Op::Pow(3),
-        Op::Div,
-        Op::Mod,
-        Op::Abs,
-        Op::Min,
-        Op::Max,
-    ];
+    fn ops() -> [Op; 12] {
+        [
+            Op::Add,
+            Op::Sub,
+            Op::Neg,
+            Op::Mul,
+            Op::Pow(Int::ZERO.into()),
+            Op::Pow(Int::from(2).into()),
+            Op::Pow(Int::from(3).into()),
+            Op::Div,
+            Op::Mod,
+            Op::Abs,
+            Op::Min,
+            Op::Max,
+        ]
+    }
 
     #[test]
     fn forward_transfer_contains_every_result_in_the_window() {
-        for op in OPS {
+        for op in &ops() {
             for x in operands() {
                 for y in operands() {
                     let f = forward(op, &x, &y);
@@ -639,7 +710,7 @@ mod tests {
     #[test]
     fn forward_transfer_is_exact_on_finite_intervals_except_mod() {
         // On operands of one finite piece, the result's hull is the hull of the image.
-        for op in OPS.into_iter().filter(|&op| op != Op::Mod) {
+        for op in ops().iter().filter(|op| !matches!(op, Op::Mod)) {
             for x in operands().into_iter().filter(finite_piece) {
                 for y in operands().into_iter().filter(finite_piece) {
                     let ys = if arity(op) == 1 { vec![0] } else { members(&y) };
@@ -664,7 +735,7 @@ mod tests {
     #[test]
     fn backward_transfer_keeps_every_operand_that_can_give_the_result() {
         let zs = operands();
-        for op in OPS {
+        for op in &ops() {
             for arg in 0..arity(op) {
                 for x in operands() {
                     for y in operands().into_iter().step_by(3) {
@@ -696,9 +767,9 @@ mod tests {
         // both the other operand and the result may be 0 (sec:constraints).
         let z = IntervalSet::of(0, 10);
         let x = IntervalSet::top();
-        assert_eq!(backward(Op::Mul, 0, &x, &IntervalSet::of(0, 3), &z), x);
+        assert_eq!(backward(&Op::Mul, 0, &x, &IntervalSet::of(0, 3), &z), x);
         assert_eq!(
-            backward(Op::Mul, 0, &x, &IntervalSet::of(1, 3), &z),
+            backward(&Op::Mul, 0, &x, &IntervalSet::of(1, 3), &z),
             IntervalSet::of(0, 10)
         );
     }

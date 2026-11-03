@@ -103,6 +103,14 @@ impl Int {
         self.0 == Repr::Small(0)
     }
 
+    /// Whether the value is odd, in O(1) time whatever its size.
+    pub fn is_odd(&self) -> bool {
+        match &self.0 {
+            Repr::Small(v) => v & 1 == 1,
+            Repr::Big(v) => v.is_odd(),
+        }
+    }
+
     /// Whether the value is 1 or -1.
     pub fn is_unit(&self) -> bool {
         matches!(self.0, Repr::Small(1 | -1))

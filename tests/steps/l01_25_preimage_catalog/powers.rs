@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use num_bigint::BigInt;
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
 use zedc::store::interval::IntervalSet;
@@ -188,14 +189,10 @@ fn a_product_shared_by_names_counts_each_factor_it_stands_for() {
     assert_eq!(shown(&p), "i [-1..=1]; exact");
 }
 
-#[test]
-fn a_shared_count_past_the_exponent_width_is_read_from_its_two_halves() {
-    // `x1 = i * i; …; x32 <= 0`: 2^32 factors, one more than the `u32` exponent of `**`
-    // holds. `x32` is read by the entry for `*` from its two operands, each `x31`, which is
-    // `i ** 2^31`. The box must hold `i = 0`, the one point that meets the demand.
-    let ds = doms(&[("i", Some(-3), Some(3))]);
-    let depth = 32;
-    let mut body = at_most(var(&format!("x{depth}")), 0);
+/// `x1 = i * i; x2 = x1 * x1; …; x<depth> = …; test(x<depth>)`: `i ** 2^depth` written as
+/// `depth` names, each the square of the one before it.
+fn squares(depth: usize, test: Term) -> Term {
+    let mut body = test;
     for n in (1..=depth).rev() {
         let prev = if n == 1 {
             "i".to_string()
@@ -208,8 +205,111 @@ fn a_shared_count_past_the_exponent_width_is_read_from_its_two_halves() {
             body,
         );
     }
-    let p = pre(&body, &ds);
-    assert!(p.domains["i"].contains(0), "{}", shown(&p));
+    body
+}
+
+/// The integer literal `n`, of any size, as the kernel holds it.
+fn big(n: BigInt) -> Term {
+    Term::Lit(Value::int(n))
+}
+
+/// `f ** k` for an exponent `k` written as a term.
+fn power_of(f: &Term, k: Term) -> Term {
+    prim(Prim::Pow, f.clone(), k)
+}
+
+#[test]
+fn a_shared_count_past_the_exponent_width_is_read_as_its_power() {
+    // `x1 = i * i; …; x32 <= 0`: 2^32 factors, one more than `u32` holds, read as
+    // `i ** 2^32`: an even power, 0 only at `i = 0`.
+    let ds = doms(&[("i", Some(-3), Some(3))]);
+    for depth in [31, 32, 33, 64, 65, 200] {
+        let k = big(BigInt::from(1) << depth);
+        let p = pre(&squares(depth, at_most(var(&format!("x{depth}")), 0)), &ds);
+        assert_eq!(p, pre(&at_most(power_of(&var("i"), k), 0), &ds), "{depth}");
+        assert_eq!(shown(&p), "i [0..=0]; exact", "{depth}");
+    }
+    // `y = x32 * i`: 2^32 + 1 factors, an odd count, so `y <= 0` is `i <= 0`.
+    for depth in [32, 64, 200] {
+        let x = format!("x{depth}");
+        let t = squares(
+            depth,
+            bind(
+                "y",
+                prim(Prim::Mul, var(&x), var("i")),
+                at_most(var("y"), 0),
+            ),
+        );
+        let k = big((BigInt::from(1) << depth) + 1);
+        let p = pre(&t, &ds);
+        assert_eq!(p, pre(&at_most(power_of(&var("i"), k), 0), &ds), "{depth}");
+        assert_eq!(shown(&p), "i [-3..=0]; exact", "{depth}");
+        check(&t, &ds, &Demand::Bool(true), &p, (-1, 1));
+    }
+}
+
+#[test]
+fn a_power_with_a_small_exponent_keeps_every_solution() {
+    // `i ** k` against the interpreter at every point, for `k` from 0 to 70, and the same
+    // count of factors written out as a product.
+    let ds = doms(&[("i", Some(-6), Some(6))]);
+    for k in 0..=70usize {
+        for test in [
+            at_most(power(&var("i"), k), 1),
+            at_most(power(&shifted(), k), 0),
+            prim(Prim::Eq, power(&var("i"), k), int(1)),
+            prim(Prim::Ge, power(&var("i"), k), int(64)),
+        ] {
+            let p = pre(&test, &ds);
+            check(&test, &ds, &Demand::Bool(true), &p, (-6, 6));
+        }
+        if k >= 1 {
+            let le1 = |t| at_most(t, 1);
+            same_as_power(&var("i"), k, product, le1, &ds);
+        }
+    }
+}
+
+#[test]
+fn an_exponent_of_any_size_is_read_by_its_parity() {
+    // `i ** k <= 0` over `-3..=3`: `i <= 0` for an odd `k`, `i = 0` for an even one, and every
+    // `i` for `k = 0`. `i ** k == 1`: 1 for an odd `k`, -1 and 1 for an even one.
+    let ds = doms(&[("i", Some(-3), Some(3))]);
+    let two = BigInt::from(2);
+    let ten = || big(BigInt::from(10));
+    let billion = || int(1_000_000_000);
+    let cases: Vec<(&str, Term, bool)> = vec![
+        ("0", int(0), false),
+        ("1", int(1), true),
+        ("u32::MAX", int(u32::MAX as i64), true),
+        ("u32::MAX + 1", int(u32::MAX as i64 + 1), false),
+        ("i64::MAX", int(i64::MAX), true),
+        ("2^64", big(two.pow(64)), false),
+        ("2^64 + 1", big(two.pow(64) + 1), true),
+        // `10 ** 10 ** 9` and `3 ** 10 ** 9`, which the kernel holds as unbuilt prime powers:
+        // built, each would be over a billion bits.
+        ("10 ** 10 ** 9", power_of(&ten(), billion()), false),
+        ("3 ** 10 ** 9", power_of(&int(3), billion()), true),
+    ];
+    for (name, k, odd) in cases {
+        let le0 = at_most(power_of(&var("i"), k.clone()), 0);
+        let eq1 = prim(Prim::Eq, power_of(&var("i"), k.clone()), int(1));
+        // The points of -1..=1 the interpreter finds meet each test: it runs every one of these
+        // powers, since its base is -1, 0 or 1.
+        let (le0_want, eq1_want, le0_met, eq1_met) = match (name, odd) {
+            ("0", _) => ("i []; exact", "i [-3..=3]; exact", 0, 3),
+            (_, true) => ("i [-3..=0]; exact", "i [1..=1]; exact", 2, 1),
+            (_, false) => ("i [0..=0]; exact", "i [-1..=-1, 1..=1]; exact", 1, 2),
+        };
+        let p = pre(&le0, &ds);
+        assert_eq!(shown(&p), le0_want, "i ** {name} <= 0");
+        let met = check(&le0, &ds, &Demand::Bool(true), &p, (-1, 1));
+        assert_eq!(met, le0_met, "i ** {name} <= 0");
+        let p = pre(&eq1, &ds);
+        assert_eq!(shown(&p), eq1_want, "i ** {name} == 1");
+        let met = check(&eq1, &ds, &Demand::Bool(true), &p, (-1, 1));
+        assert_eq!(met, eq1_met, "i ** {name} == 1");
+    }
 }
 
 #[test]
@@ -293,6 +393,32 @@ fn reading_a_product_as_a_power_is_linear_in_its_factors() {
                 pre(&mixed[at(k)], &ds);
             },
         );
+    };
+    let thread = std::thread::Builder::new().stack_size(1 << 28);
+    thread.spawn(measure).unwrap().join().unwrap();
+}
+
+/// `x1 = i * i; …; x<d> <= 0` at depths 512 and 4096: the count at depth `d` is `2^d`, a
+/// `d`-bit integer, and each name adds two of them, so the reading costs O(d) additions of
+/// at most `d` bits: O(d^2 / 64) word operations, which at these depths are far fewer than
+/// the O(d) work of reading the names. On a 256 MiB stack, as the transfer recurses on the
+/// depth of the term; the terms are built before the timing.
+#[test]
+fn reading_nested_squares_as_a_power_is_linear_in_their_depth() {
+    let measure = || {
+        let ds = doms(&[("i", Some(-3), Some(3))]);
+        let sizes = [512, scaling::FACTOR * 512];
+        let terms: Vec<Term> = sizes
+            .iter()
+            .map(|&d| squares(d, at_most(var(&format!("x{d}")), 0)))
+            .collect();
+        for t in &terms {
+            assert_eq!(shown(&pre(t, &ds)), "i [0..=0]; exact");
+        }
+        let at = |d: usize| sizes.iter().position(|&s| s == d).expect("a built size");
+        scaling::check_order("`x1 = i * i; …; x<n> <= 0`", sizes[0], 1, |d| {
+            pre(&terms[at(d)], &ds);
+        });
     };
     let thread = std::thread::Builder::new().stack_size(1 << 28);
     thread.spawn(measure).unwrap().join().unwrap();

@@ -47,6 +47,7 @@ use crate::elab::Tables;
 use crate::lex::Span;
 use crate::rejection::Row;
 use crate::resolve::{Ref, Resolution};
+use crate::store::int::Int;
 use crate::store::interval::{
     End::{Fin, PosInf},
     IntervalSet,
@@ -4366,15 +4367,15 @@ fn interval(e: &Expr) -> IntervalSet {
         ExprKind::Binary("**", a, b) => {
             let (x, n) = (interval(a), interval(b));
             match n.bounds() {
-                Some((Fin(lo), Fin(hi))) if lo == hi && lo >= 0 && lo <= u32::MAX as i64 => {
-                    forward(Op::Pow(lo as u32), &x, &x)
+                Some((Fin(lo), Fin(hi))) if lo == hi && lo >= 0 => {
+                    forward(&Op::Pow(Int::from(lo).into()), &x, &x)
                 }
                 _ if x.is_subset(&nonnegative) && n.is_subset(&nonnegative) => nonnegative,
                 _ => IntervalSet::top(),
             }
         }
         ExprKind::Binary(o, a, b) => match op(o) {
-            Some(o) => forward(o, &interval(a), &interval(b)),
+            Some(o) => forward(&o, &interval(a), &interval(b)),
             None => IntervalSet::top(),
         },
         _ => IntervalSet::top(),

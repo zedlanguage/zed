@@ -39,6 +39,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `SATURATION_ITERATIONS` 8, `SATURATION_NODES` 10^4 | zed-kernel budgets.rs | removed (8): never read; rung 3 is not built |
 | `DEFAULT_FUEL` 10^8 | zed-kernel eval.rs | removed (8): a compile-time evaluation stopped |
 | `POWER_FACTORS` 64 | store/preimage.rs | removed (CAP-power; COMPLEXITY.md S30): a product of more equal factors was read by the entry for `*`, not as a power |
+| `u32` exponent of `Op::Pow` | store/revision.rs | removed (CAP-pow32; COMPLEXITY.md S30b): a product of more than `u32::MAX` equal factors, or `x ** k` with a larger `k`, was not read as a power |
 
 Not thresholds: `TOP` 29 (the number of grammar layers), `MIN_STEPS`, `MIN_MEMORY`
 (resources). `MIN_NESTED_CALLS` is a minimum the spec guarantees; the evaluator has no
