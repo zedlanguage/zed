@@ -12,7 +12,8 @@
 //! Comments are kept. A comment on its own line stays before the statement after it; one after
 //! a statement, on its line, stays after it; one inside a statement but in none of its blocks
 //! moves to the end of the statement. One blank line is kept where the source had one or more
-//! between two statements, or before the comments that end a block.
+//! between two statements, among the comments before a statement or after the last one, or
+//! between those comments and the statement.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -78,7 +79,8 @@ const PRIMARY: u8 = 13;
 
 fn level(e: &Expr) -> u8 {
     match &e.kind {
-        ExprKind::Lambda { .. } | ExprKind::Break(_) => LAMBDA,
+        // A sort key stands only as an argument, whose level is `LAMBDA`, and its key is any `Expr`.
+        ExprKind::Lambda { .. } | ExprKind::Break(_) | ExprKind::SortKey { .. } => LAMBDA,
         ExprKind::Else { .. } => ELSE,
         ExprKind::Binary(op, ..) => binary_level(op),
         ExprKind::Is { .. } | ExprKind::In { .. } => RELATION,
@@ -410,6 +412,11 @@ impl<'a> Formatter<'a> {
         out
     }
 
+    /// Whether the source has a blank line in `from..to`.
+    fn blank(&self, from: usize, to: usize) -> bool {
+        self.text[from..to].matches('\n').count() > 1
+    }
+
     fn has_comment(&self, span: Span) -> bool {
         span.start < span.end && self.comments.range(span.start..span.end).next().is_some()
     }
@@ -448,8 +455,19 @@ impl<'a> Formatter<'a> {
                 if entry.blank && !first {
                     self.put("\n");
                 }
+                // A blank line among the leading comments, or after them, is kept: a comment the
+                // formatter moved to its own line after a statement leads the next one when read
+                // again, and keeping the blank line after it keeps formatting idempotent.
+                let mut end = None;
                 for c in entry.leading {
+                    if end.is_some_and(|e| self.blank(e, c.start)) {
+                        self.put("\n");
+                    }
                     self.put(format!("{pad}{}\n", &self.text[c.start..c.end]));
+                    end = Some(c.end);
+                }
+                if end.is_some_and(|e| self.blank(e, entry.stmt.span.start)) {
+                    self.put("\n");
                 }
                 self.put(pad);
                 let (s, trailing) = (entry.stmt, entry.trailing);
@@ -486,14 +504,14 @@ impl<'a> Formatter<'a> {
             } => {
                 let pad = indent(ind);
                 let rest = self.take(prev, region.end);
-                if let Some(c) = rest.first()
-                    && any
-                    && self.text[prev..c.start].matches('\n').count() > 1
-                {
-                    self.put("\n");
-                }
+                // As among a statement's leading comments, a blank line among these is kept.
+                let mut end = if any { Some(prev) } else { None };
                 for c in rest {
+                    if end.is_some_and(|e| self.blank(e, c.start)) {
+                        self.put("\n");
+                    }
                     self.put(format!("{pad}{}\n", &self.text[c.start..c.end]));
+                    end = Some(c.end);
                 }
             }
             Job::Stmt { s, ind, bare } => self.stmt(s, ind, bare, stack),
@@ -892,7 +910,7 @@ impl<'a> Formatter<'a> {
         for (i, s) in in_order.iter().enumerate() {
             let leading = self.take(prev, s.span.start);
             let first = leading.first().map_or(s.span.start, |c| c.start);
-            let blank = i > 0 && self.text[prev..first].matches('\n').count() > 1;
+            let blank = i > 0 && self.blank(prev, first);
             let next = in_order.get(i + 1).map_or(region.end, |n| n.span.start);
             let trailing = self.take_same_line(s.span.end, next);
             prev = trailing.last().map_or(s.span.end, |c| c.end);
@@ -1278,6 +1296,10 @@ impl<'a> Formatter<'a> {
             ExprKind::Break(of) => {
                 self.put("break ");
                 stack.push(at(of, ELSE));
+            }
+            ExprKind::SortKey { desc, key } => {
+                self.put(if *desc { "desc " } else { "asc " });
+                stack.push(at(key, LAMBDA));
             }
             ExprKind::Loop { label, body } => {
                 match label {

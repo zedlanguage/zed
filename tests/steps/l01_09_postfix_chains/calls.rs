@@ -86,17 +86,37 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
 
 #[test]
 fn a_form_of_a_later_layer_names_that_layer() {
-    let cases = [
-        (
-            "data >< f unordered",
-            "this form (Unordered) is built from layer L9",
-        ),
-        (
-            "sort(desc score)",
-            "this form (SortArg) is built from layer L5",
-        ),
-    ];
+    let cases = [(
+        "data >< f unordered",
+        "this form (Unordered) is built from layer L9",
+    )];
     for (text, want) in cases {
         assert_eq!(ast(text).unwrap_err().message, want, "{text}");
     }
+}
+
+#[test]
+fn a_sort_key_is_a_positional_argument() {
+    // DESIGN.md sec:grammar: `SortArg = ('asc' | 'desc') Expr`, one alternative of `PosArg`;
+    // it builds from here, and name resolution names the step that compiles it (L5.1).
+    let cases = [
+        ("rows.sort(desc score)", "(call (. rows sort) (desc score))"),
+        (
+            "keys.sort(asc v -> key(v))",
+            "(call (. keys sort) (asc (fn (v) (call key v))))",
+        ),
+        (
+            "sort(xs, asc a, desc b.c)",
+            "(call sort xs (asc a) (desc (. b c)))",
+        ),
+    ];
+    for (text, want) in cases {
+        assert_eq!(ast(text).unwrap().to_string(), want, "{text}");
+    }
+    // A sort key is positional, so after a named argument it is the row "Named argument
+    // before a positional one", placed at the key.
+    let text = "sort(xs, by: f, asc a)";
+    let err = ast(text).unwrap_err();
+    assert_eq!(err.row, Some(zedc::rejection::Row::NamedBeforePositional));
+    assert_eq!(&text[err.span.start..err.span.end], "asc a");
 }

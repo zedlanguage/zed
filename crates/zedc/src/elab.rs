@@ -975,6 +975,7 @@ impl<'a> Elab<'a> {
             ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
                 unreachable!("resolve rejects the forms of layer L6")
             }
+            ExprKind::SortKey { .. } => unreachable!("resolve rejects the forms of layer L5"),
             ExprKind::Int { radix, digits } => {
                 let digits: String = digits.chars().filter(|&c| c != '_').collect();
                 let v = Value::int_text(&digits, *radix).expect("the lexer's digits");

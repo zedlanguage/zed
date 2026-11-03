@@ -606,6 +606,7 @@ impl Resolver {
             ExprKind::Spread { .. } => {
                 self.later(e.span, "a call `*.` that writes its receiver", "L6.3")
             }
+            ExprKind::SortKey { .. } => self.later(e.span, "a sort key `asc` or `desc`", "L5.1"),
         }
     }
 

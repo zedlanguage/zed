@@ -1879,6 +1879,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
                 unreachable!("resolve rejects the forms of layer L6")
             }
+            ExprKind::SortKey { .. } => unreachable!("resolve rejects the forms of layer L5"),
             // A `rat` literal is decorated and keeps its carrier.
             ExprKind::Rat(s) => Ty::lit(&Value::rat(
                 Rat::decimal(s).expect("the lexer's rat text is a decimal"),

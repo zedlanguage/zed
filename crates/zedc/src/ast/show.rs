@@ -263,6 +263,10 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
         ExprKind::Spread { of, name } => {
             out.extend([Text("(*. "), at(of), Text(" "), Text(name), Text(")")]);
         }
+        ExprKind::SortKey { desc, key } => {
+            let word = if *desc { "(desc " } else { "(asc " };
+            out.extend([Text(word), at(key), Text(")")]);
+        }
     }
 }
 

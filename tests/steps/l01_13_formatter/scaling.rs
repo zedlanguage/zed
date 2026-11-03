@@ -45,3 +45,26 @@ fn many_comments_scale() {
     let out = zedc::format::format_source(commented(2).as_bytes()).unwrap();
     assert_eq!(out, commented(2));
 }
+
+/// `n` statements, each a call with a sort key and two comments inside, which move to its end,
+/// then a blank line, a leading comment, another blank line and the next statement.
+fn moved(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("a{i} = sort(xs, // by\n  desc x -> x, // key\n  {i});\n\n// next\n\n"))
+        .collect()
+}
+
+#[test]
+fn moved_comments_with_blank_lines_scale() {
+    // Each blank line is found by a scan of the text between two neighboring comments, or a
+    // comment and its statement, so the scans cover disjoint ranges.
+    let units: HashMap<usize, String> = [500, 4000].into_iter().map(|n| (n, moved(n))).collect();
+    scaling::check_order("moved comments with blank lines, by count", 500, 1, |n| {
+        zedc::format::format_source(units[&n].as_bytes()).unwrap();
+    });
+    let out = zedc::format::format_source(moved(1).as_bytes()).unwrap();
+    assert_eq!(
+        out,
+        "a0 = sort(xs, desc x -> x, 0); // by\n// key\n\n// next\n"
+    );
+}

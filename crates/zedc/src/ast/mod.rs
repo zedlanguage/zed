@@ -218,6 +218,13 @@ pub enum ExprKind {
         /// The member's name.
         name: String,
     },
+    /// `asc e` or `desc e`: a sort key, written only as a positional argument (`SortArg`).
+    SortKey {
+        /// Whether it is `desc`.
+        desc: bool,
+        /// The key.
+        key: Box<Expr>,
+    },
 }
 
 /// How a range ends: below `b` (`..<b`), through `b` (`..=b`), or not at all (`..`).
@@ -1174,7 +1181,16 @@ impl<'a> Builder<'a> {
                     positional.push(self.node(kids[0])?);
                     continue;
                 }
-                "SortArg" => return Err(self.later(k)),
+                "SortArg" => {
+                    positional.push(Expr {
+                        kind: ExprKind::SortKey {
+                            desc: self.word(self.tree.nodes[k].start) == "desc",
+                            key: Box::new(self.node(kids[0])?),
+                        },
+                        span: self.span(k),
+                    });
+                    continue;
+                }
                 _ => {}
             }
             let span = self.span(kids[0]);

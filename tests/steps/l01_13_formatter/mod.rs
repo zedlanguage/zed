@@ -3,6 +3,7 @@
 
 mod fences;
 mod layout;
+mod prelude;
 mod scaling;
 
 use zedc::ast::{Stmt, unit};

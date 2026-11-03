@@ -342,7 +342,10 @@ fn zed_line(a: &Axiom) -> String {
         }
     };
     let carrier = format!("{:?}", a.carrier).to_lowercase();
-    format!("Axiom(op: {:?}, carrier: #{carrier}, law: {law}),", a.op)
+    format!(
+        "Axiom(op: {:?}, carrier: #{carrier}, property: {law}),",
+        a.op
+    )
 }
 
 #[test]
