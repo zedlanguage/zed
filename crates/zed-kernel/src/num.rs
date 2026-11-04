@@ -587,18 +587,29 @@ impl Rat {
         // Complexity tradeoff: a remainder that is neither `0` nor the dividend itself is
         // found by building the divisor `m`, at a cost proportional to `m`'s size, which bounds
         // the remainder's; `3 ** 10 ** 9 mod 2 ** 10 ** 9` builds `2^(10^9)`, while
-        // `10 ** 10 ** 12 mod 2 ** 10 ** 12` and `5 mod 2 ** 10 ** 12` build nothing. No input
-        // is refused for its size; one whose divisor does not fit in memory is `TooLarge`.
-        // Tested by `an_exact_division_by_a_huge_power_builds_nothing` and
-        // `kept_powers_agree_with_the_built_value` (COMPLEXITY.md K30). A complete solution
-        // would keep a residue modulo a kept power unbuilt, as `p^a mod p^b` is, which needs
-        // modular arithmetic on the kept forms.
+        // `10 ** 10 ** 12 mod 2 ** 10 ** 12` and `5 mod 2 ** 10 ** 12` build nothing. An input
+        // is refused only when the memory asked for it is refused: its divisor built, the
+        // remainder of its coefficient (`rem`, 24 times `m`'s width) or a modular-power step
+        // (32 times, below), each a measured bound that can exceed the real need; any of these
+        // refused is `TooLarge`. Tested by `an_exact_division_by_a_huge_power_builds_nothing`,
+        // `kept_powers_agree_with_the_built_value` and
+        // `a_kept_power_modulo_a_wide_number_is_refused_below_its_ask` (COMPLEXITY.md K30). A
+        // complete solution would keep a residue modulo a kept power unbuilt, as `p^a mod p^b`
+        // is, which needs modular arithmetic on the kept forms.
         let (_, m) = m.to_integer()?.into_parts();
         let mut r = rem(self.num.magnitude(), &m)?;
         if !self.pows.is_empty() {
-            // Each step below holds `r`, `p^e mod m`, their product and its division by `m`:
-            // a peak heap of at most 25.2 times `m`'s width, measured over divisors of 2^8 to
-            // 2^13 words, odd (num-bigint's Montgomery power) and even; asked as 32 times.
+            // Complexity tradeoff: the memory asked for the modular-power steps is 32 times
+            // `m`'s width, a measured bound, not a proved one, on a step's peak: it holds `r`,
+            // `p^e mod m` (num-bigint's Montgomery power for an odd `m`, square and multiply
+            // for an even one), their product and its division by `m`, and the peak heap was
+            // at most 25.2 times `m`'s width over divisors of 2^8 to 2^13 words, odd and even.
+            // So a kept-power dividend modulo a wide divisor whose steps need less is
+            // `TooLarge` when the free memory lies between the two, and none aborts. Tested by
+            // `a_kept_power_modulo_a_wide_number_is_refused_below_its_ask` (COMPLEXITY.md K30).
+            // A complete solution would ask each allocation of the power and the division for
+            // its own memory, which needs a modular power written here rather than
+            // num-bigint's.
             room(BigUint::from(m.bits()) << 5u32)?;
         }
         for (p, e) in self.pows.iter() {
@@ -650,8 +661,11 @@ impl Rat {
         // building the remainder (`rem_built`) and the part of the dividend above the powers
         // it shares with the remainder (`Rat::add`), at a cost proportional to the dividend's
         // size, near the quotient's; `3 ** 10 ** 9 div 2 ** 10 ** 9` builds both, while
-        // `10 ** 10 ** 12 div 2 ** 10 ** 12` builds nothing. No input is refused for its size;
-        // one whose parts do not fit in memory is `TooLarge`. Tested by
+        // `10 ** 10 ** 12 div 2 ** 10 ** 12` builds nothing. An input is refused only when the
+        // memory asked for its parts is refused, by the measured bounds of `rem_built` and
+        // `exact_div`, which can exceed the real need; any of these refused is `TooLarge`.
+        // Tested by `a_kept_power_modulo_a_wide_number_is_refused_below_its_ask`,
+        // `an_exact_quotient_of_a_wide_number_is_refused_when_memory_is_short`,
         // `an_exact_division_by_a_huge_power_builds_nothing` and
         // `kept_powers_agree_with_the_built_value` (COMPLEXITY.md K30). A complete solution
         // would keep the floor of a quotient of kept powers unbuilt, which needs the same
@@ -677,11 +691,19 @@ impl Rat {
     }
 
     /// `a / m` for an `m` that divides this integer, or [`TooLarge`] when the system refuses
-    /// the memory for it: the two products the quotient is built from and their reduction,
-    /// sixteen times the widths of the four coefficients, as for a sum of plain rationals. The
-    /// reduction's peak heap, measured for products of 512 to 2^14 words and more by factors
-    /// of 66 words to their own length, was at most 10.9 times their width.
+    /// the memory for it.
     fn exact_div(&self, m: &Rat) -> Result<Rat, TooLarge> {
+        // Complexity tradeoff: the memory asked for an exact quotient is sixteen times the sum
+        // of the four coefficients' widths, a measured bound, not a proved one, on the two
+        // products the quotient is built from, their reduction (as for a sum of plain
+        // rationals) and the primes moved out into exponents: the reduction's peak heap was
+        // at most 10.9 times their width, for products of 512 to 2^14 words reduced by
+        // factors of 66 words to their own length. So an exact quotient that needs less is
+        // `TooLarge` when the free memory lies between the two, and none aborts. Tested by
+        // `an_exact_quotient_of_a_wide_number_is_refused_when_memory_is_short`
+        // (COMPLEXITY.md K30). A complete solution would ask each allocation of the products
+        // and the reduction for its own memory, which needs a reduction written here rather
+        // than num-bigint's.
         let bits = self.num.bits() + self.den.bits() + m.num.bits() + m.den.bits();
         room(BigUint::from(bits) << 4u32)?;
         Ok(self.div(m).expect("the divisor is not zero"))
@@ -702,11 +724,17 @@ impl Rat {
             return Ok(Cow::Borrowed(self));
         }
         if check {
-            // The copy of both coefficients, and while a power of `p` is divided out of one
-            // (`valuation`), its quotient, its remainder and the powers of `p` up to the square
-            // of the widest that divides it: sixteen times their width, a measured bound (the
-            // peak heap of `valuation` was at most 10.7 times its operand's width over powers
-            // of 3 of 2^10 to 2^17 words).
+            // Complexity tradeoff: the memory asked for is sixteen times the coefficients'
+            // width, a measured bound, not a proved one, on the copy of both coefficients and,
+            // while a power of `p` is divided out of one (`valuation`), its quotient, its
+            // remainder and the powers of `p` up to the square of the widest that divides it:
+            // the peak heap of `valuation` was at most 10.7 times its operand's width over
+            // powers of 3 of 2^10 to 2^17 words. So an alignment that needs less is
+            // `TooLarge` (for `==`, the `Watch` record `EqualityTooLarge`) when the free memory
+            // lies between the two, and none aborts. Tested by
+            // `equality_that_must_copy_a_wide_number_is_refused_when_memory_is_short`
+            // (COMPLEXITY.md K30). A complete solution would ask each allocation of
+            // `valuation` for its own memory, or divide the powers of `p` out in place.
             room(BigUint::from(self.num.bits() + self.den.bits()) << 4u32)?;
         }
         let mut pows = self.pows.to_vec();

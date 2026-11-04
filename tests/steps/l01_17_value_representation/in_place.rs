@@ -303,6 +303,41 @@ fn a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given() {
     assert_eq!((coef.bits(), coef.magnitude().count_ones()), (half, half));
 }
 
+/// A hash kept as a power, `3 ** 2 ** 27`, reduced modulo a wide number `2^(2^26)
+/// + 1`, under a margin of 28 times the divisor's width: the remainder of the coefficient
+/// asks for 24 times and is given, and the modular-power steps ask for 32 times, a measured
+/// bound above their peak of 25.2 times, and are refused, although they might fit there
+/// (the Complexity tradeoff in `Rat::rem_built`).
+#[test]
+fn a_kept_power_modulo_a_wide_number_is_refused_below_its_ask() {
+    if !in_child("a_kept_power_modulo_a_wide_number_is_refused_below_its_ask") {
+        return;
+    }
+    let k = 1u64 << 26;
+    let power = int(3)
+        .pow(&BigUint::from(1u64 << 27))
+        .expect("a power of 3 is kept");
+    let t = bin(Prim::Mod, lit(Value::integer(power)), num(above(k)));
+    // 28 times the divisor's width is three and a half times its bytes.
+    lower_limit_by(7 * (k + 1) / 2);
+    assert_eq!(too_large(&t, "mod"), BigUint::from(k + 1) << 5u32);
+}
+
+/// A wide amount held as `3 (2^n + 1) 2^5`, split three ways exactly: the quotient keeps the
+/// power of 2 and asks for sixteen times the four coefficients' width before it is built
+/// (the Complexity tradeoff in `Rat::exact_div`), and is refused under the lowered limit.
+#[test]
+fn an_exact_quotient_of_a_wide_number_is_refused_when_memory_is_short() {
+    if !in_child("an_exact_quotient_of_a_wide_number_is_refused_when_memory_is_short") {
+        return;
+    }
+    let amount = Rat::int(BigInt::from(3) * above(WIDE)).mul(&two_to(5));
+    let t = bin(Prim::IntDiv, lit(Value::integer(amount)), num(3));
+    lower_limit();
+    // Coefficients of `n + 2`, 1, 2 and 1 bits.
+    assert_eq!(too_large(&t, "div"), BigUint::from(WIDE + 6) << 4u32);
+}
+
 /// Comparing a wide amount with a price written as a rational, `wide < 0.5`, or negating it
 /// with `not`, or giving it as a bit word's operand out of its domain, is a type error that
 /// names the type, never the digits, so the message is built under a limit that refuses them.
