@@ -17,7 +17,18 @@
 //! the parent's count to the new thread and then calls the C library's. The main thread was not
 //! started that way: it counts its own bytes only, and the threads it starts, such as the test
 //! harness's thread for each test, count on their own, so the tests running at once do not all
-//! add to one count. [`allocated`] on the main thread is therefore of its own bytes.
+//! add to one count. [`allocated`] on the main thread is therefore of its own bytes, and a test
+//! that the harness runs on the main thread, as libtest does when it cannot start a thread for it,
+//! does not count the bytes of the threads it starts. Giving the main thread a count would make
+//! every test's thread add to it, one atomic shared by all threads at each allocation.
+//!
+//! Each thread started adds, at its start and on itself, a block that std's map of the live
+//! threads allocates (`std::sys::pal::unix::stack_overflow::thread_info`, one map for the
+//! process). Whether the insertion allocates, 0 bytes or about 1 KiB, depends on which other
+//! threads are alive, so a count that holds the start of a thread is not the same in every run
+//! beside other tests. `zed_tests::scaling` compares the bytes counted inside the thread of each
+//! run, which do not hold that thread's start; a run that starts threads of its own still holds
+//! their starts.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

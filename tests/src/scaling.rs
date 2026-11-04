@@ -31,7 +31,9 @@
 //! processor time. The count is of the run's thread and every thread it starts, however it starts
 //! them, and the threads those start, as the instruction count is; tests running beside a run
 //! have counts of their own and do not change it (zed-alloc-count gives each new thread the count
-//! of the thread that started it). A test
+//! of the thread that started it). The bytes compared are those counted inside the thread
+//! of each run, without its start: std records each thread that starts in a map of the live
+//! threads, and whether that allocates depends on the other threads alive. A test
 //! whose bytes grow faster than its order for a reason recorded in COMPLEXITY.md uses
 //! [`check_instructions_only`], with a comment naming the item that fixes it. A larger run whose
 //! thread counts no bytes is refused, since its bytes cannot be compared, and a count lost to 0
@@ -45,6 +47,7 @@
 //! a fresh start (F44). Memos a run's input holds, such as a `Db`'s results or a type's printed
 //! text, are the test's to make fresh.
 
+use std::cell::Cell;
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -309,22 +312,31 @@ fn compare_by(
     alone(&small);
     let mut seen = Vec::new();
     for _ in 0..meter.repeats().1 {
-        let small = meter.least(|| _ = alone(&small));
-        // The most bytes a run of the larger size allocated, on its thread and those it started.
-        let large_bytes = std::cell::Cell::new(0);
-        let large = meter.least(|| large_bytes.set(large_bytes.get().max(alone(&large))));
-        if measures == Measures::Both && large_bytes.get() == 0 {
+        // The bytes compared are those `alone` counts inside its thread, not the meter's: those
+        // hold every thread the run starts, whole, but not the start of `alone`'s own thread,
+        // whose bookkeeping in std depends on the other threads alive (see zed-alloc-count).
+        // The least of the runs of each size, and the most of the larger for the refusal.
+        let (small_bytes, large_bytes, large_most) =
+            (Cell::new(u64::MAX), Cell::new(u64::MAX), Cell::new(0));
+        let small = meter.least(|| small_bytes.set(small_bytes.get().min(alone(&small))));
+        let large = meter.least(|| {
+            let bytes = alone(&large);
+            large_bytes.set(large_bytes.get().min(bytes));
+            large_most.set(large_most.get().max(bytes));
+        });
+        if measures == Measures::Both && large_most.get() == 0 {
             panic!(
                 "{what}: the larger run allocated no bytes, on its thread or any thread it \
                  started, so its bytes cannot be compared. A run that allocates nothing is \
                  checked by check_instructions_only"
             );
         }
-        let bytes = large.bytes as f64 / small.bytes as f64;
+        // Never 0, as [`Meter::work`] counts them.
+        let (small_bytes, large_bytes) = (small_bytes.get().max(1), large_bytes.get().max(1));
+        let bytes = large_bytes as f64 / small_bytes as f64;
         if measures == Measures::Both && bytes > limit {
             panic!(
-                "{what}: allocated {} and {} bytes, {bytes:.1} times the bytes; {why}",
-                small.bytes, large.bytes
+                "{what}: allocated {small_bytes} and {large_bytes} bytes, {bytes:.1} times the bytes; {why}"
             );
         }
         let ratio = large.units as f64 / small.units as f64;
@@ -570,6 +582,34 @@ mod tests {
         });
     }
 
+    /// The bytes `alone` returns, which a comparison compares, are those of the run whatever
+    /// threads start and end beside it: the start of `alone`'s own thread, whose bookkeeping in
+    /// std depends on the threads alive, is not in them.
+    #[test]
+    fn the_bytes_of_a_run_alone_do_not_depend_on_threads_starting_beside_it() {
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|s| {
+            // Eight threads beside the measured one, each starting threads of its own and
+            // allocating on them, so the set of threads alive changes all the time.
+            for _ in 0..8 {
+                s.spawn(|| {
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::thread::spawn(|| black_box(vec![0u8; 100]))
+                            .join()
+                            .unwrap();
+                    }
+                });
+            }
+            // Measured on a thread none of them started, as a test beside them is.
+            let measured = s
+                .spawn(|| -> Vec<u64> { (0..50).map(|_| alone(&|| linear_bytes(1000))).collect() });
+            let bytes = measured.join().unwrap();
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            // 1000 words in lists of 4, 8, ..., 1024 of them.
+            assert_eq!(bytes, vec![8 * (2048 - 4); 50]);
+        });
+    }
+
     /// The message of the panic of `run`, which must panic.
     fn message_of(run: impl FnOnce()) -> String {
         let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
@@ -604,8 +644,10 @@ mod tests {
         let spawned = || std::thread::spawn(|| linear_bytes(1000)).join().unwrap();
         let joined = alone(&spawned);
         assert!(joined >= list, "{joined}");
+        // The list is allocated on the second thread down only. The starts of the threads differ
+        // by the other threads alive (see zed-alloc-count), so the two counts are not compared.
         let nested = alone(&|| std::thread::spawn(spawned).join().unwrap());
-        assert!(nested > joined, "{nested} {joined}");
+        assert!(nested >= list, "{nested}");
         let bare = |n| {
             std::thread::spawn(move || square_of_bytes(n))
                 .join()
