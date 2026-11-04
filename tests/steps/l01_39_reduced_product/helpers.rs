@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
 
@@ -22,7 +23,7 @@ use crate::l01_16_elaboration::with_prelude;
 fn run(src: &str, x: i64) -> Value {
     let u = crate::l01_16_elaboration::elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
     let ok = u.get("ok").expect("a definition `ok`");
-    let call = Term::App(Arc::new(ok), vec![Term::Lit(Value::Int(x))]);
+    let call = Term::App(Shared::new(ok), vec![Term::Lit(Value::Int(x))]);
     on_stack(|| Evaluator::new(World::new()).run(&with_prelude(call)))
         .unwrap_or_else(|e| panic!("{src}: ok({x}) failed: {e:?}"))
 }
@@ -132,27 +133,27 @@ fn prim(p: Prim, a: Term, b: Term) -> Term {
 /// L6, so the kernel term is built by hand.
 fn counting() -> Term {
     let call = Term::App(
-        Arc::new(var("g")),
+        Shared::new(var("g")),
         vec![var("g"), prim(Prim::Sub, var("x"), int(1))],
     );
     let body = Term::If(
-        Arc::new(prim(Prim::Gt, var("x"), int(0))),
-        Arc::new(prim(Prim::Add, call, int(1))),
-        Arc::new(int(0)),
+        Shared::new(prim(Prim::Gt, var("x"), int(0))),
+        Shared::new(prim(Prim::Add, call, int(1))),
+        Shared::new(int(0)),
     );
-    Term::Lam(vec!["g".into(), "x".into()], Arc::new(body))
+    Term::Lam(vec!["g".into(), "x".into()], Shared::new(body))
 }
 
 /// `h = counting; if h(h, x) > c { 1 } else { 2 }`.
 fn recursive_test(c: i64) -> Term {
-    let call = Term::App(Arc::new(var("h")), vec![var("h"), var("x")]);
+    let call = Term::App(Shared::new(var("h")), vec![var("h"), var("x")]);
     Term::Let(
         "h".into(),
-        Arc::new(counting()),
-        Arc::new(Term::If(
-            Arc::new(prim(Prim::Gt, call, int(c))),
-            Arc::new(int(1)),
-            Arc::new(int(2)),
+        Shared::new(counting()),
+        Shared::new(Term::If(
+            Shared::new(prim(Prim::Gt, call, int(c))),
+            Shared::new(int(1)),
+            Shared::new(int(2)),
         )),
     )
 }
@@ -176,14 +177,14 @@ fn a_helper_that_calls_itself_never_makes_a_reached_arm_unreachable() {
     }
     // `h(h, x) < 0` is never true, but the transfer stops at the call `h` makes of itself, so
     // the arm may stay reachable; it is not required to be found unreachable.
-    let call = Term::App(Arc::new(var("h")), vec![var("h"), var("x")]);
+    let call = Term::App(Shared::new(var("h")), vec![var("h"), var("x")]);
     let t = Term::Let(
         "h".into(),
-        Arc::new(counting()),
-        Arc::new(Term::If(
-            Arc::new(prim(Prim::Lt, call, int(0))),
-            Arc::new(int(1)),
-            Arc::new(int(2)),
+        Shared::new(counting()),
+        Shared::new(Term::If(
+            Shared::new(prim(Prim::Lt, call, int(0))),
+            Shared::new(int(1)),
+            Shared::new(int(2)),
         )),
     );
     let a = arms(&t, &ints(&["x".into()]));
@@ -195,29 +196,43 @@ fn a_helper_reads_the_binding_it_was_defined_under() {
     // `k = 100; f = (y) -> k; k = 0; if f(x) > 50 { 1 } else { 2 }`: `f` reads the first `k`, so
     // `f(x) > 50` always holds. Closing the test over `f` under the second `k` would read 0
     // and find the true arm unreachable; the true arm must stay reachable.
-    let f = Term::Lam(vec!["y".into()], Arc::new(var("k")));
+    let f = Term::Lam(vec!["y".into()], Shared::new(var("k")));
     let test = prim(
         Prim::Gt,
-        Term::App(Arc::new(var("f")), vec![var("x")]),
+        Term::App(Shared::new(var("f")), vec![var("x")]),
         int(50),
     );
-    let if_ = || Term::If(Arc::new(test.clone()), Arc::new(int(1)), Arc::new(int(2)));
+    let if_ = || {
+        Term::If(
+            Shared::new(test.clone()),
+            Shared::new(int(1)),
+            Shared::new(int(2)),
+        )
+    };
     // With no second `k`, the test is read through `f` and its false arm is unreachable.
     let once = Term::Let(
         "k".into(),
-        Arc::new(int(100)),
-        Arc::new(Term::Let("f".into(), Arc::new(f.clone()), Arc::new(if_()))),
+        Shared::new(int(100)),
+        Shared::new(Term::Let(
+            "f".into(),
+            Shared::new(f.clone()),
+            Shared::new(if_()),
+        )),
     );
     let a = arms(&once, &ints(&["x".into()]));
     assert_eq!(a.len(), 2);
     assert!(a[0].reachable() && !a[1].reachable(), "{:#?}", a);
     let t = Term::Let(
         "k".into(),
-        Arc::new(int(100)),
-        Arc::new(Term::Let(
+        Shared::new(int(100)),
+        Shared::new(Term::Let(
             "f".into(),
-            Arc::new(f),
-            Arc::new(Term::Let("k".into(), Arc::new(int(0)), Arc::new(if_()))),
+            Shared::new(f),
+            Shared::new(Term::Let(
+                "k".into(),
+                Shared::new(int(0)),
+                Shared::new(if_()),
+            )),
         )),
     );
     let a = arms(&t, &ints(&["x".into()]));

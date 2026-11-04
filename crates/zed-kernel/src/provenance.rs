@@ -19,7 +19,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::family::{Family, Id};
-use crate::term::{FixKind, Term};
+use crate::term::{FixKind, Shared, Term};
 use crate::value::{Items, Value};
 
 /// The position of a node in a term: the child index taken at each node on the way down from
@@ -596,22 +596,22 @@ fn join<'a>(a: &Found<'a>, b: &Found<'a>) -> Found<'a> {
 /// Child `i` of `t`, in the order that numbers the positions.
 pub fn child<'a>(t: &'a Term, i: u32) -> Option<&'a Term> {
     let i = i as usize;
-    fn pick<'a>(ts: &[&'a Arc<Term>], i: usize) -> Option<&'a Term> {
+    fn pick<'a>(ts: &[&'a Shared], i: usize) -> Option<&'a Term> {
         ts.get(i).map(|&t| &**t)
     }
-    let nth = |ts: &[&'a Arc<Term>]| pick(ts, i);
+    let nth = |ts: &[&'a Shared]| pick(ts, i);
     match t {
         Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => None,
         Term::Lam(_, body) => nth(&[body]),
         Term::App(f, args) => match i {
-            0 => Some(f),
+            0 => Some(&**f),
             _ => args.get(i - 1),
         },
         Term::Prim(_, args) => args.get(i),
         Term::Let(_, e, body) => nth(&[e, body]),
         Term::If(c, a, b) => nth(&[c, a, b]),
         Term::Match(s, arms) => match i {
-            0 => Some(s),
+            0 => Some(&**s),
             _ => arms.get(i - 1).map(|(_, b)| b),
         },
         Term::Fam { domain, body, .. } => nth(&[domain, body]),
@@ -640,25 +640,25 @@ pub fn child<'a>(t: &'a Term, i: u32) -> Option<&'a Term> {
 }
 
 /// Child `i` of `t`, in the order of [`child`], to change in place. A child behind an `Arc`
-/// that other terms share is first copied (`Arc::make_mut`): that one node, with the children
+/// that other terms share is first copied (`Shared::make_mut`, which gives it a new id): that one node, with the children
 /// it holds inline; its `Arc` children stay shared. `None` when `t` has no child `i`.
 pub fn child_mut(t: &mut Term, i: u32) -> Option<&mut Term> {
     let i = i as usize;
-    fn pick<const N: usize>(ts: [&mut Arc<Term>; N], i: usize) -> Option<&mut Term> {
-        ts.into_iter().nth(i).map(Arc::make_mut)
+    fn pick<const N: usize>(ts: [&mut Shared; N], i: usize) -> Option<&mut Term> {
+        ts.into_iter().nth(i).map(Shared::make_mut)
     }
     match t {
         Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => None,
         Term::Lam(_, body) => pick([body], i),
         Term::App(f, args) => match i {
-            0 => Some(Arc::make_mut(f)),
+            0 => Some(Shared::make_mut(f)),
             _ => args.get_mut(i - 1),
         },
         Term::Prim(_, args) => args.get_mut(i),
         Term::Let(_, e, body) => pick([e, body], i),
         Term::If(c, a, b) => pick([c, a, b], i),
         Term::Match(s, arms) => match i {
-            0 => Some(Arc::make_mut(s)),
+            0 => Some(Shared::make_mut(s)),
             _ => arms.get_mut(i - 1).map(|(_, b)| b),
         },
         Term::Fam { domain, body, .. } => pick([domain, body], i),

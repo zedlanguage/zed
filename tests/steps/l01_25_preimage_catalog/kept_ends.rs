@@ -2,6 +2,7 @@
 //! the preimage takes no time to write out their digits.
 
 use super::pre;
+use zed_kernel::Shared;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::preimage::Demand;
 
@@ -72,7 +73,7 @@ fn an_if_chain_over_ends_past_i64_is_read_arm_by_arm() {
         let i = Term::Var("i".into());
         let guard = Term::Prim(Prim::Ge, vec![i.clone(), lit(c)]);
         let other = Term::Prim(Prim::Add, vec![i.clone(), Term::Lit(Value::Int(by))]);
-        Term::If(Arc::new(guard), Arc::new(i), Arc::new(other))
+        Term::If(Shared::new(guard), Shared::new(i), Shared::new(other))
     };
     let chain = |c: &Num| chain_by(c, 100);
     let on =

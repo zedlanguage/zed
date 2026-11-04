@@ -7,6 +7,7 @@
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::sync::Mutex;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Value, World};
@@ -66,7 +67,7 @@ fn fields(n: usize) -> Term {
             .collect(),
     );
     let body = prim(Prim::Tuple, (0..n).map(|i| var(&format!("v{i}"))).collect());
-    Term::Match(Arc::new(prim(Prim::Atom, ins)), vec![(p, body)])
+    Term::Match(Shared::new(prim(Prim::Atom, ins)), vec![(p, body)])
 }
 
 /// `(p0(0), p1(0), …)`: `n` lookup ports, each read once.
@@ -220,7 +221,7 @@ fn cases(d: usize, at: i64) -> Term {
             Pattern::Lit(Value::Int(i as i64)),
             lit(format!("c{i}").as_str()),
         );
-        Term::Match(Arc::new(var("x")), vec![hit, (Pattern::Wild, rest)])
+        Term::Match(Shared::new(var("x")), vec![hit, (Pattern::Wild, rest)])
     });
     let_("x", prim(Prim::Mul, vec![lit(at), lit(1i64)]), chain)
 }
@@ -525,7 +526,7 @@ pub(super) fn strings(n: usize) -> World {
 pub(super) fn unused(n: usize) -> Term {
     let p = Pattern::Tuple(vec![Pattern::Bind("a".into()), Pattern::Bind("b".into())]);
     let s = prim(Prim::Tuple, vec![var("x"), var("y")]);
-    let f = lam(&["y"], Term::Match(Arc::new(s), vec![(p, var("b"))]));
+    let f = lam(&["y"], Term::Match(Shared::new(s), vec![(p, var("b"))]));
     let calls = (0..n).map(|i| app(var("f"), vec![lit(i as i64)])).collect();
     let_(
         "x",

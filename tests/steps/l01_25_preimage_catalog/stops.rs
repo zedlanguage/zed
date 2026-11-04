@@ -1,7 +1,7 @@
 //! Each kind of stop is reported, with the term it stopped at, and the preimage at a stop
 //! keeps the whole domain, so it stays necessary.
 
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{lam, lit, prim, var};
 use zed_kernel::{Family, GuardPos, Prim, Term, Value};
@@ -54,7 +54,7 @@ fn a_string_operation_on_constants_only_is_run() {
 fn a_foreign_call_stops_the_transfer() {
     // `hash` is a foreign function: a name the term does not bind.
     let call = Term::App(
-        Arc::new(Term::Var("hash".into())),
+        Shared::new(Term::Var("hash".into())),
         vec![Term::Var("x".into())],
     );
     let t = Term::Prim(Prim::Lt, vec![call, Term::Lit(Value::Int(10))]);
@@ -106,12 +106,12 @@ fn a_call_that_never_returns_stops_where_it_calls_itself() {
     let g = || Term::Var("g".into());
     let w = Term::Lam(
         vec!["g".into()],
-        Arc::new(Term::App(Arc::new(g()), vec![g()])),
+        Shared::new(Term::App(Shared::new(g()), vec![g()])),
     );
     let t = Term::Prim(
         Prim::Ge,
         vec![
-            Term::App(Arc::new(w.clone()), vec![w]),
+            Term::App(Shared::new(w.clone()), vec![w]),
             Term::Var("x".into()),
         ],
     );

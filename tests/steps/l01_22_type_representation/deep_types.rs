@@ -8,7 +8,8 @@
 //! a recursion, and is not tested here (ledger item T2-types-rest).
 
 use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+use zed_kernel::Shared;
 
 use zed_kernel::types::Type;
 use zed_kernel::types::rec::{Def, Expr, Group};
@@ -88,8 +89,8 @@ fn block(d: usize) -> Term {
     (0..d).fold(Term::Var("x".into()), |body, _| {
         Term::Let(
             "x".into(),
-            Arc::new(Term::Lit(Value::Int(0))),
-            Arc::new(body),
+            Shared::new(Term::Lit(Value::Int(0))),
+            Shared::new(body),
         )
     })
 }
@@ -98,7 +99,7 @@ fn block(d: usize) -> Term {
 fn matches(d: usize) -> Term {
     (0..d).fold(Term::Var("x".into()), |t, _| {
         Term::Match(
-            Arc::new(Term::Var("x".into())),
+            Shared::new(Term::Var("x".into())),
             vec![(Pattern::Tuple(vec![Pattern::Wild, Pattern::Wild]), t)],
         )
     })
@@ -115,7 +116,7 @@ fn a_program_and_a_pattern_nested_deep_are_released() {
     drop(matches(1_000_000));
     drop(pattern(1_000_000));
     drop(Term::App(
-        Arc::new(Term::Var("f".into())),
+        Shared::new(Term::Var("f".into())),
         vec![block(1_000_000), matches(1_000_000)],
     ));
 }

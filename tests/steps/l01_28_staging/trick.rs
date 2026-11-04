@@ -3,7 +3,7 @@
 //! what the function does.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Term, Value, World};
@@ -90,13 +90,13 @@ fn a_split_function_computes_what_the_function_does() {
         .iter_mut()
         .find(|d| d.name == "price")
         .unwrap()
-        .term = Arc::new(lam);
+        .term = Shared::new(lam);
     for tier in ["gold", "basic"] {
         for n in [0, 3, -7] {
             let call = |unit: &zedc::elab::Unit| {
                 let f = unit.get("price").unwrap();
                 let t = Term::App(
-                    std::sync::Arc::new(f),
+                    zed_kernel::Shared::new(f),
                     vec![Term::Lit(Value::atom(tier)), Term::Lit(Value::Int(n))],
                 );
                 Evaluator::new(World::new()).run(&with_prelude(t)).unwrap()

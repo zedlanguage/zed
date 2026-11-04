@@ -5,9 +5,12 @@
 //! resolved scopes before a term is built, so a term never needs renaming.
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::deep;
+use crate::family::{Id, fresh_id};
 use crate::types::Type;
 use crate::value::Value;
 
@@ -228,12 +231,104 @@ pub enum FixKind {
     /// changes. The join is a binary function term, such as `Prim::Union` on sets.
     Lattice {
         /// The join of the lattice.
-        join: Arc<Term>,
+        join: Shared,
     },
     /// General recursion, the definedness instance: a partial family over the domain `init`,
     /// which starts undefined everywhere. Each round evaluates the body at every undefined
     /// key, and an entry whose body reads only defined entries becomes defined.
     Definedness,
+}
+
+/// A subterm, shared: a copy is a reference count. It carries the id it was given when it was
+/// built: copies share it, no other subterm has it, and a subterm changed in place
+/// ([`Shared::make_mut`]) takes a new one. So a walk that meets a shared subterm again knows it
+/// by its id (memo keys are ids or structure, never addresses), the way [`crate::Items`] and
+/// [`crate::Family`] are known by theirs. The id does not change what the term means: equality,
+/// `Debug` and every evaluation read the term alone.
+#[derive(Clone)]
+pub struct Shared(Arc<Held>);
+
+#[derive(Clone)]
+struct Held {
+    id: Id,
+    term: Term,
+}
+
+impl Shared {
+    /// `t`, shared, with a new id.
+    pub fn new(t: Term) -> Shared {
+        Shared(Arc::new(Held {
+            id: fresh_id(),
+            term: t,
+        }))
+    }
+
+    /// The id of the subterm: copies share it, and no other subterm has it. Ids are only
+    /// compared; no result may depend on their values.
+    pub fn id(&self) -> u64 {
+        self.0.id
+    }
+
+    /// The term, to change in place: copied first when another holder shares it. Either way it
+    /// takes a new id, since what the old id named is no longer this term.
+    pub fn make_mut(this: &mut Shared) -> &mut Term {
+        let held = Arc::make_mut(&mut this.0);
+        held.id = fresh_id();
+        &mut held.term
+    }
+
+    /// The term, moved out when `this` is its only holder, else copied.
+    pub fn unwrap_or_clone(this: Shared) -> Term {
+        Arc::unwrap_or_clone(this.0).term
+    }
+
+    /// The number of holders of the subterm.
+    pub fn strong_count(this: &Shared) -> usize {
+        Arc::strong_count(&this.0)
+    }
+
+    /// The term, when `this` is its only holder (only to free it).
+    fn get_mut(this: &mut Shared) -> Option<&mut Term> {
+        Arc::get_mut(&mut this.0).map(|h| &mut h.term)
+    }
+}
+
+impl Deref for Shared {
+    type Target = Term;
+
+    fn deref(&self) -> &Term {
+        &self.0.term
+    }
+}
+
+impl AsRef<Term> for Shared {
+    fn as_ref(&self) -> &Term {
+        &self.0.term
+    }
+}
+
+impl From<Term> for Shared {
+    fn from(t: Term) -> Shared {
+        Shared::new(t)
+    }
+}
+
+impl PartialEq for Shared {
+    fn eq(&self, other: &Shared) -> bool {
+        self.0.id == other.0.id || self.0.term == other.0.term
+    }
+}
+
+impl fmt::Debug for Shared {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0.term, f)
+    }
+}
+
+impl fmt::Display for Shared {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0.term, f)
+    }
 }
 
 /// A kernel term.
@@ -244,37 +339,37 @@ pub enum Term {
     /// A variable.
     Var(Arc<str>),
     /// `(x, …) -> body`.
-    Lam(Vec<Arc<str>>, Arc<Term>),
+    Lam(Vec<Arc<str>>, Shared),
     /// `f(a, …)`, call by value, arguments evaluated left to right.
-    App(Arc<Term>, Vec<Term>),
+    App(Shared, Vec<Term>),
     /// A primitive applied to its arguments.
     Prim(Prim, Vec<Term>),
     /// A primitive as a function value, such as `(+)` passed to `fold`.
     PrimFn(Prim),
     /// `x = e; body`.
-    Let(Arc<str>, Arc<Term>, Arc<Term>),
+    Let(Arc<str>, Shared, Shared),
     /// `if c { a } else { b }`. A failure atom as the condition is the result.
-    If(Arc<Term>, Arc<Term>, Arc<Term>),
+    If(Shared, Shared, Shared),
     /// `match e { p -> t, … }`, first matching arm wins.
-    Match(Arc<Term>, Vec<(Pattern, Term)>),
+    Match(Shared, Vec<(Pattern, Term)>),
     /// `fam(D, i -> e)`: the family over the top-level keys of `D` whose entry at `i` is `e`.
     Fam {
         /// The domain, a family whose top-level keys are used.
-        domain: Arc<Term>,
+        domain: Shared,
         /// The key variable.
         var: Arc<str>,
         /// The entry at each key.
-        body: Arc<Term>,
+        body: Shared,
     },
     /// `reindex(F, kf, vf)`: each leaf `(p, v)` of `F` moves to keypath `kf(p, v)` with value
     /// `vf(p, v)`. Two leaves landing on one keypath is a collision.
     Reindex {
         /// The family to rekey.
-        family: Arc<Term>,
+        family: Shared,
         /// `(path, value) -> path`.
-        kf: Arc<Term>,
+        kf: Shared,
         /// `(path, value) -> value`.
-        vf: Arc<Term>,
+        vf: Shared,
         /// The injectivity evidence.
         witness: Witness,
     },
@@ -283,19 +378,19 @@ pub enum Term {
     /// `#boundary` keeps only the key, as a set leaf.
     Discard {
         /// The family to filter.
-        family: Arc<Term>,
+        family: Shared,
         /// `(path, entry) -> bool | #boundary`.
-        sel: Arc<Term>,
+        sel: Shared,
     },
     /// `fold(F, op, ev)`: collapses the innermost level of `F` with the binary `op`.
     Fold {
         /// The family to fold.
-        family: Arc<Term>,
+        family: Shared,
         /// The binary operator.
-        op: Arc<Term>,
+        op: Shared,
         /// The identity, which is the result of folding an empty level; without one an
         /// empty level folds to `#empty`.
-        identity: Option<Arc<Term>>,
+        identity: Option<Shared>,
         /// The number of key levels of `family`, at least 1, which its type gives. A family
         /// with no leaves does not show its depth, and folds to the empty family when the
         /// depth is above 1.
@@ -306,10 +401,10 @@ pub enum Term {
     /// `fix(F0, step, ev)`: the least fixed point of `step` above `F0`.
     Fix {
         /// The bottom for a lattice ascent, the domain for the definedness instance.
-        init: Arc<Term>,
+        init: Shared,
         /// For a lattice, a function from one iterate to the next. For definedness, the
         /// body of the entry at key `key`, which reads the partial family as `this`.
-        step: Arc<Term>,
+        step: Shared,
         /// The name the definedness body uses for the family being defined.
         this: Arc<str>,
         /// The name of the key variable in the definedness body.
@@ -324,18 +419,18 @@ pub enum Term {
     /// ends the loop and is stored as the entry after the last frame.
     Gen {
         /// Generation 0.
-        init: Arc<Term>,
+        init: Shared,
         /// `frame -> frame`: reads generation `t - 1`, returns generation `t`.
-        step: Arc<Term>,
+        step: Shared,
         /// `frame -> bool | atom`, `true` meaning go on.
-        guard: Arc<Term>,
+        guard: Shared,
         /// Where the guard is tested.
         pos: GuardPos,
     },
     /// Reads the whole value of an input port.
     Read(Arc<str>),
     /// `p <- v`: pushes a value to an output port, giving its acknowledgment (T-Port).
-    Push(Arc<str>, Arc<Term>),
+    Push(Arc<str>, Shared),
 }
 
 /// Shorthands for building terms in tests and in the front end's elaboration.
@@ -356,13 +451,13 @@ pub mod build {
     pub fn lam(params: &[&str], body: Term) -> Term {
         Term::Lam(
             params.iter().map(|p| Arc::from(*p)).collect(),
-            Arc::new(body),
+            Shared::new(body),
         )
     }
 
     /// An application.
     pub fn app(f: Term, args: Vec<Term>) -> Term {
-        Term::App(Arc::new(f), args)
+        Term::App(Shared::new(f), args)
     }
 
     /// A primitive applied to arguments.
@@ -372,12 +467,12 @@ pub mod build {
 
     /// `x = e; body`.
     pub fn let_(name: &str, e: Term, body: Term) -> Term {
-        Term::Let(name.into(), Arc::new(e), Arc::new(body))
+        Term::Let(name.into(), Shared::new(e), Shared::new(body))
     }
 
     /// `if c { a } else { b }`.
     pub fn if_(c: Term, a: Term, b: Term) -> Term {
-        Term::If(Arc::new(c), Arc::new(a), Arc::new(b))
+        Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
     }
 }
 
@@ -402,8 +497,8 @@ fn free(part: Freed) {
 }
 
 /// Queues the term `t` holds, when `t` is its last owner.
-fn free_shared(t: &mut Arc<Term>) {
-    if let Some(t) = Arc::get_mut(t) {
+fn free_shared(t: &mut Shared) {
+    if let Some(t) = Shared::get_mut(t) {
         free(Freed::Term(std::mem::replace(t, Term::PrimFn(Prim::Tuple))));
     }
 }

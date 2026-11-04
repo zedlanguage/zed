@@ -42,7 +42,7 @@ use std::sync::Arc;
 
 use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::{Type, Universe};
-use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 
 use super::affine::Bounds;
 use super::cell::{Cell, Entry, Premise, Premises};
@@ -527,7 +527,7 @@ struct Binding {
     /// The order of the binding: a binding made later has a larger one.
     order: u64,
     /// The lambda the name is bound to, when it is one.
-    function: Option<Arc<Term>>,
+    function: Option<Shared>,
 }
 
 /// The names as a reduction left them: a cache, equal in every scope, so that two scopes are
@@ -808,7 +808,7 @@ impl Scope {
     /// scope then mentions `x`, so `p`'s own reductions are the whole reduction, and the
     /// scope is not copied unless `x` shadows a name or `p` is empty. `e` is the bound term,
     /// kept when it is a lambda, so that a test calling `x` is read through the call.
-    pub fn bind(&mut self, x: &Arc<str>, mut p: Product, e: &Arc<Term>) -> Unbind {
+    pub fn bind(&mut self, x: &Arc<str>, mut p: Product, e: &Shared) -> Unbind {
         loop {
             let before = p.clone();
             p.reduce_domains();
@@ -912,7 +912,7 @@ impl Scope {
     fn close(&self, test: &Term) -> Option<Term> {
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut todo: Vec<Arc<str>> = stage::free(test).into_iter().collect();
-        let mut reached: Vec<(u64, &Arc<str>, &Arc<Term>)> = Vec::new();
+        let mut reached: Vec<(u64, &Arc<str>, &Shared)> = Vec::new();
         while let Some(n) = todo.pop() {
             if !seen.insert(n.clone()) {
                 continue;
@@ -938,7 +938,7 @@ impl Scope {
                 .into_iter()
                 .rev()
                 .fold(test.clone(), |body, (_, n, f)| {
-                    Term::Let(n.clone(), f.clone(), Arc::new(body))
+                    Term::Let(n.clone(), f.clone(), Shared::new(body))
                 }),
         )
     }
@@ -2044,8 +2044,8 @@ impl Scope {
                 let t = match extra {
                     Some((n, v)) => Term::Let(
                         n.clone(),
-                        Arc::new(Term::Lit(Value::Int(v))),
-                        Arc::new(c.clone()),
+                        Shared::new(Term::Lit(Value::Int(v))),
+                        Shared::new(c.clone()),
                     ),
                     None => c.clone(),
                 };
@@ -2420,7 +2420,7 @@ impl<'a> Tree<'a> {
                     level.pop().expect("a nest has a side")
                 }
                 Kind::If([c, a, b]) => {
-                    let [c, a, b] = [*c, *a, *b].map(|s| Arc::new(take(s)));
+                    let [c, a, b] = [*c, *a, *b].map(|s| Shared::new(take(s)));
                     Term::If(c, a, b)
                 }
             };
@@ -2511,7 +2511,7 @@ fn substitute(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Term {
     env.iter()
         .filter(|(n, _)| free.contains(*n))
         .fold(t.clone(), |b, (n, v)| {
-            Term::Let(n.clone(), Arc::new(Term::Lit(v.clone())), Arc::new(b))
+            Term::Let(n.clone(), Shared::new(Term::Lit(v.clone())), Shared::new(b))
         })
 }
 

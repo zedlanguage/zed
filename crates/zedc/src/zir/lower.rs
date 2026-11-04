@@ -46,7 +46,7 @@ use std::fmt::Write;
 use std::mem;
 use std::sync::Arc;
 
-use zed_kernel::term::{FixKind, Pattern, Prim, Term};
+use zed_kernel::term::{FixKind, Pattern, Prim, Shared, Term};
 use zed_kernel::types::Type;
 
 use super::{Edge, Node, Op, Region, RegionKind, Src, canon, kind_name, op_name, validate};
@@ -1590,12 +1590,9 @@ fn raise_from<'g>(first: Raising<'g>, path: &str) -> Result<Term, String> {
                     }
                     None => {
                         let body = term_of(&r.results[0], lets);
-                        Raised::Done(
-                            mem::take(lets)
-                                .into_iter()
-                                .rev()
-                                .fold(body, |b, (x, e)| Term::Let(x, Arc::new(e), Arc::new(b))),
-                        )
+                        Raised::Done(mem::take(lets).into_iter().rev().fold(body, |b, (x, e)| {
+                            Term::Let(x, Shared::new(e), Shared::new(b))
+                        }))
                     }
                 }
             }
@@ -1712,10 +1709,10 @@ fn close(
     names: Vec<Arc<str>>,
     pats: Vec<Pattern>,
 ) -> Term {
-    let a = |i: usize| Arc::new(ins[i].clone());
+    let a = |i: usize| Shared::new(ins[i].clone());
     let mut subs = subs.into_iter();
     let mut names = names.into_iter();
-    let mut sub = || Arc::new(subs.next().expect("each region raised"));
+    let mut sub = || Shared::new(subs.next().expect("each region raised"));
     let mut name = || names.next().expect("each binder named");
     match &node.op {
         Op::Prim(p) if ins.is_empty() && p.arity().is_some() => Term::PrimFn(*p),
@@ -1726,7 +1723,7 @@ fn close(
             let mut ins = ins.into_owned();
             ins.truncate(ins.len() + 1 - node.outputs.len());
             let f = ins.remove(0);
-            Term::App(Arc::new(f), ins)
+            Term::App(Shared::new(f), ins)
         }
         Op::Lambda => Term::Lam(names.collect(), sub()),
         Op::If => Term::If(a(0), sub(), sub()),
@@ -1759,7 +1756,7 @@ fn close(
         },
         Op::Fix { lattice: true, ev } => Term::Fix {
             init: a(0),
-            step: Arc::new(Term::Lam(vec![name()], sub())),
+            step: Shared::new(Term::Lam(vec![name()], sub())),
             this: "".into(),
             key: "".into(),
             kind: FixKind::Lattice { join: a(1) },
@@ -1775,8 +1772,8 @@ fn close(
         },
         Op::Gen(pos) => Term::Gen {
             init: a(0),
-            step: Arc::new(Term::Lam(vec![name()], sub())),
-            guard: Arc::new(Term::Lam(vec![name()], sub())),
+            step: Shared::new(Term::Lam(vec![name()], sub())),
+            guard: Shared::new(Term::Lam(vec![name()], sub())),
             pos: *pos,
         },
         Op::Read(p) => Term::Read(p.clone()),

@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::types::Type;
-use zed_kernel::{Evaluator, Pattern, Term, Value, World};
+use zed_kernel::{Evaluator, Pattern, Shared, Term, Value, World};
 
 use crate::canon::binders::{each_child, map_children};
 use crate::elab::{Def, Unit};
@@ -724,7 +724,7 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
             m.report.unread.push(d.name.clone());
             continue;
         }
-        let term = Arc::new(m.mix_top(&d.term));
+        let term = Shared::new(m.mix_top(&d.term));
         if matches!(*term, Term::Lit(_)) && term != d.term {
             m.report.built.push(d.name.clone());
         }
@@ -909,7 +909,7 @@ impl<'u> Specializer<'u> {
         m.unknown(ps);
         let mut arms = Vec::new();
         for v in values {
-            m.bind(p.clone(), Stage::Build, &Arc::new(Term::Lit(v.clone())));
+            m.bind(p.clone(), Stage::Build, &Shared::new(Term::Lit(v.clone())));
             arms.push((Pattern::Lit(v), m.mix_top(body)));
             m.scope.pop();
         }
@@ -917,7 +917,7 @@ impl<'u> Specializer<'u> {
         m.scope.truncate(n);
         let lam = Term::Lam(
             ps.clone(),
-            Arc::new(Term::Match(Arc::new(Term::Var(p)), arms)),
+            Shared::new(Term::Match(Shared::new(Term::Var(p)), arms)),
         );
         Ok((lam, std::mem::take(&mut m.report)))
     }
@@ -927,7 +927,7 @@ impl<'u> Specializer<'u> {
 /// reads.
 struct Entry {
     name: Arc<str>,
-    known: Option<Arc<Term>>,
+    known: Option<Shared>,
     reads: BTreeSet<Arc<str>>,
 }
 
@@ -940,7 +940,7 @@ struct Scope {
 }
 
 impl Scope {
-    fn push(&mut self, name: Arc<str>, known: Option<Arc<Term>>) {
+    fn push(&mut self, name: Arc<str>, known: Option<Shared>) {
         let reads = known.as_deref().map(free).unwrap_or_default();
         self.by_name
             .entry(name.clone())
@@ -969,7 +969,7 @@ impl Scope {
     }
 
     /// The innermost binding of `x`: `None` for a name the scope does not bind.
-    fn lookup(&self, x: &str) -> Option<&Option<Arc<Term>>> {
+    fn lookup(&self, x: &str) -> Option<&Option<Shared>> {
         let i = *self.by_name.get(x)?.last()?;
         Some(&self.entries[i].known)
     }
@@ -1212,7 +1212,7 @@ struct Mixer {
 }
 
 impl Mixer {
-    fn bind(&mut self, name: Arc<str>, stage: Stage, t: &Arc<Term>) {
+    fn bind(&mut self, name: Arc<str>, stage: Stage, t: &Shared) {
         let known = (stage == Stage::Build).then(|| t.clone());
         self.scope.push(name, known);
     }
@@ -1233,7 +1233,7 @@ impl Mixer {
         }
     }
 
-    fn lookup(&self, x: &str) -> Option<&Option<Arc<Term>>> {
+    fn lookup(&self, x: &str) -> Option<&Option<Shared>> {
         self.scope.lookup(x)
     }
 
@@ -1266,7 +1266,7 @@ impl Mixer {
         }
         let closed = lets
             .into_iter()
-            .fold(t.clone(), |body, (x, e)| Term::Let(x, e, Arc::new(body)));
+            .fold(t.clone(), |body, (x, e)| Term::Let(x, e, Shared::new(body)));
         if !ends(&closed) {
             return Err("its form does not show that it ends".into());
         }
@@ -1287,7 +1287,7 @@ impl Mixer {
     /// meets the subterms in the order of the recursion it replaces, so the scope, the index
     /// and the report change in the same order.
     fn mix(&mut self, t: &Term, at: usize) -> Term {
-        let a = |t: Term| Arc::new(t);
+        let a = Shared::new;
         let mut todo = vec![Mix::Term(t, at)];
         let mut done: Vec<Term> = Vec::new();
         while let Some(job) = todo.pop() {
@@ -1444,7 +1444,7 @@ enum Mix<'t> {
     Let(&'t Term, usize, usize),
     /// The body of the `let` at the position, binding the name to the mixed term, is on the
     /// results: unbind the name and build the `let`, or drop it when nothing reads it.
-    LetBody(&'t Arc<str>, usize, Arc<Term>),
+    LetBody(&'t Arc<str>, usize, Shared),
     /// The condition of the `if` `t`, mixed, is on the results: mix the branch it chooses, or
     /// both, at the positions.
     If(&'t Term, usize, usize),

@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Family, Lookup, Provenance, Term, Value, World};
+use zed_kernel::{Evaluator, Family, Lookup, Provenance, Shared, Term, Value, World};
 
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::{Unit, elaborate};
@@ -468,7 +468,7 @@ impl Program {
             .iter()
             .map(|(name, _)| Term::Read(name.as_str().into()))
             .collect();
-        let term = interp::prelude(Term::App(Arc::new(main), args));
+        let term = interp::prelude(Term::App(Shared::new(main), args));
         let mut ev = Evaluator::new(world);
         if trace {
             ev = ev.with_provenance(vec![Value::Int(0)]);

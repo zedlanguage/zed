@@ -13,6 +13,7 @@
 //! wherever that one is.
 
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use num_bigint::BigInt;
 use zed_kernel::{Prim, Term, Value, eval};
@@ -57,10 +58,10 @@ fn on(lo: End, hi: End) -> Domains {
 /// `t0 = i; tj = if i >= g + j { t(j-1) } else { t(j-1) + c }`.
 fn chain(k: i64, g: &Num, c: &Num) -> Term {
     (1..=k).fold(i(), |t, j| {
-        let t = Arc::new(t);
+        let t = Shared::new(t);
         let guard = prim(Prim::Ge, i(), lit(&(g + &Num::from(j))));
         let other = prim(Prim::Add, (*t).clone(), lit(c));
-        Term::If(Arc::new(guard), t, Arc::new(other))
+        Term::If(Shared::new(guard), t, Shared::new(other))
     })
 }
 
@@ -68,7 +69,7 @@ fn chain(k: i64, g: &Num, c: &Num) -> Term {
 fn reflection(g: &Num, c: &Num) -> Term {
     let guard = prim(Prim::Ge, i(), lit(g));
     let then = prim(Prim::Sub, lit(c), i());
-    Term::If(Arc::new(guard), Arc::new(then), Arc::new(i()))
+    Term::If(Shared::new(guard), Shared::new(then), Shared::new(i()))
 }
 
 /// The demands read: `t >= 0`, and integer sets with ends at `0`, at the ends of `i64`, near
@@ -102,7 +103,7 @@ fn asked(t: &Term, marker: &Term, d: &Demand) -> Term {
 
 /// Whether `t` at `i = v`, by the interpreter, meets `d`.
 fn meets(t: &Term, v: &Num, d: &Demand) -> bool {
-    let bound = Term::Let("i".into(), Arc::new(lit(v)), Arc::new(t.clone()));
+    let bound = Term::Let("i".into(), Shared::new(lit(v)), Shared::new(t.clone()));
     eval(&bound).is_ok_and(|x| d.holds(&x))
 }
 
@@ -371,7 +372,7 @@ fn values_past_i128_take_the_transfer_before() {
     let times = |f: &Num| {
         let guard = prim(Prim::Ge, i(), Term::Lit(Value::Int(0)));
         let then = prim(Prim::Mul, prim(Prim::Mul, i(), lit(f)), lit(f));
-        Term::If(Arc::new(guard), Arc::new(then), Arc::new(i()))
+        Term::If(Shared::new(guard), Shared::new(then), Shared::new(i()))
     };
     let cases = [
         (times(&pow2(64, 0)), on(End::of(-50), End::of(50)), false),

@@ -1,15 +1,14 @@
 //! Builders for kernel terms and values, shared by the step tests that construct the terms a
 //! program elaborates to (M0.9, M0.10).
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
-use zed_kernel::{Evidence, Family, FixKind, Pattern, Prim, Term, Value, Witness};
+use zed_kernel::{Evidence, Family, FixKind, Pattern, Prim, Shared, Term, Value, Witness};
 
 /// Wraps a term for a field that holds a shared subterm.
-pub fn rc(t: Term) -> Arc<Term> {
-    Arc::new(t)
+pub fn rc(t: Term) -> Shared {
+    Shared::new(t)
 }
 
 /// A string value.
@@ -336,7 +335,7 @@ pub fn refine(x: Term, p: Term) -> Term {
 /// `v` itself when it is an atom, `then` otherwise: how a helper passes a failure through.
 pub fn unless_atom(v: Term, then: Term) -> Term {
     Term::Match(
-        Arc::new(v.clone()),
+        Shared::new(v.clone()),
         vec![(Pattern::AnyAtom, v), (Pattern::Wild, then)],
     )
 }

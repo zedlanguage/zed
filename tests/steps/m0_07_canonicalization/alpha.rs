@@ -3,6 +3,7 @@
 //! independent α-equivalence test (de Bruijn indices) on random terms.
 
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
 use zed_kernel::term::{Evidence, FixKind, Pattern, Prim, Term};
@@ -17,13 +18,13 @@ use super::{addr, def};
 fn invoice(v: &str) -> Term {
     let field = |f: &str| prim(Prim::Get, vec![var(v), lit(f)]);
     Term::Fold {
-        family: Arc::new(Term::Fam {
-            domain: Arc::new(var("lines")),
+        family: Shared::new(Term::Fam {
+            domain: Shared::new(var("lines")),
             var: v.into(),
-            body: Arc::new(prim(Prim::Mul, vec![field("qty"), field("price")])),
+            body: Shared::new(prim(Prim::Mul, vec![field("qty"), field("price")])),
         }),
-        op: Arc::new(Term::PrimFn(Prim::Add)),
-        identity: Some(Arc::new(lit(0))),
+        op: Shared::new(Term::PrimFn(Prim::Add)),
+        identity: Some(Shared::new(lit(0))),
         depth: 1,
         ev: Evidence::new(),
     }
@@ -38,17 +39,17 @@ fn an_invoice_total_has_one_address_whatever_its_line_is_called() {
     // interface: each changes the address.
     let mut other = invoice("line");
     if let Term::Fold { family, .. } = &mut other
-        && let Term::Fam { domain, .. } = Arc::make_mut(family)
+        && let Term::Fam { domain, .. } = Shared::make_mut(family)
     {
-        *domain = Arc::new(var("items"));
+        *domain = Shared::new(var("items"));
     }
     assert_ne!(a, addr(&def("total", other)));
     assert_ne!(a, addr(&def("subtotal", invoice("line"))));
     let mut by_cost = invoice("line");
     if let Term::Fold { family, .. } = &mut by_cost
-        && let Term::Fam { body, .. } = Arc::make_mut(family)
+        && let Term::Fam { body, .. } = Shared::make_mut(family)
     {
-        *body = Arc::new(prim(
+        *body = Shared::new(prim(
             Prim::Mul,
             vec![
                 prim(Prim::Get, vec![var("line"), lit("qty")]),
@@ -96,7 +97,7 @@ fn pattern_and_recursion_binders_are_normalized() {
     // `match status { (code, _) -> code, _ -> 0 }`, with the code called two ways.
     let m = |c: &str| {
         Term::Match(
-            Arc::new(var("status")),
+            Shared::new(var("status")),
             vec![
                 (
                     Pattern::Tuple(vec![Pattern::Bind(c.into()), Pattern::Wild]),
@@ -110,7 +111,7 @@ fn pattern_and_recursion_binders_are_normalized() {
     // A pattern binding the same name twice means the later one.
     let pair = |a: &str, b: &str, use_: &str| {
         Term::Match(
-            Arc::new(var("p")),
+            Shared::new(var("p")),
             vec![(
                 Pattern::Tuple(vec![Pattern::Bind(a.into()), Pattern::Bind(b.into())]),
                 var(use_),
@@ -128,11 +129,11 @@ fn pattern_and_recursion_binders_are_normalized() {
     // Fibonacci by definedness: `this` and the key are binders of the step.
     // `call` is the name the step calls and `n` the name it reads as the key.
     let step = |this: &str, n: &str, call: &str, key: &str| Term::Fix {
-        init: Arc::new(var("upTo")),
-        step: Arc::new(Term::If(
-            Arc::new(prim(Prim::Lt, vec![var(key), lit(2)])),
-            Arc::new(var(key)),
-            Arc::new(prim(
+        init: Shared::new(var("upTo")),
+        step: Shared::new(Term::If(
+            Shared::new(prim(Prim::Lt, vec![var(key), lit(2)])),
+            Shared::new(var(key)),
+            Shared::new(prim(
                 Prim::Add,
                 vec![
                     app(var(call), vec![prim(Prim::Sub, vec![var(key), lit(1)])]),
@@ -168,7 +169,7 @@ fn a_dependency_change_changes_its_dependents_but_a_local_rename_does_not() {
     let total_b = addr(&def("total", invoice("row")));
     let mut cheaper = invoice("line");
     if let Term::Fold { identity, .. } = &mut cheaper {
-        *identity = Some(Arc::new(lit(-5)));
+        *identity = Some(Shared::new(lit(-5)));
     }
     let total_c = addr(&def("total", cheaper));
     let at = |t| address(&due, &resolve(t));
@@ -246,7 +247,7 @@ fn random(shape: &mut Rng, names: &mut Rng, depth: u32, scope: &mut Vec<&'static
             let arm = sub(scope, shape, names);
             scope.pop();
             let other = sub(scope, shape, names);
-            Term::Match(Arc::new(e), vec![(p, arm), (Pattern::Wild, other)])
+            Term::Match(Shared::new(e), vec![(p, arm), (Pattern::Wild, other)])
         }
         3 => {
             let d = sub(scope, shape, names);
@@ -255,9 +256,9 @@ fn random(shape: &mut Rng, names: &mut Rng, depth: u32, scope: &mut Vec<&'static
             let body = sub(scope, shape, names);
             scope.pop();
             Term::Fam {
-                domain: Arc::new(d),
+                domain: Shared::new(d),
                 var: x.into(),
-                body: Arc::new(body),
+                body: Shared::new(body),
             }
         }
         4 => {
@@ -371,8 +372,8 @@ fn the_normal_form_is_the_rules_applied_one_step_at_a_time() {
     // A step reading `this` and the key, which are bound in that order.
     let key = |k: &str| prim(Prim::Sub, vec![var(k), lit(1)]);
     one_pass_is_stepwise(Term::Fix {
-        init: Arc::new(var("upTo")),
-        step: Arc::new(app(var("fib"), vec![key("n")])),
+        init: Shared::new(var("upTo")),
+        step: Shared::new(app(var("fib"), vec![key("n")])),
         this: "fib".into(),
         key: "n".into(),
         kind: FixKind::Definedness,

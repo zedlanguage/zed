@@ -12,7 +12,7 @@
 //! built as a product of literals through, and the summary read the end of `i64` that stood
 //! for an infinite end of the domain as an input.
 
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value, eval};
 use zedc::store::interval::{End, IntervalSet};
@@ -48,7 +48,7 @@ fn neg(a: Term) -> Term {
 }
 
 fn if_(g: Term, a: Term, b: Term) -> Term {
-    Term::If(Arc::new(g), Arc::new(a), Arc::new(b))
+    Term::If(Shared::new(g), Shared::new(a), Shared::new(b))
 }
 
 /// `MIN - (u + 3)`: the constant `MIN - 3`; values in `i64` for `u <= -3`.
@@ -87,7 +87,7 @@ fn fin(ps: &[(i64, i64)]) -> IntervalSet {
 
 /// Whether the value of `t` at `u = v`, by the interpreter, lies in `z`.
 fn meets(t: &Term, v: i64, z: &IntervalSet) -> bool {
-    let bound = Term::Let("u".into(), Arc::new(int(v)), Arc::new(t.clone()));
+    let bound = Term::Let("u".into(), Shared::new(int(v)), Shared::new(t.clone()));
     let value = eval(&bound).unwrap_or_else(|e| panic!("{t} at u = {v}: {e:?}"));
     Demand::Ints(z.clone()).holds(&value)
 }

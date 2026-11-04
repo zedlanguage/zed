@@ -31,6 +31,7 @@ mod tight;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Term, Value, eval};
 use zedc::store::int::Int;
@@ -53,7 +54,11 @@ fn relation(src: &str) -> (Vec<Arc<str>>, Relation) {
 fn at(t: &Term, names: &[Arc<str>], point: &[i64]) -> Option<Value> {
     let mut t = t.clone();
     for (n, v) in names.iter().zip(point).rev() {
-        t = Term::Let(n.clone(), Arc::new(Term::Lit(Value::Int(*v))), Arc::new(t));
+        t = Term::Let(
+            n.clone(),
+            Shared::new(Term::Lit(Value::Int(*v))),
+            Shared::new(t),
+        );
     }
     eval(&t).ok()
 }

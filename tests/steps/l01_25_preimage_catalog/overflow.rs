@@ -77,9 +77,9 @@ fn a_sum_past_min_is_not_equal_to_min() {
 fn an_arm_or_a_second_input_past_max() {
     let arm = prim(Prim::Add, var("y"), int(MAX - 3));
     let t = Term::If(
-        std::sync::Arc::new(prim(Prim::Gt, var("y"), int(0))),
-        std::sync::Arc::new(arm),
-        std::sync::Arc::new(var("y")),
+        zed_kernel::Shared::new(prim(Prim::Gt, var("y"), int(0))),
+        zed_kernel::Shared::new(arm),
+        zed_kernel::Shared::new(var("y")),
     );
     let t = prim(Prim::Eq, t, int(MAX));
     let ds = doms(&[("y", Some(-10), Some(10))]);

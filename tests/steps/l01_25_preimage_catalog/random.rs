@@ -5,6 +5,7 @@
 //! cannot, so that the catalog's own exactness is checked too.
 
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
@@ -64,7 +65,7 @@ pub(super) fn int_term(rng: &mut Rng, d: u32) -> Term {
         10 => prim(Prim::Pow, vec![sub(rng), lit(rng.int(0, 3))]),
         _ => {
             let g = bool_term(rng, d - 1);
-            Term::If(Arc::new(g), Arc::new(sub(rng)), Arc::new(sub(rng)))
+            Term::If(Shared::new(g), Shared::new(sub(rng)), Shared::new(sub(rng)))
         }
     }
 }
@@ -86,7 +87,11 @@ pub(super) fn bool_term(rng: &mut Rng, d: u32) -> Term {
         0 => prim(Prim::Not, vec![sub(rng)]),
         1 => prim(Prim::And, vec![sub(rng), sub(rng)]),
         2 => prim(Prim::Or, vec![sub(rng), sub(rng)]),
-        _ => Term::If(Arc::new(sub(rng)), Arc::new(sub(rng)), Arc::new(sub(rng))),
+        _ => Term::If(
+            Shared::new(sub(rng)),
+            Shared::new(sub(rng)),
+            Shared::new(sub(rng)),
+        ),
     }
 }
 
@@ -97,13 +102,13 @@ fn with_calls(rng: &mut Rng, t: &Term, fs: usize) -> Term {
         Term::Var(_) if fs > 0 && rng.below(2) == 0 => {
             let g = Term::Var(format!("g{}", rng.below(fs)).into());
             let arg = prim(Prim::Add, vec![t.clone(), lit(rng.int(-2, 2))]);
-            Term::App(Arc::new(g), vec![arg])
+            Term::App(Shared::new(g), vec![arg])
         }
         Term::Prim(p, args) => prim(*p, args.iter().map(|a| with_calls(rng, a, fs)).collect()),
         Term::If(g, a, b) => Term::If(
-            Arc::new(with_calls(rng, g, fs)),
-            Arc::new(with_calls(rng, a, fs)),
-            Arc::new(with_calls(rng, b, fs)),
+            Shared::new(with_calls(rng, g, fs)),
+            Shared::new(with_calls(rng, a, fs)),
+            Shared::new(with_calls(rng, b, fs)),
         ),
         _ => t.clone(),
     }
@@ -115,9 +120,9 @@ fn over_v(t: &Term) -> Term {
         Term::Var(x) if &**x == "x" => Term::Var("v".into()),
         Term::Prim(p, args) => prim(*p, args.iter().map(over_v).collect()),
         Term::If(g, a, b) => Term::If(
-            Arc::new(over_v(g)),
-            Arc::new(over_v(a)),
-            Arc::new(over_v(b)),
+            Shared::new(over_v(g)),
+            Shared::new(over_v(a)),
+            Shared::new(over_v(b)),
         ),
         _ => t.clone(),
     }
@@ -135,8 +140,8 @@ pub(super) fn with_functions(rng: &mut Rng, t: &Term) -> Term {
         })
         .collect();
     for (k, b) in bodies.into_iter().enumerate().rev() {
-        let g = Term::Lam(vec!["v".into()], Arc::new(b));
-        out = Term::Let(format!("g{k}").into(), Arc::new(g), Arc::new(out));
+        let g = Term::Lam(vec!["v".into()], Shared::new(b));
+        out = Term::Let(format!("g{k}").into(), Shared::new(g), Shared::new(out));
     }
     out
 }

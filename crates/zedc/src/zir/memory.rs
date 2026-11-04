@@ -54,7 +54,7 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::term::{Pattern, Prim, Term};
+use zed_kernel::term::{Pattern, Prim, Shared, Term};
 use zed_kernel::value::Value;
 use zed_kernel::{Evaluator, KernelError};
 
@@ -1228,9 +1228,9 @@ impl<'g> Machine<'g, '_> {
                     c => {
                         let mut lets = Lets::default();
                         let t = Term::If(
-                            Arc::new(self.term(c, &mut lets)?),
-                            Arc::new(Term::Lit(Value::Int(0))),
-                            Arc::new(Term::Lit(Value::Int(1))),
+                            Shared::new(self.term(c, &mut lets)?),
+                            Shared::new(Term::Lit(Value::Int(0))),
+                            Shared::new(Term::Lit(Value::Int(1))),
                         );
                         match self.ev.run(&wrap(lets, t)).map_err(|e| e.to_string())? {
                             Value::Int(i) => Ok(i as usize),
@@ -1309,7 +1309,7 @@ impl<'g> Machine<'g, '_> {
             });
             arms.push((p, Term::Prim(Prim::Tuple, xs)));
         }
-        let t = wrap(lets, Term::Match(Arc::new(s), arms));
+        let t = wrap(lets, Term::Match(Shared::new(s), arms));
         let (i, vals) = match self.ev.run(&t).map_err(|e| e.to_string())? {
             Value::Tuple(xs) if matches!(xs.first(), Some(Value::Int(i)) if (*i as usize) < ps.len()) =>
             {
@@ -1761,7 +1761,7 @@ fn port_var(p: &str) -> Arc<str> {
 /// `t` with each lookup port in `ports` read first.
 fn wrap(ports: Lets, t: Term) -> Term {
     ports.order.into_iter().rev().fold(t, |b, p| {
-        Term::Let(port_var(&p), Arc::new(Term::Read(p)), Arc::new(b))
+        Term::Let(port_var(&p), Shared::new(Term::Read(p)), Shared::new(b))
     })
 }
 

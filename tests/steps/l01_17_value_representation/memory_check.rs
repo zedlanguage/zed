@@ -590,7 +590,7 @@ fn a_literal_pattern_refused_its_equality_test_is_an_error_of_match() {
     }
     let (built, kept) = equal_only_by_a_copy();
     let t = Term::Match(
-        std::sync::Arc::new(lit(built)),
+        zed_kernel::Shared::new(lit(built)),
         vec![(Pattern::Lit(kept), lit(1)), (Pattern::Wild, lit(2))],
     );
     lower_limit();
@@ -620,12 +620,12 @@ fn a_lattice_fixpoint_test_refused_is_an_error_of_fix() {
     let (built, kept) = equal_only_by_a_copy();
     // From `built`, one step gives `kept`, and the join keeps the newer iterate.
     let t = Term::Fix {
-        init: std::sync::Arc::new(lit(built)),
-        step: std::sync::Arc::new(lam(&["x"], lit(kept))),
+        init: zed_kernel::Shared::new(lit(built)),
+        step: zed_kernel::Shared::new(lam(&["x"], lit(kept))),
         this: "this".into(),
         key: "k".into(),
         kind: FixKind::Lattice {
-            join: std::sync::Arc::new(lam(&["a", "b"], var("b"))),
+            join: zed_kernel::Shared::new(lam(&["a", "b"], var("b"))),
         },
         ev: Evidence::new(),
     };
@@ -647,7 +647,7 @@ fn a_literal_pattern_and_a_lattice_fixpoint_answer_when_memory_is_given() {
     ));
     let kept = Value::integer(int(3).pow(&BigUint::from(1u32 << 10)).unwrap());
     let t = Term::Match(
-        std::sync::Arc::new(lit(built.clone())),
+        zed_kernel::Shared::new(lit(built.clone())),
         vec![
             (Pattern::Lit(kept.clone()), lit(1)),
             (Pattern::Wild, lit(2)),
@@ -655,12 +655,12 @@ fn a_literal_pattern_and_a_lattice_fixpoint_answer_when_memory_is_given() {
     );
     assert_eq!(eval(&t).unwrap(), Value::Int(2));
     let t = Term::Fix {
-        init: std::sync::Arc::new(lit(built)),
-        step: std::sync::Arc::new(lam(&["x"], lit(kept.clone()))),
+        init: zed_kernel::Shared::new(lit(built)),
+        step: zed_kernel::Shared::new(lam(&["x"], lit(kept.clone()))),
         this: "this".into(),
         key: "k".into(),
         kind: FixKind::Lattice {
-            join: std::sync::Arc::new(lam(&["a", "b"], var("b"))),
+            join: zed_kernel::Shared::new(lam(&["a", "b"], var("b"))),
         },
         ev: Evidence::new(),
     };

@@ -5,7 +5,7 @@
 //! still reported when the cell has been taken again, by the generation the word carries.
 
 use std::mem::ManuallyDrop;
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::types::Type;
 use zed_kernel::{Pattern, Term, Text, Value};
@@ -285,7 +285,7 @@ fn a_value_whose_parts_share_one_cell_is_read_once_per_cell() {
 fn a_nested_constant_matched_natively_agrees_with_the_kernel() {
     let p = in_tuples(30, bind("last"));
     let t = Term::Match(
-        Arc::new(Term::Lit(rate_table(30))),
+        Shared::new(Term::Lit(rate_table(30))),
         vec![((*p).clone(), Term::Var("last".into()))],
     );
     let want = kernel(&t).unwrap();

@@ -1,7 +1,7 @@
 //! The printer at the rule of low complexity (DESIGN.md Part G).
 
-use std::sync::Arc;
 use std::sync::Mutex;
+use zed_kernel::Shared;
 
 use zed_kernel::Term;
 use zed_kernel::print::pretty;
@@ -14,9 +14,9 @@ fn var(x: &str) -> Term {
 /// Shape `k` nested `d` deep: lambdas, calls in argument position, calls in head position.
 fn shape(k: usize, d: usize) -> Term {
     (0..d).fold(var(["x", "x", "f"][k]), |t, _| match k {
-        0 => Term::Lam(vec!["y".into()], Arc::new(t)),
-        1 => Term::App(Arc::new(var("g")), vec![t, var("z")]),
-        _ => Term::App(Arc::new(t), vec![var("a")]),
+        0 => Term::Lam(vec!["y".into()], Shared::new(t)),
+        1 => Term::App(Shared::new(var("g")), vec![t, var("z")]),
+        _ => Term::App(Shared::new(t), vec![var("a")]),
     })
 }
 
@@ -162,19 +162,19 @@ fn a_term_far_deeper_than_the_stack_drops_and_keeps_its_shared_parts() {
     let n = 1_000_000;
     zed_tests::deep::on_small_stack(|| {
         let inner =
-            Arc::new((0..n).fold(var("x"), |b, _| Term::Lam(vec!["y".into()], Arc::new(b))));
+            Shared::new((0..n).fold(var("x"), |b, _| Term::Lam(vec!["y".into()], Shared::new(b))));
         let outer = (0..n).fold(Term::Lam(vec!["z".into()], inner.clone()), |b, _| {
-            Term::Lam(vec!["y".into()], Arc::new(b))
+            Term::Lam(vec!["y".into()], Shared::new(b))
         });
         assert_eq!(lambda_depth(&outer), 2 * n + 1);
         drop(outer);
-        assert_eq!(Arc::strong_count(&inner), 1);
+        assert_eq!(Shared::strong_count(&inner), 1);
         assert_eq!(lambda_depth(&inner), n);
         drop(inner);
         let wide = Term::Prim(
             zed_kernel::term::Prim::Tuple,
             (0..n)
-                .map(|_| Term::Lam(vec!["y".into()], Arc::new(var("x"))))
+                .map(|_| Term::Lam(vec!["y".into()], Shared::new(var("x"))))
                 .collect(),
         );
         drop(wide);

@@ -2,7 +2,7 @@
 //! keep: the innermost binding of a name wins, a closure reads the parameter of the call that
 //! made it, and a union of boxes is exact just when it is a box.
 
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zedc::store::interval::IntervalSet;
@@ -23,15 +23,15 @@ fn int(n: i64) -> Term {
 }
 
 fn bind(x: &str, e: Term, body: Term) -> Term {
-    Term::Let(x.into(), Arc::new(e), Arc::new(body))
+    Term::Let(x.into(), Shared::new(e), Shared::new(body))
 }
 
 fn lam(x: &str, b: Term) -> Term {
-    Term::Lam(vec![x.into()], Arc::new(b))
+    Term::Lam(vec![x.into()], Shared::new(b))
 }
 
 fn call(f: &str, a: Term) -> Term {
-    Term::App(Arc::new(var(f)), vec![a])
+    Term::App(Shared::new(var(f)), vec![a])
 }
 
 fn at_least(x: &str, n: i64) -> Term {
@@ -129,8 +129,8 @@ fn an_empty_input_leaves_no_point() {
 #[test]
 fn a_call_of_an_operator_reads_the_operator_of_its_scope() {
     // `apply = (op) -> op(i, 2); apply((+)) >= 5 && apply((*)) >= 10`
-    let app = Term::App(Arc::new(var("op")), vec![var("i"), int(2)]);
-    let with = |p| Term::App(Arc::new(var("apply")), vec![Term::PrimFn(p)]);
+    let app = Term::App(Shared::new(var("op")), vec![var("i"), int(2)]);
+    let with = |p| Term::App(Shared::new(var("apply")), vec![Term::PrimFn(p)]);
     let t = bind(
         "apply",
         lam("op", app),
@@ -182,8 +182,8 @@ fn equal_factors_written_twice_are_read_as_a_square() {
 #[test]
 fn a_shared_part_is_read_as_the_same_term() {
     // `if (i >= 3) { s } else { s }` with `s = i * 2 >= 4`, one shared term.
-    let s = Arc::new(prim(Prim::Ge, prim(Prim::Mul, var("i"), int(2)), int(4)));
-    let t = Term::If(Arc::new(at_least("i", 3)), s.clone(), s);
+    let s = Shared::new(prim(Prim::Ge, prim(Prim::Mul, var("i"), int(2)), int(4)));
+    let t = Term::If(Shared::new(at_least("i", 3)), s.clone(), s);
     assert_eq!(
         holds(&t, &[("i", Some(-50), Some(50))]),
         "i [2..=50]; exact"

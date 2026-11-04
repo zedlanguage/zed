@@ -753,7 +753,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | Terms numbered in an arena (`Vec` of nodes with `u32` children), filled by an explicit stack | `Terms::add` | Mutation | A state receiver over a map from number to node, or the content digest of gap 1, which makes the numbering unneeded |
-| Raw pointer `*const Term` as the key of the visited set while the arena is filled | `Terms::id` | Identity | Keyed by the content digest of gap 1; the address lives only during the walk and is never a memo key |
+| The id of a shared subterm (`Shared::id`, drawn by `fresh_id`, shared by copies) as the key of the visited set while the arena is filled; an argument held inline is numbered with no lookup (ADDR-preimage; was `*const Term`) | `Terms::id` in `preimage.rs` and `preimage_ref.rs` | Identity (gap 1) | Keyed by the content digest of gap 1; the id is only looked up, never ordered or printed |
 | `std::mem::discriminant` of `Prim` as part of a hash key, since `Prim` has no `Hash` | `Made::Call` | None | `Prim` is an enumeration, so its value is the key |
 | `fn(&mut Memo) -> &mut HashMap<K, V>` choosing the table a generic memo helper fills | `Tx::cached`, `Tx::translated` | None | A function over the memo record returning the updated record |
 | `std::mem::replace` of the context field around a sub-transfer | `Tx::within`, `Tx::cached` | Mutation | The context passed as an argument and returned with the result |
@@ -1256,3 +1256,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `Vec<Option<Region>>` indexed by occurrence id, an entry filled the first time its occurrence runs (`get_or_insert_with`), and a `HashMap<&str, (usize, &RegionPlan)>` from a region's path to the occurrence id of its first node and its plan, built by one walk of the plan | `zir::memory::Machine::alone`, `Machine::places`, `memory::run` | Mutation (gap 11), lazy cells (gap 3) | A map from occurrence id to region in the machine's state receiver, updated in place by provable last use (L6.13); the path map is a fold over the plan |
+
+## Entries from ADDR-preimage (`zed-kernel/src/term.rs`, `zedc/src/store/preimage.rs`, `preimage_ref.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Shared`, a newtype over `Arc<Held>` where `Held` is an `Id` from `fresh_id` with the `Term`; a copy keeps the id and `Shared::make_mut` takes a new one when it changes the term; `Deref`, `AsRef`, `From<Term>`, and a `PartialEq` that is true at once on equal ids | every `Arc<Term>` child of `Term` (`Lam`, `App`, `Let`, `If`, `Match`, `Push`), `term::{lam, app, let_, if_}`, `provenance::child_mut` | Identity (gap 1) | A content digest field in each term node (gap 1), which serves as the id and makes equal terms built apart share it |
+| A `HashMap<u64, Tid>` keyed by `Shared::id` while one term is numbered | `Terms::add`, `Terms::id` | Identity (gap 1), mutation | A state receiver over a map keyed by the term's digest |

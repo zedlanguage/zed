@@ -3,6 +3,7 @@
 //! position is transferred once for each outcome.
 
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
@@ -33,7 +34,7 @@ fn doubling(k: usize) -> Term {
             format!("x{}", i - 1)
         };
         let e = prim(Prim::Add, var(&prev), var(&prev));
-        body = Term::Let(format!("x{i}").into(), Arc::new(e), Arc::new(body));
+        body = Term::Let(format!("x{i}").into(), Shared::new(e), Shared::new(body));
     }
     body
 }
@@ -41,7 +42,7 @@ fn doubling(k: usize) -> Term {
 /// `f0 = (v) -> v; f1 = (v) -> max(f0(v), f0(v + d)); …; fk(i) >= 0`: each function calls
 /// the one before it twice, with arguments that differ when `d` is 1 and agree when it is 0.
 fn calls(k: usize, d: i64) -> Term {
-    let call = |j: usize, a: Term| Term::App(Arc::new(var(&format!("f{j}"))), vec![a]);
+    let call = |j: usize, a: Term| Term::App(Shared::new(var(&format!("f{j}"))), vec![a]);
     let mut body = prim(Prim::Ge, call(k, var("i")), int(0));
     for j in (0..=k).rev() {
         let e = if j == 0 {
@@ -54,8 +55,8 @@ fn calls(k: usize, d: i64) -> Term {
             };
             prim(Prim::Max, call(j - 1, var("v")), call(j - 1, second))
         };
-        let f = Term::Lam(vec!["v".into()], Arc::new(e));
-        body = Term::Let(format!("f{j}").into(), Arc::new(f), Arc::new(body));
+        let f = Term::Lam(vec!["v".into()], Shared::new(e));
+        body = Term::Let(format!("f{j}").into(), Shared::new(f), Shared::new(body));
     }
     body
 }
@@ -77,7 +78,7 @@ fn guards(k: usize) -> Term {
             prim(Prim::Ge, var("i"), int(j)),
             prim(Prim::Le, var("i"), int(-j)),
         );
-        g = Term::If(Arc::new(g), Arc::new(a), Arc::new(b));
+        g = Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
     }
     g
 }
@@ -215,7 +216,7 @@ fn the_exact_search_scales_with_the_number_of_points() {
 /// `f0 = (v) -> v; f1 = (v) -> f0(v) + f0(v + d); …; fk(i) - j >= 0`: a sum, which the catalog
 /// does not invert exactly with two inputs, so the linear-relation translation reads it.
 fn sums(k: usize, d: i64) -> Term {
-    let call = |n: usize, a: Term| Term::App(Arc::new(var(&format!("f{n}"))), vec![a]);
+    let call = |n: usize, a: Term| Term::App(Shared::new(var(&format!("f{n}"))), vec![a]);
     let mut body = prim(
         Prim::Ge,
         prim(Prim::Sub, call(k, var("i")), var("j")),
@@ -232,8 +233,8 @@ fn sums(k: usize, d: i64) -> Term {
             };
             prim(Prim::Add, call(n - 1, var("v")), call(n - 1, second))
         };
-        let f = Term::Lam(vec!["v".into()], Arc::new(e));
-        body = Term::Let(format!("f{n}").into(), Arc::new(f), Arc::new(body));
+        let f = Term::Lam(vec!["v".into()], Shared::new(e));
+        body = Term::Let(format!("f{n}").into(), Shared::new(f), Shared::new(body));
     }
     body
 }
@@ -263,7 +264,7 @@ fn reading_the_input(k: usize) -> Term {
             format!("x{}", j - 1)
         };
         let e = prim(Prim::Max, var(&prev), var("i"));
-        body = Term::Let(format!("x{j}").into(), Arc::new(e), Arc::new(body));
+        body = Term::Let(format!("x{j}").into(), Shared::new(e), Shared::new(body));
     }
     body
 }
@@ -363,8 +364,8 @@ fn squares_of_one_name(k: usize) -> Term {
     let sum = (1..k).fold(sq(), |a, _| prim(Prim::Add, a, sq()));
     Term::Let(
         "y".into(),
-        Arc::new(y),
-        Arc::new(prim(Prim::Ge, sum, int(0))),
+        Shared::new(y),
+        Shared::new(prim(Prim::Ge, sum, int(0))),
     )
 }
 
@@ -372,8 +373,8 @@ fn squares_of_one_name(k: usize) -> Term {
 /// term of `k` distinct parts and `2^k` paths, which is numbered in time of its parts.
 fn shared_arms(k: usize) -> Term {
     (1..=k as i64).fold(prim(Prim::Ge, var("i"), int(0)), |t, j| {
-        let t = Arc::new(t);
-        Term::If(Arc::new(prim(Prim::Ge, var("i"), int(j))), t.clone(), t)
+        let t = Shared::new(t);
+        Term::If(Shared::new(prim(Prim::Ge, var("i"), int(j))), t.clone(), t)
     })
 }
 
@@ -400,9 +401,9 @@ fn long_shared_arms() {
 fn nested_values(k: usize) -> Term {
     let t = (1..=k as i64).fold(var("i"), |t, j| {
         Term::If(
-            Arc::new(prim(Prim::Ge, var("i"), int(j))),
-            Arc::new(prim(Prim::Add, t, int(1))),
-            Arc::new(prim(Prim::Sub, int(j), var("i"))),
+            Shared::new(prim(Prim::Ge, var("i"), int(j))),
+            Shared::new(prim(Prim::Add, t, int(1))),
+            Shared::new(prim(Prim::Sub, int(j), var("i"))),
         )
     });
     prim(Prim::Ge, t, int(0))
@@ -413,12 +414,12 @@ fn nested_values(k: usize) -> Term {
 /// paths: 19 ms at `k = 12`, 383 ms at 16, 1.64 s at 18.
 fn shared_values(k: usize) -> Term {
     let t = (1..=k as i64).fold(var("i"), |t, j| {
-        let t = Arc::new(t);
+        let t = Shared::new(t);
         let more = prim(Prim::Add, (*t).clone(), int(1));
         Term::If(
-            Arc::new(prim(Prim::Ge, var("i"), int(j))),
+            Shared::new(prim(Prim::Ge, var("i"), int(j))),
             t,
-            Arc::new(more),
+            Shared::new(more),
         )
     });
     prim(Prim::Ge, t, int(0))
@@ -490,9 +491,9 @@ fn auxiliary_variables_are_named_one_level_deep() {
             Prim::Max,
             prim(Prim::IntDiv, prim(Prim::Add, var("i"), var("j")), int(3)),
             Term::If(
-                Arc::new(prim(Prim::Ge, var("i"), int(0))),
-                Arc::new(var("j")),
-                Arc::new(int(2)),
+                Shared::new(prim(Prim::Ge, var("i"), int(0))),
+                Shared::new(var("j")),
+                Shared::new(int(2)),
             ),
         ),
         int(0),

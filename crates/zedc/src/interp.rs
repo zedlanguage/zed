@@ -4,9 +4,7 @@
 //! Step L1.18 binds the L1 words on scalars, each to its kernel primitive; the evaluator
 //! itself holds the per-region operator arrows, atom pass-through and the `#errs` merge.
 
-use std::sync::Arc;
-
-use zed_kernel::{Prim, Term};
+use zed_kernel::{Prim, Shared, Term};
 
 /// The L1 prelude words and their primitives.
 const WORDS: &[(&str, Prim)] = &[
@@ -47,6 +45,10 @@ pub fn prim(name: &str) -> Option<Prim> {
 /// `body` under the prelude: each word it may read bound to its primitive.
 pub fn prelude(body: Term) -> Term {
     WORDS.iter().rev().fold(body, |body, (name, p)| {
-        Term::Let((*name).into(), Arc::new(Term::PrimFn(*p)), Arc::new(body))
+        Term::Let(
+            (*name).into(),
+            Shared::new(Term::PrimFn(*p)),
+            Shared::new(body),
+        )
     })
 }

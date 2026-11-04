@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Lookup, Term, Value, World};
+use zed_kernel::{Evaluator, Lookup, Shared, Term, Value, World};
 
 use crate::ast::StmtKind;
 use crate::elab::{Cones, Test};
@@ -180,7 +180,7 @@ fn mark_failure(ds: &[&run::Diagnostic], named: Option<Row>) -> Option<String> {
 
 /// A definition of the unit and the term that replaces its own (step L25.8, a mutant): its
 /// position in the unit and the term.
-pub(crate) type Swap<'a> = Option<(usize, &'a Arc<Term>)>;
+pub(crate) type Swap<'a> = Option<(usize, &'a Shared)>;
 
 /// The value of `term` under the definitions it reaches, with `swap`, and the prelude.
 fn value(
@@ -292,7 +292,7 @@ struct Given(Term);
 
 impl Lookup for Given {
     fn get(&self, key: &Value) -> Result<Value, String> {
-        let read = Term::App(Arc::new(self.0.clone()), vec![Term::Lit(key.clone())]);
+        let read = Term::App(Shared::new(self.0.clone()), vec![Term::Lit(key.clone())]);
         Evaluator::new(World::new())
             .run(&read)
             .map_err(|e| e.to_string())

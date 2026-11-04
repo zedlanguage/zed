@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
 use zed_tests::instances::Rng;
@@ -37,7 +38,7 @@ fn tt(b: bool) -> Term {
 }
 
 fn if_(c: Term, a: Term, b: Term) -> Term {
-    Term::If(Arc::new(c), Arc::new(a), Arc::new(b))
+    Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
 }
 
 fn and(a: Term, b: Term) -> Term {
@@ -220,7 +221,7 @@ fn random_nest(rnd: &mut Rng, depth: usize) -> Term {
 /// The value of the test `t` at `env`, by the interpreter.
 fn at(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Option<bool> {
     let t = env.iter().fold(t.clone(), |b, (n, v)| {
-        Term::Let(n.clone(), Arc::new(Term::Lit(v.clone())), Arc::new(b))
+        Term::Let(n.clone(), Shared::new(Term::Lit(v.clone())), Shared::new(b))
     });
     match Evaluator::new(World::new()).run(&t) {
         Ok(Value::Bool(b)) => Some(b),

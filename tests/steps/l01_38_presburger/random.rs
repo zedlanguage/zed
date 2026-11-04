@@ -6,6 +6,7 @@
 //! refutes only with a real countermodel.
 
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
@@ -53,9 +54,9 @@ pub(crate) fn int_term(rng: &mut Rng, d: u32) -> Term {
         7 => prim(Prim::Abs, vec![sub(rng)]),
         8 => prim(rng.pick(&[Prim::Min, Prim::Max]), vec![sub(rng), sub(rng)]),
         _ => Term::If(
-            Arc::new(bool_term(rng, d - 1)),
-            Arc::new(sub(rng)),
-            Arc::new(sub(rng)),
+            Shared::new(bool_term(rng, d - 1)),
+            Shared::new(sub(rng)),
+            Shared::new(sub(rng)),
         ),
     }
 }
@@ -74,7 +75,11 @@ pub(crate) fn bool_term(rng: &mut Rng, d: u32) -> Term {
         0 => prim(Prim::Not, vec![sub(rng)]),
         1 => prim(Prim::And, vec![sub(rng), sub(rng)]),
         2 => prim(Prim::Or, vec![sub(rng), sub(rng)]),
-        _ => Term::If(Arc::new(sub(rng)), Arc::new(sub(rng)), Arc::new(sub(rng))),
+        _ => Term::If(
+            Shared::new(sub(rng)),
+            Shared::new(sub(rng)),
+            Shared::new(sub(rng)),
+        ),
     }
 }
 

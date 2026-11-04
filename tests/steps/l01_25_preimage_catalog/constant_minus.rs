@@ -5,7 +5,7 @@
 //! (`revision::map2`), so pieces moved across zero were merged and the merged box was still
 //! marked exact.
 
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
@@ -217,9 +217,9 @@ fn reflected_by(c: Term, s: i64) -> Term {
     let i = || var("i");
     let shifted = Term::Prim(Prim::Add, vec![i(), int(s)]);
     Term::If(
-        Arc::new(Term::Prim(Prim::Ge, vec![i(), int(0)])),
-        Arc::new(Term::Prim(Prim::Sub, vec![c.clone(), i()])),
-        Arc::new(Term::Prim(Prim::Sub, vec![c, shifted])),
+        Shared::new(Term::Prim(Prim::Ge, vec![i(), int(0)])),
+        Shared::new(Term::Prim(Prim::Sub, vec![c.clone(), i()])),
+        Shared::new(Term::Prim(Prim::Sub, vec![c, shifted])),
     )
 }
 

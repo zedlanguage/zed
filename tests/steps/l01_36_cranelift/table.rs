@@ -2,7 +2,7 @@
 //! or a read (COMPLEXITY.md R12): a match adds no entry, and a value made again and dropped
 //! uses the entry or cell it had, so both stay the same size at `n` and `8n`.
 
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
 use zed_kernel::types::Type;
@@ -14,7 +14,7 @@ use super::scaling::{check_run, strings, unused};
 /// `f = (y) -> y; g = (z) -> match f { p -> body }; (g(0), g(1), …, g(n-1))`: `n` matches of
 /// a function.
 fn fun_match(n: usize, p: Pattern, body: Term) -> Term {
-    let m = Term::Match(Arc::new(var("f")), vec![(p, body)]);
+    let m = Term::Match(Shared::new(var("f")), vec![(p, body)]);
     let g = lam(&["z"], m);
     let calls = (0..n).map(|i| app(var("g"), vec![lit(i as i64)])).collect();
     let_(
@@ -38,7 +38,7 @@ fn bare(n: usize) -> Term {
     let none = prim(Prim::Atom, vec![lit("none"), lit(Value::tuple(Vec::new()))]);
     let s = prim(Prim::Tuple, vec![Term::Read("x".into()), none, var("y")]);
     let p = Pattern::Tuple(["a", "b", "c"].map(|x| Pattern::Bind(x.into())).to_vec());
-    let f = lam(&["y"], Term::Match(Arc::new(s), vec![(p, var("c"))]));
+    let f = lam(&["y"], Term::Match(Shared::new(s), vec![(p, var("c"))]));
     let calls = (0..n).map(|i| app(var("f"), vec![lit(i as i64)])).collect();
     let_("f", f, prim(Prim::Tuple, calls))
 }

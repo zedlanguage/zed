@@ -81,8 +81,8 @@ fn narrowing_by_a_conjunction_of_disjunctions_scales() {
     });
 }
 
-fn arc(t: Term) -> std::sync::Arc<Term> {
-    std::sync::Arc::new(t)
+fn arc(t: Term) -> zed_kernel::Shared {
+    zed_kernel::Shared::new(t)
 }
 
 /// `let x1 = x0 + 1 in … let xk = x(k-1) + 1 in if xk >= 0 { 1 } else { 2 }`.

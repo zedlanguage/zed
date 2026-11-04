@@ -32,7 +32,7 @@ pub use eval::{Evaluator, Lookup, Schedule, World, eval, on_stack};
 pub use family::{Family, Keypath};
 pub use num::Rat;
 pub use provenance::{Fact, FactAddress, NodeAddress, Provenance};
-pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
+pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Shared, Term, Witness};
 pub use text::Text;
 pub use types::Universe;
 pub use value::{Atom, F64, Fields, Items, Value};

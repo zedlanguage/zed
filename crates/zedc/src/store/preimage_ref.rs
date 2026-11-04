@@ -72,7 +72,7 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Prim, Term, Value, World, eval, on_stack};
+use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, eval, on_stack};
 
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
@@ -549,14 +549,15 @@ impl<'t> Terms<'t> {
         n
     }
 
-    /// Numbers `root` and its parts. A part the given term shares (one `Arc` reached twice)
-    /// is numbered once: the walk keeps the parts it has met, by address, while it holds the
-    /// term borrowed, so the walk takes time of the term's distinct parts and no address
-    /// outlives it.
+    /// Numbers `root` and its parts. A subterm the given term shares (one [`Shared`] reached
+    /// twice) is numbered once: the walk keeps the shared subterms it has met by their ids, so
+    /// it takes time of the term's distinct parts. A part held inline (the root, an argument)
+    /// is reached only through its parent, so it is numbered when its parent is, with no
+    /// lookup. Ids are only looked up, never ordered, so the numbers follow the walk alone.
     fn add(&mut self, root: &'t Term) -> Tid {
         let mut seen = HashMap::new();
         let mut todo = Vec::new();
-        let r = self.id(root, &mut seen, &mut todo);
+        let r = self.number(root, &mut todo);
         while let Some((t, id)) = todo.pop() {
             let node = match t {
                 Term::Lit(Value::Int(n)) => {
@@ -582,9 +583,9 @@ impl<'t> Terms<'t> {
                 }
                 Term::App(f, args) => {
                     let f = self.id(f, &mut seen, &mut todo);
-                    Node::App(f, self.ids(args, &mut seen, &mut todo))
+                    Node::App(f, self.ids(args, &mut todo))
                 }
-                Term::Prim(p, args) => Node::Prim(*p, self.ids(args, &mut seen, &mut todo)),
+                Term::Prim(p, args) => Node::Prim(*p, self.ids(args, &mut todo)),
                 Term::Let(x, e, b) => Node::Let(
                     self.name(x),
                     self.id(e, &mut seen, &mut todo),
@@ -602,31 +603,30 @@ impl<'t> Terms<'t> {
         r
     }
 
-    /// The number of `t`, numbered now and its parts left to `todo` when it is new.
+    /// The number of the shared subterm `s`, numbered now and its parts left to `todo` when
+    /// its id is new.
     fn id(
         &mut self,
-        t: &'t Term,
-        seen: &mut HashMap<*const Term, Tid>,
+        s: &'t Shared,
+        seen: &mut HashMap<u64, Tid>,
         todo: &mut Vec<(&'t Term, Tid)>,
     ) -> Tid {
-        *seen.entry(t as *const Term).or_insert_with(|| {
-            let id = self.nodes.len() as Tid;
-            self.nodes.push(Node::Other);
-            self.src.push(Some(t));
-            todo.push((t, id));
-            id
-        })
+        *seen.entry(s.id()).or_insert_with(|| self.number(s, todo))
     }
 
-    fn ids(
-        &mut self,
-        ts: &'t [Term],
-        seen: &mut HashMap<*const Term, Tid>,
-        todo: &mut Vec<(&'t Term, Tid)>,
-    ) -> Span {
+    /// A new number for `t`, its parts left to `todo`.
+    fn number(&mut self, t: &'t Term, todo: &mut Vec<(&'t Term, Tid)>) -> Tid {
+        let id = self.nodes.len() as Tid;
+        self.nodes.push(Node::Other);
+        self.src.push(Some(t));
+        todo.push((t, id));
+        id
+    }
+
+    fn ids(&mut self, ts: &'t [Term], todo: &mut Vec<(&'t Term, Tid)>) -> Span {
         let at = self.kids.len();
         for t in ts {
-            let id = self.id(t, seen, todo);
+            let id = self.number(t, todo);
             self.kids.push(id);
         }
         Span::new(at, ts.len())
@@ -1556,11 +1556,13 @@ impl<'t> Tx<'t> {
                     inner.insert(p, None);
                     names.push(self.name(p).clone());
                 }
-                Term::Lam(names, Arc::new(self.close(b, env, &inner)?))
+                Term::Lam(names, Shared::new(self.close(b, env, &inner)?))
             }
-            Node::App(f, args) => Term::App(Arc::new(c(f)?), all(args)?),
+            Node::App(f, args) => Term::App(Shared::new(c(f)?), all(args)?),
             Node::Prim(p, args) => Term::Prim(p, all(args)?),
-            Node::If(g, a, b) => Term::If(Arc::new(c(g)?), Arc::new(c(a)?), Arc::new(c(b)?)),
+            Node::If(g, a, b) => {
+                Term::If(Shared::new(c(g)?), Shared::new(c(a)?), Shared::new(c(b)?))
+            }
             Node::Other => return None,
         })
     }
@@ -2991,7 +2993,11 @@ fn branch(
                 let Some((Fin(v), _)) = s.bounds() else {
                     unreachable!("a point is finite")
                 };
-                t = Term::Let(k.clone(), Arc::new(Term::Lit(Value::from(v))), Arc::new(t));
+                t = Term::Let(
+                    k.clone(),
+                    Shared::new(Term::Lit(Value::from(v))),
+                    Shared::new(t),
+                );
             }
             let v = Evaluator::new(World::new()).run(&t).ok()?;
             if demand.holds(&v) && search.all(&b) {
@@ -3171,8 +3177,8 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> 
         for ((k, vs), &i) in axes.iter().zip(&point).rev() {
             t = Term::Let(
                 k.clone(),
-                Arc::new(Term::Lit(Value::from(&vs[i]))),
-                Arc::new(t),
+                Shared::new(Term::Lit(Value::from(&vs[i]))),
+                Shared::new(t),
             );
         }
         let v = Evaluator::new(World::new()).run(&t).ok()?;

@@ -2,7 +2,7 @@
 //! the binders the arm uses; a unique scrutinee's cell is freed and its kept parts move out
 //! without a count write.
 
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::{Pattern, Prim, Term, Value};
@@ -12,7 +12,7 @@ use super::{cat, planned, run};
 
 fn first(scrutinee: Term) -> Term {
     let p = Pattern::Tuple(vec![Pattern::Bind("x".into()), Pattern::Wild]);
-    Term::Match(Arc::new(scrutinee), vec![(p, var("x"))])
+    Term::Match(Shared::new(scrutinee), vec![(p, var("x"))])
 }
 
 /// The count writes of `t` with fusion and without, after the same value.
@@ -75,6 +75,6 @@ fn a_struct_binder_is_found_by_field_name() {
         "point".into(),
         vec![("y".into(), Pattern::Bind("v".into()))],
     );
-    let t = Term::Match(Arc::new(atom), vec![(p, var("v"))]);
+    let t = Term::Match(Shared::new(atom), vec![(p, var("v"))]);
     assert_eq!(writes(&t), (1 + 1, 4 + 1, r#""cd""#.into()));
 }

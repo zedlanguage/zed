@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::types::Type;
 use zed_kernel::{Term, Value};
@@ -48,7 +49,7 @@ fn bound(ty: &Type, members: &BTreeSet<Value>) -> Product {
     p.cell.finite.element = FiniteSet::Set(members.clone());
     let mut s = Scope::new([]);
     let x: Arc<str> = "x".into();
-    s.bind(&x, p, &Arc::new(Term::Lit(int(0))));
+    s.bind(&x, p, &Shared::new(Term::Lit(int(0))));
     s.get("x")
 }
 

@@ -3,7 +3,7 @@
 //! place.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{lam, lit, var};
 use zed_kernel::{FixKind, GuardPos, Pattern, Prim, Term};
@@ -13,15 +13,15 @@ use zedc::stage::ends;
 use super::scaling::deep;
 
 fn app(f: Term, args: Vec<Term>) -> Term {
-    Term::App(Arc::new(f), args)
+    Term::App(Shared::new(f), args)
 }
 
 fn let_(x: &str, e: Term, b: Term) -> Term {
-    Term::Let(x.into(), Arc::new(e), Arc::new(b))
+    Term::Let(x.into(), Shared::new(e), Shared::new(b))
 }
 
-fn if_(c: Term, a: Arc<Term>, b: Arc<Term>) -> Term {
-    Term::If(Arc::new(c), a, b)
+fn if_(c: Term, a: Shared, b: Shared) -> Term {
+    Term::If(Shared::new(c), a, b)
 }
 
 fn prim(p: Prim, args: Vec<Term>) -> Term {
@@ -29,8 +29,8 @@ fn prim(p: Prim, args: Vec<Term>) -> Term {
 }
 
 /// `n` and the operation `+` read as one would write `step(n) + 1`.
-fn calls_step() -> Arc<Term> {
-    Arc::new(prim(
+fn calls_step() -> Shared {
+    Shared::new(prim(
         Prim::Add,
         vec![app(var("step"), vec![var("n")]), lit(1i64)],
     ))
@@ -42,35 +42,47 @@ fn a_shared_part_under_two_bindings_of_a_name_it_calls_gets_two_answers() {
     // a parameter: the first ends, the second calls through a parameter.
     let body = calls_step();
     let increment = lam(&["k"], prim(Prim::Add, vec![var("k"), lit(1i64)]));
-    let by_let = || Term::Let("step".into(), Arc::new(increment.clone()), body.clone());
+    let by_let = || Term::Let("step".into(), Shared::new(increment.clone()), body.clone());
     let by_param = || Term::Lam(vec!["step".into()], body.clone());
     assert!(ends(&by_let()));
     assert!(!ends(&by_param()));
     // Both places in one term, in either order: the answer of the first place read is not
     // reused at the second.
     let c = || var("flag");
-    assert!(!ends(&if_(c(), Arc::new(by_let()), Arc::new(by_param()))));
-    assert!(!ends(&if_(c(), Arc::new(by_param()), Arc::new(by_let()))));
+    assert!(!ends(&if_(
+        c(),
+        Shared::new(by_let()),
+        Shared::new(by_param())
+    )));
+    assert!(!ends(&if_(
+        c(),
+        Shared::new(by_param()),
+        Shared::new(by_let())
+    )));
     // Two `let` functions of the name: both places end.
     let decrement = lam(&["k"], prim(Prim::Sub, vec![var("k"), lit(1i64)]));
-    let by_other_let = Term::Let("step".into(), Arc::new(decrement), body.clone());
-    assert!(ends(&if_(c(), Arc::new(by_let()), Arc::new(by_other_let))));
+    let by_other_let = Term::Let("step".into(), Shared::new(decrement), body.clone());
+    assert!(ends(&if_(
+        c(),
+        Shared::new(by_let()),
+        Shared::new(by_other_let)
+    )));
     // Inside the `let`, the part is read once bare and once under a parameter named `step`,
     // which shadows the `let`.
     let shadowed = Term::Let(
         "step".into(),
-        Arc::new(increment.clone()),
-        Arc::new(if_(c(), body.clone(), Arc::new(by_param()))),
+        Shared::new(increment.clone()),
+        Shared::new(if_(c(), body.clone(), Shared::new(by_param()))),
     );
     assert!(!ends(&shadowed));
     // A parameter of another name does not shadow it.
     let other = Term::Let(
         "step".into(),
-        Arc::new(increment),
-        Arc::new(if_(
+        Shared::new(increment),
+        Shared::new(if_(
             c(),
             body.clone(),
-            Arc::new(Term::Lam(vec!["m".into()], body.clone())),
+            Shared::new(Term::Lam(vec!["m".into()], body.clone())),
         )),
     );
     assert!(ends(&other));
@@ -82,7 +94,7 @@ fn a_shared_part_under_two_bindings_of_a_name_it_calls_gets_two_answers() {
 fn a_let_function_that_calls_an_outer_name_needs_what_that_name_is_bound_to() {
     // `apply = (k) -> step(k); apply(n)`: `apply` ends when `step` does, so the answer is
     // decided by the binding of `step` around the `let`, which a shared part carries up.
-    let inner = Arc::new(let_(
+    let inner = Shared::new(let_(
         "apply",
         lam(&["k"], app(var("step"), vec![var("k")])),
         app(var("apply"), vec![var("n")]),
@@ -90,7 +102,11 @@ fn a_let_function_that_calls_an_outer_name_needs_what_that_name_is_bound_to() {
     assert!(ends(&inner), "`step` free is a prelude word");
     assert!(!ends(&Term::Lam(vec!["step".into()], inner.clone())));
     let id = lam(&["k"], var("k"));
-    assert!(ends(&Term::Let("step".into(), Arc::new(id), inner.clone())));
+    assert!(ends(&Term::Let(
+        "step".into(),
+        Shared::new(id),
+        inner.clone()
+    )));
     // A function bound by `let` and never called need not end.
     let unused = let_(
         "spin",
@@ -111,13 +127,13 @@ fn the_smallest_terms_and_the_forms_that_do_not_show_an_end() {
     // A call with no arguments, a lambda with no parameters, a match with no arms.
     assert!(ends(&app(lam(&[], lit(1i64)), vec![])));
     assert!(ends(&prim(Prim::Add, vec![])));
-    assert!(ends(&Term::Match(Arc::new(var("v")), vec![])));
+    assert!(ends(&Term::Match(Shared::new(var("v")), vec![])));
     assert!(ends(&lit(0i64)));
     assert!(ends(&var("x")));
     // `fix` and `gen`, also inside a lambda nobody calls, and also when shared by both arms.
-    let fix = Arc::new(Term::Fix {
-        init: Arc::new(var("d")),
-        step: Arc::new(var("this")),
+    let fix = Shared::new(Term::Fix {
+        init: Shared::new(var("d")),
+        step: Shared::new(var("this")),
         this: "this".into(),
         key: "k".into(),
         kind: FixKind::Definedness,
@@ -127,9 +143,9 @@ fn the_smallest_terms_and_the_forms_that_do_not_show_an_end() {
     assert!(!ends(&Term::Lam(vec![], fix.clone())));
     assert!(!ends(&if_(var("c"), fix.clone(), fix.clone())));
     let gen_ = Term::Gen {
-        init: Arc::new(lit(0i64)),
-        step: Arc::new(lam(&["f"], var("f"))),
-        guard: Arc::new(lam(&["f"], lit(false))),
+        init: Shared::new(lit(0i64)),
+        step: Shared::new(lam(&["f"], var("f"))),
+        guard: Shared::new(lam(&["f"], lit(false))),
         pos: GuardPos::Before,
     };
     assert!(!ends(&gen_));
@@ -140,7 +156,7 @@ fn the_smallest_terms_and_the_forms_that_do_not_show_an_end() {
     // A call through a parameter, and through a name a pattern binds.
     assert!(!ends(&lam(&["g"], app(var("g"), vec![lit(1i64)]))));
     let by_pattern = Term::Match(
-        Arc::new(var("v")),
+        Shared::new(var("v")),
         vec![(
             Pattern::Tuple(vec![Pattern::Bind("g".into()), Pattern::Wild]),
             app(var("g"), vec![]),
@@ -149,24 +165,24 @@ fn the_smallest_terms_and_the_forms_that_do_not_show_an_end() {
     assert!(!ends(&by_pattern));
     // A family operation handed a parameter.
     let fold = Term::Fold {
-        family: Arc::new(var("xs")),
-        op: Arc::new(var("op")),
+        family: Shared::new(var("xs")),
+        op: Shared::new(var("op")),
         identity: None,
         depth: 1,
         ev: Default::default(),
     };
     assert!(ends(&fold), "`op` free is a prelude word");
-    assert!(!ends(&Term::Lam(vec!["op".into()], Arc::new(fold))));
+    assert!(!ends(&Term::Lam(vec!["op".into()], Shared::new(fold))));
 }
 
 /// `t0 = n; tj = if n >= j { t(j-1) } else { t(j-1) + 1 }`, `k` levels, each arm holding the
 /// same `t(j-1)`: `2^k` paths, `2k + 1` distinct parts. `base` is `t0`.
 fn shared_arms(k: usize, base: Term) -> Term {
     (1..=k as i64).fold(base, |t, j| {
-        let t = Arc::new(t);
+        let t = Shared::new(t);
         let plus = prim(Prim::Add, vec![(*t).clone(), lit(1i64)]);
         let guard = prim(Prim::Ge, vec![var("n"), lit(j)]);
-        if_(guard, t, Arc::new(plus))
+        if_(guard, t, Shared::new(plus))
     })
 }
 
@@ -181,13 +197,16 @@ fn a_chain_whose_if_arms_share_their_term_is_read_in_time_near_its_size() {
                 let plain = shared_arms(k, var("n"));
                 // The chain on `step(n)` under `step = (k) -> k + 1`, and under a parameter
                 // `step`.
-                let called = Arc::new(shared_arms(k, (*calls_step()).clone()));
+                let called = Shared::new(shared_arms(k, (*calls_step()).clone()));
                 let inc = lam(&["k"], prim(Prim::Add, vec![var("k"), lit(1i64)]));
-                let by_let = Term::Let("step".into(), Arc::new(inc), called.clone());
+                let by_let = Term::Let("step".into(), Shared::new(inc), called.clone());
                 let by_param = Term::Lam(vec!["step".into()], called);
                 (
                     k,
-                    (plain, if_(var("c"), Arc::new(by_let), Arc::new(by_param))),
+                    (
+                        plain,
+                        if_(var("c"), Shared::new(by_let), Shared::new(by_param)),
+                    ),
                 )
             })
             .collect();
@@ -225,7 +244,7 @@ fn many_let_functions_called_at_the_end_are_read_in_time_near_their_number() {
             assert!(ends(&terms[&k]));
         });
         // A parameter `f7` around the chain is shadowed by the `let` of `f7`.
-        assert!(ends(&Term::Lam(vec!["f7".into()], Arc::new(lets(10)))));
+        assert!(ends(&Term::Lam(vec!["f7".into()], Shared::new(lets(10)))));
     });
 }
 
@@ -236,10 +255,10 @@ fn arms_that_call_different_let_functions_on_a_shared_part_are_read_in_time_near
     // joined at each `if` hold up to 2j names.
     let chain = |k: usize| {
         let body = (1..=k).fold(var("n"), |t, j| {
-            let t = Arc::new(t);
+            let t = Shared::new(t);
             let f = app(var(&format!("f{j}")), vec![(*t).clone()]);
             let h = app(var(&format!("h{j}")), vec![(*t).clone()]);
-            if_(var("c"), Arc::new(f), Arc::new(h))
+            if_(var("c"), Shared::new(f), Shared::new(h))
         });
         (1..=k).rev().fold(body, |b, j| {
             let b = let_(&format!("f{j}"), lam(&["x"], var("x")), b);
@@ -272,12 +291,12 @@ fn two_chains_of_calls_joined_at_every_level_are_read_in_time_near_their_size() 
     // a2, b2, …` read first so that their numbers interleave: each join is of two sets of j
     // names whose tries differ everywhere, and only the pair joined one level down is shared.
     let joined = |k: usize| {
-        let shared = |t: &Arc<Term>| Term::Push("out".into(), t.clone());
-        let (mut p, mut q) = (Arc::new(var("n")), Arc::new(var("n")));
+        let shared = |t: &Shared| Term::Push("out".into(), t.clone());
+        let (mut p, mut q) = (Shared::new(var("n")), Shared::new(var("n")));
         let mut sums = Vec::new();
         for j in 1..=k {
-            p = Arc::new(app(var(&format!("a{j}")), vec![shared(&p)]));
-            q = Arc::new(app(var(&format!("b{j}")), vec![shared(&q)]));
+            p = Shared::new(app(var(&format!("a{j}")), vec![shared(&p)]));
+            q = Shared::new(app(var(&format!("b{j}")), vec![shared(&q)]));
             sums.push(prim(Prim::Add, vec![shared(&p), shared(&q)]));
         }
         let mixed = (1..=k)
@@ -300,7 +319,7 @@ fn two_chains_of_calls_joined_at_every_level_are_read_in_time_near_their_size() 
                 assert!(ends(&terms[&k]));
             },
         );
-        assert!(!ends(&Term::Lam(vec!["b2".into()], Arc::new(joined(3)))));
-        assert!(ends(&Term::Lam(vec!["b4".into()], Arc::new(joined(3)))));
+        assert!(!ends(&Term::Lam(vec!["b2".into()], Shared::new(joined(3)))));
+        assert!(ends(&Term::Lam(vec!["b4".into()], Shared::new(joined(3)))));
     });
 }

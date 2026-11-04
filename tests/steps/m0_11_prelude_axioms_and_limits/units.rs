@@ -3,7 +3,7 @@
 //! nothing else.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::Prim;
 use zed_kernel::term::build::{lam, lit, prim, var};
@@ -23,10 +23,10 @@ fn def(name: &str, body: Term) -> Def {
 /// The unit's declarations, `rate` as given and `line` naming each line in `total`.
 fn invoicing(rate: i64, line: &str) -> Vec<Def> {
     let total = Term::Fold {
-        family: Arc::new(Term::Fam {
-            domain: Arc::new(var("lines")),
+        family: Shared::new(Term::Fam {
+            domain: Shared::new(var("lines")),
             var: line.into(),
-            body: Arc::new(prim(
+            body: Shared::new(prim(
                 Prim::Mul,
                 vec![
                     prim(Prim::Get, vec![var(line), lit("qty")]),
@@ -34,8 +34,8 @@ fn invoicing(rate: i64, line: &str) -> Vec<Def> {
                 ],
             )),
         }),
-        op: Arc::new(Term::PrimFn(Prim::Add)),
-        identity: Some(Arc::new(lit(0))),
+        op: Shared::new(Term::PrimFn(Prim::Add)),
+        identity: Some(Shared::new(lit(0))),
         depth: 1,
         ev: Evidence::new(),
     };

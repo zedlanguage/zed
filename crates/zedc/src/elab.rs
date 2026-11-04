@@ -27,7 +27,7 @@ use imbl::Vector;
 
 use zed_kernel::num::{LiteralRounding, literal_f64, show_f64};
 use zed_kernel::types::Type as KType;
-use zed_kernel::{Pattern as KPattern, Prim, Rat, Term, Universe, Value};
+use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Universe, Value};
 
 use crate::ast::{
     Error, Every, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
@@ -48,7 +48,7 @@ pub struct Def {
     /// Its kernel name.
     pub kernel: Arc<str>,
     /// Its value, shared with the lets that close a term over it.
-    pub term: Arc<Term>,
+    pub term: Shared,
     /// Whether it is bound by `=` to a value whose type, as the checker gives it, has no
     /// function component (step L1.37).
     pub first_order: bool,
@@ -171,7 +171,7 @@ impl<'u> Cones<'u> {
     /// `body` closed as [`Cones::close`] closes it, with the definition at position `i` bound
     /// to `term` when `swap` is `Some((i, term))` (step L25.8, a mutant). `term` must read
     /// the names the definition reads, as a mutant's term does, so the cone is the same.
-    pub fn close_with(&self, body: Term, swap: Option<(usize, &Arc<Term>)>) -> Term {
+    pub fn close_with(&self, body: Term, swap: Option<(usize, &Shared)>) -> Term {
         let reach = self.reach(&[&body]);
         reach.into_iter().rev().fold(body, |body, i| {
             let d = &self.unit.defs[i];
@@ -179,7 +179,7 @@ impl<'u> Cones<'u> {
                 Some((j, term)) if j == i => term.clone(),
                 _ => d.term.clone(),
             };
-            Term::Let(d.kernel.clone(), term, Arc::new(body))
+            Term::Let(d.kernel.clone(), term, Shared::new(body))
         })
     }
 }
@@ -253,7 +253,7 @@ fn elaborate_in(
                 first_order: e.info.tops.get(&name).is_some_and(|t| t.first_order()),
                 name,
                 kernel,
-                term: Arc::new(term),
+                term: Shared::new(term),
             })
             .collect();
     }
@@ -1013,7 +1013,7 @@ fn repeated<'n>(names: impl Iterator<Item = &'n str>) -> Option<&'n str> {
 }
 
 fn if_(c: Term, a: Term, b: Term) -> Term {
-    Term::If(Arc::new(c), Arc::new(a), Arc::new(b))
+    Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
 }
 
 /// How a statement is named in a cycle's error.

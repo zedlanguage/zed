@@ -17,6 +17,7 @@
 //! then check that the chains cost `O(n log n)`.
 
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
@@ -70,9 +71,9 @@ fn chain(
     arm: impl Fn(i64, Term) -> Term,
 ) -> Term {
     (1..=k as i64).fold(base, |t, j| {
-        let t = Arc::new(t);
+        let t = Shared::new(t);
         let other = arm(j, (*t).clone());
-        Term::If(Arc::new(guard(j)), t, Arc::new(other))
+        Term::If(Shared::new(guard(j)), t, Shared::new(other))
     })
 }
 
@@ -190,11 +191,11 @@ fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
         }
         "swapped" => {
             let t = (1..=ki).fold(var("i"), |t, j| {
-                let t = Arc::new(t);
+                let t = Shared::new(t);
                 let more = prim(Prim::Add, (*t).clone(), int(1));
                 Term::If(
-                    Arc::new(prim(Prim::Lt, var("i"), int(j))),
-                    Arc::new(more),
+                    Shared::new(prim(Prim::Lt, var("i"), int(j))),
+                    Shared::new(more),
                     t,
                 )
             });
@@ -219,9 +220,9 @@ fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
             let mut t = var("i");
             let mut all: Option<Term> = None;
             for j in 1..=ki {
-                let prev = Arc::new(t);
+                let prev = Shared::new(t);
                 let more = prim(Prim::Add, (*prev).clone(), int(1));
-                t = Term::If(Arc::new(ge_i(j)), prev, Arc::new(more));
+                t = Term::If(Shared::new(ge_i(j)), prev, Shared::new(more));
                 let tj = ge0(t.clone());
                 all = Some(all.map_or(tj.clone(), |a| prim(Prim::And, a, tj)));
             }
@@ -641,7 +642,7 @@ fn random_chain(rng: &mut Rng) -> Term {
                 int(c.abs()),
             ),
         };
-        let shared = Arc::new(t);
+        let shared = Shared::new(t);
         let mut arm = || {
             let s = (*shared).clone();
             let c = rng.int(-6, 6);
@@ -659,7 +660,7 @@ fn random_chain(rng: &mut Rng) -> Term {
             }
         };
         let (a, b) = (arm(), arm());
-        t = Term::If(Arc::new(g), Arc::new(a), Arc::new(b));
+        t = Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
     }
     t
 }
@@ -814,7 +815,7 @@ fn random_chains_of_shared_terms_keep_their_preimages() {
         for _ in 0..4000 {
             let mut t = var("i");
             for _ in 0..rng.int(0, 12) {
-                let prev = Arc::new(t);
+                let prev = Shared::new(t);
                 let g = ge_i(rng.int(-25, 25));
                 let c = rng.int(-6, 6);
                 let more = if rng.below(10) == 0 {
@@ -822,7 +823,7 @@ fn random_chains_of_shared_terms_keep_their_preimages() {
                 } else {
                     prim(Prim::Add, (*prev).clone(), int(c))
                 };
-                t = Term::If(Arc::new(g), prev, Arc::new(more));
+                t = Term::If(Shared::new(g), prev, Shared::new(more));
             }
             let lo = rng.int(-30, 5);
             let mut ds = i_in(lo, lo + rng.int(0, 40));
@@ -850,14 +851,14 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     let i = || var("i");
     let abs = || Term::Prim(Prim::Abs, vec![i()]);
     let x = Term::If(
-        Arc::new(prim(Prim::Ge, abs(), int(10))),
-        Arc::new(prim(Prim::Sub, int(-5), i())),
-        Arc::new(prim(Prim::Sub, int(6), i())),
+        Shared::new(prim(Prim::Ge, abs(), int(10))),
+        Shared::new(prim(Prim::Sub, int(-5), i())),
+        Shared::new(prim(Prim::Sub, int(6), i())),
     );
     let t = Term::If(
-        Arc::new(prim(Prim::Ge, abs(), int(3))),
-        Arc::new(prim(Prim::Mul, int(2), x.clone())),
-        Arc::new(prim(Prim::Add, x.clone(), x)),
+        Shared::new(prim(Prim::Ge, abs(), int(3))),
+        Shared::new(prim(Prim::Mul, int(2), x.clone())),
+        Shared::new(prim(Prim::Add, x.clone(), x)),
     );
     let ds = over(&[("i", IntervalSet::range(End::NegInf, End::of(12)))]);
     let d = Demand::Ints(pieces(&[(-30, -29), (6, 10)]));
@@ -1207,9 +1208,9 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
             .chain(arms.iter().enumerate().map(|(n, a)| (n as i64 - 3, a)))
         {
             let t = Term::If(
-                Arc::new(ge_i(b)),
-                Arc::new(yes.clone()),
-                Arc::new(no.clone()),
+                Shared::new(ge_i(b)),
+                Shared::new(yes.clone()),
+                Shared::new(no.clone()),
             );
             for z in &zs {
                 for ds in [
@@ -1244,10 +1245,10 @@ fn guarded_translation_chains_match_the_interpreter() {
     for _ in 0..120 {
         let mut t = var("x");
         for _ in 0..rng.int(1, 16) {
-            let prev = Arc::new(t);
+            let prev = Shared::new(t);
             let g = prim(Prim::Ge, var("x"), int(rng.int(-10, 10)));
             let more = prim(Prim::Add, (*prev).clone(), int(rng.int(-4, 4)));
-            t = Term::If(Arc::new(g), prev, Arc::new(more));
+            t = Term::If(Shared::new(g), prev, Shared::new(more));
         }
         let lo = rng.int(-20, 20);
         let d = ints(lo, lo + rng.int(0, 10));
@@ -1519,9 +1520,9 @@ fn a_chain_of_guards_on_remainders_is_read_class_by_class() {
 fn by_remainder(keep: Term) -> (Term, Demand) {
     let i = || var("i");
     let t = Term::If(
-        Arc::new(keep),
-        Arc::new(prim(Prim::Add, i(), int(1))),
-        Arc::new(i()),
+        Shared::new(keep),
+        Shared::new(prim(Prim::Add, i(), int(1))),
+        Shared::new(i()),
     );
     (t, ints(3, 30))
 }
@@ -1577,23 +1578,23 @@ fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
         ("j", IntervalSet::of(-30, 30)),
     ]);
     let both = Term::If(
-        Arc::new(prim(
+        Shared::new(prim(
             Prim::Eq,
             prim(Prim::Mod, i(), int(3)),
             prim(Prim::Mod, j(), int(3)),
         )),
-        Arc::new(i()),
-        Arc::new(j()),
+        Shared::new(i()),
+        Shared::new(j()),
     );
     let other = Term::If(
-        Arc::new(prim(Prim::Eq, prim(Prim::Mod, i(), int(3)), int(0))),
-        Arc::new(j()),
-        Arc::new(prim(Prim::Add, j(), int(1))),
+        Shared::new(prim(Prim::Eq, prim(Prim::Mod, i(), int(3)), int(0))),
+        Shared::new(j()),
+        Shared::new(prim(Prim::Add, j(), int(1))),
     );
     let wide = Term::If(
-        Arc::new(prim(Prim::Eq, prim(Prim::Mod, i(), int(2)), int(0))),
-        Arc::new(i()),
-        Arc::new(int(0)),
+        Shared::new(prim(Prim::Eq, prim(Prim::Mod, i(), int(2)), int(0))),
+        Shared::new(i()),
+        Shared::new(int(0)),
     );
     for (t, ds, d) in [(both, two.clone(), ints(0, 10)), (other, two, ints(0, 10))] {
         let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
@@ -1771,9 +1772,9 @@ fn no_remainder_of(k: usize) -> Term {
     (1..=k as i64).fold(ge_i(0), |t, j| {
         let g = prim(Prim::Ne, prim(Prim::Mod, var("i"), int(1024)), int(j));
         Term::If(
-            Arc::new(g),
-            Arc::new(t),
-            Arc::new(Term::Lit(Value::Bool(false))),
+            Shared::new(g),
+            Shared::new(t),
+            Shared::new(Term::Lit(Value::Bool(false))),
         )
     })
 }
@@ -1993,9 +1994,9 @@ fn zero_excluded(k: usize) -> Term {
     let (t, _, _) = many_remainders(k);
     let g = prim(Prim::Eq, prim(Prim::Mod, var("i"), int(1024)), int(0));
     Term::If(
-        Arc::new(g),
-        Arc::new(Term::Lit(Value::Bool(false))),
-        Arc::new(t),
+        Shared::new(g),
+        Shared::new(Term::Lit(Value::Bool(false))),
+        Shared::new(t),
     )
 }
 
@@ -2067,12 +2068,16 @@ fn remainder_splits_at_their_corners_keep_their_preimages() {
             let is = |c: i64| prim(Prim::Eq, rem(), int(c));
             let not = |c: i64, t: Term| {
                 Term::If(
-                    Arc::new(prim(Prim::Ne, rem(), int(c))),
-                    Arc::new(t),
-                    Arc::new(Term::Lit(Value::Bool(false))),
+                    Shared::new(prim(Prim::Ne, rem(), int(c))),
+                    Shared::new(t),
+                    Shared::new(Term::Lit(Value::Bool(false))),
                 )
             };
-            let picked = Term::If(Arc::new(is(r)), Arc::new(var("i")), Arc::new(int(0)));
+            let picked = Term::If(
+                Shared::new(is(r)),
+                Shared::new(var("i")),
+                Shared::new(int(0)),
+            );
             let terms = [
                 (picked, ints(10, 2000)),
                 (not(1, not(2, ge_i(0))), Demand::Bool(true)),
@@ -2122,7 +2127,8 @@ fn a_stretch_wrapping_past_the_modulus_inside_one_class_is_checked_by_remainder(
         let rem = || prim(Prim::Mod, var("i"), int(1024));
         let tt = || Term::Lit(Value::Bool(true));
         let ff = || Term::Lit(Value::Bool(false));
-        let ite = |g: Term, a: Term, b: Term| Term::If(Arc::new(g), Arc::new(a), Arc::new(b));
+        let ite =
+            |g: Term, a: Term, b: Term| Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
         for periods in [3i64, 4, 6, 9] {
             let mut runs = ff();
             for t in (0..periods).rev() {

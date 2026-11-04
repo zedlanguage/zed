@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Term, Text, Value};
+use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
 use zedc::zir::memory::Mode;
@@ -491,7 +491,7 @@ fn port_var(p: &str) -> Arc<str> {
 /// `t` with each lookup port in `ports` read first.
 fn wrap(ports: Lets, t: Term) -> Term {
     ports.order.into_iter().rev().fold(t, |b, p| {
-        Term::Let(port_var(&p), Arc::new(Term::Read(p)), Arc::new(b))
+        Term::Let(port_var(&p), Shared::new(Term::Read(p)), Shared::new(b))
     })
 }
 
@@ -521,9 +521,9 @@ fn branch(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Strin
     let mut lets = Lets::default();
     let c = term(t, s, ins[0], &mut lets)?;
     let q = Term::If(
-        Arc::new(c),
-        Arc::new(Term::Lit(Value::Int(0))),
-        Arc::new(Term::Lit(Value::Int(1))),
+        Shared::new(c),
+        Shared::new(Term::Lit(Value::Int(0))),
+        Shared::new(Term::Lit(Value::Int(1))),
     );
     match run(s, &wrap(lets, q))? {
         Value::Int(i) => Ok(i),
@@ -636,7 +636,7 @@ fn kernel_match(t: &Tables, s: &mut Run, ps: &[Pattern], scrut: Word) -> Result<
         });
         arms.push((p, Term::Prim(Prim::Tuple, xs)));
     }
-    let q = wrap(lets, Term::Match(Arc::new(st), arms));
+    let q = wrap(lets, Term::Match(Shared::new(st), arms));
     Ok(match run(s, &q)? {
         Value::Tuple(xs) => match xs.first() {
             Some(&Value::Int(i)) if (i as usize) < ps.len() => Ok((i as usize, xs.into_vec())),

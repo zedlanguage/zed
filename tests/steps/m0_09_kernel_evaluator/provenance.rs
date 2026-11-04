@@ -3,7 +3,7 @@
 //! by cloning is.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{if_, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Family, Prim, Provenance, Term, Value, World};
@@ -123,11 +123,11 @@ fn a_failure_taken_out_of_a_tuple_starts_at_its_literal() {
 /// cloning a branch into both arms builds: the term has `depth` distinct nodes and `2^depth`
 /// positions, and the run takes one branch per level.
 fn shared_branches(depth: usize) -> Term {
-    let mut d = Arc::new(lit(1));
+    let mut d = Shared::new(lit(1));
     for _ in 0..depth {
-        d = Arc::new(Term::If(Arc::new(lit(true)), d.clone(), d));
+        d = Shared::new(Term::If(Shared::new(lit(true)), d.clone(), d));
     }
-    Arc::unwrap_or_clone(d)
+    Shared::unwrap_or_clone(d)
 }
 
 #[test]
@@ -390,15 +390,15 @@ fn agrees_with_search(t: &Term) {
 
 /// `shared_branches` with `#late` at the bottom, each level's branches one shared term when
 /// `shared`, or two copies built apart.
-fn late_branches(depth: usize, shared: bool) -> Arc<Term> {
+fn late_branches(depth: usize, shared: bool) -> Shared {
     match depth {
-        0 => Arc::new(lit(Value::atom("late"))),
+        0 => Shared::new(lit(Value::atom("late"))),
         _ if shared => {
             let d = late_branches(depth - 1, true);
-            Arc::new(Term::If(Arc::new(lit(true)), d.clone(), d))
+            Shared::new(Term::If(Shared::new(lit(true)), d.clone(), d))
         }
-        _ => Arc::new(Term::If(
-            Arc::new(lit(true)),
+        _ => Shared::new(Term::If(
+            Shared::new(lit(true)),
             late_branches(depth - 1, false),
             late_branches(depth - 1, false),
         )),
@@ -417,7 +417,7 @@ fn the_origins_agree_with_a_search_per_member() {
         missing_row(5),
         missing_chain(6),
         shared_levels(5),
-        Arc::unwrap_or_clone(late_branches(4, true)),
+        Shared::unwrap_or_clone(late_branches(4, true)),
         both,
         picked,
     ] {
@@ -461,7 +461,7 @@ fn a_term_shared_by_both_parts_of_the_root_runs_once_at_each_position() {
     // `let x = #late * #early in #late * #early`, the bound term and the body one shared
     // term: the run evaluates it at two positions, and the `let` reads both, so each
     // literal is an origin at each position.
-    let both = Arc::new(mul(lit(Value::atom("late")), lit(Value::atom("early"))));
+    let both = Shared::new(mul(lit(Value::atom("late")), lit(Value::atom("early"))));
     let t = Term::Let("x".into(), both.clone(), both);
     let (v, p) = trace(&t);
     assert_eq!(v.errs().map(|e| e.len()), Some(2), "{v}");

@@ -3,7 +3,7 @@
 //! any `k`: its preimage is that of the power written out. Products of factors that differ
 //! are not powers, and the reading costs time linear in the product.
 
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use num_bigint::BigInt;
 use zed_kernel::{Prim, Term, Value};
@@ -26,7 +26,7 @@ fn int(n: i64) -> Term {
 }
 
 fn bind(x: &str, e: Term, body: Term) -> Term {
-    Term::Let(x.into(), Arc::new(e), Arc::new(body))
+    Term::Let(x.into(), Shared::new(e), Shared::new(body))
 }
 
 /// `f * f * … * f`, `k` factors, multiplied from the left as the parser groups them.

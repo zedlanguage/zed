@@ -754,14 +754,14 @@ impl<'a> Elab<'a> {
                 Some(f) => {
                     let g = self.temp();
                     let both = Term::Match(
-                        Arc::new(v(&f)),
+                        Shared::new(v(&f)),
                         vec![
                             (KPattern::AnyAtom, Term::Prim(Prim::Add, vec![v(&f), v(t)])),
                             (KPattern::Wild, v(t)),
                         ],
                     );
                     let merged = Term::Match(
-                        Arc::new(v(t)),
+                        Shared::new(v(t)),
                         vec![(KPattern::AnyAtom, both), (KPattern::Wild, v(&f))],
                     );
                     merges.push((g.clone(), merged));
@@ -771,7 +771,7 @@ impl<'a> Elab<'a> {
         }
         if let Some(f) = fail {
             call = Term::Match(
-                Arc::new(v(&f)),
+                Shared::new(v(&f)),
                 vec![(KPattern::AnyAtom, v(&f)), (KPattern::Wild, call)],
             );
         }
@@ -780,7 +780,7 @@ impl<'a> Elab<'a> {
                 .chain(merges)
                 .rev()
                 .fold(call, |body, (t, x)| {
-                    Term::Let(t, Arc::new(x), Arc::new(body))
+                    Term::Let(t, Shared::new(x), Shared::new(body))
                 }),
         )
     }
@@ -981,13 +981,17 @@ impl<'a> Elab<'a> {
                             })
                         })
                         .collect();
-                    let call = Term::App(Arc::new(Term::Var(fv.clone())), args);
-                    Term::Let(fv, Arc::new(f), Arc::new(Term::Lam(temps, Arc::new(call))))
+                    let call = Term::App(Shared::new(Term::Var(fv.clone())), args);
+                    Term::Let(
+                        fv,
+                        Shared::new(f),
+                        Shared::new(Term::Lam(temps, Shared::new(call))),
+                    )
                 }
                 Callee::Declared(id, f) => {
                     let params = missing.iter().map(|&j| self.kname(&f.params[j])).collect();
                     let body = self.supplied(f, slots, Term::App(self.fv(id), self.param_vars(f)));
-                    Term::Lam(params, Arc::new(body))
+                    Term::Lam(params, Shared::new(body))
                 }
             };
             m.give(Some(t));
@@ -1031,7 +1035,7 @@ impl<'a> Elab<'a> {
             unreachable!("a call through a value")
         };
         let args = slots.into_iter().map(|s| s.expect("filled")).collect();
-        m.give(Some(Term::App(Arc::new(f), args)));
+        m.give(Some(Term::App(Shared::new(f), args)));
     }
 
     /// A saturated call of a declared function, with arguments left out: their defaults in
@@ -1120,7 +1124,7 @@ impl<'a> Elab<'a> {
         } = *ff;
         let body = (defaults.into_iter().rev()).fold(
             Term::App(self.fv(id), self.param_vars(f)),
-            |body, (k, d)| Term::Let(k, Arc::new(d), Arc::new(body)),
+            |body, (k, d)| Term::Let(k, Shared::new(d), Shared::new(body)),
         );
         m.give(Some(self.supplied(f, slots, body)));
     }
@@ -1131,8 +1135,8 @@ impl<'a> Elab<'a> {
     }
 
     /// The declared function `id`, as a term.
-    fn fv(&self, id: usize) -> Arc<Term> {
-        Arc::new(Term::Var(self.names[id].clone()))
+    fn fv(&self, id: usize) -> Shared {
+        Shared::new(Term::Var(self.names[id].clone()))
     }
 
     /// Each parameter of `f`, as a term.
@@ -1143,7 +1147,7 @@ impl<'a> Elab<'a> {
     /// `body` with the arguments supplied bound to the parameters they fill.
     fn supplied(&self, f: &Function, slots: Vec<Option<Term>>, body: Term) -> Term {
         (slots.into_iter().zip(&f.params).rev()).fold(body, |body, (s, p)| match s {
-            Some(t) => Term::Let(self.kname(p), Arc::new(t), Arc::new(body)),
+            Some(t) => Term::Let(self.kname(p), Shared::new(t), Shared::new(body)),
             None => body,
         })
     }
@@ -1245,7 +1249,7 @@ impl<'a> Elab<'a> {
                 let t = self.name(n, e.span).map(|f| {
                     let temps: Vec<Arc<str>> = from.iter().map(|_| self.temp()).collect();
                     let args = from.iter().map(|&j| Term::Var(temps[j].clone())).collect();
-                    Term::Lam(temps, Arc::new(Term::App(Arc::new(f), args)))
+                    Term::Lam(temps, Shared::new(Term::App(Shared::new(f), args)))
                 });
                 m.give(t);
             }
@@ -1329,7 +1333,7 @@ impl<'a> Elab<'a> {
                 let t = s.map(|(binds, export)| {
                     let body = export.unwrap_or(Term::Prim(Prim::Tuple, Vec::new()));
                     binds.into_iter().rev().fold(body, |body, (_, k, t)| {
-                        Term::Let(k, Arc::new(t), Arc::new(body))
+                        Term::Let(k, Shared::new(t), Shared::new(body))
                     })
                 });
                 m.give(t);
@@ -1368,7 +1372,7 @@ impl<'a> Elab<'a> {
                     vec![(
                         t.to_string(),
                         t,
-                        Term::Push(port.as_str().into(), Arc::new(v)),
+                        Term::Push(port.as_str().into(), Shared::new(v)),
                     )]
                 });
                 m.ret = Ret::Stmt(out);
@@ -1391,9 +1395,9 @@ impl<'a> Elab<'a> {
                             (ff.thunks).push((
                                 k.to_string(),
                                 k.clone(),
-                                Term::Lam(reads, Arc::new(t)),
+                                Term::Lam(reads, Shared::new(t)),
                             ));
-                            Term::App(Arc::new(Term::Var(k)), args)
+                            Term::App(Shared::new(Term::Var(k)), args)
                         };
                         self.defaults.insert((ff.id, j), at_call);
                     }
@@ -1424,7 +1428,7 @@ impl<'a> Elab<'a> {
                     let mut out = vec![(
                         f.name.clone(),
                         self.names[id].clone(),
-                        Term::Lam(params, Arc::new(body)),
+                        Term::Lam(params, Shared::new(body)),
                     )];
                     out.extend(thunks);
                     out
@@ -1446,7 +1450,7 @@ impl<'a> Elab<'a> {
                             start: input.span.start,
                             end: expected.span.end,
                         };
-                        let callee = Arc::new(Term::Var(self.names[tf.id].clone()));
+                        let callee = Shared::new(Term::Var(self.names[tf.id].clone()));
                         let call = Term::App(callee, args.clone());
                         self.tests.push(Test {
                             function: tf.f.name.clone(),
@@ -1479,7 +1483,7 @@ impl<'a> Elab<'a> {
                 let t = all(m.got()).map(|ts| {
                     let mut args: Vec<Term> = receiver.into_iter().collect();
                     args.extend(ts);
-                    Term::App(Arc::new(f), args)
+                    Term::App(Shared::new(f), args)
                 });
                 m.give(t);
             }
@@ -1516,9 +1520,9 @@ impl<'a> Elab<'a> {
                     None => call,
                     Some((t, x)) => Term::Let(
                         t.clone(),
-                        Arc::new(x),
-                        Arc::new(Term::Match(
-                            Arc::new(Term::Var(t.clone())),
+                        Shared::new(x),
+                        Shared::new(Term::Match(
+                            Shared::new(Term::Var(t.clone())),
                             vec![(KPattern::AnyAtom, Term::Var(t)), (KPattern::Wild, call)],
                         )),
                     ),
@@ -1537,7 +1541,7 @@ impl<'a> Elab<'a> {
                                 let rest: Vec<Arc<str>> = (1..n).map(|_| self.temp()).collect();
                                 let mut args = vec![k];
                                 args.extend(rest.iter().map(|r| Term::Var(r.clone())));
-                                Some(Term::Lam(rest, Arc::new(Term::App(self.fv(id), args))))
+                                Some(Term::Lam(rest, Shared::new(Term::App(self.fv(id), args))))
                             }
                         }
                     }
@@ -1549,7 +1553,7 @@ impl<'a> Elab<'a> {
                     let [v, i]: [Term; 2] = ts.try_into().expect("two terms");
                     match &k.kind {
                         ExprKind::Int { .. } => Term::Prim(Prim::TupleGet, vec![v, i]),
-                        _ => Term::App(Arc::new(v), vec![i]),
+                        _ => Term::App(Shared::new(v), vec![i]),
                     }
                 });
                 m.give(t);
@@ -1576,14 +1580,14 @@ impl<'a> Elab<'a> {
                         extra,
                     } = *ff;
                     let body = (extra.iter().rev().zip(ds)).fold(body, |body, (&i, d)| {
-                        Term::Let(self.kname(&params[i]), Arc::new(d), Arc::new(body))
+                        Term::Let(self.kname(&params[i]), Shared::new(d), Shared::new(body))
                     });
-                    Term::Lam(names, Arc::new(body))
+                    Term::Lam(names, Shared::new(body))
                 });
                 m.give(t);
             }
             Frame::Lambda(names) => {
-                let t = m.t().map(|body| Term::Lam(names, Arc::new(body)));
+                let t = m.t().map(|body| Term::Lam(names, Shared::new(body)));
                 m.give(t);
             }
         }
@@ -1643,7 +1647,7 @@ impl<'a> Elab<'a> {
         }
         let arms = [(KPattern::Is(t), true), (KPattern::Wild, false)];
         Some(Term::Match(
-            Arc::new(v),
+            Shared::new(v),
             arms.map(|(p, b)| (p, Term::Lit(Value::Bool(b != negated))))
                 .to_vec(),
         ))
@@ -1670,7 +1674,7 @@ impl<'a> Elab<'a> {
         let t = self.temp();
         let arm = pat.unwrap_or(KPattern::AnyAtom);
         Some(Term::Match(
-            Arc::new(v),
+            Shared::new(v),
             vec![(arm, d), (KPattern::Bind(t.clone()), Term::Var(t))],
         ))
     }
@@ -1719,7 +1723,7 @@ fn string(parts: &[StrPart], holes: Vec<Term>) -> Term {
             StrPart::Text(t) => terms.push(Term::Lit(Value::str(t))),
             StrPart::Hole(_) => {
                 let h = holes.next().expect("a hole's term");
-                terms.push(Term::App(Arc::new(Term::Var("String".into())), vec![h]));
+                terms.push(Term::App(Shared::new(Term::Var("String".into())), vec![h]));
             }
         }
     }

@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use zed_kernel::term::{FixKind, Pattern, Term};
+use zed_kernel::term::{FixKind, Pattern, Shared, Term};
 
 /// The canonical name of the binder at de Bruijn level `level`. It starts with U+0000, which no
 /// written name contains: the lexer rejects the character in source text.
@@ -183,7 +183,7 @@ pub(crate) fn each_child<'t>(t: &'t Term, mut f: impl FnMut(&'t Term)) {
 
 /// `t` with each child replaced by `f(child)`, for a term that binds nothing.
 pub(crate) fn map_children(t: &Term, f: &mut impl FnMut(&Term) -> Term) -> Term {
-    let a = |t: &Arc<Term>, f: &mut dyn FnMut(&Term) -> Term| Arc::new(f(t));
+    let a = |t: &Shared, f: &mut dyn FnMut(&Term) -> Term| Shared::new(f(t));
     match t {
         Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => t.clone(),
         Term::App(g, args) => Term::App(a(g, f), args.iter().map(&mut *f).collect()),
@@ -299,7 +299,7 @@ impl Renamed {
 /// Renames the first written binder in preorder at binder depth `depth`. Returns the new term
 /// and the binder's written name.
 fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
-    let arc = |t: Term| Arc::new(t);
+    let arc = Shared::new;
     match t {
         Term::Lam(params, body) => {
             if let Some(r) = Renamed::of(params, depth) {
@@ -375,7 +375,7 @@ fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
             kind: FixKind::Definedness,
             ev,
         } => {
-            let fix = |init: &Arc<Term>, this: &Arc<str>, key: &Arc<str>, step: Term| Term::Fix {
+            let fix = |init: &Shared, this: &Arc<str>, key: &Arc<str>, step: Term| Term::Fix {
                 init: init.clone(),
                 step: arc(step),
                 this: this.clone(),
@@ -436,7 +436,7 @@ fn rename_pattern_bind(p: &Pattern, i: &mut usize, new: &Arc<str>) -> Pattern {
 /// `t` with the free occurrences of the variable `old` renamed to `new`. A binder of `old`
 /// inside `t` shadows it below.
 fn rename(t: &Term, old: &str, new: &Arc<str>) -> Term {
-    let arc = |t: Term| Arc::new(t);
+    let arc = Shared::new;
     let under = |names: &[&str], body: &Term| {
         if names.contains(&old) {
             body.clone()
@@ -556,7 +556,7 @@ impl Levels {
     /// deep term does not grow the thread's stack; the walk visits the subterms in the order
     /// of the recursion it replaces, so the names come out the same.
     fn term(&mut self, t: &Term) -> Term {
-        let arc = |t: Term| Arc::new(t);
+        let arc = Shared::new;
         let mut todo = vec![Walk::Term(t, 0)];
         let mut done: Vec<Term> = Vec::new();
         let mut arms: Vec<(Pattern, Term)> = Vec::new();

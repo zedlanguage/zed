@@ -20,11 +20,9 @@
 //! definition's term replaced, so it costs that definition and the tables that reach it, not
 //! a new parse, check or elaboration.
 
-use std::sync::Arc;
-
 use zed_kernel::num::TooLarge;
 use zed_kernel::provenance::{Position, child, child_mut};
-use zed_kernel::{Prim, Rat, Term, Value};
+use zed_kernel::{Prim, Rat, Shared, Term, Value};
 
 use crate::ast::{Stmt, StmtKind};
 use crate::elab::{self, Cones, Mark, Unit};
@@ -328,7 +326,7 @@ pub fn run(
         if built[def].is_none() {
             built[def] = Some(remix.mix(original));
         }
-        let term = Arc::new(apply(original, &mutant.at, &mutant.to));
+        let term = Shared::new(apply(original, &mutant.at, &mutant.to));
         let verdict = if built[def].as_ref() == Some(&remix.mix(&term)) {
             Verdict::Skipped
         } else if rows[def].is_empty() {

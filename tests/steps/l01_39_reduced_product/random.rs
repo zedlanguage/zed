@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
 use zed_tests::instances::Rng;
@@ -41,7 +42,7 @@ fn lit(n: i64) -> Term {
 }
 
 fn if_(c: Term, a: Term, b: Term) -> Term {
-    Term::If(Arc::new(c), Arc::new(a), Arc::new(b))
+    Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
 }
 
 impl Shape {
@@ -61,8 +62,8 @@ impl Shape {
     fn body(&self) -> Term {
         Term::Let(
             "z".into(),
-            Arc::new(self.z.clone()),
-            Arc::new(if_(
+            Shared::new(self.z.clone()),
+            Shared::new(if_(
                 self.outer.clone(),
                 if_(self.inner.clone(), lit(1), lit(2)),
                 if_(self.last(), lit(3), lit(4)),
@@ -81,7 +82,7 @@ impl Shape {
 /// The value of `t` at the state `env`.
 fn at(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Option<Value> {
     let t = env.iter().fold(t.clone(), |b, (n, v)| {
-        Term::Let(n.clone(), Arc::new(Term::Lit(v.clone())), Arc::new(b))
+        Term::Let(n.clone(), Shared::new(Term::Lit(v.clone())), Shared::new(b))
     });
     Evaluator::new(World::new()).run(&t).ok()
 }
@@ -168,11 +169,11 @@ fn every_value_that_reaches_an_arm_is_in_its_scope() {
 /// if <test> { if <test> { 1 } else { 2 } } else { if h(x, y) > c { 3 } else { 4 } }
 /// ```
 fn helper_body(s: &Shape) -> (Term, Term, Term) {
-    let h = Term::Lam(vec!["x".into(), "y".into()], Arc::new(s.z.clone()));
+    let h = Term::Lam(vec!["x".into(), "y".into()], Shared::new(s.z.clone()));
     let last = Term::Prim(
         Prim::Gt,
         vec![
-            Term::App(Arc::new(var("h")), vec![var("x"), var("y")]),
+            Term::App(Shared::new(var("h")), vec![var("x"), var("y")]),
             lit(s.c),
         ],
     );
@@ -181,7 +182,7 @@ fn helper_body(s: &Shape) -> (Term, Term, Term) {
         if_(s.inner.clone(), lit(1), lit(2)),
         if_(last.clone(), lit(3), lit(4)),
     );
-    let body = Term::Let("h".into(), Arc::new(h.clone()), Arc::new(body));
+    let body = Term::Let("h".into(), Shared::new(h.clone()), Shared::new(body));
     (body, last, h)
 }
 
@@ -231,7 +232,13 @@ fn agree(arms: &[Arm], paths: &[Term], name: &str, value: &Term) -> Result<usize
         ("y".into(), IntervalSet::top()),
     ]
     .into();
-    let closed = |t: &Term| Term::Let(name.into(), Arc::new(value.clone()), Arc::new(t.clone()));
+    let closed = |t: &Term| {
+        Term::Let(
+            name.into(),
+            Shared::new(value.clone()),
+            Shared::new(t.clone()),
+        )
+    };
     let exact =
         |t: &Term, o: bool| on_stack(|| preimage(&closed(t), &doms, &Demand::Bool(o))).exact;
     let function = matches!(value, Term::Lam(..));

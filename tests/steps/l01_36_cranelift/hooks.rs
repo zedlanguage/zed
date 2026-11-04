@@ -3,6 +3,7 @@
 //! port as the condition of an `if`.
 
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Value, World};
@@ -71,7 +72,7 @@ fn a_named_atom_gives_each_field_to_its_binder() {
         ],
     );
     let t = Term::Match(
-        Arc::new(atom),
+        Shared::new(atom),
         vec![(p, prim(Prim::Tuple, vec![var("v"), var("u")]))],
     );
     assert_eq!(agreed(&t, World::new()).0, r#"("x1", "y")"#);

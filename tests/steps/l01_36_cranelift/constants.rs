@@ -4,6 +4,7 @@
 //! machine and native code agree with fusion and without it.
 
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::{Evaluator, Pattern, Prim, Term, Value, World};
@@ -43,7 +44,7 @@ fn below_a_constant_in_a_shared_cell() -> Term {
         "q",
         row(),
         Term::Match(
-            Arc::new(prim(Prim::Tuple, vec![var("q"), var("q")])),
+            Shared::new(prim(Prim::Tuple, vec![var("q"), var("q")])),
             vec![(p, var("b"))],
         ),
     )
@@ -87,7 +88,7 @@ fn a_binder_beside_a_constant_in_a_shared_cell() {
         "q",
         row(),
         Term::Match(
-            Arc::new(prim(Prim::Tuple, vec![var("q"), var("q")])),
+            Shared::new(prim(Prim::Tuple, vec![var("q"), var("q")])),
             vec![(p, body)],
         ),
     );
@@ -100,7 +101,7 @@ fn a_binder_below_a_constant_in_a_unique_cell() {
         Pattern::Tuple(vec![Pattern::Wild, bind("b")]),
         Pattern::Wild,
     ]);
-    let t = Term::Match(Arc::new(row()), vec![(p, var("b"))]);
+    let t = Term::Match(Shared::new(row()), vec![(p, var("b"))]);
     agrees(&t, Value::str("x"));
 }
 
@@ -123,7 +124,7 @@ fn a_binder_below_a_constant_atom_in_a_shared_cell() {
         "q",
         q,
         Term::Match(
-            Arc::new(prim(Prim::Tuple, vec![var("q"), var("q")])),
+            Shared::new(prim(Prim::Tuple, vec![var("q"), var("q")])),
             vec![(p, var("b"))],
         ),
     );

@@ -19,12 +19,14 @@ mod random;
 mod s22;
 mod scaling;
 mod scopes;
+mod shared;
 mod stops;
 mod tonicity;
 mod wide_constants;
 mod wide_ends;
 
 use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::{Term, Value, eval};
 use zedc::store::interval::{End, IntervalSet};
@@ -49,7 +51,7 @@ pub(crate) fn function(src: &str) -> (Vec<Arc<str>>, Term) {
         panic!("{src}: `{k}` is not a function")
     };
     let body = lets.iter().rev().fold((**body).clone(), |b, (n, e)| {
-        Term::Let(n.clone(), e.clone(), Arc::new(b))
+        Term::Let(n.clone(), e.clone(), Shared::new(b))
     });
     (ps.clone(), with_prelude(body))
 }
@@ -104,7 +106,11 @@ fn meets(body: &Term, names: &[Arc<str>], point: &[i64], demand: &Demand) -> boo
         .zip(point)
         .rev()
         .fold(body.clone(), |t, (n, &v)| {
-            Term::Let(n.clone(), Arc::new(Term::Lit(Value::Int(v))), Arc::new(t))
+            Term::Let(
+                n.clone(),
+                Shared::new(Term::Lit(Value::Int(v))),
+                Shared::new(t),
+            )
         });
     eval(&t).is_ok_and(|v| demand.holds(&v))
 }

@@ -1,6 +1,6 @@
 //! Fact addresses in kernel terms: calls, higher-order calls, and every region form.
 
-use std::sync::Arc;
+use zed_kernel::Shared;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Family, GuardPos, Pattern, Prim, Term, Value, World};
@@ -289,9 +289,9 @@ fn a_definedness_entry_is_one_fact_however_many_attempts_it_took() {
 fn a_generation_names_its_step_and_guard_by_t() {
     // Halve 40 while it is even: 40, 20, 10, 5.
     let t = Term::Gen {
-        init: Arc::new(lit(40)),
-        step: Arc::new(lam(&["x"], idiv(var("x"), lit(2)))),
-        guard: Arc::new(lam(&["x"], eq(modulo(var("x"), lit(2)), lit(0)))),
+        init: Shared::new(lit(40)),
+        step: Shared::new(lam(&["x"], idiv(var("x"), lit(2)))),
+        guard: Shared::new(lam(&["x"], eq(modulo(var("x"), lit(2)), lit(0)))),
         pos: GuardPos::Before,
     };
     let (v, p) = trace(&t);

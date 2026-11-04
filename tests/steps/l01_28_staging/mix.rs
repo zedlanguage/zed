@@ -111,9 +111,13 @@ fn the_form_rule_reads_calls_and_family_operators() {
     use zed_kernel::Term;
     use zed_kernel::term::build::{lam, lit, var};
     use zedc::stage::ends;
-    let app = |f: Term, args: Vec<Term>| Term::App(std::sync::Arc::new(f), args);
+    let app = |f: Term, args: Vec<Term>| Term::App(zed_kernel::Shared::new(f), args);
     let lt = |x: &str, e: Term, b: Term| {
-        Term::Let(x.into(), std::sync::Arc::new(e), std::sync::Arc::new(b))
+        Term::Let(
+            x.into(),
+            zed_kernel::Shared::new(e),
+            zed_kernel::Shared::new(b),
+        )
     };
     // A lambda called directly, by a `let` name, or a prelude word ends.
     assert!(ends(&app(lam(&["x"], var("x")), vec![lit(1i64)])));

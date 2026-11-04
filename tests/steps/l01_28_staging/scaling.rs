@@ -3,6 +3,7 @@
 //! nested definitions was read `O(n)` times, each reading through a scope of `O(n)` names.
 
 use std::collections::BTreeMap;
+use zed_kernel::Shared;
 
 use std::sync::Arc;
 use zed_tests::scaling::{self, FACTOR};
@@ -91,14 +92,13 @@ fn the_values_passed_by_many_definitions_are_read_in_time_that_scales() {
 fn the_form_rule_on_many_nested_lets_calling_a_prelude_word_scales() {
     // Each call through a name looked for it among every name bound around the call, and a
     // prelude word is bound by none of them.
-    use std::sync::Arc;
     use zed_kernel::Term;
     use zed_kernel::term::build::var;
     use zedc::stage::ends;
     let lets = |n: usize| {
         (1..=n).rev().fold(var(&format!("x{n}")), |b, i| {
-            let e = Term::App(Arc::new(var("len")), vec![var(&format!("x{}", i - 1))]);
-            Term::Let(format!("x{i}").into(), Arc::new(e), Arc::new(b))
+            let e = Term::App(Shared::new(var("len")), vec![var(&format!("x{}", i - 1))]);
+            Term::Let(format!("x{i}").into(), Shared::new(e), Shared::new(b))
         })
     };
     deep(move || {
@@ -109,10 +109,10 @@ fn the_form_rule_on_many_nested_lets_calling_a_prelude_word_scales() {
         scaling::check("the form rule on n nested lets", 1000, |n| {
             assert!(ends(&terms[&n]));
         });
-        let call_f = |b| Term::App(Arc::new(var("f")), vec![b]);
-        let bound_to_param = Term::Lam(vec!["f".into()], Arc::new(lets(3)));
+        let call_f = |b| Term::App(Shared::new(var("f")), vec![b]);
+        let bound_to_param = Term::Lam(vec!["f".into()], Shared::new(lets(3)));
         assert!(ends(&bound_to_param), "`len` is not `f`");
-        let calls_param = Term::Lam(vec!["f".into()], Arc::new(call_f(lets(3))));
+        let calls_param = Term::Lam(vec!["f".into()], Shared::new(call_f(lets(3))));
         assert!(!ends(&calls_param));
     });
 }
@@ -162,7 +162,7 @@ fn deep_units(n: usize) -> Vec<(&'static str, Unit, Term)> {
         defs: vec![Def {
             name: "main".into(),
             kernel: "main".into(),
-            term: Arc::new(lam(&["p"], t)),
+            term: Shared::new(lam(&["p"], t)),
             first_order: false,
         }],
         tests: Arc::new([]),
