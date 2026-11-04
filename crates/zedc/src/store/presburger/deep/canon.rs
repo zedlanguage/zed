@@ -25,8 +25,10 @@
 // `l01_38_presburger::shared::shifted_chains`, this is O(n^2). The exact methods known for
 // comparing two such compressed sequences (this parse; recompression, Jeż 2015; its longest
 // common extension, I 2017) cost n log N too; a hash of each sequence would be linear but
-// cannot decide equality alone. No answer is given up; the cost is. A complete solution keeps
-// each part's parse with the part, so that it is built once and not once per call.
+// cannot decide equality alone. The author accepted this cost on 2026-11-04: O(n log N) is
+// always acceptable where no O(n) algorithm is possible. No answer is given up; the cost is.
+// A complete solution keeps each part's parse with the part, so that it is built once and not
+// once per call.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
