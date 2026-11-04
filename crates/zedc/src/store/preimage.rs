@@ -2344,87 +2344,16 @@ impl<'t> Tx<'t> {
         }
     }
 
-    /// Whether the term reads an input, or `None` when it reads a term the catalog does not
-    /// follow.
+    /// [`Walk::mentions`] on a new stack.
     fn mentions(&mut self, t: Tid, env: Eid) -> Option<bool> {
-        self.cached(|m| &mut m.mentions, (t, env), |s| s.mentions_at(t, env))
+        let w = Walk::new(self);
+        w.stack.run(w.mentions(t, env))
     }
 
-    fn mentions_at(&mut self, t: Tid, env: Eid) -> Option<bool> {
-        let any = |s: &mut Self, ts: &mut dyn Iterator<Item = At>| -> Option<bool> {
-            let mut m = false;
-            for (t, e) in ts {
-                m |= s.mentions(t, e)?;
-            }
-            Some(m)
-        };
-        match self.node(t) {
-            Node::Int(_) | Node::Bool(_) | Node::Lit(_) | Node::PrimFn(_) => Some(false),
-            Node::Var(x) => match self.lookup(env, x) {
-                Some((bt, be)) => self.mentions(bt, be),
-                None => Some(self.cx.inputs.contains_key(self.name(x))),
-            },
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                any(self, &mut [(e, env), (b, inner)].into_iter())
-            }
-            Node::Lam(ps, b) => {
-                // A parameter is not an input, even where it shadows one.
-                let no = (self.terms.bool(false), ROOT);
-                let mut inner = env;
-                for i in 0..ps.len() {
-                    inner = self.bind(inner, self.param(ps, i), no);
-                }
-                self.mentions(b, inner)
-            }
-            Node::App(f, args) => {
-                let kids = (0..args.len()).map(|i| (self.arg(args, i), env));
-                let all: Vec<At> = std::iter::once((f, env)).chain(kids).collect();
-                any(self, &mut all.into_iter())
-            }
-            Node::Prim(_, args) => {
-                let all: Vec<At> = (0..args.len()).map(|i| (self.arg(args, i), env)).collect();
-                any(self, &mut all.into_iter())
-            }
-            Node::If(g, a, b) => any(self, &mut [(g, env), (a, env), (b, env)].into_iter()),
-            Node::Follow(v, own, _) => any(self, &mut [(v, env), (own, env)].into_iter()),
-            Node::Other => None,
-        }
-    }
-
-    /// Whether the term may read a remainder `u mod c`: `false` only when it reads none,
-    /// through its bindings, and calls no lambda. A run restricted to a class of remainders
-    /// reads the class only at a remainder ([`Tx::back_arith`], [`Tx::residue_test`]), so the
-    /// transfer of a term for which this is `false` is the same in every class.
+    /// [`Walk::reads_mod`] on a new stack.
     fn reads_mod(&mut self, t: Tid, env: Eid) -> bool {
-        self.cached(|m| &mut m.reads_mod, (t, env), |s| s.reads_mod_at(t, env))
-    }
-
-    fn reads_mod_at(&mut self, t: Tid, env: Eid) -> bool {
-        match self.node(t) {
-            Node::Int(_) | Node::Bool(_) | Node::Lit(_) => false,
-            Node::PrimFn(p) => p == Prim::Mod,
-            Node::Var(x) => match self.lookup(env, x) {
-                Some((bt, be)) => self.reads_mod(bt, be),
-                None => false,
-            },
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                self.reads_mod(e, env) || self.reads_mod(b, inner)
-            }
-            Node::Prim(p, args) => {
-                p == Prim::Mod || (0..args.len()).any(|i| self.reads_mod(self.arg(args, i), env))
-            }
-            Node::App(f, args) => {
-                !matches!(self.callee(f, env), Ok(Callee::Prim(p)) if p != Prim::Mod)
-                    || (0..args.len()).any(|i| self.reads_mod(self.arg(args, i), env))
-            }
-            Node::If(g, a, b) => {
-                self.reads_mod(g, env) || self.reads_mod(a, env) || self.reads_mod(b, env)
-            }
-            Node::Follow(v, own, _) => self.reads_mod(v, env) || self.reads_mod(own, env),
-            Node::Lam(..) | Node::Other => true,
-        }
+        let w = Walk::new(self);
+        w.stack.run(w.reads_mod(t, env))
     }
 
     /// [`Walk::close`] with no name bound within the term.
@@ -4135,6 +4064,212 @@ impl<'m, 't> Walk<'m, 't> {
 
     fn name(&self, x: Name) -> Arc<str> {
         self.with(|tx| tx.name(x).clone())
+    }
+
+    fn let_env(&self, n: Name, e: Tid, env: Eid) -> Eid {
+        self.with(|tx| tx.let_env(n, e, env))
+    }
+
+    fn call_env(&self, ps: Span, args: Span, lam: Eid, caller: Eid) -> Eid {
+        self.with(|tx| tx.call_env(ps, args, lam, caller))
+    }
+
+    fn callee(&self, f: Tid, env: Eid) -> Result<Callee, Option<Arc<str>>> {
+        self.with(|tx| tx.callee(f, env))
+    }
+
+    /// The answer of `f()`, remembered under `k` in `table`: wherever it is reached, or, when a
+    /// call it reads stopped at a lambda that was being read before it began, while the stack of
+    /// lambdas being read is no lower than it was then ([`Entry`]). Each read of such an entry
+    /// passes its stop on. Without the second kind, a term reached at many places under recursion
+    /// was read again at each: a chain of k operands named and read at r places took O(r k), and
+    /// an `if` d deep whose arms are one shared term took 2^d (ST-formula-k2-rec). A known answer
+    /// takes no frame.
+    fn cached<K, V, F>(
+        &'m self,
+        table: Table<K, V>,
+        k: K,
+        f: impl FnOnce() -> F + 'm,
+    ) -> Deep<'m, V>
+    where
+        K: Hash + Eq + Clone + 'static,
+        V: Clone + 'static,
+        F: Future<Output = V> + 'm,
+    {
+        #[cfg(test)]
+        self.with(|tx| tests::held_read(tx, table, &k));
+        let known = self.with(|tx| {
+            let entry = table(&mut tx.run.memo).get(&k);
+            entry.map(|(v, cut)| (v.clone(), *cut))
+        });
+        if let Some((v, cut)) = known {
+            #[cfg(test)]
+            let bypass = cut != usize::MAX && tests::BYPASS.get();
+            #[cfg(not(test))]
+            let bypass = false;
+            if !bypass {
+                #[cfg(test)]
+                if tests::RECHECK.get() && !tests::BYPASS.get() {
+                    return self.stack.call(async move {
+                        tests::recheck_walk(self, table, &k, &v, cut, f).await;
+                        self.with(|tx| tx.cx.cut = tx.cx.cut.min(cut));
+                        v
+                    });
+                }
+                self.with(|tx| tx.cx.cut = tx.cx.cut.min(cut));
+                return Stack::ready(v);
+            }
+        }
+        self.stack.call(self.made(table, k, f))
+    }
+
+    /// `f()` read and remembered, for [`Walk::cached`].
+    async fn made<K, V, F>(&'m self, table: Table<K, V>, k: K, f: impl FnOnce() -> F) -> V
+    where
+        K: Hash + Eq + Clone + 'static,
+        V: Clone + 'static,
+        F: Future<Output = V>,
+    {
+        let (base, outer) = self.with(|tx| {
+            let base = tx.run.active.len();
+            (base, std::mem::replace(&mut tx.cx.cut, usize::MAX))
+        });
+        let v = f().await;
+        self.with(|tx| {
+            let cut = tx.cx.cut;
+            #[cfg(test)]
+            if cut < base && !none_held() {
+                tests::held_made(tx, table, &k, base);
+            }
+            let m = &mut tx.run.memo;
+            if cut >= base {
+                table(m).insert(k, (v.clone(), usize::MAX));
+            } else if none_held() {
+                // The memo before ST-formula-k2-rec, which the tests compare with.
+            } else {
+                let unheld = Box::new({
+                    let k = k.clone();
+                    move |m: &mut Memo| {
+                        if table(m).get(&k).is_some_and(|e| e.1 != usize::MAX) {
+                            table(m).remove(&k);
+                        }
+                    }
+                });
+                table(m).insert(k, (v.clone(), cut));
+                m.held.push((base, unheld));
+            }
+            tx.cx.cut = outer.min(cut);
+        });
+        v
+    }
+
+    /// Whether the term reads an input, or `None` when it reads a term the catalog does not
+    /// follow.
+    fn mentions(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<bool>> {
+        self.cached(
+            |m| &mut m.mentions,
+            (t, env),
+            move || self.mentions_at(t, env),
+        )
+    }
+
+    async fn mentions_any(&'m self, ts: impl IntoIterator<Item = At>) -> Option<bool> {
+        let mut m = false;
+        for (t, e) in ts {
+            m |= self.mentions(t, e).await?;
+        }
+        Some(m)
+    }
+
+    async fn mentions_at(&'m self, t: Tid, env: Eid) -> Option<bool> {
+        match self.node(t) {
+            Node::Int(_) | Node::Bool(_) | Node::Lit(_) | Node::PrimFn(_) => Some(false),
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.mentions(bt, be).await,
+                None => Some(self.with(|tx| {
+                    let x = tx.name(x);
+                    tx.cx.inputs.contains_key(x)
+                })),
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.mentions_any([(e, env), (b, inner)]).await
+            }
+            Node::Lam(ps, b) => {
+                // A parameter is not an input, even where it shadows one.
+                let inner = self.with(|tx| {
+                    let no = (tx.terms.bool(false), ROOT);
+                    let mut inner = env;
+                    for i in 0..ps.len() {
+                        inner = tx.bind(inner, tx.param(ps, i), no);
+                    }
+                    inner
+                });
+                self.mentions(b, inner).await
+            }
+            Node::App(f, args) => {
+                let kids = (0..args.len()).map(|i| (self.arg(args, i), env));
+                let all: Vec<At> = std::iter::once((f, env)).chain(kids).collect();
+                self.mentions_any(all).await
+            }
+            Node::Prim(_, args) => {
+                let all: Vec<At> = (0..args.len()).map(|i| (self.arg(args, i), env)).collect();
+                self.mentions_any(all).await
+            }
+            Node::If(g, a, b) => self.mentions_any([(g, env), (a, env), (b, env)]).await,
+            Node::Follow(v, own, _) => self.mentions_any([(v, env), (own, env)]).await,
+            Node::Other => None,
+        }
+    }
+
+    /// Whether the term may read a remainder `u mod c`: `false` only when it reads none,
+    /// through its bindings, and calls no lambda. A run restricted to a class of remainders
+    /// reads the class only at a remainder ([`Walk::back_arith`], [`Walk::residue_test`]), so the
+    /// transfer of a term for which this is `false` is the same in every class.
+    fn reads_mod(&'m self, t: Tid, env: Eid) -> Deep<'m, bool> {
+        self.cached(
+            |m| &mut m.reads_mod,
+            (t, env),
+            move || self.reads_mod_at(t, env),
+        )
+    }
+
+    async fn reads_mod_args(&'m self, args: Span, env: Eid) -> bool {
+        for i in 0..args.len() {
+            if self.reads_mod(self.arg(args, i), env).await {
+                return true;
+            }
+        }
+        false
+    }
+
+    async fn reads_mod_at(&'m self, t: Tid, env: Eid) -> bool {
+        match self.node(t) {
+            Node::Int(_) | Node::Bool(_) | Node::Lit(_) => false,
+            Node::PrimFn(p) => p == Prim::Mod,
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.reads_mod(bt, be).await,
+                None => false,
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.reads_mod(e, env).await || self.reads_mod(b, inner).await
+            }
+            Node::Prim(p, args) => p == Prim::Mod || self.reads_mod_args(args, env).await,
+            Node::App(f, args) => {
+                !matches!(self.callee(f, env), Ok(Callee::Prim(p)) if p != Prim::Mod)
+                    || self.reads_mod_args(args, env).await
+            }
+            Node::If(g, a, b) => {
+                self.reads_mod(g, env).await
+                    || self.reads_mod(a, env).await
+                    || self.reads_mod(b, env).await
+            }
+            Node::Follow(v, own, _) => {
+                self.reads_mod(v, env).await || self.reads_mod(own, env).await
+            }
+            Node::Lam(..) | Node::Other => true,
+        }
     }
 
     /// The term with every bound name replaced by the closed term it is bound to, for a term
@@ -5873,6 +6008,59 @@ mod tests {
         }
         m.held = held;
         tx.run.active.extend(above.iter().copied());
+        let mut c = CHECKED.get();
+        if cut != usize::MAX {
+            c[2] += u64::from(!above.is_empty());
+            c[3] += u64::from(inputs);
+        }
+        CHECKED.set(c);
+        rechecked(v, &fresh, cut, again);
+    }
+
+    /// [`recheck`] on a [`Walk`].
+    pub(super) async fn recheck_walk<'m, 't, K: Hash, V: 'static, F: Future<Output = V>>(
+        w: &Walk<'m, 't>,
+        table: Table<K, V>,
+        k: &K,
+        v: &V,
+        cut: usize,
+        f: impl FnOnce() -> F,
+    ) {
+        let (above, inputs, held, outer) = w.with(|tx| {
+            // An entry that holds wherever it is reached is read again with no lambda being read.
+            let (base, inputs) = match cut {
+                usize::MAX => (0, false),
+                _ => MADE.with_borrow(|m| {
+                    let (below, inputs) = &m[&made_key(table, k)];
+                    (below.len(), *inputs != tx.cx.inputs)
+                }),
+            };
+            let above: Vec<(Tid, usize)> = (tx.run.active.iter())
+                .filter(|e| *e.1 >= base)
+                .map(|(&b, &at)| (b, at))
+                .collect();
+            for (b, _) in &above {
+                tx.run.active.remove(b);
+            }
+            // The entries made on the stack as it is are kept apart, out of reach of the lambdas
+            // read again, which are not the ones being read.
+            let held = std::mem::take(&mut tx.run.memo.held);
+            BYPASS.set(true);
+            let outer = std::mem::replace(&mut tx.cx.cut, usize::MAX);
+            (above, inputs, held, outer)
+        });
+        let fresh = f().await;
+        let again = w.with(|tx| {
+            let again = std::mem::replace(&mut tx.cx.cut, outer);
+            BYPASS.set(false);
+            let m = &mut tx.run.memo;
+            while let Some((_, unheld)) = m.held.pop() {
+                unheld(m);
+            }
+            m.held = held;
+            tx.run.active.extend(above.iter().copied());
+            again
+        });
         let mut c = CHECKED.get();
         if cut != usize::MAX {
             c[2] += u64::from(!above.is_empty());
