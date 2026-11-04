@@ -5,11 +5,13 @@
 //! out, with a separate copy of the part at each place (COMPLEXITY.md S31).
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
+use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, decide, project, satisfiable};
 
@@ -227,4 +229,143 @@ fn a_part_shared_many_times_over_is_read_once_per_pass() {
         project(&small, &Atom::Sym("x".into())).map(|s| s.to_string()),
         Ok("[0..]".to_string())
     );
+}
+
+/// The chain of rules `a0 = x >= 0 && y >= 0`, `a1 = x >= 1 <join> a0` and
+/// `ai = x >= i <join> a(i-1) <join> a(i-2)`, each a name kept whole where it is used, as the
+/// translator keeps the formula of a name used as an operand of `&&` or `||`
+/// ([`Formula::and_keeping`]), and `ad` returned. Each rule is one part, held by the two after
+/// it, so the chain written out holds `a0` a number of times exponential in `d`.
+fn named_chain(d: usize, and: bool) -> Formula {
+    let mut rules = vec![Formula::and(vec![con(1, 0, 0, false), con(0, 1, 0, false)])];
+    for i in 1..=d as i64 {
+        let mut fs = vec![con(1, 0, -i, false)];
+        fs.extend(rules.iter().rev().take(2).cloned());
+        // Every operand but the first, a constraint, is a name.
+        rules.push(if and {
+            Formula::and_keeping(fs, |j| j > 0)
+        } else {
+            Formula::or_keeping(fs, |j| j > 0)
+        });
+    }
+    rules.pop().expect("the last rule")
+}
+
+/// `named_chain(d, and)` with `x >= -1` joined after it.
+fn extended_chain(d: usize, and: bool) -> Formula {
+    let fs = vec![named_chain(d, and), con(1, 0, 1, false)];
+    if and {
+        Formula::and_keeping(fs, |j| j == 0)
+    } else {
+        Formula::or_keeping(fs, |j| j == 0)
+    }
+}
+
+#[test]
+fn comparing_a_named_chain_with_one_built_apart_takes_time_near_linear_in_its_length() {
+    // Two chains built apart share no part, so each pair of their parts is compared.
+    let built: BTreeMap<usize, Vec<[Formula; 3]>> = [30, 240]
+        .map(|d| {
+            let three = |and| {
+                [
+                    named_chain(d, and),
+                    named_chain(d, and),
+                    extended_chain(d, and),
+                ]
+            };
+            (d, vec![three(true), three(false)])
+        })
+        .into();
+    scaling::check(
+        "a chain of d names compared with an equal and an extended one built apart",
+        30,
+        |d| {
+            for [a, b, c] in &built[&d] {
+                assert!(a == b);
+                assert_eq!(a.cmp(c), Ordering::Less);
+                std::hint::black_box((a.cmp(b), c.cmp(a)));
+            }
+        },
+    );
+}
+
+/// The chain of [`named_chain`] built of nodes made here, with `y >= y0` in `a0`; when
+/// `regroup`, each rule `ai` from `a2` on is `(x >= i <join> a(i-1)) <join> a(i-2)`, a node
+/// of its own around the first two operands, so that its parts read as flattened are those
+/// of the chain but its nodes begin and end at other places.
+fn chain(d: usize, join: fn(Vec<Formula>) -> Formula, regroup: bool, y0: i64) -> Formula {
+    let mut rules = vec![join(vec![con(1, 0, 0, false), con(0, 1, -y0, false)])];
+    for i in 1..=d {
+        let x = con(1, 0, -(i as i64), false);
+        let a = rules[i - 1].clone();
+        rules.push(match i.checked_sub(2).map(|j| rules[j].clone()) {
+            Some(b) if regroup => join(vec![join(vec![x, a]), b]),
+            Some(b) => join(vec![x, a, b]),
+            None => join(vec![x, a]),
+        });
+    }
+    rules.pop().expect("the last rule")
+}
+
+/// The constraints of `f`, a conjunction or disjunction of constraints and of parts of its
+/// own variant, read as flattened, written out.
+fn flat(f: &Formula) -> Vec<Con> {
+    let mut out = Vec::new();
+    let mut stack = vec![f];
+    while let Some(g) = stack.pop() {
+        match g {
+            Formula::Con(c) => out.push(c.clone()),
+            Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter().rev()),
+            Formula::Not(_) => unreachable!("a chain holds no negation"),
+        }
+    }
+    out
+}
+
+#[test]
+fn chains_grouped_alike_or_otherwise_compare_as_their_constraints_written_out() {
+    for d in 0..=9 {
+        for join in [and as fn(Vec<Formula>) -> Formula, or] {
+            let extended = join(vec![chain(d, join, false, 0), con(1, 0, 1, false)]);
+            let fs = [
+                chain(d, join, false, 0),
+                chain(d, join, false, 0),
+                chain(d, join, true, 0),
+                extended,
+                chain(d, join, false, 1),
+                chain(d, join, true, 1),
+            ];
+            for p in &fs {
+                for q in &fs {
+                    let o = flat(p).cmp(&flat(q));
+                    assert_eq!(p.cmp(q), o, "d = {d}: {p} against {q}");
+                    if o == Ordering::Equal {
+                        assert_eq!(hash(p), hash(q), "d = {d}: {p}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn parts_entered_together_that_end_apart_are_not_taken_as_equal() {
+    // `p = [X, c2, X, c3]` and `q = [Y, Y, c4]` with `X = [c1]` and `Y = [c1, c2]`: `X` and
+    // `Y` are met at one point and their parts agree until `X` runs out, but they are not
+    // equal, so the second pair of them is compared again and `c3` meets `c2`.
+    let cs: Vec<Formula> = (1..=4).map(|i| con(1, 0, -i, false)).collect();
+    for join in [and as fn(Vec<Formula>) -> Formula, or] {
+        for c2 in &cs[1..] {
+            for c3 in &cs[1..] {
+                for c4 in &cs[1..] {
+                    let x = join(vec![cs[0].clone()]);
+                    let y = join(vec![cs[0].clone(), c2.clone()]);
+                    let p = join(vec![x.clone(), c2.clone(), x, c3.clone()]);
+                    let q = join(vec![y.clone(), y, c4.clone()]);
+                    assert_eq!(p.cmp(&q), flat(&p).cmp(&flat(&q)), "{p} against {q}");
+                    assert_eq!(q.cmp(&p), flat(&q).cmp(&flat(&p)), "{q} against {p}");
+                }
+            }
+        }
+    }
 }

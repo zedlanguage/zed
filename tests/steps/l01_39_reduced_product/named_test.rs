@@ -207,6 +207,8 @@ fn named_limits_and_exemptions_at_each_tier_narrow_as_if_written_out() {
         assert_eq!(exempt, summary(&arms_of(approval_exempt(d, k, false))));
         let any = summary(&arms_of(approval_any_limit(d, k, true)));
         assert_eq!(any, summary(&arms_of(approval_any_limit(d, k, false))));
+        let tier = summary(&arms_of(approval_any_tier(d, k, true)));
+        assert_eq!(tier, summary(&arms_of(approval_any_tier(d, k, false))));
     }
 }
 /// Runs the scaling check of `arms` on `family(d, d, true)` at d = 30 and 240.
@@ -331,7 +333,7 @@ fn chain_scaling(what: &str, join: fn(Term, Term) -> Term) {
 #[test]
 fn arms_of_a_chain_of_named_conjunctions_take_time_near_linear_in_its_length() {
     // With the named conjunctions kept whole, and `project_parts` and `Conjuncts::and` reading
-    // a shared part at each path to it, 82 s at d = 28 (the golden ratio to the d); read once,
+    // a shared part at each path to it, 82 s at d = 28 (about 1.618 to the d); read once,
     // 10.6 times the instructions and 11.1 times the bytes from d = 30 to 240. Without the
     // `project_parts` memo it did not finish in 100 s.
     chain_scaling(
@@ -349,4 +351,21 @@ fn arms_of_a_chain_of_named_disjunctions_take_time_near_linear_in_its_length() {
         "arms of d names, each the disjunction of the two before it",
         either,
     );
+}
+
+/// The approval where any of `d` tiers approves, tier `i` a request of size `z` at most `i`
+/// that waited at least `i`, each tier needing every one of `k` credit limits, named once.
+/// The tiers are side by side, so the limits are a conjunct of each disjunct.
+fn approval_any_tier(d: usize, k: usize, named: bool) -> Term {
+    let tiers = |t: &dyn Fn() -> Term| {
+        (0..d as i64)
+            .map(|i| all(vec![t(), ge("w", i), le("z", i)]))
+            .reduce(either)
+            .expect("a tier")
+    };
+    if named {
+        let_("t", all(limits(k)), tiers(&|| var("t")))
+    } else {
+        tiers(&|| all(limits(k)))
+    }
 }

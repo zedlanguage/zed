@@ -2311,8 +2311,12 @@ impl Parts {
     // are added to the base of each place, and a disjunction's list of k disjuncts is copied
     // into each (`ds.clone()`), where `settle`, `pick` and `witness` read it again. No answer is
     // given up. Trigger: a `let`-bound conjunction or disjunction of k parts used at each of d
-    // disjuncts of one disjunction costs O(d k) here, inferred from this code and not measured.
-    // The nested shapes are near linear (`Formula::and` and `Formula::or` keep a named part
+    // disjuncts of one disjunction costs O(d k) here: with k = d named credit limits in each of
+    // d tiers side by side, `product::arms` allocates 208.8 MB at d = 30 and 10.59 GB at 240,
+    // 50.7 times (ST-formula-wide repair 4). Conjoining a part common to every disjunct once,
+    // before the disjunction, changes answers, since `project_parts` hulls each disjunction of
+    // a part apart from the rest: `rule && (x <= 0 || y <= 0)` projects `x` to `[..]` where
+    // `(rule && x <= 0) || (rule && y <= 0)` gives `[..=0, 5..]`. The nested shapes are near linear (`Formula::and` and `Formula::or` keep a named part
     // whole): tests in `l01_39_reduced_product::named_test`
     // `arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth`,
     // `..._wide_named_disjunction_at_each_tier_...`, `..._wide_named_disjunction_required_at_each_tier_...`

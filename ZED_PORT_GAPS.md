@@ -992,6 +992,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `HashMap` memo keyed by a raw `*const Parts` address with the base constraints and symbols, holding an `Rc` of the key so the address is not reused, threaded by `&mut` through a recursive function | `project_parts` (`Below`) | Shared tables across pure calls (gap 2), mutation (gap 11) | A memo keyed by the value's identity, if the runtime gives one, in the state of a fold |
 | A `HashSet<*const Vec<Formula>>` of visited shared conjunctions, with the formulas held in a `Vec` so their addresses stay live, on an explicit stack | `Conjuncts::and_held` | Mutation (gap 11) | A fold over the worklist with the visited set in its state |
 | A visited `HashSet<Id>` built in one walk to find the parts reached through two or more parents | `deep::Id::reached_twice`, `Id::among`, `Formula::chooses` | Mutation (gap 11) | A fold with the set in its state |
+| Two stacks of `slice::Iter` over borrowed parts, each level tagged with the number of the entry it was entered with, read in step; a `HashSet<(Id, Id)>` of pairs found equal and a `Vec<Option<(Id, Id)>>` of open entries, `take`n when an entry ends | `deep::Side`, `deep::Level`, `Formula::cmp` | Mutation (gap 11), identity (gap 1) | A fold over the two sides' worklists with the set of equal pairs in its state, the pairs keyed by node identity |
 
 ## Entries from OSP-drop (`zedc/src/check/mod.rs`)
 

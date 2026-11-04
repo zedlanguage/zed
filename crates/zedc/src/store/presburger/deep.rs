@@ -121,13 +121,13 @@ fn hole() -> Formula {
 /// disjunction directly in a disjunction, were flattened into it, on a stack as deep as the
 /// nesting of the node's own kind.
 // Complexity tradeoff: a part of the node's own kind reached by several paths is read at each,
-// so that compare, hash and show agree with the formula written out (`l01_38_presburger::shared`
-// asserts it). Show writes the formula out, so a chain of names each conjoining the two before
-// it prints in size exponential in its length, as written out it would, and a comparison of
-// two such formulas that are not one node costs the number of paths. No answer is given up. The hash is a fold, linear in the distinct parts.
-// The tests of chains in `l01_39_reduced_product::named_test` do not print or compare such a
-// chain and pass at near-linear cost. A complete solution prints a named part by its name and
-// compares a node by its distinct parts.
+// so that show agrees with the formula written out (`l01_38_presburger::shared` asserts it).
+// Show writes the formula out, so a chain of names each conjoining the two before it prints in
+// size exponential in its length, as written out it would: messages have no syntax that names
+// a part of a formula, so the printed text cannot refer to a part already printed. Compare
+// does not read through `Flat` but pairs the two sides' parts ([`Formula::cmp`]), and the
+// hash is a fold linear in the distinct parts. No answer is given up. A complete solution
+// prints a named part by its name, once messages have a syntax for that.
 struct Flat<'a> {
     /// The node's variant ([`Formula::rank`]).
     kind: u8,
@@ -450,6 +450,94 @@ impl Clone for Formula {
     }
 }
 
+/// One side of a pair of nodes being compared: the parts left at each level of the node's own
+/// kind, the innermost last, as in [`Flat`], each with the number of the entry it was entered
+/// with when the other side entered its partner at the same point ([`Formula::cmp`]).
+struct Side<'a> {
+    left: Vec<(slice::Iter<'a, Formula>, Option<usize>)>,
+}
+
+impl<'a> Side<'a> {
+    fn of(g: &'a Formula) -> Side<'a> {
+        Side {
+            left: vec![(g.kids().iter(), None)],
+        }
+    }
+
+    /// The next part at the innermost level, not read through.
+    fn peek(&self) -> Option<&'a Formula> {
+        self.left.last().and_then(|(it, _)| it.as_slice().first())
+    }
+
+    fn advance(&mut self) {
+        if let Some((it, _)) = self.left.last_mut() {
+            it.next();
+        }
+    }
+
+    fn enter(&mut self, g: &'a Formula, entry: Option<usize>) {
+        self.left.push((g.kids().iter(), entry));
+    }
+
+    /// The entry of the innermost level if it has no parts left: `Some(None)` for a level
+    /// entered alone.
+    fn done(&self) -> Option<Option<usize>> {
+        self.left
+            .last()
+            .filter(|(it, _)| it.as_slice().is_empty())
+            .map(|&(_, e)| e)
+    }
+}
+
+/// A pair of nodes of one variant whose parts are being compared, read as flattened, with the
+/// key of the pair when one of the two is shared.
+struct Level<'a> {
+    kind: u8,
+    a: Side<'a>,
+    b: Side<'a>,
+    key: Option<(Id, Id)>,
+}
+
+impl<'a> Level<'a> {
+    fn of(x: &'a Formula, y: &'a Formula, key: Option<(Id, Id)>) -> Level<'a> {
+        Level {
+            kind: x.rank(),
+            a: Side::of(x),
+            b: Side::of(y),
+            key,
+        }
+    }
+
+    /// Leaves each inner level with no parts left. A pair of parts entered together and left
+    /// together had equal parts read as flattened, so it is kept as equal.
+    fn settle(&mut self, equal: &mut HashSet<(Id, Id)>, entries: &mut [Option<(Id, Id)>]) {
+        while self.a.left.len() + self.b.left.len() > 0 {
+            match (self.a.done(), self.b.done()) {
+                (Some(None), _) => {
+                    self.a.left.pop();
+                }
+                (_, Some(None)) => {
+                    self.b.left.pop();
+                }
+                (Some(Some(s)), Some(Some(t))) if s == t => {
+                    self.a.left.pop();
+                    self.b.left.pop();
+                    equal.extend(entries[s].take());
+                }
+                // A part entered with a partner whose parts are not yet all read: the pair is
+                // not kept, and its partner's level is left alone when its parts run out.
+                (Some(Some(_)), _) => {
+                    self.a.left.pop();
+                }
+                (_, Some(Some(_))) => {
+                    self.b.left.pop();
+                }
+                (None, None) => return,
+            }
+        }
+    }
+}
+
 impl Ord for Formula {
     /// The order the derived one would give on the formula with each conjunction directly in a
     /// conjunction, and each disjunction directly in a disjunction, flattened into it
@@ -457,7 +545,16 @@ impl Ord for Formula {
     /// parts in order with a prefix first. A conjunction that [`Formula::and`] keeps whole,
     /// since it is shared, is then equal to the one written out. A part compared with itself is
     /// equal at once (COMPLEXITY.md S31), and a pair of parts one of which is shared is
-    /// compared once per call: a pair found equal is kept.
+    /// compared once per call: a pair found equal is kept. Two kept parts of the level's own
+    /// kind met at one point of the two flattened sequences are entered together, and kept as
+    /// equal when their parts run out together, so a pair met again is passed over.
+    // Complexity tradeoff: a kept part entered on one side alone, against a part of the other
+    // side that is not kept, is read through at each place it is met, since its parts are then
+    // compared against parts grouped otherwise. Two formulas whose kept parts line up (a named
+    // chain against an equal one or one extended at either end, built apart) are compared at a
+    // cost linear in their distinct parts (`l01_38_presburger::shared`); two that group one
+    // sequence differently at many shared places cost the size of the sequence written out. A
+    // complete solution compares the sequences as compressed strings, which no test needs.
     fn cmp(&self, other: &Formula) -> Ordering {
         match self.cmp_node(other) {
             Ordering::Equal => {}
@@ -467,34 +564,58 @@ impl Ord for Formula {
             return Ordering::Equal;
         }
         let mut equal: HashSet<(Id, Id)> = HashSet::new();
-        // The parts left at the level being read, with the key of the pair whose parts they
-        // are when one of the two is shared, and above it those of the levels around it.
-        type Level<'a> = (Flat<'a>, Flat<'a>, Option<(Id, Id)>);
-        let mut level: Level = (Flat::of(self), Flat::of(other), None);
+        // The key of each pair entered together, until it is kept as equal.
+        let mut entries: Vec<Option<(Id, Id)>> = Vec::new();
+        let mut level = Level::of(self, other, None);
         let mut above: Vec<Level> = Vec::new();
         loop {
-            match (level.0.next(), level.1.next()) {
-                (Some(x), Some(y)) => match x.cmp_node(y) {
-                    Ordering::Equal if x.kids().is_empty() && y.kids().is_empty() => {}
-                    Ordering::Equal if x.same(y) => {}
-                    Ordering::Equal => {
-                        let key =
-                            (x.is_shared() || y.is_shared()).then(|| (Id::any(x), Id::any(y)));
-                        if key.as_ref().is_some_and(|k| equal.contains(k)) {
-                            continue;
-                        }
-                        above.push(mem::replace(&mut level, (Flat::of(x), Flat::of(y), key)));
+            level.settle(&mut equal, &mut entries);
+            let (x, y) = (level.a.peek(), level.b.peek());
+            let kind = level.kind;
+            match (x, y) {
+                (Some(x), Some(y)) if x.flattens_into(kind) && y.flattens_into(kind) => {
+                    level.a.advance();
+                    level.b.advance();
+                    if x.same(y) {
+                        continue;
                     }
-                    o => return o,
-                },
+                    let key = (Id::any(x), Id::any(y));
+                    if equal.contains(&key) {
+                        continue;
+                    }
+                    entries.push(Some(key));
+                    level.a.enter(x, Some(entries.len() - 1));
+                    level.b.enter(y, Some(entries.len() - 1));
+                }
+                (Some(x), _) if x.flattens_into(kind) => {
+                    level.a.advance();
+                    level.a.enter(x, None);
+                }
+                (_, Some(y)) if y.flattens_into(kind) => {
+                    level.b.advance();
+                    level.b.enter(y, None);
+                }
+                (Some(x), Some(y)) => {
+                    level.a.advance();
+                    level.b.advance();
+                    match x.cmp_node(y) {
+                        Ordering::Equal if x.kids().is_empty() && y.kids().is_empty() => {}
+                        Ordering::Equal if x.same(y) => {}
+                        Ordering::Equal => {
+                            let key =
+                                (x.is_shared() || y.is_shared()).then(|| (Id::any(x), Id::any(y)));
+                            if key.as_ref().is_some_and(|k| equal.contains(k)) {
+                                continue;
+                            }
+                            above.push(mem::replace(&mut level, Level::of(x, y, key)));
+                        }
+                        o => return o,
+                    }
+                }
                 (Some(_), None) => return Ordering::Greater,
                 (None, Some(_)) => return Ordering::Less,
                 (None, None) => match above.pop() {
-                    Some(l) => {
-                        if let Some(k) = mem::replace(&mut level, l).2 {
-                            equal.insert(k);
-                        }
-                    }
+                    Some(l) => equal.extend(mem::replace(&mut level, l).key),
                     None => return Ordering::Equal,
                 },
             }
@@ -522,7 +643,7 @@ impl Hash for Formula {
     /// that formulas equal under [`Ord`] write equal numbers. A shared part's number is found
     /// once per call.
     fn hash<H: Hasher>(&self, state: &mut H) {
-        /// An odd multiplier, the 64-bit golden ratio.
+        /// An odd multiplier, 2^64 divided by (1 + √5) / 2.
         const BASE: u64 = 0x9e37_79b9_7f4a_7c15;
         // Each node's number, and for a conjunction or disjunction its parts' numbers as one
         // polynomial in `BASE` and `BASE` to the count of its parts. A part of the node's own
