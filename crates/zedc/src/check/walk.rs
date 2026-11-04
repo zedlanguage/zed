@@ -120,7 +120,7 @@ pub(super) enum At {
 }
 
 /// What [`Ck::narrow`] changed, for [`Ck::widen`] to restore.
-pub(super) type Saved = Vec<(usize, Option<Ty>, Option<Rc<Origin>>)>;
+pub(super) type Saved<'a> = Vec<(usize, Option<Ty>, Option<Rc<Origin<'a>>>)>;
 
 pub(super) enum Job<'a> {
     /// An expression's type, recorded for derivations.
@@ -161,7 +161,7 @@ pub(super) enum Frame<'a> {
     },
     If3(Ty),
     /// Restores what a narrowing changed, and gives the result through.
-    Widen(Saved),
+    Widen(Saved<'a>),
     CondIs(&'a Expr),
     CondNot(Span),
     CondAnd1 {
@@ -169,7 +169,7 @@ pub(super) enum Frame<'a> {
         b: &'a Expr,
         span: Span,
     },
-    CondAnd2(Box<CondAnd>),
+    CondAnd2(Box<CondAnd<'a>>),
     CondOf,
     Logic1 {
         op: &'static str,
@@ -270,13 +270,13 @@ pub(super) struct TupleF<'a> {
     data: bool,
 }
 
-pub(super) struct CondAnd {
+pub(super) struct CondAnd<'a> {
     op: &'static str,
     span: Span,
     ta: Ty,
     ya: Facts,
     na: Facts,
-    saved: Saved,
+    saved: Saved<'a>,
 }
 
 pub(super) struct ScopeF<'a> {
@@ -788,8 +788,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     unreachable!("a function")
                 };
                 let id = self.id(s.span, &f.name);
-                let text = format!("`{}` is declared here, `{sig}`", f.name);
-                self.origin(id, s.span, text, None);
+                self.origin(id, s.span, Why::Declared(sig.clone()), None);
                 self.env.insert(id, Ty::func(sig.clone()));
                 self.put(Undo::Sig(id, Some(sig)));
             }
@@ -815,9 +814,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::AtomArgs(s) => self.atom_step(m, s),
             Frame::CallAlso { id, from, sig } => {
                 let out = m.take_ty();
-                if let Some(o) = self.whence.get(&id).cloned() {
-                    let text = format!("`{}` is declared here, `{sig}`", self.t.funcs[&id].name);
-                    self.also(from, Note { span: o.span, text });
+                if let Some(o) = self.whence.get(&id).map(|o| o.span) {
+                    let t = self.t;
+                    let name = &t.funcs[&id].name;
+                    self.also(from, o, || format!("`{name}` is declared here, `{sig}`"));
                 }
                 m.ty(out);
             }
@@ -1097,8 +1097,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         match &targets[..] {
             [Target::Name(n, _)] => {
                 let id = self.id(s.span, n);
-                let text = format!("`{n}` is defined as this expression, {v}");
-                self.origin(id, value.span, text, Some(value.span));
+                self.origin(id, value.span, Why::Defined(v.clone()), Some(value.span));
                 self.alias.insert(id, value.span);
                 self.facts.insert(id, value);
                 self.env.insert(id, v);
@@ -1124,8 +1123,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     match target {
                         Target::Name(name, _) => {
                             let id = self.id(s.span, name);
-                            let text = format!("`{name}` is component {i} of this, {c}");
-                            self.origin(id, value.span, text, Some(value.span));
+                            let why = Why::Component(i, c.clone());
+                            self.origin(id, value.span, why, Some(value.span));
                             self.env.insert(id, c);
                         }
                         Target::Wild => {
@@ -1217,11 +1216,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Some(ports) = &f.ports {
             for p in ports {
                 let id = self.id(p.span, &p.name);
-                let text = format!("`{}` is an output port", p.name);
                 if matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
                     self.lines_out.insert(p.name.clone());
                 }
-                self.origin(id, p.span, text, None);
+                self.origin(id, p.span, Why::Port, None);
                 self.env.insert(id, Ty::dynamic());
             }
         }
@@ -1232,36 +1230,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let given = std::mem::take(&mut s.given);
         for ((id, p), g) in s.ids.iter().zip(&f.params).zip(given) {
-            let (t, text) = match (&p.ty, g) {
-                (Some(a), Some(t)) if t == Ty::dynamic() => {
-                    let shown = declared_text(a).unwrap_or_else(|| self.show(&t));
-                    let text = format!(
-                        "`{}` is declared `{shown}`, whose values the checker does not track: \
-                         it takes `{}` as unknown, _",
-                        p.name, p.name
-                    );
-                    (t, text)
-                }
+            let (t, why) = match (&p.ty, g) {
+                (Some(a), Some(t)) if t == Ty::dynamic() => (t, Why::Untracked(a)),
                 (Some(a), Some(t)) => {
-                    // A name is shown as written; any other type as the checker prints it.
-                    let shown = match &a.kind {
-                        TypeKind::Name(n) => n.clone(),
-                        _ => self.show(&t),
-                    };
-                    let text = format!("`{}` is declared `{shown}`", p.name);
-                    (t, text)
+                    let masks = self.masks(&t);
+                    (t.clone(), Why::Typed(a, t, masks))
                 }
-                (None, Some(t)) => {
-                    let text = format!("`{}` is {t}, the carrier of its default", p.name);
-                    (t, text)
-                }
+                (None, Some(t)) => (t.clone(), Why::Default(t)),
                 (_, None) => {
                     let k = self.class();
-                    let text = format!("`{}` has no declared type; its uses give it ${k}", p.name);
-                    (Ty::var(format!("${k}").into()), text)
+                    (Ty::var(format!("${k}").into()), Why::Untyped(k))
                 }
             };
-            self.origin(*id, p.span, text, None);
+            self.origin(*id, p.span, why, None);
             self.env.insert(*id, t.clone());
             s.tys.push(t);
         }

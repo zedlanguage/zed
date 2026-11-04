@@ -280,19 +280,116 @@ enum Src<'a> {
 /// so a tuple nested d deep keeps O(d) and not a copy of each level's type.
 type Seen<'a> = (Option<Ty>, Src<'a>);
 
-/// Where a binder's type comes from: the text, what it says, the expression whose derivation
-/// continues it, and the origin it narrows. A narrowing shares the origin it narrows, so
-/// narrowing a binder costs one origin however many tests already narrow it.
-struct Origin {
+/// Where a binder's type comes from: what it says, the expression whose derivation continues
+/// it, and the origin it narrows. A narrowing shares the origin it narrows, so narrowing a
+/// binder costs one origin however many tests already narrow it. What it says is kept as data
+/// and put into words only by a derivation that reaches it (step L1.39b), since a derivation
+/// is built only for a rejection that is reported.
+struct Origin<'a> {
     span: Span,
-    text: String,
+    why: Why<'a>,
     from: Option<Span>,
-    then: Option<Rc<Origin>>,
+    then: Option<Rc<Origin<'a>>>,
+}
+
+/// What an origin says of its binder, `b` below.
+enum Why<'a> {
+    /// `b` is a function declared with this signature.
+    Declared(Arc<Sig>),
+    /// `b` is defined as an expression of this type.
+    Defined(Ty),
+    /// `b` is this component of a tuple, of this type.
+    Component(usize, Ty),
+    /// `b` is an output port.
+    Port,
+    /// `b` is a parameter declared with this type, whose values the checker does not track.
+    Untracked(&'a Type),
+    /// `b` is a parameter declared with this type, which the checker takes as the given one.
+    Typed(&'a Type, Ty, Masks),
+    /// `b` is a parameter of this type, the carrier of its default.
+    Default(Ty),
+    /// `b` is a parameter with no declared type, given this class.
+    Untyped(usize),
+    /// `b` is narrowed to this type by a test.
+    Narrowed(Ty),
+}
+
+/// The carriers each class in a type was narrowed to when an origin was recorded: what
+/// [`Ck::show`] reads of the classes, kept so that a derivation printed later shows the type
+/// as it was then.
+type Masks = Vec<(Arc<str>, u8)>;
+
+/// `t` shown with each class of `masks`, a variable of `t` with its carriers, shown as the
+/// union of those carriers.
+fn show_with(t: &Ty, masks: &Masks) -> String {
+    if masks.is_empty() {
+        return t.to_string();
+    }
+    let mut rest = t.clone();
+    let mut parts = Vec::new();
+    let mut narrowed = 0;
+    for (v, m) in masks {
+        parts.push(mask_text(*m));
+        narrowed |= m;
+        rest.vars.remove(v);
+    }
+    if !rest.is_empty() {
+        parts.push(rest.to_string());
+    }
+    let text = parts.join(" | ");
+    #[cfg(feature = "printed-types")]
+    {
+        let carriers: Vec<Ty> = Carrier::of_mask(narrowed).map(Ty::carrier).collect();
+        ty::printed::record(&rest.union(&Ty::union_all(&carriers)), &text);
+    }
+    #[cfg(not(feature = "printed-types"))]
+    let _ = narrowed;
+    text
+}
+
+/// A use that removed carriers from a class, kept as data until a reported rejection lists
+/// it: where, what it is, and the carriers it takes, `None` for a merge.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Reason {
+    span: Span,
+    what: Box<str>,
+    takes: Option<u8>,
+}
+
+impl Reason {
+    fn note(&self) -> Note {
+        built(1);
+        let text = match self.takes {
+            Some(m) => format!("{} takes {}", self.what, mask_text(m)),
+            None => format!("{} gives these values one carrier", self.what),
+        };
+        Note {
+            span: self.span,
+            text,
+        }
+    }
+}
+
+thread_local! {
+    /// The parts of derivations built on this thread since [`derivation_steps`] last read
+    /// it: each expression a derivation walks and each premise put into words.
+    static DERIVED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn built(k: u64) {
+    DERIVED.with(|c| c.set(c.get() + k));
+}
+
+/// The parts of derivations built on this thread since the last call, which resets the
+/// count: each expression a derivation walked and each premise put into words. A check whose
+/// rejections are not reported builds none (step L1.39b).
+pub fn derivation_steps() -> u64 {
+    DERIVED.replace(0)
 }
 
 /// A chain of narrowings is as long as the tests nest, so its origins are dropped in a loop,
 /// each one whose last holder this is.
-impl Drop for Origin {
+impl Drop for Origin<'_> {
     fn drop(&mut self) {
         let mut next = self.then.take();
         while let Some(o) = next {
@@ -319,7 +416,7 @@ struct Class {
     /// class's carrier but does not restrict it.
     lits: Vec<(Lit, bool)>,
     /// The uses that removed carriers from it.
-    reasons: Vec<Note>,
+    reasons: Vec<Reason>,
     /// Its type, once the function of its level ends.
     resolved: Option<Ty>,
     /// What uses of its values need of them, each numbered in the order of all needs.
@@ -352,7 +449,7 @@ struct Ck<'t, 'a> {
     /// a bit word or an exponent reads the name.
     facts: HashMap<usize, &'a Expr>,
     /// Where each binder's type comes from.
-    whence: HashMap<usize, Rc<Origin>>,
+    whence: HashMap<usize, Rc<Origin<'a>>>,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
     /// The output ports declared `Lines`.
@@ -505,6 +602,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// is at most the size of the graph of origins it walks. The walk keeps its own stack,
     /// since a chain of definitions can be as long as the program.
     fn derive_into(&self, spans: &[Span], out: &mut Vec<Note>) {
+        if self.trying {
+            return;
+        }
         enum Work {
             Derive(Span),
             Show(Note),
@@ -529,6 +629,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some((kept, src)) = self.seen.get(&span) else {
                 continue;
             };
+            built(1);
             let ty = match (kept, src) {
                 (Some(t), _) => self.show(t),
                 (None, Src::Other(e)) => match self.tuple_seen(e) {
@@ -613,7 +714,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 next.push(note(b.span, format!("`{}` is bound here", b.name)));
             }
             while let Some(origin) = o {
-                next.push(note(origin.span, origin.text.clone()));
+                next.push(note(origin.span, self.said(id, &origin.why)));
                 if let Some(f) = origin.from {
                     next.push(Work::Derive(f));
                 }
@@ -652,16 +753,44 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Records where binder `id` gets its type.
-    fn origin(&mut self, id: usize, span: Span, text: String, from: Option<Span>) {
+    fn origin(&mut self, id: usize, span: Span, why: Why<'a>, from: Option<Span>) {
         self.whence.insert(
             id,
             Rc::new(Origin {
                 span,
-                text,
+                why,
                 from,
                 then: None,
             }),
         );
+    }
+
+    /// What the origin `why` of binder `id` says, in words: the one place an origin is put
+    /// into words, by a derivation that reaches it.
+    fn said(&self, id: usize, why: &Why<'a>) -> String {
+        built(1);
+        let b = &self.t.res.binders[id].name;
+        match why {
+            Why::Declared(sig) => format!("`{b}` is declared here, `{sig}`"),
+            Why::Defined(v) => format!("`{b}` is defined as this expression, {v}"),
+            Why::Component(i, c) => format!("`{b}` is component {i} of this, {c}"),
+            Why::Port => format!("`{b}` is an output port"),
+            Why::Untracked(a) => {
+                let shown = declared_text(a).unwrap_or_else(|| Ty::dynamic().to_string());
+                format!(
+                    "`{b}` is declared `{shown}`, whose values the checker does not track: \
+                     it takes `{b}` as unknown, _"
+                )
+            }
+            // A name is shown as written; any other type as the checker printed it then.
+            Why::Typed(a, t, masks) => match &a.kind {
+                TypeKind::Name(n) => format!("`{b}` is declared `{n}`"),
+                _ => format!("`{b}` is declared `{}`", show_with(t, masks)),
+            },
+            Why::Default(t) => format!("`{b}` is {t}, the carrier of its default"),
+            Why::Untyped(k) => format!("`{b}` has no declared type; its uses give it ${k}"),
+            Why::Narrowed(t) => format!("`{b}` is narrowed to {t} where this test decides"),
+        }
     }
 
     fn id(&self, span: Span, name: &str) -> usize {
@@ -1030,9 +1159,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.touch(r);
         let c = &mut self.classes[r];
         c.mask = m;
-        c.reasons.push(Note {
+        c.reasons.push(Reason {
             span,
-            text: format!("{what} takes {}", mask_text(mask)),
+            what: what.into(),
+            takes: Some(mask),
         });
         true
     }
@@ -1091,9 +1221,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             std::mem::swap(&mut c.reasons, &mut reasons);
         }
         c.reasons.extend(reasons);
-        c.reasons.push(Note {
+        c.reasons.push(Reason {
             span,
-            text: format!("{what} gives these values one carrier"),
+            what: what.into(),
+            takes: None,
         });
         c.mask = m;
         c.level = c.level.min(level);
@@ -1191,8 +1322,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let shown = self.show(r);
             self.error(n.span, format!("this use gives {got}, not {shown}"));
         }
-        let text = "this use needs it here".to_string();
-        self.also(from, Note { span: n.span, text });
+        self.also(from, n.span, || "this use needs it here".to_string());
     }
 
     /// The use `n`, of a value of `on`, checked at `span` where the variables of the
@@ -1342,8 +1472,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     binds.entry(v.clone()).or_insert_with(Ty::empty);
                 }
             }
-            let text = format!("{what} needs this of its argument here");
-            self.also(from, Note { span: n.span, text });
+            self.also(from, n.span, || {
+                format!("{what} needs this of its argument here")
+            });
         }
         left
     }
@@ -1544,45 +1675,38 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `t` shown with each class narrowed to some carriers shown as their union.
     fn show(&self, t: &Ty) -> String {
-        let mut rest = t.clone();
-        let mut parts = Vec::new();
-        let mut narrowed = 0;
+        show_with(t, &self.masks(t))
+    }
+
+    /// The classes of `t` narrowed to some carriers, each with its carriers: what
+    /// [`Self::show`] reads of the classes, in the order of `t`'s variables.
+    fn masks(&self, t: &Ty) -> Masks {
+        let mut out = Masks::new();
         for v in &t.vars {
             if let Some(r) = self.class_of(&Piece::Var(v.clone())) {
                 let m = self.classes[r].mask;
                 if m != EVERY && m & OTHER == 0 {
-                    parts.push(mask_text(m));
-                    narrowed |= m;
-                    rest.vars.remove(v);
+                    out.push((v.clone(), m));
                 }
             }
         }
-        if parts.is_empty() {
-            return t.to_string();
-        }
-        if !rest.is_empty() {
-            parts.push(rest.to_string());
-        }
-        let text = parts.join(" | ");
-        #[cfg(feature = "printed-types")]
-        {
-            let carriers: Vec<Ty> = Carrier::of_mask(narrowed).map(Ty::carrier).collect();
-            ty::printed::record(&rest.union(&Ty::union_all(&carriers)), &text);
-        }
-        #[cfg(not(feature = "printed-types"))]
-        let _ = narrowed;
-        text
+        out
     }
 
-    /// The uses that narrowed the classes in `t`.
+    /// The uses that narrowed the classes in `t`; none while a repair is tried, since its
+    /// errors are only counted.
     fn reasons(&self, t: &Ty) -> Vec<Note> {
         let mut out: Vec<Note> = Vec::new();
-        let mut seen: HashSet<&Note> = HashSet::new();
+        if self.trying {
+            return out;
+        }
+        let mut seen: HashSet<Note> = HashSet::new();
         for p in t.pieces() {
             if let Some(k) = self.class_of(&p) {
-                for n in &self.classes[k].reasons {
-                    if seen.insert(n) {
-                        out.push(n.clone());
+                for r in &self.classes[k].reasons {
+                    let n = r.note();
+                    if seen.insert(n.clone()) {
+                        out.push(n);
                     }
                 }
             }
@@ -1818,15 +1942,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Narrows the binders of `facts`, each origin now the test; gives what to restore.
-    fn narrow(&mut self, facts: &Facts) -> walk::Saved {
+    fn narrow(&mut self, facts: &Facts) -> walk::Saved<'a> {
         facts
             .iter()
             .map(|(b, t, test)| {
-                let name = &self.t.res.binders[*b].name;
                 let old = self.whence.get(b).cloned();
                 let o = Origin {
                     span: *test,
-                    text: format!("`{name}` is narrowed to {t} where this test decides"),
+                    why: Why::Narrowed(t.clone()),
                     from: None,
                     then: old.clone(),
                 };
@@ -1837,7 +1960,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Restores what [`Self::narrow`] changed.
-    fn widen(&mut self, saved: walk::Saved) {
+    fn widen(&mut self, saved: walk::Saved<'a>) {
         for (b, old, o) in saved.into_iter().rev() {
             match old {
                 Some(t) => self.env.insert(b, t),
@@ -2563,8 +2686,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
-    /// Adds `note` to each error from the `from`th on that lacks it.
-    fn also(&mut self, from: usize, note: Note) {
+    /// Adds the note at `span` that `text` words to each error from the `from`th on that lacks
+    /// it; the note is put into words only when there is such an error, and none while a
+    /// repair is tried, since its errors are only counted.
+    fn also(&mut self, from: usize, span: Span, text: impl FnOnce() -> String) {
+        if self.trying || self.info.errors.len() <= from {
+            return;
+        }
+        built(1);
+        let note = Note { span, text: text() };
         for e in &mut self.info.errors[from..] {
             if !e.notes.contains(&note) {
                 e.notes.push(note.clone());

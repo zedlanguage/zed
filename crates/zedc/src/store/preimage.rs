@@ -5042,6 +5042,18 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
 /// any integer.
 pub type Classes = BTreeMap<Arc<str>, Congruence>;
 
+thread_local! {
+    /// The boxes the searches of `@exact` preimages and witnesses took on this thread since
+    /// [`exact_steps`] last read it.
+    static EXACT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The boxes the searches of `@exact` preimages and witnesses took on this thread since the
+/// last call, which resets the count. Only a scope declared `@exact` searches (step L1.39b).
+pub fn exact_steps() -> u64 {
+    EXACT.replace(0)
+}
+
 /// The preimage of `demand` under `term` when its declaration is annotated `@exact`
 /// (DESIGN.md sec:constraints): [`preimage`], and where that is not exact, every input is
 /// bounded and the term's form shows that it ends, the projection of the points of the box, in
@@ -5248,6 +5260,7 @@ fn branch(
     let top = tx.terms.add(term);
     let mut boxes = vec![root];
     while let Some(b) = boxes.pop() {
+        EXACT.with(|c| c.set(c.get() + 1));
         if search.skip(&b) {
             continue;
         }
