@@ -18,29 +18,25 @@ the form it has may not meet the cost the compiler needs:
 
 | Gap | Rust construct | Sites | Class | Blocks | Proposed fix |
 |---|---|--:|---|---|---|
-| 1 | Identity: address-keyed memos, pointer equality, cached digests | 33 | missing | S.3, S.4 | Content digest as a field; `==` shortcut in the runtime |
+| 1 | Identity: address-keyed memos, pointer equality, cached digests | 33 | planned (L6.13a) | S.3, S.4 | Content digest as a field; `==` shortcut in the runtime |
 | 2 | Shared memo and intern tables across pure calls | 52 | workaround | S.3 | Digests from gap 1; state receivers for the rest |
 | 3 | Lazy once-only cells and tied recursive types | 27 | workaround | S.3 | Table of definitions keyed by id |
 | 4 | Bit operations, float bits | up to 192 | built (L1.39a) | S.2, S.3 | The bit words at L1, built by step L1.39a |
-| 5 | Bytes: spans, binary files, hashing input | 95 | missing | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
-| 6 | Command line, computed output paths, exit status | 9 | missing | S.5 | `Args` port, `Files` writes, an exit value |
-| 7 | Scalar to and from code point | 18 | missing | S.2 | Two L1 words |
-| 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | missing | S.2 | A word whose type is empty (conflicts with G5 and line 711), or an atom in each codomain |
-| 9 | Key range queries on ordered maps | 9 | missing | S.3 | `before` and `after` |
-| 10 | File import cycles | 3 cycles, 5 parent/child groups | Rust must change | S.2 | Move definitions in five, merge files in three; no Zed change |
+| 5 | Bytes: spans, binary files, hashing input | 95 | partly planned (L1.39c: `utf8`; no byte port) | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
+| 6 | Command line, computed output paths, exit status | 9 | planned (L1.19a, L1.36a; no computed paths) | S.5 | `Args` port, `Files` writes, an exit value |
+| 7 | Scalar to and from code point | 18 | planned (L1.39c, S.1c) | S.2 | Two L1 words |
+| 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | planned (S.1d, decision pending) | S.2 | A word whose type is empty (conflicts with G5 and line 711), or an atom in each codomain |
+| 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
+| 10 | File import cycles | 3 cycles, 5 parent/child groups | Rust must change (S.1f) | S.2 | Move definitions in five, merge files in three; no Zed change |
 
 Two more are in the workaround class and matter because of their cost, not their syntax: gap 11
-(mutation, which depends on step L6.13 keeping updates in place) and gap 12 (early exit).
+(mutation, which depends on step L6.13 keeping updates in place, with the report of copies of
+step L6.13b) and gap 12 (early exit, which the quantifiers of step L3.15a cover for searches).
 
-**ZED0.md is out of date.** Its section "Gaps found" says there is one, the Cranelift ports.
-Gaps 1, 4 to 9 above are further gaps. In particular its Part B lists `bitAnd`, `bitOr`, `bitXor`
-and `shl` as provided at L1 (ZED0.md line 48). DESIGN.md does use them (lines 589, 695, 2408), but
-they are missing from the words table (line 3343) and from `Prim` (`zed-kernel/term.rs:18`), and
-only `shl` has stated semantics (gap 4). The same row writes `%` by `2^32`; the grammar has neither
-operator (lines 3087, 3090, 3123), so this is `mod 2 ** 32`. ZED0.md line 47 assigns lexing by code
-point to the `String` functions, which provide no word for it (gap 7). Part B says nothing of
-bytes or arguments. This item writes only this file, so ZED0.md stands unchanged until step S.1,
-which should take its list from here.
+**ZED0.md is current** as of the audit of 2026-11-03: its Part B and "Gaps found" take their
+list from this file, and each gap above that the compiler meets before row S is now a step
+before its first use (DESIGN.md step S.1 lists them). The bit words are in the words table
+and built (gap 4); the content-address row writes `mod 2 ** 32`, as the grammar has no `%`.
 
 **The claim most likely to be wrong** is gap 11's: that primed receivers and `*.` cost O(1) per
 update on a compiler state struct. That rests on step L6.13, which is not built, so the claim
@@ -358,8 +354,8 @@ Forms, confirmed in DESIGN.md:
   adds the expected type's bounded variables, recurses through `accepts`, then removes them)
   becomes a persistent map passed down, so nothing is undone. The printer's `&mut String`
   (`Ty::write`, `Sig::write`) becomes a fold over text pieces joined once, which keeps it O(n).
-- Open point: whether `*.` reaches a nested receiver such as `self.classes[i]*.m()`. DESIGN.md
-  says it "needs a state receiver" and does not define that for a nested path. Fix: define it.
+- A nested receiver such as `self.classes[i]*.m()` is defined: DESIGN.md (sec:tour_methods,
+  the `*.` rule) lets the receiver be any keypath the one-writer rule accepts, entries included.
 
 Cost: `blocks` (`product.rs:492`), `weak_topological_order` (`wto.rs:83`) and the union-find of
 `Ck` need O(1) writes to dense arrays. In Zed that is reuse in place, by provable last use
