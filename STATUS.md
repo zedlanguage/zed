@@ -986,22 +986,24 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ADDR-cell | impl attempt 1 | 2026-11-03 16:28 | negative control (set() without visited set, not committed): loop summary 200->1600 took 62.4M->5800M instructions, 93.0x vs limit 24 (load 54); at 2000->16000  |
-| CHK-cost | impl attempt 1 | 2026-11-03 15:48 | negative control at b0a733ff (old code, new tests, sizes cut to fit 60 s): nested lambdas 54.2x bytes at 8n, nested tuples 212.8x, variable in nested tuples 201 |
-| ISSUE1-else-atoms | repair attempt 1 | 2026-11-03 16:04 | aliases followed: resolver records s = name bindings (Resolution::aliases), check::handled joins them in a union-find; alias probes print 'the body ran'; chain- |
-| LIT-adopt | impl attempt 1 | 2026-11-03 16:46 | negative control (ctl, base data() clone walk + base tuple_step): deep-tuple check_order fails, sizes 32/256 allocate 29.1 MB / 4118 MB, 141.7x > 24x; with the  |
-| NAME-ties | repair attempt 2 | 2026-11-03 09:30 | Refusal::Unordered + settle_as_sets built; names incl. disjunctions_whose_atoms_share_a_color: 25/25 pass (was 5/1000 name-dependent); full suite started / load |
-| NARROW-if | impl attempt 1 | 2026-11-03 16:46 | arms.rs: test nodes + lazy reduced-product scopes; pc.zed and the four ** repros pass |
-| PRINT-tyvars | repair attempt 2 | 2026-11-03 16:46 | start: continue wt/print-tyvars c13e06d6; rebase on main 2c3d97ac, fix named_calls pin, resolve fence drift |
+| ADDR-cell | verify attempt 1 | 2026-11-03 16:28 | tools/run_tests.sh 2: 337 pieces, 0 failed, load 24.0-42.5; starting negative control (set() visited check disabled, in place, to be reverted) |
+| ADDR-memory | impl attempt 1 | 2026-11-03 16:28 | started; ledger shows queued, no one fixing |
+| ADDR-preimage | impl attempt 1 | 2026-11-03 16:28 | started; reading brief, ledger, preimage.rs and preimage_ref.rs seen maps |
+| ADDR-stage | impl attempt 1 | 2026-11-03 16:28 | started; worktree /home/luke/Work/wt/addr-stage from main ebab4149; load 13.74 |
+| CHK-cost | repair attempt 1 | 2026-11-03 15:48 | start; fixing curried-lambda regression (VarFacts recomputed after each replace) on wt/chk-cost 078ec997; load 33.73 34.52 42.03 |
+| ISSUE1-else-atoms | repair attempt 2 | 2026-11-03 16:04 | start; continuing wt/issue1-else-atoms at 2353b98a; blocking 2 (scaling off Linux) is PERF-portable per orchestrator ledger note 18:57; fixing blocking 1 (two a |
+| LIT-adopt | impl attempt 1 | 2026-11-03 16:46 | negative controls (ctl): checker's per-expression type record cloning each tuple level, deep check_order 128/1024 fails 26.2x bytes (13.2 MB / 347.4 MB, limit 2 |
+| NAME-ties | verify attempt 3 | 2026-11-03 09:30 | started (tip 95328906) / load 13.86 23.30 33.85 |
+| NARROW-if | verify attempt 1 | 2026-11-03 16:46 | started; no earlier verify lines in log |
+| PRINT-tyvars | verify attempt 1 | 2026-11-03 16:46 | tools/run_tests.sh 2 on 29fcea9d: 333 pieces, 0 failed, load 24.0-58.1; merge-tree with main e54e4dfe: only STATUS.md conflicts (rows at end); control worktree  |
+| TEST-slow-chains_of_growing_constants_keep_their_preimages | running | 2026-11-03 09:14 | after S22-merge, S22b-rest, S22e-quad, all done (batch test on main 5d273039) |
+| TEST-slow | impl attempt 1 | 2026-11-03 19:00 | start: split five slow s22 preimage tests; worktree test-slow-s22; load 13.63 23.09 33.73 |
+| TEST-slow-more_random_guarded_chains_keep_their_preimages | running | 2026-11-03 09:14 | after S22-merge, S22b-rest, S22e-quad, all done (batch test on main 5d273039) |
+| TEST-slow-more_random_guarded_keep_their_preimages | running | 2026-11-03 16:37 |  |
+| TEST-slow-random_guarded_chains_keep_their_preimages | running | 2026-11-03 09:14 | after S22-merge, S22b-rest, S22e-quad, all done (batch test on main 5d273039) |
+| TEST-slow-random_guarded_keep_their_preimages | running | 2026-11-03 16:37 |  |
 
-Merged into local main and not yet pushed (4 commits); the push follows one full test run on the merged tree:
-
-- S22e-wide: c5ae623c, 1f36c1be, 7b86ef2e (rebased on main 8b96d7d3) and the commit that records this; conflicts with S22-WIDE (`reach` removed, `input` returns an `Option`) and LIVE3 (s22 counts) resolved keeping both; `more_random_guarded_chains_keep_their_preimages` exact count set to 99 (53 + 2 + 44) by reasoning, not measured; the batch test confirms it
-- RAT-parse: 3c33b125 (rebased on main 6e31d0da) and the commit that records this; conflicts in COMPLEXITY.md (K40 and K41 rows) and STATUS.md (ELAB-namedarg, L1.40d and RAT-parse rows) resolved keeping both
-- BINDER-type: 9cb04795 (rebased on main 928988b1) and the commit that records this; conflicts only in the l01_07 snapshots (line numbers): main's kept, the spec copy was already current, l01_07 11/11 pass
-- WIDE-copies (also MSG-operand-print): 074a199a, fc84ff8b, 56c364a9 (rebased on main e54e4dfe) and the commit that records this; conflicts only in STATUS.md and ZED_PORT_GAPS.md, both sides kept; l01_17 66, l01_39a 43, m0_09 98 pass
-- KEPT-neg-hash: b142d4a4 (rebased on main 55c7f560) and the commit that records this; conflict only in STATUS.md (rows of L1.40d, RAT-parse, WIDE-copies and KEPT-neg-hash), both sides kept; l01_24 54 pass
-- ZIR-canon-sort: a039ad0e (rebased on main ebab4149) and the commit that records this; conflict only in STATUS.md (rows of L1.40d, RAT-parse, WIDE-copies, KEPT-neg-hash and ZIR-canon-sort), both sides kept; l01_32 19 pass
+Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
 
 ## Open points
