@@ -29,8 +29,6 @@ expression: out
 12:28: a `match` is compiled from step L2.4
 08-utf8-percent.zed (L6): does not load: 8:1: a struct declaration is compiled from step L2.4
 12:36: a `match` is compiled from step L2.4
-15:48: `Scalar` is not defined
-22:52: `Scalar` is not defined
 28:3: an indexed definition is compiled from step L6.2
 30:10: a `for` is compiled from step L3.2
 33:3: an indexed definition is compiled from step L6.2

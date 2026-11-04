@@ -84,3 +84,13 @@ fn the_failures_pass_through_else() {
     assert_eq!(v("none"), "-1");
     assert_eq!(v("shown"), "\"?\"");
 }
+
+/// The form the corpus's UTF-8 decoder writes: a decoded code point interpolated through
+/// `scalar`, whose failure for a value that is not a scalar fails the text.
+#[test]
+fn an_interpolated_scalar_is_its_text_or_its_failure() {
+    assert_eq!(x("\"${scalar(65)}\""), "\"A\"");
+    assert_eq!(x("\"a${scalar(233)}b\""), "\"aéb\"");
+    assert_eq!(x("\"${scalar(56000)}\""), "#notScalar");
+    assert_eq!(x("\"${scalar(1114112)}\""), "#notScalar");
+}

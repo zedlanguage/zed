@@ -490,15 +490,14 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         };
         let mut parts: Vec<&[u8]> = vec![text.as_bytes()];
         for (path, d) in &deps {
-            parts.push(path.as_bytes());
-            match d {
-                Ok(_) => parts.push(&numbers[pkg.index[path]]),
-                Err(why) => parts.push(why.as_bytes()),
-            }
+            let read = match d {
+                Ok(_) => Read::Unit(&numbers[pkg.index[path]]),
+                Err(why) => Read::Failed(why),
+            };
+            push_read(&mut parts, path, read);
         }
         if let Some((path, _)) = &prelude {
-            parts.push(path.as_bytes());
-            parts.push(&numbers[pkg.index[path]]);
+            push_read(&mut parts, path, Read::Prelude(&numbers[pkg.index[path]]));
         }
         let k = query::key("resolve", &parts);
         let linked = Linked { deps, prelude };
@@ -589,6 +588,27 @@ fn order(pkg: &mut Package, edges: &[Vec<(usize, Span)>]) -> HashMap<(usize, usi
     cycles
 }
 
+/// What a unit's resolution reads of another unit: an import resolved to the number of its
+/// exports, an import that failed and why, or the prelude unit with the number of its exports.
+enum Read<'a> {
+    Unit(&'a [u8; 8]),
+    Failed(&'a str),
+    Prelude(&'a [u8; 8]),
+}
+
+/// Appends to the parts of a resolve key what the resolution reads of the unit `path`: its
+/// path, a tag byte that says which kind of [`Read`] follows, and the read itself. The tag
+/// keeps apart a failed import whose text has the bytes of an exports number from a resolved
+/// one, and the prelude from an import of the same unit.
+fn push_read<'a>(parts: &mut Vec<&'a [u8]>, path: &'a str, read: Read<'a>) {
+    parts.push(path.as_bytes());
+    match read {
+        Read::Unit(n) => parts.extend([&[0][..], n]),
+        Read::Failed(why) => parts.extend([&[1][..], why.as_bytes()]),
+        Read::Prelude(n) => parts.extend([&[2][..], n]),
+    }
+}
+
 /// A unit a unit imports, by path, resolved or with why it is not.
 type Dep = (Arc<str>, Result<Arc<Resolved>, String>);
 
@@ -661,4 +681,29 @@ pub fn package_report(file: &Path, text: &str) -> Result<Option<Vec<String>>, St
     let depth = path.matches('.').count();
     let shown = file.parent().and_then(|p| p.ancestors().nth(depth));
     Ok(Some(pkg.report(shown.unwrap_or(&root))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Read, push_read};
+    use crate::query::{Key, key};
+
+    /// The resolve key of a unit whose text is `text` and that reads `read` of the unit `a`.
+    fn resolve_key(text: &str, read: Read) -> Key {
+        let mut parts: Vec<&[u8]> = vec![text.as_bytes()];
+        push_read(&mut parts, "a", read);
+        key("resolve", &parts)
+    }
+
+    #[test]
+    fn a_failed_import_never_shares_a_key_with_a_resolved_one() {
+        // A failure whose text is the eight bytes of an exports number: told apart only by
+        // the tag, since the lengths are equal.
+        let number = 0x6f_6f_6f_6f_6f_6f_6f_6f_u64.to_le_bytes();
+        let why = std::str::from_utf8(&number).unwrap();
+        let unit = resolve_key("import a;", Read::Unit(&number));
+        assert_ne!(unit, resolve_key("import a;", Read::Failed(why)));
+        assert_ne!(unit, resolve_key("import a;", Read::Prelude(&number)));
+        assert_eq!(unit, resolve_key("import a;", Read::Unit(&number)));
+    }
 }

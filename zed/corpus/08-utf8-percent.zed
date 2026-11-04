@@ -12,14 +12,14 @@ hexVal(positional c) = "0123456789ABCDEF".indexOf(c.upper) else 0;
 step(positional d, positional t) = match t {
   #char(c:) -> Dec(need: 0, cp: 0, out: "${c}"),
   #byte(b:) -> if d.need == 0 {
-      if b < 128 { Dec(need: 0, cp: 0, out: "${Scalar(b)}") }
+      if b < 128 { Dec(need: 0, cp: 0, out: "${scalar(b)}") }
       else if b < 192 { Dec(need: 0, cp: 0, out: "") }              // a stray continuation byte
       else if b < 224 { Dec(need: 1, cp: b mod 32, out: "") }
       else if b < 240 { Dec(need: 2, cp: b mod 16, out: "") }
       else { Dec(need: 3, cp: b mod 8, out: "") }
     } else {
       cp = d.cp * 64 + b mod 64;
-      if d.need == 1 { Dec(need: 0, cp: 0, out: "${Scalar(cp)}") }
+      if d.need == 1 { Dec(need: 0, cp: 0, out: "${scalar(cp)}") }
       else { Dec(need: d.need - 1, cp:, out: "") }
     },
 };

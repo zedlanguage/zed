@@ -5,7 +5,9 @@
 //! Three queries exist at L1. Step L2.3 adds two over a package's units (`crate::unit`): a unit's
 //! statements and imports, keyed by its text, and its resolution, keyed by its text and the
 //! exports of the units it imports, which hold no text position, so an edit inside a unit that
-//! keeps its names resolves none of its importers again. The front end (lexing through elaboration) is keyed by the
+//! keeps its names resolves none of its importers again; each unit a resolution reads is in its
+//! key as its path, a tag byte (resolved import, failed import, or prelude) and then the number
+//! of its exports or why the import failed. The front end (lexing through elaboration) is keyed by the
 //! unit's text, since every structure before the kernel terms carries byte spans and so
 //! changes with any edit. A row of a function's `test` table is keyed by its check and the
 //! definitions the check reaches, and a row of `main`'s table by its key, its value, the

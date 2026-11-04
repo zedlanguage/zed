@@ -137,8 +137,13 @@ so a different decision changes the named `.out` files.
 2. **`int(s)` and `f64(s)`** are the String casts, giving `int | #invalid`
    (EXAMPLES, sec:domains) and `f64 | #invalid`; `else` supplies the default.
    The `f64(String)` cast is assumed by analogy (21).
-3. **`Scalar(cp)` and `"${c}"`** turn a code point into a one-character
-   String (08, 10).
+3. **`scalar(cp)` and `"${c}"`** turn a code point into a one-character
+   String (08, 10). `scalar` is the prelude word of DESIGN step L1.39c; it
+   gives `#notScalar` for a surrogate or a value above 1114111, and so fails
+   the line, as the reference does. 08 first wrote `Scalar(cp)`, a cast to
+   `Scalar`, a type DESIGN names but does not define and the compiler does
+   not bind; it became `scalar(cp)` once resolution walked match arms and
+   reported `Scalar` as not defined.
 4. **`mix(f, x)`** fixes the first parameter of `f` to `x` (10).
 5. **JSON (07):** the error position is the farthest position any
    alternative reached, after skipping whitespace; `X* sep ","` allows zero

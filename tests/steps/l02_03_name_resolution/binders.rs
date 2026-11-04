@@ -95,3 +95,20 @@ fn a_name_pattern_that_names_a_type_is_a_type_test() {
     );
     assert_eq!(describe(text, &r, "other", 1), ["pattern other"]);
 }
+
+/// The corpus's UTF-8 decoder writes each decoded code point with `scalar` (step L1.39c) in a
+/// `match` arm, which resolution now walks: every name in it resolves, to the arm's binder or
+/// to the prelude.
+#[test]
+fn the_utf8_corpus_program_resolves_the_code_points_its_match_arms_write() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../zed/corpus/08-utf8-percent.zed"
+    );
+    let text = std::fs::read_to_string(path).unwrap();
+    let r = alone(&text);
+    assert_eq!(errors(&text), Vec::<String>::new());
+    assert_eq!(describe(&text, &r, "scalar", 0), ["prelude scalar"]);
+    assert_eq!(describe(&text, &r, "b", 2), ["pattern #byte(b:)"]);
+    assert_eq!(describe(&text, &r, "scalar", 1), ["prelude scalar"]);
+}
