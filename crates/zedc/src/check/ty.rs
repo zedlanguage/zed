@@ -1327,6 +1327,17 @@ impl Ty {
     /// are dropped, a tuple that `t`'s kind-wide part holds in part leaves its rest in the set,
     /// and the other tuples are kept.
     pub fn diff(&self, t: &Ty) -> Ty {
+        self.diff_in(t, None)
+    }
+
+    /// [`Self::diff`], a tuple compared with `t` as [`Self::sub_with`] compares: each class
+    /// variable `solve` gives a type read as that type inside the functions it holds.
+    pub fn diff_with(&self, t: &Ty, solve: Solve) -> Ty {
+        self.diff_in(t, Some(solve))
+    }
+
+    /// [`Self::diff`], with the resolver of the comparisons, if any.
+    fn diff_in(&self, t: &Ty, solve: Option<Solve>) -> Ty {
         let tk = t.kernel();
         let mut out = self.clone();
         out.set = &self.set - tk.as_ref().unwrap_or(&t.set);
@@ -1339,7 +1350,12 @@ impl Ty {
         };
         let mut rest = Vec::new();
         out.tuples.retain(|a| {
-            if Ty::of_row(a.clone()).subtype(&within) {
+            let row = Ty::of_row(a.clone());
+            let inside = match solve {
+                Some(solve) => row.subtype_with(&within, solve),
+                None => row.subtype(&within),
+            };
+            if inside {
                 return false;
             }
             match (&tk, shape_kernel(a)) {

@@ -401,6 +401,46 @@ fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
         );
     });
 }
+
+/// [`curried_sums`] with `h = g(0)` put in a tuple and tested by `is` against its written
+/// type, whose `n` arrows take int.
+fn curried_tested(n: usize) -> String {
+    let arrows: String = (0..n).map(|_| "(int) -> (").collect();
+    let ints = vec!["int"; n + 1].join(", ");
+    let shut = ")".repeat(n);
+    format!(
+        "{}h = g(0);\nt = (h, 1);\nr = if t is (({arrows}({ints}){shut}), int) {{ 1 }} else {{ t }};\n",
+        curried_sums(n)
+    )
+}
+
+#[test]
+fn an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales() {
+    // `is` compares the lambdas of `t` with the written ones, reading the classes solved
+    // inside them through the union-find (`Ty::diff_with`), so the `else` branch, where `t`
+    // is not of the type, narrows to nothing. A tuple takes no function, so `t = (h, 1)` is
+    // rejected, once.
+    let (info, _) = super::info(&curried_tested(2));
+    assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+    assert_eq!(info.tops["r"].to_string(), "1");
+    let n = 100;
+    scaling::on_a_thread(1 << 29, || {
+        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| {
+                let stmts = zed_tests::deep::statements(&curried_tested(m));
+                let res = zedc::resolve::resolve(&stmts).unwrap();
+                (m, (stmts, res))
+            })
+            .collect();
+        scaling::check_order("an is test of n curried lambdas", n, 1, |m| {
+            let (stmts, res) = &built[&m];
+            let info = zedc::check::check(stmts, res);
+            assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+        });
+    });
+}
+
 #[test]
 fn nested_lambdas_name_their_variables_as_before() {
     // The names a lambda takes skip those of the lambdas inside it, found from their facts.

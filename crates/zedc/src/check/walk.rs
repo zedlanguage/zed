@@ -670,7 +670,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         return;
                     }
                 };
-                let (yes, no) = (vec![(b, v.meet(&t), e.span)], vec![(b, v.diff(&t), e.span)]);
+                // The meet keeps the functions of `v` whole; the difference compares them with
+                // those of `t`, reading the classes solved inside them ([`Ck::stale`]).
+                let no = v.diff_with(&t, &|w| self.stale(w));
+                let (yes, no) = (vec![(b, v.meet(&t), e.span)], vec![(b, no, e.span)]);
                 m.ret = match negated {
                     false => Ret::Cond(bool_, yes, no),
                     true => Ret::Cond(bool_, no, yes),

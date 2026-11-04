@@ -2,14 +2,14 @@
 //! and read through the union-find inside them (CHK-carrier, COMPLEXITY.md F71). What the
 //! checker finds of the calls, comparisons and messages that read those lambdas is what it
 //! found when the class was replaced at every depth: `curried_classes.txt` is the output
-//! of that build, at 5e449f11.
+//! of that build, this checker with `replace` in place of `replace_outside` in `generalize`.
 
 use super::info;
 
 /// `g` returns two curried lambdas whose parameters take int when each ends.
 const G: &str = "g(positional a0) = (a1) -> (a2) -> (a0 + 1, a1 + 1, a2 + 1);\n";
 
-const PROGRAMS: [&str; 19] = [
+const PROGRAMS: [&str; 25] = [
     "h = g(0);\nk = h(1);\nm = k(2);\n",
     "take(f: (int) -> (int) -> (int, int, int)) = f(1)(2);\nr = take(f: g(0));\n",
     "take(f: (String) -> (int) -> (int, int, int)) = f(\"a\")(2);\nr = take(f: g(0));\n",
@@ -29,6 +29,14 @@ const PROGRAMS: [&str; 19] = [
     "p(x) = (y) -> (z) -> x + y + z;\nq = p(1)(2)(3);\nr = p(1.5)(2.5)(3.5);\n",
     "p(x) = (y) -> (z) -> (x + 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n",
     "o(x) = (y) -> (z) -> x + 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n",
+    // `is` and `is not` on a tuple that holds such a lambda: the test of the lambda reads
+    // its classes as their types, so the branch that cannot be taken narrows to nothing.
+    "h = g(0);\nt = (h, 1);\nr = if t is (((int) -> ((int) -> (int, int, int))), int) { 1 } else { t };\n",
+    "h = g(0);\nt = (h, 1);\nr = if t is not (((int) -> ((int) -> (int, int, int))), int) { t } else { 2 };\n",
+    "h = g(0)(1);\nt = (h, 1);\nr = if t is (((String) -> (int, int, int)), int) { 1 } else { t };\n",
+    "f(c: bool) = if c { (g(0)(1), 1) } else { (g(1)(2), 2) };\nt = f(c: true);\nr = if t is (((int) -> (int, int, int)), int) { 1 } else { t };\n",
+    "h = g(0)(1);\nt = (h, 1);\nr = if t is ((((int) -> (int, int, int)), int) | int) { 1 } else { t };\n",
+    "h = g(0)(1);\nt = ((h, 1), 2);\nr = if t is ((((int) -> (int, int, int)), int), int) { 1 } else { t };\n",
 ];
 
 /// The signatures, top-level types, call signatures and errors with their notes the checker
