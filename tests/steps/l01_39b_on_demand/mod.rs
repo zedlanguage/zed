@@ -110,3 +110,47 @@ fn checking_functions_that_ask_for_no_derivation_scales() {
         assert_eq!(derivation_steps(), 0);
     });
 }
+
+/// `n` functions of `m` declared parameters each, returning the last, and a `main` that calls
+/// the first: many binders, each of which costs the checker little beyond its origin.
+fn many_parameters(n: usize, m: usize) -> String {
+    let params = (0..m)
+        .map(|j| format!("p{j}: int"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut src = String::new();
+    for i in 0..n {
+        src += &format!("g{i}({params}) = p{};\n", m - 1);
+    }
+    let args = (0..m)
+        .map(|j| format!("p{j}: 1"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    src + &format!(
+        "main(stdin: Lines) -> (stdout: Lines) {{\n  a = g0({args});\n  stdout <- \"a\" ++ String(a);\n}}\n"
+    )
+}
+
+#[test]
+fn checking_functions_of_many_parameters_scales() {
+    // 4,000 and 32,000 parameters, each with an origin. A parameter costs the checker about
+    // 10,000 instructions, so a step that grows with the origins recorded before it, such as a
+    // scan of them all comparing spans, shows here; among `clean`'s functions, at about 1.7
+    // million instructions per function, it does not. Only the check is measured: the
+    // statements are parsed and resolved before the runs.
+    let n = 100;
+    let units: HashMap<usize, _> = [n, 8 * n]
+        .into_iter()
+        .map(|k| {
+            let stmts = zed_tests::deep::statements(&many_parameters(k, 40));
+            let res = zedc::resolve::resolve(&stmts).expect("resolves");
+            (k, (stmts, res))
+        })
+        .collect();
+    scaling::check_order("checking n functions of 40 parameters", n, 1, |k| {
+        let (stmts, res) = &units[&k];
+        let info = zedc::check::check(stmts, res);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+        assert_eq!(derivation_steps(), 0);
+    });
+}
