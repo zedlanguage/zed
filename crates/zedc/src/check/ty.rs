@@ -2334,6 +2334,44 @@ fn meet_within(results: &[Ty], result: &Ty, cx: &mut Cx) -> bool {
     kernel_within && (rest.is_empty() || rest.sub_in(result, &mut b, cx) && b.is_empty())
 }
 
+/// Results [`meet_within`] intersects and the result their intersection must be within, built
+/// before a scaling test so that the test times the intersection alone and not the check of
+/// the overload around it, which costs about 160,000 instructions a result: a quadratic in the
+/// results that allocates nothing shows only here (COMPLEXITY.md F82, F85).
+#[doc(hidden)]
+pub struct Meet {
+    results: Vec<Ty>,
+    result: Ty,
+    rigid: BTreeMap<Arc<str>, u8>,
+}
+
+impl Meet {
+    /// `results` and `result`, inside expected function types whose bounded variables are
+    /// `rigid`, each with the carriers of its bound.
+    #[doc(hidden)]
+    pub fn new(results: Vec<Ty>, result: Ty, rigid: &[(&str, &[Carrier])]) -> Self {
+        let rigid = rigid
+            .iter()
+            .map(|&(v, cs)| (Arc::from(v), cs.iter().fold(0, |m, c| m | c.bit())))
+            .collect();
+        Meet {
+            results,
+            result,
+            rigid,
+        }
+    }
+
+    /// Whether the intersection of the results is within the result ([`meet_within`]).
+    #[doc(hidden)]
+    pub fn within(&self) -> bool {
+        let mut cx = Cx {
+            rigid: self.rigid.clone(),
+            ..Cx::default()
+        };
+        meet_within(&self.results, &self.result, &mut cx)
+    }
+}
+
 /// The carriers a value of `t`, as a comparison reads it, may be of, and [`OTHER`] if it may
 /// be another value: a rigid variable stands for its bound, and a function read as a variable
 /// for no carrier.

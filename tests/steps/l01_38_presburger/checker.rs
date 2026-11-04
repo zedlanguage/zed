@@ -133,12 +133,18 @@ fn the_linear_questions_of_a_unit_scale() {
         src.push_str(&program("", "x: a, y: a").replace("ok(", "ok0("));
         src
     };
-    let (small, large) = (unit(64), unit(64 * zed_tests::scaling::FACTOR));
-    for src in [&small, &large] {
-        assert!(zedc::run::load(src.as_bytes()).is_ok());
-    }
+    // The questions are timed alone, on a unit loaded before the timing (COMPLEXITY.md F85).
+    let units: std::collections::BTreeMap<usize, _> = [64, 64 * zed_tests::scaling::FACTOR]
+        .into_iter()
+        .map(|m| {
+            let src = unit(m);
+            let program = zedc::run::load(src.as_bytes()).unwrap();
+            (m, (zed_tests::deep::statements(&src), program))
+        })
+        .collect();
     zed_tests::scaling::check("the linear questions of a unit", 64, |m| {
-        let src = if m == 64 { &small } else { &large };
-        drop(zedc::run::load(src.as_bytes()));
+        let (stmts, program) = &units[&m];
+        let refused = zedc::run::linear_questions(stmts, program.unit());
+        assert!(refused.is_empty(), "{refused:?}");
     });
 }

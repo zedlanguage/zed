@@ -3,25 +3,39 @@
 //! everything found so far. An untyped parameter is now a class of a union-find forest, and
 //! each body is checked once.
 
+use std::collections::BTreeMap;
+
 use zed_kernel::types::Type as KType;
 use zed_tests::scaling;
 use zedc::check::ty::Ty;
 
-use super::{info, sig, sig_of, type_errors};
+use super::{Resolved, info, sig, sig_of};
+
+/// The units `text(m)` at `n` and `FACTOR * n`, read and resolved before the timing, so that a
+/// test times the checker alone (COMPLEXITY.md F85).
+fn resolved(n: usize, text: impl Fn(usize) -> String) -> BTreeMap<usize, Resolved> {
+    [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, Resolved::new(&text(m))))
+        .collect()
+}
 
 #[test]
 fn searching_the_signatures_of_many_functions_scales() {
     // Twenty constants for each function, each adopting its literal with no search, so that
     // what the unit has found is large beside the searches.
+    let units = resolved(25, |n| {
+        let mut text: String = (0..20 * n)
+            .map(|j| format!("k{j} = 0.5 + {j};\n"))
+            .collect();
+        text.extend((0..n).map(|i| format!("h{i}(x) = x / {};\n", i + 1)));
+        text
+    });
     scaling::check(
         "the signatures of n functions beside 20n constants",
         25,
         |n| {
-            let mut text: String = (0..20 * n)
-                .map(|j| format!("k{j} = 0.5 + {j};\n"))
-                .collect();
-            text.extend((0..n).map(|i| format!("h{i}(x) = x / {};\n", i + 1)));
-            let (info, _) = info(&text);
+            let info = units[&n].check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
             assert_eq!(info.sigs.len(), n);
             assert_eq!(info.adopt.len(), 21 * n);
@@ -70,8 +84,9 @@ fn chain(n: usize) -> String {
 fn a_chain_of_functions_with_untyped_parameters_scales() {
     // Each takes the bound of the one it calls, by its signature, with no search.
     assert_eq!(sig(&chain(3), "g2"), "(T) -> T for T in int | f64 | rat");
+    let units = resolved(400, chain);
     scaling::check("a chain of n functions", 400, |n| {
-        let (info, _) = info(&chain(n));
+        let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(info.sigs.len(), n);
     });
@@ -80,11 +95,13 @@ fn a_chain_of_functions_with_untyped_parameters_scales() {
 #[test]
 fn many_else_patterns_scale() {
     // Each `else` with a pattern read every binder of the unit to find its own.
-    scaling::check("n bindings each with an else pattern", 1000, |n| {
-        let text: String = (0..n)
+    let units = resolved(1000, |n| {
+        (0..n)
             .map(|i| format!("v{i} = #e(code: {i}) else #e(code:) -> code;\n"))
-            .collect();
-        let (info, _) = info(&text);
+            .collect()
+    });
+    scaling::check("n bindings each with an else pattern", 1000, |n| {
+        let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
@@ -103,8 +120,9 @@ fn a_signature_of_many_type_variables_scales() {
     let s = sig_of(&tuple(2), "f");
     assert_eq!(s.to_string(), "(_, _) -> (_, _)");
     assert_eq!(s.own.len(), 2, "two variables, though both print `_`");
+    let units = resolved(1000, tuple);
     scaling::check("a signature of n type variables", 1000, |n| {
-        let (info, _) = info(&tuple(n));
+        let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
@@ -120,14 +138,6 @@ fn fan(n: usize) -> String {
     src
 }
 
-/// The texts of [`fan`] at `n` and `FACTOR * n`, built before the timing.
-fn fans(n: usize) -> std::collections::BTreeMap<usize, String> {
-    [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, fan(m)))
-        .collect()
-}
-
 #[test]
 fn needs_replayed_through_a_fan_of_calls_scale() {
     // Each of the two calls met the needs of the one before anew, so they doubled at each
@@ -135,12 +145,12 @@ fn needs_replayed_through_a_fan_of_calls_scale() {
     let s = sig_of(&fan(3), "g2");
     assert_eq!(s.to_string(), "(_) -> U for U in int | f64 | rat");
     assert_eq!(s.needs.len(), 1, "one need, met once for both calls");
-    let texts = fans(250);
+    let units = resolved(250, fan);
     scaling::check(
         "needs replayed through n functions, each calling the one before twice",
         250,
         |n| {
-            let (info, _) = info(&texts[&n]);
+            let info = units[&n].check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         },
     );
@@ -302,15 +312,12 @@ fn nested_around(n: usize) -> String {
 #[test]
 fn a_variable_nested_in_tuples_checks_in_linear_time() {
     assert_eq!(sig(&nested_around(2), "f"), "(_) -> ((_, 1), 1)");
-    let texts: std::collections::BTreeMap<usize, String> = [500, scaling::FACTOR * 500]
-        .into_iter()
-        .map(|m| (m, nested_around(m)))
-        .collect();
     std::thread::Builder::new()
         .stack_size(1 << 29)
-        .spawn(move || {
+        .spawn(|| {
+            let units = resolved(500, nested_around);
             scaling::check_order("a variable nested in n tuples", 500, 1, |n| {
-                let (info, _) = info(&texts[&n]);
+                let info = units[&n].check();
                 assert!(info.errors.is_empty(), "{:?}", info.errors);
             });
         })
@@ -532,8 +539,9 @@ fn a_parameter_tested_against_many_atoms_scales() {
     assert_eq!(arrows.len(), 2);
     assert!(arrows[0].params[0].atoms().is_empty());
     assert!(!arrows[1].params[0].atoms().is_empty());
+    let units = resolved(400, tests_of_atoms);
     scaling::check("a parameter tested against n atoms", 400, |n| {
-        let (info, _) = info(&tests_of_atoms(n));
+        let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
@@ -562,8 +570,9 @@ fn a_parameter_bound_to_a_chain_of_names_scales() {
         let atom = Ty::set(KType::atom(&format!("a{k}")));
         assert!(atom.subtype(&a.params[0]), "{}", a.params[0]);
     }
+    let units = resolved(400, chain_of_names);
     scaling::check("a parameter bound to a chain of n names", 400, |n| {
-        let (info, _) = info(&chain_of_names(n));
+        let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
@@ -599,8 +608,9 @@ fn a_chain_of_atoms_from_elsewhere_than_the_parameter_scales() {
     let other = Ty::set(KType::atom("notFound"));
     assert!(!other.subtype(&arrows[0].result), "{}", arrows[0].result);
     assert!(other.subtype(&arrows[1].result), "{}", arrows[1].result);
+    let units = resolved(200, chain_of_own_atoms);
     scaling::check("a chain of n names each adding an atom", 200, |n| {
-        let (info, _) = info(&chain_of_own_atoms(n));
+        let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(info.sigs.values().next().unwrap().arrows.len(), 2);
     });
@@ -652,11 +662,12 @@ fn a_chain_of_functions_passing_a_handled_parameter_on_scales() {
             arrows[1].params[0]
         );
     }
+    let units = resolved(200, chain_of_handlers);
     scaling::check(
         "a chain of n functions passing a handled parameter on",
         200,
         |n| {
-            let (info, _) = info(&chain_of_handlers(n));
+            let info = units[&n].check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         },
     );
@@ -683,11 +694,12 @@ fn a_chain_of_functions_passing_a_handled_parameter_on_as_a_receiver_scales() {
             arrows[0].result
         );
     }
+    let units = resolved(200, |n| chain_of_handlers_calling(n, method));
     scaling::check(
         "a chain of n functions passing a handled parameter on as a receiver",
         200,
         |n| {
-            let (info, _) = info(&chain_of_handlers_calling(n, method));
+            let info = units[&n].check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         },
     );
@@ -716,11 +728,12 @@ fn many_calls_passing_a_handled_parameter_on_scale() {
     ] {
         let first = sig_of(&calls(3, call), "g").expand()[0].result.clone();
         assert!(first.atoms().is_empty(), "{call}: {first}");
+        let units = resolved(200, |n| calls(n, call));
         scaling::check(
             &format!("one function calling `{call}` n times"),
             200,
             |n| {
-                let (info, _) = info(&calls(n, call));
+                let info = units[&n].check();
                 assert!(info.errors.is_empty(), "{:?}", info.errors);
             },
         );
@@ -771,11 +784,12 @@ fn a_chain_of_functions_each_testing_an_atom_of_its_own_scales() {
     // and gives the string to its first arrow. Each pass-by costs a set difference per arrow.
     let (i, _) = info(&chain_of_atom_tests(3));
     assert!(i.errors.is_empty(), "{:?}", i.errors);
+    let units = resolved(100, chain_of_atom_tests);
     scaling::check(
         "a chain of n functions each testing an atom of its own",
         100,
         |n| {
-            let (info, _) = info(&chain_of_atom_tests(n));
+            let info = units[&n].check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         },
     );
@@ -798,11 +812,12 @@ fn many_calls_passing_some_atoms_of_their_argument_by_scale() {
         let (i, _) = info(&calls(3, call));
         assert!(i.errors.is_empty(), "{call}: {:?}", i.errors);
         assert_eq!(i.passes.len(), 3, "{call}");
+        let units = resolved(200, |n| calls(n, call));
         scaling::check(
             &format!("one function calling `{call}` n times"),
             200,
             |n| {
-                let (info, _) = info(&calls(n, call));
+                let info = units[&n].check();
                 assert!(info.errors.is_empty(), "{:?}", info.errors);
             },
         );
@@ -857,18 +872,12 @@ fn overloads(n: usize) -> String {
 
 #[test]
 fn passing_an_overload_of_many_arrows_scales() {
-    let n = 200;
-    let inputs = [(n, overloads(n)), (8 * n, overloads(8 * n))];
-    scaling::check(
+    scales(
         "an overload of n arrows passed to a slot of n arrows",
-        n,
-        |m| {
-            let text = &inputs
-                .iter()
-                .find(|(k, _)| *k == m)
-                .expect("a built size")
-                .1;
-            let (info, _) = info(text);
+        200,
+        overloads,
+        |unit| {
+            let info = unit.check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
             assert_eq!(info.sigs.len(), 2);
         },
@@ -893,18 +902,12 @@ fn wider_overloads(n: usize) -> String {
 /// arrow of the function: 57.1 times the bytes at n = 100 and 800.
 #[test]
 fn passing_an_overload_to_a_slot_of_other_arrows_scales() {
-    let n = 100;
-    let inputs = [(n, wider_overloads(n)), (8 * n, wider_overloads(8 * n))];
-    scaling::check(
+    scales(
         "an overload of n arrows passed to a slot of n other arrows",
-        n,
-        |m| {
-            let text = &inputs
-                .iter()
-                .find(|(k, _)| *k == m)
-                .expect("a built size")
-                .1;
-            let (info, _) = info(text);
+        100,
+        wider_overloads,
+        |unit| {
+            let info = unit.check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         },
     );
@@ -932,18 +935,12 @@ fn shared_overloads(n: usize) -> String {
 /// parameter index alone cost n^2/2 comparisons, 57.6x at n and 8n).
 #[test]
 fn passing_an_overload_whose_arrows_share_a_parameter_piece_scales() {
-    let n = 100;
-    let inputs = [(n, shared_overloads(n)), (8 * n, shared_overloads(8 * n))];
-    scaling::check(
+    scales(
         "an overload of n arrows sharing a parameter piece passed to a slot of n arrows",
-        n,
-        |m| {
-            let text = &inputs
-                .iter()
-                .find(|(k, _)| *k == m)
-                .expect("a built size")
-                .1;
-            let (info, _) = info(text);
+        100,
+        shared_overloads,
+        |unit| {
+            let info = unit.check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         },
     );
@@ -960,15 +957,16 @@ fn nested_overload(n: usize) -> String {
 
 #[test]
 fn a_slot_written_as_an_overload_nested_in_parentheses_scales() {
+    // Resolution and the checker are timed, on statements parsed before the timing.
     let n = 100;
-    let inputs = [(n, nested_overload(n)), (8 * n, nested_overload(8 * n))];
+    let units: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, zed_tests::deep::statements(&nested_overload(m))))
+        .collect();
     scaling::check("a slot of n arrows nested n deep in parentheses", n, |m| {
-        let text = &inputs
-            .iter()
-            .find(|(k, _)| *k == m)
-            .expect("a built size")
-            .1;
-        let (info, _) = info(text);
+        let stmts = &units[&m];
+        let res = zedc::resolve::resolve(stmts).unwrap();
+        let info = zedc::check::check(stmts, &res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(info.sigs.len(), 1);
     });
@@ -992,16 +990,12 @@ fn covering_overload(n: usize) -> String {
 
 #[test]
 fn an_overload_of_many_arrows_that_cover_a_slot_together_scales() {
-    let n = 100;
-    let inputs = [(n, covering_overload(n)), (8 * n, covering_overload(8 * n))];
-    scaling::check("an overload of n arrows covering a slot together", n, |m| {
-        let text = &inputs
-            .iter()
-            .find(|(k, _)| *k == m)
-            .expect("a built size")
-            .1;
-        assert_eq!(type_errors(text), Vec::<String>::new());
-    });
+    scales(
+        "an overload of n arrows covering a slot together",
+        100,
+        covering_overload,
+        |unit| assert_eq!(unit.type_errors(), Vec::<String>::new()),
+    );
 }
 
 /// A slot of `w` parameters and a function of one arrow that takes all but the last, where it
@@ -1024,18 +1018,13 @@ fn wide_arrows(w: usize) -> String {
 
 #[test]
 fn a_function_of_many_parameters_that_misses_one_scales() {
-    let n = 100;
-    let inputs = [(n, wide_arrows(n)), (8 * n, wide_arrows(8 * n))];
-    scaling::check(
+    scales(
         "an arrow of w parameters that misses the slot's last",
-        n,
-        |m| {
-            let text = &inputs
-                .iter()
-                .find(|(k, _)| *k == m)
-                .expect("a built size")
-                .1;
-            assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+        100,
+        wide_arrows,
+        |unit| {
+            let errors = unit.type_errors();
+            assert_eq!(errors.len(), 1, "{errors:?}");
         },
     );
 }
@@ -1048,17 +1037,11 @@ fn slot_and_overload(slot: &str, arrows: impl Iterator<Item = String>) -> String
     format!("p(f: {slot}) = 0;\nq(g: {ov}) = p(f: g);\n")
 }
 
-/// Runs `want` on the source `text(m)` at `n` and `8 * n`, both built before either is run.
-fn scales(what: &str, n: usize, text: impl Fn(usize) -> String, want: impl Fn(&str) + Sync) {
-    let inputs = [(n, text(n)), (8 * n, text(8 * n))];
-    scaling::check(what, n, |m| {
-        let text = &inputs
-            .iter()
-            .find(|(k, _)| *k == m)
-            .expect("a built size")
-            .1;
-        want(text);
-    });
+/// Runs `want` on the unit `text(m)` at `n` and `8 * n`, both read and resolved before either
+/// is run.
+fn scales(what: &str, n: usize, text: impl Fn(usize) -> String, want: impl Fn(&Resolved) + Sync) {
+    let units = resolved(n, text);
+    scaling::check(what, n, |m| want(&units[&m]));
 }
 
 /// The atoms `#{name}0 | ... | #{name}(n-1)`.
@@ -1080,8 +1063,8 @@ fn many_arrows_whose_results_intersect_within_the_slots_scale() {
         let slot = format!("(x: #c | {}) -> String", atoms("a", n));
         slot_and_overload(&slot, within.chain(outside))
     };
-    scales("n arrows met and n within", 100, text, |text| {
-        assert_eq!(type_errors(text), Vec::<String>::new());
+    scales("n arrows met and n within", 100, text, |unit| {
+        assert_eq!(unit.type_errors(), Vec::<String>::new());
     });
 }
 
@@ -1098,8 +1081,8 @@ fn many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_t
         "n arrows whose results meet on different sets",
         400,
         text,
-        |text| {
-            let errors = type_errors(text);
+        |unit| {
+            let errors = unit.type_errors();
             assert_eq!(errors.len(), 1, "{errors:?}");
             assert!(errors[0].contains("Orthogonal Vectors"), "{errors:?}");
         },
@@ -1121,8 +1104,8 @@ fn an_overload_with_a_function_arrow_covering_a_slot_scales() {
         "n arrows and a function arrow covering",
         100,
         text,
-        |text| {
-            assert_eq!(type_errors(text), Vec::<String>::new());
+        |unit| {
+            assert_eq!(unit.type_errors(), Vec::<String>::new());
         },
     );
 }
@@ -1144,8 +1127,8 @@ fn a_bounded_variable_at_many_parameters_is_refused_in_linear_time() {
             params("T")
         )
     };
-    scales("a bounded variable at w parameters", 100, text, |text| {
-        let errors = type_errors(text);
+    scales("a bounded variable at w parameters", 100, text, |unit| {
+        let errors = unit.type_errors();
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
             errors[0].contains("places the arguments give"),
@@ -1166,7 +1149,33 @@ fn many_results_that_hold_a_variable_or_a_function_meet_in_linear_time() {
         let fun = std::iter::once("((x: int | f64) -> String | ((y: int) -> int))".to_string());
         slot_and_overload("(x: U) -> U | String for U in int | f64", arrows.chain(fun))
     };
-    scales("n results holding a variable met", 100, text, |text| {
-        assert_eq!(type_errors(text), Vec::<String>::new());
+    scales("n results holding a variable met", 100, text, |unit| {
+        assert_eq!(unit.type_errors(), Vec::<String>::new());
+    });
+}
+
+/// The intersection of [`many_results_that_hold_a_variable_or_a_function_meet_in_linear_time`]
+/// timed alone, on results built before the timing: `n` results `U | String | #bi`, `U`
+/// bounded by `int | f64`, met within `U | String`. There the check around the intersection
+/// costs about 160,000 instructions a result, so a quadratic in the results that allocates
+/// nothing, such as reading the carriers of every other result for each result, passes it
+/// even at 3,200 results; here it fails at 1,000 (COMPLEXITY.md F82).
+#[test]
+fn many_results_that_hold_a_variable_meet_in_linear_time_alone() {
+    use zedc::check::ty::{Carrier, Meet};
+    let n = 1000;
+    let u_or_string = || Ty::var("U".into()).union(&Ty::carrier(Carrier::Str));
+    let meets: BTreeMap<usize, Meet> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let results = (0..m)
+                .map(|i| u_or_string().union(&Ty::set(KType::atom(&format!("b{i}")))))
+                .collect();
+            let bound: &[Carrier] = &[Carrier::Int, Carrier::F64];
+            (m, Meet::new(results, u_or_string(), &[("U", bound)]))
+        })
+        .collect();
+    scaling::check("n results holding a variable met alone", n, |m| {
+        assert!(meets[&m].within());
     });
 }

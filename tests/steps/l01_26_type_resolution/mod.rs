@@ -20,21 +20,50 @@ mod soundness;
 
 use std::sync::Arc;
 
-use zedc::ast::unit;
+use zedc::ast::Stmt;
 use zedc::check::ty::Sig;
 use zedc::check::{Info, check};
-use zedc::lex::lex_fence;
-use zedc::parse::{TOP, parse};
-use zedc::resolve::resolve;
+use zedc::resolve::Resolution;
+
+/// The unit `text`, read and resolved: what the checker takes, built before a scaling test
+/// times the checker alone (COMPLEXITY.md F85).
+pub(crate) struct Resolved {
+    text: String,
+    stmts: Vec<Stmt>,
+    res: Resolution,
+}
+
+impl Resolved {
+    /// Reads and resolves `text`.
+    pub(crate) fn new(text: &str) -> Self {
+        let (stmts, res) = zed_tests::deep::resolved(text);
+        Resolved {
+            text: text.to_string(),
+            stmts,
+            res,
+        }
+    }
+
+    /// The checker's findings.
+    pub(crate) fn check(&self) -> Info {
+        check(&self.stmts, &self.res)
+    }
+
+    /// The type errors, each `message [text]`.
+    pub(crate) fn type_errors(&self) -> Vec<String> {
+        self.check()
+            .errors
+            .iter()
+            .map(|e| format!("{} [{}]", e.message, &self.text[e.span.start..e.span.end]))
+            .collect()
+    }
+}
 
 /// The checker's findings on the unit `text`, with the resolution's binder names.
 pub(crate) fn info(text: &str) -> (Info, Vec<String>) {
-    let tokens = lex_fence(text).unwrap();
-    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
-    let stmts = unit(text, &tokens, &tree).unwrap();
-    let res = resolve(&stmts).unwrap_or_else(|e| panic!("{text}: {e:?}"));
-    let names = res.binders.iter().map(|b| b.name.clone()).collect();
-    (check(&stmts, &res), names)
+    let r = Resolved::new(text);
+    let names = r.res.binders.iter().map(|b| b.name.clone()).collect();
+    (r.check(), names)
 }
 
 /// The signature of the declared function `name` in `text`.
@@ -55,9 +84,5 @@ pub(crate) fn sig(text: &str, name: &str) -> String {
 
 /// The type errors of `text`, each `message [text]`.
 pub(crate) fn type_errors(text: &str) -> Vec<String> {
-    let (info, _) = info(text);
-    info.errors
-        .iter()
-        .map(|e| format!("{} [{}]", e.message, &text[e.span.start..e.span.end]))
-        .collect()
+    Resolved::new(text).type_errors()
 }

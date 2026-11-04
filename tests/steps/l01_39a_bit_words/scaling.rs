@@ -99,10 +99,11 @@ fn with_main(mut program: String) -> String {
     program
 }
 
-/// The work `run.load` does on each of `srcs`, at sizes `n` and `8n`, on a stack that holds
-/// `8n` levels: the parser and the checker recurse once a level, as step L1.28's tests of deep
-/// bodies allow for.
-fn check_load(what: &'static str, n: usize, power: u32, src: impl Fn(usize) -> String) {
+/// The work the checker does on each of `src`'s units, at sizes `n` and `8n`, on a stack that
+/// holds `8n` levels: the parser and the checker recurse once a level, as step L1.28's tests of
+/// deep bodies allow for. Each unit is loaded, then parsed and resolved, before the timing,
+/// which takes the checker alone (COMPLEXITY.md F85).
+fn check_alone(what: &'static str, n: usize, power: u32, src: impl Fn(usize) -> String) {
     let srcs: HashMap<usize, String> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|m| (m, src(m)))
@@ -110,8 +111,17 @@ fn check_load(what: &'static str, n: usize, power: u32, src: impl Fn(usize) -> S
     let t = std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(move || {
+            let units: HashMap<usize, _> = srcs
+                .iter()
+                .map(|(&m, text)| {
+                    zedc::run::load(text.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+                    (m, zed_tests::deep::resolved(text))
+                })
+                .collect();
             scaling::check_order(what, n, power, |m| {
-                zedc::run::load(srcs[&m].as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+                let (stmts, res) = &units[&m];
+                let info = zedc::check::check(stmts, res);
+                assert!(info.errors.is_empty(), "{:?}", info.errors);
             });
         });
     t.unwrap().join().unwrap();
@@ -123,7 +133,7 @@ fn the_checker_reads_each_operand_of_a_nest_once() {
     // operands' domains from what their text shows; each expression is read once, so the nest
     // is checked in O(n). Read again at each call, it is O(n²): 42 times the work at 300 and
     // 2400 against 8 times.
-    check_load("checking a nest of n bit-word calls", 300, 1, |n| {
+    check_alone("checking a nest of n bit-word calls", 300, 1, |n| {
         with_main(format!(
             "x = {}1{};\n",
             "bitAnd(".repeat(n),
@@ -135,7 +145,7 @@ fn the_checker_reads_each_operand_of_a_nest_once() {
 #[test]
 fn the_checker_reads_each_binding_of_a_chain_once() {
     // `y0 = 255; y1 = bitXor(shr(y0, 1), 3); …`, `n` bindings each a call on the one before.
-    check_load(
+    check_alone(
         "checking a chain of n bindings of bit-word calls",
         200,
         1,
@@ -154,7 +164,7 @@ fn a_constant_no_bit_word_reads_is_not_folded() {
     // `x = 3 ** e + 5 ** e;` with `x` read by nothing: the checker reads a binder's value only
     // for a bit word or an exponent that reads its name, so the work does not grow with `e`.
     // Folded at its binder, the sum takes time that grows faster than its digits.
-    check_load(
+    check_alone(
         "checking an unread constant 3 ** e + 5 ** e",
         200_000,
         0,

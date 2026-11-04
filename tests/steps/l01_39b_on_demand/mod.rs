@@ -101,12 +101,21 @@ fn one_rejection_builds_the_same_derivation_among_n_functions_as_among_8n() {
 
 #[test]
 fn checking_functions_that_ask_for_no_derivation_scales() {
-    // The sources are built before the runs are measured.
+    // Each source is loaded, then parsed and resolved, before the runs are measured; only the
+    // check is measured (COMPLEXITY.md F85).
     let n = 300;
-    let srcs: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, clean(k))).collect();
+    let units: HashMap<usize, _> = [n, 8 * n]
+        .into_iter()
+        .map(|k| {
+            let src = clean(k);
+            assert_eq!(counted(&src), (Ok(()), 0));
+            (k, zed_tests::deep::resolved(&src))
+        })
+        .collect();
     scaling::check_order("checking n functions with no rejection", n, 1, |k| {
-        let src = &srcs[&k];
-        assert!(load(src.as_bytes()).is_ok());
+        let (stmts, res) = &units[&k];
+        let info = zedc::check::check(stmts, res);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(derivation_steps(), 0);
     });
 }

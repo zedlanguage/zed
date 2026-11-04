@@ -228,7 +228,12 @@ pub(crate) fn write_warnings(
 /// `l01_38_presburger::checker::the_linear_questions_of_a_unit_scale`. COMPLEXITY.md row S18.
 /// A complete solution would need a complete Presburger procedure, exponential in the worst
 /// case, or would accept the function with a warning in place of the rejection.
-fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
+///
+/// Public for the test that times the questions alone, on a unit loaded before the timing:
+/// loading the unit of 64 functions there costs 3.5 times its questions, so a scaling test that
+/// times the whole load cannot see a quadratic here (COMPLEXITY.md F85).
+#[doc(hidden)]
+pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
     use crate::store::{preimage, presburger};
     let defs: std::collections::HashMap<&str, &Term> = unit
         .defs

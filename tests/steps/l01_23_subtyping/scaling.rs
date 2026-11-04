@@ -957,9 +957,17 @@ fn a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union() 
             atoms.join(" | ")
         )
     };
+    // The checker is timed alone, on statements parsed and resolved before the timing
+    // (COMPLEXITY.md F85).
+    let units: std::collections::BTreeMap<usize, _> = [64, scaling::FACTOR * 64]
+        .into_iter()
+        .map(|n| (n, zed_tests::deep::resolved(&program(n))))
+        .collect();
     scaling::check("a tuple held by n shapes together, by n", 64, |n| {
         Type::forget_emptiness();
-        assert!(zedc::run::load(program(n).as_bytes()).is_ok());
+        let (stmts, res) = &units[&n];
+        let info = zedc::check::check(stmts, res);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
 

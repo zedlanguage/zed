@@ -3,6 +3,8 @@
 //! such functions, each calling the one before twice, lowers to a graph linear in the chain's
 //! length and not exponential in it.
 
+use std::collections::BTreeMap;
+
 use zed_kernel::term::build::{app, lam, let_, lit, var};
 use zed_kernel::{Evaluator, Term, World};
 use zed_tests::deep::on_small_stack;
@@ -24,6 +26,15 @@ pub(crate) fn chain(k: usize) -> Term {
         t = let_(&format!("f{i}"), lam(&["m"], body), t);
     }
     let_("f0", lam(&["m"], push("stdout", var("m"))), t)
+}
+
+/// The terms `term(m)` at `n` and `FACTOR * n`, built before the timing, so that a test times
+/// the lowering alone.
+fn built(n: usize, term: impl Fn(usize) -> Term) -> BTreeMap<usize, Term> {
+    [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, term(m)))
+        .collect()
 }
 
 fn nodes(g: &Region) -> usize {
@@ -68,8 +79,9 @@ fn lowering_the_chain_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 28)
         .spawn(|| {
+            let terms = built(100, chain);
             scaling::check("lowering a chain of functions that push", 100, |k| {
-                lower(&chain(k)).unwrap();
+                lower(&terms[&k]).unwrap();
             })
         })
         .unwrap()
@@ -102,8 +114,9 @@ fn lowering_a_deep_nest_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 28)
         .spawn(|| {
+            let terms = built(100, nest);
             scaling::check("lowering a nest of `if`s", 100, |d| {
-                lower(&nest(d)).unwrap();
+                lower(&terms[&d]).unwrap();
             })
         })
         .unwrap()
@@ -133,8 +146,9 @@ fn reading_a_name_bound_far_out_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 30)
         .spawn(|| {
+            let terms = built(2000, far);
             scaling::check("lowering lets that read the outermost name", 2000, |n| {
-                lower(&far(n)).unwrap();
+                lower(&terms[&n]).unwrap();
             })
         })
         .unwrap()
@@ -202,11 +216,12 @@ fn lowering_many_functions_called_in_place_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 32)
         .spawn(|| {
+            let terms = built(2000, calls_in_place);
             scaling::check(
                 "lowering n functions each called once in place",
                 2000,
                 |n| {
-                    lower(&calls_in_place(n)).unwrap();
+                    lower(&terms[&n]).unwrap();
                 },
             );
             let t = calls_in_place(3);
@@ -261,8 +276,9 @@ fn lowering_pushes_to_many_ports_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 32)
         .spawn(|| {
+            let terms = built(2000, pushes_to_many_ports);
             scaling::check("lowering pushes to n ports", 2000, |n| {
-                lower(&pushes_to_many_ports(n)).unwrap();
+                lower(&terms[&n]).unwrap();
             });
         })
         .unwrap()

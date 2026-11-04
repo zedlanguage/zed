@@ -196,3 +196,11 @@ pub fn statements(text: &str) -> Vec<zedc::ast::Stmt> {
     let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
     zedc::ast::unit(text, &tokens, &tree).unwrap()
 }
+
+/// The [`statements`] of `text` and their resolution, for a test to build before it times the
+/// checker alone (COMPLEXITY.md F85).
+pub fn resolved(text: &str) -> (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution) {
+    let stmts = statements(text);
+    let res = zedc::resolve::resolve(&stmts).unwrap_or_else(|e| panic!("{text}: {e:?}"));
+    (stmts, res)
+}

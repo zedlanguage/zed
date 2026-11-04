@@ -100,8 +100,10 @@ fn a_parameter_whose_morphism_bound_check_was_refused_says_why() {
     );
 }
 
-/// The walk is linear in the written types: loading a program of `n` and of `8n` parameters,
-/// each with a nested bounded type, does work of order n, counted in instructions.
+/// The walk is linear in the written types: checking a program of `n` and of `8n` parameters,
+/// each with a nested bounded type, does work of order n, counted in instructions. The
+/// checker is timed alone, on statements parsed and resolved before the timing (COMPLEXITY.md
+/// F85).
 #[test]
 fn the_bound_walk_scales_linearly() {
     let program = |n: usize| {
@@ -110,10 +112,14 @@ fn the_bound_walk_scales_linearly() {
             .collect();
         format!("f({}) = 0;\nmain() = 0;\n", params.join(", "))
     };
-    let programs: std::collections::HashMap<usize, String> =
-        [250, 2000].into_iter().map(|n| (n, program(n))).collect();
-    zed_tests::scaling::check_order("bound walk through load", 250, 1, |n| {
-        assert!(zedc::run::load(programs[&n].as_bytes()).is_ok());
+    let units: std::collections::HashMap<usize, _> = [250, 2000]
+        .into_iter()
+        .map(|n| (n, zed_tests::deep::resolved(&program(n))))
+        .collect();
+    zed_tests::scaling::check_order("bound walk", 250, 1, |n| {
+        let (stmts, res) = &units[&n];
+        let info = zedc::check::check(stmts, res);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
 
@@ -133,8 +139,9 @@ fn a_port_whose_morphism_bound_fails_is_rejected() {
 }
 
 /// Reading the output ports, for their type at L1 and for their bounds, is linear in the
-/// ports: loading a program of `n` and of `8n` functions, each with two `Lines` ports, does
-/// work of order n.
+/// ports: resolving and checking a program of `n` and of `8n` functions, each with two `Lines`
+/// ports, does work of order n. Resolution reads the type at L1 and the checker the bounds;
+/// both are timed, on statements parsed before the timing (COMPLEXITY.md F85).
 #[test]
 fn the_port_walk_scales_linearly() {
     let program = |n: usize| {
@@ -147,9 +154,14 @@ fn the_port_walk_scales_linearly() {
         src.push_str("main() = 0;\n");
         src
     };
-    let programs: std::collections::HashMap<usize, String> =
-        [250, 2000].into_iter().map(|n| (n, program(n))).collect();
-    zed_tests::scaling::check_order("port walk through load", 250, 1, |n| {
-        assert!(zedc::run::load(programs[&n].as_bytes()).is_ok());
+    let units: std::collections::HashMap<usize, _> = [250, 2000]
+        .into_iter()
+        .map(|n| (n, zed_tests::deep::statements(&program(n))))
+        .collect();
+    zed_tests::scaling::check_order("port walk", 250, 1, |n| {
+        let stmts = &units[&n];
+        let res = resolve(stmts).unwrap_or_else(|e| panic!("{e:?}"));
+        let info = zedc::check::check(stmts, &res);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
