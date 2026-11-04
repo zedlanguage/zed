@@ -276,11 +276,12 @@ test("a dropped item counts as met for the items that need it", () => {
   assert.equal(nodes.get("B")!.ready, true);
 });
 
-test("merged is done, and verified, drafting and a probe's done are active", () => {
+test("merged is done, and verified, drafting, merging and a probe's done are active", () => {
   const st = (led: string) => by(buildNodes(inputs("", led))).get("A")!.state;
   assert.equal(st('{"id":"A","state":"merged","commit":"c111111"}\n'), "done");
   assert.equal(st('{"id":"A","state":"verified"}\n'), "active");
   assert.equal(st('{"id":"A","state":"drafting"}\n'), "active");
+  assert.equal(st('{"id":"A","state":"merging"}\n'), "active");
   assert.equal(st('{"id":"A","state":"done","by":"A:probe#1"}\n'), "active");
   assert.equal(st('{"id":"A","state":"done","by":"orchestrator"}\n'), "done");
   assert.equal(st('{"id":"A","state":"done","by":"A:merge#1"}\n'), "done");

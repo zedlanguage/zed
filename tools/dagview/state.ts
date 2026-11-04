@@ -285,7 +285,7 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     else if (ls === "merged") s = "done";
     else if (ls === "dropped") s = "dropped";
     else if (ls === "waiting" || ls === "deferred") s = "waiting";
-    else if (ls === "fixing" || ls === "drafting") s = "active";
+    else if (ls === "fixing" || ls === "drafting" || ls === "merging") s = "active";
     else if (ls === "abandoned") s = "unstarted";
     // An item the ledger lists as open is not active, whatever the log says about it.
     else if (ls === "open" || ls === "queued") s = "unstarted";
