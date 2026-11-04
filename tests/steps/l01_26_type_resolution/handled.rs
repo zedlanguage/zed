@@ -265,3 +265,48 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
     let text = "r(positional line: String | #notFound) = trim(line else \"\");\n";
     assert_eq!(sig(text, "r"), "(String | #notFound) -> String");
 }
+
+#[test]
+fn a_function_whose_handled_atoms_also_reach_its_result_has_two_arrows() {
+    // The body handles every loose atom of its parameter and passes the same atoms by to its
+    // result: the first arrow, for an argument with no atom, gives none; the second takes them.
+    // Each printed signature reads back as the same two arrows.
+    for (head, body, want) in [
+        (
+            "r(positional line)",
+            "if (line else \"\") == \"\" { \"empty\" } else { trim(line) }",
+            "((String) -> String) & ((String | #_) -> String | #_)",
+        ),
+        (
+            "r(positional c)",
+            "{ d = c else false; if c { \"yes\" } else { \"no\" } }",
+            "((bool) -> \"no\" | \"yes\") & ((bool | #_) -> \"no\" | \"yes\" | #_)",
+        ),
+        (
+            "r(positional n)",
+            "{ d = n else 0; if n > 3 { \"big\" } else { \"small\" } }",
+            "((int) -> \"big\" | \"small\") & ((int | #_) -> \"big\" | \"small\" | #_)",
+        ),
+    ] {
+        let text = format!("{head} = {body};\n");
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        let printed = sig(&text, "r");
+        assert_eq!(printed, want, "{body}");
+        let t = parse_type(&printed).unwrap_or_else(|e| panic!("{printed}: {e}"));
+        assert_eq!(t.fns.len(), 1, "{printed}");
+        assert_eq!(t.fns[0].arrows.len(), 2, "{printed} read as {t}");
+        assert_eq!(t.fns[0].to_string(), printed, "{body}");
+    }
+}
+
+#[test]
+fn an_atom_from_elsewhere_stays_on_the_first_arrow() {
+    // `#absent` is the body's own, not the parameter's, so the first arrow gives it too; the
+    // atoms `trim` passes by are the parameter's, and only the second gives them.
+    let text =
+        "r(positional line) = if (line else \"\") == \"\" { #absent } else { trim(line) };\n";
+    assert_eq!(
+        sig(text, "r"),
+        "((String) -> String | #absent) & ((String | #_) -> String | #_)"
+    );
+}

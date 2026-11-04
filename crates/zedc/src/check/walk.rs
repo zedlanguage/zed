@@ -239,6 +239,8 @@ pub(super) enum Frame<'a> {
         ids: Vec<Option<usize>>,
         level: usize,
         tys: Vec<Ty>,
+        /// The lambda's body.
+        body: &'a Expr,
     },
     /// A parameter of a lambda bound to the type of its default.
     BindDefault(&'a Param),
@@ -538,7 +540,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some((u, made)) => (Some(u), made),
                     None => (None, None),
                 };
-                for (map, set) in [(&mut self.unnamed, u), (&mut self.made, made)] {
+                let outside = self.outside_of(e, &t, &src);
+                for (map, set) in [
+                    (&mut self.unnamed, u),
+                    (&mut self.made, made),
+                    (&mut self.outside, outside),
+                ] {
                     match set {
                         Some(set) => map.insert(e.span, set),
                         None => map.remove(&e.span),
@@ -812,11 +819,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ids,
                     tys,
                     level,
+                    f,
                     ..
                 } = *s;
                 let ids: Vec<Option<usize>> = ids.into_iter().map(Some).collect();
-                let tys = self.handled_tys(&ids, tys);
-                let sig = self.generalize(level, Sig::one(params, tys, result));
+                let sig = self.handled_sig(params, &ids, tys, result, &f.body);
+                let sig = self.generalize(level, sig);
                 m.ret = Ret::Sig(sig);
             }
             Frame::AtomArgs(s) => self.atom_step(m, s),
@@ -914,10 +922,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ids,
                 level,
                 tys,
+                body,
             } => {
                 let result = m.take_ty();
-                let tys = self.handled_tys(&ids, tys);
-                let sig = self.generalize(level, Sig::one(names, tys, result));
+                let sig = self.handled_sig(names, &ids, tys, result, body);
+                let sig = self.generalize(level, sig);
                 m.ty(Ty::func(sig));
             }
             Frame::BindDefault(p) => {
@@ -1257,13 +1266,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             };
             self.origin(*id, p.span, why, None);
-            self.env.insert(
-                *id,
-                match p.ty.is_none() && t.as_var().is_some() {
-                    true => self.param_ty(*id, t.clone()),
-                    false => t.clone(),
-                },
-            );
+            let bound = match p.ty.is_none() && t.as_var().is_some() {
+                true => self.param_ty(*id, t.clone()),
+                false => t.clone(),
+            };
+            self.env.insert(*id, bound);
             s.tys.push(t);
         }
         s.i = 0;
@@ -2249,6 +2256,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ids,
             level,
             tys,
+            body,
         });
         m.job(Job::Body(body, Want::default()));
         // The defaults are checked first, in order, each bound before the next.

@@ -83,3 +83,73 @@ fn a_program_trimming_a_missing_line_runs_the_body() {
     assert_eq!((out.status, out.stderr.as_str()), (0, ""));
     assert_eq!(out.stdout, "the body ran\n");
 }
+
+/// `src`'s output on the one line `x`, which it must print without error.
+fn output(name: &str, src: &str) -> String {
+    let out = run(name, src, "x\n", &[]);
+    assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{src}");
+    out.stdout
+}
+
+#[test]
+fn a_function_whose_atoms_reach_its_result_gives_a_string_for_a_string() {
+    // The body handles every loose atom of `line` and also passes them by through `trim`, so
+    // `r` has two arrows: a string gives a string, which a `Lines` port takes, and only an
+    // argument that may be an atom gives one. One arrow, `(String | #_) -> String | #_`,
+    // rejected these programs, which ran before the parameter took the atoms.
+    let main =
+        |call: &str| format!("main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- {call};\n}}\n");
+    for (name, def, call, want) in [
+        (
+            "trim_or_empty",
+            "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };",
+            "r(\" a \")",
+            "a\n",
+        ),
+        (
+            "bool_branch",
+            "r(positional c) = { d = c else false; if c { \"yes\" } else { \"no\" } };",
+            "r(true)",
+            "yes\n",
+        ),
+        (
+            "int_branch",
+            "r(positional n) = { d = n else 0; if n > 3 { \"big\" } else { \"small\" } };",
+            "r(5)",
+            "big\n",
+        ),
+    ] {
+        assert_eq!(
+            output(name, &format!("{def}\n{}", main(call))),
+            want,
+            "{def}"
+        );
+    }
+}
+
+#[test]
+fn an_argument_that_may_be_an_atom_selects_the_arrow_that_takes_it() {
+    // `stdin[2]` is `#notFound` on one line, and the body maps it to "empty"; `stdin[1]` is
+    // the line. The lambda is the same function written as a value.
+    let src = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+               main(stdin: Lines) -> (stdout: Lines) {\n\
+               \x20 f = (positional x) -> if (x else \"\") == \"\" { \"e\" } else { trim(x) };\n\
+               \x20 stdout <- (r(stdin[2]) else \"gone\") ++ \",\" ++ (r(stdin[1]) else \"gone\") ++ \",\" ++ f(\" b \") ++ \",\" ++ (f(stdin[2]) else \"gone\");\n\
+               }\n";
+    assert_eq!(output("selects_arrow", src), "empty,x,b,e\n");
+    let body = "if (line else \"\") == \"\" { \"empty\" } else { trim(line) }";
+    assert_eq!(r(body, "#notFound"), "\"empty\"");
+    assert_eq!(r(body, "\" a \""), "\"a\"");
+}
+
+#[test]
+fn a_function_that_calls_it_with_its_own_parameter_gives_a_string_for_a_string() {
+    // `g`'s undeclared `x` takes the first arrow of `r`, so `g` is `(String) -> String`, and
+    // an atom passed to `g` passes it by (rule 6), as before `r` took the atoms.
+    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+             g(positional x) = r(x);\n";
+    let src = format!(
+        "{r}main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- g(\" a \") ++ \",\" ++ (g(stdin[2]) else \"passed by\");\n}}\n"
+    );
+    assert_eq!(output("wrapper", &src), "a,passed by\n");
+}

@@ -477,6 +477,12 @@ struct Ck<'t, 'a> {
     /// The atoms the uses of each binder handle, `else` and `is` on its name or on a name
     /// bound to it: an undeclared parameter's type holds them.
     handled: Handled,
+    /// The undeclared parameters whose type in the body holds the atoms its uses handle.
+    widened: HashSet<usize>,
+    /// Each expression's loose atoms that may reach its value from elsewhere than a parameter
+    /// of [`Self::widened`], by its span, as last found: those a call passing that parameter
+    /// no atom may still give. No entry is none.
+    outside: HashMap<Span, KType>,
 }
 
 /// A need being checked at a call.
@@ -517,36 +523,96 @@ impl<'t, 'a> Ck<'t, 'a> {
             defer: BTreeSet::new(),
             applied: None,
             handled: handled(t.res),
+            widened: HashSet::new(),
+            outside: HashMap::new(),
         }
     }
 
     /// The type an undeclared parameter `id` of the class variable `v` is bound to in its
     /// body: `v` and the atoms its uses handle.
-    fn param_ty(&self, id: usize, v: Ty) -> Ty {
+    fn param_ty(&mut self, id: usize, v: Ty) -> Ty {
         match self.handled.get(id) {
-            Some(a) => v.union(&Ty::set(a.clone())),
+            Some(a) => {
+                self.widened.insert(id);
+                v.union(&Ty::set(a.clone()))
+            }
             None => v,
         }
     }
 
-    /// The signature types of the parameters `ids` of types `tys`, at the end of the body:
-    /// an undeclared one whose class holds only carriers also holds the atoms its uses
-    /// handle, so a call passing one runs the body. A class that may hold other values
-    /// already holds every atom.
-    fn handled_tys(&self, ids: &[Option<usize>], tys: Vec<Ty>) -> Vec<Ty> {
-        tys.into_iter()
-            .zip(ids)
-            .map(|(t, id)| {
-                let a = id.and_then(|id| self.handled.get(id));
-                let k = t.as_var().and_then(|v| class_id(v));
-                match (a, k) {
-                    (Some(a), Some(k)) if self.classes[self.find(k)].mask & OTHER == 0 => {
-                        t.union(&Ty::set(a.clone()))
-                    }
-                    _ => t,
+    /// The signature of a function of parameters `params`, whose binders are `ids`, of types
+    /// `tys`, whose body `body` gives `result`. An undeclared parameter whose class holds
+    /// only carriers also holds the atoms its uses handle, so a call passing one runs the
+    /// body; a class that may hold other values already holds every atom. When the result
+    /// then holds loose atoms that reach it only from those parameters, the signature has
+    /// two arrows: first the parameters without the atoms, whose result lacks them, then the
+    /// parameters with them. So `if (line else "") == "" { "empty" } else { trim(line) }` is
+    /// `((String) -> String) & ((String | #_) -> String | #_)`, and a call passing a `String`
+    /// gives a `String` ([`Self::apply`] takes the first arrow that takes the arguments'
+    /// atoms). When a parameter of [`Self::widened`] may hold other values, its atoms reach
+    /// the result on both arrows, and the signature has the one arrow.
+    fn handled_sig(
+        &self,
+        params: Vec<SParam>,
+        ids: &[Option<usize>],
+        tys: Vec<Ty>,
+        result: Ty,
+        body: &Expr,
+    ) -> Sig {
+        let mut wide = Vec::with_capacity(tys.len());
+        let (mut added, mut other) = (false, false);
+        for (t, id) in tys.iter().zip(ids) {
+            let a = id.and_then(|id| self.handled.get(id));
+            let k = t.as_var().and_then(|v| class_id(v));
+            match (a, k) {
+                (Some(a), Some(k)) if self.classes[self.find(k)].mask & OTHER == 0 => {
+                    added = true;
+                    wide.push(t.union(&Ty::set(a.clone())));
                 }
-            })
-            .collect()
+                (Some(_), Some(_)) => {
+                    other = true;
+                    wide.push(t.clone());
+                }
+                _ => wide.push(t.clone()),
+            }
+        }
+        if !added {
+            return Sig::one(params, tys, result);
+        }
+        let loose = result.loose();
+        let kept = &loose & &self.outside_body(body);
+        // One difference per function, at its end.
+        if other || (&loose - &kept).is_empty() {
+            return Sig::one(params, wide, result);
+        }
+        let plain = result
+            .without_loose()
+            .union(&result.of_piece(&Piece::Set(kept)));
+        Sig {
+            arrows: vec![
+                Arrow {
+                    params: tys,
+                    result: plain,
+                },
+                Arrow {
+                    params: wide,
+                    result,
+                },
+            ],
+            ..Sig::one(params, Vec::new(), Ty::empty())
+        }
+    }
+
+    /// The loose atoms that may reach the value of `body`, a function's body, from elsewhere
+    /// than a parameter of [`Self::widened`]: a block's are its export's.
+    fn outside_body(&self, body: &Expr) -> KType {
+        let o = |s: Span| self.outside.get(&s).cloned().unwrap_or_else(KType::empty);
+        match &body.kind {
+            ExprKind::Block(_) => flows(body)
+                .into_iter()
+                .fold(KType::empty(), |a, s| &a | &o(s)),
+            _ => o(body.span),
+        }
     }
 
     /// Checks that the guarantee of every `L .. U -> V` in the unit's written types is within
@@ -960,6 +1026,115 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             _ => (loose.clone(), Some(loose)),
         })
+    }
+
+    /// The loose atoms that may reach the value of `e`, of type `t`, from elsewhere than a
+    /// parameter of [`Self::widened`]: what `e` gives when each such parameter holds no atom,
+    /// as on the first arrow of [`Self::handled_sig`]. It follows [`Self::unnamed_of`]: a
+    /// name of such a parameter gives none; an `else` gives its default's only when its
+    /// value may give an atom; an operator, a call of a declared function or a prelude word
+    /// passes on its parts' and gives the atoms its arrows' results hold, and `#errs` only
+    /// when two of its parts give atoms; any other expression gives all its loose atoms.
+    /// Each set is compared with the empty type as written, in `O(1)`, as in
+    /// [`Self::unnamed_of`], so a chain of `n` expressions costs `O(n log² n)`.
+    fn outside_of(&self, e: &Expr, t: &Ty, src: &Src<'_>) -> Option<KType> {
+        let loose = t.loose();
+        if loose == KType::empty() {
+            return None;
+        }
+        let o = |s: Span| self.outside.get(&s).cloned().unwrap_or_else(KType::empty);
+        let union = |spans: Vec<Span>| spans.into_iter().fold(KType::empty(), |a, s| &a | &o(s));
+        let made = |sigs: &[Arrow], parts: Vec<Span>| {
+            if !sigs.iter().all(passes_vars_on) {
+                return loose.clone();
+            }
+            let parts: Vec<KType> = parts.into_iter().map(o).collect();
+            let mut atoms = sigs
+                .iter()
+                .fold(KType::empty(), |a, arrow| &a | &arrow.result.loose());
+            if parts.iter().filter(|p| **p != KType::empty()).count() > 1 {
+                atoms = &atoms | &errs();
+            }
+            parts.iter().fold(&loose & &atoms, |a, p| &a | p)
+        };
+        Some(match (&e.kind, src) {
+            (
+                ExprKind::Else {
+                    of,
+                    pattern,
+                    default,
+                },
+                _,
+            ) => {
+                let of = o(of.span);
+                if of == KType::empty() {
+                    return Some(of);
+                }
+                let kept = match pattern {
+                    None => KType::empty(),
+                    Some(Pattern::Atom {
+                        name,
+                        fields,
+                        items,
+                        ..
+                    }) if fields.is_empty() && items.is_empty() => &of - &any_payload(name),
+                    Some(_) => of,
+                };
+                &kept | &o(default.span)
+            }
+            (ExprKind::If { .. } | ExprKind::Block(_), _) => union(flows(e)),
+            (ExprKind::Unary(op, _) | ExprKind::Binary(op, _, _), _) => {
+                made(&op_sig(op).arrows, flows(e))
+            }
+            (_, Src::Call(id, _)) => match self.env.get(id).and_then(only_fn) {
+                Some(sig) => made(&sig.arrows, flows(e)),
+                None => loose,
+            },
+            (_, Src::Name(id)) => match self.alias.get(id) {
+                Some(&value) if self.seen.contains_key(&value) => o(value),
+                _ if self.widened.contains(id) => KType::empty(),
+                _ => loose,
+            },
+            _ => match self.word_call(e) {
+                Some((w, x)) => made(&word_sig(w).arrows, vec![x]),
+                None => loose,
+            },
+        })
+    }
+
+    /// The prelude word `e` applies to one argument, and the argument's span, when `e` is
+    /// `w(x)` or `x.w()` for a word of layer L1 other than `sum` and the bit words, which
+    /// [`word_sig`] types.
+    fn word_call<'e>(&self, e: &'e Expr) -> Option<(&'e str, Span)> {
+        let ExprKind::Call {
+            callee,
+            positional,
+            named,
+            curry: false,
+        } = &e.kind
+        else {
+            return None;
+        };
+        let (w, x) = match (&callee.kind, &positional[..]) {
+            (ExprKind::Name(w), [x]) => match self.t.res.uses.get(&callee.span) {
+                Some(Ref::Prelude(_)) => (w, x.span),
+                _ => return None,
+            },
+            (
+                ExprKind::Member {
+                    of,
+                    name,
+                    safe: false,
+                },
+                [],
+            ) => match self.t.res.uses.get(&callee.span) {
+                Some(Ref::Bound(_)) => return None,
+                _ if crate::resolve::prelude_layer(name) == Some(1) => (name, of.span),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        (named.is_empty() && w != "sum" && bit_prim(w).is_none()).then_some((w.as_str(), x))
     }
 
     /// `_` bound to a value of `e`, or its component `i`, in the binding at `span`, where
@@ -2784,8 +2959,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             passed(&mut out, atoms.iter());
         }
         let defer = std::mem::take(&mut self.defer);
-        let r = match sig.arrows.len() {
-            1 => self.apply_one(what, sig, &args, defer, span),
+        let r = match (sig.arrows.len(), self.first_taking(sig, &args, pass)) {
+            (1, _) => self.apply_one(what, sig, 0, &args, defer, span),
+            (_, Some(k)) => self.apply_one(what, sig, k, &args, defer, span),
             _ => {
                 let r = self.apply_many(what, sig, &mut args, span);
                 self.applied = None;
@@ -2816,15 +2992,54 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// argument's loose atoms pass through the call: the parameter is a variable bounded to
     /// carriers, or a type that holds none of them.
     fn refuses(&self, sig: &Sig, i: usize, loose: &KType) -> bool {
-        sig.arrows.iter().all(|arrow| {
-            let p = &arrow.params[i];
-            if let Some(&m) = p.as_var().and_then(|v| sig.bounds.get(v)) {
-                return m & OTHER == 0;
-            }
-            !p.dynamic
-                && p.vars.is_empty()
-                && self.class_of_ty(p).is_none()
-                && (&p.set & loose).is_empty()
+        sig.arrows
+            .iter()
+            .all(|arrow| self.refused_at(sig, &arrow.params[i], loose))
+    }
+
+    /// Whether the parameter `p` of an arrow of `sig` takes none of the atoms `loose`.
+    fn refused_at(&self, sig: &Sig, p: &Ty, loose: &KType) -> bool {
+        if let Some(&m) = p.as_var().and_then(|v| sig.bounds.get(v)) {
+            return m & OTHER == 0;
+        }
+        !p.dynamic
+            && p.vars.is_empty()
+            && self.class_of_ty(p).is_none()
+            && (&p.set & loose).is_empty()
+    }
+
+    /// The first arrow of `sig` that takes the loose atoms of every argument, when `sig` has
+    /// more than one arrow and its arrows differ only in the loose atoms of their parameters,
+    /// as [`Self::handled_sig`] makes them: the first takes none of a parameter's handled
+    /// atoms and gives what the body gives without them, the second takes them. An argument
+    /// that may hold one of them selects the second; [`Self::apply_one`] then checks the call
+    /// against the arrow selected. `None` leaves a signature of other arrows to
+    /// [`Self::apply_many`], and when [`Self::apply`] passes every argument's atoms on.
+    fn first_taking(&self, sig: &Sig, args: &[Option<Arg>], pass: bool) -> Option<usize> {
+        let [first, rest @ ..] = &sig.arrows[..] else {
+            return None;
+        };
+        if pass || rest.is_empty() {
+            return None;
+        }
+        let bare = |a: &Arrow| -> Vec<Ty> { a.params.iter().map(Ty::without_loose).collect() };
+        let shape = bare(first);
+        if rest.iter().any(|a| bare(a) != shape) {
+            return None;
+        }
+        // An argument of a type variable of a signature around the call may hold any atom; a
+        // class of the function being inferred holds none of its own, so a call `r(x)` of an
+        // undeclared `x` takes the first arrow and `x` the carriers it allows, as it did when
+        // `r` had the first arrow alone.
+        let may = |t: &Ty| {
+            let any = t.dynamic || t.vars.iter().any(|v| class_id(v).is_none());
+            if any { atoms() } else { t.loose() }
+        };
+        sig.arrows.iter().position(|arrow| {
+            arrow.params.iter().zip(args).all(|(p, a)| {
+                let loose = a.as_ref().map(|a| may(&a.ty)).unwrap_or_else(KType::empty);
+                loose == KType::empty() || !self.refused_at(sig, p, &loose)
+            })
         })
     }
 
@@ -2865,11 +3080,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         &mut self,
         what: &str,
         sig: &Sig,
+        k: usize,
         args: &[Option<Arg>],
         defer: BTreeSet<Arc<str>>,
         span: Span,
     ) -> Result<(Ty, Vec<usize>), String> {
-        let arrow = &sig.arrows[0];
+        let arrow = &sig.arrows[k];
         let fail = |ck: &Self| Err(ck.rejected(what, args));
         let mut binds = Binds::new();
         let mut grouped = vec![false; args.len()];
@@ -4772,6 +4988,23 @@ impl<'a> Denote<'a> {
             }
             TypeKind::And(ts) => {
                 let ts: Vec<Ty> = ts.iter().map(|t| self.ty(t)).collect();
+                // An intersection of function types of one arity is one function with each
+                // of their arrows, in order, as a signature of several arrows prints.
+                let sigs: Option<Vec<Arc<Sig>>> = ts.iter().map(only_fn).collect();
+                if let Some([first, rest @ ..]) = sigs.as_deref()
+                    && rest.iter().all(|s| s.params.len() == first.params.len())
+                {
+                    let mut sig = (**first).clone();
+                    for s in rest {
+                        sig.arrows.extend(s.arrows.iter().cloned());
+                        sig.bounds
+                            .extend(s.bounds.iter().map(|(v, m)| (v.clone(), *m)));
+                        sig.own.extend(s.own.iter().cloned());
+                        sig.held.extend(s.held.iter().cloned());
+                        sig.needs.extend(s.needs.iter().cloned());
+                    }
+                    return Ty::func(Arc::new(sig));
+                }
                 let mut ts = ts.into_iter();
                 let first = ts.next().unwrap_or_else(Ty::dynamic);
                 ts.fold(first, |a, b| a.meet(&b))

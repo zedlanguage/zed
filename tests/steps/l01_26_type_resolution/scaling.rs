@@ -293,8 +293,12 @@ fn a_parameter_tested_against_many_atoms_scales() {
     // Each test adds its atom to the parameter's set, the small set into the large one.
     let (i, _) = info(&tests_of_atoms(3));
     assert!(i.errors.is_empty(), "{:?}", i.errors);
-    let a = &i.sigs.values().next().unwrap().expand()[0];
-    assert!(!a.params[0].atoms().is_empty());
+    // The atoms `trim` passes by reach the result, so the second arrow takes them; the first,
+    // for a parameter with none, gives none.
+    let arrows = i.sigs.values().next().unwrap().expand();
+    assert_eq!(arrows.len(), 2);
+    assert!(arrows[0].params[0].atoms().is_empty());
+    assert!(!arrows[1].params[0].atoms().is_empty());
     scaling::check("a parameter tested against n atoms", 400, |n| {
         let (info, _) = info(&tests_of_atoms(n));
         assert!(info.errors.is_empty(), "{:?}", info.errors);
@@ -320,7 +324,7 @@ fn a_parameter_bound_to_a_chain_of_names_scales() {
     // order the bindings are written in, and each test then adds its atom to the class's set.
     let (i, _) = info(&chain_of_names(3));
     assert!(i.errors.is_empty(), "{:?}", i.errors);
-    let a = &i.sigs.values().next().unwrap().expand()[0];
+    let a = i.sigs.values().next().unwrap().expand().pop().unwrap();
     for k in 0..3 {
         let atom = Ty::set(KType::atom(&format!("a{k}")));
         assert!(atom.subtype(&a.params[0]), "{}", a.params[0]);
@@ -328,5 +332,43 @@ fn a_parameter_bound_to_a_chain_of_names_scales() {
     scaling::check("a parameter bound to a chain of n names", 400, |n| {
         let (info, _) = info(&chain_of_names(n));
         assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
+
+/// A function whose undeclared parameter `line` has its loose atoms handled by an `else`, and
+/// whose result is `line` trimmed after a chain of `n` names, each the one before it or an
+/// atom of its own: the atoms of the chain reach the result from elsewhere than `line`.
+fn chain_of_own_atoms(n: usize) -> String {
+    let names: String = (1..=n)
+        .map(|i| {
+            format!(
+                "x{i} = if (line else \"\") == \"{i}\" {{ #a{i} }} else {{ x{} }}; ",
+                i - 1
+            )
+        })
+        .collect();
+    format!("r(positional line) = {{ x0 = line; {names}trim(x{n}) }};\n")
+}
+
+#[test]
+fn a_chain_of_atoms_from_elsewhere_than_the_parameter_scales() {
+    // Each name passes on the atoms of the one before it from elsewhere than `line`, and adds
+    // its own, the small set into the large one. The first arrow, for a `line` with no atom,
+    // gives the chain's atoms and not `line`'s.
+    let (i, _) = info(&chain_of_own_atoms(3));
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
+    let arrows = i.sigs.values().next().unwrap().expand();
+    assert_eq!(arrows.len(), 2);
+    for k in 1..=3 {
+        let atom = Ty::set(KType::atom(&format!("a{k}")));
+        assert!(atom.subtype(&arrows[0].result), "{}", arrows[0].result);
+    }
+    let other = Ty::set(KType::atom("notFound"));
+    assert!(!other.subtype(&arrows[0].result), "{}", arrows[0].result);
+    assert!(other.subtype(&arrows[1].result), "{}", arrows[1].result);
+    scaling::check("a chain of n names each adding an atom", 200, |n| {
+        let (info, _) = info(&chain_of_own_atoms(n));
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+        assert_eq!(info.sigs.values().next().unwrap().arrows.len(), 2);
     });
 }
