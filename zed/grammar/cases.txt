@@ -435,3 +435,9 @@ Type ::: (.., int) ::: ERROR
 Type ::: #a(int, ..) ::: ERROR
 Type ::: {x: int, ..} ::: ERROR
 Type ::: (.., ..) ::: ERROR
+Expr ::: text::u8[i] ::: ((text (:: u8)) ([ i ]))
+Expr ::: text::nfc::codepoints[i] ::: (((text (:: nfc)) (:: codepoints)) ([ i ]))
+Expr ::: text::chars::len ::: ((text (:: chars)) (:: len))
+Item ::: @noNaN f(x) = x; ::: (@noNaN (f ( x ) (= x ;)))
+Expr ::: if c { 2n } else { 1n } ::: (if c ({ 2n }) else ({ 1n }))
+Expr ::: char32("#") ::: (char32 (( "#" )))
