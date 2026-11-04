@@ -131,6 +131,11 @@ in docs/layout.md.
   `bitAnd bitOr bitXor bitNot shl shr popCount leadingZeros trailingZeros rotl rotr f64Bits` on
   the unbounded `int`, forward transfer on intervals (COMPLEXITY.md C25), a negative operand or an
   `x` wider than its width rejected from what the operand's text shows (C26) (tip aed59e4).
+- Done: **L1.39b**, derivations and `@exact` preimages built on demand (`check::Why`,
+  `check::Reason`, `Ck::said`): a binder's origin, a class reason and a call note are kept as
+  data and put into words only when a reported derivation reaches them; a repair trial builds
+  no derivation; counters `check::derivation_steps` and `store::preimage::exact_steps`
+  (COMPLEXITY.md F74).
 - Done: **L1.39c**, code points and bytes (`zed_kernel::words`, `Ck::code_point_call`, the
   `codePoint` hook in `zed_native::hooks`): `codePoint` (`#notScalar` unless the string is one
   scalar), `scalar` (`#notScalar` for a surrogate, a negative int or one past `0x10FFFF`), `utf8`
@@ -1041,7 +1046,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ISSUE1-else-atoms | verify attempt 6 | 2026-11-03 16:04 | fmt, clippy -D warnings pass; probes vs main zedc: blocking regression: g(positional x) = if x is #notFound { "nf" } else { trim(x) } (also trim(x else #notFoun |
 | L1.29a | impl attempt 1 | 2026-11-03 16:32 | start |
 | L1.37a | impl attempt 1 | 2026-11-03 16:32 | started |
-| L1.39b | impl attempt 1 | 2026-11-03 16:32 | start: derivations and @exact preimages on demand |
 | NARROW-if | repair attempt 8 | 2026-11-03 16:46 | arms.rs: explains takes a carrying test with its Carried path, narrowed as one conjunction; added note-count test on the strengthened hub and an ignored timing  |
 | STAGE-dag | impl attempt 1 | 2026-11-03 21:04 | started; worktree stage-dag |
 
