@@ -1291,3 +1291,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `HashMap<Span, (Option<Ty>, Src)>` written in place at each expression, with `None` for a tuple whose type is rebuilt from its components on demand | `Ck::seen`, `walk::resume` (`Frame::Seen`) | Mutation (gap 11) | A persistent map threaded through the walk as a state receiver; a type held by a shared reference needs no `None` case, since a share costs O(1) (gap 1) |
 | `let … else` and `if let … && let …` chains, one on a slice pattern (`if let [t] = ts && let Some(k) = …`), choosing the follow shape of a `match`, a comparison of an int-typed operand, and the class a literal operand of `==` follows | `store::preimage::follow_own`, `store::product::plain_comparison`, `Ck::follow` | None | An `is` test on the term's shape, then a `match` |
 | A `Vec` stack rebuilding a condition through `&&`, `||`, `!` and `if`, with a nested `fn kids` in place of a closure, whose borrow the compiler could not tie to the term | `store::product::plain_test` | Mutation (gap 11) | A fold over the condition's tree with the rebuilt children as values |
+
+## Entries from FOOTPRINT-peak (`zedc/src/cost.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Two per-device accumulators updated in place through `&mut out[d]` and `&mut kept[d]` in one loop over the regions | `per_device` | Mutation (gap 11) | `zed/prelude/cost.zed` `peak`: a fold over the device's regions with a pair (peak, retained so far) as its value |
+| `saturating_add` on the retained bytes and the peak | `per_device` | Machine integers (see the mechanical rewrites) | Vanishes on an unbounded `int`; the peak then does not stop at the maximum |

@@ -77,8 +77,13 @@ pub struct Region {
     pub work: u64,
     /// Depth: the operations on its critical path.
     pub depth: u64,
-    /// The largest live set the static plan admits, in bytes.
+    /// The largest live set the static plan admits while the region runs, in bytes.
     pub footprint: u64,
+    /// The bytes of the region's results that stay live for later regions on its device, at
+    /// most `footprint` (a larger value is read as `footprint`). Whoever builds the plan fills
+    /// it from the region's live results at its end: the cost model of step L3.23 and the
+    /// placement solver of step L24.5 (DESIGN.md step M0.6a).
+    pub retained: u64,
 }
 
 /// One alternative plan: its regions, the bytes crossing each cut edge, and its address.
@@ -99,8 +104,9 @@ pub fn brent(work: u64, depth: u64, cores: u64) -> u64 {
     (work - depth).div_ceil(cores.max(1)).saturating_add(depth)
 }
 
-/// Whether the plan respects every device's capacity: the footprints placed on a device sum to
-/// at most its capacity. A plan that names a device the target lacks is infeasible.
+/// Whether the plan respects every device's capacity: the peak footprint of each device's
+/// schedule (see [`per_device`]) is at most its capacity. A plan that names a device the target
+/// lacks is infeasible.
 pub fn feasible(plan: &Plan, target: &Target) -> bool {
     let n = target.devices.len();
     plan.regions.iter().all(|r| r.device < n)
@@ -110,15 +116,34 @@ pub fn feasible(plan: &Plan, target: &Target) -> bool {
             .all(|(w, device)| w[2] <= device.capacity)
 }
 
-/// The work, depth and footprint a plan places on each device, in device order: the regions
-/// on one device run one after another, so their work, depth and footprint add.
+/// The work, depth and footprint a plan places on each device, in device order. The regions on
+/// one device run one after another in the order the plan lists them, so their work and depth
+/// add; the footprint is the peak over that schedule of each region's footprint plus the bytes
+/// the regions before it retain (DESIGN.md step M0.6a). One pass, O(r + devices) for r
+/// regions.
+///
+/// The peak is monotone in every region's footprint and retained bytes, so a plan no worse in
+/// those is no worse in the frontier's footprint, and the frontier stays sound (step M0.6).
 fn per_device(plan: &Plan, devices: usize) -> Vec<[u64; 3]> {
     let mut out = vec![[0u64; 3]; devices];
+    // Complexity tradeoff: a region's retained bytes stay counted until the end of its
+    // device's schedule, not freed after their last reader. The answer is an upper bound on
+    // the live set, never above the sum of footprints step M0.6 used, so a plan whose retained
+    // results die early may be judged infeasible when its true peak fits. Freeing at the last
+    // reader needs each region's last reader on its device, which `Region` does not carry;
+    // with it, one more pass over the regions (subtracting at each last reader) gives the
+    // exact peak in the same O(r). Triggered by a region that retains bytes read only by the
+    // next region, followed by large regions. Test:
+    // m0_06_cost_scalarization::peak::retained_bytes_count_until_the_schedule_ends;
+    // COMPLEXITY.md C27.
+    let mut kept = vec![0u64; devices];
     for r in &plan.regions {
         let d = &mut out[r.device];
+        let k = &mut kept[r.device];
         d[0] = d[0].saturating_add(r.work);
         d[1] = d[1].saturating_add(r.depth);
-        d[2] = d[2].saturating_add(r.footprint);
+        d[2] = d[2].max(k.saturating_add(r.footprint));
+        *k = k.saturating_add(r.retained.min(r.footprint));
     }
     out
 }
@@ -226,12 +251,16 @@ mod tests {
                     device: 0,
                     work: u64::MAX,
                     depth: u64::MAX,
-                    footprint: 0,
+                    footprint: u64::MAX,
+                    retained: u64::MAX,
                 };
                 2
             ],
             cut_edges: vec![],
         };
         assert_eq!(scalarize(&plan, &t), u64::MAX);
+        // The second region's footprint on top of the first's retained bytes saturates.
+        assert_eq!(vector(&plan, 1), vec![u64::MAX, u64::MAX, u64::MAX, 0, 0]);
+        assert!(!feasible(&plan, &t));
     }
 }

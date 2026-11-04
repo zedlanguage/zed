@@ -21,7 +21,9 @@ defaultTarget = Target(
   nominalSize: 1048576,
 );
 
-struct Region { device: int, work: int, depth: int, footprint: int }
+// `retained`: the bytes of the region's results that stay live for later regions
+// on its device, read as at most `footprint` (step M0.6a).
+struct Region { device: int, work: int, depth: int, footprint: int, retained: int }
 struct Plan { address: Any, regions: [Region], cutEdges: [int] }
 
 size(positional t, positional bound) = if bound == #unbounded { t.nominalSize } else { bound };
@@ -37,10 +39,19 @@ brent(positional work, positional depth, positional cores) = {
   (work - d + max(cores, 1) - 1) div max(cores, 1) + d
 };
 
-// The work, depth and footprint each device holds, in device order.
+// The peak, over regions run one after another in plan order, of each region's
+// footprint plus the bytes the regions before it retain (step M0.6a). Retained
+// bytes count until the schedule ends, an upper bound on the live set: freeing
+// them at their last reader needs that reader, which Region does not carry
+// (the complexity tradeoff at crates/zedc/src/cost.rs per_device).
+peak(positional rs) =
+  rs.fold([0, 0], (pk, r) -> [max(pk[0], pk[1] + r.footprint), pk[1] + min(r.retained, r.footprint)])[0];
+
+// The work and depth each device holds, summed, and its peak footprint, in
+// device order.
 perDevice(positional p, positional n) = (0..<n).map(d -> {
   rs = p.regions.filter(r -> r.device == d);
-  [rs.map(r -> r.work).sum, rs.map(r -> r.depth).sum, rs.map(r -> r.footprint).sum]
+  [rs.map(r -> r.work).sum, rs.map(r -> r.depth).sum, peak(rs)]
 });
 
 feasible(positional p, positional t) =

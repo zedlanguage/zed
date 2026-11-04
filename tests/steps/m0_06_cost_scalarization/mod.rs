@@ -2,6 +2,8 @@
 //! pipeline (parse each line, keep the errors, count them by service) placed on a CPU alone or
 //! split with a GPU, compared by the scalar cost and by content address.
 
+mod peak;
+
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::address::ContentAddress;
 use zedc::cost::{
@@ -48,6 +50,7 @@ fn parse(device: usize) -> Region {
         work: 40 * LINES,
         depth: 40,
         footprint: 64 * LINES,
+        retained: 0,
     }
 }
 
@@ -58,6 +61,7 @@ fn count(device: usize) -> Region {
         work: 2 * LINES,
         depth: 2 * 20,
         footprint: 8 * LINES,
+        retained: 0,
     }
 }
 
@@ -167,6 +171,7 @@ fn the_frontier_keeps_incomparable_plans_and_drops_dominated_ones() {
             work: 100,
             depth: 50,
             footprint: 10,
+            retained: 0,
         }],
         vec![],
     );
@@ -177,6 +182,7 @@ fn the_frontier_keeps_incomparable_plans_and_drops_dominated_ones() {
             work: 120,
             depth: 10,
             footprint: 10,
+            retained: 0,
         }],
         vec![],
     );
@@ -187,6 +193,7 @@ fn the_frontier_keeps_incomparable_plans_and_drops_dominated_ones() {
             work: 130,
             depth: 10,
             footprint: 20,
+            retained: 0,
         }],
         vec![],
     );
@@ -197,6 +204,7 @@ fn the_frontier_keeps_incomparable_plans_and_drops_dominated_ones() {
             work: 120,
             depth: 10,
             footprint: 10,
+            retained: 0,
         }],
         vec![],
     );
@@ -212,11 +220,15 @@ fn random_plan(rng: &mut Rng, devices: usize) -> Plan {
     let regions = (0..1 + rng.below(4))
         .map(|_| {
             let work = rng.below(10_000) as u64;
+            let footprint = rng.below(1 << 20) as u64;
             Region {
                 device: rng.below(devices),
                 work,
                 depth: rng.below(work as usize + 1) as u64,
-                footprint: rng.below(1 << 20) as u64,
+                footprint,
+                // Up to twice the footprint, so that a value above it, read as the
+                // footprint, occurs too.
+                retained: rng.below(2 * footprint as usize + 1) as u64,
             }
         })
         .collect();
@@ -311,6 +323,7 @@ fn the_frontier_takes_time_linear_in_the_plans_when_it_stays_small() {
                     work,
                     depth,
                     footprint: 10 + k,
+                    retained: 0,
                 };
                 plan((i % 256) as u8, vec![region], vec![])
             })
