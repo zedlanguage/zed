@@ -551,7 +551,13 @@ fn order(pkg: &mut Package, edges: &[Vec<(usize, Span)>]) -> HashMap<(usize, usi
                 }
                 // Complexity tradeoff: each import that closes a cycle names the whole cycle,
                 // so b such imports on a path of k units write O(b·k) text; that text is the
-                // rejection the step asks for, and an acyclic package writes none.
+                // rejection the step asks for, and an acyclic package writes none. Trigger:
+                // many imports back into one long path, as k units each also importing the
+                // first, O(k²) text from O(k) imports. Test:
+                // `l02_03_name_resolution::scaling::a_long_cycle_is_named_whole_in_linear_time`
+                // (one cycle of 200 and 1,600 units); COMPLEXITY.md row F84. A complete
+                // solution writing O(k + b) text would print each cycle as a reference to the
+                // part of the path an earlier rejection already named.
                 Color::Gray => {
                     let mut steps = Vec::new();
                     for &(w, taken) in &stack[at[v]..] {
