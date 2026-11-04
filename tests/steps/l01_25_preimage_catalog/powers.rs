@@ -359,9 +359,8 @@ fn a_product_with_a_different_factor_holds_powers_inside_it() {
     check(&t, &ds, &Demand::Bool(true), &p, (-3, 3));
 }
 
-/// The sizes are a product of 512 factors and one of 4096. The transfer recurses on the depth
-/// of the term, so the measurement runs on a 256 MiB stack, as the `long` tests of
-/// [`super::scaling`] do; the terms are built before the timing.
+/// The sizes are a product of 512 factors and one of 4096. The measurement runs on a 2 MiB
+/// stack, as the `long` tests of [`super::scaling`] do; the terms are built before the timing.
 #[test]
 fn reading_a_product_as_a_power_is_linear_in_its_factors() {
     let measure = || {
@@ -394,13 +393,13 @@ fn reading_a_product_as_a_power_is_linear_in_its_factors() {
             },
         );
     };
-    let thread = std::thread::Builder::new().stack_size(1 << 28);
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
     thread.spawn(measure).unwrap().join().unwrap();
 }
 
 /// `x1 = i * i; …; x<d> <= 0` at depths 512 and 4096: the count at depth `d` is `2^d`, held
-/// by its value while it fits in `u32` and its parity, so each name costs O(1) to read. On a 256 MiB stack, as the transfer recurses on the
-/// depth of the term; the terms are built before the timing.
+/// by its value while it fits in `u32` and its parity, so each name costs O(1) to read. On a 2 MiB stack;
+/// the terms are built before the timing.
 #[test]
 fn reading_nested_squares_as_a_power_is_linear_in_their_depth() {
     let measure = || {
@@ -418,6 +417,6 @@ fn reading_nested_squares_as_a_power_is_linear_in_their_depth() {
             pre(&terms[at(d)], &ds);
         });
     };
-    let thread = std::thread::Builder::new().stack_size(1 << 28);
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
     thread.spawn(measure).unwrap().join().unwrap();
 }

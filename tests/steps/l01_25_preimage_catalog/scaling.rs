@@ -289,8 +289,9 @@ fn many_inputs(k: usize) -> Domains {
 
 /// The sizes the rule of low complexity is about: a summary reads each name in `O(log n)`, and
 /// its result and context take the space of what its body reads, whatever encloses it. Sizes
-/// 6 and 48 did not show a growth of `n^1.8` that sizes 48 and 384 do. The stack is what the
-/// recursion of the transfer needs until T2-mid; the terms are built before the timing.
+/// 6 and 48 did not show a growth of `n^1.8` that sizes 48 and 384 do. They run on a 2 MiB
+/// stack, which the transfer grows on the heap as it recurses (PRE-stack); the terms are
+/// built before the timing.
 fn long(what: &'static str, make: fn(usize) -> Term, ds: fn(usize) -> Domains) {
     long_at(what, 48, make, ds)
 }
@@ -305,7 +306,7 @@ fn long_at(what: &'static str, n: usize, make: fn(usize) -> Term, ds: fn(usize) 
             preimage(t, d, &Demand::Bool(true));
         });
     };
-    let thread = std::thread::Builder::new().stack_size(1 << 28);
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
     thread.spawn(measure).unwrap().join().unwrap();
 }
 
@@ -435,7 +436,7 @@ fn long_relations(what: &'static str, n: usize, make: fn(usize) -> Term) {
             relations(&[t], &inputs, false).expect("in the domain");
         });
     };
-    let thread = std::thread::Builder::new().stack_size(1 << 28);
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
     thread.spawn(measure).unwrap().join().unwrap();
 }
 
@@ -471,7 +472,7 @@ fn long_shared_values_preimage() {
             super::check(&t, &ds, &Demand::Bool(true), &p, (-50, 50));
         }
     };
-    let thread = std::thread::Builder::new().stack_size(1 << 28);
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
     thread.spawn(answers).unwrap().join().unwrap();
     long_at(
         "the preimage of `if`s whose arms read one shared term",

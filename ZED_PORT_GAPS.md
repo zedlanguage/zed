@@ -303,7 +303,9 @@ program's input; this word would be for faults in the program itself.
 `on_stack` (`eval.rs:290`) exists only to run with a 1 GiB stack (the marker `Stack`). Both vanish.
 Depth moves to the runtime: L6.7 tests a `.fold` over a 100,000-node chain, and compiled
 recursion on input-sized depth needs a growable stack in the retained runtime (inferred; not in
-L6.13). `Drop` for `text::Node` and `Premises` exists to avoid deep recursion in release,
+L6.13). The preimage transfer (`store/preimage.rs`, PRE-stack) recurses on term depth through
+`stacker::maybe_grow`, a stack that grows in segments on the heap; Zed has no such word, so a port
+needs either it in the retained runtime or each analysis rewritten with its own stack. `Drop` for `text::Node` and `Premises` exists to avoid deep recursion in release,
 so compiled reference counting must also release iteratively.
 
 ### Gap 9. Key range queries (missing)

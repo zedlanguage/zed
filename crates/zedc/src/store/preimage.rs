@@ -78,6 +78,28 @@ use super::revision::{self, Exponent, Op, Tonicity, reduce_congruence};
 use crate::stage;
 use End::{Fin, NegInf, PosInf};
 
+/// Runs `f`, first moving to a new segment of stack on the heap when less than `RED_ZONE`
+/// bytes of the current one are left. Each analysis of the transfer recurses on the depth of
+/// the term, and every such recursion passes through [`Tx::cached`], [`Tx::within`],
+/// [`Tx::close`] or [`Tx::scan`], which call this: the depth is then limited by the
+/// machine's memory alone, not by the thread's stack (PRE-stack).
+// Complexity tradeoff: the analyses stay recursive, on a stack that grows in segments,
+// rather than each becoming a machine with its own stack on the heap; a check costs O(1) and
+// a new segment is made once per `SEGMENT` bytes of depth. The sizes only place the
+// segments; no result depends on them. Nothing is refused: what is given up is the rule that
+// recursion on input size uses an explicit stack. This is a temporary form (author decision
+// on PRE-stack, 2026-11-04) until item PRE-stack-explicit rewrites each analysis with its own
+// stack on the heap (about 15 mutually recursive analyses, about 200 recursive calls) and
+// removes `stacker` from this file. It is reached by any term deeper than the thread's stack
+// allows, at depth about 1,000 on a 2 MiB thread without it; tests
+// `l01_25_preimage_catalog::deep`, COMPLEXITY.md row PRE-stack.
+fn deeper<R>(f: impl FnOnce() -> R) -> R {
+    /// More than the frames between two calls of [`deeper`] take, in a debug build.
+    const RED_ZONE: usize = 1 << 20;
+    const SEGMENT: usize = 16 << 20;
+    stacker::maybe_grow(RED_ZONE, SEGMENT, f)
+}
+
 /// An interval per input name.
 pub type Domains = BTreeMap<Arc<str>, IntervalSet>;
 
@@ -1966,7 +1988,8 @@ impl<'t> Tx<'t> {
     /// `f` read in the context `sub`, and the lowest place a call in it stopped at.
     fn within<V>(&mut self, sub: Cx, f: impl FnOnce(&mut Self) -> V) -> (V, usize) {
         let outer = std::mem::replace(&mut self.cx, sub);
-        let v = f(self);
+        // Temporary: stacker through `deeper` until PRE-stack-explicit.
+        let v = deeper(|| f(self));
         let sub = std::mem::replace(&mut self.cx, outer);
         (v, sub.cut)
     }
@@ -2066,7 +2089,8 @@ impl<'t> Tx<'t> {
         }
         let base = self.run.active.len();
         let outer = std::mem::replace(&mut self.cx.cut, usize::MAX);
-        let v = f(self);
+        // Temporary: stacker through `deeper` until PRE-stack-explicit.
+        let v = deeper(|| f(self));
         let cut = self.cx.cut;
         if cut >= base {
             table(&mut self.run.memo).insert(k, v.clone());
@@ -2343,6 +2367,11 @@ impl<'t> Tx<'t> {
     /// that reads no input. `local` holds the names bound within the term being closed: to
     /// the closed term a `let` binds, or to `None` for a lambda's parameter, which stays.
     fn close(&self, t: Tid, env: Eid, local: &Local) -> Option<Term> {
+        // Temporary: stacker through `deeper` until PRE-stack-explicit.
+        deeper(|| self.close_at(t, env, local))
+    }
+
+    fn close_at(&self, t: Tid, env: Eid, local: &Local) -> Option<Term> {
         let c = |t: Tid| self.close(t, env, local);
         let all = |args: Span| {
             (0..args.len())
@@ -3260,6 +3289,11 @@ impl<'t> Tx<'t> {
 
     /// Reports the stops in a term whose value the transfer does not follow.
     fn scan(&mut self, t: Tid, env: Eid) {
+        // Temporary: stacker through `deeper` until PRE-stack-explicit.
+        deeper(|| self.scan_at(t, env))
+    }
+
+    fn scan_at(&mut self, t: Tid, env: Eid) {
         // A term is scanned once in each scope: its stops are reported the first time.
         if !self.run.memo.scan.insert((t, env)) {
             return;
