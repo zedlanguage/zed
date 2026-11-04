@@ -2009,9 +2009,11 @@ fn refused_cover(
             let meet = match kernels.and_then(|ks| ks.into_iter().reduce(|a, b| &a & &b)) {
                 Some(k) => format!(", `{}`,", Ty::set(k)),
                 // Not built value by value ([`meet_within`]): the message says how.
-                None => ", as the checker builds it (a piece of a result that holds a function, \
-                          a variable or the unknown is left out only where another result \
-                          holds none of its carriers, or no function),"
+                None => ", as the checker builds it (a function in one result is left out where \
+                          another holds no function, and a variable bounded by carriers where \
+                          each carrier of its bound is missing from some other result; every \
+                          other piece that holds a function, a variable or the unknown is kept \
+                          whole),"
                     .into(),
             };
             return Some(format!(
@@ -2267,15 +2269,20 @@ fn met(s: &Sig, sas: &[Arrow], cands: &[usize], qa: &Arrow, cx: &mut Cx) -> bool
 /// in a piece of the rest of `i` and in every other result: each such piece must be within
 /// `result`, unless no value of it is in every other result. That is known of a function,
 /// when another result holds no function, and of a rigid variable bounded by carriers, when
-/// the carriers the other results may hold miss its bound. Linear in the results: the
-/// carriers of all but one are read off a pass from each end.
+/// each carrier of its bound is missing from some other result, since a call fixes it to one
+/// carrier. Linear in the results: the carriers every result but one may hold are read off a
+/// pass from each end.
 ///
 /// Complexity tradeoff: a piece of the rest is not intersected value by value, so some
 /// intersections within `result` are refused: `(U,) | String` and `(bool,) | String` meet
-/// only on `String`, but the tuple piece `(U,)` is not within `String`. Intersecting rigid
-/// variables value by value would fix each to each carrier of its bound, the product of the
-/// bounds in the variables; the tuple pieces would need the intersection per component of
-/// each pair of shapes of one width, quadratic in the shapes.
+/// only on `String`, but the tuple piece `(U,)` is not within `String`. Such a fit gets the
+/// error [`refused_cover`] writes, "the intersection of their results, as the checker builds
+/// it (...), is not within", which states the rule above (test
+/// `l01_26_type_resolution::fits::results_that_hold_a_function_or_a_variable_are_intersected`,
+/// COMPLEXITY.md F82). Intersecting rigid variables value by value would fix each to each
+/// carrier of its bound, the product of the bounds in the variables; the tuple pieces would
+/// need the intersection per component of each pair of shapes of one width, quadratic in the
+/// shapes.
 fn meet_within(results: &[Ty], result: &Ty, cx: &mut Cx) -> bool {
     if results.is_empty() {
         return false;
@@ -3966,7 +3973,8 @@ mod tests {
         // parameters and in its result, and the arrows hold `B`, alone or with other values,
         // at parameters and in results, so a result may hold the rigid `U` (by `B` bound to
         // it) beside values ([`meet_within`]). A fit holds at each carrier the caller may fix
-        // `U` to, at every value, as rule 6 types a call there.
+        // `U` to, at every value, as rule 6 types a call there, and the verdict is the same in
+        // every order of the arrows.
         let mut rng = Rng(0x0005_eed6);
         let (mut fit, mut refused, mut neither) = (0, 0, 0);
         let place = |rng: &mut Rng, narrow: bool| match small(rng, narrow) {
@@ -4034,10 +4042,192 @@ mod tests {
                 (false, true) => refused += 1,
                 (false, false) => neither += 1,
             }
+            same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
         }
         assert!(
             fit > 200 && neither > 200,
             "{fit} fit, {refused} refused, {neither} no cover"
+        );
+    }
+
+    /// The values of the types of [`Place`]: `int`, `bool`, `String`, `f64`, the atoms `#v0` and
+    /// `#v1`, a function of `(x0: int) -> #v0` alone, one of `(x0: int) -> #v1` alone, and one
+    /// of both (it returns no value), a bit each.
+    const FN_VALUES: usize = 9;
+
+    /// A place of an arrow over [`FN_VALUES`]: the values of a mask of the first six, the
+    /// function types `(x0: int) -> #v0` and `(x0: int) -> #v1`, and the own unbounded variable
+    /// `T` of the arrow's signature, which a comparison binds to the slot's type there.
+    #[derive(Clone, Copy, Default)]
+    struct Place {
+        m: u8,
+        f1: bool,
+        f2: bool,
+        t: bool,
+    }
+
+    impl Place {
+        /// The function type returning `#v<i>`.
+        fn f(i: usize) -> Ty {
+            let a = Arrow {
+                params: vec![Ty::carrier(Carrier::Int)],
+                result: Ty::set(KType::atom(&format!("v{i}"))),
+            };
+            Ty::func(Arc::new(sig(vec![a], 1, false)))
+        }
+
+        fn ty(self) -> Ty {
+            let carriers = [Carrier::Int, Carrier::Bool, Carrier::Str, Carrier::F64];
+            let mut t = (0..6)
+                .filter(|&b| self.m & (1 << b) != 0)
+                .fold(Ty::empty(), |t, b| match carriers.get(b) {
+                    Some(&c) => t.union(&Ty::carrier(c)),
+                    None => t.union(&Ty::set(KType::atom(&format!("v{}", b - 4)))),
+                });
+            for (held, i) in [(self.f1, 0), (self.f2, 1)] {
+                if held {
+                    t = t.union(&Place::f(i));
+                }
+            }
+            if self.t {
+                t = t.union(&Ty::var("T".into()));
+            }
+            t
+        }
+
+        /// Its values but those of `T`.
+        fn values(self) -> u16 {
+            let mut v = u16::from(self.m);
+            if self.f1 {
+                v |= 1 << 6 | 1 << 8;
+            }
+            if self.f2 {
+                v |= 1 << 7 | 1 << 8;
+            }
+            v
+        }
+
+        /// A random place of values, not empty: functions one time in `f` each.
+        fn random(rng: &mut Rng, narrow: bool, f: u64) -> Place {
+            let m = match narrow {
+                true => (rng.below(64) & rng.below(64)) as u8,
+                false => rng.below(64) as u8,
+            };
+            let mut p = Place {
+                m,
+                f1: rng.below(f) == 0,
+                f2: rng.below(f) == 0,
+                t: false,
+            };
+            if p.values() == 0 {
+                p.m = 1 << rng.below(6);
+            }
+            p
+        }
+    }
+
+    /// [`covers_by_values`] over [`FN_VALUES`]: at each value of the parameters, some arrow
+    /// takes it, and the intersection of the results of every arrow that takes it is within
+    /// `result`. `T`, alone at a parameter, takes every value there, and in the result stands
+    /// for the value it took: what an arrow generic in `T` returns at it.
+    fn covers_with_fns(arrows: &[(Vec<Place>, Place)], params: &[u16], result: u16) -> bool {
+        let mut values: Vec<Vec<u16>> = vec![Vec::new()];
+        for &m in params {
+            values = values
+                .into_iter()
+                .flat_map(|v| {
+                    (0..FN_VALUES)
+                        .filter(move |&b| m & (1 << b) != 0)
+                        .map(move |b| {
+                            let mut v = v.clone();
+                            v.push(1 << b);
+                            v
+                        })
+                })
+                .collect();
+        }
+        values.iter().all(|v| {
+            let mut met: Option<u16> = None;
+            for (ps, r) in arrows {
+                if ps.iter().zip(v).all(|(p, &x)| p.t || p.values() & x != 0) {
+                    let at_t = ps.iter().zip(v).find(|(p, _)| p.t).map_or(0, |(_, &x)| x);
+                    let r = r.values() | if r.t { at_t } else { 0 };
+                    met = Some(met.map_or(r, |m| m & r));
+                }
+            }
+            met.is_some_and(|m| m & !result == 0)
+        })
+    }
+
+    #[test]
+    fn a_fit_with_functions_in_the_results_is_a_cover_of_their_values() {
+        // As above, with two function types among the values, at parameters and in results,
+        // and arrows generic in their own unbounded `T`, alone at a parameter, so a result
+        // holds the slot's functions by `T` bound to them ([`meet_within`]): a function piece
+        // is left out of the intersection only where another result holds no function. Each
+        // fit holds at every value, and the verdict is the same in every order of the arrows.
+        let mut rng = Rng(0x0005_eed7);
+        let (mut fit, mut cover, mut by_fns, mut refused, mut neither) = (0, 0, 0, 0, 0);
+        for case in 0..4000 {
+            let width = 1 + case % 2;
+            let n = 2 + rng.below(3) as usize;
+            let mut arrows: Vec<(Vec<Place>, Place)> = Vec::new();
+            for _ in 0..n {
+                let tj = (rng.below(3) == 0).then(|| rng.below(width as u64) as usize);
+                let ps = (0..width)
+                    .map(|j| match tj == Some(j) {
+                        true => Place {
+                            t: true,
+                            ..Place::default()
+                        },
+                        false => Place::random(&mut rng, false, 3),
+                    })
+                    .collect();
+                let mut r = Place::random(&mut rng, true, 2);
+                r.t = tj.is_some() && rng.below(2) == 0;
+                arrows.push((ps, r));
+            }
+            let params: Vec<Place> = (0..width)
+                .map(|_| Place::random(&mut rng, true, 3))
+                .collect();
+            let mut result = Place::random(&mut rng, false, 3);
+            result.m |= 1 << rng.below(3);
+            let sas = arrows
+                .iter()
+                .map(|(ps, r)| Arrow {
+                    params: ps.iter().map(|p| p.ty()).collect(),
+                    result: r.ty(),
+                })
+                .collect();
+            let s = sig(sas, width, false);
+            let qa = Arrow {
+                params: params.iter().map(|p| p.ty()).collect(),
+                result: result.ty(),
+            };
+            let q = sig(vec![qa], width, false);
+            let ps: Vec<u16> = params.iter().map(|p| p.values()).collect();
+            let truth = covers_with_fns(&arrows, &ps, result.values());
+            let pairs = {
+                REFERENCE.set(Reference::Pairs);
+                let v = fits_sig(&s, &q);
+                REFERENCE.set(Reference::None);
+                v
+            };
+            let fns_met = arrows.iter().any(|(_, r)| r.f1 || r.f2 || r.t);
+            match (fits_sig(&s, &q), truth) {
+                (true, false) => panic!("case {case}: {q} in {s} is no cover of the values"),
+                (true, true) if pairs => fit += 1,
+                (true, true) if fns_met => by_fns += 1,
+                (true, true) => cover += 1,
+                (false, true) => refused += 1,
+                (false, false) => neither += 1,
+            }
+            same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
+        }
+        assert!(
+            fit > 200 && by_fns > 100 && neither > 200,
+            "{fit} fit by one arrow, {cover} together, {by_fns} together with functions in \
+             the results, {refused} refused, {neither} no cover"
         );
     }
 }

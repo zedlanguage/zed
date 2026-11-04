@@ -414,8 +414,9 @@ fn an_overload_whose_arrows_overlap_is_checked_by_the_arrows_it_names() {
 
 /// Case (3) with results that hold a function or a variable: a function is in no other
 /// result that holds none, so `String | ((y: int) -> int)` and `String | #a` meet in `String`;
-/// and `U | #a` and `U | #b`, at each carrier the caller picks for `U`, meet in `U`. Each fits
-/// as rule 6 of sec:type_resolution gives, and a near miss does not.
+/// and `U | #a` and `U | #b`, at each carrier the caller picks for `U`, meet in `U`; `U` is left
+/// out where each of its carriers is missing from another result. Each fits as rule 6 of
+/// sec:type_resolution gives, and a near miss does not.
 #[test]
 fn results_that_hold_a_function_or_a_variable_are_intersected() {
     let text = "p(f: (x: int) -> String) = f(x: 1);\n\
@@ -437,14 +438,26 @@ fn results_that_hold_a_function_or_a_variable_are_intersected() {
              String | ((y: int) -> int)))): at `((x: int) -> String)`, the arrows `((x: int) -> \
              String | #a | ((y: int) -> int))`, `((x: int) -> String | ((y: int) -> int))` each \
              take all of it, and the intersection of their results, as the checker builds it (a \
-             piece of a result that holds a function, a variable or the unknown is left out only \
-             where another result holds none of its carriers, or no function), is not within \
-             `String` (rule 6 of sec:type_resolution) [p(f: g)]"
+             function in one result is left out where another holds no function, and a variable \
+             bounded by carriers where each carrier of its bound is missing from some other \
+             result; every other piece that holds a function, a variable or the unknown is kept \
+             whole), is not within `String` (rule 6 of sec:type_resolution) [p(f: g)]"
         ]
     );
     let text = "p(f: (x: U) -> U for U in int | f64) = f(x: 1);\n\
                 q(g: ((x: T) -> T | #a for T in int | f64) & ((x: T) -> T | #a for T in int | \
                 f64)) = p(f: g);\n";
+    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+    // `U` is one carrier at a call: at `int` the third result holds none, at `f64` the second,
+    // so `U` is in no value all three share, though no one result misses both carriers.
+    let text = "p(f: (x: U) -> String for U in int | f64) = f(x: 1);\n\
+                q(g: ((x: T) -> T | #a for T in int | f64) & ((x: int | f64) -> int | String) & \
+                ((x: int | f64) -> f64 | String)) = p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    // Near miss: the second result holds `f64` too, so at `f64` all three hold `U`.
+    let text = "p(f: (x: U) -> String for U in int | f64) = f(x: 1);\n\
+                q(g: ((x: T) -> T | #a for T in int | f64) & ((x: int | f64) -> int | f64 | \
+                String) & ((x: int | f64) -> f64 | String)) = p(f: g);\n";
     assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
     // A tuple that holds a variable is not intersected value by value (DESIGN's example): the
     // results meet only on `String`, and the fit is refused with how the checker built it.
