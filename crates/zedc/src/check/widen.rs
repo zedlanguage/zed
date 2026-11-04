@@ -245,6 +245,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             | StmtKind::Type(_)
             | StmtKind::Method(_)
             | StmtKind::Import(_)
+            | StmtKind::Local(_)
             | StmtKind::UnitAnnot(_) => {}
         }
     }

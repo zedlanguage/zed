@@ -1,19 +1,30 @@
-//! Name resolution (step L1.14): every name a unit uses, tied to the binder it names.
+//! Name resolution (steps L1.14 and L2.3): every name a unit uses, tied to the binder it names.
 //!
 //! A bare name resolves in the order of DESIGN.md sec:units, stopping at the first hit: the
-//! block scopes, innermost outward; the unit's top level; the prelude. Imports and qualified
-//! names arrive at L2. Statement order has no meaning, so a name bound anywhere in a scope is
-//! in scope throughout it. A scope is a block, or a function's or lambda's parameters, which
-//! share one scope with the statements of a body block (so `f(x) { x = 1; }` rebinds `x`), or
-//! the names an `else` pattern binds, in scope in its default. A parameter's type and default
+//! block scopes, innermost outward, each with the names its own imports bring in; the unit's
+//! top level, `local` declarations included; the selective imports and qualifiers of the top
+//! level; the prelude unit the manifest names; the compiler's prelude words. Functions of one
+//! name at the top level and in its imports are the arrows of one overload set. Statement order
+//! has no meaning, so a name bound anywhere in a scope is in scope throughout it. A scope is a
+//! block, or a function's or lambda's parameters, which share one scope with the statements of
+//! a body block (so `f(x) { x = 1; }` rebinds `x`), or the names an `else` pattern or a `match`
+//! arm binds, in scope in its default or its guard and value. A parameter's type and default
 //! see the parameters (`hi: int where lo <= hi`) but not the body's bindings; a function's
-//! `test` cases are read in the scope around the function.
+//! `test` cases are read in the scope around the function; a type declaration's parameters are
+//! in scope in its type only; a method's receiver `this` is in scope in its body.
 //!
 //! Binding a name twice in one scope is an error, except that functions of one name whose
 //! written parameter types differ are the arrows of one overload set; a name in a nested scope
-//! shadows the outer one. A name that resolves to a prelude word of a later layer is an error
-//! naming the layer. A member `x.f` whose `f` is in scope may be a uniform call `f(x)`; its
-//! resolution is recorded, and elaboration (step L1.16) tells a field from a function.
+//! shadows the outer one. Two imports in one scope that bring in one name make its uses
+//! ambiguous, unless every binder they bring is a function or both come from one unit. A name
+//! that resolves to a prelude word of a later layer is an error naming the layer. A member `x.f`
+//! whose `f` is in scope may be a uniform call `f(x)`; its resolution is recorded, and
+//! elaboration (step L1.16) tells a field from a function. A member `q.f` of a qualifier names
+//! the definition `f` of the qualifier's unit, by name ([`Ref::Unit`]); step L2.4 links it.
+//!
+//! Resolution reads other units only through [`Units`]: their exports, by unit path. The loader
+//! (`crate::unit`) gives each unit the exports of the units it imports, in an order where those
+//! are resolved first; a unit read alone imports nothing.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
@@ -22,14 +33,15 @@ use std::sync::Arc;
 use imbl::Vector;
 
 use crate::ast::{
-    Annot, Error, Expr, ExprKind, Param, Pattern, Port, Stmt, StmtKind, StrPart, Target,
+    Annot, Arm, Error, Expr, ExprKind, Field, Import, ImportKind, Param, Pattern, Port, RangeEnd,
+    Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
 };
 use crate::ast::{Every, Note, Type, TypeBound, TypeKind};
 use crate::lex::Span;
 use crate::rejection::Row;
 
 /// What binds a name.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
     /// A binding `x = e;` or a target of `a, b = e;`.
     Binding,
@@ -39,8 +51,23 @@ pub enum Kind {
     Param,
     /// An output port of a function's header, `-> (stdout: Lines)`.
     Port,
-    /// A name an `else` pattern binds, `#a(f:)`.
+    /// A name a pattern binds: `#a(f:)`, `Point(x:)`, `n`, `n is int`.
     Pattern,
+    /// A struct declaration `struct Point { … }`.
+    Struct,
+    /// A type declaration `type Shape = …;`.
+    Type,
+    /// A parameter `T` of a type declaration `type Tree(T) = …;`.
+    TypeParam,
+    /// A field of a struct. Fields are named through a value of the struct, never alone, so no
+    /// scope holds them.
+    Field,
+    /// A method `T.m(…) = e;`, bound as `T.m`.
+    Method,
+    /// The receiver `this` of a method.
+    Receiver,
+    /// A qualifier: the name `import a.b;` binds to the unit `a.b`, or the `g` of `as g`.
+    Unit,
 }
 
 impl Kind {
@@ -52,7 +79,19 @@ impl Kind {
             Kind::Param => "the parameter",
             Kind::Port => "the output port",
             Kind::Pattern => "the pattern binder",
+            Kind::Struct => "the struct",
+            Kind::Type => "the type",
+            Kind::TypeParam => "the type parameter",
+            Kind::Field => "the field",
+            Kind::Method => "the method",
+            Kind::Receiver => "the receiver",
+            Kind::Unit => "the qualifier",
         }
+    }
+
+    /// Whether a binder of this kind names a type.
+    pub fn is_type(self) -> bool {
+        matches!(self, Kind::Struct | Kind::Type | Kind::TypeParam)
     }
 }
 
@@ -70,9 +109,10 @@ fn name_at(decl: Span, name: &str) -> Span {
 pub struct Binder {
     /// The name.
     pub name: String,
-    /// The text that binds it: the statement, the parameter, the port or the pattern.
+    /// The text that binds it: the statement, the parameter, the port or the pattern; for a
+    /// name an import brings in, the import.
     pub span: Span,
-    /// What binds it.
+    /// What binds it; for a name an import brings in, what binds it in its unit.
     pub kind: Kind,
 }
 
@@ -85,6 +125,16 @@ pub enum Ref {
     Bound(Vector<usize>),
     /// A prelude word of layer L1.
     Prelude(String),
+    /// The definition `name` of the unit `unit`: a member `shapes.area` of a qualifier, a type
+    /// `shapes.Point`, or a name of the prelude unit. It is named, not numbered, so a unit's
+    /// resolution stays valid while the other unit's definitions change but its exports do not;
+    /// step L2.4 links it to the definition.
+    Unit {
+        /// The unit's path.
+        unit: Arc<str>,
+        /// The name it defines.
+        name: String,
+    },
 }
 
 /// The resolution of a unit.
@@ -93,14 +143,28 @@ pub struct Resolution {
     /// The unit's binders, in the order they are met.
     pub binders: Vec<Binder>,
     /// Each use, by its text: a name, a type name, a push's statement (whose port it names),
-    /// or a member whose name is in scope.
+    /// a member whose name is in scope, a qualified member or type, or a struct pattern's or a
+    /// method's type.
     pub uses: BTreeMap<Span, Ref>,
-    /// The binders of each `else` pattern, by the `else`'s text: a range of `binders`.
+    /// The binders of each `else` pattern and of each `match` arm, by the `else`'s or the arm's
+    /// text: a range of `binders`.
     pub patterns: BTreeMap<Span, Range<usize>>,
+    /// The fields of each struct, by the struct's statement: a range of `binders`.
+    pub fields: BTreeMap<Span, Range<usize>>,
+    /// The unit each import's binder comes from: for a qualifier, the unit it names; for a
+    /// name a selective import brings in, the unit that defines it.
+    pub imports: BTreeMap<usize, Arc<str>>,
+    /// Each import statement, in every scope, with the unit it names, in text order: what the
+    /// loader reads to find the units a unit needs.
+    pub units: Vec<(Arc<str>, Span)>,
+    /// The binders a `local` declaration binds, which no other unit sees.
+    pub local: HashSet<usize>,
+    /// What the unit's top level defines, which other units may import.
+    pub exports: Exports,
     /// Where each declaration statement starts, in every scope: a binding, a function, a
-    /// struct, a type, a method, an import, a `mutable`, a piece of an indexed definition, or an
-    /// annotated one. A doc comment attaches to the declaration that follows it (DESIGN.md
-    /// sec:grammar, comments).
+    /// struct, a type, a method, an import, a `mutable`, a `local`, a piece of an indexed
+    /// definition, or an annotated one. A doc comment attaches to the declaration that follows
+    /// it (DESIGN.md sec:grammar, comments).
     pub decls: HashSet<usize>,
     /// The unit item `@log(#off);`, if the unit has one: it drops the log lines that every
     /// body of the unit writes (DESIGN.md sec:ports). Step L7.3, which writes the lines, reads it.
@@ -123,6 +187,99 @@ pub enum Handle {
     Any(String),
     /// The atom with no payload: `e is #a`, one for each atom of the tested type.
     Bare(String),
+}
+
+/// A name a unit's top level defines, as another unit sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Export {
+    /// What binds it: for a set of overloads, `Function`.
+    pub kind: Kind,
+    /// Whether every declaration of it is `local`, so that no other unit sees it.
+    pub local: bool,
+}
+
+/// What a unit's top level defines: each name, by name. It holds no text position, so an edit
+/// that moves or rewrites a definition but keeps its name, its kind and its `local` leaves the
+/// exports, and so every importer's resolution, as they were.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Exports {
+    names: BTreeMap<String, Export>,
+}
+
+impl Exports {
+    /// What the unit defines as `name`, if anything.
+    pub fn get(&self, name: &str) -> Option<Export> {
+        self.names.get(name).copied()
+    }
+
+    /// How many names the unit defines.
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    /// Whether the unit defines no name.
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// Records a top-level declaration of `name`; one arrow of an overload set that is not
+    /// `local` makes the name visible to other units.
+    fn add(&mut self, name: &str, kind: Kind, local: bool) {
+        self.names
+            .entry(name.into())
+            .and_modify(|e| e.local &= local)
+            .or_insert(Export { kind, local });
+    }
+
+    /// A BLAKE3 hash of the names in order, each with its kind and `local`: what an importer's
+    /// resolution reads of the unit.
+    pub fn digest(&self) -> [u8; 32] {
+        let mut h = blake3::Hasher::new();
+        for (name, e) in &self.names {
+            h.update(&(name.len() as u64).to_le_bytes());
+            h.update(name.as_bytes());
+            h.update(&[e.kind as u8, u8::from(e.local)]);
+        }
+        *h.finalize().as_bytes()
+    }
+}
+
+/// The other units a unit's resolution reads.
+pub trait Units {
+    /// The exports of the unit `path`, or why the unit cannot import it.
+    fn exports(&self, path: &str) -> Result<&Exports, String>;
+    /// The prelude unit the unit sees, by its path, with its exports: the one the manifest
+    /// names, for every unit but it and the units it reaches.
+    fn prelude(&self) -> Option<(&Arc<str>, &Exports)>;
+}
+
+/// A unit read alone, with no manifest above it: it imports no unit and sees no prelude unit.
+pub struct Alone;
+
+impl Units for Alone {
+    fn exports(&self, _: &str) -> Result<&Exports, String> {
+        Err(
+            "no manifest `zed.manifest` marks a package root at or above this unit, so it \
+             imports no unit"
+                .into(),
+        )
+    }
+
+    fn prelude(&self) -> Option<(&Arc<str>, &Exports)> {
+        None
+    }
+}
+
+/// A unit's resolution and what it rejects: `errors` are the unit's mistakes, `later` the forms
+/// it uses that a later step compiles. Either list stops the unit before elaboration.
+#[derive(Debug)]
+pub struct Resolved {
+    /// The resolution.
+    pub res: Resolution,
+    /// The errors, in text order.
+    pub errors: Vec<Error>,
+    /// The forms of later steps, in text order.
+    pub later: Vec<Error>,
 }
 
 /// The value words of the prelude, each with the layer it belongs to (DESIGN.md, "Defined
@@ -268,16 +425,40 @@ const TYPES: &[&str] = &[
 /// them.
 const CARRIERS: &[&str] = &["int", "f64", "rat", "String", "bool"];
 
-/// The resolution of `unit`, or every error in it, in text order.
+/// The resolution of `unit`, read alone, or every error in it and every form it uses that a
+/// later step compiles, in text order.
 pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
-    let mut r = Resolver::default();
+    let Resolved {
+        res,
+        mut errors,
+        later,
+    } = resolve_in(unit, &Alone);
+    if errors.is_empty() && later.is_empty() {
+        return Ok(res);
+    }
+    errors.extend(later);
+    errors.sort_by_key(|e| e.span);
+    Err(errors)
+}
+
+/// The resolution of `unit`, which reads the other units through `units`, with its errors and
+/// its forms of later steps, each in text order.
+pub fn resolve_in(unit: &[Stmt], units: &dyn Units) -> Resolved {
+    let mut r = Resolver {
+        units: Some(units),
+        ..Resolver::default()
+    };
+    // The top level is two scopes: the outer holds what its imports bring in (tier 3), the
+    // inner what it declares (tier 2), which shadows it.
+    r.scopes.push(Vec::new());
     r.scopes.push(Vec::new());
     r.walk(Task::Unit(unit));
-    if r.errors.is_empty() {
-        Ok(r.out)
-    } else {
-        r.errors.sort_by_key(|e| e.span);
-        Err(r.errors)
+    r.errors.sort_by_key(|e| e.span);
+    r.later.sort_by_key(|e| e.span);
+    Resolved {
+        res: r.out,
+        errors: r.errors,
+        later: r.later,
     }
 }
 
@@ -292,6 +473,7 @@ pub fn printed_type(t: &Type, leaves: HashSet<Arc<str>>) -> Result<(), Vec<Error
         ..Resolver::default()
     };
     r.walk(Task::Ty(t));
+    r.errors.append(&mut r.later);
     if r.errors.is_empty() {
         Ok(())
     } else {
@@ -300,21 +482,39 @@ pub fn printed_type(t: &Type, leaves: HashSet<Arc<str>>) -> Result<(), Vec<Error
     }
 }
 
-/// What a name is found to be: binders of the unit, or a prelude word of a layer.
+/// The level of the top level's outer scope, which holds what its imports bring in.
+const IMPORTS: usize = 1;
+/// The level of the top level's inner scope, which holds what it declares.
+const TOP: usize = 2;
+
+/// What a name is found to be: binders of the unit, a name two imports bring in, a name of the
+/// prelude unit, or a prelude word of a layer.
 enum Found {
     Bound(Vector<usize>),
+    /// Two binders from different units, which make the name ambiguous.
+    Ambiguous(usize, usize),
+    /// The prelude unit, by its path.
+    Unit(Arc<str>),
     Word(u32),
 }
 
 #[derive(Default)]
-struct Resolver {
+struct Resolver<'u> {
     out: Resolution,
     errors: Vec<Error>,
+    /// The forms a later step compiles, reported apart from the errors.
+    later: Vec<Error>,
+    /// The other units, or `None` when a printed type is read.
+    units: Option<&'u dyn Units>,
     /// The scopes, outermost first: the names each binds.
     scopes: Vec<Vec<String>>,
     /// The bindings of each name in the open scopes, innermost last, so a name is found in
     /// `O(1)` however deep the scopes nest.
     visible: HashMap<String, Vec<Bound>>,
+    /// Whether the declaration being bound is marked `local`.
+    local: bool,
+    /// The binders of imports that failed: their uses are not reported again.
+    dead: HashSet<usize>,
     /// The type variables a bounds clause around the type being walked binds, by name.
     tvars: HashMap<String, TypeVar>,
     /// The function types around the type being walked, outermost first, by their text.
@@ -345,9 +545,29 @@ struct Bound {
     /// The written parameter types of each, which tell an overload's arrows apart: a set, so
     /// declaring `K` overloads costs `O(K)`, not `O(K²)`.
     signatures: HashSet<Option<Vec<Option<String>>>>,
+    /// Whether every binder is a function, so the binders are arrows of one overload set.
+    functions: bool,
+    /// Whether every binder is a name an import brings in.
+    imported: bool,
+    /// Two binders that two imports from different units bring in, when not all are functions:
+    /// a use of the name is ambiguous.
+    ambiguous: Option<(usize, usize)>,
 }
 
-impl Resolver {
+impl Bound {
+    fn new(level: usize, kind: Kind, imported: bool) -> Self {
+        Bound {
+            level,
+            ids: Vector::new(),
+            signatures: HashSet::new(),
+            functions: kind == Kind::Function,
+            imported,
+            ambiguous: None,
+        }
+    }
+}
+
+impl Resolver<'_> {
     /// Binds `name`, written at `at`, in the innermost scope; `span` is the text that binds it
     /// and `signature` a function's parameter types. A name that names a type is an error, and
     /// is bound all the same, so that its uses are not reported as well.
@@ -372,9 +592,8 @@ impl Resolver {
             .filter(|b| b.level == level);
         if let Some(b) = here {
             let first = &self.out.binders[b.ids[0]];
-            let overload = kind == Kind::Function
-                && first.kind == Kind::Function
-                && !b.signatures.contains(&signature);
+            let overload =
+                kind == Kind::Function && b.functions && !b.signatures.contains(&signature);
             if !overload {
                 let (message, note) = match &signature {
                     Some(_) if first.kind == Kind::Function => (
@@ -383,6 +602,10 @@ impl Resolver {
                              types"
                         ),
                         format!("the first `{name}` with these parameter types"),
+                    ),
+                    _ if b.imported => (
+                        format!("`{name}` is already bound in this scope, by an import"),
+                        format!("the import that brings `{name}` into this scope"),
                     ),
                     _ => (
                         format!("`{name}` is already bound in this scope"),
@@ -404,21 +627,80 @@ impl Resolver {
         }
         let v = self.visible.entry(name.into()).or_default();
         if v.last().is_none_or(|b| b.level != level) {
-            v.push(Bound {
-                level,
-                ids: Vector::new(),
-                signatures: HashSet::new(),
-            });
+            v.push(Bound::new(level, kind, false));
             self.scopes.last_mut().expect("a scope").push(name.into());
         }
         let b = v.last_mut().expect("pushed above");
         b.ids.push_back(id);
         b.signatures.insert(signature);
+        b.functions &= kind == Kind::Function;
+        b.imported = false;
+        if level == TOP {
+            self.out.exports.add(name, kind, self.local);
+        }
+        if self.local {
+            self.out.local.insert(id);
+        }
         self.out.binders.push(Binder {
             name: name.into(),
             span,
             kind,
         });
+    }
+
+    /// Binds `name`, which the import at `span` brings in from `unit` with the kind `kind` it
+    /// has there: at the top level in the scope of its imports, in a block in the block's
+    /// scope. Two imports of one name are kept, and make its uses ambiguous unless all are
+    /// functions or both come from one unit.
+    fn bind_import(&mut self, name: &str, span: Span, kind: Kind, unit: &Arc<str>) -> usize {
+        if TYPES.contains(&name) {
+            self.names_type(name, span, span, kind.binder());
+        }
+        let id = self.out.binders.len();
+        let level = match self.scopes.len() {
+            TOP => IMPORTS,
+            n => n,
+        };
+        let v = self.visible.entry(name.into()).or_default();
+        // At most the two scopes of the top level are open when an import of the top level is
+        // bound, so this looks at two entries at most; in a block, at the last.
+        let pos = v.iter().rposition(|b| b.level < level).map_or(0, |i| i + 1);
+        match v.get_mut(pos).filter(|b| b.level == level) {
+            Some(b) if !b.imported => {
+                let first = b.ids[0];
+                self.errors.push(Error {
+                    row: None,
+                    span,
+                    message: format!("`{name}` is already bound in this scope"),
+                    notes: vec![Note {
+                        span: self.out.binders[first].span,
+                        text: format!("the binding of `{name}` the import would hide"),
+                    }],
+                });
+                self.dead.insert(id);
+            }
+            Some(b) => {
+                let first = b.ids[0];
+                b.functions &= kind == Kind::Function;
+                if b.ambiguous.is_none() && !b.functions && self.out.imports[&first] != *unit {
+                    b.ambiguous = Some((first, id));
+                }
+                b.ids.push_back(id);
+            }
+            None => {
+                let mut b = Bound::new(level, kind, true);
+                b.ids.push_back(id);
+                v.insert(pos, b);
+                self.scopes[level - 1].push(name.into());
+            }
+        }
+        self.out.imports.insert(id, unit.clone());
+        self.out.binders.push(Binder {
+            name: name.into(),
+            span,
+            kind,
+        });
+        id
     }
 
     fn open(&mut self) {
@@ -438,10 +720,55 @@ impl Resolver {
 
     /// What `name` names here, or `None`.
     fn find(&self, name: &str) -> Option<Found> {
-        if let Some(b) = self.visible.get(name).and_then(|v| v.last()) {
-            return Some(Found::Bound(b.ids.clone()));
+        if let Some(v) = self.visible.get(name)
+            && let Some(b) = v.last()
+        {
+            if let Some((a, c)) = b.ambiguous {
+                return Some(Found::Ambiguous(a, c));
+            }
+            let mut ids = b.ids.clone();
+            // The top level's functions and its imports' are one overload set.
+            if let [.., low, top] = &v[..]
+                && top.level == TOP
+                && low.level == IMPORTS
+                && top.functions
+                && low.functions
+            {
+                ids.append(low.ids.clone());
+            }
+            return Some(Found::Bound(ids));
+        }
+        if let Some((unit, exports)) = self.units.and_then(|u| u.prelude())
+            && exports.get(name).is_some_and(|e| !e.local)
+        {
+            return Some(Found::Unit(unit.clone()));
         }
         prelude_layer(name).map(Found::Word)
+    }
+
+    /// The error that `name`, used at `span`, names the binders `a` and `b`, which two imports
+    /// from different units bring in.
+    fn ambiguous(&mut self, name: &str, span: Span, a: usize, b: usize) {
+        let notes = [a, b]
+            .map(|i| Note {
+                span: self.out.binders[i].span,
+                text: format!(
+                    "this import brings `{name}` in from the unit `{}`",
+                    self.out.imports[&i]
+                ),
+            })
+            .into();
+        self.errors.push(Error {
+            row: None,
+            span,
+            message: format!(
+                "`{name}` is ambiguous: two imports bring it into scope from different units; \
+                 name the one meant through a qualifier, as `{q}.{name}` after `import {unit};`",
+                unit = self.out.imports[&a],
+                q = self.out.imports[&a].rsplit('.').next().unwrap_or_default(),
+            ),
+            notes,
+        });
     }
 
     /// Records the use of `name` at `span`, or the error that it names nothing at L1.
@@ -450,10 +777,20 @@ impl Resolver {
             return self.primed(name, span);
         }
         let message = match self.find(name) {
+            Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => return,
+            Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind == Kind::Unit => {
+                let unit = &self.out.imports[&ids[0]];
+                format!(
+                    "`{name}` names the unit `{unit}`, which is no value; a definition of the \
+                     unit is written `{name}.f`"
+                )
+            }
             Some(Found::Bound(ids)) => {
                 self.out.uses.insert(span, Ref::Bound(ids));
                 return;
             }
+            Some(Found::Ambiguous(a, b)) => return self.ambiguous(name, span, a, b),
+            Some(Found::Unit(unit)) => return self.prelude_unit(name, span, unit),
             Some(Found::Word(1)) => {
                 self.out.uses.insert(span, Ref::Prelude(name.into()));
                 return;
@@ -467,6 +804,113 @@ impl Resolver {
             message,
             notes: Vec::new(),
         });
+    }
+
+    /// The use at `span` of `name`, a definition of the prelude unit `unit`.
+    fn prelude_unit(&mut self, name: &str, span: Span, unit: Arc<str>) {
+        let what = format!("`{name}`, a definition of the prelude unit `{unit}`,");
+        self.out.uses.insert(
+            span,
+            Ref::Unit {
+                unit,
+                name: name.into(),
+            },
+        );
+        self.linked(span, &what);
+    }
+
+    /// The member `q.name` at `span`, if `q`, used at `q_span`, is a qualifier: its use, and
+    /// the definition `name` of its unit, or the error that the unit has no `name` another unit
+    /// sees. `false` when `q` names no qualifier.
+    fn qualified(&mut self, q: &str, q_span: Span, name: &str, span: Span) -> bool {
+        let Some(Found::Bound(ids)) = self.find(q) else {
+            return false;
+        };
+        let id = ids[0];
+        if self.out.binders[id].kind != Kind::Unit {
+            return false;
+        }
+        self.out.uses.insert(q_span, Ref::Bound(ids));
+        if self.dead.contains(&id) {
+            return true;
+        }
+        let unit = self.out.imports[&id].clone();
+        let import = self.out.binders[id].span;
+        if self.export(&unit, name, span, import).is_some() {
+            self.out.uses.insert(
+                span,
+                Ref::Unit {
+                    unit,
+                    name: name.into(),
+                },
+            );
+            let what = format!("`{q}.{name}`, a definition of another unit,");
+            self.linked(span, &what);
+        }
+        true
+    }
+
+    /// What the unit `unit`, which the import at `import` reads, defines as `name`, used at
+    /// `span`; or the error that it defines no `name`, or only a `local` one.
+    fn export(&mut self, unit: &Arc<str>, name: &str, span: Span, import: Span) -> Option<Export> {
+        let exports = self.units.and_then(|u| u.exports(unit).ok())?;
+        let message = match exports.get(name) {
+            Some(e) if !e.local => return Some(e),
+            Some(_) => format!(
+                "`{name}` is declared `local` in the unit `{unit}`, so no other unit sees it"
+            ),
+            None => format!("the unit `{unit}` defines no `{name}`"),
+        };
+        self.errors.push(Error {
+            row: None,
+            span,
+            message,
+            notes: vec![Note {
+                span: import,
+                text: format!("the import of the unit `{unit}`"),
+            }],
+        });
+        None
+    }
+
+    /// The import `i`, the statement at `span`: the names it binds, each in the scope of its
+    /// imports. An import of a unit the loader could not give is one error, and its names are
+    /// bound all the same, so that their uses are not reported as well.
+    fn import(&mut self, i: &Import, span: Span) {
+        let unit: Arc<str> = i.path.as_str().into();
+        self.out.units.push((unit.clone(), span));
+        let exports = match self.units.map(|u| u.exports(&i.path)) {
+            Some(Ok(e)) => Some(e),
+            Some(Err(why)) => {
+                self.errors.push(Error {
+                    row: None,
+                    span,
+                    message: format!("the unit `{unit}` cannot be imported: {why}"),
+                    notes: Vec::new(),
+                });
+                None
+            }
+            None => None,
+        };
+        let qualifier = match &i.kind {
+            ImportKind::Qualified => i.path.rsplit('.').next().unwrap_or_default(),
+            ImportKind::Alias(g) => g.as_str(),
+            ImportKind::Selective(names) => {
+                for n in names {
+                    let found = exports.map(|_| self.export(&unit, n, span, span));
+                    let kind = found.flatten().map_or(Kind::Binding, |e| e.kind);
+                    let id = self.bind_import(n, span, kind, &unit);
+                    if !matches!(found, Some(Some(_))) {
+                        self.dead.insert(id);
+                    }
+                }
+                return;
+            }
+        };
+        let id = self.bind_import(qualifier, span, Kind::Unit, &unit);
+        if exports.is_none() {
+            self.dead.insert(id);
+        }
     }
 
     /// Does `root` and every task it leads to, in written order. The tasks wait on a stack on
@@ -484,11 +928,13 @@ impl Resolver {
                     params,
                     ports,
                     body,
-                } => self.function(params, ports, body, &mut todo),
+                    this,
+                } => self.function(params, ports, body, this, &mut todo),
                 Task::Expr(e) => self.expr(e, &mut todo),
                 Task::Ty(t) => self.ty(t, &mut todo),
-                Task::Pattern(p) => self.pattern(p, &mut todo),
-                Task::BindField(name, span) => self.bind(name, span, span, Kind::Pattern, None),
+                Task::TypeName(n, span) => self.type_name(n, span),
+                Task::Pattern(p, report) => self.pattern(p, report, &mut todo),
+                Task::BindPattern(name, span) => self.bind(name, span, span, Kind::Pattern, None),
                 Task::Else {
                     span,
                     pattern,
@@ -500,8 +946,19 @@ impl Resolver {
                     if let Some(p) = pattern {
                         let start = self.out.binders.len();
                         todo.push(Task::PatternEnd(span, start));
-                        todo.push(Task::Pattern(p));
+                        todo.push(Task::Pattern(p, true));
                     }
+                }
+                Task::Arm(arm) => {
+                    self.open();
+                    todo.push(Task::Close);
+                    todo.push(Task::Expr(&arm.body));
+                    todo.extend(arm.guard.as_ref().map(Task::Expr));
+                    let start = self.out.binders.len();
+                    todo.push(Task::PatternEnd(arm.span, start));
+                    // The `match` is reported as a form of a later step, so its patterns are
+                    // not reported again.
+                    todo.push(Task::Pattern(&arm.pattern, false));
                 }
                 Task::PatternEnd(span, start) => {
                     let end = self.out.binders.len();
@@ -510,7 +967,9 @@ impl Resolver {
                 Task::Member(span, name) => {
                     if name.ends_with('\'') {
                         self.later(span, &format!("the primed field `{name}`"), "L6.3");
-                    } else if let Some(Found::Bound(ids)) = self.find(name) {
+                    } else if let Some(Found::Bound(ids)) = self.find(name)
+                        && !self.dead.contains(&ids[0])
+                    {
                         self.out.uses.insert(span, Ref::Bound(ids));
                     }
                 }
@@ -584,10 +1043,50 @@ impl Resolver {
                     Some(signature.collect()),
                 );
             }
+            StmtKind::Struct(st) => self.bind(&st.name, s.span, s.span, Kind::Struct, None),
+            StmtKind::Type(t) => self.bind(&t.name, s.span, s.span, Kind::Type, None),
+            StmtKind::Method(m)
+                if m.receiver.ends_with('\'') || m.function.name.ends_with('\'') => {}
+            StmtKind::Method(m) => {
+                let name = format!("{}.{}", m.receiver, m.function.name);
+                let signature = m
+                    .function
+                    .params
+                    .iter()
+                    .map(|p| p.ty.as_ref().map(|t| t.to_string()));
+                self.bind(
+                    &name,
+                    name_at(s.span, &name),
+                    s.span,
+                    Kind::Method,
+                    Some(signature.collect()),
+                );
+            }
+            StmtKind::Import(i) => self.import(i, s.span),
             // The declaration is not annotated again, and a `mutable` holds a binding, so this
             // recursion is one level deep.
             StmtKind::Annotated { decl, .. } => self.declare(decl, whole, families),
             StmtKind::Mutable(decl) => self.declare(decl, true, families),
+            // A `local` before a `local` is refused and not walked into, so this recursion is
+            // one level deep. A definition `local` marks in a block is refused but still bound
+            // there, so its uses are not reported again.
+            StmtKind::Local(decl) => {
+                let top = self.local_here(s, decl);
+                if top
+                    || matches!(
+                        decl.kind,
+                        StmtKind::Bind { .. }
+                            | StmtKind::Function(_)
+                            | StmtKind::Struct(_)
+                            | StmtKind::Type(_)
+                            | StmtKind::Method(_)
+                    )
+                {
+                    self.local = top;
+                    self.declare(decl, whole, families);
+                    self.local = false;
+                }
+            }
             StmtKind::IndexedDef(d) => {
                 if !d.name.ends_with('\'') && families.insert(d.name.as_str()) {
                     self.bind(
@@ -601,15 +1100,63 @@ impl Resolver {
             }
             StmtKind::Return(_)
             | StmtKind::Push { .. }
-            | StmtKind::Struct(_)
-            | StmtKind::Type(_)
-            | StmtKind::Method(_)
-            | StmtKind::Import(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
             | StmtKind::Expr(_)
             | StmtKind::UnitAnnot(_) => {}
         }
+    }
+
+    /// Whether `local` may mark `decl` in the statement `s`: it marks a definition, at a unit's
+    /// top level (a loop body, where it also stands, is of layer L6). Otherwise the error why
+    /// not.
+    fn local_here(&mut self, s: &Stmt, decl: &Stmt) -> bool {
+        let what = match &decl.kind {
+            StmtKind::Bind { .. }
+            | StmtKind::Function(_)
+            | StmtKind::Struct(_)
+            | StmtKind::Type(_)
+            | StmtKind::Method(_)
+                if self.scopes.len() == TOP =>
+            {
+                return true;
+            }
+            StmtKind::Bind { .. }
+            | StmtKind::Function(_)
+            | StmtKind::Struct(_)
+            | StmtKind::Type(_)
+            | StmtKind::Method(_) => {
+                self.errors.push(Error {
+                    row: None,
+                    span: s.span,
+                    message: "`local` stands at a unit's top level or in a loop body; a \
+                              declaration in this block is seen by no other unit already"
+                        .into(),
+                    notes: Vec::new(),
+                });
+                return false;
+            }
+            StmtKind::Return(_) => "a `return`",
+            StmtKind::Push { .. } => "a push",
+            StmtKind::Import(_) => "an import, whose names are not definitions of the unit",
+            StmtKind::Local(_) => "a `local` declaration again",
+            StmtKind::Mutable(_) => "a `mutable` binding, which belongs to a loop body",
+            StmtKind::IndexedDef(_) => "an indexed definition",
+            StmtKind::While(_) | StmtKind::Until(_) => "a loop guard",
+            StmtKind::Expr(_) => "an expression statement",
+            StmtKind::Annotated { .. } | StmtKind::UnitAnnot(_) => {
+                "an annotated declaration; write the annotation before `local`"
+            }
+        };
+        self.errors.push(Error {
+            row: None,
+            span: s.span,
+            message: format!(
+                "`local` marks a binding, a function, a struct, a type or a method, and not {what}"
+            ),
+            notes: Vec::new(),
+        });
+        false
     }
 
     /// The statement `s`, whose binders its scope has; `top` holds when it is one of the unit's
@@ -652,6 +1199,7 @@ impl Resolver {
                     params: &f.params,
                     ports,
                     body: &f.body,
+                    this: None,
                 });
                 for (a, b) in f.tests.iter().rev() {
                     todo.push(Task::Expr(b));
@@ -659,15 +1207,50 @@ impl Resolver {
                 }
                 todo.extend(ports.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
-            StmtKind::Struct(_) => self.later(s.span, "a struct declaration", "L2.4"),
+            StmtKind::Struct(st) => {
+                self.later(s.span, "a struct declaration", "L2.4");
+                self.fields(st, s.span, todo);
+            }
             // A primed name is of layer L6 wherever it stands (DESIGN.md sec:grammar).
             StmtKind::Method(m) if m.receiver.ends_with('\'') => self.primed(&m.receiver, s.span),
             StmtKind::Method(m) if m.function.name.ends_with('\'') => {
                 self.primed(&m.function.name, s.span)
             }
-            StmtKind::Method(_) => self.later(s.span, "a method", "L2.4"),
-            StmtKind::Type(_) => self.later(s.span, "a type declaration", "L2.5"),
-            StmtKind::Import(_) => self.later(s.span, "an import", "L2.3"),
+            StmtKind::Method(m) => {
+                self.later(s.span, "a method", "L2.4");
+                let f = &m.function;
+                let ports: &[Port] = f.ports.as_deref().unwrap_or_default();
+                todo.push(Task::Function {
+                    params: &f.params,
+                    ports,
+                    body: &f.body,
+                    this: Some(s.span),
+                });
+                for (a, b) in f.tests.iter().rev() {
+                    todo.push(Task::Expr(b));
+                    todo.push(Task::Expr(a));
+                }
+                todo.extend(ports.iter().rev().map(|p| Task::Ty(&p.ty)));
+                todo.push(Task::TypeName(&m.receiver, s.span));
+            }
+            StmtKind::Type(t) => {
+                self.later(s.span, "a type declaration", "L2.5");
+                self.type_decl(t, s.span, todo);
+            }
+            StmtKind::Import(_) => {
+                self.later.push(Error {
+                    row: None,
+                    span: s.span,
+                    message: "an import is linked from step L2.4, which ties each name it \
+                              brings in to the other unit's definition"
+                        .into(),
+                    notes: Vec::new(),
+                });
+            }
+            StmtKind::Local(decl) => {
+                self.later(s.span, "a `local` declaration", "L2.4");
+                todo.push(Task::Stmt(decl, top));
+            }
             StmtKind::Mutable(_) => self.later(s.span, "a `mutable` binding", "L6.3"),
             StmtKind::IndexedDef(_) => self.later(s.span, "an indexed definition", "L6.2"),
             StmtKind::While(_) => self.later(s.span, "a `while` guard", "L6.3"),
@@ -679,6 +1262,60 @@ impl Resolver {
             }
             StmtKind::UnitAnnot(a) => self.unit_annotation(a, s.span),
         }
+    }
+
+    /// The fields of the struct `st`, declared by the statement at `span`: each a binder no
+    /// scope holds, named once. A field's type and default are read in the struct's scope.
+    fn fields<'a>(&mut self, st: &'a Struct, span: Span, todo: &mut Vec<Task<'a>>) {
+        let start = self.out.binders.len();
+        let mut seen: HashMap<&str, Span> = HashMap::new();
+        for f in &st.fields {
+            match f {
+                Field::Typed {
+                    name,
+                    ty,
+                    default,
+                    span: at,
+                } => {
+                    if let Some(&first) = seen.get(name.as_str()) {
+                        self.errors.push(Error {
+                            row: None,
+                            span: *at,
+                            message: format!(
+                                "the struct `{}` has the field `{name}` twice",
+                                st.name
+                            ),
+                            notes: vec![Note {
+                                span: first,
+                                text: format!("the first field `{name}`"),
+                            }],
+                        });
+                    } else {
+                        seen.insert(name, *at);
+                        self.out.binders.push(Binder {
+                            name: name.clone(),
+                            span: *at,
+                            kind: Kind::Field,
+                        });
+                    }
+                    todo.extend(default.as_ref().map(Task::Expr));
+                    todo.push(Task::Ty(ty));
+                }
+                Field::Import { path, span: at } => todo.push(Task::TypeName(path, *at)),
+            }
+        }
+        let end = self.out.binders.len();
+        self.out.fields.insert(span, start..end);
+    }
+
+    /// The type declaration `t`, the statement at `span`: its parameters, in scope in its type.
+    fn type_decl<'a>(&mut self, t: &'a TypeDecl, span: Span, todo: &mut Vec<Task<'a>>) {
+        self.open();
+        for p in &t.params {
+            self.bind(p, span, span, Kind::TypeParam, None);
+        }
+        todo.push(Task::Close);
+        todo.push(Task::Ty(&t.ty));
     }
 
     /// The annotation `a`. None has a meaning before layer L7, so each is refused with its
@@ -730,7 +1367,7 @@ impl Resolver {
                  which drops the lines of every body in the unit"
                     .into(),
             ),
-            Some(_) if self.scopes.len() > 1 => fail(
+            Some(_) if self.scopes.len() > TOP => fail(
                 "`@log(#off);` is an item of a unit and stands at its top level, not in a \
                  block; write `@log(#off)` before a function's declaration to drop the lines \
                  of its body"
@@ -800,19 +1437,34 @@ impl Resolver {
         });
     }
 
-    /// A function's or lambda's parameters, ports and body: one scope, which a body block's
-    /// statements share.
+    /// The use at `span` of `what`, a name another unit defines, which step L2.4 links.
+    fn linked(&mut self, span: Span, what: &str) {
+        self.later.push(Error {
+            row: None,
+            span,
+            message: format!("{what} is linked from step L2.4"),
+            notes: Vec::new(),
+        });
+    }
+
+    /// A function's, a method's or a lambda's parameters, ports and body: one scope, which a
+    /// body block's statements share. A method's receiver `this` is bound in it, at the
+    /// method's statement `this`.
     fn function<'a>(
         &mut self,
         params: &'a [Param],
         ports: &'a [Port],
         body: &'a Expr,
+        this: Option<Span>,
         todo: &mut Vec<Task<'a>>,
     ) {
         if let Some(p) = params.iter().find(|p| p.tuple.is_some()) {
             return self.later(p.span, "a tuple-destructuring parameter", "L2.4");
         }
         self.open();
+        if let Some(at) = this {
+            self.bind("this", at, at, Kind::Receiver, None);
+        }
         for p in params {
             self.bind(&p.name, p.name_at, p.span, Kind::Param, None);
         }
@@ -862,6 +1514,7 @@ impl Resolver {
                 params,
                 ports: &[],
                 body,
+                this: None,
             }),
             ExprKind::Is { of, ty, .. } => {
                 if let ExprKind::Name(_) = of.kind {
@@ -922,13 +1575,44 @@ impl Resolver {
                 todo.push(Task::Expr(cond));
             }
             ExprKind::Member { of, name, .. } => {
+                if let ExprKind::Name(q) = &of.kind
+                    && self.qualified(q, of.span, name, e.span)
+                {
+                    return;
+                }
                 todo.push(Task::Member(e.span, name));
                 todo.push(Task::Expr(of));
             }
-            ExprKind::Record(_) => self.later(e.span, "a record display", "L2.4"),
-            ExprKind::With { .. } => self.later(e.span, "a `with` clause", "L2.4"),
-            ExprKind::This => self.later(e.span, "`this`", "L2.4"),
-            ExprKind::Match { .. } => self.later(e.span, "a `match`", "L2.4"),
+            ExprKind::Record(fields) => {
+                self.later(e.span, "a record display", "L2.4");
+                todo.extend(fields.iter().rev().map(|(_, v)| Task::Expr(v)));
+            }
+            ExprKind::With { of, updates } => {
+                self.later(e.span, "a `with` clause", "L2.4");
+                todo.extend(updates.iter().rev().map(|u| Task::Expr(&u.value)));
+                todo.push(Task::Expr(of));
+            }
+            ExprKind::This => {
+                self.later(e.span, "`this`", "L2.4");
+                match self.find("this") {
+                    Some(Found::Bound(ids)) => {
+                        self.out.uses.insert(e.span, Ref::Bound(ids));
+                    }
+                    _ => self.errors.push(Error {
+                        row: None,
+                        span: e.span,
+                        message: "`this` stands outside a method: it names the receiver of a \
+                                  method `T.m(…) = …`, in the method's body"
+                            .into(),
+                        notes: Vec::new(),
+                    }),
+                }
+            }
+            ExprKind::Match { of, arms } => {
+                self.later(e.span, "a `match`", "L2.4");
+                todo.extend(arms.iter().rev().map(Task::Arm));
+                todo.push(Task::Expr(of));
+            }
             ExprKind::Range(..) => self.later(e.span, "a range", "L3.2"),
             ExprKind::In { .. } => self.later(e.span, "an `in` test", "L3.2"),
             ExprKind::Reduce { .. } => self.later(e.span, "a reduction `><`", "L3.2"),
@@ -947,59 +1631,75 @@ impl Resolver {
         }
     }
 
-    /// The names the pattern `p` binds: each field written `f:` binds `f`.
-    fn pattern<'a>(&mut self, p: &'a Pattern, todo: &mut Vec<Task<'a>>) {
-        let Pattern::Atom {
-            fields,
-            items,
-            span,
-            ..
-        } = p
-        else {
-            let what = match p {
-                Pattern::Is { .. } => "a type pattern `n is T`",
-                Pattern::Lit(_) => "a literal pattern",
-                Pattern::Range { .. } => return self.later(p.span(), "a range pattern", "L3.2"),
-                _ => "a struct, name, `_` or tuple pattern",
-            };
-            return self.later(p.span(), what, "L2.4");
+    /// The pattern `p`: the names it binds, and the types it names. A field written `f:` binds
+    /// `f`; a bare name binds itself, unless it names a type, when the pattern is a type test
+    /// (DESIGN.md sec:syntax_tour, the `match` row of the operator inventory). Only an atom
+    /// pattern has its meaning at this step; the others are compiled from a later one, and are
+    /// reported so when `report` holds. The ends of a range pattern are part of the range.
+    fn pattern<'a>(&mut self, p: &'a Pattern, report: bool, todo: &mut Vec<Task<'a>>) {
+        let later = match p {
+            Pattern::Atom { .. } => None,
+            Pattern::Is { .. } => Some(("a type pattern `n is T`", "L2.4")),
+            Pattern::Lit(_) => Some(("a literal pattern", "L2.4")),
+            Pattern::Range { .. } => Some(("a range pattern", "L3.2")),
+            Pattern::Struct { .. } | Pattern::Name(..) | Pattern::Wild(_) | Pattern::Tuple(..) => {
+                Some(("a struct, name, `_` or tuple pattern", "L2.4"))
+            }
         };
-        todo.extend(items.iter().rev().map(Task::Pattern));
-        todo.extend(fields.iter().rev().map(|(f, sub)| match sub {
-            Some(sub) => Task::Pattern(sub),
-            None => Task::BindField(f, *span),
-        }));
+        if report && let Some((what, step)) = later {
+            self.later(p.span(), what, step);
+        }
+        let bind = |(f, sub): &'a (String, Option<Pattern>), span| match sub {
+            Some(sub) => Task::Pattern(sub, report),
+            None => Task::BindPattern(f, span),
+        };
+        match p {
+            Pattern::Atom {
+                fields,
+                items,
+                span,
+                ..
+            } => {
+                todo.extend(items.iter().rev().map(|i| Task::Pattern(i, report)));
+                todo.extend(fields.iter().rev().map(|f| bind(f, *span)));
+            }
+            Pattern::Struct { name, fields, span } => {
+                todo.extend(fields.iter().rev().map(|f| bind(f, *span)));
+                todo.push(Task::TypeName(name, name_at(*span, name)));
+            }
+            Pattern::Name(n, span) => {
+                let names_type = TYPES.contains(&n.as_str())
+                    || matches!(self.find(n), Some(Found::Bound(ids))
+                        if self.out.binders[ids[0]].kind.is_type());
+                if names_type {
+                    self.type_name(n, *span);
+                } else {
+                    self.bind(n, *span, *span, Kind::Pattern, None);
+                }
+            }
+            Pattern::Wild(_) => {}
+            Pattern::Tuple(items, _) => {
+                todo.extend(items.iter().rev().map(|i| Task::Pattern(i, report)))
+            }
+            Pattern::Is { name, ty, span } => {
+                todo.push(Task::Ty(ty));
+                if let Some(n) = name {
+                    self.bind(n, *span, *span, Kind::Pattern, None);
+                }
+            }
+            Pattern::Lit(e) => todo.push(Task::Expr(e)),
+            Pattern::Range { from, to, .. } => {
+                if let RangeEnd::Below(to) | RangeEnd::Through(to) = to {
+                    todo.push(Task::Pattern(to, false));
+                }
+                todo.push(Task::Pattern(from, false));
+            }
+        }
     }
 
     fn ty<'a>(&mut self, t: &'a Type, todo: &mut Vec<Task<'a>>) {
         match &t.kind {
-            TypeKind::Name(n) if TYPES.contains(&n.as_str()) => {
-                self.out.uses.insert(t.span, Ref::Prelude(n.clone()));
-            }
-            TypeKind::Name(n) if self.tvars.contains_key(n) => self.type_var(n, t.span),
-            TypeKind::Name(n)
-                if self
-                    .printed
-                    .as_ref()
-                    .is_some_and(|l| l.contains(n.as_str())) => {}
-            TypeKind::Name(n) => self.errors.push(Error {
-                row: None,
-                span: t.span,
-                message: format!("the type `{n}` is not defined"),
-                // Inside a clause, the name reads as a type variable its clause forgot.
-                notes: self
-                    .clauses
-                    .last()
-                    .map(|&span| Note {
-                        span,
-                        text: format!(
-                            "a type variable is bounded by the clause after its type, as \
-                             `for {n} in int | f64`; this clause does not bound `{n}`"
-                        ),
-                    })
-                    .into_iter()
-                    .collect(),
-            }),
+            TypeKind::Name(n) => self.type_name(n, t.span),
             TypeKind::For { ty, bounds } => {
                 // Each bound is read outside the clause, so `for T in U` with `U` bounded
                 // around it is no carrier either.
@@ -1077,15 +1777,156 @@ impl Resolver {
                 todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
             TypeKind::AtomAny(_) | TypeKind::Every(Every::Struct) if self.printed.is_some() => {}
-            TypeKind::Apply(..) => self.later(t.span, "an applied type", "L2.5"),
-            TypeKind::AtomApply(..) => self.later(t.span, "an atom type with a payload", "L2.5"),
+            TypeKind::Apply(name, ps) => {
+                self.later(t.span, "an applied type", "L2.5");
+                todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));
+                todo.push(Task::TypeName(name, name_at(t.span, name)));
+            }
+            TypeKind::AtomApply(_, ps) => {
+                self.later(t.span, "an atom type with a payload", "L2.5");
+                todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));
+            }
             TypeKind::AtomAny(_) => self.later(t.span, "an atom type with any payload", "L2.5"),
             TypeKind::Every(Every::Struct) => {
                 self.later(t.span, "the type of every struct", "L2.5")
             }
-            TypeKind::Record(_) => self.later(t.span, "a record type", "L2.5"),
+            TypeKind::Record(fields) => {
+                self.later(t.span, "a record type", "L2.5");
+                todo.extend(fields.iter().rev().map(|(_, t)| Task::Ty(t)));
+            }
             TypeKind::Array(_) => self.later(t.span, "a family type `[T]`", "L3.2"),
         }
+    }
+
+    /// The type name `n` used at `span`: a prelude type, a bounded type variable, a leaf of a
+    /// printed type, a struct, type or type parameter in scope, a qualified type `q.T` of a
+    /// qualifier's unit, or a type of the prelude unit. Otherwise the error why not.
+    fn type_name(&mut self, n: &str, span: Span) {
+        if TYPES.contains(&n) {
+            self.out.uses.insert(span, Ref::Prelude(n.into()));
+            return;
+        }
+        if self.tvars.contains_key(n) {
+            return self.type_var(n, span);
+        }
+        if self.printed.as_ref().is_some_and(|l| l.contains(n)) {
+            return;
+        }
+        if let Some((q, name)) = n.split_once('.') {
+            return self.qualified_type(q, name, span);
+        }
+        let message = match self.find(n) {
+            Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => return,
+            Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind.is_type() => {
+                self.out.uses.insert(span, Ref::Bound(ids));
+                return;
+            }
+            Some(Found::Bound(ids)) => {
+                let b = &self.out.binders[ids[0]];
+                let binder = b.kind.binder();
+                let note = Note {
+                    span: b.span,
+                    text: format!("{binder} `{n}`, which binds `{n}` here"),
+                };
+                return self.errors.push(Error {
+                    row: None,
+                    span,
+                    message: format!(
+                        "`{n}` stands where a type is written, and names {binder} `{n}`, which \
+                         is no type"
+                    ),
+                    notes: vec![note],
+                });
+            }
+            Some(Found::Ambiguous(a, b)) => return self.ambiguous(n, span, a, b),
+            Some(Found::Unit(unit)) => {
+                let kind = (self.units.and_then(|u| u.prelude()))
+                    .and_then(|(_, e)| e.get(n))
+                    .map(|e| e.kind);
+                if kind.is_some_and(Kind::is_type) {
+                    return self.prelude_unit(n, span, unit);
+                }
+                format!("the type `{n}` is not defined")
+            }
+            Some(Found::Word(_)) | None => format!("the type `{n}` is not defined"),
+        };
+        self.errors.push(Error {
+            row: None,
+            span,
+            message,
+            // Inside a clause, the name reads as a type variable its clause forgot.
+            notes: self
+                .clauses
+                .last()
+                .map(|&span| Note {
+                    span,
+                    text: format!(
+                        "a type variable is bounded by the clause after its type, as \
+                         `for {n} in int | f64`; this clause does not bound `{n}`"
+                    ),
+                })
+                .into_iter()
+                .collect(),
+        });
+    }
+
+    /// The qualified type `q.name` used at `span`: `q` a qualifier, whose unit defines the
+    /// type `name`. Otherwise the error why not.
+    fn qualified_type(&mut self, q: &str, name: &str, span: Span) {
+        if name.contains('.') {
+            return self.errors.push(Error {
+                row: None,
+                span,
+                message: format!(
+                    "the type `{q}.{name}` has more than one qualifier; a qualified type is a \
+                     qualifier and a type, as `shapes.Point` after `import geometry.shapes;`"
+                ),
+                notes: Vec::new(),
+            });
+        }
+        let message = match self.find(q) {
+            Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => return,
+            Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind == Kind::Unit => {
+                let id = ids[0];
+                let unit = self.out.imports[&id].clone();
+                let import = self.out.binders[id].span;
+                match self.export(&unit, name, span, import) {
+                    None => return,
+                    Some(e) if e.kind.is_type() => {
+                        self.out.uses.insert(
+                            span,
+                            Ref::Unit {
+                                unit,
+                                name: name.into(),
+                            },
+                        );
+                        let what = format!("`{q}.{name}`, a type of another unit,");
+                        return self.linked(span, &what);
+                    }
+                    Some(e) => format!(
+                        "`{q}.{name}` stands where a type is written, and the unit `{unit}` \
+                         declares `{name}` as {}, which is no type",
+                        e.kind.binder()
+                    ),
+                }
+            }
+            Some(Found::Bound(ids)) => format!(
+                "`{q}` in the type `{q}.{name}` names {} `{q}`, not a unit imported as `import \
+                 a.{q};`",
+                self.out.binders[ids[0]].kind.binder()
+            ),
+            Some(Found::Ambiguous(a, b)) => return self.ambiguous(q, span, a, b),
+            Some(Found::Unit(_) | Found::Word(_)) | None => format!(
+                "`{q}` in the type `{q}.{name}` names no unit: no import in scope binds the \
+                 qualifier `{q}`"
+            ),
+        };
+        self.errors.push(Error {
+            row: None,
+            span,
+            message,
+            notes: Vec::new(),
+        });
     }
 
     /// A use of the bounded type variable `n` at `span`. Its bound is a bound of the outermost
@@ -1206,24 +2047,33 @@ enum Task<'a> {
     Stmts(&'a [Stmt]),
     /// A statement, and whether it is one of the unit's own.
     Stmt(&'a Stmt, bool),
-    /// A function's or lambda's parameters, ports and body.
+    /// A function's, a method's or a lambda's parameters, ports and body; for a method, the
+    /// statement that binds its receiver `this`.
     Function {
         params: &'a [Param],
         ports: &'a [Port],
         body: &'a Expr,
+        this: Option<Span>,
     },
     Expr(&'a Expr),
     Ty(&'a Type),
-    Pattern(&'a Pattern),
+    /// A type name and the text it is written at: a struct pattern's, a method's receiver, a
+    /// struct's imported fields, an applied type's.
+    TypeName(&'a str, Span),
+    /// A pattern, and whether a form of a later step in it is reported.
+    Pattern(&'a Pattern, bool),
     /// A pattern field written `f:`, which binds `f` at the pattern's text.
-    BindField(&'a str, Span),
+    BindPattern(&'a str, Span),
     /// An `else` whose `of` is done: its pattern and default, in a scope of their own.
     Else {
         span: Span,
         pattern: Option<&'a Pattern>,
         default: &'a Expr,
     },
-    /// The end of the pattern of the `else` at the span: its binders are those from the index.
+    /// An arm of a `match`: its pattern, guard and value, in a scope of their own.
+    Arm(&'a Arm),
+    /// The end of the pattern of the `else` or the arm at the span: its binders are those from
+    /// the index.
     PatternEnd(Span, usize),
     /// A member `of.name` whose `of` is done: what `name` names, if anything.
     Member(Span, &'a str),

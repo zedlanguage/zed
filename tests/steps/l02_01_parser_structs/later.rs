@@ -1,5 +1,6 @@
 //! The parser builds every L2 form of this step; name resolution refuses each one, with the
-//! step that compiles it, until that step is built.
+//! step that compiles it, until that step is built. Since step L2.3 resolution also reads the
+//! names in them: a method of a type no declaration names, `this` outside a method.
 
 use super::refused;
 
@@ -12,11 +13,17 @@ fn each_form_names_the_step_that_compiles_it() {
         ),
         (
             "Point.norm = 1;",
-            &["a method is compiled from step L2.4 [Point.norm = 1;]"],
+            &[
+                "a method is compiled from step L2.4 [Point.norm = 1;]",
+                "the type `Point` is not defined [Point.norm = 1;]",
+            ],
         ),
         (
             "type Pos = { x: f64 };",
-            &["a type declaration is compiled from step L2.5 [type Pos = { x: f64 };]"],
+            &[
+                "a type declaration is compiled from step L2.5 [type Pos = { x: f64 };]",
+                "a record type is compiled from step L2.5 [{ x: f64 }]",
+            ],
         ),
         (
             "p = { x: 1 };",
@@ -28,7 +35,11 @@ fn each_form_names_the_step_that_compiles_it() {
         ),
         (
             "f(x) = this;",
-            &["`this` is compiled from step L2.4 [this]"],
+            &[
+                "`this` is compiled from step L2.4 [this]",
+                "`this` stands outside a method: it names the receiver of a method `T.m(…) = …`, \
+                 in the method's body [this]",
+            ],
         ),
         (
             "f = ((a, b)) -> a;",
@@ -40,7 +51,10 @@ fn each_form_names_the_step_that_compiles_it() {
         ),
         (
             "f(t: Tree(int)) = t;",
-            &["an applied type is compiled from step L2.5 [Tree(int)]"],
+            &[
+                "the type `Tree` is not defined [Tree]",
+                "an applied type is compiled from step L2.5 [Tree(int)]",
+            ],
         ),
         (
             "f(t: #node(l: int)) = t;",

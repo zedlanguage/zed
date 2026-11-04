@@ -86,9 +86,10 @@ fn a_statement_of_a_later_layer_names_that_layer() {
             "x -> { y[x + 1] <- 1; y }",
             "error: this form (KeyedPush) is built from layer L7",
         ),
+        // `local` builds from step L2.3; name resolution refuses it in a block.
         (
             "x -> { local y = x; y }",
-            "error: this form (Local) is built from layer L2",
+            "(fn (x) (block (local (= (y) x)) (return y)))",
         ),
     ]);
 }

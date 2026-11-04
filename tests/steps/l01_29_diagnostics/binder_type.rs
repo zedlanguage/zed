@@ -386,7 +386,9 @@ fn every_rule_of_the_grammar_that_writes_a_name_is_classified_and_its_binders_re
             Site::Later(text) => {
                 let out = rejected(text);
                 assert!(
-                    out.contains("is compiled from step") || out.contains("is built from layer"),
+                    out.contains("is compiled from step")
+                        || out.contains("is linked from step")
+                        || out.contains("is built from layer"),
                     "{rule}: {out}"
                 );
             }

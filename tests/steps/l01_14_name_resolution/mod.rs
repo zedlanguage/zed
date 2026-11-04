@@ -51,6 +51,7 @@ fn at(text: &str, name: &str, n: usize) -> Vec<String> {
         .unwrap_or_else(|| panic!("occurrence {n} of `{name}` is not a recorded use"));
     match used {
         Ref::Prelude(w) => vec![format!("prelude {w}")],
+        Ref::Unit { unit, name } => vec![format!("unit {unit} {name}")],
         Ref::Bound(ids) => ids
             .iter()
             .map(|&i| {
@@ -61,6 +62,13 @@ fn at(text: &str, name: &str, n: usize) -> Vec<String> {
                     Kind::Param => "param",
                     Kind::Port => "port",
                     Kind::Pattern => "pattern",
+                    Kind::Struct => "struct",
+                    Kind::Type => "type",
+                    Kind::TypeParam => "type-param",
+                    Kind::Field => "field",
+                    Kind::Method => "method",
+                    Kind::Receiver => "receiver",
+                    Kind::Unit => "qualifier",
                 };
                 format!("{kind} {}", &text[b.span.start..b.span.end])
             })

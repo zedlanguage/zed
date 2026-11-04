@@ -483,6 +483,7 @@ impl<'a> Tables<'a> {
             | StmtKind::Type(_)
             | StmtKind::Method(_)
             | StmtKind::Import(_)
+            | StmtKind::Local(_)
             | StmtKind::Annotated { .. }
             | StmtKind::Mutable(_)
             | StmtKind::IndexedDef(_)
@@ -514,7 +515,7 @@ impl<'a> Tables<'a> {
             .filter(|(u, _)| !skip.iter().any(|s| s.start <= u.start && u.end <= s.end))
             .filter_map(|(_, r)| match r {
                 Ref::Bound(ids) => Some(ids),
-                Ref::Prelude(_) => None,
+                Ref::Prelude(_) | Ref::Unit { .. } => None,
             })
             .flatten()
             .copied()
@@ -536,6 +537,7 @@ impl<'a> Tables<'a> {
             | StmtKind::Type(_)
             | StmtKind::Method(_)
             | StmtKind::Import(_)
+            | StmtKind::Local(_)
             | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
@@ -709,6 +711,9 @@ impl<'a> Elab<'a> {
             ),
             Some(Ref::Bound(ids)) => Some(Term::Var(self.names[ids[0]].clone())),
             Some(Ref::Prelude(w)) => Some(Term::Var(w.as_str().into())),
+            Some(Ref::Unit { .. }) => {
+                unreachable!("resolve sends a use of another unit's definition to step L2.4")
+            }
             None => unreachable!("a resolved unit records every name"),
         }
     }
@@ -1048,6 +1053,7 @@ fn what(s: &Stmt) -> String {
         | StmtKind::Type(_)
         | StmtKind::Method(_)
         | StmtKind::Import(_)
+        | StmtKind::Local(_)
         | StmtKind::Annotated { .. } => {
             unreachable!("resolve rejects the forms of layer L2")
         }

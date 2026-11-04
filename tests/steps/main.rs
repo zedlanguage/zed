@@ -46,6 +46,7 @@ mod l01_39b_on_demand;
 mod l01_39c_code_points;
 mod l02_01_parser_structs;
 mod l02_02_parser_match_imports;
+mod l02_03_name_resolution;
 mod l03_01_parser;
 mod l06_01_parser;
 mod l07_03_unit_log_off;

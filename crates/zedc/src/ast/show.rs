@@ -347,6 +347,7 @@ fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
             out.push(Text(")"));
         }
         StmtKind::Mutable(decl) => out.extend([Text("(mutable "), Show::Stmt(decl), Text(")")]),
+        StmtKind::Local(decl) => out.extend([Text("(local "), Show::Stmt(decl), Text(")")]),
         StmtKind::IndexedDef(d) => {
             out.extend([Text("(indexed "), Text(&d.name), Text(" ")]);
             keys(&d.keys, out);

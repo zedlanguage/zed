@@ -1095,6 +1095,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             | StmtKind::Type(_)
             | StmtKind::Method(_)
             | StmtKind::Import(_)
+            | StmtKind::Local(_)
             | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }

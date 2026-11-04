@@ -38,6 +38,8 @@ pub enum StmtKind {
     /// `mutable x = e;`: the binding, whose variable carries forward when a step leaves it
     /// unassigned.
     Mutable(Box<Stmt>),
+    /// `local d`: the declaration `d`, visible in its unit only (DESIGN.md sec:units).
+    Local(Box<Stmt>),
     /// `x[i in s] = e;` or `x[i] = e;`, an indexed definition, one piece of a piecewise one.
     IndexedDef(IndexedDef),
     /// `while c;`, the guard tested before each step.
@@ -260,6 +262,7 @@ impl StmtKind {
             StmtKind::While(_) => 0,
             StmtKind::Bind { .. }
             | StmtKind::Mutable(_)
+            | StmtKind::Local(_)
             | StmtKind::IndexedDef(_)
             | StmtKind::Push { .. }
             | StmtKind::Expr(_)
@@ -514,6 +517,23 @@ impl Builder<'_, '_> {
                 kind: self.decl(kids[0])?,
                 span: self.span(kids[0]),
             })),
+            // `local local d` parses; the chain is walked in a loop, the declaration at its end
+            // built, and the chain wrapped around it from the inside out.
+            "Local" => {
+                let mut chain = vec![d];
+                let mut inner = kids[0];
+                while self.tree.name(inner) == "Local" {
+                    chain.push(inner);
+                    inner = self.kids(inner)[0];
+                }
+                let mut kind = self.decl(inner)?;
+                let mut span = self.span(inner);
+                for &l in chain.iter().rev() {
+                    kind = StmtKind::Local(Box::new(Stmt { kind, span }));
+                    span = self.span(l);
+                }
+                return Ok(kind);
+            }
             "IndexedDef" => {
                 let (kids, boundary) = self.boundary(kids)?;
                 let [name, keys @ .., value] = kids else {

@@ -20,7 +20,12 @@ fn each_form_names_the_step_that_compiles_it() {
     check(&[
         (
             "import geometry.shapes;",
-            &["an import is compiled from step L2.3 [import geometry.shapes;]"],
+            &[
+                "the unit `geometry.shapes` cannot be imported: no manifest `zed.manifest` marks a \
+                 package root at or above this unit, so it imports no unit [import geometry.shapes;]",
+                "an import is linked from step L2.4, which ties each name it brings in to the \
+                 other unit's definition [import geometry.shapes;]",
+            ],
         ),
         (
             "size(t) = match t { _ -> 0 };",

@@ -966,6 +966,14 @@ impl<'a> Formatter<'a> {
                     bare: false,
                 });
             }
+            StmtKind::Local(decl) => {
+                self.put("local ");
+                stack.push(Job::Stmt {
+                    s: decl,
+                    ind,
+                    bare: false,
+                });
+            }
             StmtKind::IndexedDef(d) => {
                 self.put(d.name.as_str());
                 then![stack;

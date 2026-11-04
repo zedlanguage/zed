@@ -2,7 +2,10 @@
 //! a key made of everything it reads, so asking again after an edit recomputes only the
 //! queries whose inputs changed.
 //!
-//! Three queries exist at L1. The front end (lexing through elaboration) is keyed by the
+//! Three queries exist at L1. Step L2.3 adds two over a package's units (`crate::unit`): a unit's
+//! statements and imports, keyed by its text, and its resolution, keyed by its text and the
+//! exports of the units it imports, which hold no text position, so an edit inside a unit that
+//! keeps its names resolves none of its importers again. The front end (lexing through elaboration) is keyed by the
 //! unit's text, since every structure before the kernel terms carries byte spans and so
 //! changes with any edit. A row of a function's `test` table is keyed by its check and the
 //! definitions the check reaches, and a row of `main`'s table by its key, its value, the
@@ -33,9 +36,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use zed_kernel::Term;
 
-use crate::ast::Stmt;
+use crate::ast::{self, Stmt};
 use crate::elab::{Cones, Unit};
+use crate::lex::Span;
+use crate::resolve::Resolved;
 use crate::run::{self, Diagnostic};
+use crate::unit;
 
 /// A query's key: its inputs, encoded.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -65,17 +71,28 @@ pub enum Query {
     Row,
     /// A row of `main`'s table: one wave.
     Wave,
+    /// A unit's statements and imports (step L2.3), keyed by its text.
+    Parse,
+    /// A unit's resolution (step L2.3), keyed by its text and the exports of the units it
+    /// imports and of the prelude unit it sees.
+    Resolve,
 }
 
 /// The front end's result: the statements, elaboration and placed warnings, or the first
 /// rejecting phase's diagnostics.
 pub type Front = Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), Vec<Diagnostic>>;
 
+/// A unit's statements and its imports, each with the unit it names, in text order; or the
+/// errors of the first phase that rejects it.
+pub type Parsed = Result<(Vec<Stmt>, Vec<(Arc<str>, Span)>), Vec<ast::Error>>;
+
 /// The memoized results, and how many times each query was computed rather than reused.
 pub struct Db {
     front: HashMap<Key, Arc<Front>>,
     /// The results of each table query, by key.
     rows: HashMap<Query, HashMap<Key, Result<(), String>>>,
+    parsed: HashMap<Key, Arc<Parsed>>,
+    resolved: HashMap<Key, Arc<Resolved>>,
     computed: HashMap<Query, usize>,
     /// The number given to each definition's text, for a row's key.
     texts: HashMap<Box<str>, u64>,
@@ -92,6 +109,8 @@ impl Default for Db {
         Db {
             front: HashMap::new(),
             rows: HashMap::new(),
+            parsed: HashMap::new(),
+            resolved: HashMap::new(),
             computed: HashMap::new(),
             texts: HashMap::new(),
             stamp: STAMPS.fetch_add(1, Ordering::Relaxed),
@@ -105,6 +124,8 @@ impl Clone for Db {
         Db {
             front: self.front.clone(),
             rows: self.rows.clone(),
+            parsed: self.parsed.clone(),
+            resolved: self.resolved.clone(),
             computed: self.computed.clone(),
             texts: self.texts.clone(),
             stamp: STAMPS.fetch_add(1, Ordering::Relaxed),
@@ -128,6 +149,30 @@ impl Db {
         let f = Arc::new(run::compile(text));
         self.front.insert(k, f.clone());
         f
+    }
+
+    /// The statements and imports of the unit `text`.
+    pub fn parse(&mut self, text: &str) -> Arc<Parsed> {
+        let k = key("parse", &[text.as_bytes()]);
+        if let Some(p) = self.parsed.get(&k) {
+            return p.clone();
+        }
+        *self.computed.entry(Query::Parse).or_default() += 1;
+        let p = Arc::new(unit::parse_unit(text));
+        self.parsed.insert(k, p.clone());
+        p
+    }
+
+    /// The resolution kept under `k`, a key of [`Query::Resolve`], computing it with `compute`
+    /// when none is kept.
+    pub fn resolve(&mut self, k: Key, compute: impl FnOnce() -> Resolved) -> Arc<Resolved> {
+        if let Some(r) = self.resolved.get(&k) {
+            return r.clone();
+        }
+        *self.computed.entry(Query::Resolve).or_default() += 1;
+        let r = Arc::new(compute());
+        self.resolved.insert(k, r.clone());
+        r
     }
 
     /// The result of the table row `q` under `k`, computing it with `check` when no result

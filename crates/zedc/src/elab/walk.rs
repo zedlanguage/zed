@@ -381,6 +381,7 @@ impl<'a> Elab<'a> {
             | StmtKind::Type(_)
             | StmtKind::Method(_)
             | StmtKind::Import(_)
+            | StmtKind::Local(_)
             | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }

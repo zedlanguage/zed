@@ -275,7 +275,11 @@ fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
 }
 
 /// The errors `errors` of `text` as diagnostics, each placed with its steps.
-fn placed(text: &str, lines: &source::Lines, errors: Vec<ast::Error>) -> Vec<Diagnostic> {
+pub(crate) fn placed(
+    text: &str,
+    lines: &source::Lines,
+    errors: Vec<ast::Error>,
+) -> Vec<Diagnostic> {
     errors
         .into_iter()
         .map(|e| {
@@ -832,6 +836,15 @@ fn command_inner(
         }
     }
     let bytes = std::fs::read(file).map_err(|e| (2, format!("{file}: {e}")))?;
+    // A unit under a manifest that imports a unit, or sees a prelude unit, is read with its
+    // package (step L2.3); linking it to the units it imports is step L2.4.
+    if let Ok(text) = std::str::from_utf8(&bytes)
+        && let Some(report) =
+            crate::unit::package_report(std::path::Path::new(file), text).map_err(|e| (1, e))?
+        && !report.is_empty()
+    {
+        return Err((1, report.join("\n")));
+    }
     let program = load(&bytes).map_err(|e| (1, format!("{file}:{e}")))?;
     write_warnings(stderr, file, program.warnings())
         .map_err(|e| (2, format!("standard error: {e}")))?;

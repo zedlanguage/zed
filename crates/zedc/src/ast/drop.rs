@@ -140,6 +140,14 @@ fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
         }
         // A `mutable` holds a binding, so this recursion is one level deep.
         StmtKind::Mutable(decl) => stmt_kids(decl.kind, out),
+        // `local local d` is refused by resolution, but a chain of them is still unwrapped in
+        // a loop, so the recursion below is one level deep.
+        StmtKind::Local(mut decl) => {
+            while let StmtKind::Local(inner) = decl.kind {
+                decl = inner;
+            }
+            stmt_kids(decl.kind, out)
+        }
         StmtKind::Return(mut es) => out.append(&mut es),
         StmtKind::Function(f) | StmtKind::Method(Method { function: f, .. }) => {
             function_kids(f, out)

@@ -350,6 +350,7 @@ below was read at its citation. Paths are relative to `crates/`, with `src/` dro
 | `zedc`: `zir`, `zir/text` | `zir/mod.rs:342`, `:414` and 11 more, `text::spell`, `text::edge`, `text::pattern`; `zir/text.rs:36` the node types, `any_domain`, `kind_name`, `:189` `op_name` | Move the node types and the three naming functions to a leaf file that `validate` (`zir/mod.rs:386`) and `zir/text.rs` both import |
 | `zedc`: `lex`, `lex/comment`, `lex/number`, `lex/string` | `lex/mod.rs:17` `Holes`, `:165`, `:194` `comment::comment`, `:204` `number::number`, `:208` `string::string`; `comment.rs:2`, `number.rs:21`, `string.rs:24` `Error`, `ErrorKind`, `Span` and others; `string.rs:24` `lex_from`, `comment` | Move `Span`, `Tok`, `Part`, `Token`, `ErrorKind`, `Error` (`lex/mod.rs:21`–`:107`) to a leaf file, which frees `comment` and `number`. Merge `lex_from` and `string`: `lex_from` (`lex/mod.rs:181`) calls `string::string`, which calls `lex_from` for a hole (`string.rs:99`), and mutual recursion stays within a unit |
 | `zedc`: `ast`, `ast/stmts`, `ast/types` | `ast/mod.rs:21`, `:22` the re-exports; `ast/stmts.rs:6` `Builder`, `Expr`, `Param`, `Type` and others; `ast/types.rs:6` `Builder`, `Error`, `Expr` | Merge all three. `ExprKind` holds `Param`, `Type`, `Pattern` and `Stmt` (`ast/mod.rs:80`, `:92`, `:101`, `:107`), while `Param` (`ast/types.rs:65`) and `StmtKind` (`ast/stmts.rs:26`) hold `Expr`, so these are recursive types. `Builder::node` (`ast/mod.rs:347`) and `Builder::block` (`ast/stmts.rs:91`) are mutually recursive too |
+| `zedc`: `run`, `unit`, `query` (from L2.3) | `run.rs:843` `unit::package_report` in `command_inner`; `unit.rs:27` `run::placed`, `Diagnostic`, `:25` `query::Db`; `query.rs:36` `run::compile`, `Diagnostic` | Move `Diagnostic`, `Step`, `placed` and `step` (`run.rs:93`–`:160`, `:278`–`:316`) to a leaf file, and `command` and `command_inner` to a file above `unit`, which then reads `run` only through `query` |
 
 A ninth component in the scanner's first run, `lib` with `term`, came from `use super::*` inside
 the inline module `term::build` (`term.rs:317`), and is not a cycle. Zed units are files, so all of
@@ -704,6 +705,16 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `let … else { … return; }` taking the first arm of a slice, the rest of the arms pushed back as a job | `Formatter::run`, `Job::Arms` | Early return | A `match` on the list, empty against first and rest |
 | `Box<Type>` and `Box<Expr>` in `Pattern::{Is, Lit}`, so the enum stays small | `ast/types.rs` | None | Removed: Zed values are shared, and size is not the programmer's concern |
 
+
+## Entries from L2.3 (`zedc/src/unit.rs`, `resolve.rs`, `query.rs`, `run.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `trait Files` with `Dir` and `Memory`, a `&dyn Files` read through a vtable | `unit::load` | None | A function value passed in, `read: (String) -> Option<…>` |
+| `Vec<Color>` written in place during the depth-first search, and the explicit stack's top counter incremented through `last_mut` | `unit::order` | Mutation | A loop with `mutable` colors and stack, or a fold over the search's steps |
+| `HashMap<Arc<str>, usize>` index beside a `Vec` of units, both pushed to as units are found | `unit::add`, `Package::index` | Mutation | A map from path to unit built by a fold over the work list |
+| `binary_search_by` on a sorted `Vec` of imported units | `Linked::exports` | None | A map from path to resolution |
+| `let … else { unreachable!(…) }` for a unit with imports that has text | `unit::order` | Broken invariants | A type that carries the text with the parsed unit |
 
 ## Entries from T4 (`zedc/src/store/utvpi.rs`, `presburger.rs`)
 
