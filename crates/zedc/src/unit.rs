@@ -545,8 +545,15 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
 /// imports itself is reported at its first import of itself, and a component of two units or
 /// more once, by [`report`]. Time O(U log U + E + T) for U units, E imports and T the bytes of
 /// the units whose imports a report names: the sort by path, one visit of each unit and import,
-/// and the lines of those units.
-fn order(pkg: &mut Package, edges: &[Vec<(usize, Span)>], prelude: Option<usize>) -> Vec<usize> {
+/// and the lines of those units. Public for the scaling tests, which time it on import graphs
+/// built with no file read: reading, parsing and resolving a unit costs far more than ordering
+/// it, and would hide a cost per pair of units here.
+#[doc(hidden)]
+pub fn order(
+    pkg: &mut Package,
+    edges: &[Vec<(usize, Span)>],
+    prelude: Option<usize>,
+) -> Vec<usize> {
     const UNSEEN: usize = usize::MAX;
     let n = pkg.units.len();
     let mut starts: Vec<usize> = (0..n).collect();
@@ -822,6 +829,8 @@ pub fn package_report(file: &Path, text: &str) -> Result<Option<Vec<String>>, St
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::{Read, push_read};
     use crate::query::{Key, key};
 
@@ -842,5 +851,56 @@ mod tests {
         assert_ne!(unit, resolve_key("import a;", Read::Failed(why)));
         assert_ne!(unit, resolve_key("import a;", Read::Prelude(&number)));
         assert_eq!(unit, resolve_key("import a;", Read::Unit(&number)));
+    }
+
+    /// Eight bytes, each the tag of an import on a cycle.
+    const THREES: [u8; 8] = [3; 8];
+
+    /// The `i`-th of 18 reads: of the unit `a`, or of one whose path is the tag byte 1 or 3, each
+    /// a resolved unit, a failure whose text is empty or one of those tag bytes, the prelude, or
+    /// an import on a cycle.
+    fn nth_read(i: usize) -> (&'static str, Read<'static>) {
+        let path = ["a", "\u{1}", "\u{3}"][i / 6];
+        let read = match i % 6 {
+            0 => Read::Unit(&THREES),
+            1 => Read::Failed(""),
+            2 => Read::Failed("\u{1}"),
+            3 => Read::Failed("\u{3}"),
+            4 => Read::Prelude(&THREES),
+            _ => Read::OnCycle,
+        };
+        (path, read)
+    }
+
+    #[test]
+    fn no_two_lists_of_reads_share_a_resolve_key() {
+        // Every list of up to three of the reads: an import on a cycle, the tag 3 with nothing
+        // after it, never shares a key with a failure whose text is empty or tag bytes, nor
+        // with a read of a unit whose path is a tag after it.
+        let mut lists: Vec<Vec<usize>> = vec![Vec::new()];
+        let mut from = 0;
+        for _ in 0..3 {
+            let to = lists.len();
+            for l in from..to {
+                for i in 0..18 {
+                    let mut next = lists[l].clone();
+                    next.push(i);
+                    lists.push(next);
+                }
+            }
+            from = to;
+        }
+        let mut seen: HashMap<Key, usize> = HashMap::new();
+        for (n, l) in lists.iter().enumerate() {
+            let mut parts: Vec<&[u8]> = vec![b"import a;"];
+            for &i in l {
+                let (path, read) = nth_read(i);
+                push_read(&mut parts, path, read);
+            }
+            if let Some(m) = seen.insert(key("resolve", &parts), n) {
+                panic!("the reads {:?} and {l:?} share a key", lists[m]);
+            }
+        }
+        assert_eq!(seen.len(), 1 + 18 + 18 * 18 + 18 * 18 * 18);
     }
 }

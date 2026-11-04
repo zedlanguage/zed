@@ -3,12 +3,19 @@
 //! long chain of imports, one unit importing many, one import of many names, and many empty
 //! units given as roots. Each package's files are built before timing; the work measured is the
 //! loader's, from reading each file to resolving each unit.
+//!
+//! Ordering the units and reporting their cycles is also timed alone, on import graphs built
+//! with no file (many cycles of two, one long cycle, a chain of cycles, a dense component and a
+//! complete one): loading a unit costs so much more that a cost per pair of units there would
+//! not show in the loading tests.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use zed_tests::scaling;
+use zedc::lex::Span;
 use zedc::query::Db;
-use zedc::unit::{Memory, load};
+use zedc::unit::{Loaded, Memory, Package, load, order};
 
 use super::{files, mistakes};
 
@@ -336,4 +343,195 @@ fn many_roots_load_in_linear_time() {
         let roots: Vec<&str> = roots.iter().map(String::as_str).collect();
         std::hint::black_box(load(&mut Db::new(), fs, &roots));
     });
+}
+
+/// A package with no file read, and the import graph edges [`order`] reads.
+type Graph = (Package, Vec<Vec<(usize, Span)>>);
+
+/// The package of units `u0` … `u{k-1}`, unit `i` importing the units `imports[i]` in that
+/// order, one import a line, with each import graph edge at its line: what [`order`] reads,
+/// built with no file read or parsed, so that a test times the ordering and the cycles'
+/// reports alone. Loading a unit costs about 510,000 instructions, which hides a cost below
+/// about 1,000 instructions for each pair of units in the tests above that load packages.
+fn graph(imports: &[Vec<usize>]) -> Graph {
+    let mut pkg = Package::default();
+    let mut edges = Vec::with_capacity(imports.len());
+    for (i, names) in imports.iter().enumerate() {
+        let mut text = String::new();
+        let mut out = Vec::with_capacity(names.len());
+        for &j in names {
+            let line = format!("import u{j}.{{v{j}}};\n");
+            out.push((
+                j,
+                Span {
+                    start: text.len(),
+                    end: text.len() + line.len() - 1,
+                },
+            ));
+            text.push_str(&line);
+        }
+        text.push_str(&format!("v{i} = {i};\n"));
+        let path: Arc<str> = format!("u{i}").into();
+        pkg.index.insert(path.clone(), i);
+        pkg.units.push(Loaded {
+            path,
+            file: format!("u{i}.zed"),
+            text: Some(Ok(text.into())),
+            parsed: None,
+            resolved: None,
+        });
+        edges.push(out);
+    }
+    (pkg, edges)
+}
+
+/// Checks that ordering the import graph `make(k)` and reporting its cycles is linear in its
+/// units and imports, from `k` = `n`, with no file read; `expect(k, messages)` holds of the
+/// messages of its cycles at each size.
+fn ordered(
+    what: &str,
+    n: usize,
+    make: impl Fn(usize) -> Vec<Vec<usize>>,
+    expect: impl Fn(usize, &[String]),
+) {
+    let graphs: HashMap<usize, Mutex<Graph>> = [n, 8 * n]
+        .into_iter()
+        .map(|k| (k, Mutex::new(graph(&make(k)))))
+        .collect();
+    for (&k, g) in &graphs {
+        let (pkg, edges) = &mut *g.lock().unwrap();
+        order(pkg, edges, None);
+        assert_eq!(pkg.order.len(), pkg.units.len());
+        let messages: Vec<String> = pkg
+            .problems
+            .iter()
+            .map(|p| p.error.message.clone())
+            .collect();
+        expect(k, &messages);
+    }
+    scaling::check_order(what, n, 1, |k| {
+        let (pkg, edges) = &mut *graphs[&k].lock().unwrap();
+        pkg.order.clear();
+        pkg.problems.clear();
+        std::hint::black_box(order(pkg, edges, None));
+    });
+}
+
+#[test]
+fn many_disjoint_cycles_are_ordered_and_reported_in_linear_time_with_no_file_read() {
+    // `k` pairs `u{2i}` and `u{2i+1}` importing each other: `k` components, each searched for
+    // its cycle once. Clearing or allocating the search's arrays, of the size of the package,
+    // for each component makes this quadratic and fails here (measured, COMPLEXITY.md F84);
+    // the loading tests above passed under the allocation, since loading a unit costs far more.
+    ordered(
+        "many cycles of two, ordered",
+        4000,
+        |k| (0..2 * k).map(|i| vec![i ^ 1]).collect(),
+        |k, m| {
+            assert_eq!(m.len(), k);
+            assert!(
+                m.iter().all(|m| m.matches("` imports `").count() == 2),
+                "{m:?}"
+            );
+        },
+    );
+}
+
+#[test]
+fn one_long_cycle_is_ordered_and_reported_in_linear_time_with_no_file_read() {
+    ordered(
+        "one cycle, ordered",
+        2000,
+        |k| (0..k).map(|i| vec![(i + 1) % k]).collect(),
+        |k, m| {
+            assert_eq!(m.len(), 1);
+            assert_eq!(m[0].matches("` imports `").count(), k);
+        },
+    );
+}
+
+#[test]
+fn a_dense_component_is_searched_once_in_linear_time_with_no_file_read() {
+    // Each unit imports the 16 after it around a ring: one component of `16k` imports. Its
+    // shortest cycle through `u0` is found by one breadth-first search over the component,
+    // not one from each unit; a search from each unit would take `k` times as long.
+    ordered(
+        "a dense component, ordered",
+        500,
+        |k| {
+            (0..k)
+                .map(|i| (1..=16).map(|d| (i + d) % k).collect())
+                .collect()
+        },
+        |k, m| {
+            assert_eq!(m.len(), 1);
+            // From `u0`, the units 16 on at each step reach back around the ring.
+            assert_eq!(m[0].matches("` imports `").count(), k.div_ceil(16));
+        },
+    );
+}
+
+#[test]
+fn a_chain_of_cycles_is_ordered_in_linear_time_with_no_file_read() {
+    // Pairs that import each other, each pair's first unit also importing the next pair's:
+    // `k` components, each put after the one it imports, the depth-first search `k` deep.
+    ordered(
+        "a chain of cycles, ordered",
+        4000,
+        |k| {
+            (0..2 * k)
+                .map(|i| {
+                    let mut to = vec![i ^ 1];
+                    if i % 2 == 0 && i + 2 < 2 * k {
+                        to.push(i + 2);
+                    }
+                    to
+                })
+                .collect()
+        },
+        |k, m| assert_eq!(m.len(), k),
+    );
+}
+
+#[test]
+fn a_complete_component_is_searched_once_in_time_linear_in_its_imports() {
+    // Every unit imports every other: `k(k-1)` imports. The sizes 40 and 113 give 1,560 and
+    // 12,656 imports, 8.1 times as many, held to the limit for 8 times.
+    let complete = |k: usize| -> Vec<Vec<usize>> {
+        (0..k)
+            .map(|i| (0..k).filter(|&j| j != i).collect())
+            .collect()
+    };
+    let graphs: HashMap<usize, Mutex<Graph>> = [40, 113]
+        .into_iter()
+        .map(|k| (k, Mutex::new(graph(&complete(k)))))
+        .collect();
+    for g in graphs.values() {
+        let (pkg, edges) = &mut *g.lock().unwrap();
+        order(pkg, edges, None);
+        assert_eq!(pkg.problems.len(), 1);
+        // `u0` imports `u1` first, and `u1` imports `u0` first.
+        assert!(
+            pkg.problems[0]
+                .error
+                .message
+                .ends_with("`u0` imports `u1` at u0.zed:1:1, `u1` imports `u0` at u1.zed:1:1"),
+            "{}",
+            pkg.problems[0].error.message
+        );
+    }
+    let run = |k: usize| {
+        let (pkg, edges) = &mut *graphs[&k].lock().unwrap();
+        pkg.order.clear();
+        pkg.problems.clear();
+        std::hint::black_box(order(pkg, edges, None));
+    };
+    scaling::compare(
+        "a complete component, ordered: 40 and 113 units",
+        "for work linear in the imports the rule of low complexity allows at most 24 times 8 \
+         times the input (DESIGN.md Part G)",
+        24.0,
+        || run(40),
+        || run(113),
+    );
 }
