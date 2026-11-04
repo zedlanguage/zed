@@ -102,6 +102,7 @@ fn a_term_whose_form_does_not_show_it_ends_is_left_to_run() {
     let (_, s, report) = staged(src);
     assert!(report.built.is_empty(), "{:?}", report.built);
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
+    assert_eq!(report.left[0].0.to_string(), "w(w)");
     assert_eq!(report.left[0].1, "its form does not show that it ends");
     assert_eq!(term(&s, "spin"), "w(w)");
 }

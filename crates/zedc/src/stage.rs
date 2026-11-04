@@ -37,15 +37,17 @@ pub enum Stage {
 }
 
 /// What `mix` did.
-#[derive(Clone, Default, PartialEq, Eq, Debug)]
+#[derive(Clone, Default, PartialEq, Debug)]
 pub struct Report {
     /// The definitions the build evaluated, by source name.
     pub built: Vec<String>,
     /// The definitions nothing demanded, which the build did not evaluate.
     pub unread: Vec<String>,
-    /// The build-stage terms left to run, each printed with why: a part held in a node and
-    /// reached under the same bindings of its names from many places is listed once.
-    pub left: Vec<(String, String)>,
+    /// The build-stage terms left to run, each with why: a part held in a node and reached
+    /// under the same bindings of its names from many places is listed once. Each entry holds
+    /// the term, its parts still shared, not its text: `Display` and `Debug` print a term as
+    /// a tree, which on a term with shared parts can be exponential in its size.
+    pub left: Vec<(Shared, String)>,
 }
 
 /// The names `t` reads and does not bind. The term is read as the graph of its distinct parts:
@@ -2394,14 +2396,13 @@ impl Mixer {
                     sum: Summary::default(),
                 },
                 Err(why) => {
-                    // Not fixed (COMPLEXITY.md F83, open): the term is printed as a tree, so a
-                    // part shared by many places is written at each, 2^d text on d nested
-                    // `if`s whose arms are one node (test
-                    // `l01_28_staging::dag::reporting_a_term_left_to_run_whose_arms_are_one_part`,
-                    // ignored). A `let` can name a shared part only where the names it reads
-                    // resolve alike at every place; elsewhere it must be a lambda over them,
-                    // whose arguments are not O(n log n) in general.
-                    self.report.left.push((t.to_string(), why));
+                    // The term itself, not its text: printing a term with shared parts within
+                    // O(n log n) is the ledger item STAGE-print.
+                    let left = match held {
+                        Some(s) => s.clone(),
+                        None => Shared::new(t.clone()),
+                    };
+                    self.report.left.push((left, why));
                     as_written()
                 }
             });

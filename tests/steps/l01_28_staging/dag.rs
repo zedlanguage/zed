@@ -543,17 +543,17 @@ fn a_call_at_a_long_join_is_mixed_as_written() {
     );
     assert!(report.left.is_empty(), "{report:?}");
 }
-
 /// `main = (n) -> n + td` with `t0 = w(w)`, `w = (f) -> f(f)`, and `tj = if j >= 1 { t(j-1) }
 /// else { t(j-1) }`, the two arms one node: a build-stage term whose form does not show that
-/// it ends, so mixing leaves it to run and prints it in the report. Not fixed (COMPLEXITY.md
-/// F83, open): the report prints the term as a tree, 2^d text (repair 4, release build, load 9:
-/// 2.3, 36, 143, 589, 2238 ms and 30.7 KB, 492 KB, 1.97 MB, 7.86 MB, 31.5 MB at d = 10, 14,
-/// 16, 18, 20). Kept so that the fix measures the same family.
+/// it ends, so mixing leaves it to run and records it in the report. The report holds the term
+/// itself, its arms still one node, so the test compares it with `td` by structure (each
+/// `Shared` compared first by id); its text, printed as a tree, is 2^d long (STAGE-print).
+/// Before repair 5 the report held `t.to_string()`, 2^d time and text (repair 4, release
+/// build, load 9: 2.3, 36, 143, 589, 2238 ms and 30.7 KB, 492 KB, 1.97 MB, 7.86 MB, 31.5 MB at
+/// d = 10, 14, 16, 18, 20).
 #[test]
-#[ignore = "open: Report::left prints a term with shared parts as a tree (COMPLEXITY.md F83)"]
-fn reporting_a_term_left_to_run_whose_arms_are_one_part() {
-    fn unit(d: usize) -> Unit {
+fn reporting_a_term_left_to_run_whose_arms_are_one_part_scales() {
+    fn unit(d: usize) -> (Unit, Term) {
         let w = lam(&["f"], Term::App(Shared::new(var("f")), vec![var("f")]));
         let bottom = Term::App(Shared::new(var("w")), vec![var("w")]);
         let t = (1..=d as i64).fold(bottom, |t, j| {
@@ -563,30 +563,40 @@ fn reporting_a_term_left_to_run_whose_arms_are_one_part() {
         });
         let main = Term::Lam(
             vec!["n".into()],
-            Shared::new(prim(Prim::Add, vec![var("n"), t])),
+            Shared::new(prim(Prim::Add, vec![var("n"), t.clone()])),
         );
-        Unit {
+        let unit = Unit {
             defs: vec![def("w", w), def("main", main)],
             tests: Arc::from([]),
             warnings: Vec::new(),
-        }
+        };
+        (unit, t)
     }
+    // The text on a small input, where it is small: both arms written out.
+    let (small, t) = unit(1);
+    let (_, report) = stage::mix(&small, &["main"]);
+    assert_eq!(report.left.len(), 1, "{report:?}");
+    assert_eq!(*report.left[0].0, t);
+    assert_eq!(
+        report.left[0].0.to_string(),
+        "if (1 >= 1) { w(w) } else { w(w) }"
+    );
+    assert_eq!(report.left[0].1, "its form does not show that it ends");
     deep(|| {
-        let n = 12;
-        let units: BTreeMap<usize, Unit> =
+        let n = 1000;
+        let units: BTreeMap<usize, (Unit, Term)> =
             [n, FACTOR * n].into_iter().map(|d| (d, unit(d))).collect();
         scaling::check_order(
-            "the report of a term left to run, on d nested ifs whose two arms are one node",
+            "stage::mix and its report of a term left to run, on d nested ifs whose two arms \
+             are one node",
             n,
             1,
             |d| {
-                let (_, report) = stage::mix(&units[&d], &["main"]);
+                let (unit, t) = &units[&d];
+                let (_, report) = stage::mix(unit, &["main"]);
                 assert_eq!(report.left.len(), 1);
-                assert!(
-                    report.left[0].0.len() <= 200 * d,
-                    "{} bytes",
-                    report.left[0].0.len()
-                );
+                assert!(*report.left[0].0 == *t, "the term left to run is td");
+                assert_eq!(report.left[0].1, "its form does not show that it ends");
             },
         );
     });
