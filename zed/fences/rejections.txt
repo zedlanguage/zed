@@ -10,6 +10,7 @@ Unreachable `match` arm
 `.map` at a parameter outside the value positions
 Key outside the permission bound
 Undischarged region assertion
+Read below the domain with no boundary entry
 Cross-unit overlapping incomparable arrows
 Ambiguous imported name
 Need met only by an arrow in the caller's scope

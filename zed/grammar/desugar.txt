@@ -39,7 +39,7 @@ Trailer       : the trailer of its alternative
 TestTable     : a list of test cases
 TestCase      : `a -> b` asserts ⟦f(a)⟧ == ⟦b⟧ for the enclosing f, run by `zed test` (step L1.21); for `main`, that a wave reading the ports ⟦a⟧ writes the bytes ⟦b⟧
 Proof         : a derivation checked by the proof checker (sec:verification); no run-time term
-IndexedDef    : `f[i in D] = e` is fam(⟦D⟧, i -> ⟦e⟧) when e does not read f, the definedness fix(⟦D⟧, step, ev) with `this` = f when it does, and gen when the reads are one step back in a time order (sec:generations); several `[ ]` nest; the boundary's entries are defined before the first round
+IndexedDef    : `f[i in D] = e` is fam(⟦D⟧, i -> ⟦e⟧) when e does not read f, the definedness fix(⟦D⟧, step, ev) with `this` = f when it does, and gen when the reads are a bounded number of steps back in a time order, the gen's state being the window of that many frames (sec:generations); several `[ ]` nest; the boundary's entries are defined before the first round
 IndexKey      : `i in D` binds i over the keys of ⟦D⟧; an expression is the key of one case of a piecewise definition
 Push          : a push
 KeyedPush     : writes ⟦e⟧ at keypath ⟦k⟧ of a keyed accumulator, whose writes at one keypath are folded by its reducer
@@ -49,7 +49,7 @@ TypedBinding  : `x: T = e` is PlainBinding's `x = e`, also checking e against T
 PlainBinding  : `x = e;` is let x = ⟦e⟧ over the block, in dependency order; `a, b = e` is let t = ⟦e⟧ with a = t[0], b = t[1], and `_` binds nothing; a boundary gives the entries before generation 0
 Target        : a bound name, or `_`, which binds nothing
 Boundary      : the entries a generation variable or indexed definition holds before its first step or round: the init of its gen, or entries defined before a fix's first round
-BoundaryItem  : one boundary entry, `x[-1] = e`
+BoundaryItem  : `x = e` is the entry `x[lo-1] = e`, lo the low edge of x's domain (`x[-1]` for a loop); `x[k] = e` the entry at k; `x[i in D] = e` the entries at the keys of ⟦D⟧, each ⟦e⟧ with i bound to its key
 Signature     : the type of a name with no definition, a foreign function (sec:ffi) or a declared accumulator; no term
 Expr          : ⟦Lambda⟧, ⟦Break⟧ or ⟦Expr12⟧
 Break         : ends the enclosing gen: the step's guard returns #break(⟦e⟧) and the loop's result is ⟦e⟧
@@ -110,7 +110,7 @@ Arm           : `p -> e` is the kernel arm; `p where g -> e` is `p -> if(⟦g⟧
 For           : fam(⟦D⟧, k -> ⟦body⟧) over the generator's levels, with `where g` a discard of the entries where g is false and an emission level for a body with emits; several generators nest left to right (L5)
 MoreGen       : an inner generator, nested in the previous one
 Generator     : binds the InPattern to the levels of ⟦D⟧: `k in D` its keys, `k -> v in D` its keys with v = get(⟦D⟧, k), deeper levels nested
-Loop          : gen(init, step, guard): init the frame of the generation variables' boundaries, step the λ from a frame to the frame of primed values, the guard from `while`, `until` and `break`; a loop of monotone inflationary steps on a lattice of finite height is the lattice fix (sec:generations)
+Loop          : gen(init, step, guard): init the window of boundary frames `x[-1]` … `x[-k]`, k the maximum distance the body reads back (sec:generations), step the λ from a window to the window shifted by the frame of primed values, the guard from `while`, `until` and `break`; a loop of monotone inflationary steps on a lattice of finite height is the lattice fix (sec:generations)
 Pattern       : the pattern of its alternative
 RangePat      : a Bind x with the guard a <= x && x < b
 WildPat       : the kernel wildcard pattern
