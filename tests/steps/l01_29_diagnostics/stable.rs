@@ -197,16 +197,21 @@ fn check_piece(piece: usize) -> usize {
 /// within the time of one piece of the suite.
 const PIECES: usize = 2;
 
+/// Fewer types than this compared in a piece means the units no longer reach the checker. Since
+/// step L1.39b a check prints only the types its reported messages show, not every signature
+/// and origin as it is bound, so the pieces compare 48 and 29 types (77 in all, at the merge).
+const FEWEST: usize = 20;
+
 #[test]
 fn printed_types_do_not_move_0() {
     let n = check_piece(0);
-    assert!(n > 50, "{n} types compared");
+    assert!(n > FEWEST, "{n} types compared");
 }
 
 #[test]
 fn printed_types_do_not_move_1() {
     let n = check_piece(1);
-    assert!(n > 50, "{n} types compared");
+    assert!(n > FEWEST, "{n} types compared");
 }
 
 /// Unit `i` of a batch: a generic function, its own constant, and a call whose argument it
