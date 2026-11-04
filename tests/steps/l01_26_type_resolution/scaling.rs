@@ -1153,3 +1153,20 @@ fn a_bounded_variable_at_many_parameters_is_refused_in_linear_time() {
         );
     });
 }
+
+/// The intersection built where results hold a rigid variable or a function: `n` arrows
+/// `(x: T) -> T | String | #bi for T in int | f64` and one `(x: int | f64) -> String | ((y:
+/// int) -> int)`, at the slot `(x: U) -> U | String for U in int | f64`. The piece `U` of each
+/// result is within the slot's, and the function is in no other result; the carriers of all
+/// results but one are read off a pass from each end (`check::ty::meet_within`).
+#[test]
+fn many_results_that_hold_a_variable_or_a_function_meet_in_linear_time() {
+    let text = |n| {
+        let arrows = (0..n).map(|i| format!("((x: T) -> T | String | #b{i} for T in int | f64)"));
+        let fun = std::iter::once("((x: int | f64) -> String | ((y: int) -> int))".to_string());
+        slot_and_overload("(x: U) -> U | String for U in int | f64", arrows.chain(fun))
+    };
+    scales("n results holding a variable met", 100, text, |text| {
+        assert_eq!(type_errors(text), Vec::<String>::new());
+    });
+}

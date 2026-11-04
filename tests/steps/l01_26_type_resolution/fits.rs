@@ -411,3 +411,79 @@ fn an_overload_whose_arrows_overlap_is_checked_by_the_arrows_it_names() {
                 q(g: ((x: bool) -> String) & ((x: int) -> int)) = p(f: g);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
 }
+
+/// Case (3) with results that hold a function or a variable: a function is in no other
+/// result that holds none, so `String | ((y: int) -> int)` and `String | #a` meet in `String`;
+/// and `U | #a` and `U | #b`, at each carrier the caller picks for `U`, meet in `U`. Each fits
+/// as rule 6 of sec:type_resolution gives, and a near miss does not.
+#[test]
+fn results_that_hold_a_function_or_a_variable_are_intersected() {
+    let text = "p(f: (x: int) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String | #a) & ((x: int) -> String | ((y: int) -> int))) = \
+                p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    let text = "p(f: (x: U) -> U for U in int | f64) = f(x: 1);\n\
+                q(g: ((x: T) -> T | #a for T in int | f64) & ((x: T) -> T | #b for T in int | \
+                f64)) = p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    // Near misses: both results hold a function, which may be in both; `#a` is in both.
+    let text = "p(f: (x: int) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String | #a | ((y: int) -> int)) & ((x: int) -> String | \
+                ((y: int) -> int))) = p(f: g);\n";
+    assert_eq!(
+        type_errors(text),
+        [
+            "`p` does not take ((((x: int) -> String | #a | ((y: int) -> int)) & ((x: int) -> \
+             String | ((y: int) -> int)))): at `((x: int) -> String)`, the arrows `((x: int) -> \
+             String | #a | ((y: int) -> int))`, `((x: int) -> String | ((y: int) -> int))` each \
+             take all of it, and the intersection of their results, as the checker builds it (a \
+             piece of a result that holds a function, a variable or the unknown is left out only \
+             where another result holds none of its carriers, or no function), is not within \
+             `String` (rule 6 of sec:type_resolution) [p(f: g)]"
+        ]
+    );
+    let text = "p(f: (x: U) -> U for U in int | f64) = f(x: 1);\n\
+                q(g: ((x: T) -> T | #a for T in int | f64) & ((x: T) -> T | #a for T in int | \
+                f64)) = p(f: g);\n";
+    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+    // A tuple that holds a variable is not intersected value by value (DESIGN's example): the
+    // results meet only on `String`, and the fit is refused with how the checker built it.
+    let text = "p(f: (x: U) -> String for U in int | f64) = f(x: 1);\n\
+                q(g: ((x: T) -> (T,) | String for T in int | f64) & ((x: int | f64) -> (bool,) | \
+                String)) = p(f: g);\n";
+    let errors = type_errors(text);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("as the checker builds it"), "{errors:?}");
+}
+
+/// A message names a variable of the expected function type by its name there, not as `_`,
+/// the type of every value: in the result it names, and in what a variable is bound to.
+#[test]
+fn a_refused_cover_names_the_expected_types_variables() {
+    let text = "p(f: (x: U) -> U for U in int | f64) = f(x: 1);\n\
+                q(g: ((x: int | f64) -> int | f64 | #a) & ((x: int | f64) -> int | f64 | #b)) = \
+                p(f: g);\n";
+    assert_eq!(
+        type_errors(text),
+        [
+            "`p` does not take ((((x: int | f64) -> int | f64 | #a) & ((x: int | f64) -> int | \
+             f64 | #b))): at `((x: U) -> U for U in int | f64)`, the arrows `((x: int | f64) -> \
+             int | f64 | #a)`, `((x: int | f64) -> int | f64 | #b)` each take all of it, and the \
+             intersection of their results, `int | f64`, is not within `U` (rule 6 of \
+             sec:type_resolution) [p(f: g)]"
+        ]
+    );
+    let text = "p(f: (x: U, y: int | f64) -> U for U in int | f64) = 0;\n\
+                q(g: (x: T, y: T) -> T for T in int | f64) = p(f: g);\n";
+    assert_eq!(
+        type_errors(text),
+        [
+            "`p` does not take (((x: T, y: T) -> T for T in int | f64)): at `((x: U, y: int | \
+             f64) -> U for U in int | f64)`, the arrow `((x: T, y: T) -> T for T in int | f64)` \
+             takes it only with `T` bound to `int | f64 | U`, values of more than one carrier, \
+             but a call fixes `T` to one carrier, and `T` stands at 2 places the arguments give, \
+             which could be given values of two carriers (rule 6 of sec:type_resolution) \
+             [p(f: g)]"
+        ]
+    );
+}

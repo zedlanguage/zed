@@ -1965,7 +1965,7 @@ fn refused_cover(
         }
     }
     let slot = arrow_text(q, &q.arrows[k]);
-    let result = &q.arrows[k].result;
+    let result = text_at(&q.arrows[k].result, q, cx);
     let reason = if let Some((i, v, t, places)) = shared {
         let place = match places {
             Places { taken: 1.., .. } => format!(
@@ -1982,9 +1982,10 @@ fn refused_cover(
             ),
         };
         format!(
-            "the arrow `{}` takes it only with `{v}` bound to `{t}`, values of more than one \
+            "the arrow `{}` takes it only with `{v}` bound to `{}`, values of more than one \
              carrier, but a call fixes `{v}` to one carrier, and {place}",
-            arrow_text(s, &s.arrows[i])
+            arrow_text(s, &s.arrows[i]),
+            text_at(&t, q, cx)
         )
     } else if let Some((i, j)) = free {
         format!(
@@ -2001,17 +2002,22 @@ fn refused_cover(
             .map(|&(i, _)| format!("`{}`", arrow_text(s, &s.arrows[i])))
             .collect();
         // When each takes all of `qa`, the intersection is the result at every value: a plain
-        // reason, not a refused cover.
-        let whole: Option<Vec<KType>> = outside
-            .iter()
-            .map(|(_, r)| r.as_ref().and_then(Ty::kernel))
-            .collect();
-        if let Some(k) = whole.and_then(|ks| ks.into_iter().reduce(|a, b| &a & &b)) {
+        // reason, not a refused cover, with the intersection when the results have kernel types.
+        let whole: Option<Vec<&Ty>> = outside.iter().map(|(_, r)| r.as_ref()).collect();
+        if let Some(whole) = whole {
+            let kernels: Option<Vec<KType>> = whole.iter().map(|r| r.kernel()).collect();
+            let meet = match kernels.and_then(|ks| ks.into_iter().reduce(|a, b| &a & &b)) {
+                Some(k) => format!(", `{}`,", Ty::set(k)),
+                // Not built value by value ([`meet_within`]): the message says how.
+                None => ", as the checker builds it (a piece of a result that holds a function, \
+                          a variable or the unknown is left out only where another result \
+                          holds none of its carriers, or no function),"
+                    .into(),
+            };
             return Some(format!(
                 "at `{slot}`, the arrows {} each take all of it, and the intersection of their \
-                 results, `{}`, is not within `{result}` (rule 6 of sec:type_resolution)",
+                 results{meet} is not within `{result}` (rule 6 of sec:type_resolution)",
                 arrows.join(", "),
-                Ty::set(k)
             ));
         }
         format!(
@@ -2034,6 +2040,28 @@ fn refused_cover(
     Some(format!(
         "at `{slot}`, {reason} (rule 6 of sec:type_resolution)"
     ))
+}
+
+/// `t` as a message about a comparison with `q` prints it: the variables `q` bounds by
+/// carriers by their names, and the rigid variables made from them ([`Cx::fresh`]) by the
+/// names they were made from, not as `_`. Only on the way to an error.
+fn text_at(t: &Ty, q: &Sig, cx: &Cx) -> String {
+    let carriers = |v: &str| q.bounds.get(v).is_some_and(|&m| m & OTHER == 0);
+    let own = (q.bounds.keys())
+        .filter(|v| carriers(v))
+        .map(|v| (v.clone(), v.clone()));
+    let rigid = cx.rigid.keys().filter_map(|w| {
+        let (v, _) = w.rsplit_once('\'')?;
+        carriers(v).then(|| (w.clone(), Arc::from(v)))
+    });
+    let mut scope = Scope::default();
+    for (v, name) in own.chain(rigid) {
+        scope.printed.insert(name.clone());
+        scope.names.entry(v).or_default().push(Some(name));
+    }
+    let mut out = String::new();
+    t.write(&mut out, &mut scope);
+    out
 }
 
 /// The arrow `a` of `s`, as a function type of one arrow is written, with the bounds of the
@@ -2187,10 +2215,9 @@ fn binds_nothing(t: &Ty, cx: &Cx) -> bool {
 /// those that take, at `j`, all of `qa`'s type there outside `U`, `H` is not empty and the
 /// intersection of its results is within `qa`'s; or `H` is the arrows that take all of `qa`.
 /// [`Ty::diff`] keeps a part it cannot subtract, so `H` takes at least what the arrows within
-/// leave. The results are intersected as kernel types, exactly; a result that holds a
-/// function, a variable or the unknown has no kernel type, and an `H` that holds one is not
-/// taken. The cost is one comparison of each candidate and, for each `j`, one of each arrow
-/// that takes a part there with what the others leave.
+/// leave. The results are intersected by [`meet_within`]. The cost is one comparison of each
+/// candidate and, for each `j`, one of each arrow that takes a part there with what the others
+/// leave.
 fn met(s: &Sig, sas: &[Arrow], cands: &[usize], qa: &Arrow, cx: &mut Cx) -> bool {
     // An arrow of `q` that takes no value is left to one arrow and the union, as before this
     // form: the index leaves out arrows of `s` that take part of no parameter of it.
@@ -2233,21 +2260,100 @@ fn met(s: &Sig, sas: &[Arrow], cands: &[usize], qa: &Arrow, cx: &mut Cx) -> bool
     })
 }
 
-/// Whether the intersection of `results`, each a kernel type, is within `result`.
+/// Whether the intersection of `results` is within `result`. Each result is split into its
+/// kernel part, its scalars and atoms and the tuple shapes that hold no function, variable or
+/// unknown at any depth, and the rest. The kernel parts are intersected exactly. A value in
+/// every result outside that intersection is outside the kernel part of some result `i`, so
+/// in a piece of the rest of `i` and in every other result: each such piece must be within
+/// `result`, unless no value of it is in every other result. That is known of a function,
+/// when another result holds no function, and of a rigid variable bounded by carriers, when
+/// the carriers the other results may hold miss its bound. Linear in the results: the
+/// carriers of all but one are read off a pass from each end.
+///
+/// Complexity tradeoff: a piece of the rest is not intersected value by value, so some
+/// intersections within `result` are refused: `(U,) | String` and `(bool,) | String` meet
+/// only on `String`, but the tuple piece `(U,)` is not within `String`. Intersecting rigid
+/// variables value by value would fix each to each carrier of its bound, the product of the
+/// bounds in the variables; the tuple pieces would need the intersection per component of
+/// each pair of shapes of one width, quadratic in the shapes.
 fn meet_within(results: &[Ty], result: &Ty, cx: &mut Cx) -> bool {
-    let Some(ks) = results.iter().map(Ty::kernel).collect::<Option<Vec<_>>>() else {
+    if results.is_empty() {
         return false;
-    };
-    let Some(k) = ks.into_iter().reduce(|a, b| &a & &b) else {
-        return false;
-    };
-    match result.kernel() {
-        Some(r) => k.subtype(&r),
-        None => {
-            let mut b = Binds::new();
-            Ty::set(k).sub_in(result, &mut b, cx) && b.is_empty()
-        }
     }
+    let masks: Vec<u8> = results.iter().map(|r| carriers_of(r, cx)).collect();
+    let mut after = vec![EVERY; masks.len() + 1];
+    for (i, &m) in masks.iter().enumerate().rev() {
+        after[i] = after[i + 1] & m;
+    }
+    let no_function = results.iter().any(|r| holds_no_function(r, cx));
+    let mut before = EVERY;
+    let mut kernels = Vec::with_capacity(results.len());
+    let mut rest = Ty::empty();
+    for (i, r) in results.iter().enumerate() {
+        let others = before & after[i + 1];
+        before &= masks[i];
+        let mut shapes = Vec::new();
+        for row in &r.tuples {
+            match row.iter().map(Ty::kernel).collect::<Option<Vec<_>>>() {
+                Some(cs) => shapes.push(KType::tuple(cs)),
+                None => rest.tuples.push(row.clone()),
+            }
+        }
+        kernels.push(KType::union_all(
+            std::iter::once(r.set.clone()).chain(shapes),
+        ));
+        if !no_function {
+            rest.fns.extend(r.fns.iter().cloned());
+        }
+        for v in &r.vars {
+            let missed = match cx.rigid.get(v) {
+                Some(&m) => m & OTHER == 0 && m & others == 0,
+                None => no_function && cx.fns.contains_key(v),
+            };
+            if !missed {
+                rest.vars.insert(v.clone());
+            }
+        }
+        rest.dynamic |= r.dynamic;
+    }
+    let Some(k) = kernels.into_iter().reduce(|a, b| &a & &b) else {
+        return false;
+    };
+    let mut b = Binds::new();
+    let kernel_within = match result.kernel() {
+        Some(r) => k.subtype(&r),
+        None => Ty::set(k).sub_in(result, &mut b, cx) && b.is_empty(),
+    };
+    kernel_within && (rest.is_empty() || rest.sub_in(result, &mut b, cx) && b.is_empty())
+}
+
+/// The carriers a value of `t`, as a comparison reads it, may be of, and [`OTHER`] if it may
+/// be another value: a rigid variable stands for its bound, and a function read as a variable
+/// for no carrier.
+fn carriers_of(t: &Ty, cx: &Cx) -> u8 {
+    if t.dynamic {
+        return EVERY;
+    }
+    let split = t.set.split();
+    let set = Carrier::ALL
+        .into_iter()
+        .filter(|c| split.bases[c.base()].is_some())
+        .fold(0, |m, c| m | c.bit());
+    t.vars.iter().fold(set, |m, v| match cx.rigid.get(v) {
+        Some(&bound) => m | bound,
+        None if cx.fns.contains_key(v) => m | OTHER,
+        None => EVERY,
+    })
+}
+
+/// Whether no value of `t`, as a comparison reads it, is a function: it holds no function, no
+/// function read as a variable, no unknown, and only rigid variables bounded by carriers.
+fn holds_no_function(t: &Ty, cx: &Cx) -> bool {
+    t.fns.is_empty()
+        && !t.dynamic
+        && t.vars
+            .iter()
+            .all(|v| cx.rigid.get(v).is_some_and(|&m| m & OTHER == 0))
 }
 
 /// What a parameter type of an arrow must hold to hold a piece of a parameter type: the
@@ -3700,19 +3806,19 @@ mod tests {
     /// The bits of `int` and `f64`, the bound of `B` below.
     const B_VALUES: u8 = 0b1001;
 
-    /// A place of a small arrow: the values of a mask, or the variable `B` bounded by `int |
-    /// f64`.
+    /// A place of a small arrow: the values of a mask, alone or with the variable `B` bounded by
+    /// `int | f64`.
     #[derive(Clone, Copy)]
     enum Small {
         Values(u8),
-        B,
+        B(u8),
     }
 
     impl Small {
         fn ty(self) -> Ty {
             match self {
                 Small::Values(m) => of_values(m),
-                Small::B => Ty::var("B".into()),
+                Small::B(m) => Ty::var("B".into()).union(&of_values(m)),
             }
         }
 
@@ -3720,7 +3826,7 @@ mod tests {
         fn at(self, c: u8) -> u8 {
             match self {
                 Small::Values(m) => m,
-                Small::B => c,
+                Small::B(m) => m | c,
             }
         }
     }
@@ -3734,7 +3840,7 @@ mod tests {
         let fixed: Vec<(Vec<u8>, u8)> = arrows
             .iter()
             .flat_map(|(ps, r)| {
-                let held = ps.iter().chain([r]).any(|p| matches!(p, Small::B));
+                let held = ps.iter().chain([r]).any(|p| matches!(p, Small::B(_)));
                 let cs: Vec<u8> = match held {
                     true => (0..VALUES)
                         .map(|b| 1 << b)
@@ -3787,7 +3893,7 @@ mod tests {
     /// two and one of the first three values, so that results outside a slot's are common.
     fn small(rng: &mut Rng, narrow: bool) -> Small {
         if rng.below(8) == 0 {
-            return Small::B;
+            return Small::B(0);
         }
         Small::Values(match narrow {
             true => mask(rng) & mask(rng) | 1 << rng.below(3),
@@ -3851,6 +3957,87 @@ mod tests {
         assert!(
             fit > 200 && cover > 100 && neither > 200,
             "{fit} fit by one arrow, {cover} together, {refused} refused, {neither} no cover"
+        );
+    }
+
+    #[test]
+    fn a_fit_at_a_bounded_variable_is_a_cover_of_its_values() {
+        // As above, with the slot generic: `U`, bounded by `int | f64`, stands at some of its
+        // parameters and in its result, and the arrows hold `B`, alone or with other values,
+        // at parameters and in results, so a result may hold the rigid `U` (by `B` bound to
+        // it) beside values ([`meet_within`]). A fit holds at each carrier the caller may fix
+        // `U` to, at every value, as rule 6 types a call there.
+        let mut rng = Rng(0x0005_eed6);
+        let (mut fit, mut refused, mut neither) = (0, 0, 0);
+        let place = |rng: &mut Rng, narrow: bool| match small(rng, narrow) {
+            Small::B(_) if narrow && rng.below(2) == 0 => Small::B(1 << rng.below(VALUES as u64)),
+            p => p,
+        };
+        for case in 0..4000 {
+            let width = 1 + case % 2;
+            let n = 1 + rng.below(4) as usize;
+            let mut arrows: Vec<(Vec<Small>, Small)> = Vec::new();
+            for _ in 0..n {
+                let ps = (0..width).map(|_| place(&mut rng, false)).collect();
+                arrows.push((ps, place(&mut rng, true)));
+            }
+            // A slot's place: `U`, alone or with values, one time in three, else values.
+            let slot = |rng: &mut Rng, m: u8| match rng.below(3) {
+                0 => (true, m & mask(rng) & mask(rng)),
+                _ => (false, m.max(1)),
+            };
+            let params: Vec<(bool, u8)> = (0..width)
+                .map(|_| {
+                    let m = mask(&mut rng) & mask(&mut rng);
+                    slot(&mut rng, m)
+                })
+                .collect();
+            let m = mask(&mut rng) | 1 << rng.below(3);
+            let result = slot(&mut rng, m);
+            let u = |(held, m): (bool, u8)| match held {
+                true => Ty::var("U".into()).union(&of_values(m)),
+                false => of_values(m),
+            };
+            let sas = arrows
+                .iter()
+                .map(|(ps, r)| Arrow {
+                    params: ps.iter().map(|p| p.ty()).collect(),
+                    result: r.ty(),
+                })
+                .collect();
+            let mut s = sig(sas, width, false);
+            s.bounds
+                .insert("B".into(), Carrier::Int.bit() | Carrier::F64.bit());
+            s.note_held();
+            let qa = Arrow {
+                params: params.iter().map(|&p| u(p)).collect(),
+                result: u(result),
+            };
+            let mut q = sig(vec![qa], width, false);
+            q.own.insert("U".into());
+            q.bounds
+                .insert("U".into(), Carrier::Int.bit() | Carrier::F64.bit());
+            q.note_held();
+            let at = |(held, m): (bool, u8), c: u8| if held { m | c } else { m };
+            // `U` that no parameter holds is no carrier a caller fixes: it is read as its bound.
+            let fixed: &[u8] = match params.iter().any(|&(held, _)| held) {
+                true => &[1, 1 << 3],
+                false => &[1 | 1 << 3],
+            };
+            let truth = fixed.iter().all(|&c| {
+                let ps: Vec<u8> = params.iter().map(|&p| at(p, c)).collect();
+                covers_by_values(&arrows, &ps, at(result, c))
+            });
+            match (fits_sig(&s, &q), truth) {
+                (true, false) => panic!("case {case}: {q} in {s} is no cover of the values"),
+                (true, true) => fit += 1,
+                (false, true) => refused += 1,
+                (false, false) => neither += 1,
+            }
+        }
+        assert!(
+            fit > 200 && neither > 200,
+            "{fit} fit, {refused} refused, {neither} no cover"
         );
     }
 }
