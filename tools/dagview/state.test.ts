@@ -318,3 +318,14 @@ test("an override written with status is named in the warnings", () => {
   const ov = { A: { state: "done" }, B: { status: "done" }, C: "not an object" } as unknown as Record<string, never>;
   assert.deepEqual(overrideWarnings(ov), ['override B uses "status", which is ignored; write "state"']);
 });
+
+test("a label naming several items with commas is a line of each, not an item of its own", () => {
+  const [a, b] = parseLog("2026-11-04 00:14:14 | L2.3, PRE-stack | started: repair-runner\n");
+  assert.deepEqual([a.id, b.id], ["L2.3", "PRE-stack"]);
+  const [c, d] = parseLog("2026-11-04 00:14:15 | A, B:merge#1 | merged\n");
+  assert.deepEqual([c.id, c.role, c.attempt, d.id, d.role], ["A", "merge", "1", "B", "merge"]);
+  const nodes = by(buildNodes(inputs("2026-11-02 10:00:00 | A, LR2 | started\n", "")));
+  assert.equal(nodes.has("A, LR2"), false);
+  assert.equal(nodes.get("A")!.logLines, 1);
+  assert.equal(nodes.get("LR2")!.logLines, 1);
+});

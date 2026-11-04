@@ -123,16 +123,19 @@ export function parseLog(text: string): LogEntry[] {
     const m = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \| ([^|]+?) \| (.*)$/.exec(line);
     if (!m) continue;
     // "A:impl#1", and "A:orchestrator" or "A:code-sweep" with no attempt: all three are lines of A.
+    // "A, B:orchestrator" or "A, B" is a line of A and a line of B.
     const label = /^([^:#]+):([a-z][^#]*?)(?:#(.*))?$/.exec(m[2]);
-    out.push({
-      at: Date.parse(m[1].replace(" ", "T")),
-      time: m[1],
-      label: m[2],
-      id: label ? label[1] : m[2],
-      role: label ? label[2] : "",
-      attempt: label?.[3] ?? "",
-      text: m[3],
-    });
+    for (const id of (label ? label[1] : m[2]).split(/\s*,\s*/)) {
+      out.push({
+        at: Date.parse(m[1].replace(" ", "T")),
+        time: m[1],
+        label: m[2],
+        id,
+        role: label ? label[2] : "",
+        attempt: label?.[3] ?? "",
+        text: m[3],
+      });
+    }
   }
   return out;
 }
