@@ -13,6 +13,7 @@ mod order;
 mod printed;
 mod repairs;
 mod scaling;
+mod stable;
 mod tyvars;
 mod untracked;
 mod variants;

@@ -28,16 +28,16 @@ const SEED: u64 = 0x1_29b;
 /// is the unit's tail, which stays at the end: a `///` block there documents no declaration
 /// in any order. A doc comment at the end of an item's line documents the next item, so it is
 /// cut with that one.
-struct Items<'t> {
+pub(super) struct Items<'t> {
     text: &'t str,
-    cuts: Vec<usize>,
+    pub(super) cuts: Vec<usize>,
     /// The name each item declares: the first name of its declaration; `None` for a unit
     /// annotation.
     names: Vec<Option<&'t str>>,
 }
 
 /// The items of `text`; one item, the whole text, when it does not lex or parse.
-fn items(text: &str) -> Items<'_> {
+pub(super) fn items(text: &str) -> Items<'_> {
     let whole = Items {
         text,
         cuts: vec![0, text.len()],
@@ -109,7 +109,7 @@ fn declared<'t>(
 }
 
 impl<'t> Items<'t> {
-    fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.names.len()
     }
 
@@ -135,7 +135,7 @@ impl<'t> Items<'t> {
     }
 
     /// The reversed order and one seeded shuffle, each keeping each name's written order.
-    fn orders(&self) -> [Vec<usize>; 2] {
+    pub(super) fn orders(&self) -> [Vec<usize>; 2] {
         let reversed = (0..self.len()).rev().collect();
         let mut shuffled: Vec<usize> = (0..self.len()).collect();
         let mut rng = Rng::new(SEED);
@@ -148,7 +148,7 @@ impl<'t> Items<'t> {
     /// The text with its items in `order`, each followed by a line break when it ends without
     /// one, then the tail, and where each item and the tail (numbered `len`) start in it. The
     /// written order gives the text unchanged when its items end with line breaks.
-    fn permuted(&self, order: &[usize]) -> Permuted {
+    pub(super) fn permuted(&self, order: &[usize]) -> Permuted {
         let mut text = String::with_capacity(self.text.len() + order.len());
         let mut starts = Vec::with_capacity(order.len());
         for &i in order {
@@ -166,8 +166,8 @@ impl<'t> Items<'t> {
 
 /// A permuted text, and the start of each item and of the tail in it, in increasing order,
 /// with the item.
-struct Permuted {
-    text: String,
+pub(super) struct Permuted {
+    pub(super) text: String,
     starts: Vec<(usize, usize)>,
 }
 
@@ -273,7 +273,7 @@ fn across_items_by_verdict(mut answer: Answer, name: &str) -> Answer {
 
 /// Every `.zed` unit of the corpus, with its program folders, variants and controls, and of
 /// the steps' `zed/` folders, by path.
-fn units() -> Vec<(String, String)> {
+pub(super) fn units() -> Vec<(String, String)> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut dirs = vec![root.join("../zed/corpus")];
     for step in std::fs::read_dir(root.join("steps")).unwrap() {

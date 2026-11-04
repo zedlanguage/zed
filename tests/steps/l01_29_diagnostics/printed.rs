@@ -103,7 +103,7 @@ fn stated(t: &Ty) -> Ty {
 
 /// Whether `t` holds a class variable of the solver, `$k`: a text printed with one is a
 /// placeholder the checker replaces once the class is solved, and is checked in its final form.
-fn unsolved(t: &Ty) -> bool {
+pub(super) fn unsolved(t: &Ty) -> bool {
     let mut vars = Vars::default();
     t.vars_in(&mut vars);
     vars.order.iter().any(|v| v.starts_with('$'))

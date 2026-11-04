@@ -221,3 +221,109 @@ fn printing_many_warnings_scales() {
         assert_eq!(firsts(&err).len(), m);
     });
 }
+
+/// A unit with a table that passes and a `main` that squares a side past the word and pushes
+/// `push`: one widening notice, at 4:10.
+fn area_program(push: &str) -> String {
+    sized_area(3037000500, push)
+}
+
+/// `area_program` with the side `side`.
+fn sized_area(side: u64, push: &str) -> String {
+    format!(
+        "half(positional x) = x div 2 test {{ 10 -> 5, 7 -> 3 }}\n\
+         main(stdin: Lines) -> (stdout: Lines) {{\n  side = {side};\n  \
+         area = side * side;\n  stdout <- {push};\n}}\n"
+    )
+}
+
+/// The push that concatenates a number to a string, which is rejected, and its repair.
+const REJECTED_PUSH: &str = "\"area: \" ++ area";
+const REPAIRED_PUSH: &str = "\"area: \" ++ String(area)";
+
+#[test]
+fn a_rejection_is_reported_alone_and_its_repair_reports_the_notice() {
+    // Step L1.29a: one rejection and one widening notice in one unit give the rejection
+    // alone, from every entry point.
+    let src = area_program(REJECTED_PUSH);
+    let file = unit("alone", "rejected.zed", &src);
+    let why = zedc::run::load(src.as_bytes())
+        .err()
+        .expect("the concatenation is rejected");
+    assert!(why.starts_with("5:13: "), "{why}");
+    assert!(!why.contains("widens"), "{why}");
+    let (status, out, err) = test(&[&file]);
+    assert_eq!(status, 1, "{out}");
+    assert!(out.contains(&format!("{file}:5:13: ")), "{out}");
+    assert!(!out.contains("widens"), "{out}");
+    assert_eq!(err, "");
+    let (status, err) = run(&file);
+    assert_eq!(status, 1);
+    assert!(err.contains(&format!("{file}:5:13: ")), "{err}");
+    assert!(!err.contains("widens"), "{err}");
+
+    // Repaired, the unit is accepted and the notice is reported.
+    let src = area_program(REPAIRED_PUSH);
+    let file = unit("alone", "repaired.zed", &src);
+    let program = zedc::run::load(src.as_bytes()).expect("the repair is accepted");
+    let notices: Vec<(usize, usize)> = program.warnings().iter().map(|w| (w.line, w.col)).collect();
+    assert_eq!(notices, [(4, 10)]);
+    let notice = format!(
+        "{file}:4:10: `area` widens past a machine word: this `*` of an i64 and an i64 gives a \
+         big integer"
+    );
+    let (status, out, err) = test(&[&file]);
+    assert_eq!(status, 0, "{out}");
+    assert_eq!(firsts(&err), [notice.as_str()]);
+    assert_eq!(run(&file), (0, err));
+}
+
+/// Every corpus and step unit that `zedc test` finds rejected prints no warning.
+#[test]
+fn no_rejected_unit_of_the_corpus_prints_a_warning() {
+    let mut rejected = 0;
+    for (name, text) in super::order::units() {
+        if zedc::run::load(text.as_bytes()).is_ok() {
+            continue;
+        }
+        rejected += 1;
+        let file = unit("corpus", "unit.zed", &text);
+        let (_, _, err) = test(&[&file]);
+        assert_eq!(err, "", "{name}");
+    }
+    assert!(rejected >= 5, "{rejected} rejected units");
+}
+
+/// `zedc test` on a batch of `n` units, each with its own side, half rejected and half
+/// repaired: each rejected unit prints its rejection alone and each repaired one its notice,
+/// in work linear in the units. The files are written before the timing.
+#[test]
+fn a_batch_of_rejected_and_repaired_units_scales() {
+    let n = 40;
+    let batch = |m: usize| -> Vec<String> {
+        (0..m)
+            .map(|i| {
+                let push = if i % 2 == 0 {
+                    REJECTED_PUSH
+                } else {
+                    REPAIRED_PUSH
+                };
+                let side = 3037000500 + i as u64;
+                unit(
+                    &format!("halves{m}"),
+                    &format!("{i}.zed"),
+                    &sized_area(side, push),
+                )
+            })
+            .collect()
+    };
+    let batches = [batch(n), batch(scaling::FACTOR * n)];
+    scaling::check_order("zedc test on a batch of n units", n, 1, |m| {
+        let files = &batches[usize::from(m != n)];
+        let args: Vec<&str> = files.iter().map(String::as_str).collect();
+        let (status, out, err) = test(&args);
+        assert_eq!(status, 1);
+        assert_eq!(firsts(&err).len(), m / 2);
+        assert_eq!(out.matches(":5:13: ").count(), m / 2);
+    });
+}
