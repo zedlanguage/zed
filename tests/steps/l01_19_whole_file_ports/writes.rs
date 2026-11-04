@@ -177,6 +177,18 @@ fn usage_errors_exit_2() {
         (out.status, out.stderr.as_str()),
         (2, "`main` has no port `nosuch`\n")
     );
+    let files = "main(fs: Files) -> (stdout: Lines) {\n  stdout <- fs[\"a\"] else \"\";\n}\n";
+    let out = run("usage", files, "", &["fs=x"]);
+    assert_eq!(
+        (out.status, out.stderr.as_str()),
+        (2, "input port `fs` reads no file: remove `fs=x`\n")
+    );
+    let args = "main(args: CommandLine) -> (stdout: Lines) {\n  stdout <- args[1] else \"\";\n}\n";
+    let out = run("usage", args, "", &["args=x"]);
+    assert_eq!(
+        (out.status, out.stderr.as_str()),
+        (2, "input port `args` reads no file: remove `args=x`\n")
+    );
     let out = run("usage", src, "", &["--bogus"]);
     assert_eq!(out.status, 2);
     assert!(out.stderr.starts_with("usage: zedc run"), "{}", out.stderr);

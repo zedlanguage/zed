@@ -840,6 +840,17 @@ fn command_inner(
     if let Some(p) = binds.keys().find(|p| !known(p)) {
         return Err((2, format!("`main` has no port `{p}`")));
     }
+    // A `Files` or `CommandLine` input reads no file, so a binding of one would be ignored.
+    if let Some((p, _)) = program
+        .inputs
+        .iter()
+        .find(|(n, k)| *k != PortKind::Lines && binds.contains_key(n))
+    {
+        return Err((
+            2,
+            format!("input port `{p}` reads no file: remove `{p}={}`", binds[p]),
+        ));
+    }
     for name in &program.outputs {
         if !binds.contains_key(name) && name != "stdout" && name != "stderr" {
             return Err((

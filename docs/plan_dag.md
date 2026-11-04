@@ -517,6 +517,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 6 | TEST-slow-more_random_guarded_keep_their_preimages | Done: Split the s22 test `more_random_guarded_keep_their_preimages` into pieces each under 60 s, after S22e-wide merges (it also edits s22.rs) | S | no | S22b-rest, S22e-quad, S22e-wide |  |
 | 1 | CLASS-atoms | issue-1 class beyond the else-on-parameter case; first rerun every narrowing/ and differential/ repro on main after ISSUE1-else-atoms merges, and fix what is left: else on an expression computed from an inferred ... | S | no | ISSUE1-else-atoms |  |
 | 1 | TEST-rows-rule6 | zedc test rows apply the definition directly and run the body on a loose atom that a real call passes through (elab/walk.rs:507-511, guard only at info.passes spans), so a test table cannot catch the issue-1 class: rows ... | S | no | ISSUE1-else-atoms |  |
+| 1 | PORT-bind-unknown | Done: `zedc run` accepted and ignored a binding `name=path` of a `Files` or `CommandLine` input; now a usage error (exit 2) naming the binding to remove | S | no | L1.19a | `crates/zedc/src/run.rs`, `tests/steps/l01_19_whole_file_ports/writes.rs` |
 | 0 | LIT-adopt | Done: literal adoption: a literal compared by == with an inferred parameter stays int, so isOne(1.0) is false while 1.0 == 1 is true (also at a type variable: false at 1.0 and 1r); an int literal at a parameter declared f64 / ... | S | no | none |  |
 | 0 | NARROW-if | narrowing by if tests never reaches the checker: f(n: int) = if n >= 0 { popCount(n) } else { 0 } is rejected (popCount takes int[0..]), and the repair DESIGN gives for ** (a test n >= 0) is rejected the same way. repros ... | S | no | none |  |
 | 0 | RAT-parse | Done: rat(s) accepts text DESIGN.md:1772 makes #invalid (it reads only what String writes for a rat, the same without the r, or a decimal): 1/-3, 1r/-3r, -1/-3, 1/3r, 1r/3, 2r/4r, -0, 1/03 all parse (rerun: -1r/3r -1r/3r 1r/3r ... | S | no | none |  |
@@ -1568,6 +1569,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **TEST-slow-more_random_guarded_keep_their_preimages.** S22b-rest, S22e-quad, S22e-wide: from the ledger and dagview. *Note:* Added 2026-11-03 by the DAG audit. Feeds L1.40, T12.
 - **CLASS-atoms.** ISSUE1-else-atoms: from the ledger and dagview. *Note:* Added 2026-11-03 by the DAG audit. Feeds L1.40, T12.
 - **TEST-rows-rule6.** ISSUE1-else-atoms: from the ledger and dagview. *Note:* Added 2026-11-03 by the DAG audit. Feeds L1.40, T12.
+- **PORT-bind-unknown.** L1.19a. *Note:* Added 2026-11-03 from L1.19a verify#1. Feeds L1.36a, T12.
 - **LIT-adopt.** No needs. *Note:* Added 2026-11-03 by the DAG audit. Feeds L1.40, T12.
 - **NARROW-if.** No needs. *Note:* Added 2026-11-03 by the DAG audit. Feeds L1.40, T12.
 - **RAT-parse.** No needs. *Note:* Added 2026-11-03 by the DAG audit. Feeds L1.40, T12.

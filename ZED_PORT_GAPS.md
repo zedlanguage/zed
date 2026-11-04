@@ -234,8 +234,8 @@ for text parsing; the choice can wait until S.4.
 
 ### Gap 6. Command line and outputs (closed for the command line by L1.19a)
 
-Confirmed: `main` (`zedc/main.rs:9`) reads `std::env::args`, and `command_inner`
-(`run.rs:583`) dispatches on them. No DESIGN.md port gives arguments: `main`'s parameters are
+Confirmed before step L1.19a: `main` (`zedc/main.rs:9`) read `std::env::args`, and `command_inner`
+(`run.rs:583`) dispatched on them. No DESIGN.md port gave arguments: `main`'s parameters are
 ports, an input is `Lines` or `Files`. A `Lines` output is bound by the driver to a fixed path, so
 writing to a path computed at run time (`run.rs:654`, `:657`) has no form. Exit status is fixed
 by L1.19 as 0, 1 or 2, by the host; the Rust returns its own status.
