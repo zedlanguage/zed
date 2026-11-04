@@ -10,6 +10,8 @@ mod command;
 mod corpus_words;
 mod cycles;
 mod imports;
+mod later_forms;
+mod later_words;
 mod manifest;
 mod queries;
 pub(crate) mod scaling;

@@ -297,8 +297,11 @@ pub struct Resolved {
 /// The value words of the prelude, each with the layer it belongs to (DESIGN.md, "Defined
 /// words by layer"): at L1 the numeric casts, the `String` cast that interpolation calls, the
 /// `String` functions the documentation uses, and `min` and `max`, which the table does not list
-/// and so enter with the scalars they take.
-const WORDS: &[(&str, u32)] = &[
+/// and so enter with the scalars they take. The table's other names that are no word are left
+/// out: `main` and the ports `clock` and `log`, which a program names, and `abs` of L14, the L1
+/// word on more types. The step test `l02_03_name_resolution::later_words` checks these tables
+/// against the table in DESIGN.md.
+pub const WORDS: &[(&str, u32)] = &[
     ("String", 1),
     ("int", 1),
     ("rat", 1),
@@ -334,6 +337,9 @@ const WORDS: &[(&str, u32)] = &[
     ("foldr", 3),
     ("reduce", 3),
     ("allOk", 3),
+    ("any", 3),
+    ("all", 3),
+    ("find", 3),
     ("split", 3),
     ("lines", 3),
     ("concat", 3),
@@ -362,8 +368,52 @@ const WORDS: &[(&str, u32)] = &[
     ("drop", 5),
     ("takeWhile", 5),
     ("chunkBy", 5),
+    ("upTo", 5),
+    ("from", 5),
     ("fix", 6),
+    ("window", 7),
+    ("merge", 7),
+    ("latest", 7),
+    ("refine", 10),
+    ("meet", 11),
+    ("entails", 11),
+    ("complex", 14),
+    ("quat", 14),
+    ("oct", 14),
+    ("conj", 14),
+    ("normSq", 14),
+    ("inv", 14),
+    ("bf16", 14),
+    ("f16", 14),
+    ("matmul", 14),
+    ("dot", 14),
+    ("norm", 14),
+    ("cross", 14),
+    ("solve", 14),
+    ("byInduction", 15),
+    ("bySimp", 15),
+    ("byCases", 15),
+    ("using", 15),
+    ("anyIntro", 15),
+    ("anyElim", 15),
+    ("allElim", 15),
+    ("reflect", 15),
+    ("compile", 19),
     ("mix", 19),
+    ("ofNat", 22),
+    ("additive", 22),
+    ("byStrongInduction", 22),
+    ("byCollectionInduction", 22),
+    ("evalPoly", 22),
+    ("normalForm", 22),
+    ("expand", 22),
+    ("simplify", 22),
+    ("substitute", 22),
+    ("derivative", 22),
+    ("verify", 25),
+    ("explain", 25),
+    ("obligations", 25),
+    ("check", 25),
 ];
 
 /// The layer of the prelude value word `name`, if it is one.
@@ -376,7 +426,15 @@ pub fn prelude_layer(name: &str) -> Option<u32> {
 
 /// Whether `name` is a prelude value word of any layer or a prelude type name.
 pub fn is_prelude_name(name: &str) -> bool {
-    prelude_layer(name).is_some() || TYPES.contains(&name)
+    prelude_layer(name).is_some() || TYPES.contains(&name) || later_type_layer(name).is_some()
+}
+
+/// The layer of the prelude type `name` of a later layer, if it is one.
+fn later_type_layer(name: &str) -> Option<u32> {
+    LATER_TYPES
+        .iter()
+        .find(|(t, _)| *t == name)
+        .map(|&(_, layer)| layer)
 }
 
 /// The annotations, each with the layer it belongs to (DESIGN.md, "Defined words by layer").
@@ -438,8 +496,42 @@ const TYPES: &[&str] = &[
 ];
 
 /// The type names of the prelude's later layers, each with its layer (DESIGN.md, "Defined words
-/// by layer"). A use below its layer is an error naming the layer, as for a value word.
-const LATER_TYPES: &[(&str, u32)] = &[("Stream", 7)];
+/// by layer"). A use below its layer is an error naming the layer, as for a value word. The
+/// number algebras and float formats of L14 are words too, applied to build a value.
+pub const LATER_TYPES: &[(&str, u32)] = &[
+    ("Seq", 5),
+    ("Ast", 6),
+    ("Facet", 6),
+    ("Rejection", 6),
+    ("Interval", 6),
+    ("Congruence", 6),
+    ("Bound", 6),
+    ("Stream", 7),
+    ("Instant", 7),
+    ("Duration", 7),
+    ("Ptr", 7),
+    ("FloatClass", 11),
+    ("Constraints", 11),
+    ("UnitText", 12),
+    ("complex", 14),
+    ("quat", 14),
+    ("oct", 14),
+    ("bf16", 14),
+    ("f16", 14),
+    ("Proof", 15),
+    ("Semigroup", 22),
+    ("Monoid", 22),
+    ("NonCommRing", 22),
+    ("CommRing", 22),
+    ("Ring", 22),
+    ("Picture", 34),
+    ("Pointer", 34),
+    ("Keys", 34),
+    ("Midi", 34),
+    ("Camera", 34),
+    ("Audio", 34),
+    ("Sensors", 34),
+];
 
 /// The carriers, which a bounded type variable ranges over, in the order the checker prints
 /// them.
@@ -816,7 +908,11 @@ impl Resolver<'_> {
                 return;
             }
             Some(Found::Word(layer)) => format!("`{name}` is a prelude word of layer L{layer}"),
-            None => format!("`{name}` is not defined"),
+            // A prelude struct of a later layer is named as a value to build one.
+            None => match later_type_layer(name) {
+                Some(layer) => format!("`{name}` is a prelude type of layer L{layer}"),
+                None => format!("`{name}` is not defined"),
+            },
         };
         self.errors.push(Error {
             row: None,
@@ -981,6 +1077,21 @@ impl Resolver<'_> {
                     // The `match` is reported as a form of a later step, so its patterns are
                     // not reported again.
                     todo.push(Task::Pattern(&arm.pattern, false));
+                }
+                Task::For {
+                    binders,
+                    guard,
+                    body,
+                } => {
+                    self.open();
+                    for t in binders {
+                        if let Target::Name(n, at) = t {
+                            self.bind(n, *at, *at, Kind::Pattern, None);
+                        }
+                    }
+                    todo.push(Task::Close);
+                    todo.push(Task::Expr(body));
+                    todo.extend(guard.map(Task::Expr));
                 }
                 Task::PatternEnd(span, start) => {
                     let end = self.out.binders.len();
@@ -1646,21 +1757,76 @@ impl Resolver<'_> {
                 todo.extend(arms.iter().rev().map(Task::Arm));
                 todo.push(Task::Expr(of));
             }
-            ExprKind::Range(..) => self.later(e.span, "a range", "L3.2"),
-            ExprKind::In { .. } => self.later(e.span, "an `in` test", "L3.2"),
-            ExprKind::Reduce { .. } => self.later(e.span, "a reduction `><`", "L3.2"),
-            ExprKind::Read { .. } => self.later(e.span, "a metadata read `::`", "L3.2"),
-            ExprKind::Section(_) => self.later(e.span, "an operator section", "L3.2"),
-            ExprKind::Array(_) => self.later(e.span, "an array display", "L3.2"),
-            ExprKind::Set(_) => self.later(e.span, "a set display", "L3.2"),
-            ExprKind::Map(_) => self.later(e.span, "a map display", "L3.2"),
-            ExprKind::For { .. } => self.later(e.span, "a `for`", "L3.2"),
-            ExprKind::Loop { .. } => self.later(e.span, "a `loop`", "L6.3"),
-            ExprKind::Break(_) => self.later(e.span, "a `break`", "L6.3"),
-            ExprKind::Spread { .. } => {
-                self.later(e.span, "a call `*.` that writes its receiver", "L6.3")
+            // The forms below are compiled from a later step, and their parts are resolved here
+            // as `match`'s are, so a name in them is recorded or reported.
+            ExprKind::Range(from, to) => {
+                self.later(e.span, "a range", "L3.2");
+                todo.extend(to.bound().map(|b| Task::Expr(b)));
+                todo.push(Task::Expr(from));
             }
-            ExprKind::SortKey { .. } => self.later(e.span, "a sort key `asc` or `desc`", "L5.1"),
+            ExprKind::In { of, set, .. } => {
+                self.later(e.span, "an `in` test", "L3.2");
+                todo.push(Task::Expr(set));
+                todo.push(Task::Expr(of));
+            }
+            ExprKind::Reduce { of, op } => {
+                self.later(e.span, "a reduction `><`", "L3.2");
+                todo.push(Task::Expr(op));
+                todo.push(Task::Expr(of));
+            }
+            ExprKind::Read { of, .. } => {
+                self.later(e.span, "a metadata read `::`", "L3.2");
+                todo.push(Task::Expr(of));
+            }
+            ExprKind::Section(_) => self.later(e.span, "an operator section", "L3.2"),
+            ExprKind::Array(items) => {
+                self.later(e.span, "an array display", "L3.2");
+                todo.extend(items.iter().rev().map(Task::Expr));
+            }
+            ExprKind::Set(items) => {
+                self.later(e.span, "a set display", "L3.2");
+                todo.extend(items.iter().rev().map(Task::Expr));
+            }
+            ExprKind::Map(entries) => {
+                self.later(e.span, "a map display", "L3.2");
+                for (k, v) in entries.iter().rev() {
+                    todo.push(Task::Expr(v));
+                    todo.push(Task::Expr(k));
+                }
+            }
+            // The source is read outside the keypath pattern, which binds in the `where` and the
+            // body only (DESIGN.md sec:lexical, the `for` row of the operator inventory).
+            ExprKind::For {
+                binders,
+                source,
+                guard,
+                body,
+            } => {
+                self.later(e.span, "a `for`", "L3.2");
+                todo.push(Task::For {
+                    binders,
+                    guard: guard.as_deref(),
+                    body,
+                });
+                todo.push(Task::Expr(source));
+            }
+            // A loop body's bare and primed names are the frames of step L6.3, which a
+            // `mutable` or a `with` boundary declares and resolution does not bind yet, so the
+            // body is not walked: its names would be reported as not defined.
+            ExprKind::Loop { .. } => self.later(e.span, "a `loop`", "L6.3"),
+            ExprKind::Break(value) => {
+                self.later(e.span, "a `break`", "L6.3");
+                todo.push(Task::Expr(value));
+            }
+            ExprKind::Spread { of, name } => {
+                self.later(e.span, "a call `*.` that writes its receiver", "L6.3");
+                todo.push(Task::Member(e.span, name));
+                todo.push(Task::Expr(of));
+            }
+            ExprKind::SortKey { key, .. } => {
+                self.later(e.span, "a sort key `asc` or `desc`", "L5.1");
+                todo.push(Task::Expr(key));
+            }
         }
     }
 
@@ -1881,8 +2047,8 @@ impl Resolver<'_> {
                 }
                 format!("the type `{n}` is not defined")
             }
-            Some(Found::Word(_)) | None => match LATER_TYPES.iter().find(|(t, _)| *t == n) {
-                Some((_, layer)) => format!("the type `{n}` is a prelude type of layer L{layer}"),
+            Some(Found::Word(_)) | None => match later_type_layer(n) {
+                Some(layer) => format!("the type `{n}` is a prelude type of layer L{layer}"),
                 None => format!("the type `{n}` is not defined"),
             },
         };
@@ -2108,6 +2274,13 @@ enum Task<'a> {
     },
     /// An arm of a `match`: its pattern, guard and value, in a scope of their own.
     Arm(&'a Arm),
+    /// A `for` whose source is done: its keypath pattern binds in its `where` and its body, in
+    /// a scope of their own.
+    For {
+        binders: &'a [Target],
+        guard: Option<&'a Expr>,
+        body: &'a Expr,
+    },
     /// The end of the pattern of the `else` or the arm at the span: its binders are those from
     /// the index.
     PatternEnd(Span, usize),

@@ -186,6 +186,48 @@ fn a_lambda_of_many_tuple_parameters_resolves_in_linear_time() {
     linear("a lambda of many tuple parameters", 2000, pairs);
 }
 
+/// One unit of `k` functions, each built of the forms of step L3.2 and L5.1, whose children are
+/// resolved: a `for` binding its pattern in its `where` and its body, displays, a range, an `in`
+/// test, a reduction and a sort key.
+fn later_forms(k: usize) -> Vec<(String, String)> {
+    let text: String = (0..k)
+        .map(|i| {
+            format!(
+                "h{i}(m, g) = for k -> v in m where k in 0..<v {{ [v, k, {{v -> k}}] >< max }} + g(desc m);\n"
+            )
+        })
+        .collect();
+    vec![("main.zed".into(), text)]
+}
+
+/// One function of `k` `for`s, each nested in the body of the one before and reading its source
+/// from the binder of that one: the scopes open `k` deep, on the resolver's own stack.
+fn nested_fors(k: usize) -> Vec<(String, String)> {
+    let mut text = "f(m) = ".to_string();
+    for i in 0..k {
+        let from = if i == 0 {
+            "m".to_string()
+        } else {
+            format!("a{}", i - 1)
+        };
+        text.push_str(&format!("for a{i} in {from} {{ "));
+    }
+    text.push_str(&format!("a{}", k - 1));
+    text.push_str(&" }".repeat(k));
+    text.push_str(";\n");
+    vec![("main.zed".into(), text)]
+}
+
+#[test]
+fn many_functions_of_later_forms_resolve_in_linear_time() {
+    linear("many functions of later forms", 500, later_forms);
+}
+
+#[test]
+fn fors_nested_deep_resolve_in_linear_time() {
+    linear("fors nested deep", 500, nested_fors);
+}
+
 #[test]
 fn a_long_cycle_is_named_whole_in_linear_time() {
     // The chain closed into a cycle: `c0` imports the last unit.

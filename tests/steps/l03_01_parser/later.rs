@@ -27,7 +27,7 @@ fn each_form_names_the_step_that_compiles_it() {
             &["an `in` test is compiled from step L3.2 [x not in s]"],
         ),
         (
-            "f(m) = m >< g;",
+            "f(m, g) = m >< g;",
             &["a reduction `><` is compiled from step L3.2 [m >< g]"],
         ),
         (
