@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use zed_tests::fences::{self, DocFence};
 use zed_tests::tokens::render_lines;
 use zedc::fence::{self, label, marks};
@@ -115,21 +113,18 @@ fn ellipsis_is_an_elision_only_in_a_fence() {
     assert!(lex("f(x) = …;").is_err());
 }
 
-/// The copies equal the spec's fences, where the spec repository is beside this one (it is not
-/// in CI). Layers are not compared: `sync --check` recomputes them with the
+/// The copies equal the spec's fences (the spec repository as `zed_tests::spec` finds it; CI
+/// does not read it). Layers are not compared: `sync --check` recomputes them with the
 /// spec's tools.
 #[test]
-fn the_copies_match_the_spec_where_it_is_present() {
-    let spec = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../zed");
-    if !spec.join("DESIGN.md").exists() {
-        eprintln!(
-            "no spec repository at {}: drift not checked",
-            spec.display()
-        );
+fn the_copies_match_the_spec() {
+    let Some(spec) = zed_tests::spec::dir("the drift of zed/fences") else {
         return;
-    }
+    };
     for (doc, copy) in [("DESIGN.md", "design.md"), ("EXAMPLES.md", "examples.md")] {
-        let md = std::fs::read_to_string(spec.join(doc)).unwrap();
+        let path = spec.join(doc);
+        let md =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let theirs: Vec<(String, String)> = fence::extract(&md)
             .into_iter()
             .map(|f| (format!("{doc}:{}", f.line), f.text))

@@ -13,6 +13,7 @@ pub mod instances;
 pub mod kernel;
 pub mod oracle;
 pub mod scaling;
+pub mod spec;
 pub mod tokens;
 pub mod trees;
 

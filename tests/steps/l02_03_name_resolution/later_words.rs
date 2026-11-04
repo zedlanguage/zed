@@ -3,7 +3,6 @@
 //! as a name that is not defined.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use super::errors;
 use zedc::resolve::{LATER_TYPES, WORDS, annotation_layer, prelude_layer};
@@ -150,14 +149,10 @@ fn table(design: &str) -> Vec<Row> {
 
 #[test]
 fn the_resolver_holds_every_word_and_type_of_the_table() {
-    let spec = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../zed/DESIGN.md");
-    let Ok(design) = std::fs::read_to_string(&spec) else {
-        eprintln!(
-            "no spec repository at {}: table not checked",
-            spec.display()
-        );
+    let Some(spec) = zed_tests::spec::dir("the table \"Defined words by layer\"") else {
         return;
     };
+    let design = std::fs::read_to_string(spec.join("DESIGN.md")).unwrap();
     let rows = table(&design);
     assert!(rows.len() > 20, "the table has {} rows", rows.len());
     // The first layer a name is listed at is its layer: `Ast` returns at L11 with members.

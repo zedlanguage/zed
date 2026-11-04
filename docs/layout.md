@@ -92,8 +92,10 @@ link step. To run one step: `cargo test -p zed-tests --test steps l01_07`.
 
 **The design document's fences.** From step L1.7 on, every `zed` fence of DESIGN.md and
 EXAMPLES.md is a test. The extractor copies them into checked-in fixture files under
-`tests/steps/l01_07_fences/`, so that CI needs only this repository. A separate check, run
-where the spec repository is present, fails when the copies no longer match the spec.
+`tests/steps/l01_07_fences/`, so that CI needs only this repository. A separate check fails
+when the copies no longer match the spec. It finds the spec repository through `$ZED_SPEC_DIR` or as the `zed` checkout
+beside an ancestor of this one (`tests/src/spec.rs`), fails where it finds none, and is
+skipped only under `ZED_SPEC_DIR=none`, which CI sets.
 
 **Tests written in Zed.** Until the `test { }` runner lands (step L1.21), every step test is
 written in Rust, with the Zed source given as strings or fixture files. From then on, tests of

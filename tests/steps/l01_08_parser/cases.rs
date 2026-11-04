@@ -85,16 +85,13 @@ fn a_string_hole_is_parsed_as_an_expression() {
     assert_eq!(&bad[err.span.start..err.span.end], "}");
 }
 
+/// The copies in `zed/grammar` equal the PEG fences of the spec's DESIGN.md (the spec
+/// repository as `zed_tests::spec` finds it; CI does not read it).
 #[test]
-fn the_copies_match_the_spec_where_it_is_present() {
-    let spec = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../zed");
-    if !spec.join("DESIGN.md").exists() {
-        eprintln!(
-            "no spec repository at {}: drift not checked",
-            spec.display()
-        );
+fn the_copies_match_the_spec() {
+    let Some(spec) = zed_tests::spec::dir("the drift of zed/grammar") else {
         return;
-    }
+    };
     let design = std::fs::read_to_string(spec.join("DESIGN.md")).unwrap();
     let mut pegs = Vec::new();
     let mut lines = design.lines();
