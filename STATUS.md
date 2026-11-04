@@ -1040,7 +1040,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | L1.29a | impl attempt 1 | 2026-11-03 16:32 | start |
 | L1.37a | impl attempt 1 | 2026-11-03 16:32 | started |
 | L1.39b | impl attempt 1 | 2026-11-03 16:32 | start: derivations and @exact preimages on demand |
-| L1.39c | impl attempt 1 | 2026-11-03 23:00 | started; load 22.19 21.95 23.79 |
 | NARROW-if | repair attempt 8 | 2026-11-03 16:46 | arms.rs: explains takes a carrying test with its Carried path, narrowed as one conjunction; added note-count test on the strengthened hub and an ignored timing  |
 | STAGE-dag | impl attempt 1 | 2026-11-03 21:04 | started; worktree stage-dag |
 
