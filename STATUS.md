@@ -17,6 +17,8 @@ in docs/layout.md.
 - Done: **M0.5**, widening and iteration (`zedc::store`, `tests/steps/m0_05_widening_and_iteration/`,
   prelude units in `zed/prelude/`); values in DESIGN.md M0.5.
 - Done: **M0.6**, the cost scalarization (`zedc::cost`, `zedc::address`, prelude unit `cost`).
+- Done: **M0.6a**, the device footprint as the peak of its schedule (`zedc::cost::Region.retained`,
+  `per_device`, prelude `peak`; item FOOTPRINT-peak).
 - Done: **M0.7**, the canonicalizer (`zedc::canon`); values in DESIGN.md M0.7.
 - Done: **M0.8**, the Zed₀ checklist (`zed/compiler/ZED0.md`): L6 completes Zed₀, so row S
   follows L6.
