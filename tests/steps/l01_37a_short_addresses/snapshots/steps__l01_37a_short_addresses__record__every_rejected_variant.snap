@@ -67,6 +67,13 @@ payload-built-by-position
         row: None,
     },
     Diagnostic {
+        line: 3,
+        col: 41,
+        message: "the type `Utf8String` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
         line: 6,
         col: 21,
         message: "a `match` is compiled from step L2.4",
@@ -74,7 +81,7 @@ payload-built-by-position
         row: None,
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is compiled from step L2.5") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is compiled from step L2.5") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is compiled from step L2.4") }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is compiled from step L2.5") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is compiled from step L2.5") }, Outcome { line: 3, col: 41, failure: Some("the type `Utf8String` is not defined") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is compiled from step L2.4") }]
 
 taint-reaches-clean-sink
   rejected: [
@@ -92,13 +99,13 @@ taint-through-concatenation
   rejected: [
     Diagnostic {
         line: 75,
-        col: 51,
+        col: 55,
         message: "no token starts with '…' (U+2026)",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 75, col: 51, failure: Some("no token starts with '…' (U+2026)") }]
+  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 75, col: 55, failure: Some("no token starts with '…' (U+2026)") }]
 
 two-writers-of-one-generation
   rejected: [
@@ -116,13 +123,13 @@ unit-mismatch-force-energy
   rejected: [
     Diagnostic {
         line: 76,
-        col: 51,
+        col: 55,
         message: "no token starts with '…' (U+2026)",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 76, col: 51, failure: Some("no token starts with '…' (U+2026)") }]
+  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 76, col: 55, failure: Some("no token starts with '…' (U+2026)") }]
 
 unit-mismatch-in-sum
   rejected: [

@@ -71,7 +71,7 @@ ReduceTail    : `F >< op` is fold(⟦F⟧, ⟦op⟧, ev) with the evidence the c
 Unordered     : the fold's evidence permits any grouping and order (sec:reduction)
 Range         : `a ..< b`, `a ..= b` and `a ..` are the domains {a, …, b−1}, {a, …, b} and {a, a+1, …}, built by the primitive range; an unbounded domain is read only by generators that stop
 RangeTail     : the upper end of a range, exclusive, inclusive or absent
-Additive      : the primitives add and sub; `++` on String and on rank keys is the offset concatenation, the right operand reindexed by rank + count(⟦a⟧) unioned with ⟦a⟧; on Seq (L5) it is the union of the operands, which keep their origin keys, the right operand ordered after the left (sec:order), and operands whose keys overlap are a collision
+Additive      : the primitives add and sub; `++` on a string and on rank keys is the offset concatenation, the right operand reindexed by rank + count(⟦a⟧) unioned with ⟦a⟧; on Seq (L5) it is the union of the operands, which keep their origin keys, the right operand ordered after the left (sec:order), and operands whose keys overlap are a collision
 Multiplicative: the primitives mul, div, intDiv and mod
 Prefix        : the primitives neg and not
 Power         : the primitive pow, right-associative

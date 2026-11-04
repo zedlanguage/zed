@@ -47,7 +47,7 @@ byLower = words into (w.lower -> i -> w);   // words : i -> w; residue `i` writt
 byId    = users.rekey(u -> u.id);         // flat claim: error unless id-uniqueness is witnessed
 ```
 
-<!-- DESIGN.md:344 layer L8: ring L8, word none, label none; section [sec:joins] 1 -->
+<!-- DESIGN.md:345 layer L8: ring L8, word none, label none; section [sec:joins] 1 -->
 ```zed
   matmul(positional a: (r -> c -> f64), positional b: (c -> k -> f64)) =  // one shared inner domain c; the float
     (a, b) into (r -> k -> c >< (+) -> a[r][c] * b[c][k]); //   fold takes c's order — a rank for a
@@ -55,7 +55,7 @@ byId    = users.rekey(u -> u.id);         // flat claim: error unless id-uniquen
                                                            //   (sec:order, sec:reduction)
 ```
 
-<!-- DESIGN.md:420 layer L6: ring L6, word none, label none; section [sec:generations] 1 -->
+<!-- DESIGN.md:441 layer L6: ring L6, word none, label none; section [sec:generations] 1 -->
 ```zed
 sim = loop {
   pos' = pos + vel * dt      with pos = p0;    // x' means the frame being built; bare x the previous
@@ -64,27 +64,27 @@ sim = loop {
 };
 ```
 
-<!-- DESIGN.md:442 layer L6: ring L6, word none, label none; section [sec:generations] 2 -->
+<!-- DESIGN.md:463 layer L6: ring L6, word none, label none; section [sec:generations] 2 -->
 ```zed
 x[i in 0..<warm]  = coldStart(i);         // piecewise definition: phase 1
 x[i in warm..<n]  = anneal(x[i-1]);       // phase 2 — reads across the seam legally
 ```
 
-<!-- DESIGN.md:481 layer L10: ring L10, word none, label none, documentation notation; section [sec:failure] 1 -->
+<!-- DESIGN.md:502 layer L10: ring L10, word none, label none, documentation notation; section [sec:failure] 1 -->
 ```zed
 (div) : ((int, int \ 0) -> int) & ((int, 0) -> #divByZero)
 ```
 
-<!-- DESIGN.md:630 layer L10: ring L10, word L1 (String), label none; section [sec:constraints] 1 -->
+<!-- DESIGN.md:653 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:constraints] 1 -->
 ```zed
 type Small = (x: int where x * x < 100);                    // nonlinear
 type Even  = (n: int where n mod 2 == 0);                   // a residue
 type Prime = (p: int[2..] where isPrime(p));                // a predicate no domain models
-type Short = (s: String where s.len < 100);                 // a length
+type Short = (s: Utf8String where s.len < 100);                 // a length
 area(a: int[1..], b: int[1..] where a * b <= 99) -> int = a * b;   // a relation
 ```
 
-<!-- DESIGN.md:690 layer L10: ring L10, word L6 (Ast), label none; section [sec:constraints] 2 -->
+<!-- DESIGN.md:713 layer L10: ring L10, word L6 (Ast), label none; section [sec:constraints] 2 -->
 ```zed
 type Bound = int | Ast | #unbounded;                         // an affine bound is an expression over names in scope
 struct Interval   { min: Bound, max: Bound }
@@ -102,26 +102,26 @@ struct Constraints {
 }
 ```
 
-<!-- DESIGN.md:760 layer L2: ring L2, word none, label none; section [sec:units] 1 -->
+<!-- DESIGN.md:783 layer L2: ring L2, word none, label none; section [sec:units] 1 -->
 ```zed
 import geometry.shapes;               // qualified: shapes.area(s: c)
 import geometry.shapes as g;          // aliased:   g.area(s: c)
 import geometry.shapes.{area, Rect};  // selective: area(s: c), Rect(…)
 ```
 
-<!-- DESIGN.md:818 layer L20: ring L20, word L1 (String), label none; section [sec:facets] 1 -->
+<!-- DESIGN.md:841 layer L20: ring L20, word L1 (Utf8String), label none; section [sec:facets] 1 -->
 ```zed
-type Nonzero = String matching grammar { "0"* ("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") digit* };
-type UnitName = String matching grammar { alpha (alpha | "_")* };
-type UnitPower = String matching grammar { "-"? digit+ | "(" "-"? digit+ "/" Nonzero ")" };
-type UnitFactor = String matching grammar { UnitName ("^" UnitPower)? };
-type UnitProduct = String matching grammar { UnitFactor sep (" " | "*" | "·") };
-type UnitText = String matching grammar { (UnitProduct | "1") ("/" (UnitFactor | "(" UnitProduct ")"))? };
+type Nonzero = Utf8String matching grammar { "0"* ("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") digit* };
+type UnitName = Utf8String matching grammar { alpha (alpha | "_")* };
+type UnitPower = Utf8String matching grammar { "-"? digit+ | "(" "-"? digit+ "/" Nonzero ")" };
+type UnitFactor = Utf8String matching grammar { UnitName ("^" UnitPower)? };
+type UnitProduct = Utf8String matching grammar { UnitFactor sep (" " | "*" | "·") };
+type UnitText = Utf8String matching grammar { (UnitProduct | "1") ("/" (UnitFactor | "(" UnitProduct ")"))? };
 // accepted: "m^2 s^-1", "kg m/s^2", "J/(kg K)", "m^(3/2)", "1/s"
 // rejected: "m2", "J/kg K", "m^1.5", "m / s", "m^(3/0)"
 ```
 
-<!-- DESIGN.md:843 layer L14: ring L10, word L14 (quat), label none; section [sec:linalg] 1 -->
+<!-- DESIGN.md:866 layer L14: ring L10, word L14 (quat), label none; section [sec:linalg] 1 -->
 ```zed
 matmul(positional v: (c -> T), positional b: (c -> k -> T)) = (v, b) into (k -> c >< (+) -> v[c] * b[c][k]);
 matmul(positional a: (r -> c -> T), positional v: (c -> T)) = (a, v) into (r -> c >< (+) -> a[r][c] * v[c]);
@@ -130,14 +130,14 @@ cross(positional u: (int[0..<3] -> T), positional v: (int[0..<3] -> T)) = (quat(
 cross(positional u: (int[0..<7] -> T), positional v: (int[0..<7] -> T)) = (oct(0, u) * oct(0, v)).im;
 ```
 
-<!-- DESIGN.md:855 layer L14: ring L14, word L14 (layout), label none; section [sec:linalg] 2 -->
+<!-- DESIGN.md:878 layer L14: ring L14, word L14 (layout), label none; section [sec:linalg] 2 -->
 ```zed
 type Rgb = [f32; 3];                                              // int[0..<3] -> f32
 type Batch = [f32; n: _, h: 224, w: 224, c: 3] with layout(n, h, w, c);
 scale(positional s: T, positional v: [T; n]) = s * v;            // : [T; n]
 ```
 
-<!-- DESIGN.md:867 layer L14: ring L10, word L14 (matmul), label none; section [sec:linalg] 3 -->
+<!-- DESIGN.md:890 layer L14: ring L10, word L14 (matmul), label none; section [sec:linalg] 3 -->
 ```zed
 type State = int[0..<2];
 step(positional f: ((i: State with units(["m", "m/s"])) -> (j: State with units(["1/m", "s/m"])) -> f64),
@@ -145,52 +145,52 @@ step(positional f: ((i: State with units(["m", "m/s"])) -> (j: State with units(
 // step(f, x) : (i: State with units(["m", "m/s"])) -> f64
 ```
 
-<!-- DESIGN.md:910 layer L11: ring L10, word L11 (Constraints), label none; section [sec:introspection] 1 -->
+<!-- DESIGN.md:933 layer L11: ring L10, word L11 (Constraints), label none; section [sec:introspection] 1 -->
 ```zed
 type Shape =
-    #scalar(name: String, constraints: Constraints)  // int, rat, f64, bool, …, with its refinement: int[0..<10]
-  | #string(syntax: Grammar | #none, constraints: Constraints)   // String, or String matching grammar { … }
-  | #atom(name: String, payload: Type | #none)       // #red, or #parseError(pos: int, msg: String)
-  | #struct(name: String | #none, fields: [Field], syntax: Grammar | #none)
-  | #interface(name: String, fields: [Field])
+    #scalar(name: Utf8String, constraints: Constraints)  // int, rat, f64, bool, …, with its refinement: int[0..<10]
+  | #string(name: Utf8String, syntax: Grammar | #none, constraints: Constraints)   // Utf8String and the other string types, by name, or one matching grammar { … }
+  | #atom(name: Utf8String, payload: Type | #none)       // #red, or #parseError(pos: int, msg: Utf8String)
+  | #struct(name: Utf8String | #none, fields: [Field], syntax: Grammar | #none)
+  | #interface(name: Utf8String, fields: [Field])
   | #tuple(items: [Type])
-  | #union(name: String | #none, members: [Type])
+  | #union(name: Utf8String | #none, members: [Type])
   | #morphism(guarantee: Type, permission: Type, value: Type) // K -> V when guarantee == permission; K ->? V when the guarantee is empty; L .. U -> V otherwise
   | #function(params: [Param], result: Type)
   | #refined(base: Type, predicate: Ast)             // t where p, an opaque refinement (sec:domains)
   | #negation(of: Type)
   | #intersection(parts: [Type]);
-struct Field { key: _, name: String, valueType: Type, default: Ast | #none, facets: [Ast] }
-struct Param { name: String | #none, kind: #positional | #named, valueType: Type, default: Ast | #none }
+struct Field { key: _, name: Utf8String, valueType: Type, default: Ast | #none, facets: [Ast] }
+struct Param { name: Utf8String | #none, kind: #positional | #named, valueType: Type, default: Ast | #none }
 ```
 
-<!-- DESIGN.md:952 layer L11: ring L10, word L11 (::shape), label none; section [sec:introspection] 2 -->
+<!-- DESIGN.md:975 layer L11: ring L10, word L11 (::shape), label none; section [sec:introspection] 2 -->
 ```zed
-encode(positional v: T) -> String = match T::shape {
+encode(positional v: T) -> Utf8String = match T::shape {
   #struct(fields:) -> "{" ++ (fields.map(f -> quote(f.name) ++ ": " ++ encode(v[f.key])) >< ((a, b) -> a ++ ", " ++ b) else "") ++ "}",
   #string          -> quote(v),
   #atom(name:, payload: #none) -> quote(name),
-  _                -> String(v),
+  _                -> Utf8String(v),
 };
-// For u: User, encode(u) specializes to "{\"id\": " ++ String(u.id) ++ ", \"name\": " ++ quote(u.name) ++ "}":
+// For u: User, encode(u) specializes to "{\"id\": " ++ Utf8String(u.id) ++ ", \"name\": " ++ quote(u.name) ++ "}":
 // the match, the map over the two fields, and the fold all run at build.
 ```
 
-<!-- DESIGN.md:973 layer L22: ring L3, word L22 (expand), label none; section [sec:symbolic] 1 -->
+<!-- DESIGN.md:996 layer L22: ring L3, word L22 (expand), label none; section [sec:symbolic] 1 -->
 ```zed
-p = ((x: rat) -> (x + 1) ** 2)::source;
-e = expand(p);         // the tree of (x: rat) -> x ** 2 + 2 * x + 1
-d = derivative(p);     // the tree of (x: rat) -> 2 * x + 2
+p = ((x: rat) -> (x + 1r) ** 2)::source;
+e = expand(p);         // the tree of (x: rat) -> x ** 2 + 2r * x + 1r
+d = derivative(p);     // the tree of (x: rat) -> 2r * x + 2r
 ```
 
-<!-- DESIGN.md:994 layer L15: ring L15, word L5 (sort), label none; section [sec:verification] 1 -->
+<!-- DESIGN.md:1017 layer L15: ring L15, word L5 (sort), label none; section [sec:verification] 1 -->
 ```zed
 law addComm(a: int, b: int) = a + b == b + a;
 law sortIdempotent(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);
 law noOverdraft(s: Account, t: Txn where t.amount > 0) = (apply(s, t) else s).balance >= 0;   // `else` strips the loose #rejected: the body is exactly bool
 ```
 
-<!-- DESIGN.md:1029 layer L6: ring L3, word L6 (Ast), label none; section [sec:verification] 2 -->
+<!-- DESIGN.md:1052 layer L6: ring L3, word L6 (Ast), label none; section [sec:verification] 2 -->
 ```zed
 type Proof = #eval                                            // discharge by enumeration (rung 1)
            | #domain                                          // by the store's lattices and Presburger layer (rung 2)
@@ -201,10 +201,10 @@ type Proof = #eval                                            // discharge by en
            | #use(rule: LawId, args: [Ast])                   // instantiate a proved law
            | #implies(assume: Ast, then: Proof)               // discharge under a hypothesis
            | #reflect(sound: LawId)                           // run a decision procedure proved sound (sec:checking_in_zed)
-           | #assume(why: String);                            // rung 9, recorded at the site
+           | #assume(why: Utf8String);                            // rung 9, recorded at the site
 ```
 
-<!-- DESIGN.md:1100 layer L12: ring L7, word L12 (parity), label none; section [sec:checking_in_zed] 1 -->
+<!-- DESIGN.md:1123 layer L12: ring L7, word L12 (parity), label none; section [sec:checking_in_zed] 1 -->
 ```zed
 type Parity = #even | #odd | #either;
 parity = Facet(
@@ -224,7 +224,7 @@ h(n: int with parity(#odd), m: int with parity(#even)) = half(n * m);   // #mul'
 seven = 7 with parity(#odd);                                            // attaching a fact to a value is an obligation: holds(#odd, 7), rung 1
 ```
 
-<!-- DESIGN.md:1152 layer L22: ring L22, word none, label none; section [sec:theories] 1 -->
+<!-- DESIGN.md:1175 layer L22: ring L22, word none, label none; section [sec:theories] 1 -->
 ```zed
 interface Semigroup(T) {
   mul: (T, T) -> T,
@@ -259,7 +259,7 @@ interface CommRing(T) {
 intRing: CommRing(int) = { mul: (*), one: 1, add: (+), zero: 0, neg: (a -> -a) };
 ```
 
-<!-- DESIGN.md:1194 layer L22: ring L22, word L22 (CommRing), label none; section [sec:theories] 2 -->
+<!-- DESIGN.md:1217 layer L22: ring L22, word L22 (CommRing), label none; section [sec:theories] 2 -->
 ```zed
 law square(R: CommRing(T), a: T, b: T) = (a + b) * (a + b) == a * a + 2 * a * b + b * b
 proof {
@@ -270,7 +270,7 @@ proof {
 }
 ```
 
-<!-- DESIGN.md:1208 layer L22: ring L15, word L22 (Monoid), label none; section [sec:theories] 3 -->
+<!-- DESIGN.md:1231 layer L22: ring L15, word L22 (Monoid), label none; section [sec:theories] 3 -->
 ```zed
 pow(M: Monoid(T), x: T, n: int[0..]) -> T = if n == 0 { 1 } else { pow(M:, x:, n: n - 1) * x };
 
@@ -279,12 +279,12 @@ law powAdd(M: Monoid(T), x: T, m: int[0..], n: int[0..]) =
 proof { byInduction(n) }                        // base by mulOne; step by ih and mulAssoc at rung 3
 ```
 
-<!-- DESIGN.md:1218 layer L22: ring L10, word L22 (Monoid), label none; section [sec:theories] 4 -->
+<!-- DESIGN.md:1241 layer L22: ring L10, word L22 (Monoid), label none; section [sec:theories] 4 -->
 ```zed
 additive(R: CommRing(T)) -> Monoid(T) = { mul: R.add, one: R.zero };   // mulAssoc is R.addAssoc; mulOne is R.addZero; oneMul by addComm
 ```
 
-<!-- DESIGN.md:1257 layer L22: ring L22, word none, label none; section [sec:theories] 5 -->
+<!-- DESIGN.md:1280 layer L22: ring L22, word none, label none; section [sec:theories] 5 -->
 ```zed
 interface MonoInt {
   f: (int) -> int,
@@ -299,21 +299,21 @@ law monoTwice(M: MonoInt, a: int, b: int) = (a <= b).implies(M.f(M.f(a)) <= M.f(
 }
 ```
 
-<!-- DESIGN.md:1515 layer L7: ring L7, word L7 (terminated), label none; section [sec:ffi] 1 -->
+<!-- DESIGN.md:1538 layer L7: ring L7, word L7 (terminated), label none; section [sec:ffi] 1 -->
 ```zed
-@foreign struct SockAddr { family: int with bits(16), data: [byte] with length(14) }
+@foreign struct SockAddr { family: int with bits(16), data: [u8] with length(14) }
 @foreign struct AddrInfo {
   flags: i32, family: i32, socktype: i32, protocol: i32,
   addrlen: int with bits(32),
   addr: Ptr(SockAddr) | #none,
-  canonname: Ptr([byte] with terminated(0)) | #none,
+  canonname: Ptr([u8] with terminated(0)) | #none,
   next: Ptr(AddrInfo) | #none,
 }
 @foreign("c", "freeaddrinfo") freeAddrInfo: (res: Ptr(AddrInfo)) -> #ok;
-@foreign("c", "getaddrinfo") getAddrInfo: (node: [byte] with terminated(0), service: [byte] with terminated(0), hints: Ptr(AddrInfo) | #none) -> {rc: i32, res: Ptr(AddrInfo) | #none with release(freeAddrInfo)};
+@foreign("c", "getaddrinfo") getAddrInfo: (node: [u8] with terminated(0), service: [u8] with terminated(0), hints: Ptr(AddrInfo) | #none) -> {rc: i32, res: Ptr(AddrInfo) | #none with release(freeAddrInfo)};
 ```
 
-<!-- DESIGN.md:2860 layer L10: ring L10, word L1 (String), label none; section [sec:tour_basics] 1 -->
+<!-- DESIGN.md:2883 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:tour_basics] 1 -->
 ```zed
 // bindings — immutable, inferred; domains where they carry intent
 x = 42;
@@ -328,7 +328,7 @@ double(positional x) = x * 2;
 clamp(positional v, positional lo, positional hi) -> int {
   if v < lo { lo } else if v > hi { hi } else { v }   // the export: no `;`
 }
-greet(positional name: String, punct = "!") = "Hi, " ++ name ++ punct;
+greet(positional name: Utf8String, punct = "!") = "Hi, " ++ name ++ punct;
 y = 5.double.clamp(0, 8);               // ≡ clamp(double(5), 0, 8);  y == 8
 ann = greet("Ann", punct: "?");         // positional arguments first, then named
 hiAnn = greet("Ann", ...);              // currying leaves out named parameters: called hiAnn(punct: "?") or hiAnn()
@@ -352,7 +352,7 @@ onAxis = Point(x: 0.0, ...);            // a struct is its constructor, curried 
 struct Round { import Rect, r: f64 }     // composition-import, not inheritance
 ```
 
-<!-- DESIGN.md:2900 layer L10: ring L10, word none, label none; section [sec:tour_methods] 1 -->
+<!-- DESIGN.md:2923 layer L10: ring L10, word none, label none; section [sec:tour_methods] 1 -->
 ```zed
 struct Counter { n: int, hi: int }
 
@@ -388,13 +388,13 @@ run = loop {
 };
 ```
 
-<!-- DESIGN.md:2944 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
+<!-- DESIGN.md:2967 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
 ```zed
 xs   = [3, 1, 4, 1, 5];                 // [int]  ≡  int[0..<5] -> int
 m    = { "a" -> 1, "b" -> 2 };          // display: commas inside, `;` ends the statement;
-                                        //   inferred exact {"a","b"} -> int  <:  String ->? int
+                                        //   inferred exact {"a","b"} -> int  <:  Utf8String ->? int
 tags = { #red, #green };                // set ≡ self-map
-word = "never" ++ "the" ++ "less";      // String: rank-keyed, ++ concatenates by offset — O(1), rope-backed
+word = "never" ++ "the" ++ "less";      // Utf8String: rank-keyed, ++ concatenates by offset — O(1), rope-backed
 
 tens = xs.map(x -> x * 10);             // same keys, new values
 big  = xs.where(x -> x > 2);            // sparse subdomain (type records sparsity)
@@ -403,16 +403,16 @@ tot  = xs.sum;                          // = xs >< (+): sum, count, and reduce(o
 
 // WORD COUNT — method register:
 counts = text.split(" ").group(w -> w.lower).count;
-// counts : String ->? int     (f() ≡ f — a unit morphism reads as its value)
+// counts : Utf8String ->? int     (f() ≡ f — a unit morphism reads as its value)
 ```
 
-<!-- DESIGN.md:2961 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
+<!-- DESIGN.md:2984 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
 ```zed
 // the same program, symbolic register (what the optimizer reasons over):
 counts = text.split(" ") as (i -> w) into (w.lower -> i -> 1) >< (+);
 ```
 
-<!-- DESIGN.md:2966 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
+<!-- DESIGN.md:2989 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
 ```zed
 // group vs rekey — the grouping decision is always a visible word:
 byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnessed:
@@ -420,7 +420,7 @@ byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnes
                                 //    or mark the key function @injective"
 ```
 
-<!-- DESIGN.md:2973 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
+<!-- DESIGN.md:2996 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
 ```zed
 byId = users.group(u -> u.id);  // ✓ type: Id ->? (UserKey -> User)  (the extra level, declared by the word)
 
@@ -430,7 +430,7 @@ one  = best?.first;             // #none carried; lexicographic: the max-score g
                                 // (first/last descend by each level's order — sec:corner_cases)
 ```
 
-<!-- DESIGN.md:2984 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
+<!-- DESIGN.md:3007 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
 ```zed
 // query projection      (payments : OrderId -> Payment — uniquely keyed,
 //                        which is what keeps the join flat, sec:joins;
@@ -439,7 +439,7 @@ paid = orders.join(payments, on: #orderId, kind: #left);
      // OrderId -> (Order, Payment | #none) — the pair of sec:joins; absence is a value, not a null row
 ```
 
-<!-- DESIGN.md:2992 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
+<!-- DESIGN.md:3015 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
 ```zed
 // iteration projection — the SAME kernel term; the compiler picks the plan
 paid = for o in orders {
@@ -448,13 +448,13 @@ paid = for o in orders {
 };
 ```
 
-<!-- DESIGN.md:3000 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
+<!-- DESIGN.md:3023 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
 ```zed
 // anti-join, both ways (same term again)
 unpaid = orders.diff(payments, on: #orderId);
 ```
 
-<!-- DESIGN.md:3005 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
+<!-- DESIGN.md:3028 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
 ```zed
 unpaid = orders.where(o -> payments[o.orderId] is #notFound);
 
@@ -475,7 +475,7 @@ matmul(positional a: (r -> c -> f64), positional b: (c -> k -> f64)) =
 prod = a.matmul(b);
 ```
 
-<!-- DESIGN.md:3027 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
+<!-- DESIGN.md:3050 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
 ```zed
 // comprehension — parallel by default
 sq = for i in 0..<n { i * i };
@@ -505,9 +505,9 @@ sessions = events.chunkBy(e -> e.userId);     // key-change splits; last chunk i
 report   = sessions.map(s -> summarize(s));
 ```
 
-<!-- DESIGN.md:3058 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
+<!-- DESIGN.md:3081 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
 ```zed
-parse : (String) -> Config | #syntaxError(pos: int)   // an assumed input, shown as a type — no ';' (sec:lexical)
+parse : (Utf8String) -> Config | #syntaxError(pos: int)   // an assumed input, shown as a type — no ';' (sec:lexical)
 
 conf = parse(text) else defaultConfig;
 port = parse(text)?.server?.port else 8080;    // ?. carries the union; else disposes of it
@@ -529,7 +529,7 @@ badAmounts = amounts.where(a -> a is not int);     // 3: keep them — an ordina
 sumAll    = amounts.allOk >< (+);                  // 4: all or nothing: the sum, or the failures
 ```
 
-<!-- DESIGN.md:3083 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
+<!-- DESIGN.md:3106 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
 ```zed
 // one declaration: type + parser + serializer (round-trip canonical)
 struct KeyVal  grammar { key: Ident  ":"  value: Json }
@@ -539,7 +539,7 @@ type   Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null;
 cfg = Json.parse(bytes);         // Json | #syntaxError(pos: int)  — recovery structural
 out = cfg?.serialize;            // entries in parsed order: parse(serialize(x)) == x; ?. carries the union
 
-type Ident = String matching grammar { alpha (alpha | digit)* };  // typed strings, not regexes
+type Ident = Utf8String matching grammar { alpha (alpha | digit)* };  // typed strings, not regexes
 // whitespace: struct grammars (phrase level) skip insignificant whitespace between elements;
 // matching grammars (token level, as here) are exact. serialize emits none — the canonical form.
 
@@ -547,12 +547,12 @@ type Ident = String matching grammar { alpha (alpha | digit)* };  // typed strin
 // n is a stored field, and the type carries data.count == n
 struct Chunk grammar {
   n: int with bits(32) with endian(#big)
-  kind: byte* with length(4)
-  data: byte* with length(n)
+  kind: u8* with length(4)
+  data: u8* with length(n)
   crc: int with bits(32) with endian(#big)
 }
 // a tagged choice: tag 1 selects Ping, 2 selects Data; distinct tags discharge emission-disjointness
-struct Message grammar { tag: byte  body: (Ping | Data) with tagged(tag, 1, 2) }
+struct Message grammar { tag: u8  body: (Ping | Data) with tagged(tag, 1, 2) }
 
 // tests are data, attached to the definition, run in the dirty cone only
 double(positional x) = x * 2       // the `test` clause ends the declaration, so no `;` here
@@ -565,11 +565,11 @@ main(stdin: Lines) -> (stdout: Lines) {
 }
 
 // a stored collection is a port too; its schema is a build input, matched statically
-orders: OrderId ->? { total: rat, note: String | #none }
+orders: OrderId ->? { total: rat, note: Utf8String | #none }
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 
-n = orders[id]?.note;              // String | #none | #notFound | #dbError — NULL, no row, no db
-// note:  String                   // ✗ the column is nullable: #none missing from the field type
+n = orders[id]?.note;              // Utf8String | #none | #notFound | #dbError — NULL, no row, no db
+// note:  Utf8String                   // ✗ the column is nullable: #none missing from the field type
 // total: f64                      // ✗ NUMERIC is not a binary float
 
 // facets: units and taint are checked like types
@@ -578,23 +578,23 @@ t = 2.0 with units("s");
 d = v * t;                         // d::units == "m"
 // e = v + t;                      // ✗ compile error: unit mismatch
 
-exec : (Db, String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type
+exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type
 // exec(db, userInput);            // ✗ #userInput taint reaches a #clean sink
 rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers
 ```
 
-<!-- DESIGN.md:3187 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
+<!-- DESIGN.md:3212 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
 ```zed
 // layer L3
 priceOf(positional items, positional id) = items[id]?.price * (1 + taxRate);
 ```
 
-<!-- DESIGN.md:3194 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
+<!-- DESIGN.md:3219 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
 ```zed
 priceOf : (K ->? {price: f64}, K) -> f64 | #notFound
 ```
 
-<!-- DESIGN.md:3206 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
+<!-- DESIGN.md:3231 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
 ```zed
 // 1 — Deterministic parallel float sum: bit-identical at any core count.
 total = readings >< (+);
@@ -614,7 +614,7 @@ d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
 // The demanded corner pulls (memoized); dense demand pushes (wavefront). Same source.
 
 // 4 — "Inherently serial" text scan, parallelized because the state domain is finite.
-state[i] = csvStep(state[i-1], text[i])  with state[-1] = #outsideQuotes;
+state[i] = csvStep(state[i-1], text::codepoints[i])  with state[-1] = #outsideQuotes;
 // state : #outsideQuotes | #inQuotes | #escape (finite) — so the compiler reifies
 // csvStep into a transition table and runs a parallel prefix scan.
 
@@ -670,7 +670,7 @@ main(req: Stream(Query)) -> (resp: Stream(Answer)) {
 // Deploy with a keypath cut: the boundary serializes via struct grammars — RPC without stubs.
 
 // 15 — Exhaustive correctness, free, when domains are small.
-@exhaustive romanDigit(n: int[1..=9]) -> String { … }
+@exhaustive romanDigit(n: int[1..=9]) -> Utf8String { … }
   test { 1 -> "I", 4 -> "IV", 9 -> "IX" }
   // @exhaustive: all nine inputs run at build time — totality, the declared
   // properties, and the test table are checked on every one. (A complete
@@ -707,17 +707,17 @@ best = cur >< max else 0;
 // Elsewhere: Kadane's loop is serial, and its parallel form is a research exercise.
 
 // 20 — A generic JSON decoder, specialized by partial evaluation into a decoder for one struct.
-struct User { id: int, name: String }
-u: User | #parseError(pos: int, msg: String) = Json.decode(text);
+struct User { id: int, name: Utf8String }
+u: User | #parseError(pos: int, msg: Utf8String) = Json.decode(text);
 // The ascription fixes decode's result type at User (sec:type_resolution, rule 2), and User
 // is known at build, so mix specializes decode on it (sec:staging): the generic JSON parser,
 // the schema check, and the unpacker into a native struct become one deserializer that reads
 // the two fields of User directly into a User, with no intermediate Json tree, and with the
-// field names of User compiled into the matcher. text : String has no finite domain, so mix
+// field names of User compiled into the matcher. text : Utf8String has no finite domain, so mix
 // does not specialize on it: the checks on its contents stay in the residual program, and
 // #parseError stays in the type.
-ok:  User | #parseError(pos: int, msg: String) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
-bad: User | #parseError(pos: int, msg: String) = Json.decode("{\"id\": \"5\", \"name\": \"John\"}");
+ok:  User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
+bad: User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": \"5\", \"name\": \"John\"}");
 // Here the input is a literal, whose domain is a singleton (sec:domains), so the whole call
 // runs at build: ok is the constant User(id: 5, name: "John"), and bad is the constant
 // #parseError(pos: 7, msg: "expected int for field 'id', got string"). Neither residual

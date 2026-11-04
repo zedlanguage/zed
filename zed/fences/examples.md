@@ -19,10 +19,10 @@ main(stdin: Lines) -> (stdout: Lines) {
 <!-- EXAMPLES.md:40 layer L8: ring L8, word L5 (rank), label none; section [1. Programs and ports] 3 -->
 ```zed
 // [d4] sec:grouping, sec:remap_law (Ranking) — word frequencies, most common first
-main(fs: Files) -> (stdout: Lines) {          // fs : Path ->? String | #ioError, the file port (sec:ports)
+main(fs: Files) -> (stdout: Lines) {          // fs : Path ->? Utf8String | #ioError, the file port (sec:ports)
   text   = fs["input.txt"] else "";            // else strips #ioError and #notFound alike
   counts = text.split(" ").group(w -> w.lower).count;          // Lower ->? int
-  lines  = counts as (w -> n) into (desc n -> w -> "${w}: ${n}"); // rank -> (w -> String); ties share a rank
+  lines  = counts as (w -> n) into (desc n -> w -> "${w}: ${n}"); // rank -> (w -> Utf8String); ties share a rank
   stdout <- lines.rank;                                        // the rank pass: one dense rank per line
 }
 ```
@@ -31,7 +31,7 @@ main(fs: Files) -> (stdout: Lines) {          // fs : Path ->? String | #ioError
 ```zed
 // [d4] sec:order, sec:remap_law — the same over a stream, where words are keyed by line and position
 main(stdin: Lines) -> (stdout: Lines) {
-  words  = stdin.flatMap(l -> l.split(" "));                             // LineNo -> int[0..<_] -> String
+  words  = stdin.flatMap(l -> l.split(" "));                             // LineNo -> int[0..<_] -> Utf8String
   counts = words as (l -> i -> w) into (w.lower -> (l, i) -> 1) >< (+);  // Lower ->? int
   stdout <- ["${counts::card} distinct words"];
 }
@@ -74,7 +74,7 @@ big = 2 ** 100;            // int has no width; ** binds tighter than * and than
 m   = 1_000_000;  hex = 0xFF;  bits = 0b1011;  sci = 1.5e-3;
 half = 0.5;                // never .5 — a float literal starts with a digit
 y   = x ** 2 + 2*x + 1;
-b: byte = 255;             // byte = int[0..=255]; 256 here is a type error, not a wrap
+b: u8 = 255;               // u8 = int[0..=255]; 256 here is a type error, not a wrap
 w: i32 = shl(1, 30);       // no bitwise operators: bitAnd, bitOr, shl are ordinary functions
 z   = 7 / 2;               // ✗ `/` is for f64 and rat only
 ```
@@ -89,15 +89,15 @@ r1 = ratio(a, b) else 0;
 r2 = match ratio(a, b) { #divByZero -> 0, v -> v };
 ```
 
-<!-- EXAMPLES.md:121 layer L3: ring L1, word L3 (split), label none; section [4. Strings] 1 -->
+<!-- EXAMPLES.md:121 layer L3: ring L3, word L3 (split), label none; section [4. Strings] 1 -->
 ```zed
 // [d4] sec:lexical, sec:order
 s  = "Hello" ++ ", " ++ "world";     // ++ concatenates: associative, not commutative
-t  = "total: ${a + b}";              // ≡ "total: " ++ String(a + b)
-n  = s.len;                          // scalar values, not bytes; the same number as s::len
+t  = "total: ${a + b}";              // ≡ "total: " ++ Utf8String(a + b)
+n  = s.len;                          // code points, not bytes; the same number as s::len
 u  = s.upper;  l = s.lower;
-ws = s.split(" ");                   // [String]
-c  = s[0];                           // Scalar; s[i] for i : int is Scalar | #notFound
+ws = s.split(" ");                   // [Utf8String]
+c  = s::codepoints[0];               // char32; s::codepoints[i] for i : int is char32 | #notFound
 doc = """
   line one
   line two
@@ -105,20 +105,20 @@ doc = """
 esc = "tab\t quote\" newline\n";
 ```
 
-<!-- EXAMPLES.md:136 layer L3: ring L1, word none, label L3; section [4. Strings] 2 -->
+<!-- EXAMPLES.md:136 layer L3: ring L3, word L1 (char32), label L3; section [4. Strings] 2 -->
 ```zed
-// [d4] sec:order, sec:domains — comparing a scalar with a one-element literal
+// [d4] sec:order, sec:lexical — comparing a character with one written from a literal
 // layer L3
-isComment = line[0] == "#";          // the literal adopts Scalar, as 2 adopts int[0..<5] in a[2]
+isComment = line::codepoints[0] == char32("#");   // a string literal is always a Utf8String
 ```
 
 <!-- EXAMPLES.md:142 layer L8: ring L8, word L5 (rank), label none; section [4. Strings] 3 -->
 ```zed
-// [d4*] [lib] sec:remap_law, sec:order — a string is a collection; upper on a Scalar is a library word
+// [d4*] [lib] sec:remap_law, sec:order — a string is a collection; upper on a char32 is a library word
 chars    = for ch in s { ch };                            // the string itself, key by key
-shouted  = s.map(ch -> ch.upper);                          // int[0..<len] -> Scalar: a String again
+shouted  = s.map(ch -> ch.upper);                          // int[0..<len] -> char32: a Utf8String again
 reversed = s as (i -> ch) into (s::len - 1 - i -> ch);     // a bijective rekey
-noSpaces = s.where(ch -> ch != " ").rank;                  // where leaves gaps; the rank pass closes them
+noSpaces = s.where(ch -> ch != char32(" ")).rank;                  // where leaves gaps; the rank pass closes them
 ```
 
 <!-- EXAMPLES.md:150 layer L5: ring L1, word L5 (slice), label none; section [4. Strings] 4 -->
@@ -131,11 +131,11 @@ ls   = text.lines;           // split on line breaks
 joined = ws.concat(" ");     // the inverse of split
 ```
 
-<!-- EXAMPLES.md:163 layer L10: ring L10, word L1 (String), label none; section [5. Conditionals] 1 -->
+<!-- EXAMPLES.md:163 layer L10: ring L10, word L1 (Utf8String), label none; section [5. Conditionals] 1 -->
 ```zed
 // [d4] sec:tour_basics
 sign(x) = if x < 0 { -1 } else if x == 0 { 0 } else { 1 };
-grade(score) -> String {
+grade(score) -> Utf8String {
   if score >= 90 { "A" }
   else if score >= 80 { "B" }
   else { "C" }
@@ -159,13 +159,13 @@ collatz = loop {
 };
 ```
 
-<!-- EXAMPLES.md:192 layer L10: ring L10, word L1 (String), label none; section [6. Functions] 1 -->
+<!-- EXAMPLES.md:192 layer L10: ring L10, word L1 (Utf8String), label none; section [6. Functions] 1 -->
 ```zed
 // [d4] sec:tour_basics
 double(positional x) = x * 2;                        // equation form; types inferred from the body
 double: (int) -> int;                                // or a signature declaration on its own line — a statement, so it takes ';'
 clamp(positional v, positional lo, positional hi) -> int { if v < lo { lo } else if v > hi { hi } else { v } }
-greet(positional name: String, punct = "!") = "Hi, " ++ name ++ punct;
+greet(positional name: Utf8String, punct = "!") = "Hi, " ++ name ++ punct;
 g1 = greet("Al");                                    // "Hi, Al!"  — the default fills in
 g2 = greet("Al", punct: "?");                        // positional arguments first, then named
 y  = 5.double.clamp(0, 8);                           // ≡ clamp(double(5), 0, 8); a call on a literal is fine
@@ -185,7 +185,7 @@ add5  = adder(5);
 seven = add5(2);
 ```
 
-<!-- EXAMPLES.md:216 layer L1: ring L1, word L1 (String), label none; section [6. Functions] 3 -->
+<!-- EXAMPLES.md:216 layer L1: ring L1, word L1 (Utf8String), label none; section [6. Functions] 3 -->
 ```zed
 // [d4] sec:values_morphisms — named arguments, and one level of application
 g3   = greet("Al", ...);                // currying leaves out named parameters: called g3(punct: "?") or g3()
@@ -193,7 +193,7 @@ add1 = add[1];                          // brackets index one level: the section
 add1b = b -> add(1, b);                 // the lambda spelling, always available
 g4   = greet();                         // ✗ Missing argument: name has no default. The menu names greet[…] and the lambda
 g5   = greet(name: "Al");               // ✗ Argument in the wrong form: name is positional, so it is passed by position
-onKey(positional k, handler: (key: String) -> String) = handler(key: k);
+onKey(positional k, handler: (key: Utf8String) -> Utf8String) = handler(key: k);
 shout = onKey("a", handler: key -> key ++ "!");  // the type names key, so the lambda's key is named
 bad  = onKey("a", handler: s -> s);     // ✗ Function whose parameter kinds do not fit the expected function type: the type names the parameter key. The menu renames s to key
 ```
@@ -218,7 +218,7 @@ m = stats(xs).mean;
 // [d4] sec:type_language, sec:lexical — overloading is a second arrow of one name
 // layer L2
 show(positional x: int)   = "int ${x}";
-show(positional p: Point) = "(${p.x}, ${p.y})";     // show : (int -> String) & (Point -> String)
+show(positional p: Point) = "(${p.x}, ${p.y})";     // show : (int -> Utf8String) & (Point -> Utf8String)
 ```
 
 <!-- EXAMPLES.md:257 layer L6: ring L6, word L5 (zip), label none; section [7. Sequences] 1 -->
@@ -251,7 +251,7 @@ all = xs ++ ys;                           // length 10; xs ++ xs is length 10 to
 // [d4] sec:remap_law (Ranking) — sorting
 srt  = xs.sort(desc x -> x);              // [5, 4, 3, 1, 1]: a ranked source sorts to a flat ranked result
 top2 = srt.slice(0, 2);                   // [lib]
-byLen = words.sort(asc w -> w.len);       // words : [String] — flat again
+byLen = words.sort(asc w -> w.len);       // words : [Utf8String] — flat again
 ```
 
 <!-- EXAMPLES.md:289 layer L8: ring L8, word none, label none; section [7. Sequences] 4 -->
@@ -277,7 +277,7 @@ flat  = [[1, 2], [3]].rank;             // [1, 2, 3]: the rank pass over the lex
 // [d4] sec:values_morphisms, sec:type_language (m[k] row), sec:generations
 ages  = { "ann" -> 31, "bob" -> 27 };     // {"ann", "bob"} -> int
 a     = ages["ann"];                       // int: the key is provably present
-b     = ages[who];                         // int | #notFound when who : String
+b     = ages[who];                         // int | #notFound when who : Utf8String
 c     = ages[who] else 0;
 in1   = who in ages::domain;               // membership is a test on the domain
 names = ages::domain;                      // the key set
@@ -310,12 +310,12 @@ one     = best.first;
 <!-- EXAMPLES.md:343 layer L7: ring L7, word L7 (order), label none; section [8. Maps and sets] 4 -->
 ```zed
 // [d4] sec:order — every level has an order, and a sort is placed only where a fold reads it
-struct Entry { score: int with order(#desc), name: String with order(collate: "de"), id: int }
+struct Entry { score: int with order(#desc), name: Utf8String with order(collate: "de"), id: int }
 board = entrySet.rank;                        // entrySet : a set of Entry; [Entry] by score high to low, then name in German collation, then id
 total = ages >< (+);                          // + is commutative: read in storage order, no sort
 line  = ages.map(a -> "${a} ") >< (++);       // ++ is not: the ages in the code point order of the names, one sort
 least = ages.first;                           // int | #none: the same order of the same map, so the same sorted view; a top-1 selection
-fsum2 = weights >< (+);                       // weights : String -> f64; a float + is an exact sum, so no sort
+fsum2 = weights >< (+);                       // weights : Utf8String -> f64; a float + is an exact sum, so no sort
 fprod = weights >< (*);                       // a float * takes the canonical tree, which follows the key order, so it sorts, and unordered would not
 byLen2 = words.sort(by: (a, b) -> a.len <= b.len);  // a comparator: a total preorder; ties completed by the natural order
 ```
@@ -345,7 +345,7 @@ fsum  = samples >< (+) unordered;               // floats: give up bit-reproduci
 <!-- EXAMPLES.md:377 layer L8: ring L8, word L5 (sort), label none; section [9. Grouping, reduction, joins] 2 -->
 ```zed
 // [d4] sec:grouping, sec:remap_law — group, then reduce per group
-struct Sale { region: String, product: String, amount: rat }
+struct Sale { region: Utf8String, product: Utf8String, amount: rat }
 byRegion = sales.group(s -> s.region);                              // Region ->? (i -> Sale)
 totals   = byRegion.map(rows -> rows.map(r -> r.amount).sum);       // Region ->? rat
 pivot    = sales as (i -> s) into (s.region -> s.product -> i >< (+) -> s.amount);   // Region ->? Product ->? rat
@@ -434,11 +434,11 @@ k  = Circle(c: p, r: 1.0);              // p : Point, from the first block of th
 k2 = k with { c.x = 0.0 };              // one level in: k with { c = k.c with { x = 0.0 } }
 ```
 
-<!-- EXAMPLES.md:466 layer L2: ring L2, word L1 (String), label none; section [10. Structs and updates] 7 -->
+<!-- EXAMPLES.md:466 layer L2: ring L2, word L1 (Utf8String), label none; section [10. Structs and updates] 7 -->
 ```zed
 // [d4] sec:introspection — a field reached by two imports
 struct Point { x: f64, y: f64 }
-struct Colored { import Point, color: String }
+struct Colored { import Point, color: Utf8String }
 struct Weighted { import Point, w: f64 }
 struct Marker { import Colored, import Weighted }   // x and y once: the same declaration both ways
 struct Sized { w: int }
@@ -472,10 +472,10 @@ eval(positional e: Expr) -> f64 {
 three = eval(#add(#num(1.0), #num(2.0)));
 ```
 
-<!-- EXAMPLES.md:503 layer L2: ring L2, word L1 (String), label none; section [11. Unions, atoms, match] 3 -->
+<!-- EXAMPLES.md:503 layer L2: ring L2, word L1 (Utf8String), label none; section [11. Unions, atoms, match] 3 -->
 ```zed
 // [d4] sec:failure — a payload is a struct, so it is built and matched like one
-type Fail = #syntaxError(pos: int, msg: String);
+type Fail = #syntaxError(pos: int, msg: Utf8String);
 e1 = #syntaxError(pos: 3, msg: "unexpected )");  // built by name, like a struct
 // e2 = #syntaxError(3, "unexpected )");         // ✗ a payload with named fields is built by name
 position(f: Fail) = match f { #syntaxError(pos:) -> pos };   // matched by name too; msg omitted
@@ -504,7 +504,7 @@ digit(n: int) = match n { 0..=9 -> #ok, _ -> #bad };
 <!-- EXAMPLES.md:533 layer L3: ring L3, word L3 (where), label none, documentation notation; section [12. Absence and failure] 1 -->
 ```zed
 // [d4] sec:tour_failure
-parse : (String) -> Config | #syntaxError(pos: int)     // an assumed input, shown as a type — no ';' (sec:lexical)
+parse : (Utf8String) -> Config | #syntaxError(pos: int)     // an assumed input, shown as a type — no ';' (sec:lexical)
 conf = parse(text) else defaultConfig;
 port = parse(text)?.server?.port else 8080;
 msg  = match parse(text) { #syntaxError(pos:) -> "bad at ${pos}", c -> c.name };
@@ -520,7 +520,7 @@ sumZeroed = amounts.map(a -> a else 0) >< (+);
 ```zed
 // [d4] sec:failure — declared propagation: the enclosing result type carries the atom
 loadPort(path) -> int | #ioError | #notFound | #syntaxError(pos: int) {
-  text = read(path);                     // String | #ioError | #notFound
+  text = read(path);                     // Utf8String | #ioError | #notFound
   cfg  = parse(text);                    // Config | #syntaxError(pos) | #ioError | #notFound — the atoms select no arrow and flow on
   cfg.port
 }
@@ -661,11 +661,11 @@ inorder(positional t: Tree) -> [int] {
 // [d4] sec:type_language, sec:failure — .map(A: f) maps the A positions; laws 20, 21 and 23 apply to it
 type PTree(A) = #leaf(A) | #fork(l: PTree(A), r: PTree(A));
 count(positional t: PTree(_)) = t.fold(n -> match n { #fork(l:, r:) -> l + r, _ -> 1 });
-labels(positional t: PTree(int)) = t.map(A: x -> "n${x}");                    // a PTree(String)
+labels(positional t: PTree(int)) = t.map(A: x -> "n${x}");                    // a PTree(Utf8String)
 law mapId(t: PTree(int)) = t.map(A: x -> x) == t;
 law mapCompose(t: PTree(int)) = t.map(A: x -> x + 1).map(A: x -> 2 * x) == t.map(A: x -> 2 * (x + 1));
 law mapCount(t: PTree(int)) = count(t.map(A: x -> -x)) == count(t);
-checked(positional t: PTree(String)) = t.map(A: s -> int(s)).allOk;          // a PTree(int), or the merged failures of int(s)
+checked(positional t: PTree(Utf8String)) = t.map(A: s -> int(s)).allOk;          // a PTree(int), or the merged failures of int(s)
 ```
 
 <!-- EXAMPLES.md:699 layer L10: ring L10, word L4 (flatMap), label none; section [15. Trees and graphs] 3 -->
@@ -707,13 +707,13 @@ push(s: Stack(T), x: T) = s ++ [x];
 top(s: Stack(T)) = s.last;               // T | #none
 ```
 
-<!-- EXAMPLES.md:741 layer L10: ring L10, word L1 (String), label none; section [16. Generics and interfaces] 2 -->
+<!-- EXAMPLES.md:741 layer L10: ring L10, word L1 (Utf8String), label none; section [16. Generics and interfaces] 2 -->
 ```zed
 // [d4] sec:type_language, sec:type_notation — an interface is a named structural type
-interface Named { name: String }
+interface Named { name: Utf8String }
 greet(positional n: Named) = "Hi, ${n.name}";
-struct User { name: String, id: int }
-struct Cat  { name: String }
+struct User { name: Utf8String, id: int }
+struct Cat  { name: Utf8String }
 g1 = greet(User(name: "Al", id: 1));
 g2 = greet(Cat(name: "Tom"));
 ```
@@ -760,15 +760,15 @@ far = dist(Point(x: 0.0, y: 0.0), Point(x: 3.0, y: 4.0));
 
 <!-- EXAMPLES.md:794 layer L3: ring L1, word L3 (map), label none; section [18. Files, stores, and the world] 1 -->
 ```zed
-// [d4] sec:tour_failure, sec:ports — fs : Files, a port parameter of main (Files = Path ->? String | #ioError)
-text  = fs["notes.txt"] else "";                // String: else strips #ioError and #notFound
-texts = files.map(f -> fs[f]);                  // Path -> String | #ioError | #notFound
+// [d4] sec:tour_failure, sec:ports — fs : Files, a port parameter of main (Files = Path ->? Utf8String | #ioError)
+text  = fs["notes.txt"] else "";                // Utf8String: else strips #ioError and #notFound
+texts = files.map(f -> fs[f]);                  // Path -> Utf8String | #ioError | #notFound
 ```
 
 <!-- EXAMPLES.md:800 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 2 -->
 ```zed
 // [d4] sec:tour_grammar, sec:ports — a stored collection is always partial, and writes are deltas
-orders: OrderId ->? { total: rat, note: String | #none }
+orders: OrderId ->? { total: rat, note: Utf8String | #none }
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 n   = orders[id]?.note;
 run = loop t {
@@ -792,21 +792,21 @@ orders with store(postgres(dbUrl, table: "orders", schema: sql("../shared/orders
 <!-- EXAMPLES.md:821 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 5 -->
 ```zed
 // [d4*] sec:ports — a key-value store and a file-backed table
-cache: String ->? [byte] with store(kv(endpoint));
-config: String ->? String with store(file("app.cfg", KeyVal));   // the format is a struct grammar
+cache: Utf8String ->? [u8] with store(kv(endpoint));
+config: Utf8String ->? Utf8String with store(file("app.cfg", KeyVal));   // the format is a struct grammar
 ```
 
 <!-- EXAMPLES.md:827 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 6 -->
 ```zed
 // [d4] sec:ports, sec:staging — a timeout is declared on the port and adds #timeout to its failure member
-cache: String ->? [byte] with store(kv(endpoint)) with timeout(200 with units("ms"));   // lookup: [byte] | #ioError | #timeout | #notFound
+cache: Utf8String ->? [u8] with store(kv(endpoint)) with timeout(200 with units("ms"));   // lookup: [u8] | #ioError | #timeout | #notFound
 hit = cache[key] else fetch(key);                                                   // else strips #timeout with the rest: a read that ran out of time is a miss
 ```
 
 <!-- EXAMPLES.md:833 layer L7: ring L3, word L7 (Stream), label none; section [18. Files, stores, and the world] 7 -->
 ```zed
 // [prop] — ports the spec does not yet name
-main(args: [String], env: String ->? String, clock: Stream(Instant)) -> (stdout: Lines, exit: int) { … }
+main(args: [Utf8String], env: Utf8String ->? Utf8String, clock: Stream(Instant)) -> (stdout: Lines, exit: int) { … }
 page = http.get(url);                            // Response | #httpError(status: int) | #ioError
 ```
 
@@ -852,7 +852,7 @@ perMinute = events.window(60 with units("s")).map(w -> w.count);
 double(positional x) = x * 2 test { 0 -> 0, 2 -> 4, -3 -> -6 }
 clamp(positional v, positional lo, positional hi) -> int { if v < lo { lo } else if v > hi { hi } else { v } }
   test { (5, 0, 8) -> 5, (-1, 0, 8) -> 0, (9, 0, 8) -> 8 }
-@exhaustive romanDigit(n: int[1..=9]) -> String { … }       // all nine inputs run at build time
+@exhaustive romanDigit(n: int[1..=9]) -> Utf8String { … }       // all nine inputs run at build time
 @associative @commutative combine(positional a, positional b) = …;                 // a claim the checker tests, and downgrades on a counterexample
 @memoized report = logs.map(rowCost).sum;
 ```
@@ -911,9 +911,9 @@ law faultStops(l: Lamp) = (l in reachable.R).implies(advance(l, #fault) == #red)
 ```zed
 // [d4] sec:domains
 type Port  = int[1..=65535];
-type Name  = String[len 1..=80];
+type Name  = Utf8String[len 1..=80];
 type Small(K, V) = (K -> V)[card <= 10];
-type Ident = String matching grammar { alpha (alpha | digit)* };
+type Ident = Utf8String matching grammar { alpha (alpha | digit)* };
 p: Port = 8080;
 q: Port = 70000;                          // ✗ 70000 is not in int[1..=65535]
 n = int(input);                           // int | #invalid
@@ -936,7 +936,7 @@ t = 2.0 with units("s");
 d = v * t;                                 // f64 with units("m")
 bad = v + t;                               // ✗ m/s + s
 u = d::units;
-exec : (Db, String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type — no ';'
+exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type — no ';'
 q = exec(db, "select …" ++ userInput);     // ✗ taint flows through ++
 ```
 
@@ -973,7 +973,7 @@ out = cfg?.serialize;
 struct Sum   grammar { terms: Prod sep "+" }
 struct Prod  grammar { factors: Atom sep "*" }
 struct Paren grammar { "(" inner: Sum ")" }
-type Number = String matching grammar { digit digit* };
+type Number = Utf8String matching grammar { digit digit* };
 type Atom   = Number | Paren;
 Sum.eval    = terms.map(t -> t.eval).sum;
 Prod.eval   = factors.map(f -> f.eval) >< (*);
@@ -1029,7 +1029,7 @@ life = loop t {
 <!-- EXAMPLES.md:1059 layer L5: ring L3, word L5 (maxBy), label none; section [24. Small programs] 4 -->
 ```zed
 // [d4*] sec:grouping, sec:reduction — log analytics
-struct Req { path: String, status: int, ms: int }
+struct Req { path: Utf8String, status: int, ms: int }
 byPath  = reqs.group(r -> r.path);
 errRate = byPath.map(rs -> f64(rs.where(r -> r.status >= 500).count) / f64(rs::card));
 slowest = byPath.map(rs -> rs.map(r -> r.ms).max).maxBy(m -> m);      // (ms ->? (Path -> ms)) | #none; .max is exact: groups are nonempty
@@ -1038,7 +1038,7 @@ slowest = byPath.map(rs -> rs.map(r -> r.ms).max).maxBy(m -> m);      // (ms ->?
 <!-- EXAMPLES.md:1067 layer L21: ring L7, word L21 (store), label none; section [24. Small programs] 5 -->
 ```zed
 // [d4*] sec:generations, sec:ports — a todo list with a store, driven by commands
-struct Todo { title: String, done: bool }
+struct Todo { title: Utf8String, done: bool }
 todos: TodoId ->? Todo with store(kv(endpoint));
 main(cmds: Stream(Cmd)) -> (out: Lines) {
   run = loop t {

@@ -50,7 +50,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   8 | m = 1000000₍10₎ ; hex = FF₍16₎ ; bits = 1011₍2₎ ; sci = 1.5e-3f ;
   9 | half = 0.5f ;
  10 | y = x ** 2₍10₎ + 2₍10₎ * x + 1₍10₎ ;
- 11 | b : byte = 255₍10₎ ;
+ 11 | b : u8 = 255₍10₎ ;
  12 | w : i32 = shl ( 1₍10₎ , 30₍10₎ ) ;
  13 | z = 7₍10₎ / 2₍10₎ ;
 == EXAMPLES.md [3. Numbers] 2 L10
@@ -65,17 +65,17 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | n = s . len ;
   5 | u = s . upper ; l = s . lower ;
   6 | ws = s . split ( str[" "] ) ;
-  7 | c = s [ 0₍10₎ ] ;
+  7 | c = s :: codepoints [ 0₍10₎ ] ;
   8 | doc = str["line one\nline two"]
  11 | ;
  12 | esc = str["tab\t quote\" newline\n"] ;
 == EXAMPLES.md [4. Strings] 2 L3
-  3 | isComment = line [ 0₍10₎ ] == str["#"] ;
+  3 | isComment = line :: codepoints [ 0₍10₎ ] == char32 ( str["#"] ) ;
 == EXAMPLES.md [4. Strings] 3 L8
   2 | chars = «for» ch «in» s { ch } ;
   3 | shouted = s . map ( ch -> ch . upper ) ;
   4 | reversed = s «as» ( i -> ch ) «into» ( s :: len - 1₍10₎ - i -> ch ) ;
-  5 | noSpaces = s . where ( ch -> ch != str[" "] ) . rank ;
+  5 | noSpaces = s . where ( ch -> ch != char32 ( str[" "] ) ) . rank ;
 == EXAMPLES.md [4. Strings] 4 L5
   2 | sub = s . slice ( 0₍10₎ , 5₍10₎ ) ;
   3 | has = s . contains ( str["world"] ) ;
@@ -84,7 +84,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   6 | joined = ws . concat ( str[" "] ) ;
 == EXAMPLES.md [5. Conditionals] 1 L10
   2 | sign ( x ) = «if» x < 0₍10₎ { - 1₍10₎ } «else» «if» x == 0₍10₎ { 0₍10₎ } «else» { 1₍10₎ } ;
-  3 | grade ( score ) -> String {
+  3 | grade ( score ) -> Utf8String {
   4 | «if» score >= 90₍10₎ { str["A"] }
   5 | «else» «if» score >= 80₍10₎ { str["B"] }
   6 | «else» { str["C"] }
@@ -102,7 +102,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | double ( «positional» x ) = x * 2₍10₎ ;
   3 | double : ( int ) -> int ;
   4 | clamp ( «positional» v , «positional» lo , «positional» hi ) -> int { «if» v < lo { lo } «else» «if» v > hi { hi } «else» { v } }
-  5 | greet ( «positional» name : String , punct = str["!"] ) = str["Hi, "] ++ name ++ punct ;
+  5 | greet ( «positional» name : Utf8String , punct = str["!"] ) = str["Hi, "] ++ name ++ punct ;
   6 | g1 = greet ( str["Al"] ) ;
   7 | g2 = greet ( str["Al"] , punct : str["?"] ) ;
   8 | y = 5₍10₎ . double . clamp ( 0₍10₎ , 8₍10₎ ) ;
@@ -122,7 +122,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | add1b = b -> add ( 1₍10₎ , b ) ;
   5 | g4 = greet ( ) ;
   6 | g5 = greet ( name : str["Al"] ) ;
-  7 | onKey ( «positional» k , handler : ( key : String ) -> String ) = handler ( key : k ) ;
+  7 | onKey ( «positional» k , handler : ( key : Utf8String ) -> Utf8String ) = handler ( key : k ) ;
   8 | shout = onKey ( str["a"] , handler : key -> key ++ str["!"] ) ;
   9 | bad = onKey ( str["a"] , handler : s -> s ) ;
 == EXAMPLES.md [6. Functions] 4 L3
@@ -192,7 +192,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   6 | best = scores . maxBy ( v -> v ) ;
   7 | one = best . first ;
 == EXAMPLES.md [8. Maps and sets] 4 L7
-  2 | «struct» Entry { score : int «with» order ( #desc ) , name : String «with» order ( collate : str["de"] ) , id : int }
+  2 | «struct» Entry { score : int «with» order ( #desc ) , name : Utf8String «with» order ( collate : str["de"] ) , id : int }
   3 | board = entrySet . rank ;
   4 | total = ages >< ( + ) ;
   5 | line = ages . map ( a -> str[${a} " "] ) >< ( ++ ) ;
@@ -215,7 +215,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   7 | num = digits . foldl ( 0₍10₎ , ( acc , d ) -> acc * 10₍10₎ + d ) ;
   8 | fsum = samples >< ( + ) «unordered» ;
 == EXAMPLES.md [9. Grouping, reduction, joins] 2 L8
-  2 | «struct» Sale { region : String , product : String , amount : rat }
+  2 | «struct» Sale { region : Utf8String , product : Utf8String , amount : rat }
   3 | byRegion = sales . group ( s -> s . region ) ;
   4 | totals = byRegion . map ( rows -> rows . map ( r -> r . amount ) . sum ) ;
   5 | pivot = sales «as» ( i -> s ) «into» ( s . region -> s . product -> i >< ( + ) -> s . amount ) ;
@@ -269,7 +269,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | k2 = k «with» { c . x = 0.0f } ;
 == EXAMPLES.md [10. Structs and updates] 7 L2
   2 | «struct» Point { x : f64 , y : f64 }
-  3 | «struct» Colored { «import» Point , color : String }
+  3 | «struct» Colored { «import» Point , color : Utf8String }
   4 | «struct» Weighted { «import» Point , w : f64 }
   5 | «struct» Marker { «import» Colored , «import» Weighted }
   6 | «struct» Sized { w : int }
@@ -293,7 +293,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   9 | }
  10 | three = eval ( #add ( #num ( 1.0f ) , #num ( 2.0f ) ) ) ;
 == EXAMPLES.md [11. Unions, atoms, match] 3 L2
-  2 | «type» Fail = #syntaxError ( pos : int , msg : String ) ;
+  2 | «type» Fail = #syntaxError ( pos : int , msg : Utf8String ) ;
   3 | e1 = #syntaxError ( pos : 3₍10₎ , msg : str["unexpected )"] ) ;
   5 | position ( f : Fail ) = «match» f { #syntaxError ( pos : ) -> pos } ;
 == EXAMPLES.md [11. Unions, atoms, match] 4 L2
@@ -309,7 +309,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | classify ( n ) = «match» n { 0₍10₎ -> #zero , x where x < 0₍10₎ -> #neg , _ -> #pos } ;
   3 | digit ( n : int ) = «match» n { 0₍10₎ ..= 9₍10₎ -> #ok , _ -> #bad } ;
 == EXAMPLES.md [12. Absence and failure] 1 L3
-  2 | parse : ( String ) -> Config | #syntaxError ( pos : int )
+  2 | parse : ( Utf8String ) -> Config | #syntaxError ( pos : int )
   3 | conf = parse ( text ) «else» defaultConfig ;
   4 | port = parse ( text ) ?. server ?. port «else» 8080₍10₎ ;
   5 | msg = «match» parse ( text ) { #syntaxError ( pos : ) -> str["bad at " ${pos}] , c -> c . name } ;
@@ -410,7 +410,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   5 | «law» mapId ( t : PTree ( int ) ) = t . map ( A : x -> x ) == t ;
   6 | «law» mapCompose ( t : PTree ( int ) ) = t . map ( A : x -> x + 1₍10₎ ) . map ( A : x -> 2₍10₎ * x ) == t . map ( A : x -> 2₍10₎ * ( x + 1₍10₎ ) ) ;
   7 | «law» mapCount ( t : PTree ( int ) ) = count ( t . map ( A : x -> - x ) ) == count ( t ) ;
-  8 | checked ( «positional» t : PTree ( String ) ) = t . map ( A : s -> int ( s ) ) . allOk ;
+  8 | checked ( «positional» t : PTree ( Utf8String ) ) = t . map ( A : s -> int ( s ) ) . allOk ;
 == EXAMPLES.md [15. Trees and graphs] 3 L10
   2 | edges : Id ->? [ Id ] = { 1₍10₎ -> [ 2₍10₎ , 3₍10₎ ] , 2₍10₎ -> [ 4₍10₎ ] , 3₍10₎ -> [ 4₍10₎ ] , 4₍10₎ -> [ ] } ;
   3 | succ ( «positional» s ) = s . flatMap ( n -> edges [ n ] «else» [ ] ) . image ;
@@ -435,10 +435,10 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   5 | push ( s : Stack ( T ) , x : T ) = s ++ [ x ] ;
   6 | top ( s : Stack ( T ) ) = s . last ;
 == EXAMPLES.md [16. Generics and interfaces] 2 L10
-  2 | «interface» Named { name : String }
+  2 | «interface» Named { name : Utf8String }
   3 | greet ( «positional» n : Named ) = str["Hi, " ${n . name}] ;
-  4 | «struct» User { name : String , id : int }
-  5 | «struct» Cat { name : String }
+  4 | «struct» User { name : Utf8String , id : int }
+  5 | «struct» Cat { name : Utf8String }
   6 | g1 = greet ( User ( name : str["Al"] , id : 1₍10₎ ) ) ;
   7 | g2 = greet ( Cat ( name : str["Tom"] ) ) ;
 == EXAMPLES.md [16. Generics and interfaces] 3 L10
@@ -463,7 +463,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | text = fs [ str["notes.txt"] ] «else» str[] ;
   3 | texts = files . map ( f -> fs [ f ] ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 2 L21
-  2 | orders : OrderId ->? { total : rat , note : String | #none }
+  2 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
   3 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
   4 | n = orders [ id ] ?. note ;
   5 | run = «loop» t {
@@ -475,13 +475,13 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [18. Files, stores, and the world] 4 L21
   2 | orders «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["../shared/orders.sql"] ) ) ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 5 L21
-  2 | cache : String ->? [ byte ] «with» store ( kv ( endpoint ) ) ;
-  3 | config : String ->? String «with» store ( file ( str["app.cfg"] , KeyVal ) ) ;
+  2 | cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) ;
+  3 | config : Utf8String ->? Utf8String «with» store ( file ( str["app.cfg"] , KeyVal ) ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 6 L21
-  2 | cache : String ->? [ byte ] «with» store ( kv ( endpoint ) ) «with» timeout ( 200₍10₎ «with» units ( str["ms"] ) ) ;
+  2 | cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) «with» timeout ( 200₍10₎ «with» units ( str["ms"] ) ) ;
   3 | hit = cache [ key ] «else» fetch ( key ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 7 L7
-  2 | main ( args : [ String ] , env : String ->? String , clock : Stream ( Instant ) ) -> ( stdout : Lines , exit : int ) { … }
+  2 | main ( args : [ Utf8String ] , env : Utf8String ->? Utf8String , clock : Stream ( Instant ) ) -> ( stdout : Lines , exit : int ) { … }
   3 | page = http . get ( url ) ;
 == EXAMPLES.md [19. Streams] 1 L5
   2 | sessions = events . chunkBy ( e -> e . userId ) ;
@@ -502,7 +502,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | double ( «positional» x ) = x * 2₍10₎ «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
   3 | clamp ( «positional» v , «positional» lo , «positional» hi ) -> int { «if» v < lo { lo } «else» «if» v > hi { hi } «else» { v } }
   4 | «test» { ( 5₍10₎ , 0₍10₎ , 8₍10₎ ) -> 5₍10₎ , ( - 1₍10₎ , 0₍10₎ , 8₍10₎ ) -> 0₍10₎ , ( 9₍10₎ , 0₍10₎ , 8₍10₎ ) -> 8₍10₎ }
-  5 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> String { … }
+  5 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> Utf8String { … }
   6 | @associative @commutative combine ( «positional» a , «positional» b ) = … ;
   7 | @memoized report = logs . map ( rowCost ) . sum ;
 == EXAMPLES.md [20. Testing, properties, and proofs] 2 L16
@@ -539,9 +539,9 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
  13 | «law» faultStops ( l : Lamp ) = ( l «in» reachable . R ) . implies ( advance ( l , #fault ) == #red ) ;
 == EXAMPLES.md [21. Domains] 1 L20
   2 | «type» Port = int [ 1₍10₎ ..= 65535₍10₎ ] ;
-  3 | «type» Name = String [ len 1₍10₎ ..= 80₍10₎ ] ;
+  3 | «type» Name = Utf8String [ len 1₍10₎ ..= 80₍10₎ ] ;
   4 | «type» Small ( K , V ) = ( K -> V ) [ card <= 10₍10₎ ] ;
-  5 | «type» Ident = String «matching» «grammar» { alpha ( alpha | digit ) * } ;
+  5 | «type» Ident = Utf8String «matching» «grammar» { alpha ( alpha | digit ) * } ;
   6 | p : Port = 8080₍10₎ ;
   7 | q : Port = 70000₍10₎ ;
   8 | n = int ( input ) ;
@@ -556,7 +556,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | d = v * t ;
   5 | bad = v + t ;
   6 | u = d :: units ;
-  7 | exec : ( Db , String «with» taint ( #clean ) ) -> Rows | #sqlError
+  7 | exec : ( Db , Utf8String «with» taint ( #clean ) ) -> Rows | #sqlError
   8 | q = exec ( db , str["select …"] ++ userInput ) ;
 == EXAMPLES.md [22. Facets] 2 L12
   2 | half ( «positional» x : int «with» parity ( #even ) ) = x «div» 2₍10₎ ;
@@ -577,7 +577,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | «struct» Sum «grammar» { terms : Prod sep str["+"] }
   3 | «struct» Prod «grammar» { factors : Atom sep str["*"] }
   4 | «struct» Paren «grammar» { str["("] inner : Sum str[")"] }
-  5 | «type» Number = String «matching» «grammar» { digit digit * } ;
+  5 | «type» Number = Utf8String «matching» «grammar» { digit digit * } ;
   6 | «type» Atom = Number | Paren ;
   7 | Sum . eval = terms . map ( t -> t . eval ) . sum ;
   8 | Prod . eval = factors . map ( f -> f . eval ) >< ( * ) ;
@@ -617,12 +617,12 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
  13 | «until» t == 100₍10₎ ;
  14 | } ;
 == EXAMPLES.md [24. Small programs] 4 L5
-  2 | «struct» Req { path : String , status : int , ms : int }
+  2 | «struct» Req { path : Utf8String , status : int , ms : int }
   3 | byPath = reqs . group ( r -> r . path ) ;
   4 | errRate = byPath . map ( rs -> f64 ( rs . where ( r -> r . status >= 500₍10₎ ) . count ) / f64 ( rs :: card ) ) ;
   5 | slowest = byPath . map ( rs -> rs . map ( r -> r . ms ) . max ) . maxBy ( m -> m ) ;
 == EXAMPLES.md [24. Small programs] 5 L21
-  2 | «struct» Todo { title : String , done : bool }
+  2 | «struct» Todo { title : Utf8String , done : bool }
   3 | todos : TodoId ->? Todo «with» store ( kv ( endpoint ) ) ;
   4 | main ( cmds : Stream ( Cmd ) ) -> ( out : Lines ) {
   5 | run = «loop» t {

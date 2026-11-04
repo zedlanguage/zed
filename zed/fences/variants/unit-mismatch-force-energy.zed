@@ -17,7 +17,7 @@ d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
 // The demanded corner pulls (memoized); dense demand pushes (wavefront). Same source.
 
 // 4 — "Inherently serial" text scan, parallelized because the state domain is finite.
-state[i] = csvStep(state[i-1], text[i])  with state[-1] = #outsideQuotes;
+state[i] = csvStep(state[i-1], text::codepoints[i])  with state[-1] = #outsideQuotes;
 // state : #outsideQuotes | #inQuotes | #escape (finite) — so the compiler reifies
 // csvStep into a transition table and runs a parallel prefix scan.
 
@@ -73,7 +73,7 @@ main(req: Stream(Query)) -> (resp: Stream(Answer)) {
 // Deploy with a keypath cut: the boundary serializes via struct grammars — RPC without stubs.
 
 // 15 — Exhaustive correctness, free, when domains are small.
-@exhaustive romanDigit(n: int[1..=9]) -> String { … }
+@exhaustive romanDigit(n: int[1..=9]) -> Utf8String { … }
   test { 1 -> "I", 4 -> "IV", 9 -> "IX" }
   // @exhaustive: all nine inputs run at build time — totality, the declared
   // properties, and the test table are checked on every one. (A complete
@@ -110,17 +110,17 @@ best = cur >< max else 0;
 // Elsewhere: Kadane's loop is serial, and its parallel form is a research exercise.
 
 // 20 — A generic JSON decoder, specialized by partial evaluation into a decoder for one struct.
-struct User { id: int, name: String }
-u: User | #parseError(pos: int, msg: String) = Json.decode(text);
+struct User { id: int, name: Utf8String }
+u: User | #parseError(pos: int, msg: Utf8String) = Json.decode(text);
 // The ascription fixes decode's result type at User (sec:type_resolution, rule 2), and User
 // is known at build, so mix specializes decode on it (sec:staging): the generic JSON parser,
 // the schema check, and the unpacker into a native struct become one deserializer that reads
 // the two fields of User directly into a User, with no intermediate Json tree, and with the
-// field names of User compiled into the matcher. text : String has no finite domain, so mix
+// field names of User compiled into the matcher. text : Utf8String has no finite domain, so mix
 // does not specialize on it: the checks on its contents stay in the residual program, and
 // #parseError stays in the type.
-ok:  User | #parseError(pos: int, msg: String) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
-bad: User | #parseError(pos: int, msg: String) = Json.decode("{\"id\": \"5\", \"name\": \"John\"}");
+ok:  User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
+bad: User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": \"5\", \"name\": \"John\"}");
 // Here the input is a literal, whose domain is a singleton (sec:domains), so the whole call
 // runs at build: ok is the constant User(id: 5, name: "John"), and bad is the constant
 // #parseError(pos: 7, msg: "expected int for field 'id', got string"). Neither residual

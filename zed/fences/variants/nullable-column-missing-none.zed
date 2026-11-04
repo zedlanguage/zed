@@ -1,4 +1,4 @@
-// variant: // note:  String                   // ✗ the column is nullable: #none missing from the field type
+// variant: // note:  Utf8String                   // ✗ the column is nullable: #none missing from the field type
 // one declaration: type + parser + serializer (round-trip canonical)
 struct KeyVal  grammar { key: Ident  ":"  value: Json }
 struct JsonObj grammar { "{"  entries: KeyVal sep ","  "}" }
@@ -7,7 +7,7 @@ type   Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null;
 cfg = Json.parse(bytes);         // Json | #syntaxError(pos: int)  — recovery structural
 out = cfg?.serialize;            // keys sorted: parse(serialize(x)) == x; ?. carries the union
 
-type Ident = String matching grammar { alpha (alpha | digit)* };  // typed strings, not regexes
+type Ident = Utf8String matching grammar { alpha (alpha | digit)* };  // typed strings, not regexes
 // whitespace: struct grammars (phrase level) skip insignificant whitespace between elements;
 // matching grammars (token level, as here) are exact. serialize emits none — the canonical form.
 
@@ -22,11 +22,11 @@ main(stdin: Lines) -> (stdout: Lines) {
 }
 
 // a stored collection is a port too; its schema is a build input, matched statically
-orders: OrderId ->? { total: rat, note: String }   // ✗ the column is nullable: #none missing from the field type
+orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ the column is nullable: #none missing from the field type
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 
-n = orders[id]?.note;              // String | #none | #notFound | #dbError — NULL, no row, no db
-// note:  String                   // ✗ the column is nullable: #none missing from the field type
+n = orders[id]?.note;              // Utf8String | #none | #notFound | #dbError — NULL, no row, no db
+// note:  Utf8String                   // ✗ the column is nullable: #none missing from the field type
 // total: f64                      // ✗ NUMERIC is not a binary float
 
 // facets: units and taint are checked like types
@@ -35,6 +35,6 @@ t = 2.0 with units("s");
 d = v * t;                         // d::units == "m"
 // e = v + t;                      // ✗ compile error: unit mismatch
 
-exec : (Db, String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type
+exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type
 // exec(db, userInput);            // ✗ #userInput taint reaches a #clean sink
 rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers

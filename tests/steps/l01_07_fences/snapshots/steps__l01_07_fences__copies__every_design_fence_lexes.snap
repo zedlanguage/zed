@@ -41,7 +41,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | «type» Small = ( x : int where x * x < 100₍10₎ ) ;
   2 | «type» Even = ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) ;
   3 | «type» Prime = ( p : int [ 2₍10₎ .. ] where isPrime ( p ) ) ;
-  4 | «type» Short = ( s : String where s . len < 100₍10₎ ) ;
+  4 | «type» Short = ( s : Utf8String where s . len < 100₍10₎ ) ;
   5 | area ( a : int [ 1₍10₎ .. ] , b : int [ 1₍10₎ .. ] where a * b <= 99₍10₎ ) -> int = a * b ;
 == DESIGN.md [sec:constraints] 2 L10
   1 | «type» Bound = int | Ast | #unbounded ;
@@ -63,12 +63,12 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   2 | «import» geometry . shapes «as» g ;
   3 | «import» geometry . shapes . { area , Rect } ;
 == DESIGN.md [sec:facets] 1 L20
-  1 | «type» Nonzero = String «matching» «grammar» { str["0"] * ( str["1"] | str["2"] | str["3"] | str["4"] | str["5"] | str["6"] | str["7"] | str["8"] | str["9"] ) digit * } ;
-  2 | «type» UnitName = String «matching» «grammar» { alpha ( alpha | str["_"] ) * } ;
-  3 | «type» UnitPower = String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
-  4 | «type» UnitFactor = String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;
-  5 | «type» UnitProduct = String «matching» «grammar» { UnitFactor sep ( str[" "] | str["*"] | str["·"] ) } ;
-  6 | «type» UnitText = String «matching» «grammar» { ( UnitProduct | str["1"] ) ( str["/"] ( UnitFactor | str["("] UnitProduct str[")"] ) ) ? } ;
+  1 | «type» Nonzero = Utf8String «matching» «grammar» { str["0"] * ( str["1"] | str["2"] | str["3"] | str["4"] | str["5"] | str["6"] | str["7"] | str["8"] | str["9"] ) digit * } ;
+  2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | str["_"] ) * } ;
+  3 | «type» UnitPower = Utf8String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
+  4 | «type» UnitFactor = Utf8String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;
+  5 | «type» UnitProduct = Utf8String «matching» «grammar» { UnitFactor sep ( str[" "] | str["*"] | str["·"] ) } ;
+  6 | «type» UnitText = Utf8String «matching» «grammar» { ( UnitProduct | str["1"] ) ( str["/"] ( UnitFactor | str["("] UnitProduct str[")"] ) ) ? } ;
 == DESIGN.md [sec:linalg] 1 L14
   1 | matmul ( «positional» v : ( c -> T ) , «positional» b : ( c -> k -> T ) ) = ( v , b ) «into» ( k -> c >< ( + ) -> v [ c ] * b [ c ] [ k ] ) ;
   2 | matmul ( «positional» a : ( r -> c -> T ) , «positional» v : ( c -> T ) ) = ( a , v ) «into» ( r -> c >< ( + ) -> a [ r ] [ c ] * v [ c ] ) ;
@@ -85,29 +85,29 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | «positional» x : ( ( j : State «with» units ( [ str["m"] , str["m/s"] ] ) ) -> f64 ) ) = f . matmul ( x ) ;
 == DESIGN.md [sec:introspection] 1 L11
   1 | «type» Shape =
-  2 | #scalar ( name : String , constraints : Constraints )
-  3 | | #string ( syntax : Grammar | #none , constraints : Constraints )
-  4 | | #atom ( name : String , payload : Type | #none )
-  5 | | #struct ( name : String | #none , fields : [ Field ] , syntax : Grammar | #none )
-  6 | | #interface ( name : String , fields : [ Field ] )
+  2 | #scalar ( name : Utf8String , constraints : Constraints )
+  3 | | #string ( name : Utf8String , syntax : Grammar | #none , constraints : Constraints )
+  4 | | #atom ( name : Utf8String , payload : Type | #none )
+  5 | | #struct ( name : Utf8String | #none , fields : [ Field ] , syntax : Grammar | #none )
+  6 | | #interface ( name : Utf8String , fields : [ Field ] )
   7 | | #tuple ( items : [ Type ] )
-  8 | | #union ( name : String | #none , members : [ Type ] )
+  8 | | #union ( name : Utf8String | #none , members : [ Type ] )
   9 | | #morphism ( guarantee : Type , permission : Type , value : Type )
  10 | | #function ( params : [ Param ] , result : Type )
  11 | | #refined ( base : Type , predicate : Ast )
  12 | | #negation ( of : Type )
  13 | | #intersection ( parts : [ Type ] ) ;
- 14 | «struct» Field { key : _ , name : String , valueType : Type , default : Ast | #none , facets : [ Ast ] }
- 15 | «struct» Param { name : String | #none , kind : #positional | #named , valueType : Type , default : Ast | #none }
+ 14 | «struct» Field { key : _ , name : Utf8String , valueType : Type , default : Ast | #none , facets : [ Ast ] }
+ 15 | «struct» Param { name : Utf8String | #none , kind : #positional | #named , valueType : Type , default : Ast | #none }
 == DESIGN.md [sec:introspection] 2 L11
-  1 | encode ( «positional» v : T ) -> String = «match» T :: shape {
+  1 | encode ( «positional» v : T ) -> Utf8String = «match» T :: shape {
   2 | #struct ( fields : ) -> str["{"] ++ ( fields . map ( f -> quote ( f . name ) ++ str[": "] ++ encode ( v [ f . key ] ) ) >< ( ( a , b ) -> a ++ str[", "] ++ b ) «else» str[] ) ++ str["}"] ,
   3 | #string -> quote ( v ) ,
   4 | #atom ( name : , payload : #none ) -> quote ( name ) ,
-  5 | _ -> String ( v ) ,
+  5 | _ -> Utf8String ( v ) ,
   6 | } ;
 == DESIGN.md [sec:symbolic] 1 L22
-  1 | p = ( ( x : rat ) -> ( x + 1₍10₎ ) ** 2₍10₎ ) :: source ;
+  1 | p = ( ( x : rat ) -> ( x + 1r ) ** 2₍10₎ ) :: source ;
   2 | e = expand ( p ) ;
   3 | d = derivative ( p ) ;
 == DESIGN.md [sec:verification] 1 L15
@@ -124,7 +124,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   7 | | #use ( rule : LawId , args : [ Ast ] )
   8 | | #implies ( assume : Ast , then : Proof )
   9 | | #reflect ( sound : LawId )
- 10 | | #assume ( why : String ) ;
+ 10 | | #assume ( why : Utf8String ) ;
 == DESIGN.md [sec:checking_in_zed] 1 L12
   1 | «type» Parity = #even | #odd | #either ;
   2 | parity = Facet (
@@ -196,16 +196,16 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  10 | ] , claims : [ M . f ( a ) <= M . f ( b ) , M . f ( M . f ( a ) ) <= M . f ( M . f ( b ) ) ] ) )
  11 | }
 == DESIGN.md [sec:ffi] 1 L7
-  1 | @foreign «struct» SockAddr { family : int «with» bits ( 16₍10₎ ) , data : [ byte ] «with» length ( 14₍10₎ ) }
+  1 | @foreign «struct» SockAddr { family : int «with» bits ( 16₍10₎ ) , data : [ u8 ] «with» length ( 14₍10₎ ) }
   2 | @foreign «struct» AddrInfo {
   3 | flags : i32 , family : i32 , socktype : i32 , protocol : i32 ,
   4 | addrlen : int «with» bits ( 32₍10₎ ) ,
   5 | addr : Ptr ( SockAddr ) | #none ,
-  6 | canonname : Ptr ( [ byte ] «with» terminated ( 0₍10₎ ) ) | #none ,
+  6 | canonname : Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) | #none ,
   7 | next : Ptr ( AddrInfo ) | #none ,
   8 | }
   9 | @foreign ( str["c"] , str["freeaddrinfo"] ) freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
- 10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ byte ] «with» terminated ( 0₍10₎ ) , service : [ byte ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> { rc : i32 , res : Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) } ;
+ 10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> { rc : i32 , res : Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) } ;
 == DESIGN.md [sec:tour_basics] 1 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
@@ -215,7 +215,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  11 | clamp ( «positional» v , «positional» lo , «positional» hi ) -> int {
  12 | «if» v < lo { lo } «else» «if» v > hi { hi } «else» { v }
  13 | }
- 14 | greet ( «positional» name : String , punct = str["!"] ) = str["Hi, "] ++ name ++ punct ;
+ 14 | greet ( «positional» name : Utf8String , punct = str["!"] ) = str["Hi, "] ++ name ++ punct ;
  15 | y = 5₍10₎ . double . clamp ( 0₍10₎ , 8₍10₎ ) ;
  16 | ann = greet ( str["Ann"] , punct : str["?"] ) ;
  17 | hiAnn = greet ( str["Ann"] , ... ) ;
@@ -306,7 +306,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  25 | sessions = events . chunkBy ( e -> e . userId ) ;
  26 | report = sessions . map ( s -> summarize ( s ) ) ;
 == DESIGN.md [sec:tour_failure] 1 L3
-  1 | parse : ( String ) -> Config | #syntaxError ( pos : int )
+  1 | parse : ( Utf8String ) -> Config | #syntaxError ( pos : int )
   3 | conf = parse ( text ) «else» defaultConfig ;
   4 | port = parse ( text ) ?. server ?. port «else» 8080₍10₎ ;
   6 | results = files . map ( f -> read ( f ) ) . map ( b -> parse ( b ) ) ;
@@ -324,27 +324,27 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   4 | «type» Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null ;
   6 | cfg = Json . parse ( bytes ) ;
   7 | out = cfg ?. serialize ;
-  9 | «type» Ident = String «matching» «grammar» { alpha ( alpha | digit ) * } ;
+  9 | «type» Ident = Utf8String «matching» «grammar» { alpha ( alpha | digit ) * } ;
  15 | «struct» Chunk «grammar» {
  16 | n : int «with» bits ( 32₍10₎ ) «with» endian ( #big )
- 17 | kind : byte * «with» length ( 4₍10₎ )
- 18 | data : byte * «with» length ( n )
+ 17 | kind : u8 * «with» length ( 4₍10₎ )
+ 18 | data : u8 * «with» length ( n )
  19 | crc : int «with» bits ( 32₍10₎ ) «with» endian ( #big )
  20 | }
- 22 | «struct» Message «grammar» { tag : byte body : ( Ping | Data ) «with» tagged ( tag , 1₍10₎ , 2₍10₎ ) }
+ 22 | «struct» Message «grammar» { tag : u8 body : ( Ping | Data ) «with» tagged ( tag , 1₍10₎ , 2₍10₎ ) }
  25 | double ( «positional» x ) = x * 2₍10₎
  26 | «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
  27 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
  30 | main ( stdin : Lines ) -> ( stdout : Lines ) {
  31 | stdout <- stdin . map ( l -> l . upper ) ;
  32 | }
- 35 | orders : OrderId ->? { total : rat , note : String | #none }
+ 35 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
  36 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
  38 | n = orders [ id ] ?. note ;
  43 | v = 3.0f «with» units ( str["m/s"] ) ;
  44 | t = 2.0f «with» units ( str["s"] ) ;
  45 | d = v * t ;
- 48 | exec : ( Db , String «with» taint ( #clean ) ) -> Rows | #sqlError
+ 48 | exec : ( Db , Utf8String «with» taint ( #clean ) ) -> Rows | #sqlError
  50 | rows = exec ( db , sanitize ( userInput ) ) ;
 == DESIGN.md [sec:type_notation] 1 L3
   2 | priceOf ( «positional» items , «positional» id ) = items [ id ] ?. price * ( 1₍10₎ + taxRate ) ;
@@ -356,7 +356,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   7 | histB = «for» n «in» 0₍10₎ ..= maxLen { words . where ( w -> w . len == n ) . count } ;
  13 | d [ i ] [ j ] = min ( d [ i - 1₍10₎ ] [ j ] + 1₍10₎ , d [ i ] [ j - 1₍10₎ ] + 1₍10₎ , d [ i - 1₍10₎ ] [ j - 1₍10₎ ] + cost ( a [ i ] , b [ j ] ) )
  14 | «with» d [ - 1₍10₎ ] [ j «in» - 1₍10₎ ..< b :: len ] = j + 1₍10₎ , d [ i «in» 0₍10₎ .. ] [ - 1₍10₎ ] = i + 1₍10₎ ;
- 19 | state [ i ] = csvStep ( state [ i - 1₍10₎ ] , text [ i ] ) «with» state [ - 1₍10₎ ] = #outsideQuotes ;
+ 19 | state [ i ] = csvStep ( state [ i - 1₍10₎ ] , text :: codepoints [ i ] ) «with» state [ - 1₍10₎ ] = #outsideQuotes ;
  24 | firstPrime = ( «for» i «in» n .. { i } ) . where ( isPrime ) . first ;
  30 | sessions = clicks . chunkBy ( c -> c . userId ) . map ( s -> Session ( start : s . first . time , count : s . count ) ) ;
  34 | run = «loop» t { «while» t < edits :: len && ! closed ; doc' = doc . patch ( edits [ t ] ) «with» doc = empty ; } ;
@@ -378,7 +378,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  69 | main ( req : Stream ( Query ) ) -> ( resp : Stream ( Answer ) ) {
  70 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
  71 | }
- 75 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> String { … }
+ 75 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> Utf8String { … }
  76 | «test» { 1₍10₎ -> str["I"] , 4₍10₎ -> str["IV"] , 9₍10₎ -> str["IX"] }
  85 | out = files . map ( read ) . map ( parse ) . map ( transform ) ;
  86 | bad = out . where ( r -> r «is» «not» Row ) ;
@@ -388,7 +388,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  96 | report = logs . map ( rowCost ) . sum ;
 104 | cur [ i ] = max ( xs [ i ] , cur [ i - 1₍10₎ ] + xs [ i ] ) «with» cur [ - 1₍10₎ ] = 0₍10₎ ;
 105 | best = cur >< max «else» 0₍10₎ ;
-112 | «struct» User { id : int , name : String }
-113 | u : User | #parseError ( pos : int , msg : String ) = Json . decode ( text ) ;
-121 | ok : User | #parseError ( pos : int , msg : String ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;
-122 | bad : User | #parseError ( pos : int , msg : String ) = Json . decode ( str["{\"id\": \"5\", \"name\": \"John\"}"] ) ;
+112 | «struct» User { id : int , name : Utf8String }
+113 | u : User | #parseError ( pos : int , msg : Utf8String ) = Json . decode ( text ) ;
+121 | ok : User | #parseError ( pos : int , msg : Utf8String ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;
+122 | bad : User | #parseError ( pos : int , msg : Utf8String ) = Json . decode ( str["{\"id\": \"5\", \"name\": \"John\"}"] ) ;

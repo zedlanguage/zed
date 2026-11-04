@@ -105,5 +105,19 @@ EXAMPLES.md [6. Functions] 3
         steps: [],
         row: None,
     },
+    Diagnostic {
+        line: 7,
+        col: 36,
+        message: "the type `Utf8String` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 7,
+        col: 51,
+        message: "the type `Utf8String` is not defined",
+        steps: [],
+        row: None,
+    },
 ]
-  checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined") }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined") }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined") }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined") }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined") }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined") }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined") }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined") }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined") }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined") }, Outcome { line: 7, col: 36, failure: Some("the type `Utf8String` is not defined") }, Outcome { line: 7, col: 51, failure: Some("the type `Utf8String` is not defined") }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
