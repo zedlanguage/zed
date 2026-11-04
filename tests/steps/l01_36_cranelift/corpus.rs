@@ -55,10 +55,10 @@ fn every_row_passes_natively_with_the_machines_counts() {
             assert_eq!(got, want, "{} (fuse {fuse})", path.display());
             rows += got.len();
         }
-        // 85 checks of table rows (7 of them in L25.8's unit, 19 in L1.40d's and 18 in L1.26's
-        // readings unit), and the 6 marked lines of the three rejection units.
-        assert_eq!(rows, 91);
-        let want = if fuse { 184 } else { 210 };
-        assert_eq!((runs.get(), cells.get(), writes.get()), (102, 180, want));
+        // 92 checks of table rows (7 of them in L25.8's unit, 19 in L1.40d's, 18 in L1.26's
+        // readings unit and 7 in L1.26a's), and the 6 marked lines of the three rejection units.
+        assert_eq!(rows, 98);
+        let want = if fuse { 198 } else { 224 };
+        assert_eq!((runs.get(), cells.get(), writes.get()), (109, 194, want));
     }
 }

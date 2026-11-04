@@ -59,6 +59,9 @@ pub enum ExprKind {
         radix: u32,
         /// The digits.
         digits: String,
+        /// Written with the suffix `n` (step L1.26a): the integer in whichever numeric carrier
+        /// its use needs, counting toward no int default.
+        generic: bool,
     },
     /// A float, as its decimal text.
     Float(String),
@@ -1266,6 +1269,12 @@ impl<'a, 's> Builder<'a, 's> {
             Tok::Int { radix, digits } => ExprKind::Int {
                 radix: *radix,
                 digits: digits.clone(),
+                generic: false,
+            },
+            Tok::Generic { radix, digits } => ExprKind::Int {
+                radix: *radix,
+                digits: digits.clone(),
+                generic: true,
             },
             Tok::Float(s) => ExprKind::Float(s.clone()),
             Tok::Rat(s) => ExprKind::Rat(s.clone()),

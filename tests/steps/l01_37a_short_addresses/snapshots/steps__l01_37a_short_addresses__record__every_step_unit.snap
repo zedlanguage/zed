@@ -143,6 +143,11 @@ l01_26_type_resolution/zed/readings.zed
   warnings: []
   checks: [Outcome { line: 4, col: 8, failure: None }, Outcome { line: 4, col: 19, failure: None }, Outcome { line: 4, col: 32, failure: None }, Outcome { line: 4, col: 44, failure: None }, Outcome { line: 4, col: 56, failure: None }, Outcome { line: 8, col: 8, failure: None }, Outcome { line: 8, col: 21, failure: None }, Outcome { line: 8, col: 38, failure: None }, Outcome { line: 12, col: 8, failure: None }, Outcome { line: 12, col: 19, failure: None }, Outcome { line: 12, col: 32, failure: None }, Outcome { line: 12, col: 44, failure: None }, Outcome { line: 18, col: 8, failure: None }, Outcome { line: 22, col: 8, failure: None }, Outcome { line: 22, col: 20, failure: None }, Outcome { line: 27, col: 8, failure: None }, Outcome { line: 27, col: 28, failure: None }, Outcome { line: 30, col: 8, failure: None }]
 
+l01_26a_generic_literals/zed/generic.zed
+  warnings: []
+  `mask`: Ok(Int(256))
+  checks: [Outcome { line: 3, col: 8, failure: None }, Outcome { line: 3, col: 16, failure: None }, Outcome { line: 3, col: 28, failure: None }, Outcome { line: 7, col: 8, failure: None }, Outcome { line: 7, col: 27, failure: None }, Outcome { line: 11, col: 8, failure: None }, Outcome { line: 11, col: 31, failure: None }]
+
 l01_29_diagnostics/zed/narrowed.zed
   rejected: [
     Diagnostic {

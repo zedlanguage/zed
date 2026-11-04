@@ -27,6 +27,7 @@ mod l01_23_subtyping;
 mod l01_24_refinement_lattices;
 mod l01_25_preimage_catalog;
 mod l01_26_type_resolution;
+mod l01_26a_generic_literals;
 mod l01_27_absences;
 mod l01_28_staging;
 mod l01_29_diagnostics;

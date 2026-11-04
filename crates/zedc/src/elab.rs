@@ -250,7 +250,7 @@ fn elaborate_in(
 ) -> Result<(Unit, Option<Vec<Mark>>), Vec<Error>> {
     let t = Tables::new(unit, res);
     let mut info = check::check_with(&t, unit);
-    let warnings = check::widen::warnings(&t, unit, &info.adopt);
+    let warnings = check::widen::warnings(&t, unit, &info);
     let checked = std::mem::take(&mut info.errors);
     let mut e = Elab::new(t, &info);
     e.marks = marks;

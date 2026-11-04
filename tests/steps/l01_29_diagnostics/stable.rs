@@ -199,8 +199,10 @@ const PIECES: usize = 2;
 
 /// Fewer types than this compared in a piece means the units no longer reach the checker. Since
 /// step L1.39b a check prints only the types its reported messages show, not every signature
-/// and origin as it is bound, so the pieces compare 48 and 29 types (77 in all, at the merge).
-const FEWEST: usize = 20;
+/// and origin as it is bound, so the pieces compared 48 and 29 types (77 in all, at the merge).
+/// Which piece a unit falls in moves with each unit added before it: after step L1.26a's unit
+/// they compare 20 and 61, so the floor is 10, still far above the none of a broken checker.
+const FEWEST: usize = 10;
 
 #[test]
 fn printed_types_do_not_move_0() {

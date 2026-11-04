@@ -1566,7 +1566,21 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// A binary operator other than `&&` and `||` applied to its arguments `x` and `y`, the
     /// second written `b`.
-    fn binary_end(&mut self, op: &'static str, x: Arg, y: Arg, b: &'a Expr, span: Span) -> Ty {
+    fn binary_end(
+        &mut self,
+        op: &'static str,
+        mut x: Arg,
+        mut y: Arg,
+        b: &'a Expr,
+        span: Span,
+    ) -> Ty {
+        // A `kn` operand is generic: it takes the carrier of the other operand, at run time
+        // where that is a type variable (step L1.26a). Under `==` it follows as any literal.
+        if !matches!(op, "==" | "!=") {
+            for l in [&mut x.lit, &mut y.lit].into_iter().flatten() {
+                l.generic = l.n;
+            }
+        }
         match op {
             "==" | "!=" => {
                 self.data(&x.ty, &format!("`{op}`"), span);

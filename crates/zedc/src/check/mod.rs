@@ -171,11 +171,13 @@ pub struct Info {
     /// For each `*`, whether `/` is defined wherever the checker typed it: each type it gave
     /// the product holds no `int` (step L25.8, the `*` to `/` mutant).
     pub quotients: HashMap<Span, bool>,
-    /// Each literal compared by `==` or `!=` with a class that became a type variable, by its
-    /// span: the value it takes at each other numeric carrier of the variable's bound that it
-    /// adopts exactly, after any `-`. The comparison adopts at run time the carrier of the
+    /// Each literal compared by `==` or `!=` with a class that became a type variable, and each
+    /// generic literal `kn` operand of an operator in such a class (L1.26a), by its span: the
+    /// value it takes at each other numeric carrier of the variable's bound that it adopts
+    /// exactly, after any `-`. The comparison adopts at run time the carrier of the
     /// other operand (DESIGN.md L1.26, "a literal compared by `==` with a class takes the
-    /// class's carrier"); at any other value the literal keeps its own.
+    /// class's carrier"), as does the operator of a generic literal; at any other value the
+    /// literal keeps its own.
     pub follows: HashMap<Span, Vec<(Carrier, Value)>>,
     /// The type errors.
     pub errors: Vec<Error>,
@@ -246,13 +248,18 @@ impl Operands {
     }
 }
 
-/// A numeric literal: its span, its value, whether a `-` is applied to it, and its text.
+/// A numeric literal: its span, its value, whether a `-` is applied to it, its text, whether
+/// it is written with the suffix `n`, and whether it is generic (step L1.26a): written `kn` and
+/// an operand of an operator other than `==` and `!=`, the one place elaboration gives it the
+/// carrier of the other operand at run time. Elsewhere a `kn` is read as `k`.
 #[derive(Clone)]
 struct Lit {
     span: Span,
     value: Value,
     neg: bool,
     text: String,
+    n: bool,
+    generic: bool,
 }
 
 /// An argument: its type, the literal it is, if it is one, the expression it is, if any, and
@@ -2091,12 +2098,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The literal `l` joins class `k`; unless it follows, the class keeps only the carriers
-    /// it may adopt, and false if none would be left.
+    /// it may adopt, and false if none would be left. A generic literal keeps only those that
+    /// hold it exactly: `9007199254740993n` removes `f64`.
     fn join(&mut self, k: usize, l: &Lit, follower: bool) -> bool {
         if !follower {
             let m = Carrier::ALL
                 .into_iter()
-                .filter(|&c| adoptable(l, c))
+                .filter(|&c| adoptable(l, c) && (!l.generic || adopt(l, c).is_ok()))
                 .fold(0, |m, c| m | c.bit());
             if !self.restrict(k, m, &format!("the literal {}", l.text), l.span) {
                 return false;
@@ -2142,7 +2150,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Gives class `r` its type: the first of int, f64 and rat it may take if a literal that
-    /// does not follow joined it, every literal adopting it; a type variable if it may take
+    /// neither follows nor is generic joined it, every literal adopting it; a type variable if it may take
     /// any value; its carrier if one; a type variable bounded by its carriers if several;
     /// else the unknown.
     ///
@@ -2156,13 +2164,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// COMPLEXITY.md Kept row "undeclared parameters (check), `apply`"; docs/thresholds.md
     /// replacement 1. A complete solution would give the class a type variable bounded by its
     /// numeric carriers and elaborate the literal at each carrier the calls use (one
-    /// elaboration per carrier used, not per combination).
+    /// elaboration per carrier used, not per combination). The written way out is a generic
+    /// literal (step L1.26a): `f(x) = x * 2n` takes int, f64 and rat, its `2n` taking the
+    /// carrier of `x` by one `match` at run time.
     fn resolve(&mut self, r: usize) {
         let (mask, lits) = (self.classes[r].mask, self.classes[r].lits.clone());
         let numeric = [Carrier::Int, Carrier::F64, Carrier::Rat]
             .into_iter()
             .find(|c| mask & c.bit() != 0)
-            .filter(|_| lits.iter().any(|(_, follows)| !follows));
+            .filter(|_| lits.iter().any(|(l, follows)| !follows && !l.generic));
         let ty = match numeric {
             Some(c) => Ty::carrier(c),
             None if mask == EVERY => Ty::var(format!("${r}").into()),
@@ -2177,10 +2187,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.adopt_to(l, c);
                 }
             }
-            // A type variable: each literal compared with the class takes, at run time, the
-            // carrier its other operand has, of those in the bound it is exactly.
+            // A type variable: each literal compared with the class, and each generic one,
+            // takes, at run time, the carrier its other operand has, of those in the bound it
+            // is exactly.
             None => {
-                for (l, _) in lits.iter().filter(|(_, follows)| *follows) {
+                for (l, _) in lits.iter().filter(|(l, follows)| *follows || l.generic) {
                     let values: Vec<(Carrier, Value)> = [Carrier::Int, Carrier::F64, Carrier::Rat]
                         .into_iter()
                         .filter(|&c| mask & c.bit() != 0 && c != lit_carrier(&l.value))
@@ -4430,9 +4441,13 @@ fn literal(e: &Expr) -> Option<Lit> {
         _ => (e, false),
     };
     let text = |s: &str| s.chars().filter(|&c| c != '_').collect::<String>();
-    let value = match &inner.kind {
-        ExprKind::Int { radix, digits } => Value::int_text(&text(digits), *radix)?,
-        ExprKind::Float(s) => Value::float(text(s).parse().ok()?),
+    let (value, n) = match &inner.kind {
+        ExprKind::Int {
+            radix,
+            digits,
+            generic,
+        } => (Value::int_text(&text(digits), *radix)?, *generic),
+        ExprKind::Float(s) => (Value::float(text(s).parse().ok()?), false),
         _ => return None,
     };
     Some(Lit {
@@ -4440,6 +4455,8 @@ fn literal(e: &Expr) -> Option<Lit> {
         value,
         neg,
         text: inner.to_string(),
+        n,
+        generic: false,
     })
 }
 
@@ -4729,14 +4746,18 @@ fn adoptable(l: &Lit, c: Carrier) -> bool {
 /// more, none of them the literal's own.
 fn no_one_carrier(l: &Lit, want: &Ty, cs: &[Carrier]) -> String {
     let names: Vec<&str> = cs.iter().map(|c| c.name()).collect();
-    let text = format!("{}{}", if l.neg { "-" } else { "" }, l.text);
+    let sign = if l.neg { "-" } else { "" };
     let mut m = format!(
-        "`{text}` at `{want}` adopts no one carrier: the type holds numbers of {}",
+        "`{sign}{}` at `{want}` adopts no one carrier: the type holds numbers of {}",
+        l.text,
         names.join(" and ")
     );
     // Only an integer literal reaches here, since a decimal one's own f64 or its one other
-    // carrier, rat, would be taken; a written radix has no `.0` or `r` form.
-    if l.text.chars().all(|c| c.is_ascii_digit()) {
+    // carrier, rat, would be taken; a written radix has no `.0` or `r` form. The forms of
+    // `kn` are those of `k`.
+    let digits = l.text.strip_suffix('n').filter(|_| l.n).unwrap_or(&l.text);
+    let text = format!("{sign}{digits}");
+    if digits.chars().all(|c| c.is_ascii_digit()) {
         let forms: Vec<String> = cs
             .iter()
             .filter_map(|c| match c {
@@ -5175,7 +5196,7 @@ impl<'a> Ck<'_, 'a> {
         };
         let nonnegative = IntervalSet::range(End::of(0), PosInf);
         match &e.kind {
-            ExprKind::Int { radix, digits } => {
+            ExprKind::Int { radix, digits, .. } => {
                 let digits: String = digits.chars().filter(|&c| c != '_').collect();
                 Value::int_text(&digits, *radix).map_or_else(Known::top, Known::of)
             }

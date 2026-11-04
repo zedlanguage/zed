@@ -1,8 +1,9 @@
 //! Number literals (steps L1.3 and L1.4):
 //!
 //! ```peg
-//! Number   = (Rational | Float | Integer) !XID_CONTINUE
+//! Number   = (Rational | Generic | Float | Integer) !XID_CONTINUE
 //! Rational = (Float | Decimal) 'r'
+//! Generic  = Integer 'n'
 //! Float    = Decimal '.' Decimal Exponent? | Decimal Exponent
 //! Exponent = [eE] [+\-]? Decimal
 //! Integer  = '0x' Hex ('_'? Hex)* | '0o' [0-7] ('_'? [0-7])* | '0b' [01] ('_'? [01])* | Decimal
@@ -15,6 +16,11 @@
 //! the `.`, so `5.double` and `1..10` begin with the integer. A number that runs into a
 //! character that continues a name is one error over the number and that run, since no other
 //! rule reads a token starting with a digit: `200ms`, `1__000`, `1_000_`, `0b102`, `0x`.
+//!
+//! An integer followed by `n` is generic (step L1.26a): `1n` is the integer 1 in whichever
+//! numeric carrier its use needs. Only an integer takes the `n`, since it has the same value in
+//! every carrier, and a decimal does not (`0.1` in f64 is not one tenth), so `1.5n` and
+//! `1e3n` are errors that name `1.5` and `1.5r`.
 
 use unicode_ident::is_xid_continue;
 
@@ -46,13 +52,16 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
         }
     }
     let rational = radix == 10 && b.get(end) == Some(&b'r');
-    let after = end + usize::from(rational);
+    let generic = end == int_end && b.get(end) == Some(&b'n');
+    let after = end + usize::from(rational || generic);
     if text[after..].chars().next().is_some_and(is_xid_continue) {
         return Some(Err(run_on(text, pos, after, radix)));
     }
     let digits = text[start..end].replace('_', "");
     let tok = if rational {
         Tok::Rat(digits)
+    } else if generic {
+        Tok::Generic { radix, digits }
     } else if end > int_end {
         Tok::Float(digits)
     } else {
@@ -89,6 +98,16 @@ fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
         "an exponent needs digits: `1e3`, `1e-3`".to_string()
     } else if next == 'r' && radix != 10 {
         "a rational is written in decimal: `16r`, not `0x10r`".to_string()
+    } else if next == 'n'
+        && radix == 10
+        && !text[pos..end].ends_with('r')
+        && text[pos..end].contains(['.', 'e', 'E'])
+    {
+        let d = &text[pos..end];
+        format!(
+            "only an integer takes `n`: write `{d}` for a float or `{d}r` for an exact rational; \
+             a decimal has a different value in f64 and in rat, an integer the same in every carrier"
+        )
     } else if next == '_' {
         "`_` goes only between two digits".to_string()
     } else if radix == 10 && end == pos + 1 && text[pos..].starts_with('0') && "xob".contains(next)

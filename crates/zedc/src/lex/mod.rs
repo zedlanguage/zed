@@ -39,6 +39,14 @@ pub enum Tok {
         /// The digits.
         digits: String,
     },
+    /// A generic integer `kn` (step L1.26a): its base and its digits, without `_` and the
+    /// `n`. It is the exact integer k in any numeric carrier that holds k.
+    Generic {
+        /// The base.
+        radix: u32,
+        /// The digits.
+        digits: String,
+    },
     /// A float, as its decimal text without `_` (`1.5e-3`).
     Float(String),
     /// An exact rational, as its decimal text without `_` and the `r` (`0.1`).

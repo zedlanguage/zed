@@ -30,6 +30,7 @@ use zed_kernel::Value;
 
 use crate::ast::{Error, Expr, ExprKind, Note, Param, Stmt, StmtKind, StrPart, Target};
 use crate::check::Info;
+use crate::check::ty::Carrier;
 use crate::elab::Tables;
 use crate::lex::Span;
 use crate::resolve::{Ref, Resolution};
@@ -123,6 +124,8 @@ struct Crossing {
 struct Walk<'t, 'a> {
     t: &'t Tables<'a>,
     adopt: &'t HashMap<Span, Value>,
+    /// The literals that take, at run time, the carrier of a type variable (step L1.26a).
+    follows: &'t HashMap<Span, Vec<(Carrier, Value)>>,
     nodes: Vec<Node<'a>>,
     labels: HashMap<u32, Label<'a>>,
     /// The value node of each binder bound by `=` to one name.
@@ -133,14 +136,15 @@ struct Walk<'t, 'a> {
 /// The widening warnings of the resolved `unit`, whose check gave `info`: the pass alone, for
 /// tests that time it.
 pub fn of(unit: &[Stmt], res: &Resolution, info: &Info) -> Vec<Error> {
-    warnings(&Tables::new(unit, res), unit, &info.adopt)
+    warnings(&Tables::new(unit, res), unit, info)
 }
 
 /// The widening warnings of `unit`, sorted by place.
-pub(crate) fn warnings(t: &Tables, unit: &[Stmt], adopt: &HashMap<Span, Value>) -> Vec<Error> {
+pub(crate) fn warnings(t: &Tables, unit: &[Stmt], info: &Info) -> Vec<Error> {
     let mut w = Walk {
         t,
-        adopt,
+        adopt: &info.adopt,
+        follows: &info.follows,
         nodes: Vec::new(),
         labels: HashMap::new(),
         binds: HashMap::new(),
@@ -419,9 +423,12 @@ impl<'t, 'a> Walk<'t, 'a> {
     /// The value of the integer literal `e`, negated when `neg`, if the checker leaves it an
     /// `int` and it is in the word.
     fn literal(&self, e: &Expr, neg: bool) -> Option<i64> {
-        let ExprKind::Int { radix, digits } = &e.kind else {
+        let ExprKind::Int { radix, digits, .. } = &e.kind else {
             return None;
         };
+        if self.follows.contains_key(&e.span) {
+            return None;
+        }
         if let Some(v) = self.adopt.get(&e.span)
             && !matches!(v, Value::Int(_) | Value::Big(_))
         {
@@ -680,7 +687,7 @@ fn magnitude(digits: &str, radix: u32) -> Option<u128> {
 /// `2 ** k` of two literals.
 fn power_of_two(e: &Expr) -> Option<u32> {
     let k = match &e.kind {
-        ExprKind::Int { radix, digits } => {
+        ExprKind::Int { radix, digits, .. } => {
             let v = magnitude(digits, *radix)?;
             if !v.is_power_of_two() {
                 return None;
@@ -689,10 +696,11 @@ fn power_of_two(e: &Expr) -> Option<u32> {
         }
         ExprKind::Binary("**", b, k) => match (&b.kind, &k.kind) {
             (
-                ExprKind::Int { radix, digits },
+                ExprKind::Int { radix, digits, .. },
                 ExprKind::Int {
                     radix: r,
                     digits: d,
+                    ..
                 },
             ) if magnitude(digits, *radix) == Some(2) => u32::try_from(magnitude(d, *r)?).ok()?,
             _ => return None,

@@ -36,7 +36,7 @@ impl Builder<'_, '_> {
         if tree.name(base) != "Literal"
             || !matches!(
                 self.tokens[tree.nodes[base].start].tok,
-                Tok::Int { .. } | Tok::Float(_) | Tok::Rat(_)
+                Tok::Int { .. } | Tok::Generic { .. } | Tok::Float(_) | Tok::Rat(_)
             )
         {
             return None;
@@ -174,7 +174,7 @@ fn bare_names(text: &str) -> HashSet<&str> {
 fn number(e: &Expr) -> Option<Value> {
     let plain = |s: &str| s.chars().filter(|&c| c != '_').collect::<String>();
     match &e.kind {
-        ExprKind::Int { radix, digits } => Value::int_text(&plain(digits), *radix),
+        ExprKind::Int { radix, digits, .. } => Value::int_text(&plain(digits), *radix),
         ExprKind::Float(s) => literal_f64(&plain(s)).ok().map(Value::float),
         ExprKind::Rat(s) => Rat::decimal(s).map(Value::rat),
         _ => None,

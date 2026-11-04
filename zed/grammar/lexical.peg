@@ -4,8 +4,9 @@ Comment       = '//' (!'\n' ANY)* | BlockComment                                
 BlockComment  = '/*' (BlockComment | !'*/' ANY)* '*/'                              L1
 Token         = Number | String | AtomLit | AnnotLit | Keyword | Wildcard | Ident | Operator   L1
 
-Number        = (Rational | Float | Integer) !XID_CONTINUE                         L1
+Number        = (Rational | Generic | Float | Integer) !XID_CONTINUE               L1
 Rational      = (Float | Decimal) 'r'                                              L1
+Generic       = Integer 'n'                                                        L1
 Float         = Decimal '.' Decimal Exponent? | Decimal Exponent                   L1
 Exponent      = [eE] [+\-]? Decimal                                                L1
 Integer       = '0x' Hex ('_'? Hex)* | '0o' [0-7] ('_'? [0-7])* | '0b' [01] ('_'? [01])* | Decimal   L1

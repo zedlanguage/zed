@@ -30,9 +30,9 @@ fn every_step_unit_agrees() {
             r.add(&p.display().to_string(), unit(&text, engines));
         }
     });
-    assert_eq!(runs, 204, "native runs, each leaving no cell live");
+    assert_eq!(runs, 220, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
-    assert_eq!(r.compared, 18);
+    assert_eq!(r.compared, 22);
 }
 
 #[test]
