@@ -1303,3 +1303,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | An operator's table on 0..<2^w built once into a `Vec<usize>`, then read by index for each tuple | `check_word` (test) | None | A list built by `map` over a range and read by index; the reads are O(1) on a persistent vector |
 | `<[Term; 2]>::try_from(Vec<Term>)` to take the two arguments of a binary operator by value | `call` (test) | None | A list pattern `[a, b]` in a `match` |
 | `num_bigint::BigInt` for 2^63, 2^64 and 2^128 corner values | `word_corners`, `shift_values` (test) | None | `int` is unbounded: the literals `2 ** 64` and so on |
+
+## Entries from TERM-id (`zedc/src/stage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap<u64, usize>` keyed by `Shared::id` while one term is read, a part held inline having no key | `stage::Reader::ids`, `Reader::read`, `Part::held` | Identity (gap 1), mutation | A state receiver over a map keyed by the term's digest |
+| A closure over a mutable iterator (`move \|\| parts.next()`) passed as `&mut impl FnMut() -> Needs`, so a callee takes the next part's answer only when it is a lambda | `stage::Reader::needs_of`, `Reader::callee` | Mutation | The list of the parts' answers passed as a value, each case taking its head |

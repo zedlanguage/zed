@@ -181,8 +181,8 @@ fn children(t: &Term) -> Vec<&Term> {
 /// which are primitives.
 ///
 /// The term is read as the graph of its distinct parts: a part shared by two places (one
-/// `Arc` reached twice) is read once, so the time is near the number of distinct parts, not
-/// the size of the term unshared (COMPLEXITY.md row ENDS). Each part is read once whatever
+/// [`Shared`] node reached twice, known by its id) is read once, so the time is near the
+/// number of distinct parts, not the size of the term unshared (COMPLEXITY.md row ENDS). Each part is read once whatever
 /// names are bound around it: what it needs of them is the set of names it calls that must
 /// each be free or bound by `let` to a function that ends ([`Needs`]), and the binder of a
 /// name reads that set. A part shared under two bindings of a name it calls so gives each
@@ -215,44 +215,60 @@ type Name = u32;
 /// The reading of one term by [`ends`]: each distinct part numbered once, in an order that puts
 /// a part after its own parts, with what it needs.
 #[derive(Default)]
-struct Reader<'t> {
+struct Reader {
     /// What each part needs, by its number.
     needs: Vec<Needs>,
-    /// The number of each part read, in the order the parts are read, which depends only on
-    /// the term's structure and sharing (test
-    /// `l01_28_staging::ends::three_allocation_orders_read_alike`).
-    ids: HashMap<Part<'t>, usize>,
+    /// The number of each part held in a [`Shared`] node, by the node's id
+    /// ([`Shared::id`]: copies of a node share it and no other node has it, the way
+    /// [`zed_kernel::Items`] and [`zed_kernel::Family`] are known by theirs). A part shared by
+    /// two places is one node reached twice, so it is read once. A part held inline (an
+    /// argument, a match arm, the root) has one place, inside the one part that holds it, and
+    /// is read once with that part. The term is borrowed for the whole reading, so no node is
+    /// freed or changed in place while the reading holds its id.
+    ///
+    /// The numbers are given in the order the parts are read, which depends only on the term's
+    /// structure and sharing: never on the ids' values, which follow the order the nodes were
+    /// built in, nor on addresses (tests
+    /// `l01_28_staging::ends::three_allocation_orders_read_alike` and
+    /// `l01_28_staging::ids::two_build_orders_read_and_stage_alike`).
+    ///
+    /// A node's id is the only key that sees sharing without an address: occurrence ids from
+    /// one walk, as `zir::lower::Places` gives, cannot tell a part shared by both arms of `k`
+    /// nested `if`s from its unshared copy, which has `2^k` places, and on that copy every
+    /// place must be read, since a `fix` at any one of them changes the answer. Measured
+    /// (negative controls, a reader keyed by occurrence ids): ADDR-stage, 1.0, 6.8, 23.7, 63.6,
+    /// 256 and 1235 ms at k = 10 to 20; TERM-id, see COMPLEXITY.md row K44.
+    ids: HashMap<u64, usize>,
+    /// For the test hook [`reading`] only: the numbers of the parts each part reads, by its
+    /// number, in the order [`each_part`] gives them.
+    reads: Option<Vec<Vec<usize>>>,
     names: HashMap<Arc<str>, Name>,
     sets: Sets,
 }
 
-/// A part of the term a [`Reader`] reads, known by identity: two are equal when they are the
-/// same part, one `Arc` reached from two places. The key holds the borrow of the term, so the
-/// compiler checks that no part is freed, and no address reused, while the reading keeps it.
-/// The numbers and answers are kept by number and never by order of address.
-///
-/// Identity is the only way to see that a part is shared: occurrence ids from one walk, as
-/// `zir::lower::Places` gives, cannot tell a part shared by both arms of `k` nested `if`s from
-/// its unshared copy, which has `2^k` places, and on that copy every place must be read, since
-/// a `fix` at any one of them changes the answer. Measured (ADDR-stage, negative control): a
-/// reader keyed by occurrence ids took 1.0, 6.8, 23.7, 63.6, 256 and 1235 ms at k = 10 to 20,
-/// and the test at k = 1000 and 8000 was killed at 60 s. A key that is not an address needs
-/// an id carried by each shared term node, as `Items` and `Family` carry one (ledger TERM-id;
-/// ADDR-preimage adds such an id in `zed_kernel::Shared`); this key moves to it.
+/// A part of a term to be read: the term, and the id of the [`Shared`] node that holds it,
+/// when one does.
 #[derive(Clone, Copy)]
-struct Part<'t>(&'t Term);
-
-impl PartialEq for Part<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.0, other.0)
-    }
+struct Part<'t> {
+    term: &'t Term,
+    node: Option<u64>,
 }
 
-impl Eq for Part<'_> {}
+impl<'t> Part<'t> {
+    /// The part held in the node `s`.
+    fn held(s: &'t Shared) -> Self {
+        Part {
+            term: s,
+            node: Some(s.id()),
+        }
+    }
 
-impl std::hash::Hash for Part<'_> {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        std::ptr::hash(self.0, h)
+    /// The part `t`, held inline by the one part that holds it.
+    fn inline(t: &'t Term) -> Self {
+        Part {
+            term: t,
+            node: None,
+        }
     }
 }
 
@@ -260,44 +276,54 @@ impl std::hash::Hash for Part<'_> {
 /// answer (`None`, it never ends, or the number of the set of names it needs) and the numbers
 /// of the parts it reads, in the order [`each_part`] gives them.
 pub fn reading(t: &Term) -> Vec<(Option<u32>, Vec<usize>)> {
-    let mut r = Reader::default();
+    let mut r = Reader {
+        reads: Some(Vec::new()),
+        ..Reader::default()
+    };
     r.read(t);
-    let mut parts: Vec<(Part<'_>, usize)> = r.ids.iter().map(|(&p, &i)| (p, i)).collect();
-    parts.sort_unstable_by_key(|&(_, i)| i);
-    let mut todo = Vec::new();
-    parts
-        .into_iter()
-        .map(|(Part(p), i)| {
-            each_part(p, &mut todo);
-            let read = todo.drain(..).map(|(q, _)| r.ids[&Part(q)]).collect();
-            (r.needs[i], read)
-        })
-        .collect()
+    let reads = r.reads.unwrap_or_default();
+    r.needs.into_iter().zip(reads).collect()
 }
 
-impl<'t> Reader<'t> {
-    /// What `root` needs. The parts are read with an explicit stack, each after its own parts.
-    fn read(&mut self, root: &'t Term) -> Needs {
-        let mut todo = vec![(root, false)];
-        while let Some((t, parts_read)) = todo.pop() {
-            if self.ids.contains_key(&Part(t)) {
+impl Reader {
+    /// What `root` needs. The parts are read with an explicit stack, each after its own parts,
+    /// and each part held in a node only the first time the node is reached.
+    fn read(&mut self, root: &Term) -> Needs {
+        // A part to read, with `None`; or a part whose `k` parts are on their way, with `k`.
+        let mut todo = vec![(Part::inline(root), None)];
+        // The numbers of the parts read and not yet taken by the part that reads them: a
+        // part's own parts end up on top, in the reverse of the order they were put on `todo`.
+        let mut done: Vec<usize> = Vec::new();
+        let mut parts = Vec::new();
+        let mut got = Vec::new();
+        while let Some((p, count)) = todo.pop() {
+            let Some(k) = count else {
+                if let Some(&i) = p.node.and_then(|id| self.ids.get(&id)) {
+                    done.push(i);
+                    continue;
+                }
+                each_part(p.term, &mut parts);
+                todo.push((p, Some(parts.len())));
+                todo.extend(parts.drain(..).map(|q| (q, None)));
                 continue;
+            };
+            let from = done.len() - k;
+            got.clear();
+            got.extend(done[from..].iter().rev().map(|&i| self.needs[i]));
+            let needs = self.needs_of(p.term, &got);
+            let n = self.needs.len();
+            self.needs.push(needs);
+            if let Some(id) = p.node {
+                self.ids.insert(id, n);
             }
-            if parts_read {
-                let needs = self.needs_of(t);
-                self.ids.insert(Part(t), self.needs.len());
-                self.needs.push(needs);
-            } else {
-                todo.push((t, true));
-                each_part(t, &mut todo);
+            if let Some(reads) = &mut self.reads {
+                reads.push(done[from..].iter().rev().copied().collect());
             }
+            done.truncate(from);
+            done.push(n);
         }
-        self.got(root)
-    }
-
-    /// What the part `t`, already read, needs.
-    fn got(&self, t: &'t Term) -> Needs {
-        self.needs[self.ids[&Part(t)]]
+        let root = done.pop().expect("the root, read");
+        self.needs[root]
     }
 
     fn name(&mut self, x: &Arc<str>) -> Name {
@@ -314,88 +340,97 @@ impl<'t> Reader<'t> {
         Some(self.sets.union(a?, b?))
     }
 
-    /// What `t` needs, its parts read.
-    fn needs_of(&mut self, t: &'t Term) -> Needs {
+    /// What `t` needs, given what its parts need, in the order [`each_part`] gives them.
+    fn needs_of(&mut self, t: &Term, parts: &[Needs]) -> Needs {
+        let mut parts = parts.iter().copied();
+        let mut part = move || parts.next().expect("each part `each_part` gives, read");
         match t {
             Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => Some(EMPTY),
             Term::Fix { .. } | Term::Gen { .. } => None,
-            Term::Lam(ps, b) => self.under(ps, b),
+            Term::Lam(ps, _) => {
+                let body = part();
+                self.under(ps, body)
+            }
             Term::App(f, args) => {
-                let mut out = self.callee(f);
-                for a in args {
-                    out = self.and(out, self.got(a));
+                let mut out = self.callee(f, &mut part);
+                for _ in args {
+                    out = self.and(out, part());
                 }
                 out
             }
             Term::Prim(_, args) => {
                 let mut out = Some(EMPTY);
-                for a in args {
-                    out = self.and(out, self.got(a));
+                for _ in args {
+                    out = self.and(out, part());
                 }
                 out
             }
-            Term::Let(x, e, b) => {
+            Term::Let(x, e, _) => {
+                let (bound, mut body) = (part(), part());
                 // A lambda bound and never called need not end; any other binding is evaluated.
                 let evaluated = match &**e {
                     Term::Lam(..) => Some(EMPTY),
-                    _ => self.got(e),
+                    _ => bound,
                 };
                 let x = self.name(x);
-                let mut body = self.got(b);
                 if let Some(rest) = body.and_then(|b| self.sets.remove(b, x)) {
-                    let callee = self.callee(e);
+                    let callee = self.callee(e, &mut || bound);
                     body = self.and(Some(rest), callee);
                 }
                 self.and(body, evaluated)
             }
-            Term::If(c, a, b) => {
-                let ca = self.and(self.got(c), self.got(a));
-                self.and(ca, self.got(b))
+            Term::If(..) => {
+                let (c, a, b) = (part(), part(), part());
+                let ca = self.and(c, a);
+                self.and(ca, b)
             }
-            Term::Match(s, arms) => {
-                let mut out = self.got(s);
-                for (p, a) in arms {
-                    let arm = self.under(&binds(p), a);
+            Term::Match(_, arms) => {
+                let mut out = part();
+                for (p, _) in arms {
+                    let arm = self.under(&binds(p), part());
                     out = self.and(out, arm);
                 }
                 out
             }
-            Term::Fam { domain, var, body } => {
+            Term::Fam { var, .. } => {
+                let (domain, body) = (part(), part());
                 let body = self.under(std::slice::from_ref(var), body);
-                self.and(self.got(domain), body)
+                self.and(domain, body)
             }
-            Term::Reindex { family, kf, vf, .. } => {
-                let (k, v) = (self.callee(kf), self.callee(vf));
+            Term::Reindex { kf, vf, .. } => {
+                let family = part();
+                let (k, v) = (self.callee(kf, &mut part), self.callee(vf, &mut part));
                 let kv = self.and(k, v);
-                self.and(self.got(family), kv)
+                self.and(family, kv)
             }
-            Term::Discard { family, sel } => {
-                let sel = self.callee(sel);
-                self.and(self.got(family), sel)
+            Term::Discard { sel, .. } => {
+                let family = part();
+                let sel = self.callee(sel, &mut part);
+                self.and(family, sel)
             }
-            Term::Fold {
-                family,
-                op,
-                identity,
-                ..
-            } => {
-                let op = self.callee(op);
-                let out = self.and(self.got(family), op);
+            Term::Fold { op, identity, .. } => {
+                let family = part();
+                let op = self.callee(op, &mut part);
+                let out = self.and(family, op);
                 match identity {
-                    Some(i) => self.and(out, self.got(i)),
+                    Some(_) => {
+                        let identity = part();
+                        self.and(out, identity)
+                    }
                     None => out,
                 }
             }
-            Term::Push(_, t) => self.got(t),
+            Term::Push(..) => part(),
         }
     }
 
     /// What `f`, in the position of a function called, needs to be one that ends: a primitive
-    /// ends, a lambda when its body does, a name when it is free or bound to one that ends.
-    fn callee(&mut self, f: &'t Term) -> Needs {
+    /// ends, a lambda when its body does (`lambda` gives what the lambda, a part read, needs),
+    /// a name when it is free or bound to one that ends.
+    fn callee(&mut self, f: &Term, lambda: &mut impl FnMut() -> Needs) -> Needs {
         match f {
             Term::PrimFn(_) => Some(EMPTY),
-            Term::Lam(..) => self.got(f),
+            Term::Lam(..) => lambda(),
             Term::Var(x) => {
                 let x = self.name(x);
                 Some(self.sets.one(x))
@@ -404,10 +439,10 @@ impl<'t> Reader<'t> {
         }
     }
 
-    /// What `body`, read, needs with `names` bound around it to values not known to be
-    /// functions that end.
-    fn under(&mut self, names: &[Arc<str>], body: &'t Term) -> Needs {
-        let body = self.got(body)?;
+    /// What a body that needs `body` needs with `names` bound around it to values not known to
+    /// be functions that end.
+    fn under(&mut self, names: &[Arc<str>], body: Needs) -> Needs {
+        let body = body?;
         for x in names {
             let x = self.name(x);
             if self.sets.remove(body, x).is_some() {
@@ -636,9 +671,8 @@ impl Sets {
 /// Puts on `todo`, to be read, the parts of `t` that [`Reader::needs_of`] reads: every subterm,
 /// except those of `fix` and `gen`, and a function called or handed to a family operation only
 /// when it is a lambda.
-fn each_part<'t>(t: &'t Term, todo: &mut Vec<(&'t Term, bool)>) {
-    let mut part = |p: &'t Term| todo.push((p, false));
-    let lam = |g: &'t Term| matches!(g, Term::Lam(..)).then_some(g);
+fn each_part<'t>(t: &'t Term, todo: &mut Vec<Part<'t>>) {
+    let lam = |g: &'t Shared| matches!(**g, Term::Lam(..)).then(|| Part::held(g));
     match t {
         Term::Lit(_)
         | Term::Var(_)
@@ -646,29 +680,37 @@ fn each_part<'t>(t: &'t Term, todo: &mut Vec<(&'t Term, bool)>) {
         | Term::Read(_)
         | Term::Fix { .. }
         | Term::Gen { .. } => {}
-        Term::Lam(_, b) | Term::Push(_, b) => part(b),
-        Term::App(g, args) => lam(g).into_iter().chain(args).for_each(part),
-        Term::Prim(_, args) => args.iter().for_each(part),
-        Term::Let(_, e, b) => [e, b].into_iter().for_each(|p| part(p)),
-        Term::If(c, a, b) => [c, a, b].into_iter().for_each(|p| part(p)),
-        Term::Match(s, arms) => std::iter::once(&**s)
-            .chain(arms.iter().map(|(_, a)| a))
-            .for_each(part),
-        Term::Fam { domain, body, .. } => [domain, body].into_iter().for_each(|p| part(p)),
-        Term::Reindex { family, kf, vf, .. } => std::iter::once(&**family)
-            .chain(lam(kf))
-            .chain(lam(vf))
-            .for_each(part),
-        Term::Discard { family, sel } => std::iter::once(&**family).chain(lam(sel)).for_each(part),
+        Term::Lam(_, b) | Term::Push(_, b) => todo.push(Part::held(b)),
+        Term::App(g, args) => todo.extend(lam(g).into_iter().chain(args.iter().map(Part::inline))),
+        Term::Prim(_, args) => todo.extend(args.iter().map(Part::inline)),
+        Term::Let(_, e, b) => todo.extend([e, b].map(Part::held)),
+        Term::If(c, a, b) => todo.extend([c, a, b].map(Part::held)),
+        Term::Match(s, arms) => todo.extend(
+            std::iter::once(Part::held(s)).chain(arms.iter().map(|(_, a)| Part::inline(a))),
+        ),
+        Term::Fam { domain, body, .. } => todo.extend([domain, body].map(Part::held)),
+        Term::Reindex { family, kf, vf, .. } => todo.extend(
+            [Some(Part::held(family)), lam(kf), lam(vf)]
+                .into_iter()
+                .flatten(),
+        ),
+        Term::Discard { family, sel } => {
+            todo.extend([Some(Part::held(family)), lam(sel)].into_iter().flatten())
+        }
         Term::Fold {
             family,
             op,
             identity,
             ..
-        } => std::iter::once(&**family)
-            .chain(lam(op))
-            .chain(identity.as_deref())
-            .for_each(part),
+        } => todo.extend(
+            [
+                Some(Part::held(family)),
+                lam(op),
+                identity.as_ref().map(Part::held),
+            ]
+            .into_iter()
+            .flatten(),
+        ),
     }
 }
 
