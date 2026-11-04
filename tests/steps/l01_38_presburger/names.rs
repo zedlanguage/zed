@@ -1146,3 +1146,66 @@ fn decide_on_separate_tied_disjunctions_scales() {
         let _ = std::hint::black_box(decide(f));
     });
 }
+
+/// The tied cycle of four ([`cycle`]) with every variable at most `top`, variable `i` named
+/// `v{name[i]}`. Summing the cycle's rows gives `2·Σ x >= 40`, so with `top <= 4`, where
+/// `Σ x <= 16`, it has no point; the solver refuses it for its tie.
+fn capped_cycle(top: i64, name: &[usize]) -> Formula {
+    let mut rows = cycle(4);
+    for i in 0..4 {
+        let mut c = vec![0; 4];
+        c[i] = -1;
+        rows.push(ge(&c, top));
+    }
+    formula(&rows, name)
+}
+
+#[test]
+fn a_disjunct_the_solver_refuses_is_not_taken_for_a_point() {
+    // `(C4 && x <= 4) || (C4 && x <= 3)`: neither disjunct has a point, and the solver
+    // refuses both, so settling removes neither. The answer must not be `true` (verifier of
+    // NAME-ties repair 3 found `decide` gave `Ok(true)` while `satisfiable` refused): it is
+    // refused, by `decide` and `satisfiable` alike, under every naming.
+    let mut seen = BTreeMap::new();
+    each_permutation(4, |perm| {
+        let f = Formula::or(vec![capped_cycle(4, perm), capped_cycle(3, perm)]);
+        let d = decide(&f);
+        let s = satisfiable(&f);
+        assert!(d.is_err(), "{f}: decide gave {d:?}");
+        assert!(s.is_err(), "{f}: satisfiable gave {s:?}");
+        *seen.entry(answer(&f)).or_insert(0) += 1;
+    });
+    assert_eq!(seen.len(), 1, "{seen:?}");
+}
+
+#[test]
+fn a_refused_disjunct_beside_one_with_a_point_gives_one_answer() {
+    // `y` in `[0, 9]` and `(C4 && x <= 3) || (1 <= y <= 2)`: the second disjunct has a point
+    // and the first is refused. The disjunction is linked to no other, so the formula has a point,
+    // under every naming of the cycle and whether `y` sorts before or after it; `satisfiable`
+    // must not take the refused disjunct because its name comes first.
+    for y in ["a", "z"] {
+        let v = Lin::atom(Atom::Sym(y.into()));
+        let k = Lin::constant;
+        let mut seen = BTreeMap::new();
+        each_permutation(4, |perm| {
+            let f = Formula::and(vec![
+                Formula::Con(Con::ge(&v, &k(0))),
+                Formula::Con(Con::ge(&k(9), &v)),
+                Formula::or(vec![
+                    capped_cycle(3, perm),
+                    Formula::and(vec![
+                        Formula::Con(Con::ge(&k(2), &v)),
+                        Formula::Con(Con::ge(&v, &k(1))),
+                    ]),
+                ]),
+            ]);
+            assert_eq!(decide(&f), Ok(true), "{f}");
+            let m = satisfiable(&f).unwrap_or_else(|e| panic!("{f}: {e}"));
+            let m = m.expect("a point");
+            assert!(f.holds(&m), "{f}: {m:?}");
+            *seen.entry(answer(&f)).or_insert(0) += 1;
+        });
+        assert_eq!(seen.len(), 1, "{seen:?}");
+    }
+}

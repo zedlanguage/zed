@@ -867,10 +867,11 @@ fn rename(to: &HashMap<Atom, Arc<str>>, a: &Atom) -> Atom {
 /// the disjuncts, comparing atoms by name, and the points come from [`solve`], whose model
 /// breaks ties by place. The coloring of [`stable_colors`] over every constraint of the
 /// formula, read as one system, depends on the structure alone; when it gives each atom its
-/// own color, the atom of color rank `k` is renamed `#k`, which no written name is. A renaming
-/// of the variables carries their colors with them, so every naming gives the one formula, and
-/// every answer and refusal of it is renamed back. A product keeps its factors, renamed: the
-/// coloring is given, for each product, a row joining it to its two factors, so that a factor
+/// own color, the atom of color rank `k` is renamed `#k`, which no written name is, with `k`
+/// written with leading zeros to one width so that the names sort as the ranks do. A renaming
+/// of the variables carries their colors with them, so every naming gives the one formula,
+/// and every answer and refusal of it is renamed back. A product keeps its factors, renamed:
+/// the coloring is given, for each product, a row joining it to its two factors, so that a factor
 /// that occurs only in products has a color too.
 ///
 /// Complexity tradeoff: when two atoms share a color ([`Naming::Tied`]), no renaming is
@@ -961,8 +962,14 @@ impl Renamed {
             return Naming::Tied(vars, atoms.into_iter().zip(color).collect());
         }
         let from: Vec<Atom> = plain.iter().map(|&i| atoms[i].clone()).collect();
+        // The rank is written with leading zeros to one width, so that names compare as their
+        // ranks do: unpadded, `#10` sorts before `#2`, and [`nnf`] would hand the disjuncts of
+        // a chain to [`pick`] out of rank order, where its first choices can fail and [`probe`]
+        // runs (`l01_25_preimage_catalog::s22::chain_cross_live_scales`: 34.9 times the bytes
+        // from 32 to 256 unpadded, against a limit of 24).
+        let width = from.len().saturating_sub(1).to_string().len();
         let to: HashMap<Atom, Arc<str>> = (from.iter().enumerate())
-            .map(|(k, a)| (a.clone(), Arc::from(format!("#{k}"))))
+            .map(|(k, a)| (a.clone(), Arc::from(format!("#{k:0width$}"))))
             .collect();
         let f = f.map_cons(&|c| {
             let terms = c.lin.terms.iter().map(|(a, k)| (rename(&to, a), k.clone()));
@@ -1095,15 +1102,21 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 /// base and the disjunct, so the test would keep it too, and the point, which may depend on
 /// the names, changes no result. The cost is that of [`settle`] with the points of later
 /// stages unused, at most one test of each disjunct for each round.
-fn settle_as_sets(mut p: Parts) -> Result<Option<Parts>, Refusal> {
+///
+/// A disjunct is kept when its test finds a point or is refused, so a disjunct kept is not
+/// shown to have a point: [`AsSets::proven`] says which were. The last round adds nothing to
+/// the base (a round that adds rows is not the last), so each disjunct left was tested in it
+/// against the base as returned, and the marks of that round hold for the parts returned.
+fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
     let mut base = Linked::reduced(std::mem::take(&mut p.cons));
     loop {
         let Some(model) = solve(&base.cons, !p.ors.is_empty())? else {
             return Ok(None);
         };
+        let mut proven: Vec<Vec<bool>> = Vec::new();
         if p.ors.is_empty() {
             p.cons = base.cons;
-            return Ok(Some(p));
+            return Ok(Some(AsSets { p, proven }));
         }
         let mut changed = false;
         // Whether `model` is a point of the base as it now stands.
@@ -1113,21 +1126,31 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<Parts>, Refusal> {
             let mut alone: Vec<Rc<Parts>> = Vec::new();
             for ds in stage {
                 let n = ds.len();
-                let mut live: Vec<Rc<Parts>> = (ds.into_iter())
-                    .filter(|d| {
+                // Each disjunct not shown empty, and whether it is shown to have a point.
+                let (mut live, shown): (Vec<Rc<Parts>>, Vec<bool>) = (ds.into_iter())
+                    .filter_map(|d| {
                         if at_model && d.cons.iter().all(|c| c.holds(&model)) {
-                            return true;
+                            return Some((d, true));
                         }
                         let mut cs = base.around(&d.cons);
                         cs.extend(d.cons.iter());
-                        !matches!(solve(&cs, false), Ok(None))
+                        match solve(&cs, false) {
+                            Ok(None) => None,
+                            Ok(Some(_)) => Some((d, true)),
+                            Err(_) => Some((d, false)),
+                        }
                     })
-                    .collect();
+                    .unzip();
                 changed |= live.len() < n;
                 match live.len() {
                     0 => return Ok(None),
+                    // The others are shown empty, so the formula's points are those of the
+                    // base with this one, which the next round solves.
                     1 => alone.push(live.pop().expect("one")),
-                    _ => p.ors.push(live),
+                    _ => {
+                        p.ors.push(live);
+                        proven.push(shown);
+                    }
                 }
             }
             // Rows added to the base are solved again in the next round.
@@ -1143,9 +1166,18 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<Parts>, Refusal> {
         }
         if !changed {
             p.cons = base.cons;
-            return Ok(Some(p));
+            return Ok(Some(AsSets { p, proven }));
         }
     }
+}
+
+/// The parts that [`settle_as_sets`] leaves, and for each disjunction left, in the order of
+/// `p.ors`, whether each of its disjuncts is shown to have a point with the base: [`solve`]
+/// found one with the base rows linked to it, or its constraints hold at a point of the base.
+/// A disjunct kept because [`solve`] refused it is not.
+struct AsSets {
+    p: Parts,
+    proven: Vec<Vec<bool>>,
 }
 
 /// What [`settle_tied`] leaves of a formula whose atoms share a color.
@@ -1185,12 +1217,13 @@ enum Settled {
 /// exponential in the disjunctions in the worst case, or tell the atoms apart by a canonical
 /// labeling, exponential in the worst case too.
 fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<Settled, Refusal> {
-    let Some(p) = settle_as_sets(Parts::of(nnf(f, true)))? else {
+    let Some(AsSets { p, proven }) = settle_as_sets(Parts::of(nnf(f, true)))? else {
         return Ok(Settled::Empty);
     };
     // Settling solved the base, and showed a point of the base with each disjunct that
-    // `alone` takes, so a point need not be found again unless it is wanted.
-    let lone = alone(&p);
+    // `alone` takes (it takes only those [`AsSets::proven`] marks), so a point need not be
+    // found again unless it is wanted.
+    let lone = alone(&p, &proven);
     if !want && (p.ors.is_empty() || lone.is_some()) {
         return Ok(Settled::Point(Model::new()));
     }
@@ -1205,16 +1238,20 @@ fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<
 
 /// The constraints of the settled parts `p` with one disjunct of each disjunction, when no
 /// two disjunctions are linked, through rows of the base or through each other's disjuncts,
-/// and each has a disjunct with no disjunction of its own; otherwise `None`. Settling left
-/// only disjuncts that have a point with the base: each was tested against the rows linked
-/// to it, or holds at a point of the base as it now stands ([`settle_as_sets`]). The rows a
-/// disjunct is linked to are linked to no other disjunction, so the points of separate groups
+/// and each has a disjunct with no disjunction of its own that `proven` marks; otherwise
+/// `None`. Settling left disjuncts that it did not show empty, and `proven`
+/// ([`AsSets::proven`]) marks those shown to have a point with the base: each was tested
+/// against the rows linked to it, or holds at a point of the base as it now stands
+/// ([`settle_as_sets`]). A disjunct that [`solve`] refused is not marked and never taken,
+/// even when it comes first: taking it would read a refusal as a point. The rows a disjunct
+/// is linked to are linked to no other disjunction, so the points of separate groups
 /// combine into one point of the base with every disjunct taken. Whether `p` has such a
 /// point is then fixed by the links, which no renaming changes; the disjunct taken in each
-/// disjunction is the first with no disjunction of its own, which the names order, so only the
-/// point found by [`satisfiable`] may change with them. The groups are found by union and
-/// find over the atoms with path halving, linking each row and each disjunction's atoms.
-fn alone<'a>(p: &'a Parts) -> Option<Vec<&'a Con>> {
+/// disjunction is the first marked one with no disjunction of its own, which the names
+/// order, so only the point found by [`satisfiable`] may change with them. The groups are
+/// found by union and find over the atoms with path halving, linking each row and each
+/// disjunction's atoms.
+fn alone<'a>(p: &'a Parts, proven: &[Vec<bool>]) -> Option<Vec<&'a Con>> {
     fn find(parent: &mut [usize], mut i: usize) -> usize {
         while parent[i] != i {
             parent[i] = parent[parent[i]];
@@ -1257,8 +1294,9 @@ fn alone<'a>(p: &'a Parts) -> Option<Vec<&'a Con>> {
         }
     }
     let mut cons: Vec<&Con> = p.cons.iter().collect();
-    for ds in &p.ors {
-        cons.extend(ds.iter().find(|d| d.ors.is_empty())?.cons.iter());
+    for (ds, shown) in p.ors.iter().zip(proven) {
+        let (d, _) = (ds.iter().zip(shown)).find(|&(d, &s)| s && d.ors.is_empty())?;
+        cons.extend(d.cons.iter());
     }
     Some(cons)
 }
@@ -5371,7 +5409,8 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
         Naming::Tied(..) => {
             return match settle_as_sets(Parts::of(nnf(f, true)))? {
                 None => Ok(no_points(syms)),
-                Some(p) => project_parts(p, syms, Some(f), true),
+                // A projection may keep a disjunct not shown to have a point.
+                Some(AsSets { p, .. }) => project_parts(p, syms, Some(f), true),
             };
         }
     };
@@ -5555,7 +5594,8 @@ fn project_parts(
         if sets {
             for d in &order {
                 let roots = roots_of(d.atoms());
-                let s = settle_as_sets(parts_of(d, &roots));
+                // A projection may keep a disjunct not shown to have a point.
+                let s = settle_as_sets(parts_of(d, &roots)).map(|s| s.map(|s| s.p));
                 // Only a settling that leaves no point shows that a disjunct has none; a
                 // search for one would choose by name.
                 let maybe = !matches!(s, Ok(None));

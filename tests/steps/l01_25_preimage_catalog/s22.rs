@@ -916,36 +916,22 @@ type Counts = (
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 12), (7, &[])),
-    (250, (0, 3, 11), (4, &[])),
-    (500, (0, 0, 11), (4, &[])),
+    (0, (0, 0, 13), (7, &[])),
+    (250, (0, 3, 15), (4, &[])),
+    (500, (0, 0, 14), (4, &[])),
     (750, (0, 0, 6), (8, &[])),
-    (1000, (1, 0, 13), (8, &[])),
-    (1250, (0, 2, 11), (1, &[])),
-    (1500, (0, 0, 9), (8, &[])),
-    (1750, (0, 1, 6), (7, &[])),
-    (2000, (0, 1, 17), (11, &[])),
-    (2250, (0, 1, 9), (10, &[])),
-    (2500, (0, 0, 11), (6, &[])),
-    (2750, (0, 0, 9), (5, &[])),
-    (
-        3000,
-        (0, 0, 18),
-        (4, &["i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]"]),
-    ),
-    (3250, (0, 0, 14), (3, &[])),
-    (3500, (0, 0, 13), (3, &[])),
-    (
-        3750,
-        (0, 2, 8),
-        (
-            7,
-            &[
-                "i [2..] before i [2..=2, 5..]",
-                "i [4..] before i [4..=4, 7..]",
-            ],
-        ),
-    ),
+    (1000, (1, 0, 16), (8, &[])),
+    (1250, (0, 2, 14), (1, &[])),
+    (1500, (0, 0, 10), (8, &[])),
+    (1750, (0, 1, 9), (7, &[])),
+    (2000, (0, 1, 19), (11, &[])),
+    (2250, (0, 1, 11), (10, &[])),
+    (2500, (0, 0, 14), (6, &[])),
+    (2750, (0, 0, 10), (5, &[])),
+    (3000, (0, 0, 20), (4, &[])),
+    (3250, (1, 0, 13), (3, &[])),
+    (3500, (0, 0, 16), (3, &[])),
+    (3750, (0, 2, 11), (7, &[])),
 ];
 
 /// One test per row of [`GUARDED`], each under 60 s at load 120.
@@ -997,9 +983,15 @@ guarded_ranges!(
 /// S22e merged (5adc3c2). 53, was 54, since LIVE3: the transfer before, which shares the
 /// solver, now decides by `live3` the gray shadow over three variables that left it inexact on
 /// `(if ((i mod 3) == 2) { (if ((i mod 3) == 2) { (i + 0) } … < 6)`, so both are exact and
-/// alike. S22e-wide answers 49 more with the classes' relation, exact on the box; three of
-/// those boxes are wider than main's, listed below, because the hull of a class's members
-/// joins pieces that main's projection kept apart, where the relation holds no point.
+/// alike. S22e-wide answers 49 more with the classes' relation, exact on the box; on main
+/// three of those boxes were wider than the transfer before, because the hull of a class's
+/// members joins pieces that its projection kept apart, where the relation holds no point.
+///
+/// Since NAME-ties, which eliminates variables of one color a batch at a time and answers
+/// formulas whose atoms share a color without a search by name, 18 more boxes are exact in
+/// the first half (97) and 15 more in the second (114), and no box is wider than the
+/// transfer before. One box of cases 3250 to 3500, exact on main, is an inexact box narrower
+/// than the transfer before (narrower 1), and sound.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1019,21 +1011,8 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (1, 6, 79, 47, vec![]));
-    assert_eq!(
-        sum(&GUARDED[8..]),
-        (
-            0,
-            4,
-            99,
-            49,
-            vec![
-                "i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]",
-                "i [2..] before i [2..=2, 5..]",
-                "i [4..] before i [4..=4, 7..]",
-            ]
-        )
-    );
+    assert_eq!(sum(&GUARDED[..8]), (1, 6, 97, 47, vec![]));
+    assert_eq!(sum(&GUARDED[8..]), (1, 4, 114, 49, vec![]));
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.

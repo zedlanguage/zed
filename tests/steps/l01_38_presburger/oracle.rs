@@ -527,8 +527,9 @@ fn rows_of_three_terms_answer_the_same_under_any_names_and_order() {
     // gave 17 refusals and 4000 gave 25. `live3` decides the parts left with three variables,
     // which left 13 of 3000 refused without the row test (more than 20 before it). With both,
     // 15 of the 4000 are refused, and each of them is compared under every naming and order.
+    // 14 since NAME-ties, whose eliminations go by color a batch at a time, which decides one more.
     let refused = reorderings(0x38_41, 4000, 4, 3, |rng| corner_rows(rng, 4, 3));
-    assert_eq!(refused, 15);
+    assert_eq!(refused, 14);
 }
 
 #[test]
