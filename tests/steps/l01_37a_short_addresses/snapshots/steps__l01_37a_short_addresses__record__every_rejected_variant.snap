@@ -60,9 +60,9 @@ payload-built-by-position
         row: None,
     },
     Diagnostic {
-        line: 6,
+        line: 3,
         col: 13,
-        message: "the type `Fail` is not defined",
+        message: "an atom type with a payload is compiled from step L2.5",
         steps: [],
         row: None,
     },
@@ -74,7 +74,7 @@ payload-built-by-position
         row: None,
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is compiled from step L2.5") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 13, failure: Some("the type `Fail` is not defined") }, Outcome { line: 6, col: 21, failure: Some("a `match` is compiled from step L2.4") }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is compiled from step L2.5") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is compiled from step L2.5") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is compiled from step L2.4") }]
 
 taint-reaches-clean-sink
   rejected: [

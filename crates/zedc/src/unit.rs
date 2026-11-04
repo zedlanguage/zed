@@ -448,6 +448,10 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             }
         }
     }
+    // The number the database gives each resolved unit's exports, for its importers' keys: a
+    // key holds what it reads, never a hash of it (step L1.37a), and a number per unit keeps
+    // an importer's key the size of its imports.
+    let mut numbers = vec![[0u8; 8]; pkg.units.len()];
     for k in 0..pkg.order.len() {
         let u = pkg.order[k];
         let Some(parsed) = pkg.units[u].parsed.clone() else {
@@ -485,21 +489,16 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             unreachable!("a parsed unit has text")
         };
         let mut parts: Vec<&[u8]> = vec![text.as_bytes()];
-        let digests: Vec<[u8; 32]> = deps
-            .iter()
-            .map(|(_, d)| d.as_ref().map_or([0; 32], |r| r.res.exports.digest()))
-            .collect();
-        for ((path, d), digest) in deps.iter().zip(&digests) {
+        for (path, d) in &deps {
             parts.push(path.as_bytes());
             match d {
-                Ok(_) => parts.push(digest),
+                Ok(_) => parts.push(&numbers[pkg.index[path]]),
                 Err(why) => parts.push(why.as_bytes()),
             }
         }
-        let prelude_digest = prelude.as_ref().map(|(_, r)| r.res.exports.digest());
-        if let (Some((p, _)), Some(d)) = (&prelude, &prelude_digest) {
-            parts.push(p.as_bytes());
-            parts.push(d);
+        if let Some((path, _)) = &prelude {
+            parts.push(path.as_bytes());
+            parts.push(&numbers[pkg.index[path]]);
         }
         let k = query::key("resolve", &parts);
         let linked = Linked { deps, prelude };
@@ -511,6 +510,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
                 error: e.clone(),
             });
         }
+        numbers[u] = db.exports_number(&r.res.exports).to_le_bytes();
         pkg.units[u].resolved = Some(r);
     }
     pkg

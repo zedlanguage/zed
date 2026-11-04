@@ -1,8 +1,8 @@
 //! Loading and resolving a package at the rule of low complexity (DESIGN.md Part G): linear
 //! in its units, its imports and its names, for many units each importing the two before it, a
-//! long chain of imports, one unit importing many, and one import of many names. Each package's
-//! files are built before timing; the work measured is the loader's, from reading each file to
-//! resolving each unit.
+//! long chain of imports, one unit importing many, one import of many names, and many empty
+//! units given as roots. Each package's files are built before timing; the work measured is the
+//! loader's, from reading each file to resolving each unit.
 
 use std::collections::HashMap;
 
@@ -153,5 +153,39 @@ fn a_long_cycle_is_named_whole_in_linear_time() {
     );
     scaling::check_order("a cycle of units", 200, 1, |k| {
         std::hint::black_box(load(&mut Db::new(), &pkgs[&k], &["main"]));
+    });
+}
+
+/// `k` units `u0` … `u{k-1}`, each a new empty file, all given as roots, as when every unit of
+/// a package just laid out is checked at once. An empty unit costs little to read, parse and
+/// resolve (6,500 instructions; a unit of one comment costs 200,000), so the work of finding a
+/// unit among those read so far is what would grow with `k`.
+fn placeholders(k: usize) -> (Memory, Vec<String>) {
+    let fs = (0..k)
+        .map(|i| (format!("u{i}.zed"), String::new()))
+        .collect();
+    (memory(fs), (0..k).map(|i| format!("u{i}")).collect())
+}
+
+#[test]
+fn many_roots_load_in_linear_time() {
+    // Each unit is looked up among those read when it is added (`unit::add`); a linear scan
+    // there in place of `Package::index` makes this 47.2 times the work at 1,000 and 8,000
+    // units (measured), while the other tests here pass with it: a unit of the fan costs
+    // 540,000 instructions to read, parse and resolve, against the scan's 32 per unit compared.
+    let pkgs: HashMap<usize, (Memory, Vec<String>)> = [1000, 8000]
+        .into_iter()
+        .map(|k| (k, placeholders(k)))
+        .collect();
+    for (k, (fs, roots)) in &pkgs {
+        let roots: Vec<&str> = roots.iter().map(String::as_str).collect();
+        let p = load(&mut Db::new(), fs, &roots);
+        assert_eq!(p.units.len(), *k);
+        assert_eq!(mistakes(&p), Vec::<String>::new());
+    }
+    scaling::check_order("many roots", 1000, 1, |k| {
+        let (fs, roots) = &pkgs[&k];
+        let roots: Vec<&str> = roots.iter().map(String::as_str).collect();
+        std::hint::black_box(load(&mut Db::new(), fs, &roots));
     });
 }

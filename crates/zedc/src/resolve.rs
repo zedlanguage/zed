@@ -231,16 +231,17 @@ impl Exports {
             .or_insert(Export { kind, local });
     }
 
-    /// A BLAKE3 hash of the names in order, each with its kind and `local`: what an importer's
-    /// resolution reads of the unit.
-    pub fn digest(&self) -> [u8; 32] {
-        let mut h = blake3::Hasher::new();
+    /// The names in order, each as its length, its bytes, its kind and `local`: what an
+    /// importer's resolution reads of the unit, encoded so that two exports have equal bytes
+    /// only when they are equal.
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
         for (name, e) in &self.names {
-            h.update(&(name.len() as u64).to_le_bytes());
-            h.update(name.as_bytes());
-            h.update(&[e.kind as u8, u8::from(e.local)]);
+            out.extend_from_slice(&(name.len() as u64).to_le_bytes());
+            out.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(&[e.kind as u8, u8::from(e.local)]);
         }
-        *h.finalize().as_bytes()
+        out
     }
 }
 

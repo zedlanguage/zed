@@ -24,22 +24,22 @@ expression: out
 11:13: an array display is compiled from step L3.2
 06-matrix-multiply.zed (L5): does not load: 16:23: a `for` is compiled from step L3.2
 17:10: a `for` is compiled from step L3.2
-07-json-parser.zed (L20): does not load: 9:1: an import is compiled from step L2.3
+07-json-parser.zed (L20): does not load: 9:1: the unit `json` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
+9:1: an import is linked from step L2.4, which ties each name it brings in to the other unit's definition
 12:28: a `match` is compiled from step L2.4
 08-utf8-percent.zed (L6): does not load: 8:1: a struct declaration is compiled from step L2.4
 12:36: a `match` is compiled from step L2.4
+15:48: `Scalar` is not defined
+22:52: `Scalar` is not defined
 28:3: an indexed definition is compiled from step L6.2
 30:10: a `for` is compiled from step L3.2
 33:3: an indexed definition is compiled from step L6.2
 09-canonical-equal.zed (L3): does not load: 7:23: `split` is a prelude word of layer L3
 10:13: `map` is a prelude word of layer L3
-10-regex-matcher.zed (L19): does not load: 9:1: an import is compiled from step L2.3
+10-regex-matcher.zed (L19): does not load: 9:1: the unit `regex` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
+9:1: an import is linked from step L2.4, which ties each name it brings in to the other unit's definition
 16:10: `mix` is not defined
-16:14: `matches` is not defined
 11-csv-split.zed (L5): does not load: 9:1: a struct declaration is compiled from step L2.4
-13:3: `T3` is not defined
-15:9: `T3` is not defined
-16:9: `T3` is not defined
 20:11: a `for` is compiled from step L3.2
 21:11: an array display is compiled from step L3.2
 21:19: a `for` is compiled from step L3.2
@@ -47,20 +47,16 @@ expression: out
 22:3: a `for` is compiled from step L3.2
 28:8: a metadata read `::` is compiled from step L3.2
 12-cyk-table.zed (L6): does not load: 10:1: a struct declaration is compiled from step L2.4
-12:10: `Cell` is not defined
-13:22: `Cell` is not defined
-15:3: `Cell` is not defined
-17:3: `Cell` is not defined
 20:7: a metadata read `::` is compiled from step L3.2
 21:3: an indexed definition is compiled from step L6.2
 30:16: a metadata read `::` is compiled from step L3.2
 30:50: a metadata read `::` is compiled from step L3.2
 31:13: a `for` is compiled from step L3.2
-13-union-find.zed (L6): does not load: 10:1: an import is compiled from step L2.3
+13-union-find.zed (L6): does not load: 10:1: the unit `uf` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
+10:1: an import is linked from step L2.4, which ties each name it brings in to the other unit's definition
 16:11: a `for` is compiled from step L3.2
 17:11: a `for` is compiled from step L3.2
 18:12: a reduction `><` is compiled from step L3.2
-19:11: `components` is not defined
 21:11: a range is compiled from step L3.2
 22:90: an array display is compiled from step L3.2
 14-clustering.zed (L7): does not load: 15:21: this form (MoreGen) is built from layer L5
@@ -71,27 +67,32 @@ expression: out
 27:13: a metadata read `::` is compiled from step L3.2
 16-game-tick.zed (L7): does not load: 16:3: this form (Signature) is built from layer L7
 17-sensor-pipeline.zed (L7): does not load: 12:1: a struct declaration is compiled from step L2.4
-16:3: `Reading` is not defined
 22:13: a `for` is compiled from step L3.2
-18-socket-wordfreq.zed (L7): does not load: 9:12: an applied type is compiled from step L2.5
+18-socket-wordfreq.zed (L7): does not load: 9:12: the type `Stream` is not defined
+9:12: an applied type is compiled from step L2.5
 15:13: a `for` is compiled from step L3.2
 19-bank-ledger.zed (L6): does not load: 13:1: a type declaration is compiled from step L2.5
+13:11: an atom type with a payload is compiled from step L2.5
+13:31: an atom type with a payload is compiled from step L2.5
+13:64: an atom type with a payload is compiled from step L2.5
 26:38: a `match` is compiled from step L2.4
+27:17: a map display is compiled from step L3.2
+28:26: a map display is compiled from step L3.2
+29:27: a map display is compiled from step L3.2
+30:11: a map display is compiled from step L3.2
 33:37: a `match` is compiled from step L2.4
 40:10: a `loop` is compiled from step L6.3
 46:13: a `for` is compiled from step L3.2
 47:23: an array display is compiled from step L3.2
 20-taint.zed (L13): does not load: 9:19: this form (TypeFacet) is built from layer L7
-21-stats-module.zed (L3): does not load: 12:1: an import is compiled from step L2.3
-17:7: `stats` is not defined
+21-stats-module.zed (L3): does not load: 12:1: the unit `stats` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
+12:1: an import is linked from step L2.4, which ties each name it brings in to the other unit's definition
 18:13: an array display is compiled from step L3.2
 22-top-k.zed (L5): does not load: 7:1: a struct declaration is compiled from step L2.4
-10:44: `Entry` is not defined
 11:17: a sort key `asc` or `desc` is compiled from step L5.1
 11:36: a sort key `asc` or `desc` is compiled from step L5.1
 12:13: a `for` is compiled from step L3.2
 23-join-zoo.zed (L5): does not load: 11:1: a struct declaration is compiled from step L2.4
-15:3: `Row` is not defined
 18:21: a `match` is compiled from step L2.4
 20:21: a `for` is compiled from step L3.2
 26:12: a `for` is compiled from step L3.2
@@ -108,8 +109,6 @@ expression: out
 24-weighted-pick.zed (L6): does not load: 10:1: a struct declaration is compiled from step L2.4
 14:7: a metadata read `::` is compiled from step L3.2
 15:3: an indexed definition is compiled from step L6.2
-20:22: `Range` is not defined
-20:54: `Range` is not defined
 22:26: a `loop` is compiled from step L6.3
 25-autocorrelation.zed (L5): does not load: 11:51: a tuple-destructuring parameter is compiled from step L2.4
 12:13: a `for` is compiled from step L3.2
@@ -118,35 +117,39 @@ expression: out
 18:34: a `for` is compiled from step L3.2
 19:13: an array display is compiled from step L3.2
 27-parent-chain.zed (L6): does not load: 7:1: a struct declaration is compiled from step L2.4
-10:46: `Link` is not defined
 13:7: a metadata read `::` is compiled from step L3.2
 18:29: a `loop` is compiled from step L6.3
 20:3: an indexed definition is compiled from step L6.2
 22:28: a range is compiled from step L3.2
 24:13: a `for` is compiled from step L3.2
 28-precedence-climbing.zed (L6): does not load: 10:1: a struct declaration is compiled from step L2.4
+10:18: a family type `[T]` is compiled from step L3.2
+10:30: a family type `[T]` is compiled from step L3.2
 25:14: a metadata read `::` is compiled from step L3.2
-27:3: `S` is not defined
 27:23: a metadata read `::` is compiled from step L3.2
 27:43: an array display is compiled from step L3.2
 27:77: a metadata read `::` is compiled from step L3.2
 31:6: a metadata read `::` is compiled from step L3.2
 37:26: a metadata read `::` is compiled from step L3.2
-40:41: `S` is not defined
 40:71: an array display is compiled from step L3.2
-41:10: `S` is not defined
 41:28: an array display is compiled from step L3.2
 45:9: a `loop` is compiled from step L6.3
 29-late-dedup.zed (L7): does not load: 14:1: a struct declaration is compiled from step L2.4
-18:3: `Reading` is not defined
+21:15: the type `Stream` is not defined
 21:15: an applied type is compiled from step L2.5
 24:13: a `for` is compiled from step L3.2
-30-client-server.zed (L20): does not load: 11:1: an import is compiled from step L2.3
-12:1: an import is compiled from step L2.3
+30-client-server.zed (L20): does not load: 11:1: the unit `api` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
+11:1: an import is linked from step L2.4, which ties each name it brings in to the other unit's definition
+12:1: the unit `server` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
+12:1: an import is linked from step L2.4, which ties each name it brings in to the other unit's definition
 15:28: a `match` is compiled from step L2.4
-31-typechecker.zed (L6): does not load: 18:1: an import is compiled from step L2.3
-19:1: an import is compiled from step L2.3
+31-typechecker.zed (L6): does not load: 18:1: the unit `ast` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
+18:1: an import is linked from step L2.4, which ties each name it brings in to the other unit's definition
+19:1: the unit `check` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
+19:1: an import is linked from step L2.4, which ties each name it brings in to the other unit's definition
 21:51: a `match` is compiled from step L2.4
+23:54: an array display is compiled from step L3.2
+24:68: an array display is compiled from step L3.2
 27:51: an array display is compiled from step L3.2
 27:66: an array display is compiled from step L3.2
 30:11: a `for` is compiled from step L3.2
@@ -154,5 +157,5 @@ expression: out
 40:25: a `match` is compiled from step L2.4
 45:12: a `match` is compiled from step L2.4
 46:12: a `match` is compiled from step L2.4
-50:13: `fv` is not defined
+48:12: an array display is compiled from step L3.2
 60:13: a `for` is compiled from step L3.2

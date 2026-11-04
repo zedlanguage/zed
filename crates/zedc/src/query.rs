@@ -39,7 +39,7 @@ use zed_kernel::Term;
 use crate::ast::{self, Stmt};
 use crate::elab::{Cones, Unit};
 use crate::lex::Span;
-use crate::resolve::Resolved;
+use crate::resolve::{Exports, Resolved};
 use crate::run::{self, Diagnostic};
 use crate::unit;
 
@@ -96,6 +96,8 @@ pub struct Db {
     computed: HashMap<Query, usize>,
     /// The number given to each definition's text, for a row's key.
     texts: HashMap<Box<str>, u64>,
+    /// The number given to each unit's exports ([`Exports::bytes`]), for its importers' keys.
+    exports: HashMap<Box<[u8]>, u64>,
     /// This database's own number, so that the numbers a [`Cones`] keeps are read only with
     /// the database that gave them.
     stamp: u64,
@@ -113,6 +115,7 @@ impl Default for Db {
             resolved: HashMap::new(),
             computed: HashMap::new(),
             texts: HashMap::new(),
+            exports: HashMap::new(),
             stamp: STAMPS.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -128,6 +131,7 @@ impl Clone for Db {
             resolved: self.resolved.clone(),
             computed: self.computed.clone(),
             texts: self.texts.clone(),
+            exports: self.exports.clone(),
             stamp: STAMPS.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -191,6 +195,13 @@ impl Db {
         let r = check();
         rows.insert(k, r.clone());
         r
+    }
+
+    /// The number of the exports `e`, given when this database first meets them: two exports
+    /// share a number only when they are equal.
+    pub fn exports_number(&mut self, e: &Exports) -> u64 {
+        let n = self.exports.len() as u64;
+        *self.exports.entry(e.bytes().into()).or_insert(n)
     }
 
     /// How many times query `q` has been computed.
