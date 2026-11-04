@@ -195,6 +195,14 @@ pub struct Output {
 pub trait Lookup: std::fmt::Debug + Send + Sync {
     /// The value at `key`, or why the port could not answer, which stops the wave.
     fn get(&self, key: &Value) -> Result<Value, String>;
+
+    /// Why the port does not take `key`, which stops the wave, asked before the key is
+    /// compared with the keys read so far: a port whose keys may hold values whose comparison
+    /// costs more than their memory refuses them here. By default a port takes every key.
+    fn refuses(&self, key: &Value) -> Option<String> {
+        let _ = key;
+        None
+    }
 }
 
 /// The ports a program runs against: one wave of inputs, and the outputs it writes
@@ -1391,6 +1399,9 @@ impl<'t> Machine<'_, 't> {
             }
             let k = as_key(&k);
             let world = &mut self.ev.world;
+            if let Some(why) = world.sources[&*port].refuses(&k) {
+                return Err(KernelError::Port(port.to_string(), why).into());
+            }
             if let Some(v) = world.reads.get(&*port).and_then(|r| r.get(&*k)) {
                 return give(v.clone());
             }

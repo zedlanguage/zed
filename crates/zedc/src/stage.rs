@@ -19,10 +19,10 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use zed_kernel::types::Type;
-use zed_kernel::{Evaluator, Pattern, Shared, Term, Value, World};
+use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Shared, Term, Value, World};
 
 use crate::elab::{Def, Unit};
 use crate::interp;
@@ -87,18 +87,17 @@ fn pattern_names(p: &Pattern) -> Vec<&Arc<str>> {
 /// each be free or bound by `let` to a function that ends ([`Needs`]), and the binder of a
 /// name reads that set. A part shared under two bindings of a name it calls so gives each
 /// place its own answer.
-///
-/// Complexity tradeoff: a term that ends but whose form does not show it (recursion, `fix`,
-/// `gen`, a call through a parameter) is treated as possibly not ending: the build stage
-/// leaves it to run time ("its form does not show that it ends"), and enumeration and `@exact`
-/// skip it. Why: whether a term ends is undecidable, and running it under a step count would
-/// switch behavior at a size. Trigger: any of those forms in the term or in a function it
-/// calls. Tests:
-/// `l01_28_staging::mix::a_term_whose_form_does_not_show_it_ends_is_left_to_run`,
-/// `l01_28_staging::mix::a_term_whose_form_shows_it_ends_is_built_with_no_fuel`.
-/// COMPLEXITY.md row C20 (docs/thresholds.md replacement 6). A complete solution cannot
-/// exist; a stronger sound one would add a termination proof by decreasing measures
-/// (size-change termination, PSPACE-complete in the call graph).
+// Complexity tradeoff: a term that ends but whose form does not show it (recursion, `fix`,
+// `gen`, a call through a parameter) is treated as possibly not ending: the build stage
+// leaves it to run time ("its form does not show that it ends"), and enumeration and `@exact`
+// skip it. Why: whether a term ends is undecidable, and running it under a step count would
+// switch behavior at a size. Trigger: any of those forms in the term or in a function it
+// calls. Tests:
+// `l01_28_staging::mix::a_term_whose_form_does_not_show_it_ends_is_left_to_run`,
+// `l01_28_staging::mix::a_term_whose_form_shows_it_ends_is_built_with_no_fuel`.
+// COMPLEXITY.md row C20 (docs/thresholds.md replacement 6). A complete solution cannot
+// exist; a stronger sound one would add a termination proof by decreasing measures
+// (size-change termination, PSPACE-complete in the call graph).
 pub fn ends(t: &Term) -> bool {
     Reader::default().read(t).is_some()
 }
@@ -383,19 +382,18 @@ enum SetNode {
 /// that each add a name to what a shared part needs, and two chains of calls joined at every
 /// level, are so joined in time near the length of a path, not the size of the sets
 /// (COMPLEXITY.md row ENDS).
-///
-/// Complexity tradeoff: the time of a union is bounded by the number of pairs of nodes it reads
-/// that no earlier union read, not by the sizes of its sets, and no bound in the size of the
-/// term is proved for that number: a term whose parts need many sets that share few nodes
-/// pairwise could make it near the product of their sizes. Why: the sets are the answer the
-/// reading of each part must carry so that it is read once, and hash-consed tries with a memo
-/// of the pairs joined make the common case, sets that mostly agree, cost a path. Trigger: many
-/// distinct parts calling many distinct names whose sets are joined in ways unlike those of a
-/// program's nesting. Tests: the four scaling tests in `l01_28_staging::ends`, each at k and 8k,
-/// one of which fails at 60 s with the memo of pairs removed. COMPLEXITY.md row ENDS. A complete
-/// solution would bound the pairs read, for instance by reading each binder only against the
-/// one name it binds (a membership query per binder on a persistent structure built once per
-/// part), which needs the parts' sets never to be materialized.
+// Complexity tradeoff: the time of a union is bounded by the number of pairs of nodes it reads
+// that no earlier union read, not by the sizes of its sets, and no bound in the size of the
+// term is proved for that number: a term whose parts need many sets that share few nodes
+// pairwise could make it near the product of their sizes. Why: the sets are the answer the
+// reading of each part must carry so that it is read once, and hash-consed tries with a memo
+// of the pairs joined make the common case, sets that mostly agree, cost a path. Trigger: many
+// distinct parts calling many distinct names whose sets are joined in ways unlike those of a
+// program's nesting. Tests: the four scaling tests in `l01_28_staging::ends`, each at k and 8k,
+// one of which fails at 60 s with the memo of pairs removed. COMPLEXITY.md row ENDS. A complete
+// solution would bound the pairs read, for instance by reading each binder only against the
+// one name it binds (a membership query per binder on a persistent structure built once per
+// part), which needs the parts' sets never to be materialized.
 struct Sets {
     nodes: Vec<SetNode>,
     /// The number of names in each set.
@@ -891,22 +889,21 @@ enum MapNode {
 /// pushed; the bindings of the names a part reads are that map restricted to the part's set
 /// of names, and two places under the same bindings of those names have one map, so the map's
 /// number is a key of what the part mixes to.
-///
-/// Complexity tradeoff: the time of a restriction is bounded by the number of pairs of a map
-/// and a set it reads that no earlier restriction read, not by the sizes of the map and the
-/// set, and no bound in the size of the term is proved for that number, as for a union of
-/// [`Sets`]: parts that read many sets sharing few nodes, under scopes that differ in many
-/// places, could make it near the product of their sizes. Why: the restricted map is the key
-/// that lets a part shared by two places under the same bindings be mixed once, and a
-/// hash-consed restriction with a memo of the pairs read makes the common case, a scope one
-/// name larger than one seen and a set much like one seen, cost a path. Trigger: many distinct
-/// parts reading many distinct names under scopes unlike those of a program's nesting. Tests:
-/// `l01_28_staging::dag::mixing_nested_ifs_whose_arms_are_one_part_scales`,
-/// `l01_28_staging::dag::mixing_nested_lets_of_a_parameter_over_one_body_scales` and
-/// `l01_28_staging::scaling::mixing_a_chain_of_local_definitions_scales`, each at n and 8n.
-/// COMPLEXITY.md row F80. A complete solution would bound the pairs read, for instance
-/// by keying a part by the innermost binding among the names it reads, found by a query on a
-/// structure over the scope's positions that needs no set materialized.
+// Complexity tradeoff: the time of a restriction is bounded by the number of pairs of a map
+// and a set it reads that no earlier restriction read, not by the sizes of the map and the
+// set, and no bound in the size of the term is proved for that number, as for a union of
+// [`Sets`]: parts that read many sets sharing few nodes, under scopes that differ in many
+// places, could make it near the product of their sizes. Why: the restricted map is the key
+// that lets a part shared by two places under the same bindings be mixed once, and a
+// hash-consed restriction with a memo of the pairs read makes the common case, a scope one
+// name larger than one seen and a set much like one seen, cost a path. Trigger: many distinct
+// parts reading many distinct names under scopes unlike those of a program's nesting. Tests:
+// `l01_28_staging::dag::mixing_nested_ifs_whose_arms_are_one_part_scales`,
+// `l01_28_staging::dag::mixing_nested_lets_of_a_parameter_over_one_body_scales` and
+// `l01_28_staging::scaling::mixing_a_chain_of_local_definitions_scales`, each at n and 8n.
+// COMPLEXITY.md row F83. A complete solution would bound the pairs read, for instance
+// by keying a part by the innermost binding among the names it reads, found by a query on a
+// structure over the scope's positions that needs no set materialized.
 struct Maps {
     nodes: Vec<MapNode>,
     sizes: Vec<u32>,
@@ -1367,6 +1364,16 @@ struct Entry {
     known: Option<Shared>,
     reads: Set,
     prev: Map,
+    /// The number of parameters of the function the term is, when it is a lambda or a name of
+    /// one; such an entry is a function.
+    arity: Option<usize>,
+    /// The number of what the binding is exactly: a literal by its value, any other term by
+    /// its id and the exact numbers of the bindings it reads ([`Mixer::number`]).
+    fine: Binding,
+    /// Whether a call of the binding is shown to end by its form, as [`ends`] reads a call.
+    ends: bool,
+    /// The port that answers calls of the function, when it is one whose calls end.
+    stub: Option<Arc<Stub>>,
 }
 
 /// The names in scope, innermost last, with the positions of each name's entries, so a name
@@ -1465,27 +1472,253 @@ fn inline(o: Out) -> Term {
     }
 }
 
+/// Why a build-stage term is left to run when its form does not show that it ends.
+const FORM: &str = "its form does not show that it ends";
+
+/// The names the lambda `k`, called, calls by name, when its form shows that a call ends once
+/// each of them ends ([`ends`]); `None` when no binding of them makes it end.
+fn called(k: &Term) -> Option<Vec<Arc<str>>> {
+    let mut r = Reader::default();
+    let needs = r.read(k)?;
+    let mut by_name: Vec<Option<Arc<str>>> = vec![None; r.names.len()];
+    for (x, &n) in &r.names {
+        by_name[n as usize] = Some(x.clone());
+    }
+    let names = r.sets.members(needs).into_iter();
+    Some(
+        names
+            .map(|n| by_name[n as usize].clone().expect("a name read"))
+            .collect(),
+    )
+}
+
+/// The value of the closed term `t` under the prelude, its calls of the functions of `stubs`
+/// answered by their ports for the run `calls`.
+fn run_with(t: Term, stubs: &[Arc<Stub>], calls: &Arc<Run>) -> Result<Value, String> {
+    let world = stubs.iter().fold(World::new(), |w, s| {
+        let port = Port {
+            stub: s.clone(),
+            run: calls.clone(),
+        };
+        w.source(&s.port, Arc::new(port))
+    });
+    Evaluator::new(world)
+        .run(&interp::prelude(t))
+        .map_err(|e| e.to_string())
+}
+
+/// The value of the closed term `t`, when its form shows that it ends.
+fn run(t: Term) -> Result<Value, String> {
+    if !ends(&t) {
+        return Err(FORM.into());
+    }
+    run_with(t, &[], &Arc::new(Run::default()))
+}
+
+/// Whether the value `v` is compared in time linear in the memory it holds, and, as the
+/// arguments of a call when `key`, told apart by the key a port is asked: each leaf is a
+/// boolean, a number (when `key`, other than a float zero, which a key reads as `0.0`
+/// whatever its sign) or a string already written out, in tuples and keypaths. A join of
+/// strings not yet written out may be exponentially longer than its nodes, and comparing it
+/// writes it out. A family's or an atom's parts are not walked.
+fn compared(v: &Value, key: bool) -> bool {
+    let mut todo = vec![v];
+    while let Some(v) = todo.pop() {
+        match v {
+            Value::Bool(_) | Value::Int(_) | Value::Big(_) | Value::Rat(_) => {}
+            Value::Str(s) => {
+                if !s.is_written_out() {
+                    return false;
+                }
+            }
+            Value::Float(x) => {
+                if key && x.get() == 0.0 {
+                    return false;
+                }
+            }
+            Value::Tuple(items) | Value::Path(items) => todo.extend(items.iter()),
+            Value::Atom(_) | Value::Family(_) => return false,
+        }
+    }
+    true
+}
+
+/// A function bound outside a part being mixed, as a part calls it: a lambda that reads its
+/// arguments from a port, and the answers given so far, so each call at an argument is run
+/// once.
+#[derive(Debug)]
+struct Stub {
+    /// The port the lambda reads.
+    port: Arc<str>,
+    /// `(#0, .., #n) -> port[(#0, .., #n)]`.
+    lam: Shared,
+    /// The function's name and term.
+    name: Arc<str>,
+    known: Shared,
+    /// The bindings the term reads, in order, each function among them bound to its stub.
+    lets: Vec<(Arc<str>, Shared)>,
+    /// The stubs of the functions among them.
+    reads: Vec<Arc<Stub>>,
+    /// The answer at each argument tuple asked so far: `None` where the call fails.
+    table: Mutex<BTreeMap<Value, Option<Value>>>,
+}
+
+impl Stub {
+    /// The call of the function at the arguments `key`, under the bindings it reads.
+    fn term_at(&self, key: &Value) -> Term {
+        let Value::Tuple(args) = key else {
+            unreachable!("a stub is asked with the tuple of its arguments")
+        };
+        let f = Shared::new(Term::Var(self.name.clone()));
+        let call = Term::App(f, args.iter().cloned().map(Term::Lit).collect());
+        let call = Term::Let(self.name.clone(), self.known.clone(), Shared::new(call));
+        self.lets.iter().rev().fold(call, |body, (x, e)| {
+            Term::Let(x.clone(), e.clone(), Shared::new(body))
+        })
+    }
+
+    fn answer(&self, key: &Value) -> Option<Option<Value>> {
+        self.table.lock().expect("one thread").get(key).cloned()
+    }
+}
+
+/// Puts in `stub`'s table its answer at `key`, and before it each answer that answer needs.
+/// Each run calls the functions it reads through stubs that do not answer a key not yet in
+/// their tables; such a run stops, the missing answer is found first, and the run starts
+/// again, so the runs do not nest.
+fn fill(stub: &Arc<Stub>, key: &Value) {
+    let mut todo = vec![(stub.clone(), key.clone())];
+    while let Some((s, k)) = todo.last().cloned() {
+        if s.answer(&k).is_some() {
+            todo.pop();
+            continue;
+        }
+        let calls = Arc::new(Run {
+            stop: true,
+            ..Run::default()
+        });
+        let out = run_with(s.term_at(&k), &s.reads, &calls);
+        match calls.need.lock().expect("one thread").take() {
+            Some(need) => todo.push(need),
+            None => {
+                s.table.lock().expect("one thread").insert(k, out.ok());
+                todo.pop();
+            }
+        }
+    }
+}
+
+/// One run with stubs: the first answer it needed that no table held, when it stops at such an
+/// answer (`stop`), and otherwise each call it made, with its arguments and answer.
+#[derive(Debug, Default)]
+struct Run {
+    need: Mutex<Option<(Arc<Stub>, Value)>>,
+    log: Mutex<Vec<(Probe, Answer)>>,
+    stop: bool,
+}
+
+/// The port of a stub in one run.
+#[derive(Debug)]
+struct Port {
+    stub: Arc<Stub>,
+    run: Arc<Run>,
+}
+
+impl Lookup for Port {
+    fn refuses(&self, key: &Value) -> Option<String> {
+        let plain = compared(key, true);
+        (!plain).then(|| "an argument a key cannot tell apart".into())
+    }
+
+    fn get(&self, key: &Value) -> Result<Value, String> {
+        let answer = match self.stub.answer(key) {
+            Some(a) => a,
+            None if self.run.stop => {
+                *self.run.need.lock().expect("one thread") = Some((self.stub.clone(), key.clone()));
+                return Err("an answer not yet known".into());
+            }
+            None => {
+                fill(&self.stub, key);
+                self.stub.answer(key).expect("filled")
+            }
+        };
+        // An answer that cannot be compared is not recorded, and the run fails.
+        if answer.as_ref().is_some_and(|v| !compared(v, false)) {
+            return Err("an answer that cannot be compared".into());
+        }
+        if !self.run.stop {
+            let log = (
+                Probe::Call(self.stub.name.clone(), key.clone()),
+                Answer::Gives(answer.clone()),
+            );
+            self.run.log.lock().expect("one thread").push(log);
+        }
+        answer.ok_or_else(|| "the call fails".into())
+    }
+}
+
+/// A question a part being mixed asked of the scope outside it: what a function gives at a
+/// tuple of arguments, or what a binding is, exactly.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Probe {
+    Call(Arc<str>, Value),
+    Same(Arc<str>),
+}
+
+/// The answer to a [`Probe`]: the call's value, `None` when it fails; or the binding's exact
+/// number.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Answer {
+    Gives(Option<Value>),
+    Is(Binding),
+}
+
+/// A node of the tree of the questions a part asked ([`Mixer::memo`]): the part mixed, or a
+/// question with the node each answer leads to.
+enum Node {
+    Leaf(Shared, Summary),
+    Ask(Probe, BTreeMap<Answer, usize>),
+}
+
+/// What a part held in a node being mixed has asked, in order, of the entries of the scope
+/// below `base`, where the part was entered.
+struct Watch {
+    base: usize,
+    seen: BTreeSet<Probe>,
+    said: Vec<(Probe, Answer)>,
+}
+
 #[derive(Default)]
 struct Mixer {
     scope: Scope,
     report: Report,
     frees: Frees,
     maps: Maps,
-    /// The last number given to a build-stage binding ([`Mixer::number`]). One number is
-    /// never given to two bindings that can evaluate differently, so a map of names to
-    /// bindings says the same of the names it maps for the mixer's whole life.
+    /// The last number given to a build-stage binding ([`Mixer::number`]).
     given: Binding,
     /// The number of each build-stage binding to a literal, by its value.
     literals: BTreeMap<Value, Binding>,
-    /// The number of each other build-stage binding (a function, or a name of one), by the id
-    /// of its term and the map of the names that term reads to their bindings where it is
-    /// bound.
-    functions: HashMap<(u64, Map), Binding>,
-    /// The part each node held in the term `mix_top` is mixing became, by the node's id and
-    /// the map of the names it reads to their bindings ([`Maps::restrict`]); what a part mixes
-    /// to depends on nothing else, so a part shared by two places under the same bindings of
-    /// its names is mixed once and the two places share the result.
-    memo: HashMap<(u64, Map), (Shared, Summary)>,
+    /// The exact number of each other build-stage binding, by the id of its term and the exact
+    /// numbers of the bindings that term reads where it is bound, in the order of their names.
+    fines: HashMap<(u64, Vec<Binding>), Binding>,
+    /// The number of the functions of one kind: lambda or a name of one, the number of
+    /// parameters, and whether their calls are shown to end.
+    kinds: HashMap<(bool, usize, bool), Binding>,
+    /// The names each lambda, called, calls ([`called`]), by the lambda's id.
+    calls: HashMap<u64, Option<Vec<Arc<str>>>>,
+    /// The ports given to stubs so far.
+    ports: u64,
+    /// What each part held in a node in the term `mix_top` is mixing became, by the node's id
+    /// and the map of the names it reads to their bindings ([`Maps::restrict`]): the root of a
+    /// tree in [`Mixer::trie`] that asks what the part asked of the functions it reads
+    /// ([`Probe`]), each answer leading to the next question or to the mixed part. What a
+    /// part mixes to depends on nothing else, so a part shared by two places under the same
+    /// bindings of its names, or under functions that answer it alike, is mixed once and the
+    /// places share the result.
+    memo: HashMap<(u64, Map), usize>,
+    trie: Vec<Node>,
+    /// What each part held in a node now being mixed has asked, innermost last.
+    watch: Vec<Watch>,
     /// What each part held inline in a node being mixed reads, and how many positions its
     /// inline parts take, in preorder ([`Mixer::cluster`]).
     arena: Vec<(Summary, usize)>,
@@ -1498,57 +1731,151 @@ impl Mixer {
             .map_or(EMPTY, |k| self.frees.summary(Part::held(k)).free);
         let x = self.frees.name(&name);
         let prev = self.scope.top;
-        let b = match &known {
-            Some(k) => self.number(k, reads, prev),
-            None => UNKNOWN,
-        };
-        self.scope.top = self.maps.insert(prev, x, b);
-        self.scope.push(Entry {
+        let mut e = Entry {
             name,
-            known,
+            known: None,
             reads,
             prev,
-        });
+            arity: None,
+            fine: UNKNOWN,
+            ends: false,
+            stub: None,
+        };
+        let b = match &known {
+            Some(k) => self.number(&mut e, k),
+            None => UNKNOWN,
+        };
+        e.known = known;
+        self.scope.top = self.maps.insert(prev, x, b);
+        self.scope.push(e);
     }
 
-    /// The number of a binding to the build-stage term `k`, which reads `reads`, pushed where
-    /// the scope's bindings are `prev`. The number says what the binding is, not when it was
-    /// pushed: a literal is numbered by its value, any other term by its id and the bindings
-    /// of the names it reads, which are the bindings [`Mixer::eval`] closes it under. Two
-    /// bindings with one number evaluate alike, so a part reached under either mixes to one
-    /// term and is mixed once.
-    ///
-    /// Complexity tradeoff: what is given up is sharing, not exactness. Two bindings to
-    /// functions that are different terms, or the same term over different bindings of the
-    /// names it reads, get two numbers even when they compute the same values, so a part that
-    /// reads the name is mixed once under each, and the mixed term holds a copy for each; the
-    /// result is still the tree walk's. Why: whether two functions compute the same values is
-    /// undecidable in general, and a number by structure alone does not help, since functions
-    /// built on different paths differ in structure. Trigger: a part shared below `let`s that
-    /// bind a name to a function reading its earlier binding, as `let f = (y) -> f(y) + 1` and
-    /// `let f = (y) -> f(y) + 2` on the two arms of each of d nested `if`s over one body: the
-    /// 2^d paths bind 2^d different functions, and the mixed term has 2^d nodes where O(d^2)
-    /// would do (1298, 5144, 20510, 81956 nodes at d = 8, 10, 12, 14). A literal has no such
-    /// limit: `let x = x + a` and `let x = x + b` take one number per value. Tests:
-    /// `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives`
-    /// (exact on that family), `..._is_not_exponential` (ignored, open: STAGE-fn), and
-    /// `mixing_nested_lets_of_a_built_value_over_one_body_scales` for literals. COMPLEXITY.md
-    /// row F80. A complete solution would number a function by what the parts that read it
-    /// use of it, here the value `f(1)`, which needs the mixer to record which build-stage
-    /// results of a part depend on a binding and key the part by those results.
-    fn number(&mut self, k: &Shared, reads: Set, prev: Map) -> Binding {
-        let next = self.given + 1;
-        let b = match &**k {
-            Term::Lit(v) => *self.literals.entry(v.clone()).or_insert(next),
-            _ => {
-                let names = self.maps.restrict(&self.frees.sets, prev, reads);
-                *self.functions.entry((k.id(), names)).or_insert(next)
-            }
+    /// The number of the entry `e`, bound to the build-stage term `k` and pushed next, and
+    /// what else `e` holds of `k`. The number says what mixing can tell apart of the binding,
+    /// not when it was pushed. A literal is numbered by its value when the value is compared
+    /// in time linear in its memory ([`compared`]), else as any other term. A function, a
+    /// lambda or a name of one, is numbered by its kind alone (lambda or name, the number of
+    /// parameters, whether its calls end): a part that calls it is keyed by what it asked of it
+    /// as well ([`Probe`]), so a part reached under two functions that answer it alike is
+    /// mixed once.
+    /// Any other term is numbered by `e.fine`, its id and the exact numbers of the bindings it
+    /// reads, which are the bindings [`Mixer::eval`] closes it under. Two bindings with one
+    /// number, or two functions with one number that answer alike, evaluate alike, so a part
+    /// reached under either mixes to one term and is mixed once.
+    fn number(&mut self, e: &mut Entry, k: &Shared) -> Binding {
+        let at = self.scope.len();
+        let below = |x: &Arc<str>| self.scope.known_below(x, at);
+        let reads: Vec<Option<usize>> = self
+            .frees
+            .names_in(e.reads)
+            .into_iter()
+            .map(below)
+            .collect();
+        let at_entry = |j: usize| &self.scope.entries[j];
+        e.arity = match &**k {
+            Term::Lam(ps, _) => Some(ps.len()),
+            Term::Var(y) => below(y).and_then(|j| at_entry(j).arity),
+            _ => None,
         };
-        if b == next {
-            self.given = next;
+        e.ends = match &**k {
+            Term::PrimFn(_) => true,
+            Term::Var(y) => below(y).is_none_or(|j| at_entry(j).ends),
+            _ => false,
+        };
+        if let Term::Lit(v) = &**k
+            && compared(v, false)
+        {
+            let next = self.given + 1;
+            let b = *self.literals.entry(v.clone()).or_insert(next);
+            self.given = self.given.max(b);
+            e.fine = b;
+            return b;
         }
+        let fines = reads
+            .iter()
+            .map(|j| j.map_or(UNKNOWN, |j| at_entry(j).fine))
+            .collect();
+        let next = self.given + 1;
+        e.fine = *self.fines.entry((k.id(), fines)).or_insert(next);
+        self.given = self.given.max(e.fine);
+        let Some(arity) = e.arity else {
+            return e.fine;
+        };
+        e.stub = self.stub(e, k, at);
+        e.ends = e.stub.is_some();
+        let lam = matches!(**k, Term::Lam(..));
+        let next = self.given + 1;
+        let b = *self.kinds.entry((lam, arity, e.ends)).or_insert(next);
+        self.given = self.given.max(b);
         b
+    }
+
+    /// The stub of the function `e`, bound to `k` at position `at`: `None` unless a call of
+    /// it is shown to end, with each function it reads by that function's own stub and each
+    /// other binding as it is.
+    fn stub(&mut self, e: &Entry, k: &Shared, at: usize) -> Option<Arc<Stub>> {
+        let called = match &**k {
+            Term::Var(y) => Some(vec![y.clone()]),
+            _ => self
+                .calls
+                .entry(k.id())
+                .or_insert_with(|| called(k))
+                .clone(),
+        }?;
+        let entries = &self.scope.entries;
+        let callee_ends = |y: &Arc<str>| {
+            self.scope
+                .known_below(y, at)
+                .is_none_or(|j| entries[j].ends)
+        };
+        if !called.iter().all(callee_ends) {
+            return None;
+        }
+        let mut todo: BTreeSet<usize> = self
+            .frees
+            .names_in(e.reads)
+            .into_iter()
+            .filter_map(|y| self.scope.known_below(y, at))
+            .collect();
+        let (mut lets, mut reads) = (Vec::new(), Vec::new());
+        while let Some(j) = todo.pop_last() {
+            let f = &entries[j];
+            let known = f.known.as_ref().expect("a build-stage entry");
+            if f.arity.is_some() {
+                let s = f.stub.clone()?;
+                lets.push((f.name.clone(), s.lam.clone()));
+                reads.push(s);
+                continue;
+            }
+            // A binding of another form is evaluated where it is bound, so only these, whose
+            // evaluation ends, are kept.
+            if !matches!(**known, Term::Lit(_) | Term::PrimFn(_) | Term::Var(_)) {
+                return None;
+            }
+            todo.extend(
+                self.frees
+                    .names_in(f.reads)
+                    .into_iter()
+                    .filter_map(|y| self.scope.known_below(y, j)),
+            );
+            lets.push((f.name.clone(), known.clone()));
+        }
+        lets.reverse();
+        self.ports += 1;
+        let port: Arc<str> = format!("#stub{}", self.ports).into();
+        let arity = e.arity.expect("a function");
+        let params: Vec<Arc<str>> = (0..arity).map(|i| format!("#{i}").into()).collect();
+        let key = Term::Prim(Prim::Tuple, params.iter().cloned().map(Term::Var).collect());
+        let read = Term::Prim(Prim::Get, vec![Term::Read(port.clone()), key]);
+        Some(Arc::new(Stub {
+            port,
+            lam: Shared::new(Term::Lam(params, Shared::new(read))),
+            name: e.name.clone(),
+            known: k.clone(),
+            lets,
+            reads,
+            table: Mutex::default(),
+        }))
     }
 
     fn bind(&mut self, name: Arc<str>, stage: Stage, t: &Shared) {
@@ -1600,36 +1927,231 @@ impl Mixer {
         self.maps.size(bound) == self.frees.sets.size(words)
     }
 
-    /// The value of the build-stage term `t`, which reads `free`, under the bindings it
-    /// needs: the innermost build-stage entry of each name it reads, and of each name those
-    /// read, below them.
-    fn eval(&self, t: &Term, free: Set) -> Result<Value, String> {
+    /// The entries the build-stage term `t`, which reads `free`, needs, in position order: the
+    /// innermost build-stage entry of each name it reads, and of each name those read, below
+    /// them. With `base`, each function below `base` that `t` or an entry from `base` up
+    /// reads is not followed but given apart, second, to be called through its stub; the
+    /// rest are bindings below `base` that such a function reads by no other path.
+    fn needs(&self, free: Set, base: Option<usize>) -> (Vec<usize>, Vec<usize>) {
         let top = self.scope.len();
         let names = |s: Set| self.frees.names_in(s);
-        let mut todo: BTreeSet<usize> = names(free)
+        // Each entry needed, with whether `t` or an entry from `base` up reads it.
+        let mut todo: BTreeMap<usize, bool> = names(free)
             .into_iter()
             .filter_map(|x| self.scope.known_below(x, top))
+            .map(|i| (i, true))
             .collect();
-        let mut lets = Vec::new();
-        while let Some(i) = todo.pop_last() {
+        let (mut lets, mut stubs) = (Vec::new(), Vec::new());
+        while let Some((i, first)) = todo.pop_last() {
             let e = &self.scope.entries[i];
-            todo.extend(
-                names(e.reads)
-                    .into_iter()
-                    .filter_map(|x| self.scope.known_below(x, i)),
-            );
-            let known = e.known.clone().expect("a build-stage entry");
-            lets.push((e.name.clone(), known));
+            let above = base.is_none_or(|b| i >= b);
+            if !above && first && e.arity.is_some() {
+                stubs.push(i);
+                continue;
+            }
+            for y in names(e.reads) {
+                if let Some(j) = self.scope.known_below(y, i) {
+                    *todo.entry(j).or_insert(false) |= above;
+                }
+            }
+            lets.push(i);
         }
-        let closed = lets
-            .into_iter()
-            .fold(t.clone(), |body, (x, e)| Term::Let(x, e, Shared::new(body)));
+        lets.reverse();
+        stubs.reverse();
+        (lets, stubs)
+    }
+
+    /// `t` under the `let`s of the entries at the positions `at`, in order, each function in
+    /// `stubs` bound to its stub.
+    fn closed(&self, t: &Term, at: &[usize], stubs: &[usize]) -> Term {
+        let mut all: Vec<(usize, bool)> = at.iter().map(|&i| (i, false)).collect();
+        all.extend(stubs.iter().map(|&i| (i, true)));
+        all.sort_unstable();
+        all.into_iter().rev().fold(t.clone(), |body, (i, stub)| {
+            let e = &self.scope.entries[i];
+            let bound = match stub {
+                true => e.stub.as_ref().expect("a stub").lam.clone(),
+                false => e.known.clone().expect("a build-stage entry"),
+            };
+            Term::Let(e.name.clone(), bound, Shared::new(body))
+        })
+    }
+
+    /// The value of the build-stage term `t`, which reads `free`, under the bindings it
+    /// needs ([`Mixer::needs`]). While a part held in a node is mixed, each function bound
+    /// outside the part that `t` reads is called through its stub, and each call, its
+    /// arguments and its answer, is recorded as what the part asked ([`Probe::Call`]); when
+    /// one of those has no stub, or the run with stubs fails, the part is recorded as
+    /// depending on what each of them is ([`Probe::Same`]) and `t` is evaluated as written.
+    // Complexity tradeoff: what is given up is sharing, not exactness. A part that calls a
+    // function bound outside it is keyed by what it asked of the function only when the
+    // function's calls are shown to end (each function it calls through a name has a stub,
+    // and the other bindings it reads are literals, primitives or names), when the calls are
+    // made outside a family operation or a `fix` (a pure region, which reads no port), and
+    // when each run succeeds with arguments that hold no float zero, no family, no atom and
+    // no string not yet written out ([`compared`]); otherwise the part is keyed by what the
+    // function is, its term and the bindings it reads, and is mixed once under each such
+    // function, as before. A call whose answer is not yet known runs the function's term with
+    // its own reads called through their stubs; a run that meets an answer not yet known
+    // stops, that answer is found first, and the run starts again, so a function whose term
+    // asks m new answers runs m + 1 times. Why: whether two functions compute the same values
+    // is undecidable in general, so a part is keyed by the answers it took, which mixing can
+    // compare; a key of `-0.0` reads as `0.0`, a family's entries are keys, and comparing a
+    // join of strings writes it out, which may take time exponential in its nodes. The runs
+    // start again rather than nest, so the thread's stack does not grow with the depth of the
+    // functions. Trigger: a part shared below `let`s of functions that differ on each path and
+    // are called inside a family operation, through a parameter, or with such an argument;
+    // for the restart, a function that calls many earlier functions at many new arguments in
+    // one run. Tests:
+    // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives`,
+    // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_scales` (at d and
+    // 8d), `l01_28_staging::dag::a_call_the_stubs_cannot_answer_is_mixed_as_written` and
+    // `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F83. A
+    // complete solution would read a part's calls inside a pure region through a pure lookup,
+    // and key a call at an argument holding a family or a join by a hash-consed form of it.
+    fn eval(&mut self, t: &Term, free: Set) -> Result<Value, String> {
+        let base = self.watch.last().map(|w| w.base);
+        let (lets, stubs) = self.needs(free, base);
+        if stubs.is_empty() {
+            return run(self.closed(t, &lets, &[]));
+        }
+        let entries = &self.scope.entries;
+        if stubs.iter().any(|&i| entries[i].stub.is_none()) {
+            return self.as_written(t, free, &stubs);
+        }
+        let closed = self.closed(t, &lets, &stubs);
         if !ends(&closed) {
-            return Err("its form does not show that it ends".into());
+            return Err(FORM.into());
         }
-        Evaluator::new(World::new())
-            .run(&interp::prelude(closed))
-            .map_err(|e| e.to_string())
+        let ports: Vec<Arc<Stub>> = stubs
+            .iter()
+            .map(|&i| entries[i].stub.clone().expect("a stub"))
+            .collect();
+        let calls = Arc::new(Run::default());
+        let out = run_with(closed, &ports, &calls);
+        let log = std::mem::take(&mut *calls.log.lock().expect("one thread"));
+        for (p, a) in log {
+            self.record(p, a);
+        }
+        match out {
+            Ok(v) => Ok(v),
+            Err(_) => self.as_written(t, free, &stubs),
+        }
+    }
+
+    /// The value of `t`, which reads `free`, with every binding it needs as written, recorded as
+    /// depending on what each function at `stubs` is.
+    fn as_written(&mut self, t: &Term, free: Set, stubs: &[usize]) -> Result<Value, String> {
+        for &i in stubs {
+            let e = &self.scope.entries[i];
+            let (x, fine) = (e.name.clone(), e.fine);
+            self.record(Probe::Same(x), Answer::Is(fine));
+        }
+        let (lets, _) = self.needs(free, None);
+        run(self.closed(t, &lets, &[]))
+    }
+
+    /// Records that the part being mixed asked `p` and was told `a`, once.
+    fn record(&mut self, p: Probe, a: Answer) {
+        if let Some(w) = self.watch.last_mut()
+            && w.seen.insert(p.clone())
+        {
+            w.said.push((p, a));
+        }
+    }
+
+    /// The answer to `p` here, recorded as asked by the part being mixed.
+    fn ask(&mut self, p: &Probe) -> Answer {
+        match p {
+            Probe::Call(x, k) => {
+                let Value::Tuple(args) = k else {
+                    unreachable!("a call is asked with the tuple of its arguments")
+                };
+                let f = Shared::new(Term::Var(x.clone()));
+                let call = Term::App(f, args.iter().cloned().map(Term::Lit).collect());
+                let x = self.frees.name(x);
+                let free = self.frees.sets.one(x);
+                Answer::Gives(self.eval(&call, free).ok())
+            }
+            Probe::Same(x) => {
+                let top = self.scope.len();
+                let Some(i) = self.scope.known_below(x, top) else {
+                    return Answer::Is(UNKNOWN);
+                };
+                // The functions bound outside the part being mixed that what `x` is reads.
+                if let Some(base) = self.watch.last().map(|w| w.base) {
+                    let mut todo = BTreeSet::from([i]);
+                    while let Some(j) = todo.pop_last() {
+                        let e = &self.scope.entries[j];
+                        if j < base {
+                            let (y, fine) = (e.name.clone(), e.fine);
+                            self.record(Probe::Same(y), Answer::Is(fine));
+                            continue;
+                        }
+                        let reads = self.frees.names_in(e.reads);
+                        todo.extend(
+                            reads
+                                .into_iter()
+                                .filter_map(|y| self.scope.known_below(y, j)),
+                        );
+                    }
+                }
+                Answer::Is(self.scope.entries[i].fine)
+            }
+        }
+    }
+
+    /// What the part whose tree of questions starts at `at` mixed to here, when it was mixed
+    /// before under functions that answer each question as they answer here.
+    fn recall(&mut self, mut at: usize) -> Option<(Shared, Summary)> {
+        loop {
+            let p = match &self.trie[at] {
+                Node::Leaf(s, sum) => return Some((s.clone(), *sum)),
+                Node::Ask(p, _) => p.clone(),
+            };
+            let a = self.ask(&p);
+            let Node::Ask(_, next) = &self.trie[at] else {
+                unreachable!("asked above")
+            };
+            at = *next.get(&a)?;
+        }
+    }
+
+    /// Remembers that the part held in the node with id `id`, under `names`, mixed to `s`
+    /// after it asked `said`.
+    fn remember(&mut self, key: (u64, Map), said: &[(Probe, Answer)], s: Shared, sum: Summary) {
+        let leaf = self.trie.len();
+        self.trie.push(Node::Leaf(s, sum));
+        let chain = |trie: &mut Vec<Node>, from: &[(Probe, Answer)]| {
+            from.iter().rev().fold(leaf, |next, (p, a)| {
+                trie.push(Node::Ask(p.clone(), BTreeMap::from([(a.clone(), next)])));
+                trie.len() - 1
+            })
+        };
+        let Some(&root) = self.memo.get(&key) else {
+            let root = chain(&mut self.trie, said);
+            self.memo.insert(key, root);
+            return;
+        };
+        let mut at = root;
+        for (i, (p, a)) in said.iter().enumerate() {
+            let Node::Ask(q, next) = &self.trie[at] else {
+                return;
+            };
+            if q != p {
+                return;
+            }
+            match next.get(a) {
+                Some(&n) => at = n,
+                None => {
+                    let rest = chain(&mut self.trie, &said[i + 1..]);
+                    if let Node::Ask(_, next) = &mut self.trie[at] {
+                        next.insert(a.clone(), rest);
+                    }
+                    return;
+                }
+            }
+        }
     }
 
     /// `o` held in a node, its summary recorded under the node's id.
@@ -1647,6 +2169,8 @@ impl Mixer {
     /// `t` with its build-stage subterms evaluated.
     fn mix_top(&mut self, t: Part<'_>) -> Out {
         self.memo.clear();
+        self.trie.clear();
+        self.watch.clear();
         self.arena.clear();
         self.frees.of.clear();
         let site = match t.node {
@@ -1722,7 +2246,7 @@ impl Mixer {
     /// under each map of the names it reads to their bindings, and every place that reaches
     /// it again under that map shares the result, so the parts mixed, and the mixed term's
     /// distinct parts, are not more than the term's distinct parts times the maps each is
-    /// reached under (COMPLEXITY.md row F80).
+    /// reached under (COMPLEXITY.md row F83).
     fn mix(&mut self, site: Site<'_>) -> Out {
         let mut todo = vec![Mix::Part(site)];
         let mut done: Vec<Out> = Vec::new();
@@ -1788,7 +2312,15 @@ impl Mixer {
                     let out = done.pop().expect("the part mixed");
                     let sum = out.sum;
                     let s = self.hold(out);
-                    self.memo.insert((id, names), (s.clone(), sum));
+                    let w = self.watch.pop().expect("pushed on entering the part");
+                    self.remember((id, names), &w.said, s.clone(), sum);
+                    // What the part asked of the scope outside it, the part that holds it
+                    // asked too, of the scope outside that one.
+                    if !self.watch.is_empty() {
+                        for (p, _) in &w.said {
+                            self.ask(p);
+                        }
+                    }
                     done.push(Out {
                         term: Mixed::Held(s),
                         sum,
@@ -1832,13 +2364,19 @@ impl Mixer {
             .maps
             .restrict(&self.frees.sets, self.scope.top, sum.free);
         if let Some(s) = held {
-            if let Some((out, sum)) = self.memo.get(&(s.id(), names)) {
+            let root = self.memo.get(&(s.id(), names)).copied();
+            if let Some((out, sum)) = root.and_then(|at| self.recall(at)) {
                 done.push(Out {
-                    term: Mixed::Held(out.clone()),
-                    sum: *sum,
+                    term: Mixed::Held(out),
+                    sum,
                 });
                 return;
             }
+            self.watch.push(Watch {
+                base: self.scope.len(),
+                seen: BTreeSet::new(),
+                said: Vec::new(),
+            });
             todo.push(Mix::Store(s.id(), names));
         }
         if value && self.build(sum, names) {

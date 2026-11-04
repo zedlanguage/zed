@@ -452,17 +452,92 @@ fn mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives() {
     );
 }
 
-/// Not fixed (COMPLEXITY.md F80, open: STAGE-fn): a function bound on each path is numbered
-/// by its node and the bindings it reads, and the `2^k` paths to level `k` give `2^k`
-/// different functions, though they take only `k + 1` values at 1; so the mixed term has
-/// `2^d` nodes where `O(d^2)` would do (measured 1298, 5144, 20510, 81956 nodes and 38, 89,
-/// 365, 2000 ms at d = 8, 10, 12, 14, load 55 to 74).
+/// A function bound on each path is numbered by its kind, and a part that calls it is keyed by
+/// what it asked of it (COMPLEXITY.md F83): the `2^k` functions on the paths to level `k` take
+/// `k + 1` values at 1, so the parts below level `k` are mixed once for each, and the mixed
+/// term has `(3d^2 + 17d - 6) / 2` nodes, not `2^d` (before: 1298, 5144, 20510, 81956 nodes at
+/// d = 8, 10, 12, 14).
 #[test]
-#[ignore = "STAGE-fn: function bindings that differ on each path are mixed once per path"]
-fn mixing_lets_of_composed_functions_over_one_body_is_not_exponential() {
+fn mixing_lets_of_composed_functions_over_one_body_scales() {
     deep(|| {
-        let d = 12;
-        let (mixed, _) = stage::mix(&composed(d, true), &["main"]);
-        assert!(distinct(&mixed.defs[0].term) <= 4 * d * d);
+        let n = 12;
+        let units: BTreeMap<usize, Unit> = [n, FACTOR * n]
+            .into_iter()
+            .map(|d| (d, composed(d, true)))
+            .collect();
+        scaling::check_order(
+            "stage::mix on d nested ifs whose two arms are lets of two composed functions over one body",
+            n,
+            2,
+            |d| {
+                let (mixed, _) = stage::mix(&units[&d], &["main"]);
+                assert_eq!(distinct(&mixed.defs[0].term), (3 * d * d + 17 * d - 6) / 2);
+            },
+        );
     });
+}
+
+/// A call whose argument holds a float zero is not answered by the function's stub, since the
+/// key a port is asked reads `-0.0` as `0.0`: the part is evaluated as written, and
+/// `f(-0.0)` is `1.0 / -0.0`, not `1.0 / 0.0`.
+#[test]
+fn a_call_the_stubs_cannot_answer_is_mixed_as_written() {
+    let call = Shared::new(Term::App(
+        Shared::new(var("f")),
+        vec![Term::Lit(Value::float(-0.0))],
+    ));
+    let body = Term::If(Shared::new(var("c")), call.clone(), call);
+    let f = lam(
+        &["y"],
+        prim(Prim::Div, vec![Term::Lit(Value::float(1.0)), var("y")]),
+    );
+    let main = Term::Let("f".into(), Shared::new(f), Shared::new(body));
+    let unit = Unit {
+        defs: vec![def("main", Term::Lam(vec!["c".into()], Shared::new(main)))],
+        tests: Arc::from([]),
+        warnings: Vec::new(),
+    };
+    let (mixed, report) = stage::mix(&unit, &["main"]);
+    let printed = mixed.defs[0].term.to_string();
+    let shown = |x: f64| Term::Lit(Value::float(x)).to_string();
+    let (minus, plus) = (shown(f64::NEG_INFINITY), shown(f64::INFINITY));
+    assert!(printed.contains(&minus), "{printed}");
+    assert!(!printed.replace(&minus, "").contains(&plus), "{printed}");
+    assert!(report.left.is_empty(), "{report:?}");
+}
+
+/// A call at a join of strings not yet written out is not answered by the function's stub:
+/// the join of `"a"` doubled 62 times is 62 nodes and `2^62` bytes long, and comparing it with
+/// a key asked before would write it out. The part is evaluated as written.
+#[test]
+fn a_call_at_a_long_join_is_mixed_as_written() {
+    let twice = lam(&["s"], prim(Prim::Concat, vec![var("s"), var("s")]));
+    let long = (0..62).fold(lit("a"), |s, _| {
+        Term::App(Shared::new(var("twice")), vec![s])
+    });
+    let call = Term::App(Shared::new(var("f")), vec![long]);
+    let part = Shared::new(Term::Let(
+        "twice".into(),
+        Shared::new(twice),
+        Shared::new(call),
+    ));
+    let body = Term::If(Shared::new(var("c")), part.clone(), part);
+    let main = Term::Let(
+        "f".into(),
+        Shared::new(lam(&["s"], lit(1i64))),
+        Shared::new(body),
+    );
+    let unit = Unit {
+        defs: vec![def("main", Term::Lam(vec!["c".into()], Shared::new(main)))],
+        tests: Arc::from([]),
+        warnings: Vec::new(),
+    };
+    let (mixed, report) = stage::mix(&unit, &["main"]);
+    assert!(
+        mixed.defs[0]
+            .term
+            .to_string()
+            .contains("if c { 1 } else { 1 }")
+    );
+    assert!(report.left.is_empty(), "{report:?}");
 }
