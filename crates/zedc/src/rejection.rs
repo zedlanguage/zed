@@ -41,6 +41,7 @@ rows! {
     MapOutsideValues => "`.map` at a parameter outside the value positions",
     KeyOutsideBound => "Key outside the permission bound",
     UndischargedRegion => "Undischarged region assertion",
+    ReadBelowDomain => "Read below the domain with no boundary entry",
     OverlappingArrows => "Cross-unit overlapping incomparable arrows",
     AmbiguousImport => "Ambiguous imported name",
     NeedInCallerScope => "Need met only by an arrow in the caller's scope",
