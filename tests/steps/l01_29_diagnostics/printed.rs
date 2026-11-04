@@ -56,9 +56,14 @@ fn printed_by(text: &str) -> (Vec<(Ty, String)>, String) {
 /// only with a bound of carriers: one that no signature around it bounds so, or whose bound
 /// holds other values, is `_` (DESIGN.md L1.26).
 fn stated(t: &Ty) -> Ty {
+    stated_in(t, Arc::default())
+}
+
+/// [`stated`] of `t` inside signatures that bound the variables `scope` by carriers.
+fn stated_in(t: &Ty, scope: Arc<HashSet<Arc<str>>>) -> Ty {
     let mut t = t.clone();
     // Each part to read, with the variables the signatures around it bound by carriers.
-    let mut stack = vec![(&mut t, Arc::new(HashSet::<Arc<str>>::new()))];
+    let mut stack = vec![(&mut t, scope)];
     while let Some((t, scope)) = stack.pop() {
         t.family = KType::empty();
         let free = t.vars.iter().any(|v| !scope.contains(v));
@@ -68,8 +73,9 @@ fn stated(t: &Ty) -> Ty {
             stack.extend(s.items.iter_mut().map(|t| (t, scope.clone())));
             stack.extend(s.fields.values_mut().map(|t| (t, scope.clone())));
         }
+        // A row is shared and keeps what its components hold, so it is made again.
         for cs in t.tuples.iter_mut() {
-            stack.extend(cs.iter_mut().map(|t| (t, scope.clone())));
+            *cs = cs.iter().map(|c| stated_in(c, scope.clone())).collect();
         }
         for s in t.fns.iter_mut() {
             let s = Arc::make_mut(s);

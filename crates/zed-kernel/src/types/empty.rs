@@ -72,7 +72,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use num_bigint::BigUint;
 
 use super::bdd::Part;
-use super::{Lits, Morphism, Parts, Row, Type};
+use super::{Lits, Morphism, Node, Parts, Row, Type};
 use crate::value::Value;
 
 thread_local! {
@@ -154,6 +154,13 @@ impl Type {
 
     /// Whether no value is in `self`.
     pub fn is_empty(&self) -> bool {
+        // A type of scalars alone is empty when its parts list none, which costs less than
+        // finding the type among those kept.
+        if let Node::Parts(p, _) = &*self.0
+            && p.scalars_only()
+        {
+            return !p.has_scalars();
+        }
         if let Some(b) = MEMO.with(|m| m.borrow().get(self).copied()) {
             return b;
         }

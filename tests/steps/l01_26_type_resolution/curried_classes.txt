@@ -1,0 +1,160 @@
+=== "h = g(0);\nk = h(1);\nm = k(2);\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+top h = ((int) -> ((int) -> (int, int, int)))
+top k = ((int) -> (int, int, int))
+top m = (int, int, int)
+call "h(1)" = (int) -> ((int) -> (int, int, int))
+call "k(2)" = (int) -> (int, int, int)
+=== "take(f: (int) -> (int) -> (int, int, int)) = f(1)(2);\nr = take(f: g(0));\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig take = (f: ((int) -> ((int) -> (int, int, int)))) -> (int, int, int)
+top r = (int, int, int)
+call "f(1)" = (int) -> ((int) -> (int, int, int))
+call "f(1)(2)" = (int) -> (int, int, int)
+=== "take(f: (String) -> (int) -> (int, int, int)) = f(\"a\")(2);\nr = take(f: g(0));\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig take = (f: ((String) -> ((int) -> (int, int, int)))) -> (int, int, int)
+top r = !_
+call "f(\"a\")" = (String) -> ((int) -> (int, int, int))
+call "f(\"a\")(2)" = (int) -> (int, int, int)
+err `take` does not take (((int) -> ((int) -> (int, int, int)))) [take(f: g(0))]
+  note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
+  note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
+  note `take` takes (f: ((String) -> ((int) -> (int, int, int)))) -> (int, int, int)
+  note `take` is declared here, `(f: ((String) -> ((int) -> (int, int, int)))) -> (int, int, int)`
+=== "h = g(0);\nk = h(\"x\");\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+top h = ((int) -> ((int) -> (int, int, int)))
+top k = !_
+call "h(\"x\")" = (int) -> ((int) -> (int, int, int))
+err `h` does not take ("x") [h("x")]
+  note this expression is "x"
+  note `h` takes (int) -> ((int) -> (int, int, int))
+=== "h = g(0)(1);\nk = h(\"x\");\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+top h = ((int) -> (int, int, int))
+top k = !_
+call "g(0)(1)" = (int) -> ((int) -> (int, int, int))
+call "h(\"x\")" = (int) -> (int, int, int)
+err `h` does not take ("x") [h("x")]
+  note this expression is "x"
+  note `h` takes (int) -> (int, int, int)
+=== "u(n: int) = g(n);\nv(n: int) = u(n)(n)(n);\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig u = (n: int) -> ((int) -> ((int) -> (int, int, int)))
+sig v = (n: int) -> !_
+err `n` of `u` is named: pass it as `n: …` [n]
+  note `u` is declared here, `(n: int) -> ((int) -> ((int) -> (int, int, int)))`
+=== "w(f: (int) -> (int) -> (int, int, int)) = f;\nr = w(f: g(0))(1)(2);\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig w = (f: ((int) -> ((int) -> (int, int, int)))) -> ((int) -> ((int) -> (int, int, int)))
+top r = (int, int, int)
+call "w(f: g(0))(1)" = (int) -> ((int) -> (int, int, int))
+call "w(f: g(0))(1)(2)" = (int) -> (int, int, int)
+=== "w(f: (f64) -> (int) -> (int, int, int)) = f;\nr = w(f: g(0));\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig w = (f: ((f64) -> ((int) -> (int, int, int)))) -> ((f64) -> ((int) -> (int, int, int)))
+top r = !_
+err `w` does not take (((int) -> ((int) -> (int, int, int)))) [w(f: g(0))]
+  note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
+  note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
+  note `w` takes (f: ((f64) -> ((int) -> (int, int, int)))) -> ((f64) -> ((int) -> (int, int, int)))
+  note `w` is declared here, `(f: ((f64) -> ((int) -> (int, int, int)))) -> ((f64) -> ((int) -> (int, int, int)))`
+=== "t = (g(0), g(1));\nk = t;\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+top k = (((int) -> ((int) -> (int, int, int))), ((int) -> ((int) -> (int, int, int))))
+top t = (((int) -> ((int) -> (int, int, int))), ((int) -> ((int) -> (int, int, int))))
+err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))` [g(0)]
+  note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
+  note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
+err a tuple takes data, and this value may hold a function, `(int) -> ((int) -> (int, int, int))` [g(1)]
+  note this call of `g` gives ((int) -> ((int) -> (int, int, int)))
+  note `g` is declared here, `(int) -> ((int) -> ((int) -> (int, int, int)))`
+=== "c(x: int) = if x > 0 { g(0) } else { g(1) };\nd = c(x: 1)(2)(3);\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig c = (x: int) -> ((int) -> ((int) -> (int, int, int)))
+top d = (int, int, int)
+call "c(x: 1)(2)" = (int) -> ((int) -> (int, int, int))
+call "c(x: 1)(2)(3)" = (int) -> (int, int, int)
+=== "y(q) = g(q)(q);\nz = y(1)(2);\nzz = y(1.5)(2.5);\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig y = (q: int) -> ((int) -> (int, int, int))
+top z = !_
+top zz = !_
+call "g(q)(q)" = (int) -> ((int) -> (int, int, int))
+err `q` of `y` is named: pass it as `q: …` [1]
+  note `y` is declared here, `(q: int) -> ((int) -> (int, int, int))`
+err `q` of `y` is named: pass it as `q: …` [1.5]
+  note `y` is declared here, `(q: int) -> ((int) -> (int, int, int))`
+=== "take(f: (int) -> (int) -> (int, int, int)) = f(1)(2);\nr = take(f: (a1) -> (a2) -> (0 + 1, a1 + 1, a2 + 1));\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig take = (f: ((int) -> ((int) -> (int, int, int)))) -> (int, int, int)
+top r = (int, int, int)
+call "f(1)" = (int) -> ((int) -> (int, int, int))
+call "f(1)(2)" = (int) -> (int, int, int)
+=== "k(x: int) = (a) -> (b) -> (x + 1, a + 1, b + 1);\nm(f: (f64) -> (int) -> (int, int, int)) = 0;\nr = m(f: k(x: 1));\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig k = (x: int) -> ((int) -> ((int) -> (int, int, int)))
+sig m = (f: ((f64) -> ((int) -> (int, int, int)))) -> 0
+top r = !_
+err `m` does not take (((int) -> ((int) -> (int, int, int)))) [m(f: k(x: 1))]
+  note this call of `k` gives ((int) -> ((int) -> (int, int, int)))
+  note `k` is declared here, `(x: int) -> ((int) -> ((int) -> (int, int, int)))`
+  note `m` takes (f: ((f64) -> ((int) -> (int, int, int)))) -> 0
+  note `m` is declared here, `(f: ((f64) -> ((int) -> (int, int, int)))) -> 0`
+=== "h = g(0)(1);\nq = h + 1;\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+top h = ((int) -> (int, int, int))
+top q = !_
+call "g(0)(1)" = (int) -> ((int) -> (int, int, int))
+err `+` does not take (((int) -> (int, int, int)), 1) [h + 1]
+  note `h` is ((int) -> (int, int, int)) here
+  note `h` is defined as this expression, ((int) -> (int, int, int))
+  note this call gives ((int) -> (int, int, int))
+  note this literal, 1, is 1
+  note this literal, 1, is 1
+  note `+` takes (int, int) -> int
+  note `+` takes (f64, f64) -> f64
+  note `+` takes (rat, rat) -> rat
+=== "h = g;\nk = h(0)(\"a\");\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+top h = ((int) -> ((int) -> ((int) -> (int, int, int))))
+top k = !_
+call "h(0)" = (int) -> ((int) -> ((int) -> (int, int, int)))
+call "h(0)(\"a\")" = (int) -> ((int) -> (int, int, int))
+err `this value` does not take ("a") [h(0)("a")]
+  note this expression is "a"
+  note `this value` takes (int) -> ((int) -> (int, int, int))
+=== "p(x) = (y) -> x + y;\nq = p(1)(2.5);\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig p = (x: T) -> ((T) -> T) for T in int | f64 | rat
+top q = !_
+err `x` of `p` is named: pass it as `x: …` [1]
+  note `p` is declared here, `(x: T) -> ((T) -> T) for T in int | f64 | rat`
+=== "p(x) = (y) -> (z) -> x + y + z;\nq = p(1)(2)(3);\nr = p(1.5)(2.5)(3.5);\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig p = (x: T) -> ((T) -> ((T) -> T)) for T in int | f64 | rat
+top q = !_
+top r = !_
+err `x` of `p` is named: pass it as `x: …` [1]
+  note `p` is declared here, `(x: T) -> ((T) -> ((T) -> T)) for T in int | f64 | rat`
+err `x` of `p` is named: pass it as `x: …` [1.5]
+  note `p` is declared here, `(x: T) -> ((T) -> ((T) -> T)) for T in int | f64 | rat`
+=== "p(x) = (y) -> (z) -> (x + 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig p = (x: int) -> ((_) -> ((_) -> (int, _, _)))
+top q = !_
+top r = !_
+err `x` of `p` is named: pass it as `x: …` [1]
+  note `p` is declared here, `(x: int) -> ((_) -> ((_) -> (int, _, _)))`
+err `x` of `p` is named: pass it as `x: …` [1]
+  note `p` is declared here, `(x: int) -> ((_) -> ((_) -> (int, _, _)))`
+=== "o(x) = (y) -> (z) -> x + 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n"
+sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
+sig o = (x: int) -> ((_) -> ((_) -> int))
+top q = bool
+top w = (!_, 0)
+err `x` of `o` is named: pass it as `x: …` [1]
+  note `o` is declared here, `(x: int) -> ((_) -> ((_) -> int))`
+err `x` of `o` is named: pass it as `x: …` [1]
+  note `o` is declared here, `(x: int) -> ((_) -> ((_) -> int))`

@@ -834,7 +834,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if let Some(o) = self.whence.get(&id).map(|o| o.span) {
                     let t = self.t;
                     let name = &t.funcs[&id].name;
-                    self.also(from, o, || format!("`{name}` is declared here, `{sig}`"));
+                    self.also(from, o, |ck| {
+                        format!("`{name}` is declared here, `{}`", ck.sig_text(&sig))
+                    });
                 }
                 m.ty(out);
             }
@@ -945,6 +947,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = m.take_ty();
                 let s = only_fn(&t).expect("a lambda's type is a function type");
                 if !self.fits_slot(&s, &e, "the lambda", span) {
+                    let (s, e) = (self.sig_text(&s), self.sig_text(&e));
                     self.error(span, format!("the lambda is `{s}`, not `{e}`"));
                 }
                 self.fitted(span, order, extra);
@@ -1293,12 +1296,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let shown = self.show(t);
                         let mut notes = self.derive(&[d.span]);
                         notes.extend(self.reasons(t));
+                        let dt = self.text(&dt);
                         self.error_with(d.span, format!("{what} is {dt}, not {shown}"), notes);
                     }
                 }
                 None => {
-                    if !dt.subtype(t) {
+                    if !self.subtype(&dt, t) {
                         let why = dt.refused(t);
+                        let (dt, t) = (self.text(&dt), self.text(t));
                         self.error(d.span, format!("{what} is {dt}, not {t}{why}"));
                     }
                 }
@@ -1522,7 +1527,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             m.k(Frame::Tuple(s));
             return m.job(Job::Expr(e));
         }
-        m.ty(Ty::tuple(std::mem::take(&mut s.out)));
+        let cs = std::mem::take(&mut s.out);
+        m.ty(Ty::of_row(match s.data {
+            true => ty::Row::of_data(cs),
+            false => ty::Row::new(cs),
+        }));
     }
 
     /// A condition's type and the facts it makes when it holds and when it does not.
@@ -1944,7 +1953,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 p if p.is_atoms() => {}
                 p => {
-                    self.error(span, format!("`{}` is {}, not a function", s.what, p.ty()));
+                    let shown = self.text(&p.ty());
+                    self.error(span, format!("`{}` is {shown}, not a function", s.what));
                 }
             }
         }
@@ -1973,6 +1983,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
         what: Rc<str>,
     ) {
+        let sig = self.open(&sig);
         let n = sig.params.len();
         let mut slots: Vec<Option<At>> = vec![None; n];
         let mut next = 0;
@@ -2143,7 +2154,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             return m.ty(Ty::empty());
         }
-        let message = format!("`{what}` does not take these arguments: it is `{sig}`");
+        let message = format!(
+            "`{what}` does not take these arguments: it is `{}`",
+            self.sig_text(sig)
+        );
         m.k(Frame::Fail(Some((span, message))));
         m.each(args.exprs());
     }
@@ -2303,11 +2317,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut order: Vec<Option<usize>> = vec![None; e.params.len()];
         let mut extra = Vec::new();
         if params.len() < pos.len() {
+            let shown = self.sig_text(&e);
             self.rejects(
                 Row::ParameterKinds,
                 span,
                 format!(
-                    "the lambda takes {} parameter{}, and `{e}` passes {} by position",
+                    "the lambda takes {} parameter{}, and `{shown}` passes {} by position",
                     params.len(),
                     if params.len() == 1 { "" } else { "s" },
                     pos.len()
@@ -2336,11 +2351,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                         Some(f) => format!(": rename it {f}"),
                         None => String::new(),
                     };
+                    let shown = self.sig_text(&e);
                     self.rejects(
                         Row::ParameterKinds,
                         p.span,
                         format!(
-                            "the lambda's parameter `{}` is not a parameter of `{e}`{fix}",
+                            "the lambda's parameter `{}` is not a parameter of `{shown}`{fix}",
                             p.name
                         ),
                     );
@@ -2399,11 +2415,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(FitWait::Body) => {
                 let r = m.take_ty();
                 let want = s.e.arrows[s.a].result.subst(&s.unheld);
-                if !r.subtype(&want) {
+                if !self.subtype(&r, &want) {
                     let why = r.refused(&want);
+                    let (r, want, e) = (self.text(&r), self.text(&want), self.sig_text(&s.e));
                     self.error(
                         s.body.span,
-                        format!("the lambda returns {r}, and `{}` returns {want}{why}", s.e),
+                        format!("the lambda returns {r}, and `{e}` returns {want}{why}"),
                     );
                 }
                 s.a += 1;
@@ -2422,13 +2439,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let mut t = arrow.params[j].clone();
                         if let Some(a) = &p.ty {
                             let a = denoted(a);
-                            if !t.subtype(&a) {
+                            if !self.subtype(&t, &a) {
                                 let why = t.refused(&a);
+                                let (ta, tt) = (self.text(&a), self.text(&t));
+                                let e = self.sig_text(&s.e);
                                 self.error(
                                     p.span,
                                     format!(
-                                        "the lambda's parameter `{}` is {a}, and `{}` passes {t}{why}",
-                                        p.name, s.e
+                                        "the lambda's parameter `{}` is {ta}, and `{e}` passes {tt}{why}",
+                                        p.name
                                     ),
                                 );
                             }

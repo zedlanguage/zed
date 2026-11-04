@@ -420,6 +420,23 @@ struct Tuples {
 thread_local! {
     static EMPTY: Type = Type::build_empty();
     static TOP: Type = !Type::build_empty();
+    /// `bool`, `int`, `rat`, `f64` and `String`, made once, so that every use of one is one
+    /// node and compares equal to another by pointer.
+    static SCALARS: [Type; 5] = [
+        Type::with(|p| p.bools = 3),
+        Type::with(|p| p.ints.cofinite = true),
+        Type::with(|p| p.rats.cofinite = true),
+        Type::with(|p| p.floats.cofinite = true),
+        Type::with(|p| p.strings.cofinite = true),
+    ];
+    /// Each universe's type, made once, in the order of [`Universe`].
+    static UNIVERSES: [Type; 4] = [
+        Universe::Scalar,
+        Universe::Tuple,
+        Universe::Struct,
+        Universe::Morphism,
+    ]
+    .map(Type::build_universe);
 }
 
 impl Parts {
@@ -571,27 +588,27 @@ impl Type {
 
     /// `bool`.
     pub fn bool() -> Type {
-        Type::with(|p| p.bools = 3)
+        SCALARS.with(|s| s[0].clone())
     }
 
     /// `int`.
     pub fn int() -> Type {
-        Type::with(|p| p.ints.cofinite = true)
+        SCALARS.with(|s| s[1].clone())
     }
 
     /// `rat`.
     pub fn rat() -> Type {
-        Type::with(|p| p.rats.cofinite = true)
+        SCALARS.with(|s| s[2].clone())
     }
 
     /// `f64`.
     pub fn f64() -> Type {
-        Type::with(|p| p.floats.cofinite = true)
+        SCALARS.with(|s| s[3].clone())
     }
 
     /// `String`.
     pub fn string() -> Type {
-        Type::with(|p| p.strings.cofinite = true)
+        SCALARS.with(|s| s[4].clone())
     }
 
     /// The type of one scalar literal or bare atom; `None` for any other value.
@@ -654,6 +671,10 @@ impl Type {
 
     /// Every value of `u`.
     pub fn universe(u: Universe) -> Type {
+        UNIVERSES.with(|us| us[u as usize].clone())
+    }
+
+    fn build_universe(u: Universe) -> Type {
         Type::with(|p| match u {
             Universe::Scalar => {
                 p.bools = 3;
@@ -1000,6 +1021,67 @@ impl Parts {
             && self.tuples == Tuples::default()
             && !self.structs
             && self.morphisms.is_leaf() == Some(false)
+    }
+
+    /// Whether it holds a boolean, number or string, read from the parts.
+    fn has_scalars(&self) -> bool {
+        self.bools != 0
+            || [&self.ints, &self.rats, &self.floats, &self.strings]
+                .iter()
+                .any(|l| l.cofinite || !l.values.is_empty())
+    }
+}
+
+/// A type split by universe: what [`Type::split`] gives.
+pub struct Split {
+    /// Its values of `bool`, `int`, `rat`, `f64` and `String`, in that order, each `None` when
+    /// it has none.
+    pub bases: [Option<Type>; 5],
+    /// Its atoms, `None` when it has none.
+    pub atoms: Option<Type>,
+    /// Its tuples, structs and morphisms, `None` when it has none.
+    pub rest: Option<Type>,
+}
+
+impl Type {
+    /// Whether it may hold an atom, read from its parts: false only when it holds none.
+    pub fn may_hold_atoms(&self) -> bool {
+        self.p().atoms != Atoms::default()
+    }
+
+    /// `self` split into its values of each base type, its atoms and the rest: what `self & t`
+    /// gives for `t` each base type, and then the atoms and the other universes, each made by
+    /// copying one part of `self`, where the meets would build each part of each result.
+    pub fn split(&self) -> Split {
+        let p = self.p();
+        let lits = |l: &Lits, set: fn(&mut Parts, Lits)| {
+            (l.cofinite || !l.values.is_empty()).then(|| Type::with(|q| set(q, l.clone())))
+        };
+        let bools = (p.bools != 0).then(|| Type::with(|q| q.bools = p.bools));
+        let atoms = (p.atoms != Atoms::default())
+            .then(|| Type::with(|q| q.atoms = p.atoms.clone()))
+            .filter(|t| !t.is_empty());
+        let rest =
+            (p.tuples != Tuples::default() || p.structs || p.morphisms.is_leaf() != Some(false))
+                .then(|| {
+                    Type::with(|q| {
+                        q.tuples = p.tuples.clone();
+                        q.structs = p.structs;
+                        q.morphisms = p.morphisms.clone();
+                    })
+                })
+                .filter(|t| !t.is_empty());
+        Split {
+            bases: [
+                bools,
+                lits(&p.ints, |q, l| q.ints = l),
+                lits(&p.rats, |q, l| q.rats = l),
+                lits(&p.floats, |q, l| q.floats = l),
+                lits(&p.strings, |q, l| q.strings = l),
+            ],
+            atoms,
+            rest,
+        }
     }
 }
 

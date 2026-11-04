@@ -6,6 +6,7 @@
 mod adoption;
 mod bounds;
 mod calls;
+mod curried_classes;
 mod docs;
 mod fits;
 mod handled;

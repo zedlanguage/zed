@@ -2,7 +2,7 @@
 //! variable, bounded by the carriers its uses take, and the error is at the use that leaves
 //! it none.
 
-use zedc::check::ty::OTHER;
+use zedc::check::ty::{OTHER, Row};
 
 use super::{sig, sig_of, type_errors};
 
@@ -58,7 +58,10 @@ fn a_parameter_any_value_fits_gets_a_type_variable() {
     };
     assert_eq!(s.own.len(), 2);
     assert_ne!(a, b);
-    assert_eq!(s.arrows[0].result.tuples, [vec![a.clone(), b.clone()]]);
+    assert_eq!(
+        s.arrows[0].result.tuples,
+        [Row::new(vec![a.clone(), b.clone()])]
+    );
     let s = sig_of("g(r) = r else 0;\n", "g");
     assert_eq!(s.to_string(), "(r: _) -> 0 | _");
     assert_eq!(s.arrows[0].result.vars, s.arrows[0].params[0].vars);

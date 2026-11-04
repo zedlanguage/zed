@@ -24,7 +24,7 @@ pub struct Ty {
     /// from values is in `tuples`, and a function in `fns`.
     pub set: KType,
     /// The tuple shapes, each with its components.
-    pub tuples: Vec<Vec<Ty>>,
+    pub tuples: Vec<Row>,
     /// The functions.
     pub fns: Vec<Arc<Sig>>,
     /// The type variables.
@@ -38,6 +38,127 @@ pub struct Ty {
     /// with, or `None` where that is not known. The payload of an atom whose name is not
     /// listed is not known.
     pub payloads: BTreeMap<Arc<str>, Option<Vec<Shape>>>,
+}
+
+/// The components of a tuple shape, kept in one shared node with what they hold at any depth,
+/// found from the components' rows when the row is made. A row is copied in constant time, so
+/// a type is copied in the time of its outer level; and a check that walks into tuples reads
+/// a row where it would walk into it, so a tuple nested `n` deep costs `O(n)` in all, not
+/// `O(n)` at each level.
+#[derive(Clone)]
+pub struct Row(Arc<RowData>);
+
+struct RowData {
+    cs: Vec<Ty>,
+    /// The hash of the components.
+    digest: u64,
+    /// Whether a component holds a type variable or the unknown, outside functions, at any
+    /// depth: whether [`Ty::closed`] fails on one.
+    open: bool,
+    /// Whether a component holds the unknown, outside functions, at any depth.
+    dynamic: bool,
+    /// The first function, not a family, that a component holds at any depth.
+    held: Option<Arc<Sig>>,
+    /// Whether every type variable it holds outside functions, at any depth, was checked as
+    /// data when the row was made: set only for the row of a tuple expression, whose
+    /// components are each checked as data first.
+    data: bool,
+}
+
+impl Row {
+    /// The row of `cs`.
+    pub fn new(cs: Vec<Ty>) -> Row {
+        Row::made(cs, false)
+    }
+
+    /// The row of `cs`, each checked as data.
+    pub(crate) fn of_data(cs: Vec<Ty>) -> Row {
+        Row::made(cs, true)
+    }
+
+    fn made(cs: Vec<Ty>, data: bool) -> Row {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let digest = BuildHasherDefault::<DefaultHasher>::default().hash_one(&cs);
+        let open = cs
+            .iter()
+            .any(|c| !c.vars.is_empty() || c.dynamic || c.tuples.iter().any(|r| r.0.open));
+        let dynamic = cs
+            .iter()
+            .any(|c| c.dynamic || c.tuples.iter().any(|r| r.0.dynamic));
+        let held = cs.iter().find_map(|c| c.held_function().cloned());
+        Row(Arc::new(RowData {
+            cs,
+            digest,
+            open,
+            dynamic,
+            held,
+            data,
+        }))
+    }
+
+    /// Whether a component holds a type variable or the unknown, outside functions, at any
+    /// depth.
+    pub fn open(&self) -> bool {
+        self.0.open
+    }
+
+    /// Whether a component holds the unknown, outside functions, at any depth.
+    pub fn dynamic(&self) -> bool {
+        self.0.dynamic
+    }
+
+    /// Whether every type variable it holds outside functions was checked as data when the
+    /// row was made.
+    pub(crate) fn data(&self) -> bool {
+        self.0.data
+    }
+
+    /// The components, to change.
+    pub fn to_vec(&self) -> Vec<Ty> {
+        self.0.cs.clone()
+    }
+}
+
+impl std::ops::Deref for Row {
+    type Target = [Ty];
+    fn deref(&self) -> &[Ty] {
+        &self.0.cs
+    }
+}
+
+impl<'a> IntoIterator for &'a Row {
+    type Item = &'a Ty;
+    type IntoIter = std::slice::Iter<'a, Ty>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.cs.iter()
+    }
+}
+
+impl FromIterator<Ty> for Row {
+    fn from_iter<I: IntoIterator<Item = Ty>>(it: I) -> Row {
+        Row::new(it.into_iter().collect())
+    }
+}
+
+impl PartialEq for Row {
+    fn eq(&self, other: &Row) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+            || (self.0.digest == other.0.digest && self.0.cs == other.0.cs)
+    }
+}
+
+impl Eq for Row {}
+
+impl std::hash::Hash for Row {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        h.write_u64(self.0.digest);
+    }
+}
+
+impl fmt::Debug for Row {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(&self.0.cs).finish()
+    }
 }
 
 /// The payload an atom was built with: its components by position, and its fields by name.
@@ -127,7 +248,7 @@ fn holds_payload(set: &KType, n: &str) -> bool {
 
 /// A function's signature: its parameters' names and kinds, shared by its arrows, which
 /// together are an intersection, and the carriers each bounded type variable ranges over.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sig {
     /// The parameters.
     pub params: Vec<SParam>,
@@ -150,6 +271,145 @@ pub struct Sig {
     /// fixes their carriers. Worked out when it is built ([`Sig::note_held`]), so a comparison
     /// does not walk its parameters again at each depth.
     pub held: BTreeSet<Arc<str>>,
+    /// How many of the names [`super::var_name`] gives its own type variables and those of the
+    /// functions it holds take: a function around it names its own from there on. The checker
+    /// writes the own variables of a signature it solved `$k`, for the class `k` each was solved
+    /// from, and gives them their names when it finishes, so a function around one does not
+    /// rewrite it (CHK-curried).
+    pub named: usize,
+    /// The variables it holds at any depth, worked out when first asked ([`Sig::facts`]).
+    /// Once they are read the signature is not changed in place: a change goes to a clone,
+    /// whose facts are worked out again.
+    pub facts: Facts,
+}
+
+/// The variables a signature holds at any depth, inside the functions it holds too: worked
+/// out once for a signature held in a type, so that a substitution, or the naming of the
+/// variables of a function around it, does not walk it again at each depth. It is not part
+/// of the signature's value, and a clone, which may be changed, works it out again.
+///
+/// It also keeps the signature [`Sig::settle`] made of it, each solved class variable
+/// replaced at every depth: made once, when the checker finishes, so a signature held in many
+/// that the checker shows is settled once, not once for each.
+///
+/// And it keeps the signature's hash ([`Sig::digest`]), made from the hashes of the
+/// functions it holds, so a set of functions hashes each at the cost of its outer level.
+#[derive(Default)]
+pub struct Facts(
+    std::sync::OnceLock<VarFacts>,
+    std::sync::OnceLock<Arc<Sig>>,
+    std::sync::OnceLock<u64>,
+);
+
+impl Clone for Facts {
+    fn clone(&self) -> Facts {
+        Facts::default()
+    }
+}
+
+impl PartialEq for Facts {
+    fn eq(&self, _: &Facts) -> bool {
+        true
+    }
+}
+
+impl Eq for Facts {}
+
+impl std::hash::Hash for Facts {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
+impl fmt::Debug for Facts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("_")
+    }
+}
+
+/// What [`Facts`] holds. Both sets are persistent and shared with the facts of the functions
+/// it holds, so a function around one does not copy them: the larger set is kept and the
+/// smaller one added to it.
+#[derive(Default)]
+pub struct VarFacts {
+    /// The class variables.
+    pub classes: imbl::OrdSet<Arc<str>>,
+    /// The other variables, with its own, bounded and held ones.
+    pub names: imbl::OrdSet<Arc<str>>,
+    /// The first `n` such that `names` lacks the `n`th variable name ([`super::var_name`]).
+    pub free: usize,
+}
+
+impl VarFacts {
+    /// Whether it holds the variable `v`.
+    pub fn holds(&self, v: &str) -> bool {
+        self.classes.contains(v) || self.names.contains(v)
+    }
+
+    /// The facts of the arrows and needs of `s`, worked out now; for a signature not yet
+    /// held in a type, which may still change.
+    pub fn of(s: &Sig) -> VarFacts {
+        let mut g = VarFacts::default();
+        for a in &s.arrows {
+            a.params.iter().for_each(|p| g.ty(p));
+            g.ty(&a.result);
+        }
+        for n in &s.needs {
+            n.tys().for_each(|t| g.ty(t));
+        }
+        let extra = s.bounds.keys().chain(&s.own).chain(&s.held);
+        extra.for_each(|v| add(&mut g.names, v));
+        g.free = g.free.max(s.named);
+        while g.names.contains(&*super::var_name(g.free)) {
+            g.free += 1;
+        }
+        g
+    }
+
+    /// Adds the variables of `t`.
+    fn ty(&mut self, t: &Ty) {
+        for v in &t.vars {
+            match super::class_id(v) {
+                Some(_) => add(&mut self.classes, v),
+                None => add(&mut self.names, v),
+            }
+        }
+        for c in t.tuples.iter().flatten() {
+            self.ty(c);
+        }
+        for s in t.payloads.values().flatten().flatten() {
+            s.items.iter().for_each(|t| self.ty(t));
+            s.fields.values().for_each(|t| self.ty(t));
+        }
+        for s in &t.fns {
+            self.held(s.facts());
+        }
+    }
+
+    /// Adds the facts of a function it holds: of each set, the larger is kept and the smaller
+    /// one added to it, so each variable is copied O(log n) times over a nest of n.
+    fn held(&mut self, f: &VarFacts) {
+        merge(&mut self.classes, &f.classes);
+        merge(&mut self.names, &f.names);
+        self.free = self.free.max(f.free);
+    }
+}
+
+/// Adds `other` to `set`, keeping the larger of the two and adding the smaller to it.
+fn merge(set: &mut imbl::OrdSet<Arc<str>>, other: &imbl::OrdSet<Arc<str>>) {
+    let small = match other.len() > set.len() {
+        true => std::mem::replace(set, other.clone()),
+        false => other.clone(),
+    };
+    for v in &small {
+        add(set, v);
+    }
+}
+
+/// Adds `v` to `set`. A set shared with the facts of another signature is copied along the
+/// path to `v` by an insertion, so a variable it already holds is not inserted again.
+fn add(set: &mut imbl::OrdSet<Arc<str>>, v: &Arc<str>) {
+    if !set.contains(v) {
+        set.insert(v.clone());
+    }
 }
 
 /// A use the body of a generic function makes of a value whose type is a variable: checked
@@ -219,15 +479,25 @@ pub enum Slot {
 impl Need {
     /// It with its variables replaced by `binds` at every depth.
     pub fn replace(&self, binds: &Binds) -> Need {
-        let all = |ts: &[Ty]| ts.iter().map(|t| t.replace(binds)).collect();
+        self.replace_in(binds, Mode::Replace)
+    }
+
+    /// [`Need::replace`], or as `mode` says.
+    fn replace_in(&self, binds: &Binds, mode: Mode) -> Need {
+        self.map_tys(|t| t.replace_in(binds, mode))
+    }
+
+    /// It with `f` applied to each of the types [`Need::tys`] gives.
+    fn map_tys(&self, f: impl Fn(&Ty) -> Ty) -> Need {
+        let all = |ts: &[Ty]| ts.iter().map(&f).collect();
         Need {
-            on: self.on.replace(binds),
+            on: f(&self.on),
             kind: match &self.kind {
                 NeedKind::Component { i, key } => NeedKind::Component {
                     i: *i,
                     key: key.clone(),
                 },
-                NeedKind::Index(k) => NeedKind::Index(k.replace(binds)),
+                NeedKind::Index(k) => NeedKind::Index(f(k)),
                 NeedKind::Call {
                     what,
                     positional,
@@ -236,10 +506,7 @@ impl Need {
                 } => NeedKind::Call {
                     what: what.clone(),
                     positional: all(positional),
-                    named: named
-                        .iter()
-                        .map(|(n, t)| (n.clone(), t.replace(binds)))
-                        .collect(),
+                    named: named.iter().map(|(n, t)| (n.clone(), f(t))).collect(),
                     curry: *curry,
                 },
                 NeedKind::Data(what) => NeedKind::Data(what.clone()),
@@ -252,30 +519,33 @@ impl Need {
                     slot: slot.clone(),
                 },
             },
-            result: self.result.as_ref().map(|t| t.replace(binds)),
+            result: self.result.as_ref().map(&f),
             span: self.span,
         }
     }
 
     /// Every variable in it, in order of first appearance.
     pub fn vars_in(&self, out: &mut Vars) {
-        self.on.vars_in(out);
-        match &self.kind {
+        self.tys().for_each(|t| t.vars_in(out));
+    }
+
+    /// The types in it that [`Need::replace`] replaces in, in order.
+    pub fn tys(&self) -> impl Iterator<Item = &Ty> {
+        let (index, positional, named): (_, &[Ty], &[(Arc<str>, Ty)]) = match &self.kind {
             NeedKind::Component { .. }
             | NeedKind::Data(_)
             | NeedKind::Into { .. }
-            | NeedKind::Payload { .. } => {}
-            NeedKind::Index(k) => k.vars_in(out),
+            | NeedKind::Payload { .. } => (None, &[], &[]),
+            NeedKind::Index(k) => (Some(k), &[], &[]),
             NeedKind::Call {
                 positional, named, ..
-            } => {
-                positional.iter().for_each(|t| t.vars_in(out));
-                named.iter().for_each(|(_, t)| t.vars_in(out));
-            }
-        }
-        if let Some(r) = &self.result {
-            r.vars_in(out);
-        }
+            } => (None, positional, named),
+        };
+        std::iter::once(&self.on)
+            .chain(index)
+            .chain(positional)
+            .chain(named.iter().map(|(_, t)| t))
+            .chain(&self.result)
     }
 }
 
@@ -337,6 +607,17 @@ impl Carrier {
         }
     }
 
+    /// Its place among the bases of [`zed_kernel::types::Split`].
+    pub fn base(self) -> usize {
+        match self {
+            Carrier::Bool => 0,
+            Carrier::Int => 1,
+            Carrier::Rat => 2,
+            Carrier::F64 => 3,
+            Carrier::Str => 4,
+        }
+    }
+
     /// Its name.
     pub fn name(self) -> &'static str {
         match self {
@@ -388,8 +669,14 @@ pub fn mask_text(m: u8) -> String {
 
 /// Every atom.
 pub fn atoms() -> KType {
-    let carriers = Carrier::ALL.iter().fold(KType::empty(), |a, c| a | c.ty());
-    KType::universe(Universe::Scalar) - &carriers
+    thread_local! {
+        /// Made once, so that every use is one node and compares equal to another by pointer.
+        static ATOMS: KType = {
+            let carriers = Carrier::ALL.iter().fold(KType::empty(), |a, c| a | c.ty());
+            KType::universe(Universe::Scalar) - &carriers
+        };
+    }
+    ATOMS.with(KType::clone)
 }
 
 /// Every tuple and every struct, the kinds that `set` holds only as the kind-wide part.
@@ -416,7 +703,7 @@ pub enum Piece {
     /// Scalars: the values of one carrier, the atoms, or what is neither.
     Set(KType),
     /// A tuple shape.
-    Tuple(Vec<Ty>),
+    Tuple(Row),
     /// A function.
     Fn(Arc<Sig>),
     /// A type variable.
@@ -443,7 +730,7 @@ impl Piece {
     pub fn ty(&self) -> Ty {
         match self {
             Piece::Set(s) => Ty::set(s.clone()),
-            Piece::Tuple(cs) => Ty::tuple(cs.clone()),
+            Piece::Tuple(cs) => Ty::of_row(cs.clone()),
             Piece::Fn(s) => Ty::func(s.clone()),
             Piece::Var(v) => Ty::var(v.clone()),
             Piece::Dyn => Ty::dynamic(),
@@ -469,9 +756,25 @@ enum Read {
 /// keeps the reading of its own side at the cost of a pointer.
 type Env = imbl::OrdMap<Arc<str>, Read>;
 
+/// The type a class variable the checker solved stands for, if it was solved to one that
+/// holds no variable: a signature solved before the functions around it keeps such a
+/// variable in the functions it holds, and is read through this (CHK-carrier).
+pub type Solve<'s> = &'s dyn Fn(&str) -> Option<Ty>;
+
+/// How the modes of [`Ty::replace_in`] replace.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// At every depth: [`Ty::replace`].
+    Replace,
+    /// At every depth, the own variables of functions too: [`Ty::renamed`].
+    Rename,
+    /// Outside functions: [`Ty::replace_outside`].
+    Outside,
+}
+
 /// The state of one comparison of function types ([`fits_sig`], [`Ty::sub`]).
 #[derive(Default)]
-struct Cx {
+struct Cx<'s> {
     /// The bounded variables of the expected function types the comparison is inside, each
     /// with the mask of its bound: the caller of such a function picks one carrier of the
     /// bound for each, so a variable here stands for every carrier of its mask and is never
@@ -486,9 +789,11 @@ struct Cx {
     /// The number of names made: a quote is in no name a program writes, and the count keeps
     /// the names apart.
     count: usize,
+    /// The types of the solved class variables, read where a function's arrows are read.
+    solve: Option<Solve<'s>>,
 }
 
-impl Cx {
+impl Cx<'_> {
     /// A new name, from `v`.
     fn fresh(&mut self, v: &str) -> Arc<str> {
         self.count += 1;
@@ -501,7 +806,7 @@ impl Cx {
     /// replaced, and each function, outside other functions, replaced by a new variable that
     /// `fns` maps to it and `env`. The payloads stay as they are, since no comparison reads
     /// them. The cost is that of `t` outside its functions, so each function type is read once
-    /// for each comparison of it.
+    /// for each comparison of it. A class variable `solve` gives a type is read as that type.
     fn read(&mut self, t: &Ty, env: &Env) -> Ty {
         let mut out = Ty {
             set: t.set.clone(),
@@ -521,11 +826,15 @@ impl Cx {
             self.fns.insert(w.clone(), (s.clone(), env.clone()));
             out.vars.insert(w);
         }
+        let mut solved = Vec::new();
         for v in &t.vars {
             match env.get(v) {
-                None => {
-                    out.vars.insert(v.clone());
-                }
+                None => match self.solve.and_then(|f| f(v)) {
+                    Some(u) => solved.push(u),
+                    None => {
+                        out.vars.insert(v.clone());
+                    }
+                },
                 Some(Read::Rigid(w)) => {
                     out.vars.insert(w.clone());
                 }
@@ -535,7 +844,7 @@ impl Cx {
                 }
             }
         }
-        out
+        solved.iter().fold(out, |o, u| o.union(u))
     }
 
     /// Forgets the names made since `mark`.
@@ -605,8 +914,13 @@ impl Ty {
 
     /// The tuple shape `(cs…)`.
     pub fn tuple(cs: Vec<Ty>) -> Ty {
+        Ty::of_row(Row::new(cs))
+    }
+
+    /// The tuple shape of `row`.
+    pub fn of_row(row: Row) -> Ty {
         Ty {
-            tuples: vec![cs],
+            tuples: vec![row],
             ..Ty::empty()
         }
     }
@@ -658,8 +972,8 @@ impl Ty {
         if !self.payloads.is_empty() || !other.payloads.is_empty() {
             out.payloads = join_payloads(&[self, other]);
         }
-        let have: HashSet<&Vec<Ty>> = self.tuples.iter().collect();
-        let new: Vec<&Vec<Ty>> = other.tuples.iter().filter(|t| !have.contains(t)).collect();
+        let have: HashSet<&Row> = self.tuples.iter().collect();
+        let new: Vec<&Row> = other.tuples.iter().filter(|t| !have.contains(t)).collect();
         let mut added = HashSet::new();
         out.tuples
             .extend(new.into_iter().filter(|t| added.insert(*t)).cloned());
@@ -750,8 +1064,13 @@ impl Ty {
     /// family's, so it costs `O(f log n)` for `f` family atoms of `n`, where `set − loose`
     /// would complement every loose atom.
     pub fn without_loose(&self) -> Ty {
+        // A set that holds no atom loses none.
+        let set = match self.set.may_hold_atoms() {
+            true => &(&self.set - &atoms()) | &(&self.set & &self.family),
+            false => self.set.clone(),
+        };
         let mut out = Ty {
-            set: &(&self.set - &atoms()) | &(&self.set & &self.family),
+            set,
             ..self.clone()
         };
         out.prune_payloads();
@@ -779,28 +1098,21 @@ impl Ty {
     /// kind-wide part, the tuples, the functions, the variables and the unknown.
     pub fn pieces(&self) -> Vec<Piece> {
         let mut out = Vec::new();
-        let mut rest = self.set.clone();
+        let mut split = self.set.split();
         for c in Carrier::ALL {
-            let part = &self.set & &c.ty();
-            if !part.is_empty() {
-                rest = &rest - &c.ty();
-                out.push(Piece::Set(part));
+            out.extend(split.bases[c.base()].take().map(Piece::Set));
+        }
+        out.extend(split.atoms.map(Piece::Set));
+        // The kind-wide part follows the other scalars, as its own piece.
+        if let Some(rest) = split.rest {
+            let w = &rest & &wide();
+            let rest = &rest - &w;
+            if !rest.is_empty() {
+                out.push(Piece::Set(rest));
             }
-        }
-        let a = &rest & &atoms();
-        if !a.is_empty() {
-            out.push(Piece::Set(a.clone()));
-            rest = &rest - &a;
-        }
-        let w = &rest & &wide();
-        if !w.is_empty() {
-            rest = &rest - &w;
-        }
-        if !rest.is_empty() {
-            out.push(Piece::Set(rest));
-        }
-        if !w.is_empty() {
-            out.push(Piece::Set(w));
+            if !w.is_empty() {
+                out.push(Piece::Set(w));
+            }
         }
         out.extend(self.tuples.iter().cloned().map(Piece::Tuple));
         out.extend(self.fns.iter().cloned().map(Piece::Fn));
@@ -822,18 +1134,21 @@ impl Ty {
         if !self.vars.is_empty() || self.dynamic {
             return None;
         }
-        let nums = [Carrier::Int, Carrier::Rat, Carrier::F64]
-            .iter()
-            .fold(KType::empty(), |a, c| a | c.ty());
-        let nums = &self.set & &nums;
-        [Carrier::Int, Carrier::Rat, Carrier::F64]
+        // Its numbers are those of one numeric carrier: read off one split, where a meet and
+        // a subtype test per carrier would build each part anew.
+        let s = self.set.split();
+        let mut present = [Carrier::Int, Carrier::Rat, Carrier::F64]
             .into_iter()
-            .find(|c| !nums.is_empty() && nums.subtype(&c.ty()))
+            .filter(|c| s.bases[c.base()].is_some());
+        match (present.next(), present.next()) {
+            (Some(c), None) => Some(c),
+            _ => None,
+        }
     }
 
     /// Whether it holds no variable and no unknown, at any depth.
     pub fn closed(&self) -> bool {
-        self.vars.is_empty() && !self.dynamic && self.tuples.iter().flatten().all(Ty::closed)
+        self.vars.is_empty() && !self.dynamic && self.tuples.iter().all(|r| !r.open())
     }
 
     /// Whether it holds no function at any depth (a variable or the unknown may still stand
@@ -847,12 +1162,28 @@ impl Ty {
         self.fns
             .iter()
             .find(|s| !s.data)
-            .or_else(|| self.tuples.iter().flatten().find_map(Ty::held_function))
+            .or_else(|| self.tuples.iter().find_map(|r| r.0.held.as_ref()))
     }
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
     pub fn sub(&self, other: &Ty, binds: &mut Binds) -> bool {
         self.sub_in(other, binds, &mut Cx::default())
+    }
+
+    /// [`Self::sub`], each class variable `solve` gives a type read as that type inside the
+    /// functions compared.
+    pub fn sub_with(&self, other: &Ty, binds: &mut Binds, solve: Solve) -> bool {
+        let mut cx = Cx {
+            solve: Some(solve),
+            ..Cx::default()
+        };
+        self.sub_in(other, binds, &mut cx)
+    }
+
+    /// [`Self::subtype`], read as [`Self::sub_with`] reads.
+    pub fn subtype_with(&self, other: &Ty, solve: Solve) -> bool {
+        let mut b = Binds::new();
+        self.sub_with(other, &mut b, solve) && b.is_empty()
     }
 
     /// [`Self::sub`] inside the comparisons of function types `cx` holds.
@@ -954,7 +1285,7 @@ impl Ty {
                 if a.len() == b.len() {
                     let cs: Vec<Ty> = a.iter().zip(b).map(|(x, y)| x.meet(y)).collect();
                     if cs.iter().all(|c| !c.is_empty()) {
-                        met.push(cs);
+                        met.push(Row::new(cs));
                     }
                 }
             }
@@ -1008,7 +1339,7 @@ impl Ty {
         };
         let mut rest = Vec::new();
         out.tuples.retain(|a| {
-            if Ty::tuple(a.clone()).subtype(&within) {
+            if Ty::of_row(a.clone()).subtype(&within) {
                 return false;
             }
             match (&tk, shape_kernel(a)) {
@@ -1056,7 +1387,29 @@ impl Ty {
     /// holds too; not inside the types it puts in their place, which may hold the variables
     /// themselves.
     pub fn replace(&self, binds: &Binds) -> Ty {
-        if binds.is_empty() {
+        self.replace_in(binds, Mode::Replace)
+    }
+
+    /// `self` with the variables `names` gives other names, at every depth, inside the
+    /// functions it holds too, their own variables among them: each value of `names` is one
+    /// variable, and no two keys share one.
+    pub fn renamed(&self, names: &Binds) -> Ty {
+        self.replace_in(names, Mode::Rename)
+    }
+
+    /// `self` with its variables replaced by `binds` outside the functions it holds: the
+    /// functions are kept as they are, and so is a tuple that holds no variable outside them.
+    pub fn replace_outside(&self, binds: &Binds) -> Ty {
+        self.replace_in(binds, Mode::Outside)
+    }
+
+    /// [`Ty::replace`], or as `mode` says.
+    fn replace_in(&self, binds: &Binds, mode: Mode) -> Ty {
+        // A type with no tuple, function or payload holds only its own variables; outside
+        // functions, one with no tuple or payload does.
+        let fns = !self.fns.is_empty() && mode != Mode::Outside;
+        let leaf = self.tuples.is_empty() && !fns && self.payloads.is_empty();
+        if binds.is_empty() || (leaf && !self.vars.iter().any(|v| binds.contains_key(v))) {
             return self.clone();
         }
         let mut out = Ty {
@@ -1064,12 +1417,24 @@ impl Ty {
             tuples: self
                 .tuples
                 .iter()
-                .map(|cs| cs.iter().map(|c| c.replace(binds)).collect())
+                .map(|cs| match mode {
+                    Mode::Outside if !cs.open() => cs.clone(),
+                    _ => cs.iter().map(|c| c.replace_in(binds, mode)).collect(),
+                })
                 .collect(),
             fns: self
                 .fns
                 .iter()
                 .map(|s| match s.own.iter().any(|v| binds.contains_key(v)) {
+                    _ if mode == Mode::Outside => s.clone(),
+                    _ if mode == Mode::Rename => Arc::new(s.replace_in(binds, mode)),
+                    // A signature that holds none of the variables replaced is kept whole.
+                    _ if !binds
+                        .keys()
+                        .any(|v| !s.own.contains(v) && s.facts().holds(v)) =>
+                    {
+                        s.clone()
+                    }
                     true => {
                         let free = binds
                             .iter()
@@ -1084,7 +1449,7 @@ impl Ty {
             vars: BTreeSet::new(),
             dynamic: self.dynamic,
             family: self.family.clone(),
-            payloads: self.map_payloads(|t| t.replace(binds)),
+            payloads: self.map_payloads(|t| t.replace_in(binds, mode)),
         };
         for v in &self.vars {
             match binds.get(v) {
@@ -1155,6 +1520,52 @@ impl Ty {
                 a.result.vars_in(out);
             }
             s.needs.iter().for_each(|n| n.vars_in(out));
+        }
+    }
+
+    /// It with each class variable `solve` gives a type replaced by that type at every depth,
+    /// each signature it holds settled once ([`Sig::settle`]). A tuple that holds no variable
+    /// and no function is kept whole.
+    pub fn settle(&self, solve: Solve) -> Ty {
+        let mut out = Ty {
+            set: self.set.clone(),
+            tuples: (self.tuples.iter())
+                .map(|r| match r.open() || r.0.held.is_some() {
+                    true => r.iter().map(|c| c.settle(solve)).collect(),
+                    false => r.clone(),
+                })
+                .collect(),
+            fns: self.fns.iter().map(|s| s.settle(solve)).collect(),
+            vars: BTreeSet::new(),
+            dynamic: self.dynamic,
+            family: self.family.clone(),
+            payloads: self.map_payloads(|t| t.settle(solve)),
+        };
+        for v in &self.vars {
+            match solve(v) {
+                Some(t) => out = out.union(&t),
+                None => {
+                    out.vars.insert(v.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Every variable in it outside the functions it holds, in order of first appearance: a
+    /// tuple that holds none there is not entered.
+    pub fn vars_outside(&self, out: &mut Vars) {
+        for v in &self.vars {
+            if out.seen.insert(v.clone()) {
+                out.order.push(v.clone());
+            }
+        }
+        for c in self.tuples.iter().filter(|r| r.open()).flatten() {
+            c.vars_outside(out);
+        }
+        for s in self.payloads.values().flatten().flatten() {
+            s.items.iter().for_each(|t| t.vars_outside(out));
+            s.fields.values().for_each(|t| t.vars_outside(out));
         }
     }
 
@@ -1279,6 +1690,15 @@ pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
     fits_in(s, &Env::new(), q, &Env::new(), &mut Cx::default())
 }
 
+/// [`fits_sig`], read as [`Ty::sub_with`] reads.
+pub fn fits_sig_with(s: &Sig, q: &Sig, solve: Solve) -> bool {
+    let mut cx = Cx {
+        solve: Some(solve),
+        ..Cx::default()
+    };
+    fits_in(s, &Env::new(), q, &Env::new(), &mut cx)
+}
+
 /// [`fits_sig`] inside the expected function types whose bounded variables `cx.rigid` holds,
 /// `s` read by `se` and `q` by `qe`. `q`'s own bounded variables that a parameter holds join
 /// `cx.rigid`: the caller of a function of type `q` picks one carrier of each bound, so `s`
@@ -1292,7 +1712,17 @@ pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
 /// variable (COMPLEXITY.md F60).
 fn fits_in(s: &Sig, se: &Env, q: &Sig, qe: &Env, cx: &mut Cx) -> bool {
     if !s.needs.is_empty() {
-        // Compared as written: the same signature, each variable read alike on both sides.
+        // Compared as written: the same signature, each variable read alike on both sides,
+        // each solved class variable read as its type at every depth. That walk costs what
+        // the comparison of the two as written costs.
+        let solved;
+        let (s, q) = match cx.solve {
+            Some(f) => {
+                solved = (s.solved_with(f), q.solved_with(f));
+                (&solved.0, &solved.1)
+            }
+            None => (s, q),
+        };
         if s != q {
             return false;
         }
@@ -1382,10 +1812,20 @@ fn fits_in(s: &Sig, se: &Env, q: &Sig, qe: &Env, cx: &mut Cx) -> bool {
     fits
 }
 
+impl std::hash::Hash for Sig {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        h.write_u64(self.digest());
+    }
+}
+
 impl Sig {
     /// Sets [`Sig::held`] from its parameters, at any depth, on any arrow: for a signature
     /// built from parts, at the cost of a walk of its parameters.
     pub fn note_held(&mut self) {
+        debug_assert!(
+            self.facts.0.get().is_none() && self.facts.2.get().is_none(),
+            "a signature is changed after its facts were read"
+        );
         self.held.clear();
         if self.bounds.is_empty() {
             return;
@@ -1401,6 +1841,20 @@ impl Sig {
             .collect();
     }
 
+    /// It with each class variable `solve` gives a type replaced by that type at every depth.
+    pub fn solved_with(&self, solve: Solve) -> Sig {
+        let mut vs = Vars::default();
+        for a in &self.arrows {
+            a.params.iter().for_each(|p| p.vars_in(&mut vs));
+            a.result.vars_in(&mut vs);
+        }
+        self.needs.iter().for_each(|n| n.vars_in(&mut vs));
+        let binds: Binds = (vs.order.into_iter())
+            .filter_map(|v| solve(&v).map(|t| (v, t)))
+            .collect();
+        self.replace(&binds)
+    }
+
     /// Its own bounded variables no parameter holds, each bound to [`Ty::of_mask`] of its
     /// bound: no argument fixes its carrier, so a call returns a value of some carrier of it.
     pub fn unheld(&self) -> Binds {
@@ -1409,6 +1863,110 @@ impl Sig {
             .filter(|(v, _)| self.own.contains(*v) && !self.held.contains(*v))
             .map(|(v, &m)| (v.clone(), Ty::of_mask(m)))
             .collect()
+    }
+
+    /// Its hash, made at the first call from its parts, each function it holds by its own
+    /// hash: so it is asked of a signature held in a type, which no longer changes. Hashed
+    /// whole, a set of the functions of `g(0)(1)…(n)` cost the depth of each (CHK-carrier).
+    pub fn digest(&self) -> u64 {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        *self.facts.2.get_or_init(|| {
+            let parts = (&self.params, &self.arrows, &self.bounds, self.data);
+            let more = (&self.needs, &self.own, &self.held, self.named);
+            BuildHasherDefault::<DefaultHasher>::default().hash_one((parts, more))
+        })
+    }
+
+    /// The variables it holds at any depth: worked out at the first call, so it is asked of
+    /// a signature held in a type, which no longer changes.
+    pub fn facts(&self) -> &VarFacts {
+        self.facts.0.get_or_init(|| VarFacts::of(self))
+    }
+
+    /// It with each class variable `solve` gives a type replaced by that type at every depth:
+    /// made at the first call and kept, so it is asked only when no class changes after,
+    /// as the checker finishes. A signature that holds no class variable is itself.
+    pub fn settle(self: &Arc<Sig>, solve: Solve) -> Arc<Sig> {
+        if self.facts().classes.is_empty() {
+            return self.clone();
+        }
+        // A variable `solve` gives a type is replaced, so no longer bounded, own or held.
+        let open = |v: &&Arc<str>| solve(v).is_none();
+        let made = || {
+            Arc::new(Sig {
+                arrows: (self.arrows.iter())
+                    .map(|a| Arrow {
+                        params: a.params.iter().map(|p| p.settle(solve)).collect(),
+                        result: a.result.settle(solve),
+                    })
+                    .collect(),
+                needs: self
+                    .needs
+                    .iter()
+                    .map(|n| n.map_tys(|t| t.settle(solve)))
+                    .collect(),
+                bounds: (self.bounds.iter())
+                    .filter(|(v, _)| open(v))
+                    .map(|(v, m)| (v.clone(), *m))
+                    .collect(),
+                own: self.own.iter().filter(open).cloned().collect(),
+                held: self.held.iter().filter(open).cloned().collect(),
+                ..(**self).clone()
+            })
+        };
+        self.facts.1.get_or_init(made).clone()
+    }
+
+    /// The class variables of `want` that its arrows and needs hold, in the order in which
+    /// [`Ty::vars_in`] meets them. The walk enters no function whose facts hold none of those
+    /// still unseen, and it stops once all are seen, so it costs no more than replacing them.
+    pub fn first_seen(&self, want: &HashSet<Arc<str>>) -> Vec<Arc<str>> {
+        enum Item<'a> {
+            Ty(&'a Ty),
+            Sig(&'a Sig),
+        }
+        let mut out = Vec::new();
+        let mut left = want.clone();
+        let mut stack = vec![Item::Sig(self)];
+        while let Some(item) = stack.pop()
+            && !left.is_empty()
+        {
+            match item {
+                Item::Sig(s) => {
+                    // `self` may still change, so its facts are not kept; it is entered.
+                    if !std::ptr::eq(s, self) {
+                        let classes = &s.facts().classes;
+                        let any = match classes.len() < left.len() {
+                            true => classes.iter().any(|v| left.contains(v)),
+                            false => left.iter().any(|v| classes.contains(v)),
+                        };
+                        if !any {
+                            continue;
+                        }
+                    }
+                    let tys = s
+                        .arrows
+                        .iter()
+                        .flat_map(|a| a.params.iter().chain([&a.result]));
+                    let needs = s.needs.iter().flat_map(Need::tys);
+                    let at = stack.len();
+                    stack.extend(tys.chain(needs).map(Item::Ty));
+                    stack[at..].reverse();
+                }
+                Item::Ty(t) => {
+                    out.extend(t.vars.iter().filter(|v| left.remove(*v)).cloned());
+                    let at = stack.len();
+                    stack.extend(t.tuples.iter().flatten().map(Item::Ty));
+                    let shapes = t.payloads.values().flatten().flatten();
+                    stack.extend(
+                        shapes.flat_map(|s| s.items.iter().chain(s.fields.values()).map(Item::Ty)),
+                    );
+                    stack.extend(t.fns.iter().map(|s| Item::Sig(s)));
+                    stack[at..].reverse();
+                }
+            }
+        }
+        out
     }
 
     /// One arrow over `params` and `result`, with no bounded variable.
@@ -1424,12 +1982,37 @@ impl Sig {
             needs: Vec::new(),
             own: BTreeSet::new(),
             held: BTreeSet::new(),
+            named: 0,
+            facts: Default::default(),
         }
     }
 
     /// It with its variables replaced by `binds` at every depth; a bounded variable replaced
     /// by another variable keeps its bound under the new name.
     pub fn replace(&self, binds: &Binds) -> Sig {
+        self.replace_in(binds, Mode::Replace)
+    }
+
+    /// It with the variables `names` gives other names, as [`Ty::renamed`] does.
+    pub fn renamed(&self, names: &Binds) -> Sig {
+        self.replace_in(names, Mode::Rename)
+    }
+
+    /// It with its variables replaced by `binds` in its arrows and needs, outside the functions
+    /// they hold ([`Ty::replace_outside`]).
+    pub fn replace_outside(&self, binds: &Binds) -> Sig {
+        self.replace_in(binds, Mode::Outside)
+    }
+
+    /// [`Sig::replace`], or as `mode` says: renamed, its own and held variables take their new
+    /// names.
+    fn replace_in(&self, binds: &Binds, mode: Mode) -> Sig {
+        // Its own or held variable `v` under `binds`: renamed, kept, or dropped as replaced.
+        let keep = |v: &Arc<str>| match binds.get(v) {
+            None => Some(v.clone()),
+            Some(t) if mode == Mode::Rename => t.vars.first().cloned(),
+            Some(_) => None,
+        };
         let mut bounds = BTreeMap::new();
         for (v, m) in &self.bounds {
             match binds.get(v) {
@@ -1449,25 +2032,21 @@ impl Sig {
                 .arrows
                 .iter()
                 .map(|a| Arrow {
-                    params: a.params.iter().map(|p| p.replace(binds)).collect(),
-                    result: a.result.replace(binds),
+                    params: a.params.iter().map(|p| p.replace_in(binds, mode)).collect(),
+                    result: a.result.replace_in(binds, mode),
                 })
                 .collect(),
             bounds,
             data: self.data,
-            needs: self.needs.iter().map(|n| n.replace(binds)).collect(),
-            own: self
-                .own
+            needs: self
+                .needs
                 .iter()
-                .filter(|v| !binds.contains_key(*v))
-                .cloned()
+                .map(|n| n.replace_in(binds, mode))
                 .collect(),
-            held: self
-                .held
-                .iter()
-                .filter(|v| !binds.contains_key(*v))
-                .cloned()
-                .collect(),
+            own: self.own.iter().filter_map(keep).collect(),
+            held: self.held.iter().filter_map(keep).collect(),
+            named: self.named,
+            facts: Facts::default(),
         }
     }
 

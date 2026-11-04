@@ -217,8 +217,10 @@ fn blocks_nested_100000_deep_check_on_a_2_mib_stack() {
 
 // The shapes below cost about a million instructions for each `+` and a third of that for each
 // negation, branch or call, in the kernel's type algebra (`Type::new`, `Type::zip`, `Lits`),
-// before and after the walk moved to a heap stack, so 100,000 deep would take minutes. They
-// are checked 8,000 deep, eight times past the depth that overflowed.
+// before and after the walk moved to a heap stack. The checker built the scalar types and
+// their meets anew at each node; they are now made once and read off one split
+// (CHK-node-cost), and a `+` costs about 140,000 instructions, a negation or call about 70,000
+// to 80,000. They are checked 8,000 deep, eight times past the depth that overflowed.
 
 #[test]
 fn sums_8000_deep_check_on_a_2_mib_stack() {
@@ -238,15 +240,206 @@ fn negations_and_calls_8000_deep_check_on_a_2_mib_stack() {
     checks_deep(&["nested negations", "nested calls"], 1_000);
 }
 
-#[test]
-fn lambdas_nested_1000_deep_check_on_a_2_mib_stack() {
-    // The walk keeps no frame of the thread's stack per lambda; `Ty::replace` and
-    // `Sig::replace` still recurse on the nesting of the type, and overflow this stack near
-    // 4,000. The time is quadratic, from the deep clones of `Ty` (both open).
+/// Checks the program of `shape` 1,000 deep on a 2 MiB stack, then `n` and `8n` deep and
+/// checks the time is linear, on a 512 MiB stack: printing a type recurses on its nesting
+/// (`Ty::write`, for the text of each binding's origin), and overflows 2 MiB below 8,000 deep.
+fn checks_linear(shape: &str, n: usize) {
     use zed_tests::deep::{on_small_stack, program, statements};
-    let stmts = statements(&program("nested lambdas", 1_000).text);
+    let stmts = statements(&program(shape, 1_000).text);
     let res = zedc::resolve::resolve(&stmts).unwrap();
     on_small_stack(|| assert!(zedc::check::check(&stmts, &res).errors.is_empty()));
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new().stack_size(1 << 29);
+        thread
+            .spawn_scoped(scope, || {
+                let small = statements(&program(shape, n).text);
+                let large = statements(&program(shape, 8 * n).text);
+                let small_res = zedc::resolve::resolve(&small).unwrap();
+                let large_res = zedc::resolve::resolve(&large).unwrap();
+                scaling::check_order(&format!("checking {shape}"), n, 1, |k| {
+                    let (stmts, res) = if k == n {
+                        (&small, &small_res)
+                    } else {
+                        (&large, &large_res)
+                    };
+                    let info = zedc::check::check(stmts, res);
+                    assert!(info.errors.is_empty(), "{shape}: {:?}", info.errors);
+                });
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    });
+}
+
+#[test]
+fn lambdas_nested_8000_deep_check_in_linear_time() {
+    // Each lambda's signature was walked again, copied and dropped by each lambda around it,
+    // to name its variables and to replace the classes it was solved to, so the time was
+    // quadratic, and `Ty::replace` overflowed a 2 MiB stack near 4,000 deep. A signature held
+    // in a type now keeps the variables it holds (`Sig::facts`, CHK-lambda), and one that
+    // holds none of those replaced is shared whole.
+    checks_linear("nested lambdas", 1_000);
+}
+
+#[test]
+fn tuples_nested_8000_deep_check_in_linear_time() {
+    // Whether a tuple's components may hold a variable, the unknown or a function was found by
+    // a walk of the components at each level, so the time grew as n^2 and more (CHK-tuple). A
+    // tuple shape now keeps those facts (`ty::Row`).
+    checks_linear("nested tuples", 1_000);
+}
+
+/// `f(positional x) = ((… (x, 1) …, 1), 1);`, a variable `n` tuples deep.
+fn nested_around(n: usize) -> String {
+    format!(
+        "f(positional x) = {}x{};\n",
+        "(".repeat(n),
+        ", 1)".repeat(n)
+    )
+}
+
+#[test]
+fn a_variable_nested_in_tuples_checks_in_linear_time() {
+    assert_eq!(sig(&nested_around(2), "f"), "(_) -> ((_, 1), 1)");
+    let texts: std::collections::BTreeMap<usize, String> = [500, scaling::FACTOR * 500]
+        .into_iter()
+        .map(|m| (m, nested_around(m)))
+        .collect();
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(move || {
+            scaling::check_order("a variable nested in n tuples", 500, 1, |n| {
+                let (info, _) = info(&texts[&n]);
+                assert!(info.errors.is_empty(), "{:?}", info.errors);
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// `g(positional a0) = (a1) -> (a2) -> … -> (an) -> (a0, a1, …, an);`, `n` curried lambdas,
+/// the innermost using every parameter around it.
+fn curried(n: usize) -> String {
+    let lambdas: String = (1..=n).map(|i| format!("(a{i}) -> ")).collect();
+    let all: Vec<String> = (0..=n).map(|i| format!("a{i}")).collect();
+    format!("g(positional a0) = {lambdas}({});\n", all.join(", "))
+}
+
+#[test]
+fn curried_lambdas_using_every_parameter_check_in_linear_time() {
+    // Each lambda names its parameter's class when it is closed. The name is kept on the
+    // class, and the class variable stays in the signatures inside, which are not rewritten:
+    // only `finish` writes the names, once per signature it shows. Before CHK-curried the
+    // name replaced the class in every lambda inside, n - k signatures at the k-th, so the
+    // time was quadratic. The facts of a signature are persistent sets shared with the
+    // signatures inside (`VarFacts::held`), so merging them costs O(log n) per variable.
+    assert_eq!(
+        sig(&curried(3), "g"),
+        "(_) -> ((_) -> ((_) -> ((_) -> (_, _, _, _))))"
+    );
+    let n = 100;
+    scaling::on_a_thread(1 << 29, || {
+        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| {
+                let stmts = zed_tests::deep::statements(&curried(m));
+                let res = zedc::resolve::resolve(&stmts).unwrap();
+                (m, (stmts, res))
+            })
+            .collect();
+        scaling::check_order("n curried lambdas using every parameter", n, 1, |m| {
+            let (stmts, res) = &built[&m];
+            let info = zedc::check::check(stmts, res);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        });
+    });
+}
+
+/// `g(positional a0) = (a1) -> … -> (an) -> (a0 + 1, a1 + 1, …, an + 1);`, `n` curried
+/// lambdas whose parameters each take the carrier int when their lambda ends.
+fn curried_sums(n: usize) -> String {
+    let lambdas: String = (1..=n).map(|i| format!("(a{i}) -> ")).collect();
+    let all: Vec<String> = (0..=n).map(|i| format!("a{i} + 1")).collect();
+    format!("g(positional a0) = {lambdas}({});\n", all.join(", "))
+}
+
+#[test]
+fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
+    // Each lambda's parameter takes int when the lambda ends. `generalize` replaced the class
+    // by int in each of the n - k lambdas inside the k-th, which hold it: n^2, 38.2 times the
+    // bytes for 8 times n at ab0d3a84. Now a class solved to a type with no variable is
+    // replaced outside the lambdas only, and read through the union-find inside them by the
+    // comparisons and messages that read them; `finish` settles each signature once
+    // (CHK-carrier, COMPLEXITY.md F71). Per node at n = 100 and 800: 274103 and 274564
+    // instructions, 49621 and 49236 bytes; replaced at every depth, 798369 and 4944027
+    // instructions, 101619 and 481807 bytes.
+    assert_eq!(
+        sig(&curried_sums(2), "g"),
+        "(int) -> ((int) -> ((int) -> (int, int, int)))"
+    );
+    let n = 100;
+    scaling::on_a_thread(1 << 29, || {
+        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| {
+                let stmts = zed_tests::deep::statements(&curried_sums(m));
+                let res = zedc::resolve::resolve(&stmts).unwrap();
+                (m, (stmts, res))
+            })
+            .collect();
+        scaling::check_order(
+            "n curried lambdas whose parameters take a carrier",
+            n,
+            1,
+            |m| {
+                let (stmts, res) = &built[&m];
+                let info = zedc::check::check(stmts, res);
+                assert!(info.errors.is_empty(), "{:?}", info.errors);
+            },
+        );
+    });
+}
+#[test]
+fn nested_lambdas_name_their_variables_as_before() {
+    // The names a lambda takes skip those of the lambdas inside it, found from their facts.
+    // Only a variable bounded by carriers is printed by name; the others are `_` (DESIGN.md
+    // sec:diagnostics, PRINT-tyvars).
+    for (text, want) in [
+        (
+            "g(positional a) = (b) -> (c) -> (a, b, c);\n",
+            "(_) -> ((_) -> ((_) -> (_, _, _)))",
+        ),
+        (
+            "g(positional a) = (b) -> (c) -> (d) -> (e) -> (f) -> (h) -> (a, b, c, d, e, f, h);\n",
+            "(_) -> ((_) -> ((_) -> ((_) -> ((_) -> ((_) -> ((_) -> (_, _, _, _, _, _, _)))))))",
+        ),
+        (
+            "g(positional a) = (T) -> (b) -> (c) -> a;\n",
+            "(_) -> ((_) -> ((_) -> ((_) -> _)))",
+        ),
+        (
+            "g(positional f) = (x) -> (y) -> f(x, y) + x;\n",
+            "(_) -> ((U) -> ((_) -> U)) for U in int | f64 | rat",
+        ),
+        (
+            "g(positional a, positional b) = ((c) -> (d) -> (c, d), a + b);\n",
+            "(V, V) -> (((_) -> ((_) -> (_, _))), V) for V in int | f64 | rat",
+        ),
+        // The results of `h(x)` and `f(x)` are classes of `g`'s level that first appear
+        // inside the lambdas, and are named in the order they appear there.
+        (
+            "g(positional f, positional h) = (x) -> (y) -> (h(y, x), f(x), y);\n",
+            "(_, _) -> ((_) -> ((_) -> (_, _, _)))",
+        ),
+        (
+            "g(positional f) = ((x) -> f(x), (y) -> (f(y), y));\n",
+            "(_) -> (((_) -> _), ((_) -> (_, _)))",
+        ),
+    ] {
+        assert_eq!(sig(text, "g"), want, "{text}");
+    }
 }
 
 /// `x = bitAnd(bitAnd(… bitAnd(1, 1) …, 1), 1);`, `n` calls of the bit word nested.
@@ -574,4 +767,40 @@ fn many_calls_passing_some_atoms_of_their_argument_by_scale() {
             },
         );
     }
+}
+
+/// `curried_sums(n)` and `y = g(0)(1)…(n);`: a chain of n calls on one value, each through
+/// the function the call before gives.
+fn call_chain(n: usize) -> String {
+    let args: String = (1..=n).map(|i| format!("({i})")).collect();
+    format!("{}y = g(0){args};\n", curried_sums(n))
+}
+
+#[test]
+fn a_chain_of_calls_on_one_value_checks_in_linear_time() {
+    // Each call's result is a function that holds the rest of the chain. A set of functions
+    // hashed each whole (`Ty::union`), and `hold` walked each result whole, so each call cost
+    // the depth left: n^2. A signature's hash is now made once from those of the functions it
+    // holds ([`Sig::digest`]), and `hold` reads their facts (CHK-carrier, COMPLEXITY.md F71).
+    // Per node at n = 100 and 800: 413888 and 413130 instructions, 70057 and 69516 bytes;
+    // before, 1076078 and 5444818 instructions, 82672 and 166976 bytes.
+    let (info, _) = super::info(&call_chain(3));
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.tops["y"].to_string(), "(int, int, int, int)");
+    let n = 100;
+    scaling::on_a_thread(1 << 29, || {
+        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| {
+                let stmts = zed_tests::deep::statements(&call_chain(m));
+                let res = zedc::resolve::resolve(&stmts).unwrap();
+                (m, (stmts, res))
+            })
+            .collect();
+        scaling::check_order("a chain of n calls on one value", n, 1, |m| {
+            let (stmts, res) = &built[&m];
+            let info = zedc::check::check(stmts, res);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        });
+    });
 }
