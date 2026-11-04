@@ -43,7 +43,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | «type» Prime = ( p : int [ 2₍10₎ .. ] where isPrime ( p ) ) ;
   4 | «type» Short = ( s : String where s . len < 100₍10₎ ) ;
   5 | area ( a : int [ 1₍10₎ .. ] , b : int [ 1₍10₎ .. ] where a * b <= 99₍10₎ ) -> int = a * b ;
-== DESIGN.md [sec:constraints] 2 L11
+== DESIGN.md [sec:constraints] 2 L10
   1 | «type» Bound = int | Ast | #unbounded ;
   2 | «struct» Interval { min : Bound , max : Bound }
   3 | «struct» Congruence { modulus : int [ 0₍10₎ .. ] , residue : int }
@@ -114,7 +114,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | «law» addComm ( a : int , b : int ) = a + b == b + a ;
   2 | «law» sortIdempotent ( xs : [ int ] ) = xs . sort ( «asc» x -> x ) . sort ( «asc» x -> x ) == xs . sort ( «asc» x -> x ) ;
   3 | «law» noOverdraft ( s : Account , t : Txn where t . amount > 0₍10₎ ) = ( apply ( s , t ) «else» s ) . balance >= 0₍10₎ ;
-== DESIGN.md [sec:verification] 2 L11
+== DESIGN.md [sec:verification] 2 L6
   1 | «type» Proof = #eval
   2 | | #domain
   3 | | #rewrite ( rule : LawId , at : Path , bindings : Bindings )
