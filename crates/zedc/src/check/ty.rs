@@ -758,6 +758,16 @@ impl Ty {
         out
     }
 
+    /// It without the atoms `k`, as a call passes them by (rule 6 of sec:type_resolution).
+    pub fn without(&self, k: &KType) -> Ty {
+        let mut out = Ty {
+            set: &self.set - k,
+            ..self.clone()
+        };
+        out.prune_payloads();
+        out
+    }
+
     /// Drops the payloads of the atoms its set no longer holds (L29-print: a type narrowed to
     /// `String` kept the payload of the `#ioError` it lost, so it differed from `String`).
     fn prune_payloads(&mut self) {

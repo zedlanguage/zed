@@ -157,7 +157,8 @@ enum Frame<'a> {
 /// temporary, then the call itself.
 struct PassF<'a> {
     e: &'a Expr,
-    args: Vec<&'a Expr>,
+    /// Each argument whose atoms may pass, with the atoms that pass.
+    args: Vec<(&'a Expr, &'a KType)>,
     lets: Vec<(Arc<str>, Option<Term>)>,
 }
 
@@ -700,7 +701,7 @@ impl<'a> Elab<'a> {
     /// The call `e`, some of whose arguments, at `at`, hold loose atoms their parameter does not
     /// take (rule 6 of sec:type_resolution): the arguments are bound first, and an atom in any
     /// of them is the call's value, those of several merged as a primitive merges them.
-    fn passes(&mut self, m: &mut M<'a>, e: &'a Expr, at: &[Span]) {
+    fn passes(&mut self, m: &mut M<'a>, e: &'a Expr, at: &'a [(Span, KType)]) {
         let mut args: Vec<&'a Expr> = Vec::new();
         if let ExprKind::Call {
             callee,
@@ -715,7 +716,10 @@ impl<'a> Elab<'a> {
             args.extend(positional);
             args.extend(named.iter().map(|(_, a)| a));
         }
-        args.retain(|a| at.contains(&a.span));
+        let args = args
+            .into_iter()
+            .filter_map(|a| at.iter().find(|(s, _)| *s == a.span).map(|(_, k)| (a, k)))
+            .collect();
         let pf = PassF {
             e,
             args,
@@ -726,7 +730,7 @@ impl<'a> Elab<'a> {
 
     fn pass_step(&mut self, m: &mut M<'a>, mut pf: Box<PassF<'a>>) {
         match pf.args.get(pf.lets.len()) {
-            Some(&a) => {
+            Some(&(a, _)) => {
                 let t = self.temp();
                 pf.lets.push((t, None));
                 m.k(Frame::Pass(pf));
@@ -742,7 +746,7 @@ impl<'a> Elab<'a> {
 
     /// The call of [`Elab::passes`], its arguments bound.
     fn pass_end(&mut self, pf: PassF<'a>, call: Option<Term>) -> Option<Term> {
-        for a in &pf.args {
+        for (a, _) in &pf.args {
             self.passing.remove(&a.span);
         }
         let mut call = call?;
@@ -752,11 +756,31 @@ impl<'a> Elab<'a> {
             .map(|(t, x)| x.map(|x| (t, x)))
             .collect::<Option<_>>()?;
         let v = |n: &Arc<str>| Term::Var(n.clone());
+        // An argument whose atoms pass only in part (rule 6 treats each region apart): its
+        // failure is the argument when it is one of those atoms, and otherwise `false`, which
+        // no merge below takes for an atom.
+        let mut merges = Vec::new();
+        let mut fails = Vec::with_capacity(lets.len());
+        for ((t, _), &(_, k)) in lets.iter().zip(&pf.args) {
+            if *k == check::ty::atoms() {
+                fails.push(t.clone());
+                continue;
+            }
+            let g = self.temp();
+            let own = Term::Match(
+                Shared::new(v(t)),
+                vec![
+                    (KPattern::Is(k.clone()), v(t)),
+                    (KPattern::Wild, Term::Lit(Value::Bool(false))),
+                ],
+            );
+            merges.push((g.clone(), own));
+            fails.push(g);
+        }
         // Each argument's failure merged with those before it, each merge bound after the
         // arguments.
-        let mut merges = Vec::new();
         let mut fail: Option<Arc<str>> = None;
-        for (t, _) in &lets {
+        for t in &fails {
             fail = Some(match fail {
                 None => t.clone(),
                 Some(f) => {
@@ -1322,7 +1346,7 @@ impl<'a> Elab<'a> {
             }
             Frame::Pass(mut pf) => {
                 let x = m.t();
-                let a = pf.args[pf.lets.len() - 1];
+                let (a, _) = pf.args[pf.lets.len() - 1];
                 let last = pf.lets.last_mut().expect("the argument's temporary");
                 last.1 = x;
                 self.passing.insert(a.span, last.0.clone());

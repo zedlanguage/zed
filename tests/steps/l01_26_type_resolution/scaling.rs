@@ -463,7 +463,8 @@ fn a_chain_of_functions_passing_a_handled_parameter_on_as_a_receiver_scales() {
 #[test]
 fn many_calls_passing_a_handled_parameter_on_scale() {
     // One function calls `r` n times on its handled parameter, as `r(x)`, `x.r()`, `x.r`,
-    // through the higher-order `ap` and through a computed callee; each call takes `r`'s first
+    // through the higher-order `ap` and through a computed callee, and passes `x` to a lambda
+    // through `ap`, whose atoms then pass by at the call of `ap`; each call takes `r`'s first
     // arrow from outside, so `g`'s first arrow gives a `String` alone. Each call whose
     // argument holds a loose atom is applied once more, on the atoms from outside alone.
     let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
@@ -478,6 +479,7 @@ fn many_calls_passing_a_handled_parameter_on_scale() {
         "x.r",
         "ap(r, x)",
         "(if true { r } else { r })(x)",
+        "ap((positional y) -> trim(y), x)",
     ] {
         let first = sig_of(&calls(3, call), "g").expand()[0].result.clone();
         assert!(first.atoms().is_empty(), "{call}: {first}");
@@ -510,4 +512,66 @@ fn a_chain_of_method_calls_without_parentheses_scales() {
         let (info, _) = info(&chain(n));
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
+}
+
+/// `n` functions, each testing its undeclared parameter `x` against an atom of its own and
+/// passing `x` on to the one before it, and a function calling the last on a value that may
+/// be a string, the first function's atom or another.
+fn chain_of_atom_tests(n: usize) -> String {
+    let mut src = String::from("h0(positional x) = if x is #a0 { \"0\" } else { trim(x) };\n");
+    for i in 1..n {
+        src.push_str(&format!(
+            "h{i}(positional x) = if x is #a{i} {{ \"{i}\" }} else {{ h{}(x) }};\n",
+            i - 1
+        ));
+    }
+    format!(
+        "{src}g(positional k) = h{}(if k == 1 {{ #a0 }} else {{ if k == 2 {{ #b }} else {{ \"s\" }} }});\n",
+        n - 1
+    )
+}
+
+#[test]
+fn a_chain_of_functions_each_testing_an_atom_of_its_own_scales() {
+    // Each `h{i}` takes `#a{i}` alone, so its call of the one before it, which omits that atom,
+    // passes it by; the call in `g` passes `#a0` and `#b` by, which no arrow of the last takes,
+    // and gives the string to its first arrow. Each pass-by costs a set difference per arrow.
+    let (i, _) = info(&chain_of_atom_tests(3));
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
+    scaling::check(
+        "a chain of n functions each testing an atom of its own",
+        100,
+        |n| {
+            let (info, _) = info(&chain_of_atom_tests(n));
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
+}
+
+#[test]
+fn many_calls_passing_some_atoms_of_their_argument_by_scale() {
+    // `v` may be a string, `#a` or `#b`. `h` takes `#a` and omits `#b`, so each call `h(v)`
+    // passes `#b` by and gives `#a` to the arrow that takes it; the lambda takes no atom, so
+    // each call of `ap` passes both by, at that call, whose argument gave them.
+    let defs = "h(positional x) = if x is #a { \"a\" } else { trim(x) };\n\
+                ap(positional f, positional v) = f(v);\n";
+    let calls = |n: usize, call: &str| {
+        let body: String = (0..n).map(|i| format!("c{i} = {call}; ")).collect();
+        format!(
+            "{defs}g(positional k) = {{ v = if k == 1 {{ #a }} else {{ if k == 2 {{ #b }} else {{ \"s\" }} }}; {body}c0 }};\n"
+        )
+    };
+    for call in ["h(v)", "ap((positional y) -> trim(y), v)"] {
+        let (i, _) = info(&calls(3, call));
+        assert!(i.errors.is_empty(), "{call}: {:?}", i.errors);
+        assert_eq!(i.passes.len(), 3, "{call}");
+        scaling::check(
+            &format!("one function calling `{call}` n times"),
+            200,
+            |n| {
+                let (info, _) = info(&calls(n, call));
+                assert!(info.errors.is_empty(), "{:?}", info.errors);
+            },
+        );
+    }
 }

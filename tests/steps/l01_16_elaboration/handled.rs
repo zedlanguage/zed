@@ -280,3 +280,106 @@ fn a_function_value_called_with_a_handled_parameter_gives_a_string_for_a_string(
         assert_eq!(output(name, &format!("{r}{g}{main}")), want, "{g}");
     }
 }
+
+/// `src`'s output on the input `input`, which it must print without error.
+fn output_on(name: &str, src: &str, input: &str) -> String {
+    let out = run(name, src, input, &[]);
+    assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{src}");
+    out.stdout
+}
+
+#[test]
+fn a_line_that_may_be_missing_or_unreadable_runs_the_body_that_tests_for_a_missing_one() {
+    // `stdin[2]` is `String | #notFound | #ioError(..)`. A parameter tested only for
+    // `#notFound`, by `is` or by a pattern `else`, takes that atom and omits `#ioError`: rule 6
+    // treats each region of the argument apart, so `#ioError` passes the call by and
+    // `#notFound` runs the body. The call was rejected, since the atoms passed by only when
+    // no arrow took any of them; a declared parameter was rejected the same way.
+    let main =
+        "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- g(stdin[2]) else \"gone\";\n}\n";
+    for (name, g, missing) in [
+        (
+            "is_only",
+            "g(positional x) = if x is #notFound { \"nf\" } else { trim(x) };\n",
+            "nf\n",
+        ),
+        (
+            "pattern_else",
+            "g(positional x) = trim(x else #notFound -> \"\");\n",
+            "\n",
+        ),
+        (
+            "pattern_else_in_a_test",
+            "g(positional x) = if (x else #notFound -> \"\") == \"-\" { \"dash\" } else { trim(x) };\n",
+            "gone\n",
+        ),
+        (
+            "declared",
+            "g(positional x: String | #notFound) = if x is #notFound { \"nf\" } else { trim(x) };\n",
+            "nf\n",
+        ),
+    ] {
+        let src = format!("{g}{main}");
+        assert_eq!(output_on(name, &src, "x\n"), missing, "{g}");
+        assert_eq!(output_on(name, &src, "x\n b \n"), "b\n", "{g}");
+    }
+}
+
+#[test]
+fn an_atom_the_parameter_omits_passes_by_while_the_one_it_tests_runs_the_body() {
+    let g = "g(positional x) = if x is #notFound { \"nf\" } else { trim(x) };\n";
+    let main = "main(stdin: Lines) -> (stdout: Lines) {\n  \
+                stdout <- if g(if stdin[1] == \"o\" { #other } else { stdin[2] }) is #other { \"other passed\" } else { \"ran\" };\n}\n";
+    let src = format!("{g}{main}");
+    assert_eq!(output_on("other", &src, "o\n"), "other passed\n");
+    assert_eq!(output_on("other", &src, "x\n"), "ran\n");
+}
+
+#[test]
+fn a_lambda_given_a_handled_parameter_through_a_function_passes_its_atoms_by_at_that_call() {
+    // `ap(f, v) = f(v)` with the lambda `(y) -> trim(y)`, which takes no atom, and `x`, which
+    // holds the atoms the `else` handles: an atom of `x` passes by at the call of `ap`, the
+    // call whose argument gave it, so `g` gives a string for a string. The call was rejected
+    // at `g`'s definition, `f` taking no atom.
+    let ap = "ap(positional f, positional v) = f(v);\n";
+    let main = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(stdin[2]) else \"gone\");\n}\n";
+    for (name, g, want) in [
+        (
+            "lambda_in_a_test",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { ap((positional y) -> trim(y), x) };\n",
+            "a,dash,gone\n",
+        ),
+        (
+            "lambda_after_a_default",
+            "g(positional x) = { d = x else \"\"; ap((positional y) -> trim(y), x) };\n",
+            "a,-,gone\n",
+        ),
+        (
+            "lambda_through_two_functions",
+            "ap2(positional f, positional v) = ap(f, v);\n\
+             g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { ap2((positional y) -> trim(y), x) };\n",
+            "a,dash,gone\n",
+        ),
+    ] {
+        assert_eq!(output(name, &format!("{ap}{g}{main}")), want, "{g}");
+    }
+    // A missing line given to `ap` directly passes by at that call too.
+    let direct = format!(
+        "{ap}main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- ap((positional y) -> trim(y), stdin[2]) else \"gone\";\n}}\n"
+    );
+    assert_eq!(output("lambda_direct", &direct), "gone\n");
+}
+
+#[test]
+fn an_atom_a_function_gives_a_lambda_that_omits_it_is_rejected() {
+    // No argument of the call of `ap` gives `#foo`, so it passes by nowhere.
+    let src = "ap(positional f) = f(#foo);\n\
+               main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- ap((positional y) -> trim(y));\n}\n";
+    let out = run("foo", src, "x\n", &[]);
+    assert_ne!(out.status, 0);
+    assert!(
+        out.stderr.contains("`f` does not take (#foo)"),
+        "{}",
+        out.stderr
+    );
+}

@@ -167,7 +167,7 @@ pub struct Info {
     /// For each call of a function, the arguments whose loose atoms its parameter does not
     /// take: an atom there selects no arrow and is the call's value (rule 6 of
     /// sec:type_resolution), by the call's span and the arguments' spans.
-    pub passes: HashMap<Span, Vec<Span>>,
+    pub passes: HashMap<Span, Vec<(Span, KType)>>,
     /// For each `*`, whether `/` is defined wherever the checker typed it: each type it gave
     /// the product holds no `int` (step L25.8, the `*` to `/` mutant).
     pub quotients: HashMap<Span, bool>,
@@ -472,6 +472,17 @@ struct Ck<'t, 'a> {
     /// How many checks of a generic function's needs are under way; they write nothing for
     /// elaboration.
     replaying: usize,
+    /// The atoms an application inside a check of a need passed by at parameter `i` of the
+    /// function value `what` it applied, for the check to give to the call of the function
+    /// whose need it is: `(what, i, atoms)`.
+    refused: Vec<(Arc<str>, usize, KType)>,
+    /// Those atoms, each with the variables of the need's argument at `i`, for the call whose
+    /// needs are checked to pass by at its own arguments of those variables.
+    need_passed: Vec<NeedPass>,
+    /// Which arguments of the application a check of a need is about to make hold a
+    /// variable of the need: only their atoms may pass by to the call around, the first
+    /// application taking it.
+    need_args: Option<Vec<bool>>,
     /// The needs being checked at calls, one inside another.
     open: Vec<Open>,
     /// The variables of the parameters a partial call leaves out: the next application
@@ -493,6 +504,10 @@ struct Ck<'t, 'a> {
     /// takes the entry.
     tried: HashMap<Span, Option<KType>>,
 }
+
+/// Atoms that a function value applied in a check of a need passed by (rule 6 of
+/// sec:type_resolution): the value's name, the variables of the need's argument, the atoms.
+type NeedPass = (Arc<str>, Vec<Arc<str>>, KType);
 
 /// A need being checked at a call.
 struct Open {
@@ -528,6 +543,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             pending: vec![Vec::new()],
             needs: 0,
             replaying: 0,
+            refused: Vec::new(),
+            need_passed: Vec::new(),
+            need_args: None,
             open: Vec::new(),
             defer: BTreeSet::new(),
             applied: None,
@@ -1657,7 +1675,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the class takes: what the use gives flows into the class of its result.
     fn check_on(&mut self, n: &Need, t: &Ty, span: Span) {
         let from = self.info.errors.len();
+        let start = self.need_passed.len();
         let got = self.meet(n, t, &Binds::new(), span);
+        // A use checked on a value that flowed in has no call whose argument gave the atoms.
+        let passed: Vec<NeedPass> = self.need_passed.drain(start..).collect();
+        for (inner, _, k) in passed {
+            let message = format!(
+                "{inner} does not take {}: an atom passes by only at a call given it",
+                Ty::set(k)
+            );
+            self.error(n.span, message);
+        }
         if let Some(r) = &n.result
             && let Some(k) = self.class_of_ty(r)
             && !self.flow(k, &got, "this use", n.span)
@@ -1675,6 +1703,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         let b = |t: &Ty| bound(t, binds);
         let on = b(on);
         self.replaying += 1;
+        let has_vars = |t: &Ty| {
+            let mut vars = Vars::default();
+            t.vars_in(&mut vars);
+            !vars.order.is_empty()
+        };
+        self.need_args = match &n.kind {
+            NeedKind::Call { positional, .. } => Some(positional.iter().map(has_vars).collect()),
+            NeedKind::Index(t) => Some(vec![has_vars(t)]),
+            _ => None,
+        };
+        let start = self.refused.len();
         let out = match &n.kind {
             NeedKind::Component { i, key } => self.at_index(&on, *i, Arg::of(key.clone()), span),
             NeedKind::Index(k) => self.at_key(&on, Arg::of(b(k)), span),
@@ -1707,7 +1746,80 @@ impl<'t, 'a> Ck<'t, 'a> {
             NeedKind::Payload { atom, slot } => self.payload(&on, atom, slot, span),
         };
         self.replaying -= 1;
+        self.need_args = None;
+        // Each argument the use's applications passed atoms of by is named by the variables
+        // of its type in the need: an argument of no variable gives them to no call.
+        for (what, i, k) in self.refused.drain(start..).collect::<Vec<_>>() {
+            let t = match &n.kind {
+                NeedKind::Call { positional, .. } => positional.get(i),
+                NeedKind::Index(t) if i == 0 => Some(t),
+                _ => None,
+            };
+            let mut vars = Vars::default();
+            if let Some(t) = t {
+                t.vars_in(&mut vars);
+            }
+            self.need_passed.push((what, vars.order, k));
+        }
         out
+    }
+
+    /// Passes by, at the call at `span` of `sig`'s arrow `arrow` on `args`, the atoms that
+    /// the checks of its needs since the `start`th found a function value omits (rule 6 of
+    /// sec:type_resolution): at each argument whose parameter holds a variable of the need's
+    /// argument, the atoms of it the argument holds. Inside another check they go on to the
+    /// call around it. Gives the atoms passed by, or an error for atoms no argument gives.
+    fn pass_needs(
+        &mut self,
+        what: &str,
+        params: &[Ty],
+        args: &[Option<Arg>],
+        start: usize,
+        span: Span,
+    ) -> Result<Ty, String> {
+        let mut out = Ty::empty();
+        let passed: Vec<NeedPass> = self.need_passed.drain(start..).collect();
+        for (inner, vars, k) in passed {
+            let mut covered = KType::empty();
+            for (i, (p, a)) in params.iter().zip(args).enumerate() {
+                let Some(a) = a else {
+                    continue;
+                };
+                if !p.vars.iter().any(|v| vars.contains(v)) {
+                    continue;
+                }
+                let c = &a.ty.loose() & &k;
+                if c.is_empty() {
+                    continue;
+                }
+                out = out.union(&a.ty.of_piece(&Piece::Set(c.clone())));
+                match a.at {
+                    Some(at) => self.pass_at(span, at, &c),
+                    None => self.refused.push((what.into(), i, c.clone())),
+                }
+                covered = &covered | &c;
+            }
+            let left = &k - &covered;
+            if !left.is_empty() {
+                return Err(format!(
+                    "{inner}, which {what} applies, does not take {}, and no argument of \
+                     this call gives it",
+                    Ty::set(left)
+                ));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Records that the call at `span` passes by the atoms `k` of its argument at `at`.
+    fn pass_at(&mut self, span: Span, at: Span, k: &KType) {
+        let mut v = self.info.passes.get(&span).cloned().unwrap_or_default();
+        match v.iter_mut().find(|(s, _)| *s == at) {
+            Some((_, old)) if (k - &*old).is_empty() => return,
+            Some((_, old)) => *old = &*old | k,
+            None => v.push((at, k.clone())),
+        }
+        self.put(Undo::Passes(span, Some(v)));
     }
 
     /// Checks the needs of `sig`, named `what`, at a call at `span` that binds its variables
@@ -1776,11 +1888,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                         result: Ty::empty(),
                         used: false,
                     });
+                    let passing = self.need_passed.len();
                     let mut got = self.meet(n, &on, binds, span);
                     let used = self.open.last().is_some_and(|o| o.used);
                     if used && !got.is_empty() {
                         *binds = before;
                         self.info.errors.truncate(errors);
+                        self.need_passed.truncate(passing);
                         let o = self.open.last_mut().expect("the need just pushed");
                         o.result = got.clone();
                         let first = got;
@@ -3076,6 +3190,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
     ) -> (Ty, Vec<usize>) {
         let mut out = Ty::empty();
+        let need_args = self.need_args.take();
         if pass {
             let atoms: Vec<Ty> = args
                 .iter()
@@ -3094,23 +3209,37 @@ impl<'t, 'a> Ck<'t, 'a> {
                     continue;
                 };
                 let loose = a.ty.loose();
+                let from_need = need_args.as_ref().is_some_and(|v| v.get(i) == Some(&true));
+                if loose.is_empty() || (a.at.is_none() && !from_need) {
+                    continue;
+                }
+                // Rule 6 treats each region of the argument apart: the atoms every arrow
+                // omits pass by, and the rest stay in the argument to select an arrow.
+                let refused = self.refused(sig, i, &loose);
+                if refused.is_empty() {
+                    continue;
+                }
                 let Some(at) = a.at else {
+                    // A check of a need, as of `f(v)` in `ap(f, v) = f(v)`: the atoms pass by
+                    // at the call whose argument gave them, which [`Self::apply_one`] finds.
+                    atoms.push(a.ty.of_piece(&Piece::Set(refused.clone())));
+                    a.ty = a.ty.without(&refused);
+                    self.refused.push((what.into(), i, refused));
                     continue;
                 };
-                if loose.is_empty() || !self.refuses(sig, i, &loose) {
-                    continue;
+                if refused == loose {
+                    atoms.push(a.ty.loose_ty());
+                    a.ty = a.ty.without_loose();
+                } else {
+                    atoms.push(a.ty.of_piece(&Piece::Set(refused.clone())));
+                    a.ty = a.ty.without(&refused);
                 }
-                atoms.push(a.ty.loose_ty());
-                a.ty = a.ty.without_loose();
-                let mut v = self.info.passes.get(&span).cloned().unwrap_or_default();
-                if !v.contains(&at) {
-                    v.push(at);
-                    self.put(Undo::Passes(span, Some(v)));
-                }
+                self.pass_at(span, at, &refused);
             }
             passed(&mut out, atoms.iter());
         }
         let defer = std::mem::take(&mut self.defer);
+        let passing = self.need_passed.len();
         let r = match (sig.arrows.len(), self.first_taking(sig, &args, pass)) {
             (1, _) => self.apply_one(what, sig, 0, &args, defer, span),
             (_, Some(k)) => self.apply_one(what, sig, k, &args, defer, span),
@@ -3120,6 +3249,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 r
             }
         };
+        // What a check of a need left when the application failed before taking it.
+        self.need_passed.truncate(passing);
         match r {
             Ok((t, kept)) => (out.union(&t), kept),
             Err(message) => {
@@ -3140,13 +3271,27 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// Whether no arrow of `sig` takes any of the atoms `loose` at parameter `i`, so that an
-    /// argument's loose atoms pass through the call: the parameter is a variable bounded to
-    /// carriers, or a type that holds none of them.
-    fn refuses(&self, sig: &Sig, i: usize, loose: &KType) -> bool {
-        sig.arrows
-            .iter()
-            .all(|arrow| self.refused_at(sig, &arrow.params[i], loose))
+    /// The atoms of `loose` that no arrow of `sig` takes at parameter `i`, which pass through
+    /// the call: all of them where the parameter is a variable bounded to carriers, those
+    /// its type does not hold where it is a closed type, and none where it is a variable, a
+    /// class or `_`. One set difference and one meet per arrow.
+    fn refused(&self, sig: &Sig, i: usize, loose: &KType) -> KType {
+        let mut out = loose.clone();
+        for arrow in &sig.arrows {
+            if out.is_empty() {
+                break;
+            }
+            let p = &arrow.params[i];
+            out = match p.as_var().and_then(|v| sig.bounds.get(v)) {
+                Some(&m) if m & OTHER == 0 => out,
+                Some(_) => KType::empty(),
+                None if p.dynamic || !p.vars.is_empty() || self.class_of_ty(p).is_some() => {
+                    KType::empty()
+                }
+                None => &out - &p.set,
+            };
+        }
+        out
     }
 
     /// Whether the parameter `p` of an arrow of `sig` takes none of the atoms `loose`.
@@ -3416,6 +3561,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .for_each(|a| a.params.iter().for_each(|p| p.vars_in(&mut inner)));
         }
         defer.extend(inner.order.into_iter().filter(|v| !taken.contains(v)));
+        let passing = self.need_passed.len();
         let mut left = self.replay(what, &sig.needs, &mut binds, defer, span);
         // Each bounded variable's binding is within its bound, and of one carrier, or of
         // other values only: the arrows of an operator each take one. So the classes in it
@@ -3485,6 +3631,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             });
         }
+        out = out.union(&self.pass_needs(what, &arrow.params, args, passing, span)?);
         self.applied = Some((binds, left));
         Ok((out, vec![0]))
     }
@@ -3904,7 +4051,7 @@ enum Undo {
     Fit(Span, Option<Fit>),
     Sig(usize, Option<Arc<Sig>>),
     Top(String, Option<Ty>),
-    Passes(Span, Option<Vec<Span>>),
+    Passes(Span, Option<Vec<(Span, KType)>>),
     Follows(Span, Option<Vec<(Carrier, Value)>>),
     /// A class, while a repair is tried.
     Class(usize, Box<Class>),
