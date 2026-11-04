@@ -91,6 +91,11 @@ in docs/layout.md.
   `run::Diagnostic.steps`), rendered as numbered steps with the source underlined; an error
   at a use of a class lists the uses that narrowed it; repairs that the checker discharges
   (wrapping in `String`, `int`, `rat` or `f64`) are offered only when the re-check passes.
+- Done: **L1.29b**, item order (ITEM-order): each corpus and step unit is checked in its written
+  order, reversed and shuffled, with each name's declarations kept in written order, and its
+  diagnostics and test outcomes compared by item and offset; `ast::unit_all_errors` builds every
+  item, and every cycle of a scope is reported, its names sorted, at its first name (`elab::cycles`)
+  (COMPLEXITY.md F72, F73) (5ed273ba, af168195).
 - Done: **L1.30**, the compiler as queries (`zedc::query`): the front end keyed by the text,
   each table row keyed by the definitions its check reaches, so an edit reruns only the rows
   whose definitions changed; `zedc test` shares one database across its files.
@@ -1019,7 +1024,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CHK-cost | verify attempt 4 | 2026-11-03 15:48 | suite (run_tests.sh 4) running on 133364bf; control worktree wt/chk-cost-v4ctl at main e5eda472 with the branch's scaling.rs; load 28.56 35.30 38.84 |
 | CHK-curried | running | 2026-11-03 19:35 |  |
 | ISSUE1-else-atoms | repair attempt 4 | 2026-11-03 16:04 | docs rows (F69, STATUS, PORT_GAPS) done; fmt, clippy -D warnings clean (type alias Called); spec branch rebased on zed main b4d27e6 -> 77eae84 (handled-atoms sp |
-| ITEM-order | impl attempt 1 | 2026-11-03 20:39 | docs: COMPLEXITY F69, STATUS L1.29b row, ZED_PORT_GAPS entry; spec branch wt/item-order-spec (int[_..=10], layer note); ledger ITEM-order-dispatch (needs L2.6,  |
 | NARROW-if | repair attempt 5 | 2026-11-03 16:46 | committed b4ffd104 + 60827647 on wt/narrow-if, rebased onto main e5eda472 (product.rs and ZED_PORT_GAPS conflicts rebuilt by hand); suite before rebase 356 piec |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
