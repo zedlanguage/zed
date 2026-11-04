@@ -1,7 +1,7 @@
 //! Scaling at the rule of low complexity (DESIGN.md Part G) of what step L1.37a adds: the
-//! confirmation of each key the lowering finds (`canon::same_normal`), and the numbering of a
-//! unit's definitions that keys the query database (`Db::cone`). Inputs are built before the
-//! runs are measured.
+//! ordering by shape of the nodes of one key in the lowering (`canon::Shape`), and the
+//! numbering of a unit's definitions that keys the query database (`Db::cone`). Inputs are
+//! built before the runs are measured.
 
 use std::collections::HashMap;
 

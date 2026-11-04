@@ -40,6 +40,17 @@ fi
 bins=$(sed -n -e "s|^ *Executable .*(\(/.*\))$|\1|p" -e "s|^ *Executable .*(\([^/].*\))$|$root/\1|p" "$out/build.log")
 steps=$(echo "$bins" | grep '/steps-')
 full=$(echo "$bins" | grep '/full-')
+# The short-addresses build (step L1.37a) keeps 8 bits of every content address and type digest,
+# so distinct values collide; its pieces check that every place that compares by address
+# confirms equal addresses by contents, and that verdicts and outputs match the full build.
+if ! CARGO_TARGET_DIR=$root/build/short cargo test -p zed-tests --features short-addresses \
+  --test steps --no-run --message-format=short >"$out/build-short.log" 2>&1; then
+  tail -40 "$out/build-short.log"
+  echo "BUILD FAILED (short-addresses)"
+  exit 1
+fi
+short=$(sed -n -e "s|^ *Executable .*(\(/.*\))$|\1|p" -e "s|^ *Executable .*(\([^/].*\))$|$root/\1|p" \
+  "$out/build-short.log")
 # A step folder or module named here gets a piece for each of its modules and each of its own
 # tests instead of one piece; the rest get one piece each. Named because together they ran past
 # 60 s at load 100 (l01_25 138 s, l01_38 94 s, l01_36 89 s, l01_16 72 s, l01_08 64 s); the
@@ -99,6 +110,9 @@ step_pieces() {
   done
   for d in tests/steps/*/; do
     step_pieces "$(basename "$d")"
+  done
+  for g in l01_37a_short_addresses l01_37_oracle; do
+    echo "short-$g tests $short $g::"
   done
   if [ -n "$full" ]; then
     for d in tests/full/*/; do

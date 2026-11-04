@@ -31,7 +31,7 @@ fn colliding_nodes_stay_distinct_in_the_lowering() {
     let t = Term::Prim(Prim::Tuple, sums(600));
     let g = lower(&t).expect("a tuple of sums lowers");
     // Every sum is its own node, in both builds: the lowering confirms each key it finds by
-    // the node's contents (`canon::same_normal`).
+    // the node's contents (`canon::Shape`).
     assert_eq!(count(&g, "prim"), 601);
     assert_eq!(round_trip(&t), eval(&t));
     // The planted site: one node per key, the key trusted alone.

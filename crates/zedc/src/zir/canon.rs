@@ -24,6 +24,7 @@
 //! [`key`] hashes a node from the keys of its regions, so the lowering keys each new node
 //! without walking the regions below it again.
 
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 use zed_kernel::term::{Pattern, Term};
@@ -168,13 +169,19 @@ fn region_bytes(r: &Region) -> Vec<u8> {
 }
 
 /// The key of node `n` whose regions have the keys `regions`: equal keys mean equal normal
-/// forms of the one-node regions holding the nodes (up to the hash; [`same_normal`] decides
-/// it without the hash).
+/// forms of the one-node regions holding the nodes (up to the hash; [`Shape`] decides it
+/// without the hash).
 pub fn node_key(n: &Node, regions: &[ContentAddress]) -> ContentAddress {
+    key_of(&shell_bytes(n), regions)
+}
+
+/// The key of a node whose [`shell_bytes`] are `shell` and whose regions have the keys
+/// `regions`.
+fn key_of(shell: &[u8], regions: &[ContentAddress]) -> ContentAddress {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir-node\0");
     h.update(&canon::VERSION.to_le_bytes());
-    h.update(&shell_bytes(n));
+    h.update(shell);
     h.update(&(regions.len() as u64).to_le_bytes());
     for r in regions {
         h.update(&r.0);
@@ -195,31 +202,94 @@ pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> ContentAddress {
     ContentAddress::hashed(&h)
 }
 
-/// Whether `a` and `b` have equal keys by their contents rather than by the hash: whether
-/// every pair of nodes and of regions at one place in the two, from `a` and `b` down, has the
-/// bytes [`node_key`] and [`region_key`] hash. A key never decides equality alone (DESIGN.md
-/// sec:theories, the trusted base), so the lowering confirms each key it finds with this
-/// (step L1.37a). It reads each pair once, from a stack of the pairs left, and stops at the
-/// first that differs, so it costs at most the size of the smaller of `a` and `b`; regions
-/// the two share are skipped.
-pub fn same_normal(a: &Node, b: &Node) -> bool {
-    let mut todo = vec![(a, b)];
-    while let Some((a, b)) = todo.pop() {
-        if a.regions.len() != b.regions.len() || shell_bytes(a) != shell_bytes(b) {
-            return false;
+/// A node's normal form as an ordered key: the bytes [`node_key`] hashes for its operation,
+/// inputs and outputs, then its regions by their contents. Two shapes are equal exactly when
+/// every pair of nodes and of regions at one place in the two has the bytes [`node_key`] and
+/// [`region_key`] hash, so equal shapes have equal keys, and a key never decides equality
+/// alone (DESIGN.md sec:theories, the trusted base; step L1.37a). The lowering keeps the
+/// nodes of one key in a map ordered by shape, so keys that collide cost `O(log k)`
+/// comparisons for `k` nodes of the key.
+pub struct Shape {
+    shell: Vec<u8>,
+    regions: Vec<Arc<Region>>,
+}
+
+impl Shape {
+    /// The shape of `n`; its regions are shared, not copied.
+    pub fn of(n: &Node) -> Shape {
+        Shape {
+            shell: shell_bytes(n),
+            regions: n.regions.clone(),
         }
-        for (r, s) in a.regions.iter().zip(&b.regions) {
+    }
+
+    /// The key of the node of this shape whose regions have the keys `regions`: what
+    /// [`node_key`] gives, without encoding the node again.
+    pub fn key(&self, regions: &[ContentAddress]) -> ContentAddress {
+        key_of(&self.shell, regions)
+    }
+}
+
+impl Ord for Shape {
+    /// The shells' bytes, then the number of regions, then the regions pair by pair. The
+    /// regions are compared from a stack of the pairs left: each pair's node counts and
+    /// [`region_bytes`], then each pair of their nodes' region counts and [`shell_bytes`] in
+    /// order, whose region pairs are pushed. Which pairs come next depends only on the
+    /// contents compared equal so far, so this is the lexicographic order of one fixed
+    /// sequence of counts and bytes per shape, a total order. It stops at the first pair that
+    /// differs, so it costs at most the size of the smaller shape; regions the two share are
+    /// skipped.
+    fn cmp(&self, other: &Shape) -> Ordering {
+        let o = self
+            .shell
+            .cmp(&other.shell)
+            .then(self.regions.len().cmp(&other.regions.len()));
+        if o.is_ne() {
+            return o;
+        }
+        let mut todo: Vec<(&Arc<Region>, &Arc<Region>)> =
+            self.regions.iter().zip(&other.regions).collect();
+        while let Some((r, s)) = todo.pop() {
             if Arc::ptr_eq(r, s) {
                 continue;
             }
-            if r.nodes.len() != s.nodes.len() || region_bytes(r) != region_bytes(s) {
-                return false;
+            let o = r
+                .nodes
+                .len()
+                .cmp(&s.nodes.len())
+                .then_with(|| region_bytes(r).cmp(&region_bytes(s)));
+            if o.is_ne() {
+                return o;
             }
-            todo.extend(r.nodes.iter().zip(&s.nodes));
+            for (a, b) in r.nodes.iter().zip(&s.nodes) {
+                let o = a
+                    .regions
+                    .len()
+                    .cmp(&b.regions.len())
+                    .then_with(|| shell_bytes(a).cmp(&shell_bytes(b)));
+                if o.is_ne() {
+                    return o;
+                }
+                todo.extend(a.regions.iter().zip(&b.regions));
+            }
         }
+        Ordering::Equal
     }
-    true
 }
+
+impl PartialOrd for Shape {
+    fn partial_cmp(&self, other: &Shape) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Shape {
+    fn eq(&self, other: &Shape) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Shape {}
 
 /// The key of `g` from the bottom up: what [`region_key`] gives with every region's key.
 pub fn key(g: &Region) -> ContentAddress {
