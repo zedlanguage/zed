@@ -30,11 +30,7 @@ fn enumerate(rows: &[Row3], h: i64) -> bool {
     (-h..=h).any(|a| (-h..=h).any(|b| (-h..=h).any(|c| holds(rows, &[a, b, c].map(int)))))
 }
 
-/// The rows `±    // The empty slab c·x = 1 of `parity_slabs_are_decided`, c = (10^6 + 1, 10^6 + 3, 10^6 + 5),
-// over the cube |x_i| <= 5, and m rows more with coefficients up to 50, each holding the
-// whole cube with slack 0 to 5, so no row bound settles it. Every stage runs over all the
-// rows: the linear programs, the rounding, LLL (the flat direction is c) and `twovar` on the
-// one plane c·x = 1, which has no point in the cube. The work is O(m log m). + h >= 0`.
+/// The rows `±x_i + h >= 0`.
 fn cube(h: i64) -> Vec<Row3> {
     (0..3)
         .flat_map(|i| {
@@ -512,16 +508,20 @@ fn the_checkers_three_variable_question_has_a_point() {
     assert!(holds(&rows, &[5, 12, -7].map(int)));
     assert!(enumerate(&rows, 15));
     decided(&rows, true);
-    // Raised by one in the second row (-4x - 6z >= 23): 4x + 6z is even, so 4x + 6z <= -23
-    // means 4x + 6z <= -24, and the rows keep a point only if one survives that; enumeration
-    // over the same cube is the check.
+    // Raised by one in the second row (-4x - 6z >= 23): no integer point, though real ones.
+    // The first row less the fourth gives 3z <= -20, so z <= -7. 4x + 6z is even, so
+    // 4x + 6z <= -23 means 2x + 3z <= -12. The third and fourth give
+    // 24 - 2x - 3z <= 3y <= 3x + 12z + 108, so 5x + 15z >= -84 and x + 3z >= -16. Then
+    // 2(-16 - 3z) <= 2x <= -12 - 3z gives z >= -6, against z <= -7. Over the reals the
+    // same steps give only -7.37 <= z <= -6.67. Enumeration of [-15, 15]^3 agrees.
     let raised = [
         row([-2, -3, -6], 4),
         row([-4, 0, -6], -23),
         row([1, -1, 4], 36),
         row([2, 3, 3], -24),
     ];
-    assert_eq!(solve(&raised).is_some(), enumerate(&raised, 15));
+    assert!(!enumerate(&raised, 15));
+    decided(&raised, false);
 }
 
 #[test]
@@ -579,9 +579,13 @@ fn parity_slabs_are_decided() {
 
 #[test]
 fn slabs_of_million_coefficients_scale() {
-    // The empty slab 500,000 <= c·x <= 500,001 of `a_slab_of_million_coefficients_is_decided`
+    // The empty slab c·x = 1 of `parity_slabs_are_decided`, c = (10^6 + 1, 10^6 + 3, 10^6 + 5),
     // over the cube |x_i| <= 5, and m rows more with coefficients up to 50, each holding the
-    // whole cube with slack 0 to 5, so no row bound settles it. The work is O(m log m).
+    // whole cube with slack 0 to 5, so no row bound settles it. Every stage runs over all the
+    // rows: the linear programs, the rounding, LLL (the flat direction is c) and `twovar` on the
+    // one plane c·x = 1, which has no point in the cube. The work is O(m log m). From 512 rows,
+    // since at 256 an all-pairs pass of `Lin2::minus` in each round of `solve2` stays under the
+    // limit (COMPLEXITY.md S18).
     let c = [1_000_001, 1_000_003, 1_000_005];
     let family = |m: usize| -> Vec<Row3> {
         let mut rng = Rng::new(11);
@@ -594,10 +598,10 @@ fn slabs_of_million_coefficients_scale() {
         }
         rows
     };
-    let (small, large) = (family(256), family(256 * scaling::FACTOR));
+    let (small, large) = (family(512), family(512 * scaling::FACTOR));
     scales(
         "rows over a slab of million coefficients",
-        256,
+        512,
         1,
         &small,
         &large,
