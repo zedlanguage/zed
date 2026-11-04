@@ -1042,8 +1042,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHK-cost | repair attempt 4 | 2026-11-03 15:48 | CHK-carrier in progress, uncommitted: generalize (crates/zedc/src/check/mod.rs:955-971) replaces a class solved to a carrier only outside nested functions; Sig: |
-| CHK-curried | repair attempt 4 (item CHK-cost) | 2026-11-03 19:35 | CHK-carrier in progress, uncommitted: generalize (crates/zedc/src/check/mod.rs:955-971) replaces a class solved to a carrier only outside nested functions; Sig: |
 | L1.37a | impl attempt 1 | 2026-11-03 16:32 | started |
 | NARROW-if | repair attempt 8 | 2026-11-03 16:46 | arms.rs: explains takes a carrying test with its Carried path, narrowed as one conjunction; added note-count test on the strengthened hub and an ignored timing  |
 | STAGE-dag | impl attempt 1 | 2026-11-03 21:04 | started; worktree stage-dag |

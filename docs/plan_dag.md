@@ -513,7 +513,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 7 | ADDR-preimage | Done: found by ADDR-keys step 1: zedc/src/store/preimage.rs:859-874 and preimage_ref.rs:609-624 seen: HashMap<*const Term, Tid>; key by occurrence ids or a term id, with a determinism test | S | no | ADDR-keys |  |
 | 7 | ADDR-cell | Done: found by ADDR-keys step 1: zedc/src/store/cell.rs:113 seen.insert(Arc::as_ptr(n)) as a visited set; key by an id, keeping linear cost on shared nodes | S | no | ADDR-keys |  |
 | 7 | ADDR-memory | Done: found by ADDR-keys step 1: zedc/src/zir/memory.rs:839,1443 alone: HashMap<*const Node, Region>; SYNTHESIS Q10 decides occurrence ids with a memoized resolve | S | no | ADDR-keys |  |
-| 6 | CHK-cost | Checker cost per node, on tuples and on lambdas (group item covering CHK-node-cost, CHK-tuple, CHK-lambda) | S | no | T2-mid |  |
+| 6 | CHK-cost | Done: Checker cost per node, on tuples and on lambdas (group item covering CHK-node-cost, CHK-tuple, CHK-lambda) | S | no | T2-mid |  |
 | 2 | DAG-audit | Done: Audit of the dependency DAG (plan_dag, ledger, dagview): edges, cycles, groups, states; T12 needs every Rust-writing item before L1.41 and delivers the scaling-coverage check | S | no | PLAN-audit-apply |  |
 | 6 | TEST-slow-random_guarded_keep_their_preimages | Done: Split the s22 test `random_guarded_keep_their_preimages` into pieces each under 60 s, after S22e-wide merges (it also edits s22.rs) | S | no | S22b-rest, S22e-quad, S22e-wide |  |
 | 6 | TEST-slow-more_random_guarded_keep_their_preimages | Done: Split the s22 test `more_random_guarded_keep_their_preimages` into pieces each under 60 s, after S22e-wide merges (it also edits s22.rs) | S | no | S22b-rest, S22e-quad, S22e-wide |  |
