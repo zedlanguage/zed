@@ -1003,13 +1003,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MURAIL-study | running | 2026-11-03 19:52 | start: read-only study of murail-formal-model-v17.md against DESIGN |
 | NAME-ties | repair attempt 3 | 2026-11-03 09:30 | pick by color alone decided 372 of 1000 regular systems with disjunctions (1 true): added alone() (a disjunction left alone in its group of linked rows is met b |
 | NARROW-if | repair attempt 3 | 2026-11-03 16:46 | start: continue from wt/narrow-if, finish full run and commit |
-| PERF-portable | impl attempt 1 | 2026-11-03 18:52 | docs written (STATUS row+note, COMPLEXITY row, ZED_PORT_GAPS); ledger PORTABLE-rt added; running fmt, clippy, run_tests.sh 2 |
 | STUDIES3-spec | running | 2026-11-03 19:30 | merged zed bb9a806, zed-impl 9ff30c5e + b8a8e10a (l01_07 snapshots); pushed |
 | TD-cong | impl attempt 1 | 2026-11-03 04:35 | Congruence, Affine and Exponent on Num; workspace builds; writing tests (load 62.57) |
 | TEST-slow | running (item wf_29c4acd4-fb5) | 2026-11-03 19:00 | workflow item wf_29c4acd4-fb5 covering the five TEST-slow-* splits of the s22 preimage tests |
 | TRACE-study | running | 2026-11-03 19:45 | end: Q1 answered (gen = delayed trace/feedback with boundary as initial state, not a JSV trace; fix = cartesian trace via Conway; guarded gen seen by its result |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
+
+- PERF-portable (32f4a519): pushed with its merge; awaiting the batch test.
 
 
 ## Open points
