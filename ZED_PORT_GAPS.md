@@ -25,7 +25,7 @@ the form it has may not meet the cost the compiler needs:
 | 5 | Bytes: spans, binary files, hashing input | 95 | partly planned (L1.39c: `utf8`; no byte port) | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
 | 6 | Command line, computed output paths, exit status | 9 | closed for the command line (built, L1.19a); executables planned (L1.36a); no computed paths | S.5 | `CommandLine` port; `Files` writes, an exit value |
 | 7 | Scalar to and from code point | 18 | built (L1.39c) | S.2 | Four L1 words: `codePoint`, `scalar`, `utf8`, `fromUtf8` |
-| 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | planned (S.1d, decision pending) | S.2 | A word whose type is empty (conflicts with G5 and line 711), or an atom in each codomain |
+| 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | decided (S.1d: the member) | S.2 | The atom `#bug(message)`, deleted from the type wherever the invariant is proved; `zedc check` lists the rest |
 | 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
 | 10 | File import cycles | 3 cycles, 5 parent/child groups | Rust must change (S.1f) | S.2 | Move definitions in five, merge files in three; no Zed change |
 
@@ -272,22 +272,27 @@ and `source.rs`) are tables in Zed, or built-ins for now. Substring slices are O
 exist across all types. A recursion on `&xs[1..]` would become O(n log n) in total, not O(n);
 check at S.2.
 
-### Gap 8. Broken invariants and unproved indexing (missing)
+### Gap 8. Broken invariants and unproved indexing (decided: the member `#bug`, step S.1d)
 
 Confirmed: `.expect` 150, `unreachable!` 63, `panic!` 3, `assert!` 3, `debug_assert!` 5, `.unwrap()`
 5; DESIGN.md has no word that stops with a message. Failure is data, and `@invariant` is L15.
 Also about 1,193 index expressions panic in Rust on a bad index, whereas `v[i]` in Zed has
 `#notFound` in its type unless the domain proves `i` in range.
 
-Two options, and the choice is the author's:
+Decided by the author on 2026-11-04: the member. A function that reaches a broken invariant
+returns the atom `#bug(message)`, and indexing is `v[i] else #bug("index past end")`. Wherever
+the checker proves the index or the invariant, the `else` has nothing to replace and `#bug` is not
+in the type; where it does not, `#bug` stays in the type, reaches the callers' types, and
+`zedc check` lists the site. Step S.1d builds this; the port (S.3) writes each Rust `expect`,
+`unreachable!`, `panic!`, `assert!` and unproved index as such a site.
 
 | Solution | Empirical result | Score | Reasoning |
 |---|---|--:|---|
-| An L1 word `bug(message)` of empty type, which stops the program and reports the message and its provenance | not run | 7 | Keeps result types small, and the empty type keeps it out of unions. Needs the spec changes listed below |
-| An atom `#bug(String)` in the codomain of each function that can reach a broken invariant; indexing is `v[i] else #bug("…")` | not run | 6 | Needs no spec change. Cost: the atom enters the result type of nearly every function, since propagation is declared in the codomain, so signatures and arrows grow and every caller carries it |
+| **Chosen.** An atom `#bug(String)` in the codomain of each function that can reach a broken invariant; indexing is `v[i] else #bug("…")` | not run | 8 | Needs no spec change, and keeps G5 and line 711. The cost first counted against it, that the atom enters the result type of nearly every function, holds only where an invariant is unproved: wherever the checker proves it, the member is deleted. The functions that keep it are the list of proofs still missing, which `zedc check` prints |
+| An L1 word `bug(message)` of empty type, which stops the program and reports the message and its provenance | not run | 3 | Keeps result types small, and the empty type keeps it out of unions. But it breaks G5: it is a written stop that the compiler does not rule out, and a program could halt in a way its types do not show. Needs the spec changes listed below |
 
-With either, indexing that the domain proves in range needs neither. The word `bug` contradicts
-DESIGN.md at these places, which the author would have to change (each confirmed):
+The word `bug` was rejected because it contradicts DESIGN.md at these places (each confirmed when
+the gap was written):
 
 - G5 (line 21): out-of-bounds indexing and unhandled failure "cannot be written". `bug` is a
   written stop that the compiler does not rule out.
@@ -296,8 +301,13 @@ DESIGN.md at these places, which the author would have to change (each confirmed
 - Line 3710: "no program writes" the empty type. The type also has no spelling: `!_` appears
   nowhere in DESIGN.md, and a message must print types as a user can write them.
 
-Reachability of such stops is a fact tests can report on. The rule "failure is data" holds for a
-program's input; this word would be for faults in the program itself.
+So the rule "failure is data" covers faults in the program itself as well as its input.
+
+Open for S.1d (inferred from DESIGN.md sec:failure, not part of the decision): a `#bug` that arises
+as a loose atom is stripped by a caller's `e else d`, so a default such as `x else 0` would also
+hide a bug. A prelude family `type Bug = #bug(message: String)`, written in the result types,
+would keep it, since family atoms survive `else` and are removed only by `else #bug -> d`. S.1d
+chooses between these and tests the choice.
 
 `catch_unwind` and `resume_unwind` (`Evaluator::run`, `eval.rs:362`, and `on_stack`) only restore a flag, and
 `on_stack` (`eval.rs:290`) exists only to run with a 1 GiB stack (the marker `Stack`). Both vanish.

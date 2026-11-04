@@ -92,7 +92,7 @@ The audit of 2026-11-03 found these, each now a step before its first use:
   steps L6.13 to L6.13c;
 - the Cranelift port: step S.1a, before step S.4 uses it;
 - the shared checker types, fixed through L6: step S.1b;
-- stopping at a broken invariant (gap 8): step S.1d, which waits on the author's decision;
+- stopping at a broken invariant (gap 8): step S.1d, the member `#bug(message)` the author chose on 2026-11-04;
 - prelude units slower than their stated cost: step S.1e;
 - the file import cycles of the Rust compiler (gap 10): step S.1f;
 - the e-graph in Zed: step S.3a, which step L23.1 extends to ZIR.
