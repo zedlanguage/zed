@@ -23,6 +23,22 @@
 //! process does not do: tests beside a run of 20 µs let a quadratic run pass. Where
 //! `perf_event_open` is refused altogether no count exists, and the check stops with an error.
 //!
+//! All of the above is Linux. On macOS the count is `ri_instructions` of
+//! `proc_pid_rusage(getpid(), RUSAGE_INFO_V4, ...)`, the instructions the whole process retired,
+//! or, where that reads 0 (a machine whose counters the kernel does not read), its `ri_cycles`;
+//! the unit in a failure's message says which was measured. On Windows the count is
+//! `QueryProcessCycleTime`, the cycles of the whole process in user and kernel mode. Cycles
+//! change with load, as processor time does, so they get its five runs and three measurements.
+//! These counters, and the bytes `zed-alloc-count` counts on those systems, are of the whole
+//! process and not of a thread and the threads it starts, so [`Meter::new`] stops with its own
+//! error unless the harness runs one test at a time (`cargo test -- --test-threads=1`, or
+//! `RUST_TEST_THREADS=1`). Off Linux there is no meter of processor time to fall back on, and on
+//! any other system the check stops with an error. The calls are in `zed_alloc_count::os`, with
+//! the documents they follow. The macOS and Windows paths are compiled on Linux (`cargo check`
+//! and clippy for x86_64-apple-darwin, aarch64-apple-darwin and x86_64-pc-windows-msvc) and have
+//! not been run. The test binaries do not build there yet: `zed-rt`'s stack (`sysinfo`,
+//! `MAP_STACK`, `mmap`) is Linux-only.
+//!
 //! The second measure is the bytes a run allocates, counted by the global allocator of the test
 //! binaries (the crate `zed-alloc-count`): a block counts its size, a grown block its new size.
 //! Its ratio is held to the same limit. It sees what the instruction count misses: a copy is a
@@ -51,9 +67,12 @@ use std::cell::Cell;
 use std::hint::black_box;
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
 use perf_event::Builder;
+#[cfg(target_os = "linux")]
 use perf_event::events::{Event, Hardware, Software};
-use rustix::time::{ClockId, clock_gettime};
+#[cfg(any(target_os = "macos", windows))]
+use zed_alloc_count::os;
 
 /// How much larger the second run is.
 pub const FACTOR: usize = 8;
@@ -77,15 +96,30 @@ fn alone(f: &(impl Fn() + Sync)) -> u64 {
 /// The processor time this thread has used, which time spent waiting for a processor does not
 /// add to. For a limit on the time of one run that starts no thread; a comparison of two runs
 /// uses [`Meter`].
+#[cfg(unix)]
 pub fn cpu_time() -> Duration {
+    use rustix::time::{ClockId, clock_gettime};
     let t = clock_gettime(ClockId::ThreadCPUTime);
     Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
 }
 
+/// The processor time this thread has used, by `GetThreadTimes`, in kernel and user mode.
+#[cfg(windows)]
+pub fn cpu_time() -> Duration {
+    os::thread_cpu_time()
+}
+
+/// Reads a counter of work.
+type Read = Box<dyn FnMut() -> u64>;
+
 /// Counts work in the unit the machine offers.
 pub struct Meter {
-    counter: perf_event::Counter,
-    /// Whether `counter` counts instructions and not the nanoseconds of the task clock.
+    /// Reads the counter.
+    read: Read,
+    /// The name of the unit `read` counts in, for the messages.
+    unit: &'static str,
+    /// Whether the count is of instructions, which does not change with load, and not of
+    /// processor time or cycles, which do.
     instructions: bool,
 }
 
@@ -93,38 +127,95 @@ impl Meter {
     /// A meter of instructions where the hardware counts them, or else of the processor time of
     /// this thread and the threads it starts. With no counter at all a test cannot measure the
     /// work, so it stops; see [`no_counter`].
+    #[cfg(target_os = "linux")]
     pub fn new() -> Self {
-        Self::open(Hardware::INSTRUCTIONS, true)
-            .or_else(|| Self::open(Software::TASK_CLOCK, false))
+        Self::open(Hardware::INSTRUCTIONS, "instructions", true)
+            .or_else(|| Self::open(Software::TASK_CLOCK, "ns of processor time", false))
             .unwrap_or_else(|| no_counter())
     }
 
-    /// A meter of processor time, whatever the hardware offers.
-    pub fn of_cpu_time() -> Self {
-        Self::open(Software::TASK_CLOCK, false).unwrap_or_else(|| no_counter())
+    /// A meter of the instructions of the whole process where the kernel counts them, or else of
+    /// its cycles. Both count every thread of the process, so the tests must run one at a time;
+    /// see [`one_test_at_a_time`].
+    #[cfg(target_os = "macos")]
+    pub fn new() -> Self {
+        stop_unless_one_test_at_a_time("macOS", "proc_pid_rusage");
+        Self::first_that_moves([
+            (
+                Box::new(os::process_instructions) as Read,
+                "instructions of the whole process (proc_pid_rusage, ri_instructions)",
+                true,
+            ),
+            (
+                Box::new(os::process_cycles),
+                "cycles of the whole process (proc_pid_rusage, ri_cycles: ri_instructions does \
+                 not count here)",
+                false,
+            ),
+        ])
+        .unwrap_or_else(|| no_counter())
     }
 
-    /// The counter of `event`. Some virtual machines open the instructions counter and leave it
-    /// at 0, so a counter that does not move is not used.
-    fn open(event: impl Event, instructions: bool) -> Option<Self> {
+    /// A meter of the cycles of the whole process. It counts every thread of the process, so the
+    /// tests must run one at a time; see [`one_test_at_a_time`].
+    #[cfg(windows)]
+    pub fn new() -> Self {
+        stop_unless_one_test_at_a_time("Windows", "QueryProcessCycleTime");
+        Self::first_that_moves([(
+            Box::new(os::process_cycles) as Read,
+            "cycles of the whole process (QueryProcessCycleTime)",
+            false,
+        )])
+        .unwrap_or_else(|| no_counter())
+    }
+
+    /// No meter: this system has no counter the scaling tests read.
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    pub fn new() -> Self {
+        no_counter()
+    }
+
+    /// A meter of processor time, whatever the hardware offers.
+    #[cfg(target_os = "linux")]
+    pub fn of_cpu_time() -> Self {
+        Self::open(Software::TASK_CLOCK, "ns of processor time", false)
+            .unwrap_or_else(|| no_counter())
+    }
+
+    /// The counter of `event`, of this thread and the threads it starts.
+    #[cfg(target_os = "linux")]
+    fn open(event: impl Event, unit: &'static str, instructions: bool) -> Option<Self> {
         let mut builder = Builder::new(event);
         let mut counter = builder.inherit(true).enabled(true).build().ok()?;
-        let start = counter.read().expect("reading the counter");
-        spin(100_000);
-        let moved = counter.read().expect("reading the counter") != start;
-        moved.then_some(Self {
-            counter,
-            instructions,
-        })
+        let read = move || counter.read().expect("reading the counter");
+        Self::first_that_moves([(Box::new(read) as Read, unit, instructions)])
+    }
+
+    /// The first of `counters` that moves while this thread does work, with its unit and whether
+    /// it counts instructions. Some virtual machines open the instructions counter and leave it
+    /// at 0, and macOS leaves `ri_instructions` at 0 where it does not read the hardware counter,
+    /// so a counter that does not move is not used.
+    fn first_that_moves<const N: usize>(counters: [(Read, &'static str, bool); N]) -> Option<Self> {
+        counters
+            .into_iter()
+            .find_map(|(mut read, unit, instructions)| {
+                let start = read();
+                spin(100_000);
+                (read() != start).then_some(Self {
+                    read,
+                    unit,
+                    instructions,
+                })
+            })
     }
 
     /// The work `f` does, in instructions or nanoseconds, and the bytes it allocates on this
     /// thread and the threads that add their count to it; each never 0.
     pub fn work(&mut self, f: impl FnOnce()) -> Work {
         let bytes = zed_alloc_count::allocated();
-        let start = self.counter.read().expect("reading the counter");
+        let start = (self.read)();
         f();
-        let units = self.counter.read().expect("reading the counter") - start;
+        let units = (self.read)() - start;
         Work {
             units: units.max(1),
             bytes: (zed_alloc_count::allocated() - bytes).max(1),
@@ -133,11 +224,7 @@ impl Meter {
 
     /// The name of the unit of [`Work::units`].
     pub fn unit(&self) -> &'static str {
-        if self.instructions {
-            "instructions"
-        } else {
-            "ns of processor time"
-        }
+        self.unit
     }
 
     /// How many runs to take the least of, and how many measurements must all be over a limit.
@@ -194,12 +281,76 @@ enum Measures {
 }
 
 /// Stops a test that cannot measure work, which would otherwise pass unmeasured.
+#[cfg(target_os = "linux")]
 fn no_counter() -> ! {
     panic!(
         "this scaling test cannot measure work: perf_event_open opens neither the instructions \
          counter nor the task clock here. Run it where kernel.perf_event_paranoid is 2 or less \
          and no sandbox refuses that system call"
     )
+}
+
+/// Stops a test that cannot measure work, which would otherwise pass unmeasured.
+#[cfg(target_os = "macos")]
+fn no_counter() -> ! {
+    panic!(
+        "this scaling test cannot measure work: proc_pid_rusage counts neither instructions \
+         (ri_instructions) nor cycles (ri_cycles) of this process here"
+    )
+}
+
+/// Stops a test that cannot measure work, which would otherwise pass unmeasured.
+#[cfg(windows)]
+fn no_counter() -> ! {
+    panic!(
+        "this scaling test cannot measure work: QueryProcessCycleTime does not count the cycles \
+         of this process here"
+    )
+}
+
+/// Stops a test that cannot measure work, which would otherwise pass unmeasured.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn no_counter() -> ! {
+    panic!(
+        "this scaling test cannot measure work: the scaling tests read the counters of Linux \
+         (perf_event_open), macOS (proc_pid_rusage) and Windows (QueryProcessCycleTime), and this \
+         system is none of them"
+    )
+}
+
+/// Stops a test whose meter counts the whole process, as `call` does on `system`, unless the
+/// harness runs one test at a time: tests running beside it would add their work and bytes.
+#[cfg(any(target_os = "macos", windows))]
+fn stop_unless_one_test_at_a_time(system: &str, call: &str) {
+    let threads = std::env::var("RUST_TEST_THREADS").ok();
+    if !one_test_at_a_time(std::env::args(), threads.as_deref()) {
+        panic!(
+            "this scaling test cannot measure its own work: on {system} the counter of work \
+             ({call}) and the count of bytes are of the whole process, so tests running beside it \
+             would add to them. Run the tests one at a time: cargo test -- --test-threads=1"
+        )
+    }
+}
+
+/// Whether libtest, given the arguments `args` (with the program's name first) and the value
+/// `threads` of `RUST_TEST_THREADS`, runs one test at a time. Its option `--test-threads N` or
+/// `--test-threads=N` overrides the variable, and with neither it runs as many tests at once as
+/// the machine has processors.
+#[cfg_attr(
+    not(any(test, target_os = "macos", windows)),
+    expect(dead_code, reason = "only macOS and Windows measure the whole process")
+)]
+fn one_test_at_a_time(args: impl IntoIterator<Item = String>, threads: Option<&str>) -> bool {
+    let mut args = args.into_iter();
+    let mut option = None;
+    while let Some(arg) = args.next() {
+        if arg == "--test-threads" {
+            option = args.next();
+        } else if let Some(n) = arg.strip_prefix("--test-threads=") {
+            option = Some(n.to_owned());
+        }
+    }
+    option.as_deref().or(threads).map(str::trim) == Some("1")
 }
 
 /// `n` passes of a loop that the compiler cannot remove.
@@ -390,6 +541,8 @@ mod tests {
         )));
     }
 
+    // Only Linux has a meter of processor time.
+    #[cfg(target_os = "linux")]
     #[test]
     fn processor_time_tells_the_orders_apart_too() {
         let mut meter = Meter::of_cpu_time();
@@ -421,15 +574,19 @@ mod tests {
             1,
             quadratic
         )));
-        let cpu = &mut Meter::of_cpu_time();
-        assert!(fails(|| check_by(
-            cpu,
-            Measures::WorkOnly,
-            "quadratic, by time",
-            1000,
-            1,
-            quadratic
-        )));
+        // Only Linux has a meter of processor time.
+        #[cfg(target_os = "linux")]
+        {
+            let cpu = &mut Meter::of_cpu_time();
+            assert!(fails(|| check_by(
+                cpu,
+                Measures::WorkOnly,
+                "quadratic, by time",
+                1000,
+                1,
+                quadratic
+            )));
+        }
     }
 
     #[test]
@@ -545,17 +702,23 @@ mod tests {
     fn the_bytes_of_a_thread_a_run_starts_by_on_a_thread_count() {
         let on_a_thread = |n| on_a_thread(1 << 20, || square_of_bytes(n));
         assert!(fails(|| check("n² bytes on a thread", 1000, on_a_thread)));
-        let cpu = &mut Meter::of_cpu_time();
-        assert!(fails(|| check_by(
-            cpu,
-            Measures::Both,
-            "n² bytes on a thread, by time",
-            1000,
-            1,
-            on_a_thread
-        )));
+        // Only Linux has a meter of processor time.
+        #[cfg(target_os = "linux")]
+        {
+            let cpu = &mut Meter::of_cpu_time();
+            assert!(fails(|| check_by(
+                cpu,
+                Measures::Both,
+                "n² bytes on a thread, by time",
+                1000,
+                1,
+                on_a_thread
+            )));
+        }
     }
 
+    // Off Linux the counts are of the whole process, so the threads beside a run add to them.
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_bytes_of_a_run_do_not_depend_on_tests_running_beside_it() {
         let stop = std::sync::atomic::AtomicBool::new(false);
@@ -585,6 +748,7 @@ mod tests {
     /// The bytes `alone` returns, which a comparison compares, are those of the run whatever
     /// threads start and end beside it: the start of `alone`'s own thread, whose bookkeeping in
     /// std depends on the threads alive, is not in them.
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_bytes_of_a_run_alone_do_not_depend_on_threads_starting_beside_it() {
         let stop = std::sync::atomic::AtomicBool::new(false);
@@ -686,5 +850,110 @@ mod tests {
             run,
         );
         assert_eq!(fresh.into_inner(), small + large);
+    }
+
+    /// The passes of the loops of [`counted_spin`] on every thread of the process; only
+    /// `a_meter_measures_by_any_counter_it_is_given` runs them.
+    static SPUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// A counter of the passes of [`counted_spin`] in the whole process, as the counters of macOS
+    /// and Windows count the whole process, in passes of a loop rather than instructions.
+    fn spun_counter() -> Read {
+        Box::new(|| SPUN.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// `n` passes of a loop, counted by [`spun_counter`].
+    fn counted_spin(n: u64) {
+        spin(n);
+        SPUN.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The counter that moves is taken, with its unit, past one that reads 0, as macOS takes
+    /// `ri_cycles` where `ri_instructions` reads 0; none moving gives no meter.
+    #[test]
+    fn a_meter_takes_the_first_counter_that_moves() {
+        // A counter that moves by one at each read stands in for one that counts the work.
+        let moving = || {
+            let mut passes = 0u64;
+            Box::new(move || {
+                passes += 1;
+                passes
+            }) as Read
+        };
+        let zero = || Box::new(|| 0u64) as Read;
+        let meter =
+            Meter::first_that_moves([(zero(), "instructions", true), (moving(), "cycles", false)])
+                .expect("the second counter moves");
+        assert_eq!(meter.unit(), "cycles");
+        assert_eq!(meter.runs(), (1 + 5 * TRIES, 5 * TRIES));
+        let meter =
+            Meter::first_that_moves([(moving(), "instructions", true)]).expect("the counter moves");
+        assert_eq!(meter.runs(), (3, 2));
+        assert!(
+            Meter::first_that_moves([(zero(), "instructions", true), (zero(), "cycles", false)])
+                .is_none()
+        );
+    }
+
+    /// A meter of a counter that only `counted_spin` moves measures the passes of a run, whatever
+    /// counter it reads, and compares the orders of two runs as a meter of instructions does.
+    #[test]
+    fn a_meter_measures_by_any_counter_it_is_given() {
+        let mut meter = Meter {
+            read: spun_counter(),
+            unit: "passes",
+            instructions: true,
+        };
+        assert_eq!(meter.work(|| counted_spin(1234)).units, 1234);
+        let linear = |n: usize| counted_spin(10 * n as u64);
+        check_by(
+            &mut meter,
+            Measures::WorkOnly,
+            "linear passes",
+            1000,
+            1,
+            linear,
+        );
+        let quadratic = |n: usize| counted_spin((n * n) as u64);
+        let message = message_of(|| {
+            check_by(
+                &mut meter,
+                Measures::WorkOnly,
+                "quadratic passes",
+                1000,
+                1,
+                quadratic,
+            )
+        });
+        assert!(
+            message.contains("1000000 and 64000000, 64.0 times the work")
+                && message.contains("in passes"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn one_test_at_a_time_is_read_from_the_options_of_libtest_or_its_variable() {
+        let args = |a: &[&str]| -> Vec<String> {
+            std::iter::once("steps")
+                .chain(a.iter().copied())
+                .map(String::from)
+                .collect()
+        };
+        assert!(one_test_at_a_time(args(&["--test-threads=1"]), None));
+        assert!(one_test_at_a_time(
+            args(&["scaling", "--test-threads", "1"]),
+            None
+        ));
+        assert!(one_test_at_a_time(args(&[]), Some("1")));
+        assert!(!one_test_at_a_time(args(&[]), None));
+        assert!(!one_test_at_a_time(args(&[]), Some("4")));
+        assert!(!one_test_at_a_time(args(&["--test-threads=8"]), None));
+        // The option overrides the variable, either way.
+        assert!(!one_test_at_a_time(args(&["--test-threads=2"]), Some("1")));
+        assert!(one_test_at_a_time(
+            args(&["--test-threads", "1"]),
+            Some("8")
+        ));
     }
 }

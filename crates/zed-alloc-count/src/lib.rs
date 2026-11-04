@@ -29,13 +29,26 @@
 //! beside other tests. `zed_tests::scaling` compares the bytes counted inside the thread of each
 //! run, which do not hold that thread's start; a run that starts threads of its own still holds
 //! their starts.
+//!
+//! All of the above is the Linux build. On every other system there is one count, of the bytes
+//! every thread of the process allocates: Windows has no `pthread_create` to stand in for, and on
+//! macOS the counters of work (module [`os`]) are of the whole process too, so the scaling tests
+//! there run one test at a time and a count of the whole process is what they need. The macOS and
+//! Windows builds are compiled here (on Linux, by `cargo check --target`) but have not been run.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+#[cfg(target_os = "linux")]
 use std::cell::Cell;
+#[cfg(target_os = "linux")]
 use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+#[cfg(target_os = "linux")]
 use std::sync::{Arc, OnceLock};
 
+#[cfg(any(target_os = "macos", windows))]
+pub mod os;
+
+#[cfg(target_os = "linux")]
 /// The bytes a thread started by `pthread_create` and the threads it starts have allocated.
 struct Count {
     bytes: AtomicU64,
@@ -43,6 +56,7 @@ struct Count {
     parent: Option<Arc<Count>>,
 }
 
+#[cfg(target_os = "linux")]
 thread_local! {
     /// This thread's [`Count`], or null on a thread not started by `pthread_create`. The `Arc`
     /// that keeps it lives in [`start`] on this thread's stack, and is dropped only after this
@@ -54,6 +68,7 @@ thread_local! {
     static OWN: Cell<u64> = const { Cell::new(0) };
 }
 
+#[cfg(target_os = "linux")]
 /// This thread's [`Count`], if it has one.
 fn this_count() -> Option<&'static Count> {
     let count = COUNT.get();
@@ -69,6 +84,7 @@ fn this_count() -> Option<&'static Count> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// The bytes this thread and the threads it started have allocated so far.
 pub fn allocated() -> u64 {
     match this_count() {
@@ -77,6 +93,7 @@ pub fn allocated() -> u64 {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Adds `bytes` to this thread's count and its parents', from inside the allocator, when the
 /// system gave the block (`block` is not null) and returns `block`. The walk is as long as the
 /// chain of threads that started this one, a handful in any test.
@@ -94,6 +111,26 @@ fn count(block: *mut u8, bytes: usize) -> *mut u8 {
     block
 }
 
+/// The bytes every thread of the process has allocated, off Linux.
+#[cfg(not(target_os = "linux"))]
+static ALL: AtomicU64 = AtomicU64::new(0);
+
+/// The bytes every thread of this process has allocated so far: off Linux there is one count
+/// (see the crate's documentation).
+#[cfg(not(target_os = "linux"))]
+pub fn allocated() -> u64 {
+    ALL.load(Relaxed)
+}
+
+/// Adds `bytes` to the count of the process, from inside the allocator, when the system gave the
+/// block (`block` is not null), and returns `block`.
+#[cfg(not(target_os = "linux"))]
+fn count(block: *mut u8, bytes: usize) -> *mut u8 {
+    if !block.is_null() {
+        ALL.fetch_add(bytes as u64, Relaxed);
+    }
+    block
+}
 /// The system allocator, counting bytes per thread.
 pub struct Counting;
 
@@ -129,9 +166,11 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static COUNTING: Counting = Counting;
 
+#[cfg(target_os = "linux")]
 /// The function a new thread runs, as `pthread_create` takes it.
 type Routine = extern "C" fn(*mut c_void) -> *mut c_void;
 
+#[cfg(target_os = "linux")]
 /// The C library's `pthread_create`.
 type Create = unsafe extern "C" fn(
     *mut libc::pthread_t,
@@ -140,6 +179,7 @@ type Create = unsafe extern "C" fn(
     *mut c_void,
 ) -> c_int;
 
+#[cfg(target_os = "linux")]
 /// What [`start`] needs: the thread's own routine and argument, and the count of its parent.
 struct Start {
     routine: Routine,
@@ -147,6 +187,7 @@ struct Start {
     parent: Option<Arc<Count>>,
 }
 
+#[cfg(target_os = "linux")]
 /// The C library's `pthread_create`, found once.
 fn create() -> Create {
     static CREATE: OnceLock<Create> = OnceLock::new();
@@ -166,6 +207,7 @@ fn create() -> Create {
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Starts a thread as the C library's `pthread_create` does, giving it a count that adds to the
 /// count of this thread, if this thread has one.
 ///
@@ -207,6 +249,7 @@ pub unsafe extern "C" fn pthread_create(
     failed
 }
 
+#[cfg(target_os = "linux")]
 /// The routine of every thread this crate's `pthread_create` starts: it gives the thread its
 /// count, runs the thread's own routine, and takes the count away again before dropping it. A
 /// thread that ends by `pthread_exit` keeps its count, which is never dropped; std ends none
@@ -278,6 +321,8 @@ mod tests {
         assert_eq!(bytes_of(|| drop(v)), 0);
     }
 
+    // Off Linux the count is of the whole process, which other threads add to.
+    #[cfg(target_os = "linux")]
     #[test]
     fn other_threads_do_not_change_this_threads_count() {
         let stop = std::sync::atomic::AtomicBool::new(false);
@@ -302,6 +347,7 @@ mod tests {
         });
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_thread_counts_in_the_count_of_the_thread_that_started_it() {
         let mut child = 0;
@@ -323,6 +369,7 @@ mod tests {
         assert!(all >= child, "{all} {child}");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     #[expect(
         unsafe_code,

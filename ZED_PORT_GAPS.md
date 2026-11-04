@@ -1263,3 +1263,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `Shared`, a newtype over `Arc<Held>` where `Held` is an `Id` from `fresh_id` with the `Term`; a copy keeps the id and `Shared::make_mut` takes a new one when it changes the term; `Deref`, `AsRef`, `From<Term>`, and a `PartialEq` that is true at once on equal ids | every `Arc<Term>` child of `Term` (`Lam`, `App`, `Let`, `If`, `Match`, `Push`), `term::{lam, app, let_, if_}`, `provenance::child_mut` | Identity (gap 1) | A content digest field in each term node (gap 1), which serves as the id and makes equal terms built apart share it |
 | A `HashMap<u64, Tid>` keyed by `Shared::id` while one term is numbered | `Terms::add`, `Terms::id` | Identity (gap 1), mutation | A state receiver over a map keyed by the term's digest |
+
+## Entries from PERF-portable (`tests/src/scaling.rs`, `zed-alloc-count/src/os.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `#[cfg(target_os = ...)]` on items, statements and dependencies, one body per system | `scaling::Meter::new`, `no_counter`, `cpu_time`, `zed_alloc_count::os`, `allocated`, `count` | Attributes | A runtime binding per target, chosen by the build |
+| `libc::proc_pid_rusage` into a zeroed `MaybeUninit<rusage_info_v4>`; `windows_sys` `QueryProcessCycleTime` and `GetThreadTimes` | `zed_alloc_count::os` | Foreign library | Test harness only: read through an `@ffi` binding |
+| `Box<dyn FnMut() -> u64>` counters in a const-generic array, the first that moves taken | `scaling::Meter`, `first_that_moves` | Mutation | A list of counter functions, each read as a value |
+| One process-wide `static AtomicU64` of bytes off Linux | `zed_alloc_count::ALL` | Shared tables across pure calls (gap 2) | A count kept by the runtime and read as a value |
