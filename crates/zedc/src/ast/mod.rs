@@ -344,25 +344,38 @@ pub fn ty(text: &str, tokens: &[Token], tree: &Tree) -> Result<Type, Error> {
     })
 }
 
-/// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, in written order but
-/// for guards, which are ordered as in a block (`StmtKind::place`). A unit's top level exports
-/// its declarations, so `return` there is an error.
+/// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, as [`unit_all_errors`]
+/// gives them, or the first error in written order.
 pub fn unit(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Error> {
+    unit_all_errors(text, tokens, tree)
+        .map_err(|es| es.into_iter().next().expect("an error per failed unit"))
+}
+
+/// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, in written order but
+/// for guards, which are ordered as in a block (`StmtKind::place`), or the error of each item
+/// that cannot be built, in written order. Every item is built, so which errors are reported
+/// does not depend on the order of the items (step L1.29b). A unit's top level exports its
+/// declarations, so `return` there is an error.
+pub fn unit_all_errors(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Vec<Error>> {
     with_holes(text, tokens, tree, |b| {
         b.fill(tree.root);
         let kids = b.kids(tree.root);
         let mut out = Vec::with_capacity(kids.len());
+        let mut errors = Vec::new();
         for &k in kids {
-            let s = b.item(k)?;
-            if let StmtKind::Return(_) = s.kind {
-                return Err(Error {
+            match b.item(k) {
+                Ok(s) if matches!(s.kind, StmtKind::Return(_)) => errors.push(Error {
                     row: None,
                     span: s.span,
                     message: "`return` exports from a block; a unit's top level has none".into(),
                     notes: Vec::new(),
-                });
+                }),
+                Ok(s) => out.push(s),
+                Err(e) => errors.push(e),
             }
-            out.push(s);
+        }
+        if !errors.is_empty() {
+            return Err(errors);
         }
         out.sort_by_key(|s| s.kind.place());
         Ok(out)

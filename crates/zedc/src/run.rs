@@ -173,7 +173,7 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), 
         lex::lex_with_docs(text).map_err(|e| vec![at(e.span.start, e.to_string())])?;
     let tree =
         parse(text, &tokens, "Unit", TOP).map_err(|e| vec![at(e.span.start, e.to_string())])?;
-    let stmts = ast::unit(text, &tokens, &tree).map_err(|e| all(vec![e]))?;
+    let stmts = ast::unit_all_errors(text, &tokens, &tree).map_err(all)?;
     let res = resolve::resolve(&stmts).map_err(all)?;
     // Doc comments are checked after parsing; their errors join elaboration's.
     let mut errors = docs::check(text, &tokens, &docs, &res);

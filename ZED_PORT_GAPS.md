@@ -1328,3 +1328,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `format!("#{k:0width$}")`, a width given by a variable | `Renamed::of` | Formatting (no width argument in Zed's string interpolation) | A `pad_left` of the decimal text to the width |
 | `let ... else` returns on a settling with no point and on no choice by color | `settle_tied` | Early exit (gap 12) | A match on each result |
 | A vector of each disjunct's settled parts, filled before the asking loop and emptied by `Option::take` as each is read | `project_parts` (`pre`) | Mutation (gap 11) | The settled parts zipped with the disjuncts, read once by a map; no take needed |
+
+## Entries from ITEM-order (`zedc/src/ast/mod.rs`, `run.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `for` loop over the items that pushes each built statement to one `Vec` and each error to another, inside the `with_holes` closure | `ast::unit_all_errors` | Mutation (gap 11) | A fold over the items into a pair of lists, statements and errors |
