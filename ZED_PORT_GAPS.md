@@ -1017,6 +1017,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Unbounded counts of repeats (`num_bigint::BigUint`), since a run can be longer than 2^64 | `Sym::Run`, `Canon::cmp_seqs`, `Finger::cut` | None (`int` is unbounded) | `int` |
 | Bit operations on symbol numbers for deterministic coin tossing (`^`, `trailing_zeros`, `>>`, `& 1`) | `Canon::chunk` | Bit operations (gap 4, built) | The bit words of L1.39a |
 
+## Entries from BDD-atom-order (`zed-kernel/src/types/print.rs`, `types/bdd.rs`, `types/bdd/list.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An iterator over nested segments with its own stack of frames, each a `slice::Iter` into a segment list or a group's elements, resumed across `next` calls | `print::Pieces`, `Frame` | Mutation (gap 11) | A state receiver holding a list of (list, index) frames, as for `Machine::run` |
+| The text of a decision list written into one `Vec<Seg>` from the first block on, with a `Vec` of the segments that close each block begun, popped onto the end | `Printer::list` | Mutation (gap 11) | A list builder in a state receiver; a list value appended per block would copy the prefix unless the runtime reuses it |
+| Ranks of nodes by height, each level's signatures sorted by `sort_unstable` and numbered (AHU) | `Printer::canon` | None | A sort of a list of (signature, node) values, then a fold that numbers equal runs |
+| A `#[cfg(test)]` `thread_local!` salt mixed into the type digests, so tests can permute the atom order | `types::SALT`, `mix` | Not ported | Tests only; the port's digests would take the salt as an argument of the digest function |
+
 ## Entries from ST-formula-k2-rec (`zedc/src/store/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
