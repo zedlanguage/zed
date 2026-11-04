@@ -989,14 +989,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ADDR-memory | impl attempt 1 | 2026-11-03 16:28 | started; ledger shows queued, no one fixing |
-| ADDR-preimage | impl attempt 1 | 2026-11-03 16:28 | started; reading brief, ledger, preimage.rs and preimage_ref.rs seen maps |
-| ADDR-stage | impl attempt 1 | 2026-11-03 16:28 | started; worktree /home/luke/Work/wt/addr-stage from main ebab4149; load 13.74 |
-| CHK-cost | repair attempt 1 | 2026-11-03 15:48 | start; fixing curried-lambda regression (VarFacts recomputed after each replace) on wt/chk-cost 078ec997; load 33.73 34.52 42.03 |
-| ISSUE1-else-atoms | repair attempt 2 | 2026-11-03 16:04 | start; continuing wt/issue1-else-atoms at 2353b98a; blocking 2 (scaling off Linux) is PERF-portable per orchestrator ledger note 18:57; fixing blocking 1 (two a |
-| LIT-adopt | impl attempt 1 | 2026-11-03 16:46 | negative controls (ctl): checker's per-expression type record cloning each tuple level, deep check_order 128/1024 fails 26.2x bytes (13.2 MB / 347.4 MB, limit 2 |
-| NAME-ties | verify attempt 3 | 2026-11-03 09:30 | started (tip 95328906) / load 13.86 23.30 33.85 |
-| NARROW-if | verify attempt 1 | 2026-11-03 16:46 | started; no earlier verify lines in log |
+| ADDR-memory | verify attempt 1 | 2026-11-03 16:28 | negative control (alone as Vec<(usize, Region)> searched by position, worktree addr-memory-ctl, not committed): running_many_node_occurrences_is_linear fails, 3 |
+| ADDR-preimage | verify attempt 1 | 2026-11-03 16:28 | negative control (Terms::id without seen map, test n=2) in wt/addr-preimage-ctl: sizes 2 and 16 allocate 29408 and 553125616 bytes, 18808.7x vs limit 24, fails  |
+| CHK-cost | verify attempt 2 | 2026-11-03 15:48 | start, branch wt/chk-cost 947a5b48; no earlier verify#2 lines to reuse; load 39.65 42.16 41.76 |
+| ISSUE1-else-atoms | verify attempt 3 | 2026-11-03 16:04 | done: ok=false (1 blocking: a function that handles atoms and calls a two-arrow function, g(positional x) = if (x else "") == "-" { "dash" } else { r(x) }, gets |
+| LIT-adopt | repair attempt 1 | 2026-11-03 16:46 | start: fixing verifier findings (2^d follow comparisons, missing scaling tests, tuple-union shapes, carrier order) |
+| LOOP-boundary | running | 2026-11-03 19:33 | report saved to wt/loop-boundary/REPORT.md; adopted in full; spec agent LOOP-boundary-spec launching |
+| LOOP-boundary-spec | running | 2026-11-03 19:45 | edits 2-7 done: m[k] row, lexical with row, grammar rows, elaboration row, dependency proof (b), diagnostics row; tour 17 checked |
+| MURAIL-study | running | 2026-11-03 19:52 | start: read-only study of murail-formal-model-v17.md against DESIGN |
+| NAME-ties | repair attempt 3 | 2026-11-03 09:30 | pick by color alone decided 372 of 1000 regular systems with disjunctions (1 true): added alone() (a disjunction left alone in its group of linked rows is met b |
+| NARROW-if | repair attempt 3 | 2026-11-03 16:46 | start: continue from wt/narrow-if, finish full run and commit |
+| PERF-portable | impl attempt 1 | 2026-11-03 18:52 | docs written (STATUS row+note, COMPLEXITY row, ZED_PORT_GAPS); ledger PORTABLE-rt added; running fmt, clippy, run_tests.sh 2 |
+| STUDIES3-spec | running | 2026-11-03 19:30 | merged zed bb9a806, zed-impl 9ff30c5e + b8a8e10a (l01_07 snapshots); pushed |
+| TD-cong | impl attempt 1 | 2026-11-03 04:35 | Congruence, Affine and Exponent on Num; workspace builds; writing tests (load 62.57) |
+| TEST-slow | running (item wf_29c4acd4-fb5) | 2026-11-03 19:00 | workflow item wf_29c4acd4-fb5 covering the five TEST-slow-* splits of the s22 preimage tests |
+| TRACE-study | running | 2026-11-03 19:45 | end: Q1 answered (gen = delayed trace/feedback with boundary as initial state, not a JSV trace; fix = cartesian trace via Conway; guarded gen seen by its result |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
