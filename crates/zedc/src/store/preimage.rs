@@ -1134,8 +1134,9 @@ enum Form {
     Prim(std::mem::Discriminant<Prim>, Vec<Tid>),
     Let(Name, Tid, Tid),
     If(Tid, Tid, Tid),
-    /// A literal of another kind, a lambda, a primitive as a value, or a term outside the
-    /// catalog: the term itself.
+    /// A literal of another kind, a literal that follows a carrier (`Node::Follow`, whose arms
+    /// hold such literals), a lambda, a primitive as a value, or a term outside the catalog:
+    /// the term itself.
     Own(Tid),
 }
 
@@ -1219,7 +1220,7 @@ impl<'t> Terms<'t> {
                 ),
                 Term::Match(v, arms) if let Some(own) = follow_own(arms) => Node::Follow(
                     self.id(v, &mut seen, &mut todo),
-                    self.id(own, &mut seen, &mut todo),
+                    self.number(own, &mut todo),
                     &arms[..arms.len() - 1],
                 ),
                 _ => Node::Other,
@@ -1284,7 +1285,9 @@ impl<'t> Terms<'t> {
             Node::Prim(p, args) => Form::Prim(std::mem::discriminant(&p), self.forms(args)),
             Node::Let(x, e, b) => Form::Let(x, self.form(e), self.form(b)),
             Node::If(g, a, b) => Form::If(self.form(g), self.form(a), self.form(b)),
-            Node::Lit(_) | Node::Lam(..) | Node::PrimFn(_) | Node::Other => Form::Own(t),
+            Node::Lit(_) | Node::Lam(..) | Node::PrimFn(_) | Node::Follow(..) | Node::Other => {
+                Form::Own(t)
+            }
         };
         let f = *self.by_form.entry(form).or_insert(t);
         self.forms.insert(t, f);
@@ -2331,6 +2334,7 @@ impl<'t> Tx<'t> {
             Node::If(g, a, b) => {
                 self.reads_mod(g, env) || self.reads_mod(a, env) || self.reads_mod(b, env)
             }
+            Node::Follow(v, own, _) => self.reads_mod(v, env) || self.reads_mod(own, env),
             Node::Lam(..) | Node::Other => true,
         }
     }

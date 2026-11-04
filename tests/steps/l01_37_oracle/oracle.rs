@@ -32,7 +32,7 @@ fn every_step_unit_agrees() {
     });
     assert_eq!(runs, 204, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
-    assert_eq!(r.compared, 16);
+    assert_eq!(r.compared, 18);
 }
 
 #[test]

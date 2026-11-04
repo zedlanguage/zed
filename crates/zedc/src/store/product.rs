@@ -2583,7 +2583,7 @@ fn plain_test(test: &Term, scope: &Scope) -> Option<Term> {
                         let b = new.pop().expect("three parts");
                         let a = new.pop().expect("three parts");
                         let c = new.pop().expect("three parts");
-                        Term::If(Arc::new(c), Arc::new(a), Arc::new(b))
+                        Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
                     }
                 }));
             }

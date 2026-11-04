@@ -1661,8 +1661,8 @@ impl<'a> Elab<'a> {
         // The literal's own term, which a marked elaboration marks, is the last arm.
         let own = mem::replace(&mut args[at], Term::Var(other.clone()));
         arms.push((KPattern::Wild, own));
-        args[at] = Term::Match(Arc::new(Term::Var(other.clone())), arms);
-        Term::Let(other, Arc::new(x), Arc::new(Term::Prim(p, args)))
+        args[at] = Term::Match(Shared::new(Term::Var(other.clone())), arms);
+        Term::Let(other, Shared::new(x), Shared::new(Term::Prim(p, args)))
     }
 
     /// `v is t`, its operand and type elaborated.
