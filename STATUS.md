@@ -1021,10 +1021,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHK-cost | verify attempt 4 | 2026-11-03 15:48 | suite (run_tests.sh 4) running on 133364bf; control worktree wt/chk-cost-v4ctl at main e5eda472 with the branch's scaling.rs; load 28.56 35.30 38.84 |
-| CHK-curried | running | 2026-11-03 19:35 |  |
-| ISSUE1-else-atoms | repair attempt 4 | 2026-11-03 16:04 | docs rows (F69, STATUS, PORT_GAPS) done; fmt, clippy -D warnings clean (type alias Called); spec branch rebased on zed main b4d27e6 -> 77eae84 (handled-atoms sp |
-| NARROW-if | repair attempt 5 | 2026-11-03 16:46 | committed b4ffd104 + 60827647 on wt/narrow-if, rebased onto main e5eda472 (product.rs and ZED_PORT_GAPS conflicts rebuilt by hand); suite before rebase 356 piec |
+| CHK-cost | repair attempt 4 | 2026-11-03 15:48 | CHK-carrier in progress, uncommitted: generalize (crates/zedc/src/check/mod.rs:955-971) replaces a class solved to a carrier only outside nested functions; Sig: |
+| CHK-curried | repair attempt 4 (item CHK-cost) | 2026-11-03 19:35 | CHK-carrier in progress, uncommitted: generalize (crates/zedc/src/check/mod.rs:955-971) replaces a class solved to a carrier only outside nested functions; Sig: |
+| ISSUE1-else-atoms | verify attempt 6 | 2026-11-03 16:04 | fmt, clippy -D warnings pass; probes vs main zedc: blocking regression: g(positional x) = if x is #notFound { "nf" } else { trim(x) } (also trim(x else #notFoun |
+| L1.19a | impl attempt 1 | 2026-11-03 23:00 | start: CommandLine input port |
+| L1.29a | impl attempt 1 | 2026-11-03 16:32 | start |
+| L1.37a | impl attempt 1 | 2026-11-03 16:32 | started |
+| L1.39b | impl attempt 1 | 2026-11-03 16:32 | start: derivations and @exact preimages on demand |
+| L1.39c | impl attempt 1 | 2026-11-03 23:00 | started; load 22.19 21.95 23.79 |
+| NARROW-if | repair attempt 8 | 2026-11-03 16:46 | arms.rs: explains takes a carrying test with its Carried path, narrowed as one conjunction; added note-count test on the strengthened hub and an ignored timing  |
+| STAGE-dag | impl attempt 1 | 2026-11-03 21:04 | started; worktree stage-dag |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
