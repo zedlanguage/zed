@@ -2110,18 +2110,37 @@ impl<'t> Tx<'t> {
         k: K,
         f: impl FnOnce(&mut Self) -> V,
     ) -> V {
+        #[cfg(test)]
+        tests::held_read(self, table, &k);
         if let Some((v, cut)) = table(&mut self.run.memo).get(&k) {
-            self.cx.cut = self.cx.cut.min(*cut);
-            return v.clone();
+            let (v, cut) = (v.clone(), *cut);
+            #[cfg(test)]
+            let bypass = cut != usize::MAX && tests::BYPASS.get();
+            #[cfg(not(test))]
+            let bypass = false;
+            if !bypass {
+                #[cfg(test)]
+                if tests::RECHECK.get() && !tests::BYPASS.get() {
+                    tests::recheck(self, table, &k, &v, cut, f);
+                }
+                self.cx.cut = self.cx.cut.min(cut);
+                return v;
+            }
         }
         let base = self.run.active.len();
         let outer = std::mem::replace(&mut self.cx.cut, usize::MAX);
         // Temporary: stacker through `deeper` until PRE-stack-explicit.
         let v = deeper(|| f(self));
         let cut = self.cx.cut;
+        #[cfg(test)]
+        if cut < base && !none_held() {
+            tests::held_made(self, table, &k, base);
+        }
         let m = &mut self.run.memo;
         if cut >= base {
             table(m).insert(k, (v.clone(), usize::MAX));
+        } else if none_held() {
+            // The memo before ST-formula-k2-rec, which the tests compare with.
         } else {
             let unheld = Box::new({
                 let k = k.clone();
@@ -5176,6 +5195,15 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
 /// any integer.
 pub type Classes = BTreeMap<Arc<str>, Congruence>;
 
+/// Whether [`Tx::cached`] remembers nothing a call stopped below, as before ST-formula-k2-rec,
+/// for the tests that compare the memo with the one before; never outside the tests.
+fn none_held() -> bool {
+    #[cfg(test)]
+    return tests::NONE_HELD.get();
+    #[cfg(not(test))]
+    false
+}
+
 thread_local! {
     /// The boxes the searches of `@exact` preimages and witnesses took on this thread since
     /// [`exact_steps`] last read it.
@@ -5661,7 +5689,254 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> 
 mod tests {
     use super::presburger::TWO_AT_A_TIME;
     use super::*;
+    use std::cell::{Cell, RefCell};
     use std::collections::BTreeSet;
+
+    thread_local! {
+        /// Whether [`Tx::cached`] remembers nothing a call stopped below ([`none_held`]).
+        pub(super) static NONE_HELD: Cell<bool> = const { Cell::new(false) };
+        /// Each entry made below a stop, by its table and key: the lambdas being read when it
+        /// began, by their places, and the inputs of its context.
+        static MADE: RefCell<HashMap<u64, (Vec<Tid>, Sets)>> = RefCell::new(HashMap::new());
+        /// Of the reads of entries made below a stop: all, those on a stack higher than where
+        /// the entry began, and those in a context with other inputs (within another summary).
+        static READS: Cell<[u64; 3]> = const { Cell::new([0; 3]) };
+        /// Whether [`Tx::cached`] reads the term again at each hit, an entry made below a stop
+        /// on the stack it began on and any other entry on an empty stack, and checks the two
+        /// agree ([`rechecked`]).
+        pub(super) static RECHECK: Cell<bool> = const { Cell::new(false) };
+        /// Whether [`Tx::cached`] passes over entries made below a stop, while it reads a
+        /// term again for [`RECHECK`].
+        pub(super) static BYPASS: Cell<bool> = const { Cell::new(false) };
+        /// Of the entries [`RECHECK`] read again: those compared, those of kinds not compared,
+        /// those read on a stack higher than where they began, those read with other inputs, and
+        /// the entries that hold everywhere compared.
+        static CHECKED: Cell<[u64; 5]> = const { Cell::new([0; 5]) };
+    }
+
+    fn made_key<K: Hash, V>(table: Table<K, V>, k: &K) -> u64 {
+        use std::hash::Hasher;
+        let mut h = std::hash::DefaultHasher::new();
+        (table as usize).hash(&mut h);
+        k.hash(&mut h);
+        h.finish()
+    }
+
+    /// The bodies of the lambdas being read, by their places.
+    fn stack(tx: &Tx<'_>) -> Vec<Tid> {
+        let mut s = vec![0; tx.run.active.len()];
+        for (&body, &at) in &tx.run.active {
+            s[at] = body;
+        }
+        s
+    }
+
+    /// Records an entry [`Tx::cached`] makes below a stop, which began on a stack `base` high.
+    pub(super) fn held_made<K: Hash, V>(tx: &Tx<'_>, table: Table<K, V>, k: &K, base: usize) {
+        let s = stack(tx);
+        assert_eq!(
+            s.len(),
+            base,
+            "the stack is as high as where the entry began"
+        );
+        let made = (s, tx.cx.inputs.clone());
+        MADE.with_borrow_mut(|m| m.insert(made_key(table, k), made));
+    }
+
+    /// Counts a read of an entry made below a stop, if `k` holds one, and checks that the
+    /// lambdas being read where it began are still being read at the same places, but for
+    /// a read [`BYPASS`] passes over.
+    pub(super) fn held_read<K: Hash + Eq, V>(tx: &mut Tx<'_>, table: Table<K, V>, k: &K) {
+        // Reading again for [`RECHECK`] sets aside lambdas, and passes over these entries.
+        if BYPASS.get()
+            || !table(&mut tx.run.memo)
+                .get(k)
+                .is_some_and(|e| e.1 != usize::MAX)
+        {
+            return;
+        }
+        let (below, inputs) = MADE.with_borrow(|m| m[&made_key(table, k)].clone());
+        let now = stack(tx);
+        assert!(
+            now.starts_with(&below),
+            "an entry made on the stack {below:?} is read on {now:?}"
+        );
+        let mut r = READS.get();
+        r[0] += 1;
+        r[1] += u64::from(now.len() > below.len());
+        r[2] += u64::from(tx.cx.inputs != inputs);
+        READS.set(r);
+    }
+
+    /// Checks the entry made below a stop that `k` holds, `v` with cut `cut`, against its term
+    /// read again by `f` with no such entry ([`BYPASS`]), in the context of the read, on the
+    /// stack the entry began on: the lambdas read since are set aside while `f` runs, and the
+    /// entries below a stop it makes are removed after, so that the memo holds no entry that
+    /// began on that stack once they are back.
+    pub(super) fn recheck<'t, K: Hash, V: 'static>(
+        tx: &mut Tx<'t>,
+        table: Table<K, V>,
+        k: &K,
+        v: &V,
+        cut: usize,
+        f: impl FnOnce(&mut Tx<'t>) -> V,
+    ) {
+        // An entry that holds wherever it is reached is read again with no lambda being read.
+        let (base, inputs) = match cut {
+            usize::MAX => (0, false),
+            _ => MADE.with_borrow(|m| {
+                let (below, inputs) = &m[&made_key(table, k)];
+                (below.len(), *inputs != tx.cx.inputs)
+            }),
+        };
+        let above: Vec<(Tid, usize)> = (tx.run.active.iter())
+            .filter(|e| *e.1 >= base)
+            .map(|(&b, &at)| (b, at))
+            .collect();
+        for (b, _) in &above {
+            tx.run.active.remove(b);
+        }
+        // The entries made on the stack as it is are kept apart, out of reach of the lambdas
+        // read again, which are not the ones being read.
+        let held = std::mem::take(&mut tx.run.memo.held);
+        BYPASS.set(true);
+        let outer = std::mem::replace(&mut tx.cx.cut, usize::MAX);
+        let fresh = deeper(|| f(tx));
+        let again = std::mem::replace(&mut tx.cx.cut, outer);
+        BYPASS.set(false);
+        let m = &mut tx.run.memo;
+        while let Some((_, unheld)) = m.held.pop() {
+            unheld(m);
+        }
+        m.held = held;
+        tx.run.active.extend(above.iter().copied());
+        let mut c = CHECKED.get();
+        if cut != usize::MAX {
+            c[2] += u64::from(!above.is_empty());
+            c[3] += u64::from(inputs);
+        }
+        CHECKED.set(c);
+        rechecked(v, &fresh, cut, again);
+    }
+
+    /// Checks an entry made below a stop against its term read again: the same value and the
+    /// same cut. Values of the kinds no test compares are counted apart.
+    fn rechecked<V: 'static>(v: &V, fresh: &V, cut: usize, again: usize) {
+        use std::any::Any;
+        let (a, b): (&dyn Any, &dyn Any) = (v, fresh);
+        let same = if let (Some(a), Some(b)) = (a.downcast_ref::<Fwd>(), b.downcast_ref()) {
+            Some(fwd_same(a, b))
+        } else if let (Some(a), Some(b)) = (a.downcast_ref::<Res>(), b.downcast_ref()) {
+            Some(res_same(a, b))
+        } else if let (Some(a), Some(b)) = (a.downcast_ref::<Option<bool>>(), b.downcast_ref()) {
+            Some(a == b)
+        } else if let (Some(a), Some(b)) = (a.downcast_ref::<bool>(), b.downcast_ref()) {
+            Some(a == b)
+        } else if let (Some(a), Some(b)) = (a.downcast_ref::<Option<Value>>(), b.downcast_ref()) {
+            Some(a == b)
+        } else if let (Some(a), Some(b)) =
+            (a.downcast_ref::<Option<IntervalSet>>(), b.downcast_ref())
+        {
+            Some(a == b)
+        } else if a.is::<Option<Lin>>() || a.is::<Option<Formula>>() {
+            // A translation read again defines its own auxiliary atoms anew.
+            Some(renamed(&shown_any(a), &shown_any(b)))
+        } else {
+            None
+        };
+        // An entry that holds wherever it is reached may stop where its own reading calls
+        // itself, which its cut leaves out.
+        let held = cut != usize::MAX;
+        assert!(
+            !held || cut == again,
+            "an entry's cut {cut} where it began, {again} again"
+        );
+        let mut c = CHECKED.get();
+        match same {
+            Some(same) => {
+                assert!(
+                    same,
+                    "an entry's value where it began, cut {cut}: {} read again {}, cut {again}",
+                    shown_any(a),
+                    shown_any(b)
+                );
+                c[if held { 0 } else { 4 }] += 1;
+            }
+            None => c[1] += 1,
+        }
+        CHECKED.set(c);
+    }
+
+    /// A value of a kind [`rechecked`] compares, shown.
+    fn shown_any(v: &dyn std::any::Any) -> String {
+        if let Some(f) = v.downcast_ref::<Fwd>() {
+            format!(
+                "ints {} bools {:?} fails {} other {}",
+                f.ints, f.bools, f.fails, f.other
+            )
+        } else if let Some(r) = v.downcast_ref::<Res>() {
+            let dom: Vec<String> = r.dom.iter().map(|(n, s)| format!("{n} {s}")).collect();
+            format!("dom {dom:?} none {} exact {}", r.none, r.exact)
+        } else if let Some(f) = v.downcast_ref::<Option<Formula>>() {
+            format!("{:?}", f.as_ref().map(built))
+        } else if let Some(x) = v.downcast_ref::<Option<bool>>() {
+            format!("{x:?}")
+        } else if let Some(x) = v.downcast_ref::<bool>() {
+            format!("{x}")
+        } else if let Some(x) = v.downcast_ref::<Option<Value>>() {
+            format!("{x:?}")
+        } else if let Some(x) = v.downcast_ref::<Option<IntervalSet>>() {
+            format!("{x:?}")
+        } else if let Some(x) = v.downcast_ref::<Option<Lin>>() {
+            format!("{:?}", x.as_ref().map(Lin::to_string))
+        } else {
+            "a kind not shown".into()
+        }
+    }
+
+    /// Whether `a` and `b` are the same text but for the numbers of auxiliary atoms (`q1`),
+    /// each number in one standing for one in the other.
+    fn renamed(a: &str, b: &str) -> bool {
+        fn parts(s: &str) -> Vec<Result<&str, u64>> {
+            let (mut out, mut from, bytes) = (Vec::new(), 0, s.as_bytes());
+            let mut i = 0;
+            while i < bytes.len() {
+                let start = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+                let digits = bytes[i + 1..]
+                    .iter()
+                    .take_while(|c| c.is_ascii_digit())
+                    .count();
+                if start && bytes[i] == b'q' && digits > 0 {
+                    out.push(Ok(&s[from..i]));
+                    out.push(Err(s[i + 1..i + 1 + digits].parse().expect("a number")));
+                    i += 1 + digits;
+                    from = i;
+                } else {
+                    i += 1;
+                }
+            }
+            out.push(Ok(&s[from..]));
+            out
+        }
+        let (a, b) = (parts(a), parts(b));
+        let (mut there, mut back) = (HashMap::new(), HashMap::new());
+        a.len() == b.len()
+            && a.iter().zip(&b).all(|(x, y)| match (x, y) {
+                (Ok(x), Ok(y)) => x == y,
+                (Err(m), Err(n)) => {
+                    *there.entry(m).or_insert(n) == n && *back.entry(n).or_insert(m) == m
+                }
+                _ => false,
+            })
+    }
+
+    fn fwd_same(a: &Fwd, b: &Fwd) -> bool {
+        (&a.ints, a.bools, a.fails, a.other) == (&b.ints, b.bools, b.fails, b.other)
+    }
+
+    fn res_same(a: &Res, b: &Res) -> bool {
+        (&a.dom, a.none, a.exact) == (&b.dom, b.none, b.exact)
+    }
 
     /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
     struct Rng(u64);
@@ -5682,6 +5957,16 @@ mod tests {
         Test,
         /// The first parameter of a lambda that is called with itself as that argument.
         Itself,
+        /// A parameter of a lambda of a group that calls itself ([`Gen::group`]), which only
+        /// [`Gen::again`] reads.
+        Fn,
+    }
+
+    /// A group of lambdas that call one another ([`Gen::group`]): the parameters that name
+    /// them, and the parameter whose value falls at each call.
+    struct Frame {
+        fns: Vec<Arc<str>>,
+        n: Arc<str>,
     }
 
     /// A random program over the inputs `x` and `y`: tests joined by `&&` and `||`, nested
@@ -5695,9 +5980,25 @@ mod tests {
         /// Tests made at one place and read again at another: the names in scope where each
         /// was made, which must be in scope where it is read again.
         pool: Vec<(Vec<Arc<str>>, Shared)>,
+        /// Whether a test may also be a group of lambdas that call one another, or a call of
+        /// one of them; [`Gen::new`] makes it false, so the programs are as before.
+        rec: bool,
+        /// The groups whose lambdas may be called here: those whose step is being made.
+        frames: Vec<Frame>,
     }
 
     impl Gen {
+        fn new(seed: u64, rec: bool) -> Self {
+            Gen {
+                rng: Rng(seed),
+                fresh: 0,
+                bound: Vec::new(),
+                pool: Vec::new(),
+                rec,
+                frames: Vec::new(),
+            }
+        }
+
         fn name(&mut self) -> Arc<str> {
             self.fresh += 1;
             format!("v{}", self.fresh).into()
@@ -5774,6 +6075,14 @@ mod tests {
             }
             let d = d - 1;
             let lit = |n: i64| Term::Lit(Value::Int(n));
+            if self.rec {
+                match self.rng.below(6) {
+                    0 if !self.frames.is_empty() => return self.again(d),
+                    1 if !self.frames.is_empty() => return self.named_again(d),
+                    2 => return self.group(d),
+                    _ => {}
+                }
+            }
             match self.rng.below(20) {
                 0 | 1 => self.cmp(2),
                 2 => Term::Lit(Value::Bool(self.rng.below(2) == 0)),
@@ -5872,6 +6181,109 @@ mod tests {
             });
             let w = Term::Lam(vec![g, n], Shared::new(body));
             Term::App(Shared::new(w.clone()), vec![w, self.int(2)])
+        }
+
+        /// `f_j(f_1, .., f_k, e)` with `f_i = (f_1, .., f_k, n) -> if n <= 0 { base_i } else
+        /// { step_i }` and k one or two, the lambdas bound by `let` or written in place:
+        /// functions that call themselves or each other, each call with a lower `n`
+        /// ([`Gen::again`]). A base calls none of its group, nor does anything inside it, so
+        /// each run of the group ends, unless a shared test made in one lambda's step is
+        /// read again in the other's base, where its names are bound alike.
+        fn group(&mut self, d: u32) -> Term {
+            let k = 1 + self.rng.below(2) as usize;
+            let fns: Vec<Arc<str>> = (0..k).map(|_| self.name()).collect();
+            let n = self.name();
+            let mut lams = Vec::with_capacity(k);
+            for _ in 0..k {
+                let depth = self.bound.len();
+                self.bound.extend(fns.iter().map(|f| (f.clone(), Kind::Fn)));
+                self.bound.push((n.clone(), Kind::Int));
+                let base = self.test(d);
+                self.frames.push(Frame {
+                    fns: fns.clone(),
+                    n: n.clone(),
+                });
+                let step = self.test(d);
+                self.frames.pop();
+                self.bound.truncate(depth);
+                let guard = Term::Prim(
+                    Prim::Le,
+                    vec![Term::Var(n.clone()), Term::Lit(Value::Int(0))],
+                );
+                let body = Term::If(Shared::new(guard), Shared::new(base), Shared::new(step));
+                let mut ps = fns.clone();
+                ps.push(n.clone());
+                lams.push(Term::Lam(ps, Shared::new(body)));
+            }
+            let j = self.rng.below(k as u64) as usize;
+            let arg = self.int(2);
+            if self.rng.below(2) == 0 {
+                let mut args = lams.clone();
+                args.push(arg);
+                return Term::App(Shared::new(lams[j].clone()), args);
+            }
+            let names: Vec<Arc<str>> = (0..k).map(|_| self.name()).collect();
+            let mut args: Vec<Term> = names.iter().map(|m| Term::Var(m.clone())).collect();
+            args.push(arg);
+            let mut t = Term::App(Shared::new(Term::Var(names[j].clone())), args);
+            for (m, l) in names.iter().zip(lams).rev() {
+                t = Term::Let(m.clone(), Shared::new(l), Shared::new(t));
+            }
+            t
+        }
+
+        /// `let s = e in (s && t) || ((v) -> u && s)(e2)`, `||` and `&&` either way round: `e`
+        /// a call of a lambda of the group ([`Gen::again`]) joined with a comparison, read
+        /// here and again within a call whose argument `e2` may read the inputs, and `u` a test
+        /// that may read `v`.
+        fn named_again(&mut self, d: u32) -> Term {
+            let p = if self.rng.below(2) == 0 {
+                Prim::And
+            } else {
+                Prim::Or
+            };
+            let e = Term::Prim(p, vec![self.again(d), self.cmp(1)]);
+            let s = self.name();
+            let b = self.within(s.clone(), Kind::Test, |g| {
+                let q = if g.rng.below(2) == 0 {
+                    Prim::And
+                } else {
+                    Prim::Or
+                };
+                let here = Term::Prim(q, vec![Term::Var(s.clone()), g.test(d)]);
+                let v = g.name();
+                let u = g.within(v.clone(), Kind::Int, |g| {
+                    Term::Prim(q, vec![g.test(d), Term::Var(s.clone())])
+                });
+                let call = Term::App(
+                    Shared::new(Term::Lam(vec![v], Shared::new(u))),
+                    vec![g.int(2)],
+                );
+                Term::Prim(p, vec![here, call])
+            });
+            Term::Let(s, Shared::new(e), Shared::new(b))
+        }
+
+        /// A call of a lambda of a group whose step is being made, any number of groups out,
+        /// with its `n` lowered: `n - 1`, `n - 2` or `min(n - 1, e)`.
+        fn again(&mut self, d: u32) -> Term {
+            let i = self.rng.below(self.frames.len() as u64) as usize;
+            let (fns, n) = (self.frames[i].fns.clone(), self.frames[i].n.clone());
+            let f = fns[self.rng.below(fns.len() as u64) as usize].clone();
+            let less = |c: i64| {
+                Term::Prim(
+                    Prim::Sub,
+                    vec![Term::Var(n.clone()), Term::Lit(Value::Int(c))],
+                )
+            };
+            let arg = match self.rng.below(3) {
+                0 => less(1),
+                1 => less(2),
+                _ => Term::Prim(Prim::Min, vec![less(1), self.int(d.min(1))]),
+            };
+            let mut args: Vec<Term> = fns.iter().map(|g| Term::Var(g.clone())).collect();
+            args.push(arg);
+            Term::App(Shared::new(Term::Var(f)), args)
         }
     }
 
@@ -5973,12 +6385,7 @@ mod tests {
 
     #[test]
     fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time() {
-        let mut g = Gen {
-            rng: Rng(0x9e37_79b9_7f4a_7c15),
-            fresh: 0,
-            bound: Vec::new(),
-            pool: Vec::new(),
-        };
+        let mut g = Gen::new(0x9e37_79b9_7f4a_7c15, false);
         let (mut some, mut none, mut kept, mut stopped, mut fewer) = (0, 0, 0, 0, 0);
         for round in 0..4000 {
             g.pool.clear();
@@ -6058,5 +6465,330 @@ mod tests {
         eprintln!("some {some}, kept {kept}, none {none}, stopped {stopped}, fewer {fewer}");
         // Formulas, kept parts, translations that fail, stops and dropped entries all occur.
         assert!(some > 500 && kept > 20 && none > 100 && stopped > 50 && fewer > 500);
+    }
+
+    /// What `t` gives with `x` and `y` at `at`, `Some(None)` for a failure; `None` when the run
+    /// does not end within its fuel.
+    fn run_at(t: &Term, at: (i64, i64)) -> Option<Option<Value>> {
+        let bind = |n: &str, v: i64, b: Term| {
+            Term::Let(
+                n.into(),
+                Shared::new(Term::Lit(Value::Int(v))),
+                Shared::new(b),
+            )
+        };
+        let t = bind("x", at.0, bind("y", at.1, t.clone()));
+        match Evaluator::new(World::new()).with_fuel(1_000).run(&t) {
+            Err(zed_kernel::KernelError::OutOfFuel) => None,
+            r => Some(r.ok()),
+        }
+    }
+
+    /// A preimage's relation, its formula and definitions as built.
+    fn relation(p: &Preimage) -> Option<(String, Vec<String>)> {
+        p.relation.as_ref().map(|r| {
+            let defs = r
+                .defs
+                .iter()
+                .map(|(n, w, f)| format!("{n} {w} {}", built(f)));
+            (built(&r.body), defs.collect())
+        })
+    }
+
+    /// What the round `round` checks of `t`: its translation (formula, definitions, cut,
+    /// stops) and the whole preimage of each demand are what the memo before
+    /// ST-formula-k2-rec gives, each entry made below a stop gives what reading its term again
+    /// on the stack it began on gives ([`RECHECK`]), and each preimage holds every point of
+    /// `x, y` in `-6..=6` at which the interpreter meets the demand, and only those where it
+    /// is exact. The points stop at the first run that does not end. Gives the preimages,
+    /// whether the translation stopped, the points met, and whether a run did not end.
+    fn check(t: &Term, round: usize) -> ([Preimage; 2], bool, usize, bool) {
+        let doms = domains();
+        let demands = [true, false].map(Demand::Bool);
+        NONE_HELD.set(true);
+        let before = translate(t, false);
+        let pb = demands.clone().map(|d| preimage(t, &doms, &d));
+        NONE_HELD.set(false);
+        let now = translate(t, false);
+        let pn = demands.clone().map(|d| preimage(t, &doms, &d));
+        RECHECK.set(true);
+        translate(t, false);
+        for d in &demands {
+            preimage(t, &doms, d);
+        }
+        RECHECK.set(false);
+        assert_eq!(now.formula, before.formula, "round {round}: {t:?}");
+        assert_eq!(now.defs, before.defs, "round {round}: {t:?}");
+        assert_eq!(now.cut, before.cut, "round {round}: {t:?}");
+        assert_eq!(now.stops, before.stops, "round {round}: {t:?}");
+        for ((p, q), d) in pn.iter().zip(&pb).zip(&demands) {
+            assert_eq!(p, q, "round {round}, {d:?}: {t:?}");
+            assert_eq!(relation(p), relation(q), "round {round}, {d:?}: {t:?}");
+        }
+        let mut met = 0;
+        for x in -6..=6 {
+            for y in -6..=6 {
+                let Some(v) = run_at(t, (x, y)) else {
+                    return (pn, now.cut != usize::MAX, met, true);
+                };
+                for (p, d) in pn.iter().zip(&demands) {
+                    let inside = p.domains["x"].contains(x) && p.domains["y"].contains(y);
+                    if v.as_ref().is_some_and(|v| d.holds(v)) {
+                        met += 1;
+                        assert!(inside, "round {round}, {d:?} at {x}, {y}: {t:?}");
+                    } else {
+                        let fails = !(p.exact && inside);
+                        assert!(fails, "round {round}, {d:?} exact at {x}, {y}: {t:?}");
+                    }
+                }
+            }
+        }
+        (pn, now.cut != usize::MAX, met, false)
+    }
+
+    /// An entry made below a stop is read where the lambdas being read when it began are still
+    /// being read, and it gives there what the memo before ST-formula-k2-rec gave, which
+    /// read the term again at each place ([`check`]), on random programs of functions that
+    /// call themselves and each other ([`Gen::group`]), nested, with shared tests and calls
+    /// whose arguments read the inputs, so that entries are read within other summaries and
+    /// on higher stacks.
+    #[test]
+    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives() {
+        let mut g = Gen::new(0x2545_f491_4f6c_dd1d, true);
+        READS.set([0; 3]);
+        CHECKED.set([0; 5]);
+        let (mut met, mut endless, mut stopped) = (0, 0, 0);
+        for round in 0..1000 {
+            g.pool.clear();
+            let t = match g.rng.below(3) {
+                0 => g.group(4),
+                1 => g.itself(4),
+                _ => {
+                    let p = if g.rng.below(2) == 0 {
+                        Prim::And
+                    } else {
+                        Prim::Or
+                    };
+                    Term::Prim(p, vec![g.test(4), g.test(4)])
+                }
+            };
+            let (_, s, m, e) = check(&t, round);
+            stopped += usize::from(s);
+            met += m;
+            endless += usize::from(e);
+        }
+        let [reads, higher, other] = READS.get();
+        let [checked, unchecked, raised, inside, everywhere] = CHECKED.get();
+        eprintln!(
+            "held reads {reads}, on a higher stack {higher}, under other inputs {other}; read \
+             again {checked}, of kinds not compared {unchecked}, on a higher stack {raised}, \
+             under other inputs {inside}, entries that hold anywhere {everywhere}; stopped \
+             {stopped}, points met {met}, rounds out of fuel {endless}"
+        );
+        assert!(reads > 5000 && higher > 3000 && other > 2000 && stopped > 400 && met > 100_000);
+        assert!(checked > 4000 && raised > 3000 && inside > 2000 && everywhere > 500_000);
+    }
+
+    mod written {
+        //! Hand-written programs, one for each way an entry made below a stop could be read
+        //! where it no longer holds.
+        use super::*;
+
+        fn v(n: &str) -> Term {
+            Term::Var(n.into())
+        }
+        fn int(i: i64) -> Term {
+            Term::Lit(Value::Int(i))
+        }
+        fn prim(p: Prim, a: Term, b: Term) -> Term {
+            Term::Prim(p, vec![a, b])
+        }
+        fn app(f: Term, args: Vec<Term>) -> Term {
+            Term::App(Shared::new(f), args)
+        }
+        fn lam(ps: &[&str], body: Term) -> Term {
+            Term::Lam(ps.iter().map(|&p| p.into()).collect(), Shared::new(body))
+        }
+        fn let_(n: &str, e: Term, b: Term) -> Term {
+            Term::Let(n.into(), Shared::new(e), Shared::new(b))
+        }
+        fn if_(c: Term, a: Term, b: Term) -> Term {
+            Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
+        }
+
+        /// The counters of [`check`] on `t`, and its preimages shown: for each demand, the
+        /// box, whether it is exact, and the stops.
+        fn run(t: &Term) -> (usize, [u64; 3], [u64; 5], String) {
+            MADE.with_borrow_mut(HashMap::clear);
+            READS.set([0; 3]);
+            CHECKED.set([0; 5]);
+            let (ps, _, _, endless) = check(t, 0);
+            assert!(!endless, "{t:?}");
+            let shown = ps.map(|p| {
+                format!(
+                    "x {} y {}{} stops {}",
+                    p.domains["x"],
+                    p.domains["y"],
+                    if p.exact { " exact" } else { "" },
+                    p.stops.len()
+                )
+            });
+            (
+                MADE.with_borrow(HashMap::len),
+                READS.get(),
+                CHECKED.get(),
+                shown.join("; "),
+            )
+        }
+
+        use Prim::{Add, And, Eq, Ge, Le, Lt, Min, Mul, Or, Sub};
+
+        /// `f(f, n - c)`.
+        fn again(c: i64) -> Term {
+            app(v("f"), vec![v("f"), prim(Sub, v("n"), int(c))])
+        }
+
+        /// `let f = (f, n) -> if n <= 0 { base } else { step } in f(f, arg)`.
+        fn rec(base: Term, step: Term, arg: Term) -> Term {
+            let f = lam(&["f", "n"], if_(prim(Le, v("n"), int(0)), base, step));
+            let_("f", f, app(v("f"), vec![v("f"), arg]))
+        }
+
+        /// `let k = (g) -> g(g, 0) <= x in let w = (g, n) -> if n <= 0 { 1 } else { if k(g)
+        /// { 1 } else { 2 } } in w(w, x) >= 1 && k(w)`: `k`'s body stops at `w` within `w`, so
+        /// its entries are held, and `k(w)` is read again once `w` has returned.
+        #[test]
+        fn an_entry_that_stops_at_a_lambda_being_read_is_held() {
+            let k = lam(&["g"], prim(Le, app(v("g"), vec![v("g"), int(0)]), v("x")));
+            let w = lam(
+                &["g", "n"],
+                if_(
+                    prim(Le, v("n"), int(0)),
+                    int(1),
+                    if_(app(v("k"), vec![v("g")]), int(1), int(2)),
+                ),
+            );
+            let body = prim(
+                And,
+                prim(Ge, app(v("w"), vec![v("w"), v("x")]), int(1)),
+                app(v("k"), vec![v("w")]),
+            );
+            let (made, reads, _, shown) = run(&let_("k", k, let_("w", w, body)));
+            assert_eq!(
+                shown,
+                "x [1..=6] y [-6..=6] stops 2; x [-6..=0] y [-6..=6] exact stops 2"
+            );
+            assert!(made > 0 && reads[0] > 0, "{made} {reads:?}");
+        }
+
+        /// `f(f, n) = if n <= 0 { ((q) -> x - 3 <= 1)(n) } else { (let s = f(f, n - 1) && 2
+        /// <= n in (s || ((u) -> s)(x + n - y)) && ((w) -> f(f, n - 2) || s)(-3 - y)) || y <=
+        /// x }`: entries made within the lambda of `w` are not read within the lambda of `u`,
+        /// at the same height of the stack.
+        #[test]
+        fn an_entry_made_within_one_lambda_is_not_read_within_another() {
+            let s = prim(And, again(1), prim(Le, int(2), v("n")));
+            let first = prim(
+                Or,
+                v("s"),
+                app(
+                    lam(&["u"], v("s")),
+                    vec![prim(Add, v("x"), prim(Sub, v("n"), v("y")))],
+                ),
+            );
+            let second = app(
+                lam(&["w"], prim(Or, again(2), v("s"))),
+                vec![prim(Sub, int(-3), v("y"))],
+            );
+            let step = prim(
+                Or,
+                let_("s", s, prim(And, first, second)),
+                prim(Le, v("y"), v("x")),
+            );
+            let base = app(
+                lam(&["q"], prim(Le, prim(Sub, v("x"), int(3)), int(1))),
+                vec![v("n")],
+            );
+            let arg = prim(Min, prim(Sub, prim(Sub, int(1), v("y")), v("x")), int(4));
+            let (made, reads, checked, shown) = run(&rec(base, step, arg));
+            assert_eq!(
+                shown,
+                "x [-6..=6] y [-6..=6] stops 2; x [-6..=6] y [-5..=6] stops 2"
+            );
+            assert!(
+                made > 0 && reads[1] > 0 && checked[2] > 0,
+                "{reads:?} {checked:?}"
+            );
+        }
+
+        /// `f(f, n) = if n <= 0 { n <= y } else { let a = f(f, n - 1) || x <= n in a && ((p)
+        /// -> a || (p >= y && x <= n))(n + x) }` with `f(f, 2)`: `a` stops at `f`, and is read
+        /// again within the lambda of `p`, on a higher stack and with `p` among the inputs.
+        /// With `p` named `x`, the `x <= n` within it is another term than the one in `a`.
+        fn higher(p: &str) -> ([u64; 3], [u64; 5], String) {
+            let a = prim(Or, again(1), prim(Le, v("x"), v("n")));
+            let inner = lam(
+                &[p],
+                prim(
+                    Or,
+                    v("a"),
+                    prim(And, prim(Ge, v(p), v("y")), prim(Le, v("x"), v("n"))),
+                ),
+            );
+            let step = let_(
+                "a",
+                a,
+                prim(And, v("a"), app(inner, vec![prim(Add, v("n"), v("x"))])),
+            );
+            let (made, reads, checked, shown) = run(&rec(prim(Le, v("n"), v("y")), step, int(2)));
+            assert!(made > 0 && reads[1] > 0 && reads[2] > 0, "{reads:?}");
+            assert!(checked[2] > 0 && checked[3] > 0, "{checked:?}");
+            (reads, checked, shown)
+        }
+
+        #[test]
+        fn an_entry_read_within_a_call_holds_under_its_inputs() {
+            let (_, _, shown) = higher("u");
+            assert_eq!(
+                shown,
+                "x [-6..=6] y [-6..=6] stops 1; x [3..=6] y [-6..=6] stops 1"
+            );
+        }
+
+        #[test]
+        fn a_parameter_that_shadows_an_input_reaches_no_entry_of_the_input() {
+            let (_, _, shown) = higher("x");
+            assert_eq!(
+                shown,
+                "x [-6..=6] y [-6..=6] stops 1; x [3..=6] y [-6..=6] stops 1"
+            );
+        }
+
+        /// `f(f, n) = if n <= 0 { 2 < 2 } else { let s = f(f, n - 1) || -1 + y == 2 * y in (s
+        /// || n < n) || ((u) -> s || s)(-2) }` with `f(f, -3)`: the `||` within the lambda of
+        /// `u` reads `s` only from the memo, and stops where `s` stopped.
+        #[test]
+        fn a_hit_passes_its_cut_to_the_reader() {
+            let s = prim(
+                Or,
+                again(1),
+                prim(Eq, prim(Add, int(-1), v("y")), prim(Mul, int(2), v("y"))),
+            );
+            let inner = app(lam(&["u"], prim(Or, v("s"), v("s"))), vec![int(-2)]);
+            let step = let_(
+                "s",
+                s,
+                prim(Or, prim(Or, v("s"), prim(Lt, v("n"), v("n"))), inner),
+            );
+            let (made, reads, checked, shown) = run(&rec(prim(Lt, int(2), int(2)), step, int(-3)));
+            assert_eq!(
+                shown,
+                "x [] y [] exact stops 1; x [-6..=6] y [-6..=6] exact stops 1"
+            );
+            assert!(
+                made > 0 && reads[0] > 0 && checked[0] > 0,
+                "{reads:?} {checked:?}"
+            );
+        }
     }
 }
