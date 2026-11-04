@@ -820,6 +820,17 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 - No new gap. `Arc::unwrap_or_clone` of a signature is a copy of a shared value, which in Zed is the value itself (gap 1 covers identity). `fits_in` keys a `HashMap<&Arrow, &Arrow>` by the arrows' content (`Hash`, `Eq`), which in Zed is a map keyed by the arrow value; the `entry().or_insert` loop is a fold that keeps the first arrow per key. `Type::and_operands` walks nested intersections with an explicit stack, which in Zed is a fold over the operand tree; `&dyn Fn` in a test is a function value.
 
+## Entries from AND-fns-fit (`check/ty.rs`, `zed-kernel/src/types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap<(usize, Key<'t>), Vec<usize>>` whose key borrows the atom name (`Key::Atom(&'t str)`) from the arrows it indexes | `check::ty::ArrowIndex` | None | A map keyed by a pair of position and a sum type of carrier and name; Zed shares the name |
+| `Option::get_or_insert_with` to build the index on the first slot arrow that equals none of the argument's | `check::ty::every_arrow_fits` | Lazy cells (gap 3) | Build the index before the fold when any slot arrow misses the equal map, or fold with the index as an optional accumulator |
+| `binary_search` in a sorted posting list, and a merge of two sorted lists by two cursors | `ArrowIndex::first` | Mutation | Sorted-set membership, and a recursive merge of two lists |
+| `Iterator::any` and `all` over the candidates, stopping at the first arrow that fits | `ArrowIndex::first`, `every_arrow_fits` | Early exit (gap 12) | The quantifiers of step L3.15a |
+| A `thread_local!` `Cell<bool>` that switches `every_arrow_fits` to the all-pairs search in the test module | `check::ty::ALL_PAIRS` (cfg(test)) | Global state | Pass the search as a parameter in the test, or test the two functions directly |
+| `impl Iterator` returned in an `Option` (`atom_names`) | `zed-kernel::types::Type::atom_names` | Iterators | A list of pairs, or `None` |
+
 ## Entries from LR4 (`zedc/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
 
 - No new gap. `Builder::make_expr`, arm `"Expr12"`, reads its two children with `let [l, t] = kids[..] else { unreachable!(..) }`, a slice pattern in a `let … else`; both are rows of the appendix (`let_else`, slice patterns) with the rewrite already listed: test the length, then index.
