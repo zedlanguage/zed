@@ -195,6 +195,19 @@ test("override needs also replace the ledger feeds of other items into it, but n
   assert.ok(by(buildNodes(inp)).get("Y")!.needs.includes("X"));
 });
 
+test("an item outside Zed draws no box, whether a plan row, the ledger or the log names it, and no edge names it", () => {
+  const inp = inputs(
+    "2026-11-02 10:00:00 | X:impl#1 | start\n2026-11-02 10:00:01 | V:impl#1 | start\n",
+    '{"id":"X","state":"done","needs":["A"],"feeds":["C"]}\n{"id":"V","state":"done","feeds":["B"]}\n{"id":"LR2","state":"fixed","commit":"c1"}\n',
+  );
+  inp.overrides = { A: { outside: true }, X: { outside: true }, V: { outside: true, feeds: ["C"] } };
+  const nodes = by(buildNodes(inp));
+  assert.deepEqual([...nodes.keys()].sort(), ["B", "C", "LR2"]);
+  assert.deepEqual(nodes.get("B")!.needs, ["LR2"]);
+  assert.deepEqual(nodes.get("C")!.needs, ["B"]);
+  assert.equal(nodes.get("B")!.ready, true);
+});
+
 test("a label with no attempt is a line of its item, and bookkeeping draws no box", () => {
   const [a, b] = parseLog(
     "2026-11-02 10:00:00 | B:code-sweep | finder done\n2026-11-02 10:00:01 | T14-cell-len:merge (orchestrator) | merged\n",

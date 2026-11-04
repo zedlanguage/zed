@@ -48,6 +48,9 @@ export interface Override {
   // Edges for an item the plan does not order: the items it needs, and the items that need it.
   needs?: string[];
   feeds?: string[];
+  // Not a step of Zed (the viewer, the test harness, an edit to the plan): no box is drawn and no
+  // edge names it, while its ledger and log lines stay as history.
+  outside?: boolean;
 }
 
 export interface Sub {
@@ -227,13 +230,14 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     ledger.get(id)!.push(e);
   }
 
-  const rows = [...inp.plan];
+  const outside = (id: string) => inp.overrides[id]?.outside === true;
+  const rows = inp.plan.filter((r) => !outside(r.id));
   const planned = new Set(rows.map((r) => r.id));
   // An item only the orchestrator's bookkeeping names (status, plan and lock lines) is not a task.
   const bookkeeping = (id: string) =>
     !ledger.has(id) && !inp.overrides[id] && (logs.get(id) ?? []).every((l) => l.entry.role === "orchestrator");
   for (const id of new Set([...logs.keys(), ...ledger.keys()])) {
-    if (!planned.has(id) && !bookkeeping(id)) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
+    if (!planned.has(id) && !bookkeeping(id) && !outside(id)) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
   }
   // Edges come from the overrides and from ledger lines, so an agent adds them by appending.
   // An override's needs replace what the ledger says the item needs: the needs of its own ledger
@@ -262,6 +266,7 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     const r = rows[i];
     const extra = [...(own.get(r.id) ?? []), ...(fed.get(r.id) ?? [])].filter((n) => !r.needs.includes(n));
     if (extra.length > 0) rows[i] = { ...r, needs: [...r.needs, ...new Set(extra)] };
+    if (rows[i].needs.some(outside)) rows[i] = { ...rows[i], needs: rows[i].needs.filter((n) => !outside(n)) };
   }
 
   const states = new Map<string, NodeState>();
