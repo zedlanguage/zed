@@ -124,6 +124,11 @@ in docs/layout.md.
 - Done: **L1.37**, the differential oracle (`zed_tests::oracle`): the interpreter against native
   code, fused and unfused, on every enabled fence, the step units, the enabled corpus programs
   and each step program on every corpus input, byte-compared; permanent in CI.
+- Done: **L1.37a**, colliding content addresses (feature `short-addresses` of zed-kernel, 8-bit
+  digests and addresses): every comparison by address confirms equal addresses by contents
+  (`Lower::add`, the BDD order, `query` keys, `cost` plans, `store::product::Tree::of`), and the
+  oracle and the step programs give the same results in the short build, scaling tests aside
+  (Open points; COMPLEXITY.md S37, K46, F78, F79, Z19).
 - Done: **L1.38**, the linear-relation domain (`zedc::store::presburger`): the Omega test,
   projection, and rung 2 with products of two symbols as atoms; the preimage keeps the relation
   a necessary box was projected from.
@@ -1043,11 +1048,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| L1.37a | impl attempt 1 | 2026-11-03 16:32 | started |
 | NARROW-if | repair attempt 8 | 2026-11-03 16:46 | arms.rs: explains takes a carrying test with its Carried path, narrowed as one conjunction; added note-count test on the strengthened hub and an ignored timing  |
 | STAGE-dag | impl attempt 1 | 2026-11-03 21:04 | started; worktree stage-dag |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
+
+- L1.37a, awaiting the batch test.
 
 
 ## Open points
