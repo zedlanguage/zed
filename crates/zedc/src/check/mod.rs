@@ -3389,9 +3389,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect(),
         };
         let what = format!("`{}`", f.name);
-        if !self.fits_slot(&Arc::new(permuted), e, &what, span) {
+        let permuted = Arc::new(permuted);
+        if !self.fits_slot(&permuted, e, &what, span) {
+            // The cover of rule 6 the checker refuses, if that is why ([`ty::why_unfit`]).
+            let why = match permuted.needs.is_empty() {
+                true => ty::why_unfit_with(&permuted, e, &|v| self.stale(v))
+                    .map_or_else(String::new, |w| format!(": {w}")),
+                false => String::new(),
+            };
             let (s, e) = (self.sig_text(&s), self.sig_text(e));
-            self.error(span, format!("`{}` is `{s}`, not `{e}`", f.name));
+            self.error(span, format!("`{}` is `{s}`, not `{e}`{why}", f.name));
         }
         if from.iter().enumerate().any(|(i, &j)| i != j) {
             self.put(Undo::Fit(span, Some(Fit::Adapter { from })));

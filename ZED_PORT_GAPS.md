@@ -843,6 +843,16 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `HashSet<Key>` of the carriers and atom names a closed result offers, tested for each candidate's result keys | `ArrowIndex::result_keys`, `candidates` | None | A set of the sum type of carrier and name |
 | Every nonempty subset of at most 10 arrows as a bit mask `1u32..1 << n` | `check::ty::tests::together` (test only) | Bit operations on a machine word | A fold that builds the list of subsets, or the bit operations of the integer carrier |
 
+## Entries from AND-fns-rule6b (`check/ty.rs`, `check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An `Option<Option<String>>` field of the comparison state, taken at entry (`Option::take`) so a nested comparison gives no reason, and set on the way out to an error | `check::ty::Cx::why`, `fits_in`, `why_unfit_in` | Mutation | Return the reason with the verdict from `fits_in`, as a sum type of fit, plain refusal and refusal with a reason |
+| A struct of two counters bumped in a recursive walk (`Places`), matched with range patterns (`taken: 1..`) | `check::ty::Places::walk`, `refused_cover` | Mutation | A fold that returns the pair of counts; a `match` on the pair |
+| `BTreeMap<usize, Vec<(&Ty, Ty)>>` of the parts at each parameter, filled with `entry().or_default().push` | `check::ty::met`, `covered` | Mutation | A table from parameter to a list, built by a fold |
+| `std::slice::from_ref` to compare one arrow of the slot alone | `check::ty::fits_in` | None | A list of one |
+| A test generator of small types as bit masks of 7 values (`u8`), with `Rng` threaded through plain functions | `check::ty::tests::a_fit_of_small_types_is_a_cover_of_their_values` (test only) | Bit operations on a machine word | The bit operations of the integer carrier, or a set of values |
+
 ## Entries from LR4 (`zedc/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
 
 - No new gap. `Builder::make_expr`, arm `"Expr12"`, reads its two children with `let [l, t] = kids[..] else { unreachable!(..) }`, a slice pattern in a `let … else`; both are rows of the appendix (`let_else`, slice patterns) with the rewrite already listed: test the length, then index.

@@ -3,7 +3,7 @@
 //! default.
 
 use super::{info, sig, type_errors};
-use crate::l01_16_elaboration::value;
+use crate::l01_16_elaboration::{errors, value};
 use zedc::ast::unit;
 use zedc::check::Fit;
 use zedc::lex::lex_fence;
@@ -222,48 +222,192 @@ fn arrows_that_cover_together_must_each_return_within_the_slots_result() {
     );
 }
 
-/// Three cases rule 6 accepts that the checker rejects, each a Complexity tradeoff of
-/// `check::ty::covered` (COMPLEXITY.md F82): arrows that cover a slot only by splitting two
-/// parameters at once (whether a union of products covers a product is coNP-complete);
-/// arrows that overlap on the slot's parameter, each returning outside its result while the
-/// intersection of their results, which rule 6 gives there, is within it (the all-subsets
-/// condition of semantic subtyping, exponential in the arrows that overlap); and an arrow whose
-/// parameter type is a function type, read as a variable (which part of the parameter it is
-/// bound to is a choice per arrow).
+/// Case (1) of `check::ty::covered` (COMPLEXITY.md F82): arrows that cover a slot only by
+/// splitting two parameters at once are refused, with the reason, since whether a union of
+/// products covers a product is coNP-complete. One parameter split, the other held by each
+/// arrow, is covered.
 #[test]
-fn arrows_that_cover_only_across_two_parameters_or_by_intersected_results_are_refused() {
+fn arrows_that_cover_only_across_two_parameters_are_refused_with_the_reason() {
     let text = "p(f: (x: int | bool, y: int | bool) -> String) = f(x: 1, y: 2);\n\
                 q(g: ((x: int, y: int) -> String) & ((x: bool, y: bool) -> String) & \
                 ((x: int, y: bool) -> String) & ((x: bool, y: int) -> String)) = p(f: g);\n";
-    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
-    // One parameter split, the other held by each arrow, is covered.
+    assert_eq!(
+        type_errors(text),
+        [
+            "`p` does not take ((((x: int, y: int) -> String) & ((x: bool, y: bool) -> String) & \
+             ((x: int, y: bool) -> String) & ((x: bool, y: int) -> String))): at `((x: bool | \
+             int, y: bool | int) -> String)`, the arrow `((x: int, y: int) -> String)` takes a \
+             part of more than one parameter, and arrows are combined only when they differ at \
+             one parameter: whether arrows that split several parameters cover them is \
+             coNP-complete (rule 6 of sec:type_resolution) [p(f: g)]"
+        ]
+    );
     let text = "p(f: (x: int | bool, y: int) -> String) = f(x: 1, y: 2);\n\
                 q(g: ((x: int, y: int) -> String) & ((x: bool, y: int | bool) -> String)) = \
                 p(f: g);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
-    let text = "p(f: (x: int) -> String) = f(x: 1);\n\
-                q(g: ((x: int) -> String | #a) & ((x: int) -> String | #b)) = p(f: g);\n";
-    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
-    // An arrow whose parameter type is a function type takes no part in a cover (case 2).
-    let text = "p(f: (x: int | ((y: int) -> int)) -> String) = 0;\n\
-                q(g: ((x: int) -> String) & ((x: (y: int) -> int) -> String)) = p(f: g);\n";
-    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
 }
 
-/// An arrow whose parameter type holds a bounded variable inside a tuple takes no part in a
-/// cover: `(x: (T,)) -> String for T in int | f64` does not take `(bool,)`, and a union with
-/// the other arrows' types would bind `T` to `bool` with no check of its bound
-/// (`check::ty::covered`). Alone, it fits where its bound holds and not elsewhere.
+/// Case (2): a parameter type that binds nothing takes part in a cover: a function type, read
+/// as a variable of its own, alike. An arrow whose parameter type holds a type variable of its
+/// own, at any depth, takes no part, with the reason: `(x: (T,)) -> String for T in int | f64`
+/// does not take `(bool,)`, and a union with the other arrows' types would bind `T` to `bool`
+/// with no check of its bound. Alone, it fits where its bound holds and not elsewhere.
 #[test]
-fn an_arrow_with_a_variable_in_a_tuple_takes_no_part_in_a_cover() {
+fn a_function_type_takes_part_in_a_cover_and_a_type_variable_does_not() {
+    let text = "p(f: (x: int | ((y: int) -> int)) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String) & ((x: (y: int) -> int) -> String)) = p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    let run = format!("{text}show(x: int | ((y: int) -> int)) = \"shown\";\nz = q(g: show);\n");
+    assert_eq!(value(&run, "z"), "\"shown\"");
+    // Near miss: the function arrow returns outside the slot's result.
+    let text = "p(f: (x: int | ((y: int) -> int)) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String) & ((x: (y: int) -> int) -> int)) = p(f: g);\n";
+    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
     let text = "p(f: (x: int | (bool,)) -> String) = f(x: 1);\n\
                 q(g: ((x: int) -> String) & ((x: (T,)) -> String for T in int | f64)) = \
                 p(f: g);\n";
-    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+    assert_eq!(
+        type_errors(text),
+        [
+            "`p` does not take ((((x: int) -> String) & ((x: (T,)) -> String) for T in int | \
+             f64)): at `((x: int | (bool,)) -> String)`, the arrow `((x: (T,)) -> String for T \
+             in int | f64)` would take part of `x` only by binding its type variable there, and \
+             arrows that cover a parameter together bind no variable: which part each takes is \
+             a choice per arrow, and fixing a bounded variable to each carrier of its bound \
+             multiplies the arrows by the product of the bounds (rule 6 of \
+             sec:type_resolution) [p(f: g)]"
+        ]
+    );
     let text = "p(f: (x: (bool,)) -> String) = 0;\n\
                 q(g: (x: (T,)) -> String for T in int | f64) = p(f: g);\n";
     assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
     let text = "p(f: (x: (int,)) -> String) = 0;\n\
                 q(g: (x: (T,)) -> String for T in int | f64) = p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+}
+
+/// Case (3): where several arrows take one value, rule 6 gives the intersection of their
+/// results. Arrows that each take all of the slot's parameters, or all that the arrows within
+/// its result leave of one parameter, are intersected; `String | #a` and `String | #b` meet in
+/// `String`.
+#[test]
+fn arrows_whose_results_only_intersect_within_the_slots_fit() {
+    let g = "q(g: ((x: int) -> String | #a) & ((x: int) -> String | #b)) = p(f: g);\n";
+    for slot in ["String", "String | #a | #b"] {
+        let text = format!("p(f: (x: int) -> {slot}) = f(x: 1);\n{g}");
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{slot}");
+    }
+    // An arrow within takes `bool`, and the two outside both take what it leaves, `int`.
+    let text = "p(f: (x: int | bool) -> String) = f(x: 1);\n\
+                q(g: ((x: bool) -> String) & ((x: int | bool) -> String | #a) & \
+                ((x: int) -> String | #b)) = p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    // Near miss: the intersection `String | #c` is not within `String | #a`.
+    let text = "p(f: (x: int) -> String | #a) = f(x: 1);\n\
+                q(g: ((x: int) -> String | #a | #c) & ((x: int) -> String | #b | #c)) = \
+                p(f: g);\n";
+    assert_eq!(
+        type_errors(text),
+        [
+            "`p` does not take ((((x: int) -> String | #a | #c) & ((x: int) -> String | #b | \
+             #c))): at `((x: int) -> String | #a)`, the arrows `((x: int) -> String | #a | #c)`, \
+             `((x: int) -> String | #b | #c)` each take all of it, and the intersection of their \
+             results, `String | #c`, is not within `String | #a` (rule 6 of sec:type_resolution) \
+             [p(f: g)]"
+        ]
+    );
+}
+
+/// The rest of case (3) is refused with the reason: no one set of the arrows outside the
+/// slot's result takes every value. `String` is the intersection at `int` from the first two
+/// arrows and at `bool` from the first and the third; finding the values each set of arrows
+/// shares is as hard as Orthogonal Vectors.
+#[test]
+fn arrows_whose_results_intersect_within_only_on_different_sets_are_refused_with_the_reason() {
+    let text = "p(f: (x: int | bool) -> String) = f(x: 1);\n\
+                q(g: ((x: int | bool) -> String | #a) & ((x: int) -> String | #b) & \
+                ((x: bool) -> String | #c)) = p(f: g);\n";
+    assert_eq!(
+        type_errors(text),
+        [
+            "`p` does not take ((((x: bool | int) -> String | #a) & ((x: int) -> String | #b) & \
+             ((x: bool) -> String | #c))): at `((x: bool | int) -> String)`, the arrows `((x: \
+             bool | int) -> String | #a)`, `((x: int) -> String | #b)`, `((x: bool) -> String | \
+             #c)` each return outside `String`; where several take one value, the intersection \
+             of their results is the result, and the checker builds it only from arrows that \
+             each take all that the arrows returning within `String` leave of one parameter, \
+             since finding the values each set of arrows shares is as hard as Orthogonal \
+             Vectors (rule 6 of sec:type_resolution) [p(f: g)]"
+        ]
+    );
+}
+
+/// A bounded variable is one carrier at a call (sec:type_resolution), so an arrow that takes
+/// a slot only with its variable bound to values of two carriers fits only where one argument
+/// fixes the variable and the arrow takes no value of it elsewhere. `add` bound to `int | f64`
+/// would be called with an `int` and an `f64`; the function `g` returns would be given an `f64`
+/// after `x` fixed `T` to `int`. Each was taken before, and the first failed when run.
+#[test]
+fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
+    let text = "p(f: (x: int | f64, y: int | f64) -> int | f64) = f(x: 1, y: 1.5);\n\
+                add(x, y) = x + y;\nz = p(f: add);\n";
+    assert_eq!(
+        type_errors(text),
+        [
+            "`add` is `(x: T, y: T) -> T for T in int | f64 | rat`, not `(x: int | f64, y: int \
+             | f64) -> int | f64`: at `((x: int | f64, y: int | f64) -> int | f64)`, the arrow \
+             `((x: T, y: T) -> T for T in int | f64 | rat)` takes it only with `T` bound to \
+             `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, \
+             and `T` stands at 2 places the arguments give, which could be given values of two \
+             carriers (rule 6 of sec:type_resolution) [add]"
+        ]
+    );
+    let text = "p(f: (x: int | f64) -> ((y: int | f64) -> int)) = f(x: 1)(y: 1.5);\n\
+                q(g: (x: T) -> ((y: T) -> int) for T in int | f64) = p(f: g);\n";
+    assert_eq!(
+        type_errors(text),
+        [
+            "`p` does not take (((x: T) -> ((y: T) -> int) for T in int | f64)): at `((x: int | \
+             f64) -> ((y: int | f64) -> int))`, the arrow `((x: T) -> ((y: T) -> int) for T in \
+             int | f64)` takes it only with `T` bound to `int | f64`, values of more than one \
+             carrier, but a call fixes `T` to one carrier, and `T` stands where the arrow takes \
+             values of it inside a function type, which need not be of the carrier its argument \
+             fixes (rule 6 of sec:type_resolution) [p(f: g)]"
+        ]
+    );
+    // Near miss: one place, the result's alike, so each value takes the arrow at its carrier.
+    let text = "p(f: (x: int | f64) -> int | f64) = f(x: 1);\ninc(x) = x + 1n;\nz = p(f: inc);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    assert_eq!(value(text, "z"), "2");
+}
+
+/// Case (4): an overload whose arrows overlap, `h(x: int | bool) = "a"; h(x: int) = 3`, is
+/// refused where an arrow is expected, by elaboration, since choosing among overloads arrives
+/// at step L2: by
+/// the order of sec:specificity `int` is the more specific, so `h` at `int` gives `3`, and the
+/// type L2 gives the name is `((x: bool) -> String) & ((x: int) -> int)`. That type is refused
+/// where `(x: int | bool) -> String` is expected, and fits where `String | int` is.
+#[test]
+fn an_overload_whose_arrows_overlap_is_checked_by_the_arrows_it_names() {
+    for result in ["String", "String | int"] {
+        let text = format!(
+            "p(f: (x: int | bool) -> {result}) = f(x: 1);\nh(x: int | bool) = \"a\";\n\
+             h(x: int) = 3;\nz = p(f: h);\n"
+        );
+        assert_eq!(
+            errors(&text),
+            ["`h` names 2 overloads; choosing among them arrives at L2 [h]"],
+            "{result}"
+        );
+    }
+    let text = "p(f: (x: int | bool) -> String) = f(x: 1);\n\
+                q(g: ((x: bool) -> String) & ((x: int) -> int)) = p(f: g);\n";
+    assert_eq!(
+        type_errors(text),
+        ["`p` does not take ((((x: bool) -> String) & ((x: int) -> int))) [p(f: g)]"]
+    );
+    let text = "p(f: (x: int | bool) -> String | int) = f(x: 1);\n\
+                q(g: ((x: bool) -> String) & ((x: int) -> int)) = p(f: g);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
 }

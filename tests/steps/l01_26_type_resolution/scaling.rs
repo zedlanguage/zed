@@ -1006,7 +1006,7 @@ fn an_overload_of_many_arrows_that_cover_a_slot_together_scales() {
 
 /// A slot of `w` parameters and a function of one arrow that takes all but the last, where it
 /// takes `int` and the slot passes `int | bool`: the cover compares the arrow's parameters in
-/// one pass, not once for each parameter left out (`check::ty::sole_miss`; that cost the
+/// one pass, not once for each parameter left out (`check::ty::part_of`; that cost the
 /// square of the width, 38.8 times the bytes at w = 100 and 800).
 fn wide_arrows(w: usize) -> String {
     let params = |last: &str| {
@@ -1038,4 +1038,118 @@ fn a_function_of_many_parameters_that_misses_one_scales() {
             assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
         },
     );
+}
+
+/// The cases of rule 6 that `check::ty::covered` builds or refuses with a reason, each at `n`
+/// and `8 * n` arrows: the source of `p(f: g)` for the slot `slot` and the overload of
+/// `arrows`.
+fn slot_and_overload(slot: &str, arrows: impl Iterator<Item = String>) -> String {
+    let ov = arrows.collect::<Vec<_>>().join(" & ");
+    format!("p(f: {slot}) = 0;\nq(g: {ov}) = p(f: g);\n")
+}
+
+/// Runs `want` on the source `text(m)` at `n` and `8 * n`, both built before either is run.
+fn scales(what: &str, n: usize, text: impl Fn(usize) -> String, want: impl Fn(&str) + Sync) {
+    let inputs = [(n, text(n)), (8 * n, text(8 * n))];
+    scaling::check(what, n, |m| {
+        let text = &inputs
+            .iter()
+            .find(|(k, _)| *k == m)
+            .expect("a built size")
+            .1;
+        want(text);
+    });
+}
+
+/// The atoms `#{name}0 | ... | #{name}(n-1)`.
+fn atoms(name: &str, n: usize) -> String {
+    (0..n)
+        .map(|i| format!("#{name}{i}"))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// Case (3), built: `n` arrows `(x: #ai) -> String` within the slot's result, and `n` arrows
+/// `(x: #c | #ai) -> String | #bi` outside it, each taking `#c`, what the others leave; the
+/// intersection of their `n` results is `String` (`check::ty::met`).
+#[test]
+fn many_arrows_whose_results_intersect_within_the_slots_scale() {
+    let text = |n| {
+        let within = (0..n).map(|i| format!("((x: #a{i}) -> String)"));
+        let outside = (0..n).map(|i| format!("((x: #c | #a{i}) -> String | #b{i})"));
+        let slot = format!("(x: #c | {}) -> String", atoms("a", n));
+        slot_and_overload(&slot, within.chain(outside))
+    };
+    scales("n arrows met and n within", 100, text, |text| {
+        assert_eq!(type_errors(text), Vec::<String>::new());
+    });
+}
+
+/// Case (3), refused with the reason: `(x: #ai | #a(i+1)) -> String | #bi` meet in `String` at
+/// each atom, but no one set of them takes every atom; the message names the `n` arrows in
+/// one pass (`check::ty::refused_cover`).
+#[test]
+fn many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_time() {
+    let text = |n| {
+        let arrows = (0..n).map(|i| format!("((x: #a{i} | #a{}) -> String | #b{i})", i + 1));
+        slot_and_overload(&format!("(x: {}) -> String", atoms("a", n + 1)), arrows)
+    };
+    scales(
+        "n arrows whose results meet on different sets",
+        400,
+        text,
+        |text| {
+            let errors = type_errors(text);
+            assert_eq!(errors.len(), 1, "{errors:?}");
+            assert!(errors[0].contains("Orthogonal Vectors"), "{errors:?}");
+        },
+    );
+}
+
+/// Case (2), built: `n` arrows `(x: #ai) -> String` and one whose parameter is a function type,
+/// which binds nothing, cover `(x: #a0 | ... | ((y: int) -> int)) -> String`
+/// (`check::ty::binds_nothing`).
+#[test]
+fn an_overload_with_a_function_arrow_covering_a_slot_scales() {
+    let text = |n| {
+        let arrows = (0..n).map(|i| format!("((x: #a{i}) -> String)"));
+        let fun = std::iter::once("((x: (y: int) -> int) -> String)".to_string());
+        let slot = format!("(x: {} | ((y: int) -> int)) -> String", atoms("a", n));
+        slot_and_overload(&slot, arrows.chain(fun))
+    };
+    scales(
+        "n arrows and a function arrow covering",
+        100,
+        text,
+        |text| {
+            assert_eq!(type_errors(text), Vec::<String>::new());
+        },
+    );
+}
+
+/// A bounded variable at `w` parameters, bound to `int | f64`, is refused with the count of its
+/// places, found by one walk of the arrow (`check::ty::one_place`).
+#[test]
+fn a_bounded_variable_at_many_parameters_is_refused_in_linear_time() {
+    let text = |w| {
+        let params = |t: &str| {
+            (0..w)
+                .map(|j| format!("x{j}: {t}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        format!(
+            "p(f: ({}) -> int | f64) = 0;\nq(g: ({}) -> T for T in int | f64) = p(f: g);\n",
+            params("int | f64"),
+            params("T")
+        )
+    };
+    scales("a bounded variable at w parameters", 100, text, |text| {
+        let errors = type_errors(text);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("places the arguments give"),
+            "{errors:?}"
+        );
+    });
 }
