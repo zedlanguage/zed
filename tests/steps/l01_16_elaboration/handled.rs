@@ -177,3 +177,55 @@ fn a_function_that_handles_its_parameter_and_passes_it_to_one_that_does_too() {
         assert_eq!(output(name, &format!("{r}{g}{main}")), want, "{g}");
     }
 }
+
+#[test]
+fn a_method_call_passes_its_receiver_as_the_first_argument() {
+    // `x.r()` is `r(x)`: the receiver fills `r`'s first parameter, so with no atom in `x` the
+    // call takes `r`'s first arrow, as the calls written `r(x)` above do, and each `g` gives a
+    // string for a string. `r2` has a second parameter after the receiver. The same holds for
+    // `x?.r()`, which passes an atom of `x` by, a chain `x.r().r()`, and a call through a local
+    // name of a function or of a lambda.
+    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+             r2(positional line, positional d) = if (line else \"\") == \"\" { d } else { trim(line) };\n";
+    let main = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(stdin[2]) else \"gone\");\n}\n";
+    for (name, g, want) in [
+        ("method_wrapper", "g(positional x) = x.r();\n", "a,-,gone\n"),
+        (
+            "method_handles_then_passes_on",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r() };\n",
+            "a,dash,empty\n",
+        ),
+        (
+            "method_binds_then_passes_on",
+            "g(positional x) = { d = x else \"\"; x.r() };\n",
+            "a,-,empty\n",
+        ),
+        (
+            "method_second_argument",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r2(\"none\") };\n",
+            "a,dash,none\n",
+        ),
+        (
+            "safe_method",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x?.r() };\n",
+            "a,dash,gone\n",
+        ),
+        (
+            "chained_methods",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r().r() };\n",
+            "a,dash,empty\n",
+        ),
+        (
+            "local_name_of_a_function",
+            "g(positional x) = { f = r; if (x else \"\") == \"-\" { \"dash\" } else { f(x) } };\n",
+            "a,dash,empty\n",
+        ),
+        (
+            "local_lambda",
+            "g(positional x) = { f = (positional y) -> if (y else \"\") == \"\" { \"e\" } else { trim(y) }; if (x else \"\") == \"-\" { \"dash\" } else { f(x) } };\n",
+            "a,dash,e\n",
+        ),
+    ] {
+        assert_eq!(output(name, &format!("{r}{g}{main}")), want, "{g}");
+    }
+}

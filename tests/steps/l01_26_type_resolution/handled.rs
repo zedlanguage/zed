@@ -130,7 +130,7 @@ fn a_parameter_of_any_value_stays_a_type_variable() {
         assert!(a.params[0].as_var().is_some(), "{body}: {}", a.params[0]);
     }
     let text = "r(positional line) = line else \"\";\n";
-    assert_eq!(sig(text, "r"), "(T) -> \"\" | T");
+    assert_eq!(sig(text, "r"), "(_) -> \"\" | _");
 }
 
 #[test]
@@ -220,18 +220,18 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
     for (body, want) in [
         (
             "if line is #notFound { #absent } else { \"s\" }",
-            "(T) -> \"s\" | #absent",
+            "(_) -> \"s\" | #absent",
         ),
         (
             "if line is #notFound { #absent } else { line else \"\" }",
-            "(T) -> \"\" | #absent | T",
+            "(_) -> \"\" | #absent | _",
         ),
         (
             "if line is #notFound { #absent } else { trim(line else \"\") }",
             "(String | #_) -> String | #absent",
         ),
         ("trim(line else \"\")", "(String | #_) -> String"),
-        ("line else \"\"", "(T) -> \"\" | T"),
+        ("line else \"\"", "(_) -> \"\" | _"),
         ("upper(line else \"\")", "(String | #_) -> String"),
         ("(line else 0) + 1", "(int | #_) -> int"),
         ("{ s = line else \"\"; trim(s) }", "(String | #_) -> String"),

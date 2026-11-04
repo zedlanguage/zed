@@ -282,6 +282,10 @@ enum Src<'a> {
 /// so a tuple nested d deep keeps O(d) and not a copy of each level's type.
 type Seen<'a> = (Option<Ty>, Src<'a>);
 
+/// A call's callee as [`Ck::called`] finds it: the function, and a method call's receiver with
+/// whether it is `?.`.
+type Called<'e> = (Arc<Sig>, Option<(&'e Expr, bool)>);
+
 /// Where a binder's type comes from: what it says, the expression whose derivation continues
 /// it, and the origin it narrows. A narrowing shares the origin it narrows, so narrowing a
 /// binder costs one origin however many tests already narrow it. What it says is kept as data
@@ -1032,9 +1036,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// parameter of [`Self::widened`]: what `e` gives when each such parameter holds no atom,
     /// as on the first arrow of [`Self::handled_sig`]. It follows [`Self::unnamed_of`]: a
     /// name of such a parameter gives none; an `else` gives its default's only when its
-    /// value may give an atom; an operator, a call of a declared function or a prelude word
-    /// passes on its parts' and gives the atoms its arrows' results hold, and `#errs` only
-    /// when two of its parts give atoms; a call of a function of two arrows from
+    /// value may give an atom; an operator, a call of a function [`Self::called`] names (a
+    /// method call's receiver one of its parts) or a prelude word passes on its parts' and
+    /// gives the atoms its arrows' results hold, and `#errs` only when two of its parts give
+    /// atoms; a call of a function of two arrows from
     /// [`Self::handled_sig`] gives only those of the arrow [`Self::outside_arrow`] selects;
     /// any other expression gives all its loose atoms.
     /// Each set is compared with the empty type as written, in `O(1)`, as in
@@ -1088,13 +1093,20 @@ impl<'t, 'a> Ck<'t, 'a> {
             (ExprKind::Unary(op, _) | ExprKind::Binary(op, _, _), _) => {
                 made(&op_sig(op).arrows, flows(e))
             }
-            (_, Src::Call(id, _)) => match self.env.get(id).and_then(only_fn) {
-                Some(sig) => match self.outside_arrow(&sig, e) {
-                    Some(k) => made(&sig.arrows[k..=k], flows(e)),
-                    None => made(&sig.arrows, flows(e)),
-                },
-                None => loose,
-            },
+            (ExprKind::Call { callee, .. }, _)
+                if let Some((sig, receiver)) = self.called(callee) =>
+            {
+                // The receiver's atoms reach the value as an argument's do; through `?.` they
+                // pass the call by.
+                let mut parts = flows(e);
+                if let Some((r, _)) = receiver {
+                    parts.insert(0, r.span);
+                }
+                match self.outside_arrow(&sig, e, receiver) {
+                    Some(k) => made(&sig.arrows[k..=k], parts),
+                    None => made(&sig.arrows, parts),
+                }
+            }
             (_, Src::Name(id)) => match self.alias.get(id) {
                 Some(&value) if self.seen.contains_key(&value) => o(value),
                 _ if self.widened.contains(id) => KType::empty(),
@@ -1113,10 +1125,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// when no argument holds any. A call that passes a handled parameter on to such a
     /// function then gives, from outside, only what the first arrow's result holds, not the
     /// atoms the second arrow gives back for that parameter. `None` for any other signature.
-    /// A positional argument fills the next parameter and a named one the first parameter of
-    /// its name, as the checker's `call_sig` places them; `O(a log a)` for `a`
-    /// arguments, the names looked up in a map.
-    fn outside_arrow(&self, sig: &Sig, e: &Expr) -> Option<usize> {
+    /// The receiver of a method call, from [`Self::called`], fills the first parameter, and
+    /// with `?.` holds no atom there; a positional argument fills the next parameter and a
+    /// named one the first parameter of its name, as the checker's `call_sig` places them;
+    /// `O(a log a)` for `a` arguments, the names looked up in a map.
+    fn outside_arrow(&self, sig: &Sig, e: &Expr, receiver: Option<(&Expr, bool)>) -> Option<usize> {
         let ExprKind::Call {
             positional, named, ..
         } = &e.kind
@@ -1128,7 +1141,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let o = |s: Span| self.outside.get(&s).cloned().unwrap_or_else(KType::empty);
         let mut loose = vec![KType::empty(); sig.params.len()];
-        for (slot, a) in loose.iter_mut().zip(positional) {
+        let first = usize::from(receiver.is_some());
+        if let (Some((r, false)), Some(slot)) = (receiver, loose.first_mut()) {
+            *slot = o(r.span);
+        }
+        for (slot, a) in loose.iter_mut().skip(first).zip(positional) {
             *slot = o(a.span);
         }
         let at: HashMap<&str, usize> = sig
@@ -2470,6 +2487,25 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             _ => None,
         }
+    }
+
+    /// The one function a call's callee names, and for a method call `x.r()` or `x?.r()` its
+    /// receiver `x` and whether it is `?.`: the callee `r` or `x.r` resolved to one binder whose
+    /// type is a function, a declared one or a value, as `call` and `member_end` resolve it.
+    /// `x.r()` is `r(x)`: the receiver fills the first parameter.
+    fn called<'e>(&self, callee: &'e Expr) -> Option<Called<'e>> {
+        let receiver = match &callee.kind {
+            ExprKind::Name(_) => None,
+            ExprKind::Member { of, safe, .. } => Some((&**of, *safe)),
+            _ => return None,
+        };
+        let Some(Ref::Bound(ids)) = self.t.res.uses.get(&callee.span) else {
+            return None;
+        };
+        if ids.len() != 1 {
+            return None;
+        }
+        Some((self.env.get(&ids[0]).and_then(only_fn)?, receiver))
     }
 
     /// Checks each operand of the bit word `w` against its domain (DESIGN.md sec:domains):

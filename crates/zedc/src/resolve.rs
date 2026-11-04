@@ -562,7 +562,7 @@ impl Resolver {
                         Target::Wild => {}
                     }
                 }
-                if let ([Target::Name(_)], ExprKind::Name(_)) = (targets.as_slice(), &value.kind)
+                if let ([Target::Name(..)], ExprKind::Name(_)) = (targets.as_slice(), &value.kind)
                     && !whole
                     && self.out.binders.len() == id + 1
                 {
