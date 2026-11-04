@@ -1075,7 +1075,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | NARROW-if | repair attempt 8 | 2026-11-03 16:46 | arms.rs: explains takes a carrying test with its Carried path, narrowed as one conjunction; added note-count test on the strengthened hub and an ignored timing  |
-| STAGE-dag | impl attempt 1 | 2026-11-03 21:04 | started; worktree stage-dag |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
