@@ -11,9 +11,10 @@ use zed_tests::scaling::{self, FACTOR};
 use zed_kernel::term::build::{if_, lam, let_, lit, prim, var};
 use zed_kernel::term::{Prim, Term};
 use zedc::elab::{Def, Unit};
+use zedc::run::{Program, load};
 use zedc::stage::{Domain, Specializer, Stage, color, ends, free, mix, passed};
 
-use super::{out, staged};
+use super::out;
 use crate::l01_16_elaboration::elab;
 
 /// `main` with `n` local definitions in a chain from a port, each read by the next; `all`
@@ -41,30 +42,39 @@ pub(super) fn deep(f: impl FnOnce() + Send + 'static) {
     t.unwrap().join().unwrap();
 }
 
-#[test]
-fn mixing_a_chain_of_local_definitions_scales() {
-    deep(|| {
-        scaling::check("mixing a chain of n run-stage definitions", 400, |n| {
-            let (_, s, report) = staged(&chain(n, false));
+/// Checks that staging `chain(n, all)` scales, `what` naming it, with the program loaded
+/// before timing: loading it, which parses, checks and elaborates, did 7 to 9 times the work
+/// of staging, enough to hide a quadratic added to it (COMPLEXITY.md F85). The output of the
+/// staged program of size `n` is checked once, outside the timing, to be `want`.
+fn mixing_scales(what: &'static str, n: usize, all: bool, want: usize) {
+    deep(move || {
+        let progs: BTreeMap<usize, Program> = [n, FACTOR * n]
+            .into_iter()
+            .map(|k| (k, load(chain(k, all).as_bytes()).unwrap()))
+            .collect();
+        let (s, report) = progs[&n].stage();
+        assert!(report.left.is_empty());
+        assert_eq!(out(&s, "1\n"), format!("{want}\n"));
+        scaling::check(what, n, |k| {
+            let (_, report) = progs[&k].stage();
             assert!(report.left.is_empty());
-            assert_eq!(out(&s, "1\n"), format!("{}\n", 1 + n * (n + 1) / 2));
-        })
+        });
     });
 }
 
 #[test]
+fn mixing_a_chain_of_local_definitions_scales() {
+    let n = 400;
+    let want = 1 + n * (n + 1) / 2;
+    mixing_scales("mixing a chain of n run-stage definitions", n, false, want);
+}
+
+#[test]
 fn mixing_a_term_that_reads_every_definition_scales() {
-    deep(|| {
-        scaling::check(
-            "mixing a chain of n definitions all read at the end",
-            200,
-            |n| {
-                let (_, s, _) = staged(&chain(n, true));
-                let want: usize = (0..=n).map(|i| 1 + i * (i + 1) / 2).sum();
-                assert_eq!(out(&s, "1\n"), format!("{want}\n"));
-            },
-        )
-    });
+    let n = 200;
+    let want = (0..=n).map(|i| 1 + i * (i + 1) / 2).sum();
+    let what = "mixing a chain of n definitions all read at the end";
+    mixing_scales(what, n, true, want);
 }
 
 /// `f` and `n` definitions, each calling it with its own literal.

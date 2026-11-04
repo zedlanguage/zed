@@ -251,8 +251,41 @@ fn elaborate_in(
     let t = Tables::new(unit, res);
     let mut info = check::check_with(&t, unit);
     let warnings = check::widen::warnings(&t, unit, &info);
+    // The checker's errors first, so that where both report one error, as for an argument
+    // that fills no parameter, the checker's, which carries its notes, is the one kept: the
+    // sort is stable.
     let checked = std::mem::take(&mut info.errors);
-    let mut e = Elab::new(t, &info);
+    let (mut out, marks, errors) = lower(t, &info, unit, marks, checked);
+    out.warnings = warnings;
+    finish(out, marks, errors)
+}
+
+/// The elaboration of `unit` under its resolution from `info`, the checker's [`check::check`]
+/// of the same unit and resolution, with no errors, or elaboration's own errors in text
+/// order. It does what [`elaborate`] does after checking, and gives no warnings, which the
+/// checker's widening pass finds. For tests that measure elaboration alone: parsing and
+/// checking cost far more per term than elaboration, so a scaling test that times them too
+/// cannot see a quadratic in elaboration (COMPLEXITY.md F85).
+#[doc(hidden)]
+pub fn elaborate_checked(unit: &[Stmt], res: &Resolution, info: &Info) -> Result<Unit, Vec<Error>> {
+    assert!(
+        info.errors.is_empty(),
+        "elaborate_checked takes the Info of a unit the checker accepts"
+    );
+    let (out, marks, errors) = lower(Tables::new(unit, res), info, unit, None, Vec::new());
+    finish(out, marks, errors).map(|(unit, _)| unit)
+}
+
+/// Elaboration proper: the unit's definitions and tests from the binder tables `t` and the
+/// checker's `info`, with `errors` followed by elaboration's own.
+fn lower<'a>(
+    t: Tables<'a>,
+    info: &'a Info,
+    unit: &'a [Stmt],
+    marks: Option<Vec<Mark>>,
+    mut errors: Vec<Error>,
+) -> (Unit, Option<Vec<Mark>>, Vec<Error>) {
+    let mut e = Elab::new(t, info);
     e.marks = marks;
     let mut out = Unit::default();
     if let Some((binds, _)) = e.scope(unit, true) {
@@ -267,14 +300,18 @@ fn elaborate_in(
             .collect();
     }
     out.tests = std::mem::take(&mut e.tests).into();
-    out.warnings = warnings;
-    // The checker's errors first, so that where both report one error, as for an argument
-    // that fills no parameter, the checker's, which carries its notes, is the one kept: the
-    // sort is stable.
-    let mut errors = checked;
     errors.append(&mut e.errors);
+    (out, e.marks.take(), errors)
+}
+
+/// `out` and `marks`, or `errors` sorted by place and message, each once.
+fn finish(
+    out: Unit,
+    marks: Option<Vec<Mark>>,
+    mut errors: Vec<Error>,
+) -> Result<(Unit, Option<Vec<Mark>>), Vec<Error>> {
     if errors.is_empty() {
-        Ok((out, e.marks.take()))
+        Ok((out, marks))
     } else {
         errors.sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
         errors.dedup_by(|a, b| (a.span, &a.message, a.row) == (b.span, &b.message, b.row));

@@ -10,7 +10,7 @@ use zed_kernel::types::Type;
 use zed_kernel::value::Value;
 use zed_tests::scaling;
 
-use crate::l01_16_elaboration::elab;
+use crate::l01_16_elaboration::{Checked, checked, elab};
 
 /// A string of 1000 characters ending in `i`, as a type.
 fn long(i: usize) -> Type {
@@ -59,15 +59,15 @@ fn union(n: usize) -> String {
 
 #[test]
 fn a_union_of_many_tuple_types_scales() {
-    let texts: Mutex<BTreeMap<usize, String>> = Mutex::default();
-    scaling::check("is against a union of n pairs", 250, |n| {
-        let text = texts
-            .lock()
-            .unwrap()
-            .entry(n)
-            .or_insert_with(|| union(n))
-            .clone();
-        let u = elab(&text).unwrap_or_else(|e| panic!("{e:?}"));
+    // Elaboration is timed alone: parsing and checking the unit did nearly three times its
+    // work at 250 pairs, enough to hide a quadratic added to it (COMPLEXITY.md F85).
+    let units: BTreeMap<usize, Checked> = [250, scaling::FACTOR * 250]
+        .into_iter()
+        .map(|n| (n, checked(&union(n))))
+        .collect();
+    assert_eq!(units[&250].elab().defs, elab(&union(250)).unwrap().defs);
+    scaling::check("elaborating `is` against a union of n pairs", 250, |n| {
+        let u = units[&n].elab();
         assert!(u.get("f").unwrap().to_string().contains("(is (| "));
     });
     let built: Mutex<BTreeMap<usize, Vec<Type>>> = Mutex::default();

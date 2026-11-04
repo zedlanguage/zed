@@ -121,5 +121,14 @@ fn rounding_a_literal_of_n_digits_scales() {
     zed_tests::scaling::check_order("a float literal of n digits", 2000, 1, |n| {
         elab(&inputs[&n]).unwrap();
     });
+    // The rounding alone: the rest of the pipeline did about 2.6 times its work at 2000
+    // digits, enough to hide a quadratic added to it (COMPLEXITY.md F85).
+    let digits: HashMap<usize, String> = inputs
+        .iter()
+        .map(|(&n, t)| (n, t["v = ".len()..t.len() - ";\n".len()].to_string()))
+        .collect();
+    zed_tests::scaling::check_order("rounding a float literal of n digits", 2000, 1, |n| {
+        assert!(literal_f64(&digits[&n]).is_ok());
+    });
     assert_eq!(x(&format!("0.{}1e3", "3".repeat(3))), "333.1");
 }

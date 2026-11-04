@@ -1,15 +1,19 @@
 //! Elaboration at the rule of low complexity (DESIGN.md Part G).
+//!
+//! A test of elaboration times it alone, from units parsed, resolved and checked before timing
+//! ([`Checked`]): on all but one of these families the parser and the checker do 4 to 92 times
+//! the work of elaboration, and a test that times them too lets through an added quadratic
+//! whose cost at size n is less than 0.4 times all it times (COMPLEXITY.md F85).
 
 use std::collections::BTreeMap;
 
 use zed_tests::scaling::FACTOR;
-use zedc::ast::{Stmt, unit};
-use zedc::elab::elaborate;
+use zedc::ast::unit;
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
-use zedc::resolve::{Resolution, resolve};
+use zedc::resolve::resolve;
 
-use super::{elab, term, value};
+use super::{Checked, checked, elab, term, value};
 
 /// `h0(x = 1) = x;` and `h{i}(x = h{i-1}() + h{i-1}()) = x;` up to `k`, and `main = h{k}();`.
 fn chain(k: usize) -> String {
@@ -25,8 +29,12 @@ fn defaults_calling_functions_with_defaults_scale() {
     // A call leaving a parameter out held a copy of its default, and the copy's own calls
     // copies of theirs, so the chain's term doubled with each function (2.9 million
     // characters for `main` at `k = 16`).
-    zed_tests::scaling::check("a chain of defaults, by length", 8, |k| {
-        let u = elab(&chain(k)).unwrap();
+    let units: BTreeMap<usize, Checked> = [8, FACTOR * 8]
+        .into_iter()
+        .map(|k| (k, checked(&chain(k))))
+        .collect();
+    zed_tests::scaling::check("elaborating a chain of defaults, by length", 8, |k| {
+        let u = units[&k].elab();
         let main = u.defs.iter().find(|d| d.name == "main").unwrap();
         assert!(main.term.to_string().len() < 40, "{}", main.term);
     });
@@ -204,8 +212,17 @@ fn checking_and_ordering_nested_functions_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {
-            zed_tests::scaling::check("functions nested n deep", 100, |n| {
-                let u = elab(&nested(n)).unwrap();
+            // The checker and elaboration are timed apart, each from what comes before it,
+            // made before timing.
+            let units: BTreeMap<usize, Checked> = [100, FACTOR * 100]
+                .into_iter()
+                .map(|n| (n, checked(&nested(n))))
+                .collect();
+            zed_tests::scaling::check("checking functions nested n deep", 100, |n| {
+                assert!(units[&n].check().errors.is_empty());
+            });
+            zed_tests::scaling::check("elaborating functions nested n deep", 100, |n| {
+                let u = units[&n].elab();
                 assert!(u.defs.iter().any(|d| d.name == "main"));
             });
             assert_eq!(value(&nested(3), "main"), "3");
@@ -257,23 +274,17 @@ fn named_through_a_value(n: usize) -> String {
     )
 }
 
-/// Checks that elaborating the unit `text(m)` is of order m, building the front end of each
-/// size first, so that elaboration is timed alone, and that its last definition is `last`.
+/// Checks that elaborating the unit `text(m)` is of order m, parsing and checking each size
+/// first, so that elaboration is timed alone, and that its last definition is `last`. (Until
+/// ELAB-scaling-isolation the checker, which `elaborate` runs first, was timed too: 9 and 16
+/// times elaboration's work on the two families below.)
 fn elaboration_scales(what: &str, n: usize, text: fn(usize) -> String, last: &str) {
-    let built: BTreeMap<usize, (Vec<Stmt>, Resolution)> = [n, FACTOR * n]
+    let units: BTreeMap<usize, Checked> = [n, FACTOR * n]
         .into_iter()
-        .map(|m| {
-            let text = text(m);
-            let tokens = lex_fence(&text).unwrap();
-            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-            let stmts = unit(&text, &tokens, &tree).unwrap();
-            let res = resolve(&stmts).unwrap();
-            (m, (stmts, res))
-        })
+        .map(|m| (m, checked(&text(m))))
         .collect();
     zed_tests::scaling::check(what, n, |m| {
-        let (stmts, res) = &built[&m];
-        let u = elaborate(stmts, res).unwrap();
+        let u = units[&m].elab();
         assert_eq!(u.defs.last().unwrap().name, last);
     });
 }
@@ -302,10 +313,16 @@ fn a_call_through_a_value_naming_many_arguments_scales() {
 #[test]
 fn ordering_a_function_with_many_rows_scales() {
     // Each use in a row was tested against every row of the function.
-    zed_tests::scaling::check("a function with n rows naming a constant", 250, |n| {
-        let rows: Vec<String> = (0..n).map(|_| "c -> c".to_string()).collect();
-        let src = format!("c = 2;\nf(x) = x test {{ {} }}\n", rows.join(", "));
-        let u = elab(&src).unwrap();
+    let units: BTreeMap<usize, Checked> = [250, FACTOR * 250]
+        .into_iter()
+        .map(|n| {
+            let rows: Vec<String> = (0..n).map(|_| "c -> c".to_string()).collect();
+            let src = format!("c = 2;\nf(x) = x test {{ {} }}\n", rows.join(", "));
+            (n, checked(&src))
+        })
+        .collect();
+    zed_tests::scaling::check("elaborating a function with n rows", 250, |n| {
+        let u = units[&n].elab();
         assert_eq!(u.tests.len(), n);
     });
 }
@@ -471,24 +488,19 @@ fn blocks_and_tuples_nested_100000_deep_are_ordered_on_a_2_mib_stack() {
 }
 
 /// Elaborates each program of `shapes` on a 2 MiB stack, `n` deep and `8n` deep, and checks
-/// the time is linear. Elaboration recursed once per level of nesting; the time includes the
-/// checker's, which elaboration runs first.
+/// the time is linear. Elaboration recursed once per level of nesting. Each program is checked
+/// first, on the same stack, and elaboration is timed alone: the checker did 5 to 92 times its
+/// work on these shapes, and `l01_26_type_resolution::scaling` times the checker on each.
 fn elaborates_deep(shapes: &[&str], n: usize) {
     use zed_tests::deep::{on_small_stack, program, statements};
     on_small_stack(|| {
         for &shape in shapes {
-            let small = statements(&program(shape, n).text);
-            let large = statements(&program(shape, 8 * n).text);
-            let small_res = resolve(&small).unwrap();
-            let large_res = resolve(&large).unwrap();
+            let units: BTreeMap<usize, Checked> = [n, 8 * n]
+                .into_iter()
+                .map(|k| (k, Checked::new(statements(&program(shape, k).text))))
+                .collect();
             zed_tests::scaling::check_order(&format!("elaborating {shape}"), n, 1, |k| {
-                let (stmts, res) = if k == n {
-                    (&small, &small_res)
-                } else {
-                    (&large, &large_res)
-                };
-                let unit = elaborate(stmts, res).unwrap_or_else(|e| panic!("{shape}: {e:?}"));
-                assert!(!unit.defs.is_empty(), "{shape}");
+                assert!(!units[&k].elab().defs.is_empty(), "{shape}");
             });
         }
     });
@@ -499,9 +511,9 @@ fn blocks_nested_100000_deep_elaborate_on_a_2_mib_stack() {
     elaborates_deep(&["nested blocks"], 12_500);
 }
 
-// The checker, which elaboration runs first, costs about a million instructions for each `+`
-// and a third of that for each negation, branch or call (COMPLEXITY.md F62), so these shapes
-// elaborate 8,000 deep.
+// The checker, which runs on each program before it is elaborated, costs about 140,000
+// instructions for each `+` and half that for each negation, branch or call (CHK-node-cost, in
+// `l01_26_type_resolution::scaling`), so these shapes elaborate 8,000 deep.
 
 #[test]
 fn sums_and_else_if_chains_8000_deep_elaborate_on_a_2_mib_stack() {
@@ -534,20 +546,20 @@ fn else_patterns(n: usize, named: bool) -> String {
     format!("x = #b;\nt = x else {p} -> 0;\n")
 }
 
-/// Elaborates `text(n)` and `text(8n)` on a 2 MiB stack, and checks the time is linear.
+/// Checks and elaborates `text(n)` and `text(8n)` on a 2 MiB stack, and checks that the time of
+/// each is linear, timed apart: the checker did up to 7 times the work of elaboration on these.
 fn elaborates_text_deep(what: &str, n: usize, text: fn(usize) -> String) {
     use zed_tests::deep::{on_small_stack, statements};
     on_small_stack(|| {
-        let (small, large) = (statements(&text(n)), statements(&text(8 * n)));
-        let (small_res, large_res) = (resolve(&small).unwrap(), resolve(&large).unwrap());
+        let units: BTreeMap<usize, Checked> = [n, 8 * n]
+            .into_iter()
+            .map(|k| (k, Checked::new(statements(&text(k)))))
+            .collect();
+        zed_tests::scaling::check_order(&format!("checking {what}"), n, 1, |k| {
+            assert!(units[&k].check().errors.is_empty(), "{what}");
+        });
         zed_tests::scaling::check_order(&format!("elaborating {what}"), n, 1, |k| {
-            let (stmts, res) = if k == n {
-                (&small, &small_res)
-            } else {
-                (&large, &large_res)
-            };
-            let unit = elaborate(stmts, res).unwrap_or_else(|e| panic!("{what}: {e:?}"));
-            assert_eq!(unit.defs.len(), 2, "{what}");
+            assert_eq!(units[&k].elab().defs.len(), 2, "{what}");
         });
     });
 }
@@ -586,4 +598,48 @@ fn errors_inside_types_and_patterns_keep_their_order() {
             "{p}"
         );
     }
+}
+
+#[test]
+fn elaborating_from_the_checkers_findings_gives_what_elaborate_gives() {
+    // The tests above time `elaborate_checked` on a unit checked before timing; it must give
+    // the definitions and test cases `elaborate` gives, and only the checker's warnings differ.
+    use zed_tests::deep::program;
+    let mut texts = vec![
+        chain(3),
+        nested(3),
+        named(3),
+        named_through_a_value(3),
+        "c = 2;\nf(x) = x test { c -> c, 1 -> 1 }\n".to_string(),
+        open(4),
+        big_callee(3),
+        differences(3),
+        else_patterns(3, false),
+        else_patterns(3, true),
+        "f(positional x, positional k) = x * k + 1n;\ng = f(2.5, 2n);\n".to_string(),
+    ];
+    for shape in [
+        "nested blocks",
+        "a left-nested sum",
+        "an `else if` chain",
+        "nested negations",
+        "nested calls",
+    ] {
+        texts.push(program(shape, 5).text);
+    }
+    for text in &texts {
+        let (alone, whole) = (checked(text).elab(), elab(text).unwrap());
+        assert_eq!(
+            (&alone.defs, &alone.tests),
+            (&whole.defs, &whole.tests),
+            "{text}"
+        );
+        assert!(alone.warnings.is_empty());
+    }
+    // A product that may not fit in a machine word is warned by the checker's widening pass,
+    // which `elaborate_checked` does not run.
+    let text = "area = 3037000500 * 3037000500;\n";
+    let (alone, whole) = (checked(text).elab(), elab(text).unwrap());
+    assert_eq!(alone.defs, whole.defs);
+    assert_eq!((alone.warnings.len(), whole.warnings.len()), (0, 1));
 }
