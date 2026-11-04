@@ -259,3 +259,38 @@ main(stdin: Lines) -> (stdout: Lines) {
         ]
     );
 }
+
+#[test]
+fn a_rejected_nested_tuple_shows_each_tuple_and_its_type() {
+    // A tuple keeps no type of its own as the checker walks; its derivation finds it from its
+    // components, at any depth.
+    let out = rejected("x = \"pair: \" ++ ((1, 2.5), \"a\");\n");
+    assert_eq!(
+        out,
+        r#"1:5: `++` does not take ("pair: ", ((1, 2.5), "a"))
+  [1] 1:5: this expression is "pair: "
+      1 | x = "pair: " ++ ((1, 2.5), "a");
+        |     ^^^^^^^^
+  [2] 1:17: this expression gives ((1, 2.5), "a")
+      1 | x = "pair: " ++ ((1, 2.5), "a");
+        |                 ^^^^^^^^^^^^^^^
+  [3] 1:18: this expression gives (1, 2.5)
+      1 | x = "pair: " ++ ((1, 2.5), "a");
+        |                  ^^^^^^^^
+  [4] 1:19: this literal, 1, is 1
+      1 | x = "pair: " ++ ((1, 2.5), "a");
+        |                   ^
+  [5] 1:22: this literal, 2.5, is 2.5
+      1 | x = "pair: " ++ ((1, 2.5), "a");
+        |                      ^^^
+  [6] 1:28: this expression is "a"
+      1 | x = "pair: " ++ ((1, 2.5), "a");
+        |                            ^^^
+  [7] 1:5: `++` takes (String, String) -> String
+      1 | x = "pair: " ++ ((1, 2.5), "a");
+        |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [8] 1:17: repair: wrap this in `String(…)`; the checker accepts that
+      1 | x = "pair: " ++ ((1, 2.5), "a");
+        |                 ^^^^^^^^^^^^^^^"#
+    );
+}

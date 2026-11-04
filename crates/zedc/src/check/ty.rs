@@ -801,14 +801,21 @@ impl Ty {
         out
     }
 
-    /// The one numeric carrier its numbers are of, when they are of one and it holds nothing
-    /// but those numbers and atoms.
+    /// The numeric carrier a literal adopts where a value of this type is expected: the one
+    /// carrier its numbers are of, when it holds numbers of one carrier and no variable or
+    /// unknown, which could stand for numbers of another. Its other members (atoms, strings,
+    /// booleans, tuples, functions) do not count, so `1` at `f64 | String` is `1.0`; a type
+    /// with numbers of two carriers, as `f64 | rat`, gives none: there a literal keeps its own
+    /// carrier when the type holds it and is an error otherwise (`check::carriers_at`; DESIGN.md
+    /// L1.26: the carrier "an operator or a parameter expects").
     pub fn numeric_carrier(&self) -> Option<Carrier> {
-        if !self.tuples.is_empty() || !self.fns.is_empty() || !self.vars.is_empty() || self.dynamic
-        {
+        if !self.vars.is_empty() || self.dynamic {
             return None;
         }
-        let nums = &self.set - &atoms();
+        let nums = [Carrier::Int, Carrier::Rat, Carrier::F64]
+            .iter()
+            .fold(KType::empty(), |a, c| a | c.ty());
+        let nums = &self.set & &nums;
         [Carrier::Int, Carrier::Rat, Carrier::F64]
             .into_iter()
             .find(|c| !nums.is_empty() && nums.subtype(&c.ty()))

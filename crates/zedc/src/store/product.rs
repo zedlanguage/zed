@@ -51,7 +51,7 @@ use super::hull::Hull;
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
-use super::preimage::{Classes, Demand, Domains, Point, preimage, relations, witness};
+use super::preimage::{Classes, Demand, Domains, Point, follow_own, preimage, relations, witness};
 use super::presburger::{self, Atom, Con, Formula, Lin, Rel};
 use super::revision::{self, Op, reduce_congruence};
 use crate::stage;
@@ -1209,6 +1209,8 @@ impl Scope {
         if self.bottom {
             return;
         }
+        let plain = plain_test(test, self);
+        let test = plain.as_ref().unwrap_or(test);
         let (tree, pol) = Tree::of(test);
         self.narrow_linear(&tree, 0, outcome == pol, prem);
     }
@@ -2466,6 +2468,86 @@ fn join_cases(mut cases: Vec<Scope>) -> Scope {
     cases.pop().expect("a test has a case")
 }
 
+/// The comparison `t` is when it compares a literal with a value whose carrier is inferred
+/// (the match [`follow_own`] reads, bound around the comparison) and the value is an integer
+/// in `scope`: the value compared with the literal itself, since no other arm is taken.
+fn plain_comparison(t: &Term, scope: &mut Scope) -> Option<Term> {
+    let Term::Let(v, x, body) = t else {
+        return None;
+    };
+    let Term::Prim(p, args) = &**body else {
+        return None;
+    };
+    if !is_comparison(*p) || args.len() != 2 {
+        return None;
+    }
+    let bound = |a: &Term| matches!(a, Term::Var(w) if w == v);
+    let own = |a: &Term| match a {
+        Term::Match(s, arms) if bound(s) => follow_own(arms).cloned(),
+        _ => None,
+    };
+    let at = (0..2).find(|&i| bound(&args[1 - i]) && own(&args[i]).is_some())?;
+    if !forward_in(x, scope).ty.element.subtype(&Type::int()) {
+        return None;
+    }
+    let mut plain = args.clone();
+    plain[at] = own(&args[at])?;
+    plain[1 - at] = (**x).clone();
+    Some(Term::Prim(*p, plain))
+}
+
+/// `test` with each comparison [`plain_comparison`] reads made plain, through its
+/// connectives; `None` when it holds none. An explicit stack, since a test nests as deep as
+/// it is written.
+fn plain_test(test: &Term, scope: &mut Scope) -> Option<Term> {
+    enum Step<'a> {
+        Visit(&'a Term),
+        Build(&'a Term),
+    }
+    fn kids(t: &Term) -> Vec<&Term> {
+        match t {
+            Term::Prim(Prim::And | Prim::Or | Prim::Not, a) => a.iter().collect(),
+            Term::If(c, a, b) => vec![&**c, &**a, &**b],
+            _ => Vec::new(),
+        }
+    }
+    let (mut todo, mut done) = (vec![Step::Visit(test)], Vec::<Option<Term>>::new());
+    while let Some(step) = todo.pop() {
+        match step {
+            Step::Visit(t) => {
+                let ks = kids(t);
+                if ks.is_empty() {
+                    done.push(plain_comparison(t, scope));
+                } else {
+                    todo.push(Step::Build(t));
+                    todo.extend(ks.into_iter().rev().map(Step::Visit));
+                }
+            }
+            Step::Build(t) => {
+                let ks = kids(t);
+                let got = done.split_off(done.len() - ks.len());
+                if got.iter().all(Option::is_none) {
+                    done.push(None);
+                    continue;
+                }
+                let mut new: Vec<Term> = (got.into_iter().zip(ks))
+                    .map(|(g, k)| g.unwrap_or_else(|| k.clone()))
+                    .collect();
+                done.push(Some(match t {
+                    Term::Prim(p, _) => Term::Prim(*p, new),
+                    _ => {
+                        let b = new.pop().expect("three parts");
+                        let a = new.pop().expect("three parts");
+                        let c = new.pop().expect("three parts");
+                        Term::If(Arc::new(c), Arc::new(a), Arc::new(b))
+                    }
+                }));
+            }
+        }
+    }
+    done.pop().expect("one result")
+}
+
 /// Whether `t` is a comparison, a connective or a boolean literal.
 fn is_test(t: &Term) -> bool {
     matches!(
@@ -2547,6 +2629,7 @@ fn forward_in(e: &Term, scope: &mut Scope) -> Product {
     match e {
         Term::Lit(v) => return Product::literal(v),
         Term::Var(x) => return scope.get(x),
+        Term::Let(..) if let Some(t) = plain_comparison(e, scope) => return forward_in(&t, scope),
         Term::Let(x, v, b) => {
             let p = forward_in(v, scope);
             let u = scope.bind(x, p, v);

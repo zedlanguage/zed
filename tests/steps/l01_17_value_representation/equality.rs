@@ -57,3 +57,14 @@ fn functions_compare_only_over_an_enumerable_domain() {
         "{got}"
     );
 }
+
+#[test]
+fn a_function_deep_in_a_tuple_is_reported_once_where_it_is_written() {
+    // Each tuple checks its own components, so a function two tuples deep gets one error, at
+    // the inner tuple, and not one more at each tuple around it.
+    let src = "inc = x -> x + 1;\npair = ((inc, 1), 2);\n";
+    assert_eq!(
+        errors(src),
+        ["a tuple takes data, and this value may hold a function, `(int) -> int` [inc]"]
+    );
+}

@@ -192,7 +192,7 @@ pub(super) enum Frame<'a> {
         span: Span,
         x: Box<Arg>,
     },
-    ArgOf(Span),
+    ArgOf(&'a Expr),
     Scope(Box<ScopeF<'a>>),
     Tests(Box<ScopeF<'a>>),
     TestArgs(Box<TestF<'a>>),
@@ -542,7 +542,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         None => map.remove(&e.span),
                     };
                 }
-                self.seen.insert(e.span, (t.clone(), src));
+                // A tuple written out keeps no type of its own (`Seen`).
+                let kept = (!matches!(e.kind, ExprKind::Tuple(_))).then(|| t.clone());
+                self.seen.insert(e.span, (kept, src));
                 m.ty(t);
             }
             Frame::Const(t) => {
@@ -753,10 +755,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.binary_end(op, *x, y, b, span);
                 m.ty(t);
             }
-            Frame::ArgOf(span) => {
+            Frame::ArgOf(e) => {
                 let t = m.take_ty();
                 m.ret = Ret::Arg(Arg {
-                    at: Some(span),
+                    at: Some(e.span),
+                    parts: parts(e),
                     ..Arg::of(t)
                 });
             }
@@ -1327,10 +1330,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ty: lit_ty(&l.value, l.neg),
                 lit: Some(l),
                 at: Some(e.span),
+                parts: None,
             });
             return;
         }
-        m.k(Frame::ArgOf(e.span));
+        m.k(Frame::ArgOf(e));
         m.job(Job::At(e, want));
     }
 
@@ -1496,8 +1500,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn tuple_step(&mut self, m: &mut M<'a>, mut s: Box<TupleF<'a>>) {
         if s.started > s.out.len() {
             let t = m.take_ty();
-            if s.data {
-                self.data(&t, "a tuple", s.es[s.out.len()].span);
+            // A tuple written as a component has checked its own components, so it is data
+            // where they are; checking it again would walk each nested tuple once per level.
+            let e = &s.es[s.out.len()];
+            if s.data && !matches!(e.kind, ExprKind::Tuple(_)) {
+                self.data(&t, "a tuple", e.span);
             }
             s.out.push(t);
         }
@@ -1690,7 +1697,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     fn word_end(&mut self, w: &str, x: Arg, span: Span) -> Ty {
         if w == "sum" {
-            return self.sum(x.ty, span);
+            return self.sum(x, span);
         }
         if w == "String" {
             self.data(&x.ty, "`String`", span);

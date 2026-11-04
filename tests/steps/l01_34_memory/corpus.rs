@@ -42,14 +42,14 @@ fn every_row_passes_through_the_machine() {
             assert_eq!(got, want, "{} (fuse {fuse})", path.display());
             rows += got.len();
         }
-        // 67 checks of table rows (7 of them in L25.8's unit, 19 in L1.40d's), and the 6
-        // marked lines of the three rejection units.
-        assert_eq!(rows, 73);
+        // 85 checks of table rows (7 of them in L25.8's unit, 19 in L1.40d's and 18 in L1.26's
+        // readings unit), and the 6 marked lines of the three rejection units.
+        assert_eq!(rows, 91);
         // The seven units of L1 evaluate 58 closed terms, which allocate 108 cells, L25.8's unit
-        // 7 terms and 9 cells, and L1.40d's unit 19 terms and 29 cells; fusion saves 26 count
-        // writes.
-        let want = if fuse { 150 } else { 176 };
-        assert_eq!((runs.get(), cells.get(), writes.get()), (84, 146, want));
+        // 7 terms and 9 cells, L1.40d's unit 19 terms and 29 cells, and L1.26's readings unit
+        // 18 terms and 34 cells; fusion saves 26 count writes.
+        let want = if fuse { 184 } else { 210 };
+        assert_eq!((runs.get(), cells.get(), writes.get()), (102, 180, want));
     }
 }
 

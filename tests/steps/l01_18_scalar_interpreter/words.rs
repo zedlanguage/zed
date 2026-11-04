@@ -46,8 +46,10 @@ fn summing_an_order() {
     assert_eq!(x("sum((1.5, 2.25))"), "3.75");
     assert_eq!(x("sum((1r/2r, 1r/3r))"), "5r/6r");
     assert_eq!(x("sum((9, int(\"x\")))"), "#invalid");
+    // An integer literal beside an f64 is read as one (DESIGN.md L1.26); a string is no number.
+    assert_eq!(x("sum((1, 2.0))"), "3.0");
     assert_eq!(
-        errors("x = sum((1, 2.0));\n"),
-        ["`sum` does not take (1, 2.0) [sum((1, 2.0))]"]
+        errors("x = sum((1, \"a\"));\n"),
+        ["`sum` does not take (1, \"a\") [sum((1, \"a\"))]"]
     );
 }

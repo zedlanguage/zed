@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use zedc::run::load;
 
-/// Every `.zed` unit of the corpus and of the steps' tests, and three rejected programs.
+/// Every `.zed` unit of the corpus and of the steps' tests, and four rejected programs.
 fn units() -> Vec<(String, Vec<u8>)> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut dirs = vec![root.join("../zed/corpus")];
@@ -38,6 +38,10 @@ fn units() -> Vec<(String, Vec<u8>)> {
     out.push((
         "a parameter's morphism type outside its bound".into(),
         b"f(x: #a .. #b -> int) = 0;\nmain() = 0;\n".to_vec(),
+    ));
+    out.push((
+        "a literal at a union of two carriers it can adopt".into(),
+        b"f(positional x: f64 | rat) = x;\nmain() = f(1);\n".to_vec(),
     ));
     out
 }
@@ -80,6 +84,21 @@ fn batch_and_single_file_checking_agree() {
         Some(
             "1:6: the guarantee (left of `..`) of this morphism type is not within its \
              permission (right of `..`)"
+        )
+    );
+    // A literal at a type that names no one carrier is rejected the same way on both paths.
+    let at = units
+        .iter()
+        .position(|(name, _)| name == "a literal at a union of two carriers it can adopt")
+        .expect("the unit");
+    assert_eq!(
+        batch[at].as_deref(),
+        Some(
+            "2:12: `1` at `rat | f64` adopts no one carrier: the type holds numbers of f64 and \
+             rat; write the one meant, as `1.0` or `1r`\n  \
+             [1] 1:1: `f` is declared here, `(rat | f64) -> rat | f64`\n      \
+             1 | f(positional x: f64 | rat) = x;\n        \
+             | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
         )
     );
 }

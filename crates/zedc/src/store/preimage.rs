@@ -67,7 +67,8 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, eval, on_stack};
+use zed_kernel::types::Type;
+use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval, on_stack};
 
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
@@ -1088,8 +1089,26 @@ enum Node<'t> {
     PrimFn(Prim),
     Let(Name, Tid, Tid),
     If(Tid, Tid, Tid),
+    /// A literal compared with a value whose carrier is inferred: the value, the literal's
+    /// own term, and the arms that give the literal at a float or a rational (DESIGN.md L1.26;
+    /// [`follow_own`]).
+    Follow(Tid, Tid, &'t [(Pattern, Term)]),
     /// A term the scalar catalog does not cover.
     Other,
+}
+
+/// The literal's own term in the match the elaborator writes for a literal compared with a
+/// value whose carrier is inferred: an arm `is f64` or `is rat` for each carrier it follows,
+/// each to a literal, and last the literal itself. Any other match is outside the catalog.
+pub(super) fn follow_own(arms: &[(Pattern, Term)]) -> Option<&Term> {
+    let ((Pattern::Wild, own), rest) = arms.split_last()? else {
+        return None;
+    };
+    let carrier = |(p, v): &(Pattern, Term)| {
+        matches!(p, Pattern::Is(t) if *t == Type::f64() || *t == Type::rat())
+            && matches!(v, Term::Lit(_))
+    };
+    (!rest.is_empty() && rest.iter().all(carrier)).then_some(own)
 }
 
 /// A term the transfer makes, by what fixes it: a literal, a parameter's name, the primitive
@@ -1197,6 +1216,11 @@ impl<'t> Terms<'t> {
                     self.id(g, &mut seen, &mut todo),
                     self.id(a, &mut seen, &mut todo),
                     self.id(b, &mut seen, &mut todo),
+                ),
+                Term::Match(v, arms) if let Some(own) = follow_own(arms) => Node::Follow(
+                    self.id(v, &mut seen, &mut todo),
+                    self.id(own, &mut seen, &mut todo),
+                    &arms[..arms.len() - 1],
                 ),
                 _ => Node::Other,
             };
@@ -1796,6 +1820,9 @@ impl<'t> Tx<'t> {
                 }
                 (Node::Let(x, e, c), Node::Let(y, f, d)) if x == y => todo.extend([(e, f), (c, d)]),
                 (Node::If(g, x, c), Node::If(h, y, d)) => todo.extend([(g, h), (x, y), (c, d)]),
+                (Node::Follow(v, x, a), Node::Follow(w, y, b)) if a == b => {
+                    todo.extend([(v, w), (x, y)])
+                }
                 (Node::Other, Node::Other)
                     if self.terms.src[a as usize] == self.terms.src[b as usize] => {}
                 _ => return false,
@@ -2269,6 +2296,7 @@ impl<'t> Tx<'t> {
                 any(self, &mut all.into_iter())
             }
             Node::If(g, a, b) => any(self, &mut [(g, env), (a, env), (b, env)].into_iter()),
+            Node::Follow(v, own, _) => any(self, &mut [(v, env), (own, env)].into_iter()),
             Node::Other => None,
         }
     }
@@ -2347,6 +2375,11 @@ impl<'t> Tx<'t> {
             Node::If(g, a, b) => {
                 Term::If(Shared::new(c(g)?), Shared::new(c(a)?), Shared::new(c(b)?))
             }
+            Node::Follow(v, own, arms) => {
+                let mut arms = arms.to_vec();
+                arms.push((Pattern::Wild, c(own)?));
+                Term::Match(Shared::new(c(v)?), arms)
+            }
             Node::Other => return None,
         })
     }
@@ -2357,6 +2390,12 @@ impl<'t> Tx<'t> {
             |m| &mut m.constant,
             (t, env),
             |s| {
+                // A literal compared with a value that is no float or rational is its own term.
+                if let Node::Follow(v, own, _) = s.node(t)
+                    && !s.fwd(v, env).other
+                {
+                    return s.constant(own, env);
+                }
                 if s.mentions(t, env)? {
                     return None;
                 }
@@ -2796,6 +2835,12 @@ impl<'t> Tx<'t> {
                 let inner = self.let_env(n, e, env);
                 self.fwd(b, inner)
             }
+            Node::Follow(v, own, _) => {
+                // At a float or a rational the literal is one, a value of another kind.
+                let mut out = self.fwd(own, env);
+                out.other |= self.fwd(v, env).other;
+                out
+            }
             Node::If(g, a, b) => {
                 let g = self.fwd(g, env);
                 // A guard that is not a test is a failure.
@@ -3227,6 +3272,11 @@ impl<'t> Tx<'t> {
             Node::Let(n, e, b) => {
                 let inner = self.let_env(n, e, env);
                 self.scan(b, inner)
+            }
+            Node::Follow(v, own, _) => {
+                for u in [v, own] {
+                    self.scan(u, env);
+                }
             }
             Node::If(g, a, b) => {
                 for u in [g, a, b] {

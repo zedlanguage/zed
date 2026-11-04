@@ -1633,7 +1633,36 @@ impl<'a> Elab<'a> {
                 quotient: self.info.quotients.get(&e.span) == Some(&true),
             });
         }
-        Some(Term::Prim(p, args))
+        Some(match p {
+            Prim::Eq | Prim::Ne => self.follow(l, r, p, args),
+            _ => Term::Prim(p, args),
+        })
+    }
+
+    /// `l == r` or `l != r`, the primitive `p` on `args`, when one operand is a literal compared with a
+    /// type variable (`Info::follows`): the other operand is bound first, and the literal takes
+    /// the carrier of its value, `x == 1` reading `1.0` where `x` is an `f64` (DESIGN.md L1.26).
+    /// The literal is a constant, so evaluating the other operand first changes nothing.
+    fn follow(&mut self, l: &Expr, r: &Expr, p: Prim, mut args: Vec<Term>) -> Term {
+        let follows = &self.info.follows;
+        let Some((at, values)) = [l, r]
+            .into_iter()
+            .enumerate()
+            .find_map(|(i, e)| Some((i, follows.get(&lit_span(e)?)?)))
+        else {
+            return Term::Prim(p, args);
+        };
+        let other = self.temp();
+        let x = mem::replace(&mut args[1 - at], Term::Var(other.clone()));
+        let mut arms: Vec<(KPattern, Term)> = values
+            .iter()
+            .map(|(c, v)| (KPattern::Is(c.ty()), Term::Lit(v.clone())))
+            .collect();
+        // The literal's own term, which a marked elaboration marks, is the last arm.
+        let own = mem::replace(&mut args[at], Term::Var(other.clone()));
+        arms.push((KPattern::Wild, own));
+        args[at] = Term::Match(Arc::new(Term::Var(other.clone())), arms);
+        Term::Let(other, Arc::new(x), Arc::new(Term::Prim(p, args)))
     }
 
     /// `v is t`, its operand and type elaborated.
@@ -1730,4 +1759,13 @@ fn string(parts: &[StrPart], holes: Vec<Term>) -> Term {
     let mut terms = terms.into_iter();
     let first = terms.next().unwrap_or(Term::Lit(Value::str("")));
     terms.fold(first, |a, b| Term::Prim(Prim::Concat, vec![a, b]))
+}
+
+/// The span of the numeric literal `e` is, under any `-`, as the checker records it.
+fn lit_span(e: &Expr) -> Option<Span> {
+    let inner = match &e.kind {
+        ExprKind::Unary("-", a) => &**a,
+        _ => e,
+    };
+    matches!(inner.kind, ExprKind::Int { .. } | ExprKind::Float(_)).then_some(inner.span)
 }

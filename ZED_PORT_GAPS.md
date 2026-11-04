@@ -1281,3 +1281,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `libc::proc_pid_rusage` into a zeroed `MaybeUninit<rusage_info_v4>`; `windows_sys` `QueryProcessCycleTime` and `GetThreadTimes` | `zed_alloc_count::os` | Foreign library | Test harness only: read through an `@ffi` binding |
 | `Box<dyn FnMut() -> u64>` counters in a const-generic array, the first that moves taken | `scaling::Meter`, `first_that_moves` | Mutation | A list of counter functions, each read as a value |
 | One process-wide `static AtomicU64` of bytes off Linux | `zed_alloc_count::ALL` | Shared tables across pure calls (gap 2) | A count kept by the runtime and read as a value |
+
+## Entries from LIT-adopt (`zedc/src/check/mod.rs`, `walk.rs`, `elab/walk.rs`, `store/preimage.rs`, `store/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec` stack of open tuples, each with borrowed slices of what it holds and a `Vec` of the results pushed in place until the tuple closes (`OpenTuple` in `adopted`: the parts, the components and the expected components; in `parts` and `tuple_seen`, a tuple of the items and the parts or types so far) | `check::adopted`, `parts`, `Ck::tuple_seen` | Mutation (gap 11) | A fold over the parts with the stack as a persistent list; each closed tuple is a value built once |
+| A stack of pairs of borrowed sides of `==` (`Side<'a>`, a tuple of references) and an iterator borrowing a tuple's components (`fn sides(...) -> Option<impl Iterator<Item = Side<'a>>>`) | `Ck::equal`, `sides` | None | Shared values in place of borrows; the components as a list mapped once |
+| `HashMap<Span, (Option<Ty>, Src)>` written in place at each expression, with `None` for a tuple whose type is rebuilt from its components on demand | `Ck::seen`, `walk::resume` (`Frame::Seen`) | Mutation (gap 11) | A persistent map threaded through the walk as a state receiver; a type held by a shared reference needs no `None` case, since a share costs O(1) (gap 1) |
+| `let … else` and `if let … && let …` chains choosing the follow shape of a `match` and a comparison of an int-typed operand | `store::preimage::follow_own`, `store::product::plain_comparison` | None | An `is` test on the term's shape, then a `match` |
+| A `Vec` stack rebuilding a condition through `&&`, `||`, `!` and `if`, with a nested `fn kids` in place of a closure, whose borrow the compiler could not tie to the term | `store::product::plain_test` | Mutation (gap 11) | A fold over the condition's tree with the rebuilt children as values |
