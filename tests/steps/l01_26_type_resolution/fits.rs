@@ -180,16 +180,66 @@ fn a_slot_whose_arrows_bound_one_variable_differently_is_an_error() {
 /// An overload whose arrows cover a slot's parameter only together:
 /// `((x: int) -> String) & ((x: bool) -> String)` passed where `(x: int | bool) -> String` is
 /// expected. Rule 6 (DESIGN.md sec:type_resolution) types an application region by region, so
-/// a call of the slot at `int | bool` gets `String` from the two arrows. The checker requires
-/// one arrow of the argument to take the slot's whole parameter (`check::ty::fits_in`), so it
-/// rejects the call: "`p` does not take ((((x: int) -> String) & ((x: bool) -> String)))
-/// [p(f: g)]". Open for the author: a wider check that stays polynomial is
-/// "the slot arrow's parameter is within the union of the parameters of the arrows whose
-/// result is within its result" (AND-fns-fit report).
+/// a call of the slot at `int | bool` reaches, at each value, an arrow that gives `String`
+/// (`check::ty::covered`).
 #[test]
-#[ignore = "rule 6 reads this as fitting; the checker rejects it; a semantics decision for the author"]
 fn an_overload_that_covers_a_slots_parameter_only_together_fits() {
     let text = "p(f: (x: int | bool) -> String) = f(x: 1);\n\
                 q(g: ((x: int) -> String) & ((x: bool) -> String)) = p(f: g);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
+    // Run through: `show` takes both, `q` passes it on as two arrows, `p` calls it at `int`.
+    let run = format!("{text}show(x: int | bool) = \"shown\";\ny = q(g: show);\n");
+    assert_eq!(type_errors(&run), Vec::<String>::new());
+    assert_eq!(value(&run, "y"), "\"shown\"");
+    // With parameters passed by position, whose names are not compared, alike.
+    let text = "p(f: (positional x: int | bool) -> String) = f(1);\n\
+                q(g: ((positional y: int) -> String) & ((positional z: bool) -> String)) = \
+                p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    // Three arrows, two of which cover the slot's parameter together.
+    let text = "p(f: (x: int | bool) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String) & ((x: String) -> int) & ((x: bool) -> String)) = \
+                p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+}
+
+/// Arrows that cover the slot's parameter together but one of which returns outside the slot's
+/// result do not fit: at `bool`, `g` gives an `int`.
+#[test]
+fn arrows_that_cover_together_must_each_return_within_the_slots_result() {
+    let text = "p(f: (x: int | bool) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String) & ((x: bool) -> int)) = p(f: g);\n";
+    assert_eq!(
+        type_errors(text),
+        ["`p` does not take ((((x: int) -> String) & ((x: bool) -> int))) [p(f: g)]"]
+    );
+    // Nor do arrows that leave part of the parameter out.
+    let text = "p(f: (x: int | bool | String) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String) & ((x: bool) -> String)) = p(f: g);\n";
+    assert_eq!(
+        type_errors(text),
+        ["`p` does not take ((((x: int) -> String) & ((x: bool) -> String))) [p(f: g)]"]
+    );
+}
+
+/// Two cases rule 6 accepts that the checker rejects, each a Complexity tradeoff of
+/// `check::ty::covered` (COMPLEXITY.md F82): arrows that cover a slot only by splitting two
+/// parameters at once (whether a union of products covers a product is coNP-complete), and
+/// arrows that overlap on the slot's parameter, each returning outside its result while the
+/// intersection of their results, which rule 6 gives there, is within it (the all-subsets
+/// condition of semantic subtyping, exponential in the arrows that overlap).
+#[test]
+fn arrows_that_cover_only_across_two_parameters_or_by_intersected_results_are_refused() {
+    let text = "p(f: (x: int | bool, y: int | bool) -> String) = f(x: 1, y: 2);\n\
+                q(g: ((x: int, y: int) -> String) & ((x: bool, y: bool) -> String) & \
+                ((x: int, y: bool) -> String) & ((x: bool, y: int) -> String)) = p(f: g);\n";
+    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+    // One parameter split, the other held by each arrow, is covered.
+    let text = "p(f: (x: int | bool, y: int) -> String) = f(x: 1, y: 2);\n\
+                q(g: ((x: int, y: int) -> String) & ((x: bool, y: int | bool) -> String)) = \
+                p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    let text = "p(f: (x: int) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String | #a) & ((x: int) -> String | #b)) = p(f: g);\n";
+    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
 }

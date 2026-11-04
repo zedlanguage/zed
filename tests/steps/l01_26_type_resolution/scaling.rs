@@ -927,12 +927,11 @@ fn shared_overloads(n: usize) -> String {
     )
 }
 
-/// Probe of the case the index of arrows leaves at n^2/2 comparisons (COMPLEXITY.md F82): the
-/// arrows share the piece of the parameter the slot's arrows need, so each arrow of the slot
-/// is compared with the arrows before the one that fits.
+/// The arrows share the piece of the parameter the slot's arrows need, so the index of arrows
+/// by parameter leaves every arrow; the index by result leaves one (COMPLEXITY.md F82; the
+/// parameter index alone cost n^2/2 comparisons, 57.6x at n and 8n).
 #[test]
-#[ignore = "n^2 comparisons: parameters that share a piece; see the Complexity tradeoff in check::ty::every_arrow_fits"]
-fn passing_an_overload_whose_arrows_share_a_parameter_piece_is_quadratic() {
+fn passing_an_overload_whose_arrows_share_a_parameter_piece_scales() {
     let n = 100;
     let inputs = [(n, shared_overloads(n)), (8 * n, shared_overloads(8 * n))];
     scaling::check(

@@ -828,8 +828,17 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Option::get_or_insert_with` to build the index on the first slot arrow that equals none of the argument's | `check::ty::every_arrow_fits` | Lazy cells (gap 3) | Build the index before the fold when any slot arrow misses the equal map, or fold with the index as an optional accumulator |
 | `binary_search` in a sorted posting list, and a merge of two sorted lists by two cursors | `ArrowIndex::first` | Mutation | Sorted-set membership, and a recursive merge of two lists |
 | `Iterator::any` and `all` over the candidates, stopping at the first arrow that fits | `ArrowIndex::first`, `every_arrow_fits` | Early exit (gap 12) | The quantifiers of step L3.15a |
-| A `thread_local!` `Cell<bool>` that switches `every_arrow_fits` to the all-pairs search in the test module | `check::ty::ALL_PAIRS` (cfg(test)) | Global state | Pass the search as a parameter in the test, or test the two functions directly |
+| A `thread_local!` `Cell<bool>` that switches `every_arrow_fits` to the all-pairs search in the test module (since AND-fns-rule6, `REFERENCE`, below) | `check::ty::ALL_PAIRS` (cfg(test)) | Global state | Pass the search as a parameter in the test, or test the two functions directly |
 | `impl Iterator` returned in an `Option` (`atom_names`) | `zed-kernel::types::Type::atom_names` | Iterators | A list of pairs, or `None` |
+
+## Entries from AND-fns-rule6 (`check/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `thread_local!` `Cell<Reference>` (an enum of none, all pairs, all subsets) that replaces `ALL_PAIRS` and switches `every_arrow_fits` to a reference search in the test module | `check::ty::REFERENCE` (cfg(test)) | Global state | Pass the search as a parameter in the test, or test the functions directly |
+| Concatenated posting lists made a set by `sort_unstable` and `dedup`, then filtered by `retain` | `ArrowIndex::candidates` | Mutation | A sorted set built from the lists, then a filter |
+| A `HashSet<Key>` of the carriers and atom names a closed result offers, tested for each candidate's result keys | `ArrowIndex::result_keys`, `candidates` | None | A set of the sum type of carrier and name |
+| Every nonempty subset of at most 10 arrows as a bit mask `1u32..1 << n` | `check::ty::tests::together` (test only) | Bit operations on a machine word | A fold that builds the list of subsets, or the bit operations of the integer carrier |
 
 ## Entries from LR4 (`zedc/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
 
