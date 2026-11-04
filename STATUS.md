@@ -989,7 +989,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRINT-tyvars | impl attempt 1 | 2026-11-03 16:46 | scaling (instructions, 300 vs 2400, limit 24): wide signature 7.88x work 7.91x bytes; nested shadowing chain 8.01x work 8.00x bytes; negative control (fresh cou |
 | RAT-parse | impl attempt 1 | 2026-11-03 16:46 | negative control 2 (decimal reduced by Stein gcd, not committed): x.y decimal 20k->160k digits 56.6M->2,768.5M instr 48.9x fails; new over_ten_to 8.4M->168.1M 1 |
 | S22e-wide | verify attempt 2 | 2026-11-03 11:28 | fmt clean, clippy -D warnings exit 0; starting tools/run_tests.sh 4, load 26.05 30.19 36.24 |
-| SCALE-threads | verify attempt 2 | 2026-11-03 12:56 | negative control (standalone copy of zed-alloc-count with the parent link dropped, /home/luke/Work/wt/scale-threads-ctl, not committed): 2 of 6 fail (a_thread_c |
 | WIDE-copies | verify attempt 2 | 2026-11-03 12:51 | fmt check, clippy -D warnings clean; tools/run_tests.sh 4 started (load5 29.59) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
