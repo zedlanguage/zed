@@ -1504,7 +1504,7 @@ CI has none of these tools and runs only the local suite, so each item in this t
 - **BIT-axioms.** BIT-words: the words the axioms are about. From the ledger. *Note:* Added 2026-11-03 by the plan audit. Feeds L1.41.
 - **BIT-memo-test.** BIT-words: the memo tested. From the ledger. *Note:* Added 2026-11-03 by the plan audit. Feeds L1.41.
 - **S22-more-random-fail.** No needs. Added by the plan audit (C), which asked for the run. *Note:* Added 2026-11-03 by the plan audit. Feeds L1.40.
-- **KINDS-reject.** OSP-diag: the rejection row field. T6-kinds: the rejection holds until T6-kinds builds the forms, and is dropped if T6-kinds merges first (ledger, 16:37). *Note:* Added 2026-11-03 by the plan audit; the DAG audit reversed its edge with T6-kinds, which made a cycle. Feeds L1.40d and T12.
+- **KINDS-reject.** OSP-diag: the rejection row field. T6-kinds: the rejection holds until T6-kinds builds the forms, and is dropped if T6-kinds merges first (ledger, 16:37). *Note:* Added 2026-11-03 by the plan audit; the DAG audit reversed its edge with T6-kinds, which made a cycle. Feeds L1.40d and T12. *Dropped* 2026-11-03: T6-kinds merged first (74a76107), so the forms are built and no rejection is needed.
 - **GUIDE-joins.** No needs: LR4, the grammar change, is done. Low priority. *Note:* Added 2026-11-03 by the plan audit. Feeds L25.9.
 - **ADDR-stage.** ADDR-keys: from the ledger and dagview. *Note:* Added 2026-11-03 by the DAG audit. Feeds L1.40, T12.
 - **ADDR-preimage.** ADDR-keys: from the ledger and dagview. *Note:* Added 2026-11-03 by the DAG audit. Feeds T12, L1.41.
