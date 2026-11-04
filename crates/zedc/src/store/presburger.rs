@@ -528,6 +528,10 @@ impl Formula {
     // COMPLEXITY.md S31b. A complete merge needs the conjunction as a persistent map from each
     // left-hand side to its constraint, shared with the named part and extended at each place.
     pub fn and_keeping(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
+        #[cfg(test)]
+        if TWO_AT_A_TIME.get() {
+            return tests::and_keeping_before(fs, keep);
+        }
         let mut j = Joining::new(true);
         for (i, f) in fs.into_iter().enumerate() {
             j.operand(f, keep(i));
@@ -553,6 +557,10 @@ impl Formula {
     // COMPLEXITY.md S31b. A complete check needs each kept part's constraints indexed in its
     // node, so that the lookup across it costs O(1) per disjunct.
     pub fn or_keeping(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
+        #[cfg(test)]
+        if TWO_AT_A_TIME.get() {
+            return tests::or_keeping_before(fs, keep);
+        }
         let mut j = Joining::new(false);
         for (i, f) in fs.into_iter().enumerate() {
             j.operand(f, keep(i));
@@ -6404,7 +6412,15 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
 }
 
 #[cfg(test)]
-mod tests {
+thread_local! {
+    /// Whether [`Formula::and_keeping`] and [`Formula::or_keeping`] join as they did before
+    /// [`Joining`], and the translator joins a chain of `&&` or `||` two at a time
+    /// (`preimage::Tx::two_at_a_time`): for the tests that compare the two (ST-formula-k2).
+    pub(super) static TWO_AT_A_TIME: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(super) mod tests {
     use super::*;
 
     fn sym(s: &str) -> Atom {
@@ -6868,7 +6884,7 @@ mod tests {
     }
 
     /// `Formula::and_keeping` as it was before `Joining`, to compare against.
-    fn and_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
+    pub(super) fn and_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
         let mut flat = Vec::new();
         for (i, f) in fs.into_iter().enumerate() {
             match f {
@@ -6913,7 +6929,7 @@ mod tests {
     }
 
     /// `Formula::or_keeping` as it was before `Joining`, to compare against.
-    fn or_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
+    pub(super) fn or_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
         let mut out = Vec::new();
         for (i, f) in fs.into_iter().enumerate() {
             match f {

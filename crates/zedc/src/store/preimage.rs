@@ -2796,7 +2796,14 @@ impl<'t> Tx<'t> {
                 );
                 match p {
                     Not => Some(Formula::negate(self.formula(tr, a, env)?)),
-                    And | Or => self.chain(tr, p, [a, b.expect("two operands")], env),
+                    And | Or => {
+                        let b = b.expect("two operands");
+                        #[cfg(test)]
+                        if presburger::TWO_AT_A_TIME.get() {
+                            return self.two_at_a_time(tr, p, a, b, env);
+                        }
+                        self.chain(tr, p, [a, b], env)
+                    }
                     Lt | Le | Gt | Ge | Eq | Ne => {
                         let b = b.expect("two operands");
                         let (mark, logged) = (tr.defs.len(), self.run.memo.log.len());
@@ -2876,6 +2883,20 @@ impl<'t> Tx<'t> {
             }
         }
         Some(j.finish())
+    }
+
+    /// The formula of a `&&` or `||` as the translator made it before [`Tx::chain`]
+    /// (64781908): each operand by [`Tx::formula`], an inner `&&` with its own memo entry, and
+    /// the two joined at once; for the tests that compare the two (ST-formula-k2).
+    #[cfg(test)]
+    fn two_at_a_time(&mut self, tr: &mut Tr, p: Prim, a: Tid, b: Tid, env: Eid) -> Option<Formula> {
+        let named = [a, b].map(|t| matches!(self.node(t), Node::Var(_)));
+        let (a, b) = (self.formula(tr, a, env)?, self.formula(tr, b, env)?);
+        Some(if p == Prim::And {
+            Formula::and_keeping(vec![a, b], |i| named[i])
+        } else {
+            Formula::or_keeping(vec![a, b], |i| named[i])
+        })
     }
 
     // ---- Forward transfer -------------------------------------------------------------
@@ -5594,5 +5615,380 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> 
             }
             point[j] = 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::presburger::TWO_AT_A_TIME;
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % n
+        }
+    }
+
+    /// What a name in scope stands for.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Kind {
+        Int,
+        Test,
+        /// The first parameter of a lambda that is called with itself as that argument.
+        Itself,
+    }
+
+    /// A random program over the inputs `x` and `y`: tests joined by `&&` and `||`, nested
+    /// and mixed, with constants, named tests and integers, calls, lambdas that call
+    /// themselves, and parts shared between places.
+    struct Gen {
+        rng: Rng,
+        fresh: u32,
+        /// The names in scope, innermost last.
+        bound: Vec<(Arc<str>, Kind)>,
+        /// Tests made at one place and read again at another: the names in scope where each
+        /// was made, which must be in scope where it is read again.
+        pool: Vec<(Vec<Arc<str>>, Shared)>,
+    }
+
+    impl Gen {
+        fn name(&mut self) -> Arc<str> {
+            self.fresh += 1;
+            format!("v{}", self.fresh).into()
+        }
+
+        fn some(&mut self, kind: Kind) -> Option<Arc<str>> {
+            let of: Vec<Arc<str>> = (self.bound.iter())
+                .filter(|(_, k)| *k == kind)
+                .map(|(n, _)| n.clone())
+                .collect();
+            (!of.is_empty()).then(|| of[self.rng.below(of.len() as u64) as usize].clone())
+        }
+
+        fn int(&mut self, d: u32) -> Term {
+            let lit = |n: i64| Term::Lit(Value::Int(n));
+            match self.rng.below(if d == 0 { 3 } else { 7 }) {
+                0 => Term::Var(if self.rng.below(2) == 0 { "x" } else { "y" }.into()),
+                1 => lit(self.rng.below(7) as i64 - 3),
+                2 => Term::Var(self.some(Kind::Int).unwrap_or_else(|| "x".into())),
+                3 => Term::Prim(Prim::Add, vec![self.int(d - 1), self.int(d - 1)]),
+                4 => Term::Prim(Prim::Sub, vec![self.int(d - 1), self.int(d - 1)]),
+                5 => Term::Prim(
+                    Prim::Mul,
+                    vec![lit(self.rng.below(5) as i64 - 2), self.int(d - 1)],
+                ),
+                _ => {
+                    let p = if self.rng.below(2) == 0 {
+                        Prim::Min
+                    } else {
+                        Prim::Max
+                    };
+                    Term::Prim(p, vec![self.int(d - 1), self.int(d - 1)])
+                }
+            }
+        }
+
+        fn cmp(&mut self, d: u32) -> Term {
+            let ps = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge, Prim::Eq, Prim::Ne];
+            let p = ps[self.rng.below(6) as usize];
+            Term::Prim(p, vec![self.int(d), self.int(d)])
+        }
+
+        fn shared(&mut self, d: u32) -> Shared {
+            let here: Vec<Arc<str>> = self.bound.iter().map(|(n, _)| n.clone()).collect();
+            let fits: Vec<usize> = (0..self.pool.len())
+                .filter(|&i| here.starts_with(&self.pool[i].0))
+                .collect();
+            if !fits.is_empty() && self.rng.below(3) == 0 {
+                let i = fits[self.rng.below(fits.len() as u64) as usize];
+                return self.pool[i].1.clone();
+            }
+            let s = Shared::new(self.test(d));
+            self.pool.push((here, s.clone()));
+            s
+        }
+
+        fn within(&mut self, x: Arc<str>, kind: Kind, f: impl FnOnce(&mut Self) -> Term) -> Term {
+            self.bound.push((x, kind));
+            let t = f(self);
+            self.bound.pop();
+            t
+        }
+
+        fn test(&mut self, d: u32) -> Term {
+            if d == 0 {
+                return match self.rng.below(4) {
+                    0 => Term::Lit(Value::Bool(self.rng.below(2) == 0)),
+                    1 => match self.some(Kind::Test) {
+                        Some(n) => Term::Var(n),
+                        None => self.cmp(1),
+                    },
+                    _ => self.cmp(1),
+                };
+            }
+            let d = d - 1;
+            let lit = |n: i64| Term::Lit(Value::Int(n));
+            match self.rng.below(20) {
+                0 | 1 => self.cmp(2),
+                2 => Term::Lit(Value::Bool(self.rng.below(2) == 0)),
+                // A test with a constant value that is no literal.
+                3 => Term::Prim(
+                    Prim::Lt,
+                    vec![lit(self.rng.below(3) as i64), lit(self.rng.below(3) as i64)],
+                ),
+                4 => Term::Prim(Prim::Not, vec![self.test(d)]),
+                5..=9 => {
+                    let p = if self.rng.below(2) == 0 {
+                        Prim::And
+                    } else {
+                        Prim::Or
+                    };
+                    Term::Prim(p, vec![self.test(d), self.test(d)])
+                }
+                10 | 18 | 19 => match self.some(Kind::Test) {
+                    Some(n) => Term::Var(n),
+                    None => self.cmp(2),
+                },
+                11 => {
+                    let (x, e) = (self.name(), self.shared(d));
+                    let b = self.within(x.clone(), Kind::Test, |g| g.test(d));
+                    Term::Let(x, e, Shared::new(b))
+                }
+                12 => {
+                    let (x, e) = (self.name(), Shared::new(self.int(2)));
+                    let b = self.within(x.clone(), Kind::Int, |g| g.test(d));
+                    Term::Let(x, e, Shared::new(b))
+                }
+                13 => Term::If(self.shared(d), self.shared(d), self.shared(d)),
+                14 => {
+                    let x = self.name();
+                    let b = self.within(x.clone(), Kind::Int, |g| g.test(d));
+                    let f = Term::Lam(vec![x], Shared::new(b));
+                    Term::App(Shared::new(f), vec![self.int(2)])
+                }
+                15 => {
+                    let p = if self.rng.below(2) == 0 {
+                        Prim::And
+                    } else {
+                        Prim::Or
+                    };
+                    Term::App(
+                        Shared::new(Term::PrimFn(p)),
+                        vec![self.test(d), self.test(d)],
+                    )
+                }
+                16 => match self.some(Kind::Itself) {
+                    Some(g) => Term::App(
+                        Shared::new(Term::Var(g.clone())),
+                        vec![Term::Var(g), self.int(2)],
+                    ),
+                    None => Term::Prim(Prim::Eq, vec![self.test(d), self.test(d)]),
+                },
+                _ => self.itself(d),
+            }
+        }
+
+        /// Named tests, each a chain of comparisons such as a limit or an exemption, and a
+        /// chain over them: `l1 = a && (b && c); ...; l1 || (l2 && d)`.
+        fn named(&mut self) -> Term {
+            let k = 1 + self.rng.below(4) as usize;
+            let mut lets = Vec::with_capacity(k);
+            for _ in 0..k {
+                let p = if self.rng.below(2) == 0 {
+                    Prim::And
+                } else {
+                    Prim::Or
+                };
+                let inner = Term::Prim(p, vec![self.cmp(1), self.cmp(1)]);
+                let rhs = Term::Prim(p, vec![self.cmp(1), inner]);
+                let x = self.name();
+                self.bound.push((x.clone(), Kind::Test));
+                lets.push((x, Shared::new(rhs)));
+            }
+            let p = if self.rng.below(2) == 0 {
+                Prim::And
+            } else {
+                Prim::Or
+            };
+            let mut t = Term::Prim(p, vec![self.test(3), self.test(3)]);
+            for (x, rhs) in lets.into_iter().rev() {
+                self.bound.pop();
+                t = Term::Let(x, rhs, Shared::new(t));
+            }
+            t
+        }
+
+        /// `w(w, n)` with `w = (g, n) -> body`, the body a test that may call `g(g, ..)`.
+        fn itself(&mut self, d: u32) -> Term {
+            let (g, n) = (self.name(), self.name());
+            let body = self.within(g.clone(), Kind::Itself, |s| {
+                s.within(n.clone(), Kind::Int, |s| s.test(d))
+            });
+            let w = Term::Lam(vec![g, n], Shared::new(body));
+            Term::App(Shared::new(w.clone()), vec![w, self.int(2)])
+        }
+    }
+
+    /// The formula's tree as built, each node and its parts: compare, hash and show read a
+    /// kept part as flattened, and this must not.
+    fn built(f: &Formula) -> String {
+        let parts = |gs: &[Formula]| gs.iter().map(built).collect::<Vec<_>>().join(", ");
+        match f {
+            Formula::Con(c) => format!("({c})"),
+            Formula::Not(g) => format!("!{}", built(g)),
+            Formula::And(gs) => format!("and[{}]", parts(gs)),
+            Formula::Or(gs) => format!("or[{}]", parts(gs)),
+        }
+    }
+
+    /// Whether `f` holds a conjunction as a part of a conjunction, or a disjunction of a
+    /// disjunction.
+    fn kept(f: &Formula) -> bool {
+        match f {
+            Formula::Con(_) => false,
+            Formula::Not(g) => kept(g),
+            Formula::And(gs) => gs.iter().any(|g| matches!(g, Formula::And(_)) || kept(g)),
+            Formula::Or(gs) => gs.iter().any(|g| matches!(g, Formula::Or(_)) || kept(g)),
+        }
+    }
+
+    /// What one translation of a term gives and leaves behind.
+    #[derive(PartialEq, Debug)]
+    struct Seen {
+        formula: Option<String>,
+        defs: Vec<String>,
+        /// The formula memo, each entry's formula built.
+        memo: BTreeMap<At, Option<String>>,
+        /// The `&&` and `||` primitive nodes.
+        chains: BTreeSet<Tid>,
+        /// Whether the formula holds a conjunction kept whole in a conjunction, or a disjunction
+        /// in a disjunction.
+        kept: bool,
+        cut: usize,
+        log: usize,
+        lin: usize,
+        stops: usize,
+    }
+
+    fn domains() -> Domains {
+        let r = || IntervalSet::range(End::of(-6), End::of(6));
+        [("x".into(), r()), ("y".into(), r())].into()
+    }
+
+    /// The formula of `t` as the linear stage translates it, with `&&` and `||` joined two at
+    /// a time where `old`.
+    fn translate(t: &Term, old: bool) -> Seen {
+        TWO_AT_A_TIME.set(old);
+        let mut tx = Tx::new();
+        let root = tx.terms.add(t);
+        tx.start(&domains(), Landmarks::none());
+        let mut tr = Tr {
+            defs: Vec::new(),
+            products: false,
+        };
+        let f = tx.formula(&mut tr, root, ROOT);
+        TWO_AT_A_TIME.set(false);
+        let chains = (0..tx.terms.nodes.len() as Tid)
+            .filter(|&u| matches!(tx.node(u), Node::Prim(Prim::And | Prim::Or, _)))
+            .collect();
+        Seen {
+            formula: f.as_ref().map(built),
+            kept: f.as_ref().is_some_and(kept),
+            defs: (tr.defs.iter())
+                .map(|(n, w, f)| format!("{n} {w} {}", built(f)))
+                .collect(),
+            memo: (tx.run.memo.formula.iter())
+                .map(|(k, v)| (*k, v.as_ref().map(built)))
+                .collect(),
+            chains,
+            cut: tx.cx.cut,
+            log: tx.run.memo.log.len(),
+            lin: tx.run.memo.lin.len(),
+            stops: tx.run.stops.len(),
+        }
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time() {
+        let mut g = Gen {
+            rng: Rng(0x9e37_79b9_7f4a_7c15),
+            fresh: 0,
+            bound: Vec::new(),
+            pool: Vec::new(),
+        };
+        let (mut some, mut none, mut kept, mut stopped, mut fewer) = (0, 0, 0, 0, 0);
+        for round in 0..4000 {
+            g.pool.clear();
+            let t = match g.rng.below(4) {
+                0 => g.itself(4),
+                1 => g.named(),
+                _ => {
+                    let p = if g.rng.below(2) == 0 {
+                        Prim::And
+                    } else {
+                        Prim::Or
+                    };
+                    Term::Prim(p, vec![g.test(4), g.test(4)])
+                }
+            };
+            let (old, new) = (translate(&t, true), translate(&t, false));
+            assert_eq!(new.formula, old.formula, "round {round}: {t:?}");
+            assert_eq!(new.defs, old.defs, "round {round}: {t:?}");
+            assert_eq!(new.cut, old.cut, "round {round}: {t:?}");
+            assert_eq!(
+                (new.lin, new.stops),
+                (old.lin, old.stops),
+                "round {round}: {t:?}"
+            );
+            // The old translation also remembered each inner `&&` of a chain; every other
+            // entry is the same.
+            for (k, v) in &new.memo {
+                assert_eq!(
+                    old.memo.get(k),
+                    Some(v),
+                    "round {round}, entry {k:?}: {t:?}"
+                );
+            }
+            let extra: Vec<&At> = old
+                .memo
+                .keys()
+                .filter(|k| !new.memo.contains_key(k))
+                .collect();
+            for k in &extra {
+                assert!(
+                    old.chains.contains(&k.0),
+                    "round {round}, entry {k:?}: {t:?}"
+                );
+            }
+            assert_eq!(old.log - new.log, extra.len(), "round {round}: {t:?}");
+            fewer += usize::from(!extra.is_empty());
+            // The whole preimage, with the relation's formula as built.
+            let doms = domains();
+            for w in [true, false].into_iter().filter(|_| round % 4 == 0) {
+                TWO_AT_A_TIME.set(true);
+                let po = preimage(&t, &doms, &Demand::Bool(w));
+                TWO_AT_A_TIME.set(false);
+                let pn = preimage(&t, &doms, &Demand::Bool(w));
+                assert_eq!(pn, po, "round {round}, demand {w}: {t:?}");
+                let rel = |p: &Preimage| p.relation.as_ref().map(|r| built(&r.body));
+                assert_eq!(rel(&pn), rel(&po), "round {round}, demand {w}: {t:?}");
+            }
+            match &new.formula {
+                Some(_) if new.kept => kept += 1,
+                Some(_) => some += 1,
+                None => none += 1,
+            }
+            stopped += usize::from(new.stops > 0 || new.cut != usize::MAX);
+        }
+        eprintln!("some {some}, kept {kept}, none {none}, stopped {stopped}, fewer {fewer}");
+        // Formulas, kept parts, translations that fail, stops and dropped entries all occur.
+        assert!(some > 500 && kept > 20 && none > 100 && stopped > 50 && fewer > 500);
     }
 }

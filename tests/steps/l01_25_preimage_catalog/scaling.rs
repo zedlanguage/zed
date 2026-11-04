@@ -452,6 +452,47 @@ fn long_shared_values() {
     long_relations("`if`s whose arms read one shared term", 256, shared_values);
 }
 
+/// `c0 = i >= 0 && i <= 9; cj = (if (i >= j) { c(j-1) } else { c(j-1) }) && i != j &&
+/// i <= j + 9`, with `||` in place of `&&` at each odd `j`: chains of `&&` and `||` whose
+/// `if` arms read one shared chain, `k` distinct chains and `2^k` paths. The inner `&&` of a
+/// chain is an operand of that chain alone and is read inside it, with no memo entry of its
+/// own; the `if` and the chain it reads have one, so each chain is translated once
+/// (ST-formula-k2). With no memo entry for a chain or an `if`, k = 256 did not finish in 60 s.
+fn shared_chains(k: usize) -> Term {
+    let chain = |p: Prim, ts: [Term; 3]| {
+        let [a, b, c] = ts;
+        prim(p, prim(p, a, b), c)
+    };
+    let first = prim(
+        Prim::And,
+        prim(Prim::Ge, var("i"), int(0)),
+        prim(Prim::Le, var("i"), int(9)),
+    );
+    let t = (1..=k as i64).fold(first, |t, j| {
+        let t = Shared::new(t);
+        let p = if j % 2 == 0 { Prim::And } else { Prim::Or };
+        let guard = Shared::new(prim(Prim::Ge, var("i"), int(j)));
+        chain(
+            p,
+            [
+                Term::If(guard, t.clone(), t),
+                prim(Prim::Ne, var("i"), int(j)),
+                prim(Prim::Le, var("i"), int(j + 9)),
+            ],
+        )
+    });
+    prim(Prim::And, t, prim(Prim::Ge, var("i"), int(-5)))
+}
+
+#[test]
+fn long_shared_chains() {
+    long_relations(
+        "chains of `&&` and `||` whose `if` arms read one shared chain",
+        256,
+        shared_chains,
+    );
+}
+
 /// The preimage of [`shared_values`]: its value is `i + k` below 1, `k` up to `k` and `i`
 /// above, so `t >= 0` holds exactly on `i >= -k`. The summary of the shared term as one
 /// piecewise-affine function answers each demand once (COMPLEXITY.md S22).

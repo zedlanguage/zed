@@ -370,15 +370,15 @@ fn approval_any_tier(d: usize, k: usize, named: bool) -> Term {
     }
 }
 
-/// Runs the scaling check of `arms` on `family(1, k, true)` at k = 120 and 960: one tier, so
-/// that the work is that of the chain of k limits alone.
-fn limit_scaling(what: &str, family: fn(usize, usize, bool) -> Term) {
+/// Runs the scaling check of `arms` on `family(1, k, true)` at k = n and 8n: one tier, so that
+/// the work is that of the chain of k limits alone.
+fn limit_scaling(what: &str, n: usize, family: fn(usize, usize, bool) -> Term) {
     scaling::on_a_thread(1 << 29, || {
-        let tests: BTreeMap<usize, Term> = [120, 960]
+        let tests: BTreeMap<usize, Term> = [n, scaling::FACTOR * n]
             .map(|k| (k, if_(family(1, k, true), lit(1), lit(2))))
             .into();
         let scope = ints(&names());
-        scaling::check(what, 120, |k| {
+        scaling::check(what, n, |k| {
             std::hint::black_box(arms(&tests[&k], &scope));
         });
     });
@@ -387,12 +387,13 @@ fn limit_scaling(what: &str, family: fn(usize, usize, bool) -> Term) {
 #[test]
 fn arms_of_a_named_conjunction_of_k_limits_take_time_near_linear_in_k() {
     // The translator made the conjunction of each prefix of `l0 && l1 && ...` in turn, copying
-    // and tightening the prefix again at each limit: k² (ST-formula-k2). On
-    // origin/main 64781908 this test fails at 27.7 times the bytes (0.17 to 4.61 GB; limit 24).
-    // Joined in one pass (`Tx::chain`): 0.59 to 4.72 G instructions (8.0 times) and 7.2 times
-    // the bytes.
+    // and tightening the prefix again at each limit: k² (ST-formula-k2). At k = 240 and 1920, on
+    // origin/main 64781908 this test fails at 39.8 times the bytes (0.47 to 18.7 GB; limit 24;
+    // at k = 120 and 960 only 27.7 times). Joined in one pass (`Tx::chain`): 1.16 to 9.61 G
+    // instructions (8.3 times) and 7.6 times the bytes, 2.4 s.
     limit_scaling(
         "arms of a conjunction of k credit limits named once",
+        240,
         approval_within,
     );
 }
@@ -400,11 +401,12 @@ fn arms_of_a_named_conjunction_of_k_limits_take_time_near_linear_in_k() {
 #[test]
 fn arms_of_a_named_disjunction_of_k_limits_take_time_near_linear_in_k() {
     // As for the conjunction, the disjunction of each prefix of `l0 || l1 || ...` was made in
-    // turn (ST-formula-k2). On origin/main 64781908 this test fails at
-    // 25.3 times the bytes (0.20 to 5.17 GB). Joined in one pass: 0.62 to 4.69 G instructions
-    // (7.5 times) and 7.3 times the bytes.
+    // turn (ST-formula-k2). At k = 240 and 1920, on origin/main 64781908 this test fails at 35.7
+    // times the bytes (0.53 to 18.8 GB; at k = 120 and 960 only 25.3 times). Joined in one
+    // pass: 1.21 to 9.41 G instructions (7.7 times) and 7.6 times the bytes, 2.6 s.
     limit_scaling(
         "arms of any of k credit limits named once, required of a small request",
+        240,
         approval_any_limit,
     );
 }
@@ -414,7 +416,11 @@ fn arms_of_k_named_exemptions_take_time_near_linear_in_k() {
     // A disjunction of k exemptions beside the tier's own disjuncts (ST-formula-k2). On
     // origin/main 64781908 this test fails at 38.8 times the bytes (0.12 to 4.55 GB). Joined in
     // one pass: 0.29 to 2.36 G instructions (8.3 times) and 7.6 times the bytes.
-    limit_scaling("arms of any of k exemptions named once", approval_exempt);
+    limit_scaling(
+        "arms of any of k exemptions named once",
+        120,
+        approval_exempt,
+    );
 }
 
 #[test]
@@ -424,6 +430,7 @@ fn arms_of_a_tier_needing_k_named_limits_take_time_near_linear_in_k() {
     // one pass: 0.36 to 3.72 G instructions (10.4 times) and 8.7 times the bytes.
     limit_scaling(
         "arms of a tier needing k credit limits named once",
+        120,
         approval_any_tier,
     );
 }
