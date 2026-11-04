@@ -36,7 +36,8 @@ if ! cargo test --workspace $features --no-run --message-format=short >"$out/bui
   echo "BUILD FAILED"
   exit 1
 fi
-bins=$(sed -n "s|^ *Executable .*(\(.*\))$|$root/\1|p" "$out/build.log")
+# Cargo prints a binary path relative to the checkout only when the target directory is inside it.
+bins=$(sed -n -e "s|^ *Executable .*(\(/.*\))$|\1|p" -e "s|^ *Executable .*(\([^/].*\))$|$root/\1|p" "$out/build.log")
 steps=$(echo "$bins" | grep '/steps-')
 full=$(echo "$bins" | grep '/full-')
 # A step folder or module named here gets a piece for each of its modules and each of its own
