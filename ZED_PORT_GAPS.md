@@ -23,7 +23,7 @@ the form it has may not meet the cost the compiler needs:
 | 3 | Lazy once-only cells and tied recursive types | 27 | workaround | S.3 | Table of definitions keyed by id |
 | 4 | Bit operations, float bits | up to 192 | built (L1.39a) | S.2, S.3 | The bit words at L1, built by step L1.39a |
 | 5 | Bytes: spans, binary files, hashing input | 95 | partly planned (L1.39c: `utf8`; no byte port) | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
-| 6 | Command line, computed output paths, exit status | 9 | planned (L1.19a, L1.36a; no computed paths) | S.5 | `Args` port, `Files` writes, an exit value |
+| 6 | Command line, computed output paths, exit status | 9 | closed for the command line (built, L1.19a); executables planned (L1.36a); no computed paths | S.5 | `CommandLine` port; `Files` writes, an exit value |
 | 7 | Scalar to and from code point | 18 | planned (L1.39c, S.1c) | S.2 | Two L1 words |
 | 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | planned (S.1d, decision pending) | S.2 | A word whose type is empty (conflicts with G5 and line 711), or an atom in each codomain |
 | 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
@@ -232,7 +232,7 @@ library function, which hashing needs. (c) For files, the binary ZIR and wave re
 `zir/text.rs` already has. Recommended: the port, since content-addressed caches should not pay
 for text parsing; the choice can wait until S.4.
 
-### Gap 6. Command line and outputs (missing)
+### Gap 6. Command line and outputs (closed for the command line by L1.19a)
 
 Confirmed: `main` (`zedc/main.rs:9`) reads `std::env::args`, and `command_inner`
 (`run.rs:583`) dispatches on them. No DESIGN.md port gives arguments: `main`'s parameters are
@@ -244,6 +244,13 @@ Fix: an `Args` input port (L1) as `[String]`, a `Files`-like output `path -> Str
 and a status from `main`'s result. Alternative: keep a Rust driver as the stage root that decodes
 arguments into port bindings; this needs no spec change but leaves Rust in stage2, against S.
 Recommended: the ports.
+
+Closed for the command line (step L1.19a): an input of type `CommandLine` is the family of the
+words after `--`, keyed by position from 1 (`run::arguments`); `main.rs` now reads
+`std::env::args_os`, and a word that is not UTF-8 is a usage error. The compiler in Zed reads its
+arguments through this port from S.5 on. Still open: an executable that binds its ports from its own command
+line is step L1.36a; a write to a path computed at run time and an exit status from `main`'s
+result have no step.
 
 ### Gap 7. Code points and text tables (missing)
 
@@ -1335,3 +1342,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A `for` loop over the items that pushes each built statement to one `Vec` and each error to another, inside the `with_holes` closure | `ast::unit_all_errors` | Mutation (gap 11) | A fold over the items into a pair of lists, statements and errors |
 | Tarjan's search over a `Vec` of (node, next dependency) frames, with `index`, `low` and `on_stack` updated in place by node | `elab::cycles` | Mutation (gap 11) | A fold over the nodes with persistent maps for `index` and `low` and a list for the stack, or the same loop once Zed has mutable arrays |
+
+## Entries from L1.19a (`zedc/src/run.rs`, `main.rs`, `check/mod.rs`, `testing.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::env::args_os` and `OsStr::to_str`, the words as bytes decoded to UTF-8 one by one | `main`, `run::words` | Bytes (gap 5) | None needed: the host decodes the command line and the program reads the `CommandLine` port, a family of `String`s; the usage error is the host's |
+| `Iterator::position` for the first `--`, then slices `&args[..i]` and `&args[i + 1..]` | `run::words` | Library: DESIGN.md names no `position` on a family | A fold that finds the first key whose value is `"--"`, then two key ranges of the family |
+| `.collect::<Result<Vec<_>, String>>()` stopping at the first word that is not UTF-8 | `run::words` | Early exit (gap 12) | A fold that keeps the first failure |
+| `split('\n')`, `Vec::pop` of a last empty piece, `strip_suffix('\r')` | `testing::given_args` | Mutation (gap 11) | The L3 word `lines`, which splits a `String` as a `Lines` input is |
+| A `match` on `&words.command[..]` slice patterns with `*cmd == "run"` | `run::command_inner` | None: Zed's `match` on tuples | The same match on the list of words |
