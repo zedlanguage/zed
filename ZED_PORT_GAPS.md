@@ -1364,5 +1364,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `Resolution::handles`, a `Vec` the resolver pushes to as it walks each `else` and `is` | `resolve::Resolver::expr` | Mutation | The walk returns its handled sites with its other results, joined at each node |
+| `Resolution::handles` and `Resolution::aliases`, `Vec`s the resolver pushes to as it walks each `else` and `is` and declares each `s = name` | `resolve::Resolver::expr`, `resolve::Resolver::declare` | Mutation | The walk returns its handled sites with its other results, joined at each node |
 | A `HashMap<usize, KType>` of each parameter's handled atoms, each entry joined in place (`*e = &*e \| &a`) | `check::handled` | Mutation | A fold over the sites into a persistent map, joining the entry's value |
+| A union-find over binders as two `Vec<usize>` (`root`, `size`) updated in place, with path halving | `check::handled` | Mutation | A persistent union-find, or a fold over the aliases into a map from binder to class kept by a library type with O(α) find |
+| `Origin::ty: Option<(Ty, 'static str)>`, the type of a note formatted with its text only when a message renders it | `check::Origin`, `Ck::origin_ty`, the note renderer | None | A note holds its type as a value and the renderer formats it; laziness is the same |

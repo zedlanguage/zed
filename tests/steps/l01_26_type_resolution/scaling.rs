@@ -325,7 +325,7 @@ fn a_parameter_bound_to_a_chain_of_names_scales() {
         let atom = Ty::set(KType::atom(&format!("a{k}")));
         assert!(atom.subtype(&a.params[0]), "{}", a.params[0]);
     }
-    scaling::check_order("a parameter bound to a chain of n names", 400, 0, |n| {
+    scaling::check("a parameter bound to a chain of n names", 400, |n| {
         let (info, _) = info(&chain_of_names(n));
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });

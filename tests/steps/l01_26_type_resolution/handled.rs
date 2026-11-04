@@ -5,6 +5,7 @@
 //! checked by subtyping, not by their printed text.
 
 use zed_kernel::types::Type as KType;
+use zedc::check::read::parse_type;
 use zedc::check::ty::{Arrow, Carrier, Ty, atoms};
 
 use super::{info, sig, type_errors};
@@ -209,4 +210,58 @@ fn a_name_bound_to_a_computed_value_handles_nothing_for_the_line() {
     // `line` takes no atom, so an atom passed to `r` passes the call by (rule 6).
     let a = arrow("{ s = trim(line); s else \"\" }");
     assert!(same(&a.params[0], &string()), "{}", a.params[0]);
+}
+
+#[test]
+fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
+    // The rows of the table in zedlanguage/zed issue 1, and the forms beside them. Every atom
+    // is `#_`, an atom with any payload `#a(..)`; each printed signature reads back as the
+    // same type.
+    for (body, want) in [
+        (
+            "if line is #notFound { #absent } else { \"s\" }",
+            "(T) -> \"s\" | #absent",
+        ),
+        (
+            "if line is #notFound { #absent } else { line else \"\" }",
+            "(T) -> \"\" | #absent | T",
+        ),
+        (
+            "if line is #notFound { #absent } else { trim(line else \"\") }",
+            "(String | #_) -> String | #absent",
+        ),
+        ("trim(line else \"\")", "(String | #_) -> String"),
+        ("line else \"\"", "(T) -> \"\" | T"),
+        ("upper(line else \"\")", "(String | #_) -> String"),
+        ("(line else 0) + 1", "(int | #_) -> int"),
+        ("{ s = line else \"\"; trim(s) }", "(String | #_) -> String"),
+        ("{ s = line; trim(s else \"\") }", "(String | #_) -> String"),
+        (
+            "if line is #notFound { \"\" } else { trim(line) }",
+            "(String | #notFound) -> String",
+        ),
+        (
+            "if line is #a | #b { \"\" } else { trim(line) }",
+            "(String | #a | #b) -> String",
+        ),
+        (
+            "trim(line else #notFound -> \"\")",
+            "(String | #notFound | #notFound(..)) -> String",
+        ),
+        ("trim(line)", "(String) -> String"),
+    ] {
+        let text = format!("r(positional line) = {body};\n");
+        let printed = sig(&text, "r");
+        assert_eq!(printed, want, "{body}");
+        let t = parse_type(&printed).unwrap_or_else(|e| panic!("{printed}: {e}"));
+        assert_eq!(t.fns.len(), 1, "{printed}");
+        assert_eq!(t.fns[0].to_string(), printed, "{body}");
+    }
+    let text = "add(positional a, positional b) = (a else b) + b;\n";
+    assert_eq!(
+        sig(text, "add"),
+        "(#_ | T, T) -> T for T in int | f64 | rat"
+    );
+    let text = "r(positional line: String | #notFound) = trim(line else \"\");\n";
+    assert_eq!(sig(text, "r"), "(String | #notFound) -> String");
 }
