@@ -110,6 +110,19 @@ const LOWER_TYPES: &[&str] = &["complex", "quat", "oct", "bf16", "f16"];
 /// "every facet a program defines": names of the program, not of the prelude.
 const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency"), ("L12", "dist")];
 
+/// Names of the table whose rows are not built, each with the plan row that builds it: the test
+/// holds that each is not yet known, so that row must take it out of this list.
+const PENDING: &[(&str, &str)] = &[
+    ("noNaN", "NONAN"),
+    ("U8String", "STR-types"),
+    ("Utf8String", "STR-types"),
+    ("Utf16String", "STR-types"),
+    ("Utf32String", "STR-types"),
+    ("char8", "STR-types"),
+    ("char16", "STR-types"),
+    ("char32", "STR-types"),
+];
+
 /// A row of the table "Defined words by layer": its layer, and its annotations, facet words and
 /// defined forms, each the text of its code spans.
 struct Row {
@@ -167,6 +180,14 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
     {
         for a in annots {
             let name = a.strip_prefix('@').expect("an annotation");
+            if PENDING.iter().any(|(n, _)| *n == name) {
+                assert_eq!(
+                    annotation_layer(name),
+                    None,
+                    "@{name} is built: remove it from PENDING"
+                );
+                continue;
+            }
             assert_eq!(annotation_layer(name), Some(*layer), "@{name}");
         }
         // A facet word is a value word: the prelude binds the `Facet` value to the name.
@@ -189,6 +210,18 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
                 && !NOT_PRELUDE_NAMES.contains(&(tag.as_str(), f.as_str()))
         });
         for f in names {
+            if PENDING.iter().any(|(n, _)| n == f) {
+                assert_eq!(
+                    prelude_layer(f),
+                    None,
+                    "`{f}` is built: remove it from PENDING"
+                );
+                assert!(
+                    !zedc::resolve::is_prelude_name(f),
+                    "`{f}` is built: remove it from PENDING"
+                );
+                continue;
+            }
             let upper = f.chars().next().is_some_and(char::is_uppercase);
             if !upper {
                 words.entry(f.clone()).or_insert(*layer);
