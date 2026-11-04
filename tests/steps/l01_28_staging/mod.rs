@@ -5,6 +5,7 @@
 //! on a parameter only when the parameter's domain is finite and small.
 
 mod dag;
+mod differential;
 mod ends;
 mod ids;
 mod mix;

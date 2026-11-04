@@ -2015,7 +2015,9 @@ impl Mixer {
     // it is within a constant factor of what the output needs. Tests:
     // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives`,
     // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_scales` (at d and
-    // 8d), `l01_28_staging::dag::a_call_the_stubs_cannot_answer_is_mixed_as_written` and
+    // 8d), `l01_28_staging::dag::a_call_the_stubs_cannot_answer_is_mixed_as_written`,
+    // `l01_28_staging::differential::a_part_whose_call_no_answer_table_takes_asks_which_function_it_called`
+    // (one part under two functions, keyed by which function it called) and
     // `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F83. A
     // complete solution would read a part's calls inside a pure region through a pure lookup,
     // and key a call at an argument holding a family or a join by a hash-consed form of it.
