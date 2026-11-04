@@ -383,17 +383,20 @@ impl Rat {
                     false => &self.num + &b.num,
                 }));
             }
-            // Complexity tradeoff: the memory asked for a sum of two plain rationals is eight
-            // times the unreduced result's width, a bound on the two cross products, their sum
-            // and the reduction by the gcd, whose peak was measured at two to four times that
-            // width; so a sum near an eighth of the free memory is refused though it would
-            // fit, and none aborts. Tested by `a_wide_rational_difference_is_refused_when_
-            // memory_is_short` (COMPLEXITY.md K30). A complete solution would ask each
-            // allocation of the reduction for its own memory, which needs a reduction written
-            // here rather than num-bigint's.
+            // Complexity tradeoff: the memory asked for a sum of two plain rationals is
+            // sixteen times the unreduced result's width, a measured bound, not a proved one,
+            // on the two cross products, their sum and the reduction by the gcd (a
+            // Burnikel-Ziegler remainder of the wider by the narrower, Stein's gcd and two
+            // divisions by it): the peak heap was at most 8.8 times that width over numerators
+            // and denominators of 3 to 2^16 words, and the reduction alone of an exact
+            // quotient at most 10.9 times (`exact_div`). So a sum needing less is refused when
+            // the free memory lies between the two, and none aborts. Tested by `a_wide_
+            // rational_difference_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
+            // complete solution would ask each allocation of the reduction for its own memory,
+            // which needs a reduction written here rather than num-bigint's.
             let n = (self.num.bits() + b.den.bits()).max(b.num.bits() + self.den.bits()) + 1;
             let d = self.den.bits() + b.den.bits();
-            room(BigUint::from(n + d) << 3u32)?;
+            room(BigUint::from(n + d) << 4u32)?;
             return Ok(Rat::new(
                 signed(&self.num * &b.den, &b.num * &self.den),
                 &self.den * &b.den,
@@ -592,6 +595,12 @@ impl Rat {
         // modular arithmetic on the kept forms.
         let (_, m) = m.to_integer()?.into_parts();
         let mut r = rem(self.num.magnitude(), &m)?;
+        if !self.pows.is_empty() {
+            // Each step below holds `r`, `p^e mod m`, their product and its division by `m`:
+            // a peak heap of at most 25.2 times `m`'s width, measured over divisors of 2^8 to
+            // 2^13 words, odd (num-bigint's Montgomery power) and even; asked as 32 times.
+            room(BigUint::from(m.bits()) << 5u32)?;
+        }
         for (p, e) in self.pows.iter() {
             r = r * BigUint::from(*p).modpow(e.magnitude(), &m) % &m;
         }
@@ -606,16 +615,22 @@ impl Rat {
         if self.is_plain() && m.is_plain() {
             // Complexity tradeoff: the memory asked for is the quotient's width for a divisor
             // of one word, which num-bigint divides into a single copy of the dividend, and
-            // four times the dividend's width for a wider divisor, the peak of num-bigint's
-            // long division and Burnikel-Ziegler division as measured (two to four times); so
-            // a quotient by a wide divisor near a quarter of the free memory is refused though
-            // it might fit, and none aborts. Tested by `dividing_a_wide_number_is_refused_
-            // when_memory_is_short` (COMPLEXITY.md K30). A complete solution would divide here
-            // and ask for each block of the quotient as it is written.
+            // sixteen times the dividend's width for a wider divisor. Sixteen is measured, not
+            // proved: the peak heap of num-bigint's `div_euclid` by a divisor of two or more
+            // words (Burnikel-Ziegler division, which pads both operands to a power of two of
+            // words and copies them at each level) is at most 15.0 times the dividend's width
+            // over dividends of 2^8 to 2^20 words, divisors of 2 words to the dividend's
+            // length and all four signs, the worst a dividend of all ones just above a power of
+            // two of words. So a quotient by a wide divisor that needs less, often under eight
+            // times, is refused when the free memory lies between the two, and none aborts.
+            // Tested by `dividing_a_wide_number_is_refused_when_memory_is_short` and
+            // `dividing_by_a_wide_divisor_answers_when_its_peak_is_given` (COMPLEXITY.md K30).
+            // A complete solution would be a division whose peak is known by construction:
+            // blocks of the divisor's length divided in place into a quotient allocated once.
             let a = BigUint::from(self.num.bits());
             room(match m.num.magnitude().to_u64() {
                 Some(_) => a,
-                None => a << 2u32,
+                None => a << 4u32,
             })?;
             return Ok(Rat::int(Euclid::div_euclid(&self.num, &m.num)));
         }
@@ -663,10 +678,12 @@ impl Rat {
 
     /// `a / m` for an `m` that divides this integer, or [`TooLarge`] when the system refuses
     /// the memory for it: the two products the quotient is built from and their reduction,
-    /// eight times the widths of the four coefficients, as for a sum of plain rationals.
+    /// sixteen times the widths of the four coefficients, as for a sum of plain rationals. The
+    /// reduction's peak heap, measured for products of 512 to 2^14 words and more by factors
+    /// of 66 words to their own length, was at most 10.9 times their width.
     fn exact_div(&self, m: &Rat) -> Result<Rat, TooLarge> {
         let bits = self.num.bits() + self.den.bits() + m.num.bits() + m.den.bits();
-        room(BigUint::from(bits) << 3u32)?;
+        room(BigUint::from(bits) << 4u32)?;
         Ok(self.div(m).expect("the divisor is not zero"))
     }
 
@@ -687,8 +704,10 @@ impl Rat {
         if check {
             // The copy of both coefficients, and while a power of `p` is divided out of one
             // (`valuation`), its quotient, its remainder and the powers of `p` up to the square
-            // of the widest that divides it: at most eight times their width.
-            room(BigUint::from(self.num.bits() + self.den.bits()) << 3u32)?;
+            // of the widest that divides it: sixteen times their width, a measured bound (the
+            // peak heap of `valuation` was at most 10.7 times its operand's width over powers
+            // of 3 of 2^10 to 2^17 words).
+            room(BigUint::from(self.num.bits() + self.den.bits()) << 4u32)?;
         }
         let mut pows = self.pows.to_vec();
         pows.extend(new.into_iter().map(|p| (p, BigInt::zero())));
@@ -1016,12 +1035,20 @@ fn divides(m: &BigUint, p: u64) -> bool {
     }
 }
 
+/// The memory of one block step of [`rem`] by a divisor wider than a word, in multiples of the
+/// divisor's width: the remainder so far, the block, their shifted sum, and num-bigint's
+/// Burnikel-Ziegler division of it by the divisor, which pads to a power of two of words and
+/// copies at each level. The peak heap measured over divisors of 2^8 to 2^20 words, dividends
+/// of one to two blocks, lengths just above and below powers of two and all-ones dividends, is
+/// at most 21.3 times the divisor's width, the worst a divisor just above a power of two of
+/// words; 24 leaves an eighth to spare.
+const REM_STEP: u32 = 24;
+
 /// `a mod m` for an `m` that is not zero, read from the top of `a` with no copy of it, so its
 /// memory is that of `m` whatever the size of `a`. A one-word `m` folds the words of `a` into
 /// a two-word remainder; a wider `m` folds blocks of as many words as `m` has, each step
 /// dividing a number of twice `m`'s length by `m`. [`TooLarge`] when the system refuses the
-/// memory for a step: num-bigint's division of it peaks at four times its dividend
-/// (measured), so eight times `m`'s width.
+/// memory for a step, asked as [`REM_STEP`] times `m`'s width.
 fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
     if let Some(w) = m.to_u64() {
         let w = u128::from(w);
@@ -1031,7 +1058,13 @@ fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
             .fold(0u128, |r, d| ((r << 64) | u128::from(d)) % w);
         return Ok(BigUint::from(r));
     }
-    room(BigUint::from(m.bits()) << 3u32)?;
+    // Complexity tradeoff: a step's memory is asked as `REM_STEP` times `m`'s width, a measured
+    // bound on its peak (see `REM_STEP`), not a proved one, so a remainder whose step needs
+    // less is refused when the free memory lies between the two. Tested by `a_wide_number_
+    // modulo_a_wide_one_answers_when_its_peak_is_given` (COMPLEXITY.md K30). A complete
+    // solution would divide each block in place into a quotient allocated once, whose peak is
+    // known by construction.
+    room(BigUint::from(m.bits()) * REM_STEP)?;
     let len = m.iter_u64_digits().len();
     let mut words = a.iter_u64_digits().rev();
     let mut left = words.len();

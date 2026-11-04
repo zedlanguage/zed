@@ -60,6 +60,12 @@ pub(super) fn in_child_at(module: &str, name: &str) -> bool {
 /// Lowers this process's address-space limit to what it uses now plus [`MARGIN`], and checks
 /// that a request of twice the margin is then refused.
 pub(super) fn lower_limit() {
+    lower_limit_by(MARGIN);
+}
+
+/// Lowers this process's address-space limit to what it uses now plus `margin` bytes, and
+/// checks that a request of twice the margin is then refused.
+pub(super) fn lower_limit_by(margin: u64) {
     let status = std::fs::read_to_string("/proc/self/status").expect("Linux has /proc");
     let kib: u64 = status
         .lines()
@@ -67,7 +73,7 @@ pub(super) fn lower_limit() {
         .and_then(|v| v.trim().strip_suffix("kB"))
         .and_then(|v| v.trim().parse().ok())
         .expect("/proc/self/status has VmSize in kB");
-    let limit = (kib << 10) + MARGIN;
+    let limit = (kib << 10) + margin;
     rustix::process::setrlimit(
         rustix::process::Resource::As,
         rustix::process::Rlimit {
@@ -76,7 +82,7 @@ pub(super) fn lower_limit() {
         },
     )
     .expect("a process may lower its own limit");
-    let words = usize::try_from(MARGIN / 4).expect("the margin fits a usize");
+    let words = usize::try_from(margin / 4).expect("the margin fits a usize");
     assert!(
         Vec::<u64>::new().try_reserve_exact(words).is_err(),
         "the lowered limit refuses twice the margin"

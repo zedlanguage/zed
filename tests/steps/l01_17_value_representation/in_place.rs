@@ -7,6 +7,8 @@
 //! The memory tests run in a child process under a lowered address-space limit, set up as in
 //! the sibling module `memory_check`.
 
+use std::sync::Arc;
+
 use num_bigint::{BigInt, BigUint};
 use num_traits::{Euclid, One, Zero};
 use zed_kernel::term::build::{lit, prim};
@@ -14,7 +16,7 @@ use zed_kernel::{KernelError, Prim, Rat, Term, Value, eval};
 use zed_tests::kernel::{bin, sub};
 use zed_tests::scaling::check_order;
 
-use super::memory_check::{WIDE, in_child_at, lower_limit};
+use super::memory_check::{WIDE, in_child_at, lower_limit, lower_limit_by};
 
 fn in_child(name: &str) -> bool {
     in_child_at(module_path!(), name)
@@ -38,12 +40,76 @@ fn two_to(s: u64) -> Rat {
     int(2).pow(&BigUint::from(s)).expect("a power of 2 is kept")
 }
 
+/// What `eval` gave, told without printing a number's digits: under the lowered limit the
+/// decimal text of a wide result would itself abort the process.
+fn outcome(r: &Result<Value, KernelError>) -> String {
+    match r {
+        Ok(Value::Int(i)) => format!("Ok(Int({i}))"),
+        Ok(Value::Big(n) | Value::Rat(n)) => {
+            let (coef, pows) = n.integer_factors();
+            format!(
+                "Ok(a number of {} bits and {} kept primes)",
+                coef.bits(),
+                pows.len()
+            )
+        }
+        Ok(v) => format!("Ok(a value of type {})", v.kind_type()),
+        Err(KernelError::NumberTooLarge { op, bits }) => {
+            format!("Err(NumberTooLarge {{ op: {op}, bits: {bits} }})")
+        }
+        Err(KernelError::Type(m)) => format!("Err(Type({m}))"),
+        Err(_) => "Err(another error)".into(),
+    }
+}
+
 /// The error of `t`, which must be [`KernelError::NumberTooLarge`] of `op`, and its size.
 fn too_large(t: &Term, op: &str) -> BigUint {
     match eval(t) {
         Err(KernelError::NumberTooLarge { op: o, bits }) if o == op => bits,
-        other => panic!("{op}: {other:?}"),
+        other => panic!("{op}: {}", outcome(&other)),
     }
+}
+
+/// The integer `eval(t)` gives, held as a plain coefficient.
+fn integer(t: &Term) -> Arc<Rat> {
+    match eval(t) {
+        Ok(Value::Big(n)) => n,
+        other => panic!("{}", outcome(&other)),
+    }
+}
+
+/// `b^e mod m`, for `m` below 2^63.
+fn pow_mod(b: u64, e: u64, m: u64) -> u64 {
+    let (mut b, mut e, mut r) = (u128::from(b % m), e, 1u128);
+    let m = u128::from(m);
+    while e > 0 {
+        if e & 1 == 1 {
+            r = r * b % m;
+        }
+        b = b * b % m;
+        e >>= 1;
+    }
+    u64::try_from(r).expect("below m")
+}
+
+/// The Mersenne prime 2^61 - 1, a modulus by which a wide number is checked without a copy.
+const MERSENNE: u64 = (1 << 61) - 1;
+
+/// `(2^n + 1 - r) / (2^k + 1) mod 2^61 - 1`, the residue of the quotient of `2^n + 1` by
+/// `2^k + 1` that leaves `r`, from the residues of its parts.
+fn quotient_residue(n: u64, k: u64, r: u64) -> u64 {
+    let m = MERSENNE;
+    let a = (pow_mod(2, n, m) + 1 + m - r % m) % m;
+    let d = (pow_mod(2, k, m) + 1) % m;
+    u64::try_from(u128::from(a) * u128::from(pow_mod(d, m - 2, m)) % u128::from(m))
+        .expect("below m")
+}
+
+/// The residue of `q` modulo 2^61 - 1, read by [`Rat::rem_euclid`] one word at a time.
+fn residue(q: &Rat) -> u64 {
+    let r = q.rem_euclid(&int(MERSENNE)).expect("a one-word remainder");
+    let (coef, _) = r.integer_factors();
+    u64::try_from(coef).expect("below 2^61")
 }
 
 /// A balance of `2^30` bits less a fee, a fee less the balance, and the balance plus one:
@@ -78,14 +144,14 @@ fn a_wide_rational_difference_is_refused_when_memory_is_short() {
     let third = |n: BigInt| lit(Value::rat(Rat::new(n, BigInt::from(3)).unwrap()));
     let t = sub(third(above(WIDE)), third(BigInt::one()));
     lower_limit();
-    // Eight times the unreduced width: a numerator of `(n + 1) + 2 + 1` bits, the sum of
+    // Sixteen times the unreduced width: a numerator of `(n + 1) + 2 + 1` bits, the sum of
     // two cross products, over a denominator of `2 + 2`.
-    assert_eq!(too_large(&t, "-"), BigUint::from(WIDE + 8) << 3u32);
+    assert_eq!(too_large(&t, "-"), BigUint::from(WIDE + 8) << 4u32);
 }
 
 /// Splitting a wide amount three ways, `wide div 3`, builds a quotient as wide as the amount;
-/// it is asked for first and refused. A divisor wider than a word asks for four times the
-/// dividend, the peak of num-bigint's long division.
+/// it is asked for first and refused. A divisor wider than a word asks for sixteen times the
+/// dividend, a measured bound on the peak of num-bigint's division.
 #[test]
 fn dividing_a_wide_number_is_refused_when_memory_is_short() {
     if !in_child("dividing_a_wide_number_is_refused_when_memory_is_short") {
@@ -100,7 +166,7 @@ fn dividing_a_wide_number_is_refused_when_memory_is_short() {
     assert_eq!(too_large(&by_word, "div"), BigUint::from(WIDE + 1));
     assert_eq!(
         too_large(&by_two_words, "div"),
-        BigUint::from(WIDE + 1) << 2u32
+        BigUint::from(WIDE + 1) << 4u32
     );
     // `(2^n + 1) 2^5 div 3` is not exact: it builds the remainder and the difference.
     too_large(&kept_by_word, "div");
@@ -135,8 +201,106 @@ fn a_wide_number_modulo_a_small_one_answers_when_memory_is_short() {
     ];
     lower_limit();
     for (i, (t, want)) in cases.iter().enumerate() {
-        assert_eq!(eval(t).unwrap(), Value::int(want.clone()), "case {i}");
+        let got = eval(t);
+        assert!(
+            matches!(&got, Ok(v) if *v == Value::int(want.clone())),
+            "case {i}: {}",
+            outcome(&got)
+        );
     }
+}
+
+/// A wide amount split by a wide divisor, `wide div (2^4096 + 1)` and `wide div (2^(2^29) +
+/// 1)`, and the remainder `wide mod (2^(2^29) + 1)`, under a margin of 600 MiB: num-bigint's
+/// division of them needs more than that, up to 15 times the dividend's width (the quotient)
+/// and 21 times the divisor's (the remainder), so each asks for sixteen and 24 times, and is
+/// refused. Asking for four and eight times, as before, let each start and abort.
+#[test]
+fn a_division_by_a_wide_divisor_is_refused_below_its_measured_peak() {
+    if !in_child("a_division_by_a_wide_divisor_is_refused_below_its_measured_peak") {
+        return;
+    }
+    let wide = || num(above(WIDE));
+    let half = 1u64 << 29;
+    let by_4097_bits = bin(Prim::IntDiv, wide(), num(above(4096)));
+    let by_half = bin(Prim::IntDiv, wide(), num(above(half)));
+    let mod_half = bin(Prim::Mod, wide(), num(above(half)));
+    lower_limit_by(600 << 20);
+    let quotient = BigUint::from(WIDE + 1) << 4u32;
+    assert_eq!(too_large(&by_4097_bits, "div"), quotient);
+    assert_eq!(too_large(&by_half, "div"), quotient);
+    assert_eq!(too_large(&mod_half, "mod"), BigUint::from(half + 1) * 24u32);
+}
+
+/// The quotients of `a_division_by_a_wide_divisor_is_refused_below_its_measured_peak`, and one
+/// of a negative amount, each in its own process with the sixteen times the dividend's width
+/// that it asks for given, and 64 MiB more: each is computed. Each has its own process because
+/// the allocator does not give back all the address space a division leaves, so a second
+/// division in the same process can be refused. `2^n + 1` is `2` more than a multiple of
+/// `2^k + 1` when `n / k` is even, so `(2^n + 1) div (2^(n/2) + 1)` is `2^(n/2) - 1`, `n/2`
+/// ones; each quotient's residue modulo 2^61 - 1 is checked against its parts'.
+#[test]
+fn dividing_by_a_wide_divisor_answers_when_its_peak_is_given() {
+    if !in_child("dividing_by_a_wide_divisor_answers_when_its_peak_is_given") {
+        return;
+    }
+    let t = bin(Prim::IntDiv, num(above(WIDE)), num(above(4096)));
+    // Sixteen times the dividend's width is twice its bits as bytes.
+    lower_limit_by(2 * (WIDE + 1) + (64 << 20));
+    let q = integer(&t);
+    assert_eq!(q.integer_factors().0.bits(), WIDE - 4096);
+    assert_eq!(residue(&q), quotient_residue(WIDE, 4096, 2));
+}
+
+/// `-(2^n + 1) = -(q + 1) (2^k + 1) + (2^k - 1)`, under the limit of
+/// `dividing_by_a_wide_divisor_answers_when_its_peak_is_given`.
+#[test]
+fn dividing_a_negative_amount_by_a_wide_divisor_answers_when_its_peak_is_given() {
+    if !in_child("dividing_a_negative_amount_by_a_wide_divisor_answers_when_its_peak_is_given") {
+        return;
+    }
+    let t = bin(Prim::IntDiv, num(-above(WIDE)), num(above(4096)));
+    lower_limit_by(2 * (WIDE + 1) + (64 << 20));
+    let q = integer(&t);
+    assert!(q.is_negative());
+    let want = (MERSENNE - quotient_residue(WIDE, 4096, 2) + MERSENNE - 1) % MERSENNE;
+    assert_eq!(residue(&q), want);
+}
+
+/// `(2^n + 1) div (2^(n/2) + 1)`, `n/2` ones, under the limit of
+/// `dividing_by_a_wide_divisor_answers_when_its_peak_is_given`.
+#[test]
+fn dividing_by_half_the_width_answers_when_its_peak_is_given() {
+    if !in_child("dividing_by_half_the_width_answers_when_its_peak_is_given") {
+        return;
+    }
+    let half = 1u64 << 29;
+    let t = bin(Prim::IntDiv, num(above(WIDE)), num(above(half)));
+    lower_limit_by(2 * (WIDE + 1) + (64 << 20));
+    let q = integer(&t);
+    let (coef, _) = q.integer_factors();
+    assert_eq!((coef.bits(), coef.magnitude().count_ones()), (half, half));
+    assert_eq!(residue(&q), quotient_residue(WIDE, half, 2));
+}
+
+/// `wide mod (2^(2^29) + 1)`, of the amount and of its negative, with the 24 times the
+/// divisor's width that a step of the remainder asks for given, and 64 MiB more: `2^(2^30) =
+/// 1` modulo `2^(2^29) + 1`, so the remainders are `2` and `2^(2^29) - 1`.
+#[test]
+fn a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given() {
+    if !in_child("a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given") {
+        return;
+    }
+    let half = 1u64 << 29;
+    let t = bin(Prim::Mod, num(above(WIDE)), num(above(half)));
+    let negative = bin(Prim::Mod, num(-above(WIDE)), num(above(half)));
+    // 24 times the divisor's width is three times its bytes.
+    lower_limit_by(3 * (half + 1) + (64 << 20));
+    let got = eval(&t);
+    assert!(matches!(&got, Ok(Value::Int(2))), "{}", outcome(&got));
+    let r = integer(&negative);
+    let (coef, _) = r.integer_factors();
+    assert_eq!((coef.bits(), coef.magnitude().count_ones()), (half, half));
 }
 
 /// Comparing a wide amount with a price written as a rational, `wide < 0.5`, or negating it
@@ -167,7 +331,7 @@ fn a_type_error_on_a_wide_number_names_its_type_when_memory_is_short() {
     for (t, want) in &cases {
         match eval(t) {
             Err(KernelError::Type(m)) => assert_eq!(m, *want),
-            other => panic!("{want}: {other:?}"),
+            other => panic!("{want}: {}", outcome(&other)),
         }
     }
 }
@@ -321,7 +485,7 @@ fn rational_differences_agree_with_the_cross_product() {
 #[test]
 fn wide_differences_quotients_and_remainders_cost_order_n() {
     let n = 1 << 18;
-    let inputs: Vec<(usize, Term, Term, Term, Term)> = [n, 8 * n]
+    let inputs: Vec<(usize, Term, Term, Term, Term, Term, Term)> = [n, 8 * n]
         .into_iter()
         .map(|m| {
             let w = || num(above(m as u64));
@@ -331,6 +495,8 @@ fn wide_differences_quotients_and_remainders_cost_order_n() {
                 bin(Prim::Mod, w(), num(above(128))),
                 sub(num(1), w()),
                 bin(Prim::IntDiv, w(), num(3)),
+                bin(Prim::Mod, w(), num(above(8192))),
+                bin(Prim::IntDiv, w(), num(above(8192))),
             )
         })
         .collect();
@@ -351,5 +517,11 @@ fn wide_differences_quotients_and_remainders_cost_order_n() {
     });
     check_order("2^n + 1 div 3", n, 1, |m| {
         assert!(matches!(eval(&at(m).4).unwrap(), Value::Big(_)));
+    });
+    check_order("2^n + 1 mod 2^8192 + 1", n, 1, |m| {
+        assert!(eval(&at(m).5).is_ok());
+    });
+    check_order("2^n + 1 div 2^8192 + 1", n, 1, |m| {
+        assert!(matches!(eval(&at(m).6).unwrap(), Value::Big(_)));
     });
 }
