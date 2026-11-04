@@ -1017,6 +1017,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Unbounded counts of repeats (`num_bigint::BigUint`), since a run can be longer than 2^64 | `Sym::Run`, `Canon::cmp_seqs`, `Finger::cut` | None (`int` is unbounded) | `int` |
 | Bit operations on symbol numbers for deterministic coin tossing (`^`, `trailing_zeros`, `>>`, `& 1`) | `Canon::chunk` | Bit operations (gap 4, built) | The bit words of L1.39a |
 
+## Entries from ST-formula-k2-rec (`zedc/src/store/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A stack of boxed closures `Box<dyn FnOnce(&mut Memo)>`, each removing one memo entry, run by `Vec::pop_if` as the reading stack falls | `preimage::Memo::held`, `Tx::cached`, `Tx::through` | Mutation (gap 11) | A list of (height, table, key) values in the translator's state; the drop is a fold that removes each key from its table |
+
 ## Entries from ST-formula-k2 (`zedc/src/store/presburger.rs`, `preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |

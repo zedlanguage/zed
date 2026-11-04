@@ -493,6 +493,88 @@ fn long_shared_chains() {
     );
 }
 
+/// `w = (g, v) -> let ok = i >= 0 && i >= 1 && … && i >= k - 2 && seen(g(g, v)) in ok && (i
+/// >= 1 || ok) && … && (i >= r - 1 || ok)`, read as `w(w, i)` with `seen = (u) -> i <= 1000`:
+/// a check that calls itself, by self-application, through a function that ignores what the
+/// call gives, and that tests its chain of `k` limits at `r` places. The call of `w` made while
+/// `w` is being read stops there, and `seen` reads no argument, so `ok` has a formula; but the
+/// stop is below the place where `ok` began, so its formula is not kept in the memo of the
+/// whole transfer, and each of its `r` reads reads its chain again (ST-formula-k2-rec).
+fn rereads(r: usize, k: usize) -> Term {
+    let ge = |j: usize| prim(Prim::Ge, var("i"), int(j as i64));
+    let app = |f: Term, args: Vec<Term>| Term::App(Shared::new(f), args);
+    let seen = Term::Lam(
+        vec!["u".into()],
+        Shared::new(prim(Prim::Le, var("i"), int(1000))),
+    );
+    let again = app(var("g"), vec![var("g"), var("v")]);
+    let limits = (1..k - 1).fold(ge(0), |a, j| prim(Prim::And, a, ge(j)));
+    let ok = prim(Prim::And, limits, app(seen, vec![again]));
+    let uses = (1..r).fold(var("ok"), |a, j| {
+        prim(Prim::And, a, prim(Prim::Or, ge(j), var("ok")))
+    });
+    let body = Term::Let("ok".into(), Shared::new(ok), Shared::new(uses));
+    let w = Term::Lam(vec!["g".into(), "v".into()], Shared::new(body));
+    app(w.clone(), vec![w, var("i")])
+}
+
+/// [`rereads`] holds where `ok` does, on `i >= k - 2`, with the stop where `w` calls itself;
+/// its relation reads `ok` at each of its `r` places, its limits tightened to the last.
+#[test]
+fn a_chain_read_at_many_places_under_recursion_is_translated() {
+    let ds = doms(&[("i", Some(-50), Some(50))]);
+    let inputs: [Arc<str>; 1] = ["i".into()];
+    for (r, k) in [(1, 2), (3, 4), (6, 5), (40, 30)] {
+        let t = rereads(r, k);
+        let p = preimage(&t, &ds, &Demand::Bool(true));
+        let stop = "stop: a call of a function already being read at g(g, v)";
+        assert_eq!(shown(&p), format!("i [{}..=50]; exact; {stop}", k - 2));
+        let rs = relations(&[&t], &inputs, false).expect("in the domain");
+        assert_eq!(rs.len(), 1);
+        let ok = format!("i >= {} && i <= 1000", k - 2);
+        let want = (1..r).fold(ok.clone(), |a, j| format!("{a} && (i >= {j} || ({ok}))"));
+        assert_eq!(rs[0].to_string(), want, "r={r} k={k}");
+    }
+}
+
+/// [`rereads`] with `r` places and `k` limits, each at `n` and `8n` and both at once: the
+/// work is of order `r + k` and not `r k`, since a chain whose formula holds where it is
+/// reached on the stack it was read at is read once there (COMPLEXITY.md S31b).
+#[test]
+fn long_chains_read_at_many_places_under_recursion() {
+    let n = 64;
+    let measure = move || {
+        let inputs: [Arc<str>; 1] = ["i".into()];
+        let large = n * scaling::FACTOR;
+        let cases = [
+            (
+                "a chain of 64 limits under recursion read at r places",
+                (n, 64),
+                (large, 64),
+            ),
+            (
+                "a chain of k limits under recursion read at 64 places",
+                (64, n),
+                (64, large),
+            ),
+            (
+                "a chain of k limits under recursion read at k places",
+                (n, n),
+                (large, large),
+            ),
+        ];
+        for (what, (r, k), (r8, k8)) in cases {
+            let (a, b) = (rereads(r, k), rereads(r8, k8));
+            scaling::check(what, n, |s| {
+                let t = if s == n { &a } else { &b };
+                relations(&[t], &inputs, false).expect("in the domain");
+            });
+        }
+    };
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
+    thread.spawn(measure).unwrap().join().unwrap();
+}
+
 /// The preimage of [`shared_values`]: its value is `i + k` below 1, `k` up to `k` and `i`
 /// above, so `t >= 0` holds exactly on `i >= -k`. The summary of the shared term as one
 /// piecewise-affine function answers each demand once (COMPLEXITY.md S22).
@@ -549,4 +631,46 @@ fn auxiliary_variables_are_named_one_level_deep() {
     );
     assert!(shown.contains(" then j else 2"), "{shown}");
     assert!(shown.contains("q3 = max(q0, q2)"), "{shown}");
+}
+
+/// `w = (g, v) -> t_d`, read as `w(w, i)`, with `t_0 = seen(g(g, v))`, `seen = (u) -> i <=
+/// 1000` and `t_j = if (i >= j) { t(j-1) } else { t(j-1) }`: a term of `d` distinct parts and
+/// `2^d` paths under a call that stops where `w` calls itself, below where each part began.
+fn shared_arms_under_recursion(d: usize) -> Term {
+    let app = |f: Term, args: Vec<Term>| Term::App(Shared::new(f), args);
+    let seen = Term::Lam(
+        vec!["u".into()],
+        Shared::new(prim(Prim::Le, var("i"), int(1000))),
+    );
+    let again = app(var("g"), vec![var("g"), var("v")]);
+    let t = (1..=d as i64).fold(app(seen, vec![again]), |t, j| {
+        let t = Shared::new(t);
+        Term::If(Shared::new(prim(Prim::Ge, var("i"), int(j))), t.clone(), t)
+    });
+    let w = Term::Lam(vec!["g".into(), "v".into()], Shared::new(t));
+    app(w.clone(), vec![w, var("i")])
+}
+
+/// Each part of [`shared_arms_under_recursion`] is read once, in the transfer and in the
+/// translation, and not once for each path: d = 14 took 21.6 and 82.9 ms, four times d = 12,
+/// before parts read below a stop were remembered (ST-formula-k2-rec).
+#[test]
+fn long_shared_arms_under_recursion() {
+    let ds = doms(&[("i", Some(-50), Some(50))]);
+    let p = preimage(&shared_arms_under_recursion(6), &ds, &Demand::Bool(true));
+    assert_eq!(
+        shown(&p),
+        "i [-50..=50]; exact; stop: a call of a function already being read at g(g, v)"
+    );
+    long_at(
+        "`if`s under recursion whose arms are one shared term",
+        32,
+        shared_arms_under_recursion,
+        one,
+    );
+    long_relations(
+        "`if`s under recursion whose arms are one shared term",
+        32,
+        shared_arms_under_recursion,
+    );
 }

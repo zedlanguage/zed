@@ -1410,12 +1410,12 @@ struct Residue {
 struct Kept {
     sums: HashMap<Summary, u32>,
     fwds: HashMap<u32, Fwd>,
-    fwd: HashMap<At, Fwd>,
-    constant: HashMap<At, Option<Value>>,
-    mentions: HashMap<At, Option<bool>>,
-    clip: HashMap<At, Option<IntervalSet>>,
-    by_class: HashMap<At, Option<ByClass>>,
-    reads_mod: HashMap<At, bool>,
+    fwd: HashMap<At, Entry<Fwd>>,
+    constant: HashMap<At, Entry<Option<Value>>>,
+    mentions: HashMap<At, Entry<Option<bool>>>,
+    clip: HashMap<At, Entry<Option<IntervalSet>>>,
+    by_class: HashMap<At, Entry<Option<ByClass>>>,
+    reads_mod: HashMap<At, Entry<bool>>,
 }
 
 impl Run {
@@ -1583,31 +1583,48 @@ impl Fwd {
 /// differs for each summary, since the parameter's name holds the summary's number.
 #[derive(Default)]
 struct Memo {
-    mentions: HashMap<At, Option<bool>>,
-    constant: HashMap<At, Option<Value>>,
-    fwd: HashMap<At, Fwd>,
-    back: HashMap<(At, Demand), Res>,
+    mentions: HashMap<At, Entry<Option<bool>>>,
+    constant: HashMap<At, Entry<Option<Value>>>,
+    fwd: HashMap<At, Entry<Fwd>>,
+    back: HashMap<(At, Demand), Entry<Res>>,
     /// The piecewise-affine summary of an integer term of one input ([`Tx::pa`]).
-    pa: HashMap<At, Option<Pa>>,
+    pa: HashMap<At, Entry<Option<Pa>>>,
     /// The interval an integer demand on a term is met with before it is read ([`Tx::clip`]).
-    clip: HashMap<At, Option<IntervalSet>>,
+    clip: HashMap<At, Entry<Option<IntervalSet>>>,
     /// The summaries of a term in every class of remainders of a split ([`Tx::by_class`]).
-    by_class: HashMap<At, Option<ByClass>>,
+    by_class: HashMap<At, Entry<Option<ByClass>>>,
     /// Whether a term may read a remainder, so that its transfer may depend on a split's class
     /// ([`Tx::reads_mod`]).
-    reads_mod: HashMap<At, bool>,
+    reads_mod: HashMap<At, Entry<bool>>,
     scan: HashSet<At>,
-    lin: HashMap<At, Option<Lin>>,
-    formula: HashMap<At, Option<Formula>>,
+    lin: HashMap<At, Entry<Option<Lin>>>,
+    formula: HashMap<At, Entry<Option<Formula>>>,
     /// The translations of calls, by the lambda and the translations of the arguments: a
     /// body's value depends on its parameters only through their values, so calls whose
     /// arguments translate alike translate alike, however they are reached.
-    lin_calls: HashMap<CallKey, Option<Lin>>,
-    formula_calls: HashMap<CallKey, Option<Formula>>,
+    lin_calls: HashMap<CallKey, Entry<Option<Lin>>>,
+    formula_calls: HashMap<CallKey, Entry<Option<Formula>>>,
     /// The translation entries in the order they were made, which a translation that is
     /// undone removes.
     log: Vec<Logged>,
+    /// The entries that hold only where the stack of lambdas being read holds what it held
+    /// when they began ([`Entry`]), each with that height and what removes it, in the order
+    /// they were made, so with heights that do not fall: [`Tx::through`] removes those above
+    /// the height it leaves the stack at.
+    held: Vec<(usize, Unheld)>,
 }
+
+/// A memo entry: its value, and the lowest place on the stack of lambdas being read at which
+/// a call it read stopped, where that place is below the stack's height when it began, or
+/// `usize::MAX`. An entry of the first kind holds while the stack holds what it held then,
+/// since its value depends on those lambdas alone, and is kept until the stack is lower; a
+/// result that reads it stopped at that place too (ST-formula-k2-rec). The second kind holds
+/// wherever it is reached.
+type Entry<V> = (V, usize);
+
+/// Removes an entry of the first kind of [`Entry`] from its table, unless the table holds
+/// another entry under its key by then.
+type Unheld = Box<dyn FnOnce(&mut Memo)>;
 
 /// A call to translate: the lambda, by its body and scope, and its arguments' linear terms.
 type CallKey = (At, Vec<Lin>);
@@ -1621,16 +1638,17 @@ enum Logged {
 }
 
 /// One of the memo's tables.
-type Table<K, V> = fn(&mut Memo) -> &mut HashMap<K, V>;
+type Table<K, V> = fn(&mut Memo) -> &mut HashMap<K, Entry<V>>;
 
 /// A context: the inputs it reads, those of the transfer and the parameters of the summaries
 /// it is within.
 struct Cx {
     inputs: Sets,
     /// The lowest place on the stack of lambdas being read whose lambda a call stopped at,
-    /// since the result being computed began. A result is remembered only when that place is
-    /// not below the stack's height when it began: otherwise it depends on where it was
-    /// reached.
+    /// since the result being computed began. A result is remembered wherever it is reached
+    /// only when that place is not below the stack's height when it began; otherwise it
+    /// depends on the lambdas below that height, and is remembered while they are there
+    /// ([`Entry`]).
     cut: usize,
 }
 
@@ -1885,6 +1903,10 @@ impl<'t> Tx<'t> {
         self.run.active.insert(body, place);
         let v = f(self, place);
         self.run.active.remove(&body);
+        let m = &mut self.run.memo;
+        while let Some((_, unheld)) = m.held.pop_if(|(at, _)| *at > place) {
+            unheld(m);
+        }
         v
     }
 
@@ -2076,15 +2098,20 @@ impl<'t> Tx<'t> {
         out
     }
 
-    /// `f()`, remembered under `k` in `table` unless a call it reads stopped at a lambda that
-    /// was being read before it began.
-    fn cached<K: Hash + Eq, V: Clone>(
+    /// `f()`, remembered under `k` in `table`: wherever it is reached, or, when a call it reads
+    /// stopped at a lambda that was being read before it began, while the stack of lambdas
+    /// being read is no lower than it was then ([`Entry`]). Each read of such an entry passes
+    /// its stop on. Without the second kind, a term reached at many places under recursion was
+    /// read again at each: a chain of k operands named and read at r places took O(r k), and
+    /// an `if` d deep whose arms are one shared term took 2^d (ST-formula-k2-rec).
+    fn cached<K: Hash + Eq + Clone + 'static, V: Clone + 'static>(
         &mut self,
         table: Table<K, V>,
         k: K,
         f: impl FnOnce(&mut Self) -> V,
     ) -> V {
-        if let Some(v) = table(&mut self.run.memo).get(&k) {
+        if let Some((v, cut)) = table(&mut self.run.memo).get(&k) {
+            self.cx.cut = self.cx.cut.min(*cut);
             return v.clone();
         }
         let base = self.run.active.len();
@@ -2092,8 +2119,20 @@ impl<'t> Tx<'t> {
         // Temporary: stacker through `deeper` until PRE-stack-explicit.
         let v = deeper(|| f(self));
         let cut = self.cx.cut;
+        let m = &mut self.run.memo;
         if cut >= base {
-            table(&mut self.run.memo).insert(k, v.clone());
+            table(m).insert(k, (v.clone(), usize::MAX));
+        } else {
+            let unheld = Box::new({
+                let k = k.clone();
+                move |m: &mut Memo| {
+                    if table(m).get(&k).is_some_and(|e| e.1 != usize::MAX) {
+                        table(m).remove(&k);
+                    }
+                }
+            });
+            table(m).insert(k, (v.clone(), cut));
+            m.held.push((base, unheld));
         }
         self.cx.cut = outer.min(cut);
         v
@@ -2101,7 +2140,7 @@ impl<'t> Tx<'t> {
 
     /// [`Tx::cached`] for the translation into the linear-relation domain, whose entries a
     /// translation that is undone removes; `logged` names an entry for the log.
-    fn translated<K: Hash + Eq + Clone, V: Clone>(
+    fn translated<K: Hash + Eq + Clone + 'static, V: Clone + 'static>(
         &mut self,
         table: Table<K, V>,
         k: K,
@@ -5872,7 +5911,11 @@ mod tests {
         /// in a disjunction.
         kept: bool,
         cut: usize,
+        /// The entries made and not undone, other than those of the formula of a `&&` or `||`.
         log: usize,
+        /// The `&&` and `||` nodes whose formula entry was made and not undone, kept or not:
+        /// an entry made below a stop is dropped when the stack falls below where it began.
+        chain_log: BTreeSet<At>,
         lin: usize,
         stops: usize,
     }
@@ -5895,9 +5938,21 @@ mod tests {
         };
         let f = tx.formula(&mut tr, root, ROOT);
         TWO_AT_A_TIME.set(false);
-        let chains = (0..tx.terms.nodes.len() as Tid)
+        let chains: BTreeSet<Tid> = (0..tx.terms.nodes.len() as Tid)
             .filter(|&u| matches!(tx.node(u), Node::Prim(Prim::And | Prim::Or, _)))
             .collect();
+        let chain = |e: &Logged| match e {
+            Logged::Formula(k) if chains.contains(&k.0) => Some(*k),
+            _ => None,
+        };
+        let log = tx
+            .run
+            .memo
+            .log
+            .iter()
+            .filter(|e| chain(e).is_none())
+            .count();
+        let chain_log = tx.run.memo.log.iter().filter_map(chain).collect();
         Seen {
             formula: f.as_ref().map(built),
             kept: f.as_ref().is_some_and(kept),
@@ -5905,11 +5960,12 @@ mod tests {
                 .map(|(n, w, f)| format!("{n} {w} {}", built(f)))
                 .collect(),
             memo: (tx.run.memo.formula.iter())
-                .map(|(k, v)| (*k, v.as_ref().map(built)))
+                .map(|(k, (v, _))| (*k, v.as_ref().map(built)))
                 .collect(),
             chains,
             cut: tx.cx.cut,
-            log: tx.run.memo.log.len(),
+            log,
+            chain_log,
             lin: tx.run.memo.lin.len(),
             stops: tx.run.stops.len(),
         }
@@ -5967,7 +6023,19 @@ mod tests {
                     "round {round}, entry {k:?}: {t:?}"
                 );
             }
-            assert_eq!(old.log - new.log, extra.len(), "round {round}: {t:?}");
+            // Every other entry made is the same, and every entry the new translation made for
+            // a chain the old one made too, as the formula of the chain's top.
+            assert_eq!(old.log, new.log, "round {round}: {t:?}");
+            assert!(
+                new.chain_log.is_subset(&old.chain_log),
+                "round {round}: {t:?}"
+            );
+            for k in &extra {
+                assert!(
+                    old.chain_log.contains(k),
+                    "round {round}, entry {k:?}: {t:?}"
+                );
+            }
             fewer += usize::from(!extra.is_empty());
             // The whole preimage, with the relation's formula as built.
             let doms = domains();
