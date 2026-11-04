@@ -1052,6 +1052,14 @@ impl Type {
         self.p().atoms != Atoms::default()
     }
 
+    /// The names of its atoms, each with whether it holds the bare atom `#name`, read from its
+    /// parts in name order; `None` when it holds the atoms of every name it does not list. A
+    /// listed name may hold no value, when its payload type is empty but not built as empty.
+    pub fn atom_names(&self) -> Option<impl Iterator<Item = (&str, bool)>> {
+        let a = &self.p().atoms;
+        (!a.cofinite).then(|| a.names.iter().map(|(n, p)| (&**n, p.bare)))
+    }
+
     /// `self` split into its values of each base type, its atoms and the rest: what `self & t`
     /// gives for `t` each base type, and then the atoms and the other universes, each made by
     /// copying one part of `self`, where the meets would build each part of each result.

@@ -887,15 +887,56 @@ fn wider_overloads(n: usize) -> String {
     format!("p(f: {}) = 0;\nq(g: {}) = p(f: g);\n", ov(""), ov(" | #z"))
 }
 
-/// Probe of the case `fits_in` leaves at n^2 comparisons (COMPLEXITY.md F82; open:
-/// AND-fns-fit): each arrow of the slot is compared with the arrows of the function before it.
+/// An overload of n arrows passed to a slot of n other arrows: each arrow of the slot is
+/// looked up by its parameter's atom in an index of the function's arrows, which gives the one
+/// arrow that takes it (COMPLEXITY.md F82). Before the index each was compared with every
+/// arrow of the function: 57.1 times the bytes at n = 100 and 800.
 #[test]
-#[ignore = "n^2 comparisons, open: AND-fns-fit"]
-fn passing_an_overload_to_a_slot_of_other_arrows_is_quadratic() {
+fn passing_an_overload_to_a_slot_of_other_arrows_scales() {
     let n = 100;
     let inputs = [(n, wider_overloads(n)), (8 * n, wider_overloads(8 * n))];
     scaling::check(
         "an overload of n arrows passed to a slot of n other arrows",
+        n,
+        |m| {
+            let text = &inputs
+                .iter()
+                .find(|(k, _)| *k == m)
+                .expect("a built size")
+                .1;
+            let (info, _) = info(text);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
+}
+
+/// Like [`wider_overloads`], but every arrow of `q`'s function takes `#c` as well as its own
+/// atom, and each arrow of the slot takes `#c` alone: every arrow of the function offers what
+/// each arrow of the slot needs, and only the results tell them apart.
+fn shared_overloads(n: usize) -> String {
+    let ov = |param: &dyn Fn(usize) -> String| {
+        (0..n)
+            .map(|i| format!("((x: {}) -> #b{i})", param(i)))
+            .collect::<Vec<_>>()
+            .join(" & ")
+    };
+    format!(
+        "p(f: {}) = 0;\nq(g: {}) = p(f: g);\n",
+        ov(&|_| "#c".into()),
+        ov(&|i| format!("#c | #a{i}"))
+    )
+}
+
+/// Probe of the case the index of arrows leaves at n^2/2 comparisons (COMPLEXITY.md F82): the
+/// arrows share the piece of the parameter the slot's arrows need, so each arrow of the slot
+/// is compared with the arrows before the one that fits.
+#[test]
+#[ignore = "n^2 comparisons: parameters that share a piece; see the Complexity tradeoff in check::ty::every_arrow_fits"]
+fn passing_an_overload_whose_arrows_share_a_parameter_piece_is_quadratic() {
+    let n = 100;
+    let inputs = [(n, shared_overloads(n)), (8 * n, shared_overloads(8 * n))];
+    scaling::check(
+        "an overload of n arrows sharing a parameter piece passed to a slot of n arrows",
         n,
         |m| {
             let text = &inputs

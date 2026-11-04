@@ -176,3 +176,20 @@ fn a_slot_whose_arrows_bound_one_variable_differently_is_an_error() {
         ]
     );
 }
+
+/// An overload whose arrows cover a slot's parameter only together:
+/// `((x: int) -> String) & ((x: bool) -> String)` passed where `(x: int | bool) -> String` is
+/// expected. Rule 6 (DESIGN.md sec:type_resolution) types an application region by region, so
+/// a call of the slot at `int | bool` gets `String` from the two arrows. The checker requires
+/// one arrow of the argument to take the slot's whole parameter (`check::ty::fits_in`), so it
+/// rejects the call: "`p` does not take ((((x: int) -> String) & ((x: bool) -> String)))
+/// [p(f: g)]". Open for the author: a wider check that stays polynomial is
+/// "the slot arrow's parameter is within the union of the parameters of the arrows whose
+/// result is within its result" (AND-fns-fit report).
+#[test]
+#[ignore = "rule 6 reads this as fitting; the checker rejects it; a semantics decision for the author"]
+fn an_overload_that_covers_a_slots_parameter_only_together_fits() {
+    let text = "p(f: (x: int | bool) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String) & ((x: bool) -> String)) = p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+}
