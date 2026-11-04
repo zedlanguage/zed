@@ -1,8 +1,7 @@
-// The page: lays the plan out with dagre, draws it, polls /api/state.
-// The view (pan and zoom) survives every update; layout reruns only when the
-// set of nodes, the set of expanded nodes or the edge mode changes.
-
-declare const dagre: any;
+// The page: polls /api/state, asks the server for a layout (/api/layout, laid
+// out with ELK), draws it. The view (pan and zoom) survives every update; a new
+// layout is asked for only when the set of nodes, the set of expanded nodes or
+// the edge mode changes, and the last layout stays on screen until it arrives.
 
 interface Sub { name: string; role: string; lastAt: number; text: string }
 interface Node {
@@ -18,6 +17,11 @@ interface State {
   machine: { load: string; lock: string; origin: string | null; main: string | null; ahead: number };
 }
 interface Point { x: number; y: number }
+interface Layout {
+  key: string; w: number; h: number;
+  boxes: Record<string, { x: number; y: number; w: number; h: number }>;
+  edges: { from: string; to: string; points: Point[] }[];
+}
 
 const POLL_MS = 2000;
 const WIDE = 330;
@@ -80,7 +84,11 @@ document.body.append(top, stage, side);
 let current: State | null = null;
 let selected: string | null = null;
 let allEdges = false;
-let layoutKey = "";
+// The last request the server answered with a layout of exactly that graph,
+// the key of the layout on screen, and why the layout on screen is not current.
+let freshBody = "";
+let drawnKey = "";
+let layoutNote = "";
 let positions = new Map<string, { x: number; y: number; w: number; h: number }>();
 let extent = { w: 1, h: 1 };
 const view = { x: 0, y: 0, k: 1 };
@@ -157,7 +165,8 @@ button("In progress", "Show the nodes in progress and their neighbors", () => fi
 const edgesButton = button("Direct edges", "Switch between direct dependencies and every edge", () => {
   allEdges = !allEdges;
   edgesButton.textContent = allEdges ? "All edges" : "Direct edges";
-  if (current) render(current);
+  const s = current;
+  if (s) void relayout(s).then(() => render(s), () => render(s));
 });
 search.addEventListener("input", () => {
   const q = search.value.trim().toLowerCase();
@@ -196,32 +205,36 @@ function heightOf(n: Node): number {
   return 126 + n.subs.length * 21;
 }
 
-function layout(s: State): void {
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "TB", nodesep: 26, ranksep: 54, edgesep: 8, marginx: 20, marginy: 20 });
-  g.setDefaultEdgeLabel(() => ({}));
-  for (const n of s.nodes) {
-    g.setNode(n.id, { width: n.state === "active" ? WIDE : NARROW, height: heightOf(n) });
-  }
-  const known = new Set(s.nodes.map((n) => n.id));
-  for (const [a, b] of edgesOf(s)) {
-    if (known.has(a) && known.has(b)) g.setEdge(a, b);
-  }
-  dagre.layout(g);
-  const graph = g.graph();
-  extent = { w: graph.width, h: graph.height };
-  positions = new Map(s.nodes.map((n) => {
-    const p = g.node(n.id);
-    return [n.id, { x: p.x, y: p.y, w: p.width, h: p.height }];
-  }));
+// Asks for the layout of the graph s shows. The server answers at once with
+// its newest layout for the edge mode, which may be of an older graph while it
+// lays out this one; the page draws that and asks again on the next poll.
+async function relayout(s: State): Promise<void> {
+  const graph = {
+    nodes: s.nodes.map((n) => ({ id: n.id, w: n.state === "active" ? WIDE : NARROW, h: heightOf(n) })),
+    edges: edgesOf(s),
+  };
+  const body = JSON.stringify({ mode: allEdges ? "all" : "direct", graph });
+  if (body === freshBody) return;
+  const res = await fetch("/api/layout", { method: "POST", body });
+  if (!res.ok) throw new Error(String(res.status));
+  const answer = await res.json() as { layout: Layout | null; fresh: boolean; error?: string };
+  if (answer.fresh) freshBody = body;
+  layoutNote = answer.fresh ? "" : answer.error ?? "laying out";
+  if (answer.layout && answer.layout.key !== drawnKey) draw(answer.layout, s);
+}
+
+function draw(l: Layout, s: State): void {
+  drawnKey = l.key;
+  extent = { w: l.w, h: l.h };
+  positions = new Map(Object.entries(l.boxes));
   svg.setAttribute("width", String(extent.w));
   svg.setAttribute("height", String(extent.h));
   nodeLayer.style.width = `${extent.w}px`;
   nodeLayer.style.height = `${extent.h}px`;
   svg.replaceChildren();
   const stateOf = new Map(s.nodes.map((n) => [n.id, n.state]));
-  for (const e of g.edges()) {
-    const pts: Point[] = g.edge(e).points;
+  for (const e of l.edges) {
+    const pts = e.points;
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     let d = `M${pts[0].x},${pts[0].y}`;
     for (let i = 1; i < pts.length - 1; i++) {
@@ -232,9 +245,9 @@ function layout(s: State): void {
     const end = pts[pts.length - 1];
     d += ` L${end.x},${end.y}`;
     path.setAttribute("d", d);
-    path.dataset.from = e.v;
-    path.dataset.to = e.w;
-    path.setAttribute("class", stateOf.get(e.v) === "done" || stateOf.get(e.v) === "dropped" ? "edge met" : "edge");
+    path.dataset.from = e.from;
+    path.dataset.to = e.to;
+    path.setAttribute("class", stateOf.get(e.from) === "done" || stateOf.get(e.from) === "dropped" ? "edge met" : "edge");
     svg.append(path);
   }
   highlight();
@@ -299,17 +312,6 @@ function fill(card: HTMLElement, n: Node, now: number): void {
 function render(s: State): void {
   current = s;
   const active = s.nodes.filter((n) => n.state === "active");
-  const key = JSON.stringify([
-    allEdges,
-    s.nodes.map((n) => n.id),
-    edgesOf(s),
-    active.map((n) => [n.id, n.subs.length, n.subs.length === 0 && n.note !== ""]),
-  ]);
-  const relaid = key !== layoutKey;
-  if (relaid) {
-    layoutKey = key;
-    layout(s);
-  }
   const live = new Set(s.nodes.map((n) => n.id));
   for (const [id, card] of cards) {
     if (!live.has(id)) {
@@ -325,7 +327,10 @@ function render(s: State): void {
       cards.set(n.id, card);
       nodeLayer.append(card);
     }
-    const p = positions.get(n.id)!;
+    // A node the layout on screen does not hold yet waits for the next one.
+    const p = positions.get(n.id);
+    card.style.display = p ? "" : "none";
+    if (!p) continue;
     const found = card.classList.contains("found");
     card.className = `node ${n.state}${n.ready ? " ready" : ""}${n.awaitingBatch ? " awaiting" : ""}` +
       `${n.id === selected ? " selected" : ""}${found ? " found" : ""}`;
@@ -336,7 +341,7 @@ function render(s: State): void {
     card.title = n.title;
     fill(card, n, s.now);
   }
-  if (!placed) {
+  if (!placed && positions.size > 0) {
     placed = true;
     fit(focusIds());
   }
@@ -412,9 +417,11 @@ async function poll(): Promise<void> {
   try {
     const res = await fetch("/api/state");
     if (!res.ok) throw new Error(String(res.status));
-    render(await res.json() as State);
+    const s = await res.json() as State;
+    await relayout(s);
+    render(s);
     lastGood = Date.now();
-    title.textContent = "Zed plan";
+    title.textContent = layoutNote ? `Zed plan: ${layoutNote}` : "Zed plan";
     title.classList.remove("lost");
   } catch {
     title.textContent = lastGood === 0 ? "Zed plan: no server" : `Zed plan: server lost ${duration(Date.now() - lastGood)} ago`;

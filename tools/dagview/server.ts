@@ -2,16 +2,20 @@
 // Run with `node server.ts`. Node strips the types; nothing is compiled.
 //
 // Reads, on each poll: docs/plan_dag.md, wt/running-log.md, wt/ledger.jsonl,
-// wt/dag-overrides.json, wt/merge.lock/owner, /proc/loadavg and git.
+// wt/dag-overrides.json, wt/merge.lock/owner, /proc/loadavg and git. Lays the
+// plan out when the page posts its graph to /api/layout (see layout.ts).
 
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import type { IncomingMessage } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { buildNodes, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, resolveId } from "./state.ts";
 import type { Override } from "./state.ts";
+import { Layouts, layoutInWorker } from "./layout.ts";
+import type { Graph } from "./layout.ts";
 
 const here = import.meta.dirname;
 const repo = process.env.DAGVIEW_REPO ?? resolve(here, "../..");
@@ -113,7 +117,15 @@ const page = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Zed plan</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/style.css"></head>
-<body><script src="/dagre.js"></script><script type="module" src="/client.js"></script></body></html>`;
+<body><script type="module" src="/client.js"></script></body></html>`;
+
+const layouts = new Layouts(layoutInWorker);
+
+async function body(req: IncomingMessage): Promise<string> {
+  const parts: Buffer[] = [];
+  for await (const part of req) parts.push(part as Buffer);
+  return Buffer.concat(parts).toString("utf8");
+}
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
@@ -127,11 +139,6 @@ const server = createServer(async (req, res) => {
         return send("text/html; charset=utf-8", page);
       case "/style.css":
         return send("text/css; charset=utf-8", await readFile(join(here, "style.css"), "utf8"));
-      case "/dagre.js":
-        return send(
-          "text/javascript; charset=utf-8",
-          await readFile(join(here, "node_modules/@dagrejs/dagre/dist/dagre.min.js"), "utf8"),
-        );
       case "/client.js":
         return send(
           "text/javascript; charset=utf-8",
@@ -139,6 +146,10 @@ const server = createServer(async (req, res) => {
         );
       case "/api/state":
         return send("application/json", JSON.stringify(await state()));
+      case "/api/layout": {
+        const { mode, graph } = JSON.parse(await body(req)) as { mode: string; graph: Graph };
+        return send("application/json", JSON.stringify(layouts.request(mode, graph)));
+      }
       case "/api/log": {
         const id = url.searchParams.get("id") ?? "";
         const known = new Map(parsePlan(await text(join(repo, "docs/plan_dag.md"))).map((r) => [r.id.toLowerCase(), r.id]));
