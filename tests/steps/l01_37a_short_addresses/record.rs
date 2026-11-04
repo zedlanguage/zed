@@ -127,10 +127,11 @@ fn every_step_program_on_every_corpus_input() {
 #[test]
 fn printed_types() {
     // Types whose diagrams test many tuple types and atoms: their printing does not follow
-    // the digests, which the two builds order differently. Open (STATUS, L1.37a): a union
-    // of tuple types less another, such as `(| (tuple 0 #a0) (tuple 1 #a1)) - (tuple 1 _)`,
-    // prints the negations along its diagram's paths, which follow the digests, so the two
-    // builds print it differently; no L1 source prints one.
+    // the digests, which the two builds order differently. A union of tuple types less
+    // another, such as `(| (tuple 0 #a0) (tuple 1 #a1)) - (tuple 1 _)`, printed the negations
+    // along its diagram's paths, which follow the digests, so the two builds printed it
+    // differently, until both printers showed a diagram from its decision list in its one
+    // form (step BDD-atom-order).
     use zed_kernel::Value;
     use zed_kernel::types::Type;
     let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal type");
@@ -141,8 +142,13 @@ fn printed_types() {
         );
         let atoms = Type::union_all((0..n).map(|i| Type::atom(&format!("b{i}"))));
         let met = &Type::tuple(vec![Type::int(), lit(0)]) & &Type::tuple(vec![lit(n), Type::int()]);
+        let less = &tuples - &Type::tuple(vec![lit(n - 1), Type::top()]);
         writeln!(out, "{n}: {tuples}\n  {atoms}\n  {met}\n  {}", !&tuples)
             .expect("a String takes any write");
+        for t in [&tuples, &met, &!&tuples, &less] {
+            writeln!(out, "  {}", t.surface()).expect("a String takes any write");
+        }
+        writeln!(out, "  {less}").expect("a String takes any write");
     }
     insta::assert_snapshot!(out);
 }

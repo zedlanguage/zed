@@ -87,7 +87,25 @@ pub(crate) fn mix(a: u64, b: u64) -> u64 {
     let mut z = (a.rotate_left(29) ^ b).wrapping_add(0x9e37_79b9_7f4a_7c15);
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    crate::address::short64(z ^ (z >> 31))
+    crate::address::short64(salted(z ^ (z >> 31)))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's change of every digest made on its thread (module `print`'s tests): a thread with
+    /// another salt orders the atoms of its diagrams as another hash would.
+    pub(crate) static SALT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn salted(h: u64) -> u64 {
+    h ^ SALT.get()
+}
+
+#[cfg(not(test))]
+#[inline]
+fn salted(h: u64) -> u64 {
+    h
 }
 
 /// FNV-1a over `b`.
@@ -1751,10 +1769,14 @@ fn tuples(items: &mut Vec<Rope>, t: &Tuples) {
     }
 }
 
-/// One item per path of a diagram: the intersection of the atoms it takes, or `all` when it
-/// takes none, and the complements of those it refuses. The items, and the atoms within each,
-/// are sorted as text, since the diagram's order of atoms is that of their digests. A part
-/// kept as an expression is its connective applied to the items of its operands.
+/// One item per clause of a diagram's decision list (`Bdd::list`), whose form does not depend
+/// on the order of the atoms, which is that of their digests (step BDD-atom-order): each
+/// literal of a block of value `true`, with the complements of the literals of the blocks of
+/// value `false` before it, and, when the default is `true`, the complements of them all. A
+/// clause is the intersection of the atoms it takes, or `all` when it takes none, and the
+/// complements of those it refuses. The items, and the atoms within each, are sorted as text.
+/// A part kept as an expression is its connective applied to the items of its operands, the
+/// two operands of a union or intersection sorted as text.
 fn clauses<A: bdd::Literal>(
     items: &mut Vec<Rope>,
     all: &Rope,
@@ -1774,30 +1796,68 @@ fn clauses<A: bdd::Literal>(
             };
             items.push(match form {
                 Form::Not(a) => rope!["(& ", all.clone(), " (! ", item(a), "))"],
-                Form::Or(a, b) => rope!["(| ", item(a), " ", item(b), ")"],
-                Form::And(a, b) => rope!["(& ", item(a), " ", item(b), ")"],
+                Form::Or(a, b) => {
+                    let (x, y) = sorted_pair(item(a), item(b));
+                    rope!["(| ", x, " ", y, ")"]
+                }
+                Form::And(a, b) => {
+                    let (x, y) = sorted_pair(item(a), item(b));
+                    rope!["(& ", x, " ", y, ")"]
+                }
             });
             return;
         }
     };
+    let list = b.list();
     let mut found = Vec::new();
-    b.paths(&mut |pos, neg| {
-        let mut lits: Vec<Rope> = pos.iter().map(|a| show(a)).collect();
+    // A clause: the atoms `pos` taken, those `neg` refused, and each literal of `zeros` false.
+    let mut clause = |pos: &[&A], neg: &[&A], zeros: &[(&A, bool)]| {
+        let taken = (pos.iter().copied()).chain(zeros.iter().filter(|z| !z.1).map(|z| z.0));
+        let mut lits: Vec<Rope> = taken.map(show).collect();
         lits.sort();
         if lits.is_empty() {
             lits.push(all.clone());
         }
-        let mut refused: Vec<Rope> = neg.iter().map(|n| rope!["(! ", show(n), ")"]).collect();
+        let not = (neg.iter().copied()).chain(zeros.iter().filter(|z| z.1).map(|z| z.0));
+        let mut refused: Vec<Rope> = not.map(|n| rope!["(! ", show(n), ")"]).collect();
         refused.sort();
         lits.extend(refused);
         match lits.len() {
             1 => found.push(lits.remove(0)),
             _ => found.push(Rope::listed("(&", lits)),
         }
-        true
-    });
+    };
+    // The literals of the blocks of value `false` so far, each with whether it is taken.
+    let mut zeros: Vec<(&A, bool)> = Vec::new();
+    for (value, lits) in &list.blocks {
+        if *value {
+            for (a, taken) in lits {
+                match taken {
+                    true => clause(&[a], &[], &zeros),
+                    false => clause(&[], &[a], &zeros),
+                }
+            }
+        } else {
+            zeros.extend(lits.iter().map(|(a, t)| (a, *t)));
+        }
+    }
+    match &list.tail {
+        Ok(true) => clause(&[], &[], &zeros),
+        Ok(false) => {}
+        Err(rest) => {
+            rest.paths(&mut |pos, neg| {
+                clause(pos, neg, &zeros);
+                true
+            });
+        }
+    }
     found.sort();
     items.extend(found);
+}
+
+/// The two texts in the order of their bytes.
+fn sorted_pair(x: Rope, y: Rope) -> (Rope, Rope) {
+    if x <= y { (x, y) } else { (y, x) }
 }
 
 /// The values of a finite type, one at a time, from [`Type::each_value`].

@@ -38,6 +38,8 @@ use std::sync::atomic::{AtomicU64, Ordering as Atomic};
 
 use super::{Morphism, Op, Row, mix};
 
+mod list;
+
 /// The next node id. Diagram nodes and expressions take their ids from one counter, so an id
 /// names one node among both; ids key the maps of a walk, never addresses.
 static NEXT: AtomicU64 = AtomicU64::new(2);
@@ -196,22 +198,49 @@ impl<A: Literal> Bdd<A> {
         }
     }
 
-    /// A chain under `op` of two or more literals, as its first literal and the rest.
-    fn split(&self, op: Op) -> Option<(Bdd<A>, Bdd<A>)> {
-        let Bdd::Node(n) = self else { return None };
+    /// The literals of a chain under `op` of two or more literals, each an atom and whether
+    /// the chain takes it; `None` for any other diagram.
+    fn chain(&self, op: Op) -> Option<Vec<(&A, bool)>> {
         if self.is_literal() || !self.is_chain(op) {
             return None;
         }
         let out = op == Op::Or;
-        let atom = Bdd::literal(n.atom.clone());
-        Some(match &n.lo {
-            Bdd::Leaf(v) if *v == out => (atom.not_if(out), n.hi.clone()),
-            _ => (atom.not_if(!out), n.lo.clone()),
-        })
+        let mut lits = Vec::new();
+        let mut b = self;
+        while let Bdd::Node(n) = b {
+            b = match &n.lo {
+                Bdd::Leaf(v) if *v == out => {
+                    lits.push((&n.atom, !out));
+                    &n.hi
+                }
+                _ => {
+                    lits.push((&n.atom, out));
+                    &n.lo
+                }
+            };
+        }
+        Some(lits)
     }
 
-    fn not_if(self, b: bool) -> Bdd<A> {
-        if b { self.not() } else { self }
+    /// The chain under `op` without its literal on `atom`, which it takes when `taken`.
+    fn chain_without(&self, op: Op, atom: &A, taken: bool) -> Bdd<A> {
+        // The literal is left out by fixing it to the value `op` passes over.
+        let value = taken != (op == Op::Or);
+        self.restrict(&|a| (a == atom).then_some(value), &mut HashMap::new())
+    }
+
+    /// The literal on `atom`, taken or refused.
+    fn literal_of(atom: &A, taken: bool) -> Bdd<A> {
+        let l = Bdd::literal(atom.clone());
+        if taken { l } else { l.not() }
+    }
+
+    /// The atom of a diagram that is one literal, and whether the literal takes it.
+    fn as_literal(&self) -> Option<(&A, bool)> {
+        match self {
+            Bdd::Node(n) if self.is_literal() => Some((&n.atom, matches!(n.hi, Bdd::Leaf(true)))),
+            _ => None,
+        }
     }
 
     fn apply(&self, other: &Bdd<A>, op: Op, memo: &mut HashMap<(u64, u64), Bdd<A>>) -> Bdd<A> {
@@ -578,6 +607,14 @@ pub(super) enum Form<A: Literal> {
     And(Part<A>, Part<A>),
 }
 
+/// The operands of a part under a connective ([`Part::operands`]).
+enum Operands<'a, A: Literal> {
+    /// An expression's two operands.
+    Two(&'a Part<A>, &'a Part<A>),
+    /// A chain, with its literals.
+    Chain(&'a Bdd<A>, Vec<(&'a A, bool)>),
+}
+
 impl<A: Literal> Part<A> {
     /// The hash of the part's contents.
     pub(super) fn digest(&self) -> u64 {
@@ -739,46 +776,103 @@ impl<A: Literal> Part<A> {
         Part::expr(Form::Or(a, b))
     }
 
-    /// The operands of an `And` or an `Or`, under `op`.
-    fn operands(&self, op: Op) -> Option<[Part<A>; 2]> {
+    /// The operands of an expression's `And` or `Or`, under `op`, or the literals of a chain
+    /// under `op`.
+    fn operands(&self, op: Op) -> Option<Operands<'_, A>> {
         match (self, op) {
             (Part::Expr(e), Op::And) => match &e.form {
-                Form::And(a, b) => Some([a.clone(), b.clone()]),
+                Form::And(a, b) => Some(Operands::Two(a, b)),
                 _ => None,
             },
             (Part::Expr(e), Op::Or) => match &e.form {
-                Form::Or(a, b) => Some([a.clone(), b.clone()]),
+                Form::Or(a, b) => Some(Operands::Two(a, b)),
                 _ => None,
             },
-            (Part::Bdd(b), _) => b.split(op).map(|(x, y)| [Part::Bdd(x), Part::Bdd(y)]),
+            (Part::Bdd(b), _) => b.chain(op).map(|lits| Operands::Chain(b, lits)),
         }
     }
 
     /// `(c, x, y)` when `a op b` is a choice: under `Or`, `c&x | !c&y`; under `And`,
-    /// `(!c|x) & (c|y)`.
+    /// `(!c|x) & (c|y)`. The condition `c` is an operand of `a`'s expression, or a literal of
+    /// its chain, whose complement is one of `b`'s. When two or more conditions fit, which one
+    /// a search finds first depends on the order of the atoms, so there is then no choice, and
+    /// the parts built are the same in every order of the atoms (step BDD-atom-order).
     fn choice_of(a: &Part<A>, b: &Part<A>, op: Op) -> Option<(Part<A>, Part<A>, Part<A>)> {
         let inner = if op == Op::Or { Op::And } else { Op::Or };
-        let [p, q] = a.operands(inner)?;
-        let [r, s] = b.operands(inner)?;
-        for (c, x) in [(&p, &q), (&q, &p)] {
-            for (n, y) in [(&r, &s), (&s, &r)] {
-                if c.same_as_not(n) {
-                    return Some(if op == Op::Or {
-                        (c.clone(), x.clone(), y.clone())
-                    } else {
-                        // `(c|x) & (!c|y)` takes `y` when `c`.
-                        (c.clone(), y.clone(), x.clone())
-                    });
+        let (l, r) = (a.operands(inner)?, b.operands(inner)?);
+        // The literal of `lits` that `n` is.
+        let within = |n: &Part<A>, lits: &[(&A, bool)]| match n {
+            Part::Bdd(d) => d
+                .as_literal()
+                .filter(|(atom, taken)| lits.iter().any(|(x, t)| x == atom && t == taken))
+                .map(|(atom, taken)| (atom.clone(), taken)),
+            Part::Expr(_) => None,
+        };
+        let mut found = Vec::new();
+        match (&l, &r) {
+            (Operands::Two(p, q), Operands::Two(s, t)) => {
+                for (c, x) in [(p, q), (q, p)] {
+                    for (n, y) in [(s, t), (t, s)] {
+                        if c.same_as_not(n) {
+                            found.push(((*c).clone(), (*x).clone(), (*y).clone()));
+                        }
+                    }
                 }
             }
+            (Operands::Two(p, q), Operands::Chain(d, lits)) => {
+                for (c, x) in [(p, q), (q, p)] {
+                    if let Some((atom, taken)) = within(&c.not(), lits) {
+                        let y = Part::Bdd(d.chain_without(inner, &atom, taken));
+                        found.push(((*c).clone(), (*x).clone(), y));
+                    }
+                }
+            }
+            (Operands::Chain(d, lits), Operands::Two(s, t)) => {
+                for (n, y) in [(s, t), (t, s)] {
+                    if let Some((atom, taken)) = within(&n.not(), lits) {
+                        let c = Part::Bdd(Bdd::literal_of(&atom, taken));
+                        let x = Part::Bdd(d.chain_without(inner, &atom, taken));
+                        found.push((c, x, (*y).clone()));
+                    }
+                }
+            }
+            (Operands::Chain(d, xs), Operands::Chain(e, ys)) => {
+                // The atoms on which the chains' literals are complements, found by sorting so
+                // that the time is `O(k log k)` in the literals; the rests are built only for
+                // a single atom.
+                let mut sorted = xs.clone();
+                sorted.sort_unstable();
+                let mut both = ys
+                    .iter()
+                    .filter(|(atom, taken)| sorted.binary_search(&(*atom, !*taken)).is_ok());
+                let (Some(&(atom, taken)), None) = (both.next(), both.next()) else {
+                    return None;
+                };
+                found.push((
+                    Part::Bdd(Bdd::literal_of(atom, !taken)),
+                    Part::Bdd(d.chain_without(inner, atom, !taken)),
+                    Part::Bdd(e.chain_without(inner, atom, taken)),
+                ));
+            }
         }
-        None
+        let mut found = found.into_iter();
+        let (Some((c, x, y)), None) = (found.next(), found.next()) else {
+            return None;
+        };
+        Some(if op == Op::Or {
+            (c, x, y)
+        } else {
+            // `(c|x) & (!c|y)` takes `y` when `c`.
+            (c, y, x)
+        })
     }
 
-    /// The choice this part is in its one form.
+    /// The choice this part is in its one form. Only an expression is one, since an operand
+    /// of a chain's union is a literal, which has no operands.
     fn choice(&self) -> Option<(Part<A>, Part<A>, Part<A>)> {
-        let [a, b] = self.operands(Op::Or)?;
-        Part::choice_of(&a, &b, Op::Or).map(|(c, x, y)| {
+        let Part::Expr(e) = self else { return None };
+        let Form::Or(a, b) = &e.form else { return None };
+        Part::choice_of(a, b, Op::Or).map(|(c, x, y)| {
             let (d, same) = Part::condition(&c);
             if same { (d, x, y) } else { (d, y, x) }
         })
@@ -1751,6 +1845,146 @@ mod tests {
             |m| {
                 let (a, b) = &built[&m];
                 assert_eq!(a.cmp(b), Ordering::Equal);
+            },
+        );
+    }
+
+    /// A decision list's blocks with each block's literals sorted, and its tail.
+    type Blocks = (Vec<(bool, Vec<(Row, bool)>)>, Result<bool, Bdd<Row>>);
+
+    fn sorted(l: super::list::List<Row>) -> Blocks {
+        let blocks = l
+            .blocks
+            .into_iter()
+            .map(|(v, mut lits)| {
+                lits.sort();
+                (v, lits)
+            })
+            .collect();
+        (blocks, l.tail)
+    }
+
+    /// The decision list found block by block: the atoms forced on the paths to one leaf,
+    /// then the diagram restricted to their literals false, and so on.
+    fn list_by_blocks(b: &Bdd<Row>) -> Blocks {
+        let mut f = b.clone();
+        let mut blocks = Vec::new();
+        let mut last: Option<bool> = None;
+        loop {
+            if let Bdd::Leaf(v) = f {
+                return (blocks, Ok(v));
+            }
+            // The literals of value `!leaf`: those whose opposite every path to `leaf` takes.
+            let of = |leaf: bool| {
+                let (taken, refused) = f.forced_to(leaf);
+                let mut lits: Vec<(Row, bool)> = taken.into_iter().map(|a| (a, false)).collect();
+                lits.extend(refused.into_iter().map(|a| (a, true)));
+                lits.sort();
+                lits
+            };
+            let (value, lits) = match last {
+                None => match of(false) {
+                    l if !l.is_empty() => (true, l),
+                    _ => (false, of(true)),
+                },
+                Some(v) => (!v, of(v)),
+            };
+            if lits.is_empty() {
+                return (blocks, Err(f));
+            }
+            let fix: BTreeMap<Row, bool> = lits.iter().map(|(a, t)| (a.clone(), !t)).collect();
+            f = f.restrict(&|a: &Row| fix.get(a).copied(), &mut HashMap::new());
+            blocks.push((value, lits));
+            last = Some(value);
+        }
+    }
+
+    fn eval_list(l: &Blocks, holds: &impl Fn(&Row) -> bool) -> bool {
+        for (v, lits) in &l.0 {
+            if lits.iter().any(|(a, t)| holds(a) == *t) {
+                return *v;
+            }
+        }
+        match &l.1 {
+            Ok(v) => *v,
+            Err(b) => b.eval(holds),
+        }
+    }
+
+    #[test]
+    fn list_matches_the_blocks_found_one_by_one() {
+        let mut seed = 11;
+        let mut lists = 0;
+        for _ in 0..4000 {
+            let Part::Bdd(b) = random(&mut seed, 6) else {
+                continue;
+            };
+            let got = sorted(b.list());
+            assert_eq!(got, list_by_blocks(&b), "the list of {b:?}");
+            // Every diagram the connectives build is a decision list (`Part::zip`).
+            assert!(got.1.is_ok(), "{b:?} is a decision list");
+            for bits in 0..64u64 {
+                let holds = |a: &Row| (0..6).any(|i| bits >> i & 1 == 1 && *a == atom(i));
+                assert_eq!(eval_list(&got, &holds), b.eval(holds), "{b:?} at {bits}");
+            }
+            lists += 1;
+        }
+        assert!(lists > 1000, "{lists} diagrams");
+    }
+
+    #[test]
+    fn list_of_a_diagram_that_is_no_decision_list_keeps_the_rest() {
+        // `x | (y ^ z)`: the block `x`, then the parity of `y` and `z`, which no literal decides.
+        let mut xs: Vec<Row> = (0..3).map(atom).collect();
+        xs.sort();
+        let (y, z) = (Bdd::literal(xs[1].clone()), Bdd::literal(xs[2].clone()));
+        let parity = Bdd::node(xs[1].clone(), z.not(), z.clone());
+        let f = Bdd::node(xs[0].clone(), Bdd::Leaf(true), parity.clone());
+        let l = f.list();
+        assert_eq!(l.blocks, vec![(true, vec![(xs[0].clone(), true)])]);
+        assert_eq!(l.tail, Err(parity.clone()));
+        assert_eq!(sorted(f.list()), list_by_blocks(&f));
+        assert_eq!(parity.list().blocks, Vec::new());
+        assert_eq!(y.list().blocks, vec![(true, vec![(xs[1].clone(), true)])]);
+        assert_eq!(y.list().tail, Ok(false));
+        assert_eq!(
+            y.not().list().blocks,
+            vec![(true, vec![(xs[1].clone(), false)])]
+        );
+    }
+
+    #[test]
+    fn list_of_alternating_literals_scales() {
+        // `((x0 | x1) & !x2 | x3) & !x4 …`, each new literal first in the order, so the
+        // diagram is one node per atom and every literal is a block of its own: finding the
+        // blocks one by one took a pass over the nodes per block.
+        let build = |m: usize| {
+            let mut xs: Vec<Row> = (0..m as u64).map(atom).collect();
+            xs.sort();
+            let mut f = Part::literal(xs[m - 1].clone());
+            for (i, x) in xs[..m - 1].iter().rev().enumerate() {
+                f = match i % 2 {
+                    0 => f.zip(&Part::literal(x.clone()), Op::Or),
+                    _ => f.zip(&Part::literal(x.clone()).not(), Op::And),
+                };
+            }
+            let Part::Bdd(b) = f else {
+                unreachable!("a literal joined to a diagram is a diagram")
+            };
+            b
+        };
+        let n = 1 << 12;
+        let built: BTreeMap<usize, Bdd<Row>> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| (m, build(m)))
+            .collect();
+        scaling::check(
+            "the decision list of alternating literals, by atoms",
+            n,
+            |m| {
+                let l = built[&m].list();
+                assert_eq!(l.blocks.len(), m - 1);
+                assert_eq!(l.tail, Ok(false));
             },
         );
     }

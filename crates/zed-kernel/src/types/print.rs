@@ -63,6 +63,7 @@ impl Type {
             unreachable!("a reference is one node")
         };
         p.walk(i);
+        p.canon(i);
         p.render(Text {
             segs: vec![Seg::Node(i, at)],
             class: root.class,
@@ -71,7 +72,7 @@ impl Type {
 }
 
 /// How a text binds, for parenthesizing it as an operand.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Class {
     Arrow,
     Union,
@@ -85,7 +86,7 @@ enum Class {
 }
 
 /// Where a text stands, and so which classes it may have there unparenthesized.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum At {
     Any,
     Union,
@@ -115,6 +116,76 @@ impl At {
 enum Seg {
     Str(String),
     Node(usize, At),
+    /// Texts that may stand in any order, joined by a separator: the operands of a union or
+    /// an intersection, which [`Printer::canon`] orders by their contents.
+    Group(Group),
+}
+
+#[derive(Debug)]
+struct Group {
+    sep: &'static str,
+    elems: Vec<Vec<Seg>>,
+}
+
+/// A string or a node of a text, groups spelled out with their separators.
+#[derive(Clone, Copy)]
+enum Piece<'a> {
+    Str(&'a str),
+    Node(usize, At),
+}
+
+/// The pieces of segments in order, with a stack of their own; [`Printer::write`] pushes the
+/// text of a node it spells out.
+struct Pieces<'a> {
+    stack: Vec<Frame<'a>>,
+}
+
+enum Frame<'a> {
+    Segs(std::slice::Iter<'a, Seg>),
+    /// A group's elements, and whether the next is the first.
+    Elems(&'static str, std::slice::Iter<'a, Vec<Seg>>, bool),
+    Close,
+}
+
+impl<'a> Pieces<'a> {
+    fn new(segs: &'a [Seg]) -> Pieces<'a> {
+        Pieces {
+            stack: vec![Frame::Segs(segs.iter())],
+        }
+    }
+}
+
+impl<'a> Iterator for Pieces<'a> {
+    type Item = Piece<'a>;
+
+    fn next(&mut self) -> Option<Piece<'a>> {
+        loop {
+            match self.stack.last_mut()? {
+                Frame::Segs(it) => match it.next() {
+                    None => drop(self.stack.pop()),
+                    Some(Seg::Str(s)) => return Some(Piece::Str(s)),
+                    Some(Seg::Node(i, at)) => return Some(Piece::Node(*i, *at)),
+                    Some(Seg::Group(g)) => {
+                        self.stack.push(Frame::Elems(g.sep, g.elems.iter(), true))
+                    }
+                },
+                Frame::Elems(sep, it, first) => match it.next() {
+                    None => drop(self.stack.pop()),
+                    Some(e) => {
+                        let (sep, first) = (*sep, std::mem::replace(first, false));
+                        self.stack.push(Frame::Segs(e.iter()));
+                        if !first {
+                            return Some(Piece::Str(sep));
+                        }
+                    }
+                },
+                Frame::Close => {
+                    self.stack.pop();
+                    return Some(Piece::Str(")"));
+                }
+            }
+        }
+    }
 }
 
 /// A text with its class.
@@ -128,6 +199,18 @@ impl Text {
         Text {
             segs: vec![Seg::Str(s.into())],
             class,
+        }
+    }
+
+    /// The text of one or more `items` in any order, joined by `sep`, each operand at `at`;
+    /// `class` when there are two or more.
+    fn group(items: Vec<Text>, sep: &'static str, at: At, class: Class) -> Text {
+        match items.len() {
+            1 => items.into_iter().next().expect("one item"),
+            _ => Text {
+                segs: vec![group(items, sep, at)],
+                class,
+            },
         }
     }
 
@@ -165,6 +248,71 @@ fn put(segs: &mut Vec<Seg>, t: Text, at: At) {
             segs.extend(t.segs);
             segs.push(Seg::Str(")".into()));
         }
+    }
+}
+
+/// The group of `items`, each at `at`.
+fn group(items: Vec<Text>, sep: &'static str, at: At) -> Seg {
+    debug_assert!(!items.is_empty(), "a group has an element");
+    Seg::Group(Group {
+        sep,
+        elems: items
+            .into_iter()
+            .map(|t| {
+                let mut segs = Vec::new();
+                put(&mut segs, t, at);
+                segs
+            })
+            .collect(),
+    })
+}
+
+/// A token of a text's contents, a node by its rank ([`Printer::canon`]).
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Tok<'a> {
+    /// A recursive type: its context, its name, and its number.
+    Rec(&'a str, &'a str, u64),
+    /// Whether the node is named, and the class it has.
+    Head(bool, Class),
+    Str(&'a str),
+    Node(u32, At),
+}
+
+/// The tokens of `segs`.
+fn toks<'a>(segs: &'a [Seg], rank: &[u32], out: &mut Vec<Tok<'a>>) {
+    out.extend(Pieces::new(segs).map(|p| match p {
+        Piece::Str(s) => Tok::Str(s),
+        Piece::Node(i, at) => Tok::Node(rank[i], at),
+    }));
+}
+
+/// Orders the elements of each group in `segs` by their tokens, groups inside elements first.
+/// The recursion is as deep as groups are nested in one text, which is at most once, since an
+/// element is an operand or a literal.
+fn sort_groups(segs: &mut [Seg], rank: &[u32]) {
+    for s in segs {
+        let Seg::Group(g) = s else { continue };
+        for e in &mut g.elems {
+            sort_groups(e, rank);
+        }
+        let mut keyed: Vec<(Vec<Tok>, usize)> = g
+            .elems
+            .iter()
+            .enumerate()
+            .map(|(k, e)| {
+                let mut key = Vec::new();
+                toks(e, rank, &mut key);
+                (key, k)
+            })
+            .collect();
+        keyed.sort_unstable();
+        let order: Vec<usize> = keyed.into_iter().map(|(_, k)| k).collect();
+        let mut old: Vec<Option<Vec<Seg>>> =
+            std::mem::take(&mut g.elems).into_iter().map(Some).collect();
+        g.elems = order
+            .into_iter()
+            .map(|k| old[k].take().expect("each element is placed once"))
+            .collect();
     }
 }
 
@@ -213,8 +361,9 @@ struct Printer {
     index: BTreeMap<Key, usize>,
     texts: Vec<Option<Text>>,
     uses: Vec<u32>,
-    /// A recursive type, named however often it is used.
-    forced: Vec<bool>,
+    /// A recursive type, named however often it is used: its context, its name and its
+    /// number, which rank it ([`Printer::canon`]).
+    forced: Vec<Option<(String, String, u64)>>,
     /// The nodes in the order the walk leaves them.
     post: Vec<usize>,
     /// Each node's item, until visited.
@@ -225,6 +374,17 @@ struct Printer {
 enum Step {
     Enter(usize),
     Leave(usize),
+}
+
+/// Pushes the nodes `segs` names, so that the first is visited first.
+fn push_children(stack: &mut Vec<Step>, segs: &[Seg]) {
+    let children: Vec<usize> = Pieces::new(segs)
+        .filter_map(|p| match p {
+            Piece::Node(j, _) => Some(j),
+            Piece::Str(_) => None,
+        })
+        .collect();
+    stack.extend(children.into_iter().rev().map(Step::Enter));
 }
 
 impl Printer {
@@ -238,7 +398,7 @@ impl Printer {
                 self.index.insert(key, i);
                 self.texts.push(None);
                 self.uses.push(0);
-                self.forced.push(false);
+                self.forced.push(None);
                 self.items.push(Some(item));
                 i
             }
@@ -265,14 +425,113 @@ impl Printer {
                     };
                     let text = self.text(&item);
                     stack.push(Step::Leave(i));
-                    stack.extend(text.segs.iter().rev().filter_map(|s| match s {
-                        Seg::Node(j, _) => Some(Step::Enter(*j)),
-                        Seg::Str(_) => None,
-                    }));
+                    push_children(&mut stack, &text.segs);
                     self.texts[i] = Some(text);
                 }
             }
         }
+    }
+
+    /// The walk's order again, over the texts as [`Printer::canon`] ordered them.
+    fn order(&mut self, root: usize) {
+        let mut seen = vec![false; self.texts.len()];
+        self.post.clear();
+        let mut stack = vec![Step::Enter(root)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Leave(i) => self.post.push(i),
+                Step::Enter(i) => {
+                    if std::mem::replace(&mut seen[i], true) {
+                        continue;
+                    }
+                    stack.push(Step::Leave(i));
+                    push_children(&mut stack, &self.texts[i].as_ref().expect("visited").segs);
+                }
+            }
+        }
+    }
+
+    /// Whether node `i` gets a definition: a recursive type, or a node used twice or more
+    /// whose text is more than one token.
+    fn named(&self, i: usize) -> bool {
+        let text = self.texts[i].as_ref().expect("visited");
+        let token = matches!(&text.segs[..], [Seg::Str(s)] if !s.contains([' ', '(', ',']));
+        self.forced[i].is_some() || (self.uses[i] >= 2 && !token)
+    }
+
+    /// Orders the elements of every group by their contents, so that the text does not depend
+    /// on the order the parts' operands and literals were found in, which follows the atoms'
+    /// digests (step BDD-atom-order). Each node gets a rank by its contents, as in the tree
+    /// isomorphism test of Aho, Hopcroft and Ullman: the nodes are taken by height, those of
+    /// one height ordered by their tokens, a child by its rank, each group's elements sorted
+    /// first; a recursive type is a leaf ranked by its name, since every cycle passes through
+    /// one. The walk's order is then found again, and with it the names' numbers.
+    // Complexity tradeoff: the tokens of one height are sorted together, so the time is
+    // `O(t log t)` in the tokens of all texts, against `O(t)` for the walk alone.
+    fn canon(&mut self, root: usize) {
+        let n = self.texts.len();
+        let mut height: Vec<Option<usize>> =
+            self.forced.iter().map(|f| f.as_ref().map(|_| 0)).collect();
+        for &i in &self.post {
+            if height[i].is_some() {
+                continue;
+            }
+            let segs = &self.texts[i].as_ref().expect("visited").segs;
+            let h = Pieces::new(segs)
+                .filter_map(|p| match p {
+                    Piece::Node(j, _) => Some(
+                        height[j]
+                            .expect("a node leaves after those it names, but a recursive type"),
+                    ),
+                    Piece::Str(_) => None,
+                })
+                .max()
+                .unwrap_or(0);
+            height[i] = Some(h + 1);
+        }
+        let mut levels: Vec<Vec<usize>> = Vec::new();
+        for (i, h) in height.into_iter().enumerate() {
+            let h = h.expect("the walk leaves every node");
+            if levels.len() <= h {
+                levels.resize_with(h + 1, Vec::new);
+            }
+            levels[h].push(i);
+        }
+        let mut rank = vec![u32::MAX; n];
+        let mut next = 0;
+        for level in &levels {
+            for &i in level {
+                let text = self.texts[i].as_mut().expect("visited");
+                sort_groups(&mut text.segs, &rank);
+            }
+            let mut sigs: Vec<(Vec<Tok>, usize)> =
+                level.iter().map(|&i| (self.sig(i, &rank), i)).collect();
+            sigs.sort_unstable();
+            let mut last = None;
+            for (sig, i) in &sigs {
+                if last != Some(sig) {
+                    next += 1;
+                    last = Some(sig);
+                }
+                rank[*i] = next;
+            }
+        }
+        self.order(root);
+    }
+
+    /// The tokens of node `i`, its children by `rank`.
+    fn sig<'a>(&'a self, i: usize, rank: &[u32]) -> Vec<Tok<'a>> {
+        if let Some((ctx, name, id)) = &self.forced[i] {
+            return vec![Tok::Rec(ctx, name, *id)];
+        }
+        let text = self.texts[i].as_ref().expect("visited");
+        let class = match text.class {
+            Class::Of(j) => Class::Of(rank[j] as usize),
+            c => c,
+        };
+        let mut sig = vec![Tok::Head(self.named(i), class)];
+        toks(&text.segs, rank, &mut sig);
+        sig
     }
 
     fn text(&mut self, item: &Item) -> Text {
@@ -296,7 +555,8 @@ impl Printer {
     fn ty(&mut self, ctx: &Ctx, t: &Type) -> Text {
         if let Node::Rec(r) = &*t.0 {
             let i = self.index[&Key::Ty(ctx.clone(), t.clone())];
-            self.forced[i] = true;
+            let ctx_name = ctx.as_deref().unwrap_or("").to_string();
+            self.forced[i] = Some((ctx_name, t.to_string(), r.id));
             let body = r.body.get_or_init(|| (r.make)()).clone();
             return self.refer(Item::Ty(ctx.clone(), body));
         }
@@ -487,7 +747,8 @@ impl Printer {
         }
     }
 
-    /// A part: a diagram node as `a & hi | (lo \ a)`, or an expression's connective.
+    /// A part: a diagram from its decision list ([`Printer::list`]), or an expression's
+    /// connective, its operands in any order.
     fn part<A: super::bdd::Literal>(
         &mut self,
         p: &Part<A>,
@@ -501,36 +762,187 @@ impl Printer {
             Some(false) => Text::word("!_", Class::Prim),
             None => me.refer(item(q)),
         };
-        let b = match p.view() {
-            Err(form) => {
-                return match form {
-                    Form::Not(q) => {
-                        let q = operand(self, q);
+        match p.view() {
+            Ok(b) => self.list(b, lit, all, item),
+            Err(Form::Not(q)) => {
+                let q = operand(self, q);
+                let mut segs = Vec::new();
+                put(&mut segs, all(self), At::DiffLeft);
+                segs.push(Seg::Str(" \\ ".into()));
+                put(&mut segs, q, At::Prim);
+                Text {
+                    segs,
+                    class: Class::Diff,
+                }
+            }
+            Err(Form::Or(x, y)) => {
+                let x = operand(self, x);
+                let y = operand(self, y);
+                Text::group(vec![x, y], " | ", At::Union, Class::Union)
+            }
+            Err(Form::And(x, y)) => {
+                let x = operand(self, x);
+                let y = operand(self, y);
+                Text::group(vec![x, y], " & ", At::And, Class::And)
+            }
+        }
+    }
+
+    /// A diagram from its decision list in its one form (module `bdd::list`), which does not
+    /// depend on the order of the atoms. A block of value `true` is the union of its literals
+    /// and the rest, `a | (all \ b) | rest`; a block of value `false` is the rest without its
+    /// literals, `b & rest \ a`, `a` an atom the block's literals take and `b` one they refuse.
+    /// The literals of a block are a group. A diagram that is no decision list has none such,
+    /// so what is left after the blocks is printed node by node ([`Printer::node`]). The text
+    /// is written from the first block on into one list of segments, with a stack of what
+    /// closes the blocks begun, so that no block's text is copied into the text before it.
+    // Complexity tradeoff: each diagram prints its own list, so the text is linear in the
+    // lists of the distinct parts printed, where printing nodes was linear in their union.
+    fn list<A: super::bdd::Literal>(
+        &mut self,
+        b: &Bdd<A>,
+        lit: &dyn Fn(&mut Printer, &A) -> Text,
+        all: &dyn Fn(&mut Printer) -> Text,
+        item: &dyn Fn(&Part<A>) -> Item,
+    ) -> Text {
+        let list = b.list();
+        let m = list.blocks.len();
+        let every = matches!(list.tail, Ok(true));
+        let mut tail = match &list.tail {
+            Ok(true) => Some(all(self)),
+            Ok(false) => None,
+            Err(rest) => Some(self.node(rest, lit, all, item)),
+        };
+        // The texts of each block's literals: of value `true`, `a` and `all \ b` in the order
+        // of the literals; of value `false`, the atoms refused and those taken.
+        let mut texts: Vec<(Vec<Text>, Vec<Text>)> = Vec::with_capacity(m);
+        for (value, lits) in list.blocks.iter().rev() {
+            let (mut first, mut taken) = (Vec::new(), Vec::new());
+            for (a, t) in lits {
+                let l = lit(self, a);
+                match (value, t) {
+                    (true, true) | (false, false) => first.push(l),
+                    (false, true) => taken.push(l),
+                    (true, false) => {
                         let mut segs = Vec::new();
                         put(&mut segs, all(self), At::DiffLeft);
                         segs.push(Seg::Str(" \\ ".into()));
-                        put(&mut segs, q, At::Prim);
-                        Text {
+                        put(&mut segs, l, At::Prim);
+                        first.push(Text {
                             segs,
                             class: Class::Diff,
-                        }
+                        });
                     }
-                    Form::Or(x, y) => {
-                        let x = operand(self, x);
-                        let y = operand(self, y);
-                        Text::joined(vec![x, y], " | ", At::Union, Class::Union, "!_")
-                    }
-                    Form::And(x, y) => {
-                        let x = operand(self, x);
-                        let y = operand(self, y);
-                        Text::joined(vec![x, y], " & ", At::And, Class::And, "_")
-                    }
-                };
+                }
             }
-            Ok(b) => b,
+            texts.push((first, taken));
+        }
+        texts.reverse();
+        // The class of the text from each block on, `None` where it has no value.
+        let mut class = vec![None; m + 1];
+        class[m] = tail.as_ref().map(|t| t.class);
+        for k in (0..m).rev() {
+            let (first, taken) = &texts[k];
+            let next = class[k + 1];
+            class[k] = match list.blocks[k].0 {
+                true => Some(match (first.len(), next) {
+                    (1, None) => first[0].class,
+                    _ => Class::Union,
+                }),
+                // A block of value `false` before no value leaves no value.
+                false => next.map(|n| match (taken.is_empty(), first.len()) {
+                    (false, _) => Class::Diff,
+                    (true, 0) => n,
+                    (true, 1) if every && k + 1 == m => first[0].class,
+                    (true, _) => Class::And,
+                }),
+            };
+        }
+        let mut segs = Vec::new();
+        // What closes each block begun, last first.
+        let mut closing: Vec<Vec<Seg>> = Vec::new();
+        let open = |segs: &mut Vec<Seg>, closing: &mut Vec<Vec<Seg>>, at: At, c: Class| {
+            if !at.admits(c) {
+                segs.push(Seg::Str("(".into()));
+                closing.push(vec![Seg::Str(")".into())]);
+            }
         };
+        // Where the text from the next block on stands.
+        let mut at = At::Any;
+        for (k, (first, taken)) in texts.into_iter().enumerate() {
+            if class[k].is_none() {
+                break;
+            }
+            let last = class[k + 1].is_none();
+            if list.blocks[k].0 {
+                match (first.len(), last) {
+                    (1, true) => {
+                        put(&mut segs, first.into_iter().next().expect("one item"), at);
+                    }
+                    (_, true) => {
+                        open(&mut segs, &mut closing, at, Class::Union);
+                        segs.push(group(first, " | ", At::Union));
+                    }
+                    (_, false) => {
+                        open(&mut segs, &mut closing, at, Class::Union);
+                        put(
+                            &mut segs,
+                            Text::group(first, " | ", At::Union, Class::Union),
+                            At::Union,
+                        );
+                        segs.push(Seg::Str(" | ".into()));
+                        at = At::Union;
+                        continue;
+                    }
+                }
+                tail = None;
+                break;
+            }
+            if !taken.is_empty() {
+                open(&mut segs, &mut closing, at, Class::Diff);
+                closing.push(vec![
+                    Seg::Str(" \\ ".into()),
+                    group(taken, " \\ ", At::Prim),
+                ]);
+                at = At::DiffLeft;
+            }
+            if first.is_empty() {
+                continue;
+            }
+            let refused = Text::group(first, " & ", At::And, Class::And);
+            if every && k + 1 == m {
+                put(&mut segs, refused, at);
+                tail = None;
+                break;
+            }
+            open(&mut segs, &mut closing, at, Class::And);
+            put(&mut segs, refused, At::And);
+            segs.push(Seg::Str(" & ".into()));
+            at = At::And;
+        }
+        if let Some(t) = tail {
+            put(&mut segs, t, at);
+        }
+        while let Some(s) = closing.pop() {
+            segs.extend(s);
+        }
+        Text {
+            segs,
+            class: class[0].expect("a diagram that is no leaf has values"),
+        }
+    }
+
+    /// A diagram node over the atom `a`, with `hi` and `lo`, as `a & hi | (lo \ a)`, its
+    /// sides nodes of their own.
+    fn node<A: super::bdd::Literal>(
+        &mut self,
+        b: &Bdd<A>,
+        lit: &dyn Fn(&mut Printer, &A) -> Text,
+        all: &dyn Fn(&mut Printer) -> Text,
+        item: &dyn Fn(&Part<A>) -> Item,
+    ) -> Text {
         let Ok((_, a, hi, lo)) = b.branch() else {
-            unreachable!("a leaf part is printed by its parent")
+            unreachable!("a diagram is printed node by node only where it is no decision list")
         };
         let side = |me: &mut Printer, d: &Bdd<A>| match d.branch() {
             Err(true) => all(me),
@@ -595,9 +1007,7 @@ impl Printer {
         let mut defs = Vec::new();
         let mut k = 0;
         for &i in &self.post {
-            let text = self.texts[i].as_ref().expect("visited");
-            let token = matches!(&text.segs[..], [Seg::Str(s)] if !s.contains([' ', '(', ',']));
-            if self.forced[i] || (self.uses[i] >= 2 && !token) {
+            if self.named(i) {
                 k += 1;
                 named[i] = Some(format!("T{k}"));
             }
@@ -624,33 +1034,19 @@ impl Printer {
 
     /// Writes `segs`, a node by its name or else its own text, with a stack of its own.
     fn write(&self, segs: &[Seg], named: &[Option<String>], out: &mut String) {
-        enum W<'a> {
-            Segs(std::slice::Iter<'a, Seg>),
-            Close,
-        }
-        let mut stack = vec![W::Segs(segs.iter())];
-        while let Some(top) = stack.last_mut() {
-            let W::Segs(it) = top else {
-                out.push(')');
-                stack.pop();
-                continue;
-            };
-            let Some(seg) = it.next() else {
-                stack.pop();
-                continue;
-            };
-            match seg {
-                Seg::Str(s) => out.push_str(s),
-                Seg::Node(i, at) => match &named[*i] {
+        let mut pieces = Pieces::new(segs);
+        while let Some(piece) = pieces.next() {
+            match piece {
+                Piece::Str(s) => out.push_str(s),
+                Piece::Node(i, at) => match &named[i] {
                     Some(name) => out.push_str(name),
                     None => {
-                        let wrap = !at.admits(self.class(*i, named));
-                        if wrap {
+                        if !at.admits(self.class(i, named)) {
                             out.push('(');
-                            stack.push(W::Close);
+                            pieces.stack.push(Frame::Close);
                         }
-                        let text = self.texts[*i].as_ref().expect("visited");
-                        stack.push(W::Segs(text.segs.iter()));
+                        let text = self.texts[i].as_ref().expect("visited");
+                        pieces.stack.push(Frame::Segs(text.segs.iter()));
                     }
                 },
             }
@@ -687,4 +1083,175 @@ fn minus(word: &str, t: Text) -> Text {
 /// Every morphism: no key promised, any key permitted, any value.
 fn every_morphism() -> Text {
     Text::word("!_ .. _ -> _", Class::Arrow)
+}
+
+#[cfg(test)]
+mod tests {
+    //! The text of a type does not depend on the order of its atoms (step BDD-atom-order).
+    //! The order follows the digests, which differ between the full build and the
+    //! short-addresses build; the test hook `SALT` changes every digest of a thread, so a type
+    //! built on a thread of its own with a salt has its atoms in another order.
+
+    use std::collections::BTreeMap;
+
+    use super::super::bdd::Part;
+    use super::super::{Op, Row, SALT, Type};
+    use crate::scaling;
+    use crate::value::Value;
+
+    fn next(seed: &mut u64) -> u64 {
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        *seed >> 33
+    }
+
+    fn lit(i: u64) -> Type {
+        Type::lit(&Value::Int(i as i64)).expect("an integer literal type")
+    }
+
+    fn leaf(seed: &mut u64, depth: u32) -> Type {
+        let k = next(seed);
+        match k % 7 {
+            0 => Type::top(),
+            1 | 2 => lit(k / 7 % 4),
+            3 => Type::atom(&format!("a{}", k / 7 % 3)),
+            4 if depth > 0 => ty(seed, depth - 1),
+            5 => Type::exact(lit(k / 7 % 3), Type::int()),
+            _ => Type::int(),
+        }
+    }
+
+    /// A random type of unions, intersections, differences and complements of tuple types,
+    /// some of them an atom's payload.
+    fn ty(seed: &mut u64, depth: u32) -> Type {
+        let k = next(seed);
+        if depth == 0 || k.is_multiple_of(7) {
+            let n = 1 + (k / 7 % 2) as usize;
+            let t = Type::tuple(
+                (0..n)
+                    .map(|_| leaf(seed, depth.saturating_sub(2)))
+                    .collect(),
+            );
+            return match k / 14 % 5 {
+                0 => Type::atom_with("p", &t),
+                _ => t,
+            };
+        }
+        let a = ty(seed, depth - 1);
+        match k % 4 {
+            0 => &a | &ty(seed, depth - 1),
+            1 => &a & &ty(seed, depth - 1),
+            2 => &a - &ty(seed, depth - 1),
+            _ => !&a,
+        }
+    }
+
+    /// The parts of `t` kept as expressions.
+    fn exprs(t: &Type) -> usize {
+        let p = t.p();
+        p.tuples.lens.values().filter(|q| q.view().is_err()).count()
+            + usize::from(p.morphisms.view().is_err())
+    }
+
+    /// On a thread with `salt`: the texts of `n` random types in both printers, the number of
+    /// their parts kept as expressions, and how 64 pairs of tuple types are ordered.
+    fn texts(salt: u64, n: u64) -> (Vec<(String, String)>, usize, Vec<bool>) {
+        std::thread::spawn(move || {
+            SALT.set(salt);
+            let mut kept = 0;
+            let texts = (0..n)
+                .map(|i| {
+                    let mut seed = i * 7919 + 1;
+                    let t = ty(&mut seed, 5);
+                    kept += exprs(&t);
+                    (t.to_string(), t.surface().to_string())
+                })
+                .collect();
+            let order = (0..64)
+                .map(|i| Row::new(vec![lit(i)]) < Row::new(vec![lit(i + 1)]))
+                .collect();
+            (texts, kept, order)
+        })
+        .join()
+        .expect("the thread prints without panicking")
+    }
+
+    #[test]
+    fn random_types_print_alike_in_every_order_of_their_atoms() {
+        let n = 3000;
+        let (want, kept, order) = texts(0, n);
+        assert!(kept > 100, "the types keep parts as expressions: {kept}");
+        for salt in [0x5555_aaaa_1234_9876, 0x0123_4567_89ab_cdef, u64::MAX] {
+            let (got, _, other) = texts(salt, n);
+            assert_ne!(order, other, "salt {salt:#x} orders the atoms otherwise");
+            let differ: Vec<_> = (0..n as usize).filter(|&i| want[i] != got[i]).collect();
+            assert!(
+                differ.is_empty(),
+                "salt {salt:#x}: {} of {n} types print otherwise, first {:?} and {:?}",
+                differ.len(),
+                want[differ[0]],
+                got[differ[0]],
+            );
+        }
+    }
+
+    #[test]
+    fn a_union_of_tuple_types_less_another_prints_alike_in_every_order() {
+        // The case of L1.37a repair#1: the two builds printed `((0, #a0) | (1, #a1)) \ (1, _)`
+        // and `(0, #a0) & ((_, _) \ (1, _)) | ((1, #a1) \ (1, _) \ (0, #a0))`.
+        for salt in [0, 0x5555_aaaa_1234_9876, 0x0123_4567_89ab_cdef, u64::MAX] {
+            let (display, surface) = std::thread::spawn(move || {
+                SALT.set(salt);
+                let a = Type::tuple(vec![lit(0), Type::atom("a0")]);
+                let b = Type::tuple(vec![lit(1), Type::atom("a1")]);
+                let t = &(&a | &b) - &Type::tuple(vec![lit(1), Type::top()]);
+                (t.to_string(), t.surface().to_string())
+            })
+            .join()
+            .expect("the thread prints without panicking");
+            assert_eq!(surface, "((0, #a0) | (1, #a1)) \\ (1, _)", "salt {salt:#x}");
+            assert_eq!(
+                display, "(| (& (tuple 0 #a0) (! (tuple 1 _))) (& (tuple 1 #a1) (! (tuple 1 _))))",
+                "salt {salt:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_text_of_a_long_decision_list_scales() {
+        // `((x0 | x1) \ x2 \ x3 | x4 | x5) \ x6 …`: blocks of two literals, values alternating,
+        // each new literal first in the order, so the diagram is one node per atom.
+        let build = |m: usize| {
+            let mut xs: Vec<Row> = (0..m as u64).map(|i| Row::new(vec![lit(i)])).collect();
+            xs.sort();
+            let mut f = Part::literal(xs[m - 1].clone());
+            for (i, x) in xs[..m - 1].iter().rev().enumerate() {
+                f = match i / 2 % 2 {
+                    0 => f.zip(&Part::literal(x.clone()).not(), Op::And),
+                    _ => f.zip(&Part::literal(x.clone()), Op::Or),
+                };
+            }
+            Type::with(|p| {
+                p.tuples.lens.insert(1, f);
+            })
+        };
+        let n = 1 << 10;
+        let built: BTreeMap<usize, Type> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| (m, build(m)))
+            .collect();
+        scaling::check(
+            "the text of a decision list of blocks of two, by atoms",
+            n,
+            |m| {
+                let s = built[&m].surface();
+                assert!(s.defs.is_empty());
+                assert_eq!(
+                    s.root.matches(" \\ ").count() + s.root.matches(" | ").count(),
+                    m - 1
+                );
+            },
+        );
+    }
 }
