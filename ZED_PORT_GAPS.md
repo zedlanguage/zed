@@ -420,7 +420,7 @@ Confirmed against sec:grammar; counts in the appendix.
 | `dyn Fn`, `FnMut`, `impl Fn`, `fn` pointers | 37 `dyn` | Function values. `dyn Lookup`, `dyn Read`, `dyn Write` become ports |
 | Generics | 67 fns, 38 types | Implicit by inference (line 537), and `type N(X)` at L2 |
 | Tuple structs | 20 | `#sym(String)` for a distinction: same-shape structs are one type (line 2774). `Sym`, `Key`, `ContentAddress`, `Card` need this |
-| Privacy: `pub`, `pub(crate)`, private fields | 1163 `pub` | `local` hides a declaration in its file; a field cannot be hidden, so an invariant such as `Row`'s is held by convention |
+| Privacy: `pub`, `pub(crate)`, private fields | 1163 `pub` | `local` hides a declaration in its file; a field cannot be hidden, so an invariant such as `Row`'s is held by convention. `#[doc(hidden)]` on the entry points exported only for tests (`check::Operands`, `elab::topo`, `store::preimage_ref`) has no Zed form: they are ordinary exports |
 | `if let`, `while let`, `matches!`, `let … else` | 309, 48, 115, 122 | `match`, `is`, `else` |
 | Or-patterns | 180 | No grammar form. `is #a \| #b` works for atoms; literal-set types are L10, so strings and ints take `where x in {…}`; arms binding a name in each branch are repeated. An or-pattern in sec:grammar at L2 would be a small addition worth making |
 | `x @ pat` | 10 | `x is T` covers type tests; a nested binding needs a second `match` |

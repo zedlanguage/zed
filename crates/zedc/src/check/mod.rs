@@ -216,6 +216,36 @@ pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
     (out, ck.info.errors.into_iter().map(|e| e.message).collect())
 }
 
+/// The two operands of `==` that [`Ck::equal`] pairs, built before a scaling test, so that
+/// the test times the pairing alone and not the check of the program around it: a value of
+/// the type `x`, and the expression `e`, of the type `et`, with the literals written in it.
+#[doc(hidden)]
+pub struct Operands {
+    x: Ty,
+    e: Expr,
+    et: Ty,
+}
+
+impl Operands {
+    #[doc(hidden)]
+    pub fn new(x: Ty, e: Expr, et: Ty) -> Self {
+        Operands { x, e, et }
+    }
+
+    /// Pairs the operands as `x == e` does, in a checker of the empty unit, and gives the
+    /// number of literals that adopt a carrier.
+    #[doc(hidden)]
+    pub fn adoptions(&self) -> usize {
+        let res = crate::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t);
+        let (lit, parts) = (literal(&self.e), parts(&self.e));
+        let y = (vec![&self.et], lit.as_ref(), parts.as_deref());
+        ck.pair((vec![&self.x], None, None), y);
+        ck.info.adopt.len()
+    }
+}
+
 /// A numeric literal: its span, its value, whether a `-` is applied to it, and its text.
 #[derive(Clone)]
 struct Lit {
@@ -2532,7 +2562,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// is inside a tuple. Each side borrows its component types, one per shape, so a tuple
     /// nested d deep at s shapes costs O(d·s) and not a copy of each level's type.
     fn equal(&mut self, x: &Arg, y: &Arg) {
-        let mut stack = vec![(side(x), side(y), false)];
+        self.pair(side(x), side(y));
+    }
+
+    /// [`Ck::equal`] of the two sides `x` and `y`.
+    fn pair(&mut self, x: Side<'_>, y: Side<'_>) {
+        let mut stack = vec![(x, y, false)];
         while let Some(((xt, xl, xp), (yt, yl, yp), inner)) = stack.pop() {
             match (xl, yl) {
                 (Some(l), Some(m)) => {

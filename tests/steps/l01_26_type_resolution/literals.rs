@@ -293,6 +293,57 @@ fn adopting_the_literals_of_a_deep_tuple_scales() {
         .unwrap();
 }
 
+/// The operands of `p == ((…(0, 0)…, 0), 0)`, the tuple nested `d` deep, with `p` at f64
+/// components, as in [`deep`].
+fn deep_operands(d: usize) -> zedc::check::Operands {
+    use zedc::check::ty::{Carrier, Ty};
+    let nested = |c| {
+        let mut t = Ty::carrier(c);
+        for _ in 0..d {
+            t = Ty::tuple(vec![t, Ty::carrier(c)]);
+        }
+        t
+    };
+    let mut lit = "0".to_string();
+    for _ in 0..d {
+        lit = format!("({lit}, 0)");
+    }
+    let stmts = zed_tests::deep::statements(&format!("y = {lit};\n"));
+    let Some(zedc::ast::StmtKind::Bind { value, .. }) = stmts.into_iter().next().map(|s| s.kind)
+    else {
+        unreachable!("a binding")
+    };
+    zedc::check::Operands::new(nested(Carrier::F64), value, nested(Carrier::Int))
+}
+
+#[test]
+fn pairing_the_sides_of_a_deep_comparison_scales() {
+    // The check of the whole program in `adopting_the_literals_of_a_deep_tuple_scales` spends
+    // about 357,000 instructions a level, most of them outside `==`, and that hides a `sides`
+    // that walks each level's whole type for variables, O(d^2) with no allocation: the test
+    // passed such a `sides` at 9.1 times the instructions from depth 128 to 1,024. Here the
+    // operands are built before the timing, and only their pairing by `==` is timed. The
+    // pairing itself spends about 106,000 instructions a level, most in `class_of_ty` of each
+    // literal's carrier, so the O(d^2) walk reaches the limit only from depth 2,048: that
+    // `sides` takes 37.3 times the instructions from 2,048 to 16,384 here, and this one 8.0.
+    scaling::on_a_thread(1 << 29, || {
+        assert_eq!(deep_operands(3).adoptions(), 4);
+        let ops: Vec<_> = [2048, scaling::FACTOR * 2048]
+            .into_iter()
+            .map(|d| (d, deep_operands(d)))
+            .collect();
+        scaling::check_order(
+            "pairing the sides of == of tuples nested n deep",
+            2048,
+            1,
+            |d| {
+                let (_, o) = ops.iter().find(|(k, _)| *k == d).unwrap();
+                assert_eq!(o.adoptions(), d + 1);
+            },
+        );
+    });
+}
+
 #[test]
 fn a_literal_compared_with_a_union_follows_the_one_carrier_it_can_adopt() {
     // One numeric member: the literal adopts it.
