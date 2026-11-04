@@ -995,22 +995,20 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHK-cost | verify attempt 2 | 2026-11-03 15:48 | start, branch wt/chk-cost 947a5b48; no earlier verify#2 lines to reuse; load 39.65 42.16 41.76 |
-| ISSUE1-else-atoms | verify attempt 3 | 2026-11-03 16:04 | done: ok=false (1 blocking: a function that handles atoms and calls a two-arrow function, g(positional x) = if (x else "") == "-" { "dash" } else { r(x) }, gets |
-| LIT-adopt | repair attempt 1 | 2026-11-03 16:46 | start: fixing verifier findings (2^d follow comparisons, missing scaling tests, tuple-union shapes, carrier order) |
+| BEND-spec | running | 2026-11-03 20:17 | start: reading BEND-study report |
+| CHK-cost | repair attempt 1 | 2026-11-03 15:48 | curried probe 15.7M->130.6M instr at n=125..1000 (was 187M->12418M); steps groups pass; full suite started; load 51.63 |
+| ISSUE1-else-atoms | repair attempt 3 | 2026-11-03 16:04 | new scaling test chain of n handler functions: 8.0x bytes (106.4M, 851.8M) n=200/1600 load 38; negative control (every outside set cloned and formatted per call |
+| LIT-adopt | verify attempt 2 | 2026-11-03 16:46 | BLOCKING: == misses the union rules: x == 1 with x: f64 / rat accepted and false at 1.0 and 1r (spec sentence says rejected); p == (1, 2) with p: (f64, f64) / ( |
 | LOOP-boundary | running | 2026-11-03 19:33 | report saved to wt/loop-boundary/REPORT.md; adopted in full; spec agent LOOP-boundary-spec launching |
-| LOOP-boundary-spec | running | 2026-11-03 19:45 | edits 2-7 done: m[k] row, lexical with row, grammar rows, elaboration row, dependency proof (b), diagnostics row; tour 17 checked |
-| MURAIL-study | running | 2026-11-03 19:52 | start: read-only study of murail-formal-model-v17.md against DESIGN |
-| NAME-ties | repair attempt 3 | 2026-11-03 09:30 | pick by color alone decided 372 of 1000 regular systems with disjunctions (1 true): added alone() (a disjunction left alone in its group of linked rows is met b |
-| NARROW-if | repair attempt 3 | 2026-11-03 16:46 | start: continue from wt/narrow-if, finish full run and commit |
+| LOOP-boundary-spec merge | running | 2026-11-03 20:16 | plan-loopbound merged 72e14a7e + spec copies synced; l01_07_fences 11/11; pushed; lock released |
+| NAME-ties | verify attempt 4 | 2026-11-03 09:30 | started (tip 5d688a7a, spec 9e57519) / load 23.54 28.74 34.31 |
+| NARROW-if | verify attempt 2 | 2026-11-03 16:46 | returning ok=false: one blocking item, quadratic rejection notes (arms.rs deciding lists tests on unrelated names), easy fix, not hard; everything else verified |
+| plan-loopbound | merge attempt  | 2026-11-03 20:10 | lock taken |
 | STUDIES3-spec | running | 2026-11-03 19:30 | merged zed bb9a806, zed-impl 9ff30c5e + b8a8e10a (l01_07 snapshots); pushed |
-| TD-cong | impl attempt 1 | 2026-11-03 04:35 | Congruence, Affine and Exponent on Num; workspace builds; writing tests (load 62.57) |
+| TD-cong | verify attempt 1 | 2026-11-03 04:35 | started; reading diff 0d32a264 vs main |
 | TEST-slow | running (item wf_29c4acd4-fb5) | 2026-11-03 19:00 | workflow item wf_29c4acd4-fb5 covering the five TEST-slow-* splits of the s22 preimage tests |
-| TRACE-study | running | 2026-11-03 19:45 | end: Q1 answered (gen = delayed trace/feedback with boundary as initial state, not a JSV trace; fix = cartesian trace via Conway; guarded gen seen by its result |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
-
-- PERF-portable (32f4a519): pushed with its merge; awaiting the batch test.
 
 
 ## Open points
