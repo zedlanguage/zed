@@ -15,7 +15,10 @@ mod scaling;
 mod signatures;
 mod soundness;
 
+use std::sync::Arc;
+
 use zedc::ast::unit;
+use zedc::check::ty::Sig;
 use zedc::check::{Info, check};
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
@@ -31,15 +34,20 @@ pub(crate) fn info(text: &str) -> (Info, Vec<String>) {
     (check(&stmts, &res), names)
 }
 
-/// The signature of the declared function `name` in `text`, printed.
-pub(crate) fn sig(text: &str, name: &str) -> String {
+/// The signature of the declared function `name` in `text`.
+pub(crate) fn sig_of(text: &str, name: &str) -> Arc<Sig> {
     let (info, names) = info(text);
     let (_, s) = info
         .sigs
         .iter()
         .find(|(id, _)| names[**id] == name)
         .unwrap_or_else(|| panic!("no function `{name}`"));
-    s.to_string()
+    s.clone()
+}
+
+/// The signature of the declared function `name` in `text`, printed.
+pub(crate) fn sig(text: &str, name: &str) -> String {
+    sig_of(text, name).to_string()
 }
 
 /// The type errors of `text`, each `message [text]`.

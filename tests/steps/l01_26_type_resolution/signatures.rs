@@ -2,7 +2,9 @@
 //! variable, bounded by the carriers its uses take, and the error is at the use that leaves
 //! it none.
 
-use super::{sig, type_errors};
+use zedc::check::ty::OTHER;
+
+use super::{sig, sig_of, type_errors};
 
 #[test]
 fn arithmetic_gives_a_variable_bounded_by_the_numeric_carriers() {
@@ -44,28 +46,43 @@ fn comparison_checks_at_every_ordered_carrier() {
 
 #[test]
 fn a_parameter_any_value_fits_gets_a_type_variable() {
-    assert_eq!(
-        sig("label(n) = \"n = ${n}\";\n", "label"),
-        "(n: T) -> String"
-    );
-    assert_eq!(
-        sig("pair(a, b) = (a, b);\n", "pair"),
-        "(a: T, b: U) -> (T, U)"
-    );
-    assert_eq!(sig("g(r) = r else 0;\n", "g"), "(r: T) -> 0 | T");
+    // A variable no carriers bound is printed `_` (DESIGN.md L1.26), and is still the
+    // signature's own: two such parameters are two variables.
+    let s = sig_of("label(n) = \"n = ${n}\";\n", "label");
+    assert_eq!(s.to_string(), "(n: _) -> String");
+    assert_eq!(s.own.len(), 1);
+    let s = sig_of("pair(a, b) = (a, b);\n", "pair");
+    assert_eq!(s.to_string(), "(a: _, b: _) -> (_, _)");
+    let [a, b] = &s.arrows[0].params[..] else {
+        panic!("two parameters")
+    };
+    assert_eq!(s.own.len(), 2);
+    assert_ne!(a, b);
+    assert_eq!(s.arrows[0].result.tuples, [vec![a.clone(), b.clone()]]);
+    let s = sig_of("g(r) = r else 0;\n", "g");
+    assert_eq!(s.to_string(), "(r: _) -> 0 | _");
+    assert_eq!(s.arrows[0].result.vars, s.arrows[0].params[0].vars);
     // Only the condition is fixed; the branches stay generic, each its own variable.
-    assert_eq!(
-        sig(
-            "pick(positional c, positional a, positional b) = if c { a } else { b };\n",
-            "pick"
-        ),
-        "(bool, T, U) -> T | U"
+    let s = sig_of(
+        "pick(positional c, positional a, positional b) = if c { a } else { b };\n",
+        "pick",
     );
+    assert_eq!(s.to_string(), "(bool, _, _) -> _");
+    let ps = &s.arrows[0].params;
+    assert_ne!(ps[1], ps[2]);
+    let both: std::collections::BTreeSet<_> = ps[1].vars.union(&ps[2].vars).cloned().collect();
+    assert_eq!(s.arrows[0].result.vars, both);
 }
 
 #[test]
 fn a_type_variable_used_as_a_tuple_gives_a_variable_each_call_binds() {
-    assert_eq!(sig("first(p) = p[0];\n", "first"), "(p: T) -> U");
+    let s = sig_of("first(p) = p[0];\n", "first");
+    assert_eq!(s.to_string(), "(p: _) -> _");
+    // The result is a second variable, which the need of `p[0]` gives at each call.
+    let (p, r) = (&s.arrows[0].params[0].vars, &s.arrows[0].result.vars);
+    assert_eq!((p.len(), r.len()), (1, 1));
+    assert_ne!(p, r);
+    assert_eq!(s.needs.len(), 1);
 }
 
 #[test]
@@ -123,7 +140,10 @@ fn a_parameter_compared_with_a_tuple_may_be_a_tuple() {
     // `<` orders tuples of one length as well as carriers, so `x` may be `(3, 4)`: its
     // class keeps the tuple arrow, which allows only other values, and bounds its variable.
     let src = "lt(positional x) = x < (1, 2);\nmain() = lt((3, 4));\n";
-    assert_eq!(sig(src, "lt"), "(T) -> bool for T in other values");
+    // No bounds clause can write a bound of other values, so the variable is printed `_`.
+    let s = sig_of(src, "lt");
+    assert_eq!(s.to_string(), "(_) -> bool");
+    assert!(s.bounds.values().all(|m| m & OTHER != 0) && s.bounds.len() == 1);
     assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));
 }
 
@@ -132,6 +152,9 @@ fn a_literal_compared_for_equality_does_not_bound_a_parameter() {
     // `==` takes any two values, so the literal follows the class and leaves it every
     // carrier: `eq1("a")` is false, not an error.
     let src = "eq1(positional x) = x == 1;\nmain() = eq1(\"a\");\n";
-    assert_eq!(sig(src, "eq1"), "(T) -> bool");
+    let s = sig_of(src, "eq1");
+    assert_eq!(s.to_string(), "(_) -> bool");
+    assert!(s.bounds.is_empty());
+    assert_eq!(s.own.len(), 1);
     assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));
 }

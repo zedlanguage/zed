@@ -17,6 +17,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
+use std::sync::Arc;
 
 use imbl::Vector;
 
@@ -249,6 +250,25 @@ pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
     }
 }
 
+/// The errors name resolution finds in the type `t`, read as a type the checker printed
+/// (OSP-diag, DESIGN.md "Printed types are syntax"): the walk a written type gets, the names in
+/// `leaves` standing for the leaves of layer L10 a printed type holds (`_`, `!_`, a literal),
+/// and an atom's payload type, a form of step L2.5 the checker prints from L1 on, read through
+/// to its parts. A type variable no bounds clause around it binds is not defined.
+pub fn printed_type(t: &Type, leaves: HashSet<Arc<str>>) -> Result<(), Vec<Error>> {
+    let mut r = Resolver {
+        printed: Some(leaves),
+        ..Resolver::default()
+    };
+    r.walk(Task::Ty(t));
+    if r.errors.is_empty() {
+        Ok(())
+    } else {
+        r.errors.sort_by_key(|e| e.span);
+        Err(r.errors)
+    }
+}
+
 /// What a name is found to be: binders of the unit, or a prelude word of a layer.
 enum Found {
     Bound(Vector<usize>),
@@ -270,6 +290,9 @@ struct Resolver {
     arrows: Vec<Span>,
     /// The bounds clauses around the type being walked, outermost first, by their text.
     clauses: Vec<Span>,
+    /// When a printed type is read ([`printed_type`]): the names that stand for its leaves of
+    /// layer L10.
+    printed: Option<HashSet<Arc<str>>>,
 }
 
 /// A type variable of a bounds clause, while its type is walked.
@@ -865,6 +888,11 @@ impl Resolver {
                 self.out.uses.insert(t.span, Ref::Prelude(n.clone()));
             }
             TypeKind::Name(n) if self.tvars.contains_key(n) => self.type_var(n, t.span),
+            TypeKind::Name(n)
+                if self
+                    .printed
+                    .as_ref()
+                    .is_some_and(|l| l.contains(n.as_str())) => {}
             TypeKind::Name(n) => self.errors.push(Error {
                 row: None,
                 span: t.span,
@@ -941,6 +969,9 @@ impl Resolver {
                 self.arrows.push(t.span);
                 todo.push(Task::ArrowEnd);
                 todo.extend([result, upper, lower].map(|t| Task::Ty(t)));
+            }
+            TypeKind::AtomApply(_, ps) if self.printed.is_some() => {
+                todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
             TypeKind::Apply(..) => self.later(t.span, "an applied type", "L2.5"),
             TypeKind::AtomApply(..) => self.later(t.span, "an atom type with a payload", "L2.5"),

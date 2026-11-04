@@ -72,6 +72,13 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
             "`{text}`: the bound of `{v}` is on no signature that names it"
         ));
     }
+    // The names the resolver finds, as in a written type: a variable no clause bounds is not
+    // defined.
+    let leaves = binds.keys().cloned().collect();
+    if let Err(es) = crate::resolve::printed_type(&t, leaves) {
+        let why: Vec<String> = es.into_iter().map(|e| e.message).collect();
+        return Err(format!("`{text}`: {}", why.join("; ")));
+    }
     Ok(ty)
 }
 

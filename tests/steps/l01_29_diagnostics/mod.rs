@@ -12,6 +12,7 @@ mod neglit;
 mod printed;
 mod repairs;
 mod scaling;
+mod tyvars;
 mod untracked;
 mod variants;
 mod widen;

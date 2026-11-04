@@ -75,8 +75,8 @@ main(stdin: Lines) -> (stdout: Lines) {
         [
             "this expression is \"12\"",
             "this expression is #gold",
-            "`discount` takes (price: int, tier: T) -> int",
-            "`discount` is declared here, `(price: int, tier: T) -> int`",
+            "`discount` takes (price: int, tier: _) -> int",
+            "`discount` is declared here, `(price: int, tier: _) -> int`",
         ]
     );
 }
@@ -97,7 +97,7 @@ main(stdin: Lines) -> (stdout: Lines) {
         .unwrap_or_else(|| panic!("{out}"));
     assert_eq!(s[narrowed - 1], "`v` is int here");
     assert!(
-        s[narrowed + 1] == "`v` has no declared type; its uses give it T",
+        s[narrowed + 1] == "`v` has no declared type; its uses give it _",
         "{out}"
     );
 }

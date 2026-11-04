@@ -311,9 +311,22 @@ fn searches_through_nested_functions_scale() {
                 elab(&open(n)).unwrap();
             });
             assert_eq!(value(&open(4), "main"), "4");
-            let t = (Some("int".to_string()), Some("(T) -> T".to_string()));
+            // The variable is `f0`'s, which the inner signature neither binds nor bounds, so
+            // it prints `_` there.
+            let t = (Some("int".to_string()), Some("(_) -> _".to_string()));
             assert_eq!(found(&open(6), 5), t);
             assert_eq!(found(&open(64), 63), t);
+            for n in [6, 64] {
+                let f0 = crate::l01_26_type_resolution::sig_of(&open(n), "f0");
+                let last = crate::l01_26_type_resolution::sig_of(&open(n), &format!("f{}", n - 1));
+                let a = &last.arrows[0];
+                assert!(last.own.is_empty() && last.bounds.is_empty());
+                assert_eq!(
+                    (a.params[0].vars.len(), &a.params[0].vars),
+                    (1, &a.result.vars)
+                );
+                assert!(f0.own.is_superset(&a.result.vars), "the variable is f0's");
+            }
         })
         .unwrap()
         .join()

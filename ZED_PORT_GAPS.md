@@ -1238,3 +1238,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `BigUint::iter_u64_digits().rev()` folded into a `u128` remainder | `num::rem` | Missing (no word view of an `int`) | A runtime primitive giving an `int`'s words, or `mod` by a word as a primitive |
 | `BigUint::from_slice` of a block of `u64` words split into reversed `u32` pairs | `num::rem` | Missing (no word view of an `int`) | The same primitive, building an `int` from a slice of its words |
 | `Result<bool, TooLarge>` with `?` through `divides_by`, `magnitude_order` and `exact_div` | `Rat::divides_by`, `Rat::div_euclid`, `Rat::rem_euclid` | Early exit (gap 12) | A failure value returned and matched at each call |
+
+## Entries from PRINT-tyvars (`zedc/src/check/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Scope` of `HashMap<Arc<str>, Vec<Option<Arc<str>>>>` (the printed name of each variable, innermost last), a `HashSet` of names in use and a counter, held as `&mut Scope` across the recursion of the printer, pushed by `Scope::open` at each signature and popped by `Scope::close` after it | `Ty::write`, `Sig::write`, `Scope::open`, `Scope::close` | Mutation (gap 11): a map held across a recursion and undone after it | A persistent map from variable to printed name and a set of names in use, passed down into each signature, so nothing is undone; the counter is returned with the text, so a fresh name is still tried once in the whole type |

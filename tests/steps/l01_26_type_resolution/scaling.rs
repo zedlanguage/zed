@@ -5,7 +5,7 @@
 
 use zed_tests::scaling;
 
-use super::{info, sig};
+use super::{info, sig, sig_of};
 
 #[test]
 fn searching_the_signatures_of_many_functions_scales() {
@@ -98,7 +98,9 @@ fn tuple(n: usize) -> String {
 #[test]
 fn a_signature_of_many_type_variables_scales() {
     // Naming the variables looked for each among those named before (COMPLEXITY.md F28).
-    assert_eq!(sig(&tuple(2), "f"), "(T, U) -> (T, U)");
+    let s = sig_of(&tuple(2), "f");
+    assert_eq!(s.to_string(), "(_, _) -> (_, _)");
+    assert_eq!(s.own.len(), 2, "two variables, though both print `_`");
     scaling::check("a signature of n type variables", 1000, |n| {
         let (info, _) = info(&tuple(n));
         assert!(info.errors.is_empty(), "{:?}", info.errors);
@@ -128,7 +130,9 @@ fn fans(n: usize) -> std::collections::BTreeMap<usize, String> {
 fn needs_replayed_through_a_fan_of_calls_scale() {
     // Each of the two calls met the needs of the one before anew, so they doubled at each
     // function; a use met twice now gives what it gave the first time.
-    assert_eq!(sig(&fan(3), "g2"), "(T) -> U for U in int | f64 | rat");
+    let s = sig_of(&fan(3), "g2");
+    assert_eq!(s.to_string(), "(_) -> U for U in int | f64 | rat");
+    assert_eq!(s.needs.len(), 1, "one need, met once for both calls");
     let texts = fans(250);
     scaling::check(
         "needs replayed through n functions, each calling the one before twice",

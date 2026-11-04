@@ -2,13 +2,15 @@
 //! the step folders parses back, as type syntax, to the type printed (OSP-diag, DESIGN.md
 //! "Printed types are syntax").
 
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Rat, Value};
 use zed_tests::scaling;
 use zedc::check::read::parse_type;
-use zedc::check::ty::{Carrier, Shape, Ty, Vars, printed};
+use zedc::check::ty::{Carrier, OTHER, Shape, Ty, Vars, printed};
 
 /// Each program the check reads: its place and text.
 fn programs() -> Vec<(String, String)> {
@@ -50,21 +52,37 @@ fn printed_by(text: &str) -> (Vec<(Ty, String)>, String) {
 
 /// What type syntax states of `t`: the atoms a named family holds, a positional parameter's name,
 /// a default, a body's needs, the variables a signature binds and whether it is a family are
-/// not written in a type. The payloads of atoms are (L29-print).
+/// not written in a type. The payloads of atoms are (L29-print). A type variable is written
+/// only with a bound of carriers: one that no signature around it bounds so, or whose bound
+/// holds other values, is `_` (DESIGN.md L1.26).
 fn stated(t: &Ty) -> Ty {
     let mut t = t.clone();
-    let mut stack = vec![&mut t];
-    while let Some(t) = stack.pop() {
+    // Each part to read, with the variables the signatures around it bound by carriers.
+    let mut stack = vec![(&mut t, Arc::new(HashSet::<Arc<str>>::new()))];
+    while let Some((t, scope)) = stack.pop() {
         t.family = KType::empty();
+        let free = t.vars.iter().any(|v| !scope.contains(v));
+        t.vars.retain(|v| scope.contains(v));
+        t.dynamic |= free;
         for s in t.payloads.values_mut().flatten().flatten() {
-            stack.extend(s.items.iter_mut());
-            stack.extend(s.fields.values_mut());
+            stack.extend(s.items.iter_mut().map(|t| (t, scope.clone())));
+            stack.extend(s.fields.values_mut().map(|t| (t, scope.clone())));
         }
         for cs in t.tuples.iter_mut() {
-            stack.extend(cs.iter_mut());
+            stack.extend(cs.iter_mut().map(|t| (t, scope.clone())));
         }
         for s in t.fns.iter_mut() {
-            let s = std::sync::Arc::make_mut(s);
+            let s = Arc::make_mut(s);
+            s.bounds.retain(|_, m| *m & OTHER == 0);
+            // Its own variables bounded by carriers are written by name; its other own ones are `_`.
+            let scope = if s.bounds.is_empty() && s.own.iter().all(|v| !scope.contains(v)) {
+                scope.clone()
+            } else {
+                let mut inner = (*scope).clone();
+                inner.retain(|v| !s.own.contains(v));
+                inner.extend(s.bounds.keys().cloned());
+                Arc::new(inner)
+            };
             for p in s.params.iter_mut() {
                 if p.positional {
                     p.name = "".into();
@@ -75,8 +93,8 @@ fn stated(t: &Ty) -> Ty {
             s.own.clear();
             s.data = false;
             for a in s.arrows.iter_mut() {
-                stack.extend(a.params.iter_mut());
-                stack.push(&mut a.result);
+                stack.extend(a.params.iter_mut().map(|t| (t, scope.clone())));
+                stack.push((&mut a.result, scope.clone()));
             }
         }
     }

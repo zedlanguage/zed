@@ -809,7 +809,7 @@ fn a_lambda_whose_uses_the_bound_does_not_allow_is_an_error() {
         ),
         (
             "y = mix(g: (a, b) -> b);\n",
-            "the lambda is `(a: T, b: U) -> U`, not `(a: T, b: int) -> T for T in int | f64` \
+            "the lambda is `(a: _, b: _) -> _`, not `(a: T, b: int) -> T for T in int | f64` \
              [(a, b) -> b]",
         ),
         // The inner `p_wide` gives an f64, so `x` is an f64, and `p_wide` passes an int too.

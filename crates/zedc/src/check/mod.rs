@@ -3913,7 +3913,7 @@ fn class_id(v: &str) -> Option<usize> {
 }
 
 /// The `n`th name of a signature's own type variables: `T`, `U`, `V`, `W`, `T5`, ….
-fn var_name(n: usize) -> Arc<str> {
+pub(super) fn var_name(n: usize) -> Arc<str> {
     match n {
         0..4 => ["T", "U", "V", "W"][n].into(),
         _ => format!("T{}", n + 1).into(),

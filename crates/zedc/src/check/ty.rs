@@ -7,7 +7,7 @@
 //! combination of its arguments' pieces, so `int | f64` plus `int` is checked as `int + int`
 //! and `f64 + int`.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -59,20 +59,20 @@ impl Shape {
     }
 
     /// Writes the type of the atom `#name` with this payload to `out`: `#name(int, f: String)`.
-    fn write(&self, name: &str, out: &mut String) {
+    fn write(&self, name: &str, out: &mut String, scope: &mut Scope) {
         out.push('#');
         out.push_str(name);
         out.push('(');
         let mut first = true;
         for t in &self.items {
             separate(out, &mut first, ", ");
-            t.write(out);
+            t.write(out, scope);
         }
         for (f, t) in &self.fields {
             separate(out, &mut first, ", ");
             out.push_str(f);
             out.push_str(": ");
-            t.write(out);
+            t.write(out, scope);
         }
         out.push(')');
     }
@@ -1489,10 +1489,79 @@ impl Sig {
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();
-        self.write(&mut text);
+        self.write(&mut text, &mut Scope::default());
         #[cfg(feature = "printed-types")]
         printed::record(self, &text);
         f.write_str(&text)
+    }
+}
+
+/// The type variables the signatures around a place being printed bind: each by its name in
+/// the type, with the name it is printed with, or none when it is printed `_`. A variable no
+/// signature around it bounds by carriers is printed `_`, the type of every value, since type
+/// syntax writes a type variable only with its bound (DESIGN.md L1.26, sec:diagnostics).
+#[derive(Default)]
+struct Scope {
+    /// Each variable's printed names, innermost signature last.
+    names: HashMap<Arc<str>, Vec<Option<Arc<str>>>>,
+    /// The printed names in scope, so a signature inside another that bounds a name already
+    /// printed takes a fresh one: a bounds clause inside another's may not bound its name again.
+    printed: HashSet<Arc<str>>,
+    /// The index in `T`, `U`, … of the next fresh name to try. It only grows, so each name is
+    /// tried once however many signatures take a fresh one.
+    fresh: usize,
+}
+
+impl Scope {
+    /// How the variable `v` is printed here: its printed name, or `None` for `_`.
+    fn name(&self, v: &Arc<str>) -> Option<&Arc<str>> {
+        self.names.get(v)?.last()?.as_ref()
+    }
+
+    /// Opens the variables `sig` binds, giving each bounded one a printed name, and returns
+    /// them with their masks, in the order of `sig.bounds`. A name not printed around the
+    /// signature is kept; otherwise the next of `T`, `U`, … not yet tried that is neither
+    /// printed around it nor a name of its own.
+    fn open(&mut self, sig: &Sig) -> Vec<(Arc<str>, u8)> {
+        let mut out = Vec::new();
+        for (v, &m) in &sig.bounds {
+            if m & OTHER != 0 {
+                self.names.entry(v.clone()).or_default().push(None);
+                continue;
+            }
+            let name = if self.printed.contains(v) {
+                loop {
+                    let name = super::var_name(self.fresh);
+                    self.fresh += 1;
+                    if !self.printed.contains(&name) && !sig.bounds.contains_key(&name) {
+                        break name;
+                    }
+                }
+            } else {
+                v.clone()
+            };
+            self.printed.insert(name.clone());
+            self.names
+                .entry(v.clone())
+                .or_default()
+                .push(Some(name.clone()));
+            out.push((name, m));
+        }
+        for v in sig.own.iter().filter(|v| !sig.bounds.contains_key(*v)) {
+            self.names.entry(v.clone()).or_default().push(None);
+        }
+        out
+    }
+
+    /// Closes the variables `sig` binds, which [`Scope::open`] opened.
+    fn close(&mut self, sig: &Sig) {
+        let own = sig.own.iter().filter(|v| !sig.bounds.contains_key(*v));
+        for v in sig.bounds.keys().chain(own) {
+            let names = self.names.get_mut(v).expect("opened");
+            if let Some(Some(name)) = names.pop() {
+                self.printed.remove(&name);
+            }
+        }
     }
 }
 
@@ -1507,8 +1576,8 @@ fn separate(out: &mut String, first: &mut bool, sep: &str) {
 impl Ty {
     /// Writes its text, in type syntax, to `out`. Each part is written in place, not built as a
     /// string and copied into the whole: copying cost the depth of each part, so O(n^2) for a
-    /// function type n deep.
-    fn write(&self, out: &mut String) {
+    /// function type n deep. A variable `scope` does not name is printed `_`, once.
+    fn write(&self, out: &mut String, scope: &mut Scope) {
         let mut first = true;
         // An atom whose payloads are known prints each payload's type, `#ioError(op: String,
         // path: String, why: String)` (L29-print); the kernel set holds it with any payload.
@@ -1532,7 +1601,7 @@ impl Ty {
         for (n, ss) in shaped {
             for s in ss {
                 separate(out, &mut first, " | ");
-                s.write(n, out);
+                s.write(n, out, scope);
             }
         }
         for cs in &self.tuples {
@@ -1541,7 +1610,7 @@ impl Ty {
             let mut one = true;
             for c in cs {
                 separate(out, &mut one, ", ");
-                c.write(out);
+                c.write(out, scope);
             }
             if cs.len() == 1 {
                 out.push(',');
@@ -1551,14 +1620,20 @@ impl Ty {
         for s in &self.fns {
             separate(out, &mut first, " | ");
             out.push('(');
-            s.write(out);
+            s.write(out, scope);
             out.push(')');
         }
+        let mut free = false;
         for v in &self.vars {
-            separate(out, &mut first, " | ");
-            out.push_str(v);
+            match scope.name(v) {
+                Some(name) => {
+                    separate(out, &mut first, " | ");
+                    out.push_str(name);
+                }
+                None => free = true,
+            }
         }
-        if self.dynamic {
+        if self.dynamic || free {
             separate(out, &mut first, " | ");
             out.push('_');
         }
@@ -1571,7 +1646,7 @@ impl Ty {
 impl fmt::Display for Sig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();
-        self.write(&mut text);
+        self.write(&mut text, &mut Scope::default());
         #[cfg(feature = "printed-types")]
         printed::record(&Ty::func(Arc::new(self.clone())), &text);
         f.write_str(&text)
@@ -1579,8 +1654,10 @@ impl fmt::Display for Sig {
 }
 
 impl Sig {
-    /// Writes its text, in type syntax, to `out`.
-    fn write(&self, out: &mut String) {
+    /// Writes its text, in type syntax, to `out`: its variables bounded by carriers by name, in
+    /// a bounds clause after the arrows, and the others `_`.
+    fn write(&self, out: &mut String, scope: &mut Scope) {
+        let bounds = scope.open(self);
         let several = self.arrows.len() != 1;
         let mut first = true;
         for a in &self.arrows {
@@ -1596,20 +1673,21 @@ impl Sig {
                     out.push_str(&p.name);
                     out.push_str(": ");
                 }
-                t.write(out);
+                t.write(out, scope);
             }
             out.push_str(") -> ");
-            a.result.write(out);
+            a.result.write(out, scope);
             if several {
                 out.push(')');
             }
         }
-        for (i, (v, m)) in self.bounds.iter().enumerate() {
+        for (i, (v, m)) in bounds.iter().enumerate() {
             out.push_str(if i == 0 { " for " } else { ", " });
             out.push_str(v);
             out.push_str(" in ");
             out.push_str(&mask_text(*m));
         }
+        scope.close(self);
     }
 }
 
