@@ -991,11 +991,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | NARROW-if | impl attempt 1 | 2026-11-03 16:46 | arms.rs: test nodes + lazy reduced-product scopes; pc.zed and the four ** repros pass |
 | PRINT-tyvars | repair attempt 2 | 2026-11-03 16:46 | start: continue wt/print-tyvars c13e06d6; rebase on main 2c3d97ac, fix named_calls pin, resolve fence drift |
 | RAT-parse | impl attempt 1 | 2026-11-03 16:46 | docs: COMPLEXITY K41, STATUS row; new item NUM-subquad in ledger (needs RAT-parse, feeds T12, L1.40); suite running |
-| S22e-wide | verify attempt 3 | 2026-11-03 11:28 | diff since aa0e3361 is the comment at split_residues only (preimage.rs:476-490), claims match s22.rs:922-924 and COMPLEXITY S22e-wide; fmt clean, clippy -D warn |
 | WIDE-copies | repair attempt 1 | 2026-11-03 12:51 | start: repair verify#2 findings on wt/wide-copies (tradeoff comments rem_built, exact_div, aligned; STATUS row) |
 | ZIR-canon-sort | impl attempt 1 | 2026-11-03 17:31 | negative control (old swap loop, not committed): new scaling test fails, 4895169 vs 2490169701 instructions at F=100/800, 508.7x (limit 24), load 56; Eq mutant  |
 
-Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (4 commits); the push follows one full test run on the merged tree:
+
+- S22e-wide: c5ae623c, 1f36c1be, 7b86ef2e (rebased on main 8b96d7d3) and the commit that records this; conflicts with S22-WIDE (`reach` removed, `input` returns an `Option`) and LIVE3 (s22 counts) resolved keeping both; `more_random_guarded_chains_keep_their_preimages` exact count set to 99 (53 + 2 + 44) by reasoning, not measured; the batch test confirms it
 
 
 ## Open points
