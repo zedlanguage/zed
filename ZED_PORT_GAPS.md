@@ -1294,3 +1294,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | Two per-device accumulators updated in place through `&mut out[d]` and `&mut kept[d]` in one loop over the regions | `per_device` | Mutation (gap 11) | `zed/prelude/cost.zed` `peak`: a fold over the device's regions with a pair (peak, retained so far) as its value |
 | `saturating_add` on the retained bytes and the peak | `per_device` | Machine integers (see the mechanical rewrites) | Vanishes on an unbounded `int`; the peak then does not stop at the maximum |
+
+## Entries from BIT-axioms (`zedc/src/axioms.rs`, `tests/steps/m0_11_prelude_axioms_and_limits/`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Two new `Law` variants, one holding a `Const` and one a `&'static str`, in a `const` table of `Axiom` | `axioms::Law::SelfInverse`, `PowerOfTwo`, `AXIOMS` | None | Atoms with a payload, `#selfInverse(0)` and `#powerOfTwo("*")`, as `zed/prelude/axioms.zed` already writes them |
+| An operator's table on 0..<2^w built once into a `Vec<usize>`, then read by index for each tuple | `check_word` (test) | None | A list built by `map` over a range and read by index; the reads are O(1) on a persistent vector |
+| `<[Term; 2]>::try_from(Vec<Term>)` to take the two arguments of a binary operator by value | `call` (test) | None | A list pattern `[a, b]` in a `match` |
+| `num_bigint::BigInt` for 2^63, 2^64 and 2^128 corner values | `word_corners`, `shift_values` (test) | None | `int` is unbounded: the literals `2 ** 64` and so on |

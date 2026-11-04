@@ -82,6 +82,11 @@ pub enum Law {
     /// For a predicate, `op(a, b)` and `next(b, c)` imply `result(a, c)`, written
     /// `Composes(next, result)`: one composition of an order chain (sec:verification).
     Composes(&'static str, &'static str),
+    /// `op(a, a) == e`: every value is its own inverse, `e` the identity.
+    SelfInverse(Const),
+    /// For an `op(x, k)` with `k >= 0`, `op(x, k) == g(x, 2 ** k)`, `g` the named operator: a
+    /// shift is a product or a quotient by a power of two.
+    PowerOfTwo(&'static str),
 }
 
 /// One axiom: an operator, the carrier of its arrow, and a law.
@@ -238,6 +243,21 @@ pub const AXIOMS: &[Axiom] = &[
     ax(">", String, Implies(">=")),
     ax(">", String, Composes(">=", ">")),
     ax(">=", String, Composes(">", ">")),
+    // The bit words of step L1.39a, on their domain `int[0..]`. None takes a width, so no law
+    // wraps: `shl(x, k)` is the exact `x * 2 ** k` for every int `x`, `shl(1, 64)` is `2 ** 64`,
+    // and `shr(x, k)` is the Euclidean `x div 2 ** k`, which rounds toward negative infinity.
+    ax("bitAnd", Int, Associative),
+    ax("bitAnd", Int, Commutative),
+    ax("bitAnd", Int, Idempotent),
+    ax("bitOr", Int, Associative),
+    ax("bitOr", Int, Commutative),
+    ax("bitOr", Int, Idempotent),
+    ax("bitXor", Int, Associative),
+    ax("bitXor", Int, Commutative),
+    ax("bitXor", Int, Identity(Const::Int(0))),
+    ax("bitXor", Int, SelfInverse(Const::Int(0))),
+    ax("shl", Int, PowerOfTwo("*")),
+    ax("shr", Int, PowerOfTwo("div")),
 ];
 
 /// The axioms of `op` at `carrier`.
