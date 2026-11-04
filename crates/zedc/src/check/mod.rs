@@ -3950,7 +3950,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
 }
 
 /// The type of the bytes `utf8` gives and `fromUtf8` reads (step L1.39c): a family of ints keyed
-/// by ints. The checker has no int-range types before step L10 (COMPLEXITY.md C28), so neither the keys
+/// by ints. The checker has no int-range types before step L10, so neither the keys
 /// from 1 nor the bytes in `0 ..< 256` are stated here; the kernel gives `#badUtf8` for an int
 /// that is not a byte.
 fn bytes() -> Ty {
@@ -4154,6 +4154,18 @@ impl<'a> Ck<'_, 'a> {
         }
     }
 
+    // Complexity tradeoff: only a call of `codePoint` written in the text, as the operand or as
+    // the value of a `name =` binder, gets the interval `0 ..= 1114111`; one that reaches a bit
+    // word through a function's result or a parameter is read as any int, and the bit word
+    // rejects it ("`bitAnd` takes `a` in int[0..], and this `a` is int"). Why: as for C26, the
+    // checker runs before the store's iteration, and following each call into the body it
+    // returns would check that body once per call site, where reading the text is O(1) per
+    // node. Trigger: a `codePoint` result returned by a user function, as in
+    // `f(s) = codePoint(s); x = bitAnd(f(s: "a"), 1);`. Test:
+    // `l01_39c_code_points::checks::a_code_point_returned_by_a_function_is_read_as_any_int`.
+    // COMPLEXITY.md row C28. A complete solution needs int-range types on results (step L10,
+    // ledger BIT-checker-ranges), so `codePoint`'s signature states `int[0..=1114111]` and a
+    // function's result type carries it, or the checker reading the reduced product's cell.
     /// Whether `e` calls the prelude word `codePoint` (step L1.39c), `codePoint(s)`, `s.codePoint()`
     /// or `s.codePoint`, whose int value lies in `0 ..= 1114111`.
     fn code_point_call(&self, e: &Expr) -> bool {

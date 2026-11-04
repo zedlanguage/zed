@@ -257,7 +257,7 @@ result have no step.
 Built by step L1.39c: `codePoint : String -> int | #notScalar`, `scalar : int -> String |
 #notScalar`, `utf8 : String -> (int ->? int)` (keys `1 ..= n`) and `fromUtf8 : (int ->? int) ->
 String | #badUtf8` are kernel primitives (`zed_kernel::words`, `Prim`) and prelude words of layer
-L1 (COMPLEXITY.md row C28). So `\u{…}` decoding (`lex/string.rs:149`, `:292`) and
+L1 (COMPLEXITY.md, Kept). So `\u{…}` decoding (`lex/string.rs:149`, `:292`) and
 `zir/text.rs:983` can be written in Zed. The implementation uses `char::from_u32`, `str::chars`,
 `str::bytes` and `String::from_utf8`; in Zed these are the four words themselves, so the step adds
 no new gap. There is still no character type: text is one-element strings ordered by code point

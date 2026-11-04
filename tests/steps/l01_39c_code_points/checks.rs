@@ -73,7 +73,28 @@ fn a_code_point_is_not_wider_than_21_digits_but_may_be_wider_than_20() {
 
 #[test]
 fn a_local_function_named_code_point_is_not_the_word() {
-    let src = "codePoint(s) = -1;\nx = bitAnd(codePoint(s: \"a\"), 1);\n";
-    let out = rejected(src);
-    assert!(out.contains("`bitAnd` takes `a` in int[0..]"), "{out}");
+    // The receiver forms resolve to the user's `codePoint`, whose value is -1.
+    for call in ["\"a\".codePoint", "\"a\".codePoint()"] {
+        let src = format!("codePoint(s) = -1;\nx = bitAnd({call}, 1);\n");
+        let out = rejected(&src);
+        assert!(
+            out.contains("`bitAnd` takes `a` in int[0..]"),
+            "{src}: {out}"
+        );
+        assert!(out.contains("this `a` is -1"), "{src}: {out}");
+    }
+}
+
+#[test]
+fn a_code_point_returned_by_a_function_is_read_as_any_int() {
+    // COMPLEXITY.md C28: only a call of `codePoint` written as the operand, or bound to a
+    // name by `=`, is known to lie in `0 ..= 1114111`; through a function's result it is any int.
+    let out = rejected("f(s) = codePoint(s);\nx = bitAnd(f(s: \"a\"), 1);\n");
+    assert!(
+        out.contains("`bitAnd` takes `a` in int[0..], and this `a` is int"),
+        "{out}"
+    );
+    assert!(accepted(
+        "c = codePoint(\"a\");\nx = bitAnd(c, 1) else 0;\n"
+    ));
 }
