@@ -253,8 +253,8 @@ pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
 /// The errors name resolution finds in the type `t`, read as a type the checker printed
 /// (OSP-diag, DESIGN.md "Printed types are syntax"): the walk a written type gets, the names in
 /// `leaves` standing for the leaves of layer L10 a printed type holds (`_`, `!_`, a literal),
-/// and an atom's payload type, a form of step L2.5 the checker prints from L1 on, read through
-/// to its parts. A type variable no bounds clause around it binds is not defined.
+/// and the forms of step L2.5 the checker prints from L1 on: an atom's payload type, read through
+/// to its parts, an atom with any payload `#a(..)` and every struct `{..}`. A type variable no bounds clause around it binds is not defined.
 pub fn printed_type(t: &Type, leaves: HashSet<Arc<str>>) -> Result<(), Vec<Error>> {
     let mut r = Resolver {
         printed: Some(leaves),
@@ -973,6 +973,7 @@ impl Resolver {
             TypeKind::AtomApply(_, ps) if self.printed.is_some() => {
                 todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
+            TypeKind::AtomAny(_) | TypeKind::Every(Every::Struct) if self.printed.is_some() => {}
             TypeKind::Apply(..) => self.later(t.span, "an applied type", "L2.5"),
             TypeKind::AtomApply(..) => self.later(t.span, "an atom type with a payload", "L2.5"),
             TypeKind::AtomAny(_) => self.later(t.span, "an atom type with any payload", "L2.5"),
