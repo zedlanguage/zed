@@ -132,9 +132,9 @@ impl fmt::Display for Atom {
 }
 
 /// Why a question lies outside the fragment the solver decides. Each is reported in its own
-/// words (sec:diagnostics), and each is a property of the system's shape, never of its size;
-/// narrowing keeps the written constraint, which is sound.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+/// words (sec:diagnostics), and each is a property of the system's shape, never of its size
+/// or of the names of its variables; narrowing keeps the written constraint, which is sound.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Refusal {
     /// Every elimination of a variable would enlarge the system, which has four variables or
     /// more and is not of the form `±x ± y + k >= 0`; no row is below zero over the box its
@@ -146,6 +146,27 @@ pub enum Refusal {
     Shadows,
     /// The search through the disjunctions found no point and removed no disjunct.
     Disjuncts,
+    /// The next step would choose among variables, or equalities, that no structure of the
+    /// rows tells apart and that share a row, so the choice would fall to their names; the
+    /// stages that need no choice decided nothing.
+    Tie(Arc<Tie>),
+    /// The formula has disjunctions left after every disjunct with no point is removed, and
+    /// atoms that no structure tells apart, so the search through the disjunctions would go in
+    /// an order chosen by name; the one choice of disjuncts that the structure fixes, when
+    /// there is one, has no point with the rest. The rows of the [`Tie`] are the disjunctions left.
+    Unordered(Arc<Tie>),
+}
+
+/// The variables of a [`Refusal::Tie`], and the rows they share, written over the variables
+/// left at that step: a variable the solver made up for an equality or a splinter is `t1`,
+/// `t2` and so on, and a variable standing for several whose columns are multiples of one
+/// column is written as their sum.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Tie {
+    /// The variables, as written.
+    pub vars: Vec<String>,
+    /// The rows they share, each `... >= 0` or `... == 0`.
+    pub rows: Vec<String>,
 }
 
 impl fmt::Display for Refusal {
@@ -162,6 +183,53 @@ impl fmt::Display for Refusal {
             }
             Refusal::Disjuncts => {
                 "no choice among the disjunctions of the integer constraints was settled"
+            }
+            Refusal::Tie(t) => {
+                let quote = |xs: &[String]| {
+                    xs.iter()
+                        .map(|x| format!("`{x}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                return write!(
+                    f,
+                    "variables that no structure tells apart would be eliminated in an order \
+                     chosen by name: {} occur alike in the integer constraints (the same \
+                     coefficients, in rows that occur alike), so the next step has no first \
+                     among them, and they share {}; so whether the constraints hold at an \
+                     integer point is not decided",
+                    quote(&t.vars),
+                    if t.rows.len() == 1 {
+                        format!("the row {}", quote(&t.rows))
+                    } else {
+                        format!("the rows {}", quote(&t.rows))
+                    }
+                );
+            }
+            Refusal::Unordered(t) => {
+                let quote = |xs: &[String]| {
+                    xs.iter()
+                        .map(|x| format!("`{x}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                return write!(
+                    f,
+                    "the disjunctions of the integer constraints would be searched in an order \
+                     chosen by name: {} occur alike in the constraints (the same coefficients, \
+                     in rows that occur alike), so no order of the search is fixed by their \
+                     structure, and {} {} left after every disjunct with no point is removed, \
+                     with no choice of one disjunct in each, fixed by the structure, that has a \
+                     point with the rest; so whether the constraints hold at an integer point is \
+                     not decided",
+                    quote(&t.vars),
+                    if t.rows.len() == 1 {
+                        format!("the disjunction {}", quote(&t.rows))
+                    } else {
+                        format!("the disjunctions {}", quote(&t.rows))
+                    },
+                    if t.rows.len() == 1 { "is" } else { "are" }
+                );
             }
         })
     }
@@ -735,6 +803,22 @@ pub type Model = BTreeMap<Atom, Int>;
 
 /// Whether `f` holds somewhere, and where.
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
+    match Renamed::of(f) {
+        Naming::Kept => satisfiable_inner(f),
+        Naming::Renamed(r) => {
+            let found = satisfiable_inner(&r.f).map_err(|e| r.back_refusal(e))?;
+            Ok(found.map(|m| m.into_iter().map(|(a, v)| (r.back(&a), v)).collect()))
+        }
+        Naming::Tied(vars, color) => match settle_tied(f, &color, true)? {
+            Settled::Empty => Ok(None),
+            Settled::Point(m) => Ok(Some(m)),
+            Settled::Left(p) => Err(unordered(vars, &p)),
+        },
+    }
+}
+
+/// [`satisfiable`] of a formula whose names no longer matter ([`Renamed`]).
+fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
     match propagate(f)? {
         None => Ok(None),
         Some(p) => found(p),
@@ -744,11 +828,492 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// Whether `f` holds somewhere. A conjunction is decided without building a point; a point is
 /// built only to search the disjunctions that propagation leaves.
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
+    match Renamed::of(f) {
+        Naming::Kept => decide_inner(f),
+        Naming::Renamed(r) => decide_inner(&r.f).map_err(|e| r.back_refusal(e)),
+        Naming::Tied(vars, color) => match settle_tied(f, &color, false)? {
+            Settled::Empty => Ok(false),
+            Settled::Point(_) => Ok(true),
+            Settled::Left(p) => Err(unordered(vars, &p)),
+        },
+    }
+}
+
+/// [`decide`] of a formula whose names no longer matter ([`Renamed`]).
+fn decide_inner(f: &Formula) -> Result<bool, Refusal> {
     match propagate(f)? {
         None => Ok(false),
         Some(p) if p.ors.is_empty() => Ok(true),
         Some(p) => Ok(found(p)?.is_some()),
     }
+}
+
+/// The new name of `a` under the renaming `to` of [`Renamed`]; an atom not in it keeps its own,
+/// and a product its factors renamed.
+fn rename(to: &HashMap<Atom, Arc<str>>, a: &Atom) -> Atom {
+    let sym = |s: &Arc<str>| (to.get(&Atom::Sym(s.clone()))).map_or_else(|| s.clone(), Arc::clone);
+    match a {
+        Atom::Product(x, y) => Atom::product(&sym(x), &sym(y)),
+        Atom::Sym(_) | Atom::Aux(_) => to
+            .get(a)
+            .map_or_else(|| a.clone(), |s| Atom::Sym(s.clone())),
+    }
+}
+
+/// A formula with disjunctions, its atoms renamed by the structure of its constraints, so that
+/// the search through its disjunctions ([`pick`], [`probe`], [`project_parts`]) reads one
+/// formula under every naming of its variables. That search takes, in each disjunction, the
+/// first disjunct that serves, in an order and at points that the names decide: [`nnf`] sorts
+/// the disjuncts, comparing atoms by name, and the points come from [`solve`], whose model
+/// breaks ties by place. The coloring of [`stable_colors`] over every constraint of the
+/// formula, read as one system, depends on the structure alone; when it gives each atom its
+/// own color, the atom of color rank `k` is renamed `#k`, which no written name is. A renaming
+/// of the variables carries their colors with them, so every naming gives the one formula, and
+/// every answer and refusal of it is renamed back. A product keeps its factors, renamed: the
+/// coloring is given, for each product, a row joining it to its two factors, so that a factor
+/// that occurs only in products has a color too.
+///
+/// Complexity tradeoff: when two atoms share a color ([`Naming::Tied`]), no renaming is
+/// fixed by the structure, so the formula is not searched: [`decide`] and [`satisfiable`]
+/// settle it by [`settle_as_sets`], whose result no order of its parts changes, answer it
+/// when no two disjunctions left are linked ([`alone`]), test what is otherwise left with the
+/// disjuncts their colors choose ([`settle_tied`], [`by_color`]), and refuse
+/// with [`Refusal::Unordered`] when that finds no point; [`project_each`] projects it by
+/// [`project_parts`] with `sets`, which asks only such questions and keeps every disjunction.
+/// What is given up: a formula with such atoms whose point or whose emptiness only the search
+/// shows (`true` or `false` becomes the refusal; [`settle_tied`]'s tradeoff), and in a
+/// projection, the narrowing that showing a disjunct empty by a search would give. Why:
+/// telling such atoms apart is canonical labeling
+/// of the formula's graph, which individualization and refinement (McKay and Piperno's nauty
+/// and Traces) do in time exponential in the worst case, while color refinement alone gives
+/// one color to atoms that no automorphism exchanges (regular graphs, the Frucht graph);
+/// searching as written made the answer depend on the names (5 of 1,000 systems of the test
+/// below). Trigger: a formula with a disjunction, after negations are pushed in, two of whose
+/// atoms the coloring does not tell apart. Tests:
+/// `l01_38_presburger::names::disjunctions_whose_atoms_share_a_color` and
+/// `l01_38_presburger::names::a_formula_whose_atoms_share_a_color_is_settled_or_refused`.
+/// COMPLEXITY.md row NAME-ties-or. A complete solution would rename by a canonical labeling,
+/// or search the disjunctions completely (DPLL(T)); each is exponential in the worst case.
+struct Renamed {
+    /// The formula renamed.
+    f: Formula,
+    /// The atom renamed `#k`, at `k`.
+    from: Vec<Atom>,
+    /// The new name of each atom renamed.
+    to: HashMap<Atom, Arc<str>>,
+}
+
+/// How the names of a formula's atoms reach its answer ([`Renamed::of`]).
+enum Naming {
+    /// They do not: the formula has no disjunction, and [`solve`] decides it by structure
+    /// alone.
+    Kept,
+    /// The formula renamed by the colors of its atoms.
+    Renamed(Renamed),
+    /// Two atoms or more share a color: the atoms of the least such color, by name, and the
+    /// color of each atom, which no renaming changes.
+    Tied(Vec<Atom>, HashMap<Atom, usize>),
+}
+
+impl Renamed {
+    /// How the names of `f`'s atoms are kept from its answer: not at all when it has no
+    /// disjunction, by renaming when each atom has its own color, and otherwise by settling
+    /// it without a search ([`Naming::Tied`]).
+    fn of(f: &Formula) -> Naming {
+        if !f.chooses() {
+            return Naming::Kept;
+        }
+        let mut cons = f.cons();
+        let mut atoms: BTreeSet<Atom> = BTreeSet::new();
+        for c in &cons {
+            atoms.extend(c.lin.terms.keys().cloned());
+        }
+        let joins: Vec<Con> = (atoms.iter())
+            .filter_map(|a| match a {
+                Atom::Product(x, y) => {
+                    let factors =
+                        Lin::atom(Atom::Sym(x.clone())).plus(&Lin::atom(Atom::Sym(y.clone())));
+                    Some(Con::eq(
+                        &Lin::atom(a.clone()).plus(&factors),
+                        &Lin::default(),
+                    ))
+                }
+                Atom::Sym(_) | Atom::Aux(_) => None,
+            })
+            .collect();
+        for c in &joins {
+            atoms.extend(c.lin.terms.keys().cloned());
+        }
+        cons.extend(joins.iter());
+        let atoms: Vec<Atom> = atoms.into_iter().collect();
+        let color = stable_colors(&atoms, &cons);
+        let mut plain: Vec<usize> = (0..atoms.len())
+            .filter(|&i| !matches!(atoms[i], Atom::Product(..)))
+            .collect();
+        plain.sort_unstable_by_key(|&i| color[i]);
+        if let Some(w) = plain.windows(2).find(|w| color[w[0]] == color[w[1]]) {
+            let tied = color[w[0]];
+            let mut vars: Vec<Atom> = (plain.iter())
+                .filter(|&&i| color[i] == tied)
+                .map(|&i| atoms[i].clone())
+                .collect();
+            vars.sort_unstable();
+            return Naming::Tied(vars, atoms.into_iter().zip(color).collect());
+        }
+        let from: Vec<Atom> = plain.iter().map(|&i| atoms[i].clone()).collect();
+        let to: HashMap<Atom, Arc<str>> = (from.iter().enumerate())
+            .map(|(k, a)| (a.clone(), Arc::from(format!("#{k}"))))
+            .collect();
+        let f = f.map_cons(&|c| {
+            let terms = c.lin.terms.iter().map(|(a, k)| (rename(&to, a), k.clone()));
+            Formula::Con(Con {
+                lin: Lin {
+                    terms: terms.collect(),
+                    constant: c.lin.constant.clone(),
+                },
+                rel: c.rel,
+            })
+        });
+        Naming::Renamed(Renamed { f, from, to })
+    }
+
+    /// The new name of `a`; an atom not in the formula keeps its own.
+    fn there(&self, a: &Atom) -> Atom {
+        rename(&self.to, a)
+    }
+
+    /// The atom that `a`, a new name or one kept, stands for.
+    fn back(&self, a: &Atom) -> Atom {
+        let of = |s: &Arc<str>| {
+            let k = s.strip_prefix('#').and_then(|k| k.parse::<usize>().ok());
+            k.map(|k| &self.from[k])
+        };
+        match a {
+            Atom::Sym(s) => of(s).map_or_else(|| a.clone(), Atom::clone),
+            Atom::Product(x, y) => {
+                let factor = |s: &Arc<str>| match of(s) {
+                    Some(Atom::Sym(t)) => t.clone(),
+                    _ => s.clone(),
+                };
+                Atom::product(&factor(x), &factor(y))
+            }
+            Atom::Aux(_) => a.clone(),
+        }
+    }
+
+    /// `text`, written over the new names, with each written as the atom it stands for.
+    fn back_text(&self, text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find('#') {
+            out.push_str(&rest[..at]);
+            let digits = rest[at + 1..]
+                .bytes()
+                .take_while(u8::is_ascii_digit)
+                .count();
+            match rest[at + 1..at + 1 + digits].parse::<usize>() {
+                Ok(k) if k < self.from.len() => out.push_str(&self.from[k].to_string()),
+                _ => out.push_str(&rest[at..at + 1 + digits]),
+            }
+            rest = &rest[at + 1 + digits..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// The refusal `e` of the renamed formula, written over the atoms as given.
+    fn back_refusal(&self, e: Refusal) -> Refusal {
+        match e {
+            Refusal::Tie(t) => Refusal::Tie(Arc::new(Tie {
+                vars: t.vars.iter().map(|v| self.back_text(v)).collect(),
+                rows: t.rows.iter().map(|v| self.back_text(v)).collect(),
+            })),
+            Refusal::Unordered(t) => Refusal::Unordered(Arc::new(Tie {
+                vars: t.vars.iter().map(|v| self.back_text(v)).collect(),
+                rows: t.rows.iter().map(|v| self.back_text(v)).collect(),
+            })),
+            Refusal::Growth | Refusal::Shadows | Refusal::Disjuncts => e,
+        }
+    }
+}
+
+/// The refusal of a formula whose atoms `vars` share a color ([`Naming::Tied`]) and whose
+/// settled parts `p` keep disjunctions: the atoms, and the disjunctions left that mention one
+/// of them, or every disjunction left when none does. A disjunct is written as its own
+/// constraints, with `&& ...` for the disjunctions within it.
+fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
+    let mentions = |ds: &[Rc<Parts>]| {
+        ds.iter()
+            .any(|d| vars.iter().any(|v| d.atoms().contains(v)))
+    };
+    let write = |ds: &[Rc<Parts>]| {
+        let each = ds.iter().map(|d| {
+            let mut cs: Vec<String> = d.cons.iter().map(Con::to_string).collect();
+            if !d.ors.is_empty() {
+                cs.push("...".to_owned());
+            }
+            match cs.len() {
+                1 => cs.pop().expect("one"),
+                _ => format!("({})", cs.join(" && ")),
+            }
+        });
+        each.collect::<Vec<_>>().join(" || ")
+    };
+    let near: Vec<String> = (p.ors.iter())
+        .filter(|ds| mentions(ds))
+        .map(|ds| write(ds))
+        .collect();
+    let mut rows = if near.is_empty() {
+        p.ors.iter().map(|ds| write(ds)).collect()
+    } else {
+        near
+    };
+    rows.sort_unstable();
+    Refusal::Unordered(Arc::new(Tie {
+        vars: vars.iter().map(Atom::to_string).collect(),
+        rows,
+    }))
+}
+
+/// The parts `p` settled as [`settle`] settles them, with each test of a disjunct made
+/// against a base that no order of the parts can change, for a formula whose atoms share a
+/// color ([`Naming::Tied`]), whose parts [`nnf`] sorts by name.
+///
+/// [`settle`] reads the disjunctions one at a time, and a disjunction left with one disjunct
+/// joins the base at once, so a later disjunct is tested against more rows than an earlier
+/// one; [`solve`] may refuse a system and decide a smaller one empty, so that order could
+/// change which disjuncts are removed. Here the disjunctions are read in stages: each stage
+/// tests every disjunction it holds against the base as the stage began, and only then adds
+/// the disjuncts left alone to the base and makes their disjunctions the next stage, as
+/// [`settle`] reads them in the same round. Each test then has the same rows whatever the
+/// order, [`solve`] answers by the rows and not their order or names, and the base after each
+/// stage is the same set of rows ([`Linked::meet`] keeps the least constant for a term and
+/// comparison whatever the order), so by induction on the stages and rounds every naming
+/// gives the same rounds, the same disjuncts removed and the same answer. A disjunct whose
+/// constraints hold at the point found for the base is kept untested, as [`settle`] keeps it,
+/// only while that point holds every row added to the base since: it is then a point of the
+/// base and the disjunct, so the test would keep it too, and the point, which may depend on
+/// the names, changes no result. The cost is that of [`settle`] with the points of later
+/// stages unused, at most one test of each disjunct for each round.
+fn settle_as_sets(mut p: Parts) -> Result<Option<Parts>, Refusal> {
+    let mut base = Linked::reduced(std::mem::take(&mut p.cons));
+    loop {
+        let Some(model) = solve(&base.cons, !p.ors.is_empty())? else {
+            return Ok(None);
+        };
+        if p.ors.is_empty() {
+            p.cons = base.cons;
+            return Ok(Some(p));
+        }
+        let mut changed = false;
+        // Whether `model` is a point of the base as it now stands.
+        let mut at_model = true;
+        let mut stage = std::mem::take(&mut p.ors);
+        while !stage.is_empty() {
+            let mut alone: Vec<Rc<Parts>> = Vec::new();
+            for ds in stage {
+                let n = ds.len();
+                let mut live: Vec<Rc<Parts>> = (ds.into_iter())
+                    .filter(|d| {
+                        if at_model && d.cons.iter().all(|c| c.holds(&model)) {
+                            return true;
+                        }
+                        let mut cs = base.around(&d.cons);
+                        cs.extend(d.cons.iter());
+                        !matches!(solve(&cs, false), Ok(None))
+                    })
+                    .collect();
+                changed |= live.len() < n;
+                match live.len() {
+                    0 => return Ok(None),
+                    1 => alone.push(live.pop().expect("one")),
+                    _ => p.ors.push(live),
+                }
+            }
+            // Rows added to the base are solved again in the next round.
+            changed |= !alone.is_empty();
+            stage = Vec::new();
+            for d in &alone {
+                at_model &= d.cons.iter().all(|c| c.holds(&model));
+                d.cons.iter().for_each(|c| {
+                    base.meet(c.clone());
+                });
+                stage.extend(d.ors.iter().cloned());
+            }
+        }
+        if !changed {
+            p.cons = base.cons;
+            return Ok(Some(p));
+        }
+    }
+}
+
+/// What [`settle_tied`] leaves of a formula whose atoms share a color.
+enum Settled {
+    /// No point.
+    Empty,
+    /// A point, or an empty model when none was asked for.
+    Point(Model),
+    /// The parts, with disjunctions that settling leaves and no disjunct taken by color.
+    Left(Parts),
+}
+
+/// `f`, whose atoms share a color ([`Naming::Tied`]) and have the colors `color`, settled
+/// ([`settle_as_sets`]) and then, when disjunctions are left, answered when no two of them are
+/// linked ([`alone`]), or else tested with the disjuncts that their colors choose
+/// ([`by_color`]): a point of the base with those disjuncts is a point of `f`. With `want`,
+/// the point is built.
+///
+/// Complexity tradeoff: a formula with linked disjunctions left after settling is answered
+/// only when each disjunction has one least disjunct by [`by_color`]'s key and the base with
+/// those disjuncts has a point; otherwise it is `Left`, which [`decide`] and [`satisfiable`]
+/// refuse with [`Refusal::Unordered`]. What is given up: such a formula whose only points lie
+/// under other choices, or two of whose disjuncts tie on the key, and every such formula with no
+/// point (`false` becomes the refusal; [`settle_as_sets`] still shows no point when a
+/// disjunction loses every disjunct against the base). Why: a search that tries the
+/// disjuncts in turn needs an order among those of equal key, and that order would come from
+/// the names; testing every disjunct with every other disjunction instead, as the probe that
+/// this replaced did, cost the disjuncts times a settling for each round, cubic on a star of
+/// tied leaves with a disjunction each (8 to 64 leaves: 22 ms to 10.8 s). Here the test is one
+/// [`solve`] after the settling, and the links are read once. Trigger: a formula with two
+/// linked disjunctions left after settling, two of whose atoms the coloring does not tell
+/// apart. Tests:
+/// `l01_38_presburger::names::a_formula_whose_atoms_share_a_color_is_settled_or_refused`,
+/// `l01_38_presburger::names::decide_on_tied_disjunctions_scales` and
+/// `l01_38_presburger::names::decide_on_separate_tied_disjunctions_scales`. COMPLEXITY.md row
+/// NAME-ties-or. A complete solution would search the disjunctions completely (DPLL(T)),
+/// exponential in the disjunctions in the worst case, or tell the atoms apart by a canonical
+/// labeling, exponential in the worst case too.
+fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<Settled, Refusal> {
+    let Some(p) = settle_as_sets(Parts::of(nnf(f, true)))? else {
+        return Ok(Settled::Empty);
+    };
+    // Settling solved the base, and showed a point of the base with each disjunct that
+    // `alone` takes, so a point need not be found again unless it is wanted.
+    let lone = alone(&p);
+    if !want && (p.ors.is_empty() || lone.is_some()) {
+        return Ok(Settled::Point(Model::new()));
+    }
+    let Some(cons) = lone.or_else(|| by_color(&p, color)) else {
+        return Ok(Settled::Left(p));
+    };
+    Ok(match solve(&cons, want)? {
+        Some(m) => Settled::Point(m),
+        None => Settled::Left(p),
+    })
+}
+
+/// The constraints of the settled parts `p` with one disjunct of each disjunction, when no
+/// two disjunctions are linked, through rows of the base or through each other's disjuncts,
+/// and each has a disjunct with no disjunction of its own; otherwise `None`. Settling left
+/// only disjuncts that have a point with the base: each was tested against the rows linked
+/// to it, or holds at a point of the base as it now stands ([`settle_as_sets`]). The rows a
+/// disjunct is linked to are linked to no other disjunction, so the points of separate groups
+/// combine into one point of the base with every disjunct taken. Whether `p` has such a
+/// point is then fixed by the links, which no renaming changes; the disjunct taken in each
+/// disjunction is the first with no disjunction of its own, which the names order, so only the
+/// point found by [`satisfiable`] may change with them. The groups are found by union and
+/// find over the atoms with path halving, linking each row and each disjunction's atoms.
+fn alone<'a>(p: &'a Parts) -> Option<Vec<&'a Con>> {
+    fn find(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let mut ids: HashMap<&'a Atom, usize> = HashMap::new();
+    let mut parent: Vec<usize> = Vec::new();
+    // Links the atoms given into one group, and gives the group's root, or `None` when no
+    // atom is given.
+    let mut link = |atoms: &mut dyn Iterator<Item = &'a Atom>| -> Option<usize> {
+        let mut root: Option<usize> = None;
+        for a in atoms {
+            let next = parent.len();
+            let i = *ids.entry(a).or_insert(next);
+            if i == next {
+                parent.push(i);
+            }
+            let r = find(&mut parent, i);
+            match root {
+                None => root = Some(r),
+                Some(q) if q != r => parent[r] = q,
+                Some(_) => {}
+            }
+        }
+        root
+    };
+    p.cons.iter().for_each(|c| {
+        link(&mut c.lin.terms.keys());
+    });
+    let roots: Vec<Option<usize>> = (p.ors.iter())
+        .map(|ds| link(&mut ds.iter().flat_map(|d| d.atoms().iter())))
+        .collect();
+    let mut seen = vec![false; parent.len()];
+    for r in roots.into_iter().flatten() {
+        let r = find(&mut parent, r);
+        if std::mem::replace(&mut seen[r], true) {
+            return None;
+        }
+    }
+    let mut cons: Vec<&Con> = p.cons.iter().collect();
+    for ds in &p.ors {
+        cons.extend(ds.iter().find(|d| d.ors.is_empty())?.cons.iter());
+    }
+    Some(cons)
+}
+
+/// The key of a constraint that no renaming of its atoms changes, given their colors: its
+/// comparison, its constant, and the color and coefficient of each term, sorted. An atom with
+/// no color, which the formula colored has not, reads as the greatest color.
+fn color_key<'a>(
+    c: &'a Con,
+    color: &HashMap<Atom, usize>,
+) -> (Rel, &'a Int, Vec<(usize, &'a Int)>) {
+    let mut terms: Vec<(usize, &Int)> = (c.lin.terms.iter())
+        .map(|(a, k)| (color.get(a).copied().unwrap_or(usize::MAX), k))
+        .collect();
+    terms.sort_unstable();
+    (c.rel, &c.lin.constant, terms)
+}
+
+/// The constraints of the settled parts `p` with, in each disjunction, and in each disjunction
+/// of a disjunct taken, the disjunct whose constraints have the least sorted list of
+/// [`color_key`]s, or `None` when two disjuncts of a disjunction share the least list. Each
+/// choice reads one disjunction and the colors, which a renaming carries with the atoms, so
+/// every naming takes the same disjuncts, renamed; the constraints are a set to [`solve`],
+/// which answers by the rows and not their order or names. The nest is read on an explicit
+/// stack, and each disjunct's key costs its constraints' terms times their logarithm.
+fn by_color<'a>(p: &'a Parts, color: &HashMap<Atom, usize>) -> Option<Vec<&'a Con>> {
+    let mut cons: Vec<&Con> = p.cons.iter().collect();
+    let mut stack: Vec<&[Rc<Parts>]> = p.ors.iter().map(Vec::as_slice).collect();
+    while let Some(ds) = stack.pop() {
+        let key = |d: &'a Parts| {
+            let mut k: Vec<_> = d.cons.iter().map(|c| color_key(c, color)).collect();
+            k.sort_unstable();
+            k
+        };
+        let mut least: Option<(_, &Parts)> = None;
+        let mut tied = false;
+        for d in ds {
+            let k = key(d);
+            match &least {
+                Some((l, _)) if k > *l => {}
+                Some((l, _)) if k == *l => tied = true,
+                _ => {
+                    least = Some((k, d));
+                    tied = false;
+                }
+            }
+        }
+        let (_, d) = least?;
+        if tied {
+            return None;
+        }
+        cons.extend(d.cons.iter());
+        stack.extend(d.ors.iter().map(Vec::as_slice));
+    }
+    Some(cons)
 }
 
 /// A point of the propagated parts `p`, or `None` when the search removes every disjunct of
@@ -1066,6 +1631,15 @@ impl Linked {
     fn of(cons: Vec<Con>) -> Linked {
         let mut l = Linked::default();
         cons.into_iter().for_each(|c| l.add(c));
+        l
+    }
+
+    /// [`Linked::of`] with each constraint added by [`Linked::meet`].
+    fn reduced(cons: Vec<Con>) -> Linked {
+        let mut l = Linked::default();
+        cons.into_iter().for_each(|c| {
+            l.meet(c);
+        });
         l
     }
 
@@ -1899,7 +2473,11 @@ impl Parts {
 /// `f`, negated when `!sign`, with each negation pushed to the constraints: not `t >= 0` is
 /// `-t - 1 >= 0`, and not `t == 0` is `t >= 1 || -t >= 1`. The parts of each conjunction and
 /// disjunction are sorted, so that the search through them, which takes the first that serves,
-/// does not depend on the order they are written in.
+/// does not depend on the order they are written in. The sort compares names, so its order
+/// reaches an answer only through the names [`Renamed`] gives by color, or not at all: a
+/// formula whose atoms share a color is settled, tested and projected by questions whose
+/// answers no order of the parts changes ([`settle_as_sets`], [`alone`], [`by_color`],
+/// [`project_parts`] with `sets`), and refused when a search would be needed.
 fn nnf(f: &Formula, sign: bool) -> Formula {
     f.fold(
         sign,
@@ -2040,6 +2618,13 @@ fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
 
 /// Whether a conjunction of constraints holds somewhere, and, when `want`, where; without
 /// `want` a point is answered by an empty model, and none is built.
+///
+/// No step of the solver chooses by the names of the variables or by the order of the rows:
+/// each choice goes by what the structure of the rows gives (the colors of [`canonical`], the
+/// fill of an elimination, the coefficients), and where that leaves two candidates that share
+/// a row, the solver refuses with [`Refusal::Tie`] instead of choosing; candidates that share
+/// no row are taken together, which no order can change. So the answer, refusals included, is
+/// the same under every naming of the variables and every order of the constraints.
 fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<Model>, Refusal> {
     let cons: Vec<&Con> = cons.iter().map(|c| c.borrow()).collect();
     let atoms: Vec<Atom> = cons
@@ -2048,11 +2633,16 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let (atoms, rows, _) = canonical(atoms, &cons);
+    let Canonical {
+        atoms,
+        rows,
+        keys,
+        row_keys,
+    } = canonical(atoms, &cons);
     let index: BTreeMap<&Atom, usize> = atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
     // In the order of `canonical`, so that neither the order of the constraints nor the names of
     // the variables decide the order of the work, except among variables that refinement cannot
-    // tell apart.
+    // tell apart, where no choice is made by that order.
     let sorted: Vec<&Con> = rows.into_iter().map(|r| cons[r]).collect();
     // Each equality `x - y == d` ties `x` to `y`: every row is written over one variable of
     // each tied class, the others being offsets from it, so no row is rewritten for them.
@@ -2072,20 +2662,22 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
             return Ok(None);
         }
     }
+    let at = ties.representatives(&keys);
     let mut base: Vec<(Row, Rel)> = Vec::with_capacity(sorted.len());
     for c in sorted {
         let mut sum: BTreeMap<usize, Int> = BTreeMap::new();
         let mut k = c.lin.constant.clone();
         for (a, coef) in &c.lin.terms {
-            let (r, d) = ties.root(index[a]);
-            k = &k + &(coef * &d);
-            let at = sum.entry(r).or_insert(Int::ZERO);
+            let (r, d) = &at[index[a]];
+            k = &k + &(coef * d);
+            let at = sum.entry(*r).or_insert(Int::ZERO);
             *at = &*at + coef;
         }
         let a = sum.into_iter().filter(|(_, c)| !c.is_zero()).collect();
         base.push((Row { a, k }, c.rel));
     }
-    let Some(vals) = quotient(atoms.len(), base, want)? else {
+    let name = |i: usize| atoms[i].to_string();
+    let Some(vals) = quotient(atoms.len(), base, &keys, &row_keys, want, &name)? else {
         return Ok(None);
     };
     if !want {
@@ -2093,13 +2685,76 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
     }
     let mut model: Model = atoms.iter().cloned().zip(vals).collect();
     for (i, a) in atoms.iter().enumerate() {
-        let (r, d) = ties.root(i);
-        if r != i {
-            let v = &model[&atoms[r]] + &d;
+        let (r, d) = &at[i];
+        if *r != i {
+            let v = &model[&atoms[*r]] + d;
             model.insert(a.clone(), v);
         }
     }
     Ok(Some(model))
+}
+
+/// A choice among candidates that share a row and that nothing but their names or places
+/// tells apart, as variables by place and rows: the cause of a [`Refusal::Tie`] before its
+/// variables are named.
+struct Tied {
+    vars: Vec<usize>,
+    rows: Vec<(Row, Rel)>,
+}
+
+impl Tied {
+    /// The refusal, with the variables by place below `vars` named by `name` and those made
+    /// up after them `t1`, `t2` and so on.
+    fn written(&self, vars: usize, name: &dyn Fn(usize) -> String) -> Refusal {
+        let label = |j: usize| {
+            if j < vars {
+                name(j)
+            } else {
+                format!("t{}", j - vars + 1)
+            }
+        };
+        Refusal::Tie(Arc::new(Tie {
+            vars: self.vars.iter().map(|&j| label(j)).collect(),
+            rows: self
+                .rows
+                .iter()
+                .map(|(r, rel)| {
+                    let rel = if *rel == Rel::Eq { "==" } else { ">=" };
+                    format!(
+                        "{} {rel} 0",
+                        sum_of(r.a.iter().map(|(j, c)| (label(*j), c)), &r.k)
+                    )
+                })
+                .collect(),
+        }))
+    }
+}
+
+/// `Σ c·x + k`, written as [`Lin`] writes a term.
+fn sum_of<'a>(terms: impl Iterator<Item = (String, &'a Int)>, k: &Int) -> String {
+    let mut out = String::new();
+    for (x, c) in terms {
+        let m = c.abs();
+        match (out.is_empty(), c.is_negative()) {
+            (true, true) => out.push('-'),
+            (true, false) => {}
+            (false, true) => out.push_str(" - "),
+            (false, false) => out.push_str(" + "),
+        }
+        if m == Int::ONE {
+            out.push_str(&x);
+        } else {
+            out.push_str(&format!("{m} * {x}"));
+        }
+    }
+    if out.is_empty() {
+        out = k.to_string();
+    } else if k.is_positive() {
+        out.push_str(&format!(" + {k}"));
+    } else if k.is_negative() {
+        out.push_str(&format!(" - {}", k.abs()));
+    }
+    out
 }
 
 /// Variables whose columns are multiples of one column, merged into one variable: the
@@ -2141,7 +2796,21 @@ fn bezout(a: &Int, b: &Int) -> (Int, Int, Int) {
 /// added. A primitive column has coprime entries and its first entry above zero; columns are
 /// grouped by sorting them, O(T log T) comparisons for T terms, and the factors grow by
 /// O(log² C) bits for coefficients of C. With no two columns grouped, `base` goes on as it is.
-fn quotient(vars: usize, base: Vec<(Row, Rel)>, want: bool) -> Result<Option<Vec<Int>>, Refusal> {
+///
+/// The first entry of a column is first in the order of the rows, which names can decide, so
+/// the sign of `y`, which the later steps can see, is set otherwise: `p` is turned so that the
+/// members of least color (`keys`) enter with multiples above zero; where those members enter
+/// with both signs, so that the sorted pairs of row color (`row_keys`) and entry are the
+/// lesser of `p` and `-p`; and where `p` and `-p` give the same pairs, the group is not
+/// merged. `y` takes the least color of its members.
+fn quotient(
+    vars: usize,
+    base: Vec<(Row, Rel)>,
+    keys: &[usize],
+    row_keys: &[usize],
+    want: bool,
+    name: &dyn Fn(usize) -> String,
+) -> Result<Option<Vec<Int>>, Refusal> {
     // Each column, as its signed content and its primitive part, by row.
     let mut cols: Vec<Vec<(usize, &Int)>> = vec![Vec::new(); vars];
     for (i, (r, _)) in base.iter().enumerate() {
@@ -2189,13 +2858,67 @@ fn quotient(vars: usize, base: Vec<(Row, Rel)>, want: bool) -> Result<Option<Vec
         m.links.push((j, s, t));
     }
     if groups.iter().all(|(_, m)| m.links.len() == 1) {
-        return parts(vars, base, want);
+        return parts(vars, base, keys, want, name);
     }
+    // The sign of each group's variable (true where it is `-p`), and its color. A group whose
+    // sign nothing but names would choose is not merged: each member stays a variable of its
+    // own, with its own column and color, which keeps the points as they are; whether a group
+    // is merged depends on its columns and colors only, so no naming changes it.
+    let content = |j: usize| &split[j].as_ref().expect("a column").0;
+    let mut turned: Vec<(bool, usize)> = Vec::with_capacity(groups.len());
+    let mut kept: Vec<(usize, Merged)> = Vec::with_capacity(groups.len());
+    for (first, m) in groups {
+        let (_, prim) = split[first].as_ref().expect("a group's first column");
+        let least = m
+            .links
+            .iter()
+            .map(|(j, _, _)| keys[*j])
+            .min()
+            .expect("a group has a member");
+        let signs: BTreeSet<bool> = m
+            .links
+            .iter()
+            .filter(|(j, _, _)| keys[*j] == least)
+            .map(|(j, _, _)| content(*j).is_negative())
+            .collect();
+        let flip = match signs.len() {
+            1 => Some(signs.contains(&true)),
+            _ => {
+                let pairs = |sign: &Int| {
+                    let mut v: Vec<(usize, Int)> =
+                        prim.iter().map(|(i, p)| (row_keys[*i], p * sign)).collect();
+                    v.sort();
+                    v
+                };
+                match pairs(&Int::ONE).cmp(&pairs(&-&Int::ONE)) {
+                    Ordering::Less => Some(false),
+                    Ordering::Greater => Some(true),
+                    Ordering::Equal => None,
+                }
+            }
+        };
+        match flip {
+            Some(flip) => {
+                turned.push((flip, least));
+                kept.push((first, m));
+            }
+            None => {
+                for (j, _, _) in m.links {
+                    turned.push((false, keys[j]));
+                    let gcd = content(j).clone();
+                    let links = vec![(j, Int::ZERO, Int::ONE)];
+                    kept.push((j, Merged { gcd, links }));
+                }
+            }
+        }
+    }
+    let groups = kept;
     let mut rows: Vec<Vec<Term>> = vec![Vec::new(); base.len()];
     for (id, (first, m)) in groups.iter().enumerate() {
         let (_, prim) = split[*first].as_ref().expect("a group's first column");
+        let g = if turned[id].0 { -&m.gcd } else { m.gcd.clone() };
         for (i, p) in prim {
-            rows[*i].push((id, p * &m.gcd));
+            rows[*i].push((id, p * &g));
         }
     }
     let reduced = base
@@ -2211,15 +2934,29 @@ fn quotient(vars: usize, base: Vec<(Row, Rel)>, want: bool) -> Result<Option<Vec
             )
         })
         .collect();
-    let Some(y) = parts(groups.len(), reduced, want)? else {
+    let group_keys: Vec<usize> = turned.iter().map(|t| t.1).collect();
+    // A group's variable is the sum of its members, each times its multiple over the divisor.
+    let group_name = |id: usize| {
+        let (m, flip) = (&groups[id].1, turned[id].0);
+        let terms: Vec<(String, Int)> = m
+            .links
+            .iter()
+            .map(|(j, _, _)| {
+                let c = content(*j).div_floor(&m.gcd);
+                (name(*j), if flip { -&c } else { c })
+            })
+            .collect();
+        sum_of(terms.iter().map(|(x, c)| (x.clone(), c)), &Int::ZERO)
+    };
+    let Some(y) = parts(groups.len(), reduced, &group_keys, want, &group_name)? else {
         return Ok(None);
     };
     if !want {
         return Ok(Some(Vec::new()));
     }
     let mut x = vec![Int::ZERO; vars];
-    for ((_, m), value) in groups.iter().zip(y) {
-        let mut carry = value;
+    for (((_, m), value), (flip, _)) in groups.iter().zip(y).zip(&turned) {
+        let mut carry = if *flip { -&value } else { value };
         for (j, s, t) in m.links.iter().rev() {
             x[*j] = t * &carry;
             carry = s * &carry;
@@ -2235,8 +2972,15 @@ type Part = (Vec<usize>, Vec<(Row, Rel)>);
 /// at a point exactly when each part's rows do at its own variables. So the answer is empty
 /// when one part is empty, whatever the others give; otherwise the least of the parts'
 /// refusals; otherwise the parts' points together, a variable in no row taking 0. A part of
-/// two variables is decided exactly, however many such parts there are.
-fn parts(vars: usize, base: Vec<(Row, Rel)>, want: bool) -> Result<Option<Vec<Int>>, Refusal> {
+/// two variables is decided exactly, however many such parts there are. Each part's
+/// variables keep their colors, `keys`.
+fn parts(
+    vars: usize,
+    base: Vec<(Row, Rel)>,
+    keys: &[usize],
+    want: bool,
+    name: &dyn Fn(usize) -> String,
+) -> Result<Option<Vec<Int>>, Refusal> {
     // The parts, by union-find over the variables each row mentions.
     let mut parent: Vec<usize> = (0..vars).collect();
     fn find(parent: &mut [usize], mut i: usize) -> usize {
@@ -2297,10 +3041,12 @@ fn parts(vars: usize, base: Vec<(Row, Rel)>, want: bool) -> Result<Option<Vec<In
                 (Row { a, k: r.k }, rel)
             })
             .collect();
-        match search(vs.len(), &rows, want) {
+        let part_keys: Vec<usize> = vs.iter().map(|&v| keys[v]).collect();
+        let part_name = |i: usize| name(vs[i]);
+        match search(vs.len(), &rows, &part_keys, want, &part_name) {
             Ok(None) => return Ok(None),
             Ok(Some(p)) => points.push((vs, p)),
-            Err(r) => refused = Some(refused.map_or(r, |q| q.min(r))),
+            Err(r) => refused = Some(least(refused, r)),
         }
     }
     if let Some(r) = refused {
@@ -2314,78 +3060,129 @@ fn parts(vars: usize, base: Vec<(Row, Rel)>, want: bool) -> Result<Option<Vec<In
     Ok(Some(vals))
 }
 
-/// The Omega test on `base` over `vars` variables, with the splinters of its dark
-/// eliminations: by Pugh's lemma [Omega, sec. 2.3] the problem has an integer point exactly
-/// when its dark shadow has one or one of the splinters of a dark elimination has one. The
-/// splinters are searched only when the dark shadows have no point, each once, without
+/// The lesser of a refusal and the one held, if any.
+fn least(held: Option<Refusal>, r: Refusal) -> Refusal {
+    match held {
+        Some(q) if q <= r => q,
+        _ => r,
+    }
+}
+
+/// The Omega test on `base` over `vars` variables of colors `keys`, with the splinters of its
+/// dark eliminations: by Pugh's lemma [Omega, sec. 2.3] the problem has an integer point
+/// exactly when its dark shadow has one or one of the splinters of a dark elimination has one.
+/// The splinters are searched only when the dark shadows have no point, each once, without
 /// splinters of their own. Pugh's lemma holds for either side of an elimination (for the
 /// upper bounds, it is the lemma for `-x`), so the splinters taken are those of the side with
-/// fewer bounds. They are tried in the order of the steps and of the rows, which is fixed by
-/// the problem: the first point is the answer, and so is the first refusal, since a splinter
-/// that is refused leaves the answer refused unless a later one has a point, and searching on
-/// for that point would run the test again for every bound when none has one. A refused dark
+/// fewer bounds, and of both sides when they have as many, since which side is the lower one
+/// can turn on the sign `quotient` gave a merged variable. The splinters are searched a batch
+/// of dark eliminations at a time, in the order of the batches, and every splinter of a batch
+/// is searched, so the answer does not depend on the order of the variables within a batch:
+/// a point of a splinter is the answer; otherwise the first batch with a dark elimination
+/// none of whose sides has only empty splinters gives the least refusal met in that batch;
+/// otherwise the problem is empty. A refused dark
 /// shadow is the answer likewise: the splinters hold only the points it misses, so they could
 /// turn the refusal into a point but never into an empty answer.
-fn search(vars: usize, base: &[(Row, Rel)], want: bool) -> Result<Option<Vec<Int>>, Refusal> {
-    let mut top = Omega::new(vars, base, want, true);
+fn search(
+    vars: usize,
+    base: &[(Row, Rel)],
+    keys: &[usize],
+    want: bool,
+    name: &dyn Fn(usize) -> String,
+) -> Result<Option<Vec<Int>>, Refusal> {
+    let mut top = Omega::new(keys, base, want, true);
     match top.run() {
         Leaf::Point(v) => return Ok(Some(v)),
         Leaf::Empty => {}
         Leaf::Refused(r) => return Err(r),
+        Leaf::Tied(t) => return Err(t.written(vars, name)),
     }
-    for &(at, n) in &top.gray {
-        let Step::Chosen(j, rows) = &top.steps[at] else {
-            unreachable!("a dark elimination is a chosen step")
-        };
-        let (lowers, uppers): (Vec<&Row>, Vec<&Row>) =
-            rows.iter().partition(|r| r.at(*j).is_positive());
-        // The splinters of the side with fewer rows, each bound measured against the largest
-        // coefficient of the other side; the lower side on a tie.
-        let (side, other) = if uppers.len() < lowers.len() {
-            (uppers, lowers)
-        } else {
-            (lowers, uppers)
-        };
-        let m = other
-            .iter()
-            .map(|r| r.at(*j).abs())
-            .max()
-            .expect("an inexact elimination has both bounds");
-        for bound in side {
-            let Some(mut child) = top.splinter(base, at, n, bound, *j, &m) else {
-                continue;
+    for batch in &top.gray {
+        let mut refused: Option<Refusal> = None;
+        for &(at, n) in batch {
+            let Step::Chosen(j, rows) = &top.steps[at] else {
+                unreachable!("a dark elimination is a chosen step")
             };
-            let mut leaf = child.run();
-            if matches!(leaf, Leaf::Empty) && child.gap {
-                // Run again with each gray shadow over three variables decided by `live3`,
-                // which leaves a gap only where four variables or more are left.
-                let Some(again) = top.splinter(base, at, n, bound, *j, &m) else {
-                    unreachable!("a splinter built once is built again");
-                };
-                child = again;
-                child.exact3 = true;
-                leaf = child.run();
+            let (lowers, uppers): (Vec<&Row>, Vec<&Row>) =
+                rows.iter().partition(|r| r.at(*j).is_positive());
+            // The splinters of the side with fewer rows, each bound measured against the
+            // largest coefficient of the other side; both sides when they have as many rows.
+            let sides: Vec<(&[&Row], &[&Row])> = match uppers.len().cmp(&lowers.len()) {
+                Ordering::Less => vec![(&uppers, &lowers)],
+                Ordering::Greater => vec![(&lowers, &uppers)],
+                Ordering::Equal => vec![(&lowers, &uppers), (&uppers, &lowers)],
+            };
+            let mut covered = false;
+            let mut why: Option<Refusal> = None;
+            for (side, other) in sides {
+                let m = other
+                    .iter()
+                    .map(|r| r.at(*j).abs())
+                    .max()
+                    .expect("an inexact elimination has both bounds");
+                let mut open: Option<Refusal> = None;
+                for bound in side {
+                    let Some(mut child) = top.splinter(base, at, n, bound, *j, &m) else {
+                        continue;
+                    };
+                    let mut leaf = child.run();
+                    if matches!(leaf, Leaf::Empty) && child.gap {
+                        // Run again with each gray shadow over three variables decided by
+                        // `live3`, which leaves a gap only where four variables or more are left.
+                        let Some(again) = top.splinter(base, at, n, bound, *j, &m) else {
+                            unreachable!("a splinter built once is built again");
+                        };
+                        child = again;
+                        child.exact3 = true;
+                        leaf = child.run();
+                    }
+                    match leaf {
+                        Leaf::Point(v) => return Ok(Some(v)),
+                        Leaf::Empty if !child.gap => {}
+                        // Complexity tradeoff: a splinter whose own elimination leaves a gray
+                        // shadow (a splinter of a splinter) over four variables or more is not
+                        // searched; the question gets `Refusal::Shadows` ("not decided") even
+                        // when a point lies there. With three variables left, the run again
+                        // above decides the gray shadow by `live3`. Why: each level of
+                        // splinters multiplies the searches by the bounds of one side and their
+                        // coefficients, so nested splinters cost time exponential in the
+                        // variables. Trigger: an inexact elimination inside a splinter with four
+                        // variables or more live, which needs coefficients other than ±1 on
+                        // both sides of a variable at two levels. Tests:
+                        // `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
+                        // `l01_38_presburger::checker::a_question_whose_point_lies_past_one_splinter_is_rejected`,
+                        // `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`.
+                        // COMPLEXITY.md row S18. A complete solution would recurse into nested
+                        // splinters as Pugh's Omega test does, at a cost exponential in the
+                        // depth of the nesting.
+                        Leaf::Empty => open = Some(least(open, Refusal::Shadows)),
+                        Leaf::Refused(r) => open = Some(least(open, r)),
+                        Leaf::Tied(t) => open = Some(least(open, t.written(vars, name))),
+                    }
+                }
+                match open {
+                    None => covered = true,
+                    Some(r) => why = Some(least(why, r)),
+                }
             }
-            match leaf {
-                Leaf::Point(v) => return Ok(Some(v)),
-                Leaf::Empty if !child.gap => {}
-                // Complexity tradeoff: a splinter whose own elimination leaves a gray shadow
-                // (a splinter of a splinter) over four variables or more is not searched; the
-                // question gets `Refusal::Shadows` ("not decided") even when a point lies
-                // there. With three variables left, the run again above decides the gray
-                // shadow by `live3`. Why: each level of splinters multiplies the searches by
-                // the bounds of one side and their coefficients, so nested splinters cost time
-                // exponential in the variables. Trigger: an inexact elimination inside a
-                // splinter with four variables or more live, which needs coefficients other
-                // than ±1 on both sides of a variable at two levels.
-                // Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
-                // `l01_38_presburger::checker::a_question_whose_point_lies_past_one_splinter_is_rejected`,
-                // `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`. COMPLEXITY.md
-                // row S18. A complete solution would recurse into nested splinters as Pugh's
-                // Omega test does, at a cost exponential in the depth of the nesting.
-                Leaf::Empty => return Err(Refusal::Shadows),
-                Leaf::Refused(r) => return Err(r),
+            if !covered && let Some(r) = why {
+                refused = Some(least(refused, r));
             }
+        }
+        // Complexity tradeoff: the search ends at the first batch of dark eliminations with a
+        // refusal, and the splinters of later batches, which could hold a point, are not
+        // searched; the question gets the refusal. Why: searching every splinter costs a run of
+        // the Omega test for each, which along a chain of dark eliminations is quadratic in the
+        // variables; ending at the first refusal, as the search did before, keeps it linear
+        // when that refusal comes early. The batches are given by the structure, and so is
+        // their order, so ending after a whole batch keeps the answer the same under every
+        // naming, which ending inside one would not. Trigger: a dark elimination whose
+        // splinters are refused, before one whose splinters hold a point. Tests:
+        // `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`,
+        // `l01_38_presburger::names::the_splinters_are_searched_a_batch_at_a_time`.
+        // COMPLEXITY.md row NAME-ties.
+        if let Some(r) = refused {
+            return Err(r);
         }
     }
     Ok(None)
@@ -2418,7 +3215,10 @@ impl Ties {
         (i, d)
     }
 
-    /// Adds `x[x] - x[y] == d`; false when the ties already make it something else.
+    /// Adds `x[x] - x[y] == d`; false when the ties already make it something else. Which of
+    /// two roots of equal rank goes under the other follows the order of the arguments, so it
+    /// is not used beyond this forest: [`Ties::representatives`] chooses the variable that
+    /// stands for each class.
     fn equate(&mut self, x: usize, y: usize, d: Int) -> bool {
         let (x, dx) = self.root(x);
         let (y, dy) = self.root(y);
@@ -2439,6 +3239,31 @@ impl Ties {
         }
         true
     }
+
+    /// For each variable, the member of its class that stands for the class, and `d` with the
+    /// variable equal to that member plus `d`: the member of least color (`keys`), then of least
+    /// offset, then of least place. Colors, and the differences between the offsets of a
+    /// class, depend on the rows alone, not on the order in which [`Ties::equate`] joined the
+    /// class; two members of one color and one offset are equal at every point and alike in
+    /// the rows, so taking one or the other only renames the variable that stands for the
+    /// class. O(n log n) for n variables.
+    fn representatives(&self, keys: &[usize]) -> Vec<(usize, Int)> {
+        let roots: Vec<(usize, Int)> = (0..self.parent.len()).map(|i| self.root(i)).collect();
+        let mut best: Vec<Option<(usize, &Int, usize)>> = vec![None; roots.len()];
+        for (i, (r, d)) in roots.iter().enumerate() {
+            let candidate = (keys[i], d, i);
+            if best[*r].is_none_or(|b| candidate < b) {
+                best[*r] = Some(candidate);
+            }
+        }
+        roots
+            .iter()
+            .map(|(r, d)| {
+                let (_, e, rep) = best[*r].expect("each root has a member");
+                (rep, d - e)
+            })
+            .collect()
+    }
 }
 
 /// `atoms`, in name order, put in the order the solver takes them; the places in `cons` of the
@@ -2452,8 +3277,8 @@ impl Ties {
 /// `cons`, break ties between equal colors only; when every variable's color is distinct, two
 /// rows of one color are equal, so the orders depend on the structure alone. O(n + m + t log t)
 /// for n variables, m rows and t terms, with the sorts of each row's terms and each variable's
-/// rows.
-fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> (Vec<Atom>, Vec<usize>, Vec<usize>) {
+/// rows. The colors of the rows, in the order taken, come with them.
+fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> Canonical {
     let n = atoms.len();
     let color = stable_colors(&atoms, cons);
     let by_color = |v: &usize| (color[*v], *v);
@@ -2512,12 +3337,27 @@ fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> (Vec<Atom>, Vec<usize>, Vec<usi
     bare.sort_by_key(|&r| (color[n + r], r));
     rows.extend(bare);
     let keys = order.iter().map(|&x| color[x]).collect();
+    let row_keys = rows.iter().map(|&r| color[n + r]).collect();
     let mut atoms: Vec<Option<Atom>> = atoms.into_iter().map(Some).collect();
     let order = order
         .into_iter()
         .map(|x| atoms[x].take().expect("each variable placed once"))
         .collect();
-    (order, rows, keys)
+    Canonical {
+        atoms: order,
+        rows,
+        keys,
+        row_keys,
+    }
+}
+
+/// What [`canonical`] gives: the atoms in the order taken, the places of the rows in the order
+/// taken, and the color of each atom and of each row in those orders.
+struct Canonical {
+    atoms: Vec<Atom>,
+    rows: Vec<usize>,
+    keys: Vec<usize>,
+    row_keys: Vec<usize>,
 }
 
 /// The variables of the conjunction `cons` in the order the solver takes them, and their
@@ -2532,7 +3372,11 @@ pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let (order, _, colors) = canonical(atoms, &cons);
+    let Canonical {
+        atoms: order,
+        keys: colors,
+        ..
+    } = canonical(atoms, &cons);
     let colors = order
         .iter()
         .zip(colors)
@@ -2917,11 +3761,18 @@ impl Row {
     }
 }
 
-/// The symmetric remainder of `a` by `m`, of either sign.
+/// The symmetric remainder of `a` by `m`, of either sign, odd in `a`: at exactly half of `m`
+/// it takes the sign opposite to `a`, so that `mod_hat(-a, m) == -mod_hat(a, m)` and an
+/// equality solved with its sign turned gives the same definition.
 fn mod_hat(a: &Int, m: &Int) -> Int {
     let m = m.abs();
     let r = a.mod_floor(&m);
-    if (&r + &r) >= m { &r - &m } else { r }
+    match (&r + &r).cmp(&m) {
+        Ordering::Less => r,
+        Ordering::Greater => &r - &m,
+        Ordering::Equal if a.is_negative() => r,
+        Ordering::Equal => &r - &m,
+    }
 }
 
 /// How a variable occurs in the inequalities: as a lower or an upper bound, and how often with
@@ -2964,14 +3815,16 @@ impl Sides {
                 || (self.hi == self.hi_unary && self.hi_unary > 0))
     }
 
-    /// Where the variable stands among those to eliminate.
-    fn rank(&self, j: usize) -> Rank {
-        (self.fill(), j)
+    /// Where the variable `x[j]`, of color `key`, stands among those to eliminate.
+    fn rank(&self, key: usize, j: usize) -> Rank {
+        (self.fill(), key, j)
     }
 }
 
-/// The fill of a variable's elimination, and the variable.
-type Rank = (isize, usize);
+/// The fill of a variable's elimination, its color, and the variable. The step takes the
+/// least fill and color; the place only orders variables that tie in both, among which no
+/// choice is made by it (see [`System::least`]).
+type Rank = (isize, usize, usize);
 
 /// A row of a [`System`]: its constant, and its place in the system's list.
 struct Held {
@@ -2979,11 +3832,12 @@ struct Held {
     id: usize,
 }
 
-/// A variable of a [`System`]: its rows, by place, and how it occurs in them.
+/// A variable of a [`System`]: its rows, by place, how it occurs in them, and its color.
 #[derive(Default)]
 struct Var {
     rows: BTreeSet<usize>,
     sides: Sides,
+    key: usize,
 }
 
 /// A system of inequalities, kept normalized as rows are added and removed: each set of
@@ -3005,6 +3859,9 @@ struct System {
     /// The lesser coefficients of two opposite rows whose constants sum to zero; a pair may
     /// since have changed, and is checked when taken.
     meets: BTreeSet<Coefs>,
+    /// The lesser coefficients of the equalities kept as pairs of opposite rows, which are
+    /// not met again.
+    loose: BTreeSet<Coefs>,
     /// Whether a row is false, or two opposite rows meet nowhere.
     empty: bool,
     /// The variables some row holds.
@@ -3014,16 +3871,23 @@ struct System {
 }
 
 impl System {
-    fn new(vars: usize) -> System {
+    /// An empty system over variables of the colors `keys`.
+    fn new(keys: impl Iterator<Item = usize>) -> System {
         System {
             rows: BTreeMap::new(),
             ids: Vec::new(),
-            vars: std::iter::repeat_with(Var::default).take(vars).collect(),
+            vars: keys
+                .map(|key| Var {
+                    key,
+                    ..Var::default()
+                })
+                .collect(),
             exact: BTreeSet::new(),
             inexact: BTreeSet::new(),
             one_sided: BTreeSet::new(),
             fixable: BTreeSet::new(),
             meets: BTreeSet::new(),
+            loose: BTreeSet::new(),
             empty: false,
             live: 0,
             wide_rows: 0,
@@ -3058,7 +3922,9 @@ impl System {
                 self.empty = true;
             } else if s.is_zero() {
                 let lesser = if r.a < *key { r.a } else { key.clone() };
-                self.meets.insert(lesser);
+                if !self.loose.contains(&lesser) {
+                    self.meets.insert(lesser);
+                }
             }
         }
     }
@@ -3079,7 +3945,8 @@ impl System {
             } else {
                 &mut self.exact
             };
-            set.remove(&v.sides.rank(*i));
+            let key = v.key;
+            set.remove(&v.sides.rank(key, *i));
             self.one_sided.remove(i);
             self.fixable.remove(i);
             let s = &mut v.sides;
@@ -3115,7 +3982,7 @@ impl System {
             } else {
                 &mut self.exact
             };
-            set.insert(s.rank(*i));
+            set.insert(s.rank(key, *i));
             if s.lo == 0 || s.hi == 0 {
                 self.one_sided.insert(*i);
             }
@@ -3139,35 +4006,65 @@ impl System {
         ids.into_iter().map(|id| self.remove(id)).collect()
     }
 
-    /// One of two opposite rows that meet in an equality, both removed.
-    fn meeting(&mut self) -> Option<Row> {
-        while let Some(a) = self.meets.pop_first() {
+    /// The rows of opposite pairs that meet in an equality, one of each pair, all removed. Two
+    /// pairs share no row, since a row has one opposite, so taking them all at once leaves the
+    /// same system in whatever order they are taken.
+    fn meetings(&mut self) -> Vec<Row> {
+        let mut out = Vec::new();
+        for a in std::mem::take(&mut self.meets) {
             let opp = opposite(&a);
             if let (Some(r), Some(o)) = (self.rows.get(&a), self.rows.get(opp.as_slice()))
                 && (&r.k + &o.k).is_zero()
             {
                 let (r, o) = (r.id, o.id);
                 self.remove(o);
-                return Some(self.remove(r));
+                out.push(self.remove(r));
             }
         }
-        None
+        out
     }
 
-    /// The variable of least fill among the exact eliminations, the first on a tie, whose
-    /// elimination adds no terms unless `fill_ok`. So the terms of the system never rise,
-    /// whatever its size, until a point is known to exist.
-    fn exact_step(&self, fill_ok: bool) -> Option<usize> {
-        self.exact
-            .first()
-            .filter(|r| fill_ok || r.0 <= 0)
-            .map(|r| r.1)
-    }
-
-    /// The variable of least fill among the inexact eliminations whose elimination adds no
-    /// terms, the first on a tie.
-    fn inexact_step(&self) -> Option<usize> {
-        self.inexact.first().filter(|r| r.0 <= 0).map(|r| r.1)
+    /// The variables of least fill and color among the ranks of `sets`, with that fill: all
+    /// of them when no two share a row, and otherwise the tie, with the rows they share.
+    ///
+    /// Variables that share no row are eliminated together, and the order among them does
+    /// not change the result: eliminating `x[i]` removes the rows of `x[i]` and adds rows over
+    /// their other variables, none of which is `x[j]`, since no row holds both, so the rows of
+    /// `x[j]`, and with them its elimination, are the same before and after; and adding a row
+    /// keeps the least constant of each set of coefficients, which no order changes.
+    fn least(&self, sets: &[&BTreeSet<Rank>]) -> Option<(isize, Result<Vec<usize>, Tied>)> {
+        let &(fill, key, _) = sets.iter().filter_map(|s| s.first()).min()?;
+        let js: Vec<usize> = sets
+            .iter()
+            .flat_map(|s| s.range((fill, key, 0)..=(fill, key, usize::MAX)))
+            .map(|r| r.2)
+            .collect();
+        let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
+        for j in &js {
+            for id in &self.vars[*j].rows {
+                *seen.entry(*id).or_insert(0) += 1;
+            }
+        }
+        let shared: Vec<(Row, Rel)> = seen
+            .into_iter()
+            .filter(|(_, n)| *n > 1)
+            .map(|(id, _)| {
+                let a = self.ids[id].clone().expect("a row held");
+                let k = self.rows[&a].k.clone();
+                (Row { a, k }, Rel::Ge)
+            })
+            .collect();
+        if shared.is_empty() {
+            Some((fill, Ok(js)))
+        } else {
+            Some((
+                fill,
+                Err(Tied {
+                    vars: js,
+                    rows: shared,
+                }),
+            ))
+        }
     }
 
     /// The value of the bound row of `x[j]` on the side `upper`, if it has one.
@@ -3193,9 +4090,11 @@ impl System {
 
 /// Whether the inequalities have no rational point once each row is normalized, which keeps
 /// every integer point: real shadows while an elimination adds no terms, and the box test of
-/// [`box_empty`] on what is left.
+/// [`box_empty`] on what is left. The shadows are taken as [`System::least`] gives them: all
+/// the variables of least fill and color together, and where two of those share a row, none,
+/// the box test then deciding, so no step turns on the names of the variables.
 fn relaxed_empty(gs: &System) -> bool {
-    let mut sys = System::new(gs.vars.len());
+    let mut sys = System::new(gs.vars.iter().map(|v| v.key));
     for (a, r) in &gs.rows {
         sys.add(Row {
             a: a.clone(),
@@ -3203,14 +4102,15 @@ fn relaxed_empty(gs: &System) -> bool {
         });
     }
     while !sys.empty {
-        let least = sys.exact.first().into_iter().chain(sys.inexact.first());
-        let Some(&(fill, j)) = least.min() else {
+        let Some((fill, js)) = sys.least(&[&sys.exact, &sys.inexact]) else {
             return false;
         };
-        if fill > 0 {
+        let (true, Ok(js)) = (fill <= 0, js) else {
             return box_empty(&sys);
+        };
+        for j in js {
+            sys.eliminate(j, false);
         }
-        sys.eliminate(j, false);
     }
     true
 }
@@ -3415,28 +4315,155 @@ fn combine(lo: &Row, hi: &Row, j: usize, dark: bool) -> Row {
         },
     }
 }
+/// An equality as its structure gives it: the colors of its variables with their
+/// coefficients, sorted, and its constant, taken for the row or its negation, whichever is
+/// less, so that neither the names of the variables nor the sign the row was written with
+/// changes it.
+type Shape = (Vec<(usize, Int)>, Int);
 
-/// The equalities as a stack, a slot emptied when its row holds everywhere, with the slots of
-/// each variable.
-struct Equalities {
-    rows: Vec<Option<Row>>,
-    of: Vec<BTreeSet<usize>>,
+/// The order in which equalities are solved: first those written by the latest batch of steps,
+/// so that the work stays with the equalities the last step changed, as a stack of equalities
+/// does; then the fewest variables; then the number of equalities that hold the variable the
+/// step would define (its degree, the least over a tie), so that a step writes its definition
+/// into as few other equalities as it can; then the [`Shape`]. Each part is given by the
+/// structure and by the steps before, none by a name. Along a chain of equalities this goes
+/// from one equality to the next and keeps each as short as it was; an order that jumps
+/// fills the rows in, and their coefficients grow.
+type EqKey = (std::cmp::Reverse<u64>, usize, usize, Shape);
+
+/// The [`Shape`] of the row `r` over the variables of `sys`.
+fn shape(r: &Row, sys: &System) -> Shape {
+    let side = |f: &Int| -> Shape {
+        let mut a: Vec<(usize, Int)> = r.a.iter().map(|(i, c)| (sys.vars[*i].key, c * f)).collect();
+        a.sort_unstable();
+        (a, &r.k * f)
+    };
+    side(&Int::ONE).min(side(&-&Int::ONE))
 }
+
+/// The variables a step on the equality `e` would choose to define, as `Omega::equality`
+/// chooses: those with a unit coefficient when there are any, otherwise those of least
+/// coefficient, and of these those of least color. More than one is a tie.
+fn pivots(e: &Row, sys: &System) -> Vec<usize> {
+    let key = |i: usize| sys.vars[i].key;
+    let units = e.a.iter().any(|(_, c)| c.is_unit());
+    let pool: Vec<(Int, usize, usize)> =
+        e.a.iter()
+            .filter(|(_, c)| !units || c.is_unit())
+            .map(|(i, c)| (c.abs(), key(*i), *i))
+            .collect();
+    let (m, k, _) = pool.iter().min().expect("a row has a variable").clone();
+    pool.into_iter()
+        .filter(|(c, kk, _)| *c == m && *kk == k)
+        .map(|p| p.2)
+        .collect()
+}
+
+/// The row or its negation, whichever is less, as its coefficients and its constant: two
+/// equalities with the same one are the same equality.
+fn unsigned(r: &Row) -> (Vec<Term>, Int) {
+    let neg = opposite(&r.a);
+    if *r.a <= *neg {
+        (r.a.to_vec(), r.k.clone())
+    } else {
+        (neg, -&r.k)
+    }
+}
+
+/// An equality held: its row, its key, and the variables a step on it would define.
+struct Kept {
+    row: Row,
+    key: EqKey,
+    pivots: Vec<usize>,
+}
+
+/// The equalities, by slot, a slot emptied when its row holds everywhere or another slot
+/// holds the same equality, with the slots of each variable, the slots whose step would define
+/// each variable, and the slots in use in the order of their [`EqKey`]s.
+struct Equalities {
+    rows: Vec<Option<Kept>>,
+    of: Vec<BTreeSet<usize>>,
+    pivot_of: Vec<BTreeSet<usize>>,
+    order: BTreeSet<(EqKey, usize)>,
+    /// The slot of each equality held, by [`unsigned`].
+    held: BTreeMap<(Vec<Term>, Int), usize>,
+    /// The number of batches of steps begun so far: an equality written by a later one is solved
+    /// first.
+    now: u64,
+}
+
+/// The equalities to solve next, by slot: those of least [`EqKey`] when no two share a variable,
+/// otherwise the same slots with the tie.
+type EqStep = Result<Vec<usize>, (Vec<usize>, Tied)>;
 
 impl Equalities {
     fn new(vars: usize) -> Equalities {
         Equalities {
             rows: Vec::new(),
             of: vec![BTreeSet::new(); vars],
+            pivot_of: vec![BTreeSet::new(); vars],
+            order: BTreeSet::new(),
+            held: BTreeMap::new(),
+            now: 0,
         }
     }
 
-    /// The slot of the last equality, if any.
-    fn last(&mut self) -> Option<usize> {
-        while matches!(self.rows.last(), Some(None)) {
-            self.rows.pop();
+    /// Room for a fresh variable.
+    fn grow(&mut self) {
+        self.of.push(BTreeSet::new());
+        self.pivot_of.push(BTreeSet::new());
+    }
+
+    /// The row in slot `s`, which is in use.
+    fn row(&self, s: usize) -> &Row {
+        &self.rows[s].as_ref().expect("a slot in use").row
+    }
+
+    /// The slots of the equalities of least key, all of them when no two share a variable or
+    /// when each has one variable to define, with a unit coefficient, that no other of them
+    /// holds; otherwise the tie, with the variables they share and the equalities. Equalities
+    /// taken so are solved together, and the order among them does not change the result:
+    /// solving one defines one of its variables (its pivot) by the others, or by the others
+    /// and a fresh one, and writes the definition only into the rows that hold the pivot. In
+    /// the first case no other of them holds any of its variables. In the second, no other of
+    /// them holds its pivot, so each other is solved the same before and after, and no
+    /// definition holds another's pivot, since a definition holds only variables of its own
+    /// equality, so each row ends with every pivot replaced by its definition, whatever the
+    /// order. Every substitution of one batch is stamped alike (`Equalities::step`), so the
+    /// order does not reach the [`EqKey`]s either.
+    fn least(&self) -> Option<EqStep> {
+        let (key, _) = self.order.first()?;
+        let slots: Vec<usize> = self
+            .order
+            .range((key.clone(), 0)..=(key.clone(), usize::MAX))
+            .map(|(_, s)| *s)
+            .collect();
+        let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
+        for s in &slots {
+            for (i, _) in self.row(*s).a.iter() {
+                *seen.entry(*i).or_insert(0) += 1;
+            }
         }
-        self.rows.len().checked_sub(1)
+        let vars: Vec<usize> = seen
+            .into_iter()
+            .filter(|(_, n)| *n > 1)
+            .map(|(i, _)| i)
+            .collect();
+        let apart = |s: &usize| {
+            let held = self.rows[*s].as_ref().expect("a slot in use");
+            let [p] = held.pivots[..] else {
+                return false;
+            };
+            held.row.at(p).is_unit() && vars.binary_search(&p).is_err()
+        };
+        if vars.is_empty() || slots.iter().all(apart) {
+            return Some(Ok(slots));
+        }
+        let rows = slots
+            .iter()
+            .map(|s| (self.row(*s).clone(), Rel::Eq))
+            .collect();
+        Some(Err((slots, Tied { vars, rows })))
     }
 
     fn push(&mut self, r: Row, sys: &mut System) {
@@ -3444,26 +4471,90 @@ impl Equalities {
         self.put(self.rows.len() - 1, r, sys);
     }
 
+    /// The degree of a step that would define one of `pivots`.
+    fn degree(&self, pivots: &[usize]) -> usize {
+        pivots
+            .iter()
+            .map(|p| self.of[*p].len())
+            .min()
+            .expect("a pivot")
+    }
+
     fn put(&mut self, s: usize, r: Row, sys: &mut System) {
         match r.normal(true) {
             Norm::False => sys.empty = true,
             Norm::True => {}
             Norm::Row(r) => {
+                let same = unsigned(&r);
+                if self.held.contains_key(&same) {
+                    return;
+                }
+                self.held.insert(same, s);
                 for (i, _) in r.a.iter() {
                     self.of[*i].insert(s);
                 }
-                self.rows[s] = Some(r);
+                let pivots = pivots(&r, sys);
+                for p in &pivots {
+                    self.pivot_of[*p].insert(s);
+                }
+                let key = (
+                    std::cmp::Reverse(self.now),
+                    r.a.len(),
+                    self.degree(&pivots),
+                    shape(&r, sys),
+                );
+                self.order.insert((key.clone(), s));
+                let vars: Vec<usize> = r.a.iter().map(|(i, _)| *i).collect();
+                self.rows[s] = Some(Kept {
+                    row: r,
+                    key,
+                    pivots,
+                });
+                self.rekey(&vars, s);
             }
         }
     }
 
     /// Empties the slot `s`, and returns its row.
     fn clear(&mut self, s: usize) -> Row {
-        let r = self.rows[s].take().expect("a slot in use");
-        for (i, _) in r.a.iter() {
+        let Kept { row, key, pivots } = self.rows[s].take().expect("a slot in use");
+        self.order.remove(&(key, s));
+        self.held.remove(&unsigned(&row));
+        for p in &pivots {
+            self.pivot_of[*p].remove(&s);
+        }
+        let vars: Vec<usize> = row.a.iter().map(|(i, _)| *i).collect();
+        for i in &vars {
             self.of[*i].remove(&s);
         }
-        r
+        self.rekey(&vars, s);
+        row
+    }
+
+    /// Renews the degree in the key of each slot but `s` whose step would define one of
+    /// `vars`, whose counts of equalities have changed. Each slot has its own pivots, so a
+    /// change to the equalities of a variable renews only the slots that would define it.
+    fn rekey(&mut self, vars: &[usize], s: usize) {
+        let slots: BTreeSet<usize> = vars
+            .iter()
+            .flat_map(|v| self.pivot_of[*v].iter().copied())
+            .filter(|t| *t != s)
+            .collect();
+        for t in slots {
+            let degree = self.degree(&self.rows[t].as_ref().expect("a slot in use").pivots);
+            let held = self.rows[t].as_mut().expect("a slot in use");
+            if held.key.2 != degree {
+                self.order.remove(&(held.key.clone(), t));
+                held.key.2 = degree;
+                self.order.insert((held.key.clone(), t));
+            }
+        }
+    }
+
+    /// Starts a batch of steps: the equalities their substitutions write are stamped after
+    /// those of every batch before, and alike within the batch.
+    fn step(&mut self) {
+        self.now += 1;
     }
 
     /// Replaces `x[j]` by `def` in each equality that holds it.
@@ -3491,6 +4582,8 @@ enum Leaf {
     Empty,
     /// The system is outside the fragment decided.
     Refused(Refusal),
+    /// The next step would choose among candidates that only their names tell apart.
+    Tied(Tied),
 }
 
 /// The Omega test. Each step solves an equality, turns two opposite rows that meet into one,
@@ -3510,9 +4603,11 @@ struct Omega {
     /// Whether the dark eliminations are kept for the search of their splinters; false within a
     /// splinter.
     may_splinter: bool,
-    /// The dark eliminations kept: the place of each one's step, and the number of variables
-    /// then.
-    gray: Vec<(usize, usize)>,
+    /// The dark eliminations kept, by batch, the batches in the order taken: the place of each
+    /// one's step, and the number of variables then. A batch is the variables
+    /// [`System::least`] gave together, which share no row and which nothing but their names
+    /// tells apart.
+    gray: Vec<Vec<(usize, usize)>>,
     /// Whether a dark shadow was taken whose splinters are not searched.
     gap: bool,
     /// Whether a gray shadow with three variables left is decided by `live3` in place of a
@@ -3521,13 +4616,20 @@ struct Omega {
     /// Whether an exact elimination may add terms: set once a system of rows `±x ± y + k >= 0`
     /// is shown to have a point, since its eliminations are all exact and keep that form.
     fill_ok: bool,
+    /// The first tie among equalities, which were then kept as pairs of opposite rows.
+    loose_tie: Option<Tied>,
+    /// The equalities whose coefficients a step has reduced but not yet to a unit: each is
+    /// taken again until it is solved, as the Omega test does, since taking another between
+    /// its steps can undo their reduction. They share no variable, as the batch they came
+    /// from shares none and a step brings in only its own variables and a fresh one.
+    working: Vec<usize>,
 }
 
 impl Omega {
-    /// The test on the rows `base`, each `>= 0` or `== 0`, over `vars` variables.
-    fn new(vars: usize, base: &[(Row, Rel)], want: bool, may_splinter: bool) -> Omega {
-        let mut sys = System::new(vars);
-        let mut es = Equalities::new(vars);
+    /// The test on the rows `base`, each `>= 0` or `== 0`, over variables of the colors `keys`.
+    fn new(keys: &[usize], base: &[(Row, Rel)], want: bool, may_splinter: bool) -> Omega {
+        let mut sys = System::new(keys.iter().copied());
+        let mut es = Equalities::new(keys.len());
         for (r, rel) in base {
             match rel {
                 Rel::Eq => es.push(r.clone(), &mut sys),
@@ -3546,6 +4648,8 @@ impl Omega {
             gap: false,
             exact3: false,
             fill_ok: false,
+            loose_tie: None,
+            working: Vec::new(),
         }
     }
 
@@ -3556,21 +4660,56 @@ impl Omega {
             if self.sys.empty {
                 return Leaf::Empty;
             }
-            if let Some(s) = self.es.last() {
-                self.equality(s);
-                continue;
+            // No step below chooses by the names of the variables: each takes what the
+            // structure gives first (by color, through `System::least` and
+            // `Equalities::least`), all such candidates together when no two share a row, and
+            // none when two do, which ends the eliminations at `tie`. Equalities tied so are
+            // kept as pairs of opposite rows, which the stages below decide by the same rule.
+            let working = std::mem::take(&mut self.working);
+            let slots: Vec<usize> = working
+                .into_iter()
+                .filter(|s| self.es.rows[*s].is_some())
+                .collect();
+            let next = if slots.is_empty() {
+                self.es.least()
+            } else {
+                Some(Ok(slots))
+            };
+            self.es.step();
+            match next {
+                Some(Ok(slots)) => {
+                    for s in slots {
+                        if let Err(t) = self.equality(s) {
+                            self.loosen(&[s], t);
+                        }
+                    }
+                    continue;
+                }
+                Some(Err((slots, t))) => {
+                    if !self.differences(&slots) {
+                        self.loosen(&slots, t);
+                    }
+                    continue;
+                }
+                None => {}
             }
             if !self.pending.is_empty() {
                 self.flush();
                 continue;
             }
-            if let Some(r) = self.sys.meeting() {
-                self.es.push(r, &mut self.sys);
+            let meets = self.sys.meetings();
+            if !meets.is_empty() {
+                for r in meets {
+                    self.es.push(r, &mut self.sys);
+                }
                 continue;
             }
             if self.sys.rows.is_empty() {
                 break;
             }
+            // Dropping a variable bounded on one side only removes its rows, which leaves every
+            // other such variable bounded on one side or not at all, so the variables dropped
+            // in the end, and the rows left, are the same in whatever order they are taken.
             if let Some(&j) = self.sys.one_sided.first() {
                 let rows = self.sys.take(j);
                 self.steps.push(Step::Chosen(j, rows));
@@ -3580,10 +4719,27 @@ impl Omega {
                 self.fix();
                 continue;
             }
-            if let Some(j) = self.sys.exact_step(self.fill_ok) {
-                let rows = self.sys.eliminate(j, false);
-                self.steps.push(Step::Chosen(j, rows));
-                continue;
+            let mut tie: Option<Tied> = None;
+            match self.sys.least(&[&self.sys.exact]) {
+                Some((fill, _)) if fill > 0 && !self.fill_ok => {}
+                Some((_, Ok(js))) => {
+                    for j in js {
+                        let rows = self.sys.eliminate(j, false);
+                        self.steps.push(Step::Chosen(j, rows));
+                    }
+                    continue;
+                }
+                // Once `fill_ok` is set the rows are `±x ± y + k >= 0` and have a point, and
+                // their eliminations are exact and keep that form, so the answer is known and
+                // the order of the rest only places the point found.
+                Some((_, Err(_))) if self.fill_ok => {
+                    let &(_, _, j) = self.sys.exact.first().expect("a variable");
+                    let rows = self.sys.eliminate(j, false);
+                    self.steps.push(Step::Chosen(j, rows));
+                    continue;
+                }
+                Some((_, Err(t))) => tie = Some(t),
+                None => {}
             }
             if self.sys.live <= 2 {
                 let Some((x, v)) = self.pair() else {
@@ -3600,7 +4756,7 @@ impl Omega {
                 continue;
             }
             if self.sys.wide_rows == 0 {
-                // Every elimination is exact, and each adds terms.
+                // Every elimination is exact, and each adds terms or is tied.
                 let rows: Vec<(&[Term], &Int)> =
                     self.sys.rows.iter().map(|(a, h)| (&**a, &h.k)).collect();
                 if utvpi::integer_empty(self.sys.vars.len(), &rows) {
@@ -3612,32 +4768,45 @@ impl Omega {
                 self.fill_ok = true;
                 continue;
             }
-            if let Some(j) = self.sys.inexact_step() {
-                // An empty real shadow, which keeps every integer point, shows the problem empty; from here
-                // on the dark shadow is solved, whose points are points of the problem, and
-                // the splinters of each dark elimination hold the points it misses.
-                if !self.tested {
-                    self.tested = true;
-                    if relaxed_empty(&self.sys) {
-                        return Leaf::Empty;
+            if tie.is_none() {
+                match self.sys.least(&[&self.sys.inexact]) {
+                    Some((fill, Ok(js))) if fill <= 0 => {
+                        // An empty real shadow, which keeps every integer point, shows the
+                        // problem empty; from here on the dark shadow is solved, whose points
+                        // are points of the problem, and the splinters of each dark elimination
+                        // hold the points it misses.
+                        if !self.tested {
+                            self.tested = true;
+                            if relaxed_empty(&self.sys) {
+                                return Leaf::Empty;
+                            }
+                        }
+                        if self.exact3 && self.sys.live == 3 {
+                            // A gray shadow inside a splinter, which would leave the question
+                            // refused, is decided completely when three variables are left.
+                            match self.three() {
+                                Some(leaf) => return leaf,
+                                None => continue,
+                            }
+                        }
+                        if self.may_splinter {
+                            self.gray.push(Vec::with_capacity(js.len()));
+                        } else {
+                            self.gap = true;
+                        }
+                        for j in js {
+                            if self.may_splinter {
+                                let at = (self.steps.len(), self.sys.vars.len());
+                                self.gray.last_mut().expect("a batch").push(at);
+                            }
+                            let rows = self.sys.eliminate(j, true);
+                            self.steps.push(Step::Chosen(j, rows));
+                        }
+                        continue;
                     }
+                    Some((fill, Err(t))) if fill <= 0 => tie = Some(t),
+                    _ => {}
                 }
-                if self.exact3 && self.sys.live == 3 {
-                    // A gray shadow inside a splinter, which would leave the question
-                    // refused, is decided completely when three variables are left.
-                    match self.three() {
-                        Some(leaf) => return leaf,
-                        None => continue,
-                    }
-                }
-                if self.may_splinter {
-                    self.gray.push((self.steps.len(), self.sys.vars.len()));
-                } else {
-                    self.gap = true;
-                }
-                let rows = self.sys.eliminate(j, true);
-                self.steps.push(Step::Chosen(j, rows));
-                continue;
             }
             // Every elimination left adds terms. With three variables, one of which has a
             // unit coefficient in every row on one side (an exact elimination), that
@@ -3648,9 +4817,10 @@ impl Omega {
             // two variables left are decided exactly by `pair`, and `choose` lifts the
             // variable back. The dispatch on three live variables is a structural class, like
             // the dispatch on two or fewer to `twovar`: it switches on a count of dimensions,
-            // not on a size of the input, so it is no threshold.
+            // not on a size of the input, so it is no threshold. The stage decides the rows
+            // exactly with any such variable, so which one it takes does not change the answer.
             if self.sys.live == 3
-                && let Some(&(_, z)) = self.sys.exact.first()
+                && let Some(&(_, _, z)) = self.sys.exact.first()
             {
                 let rows = self.sys.take(z);
                 let mut others: Vec<usize> = Vec::with_capacity(2);
@@ -3677,6 +4847,13 @@ impl Omega {
                 }
                 self.steps.push(Step::Chosen(z, rows));
                 continue;
+            }
+            // An empty real shadow shows the problem empty whatever was tied.
+            if tie.is_some() && !self.tested {
+                self.tested = true;
+                if relaxed_empty(&self.sys) {
+                    return Leaf::Empty;
+                }
             }
             // The rows are empty when the box of their bounds shows it, and have a point when
             // one of the five points of the box that `box_point` tries holds them; otherwise
@@ -3722,13 +4899,35 @@ impl Omega {
                 start = v;
                 break;
             }
-            if self.sys.live > 3 {
-                return Leaf::Refused(Refusal::Growth);
+            if self.sys.live <= 3 {
+                // `live3` decides three variables completely, so the order of tied ones
+                // cannot change its answer.
+                match self.three() {
+                    Some(leaf) => return leaf,
+                    None => continue,
+                }
             }
-            match self.three() {
-                Some(leaf) => return leaf,
-                None => continue,
-            }
+            // Complexity tradeoff: when the next elimination would choose among variables
+            // (or equalities, or the variables of an equality) that share a row and that
+            // refinement of the rows cannot tell apart, and neither the stages above nor the
+            // box decide the rows, the question gets `Refusal::Tie` ("not decided"), though
+            // it may have a point or none. Why: which of them goes first changes the rows
+            // that follow and so whether a later stage decides them, and nothing but their
+            // names would choose; refusing keeps every answer, refusals included, the same
+            // under every naming of the variables, while trying every order is exponential
+            // in the tied variables and telling them apart for good (canonical labeling of
+            // the rows) has no known polynomial algorithm. Trigger: two variables of one
+            // color, both of least fill, sharing a row, in a system no other stage decides;
+            // the size of the system plays no part. Tests:
+            // `l01_38_presburger::names::a_tie_that_shares_a_row_is_refused`,
+            // `l01_38_presburger::names::every_naming_gives_one_answer_on_the_regular_family_of_five_103`.
+            // COMPLEXITY.md row NAME-ties. A complete solution would search every order of
+            // the tied candidates, or decide the rows by a complete method (plan item
+            // HULL3-GEN; three live variables are decided by `live3` above).
+            return match tie.or_else(|| self.loose_tie.take()) {
+                Some(t) => Leaf::Tied(t),
+                None => Leaf::Refused(Refusal::Growth),
+            };
         }
         if !self.want {
             return Leaf::Point(Vec::new());
@@ -3867,27 +5066,66 @@ impl Omega {
             },
             Rel::Ge,
         ));
-        Some(Omega::new(vars + 1, &rows, self.want, false))
+        // The fresh `k` has a color of its own, above every color of the rows.
+        let keys: Vec<usize> = self.sys.vars[..vars]
+            .iter()
+            .map(|v| v.key)
+            .chain([usize::MAX])
+            .collect();
+        Some(Omega::new(&keys, &rows, self.want, false))
     }
 
-    /// Solves the equality in slot `s`: by a unit coefficient where it has one, or else by one
-    /// unimodular step on the variable `y` of least coefficient `b`, the first on a tie: with
-    /// `q[i]` the nearest integer to `a[i] / b` at each other `x[i]` and `q` that of `k / b`,
-    /// `y = t - Σ q[i]·x[i] - q` for a fresh `t`. The map is onto the integers, and leaves the symmetric remainder of each
-    /// `a[i]` by `b`, so the least coefficient at least halves and every other falls below it in
-    /// one step, however large it was.
-    fn equality(&mut self, s: usize) {
+    /// Solves the equality in slot `s`: by the unit coefficient of least color where it has
+    /// one, or else by one unimodular step on the variable `y` of least coefficient `b` and of
+    /// least color among those: with `q[i]` the nearest integer to `a[i] / b` at each other
+    /// `x[i]` and `q` that of `k / b`, `y = t - Σ q[i]·x[i] - q` for a fresh `t` of the color of
+    /// `y`. The map is onto the integers, and leaves the symmetric remainder of each `a[i]` by
+    /// `b`, so the least coefficient at least halves and every other falls below it in one
+    /// step, however large it was. When two variables tie for the choice, the tie, with the
+    /// equality, and the equality is left in its slot.
+    fn equality(&mut self, s: usize) -> Result<(), Tied> {
         let e = self.es.clear(s);
-        if let Some((j, _)) = e.a.iter().find(|(_, c)| c.is_unit()) {
-            self.define(*j, &e);
-            return;
-        }
-        let (y, b) =
+        let key = |i: usize| self.sys.vars[i].key;
+        let units: Vec<usize> =
             e.a.iter()
-                .map(|(i, c)| (*i, c))
-                .min_by_key(|(i, c)| (c.abs(), *i))
-                .expect("a row has a variable");
-        let t = self.fresh();
+                .filter(|(_, c)| c.is_unit())
+                .map(|(i, _)| *i)
+                .collect();
+        let pool: Vec<(Int, usize, usize)> = if units.is_empty() {
+            e.a.iter().map(|(i, c)| (c.abs(), key(*i), *i)).collect()
+        } else {
+            units.iter().map(|&i| (Int::ONE, key(i), i)).collect()
+        };
+        let (m, k, _) = pool.iter().min().expect("a row has a variable").clone();
+        let tied: Vec<usize> = pool
+            .iter()
+            .filter(|(c, kk, _)| *c == m && *kk == k)
+            .map(|p| p.2)
+            .collect();
+        // `x - y == d` between two variables of one color, as `Ties` does in `solve`: the
+        // greater is defined by the lesser, which is a choice by the values, not the names; when
+        // `d` is zero the two are equal at every point, so defining either leaves the same rows
+        // with one name for the other.
+        let difference = tied.len() == 2 && e.a.len() == 2 && e.a[0].1 == -&e.a[1].1;
+        if difference {
+            // `c·x0 - c·x1 + k == 0`, so `x0 - x1 == -k·c`.
+            let d = -&(&e.k * &e.a[0].1);
+            let y = if d.is_negative() { e.a[1].0 } else { e.a[0].0 };
+            self.define(y, &e);
+            return Ok(());
+        }
+        if tied.len() > 1 {
+            let rows = vec![(e.clone(), Rel::Eq)];
+            self.es.put(s, e, &mut self.sys);
+            return Err(Tied { vars: tied, rows });
+        }
+        let y = tied[0];
+        if !units.is_empty() {
+            self.define(y, &e);
+            return Ok(());
+        }
+        let b = &e.at(y).clone();
+        let t = self.fresh(key(y));
         let mut a: Vec<Term> =
             e.a.iter()
                 .filter(|(i, _)| *i != y)
@@ -3903,13 +5141,97 @@ impl Omega {
         };
         self.es.put(s, e, &mut self.sys);
         self.es.subst(y, &def, &mut self.sys);
+        self.working.push(s);
         self.steps.push(Step::Defined(y, def.clone()));
         self.pending.push((y, def));
+        Ok(())
     }
 
-    fn fresh(&mut self) -> usize {
-        self.sys.vars.push(Var::default());
-        self.es.of.push(BTreeSet::new());
+    /// Solves the equalities in `slots` together when each is `x - y == d`, and says whether
+    /// it did. Each class of variables they join is written over one member, the member of least
+    /// color, then of least value, then of least place, as [`Ties::representatives`] chooses,
+    /// so the order of the equalities plays no part; two members of one color and one value
+    /// are equal at every point, so taking either leaves the same rows with one name for the
+    /// other. O(e log e) for e equalities.
+    fn differences(&mut self, slots: &[usize]) -> bool {
+        let is_difference =
+            |r: &Row| r.a.len() == 2 && r.a[0].1.is_unit() && r.a[0].1 == -&r.a[1].1;
+        if !slots.iter().all(|s| {
+            self.es.rows[*s]
+                .as_ref()
+                .is_some_and(|h| is_difference(&h.row))
+        }) {
+            return false;
+        }
+        let rows: Vec<Row> = slots.iter().map(|s| self.es.clear(*s)).collect();
+        let vars: Vec<usize> = rows
+            .iter()
+            .flat_map(|r| r.a.iter().map(|(i, _)| *i))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let local = |i: usize| vars.binary_search(&i).expect("a variable of the rows");
+        let mut ties = Ties::new(vars.len());
+        for r in &rows {
+            // `c·x - c·y + k == 0`, so `x - y == -k·c`.
+            let d = -&(&r.k * &r.a[0].1);
+            if !ties.equate(local(r.a[0].0), local(r.a[1].0), d) {
+                self.sys.empty = true;
+                return true;
+            }
+        }
+        let keys: Vec<usize> = vars.iter().map(|&i| self.sys.vars[i].key).collect();
+        for (l, (rep, d)) in ties.representatives(&keys).into_iter().enumerate() {
+            if rep != l {
+                // `x - rep - d == 0`.
+                let e = Row {
+                    a: merge(
+                        &[(vars[l], Int::ONE)],
+                        &Int::ONE,
+                        &[(vars[rep], -&Int::ONE)],
+                        &Int::ONE,
+                        usize::MAX,
+                    ),
+                    k: -&d,
+                };
+                self.define(vars[l], &e);
+            }
+        }
+        true
+    }
+
+    /// Keeps the equalities in `slots`, which tie as `t` says, as pairs of opposite rows. Each
+    /// slot is cleared, and no equality takes its place: equalities are formed only from the
+    /// input and from rows that meet ([`System::meetings`]), and rows whose coefficients are
+    /// kept in `loose` are not formed again, so the loop ends. An equality whose rows were
+    /// kept before adds them again, which changes nothing, and the loop goes on to the stages
+    /// below as after any tie kept so; the stages after the eliminations decide what they can
+    /// and the first tie is kept for the refusal. Each pair holds the points of its equality,
+    /// so the rows mean what they did, and the set of slots is chosen by structure, so no
+    /// order among them plays a part. O(e log m) for e equalities over m rows.
+    fn loosen(&mut self, slots: &[usize], t: Tied) {
+        self.loose_tie.get_or_insert(t);
+        for &s in slots {
+            if self.es.rows[s].is_none() {
+                continue;
+            }
+            let r = self.es.clear(s);
+            let opp: Coefs = opposite(&r.a).into();
+            let lesser = if r.a < opp { r.a.clone() } else { opp.clone() };
+            self.sys.loose.insert(lesser);
+            let k = -&r.k;
+            self.sys.add(r);
+            self.sys.add(Row { a: opp, k });
+        }
+    }
+
+    /// A fresh variable of the color `key`.
+    fn fresh(&mut self, key: usize) -> usize {
+        self.sys.vars.push(Var {
+            key,
+            ..Var::default()
+        });
+        self.es.grow();
         self.sys.vars.len() - 1
     }
 
@@ -4041,8 +5363,32 @@ pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
 /// that a symbol whose hull is refused leaves the others projected. With them, the causes for
 /// which a disjunction was left out, which leaves each hull wider but sound.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    let r = match Renamed::of(f) {
+        Naming::Kept => return project_each_inner(f, syms),
+        Naming::Renamed(r) => r,
+        // Projected with each disjunction kept, by questions that no order of the parts
+        // changes ([`project_parts`] with `sets`).
+        Naming::Tied(..) => {
+            return match settle_as_sets(Parts::of(nnf(f, true)))? {
+                None => Ok(no_points(syms)),
+                Some(p) => project_parts(p, syms, Some(f), true),
+            };
+        }
+    };
+    let there: Vec<Atom> = syms.iter().map(|s| r.there(s)).collect();
+    let (each, skipped) = project_each_inner(&r.f, &there).map_err(|e| r.back_refusal(e))?;
+    Ok((
+        each.into_iter()
+            .map(|s| s.map_err(|e| r.back_refusal(e)))
+            .collect(),
+        skipped.into_iter().map(|e| r.back_refusal(e)).collect(),
+    ))
+}
+
+/// [`project_each`] of a formula whose names no longer matter ([`Renamed`]).
+fn project_each_inner(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     match propagate(f)? {
-        Some(p) => project_parts(p, syms, Some(f)),
+        Some(p) => project_parts(p, syms, Some(f), false),
         None => Ok(no_points(syms)),
     }
 }
@@ -4064,10 +5410,26 @@ fn no_points(syms: &[Atom]) -> Each {
 /// formula and below it over the level with each disjunct's disjunctions cut to their
 /// disjuncts' own constraints and its projections added ([`summarize`]), so that no level
 /// reads the whole nest below it either.
-fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result<Each, Refusal> {
+///
+/// With `sets`, for parts whose atoms share a color ([`Naming::Tied`]), each question is one
+/// whose answer no order of the parts changes: no search ([`pick`], [`probe`]) removes
+/// disjuncts first; each disjunct of a disjunction is settled by [`settle_as_sets`] before any
+/// is asked for a symbol; those shown to have no point are not asked, and each of the others
+/// is asked for the symbols that all of them touch, even after one is refused; and a hull is
+/// tightened by [`decide`], which renames or settles the formula as its colors allow. The
+/// projection is then a function of the parts as sets: for each disjunction, the union of its
+/// disjuncts' projections, met over the disjunctions. The settling of each disjunct is the
+/// cost added to that of the projection, one test of each disjunct below it for each round of
+/// the settling.
+fn project_parts(
+    mut p: Parts,
+    syms: &[Atom],
+    whole: Option<&Formula>,
+    sets: bool,
+) -> Result<Each, Refusal> {
     let none = || no_points(syms);
     let mut skipped: Vec<Refusal> = Vec::new();
-    if p.ors.len() > 1 && pick(&p, whole.is_some()).is_err() {
+    if !sets && p.ors.len() > 1 && pick(&p, whole.is_some()).is_err() {
         let Some(q) = probe(p)? else {
             return Ok(none());
         };
@@ -4122,6 +5484,56 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
     // For each disjunction, its disjuncts with a point and their projections, each sorted by
     // symbol; read only to tighten a hull, so kept only with two disjunctions or more.
     let mut seen: Vec<Option<Vec<Projected>>> = Vec::new();
+    // The groups a disjunct touches, found from its atoms or from the base's, whichever are
+    // fewer, so that a level does not read every atom below it.
+    let roots_of = |atoms: &OrdSet<Atom>| -> Vec<usize> {
+        let mut roots: Vec<usize> = if atoms.len() <= linked.ids.len() {
+            (atoms.iter())
+                .filter_map(|a| linked.ids.get(a).map(|i| linked.root(*i)))
+                .collect()
+        } else {
+            (linked.ids.iter())
+                .filter(|(a, _)| atoms.contains(*a))
+                .map(|(_, i)| linked.root(*i))
+                .collect()
+        };
+        roots.sort_unstable();
+        roots.dedup();
+        roots
+    };
+    // The symbols a disjunct with `atoms` and base groups `roots` touches, in order.
+    let touched = |atoms: &OrdSet<Atom>, roots: &[usize]| -> Vec<usize> {
+        let named: Vec<&Atom> = if atoms.len() <= free.len() {
+            (atoms.iter())
+                .filter(|a| index.contains_key(a) && !linked.ids.contains_key(*a))
+                .collect()
+        } else {
+            free.iter()
+                .copied()
+                .filter(|s| atoms.contains(*s))
+                .collect()
+        };
+        let groups = roots
+            .iter()
+            .copied()
+            .chain(named.into_iter().filter_map(group));
+        let mut ks: Vec<usize> = groups
+            .flat_map(|r| syms_of.get(&r).into_iter().flatten().copied())
+            .collect();
+        ks.sort_unstable();
+        ks.dedup();
+        ks
+    };
+    // The disjunct's parts with the base groups it touches, its constraints sorted as
+    // [`nnf`] sorts them and its disjunctions shared.
+    let parts_of = |d: &Parts, roots: &[usize]| -> Parts {
+        let mut fs: Vec<Formula> = roots.iter().map(|r| base_of(*r).clone()).collect();
+        fs.extend(d.cons.iter().cloned().map(Formula::Con));
+        let mut q = Parts::of(Formula::and(fs));
+        q.cons.sort();
+        q.ors.extend(d.ors.iter().cloned());
+        q
+    };
     for ds in &ors {
         // For each symbol, the join of its projections over the satisfiable disjuncts that
         // touch it (`None` once one is refused), and how many touch it; a satisfiable disjunct
@@ -4133,26 +5545,43 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
         // are read smallest first, and each is asked only for the symbols that every disjunct
         // with a point before it touched (`None`: all of them). A deep disjunct beside a small
         // one is then asked for the few symbols the small one names, not for every symbol of
-        // the nest below it.
+        // the nest below it. With `sets`, each disjunct is settled first, and each
+        // that may have a point is asked for the symbols that all such disjuncts touch, which
+        // no order changes; the others are not asked.
         let mut order: Vec<&Parts> = ds.iter().map(|d| &**d).collect();
         order.sort_by_key(|d| d.atoms().len());
         let mut wanted: Option<Vec<usize>> = None;
-        for d in order {
-            // The groups the disjunct touches, found from its atoms or from the base's,
-            // whichever are fewer, so that a level does not read every atom below it.
-            let atoms = d.atoms();
-            let mut roots: Vec<usize> = if atoms.len() <= linked.ids.len() {
-                (atoms.iter())
-                    .filter_map(|a| linked.ids.get(a).map(|i| linked.root(*i)))
-                    .collect()
-            } else {
-                (linked.ids.iter())
-                    .filter(|(a, _)| atoms.contains(*a))
-                    .map(|(_, i)| linked.root(*i))
-                    .collect()
+        let mut pre: Vec<Option<Result<Option<Parts>, Refusal>>> = Vec::new();
+        if sets {
+            for d in &order {
+                let roots = roots_of(d.atoms());
+                let s = settle_as_sets(parts_of(d, &roots));
+                // Only a settling that leaves no point shows that a disjunct has none; a
+                // search for one would choose by name.
+                let maybe = !matches!(s, Ok(None));
+                if maybe {
+                    let ks = touched(d.atoms(), &roots);
+                    wanted = Some(match wanted {
+                        None => ks,
+                        Some(ws) => ws
+                            .into_iter()
+                            .filter(|k| ks.binary_search(k).is_ok())
+                            .collect(),
+                    });
+                }
+                pre.push(maybe.then_some(s));
+            }
+        }
+        for (at, d) in order.into_iter().enumerate() {
+            let pre_d = match pre.get_mut(at) {
+                Some(s) => match s.take() {
+                    Some(s) => Some(s),
+                    None => continue,
+                },
+                None => None,
             };
-            roots.sort_unstable();
-            roots.dedup();
+            let atoms = d.atoms();
+            let roots = roots_of(atoms);
             let ks: Vec<usize> = match &wanted {
                 Some(ws) => ws
                     .iter()
@@ -4162,51 +5591,28 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
                         None => atoms.contains(&syms[k]),
                     })
                     .collect(),
-                None => {
-                    let named: Vec<&Atom> = if atoms.len() <= free.len() {
-                        (atoms.iter())
-                            .filter(|a| index.contains_key(a) && !linked.ids.contains_key(*a))
-                            .collect()
-                    } else {
-                        free.iter()
-                            .copied()
-                            .filter(|s| atoms.contains(*s))
-                            .collect()
-                    };
-                    let groups = roots
-                        .iter()
-                        .copied()
-                        .chain(named.into_iter().filter_map(group));
-                    let mut ks: Vec<usize> = groups
-                        .flat_map(|r| syms_of.get(&r).into_iter().flatten().copied())
-                        .collect();
-                    ks.sort_unstable();
-                    ks.dedup();
-                    ks
-                }
+                None => touched(atoms, &roots),
             };
-            // The disjunct's parts with the base groups it touches, its constraints sorted as
-            // [`nnf`] sorts them and its disjunctions shared.
-            let mut fs: Vec<Formula> = roots.iter().map(|r| base_of(*r).clone()).collect();
-            fs.extend(d.cons.iter().cloned().map(Formula::Con));
-            let mut q = Parts::of(Formula::and(fs));
-            q.cons.sort();
-            q.ors.extend(d.ors.iter().cloned());
             let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
             // A disjunct asked for no symbol is only asked whether it has a point, as
-            // [`decide`] asks it.
-            let found_rs = settle(q).and_then(|q| match q {
+            // [`decide`] asks it; with `sets` it was asked above.
+            let settled = match pre_d {
+                Some(s) => s,
+                None => settle(parts_of(d, &roots)),
+            };
+            let found_rs = settled.and_then(|q| match q {
                 None => Ok((no_points(&sub), false)),
                 Some(q) if ks.is_empty() => {
                     // A point of the disjunct with each disjunct below cut to its own
                     // constraints keeps it, as a level below the top is tightened
                     // ([`summarize`]); the search below it runs only when there is none.
-                    let point = q.ors.is_empty()
+                    let point = sets
+                        || q.ors.is_empty()
                         || pick(&q, false).is_ok()
                         || !matches!(probe(q), Ok(None));
                     Ok(((Vec::new(), Vec::new()), point))
                 }
-                Some(q) => project_parts(q, &sub, None).map(|e| {
+                Some(q) => project_parts(q, &sub, None, sets).map(|e| {
                     let point = e.0.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()));
                     (e, point)
                 }),
@@ -4219,6 +5625,11 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
                 Err(r) => {
                     skipped.push(r);
                     refused = true;
+                    // With `sets` every disjunct is asked, so the causes reported are those
+                    // of all of them, not of those before the first refused.
+                    if sets {
+                        continue;
+                    }
                     break;
                 }
             };
@@ -4229,7 +5640,7 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
             let mut kept = Vec::new();
             for (j, &k) in ks.iter().enumerate() {
                 if let Err(r) = &rs[j] {
-                    skipped.push(*r);
+                    skipped.push(r.clone());
                 }
                 let e = acc.entry(k).or_insert((Some(IntervalSet::empty()), 0));
                 e.0 =
@@ -4245,7 +5656,9 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
             if n_ors > 1 {
                 found_here.push((d, kept));
             }
-            wanted = Some(ks);
+            if !sets {
+                wanted = Some(ks);
+            }
         }
         if n_ors > 1 {
             seen.push((!refused).then_some(found_here));
@@ -4277,7 +5690,7 @@ fn project_parts(mut p: Parts, syms: &[Atom], whole: Option<&Formula>) -> Result
                 Some(f) => f,
                 None => summary.get_or_insert_with(|| summarize(&linked.cons, &seen, syms)),
             };
-            *o = tighten(f, sym, s.clone());
+            *o = tighten(f, sym, s.clone(), if sets { decide } else { decide_inner });
         }
     }
     skipped.sort_unstable();
@@ -4333,15 +5746,22 @@ fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Fo
 
 /// `set`, holding every value of `sym` over `f`'s points, with each finite bound raised or
 /// lowered by bisection to the nearest value at which `f` with `sym` past it is shown to have
-/// no point. A bound moves only on such a proof, so a refused question leaves it sound.
-fn tighten(f: &Formula, sym: &Atom, set: IntervalSet) -> Result<IntervalSet, Refusal> {
+/// no point. A bound moves only on such a proof, so a refused question leaves it sound. Each
+/// question is asked of `ask`, [`decide_inner`] for a formula renamed or [`decide`] when its
+/// atoms may share a color.
+fn tighten(
+    f: &Formula,
+    sym: &Atom,
+    set: IntervalSet,
+    ask: fn(&Formula) -> Result<bool, Refusal>,
+) -> Result<IntervalSet, Refusal> {
     let Some((End::Fin(lo), End::Fin(hi))) = set.bounds() else {
         return Ok(set);
     };
     let x = Lin::atom(sym.clone());
     let none = |con: Con| {
         matches!(
-            decide(&Formula::and(vec![f.clone(), Formula::Con(con)])),
+            ask(&Formula::and(vec![f.clone(), Formula::Con(con)])),
             Ok(false)
         )
     };
@@ -4378,7 +5798,7 @@ fn tighten(f: &Formula, sym: &Atom, set: IntervalSet) -> Result<IntervalSet, Ref
 
 /// The least and greatest values of a symbol over a formula.
 fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
-    match satisfiable(c)? {
+    match satisfiable_inner(c)? {
         Some(m) => hull_from(c, sym, &m),
         None => Ok(IntervalSet::empty()),
     }
@@ -4393,7 +5813,7 @@ fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal>
     let x = Lin::atom(sym.clone());
     let at = m.get(sym).cloned().unwrap_or(Int::ZERO);
     let with = |con: Con| -> Result<bool, Refusal> {
-        decide(&Formula::and(vec![c.clone(), Formula::Con(con)]))
+        decide_inner(&Formula::and(vec![c.clone(), Formula::Con(con)]))
     };
     let below = |v: &Int| with(Con::ge(&Lin::constant(v.clone()), &x));
     let above = |v: &Int| with(Con::ge(&x, &Lin::constant(v.clone())));
@@ -4773,9 +6193,11 @@ mod tests {
         // `2x - 3y == 1` sees `x` and `y` only through `2x - 3y`, which takes every integer:
         // one variable with column 1, and its point lifted to `x` and `y`.
         let r = row(&[(0, 2), (1, -3)], -1);
-        let point = quotient(2, vec![(r.clone(), Rel::Eq)], true)
-            .expect("decided")
-            .expect("a point");
+        let point = quotient(2, vec![(r.clone(), Rel::Eq)], &[0, 1], &[0], true, &|i| {
+            format!("x{i}")
+        })
+        .expect("decided")
+        .expect("a point");
         assert_eq!(r.eval(&point), Int::ZERO);
     }
 
@@ -4783,7 +6205,12 @@ mod tests {
     fn merged_columns_take_only_the_multiples_of_their_divisor() {
         // `2x + 4y` is even, so `2x + 4y == 1` has no point, though it has rational ones.
         let r = row(&[(0, 2), (1, 4)], -1);
-        assert_eq!(quotient(2, vec![(r, Rel::Eq)], true), Ok(None));
+        assert_eq!(
+            quotient(2, vec![(r, Rel::Eq)], &[0, 1], &[0], true, &|i| format!(
+                "x{i}"
+            )),
+            Ok(None)
+        );
     }
 
     #[test]
@@ -4896,7 +6323,7 @@ mod tests {
     /// each variable in `[-half, half]`.
     fn boxed_system(rows: &[(Vec<i128>, i128)], perm: &[usize], half: i128) -> System {
         let n = perm.len();
-        let mut sys = System::new(n);
+        let mut sys = System::new(0..n);
         for (c, k) in rows {
             let t: Vec<(usize, i128)> = (0..n)
                 .filter(|&i| c[i] != 0)
@@ -5013,7 +6440,7 @@ mod tests {
         lo: &[Option<i128>],
         hi: &[Option<i128>],
     ) -> bool {
-        let mut sys = System::new(n);
+        let mut sys = System::new(0..n);
         for (a, k) in rows {
             sys.add(Row {
                 a: a.iter().map(|(j, c)| (*j, Int::from(*c))).collect(),

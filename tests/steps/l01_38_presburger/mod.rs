@@ -17,6 +17,7 @@ mod deep;
 mod entailment;
 mod hull3;
 mod live3;
+mod names;
 mod near;
 mod omega;
 mod oracle;

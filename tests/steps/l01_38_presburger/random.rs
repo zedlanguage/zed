@@ -13,7 +13,7 @@ use zed_tests::instances::Rng;
 use zedc::store::interval::IntervalSet;
 use zedc::store::preimage::relations;
 use zedc::store::presburger::{
-    Atom, Con, Entailment, Formula, Lin, Relation, entails, member, project, satisfiable,
+    Atom, Con, Entailment, Formula, Lin, Refusal, Relation, entails, member, project, satisfiable,
 };
 
 use super::{holds, point, projections, window};
@@ -173,7 +173,8 @@ fn check_projection(claimed: &[IntervalSet], t: &Term, names: &[Arc<str>]) -> Re
 }
 
 /// No point of the window refutes a proved entailment from `p` to `g`, and a countermodel
-/// is one.
+/// is one. A refusal for a search whose order only names would fix (NAME-ties repair 2) is
+/// the one refusal a linear question may give.
 fn check_entailment(e: &Entailment, p: &Term, g: &Term, names: &[Arc<str>]) -> Result<(), String> {
     let counter = window(names.len(), LO, HI)
         .into_iter()
@@ -190,6 +191,7 @@ fn check_entailment(e: &Entailment, p: &Term, g: &Term, names: &[Arc<str>]) -> R
                 Err(format!("{p} to {g}: the countermodel {q:?} is none"))
             }
         }
+        (Entailment::Refused(Refusal::Unordered(_)), _) => Ok(()),
         (Entailment::NotProved(_) | Entailment::Refused(_), _) => Err(format!(
             "{p} to {g}: {e}, which a linear question never gives"
         )),
@@ -219,7 +221,7 @@ fn window_term(names: &[Arc<str>]) -> Term {
 fn random_tests_agree_with_the_interpreter() {
     let mut rng = Rng::new(0x1_38);
     let ns = names();
-    let (mut checked, mut models, mut entailments, mut wider) = (0, 0, 0, 0);
+    let (mut checked, mut models, mut entailments, mut wider, mut unordered) = (0, 0, 0, 0, 0);
     while checked < 60 {
         let t = bool_term(&mut rng, 2);
         let Some(rs) = relations(&[&t], &ns, false) else {
@@ -245,6 +247,7 @@ fn random_tests_agree_with_the_interpreter() {
         let e = entails(&rs[0], &rs[1]);
         check_entailment(&e, &inside, &g, &ns).unwrap();
         entailments += usize::from(matches!(e, Entailment::Proved(_)));
+        unordered += usize::from(matches!(e, Entailment::Refused(Refusal::Unordered(_))));
         checked += 1;
     }
     // Option A (STATUS.md, L1.38): one projection of the 60, of `y` on a term with `div`, `mod`,
@@ -254,6 +257,13 @@ fn random_tests_agree_with_the_interpreter() {
     // correctness, which the check above holds for every projection. Since HULL3 (XT3 B4), the
     // only change, that projection is [0..=5]: every projection is the hull of its values.
     assert_eq!(wider, 0, "projections wider than the hull of their values");
+    // Since NAME-ties repair 2, one entailment of the 60, from `x != y` in the window to
+    // `-x == y - 1`, is refused: `x` and `y` occur alike, and two disjunctions are left that only
+    // an order chosen by name would search. Before, it was answered.
+    assert_eq!(
+        unordered, 1,
+        "entailments refused for a search order only names fix"
+    );
     // Both answers occur, so neither check passes by never being asked.
     assert!(models > 10 && models < 55, "{models} of 60 satisfiable");
     assert!(

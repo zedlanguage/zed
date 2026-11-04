@@ -57,7 +57,7 @@ fn answers(f: &Formula, answer: Result<bool, Refusal>) {
     assert_eq!(decide(f), answer, "{f}");
     let found = satisfiable(f);
     assert_eq!(
-        found.as_ref().map(Option::is_some).map_err(|r| *r),
+        found.as_ref().map(Option::is_some).map_err(Refusal::clone),
         answer,
         "{f}"
     );
@@ -143,7 +143,7 @@ fn a_variable_with_equal_bounds_is_answered_as_enumeration_answers_or_refused() 
             got == Ok(truth) || got == Err(Refusal::Growth),
             "{f}: {got:?}"
         );
-        answers(&f, got);
+        answers(&f, got.clone());
         answered.push((v, got));
     }
     eprintln!("x0 fixed: {answered:?}");

@@ -69,10 +69,13 @@ fn opposite_rows_meet_in_an_equality_or_nowhere() {
     assert_eq!(satisfiable(&f), Ok(None));
 }
 
-/// `3·x[i+1] >= 2·x[i] + 1` and `2·x[i] + 3 >= 3·x[i+1]`, which holds only with values growing
-/// by half at each step back from the last.
+/// `3·x[i+1] >= 2·x[i] + 1` and `2·x[i] + 3 >= 3·x[i+1]`, with `x[v] >= 4`, which holds only
+/// with values growing by half at each step back from the last. (Without `x[v] >= 4` every
+/// `x[i]` may be 1, 2 or 3; only the order of the eliminations gave large values.)
 fn growing(v: usize) -> Formula {
     let name = |i: usize| format!("x{i}");
+    let last = name(v);
+    let floor = ge(&[(last.as_str(), 1)], -4);
     let rows = (0..v).flat_map(|i| {
         let (a, b) = (name(i), name(i + 1));
         [
@@ -80,7 +83,7 @@ fn growing(v: usize) -> Formula {
             ge(&[(a.as_str(), 2), (b.as_str(), -3)], 3),
         ]
     });
-    Formula::and(rows.collect())
+    Formula::and(rows.chain([floor]).collect())
 }
 
 #[test]
@@ -118,7 +121,7 @@ fn differ(a: &str, b: &str) -> Formula {
 #[test]
 fn each_cause_of_a_refusal_has_its_own_message() {
     let refused = |f: Formula, why: Refusal, text: &str| {
-        assert_eq!(satisfiable(&f), Err(why));
+        assert_eq!(satisfiable(&f), Err(why.clone()));
         let e = entails(&Relation::of(f), &Relation::of(Formula::bottom()));
         assert_eq!(e, Entailment::Refused(why));
         assert_eq!(e.to_string(), format!("refused: {text}"));
@@ -151,18 +154,44 @@ fn each_cause_of_a_refusal_has_its_own_message() {
          splinter of their projection, so whether one exists is not decided",
     );
     // Four tasks, three slots, each pair in different slots: no slot assignment, which the
-    // search through the disjunctions does not show by propagation.
+    // search through the disjunctions does not show by propagation. Each task has a row of
+    // its own, with a coefficient of its own, that `t >= 0` implies, so that the structure
+    // tells the tasks apart.
     let tasks = ["a", "b", "c", "d"];
-    let mut rows = Vec::new();
-    for (i, t) in tasks.iter().enumerate() {
-        rows.push(ge(&[(t, 1)], 0));
-        rows.push(ge(&[(t, -1)], 2));
-        rows.extend(tasks[..i].iter().map(|s| differ(s, t)));
-    }
+    let pigeons = |apart: bool| {
+        let mut rows = Vec::new();
+        for (i, t) in tasks.iter().enumerate() {
+            rows.push(ge(&[(t, 1)], 0));
+            rows.push(ge(&[(t, -1)], 2));
+            if apart {
+                rows.push(ge(&[(t, 2 + i as i128)], 1));
+            }
+            rows.extend(tasks[..i].iter().map(|s| differ(s, t)));
+        }
+        Formula::and(rows)
+    };
     refused(
-        Formula::and(rows),
+        pigeons(true),
         Refusal::Disjuncts,
         "no choice among the disjunctions of the integer constraints was settled",
+    );
+    // With no such rows the tasks occur alike, so the search would take them in an order
+    // chosen by name, and the disjunctions left are named.
+    let Err(why @ Refusal::Unordered(_)) = satisfiable(&pigeons(false)) else {
+        panic!("the tied tasks are refused for their order");
+    };
+    let e = entails(
+        &Relation::of(pigeons(false)),
+        &Relation::of(Formula::bottom()),
+    );
+    assert_eq!(e, Entailment::Refused(why));
+    let text = e.to_string();
+    assert!(
+        text.starts_with(
+            "refused: the disjunctions of the integer constraints would be searched in an \
+             order chosen by name: `a`, `b`, `c`, `d` occur alike"
+        ),
+        "{text}"
     );
 }
 

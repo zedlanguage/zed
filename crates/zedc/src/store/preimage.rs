@@ -398,7 +398,7 @@ fn project_classes(rel: &Relation, dom: &Domains) -> Result<(Domains, Option<Ref
         };
         out.insert(k.clone(), p);
     }
-    Ok((out, skipped.first().copied()))
+    Ok((out, skipped.first().cloned()))
 }
 
 /// The relation of the classes of a split by remainders over many periods, exact on its box,
@@ -920,7 +920,7 @@ fn linear(
             Formula::negate(rel.body.clone()),
         ]);
         Ok(match presburger::decide(&outside) {
-            Ok(meets) => (out, !meets, skipped.first().copied()),
+            Ok(meets) => (out, !meets, skipped.first().cloned()),
             Err(why) => (out, false, Some(why)),
         })
     };

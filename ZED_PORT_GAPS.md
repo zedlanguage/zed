@@ -1310,3 +1310,19 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A `HashMap<u64, usize>` keyed by `Shared::id` while one term is read, a part held inline having no key | `stage::Reader::ids`, `Reader::read`, `Part::held` | Identity (gap 1), mutation | A state receiver over a map keyed by the term's digest |
 | A closure over a mutable iterator (`move \|\| parts.next()`) passed as `&mut impl FnMut() -> Needs`, so a callee takes the next part's answer only when it is a lambda | `stage::Reader::needs_of`, `Reader::callee` | Mutation | The list of the parts' answers passed as a value, each case taking its head |
+
+## Entries from NAME-ties (`zedc/src/store/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A substitution counter `now` bumped in place and read as `std::cmp::Reverse(now)` in a sort key | `Equalities::subst`, `Equalities::put` | Mutation (gap 11) | The counter threaded through the state receiver; `Reverse` as a key that sorts descending |
+| `Option::take` and `get_or_insert` on the kept first tie | `Omega::loosen`, `Omega::run` | Mutation (gap 11) | The kept tie as a field of the threaded state, read and cleared by one `patch` |
+| `return` from inside nested loops on the first point of a splinter, and after the first refused batch | `search` | Early exit (gap 12) | A fold over the batches that stops on a point or a refusal |
+| `Vec<Vec<(usize, usize)>>` of batches, pushed to by `last_mut` | `Omega::gray`, `Omega::run` | Mutation (gap 11) | An array of batches built by append on the threaded state |
+| A `String` built by `push_str` while a `&str` cursor moves past each `#` | `Renamed::back_text` | Mutation (gap 11) | A fold over the pieces of the text split at `#`, each piece mapped and joined |
+| A depth-first walk with an explicit `Vec` stack and `return` on the first disjunction or negation | `Formula::chooses` | Early exit (gap 12) | A recursive `any` over the children |
+| Union and find over a `Vec<usize>` of parents with path halving written in place, by a closure that captures the parents and a `HashMap` from atom to index filled by `entry`; a `Vec<bool>` of roots seen, set by `std::mem::replace` | `alone` | Mutation (gap 11) | The parent array and the roots seen on the threaded state, updated by `patch` at each step of the find |
+| `return None` from inside the loop over the roots on a root seen twice, and `?` on the search for a disjunct with no disjunction of its own | `alone` | Early exit (gap 12) | A fold over the roots that stops on the first repeat; an `Option` chain over the disjunctions |
+| A nest of disjunctions read on an explicit `Vec` stack of slices, the least key kept in an `Option` with a tie flag, and `?` on an empty disjunction | `by_color` | Mutation (gap 11), Early exit (gap 12) | A recursive fold over the nest, with the least key and the tie as its accumulator |
+| `let ... else` returns on a settling with no point and on no choice by color | `settle_tied` | Early exit (gap 12) | A match on each result |
+| A vector of each disjunct's settled parts, filled before the asking loop and emptied by `Option::take` as each is read | `project_parts` (`pre`) | Mutation (gap 11) | The settled parts zipped with the disjuncts, read once by a map; no take needed |

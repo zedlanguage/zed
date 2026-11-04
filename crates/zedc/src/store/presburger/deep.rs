@@ -247,6 +247,18 @@ impl Formula {
         }
     }
 
+    /// Whether the formula has a disjunction or a negation, which pushed in may make one.
+    pub(super) fn chooses(&self) -> bool {
+        let mut stack = vec![self];
+        while let Some(g) = stack.pop() {
+            match g {
+                Formula::Or(_) | Formula::Not(_) => return true,
+                Formula::Con(_) | Formula::And(_) => stack.extend(g.kids()),
+            }
+        }
+        false
+    }
+
     /// The parts of a conjunction or a disjunction, moved out when no other holder shares
     /// them and copied, one level deep, when one does, or `None` for another formula.
     pub fn into_parts(mut self) -> Option<Vec<Formula>> {

@@ -379,7 +379,7 @@ fn linear(
             Formula::negate(rel.body.clone()),
         ]);
         Ok(match presburger::decide(&outside) {
-            Ok(meets) => (out, !meets, skipped.first().copied()),
+            Ok(meets) => (out, !meets, skipped.first().cloned()),
             Err(why) => (out, false, Some(why)),
         })
     };

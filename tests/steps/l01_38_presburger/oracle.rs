@@ -74,6 +74,7 @@ struct Tally {
     unsat: usize,
     growth: usize,
     shadows: usize,
+    tie: usize,
 }
 
 /// Checks `count` random systems from `make` against enumeration.
@@ -97,11 +98,13 @@ fn run(seed: u64, count: usize, n: usize, half: i64, make: impl Fn(&mut Rng) -> 
             }
             Err(Refusal::Growth) => t.growth += 1,
             Err(Refusal::Shadows) => t.shadows += 1,
+            Err(Refusal::Tie(_)) => t.tie += 1,
             Err(Refusal::Disjuncts) => panic!("a conjunction refused for its disjunctions: {f}"),
+            Err(Refusal::Unordered(_)) => panic!("a conjunction refused for its disjunctions: {f}"),
         }
         assert_eq!(
             decide(&f),
-            got.as_ref().map(Option::is_some).map_err(|r| *r),
+            got.as_ref().map(Option::is_some).map_err(Refusal::clone),
             "{f}"
         );
     }
@@ -166,7 +169,7 @@ fn unit_rows_over_five_variables_match_enumeration() {
     });
     assert!(t.sat > 40 && t.unsat > 40, "{t:?}");
     // The parity test decides every such system.
-    assert_eq!((t.growth, t.shadows), (0, 0), "{t:?}");
+    assert_eq!((t.growth, t.shadows, t.tie), (0, 0, 0), "{t:?}");
 }
 
 #[test]
@@ -177,7 +180,7 @@ fn large_coefficients_over_two_variables_match_enumeration() {
     });
     assert!(t.sat > 40 && t.unsat > 40, "{t:?}");
     // Two variables are always decided.
-    assert_eq!((t.growth, t.shadows), (0, 0), "{t:?}");
+    assert_eq!((t.growth, t.shadows, t.tie), (0, 0, 0), "{t:?}");
 }
 
 #[test]
@@ -195,7 +198,7 @@ fn rows_over_three_variables_with_a_unit_side_match_enumeration() {
             .collect()
     });
     assert!(t.sat > 40 && t.unsat > 40, "{t:?}");
-    assert_eq!((t.growth, t.shadows), (0, 0), "{t:?}");
+    assert_eq!((t.growth, t.shadows, t.tie), (0, 0, 0), "{t:?}");
 }
 
 /// 2 to 6 rows of three terms with coefficients up to 5 over `n` variables, half of them met
@@ -364,7 +367,15 @@ fn answers_do_not_depend_on_names_or_order() {
         let renamed = |i: usize| Atom::Sym(Arc::from(format!("z{}", n - perm[i])));
         let g = system(&renamed, &order, true);
         let (a, b) = (decide(&f), decide(&g));
-        assert_eq!(a, b, "{f}\nrenamed and reordered: {g}");
+        // A tie names its variables, which the renaming changes: two ties are the same answer
+        // when they name as many variables and rows.
+        let same = match (&a, &b) {
+            (Err(Refusal::Tie(s)), Err(Refusal::Tie(t))) => {
+                (s.vars.len(), s.rows.len()) == (t.vars.len(), t.rows.len())
+            }
+            _ => a == b,
+        };
+        assert!(same, "{f}\nrenamed and reordered: {g}\n{a:?}\n{b:?}");
         refused += usize::from(a.is_err());
     }
     // The refusals are among the answers compared.

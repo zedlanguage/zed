@@ -746,7 +746,7 @@ impl Refused {
     /// The warning that reports this refusal, with its derivation.
     fn warning(&self) -> Warning {
         let c = &self.constraint;
-        let cause = self.cause;
+        let cause = &self.cause;
         let (given, asked, kept) = match &self.asked {
             Asked::Test { outcome } => (
                 format!("the test `{c}` is assumed {outcome}"),

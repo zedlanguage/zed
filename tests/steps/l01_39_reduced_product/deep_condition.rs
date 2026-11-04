@@ -296,22 +296,31 @@ fn two_choices_inside_a_branch_still_narrow_its_bounds() {
 
 #[test]
 fn a_branch_with_no_point_does_not_widen_the_other() {
-    // The second branch asks `a` and `b` each to be both at most 0 and at least 1 in some
-    // combination, so it has no point, though no single choice in it is ruled out alone;
-    // the then arm is the first branch's.
+    // The second branch asks `a` to be at most 0 and at least 1, and `b` at most `k - 1` and
+    // at least `k`, in some combination, so it has no point, though no single choice in it is
+    // ruled out alone; the then arm is the first branch's.
     let ge = |n, v| cmp(Prim::Ge, n, v);
     let le = |n, v| cmp(Prim::Le, n, v);
-    let none = all(vec![
-        either(ge("a", 1), ge("b", 1)),
-        either(ge("a", 1), le("b", 0)),
-        either(le("a", 0), ge("b", 1)),
-        either(le("a", 0), le("b", 0)),
-    ]);
-    let first = all(vec![ge("x", 3), ge("y", 0), ge("z", 0)]);
-    let names: Vec<Arc<str>> = ["x", "y", "z", "a", "b"].map(Into::into).into();
-    let a = arms(&if_(either(first, none), lit(1), lit(2)), &ints(&names));
-    let get = |n: &str| a[0].scope.get(n).ints().to_string();
-    assert_eq!([get("x"), get("y"), get("z")], ["[3..]", "[0..]", "[0..]"]);
+    let then_arm = |k: i64, z: i64| {
+        let none = all(vec![
+            either(ge("a", 1), ge("b", k)),
+            either(ge("a", 1), le("b", k - 1)),
+            either(le("a", 0), ge("b", k)),
+            either(le("a", 0), le("b", k - 1)),
+        ]);
+        let first = all(vec![ge("x", 3), ge("y", 0), ge("z", z)]);
+        let names: Vec<Arc<str>> = ["x", "y", "z", "a", "b"].map(Into::into).into();
+        let a = arms(&if_(either(first, none), lit(1), lit(2)), &ints(&names));
+        let get = |n: &str| a[0].scope.get(n).ints().to_string();
+        [get("x"), get("y"), get("z")]
+    };
+    // With `k = 2` and `z >= 1` every atom has a color of its own, so the formula is renamed
+    // and searched, and the search shows the second branch empty.
+    assert_eq!(then_arm(2, 1), ["[3..]", "[0..]", "[1..]"]);
+    // With `k = 1` and `z >= 0`, `a` and `b` occur alike, as do `y` and `z`: only a search
+    // in an order chosen by name would show the second branch empty (NAME-ties, COMPLEXITY.md
+    // NAME-ties-or), so it is kept, and the then arm is no narrower than the scope.
+    assert_eq!(then_arm(1, 0), ["[..]", "[..]", "[..]"]);
 }
 
 #[test]
