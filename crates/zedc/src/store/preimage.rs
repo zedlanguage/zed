@@ -237,7 +237,14 @@ fn preimage_in(
     // `l01_25_preimage_catalog::s22::remainders_read_by_each_class_keep_the_transfer_first_scales`,
     // COMPLEXITY.md row S22e-quad. A complete solution would hold the congruence facet in
     // the backward transfer's sets, so that one transfer carries every class at once.
+    //
+    // A split that finds a mixed stretch over many periods ([`Split::Wide`]) is kept, and the
+    // transfer and the split over the transfer's box run as without it: over that narrower box
+    // the split may be exact where over the whole box it is not (`many_remainders` below
+    // `i mod 1024 == 0`, row S22e-wide). When neither is exact the kept answer is the
+    // preimage, its box met with the transfer's, and the linear stage is not run.
     let mut whole_tried = false;
+    let mut early = None;
     if !is_empty(inputs) {
         match split_residues(tx, root, inputs, demand, &marks, true) {
             Split::Exact(dom) => {
@@ -249,6 +256,10 @@ fn preimage_in(
                     relation: None,
                     refusal: None,
                 };
+            }
+            Split::Wide(dom, found) => {
+                early = Some((dom, found));
+                whole_tried = true;
             }
             Split::NotExact => whole_tried = true,
             Split::Deferred => {}
@@ -273,9 +284,21 @@ fn preimage_in(
         && !is_empty(&r.dom)
         // The split over the whole box was tried above.
         && !(whole_tried && r.dom == *inputs)
-        && let Split::Exact(dom) = split_residues(tx, root, &r.dom, demand, &marks, false)
     {
-        r = Whole { dom, exact: true };
+        match split_residues(tx, root, &r.dom, demand, &marks, false) {
+            Split::Exact(dom) => r = Whole { dom, exact: true },
+            Split::Wide(dom, found) => return wide(term, dom, found, demand, stops),
+            Split::NotExact | Split::Deferred => {}
+        }
+    }
+    if !r.exact
+        && let Some((dom, found)) = early
+    {
+        let dom = dom.into_iter().map(|(k, v)| {
+            let v = v.meet(&r.dom[&k]);
+            (k, v)
+        });
+        return wide(term, dom.collect(), found, demand, stops);
     }
     let (mut relation, mut refusal) = (None, None);
     if !r.exact
@@ -312,10 +335,83 @@ fn preimage_in(
     }
 }
 
+/// The preimage of a split by remainders over many periods ([`Split::Wide`]): its box, not
+/// exact, with the classes' relation and the refusal that left the box wider, or the box
+/// listed when it can be ([`enumerate`]). The linear stage is not run on the term
+/// ([`split_residues`] says why).
+fn wide(
+    term: &Term,
+    dom: Domains,
+    (rel, why): ClassRelation,
+    demand: &Demand,
+    mut stops: Vec<Stop>,
+) -> Preimage {
+    let mut r = Whole { dom, exact: false };
+    let mut enumerated = false;
+    if let Some(e) = enumerate(term, &r.dom, demand) {
+        r = e;
+        enumerated = true;
+    }
+    stops.dedup();
+    Preimage {
+        domains: r.dom,
+        exact: r.exact,
+        enumerated,
+        stops,
+        relation: (!r.exact).then_some(rel),
+        refusal: if r.exact { None } else { why },
+    }
+}
+
+/// The box `dom` narrowed to the projection of the classes' relation `rel` onto its inputs,
+/// with the refusal for which a disjunct was left out, as the linear stage projects its own
+/// relation ([`linear`]), here with one pair of auxiliary variables for the split input.
+fn project_classes(rel: &Relation, dom: &Domains) -> Result<(Domains, Option<Refusal>), Refusal> {
+    let within = |d: &Domains| -> Formula {
+        let parts = d
+            .iter()
+            .map(|(k, v)| presburger::member(&presburger::Atom::Sym(k.clone()), v))
+            .collect();
+        Formula::and(parts)
+    };
+    let mentioned = rel.body.atoms();
+    let syms: Vec<presburger::Atom> = dom
+        .keys()
+        .map(|k| presburger::Atom::Sym(k.clone()))
+        .filter(|a| mentioned.contains(a))
+        .collect();
+    // The box's hull, so that the body is the only disjunction; the projections are met with
+    // the box below.
+    let hull = dom.iter().map(|(k, v)| (k.clone(), v.hull())).collect();
+    let whole = Formula::and(vec![rel.defined(), within(&hull), rel.body.clone()]);
+    let (each, skipped) = presburger::project_each(&whole, &syms)?;
+    let mut each = each.into_iter();
+    let mut out = Domains::new();
+    for (k, v) in dom {
+        let p = if mentioned.contains(&presburger::Atom::Sym(k.clone())) {
+            each.next()
+                .expect("one projection for each mentioned input")?
+                .meet(v)
+        } else {
+            v.clone()
+        };
+        out.insert(k.clone(), p);
+    }
+    Ok((out, skipped.first().copied()))
+}
+
+/// The relation of the classes of a split by remainders over many periods, exact on its box,
+/// and the refusal that left the box wider ([`Split::Wide`]).
+type ClassRelation = (Relation, Option<Refusal>);
+
 /// What [`split_residues`] found.
 enum Split {
     /// The preimage, exact.
     Exact(Domains),
+    /// The preimage within the box, not exact, the relation of the classes that is, and the
+    /// refusal that left the box wider: a stretch where some classes keep their points and
+    /// others do not spans more than two periods ([`split_classes`]).
+    Wide(Domains, ClassRelation),
     /// No split applies, or it is not exact.
     NotExact,
     /// The split before the first transfer was given up for the transfer to run first
@@ -336,36 +432,68 @@ enum Split {
 /// each `S_R` outside that common part whose remainder is in `R`. The other inputs must
 /// have the same sets in every class whose set is not empty, so that the union is a box.
 ///
-/// The runs of the classes share what they compute without reading the class ([`Kept`]), and
-/// an `if` on the remainder is read from one summary over every class ([`Tx::by_class`]), so
-/// a chain of `k` guards `x mod m == c` with arms the summary reads costs `O(k log k)` in all
-/// (COMPLEXITY.md row S22e-quad).
+/// Design (COMPLEXITY.md rows S22e-quad and S22e-wide). (A) The runs of the classes share what
+/// they compute without reading the class ([`Kept`]), and a term is read once for every class
+/// as one summary over the classes ([`Tx::by_class`]): an `if` on the remainder takes its arms'
+/// summaries class by class, `O(log G)`; a term that reads no remainder has one transfer in
+/// every class, so it is summarized once, over the box, and that one summary stands in every
+/// class (`min` and `max` with a constant, an `if` on a test that reads no remainder, the
+/// affine maps). A chain of `k` such guards and terms costs `O(k log k)` in all, where each
+/// class's own read of it cost `G` transfers. Measured over `[-5000, 5000]`, from `k` to `8k`:
+/// guards `i mod 1024 == j` with arms `min(t + 1, 2^40)`, 2.24M to 17.6M instructions (`k` =
+/// 8; main 21.7M to 5.25G), and `k` tests `i >= 7j` above `k` such guards, 6.44M to 53.7M
+/// (`k` = 16; main 22.4M to 358M at 16 to 64).
+///
+/// (B) Where a stretch of `x` in which some classes keep their points and others do not spans
+/// more than two periods, the set of its points is a piece for each period, more than a box
+/// lists in the stretch's width (row C17). Main then ran the linear stage on the term. That
+/// stage was slow and inexact for a cause in its translation, not in the term: it gives each
+/// occurrence of `x mod m` its own pair of auxiliary variables, so `k` guards hold `k` pairs
+/// whose projection is above linear, and its check of exactness decides the negated body, `k`
+/// disjuncts. Now the split answers itself ([`Split::Wide`]): the classes' sets are one
+/// relation with one pair of auxiliary variables for the split input, one flat disjunct for
+/// each piece ([`residue_relation`]); the box is narrowed to its projection over the box's
+/// hull, linear in the pieces ([`project_classes`]); and the box is exact when every member
+/// lies in the set of its class, a sweep over the pieces with the classes marked in a Fenwick
+/// tree, `O(P log P)` for `P` pieces, with no Presburger decision ([`covers`]). Before the
+/// first transfer such an answer is kept, and the transfer and the split over its box run as
+/// without it ([`preimage_in`]): over that narrower box the split may be exact where over the
+/// whole box it is not. Measured from `k` to `8k`: `k` guards `i mod 1024 != j`, 17.3M to
+/// 20.6M (`k` = 4; main 0.86G and 3.0G at 8 and 16, inexact), and `many_remainders(k)` below
+/// `if (i mod 1024 == 0) { false }`, 85.9M to 498M (`k` = 4; main 11.3G and 84.1G at 8 and
+/// 16, inexact); both are now exact.
 ///
 /// Complexity tradeoff: a term the summary does not read is read by each class's run, `G`
 /// times the cost of one transfer of it for `G` classes, and `G` is at most `2d + 1` for `d`
 /// distinct constants compared: `O(G n log n)`, up to `O(n^2 log n)`, where that transfer is
-/// `O(n log n)`, and more where it is not. Measured over `[-5000, 5000]`: a chain of `k` guards
-/// `i mod 1024 == j` with arms `min(t + 1, 2^40)`, about `k^2.7` (21.7M to 5.25G
-/// instructions at `k` = 8 to 64; one class's transfer of the `min` chain is itself above
-/// linear), and `k` guards `i >= 7j` above `k` such guards with arms `t + 1`, `k^2` (22.4M to
-/// 358M at `k` = 16 to 64). The split is not tried when the terms compare remainders
-/// of two inputs or two moduli, and it is given up when a class's transfer is not exact,
-/// when two classes narrow another input differently, or when a stretch of `x` where some
-/// classes keep their points and others do not spans more than two periods of `m`; those
-/// inputs get the linear stage's answer, as before. Why: the classes of two pairs combine as
-/// a product, `G1 * G2` transfers; boxes that differ in two inputs have a union that is not
-/// a box (row C14); a mixed stretch over many periods is a set of pieces in the stretch's
-/// width divided by `m` (row C17); and the summary reads an `if` only when its guard is true
-/// throughout or false throughout each class. Trigger: a guard `x mod m == c` for `d`
-/// distinct `c` above an `if` on another test or an operator the summary does not read (the
-/// cost); two remainders compared; another input narrowed by class; a class set ending more
-/// than a period away from another's. Test: `l01_25_preimage_catalog::s22::chain_mod7_scales`,
+/// `O(n log n)`. Such terms are listed at [`Tx::by_class`] (an `if` whose arms differ by more
+/// than a constant in some class, a test of a term that reads a remainder, `min` and `max`
+/// across their constant, values that may leave `i64`). The split is not tried when the terms
+/// compare remainders of two inputs or two moduli, and it is given up when a class's transfer
+/// is not exact or when two classes narrow another input differently; those inputs get the
+/// linear stage's answer, as before. Why: the classes of two pairs combine as a product, `G1 *
+/// G2` transfers, and boxes that differ in two inputs have a union that is not a box (row
+/// C14). Trigger: a guard `x mod m == c` for `d` distinct `c` above such a term (the cost);
+/// two remainders compared; another input narrowed by class. Test:
+/// `l01_25_preimage_catalog::s22::chain_mod7_scales`,
 /// `l01_25_preimage_catalog::s22::many_remainders_scales`,
 /// `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`
 /// and `l01_25_preimage_catalog::s22::a_split_by_remainders_is_given_up_where_it_cannot_be_exact`.
-/// COMPLEXITY.md rows S22e and S22e-quad. A complete solution would hold the congruence facet
-/// in the backward transfer's sets (`x mod m` in a set of classes beside the interval), so
-/// that one transfer carries every class at once.
+/// A complete solution would hold the congruence facet in the backward transfer's sets (`x mod
+/// m` in a set of classes beside the interval), so that one transfer carries every class at
+/// once.
+///
+/// Complexity tradeoff: over many periods the box keeps a mixed stretch's middle periods as
+/// one piece, its first and last members in the class read once more ([`mod_pre`]), not a
+/// piece for each period, which would be the stretch's width divided by `m` pieces with no
+/// bound in the size of the term. Such a box is not exact ([`covers`] finds a member outside
+/// its class's set) and carries the classes' relation, which is exact; the linear stage is
+/// not run on it, since its answer would be no narrower box at a cost above linear. Given up:
+/// a box listing every period. Trigger: a mixed stretch that the transfer's box does not
+/// narrow to within two periods, for example `i mod 10 == 3` over `[0, 10^9]`. Test: `l01_25_preimage_catalog::entries` (the `[0, 10^9]` case) and
+/// `l01_25_preimage_catalog::s22::remainders_over_many_periods_scale`. The cost is the
+/// projection over the box's hull, linear in the pieces, and, for an answer kept before the
+/// first transfer, one more transfer and split over the transfer's box, `O(n log n)`.
 fn split_residues(
     tx: &mut Tx<'_>,
     root: Tid,
@@ -376,7 +504,8 @@ fn split_residues(
 ) -> Split {
     let mut deferred = false;
     match split_classes(tx, root, dom, demand, marks, early, &mut deferred) {
-        Some(d) => Split::Exact(d),
+        Some((d, None)) => Split::Exact(d),
+        Some((d, Some(found))) => Split::Wide(d, found),
         None if deferred => Split::Deferred,
         None => Split::NotExact,
     }
@@ -392,7 +521,7 @@ fn split_classes(
     marks: &Landmarks,
     early: bool,
     deferred: &mut bool,
-) -> Option<Domains> {
+) -> Option<(Domains, Option<ClassRelation>)> {
     let (x, c, cuts) = tx.residue_cuts(dom)?;
     let m = c.unsigned_abs() as i128;
     let name = tx.name(x).clone();
@@ -452,24 +581,216 @@ fn split_classes(
     }
     let common = common.expect("at least two classes");
     let mut pieces = common.pieces().to_vec();
+    let mut wide = false;
+    let mut parts = Vec::new();
     for (s, class) in &classes {
-        for (lo, hi) in common.complement_in(s).pieces() {
-            let (own, exact) = mod_pre(class, c, &IntervalSet::range(lo.clone(), hi.clone()));
-            if !exact {
-                return None;
+        let own = common.complement_in(s);
+        for (lo, hi) in own.pieces() {
+            // An end moves in to the nearest member of the class, which [`mod_pre`] leaves on
+            // a half-line.
+            let Some(within) = in_class(lo, hi, class, m) else {
+                continue;
+            };
+            let (hull, exact) = mod_pre(class, c, &within);
+            if exact {
+                pieces.extend_from_slice(hull.pieces());
+                continue;
             }
-            pieces.extend_from_slice(own.pieces());
+            // The merged periods between the first and the last are read once more, which
+            // lists their own first and last, as the transfer's box split again did before.
+            for (a, b) in hull.pieces() {
+                let (part, exact) = mod_pre(class, c, &IntervalSet::range(a.clone(), b.clone()));
+                wide |= !exact;
+                pieces.extend_from_slice(part.pieces());
+            }
+        }
+        if !own.is_empty() {
+            parts.push((own, class));
         }
     }
     let Some(mut rest) = rest else {
-        return Some(
-            dom.keys()
-                .map(|k| (k.clone(), IntervalSet::empty()))
-                .collect(),
-        );
+        let none = dom.keys().map(|k| (k.clone(), IntervalSet::empty()));
+        return Some((none.collect(), None));
     };
-    rest.insert(name, IntervalSet::from_pieces(pieces));
-    Some(rest)
+    rest.insert(name.clone(), IntervalSet::from_pieces(pieces));
+    if !wide {
+        return Some((rest, None));
+    }
+    // A stretch over more than two periods holds the class's remainders in each period, a
+    // piece for each; the box holds their hull, and the relation the remainders. The box is
+    // narrowed to the relation's projection, which lists the periods within the box, and is
+    // exact when every member lies in the set of its class ([`covers`]).
+    let rel = residue_relation(&name, c, &common, &parts);
+    let (out, why) = match project_classes(&rel, &rest) {
+        Ok(found) => found,
+        Err(why) => (rest, Some(why)),
+    };
+    let sets: Vec<&IntervalSet> = classes.iter().map(|(s, _)| s).collect();
+    if covers(&out[&name], &sets, &cuts, m) {
+        return Some((out, None));
+    }
+    Some((out, Some((rel, why))))
+}
+
+/// The integers of `lo..=hi` from the first to the last whose remainder by `m` lies in `class`,
+/// one range of remainders, or `None` when there is none.
+fn in_class(lo: &End, hi: &End, class: &IntervalSet, m: i128) -> Option<IntervalSet> {
+    let Some((Fin(a), Fin(b))) = class.bounds() else {
+        unreachable!("a class is a range of remainders")
+    };
+    let m = Num::from(m);
+    let lo = match lo {
+        Fin(x) => {
+            let r = x.rem_euclid(&m);
+            Fin(if r < *a {
+                x + &(a - &r)
+            } else if r > *b {
+                &(x + &(&m - &r)) + a
+            } else {
+                x.clone()
+            })
+        }
+        e => e.clone(),
+    };
+    let hi = match hi {
+        Fin(x) => {
+            let r = x.rem_euclid(&m);
+            Fin(if r > *b {
+                x - &(&r - b)
+            } else if r < *a {
+                &(x - &(&r + &m)) + b
+            } else {
+                x.clone()
+            })
+        }
+        e => e.clone(),
+    };
+    match (&lo, &hi) {
+        (Fin(l), Fin(h)) if l > h => None,
+        _ => Some(IntervalSet::range(lo, hi)),
+    }
+}
+
+/// Whether every member of `out` lies in the set of its class, `sets[j]` for the remainders
+/// `cuts[j]..cuts[j + 1]` by `m`: whether `out` holds only points of the split's preimage. A
+/// sweep over the ends of the pieces of `out` and of every set, in order, with the classes
+/// whose set holds the stretch up to the next end marked in a Fenwick tree over the classes:
+/// a stretch within `out` is covered when every class of its remainders is marked, one range
+/// of classes, or two where the remainders wrap past `m`. `O(P log P)` for `P` pieces.
+fn covers(out: &IntervalSet, sets: &[&IntervalSet], cuts: &[i128], m: i128) -> bool {
+    // At each end a piece starts (+1) or stops (-1): a set's, of class `Some(j)`, or `out`'s.
+    let mut ends: Vec<(End, i64, Option<usize>)> = Vec::new();
+    let all = sets.iter().enumerate().map(|(j, s)| (Some(j), *s));
+    for (j, s) in all.chain([(None, out)]) {
+        for (lo, hi) in s.pieces() {
+            ends.push((lo.clone(), 1, j));
+            if *hi != PosInf {
+                ends.push((hi.succ(), -1, j));
+            }
+        }
+    }
+    // Every end at one place is applied before the stretch after it is read, so the order
+    // among them does not matter.
+    ends.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let g = sets.len();
+    let mut tree = vec![0i64; g + 1];
+    let add = |tree: &mut [i64], j: usize, d: i64| {
+        let mut i = j + 1;
+        while i <= g {
+            tree[i] += d;
+            i += i.isolate_lowest_one();
+        }
+    };
+    // The number of marked classes below `j`.
+    let below = |tree: &[i64], j: usize| {
+        let (mut i, mut n) = (j, 0);
+        while i > 0 {
+            n += tree[i];
+            i -= i.isolate_lowest_one();
+        }
+        n
+    };
+    let full = |tree: &[i64], (a, b): (usize, usize)| {
+        below(tree, b + 1) - below(tree, a) == (b - a + 1) as i64
+    };
+    let class = |r: Num| {
+        let r = r.to_i128().expect("a remainder lies below the modulus");
+        cuts.partition_point(|&c| c <= r) - 1
+    };
+    let m = Num::from(m);
+    let (mut inside, mut i) = (false, 0);
+    while i < ends.len() {
+        let at = ends[i].0.clone();
+        while let Some((e, d, j)) = ends.get(i)
+            && *e == at
+        {
+            match j {
+                Some(j) => add(&mut tree, *j, *d),
+                None => inside = *d > 0,
+            }
+            i += 1;
+        }
+        if !inside {
+            continue;
+        }
+        // The stretch from `at` to the next end, or on to `PosInf`.
+        let covered = match (&at, ends.get(i).map(|e| &e.0)) {
+            (Fin(u), Some(Fin(next))) if (next - u) < m => {
+                let v = next - &Num::ONE;
+                let (a, b) = (class(u.rem_euclid(&m)), class(v.rem_euclid(&m)));
+                if a <= b {
+                    full(&tree, (a, b))
+                } else {
+                    full(&tree, (a, g - 1)) && full(&tree, (0, b))
+                }
+            }
+            _ => full(&tree, (0, g - 1)),
+        };
+        if !covered {
+            return false;
+        }
+    }
+    true
+}
+
+/// The relation that `x` is in `common`, or in the set of one of `parts` with `x mod c` in
+/// its class: `x == c * q + r` and `0 <= r < |c|`, with `q` and `r` the auxiliary variables 0
+/// and 1, as the linear-relation domain defines a remainder.
+fn residue_relation(
+    name: &Arc<str>,
+    c: i64,
+    common: &IntervalSet,
+    parts: &[(IntervalSet, &IntervalSet)],
+) -> Relation {
+    use presburger::Atom;
+    let x = Atom::Sym(name.clone());
+    let (q, r) = (Lin::atom(Atom::Aux(0)), Lin::atom(Atom::Aux(1)));
+    let c = i128::from(c);
+    let def = Formula::and(vec![
+        Formula::Con(Con::eq(&Lin::atom(x.clone()), &q.times(c).plus(&r))),
+        Formula::Con(Con::ge(&r, &Lin::constant(0))),
+        Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r)),
+    ]);
+    // One disjunct for each piece, so that the body is one disjunction, which the projection
+    // reads exactly ([`presburger::project_each`]).
+    let one =
+        |lo: &End, hi: &End| presburger::member(&x, &IntervalSet::range(lo.clone(), hi.clone()));
+    let mut body: Vec<Formula> = common.pieces().iter().map(|(lo, hi)| one(lo, hi)).collect();
+    for (s, class) in parts {
+        for (lo, hi) in s.pieces() {
+            body.push(Formula::and(vec![
+                one(lo, hi),
+                presburger::member(&Atom::Aux(1), class),
+            ]));
+        }
+    }
+    Relation {
+        body: Formula::or(body),
+        defs: vec![
+            (0, format!("{name} div {c}"), def),
+            (1, format!("{name} mod {c}"), Formula::top()),
+        ],
+    }
 }
 
 /// The relations the linear-relation domain states for `terms`, tests over the free names
@@ -765,6 +1086,22 @@ enum Made {
     Diff(Tid),
 }
 
+/// The form of a term: its kind, its constant or name, and the forms of its parts, so that
+/// two terms of one form compute the same in one scope ([`Terms::form`]).
+#[derive(PartialEq, Eq, Hash)]
+enum Form {
+    Int(i64),
+    Bool(bool),
+    Var(Name),
+    App(Tid, Vec<Tid>),
+    Prim(std::mem::Discriminant<Prim>, Vec<Tid>),
+    Let(Name, Tid, Tid),
+    If(Tid, Tid, Tid),
+    /// A literal of another kind, a lambda, a primitive as a value, or a term outside the
+    /// catalog: the term itself.
+    Own(Tid),
+}
+
 /// The terms of one transfer, each numbered once: the given terms and their parts, and the
 /// terms the transfer makes, each made once. Numbers, not addresses, are what results are
 /// remembered by, so a number is never reused while a result keyed by it is kept.
@@ -780,6 +1117,9 @@ struct Terms<'t> {
     made: HashMap<Made, Tid>,
     /// The integer literals of the given terms, each term counted once.
     ints: Vec<Num>,
+    /// Each term's first term of the same form ([`Terms::form`]).
+    forms: HashMap<Tid, Tid>,
+    by_form: HashMap<Form, Tid>,
 }
 
 impl<'t> Terms<'t> {
@@ -887,6 +1227,34 @@ impl<'t> Terms<'t> {
         t
     }
 
+    /// The first term numbered with the form of `t`: a term copied, which a given term is
+    /// when it was cloned rather than shared, is one term here, so that what is kept by term
+    /// ([`Tx::by_class`]) is computed once for every copy. `O(1)` per term, each read once.
+    fn form(&mut self, t: Tid) -> Tid {
+        if let Some(&f) = self.forms.get(&t) {
+            return f;
+        }
+        let form = match self.nodes[t as usize] {
+            Node::Int(n) => Form::Int(n),
+            Node::Bool(b) => Form::Bool(b),
+            Node::Var(x) => Form::Var(x),
+            Node::App(f, args) => Form::App(self.form(f), self.forms(args)),
+            Node::Prim(p, args) => Form::Prim(std::mem::discriminant(&p), self.forms(args)),
+            Node::Let(x, e, b) => Form::Let(x, self.form(e), self.form(b)),
+            Node::If(g, a, b) => Form::If(self.form(g), self.form(a), self.form(b)),
+            Node::Lit(_) | Node::Lam(..) | Node::PrimFn(_) | Node::Other => Form::Own(t),
+        };
+        let f = *self.by_form.entry(form).or_insert(t);
+        self.forms.insert(t, f);
+        f
+    }
+
+    fn forms(&mut self, args: Span) -> Vec<Tid> {
+        (0..args.len())
+            .map(|i| self.form(args.get(&self.kids, i)))
+            .collect()
+    }
+
     fn int(&mut self, n: i64) -> Tid {
         self.made(Made::Int(n), Node::Int(n))
     }
@@ -980,6 +1348,7 @@ struct Kept {
     mentions: HashMap<At, Option<bool>>,
     clip: HashMap<At, Option<IntervalSet>>,
     by_class: HashMap<At, Option<ByClass>>,
+    reads_mod: HashMap<At, bool>,
 }
 
 impl Run {
@@ -994,6 +1363,7 @@ impl Run {
             mentions: std::mem::take(&mut m.mentions),
             clip: std::mem::take(&mut m.clip),
             by_class: std::mem::take(&mut m.by_class),
+            reads_mod: std::mem::take(&mut m.reads_mod),
         }
     }
 
@@ -1003,6 +1373,7 @@ impl Run {
         (self.sums, self.fwds) = (k.sums, k.fwds);
         (m.fwd, m.constant, m.mentions) = (k.fwd, k.constant, k.mentions);
         (m.clip, m.by_class) = (k.clip, k.by_class);
+        m.reads_mod = k.reads_mod;
     }
 }
 
@@ -1155,6 +1526,9 @@ struct Memo {
     clip: HashMap<At, Option<IntervalSet>>,
     /// The summaries of a term in every class of remainders of a split ([`Tx::by_class`]).
     by_class: HashMap<At, Option<ByClass>>,
+    /// Whether a term may read a remainder, so that its transfer may depend on a split's class
+    /// ([`Tx::reads_mod`]).
+    reads_mod: HashMap<At, bool>,
     scan: HashSet<At>,
     lin: HashMap<At, Option<Lin>>,
     formula: HashMap<At, Option<Formula>>,
@@ -1878,6 +2252,40 @@ impl<'t> Tx<'t> {
             }
             Node::If(g, a, b) => any(self, &mut [(g, env), (a, env), (b, env)].into_iter()),
             Node::Other => None,
+        }
+    }
+
+    /// Whether the term may read a remainder `u mod c`: `false` only when it reads none,
+    /// through its bindings, and calls no lambda. A run restricted to a class of remainders
+    /// reads the class only at a remainder ([`Tx::back_arith`], [`Tx::residue_test`]), so the
+    /// transfer of a term for which this is `false` is the same in every class.
+    fn reads_mod(&mut self, t: Tid, env: Eid) -> bool {
+        self.cached(|m| &mut m.reads_mod, (t, env), |s| s.reads_mod_at(t, env))
+    }
+
+    fn reads_mod_at(&mut self, t: Tid, env: Eid) -> bool {
+        match self.node(t) {
+            Node::Int(_) | Node::Bool(_) | Node::Lit(_) => false,
+            Node::PrimFn(p) => p == Prim::Mod,
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.reads_mod(bt, be),
+                None => false,
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.reads_mod(e, env) || self.reads_mod(b, inner)
+            }
+            Node::Prim(p, args) => {
+                p == Prim::Mod || (0..args.len()).any(|i| self.reads_mod(self.arg(args, i), env))
+            }
+            Node::App(f, args) => {
+                !matches!(self.callee(f, env), Ok(Callee::Prim(p)) if p != Prim::Mod)
+                    || (0..args.len()).any(|i| self.reads_mod(self.arg(args, i), env))
+            }
+            Node::If(g, a, b) => {
+                self.reads_mod(g, env) || self.reads_mod(a, env) || self.reads_mod(b, env)
+            }
+            Node::Lam(..) | Node::Other => true,
         }
     }
 
@@ -2631,6 +3039,22 @@ impl<'t> Tx<'t> {
                 {
                     return r;
                 }
+                if let Some(index) = self.run.residue.as_ref().map(|r| r.index) {
+                    // A test in a class of remainders: the summary over every class, 1 where
+                    // it holds and 0 where it fails.
+                    if let Demand::Bool(w) = *d
+                        && self.fwd(t, env).is_bool()
+                        && let Some(pa) = self.by_class(t, env).and_then(|c| c.get(index))
+                        && let Some(r) = self.invert_pa(&pa, &IntervalSet::of(w.into(), w.into()))
+                    {
+                        return r;
+                    }
+                    // A guard on the remainder takes one arm throughout the class.
+                    if let Some(yes) = self.residue_test(g, env) {
+                        let taken = yes.iter().any(|&(i, j)| i <= index && index <= j);
+                        return self.back_at(if taken { a } else { b }, env, d);
+                    }
+                }
                 let gt = self.back_at(g, env, &Demand::Bool(true));
                 let at = self.back_at(a, env, d);
                 let gf = self.back_at(g, env, &Demand::Bool(false));
@@ -3000,6 +3424,7 @@ impl<'t> Tx<'t> {
         // In a class of remainders, an `if` the summary over every class reads is looked up
         // there, so that the classes share one reading of the term.
         if matches!(self.node(t), Node::If(..))
+            && !self.fwd(t, env).has_bools()
             && let Some(index) = self.run.residue.as_ref().map(|r| r.index)
             && let Some(p) = self.by_class(t, env).and_then(|b| b.get(index))
         {
@@ -3060,6 +3485,17 @@ impl<'t> Tx<'t> {
         }
         let pa = self.pa(a, env)?;
         let pb = self.pa(b, env)?;
+        self.pa_select(g, env, &pa, &pb)
+    }
+
+    /// The summary that is `pa` on the inputs where the test `g` holds and `pb` where it
+    /// fails ([`Tx::pa_if`]).
+    fn pa_select(&mut self, g: Tid, env: Eid, pa: &Pa, pb: &Pa) -> Option<Pa> {
+        let gt = self.back_at(g, env, &Demand::Bool(true));
+        let gf = self.back_at(g, env, &Demand::Bool(false));
+        if !gt.exact || !gf.exact {
+            return None;
+        }
         let (yes, no) = (!self.empty(&gt), !self.empty(&gf));
         if gt.dom.len() > 1 || gf.dom.len() > 1 {
             return None;
@@ -3080,14 +3516,14 @@ impl<'t> Tx<'t> {
         let Some(var) = var else {
             // Neither the guard nor the arms read an input: one arm is taken everywhere.
             return match (yes, no) {
-                (true, false) => Some(pa),
-                (false, true) => Some(pb),
+                (true, false) => Some(pa.clone()),
+                (false, true) => Some(pb.clone()),
                 _ => None,
             };
         };
         let dom = self.cx.inputs.get(var)?;
         let mut slices = Vec::new();
-        for (taken, r, arm) in [(yes, &gt, &pa), (no, &gf, &pb)] {
+        for (taken, r, arm) in [(yes, &gt, pa), (no, &gf, pb)] {
             if !taken {
                 continue;
             }
@@ -3154,25 +3590,44 @@ impl<'t> Tx<'t> {
     }
 
     /// The summary ([`Tx::pa`]) of the term in every class of remainders of the run's split
-    /// ([`split_residues`]), built once for all classes: `None` outside a split, and for a term
-    /// other than those [`Tx::pa_prim`] reads, inputs, constants, and `if`s whose guard
-    /// compares the split's remainder with a constant. In each class such a guard is true
-    /// throughout or false throughout, so the `if` is the arm it takes, and the summaries of
-    /// the classes are those of the `no` arm with the classes where the guard holds taken from
-    /// the `yes` arm: `O(log G)` for `G` classes.
+    /// ([`split_residues`]), built once for all classes, with a test's `false` and `true` read
+    /// as 0 and 1: `None` outside a split, and for a term other than those read here.
+    ///
+    /// - An `if` whose guard compares the split's remainder with a constant: in each class such
+    ///   a guard is true throughout or false throughout, so the `if` is the arm it takes, and
+    ///   the summaries of the classes are those of the `no` arm with the classes where the
+    ///   guard holds taken from the `yes` arm, `O(log G)` for `G` classes. Such a comparison
+    ///   as a value is read the same way, as an `if` with arms 1 and 0.
+    /// - A term that reads no remainder ([`Tx::reads_mod`]): its transfer is the same in every
+    ///   class, so its summary is read once, [`Tx::pa_at`], or for a test the one that is 1
+    ///   and 0 on the sets the transfer finds exactly where it holds and where it fails.
+    /// - An `if` on a test that reads no remainder: when both arms are one summary in every
+    ///   class, the summary of the `if` is too, sliced once ([`Tx::pa_select`]); when the arms
+    ///   add constants to one tree whose summaries are a base plus a constant in each class
+    ///   (`t` and `t + 1` for one `t`, [`ByClass`]), the tree is kept and its base is sliced
+    ///   once, `O(log n)`, since adding a constant commutes with slicing by the guard's sets.
+    /// - `-u`, `u + c`, `u - c`, `c - u` and `c * u`: every summary is mapped, `O(1)`; `not u`
+    ///   is `1 - u`; `min` and `max` of `u` and a constant `c` are `u` or `c` in every class
+    ///   when the forward values of `u`, the same in every class, lie on one side of `c`.
     ///
     /// Complexity tradeoff: a term this does not read is read in each class by its own run,
-    /// `O(G n log n)` for `G` classes, as before this summary (row S22e). Given up: an `if`
-    /// whose guard is any other test (it narrows each class's summary in its own way, so the
-    /// classes share no step), and a term whose values or coefficients may pass `i64::MAX` in
-    /// magnitude (the summary checks them on the bounds of every class at once, where the
-    /// transfer checks each class). Trigger: such an `if` or such values between the root and
-    /// the remainder guards, for example a domain unbounded on either side. Test:
+    /// `O(G n log n)` for `G` classes, as before this summary (row S22e). Given up: an `if` on
+    /// a test that reads no remainder whose arms differ by more than a constant in some class,
+    /// or whose classes' summaries are not one base plus a constant (each class's summary is
+    /// then sliced in its own way, so the classes share no step); a test of a term that reads
+    /// a remainder (its set in each class is the inverse of that class's own summary); `min`
+    /// and `max` whose other argument's values cross the constant; and a term whose values or
+    /// coefficients may pass `i64::MAX` in magnitude (the summary checks them on the bounds of
+    /// every class at once, where the transfer checks each class). Trigger: such a term between
+    /// the root and the remainder guards, for example `if i >= 3 { t } else { -t }`, `t >= 0`
+    /// below an `if` on the remainder, `min(t, 5)` with `t` on both sides of 5, or a domain
+    /// unbounded on either side. Test:
     /// `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`,
-    /// COMPLEXITY.md row S22e-quad. A complete solution would hold the congruence facet in the
-    /// backward transfer's sets (`x mod m` in a set of classes beside the interval), so that
-    /// one transfer carries every class at once.
+    /// COMPLEXITY.md rows S22e-quad and S22e-wide. A complete solution would hold the
+    /// congruence facet in the backward transfer's sets (`x mod m` in a set of classes beside
+    /// the interval), so that one transfer carries every class at once.
     fn by_class(&mut self, t: Tid, env: Eid) -> Option<ByClass> {
+        let t = self.terms.form(t);
         self.cached(|m| &mut m.by_class, (t, env), |s| s.by_class_at(t, env))
     }
 
@@ -3184,21 +3639,47 @@ impl<'t> Tx<'t> {
         {
             return match v {
                 Value::Int(c) => ByClass::constant(c, n),
+                Value::Bool(b) => ByClass::constant(b.into(), n),
                 _ => None,
             };
         }
+        let read = self.by_class_node(t, env, n);
+        if read.is_some() || matches!(self.node(t), Node::Var(_)) || self.reads_mod(t, env) {
+            return read;
+        }
+        // The transfer of the term is the same in every class.
+        let pa = if self.fwd(t, env).is_bool() {
+            self.pa_select(t, env, &Pa::Const(1), &Pa::Const(0))?
+        } else {
+            self.pa_at(t, env)?
+        };
+        let var = pa.var().cloned();
+        let x = match &var {
+            Some(v) => self.magnitude(v)?,
+            None => 0,
+        };
+        let bound = Bound::of(&pa, x);
+        ByClass::based(pa, var, bound, n)
+    }
+
+    /// The largest magnitude of the domain of the input `var`, when it is bounded.
+    fn magnitude(&self, var: &Arc<str>) -> Option<u128> {
+        let (lo, hi) = self.cx.inputs.get(var)?.bounds()?;
+        Some(input(lo)?.unsigned_abs().max(input(hi)?.unsigned_abs()))
+    }
+
+    /// [`Tx::by_class`] of the term by its kind.
+    fn by_class_node(&mut self, t: Tid, env: Eid, n: usize) -> Option<ByClass> {
         match self.node(t) {
             Node::Int(c) => ByClass::constant(c, n),
             Node::Var(x) => match self.lookup(env, x) {
                 Some((bt, be)) => self.by_class(bt, be),
                 None => {
                     let name = self.name(x).clone();
-                    let (lo, hi) = self.cx.inputs.get(&name)?.bounds()?;
-                    let x = input(lo)?.unsigned_abs().max(input(hi)?.unsigned_abs());
                     let bound = Bound {
                         a: 1,
                         b: 0,
-                        x,
+                        x: self.magnitude(&name)?,
                         mul: 1,
                     };
                     let pa = Pa::Linear {
@@ -3206,7 +3687,7 @@ impl<'t> Tx<'t> {
                         a: 1,
                         b: 0,
                     };
-                    ByClass::same(pa, Some(name), bound, n)
+                    ByClass::based(pa, Some(name), bound, n)
                 }
             },
             Node::Let(m, e, b) => {
@@ -3221,23 +3702,68 @@ impl<'t> Tx<'t> {
                 _ => None,
             },
             Node::Prim(p, args) if p.arity().is_none_or(|k| k == args.len()) => {
-                self.by_class_prim(t, p, args, env)
+                self.by_class_prim(t, p, args, env, n)
             }
-            Node::If(g, a, b) => {
-                let yes = self.residue_test(g, env)?;
-                let ca = self.by_class(a, env)?;
-                let cb = self.by_class(b, env)?;
-                ByClass::choose(&ca, &cb, &yes)
-            }
+            Node::If(g, a, b) => match self.residue_test(g, env) {
+                Some(yes) => {
+                    let ca = self.by_class(a, env)?;
+                    let cb = self.by_class(b, env)?;
+                    ByClass::choose(&ca, &cb, &yes)
+                }
+                None => self.by_class_if(g, a, b, env),
+            },
             _ => None,
         }
     }
 
+    /// [`Tx::by_class`] of an `if` whose guard `g` is not on the split's remainder.
+    fn by_class_if(&mut self, g: Tid, a: Tid, b: Tid, env: Eid) -> Option<ByClass> {
+        if self.reads_mod(g, env) {
+            return None;
+        }
+        let ca = self.by_class(a, env)?;
+        let cb = self.by_class(b, env)?;
+        let bound = ca.bound.max(cb.bound);
+        if ca.adds
+            && cb.adds
+            && Rc::ptr_eq(&ca.root, &cb.root)
+            && let (Some(u), Some(v)) = (&ca.base, &cb.base)
+            && same_pa(u, v)
+        {
+            // In class `i` the arms are `u + d_i + ca.shift` and `u + d_i + cb.shift`.
+            let pa = u.affine(1, ca.shift)?;
+            let pb = u.affine(1, cb.shift)?;
+            let base = self.pa_select(g, env, &pa, &pb)?;
+            let var = base.var().cloned().or(ca.var.clone());
+            return bound.holds().then(|| ByClass {
+                root: ca.root.clone(),
+                n: ca.n,
+                var,
+                bound,
+                base: Some(base),
+                shift: 0,
+                adds: true,
+            });
+        }
+        let (pa, pb) = (ca.uniform()?, cb.uniform()?);
+        let pa = self.pa_select(g, env, &pa, &pb)?;
+        let var = pa.var().cloned().or(ca.var.clone());
+        ByClass::based(pa, var, bound, ca.n)
+    }
+
     /// [`Tx::pa_prim`] over every class.
-    fn by_class_prim(&mut self, t: Tid, p: Prim, args: Span, env: Eid) -> Option<ByClass> {
+    fn by_class_prim(
+        &mut self,
+        t: Tid,
+        p: Prim,
+        args: Span,
+        env: Eid,
+        n: usize,
+    ) -> Option<ByClass> {
         let a = self.arg(args, 0);
         match p {
             Prim::Neg => self.by_class(a, env)?.affine((-1, 0)),
+            Prim::Not => self.by_class(a, env)?.affine((-1, 1)),
             Prim::Add => {
                 let b = self.arg(args, 1);
                 if let Some(c) = self.constant_int(a, env) {
@@ -3251,10 +3777,8 @@ impl<'t> Tx<'t> {
                 if let Some(c) = self.constant_int(b, env) {
                     return self.by_class(a, env)?.affine((1, -i128::from(c)));
                 }
-                if self.constant_int(a, env)? != 0 {
-                    return None;
-                }
-                self.by_class(b, env)?.affine((-1, 0))
+                let c = self.constant_int(a, env)?;
+                self.by_class(b, env)?.affine((-1, c.into()))
             }
             Prim::Mul => {
                 if self.power(t, env).is_some() {
@@ -3269,6 +3793,29 @@ impl<'t> Tx<'t> {
                     return None;
                 }
                 self.by_class(u, env)?.affine((c.into(), 0))
+            }
+            Prim::Min | Prim::Max => {
+                let b = self.arg(args, 1);
+                let (c, u) = match self.constant_int(a, env) {
+                    Some(c) => (c, b),
+                    None => (self.constant_int(b, env)?, a),
+                };
+                // The forward values are read over the box, the same in every class.
+                let f = self.fwd(u, env);
+                let (Fin(lo), Fin(hi)) = f.ints.bounds()? else {
+                    return None;
+                };
+                let c_num = Num::from(c);
+                let (below, above) = (*hi <= c_num, *lo >= c_num);
+                match (p, below, above) {
+                    (Prim::Min, true, _) | (Prim::Max, _, true) => self.by_class(u, env),
+                    (Prim::Min, _, true) | (Prim::Max, true, _) => ByClass::constant(c, n),
+                    _ => None,
+                }
+            }
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Eq | Prim::Ne => {
+                let yes = self.residue_test(t, env)?;
+                ByClass::choose(&ByClass::constant(1, n)?, &ByClass::constant(0, n)?, &yes)
             }
             _ => None,
         }
@@ -3442,6 +3989,13 @@ impl Pa {
 /// splits into two halves with an affine map still to be applied to both. A change of every
 /// summary by an affine map and a reading of one class take `O(log n)`, and taking a range
 /// of classes from another such tree `O(log n)` new nodes.
+///
+/// A leaf may stand for the tree's `base`, one summary for every class, mapped by the maps
+/// on its path ([`Leaf::Base`]); a constant added to every class is kept in `shift`, outside
+/// the tree. When every leaf is the base and every map only adds (`adds`), the summary in
+/// class `i` is `base + d_i` for a constant `d_i`, so that an `if` on a test that reads no
+/// remainder, whose arms add constants to one such tree, is the same tree over a new base
+/// ([`Tx::by_class_if`]).
 #[derive(Clone)]
 struct ByClass {
     root: Rc<Cls>,
@@ -3449,15 +4003,29 @@ struct ByClass {
     /// The input the summaries read, if any.
     var: Option<Arc<str>>,
     bound: Bound,
+    /// The summary the leaves [`Leaf::Base`] stand for.
+    base: Option<Pa>,
+    /// Added to the summary of every class, after the tree's maps.
+    shift: i128,
+    /// Whether every leaf is [`Leaf::Base`] and every map in the tree has multiplier 1.
+    adds: bool,
 }
 
 enum Cls {
-    Same(Pa),
+    Same(Leaf),
     Split {
         left: Rc<Cls>,
         right: Rc<Cls>,
         tag: (i128, i128),
     },
+}
+
+/// The summary a leaf of a [`ByClass`] holds for its classes.
+enum Leaf {
+    /// This summary.
+    Own(Pa),
+    /// The tree's base, mapped by `(mul, add)`.
+    Base((i128, i128)),
 }
 
 /// Bounds over every class on the magnitudes of the summaries' leaves, `a * var + b` with
@@ -3487,15 +4055,44 @@ impl Bound {
             mul: self.mul.max(o.mul),
         }
     }
+
+    /// A bound on the values of `pa`, whose input lies within `x` in magnitude.
+    fn of(pa: &Pa, x: u128) -> Bound {
+        let (a, b) = match pa {
+            Pa::Const(c) => (0, c.unsigned_abs().into()),
+            Pa::Linear { a, b, .. } => (a.unsigned_abs(), b.unsigned_abs()),
+            Pa::Piecewise { root: None, .. } => (0, 0),
+            Pa::Piecewise { root: Some(r), .. } => {
+                (0, r.vals.0.unsigned_abs().max(r.vals.1.unsigned_abs()))
+            }
+        };
+        Bound { a, b, x, mul: 1 }
+    }
 }
 
 impl ByClass {
     fn same(pa: Pa, var: Option<Arc<str>>, bound: Bound, n: usize) -> Option<ByClass> {
         bound.holds().then(|| ByClass {
-            root: Rc::new(Cls::Same(pa)),
+            root: Rc::new(Cls::Same(Leaf::Own(pa))),
             n,
             var,
             bound,
+            base: None,
+            shift: 0,
+            adds: false,
+        })
+    }
+
+    /// `pa`, which is the same in every class, as the base of every leaf.
+    fn based(pa: Pa, var: Option<Arc<str>>, bound: Bound, n: usize) -> Option<ByClass> {
+        bound.holds().then(|| ByClass {
+            root: Rc::new(Cls::Same(Leaf::Base((1, 0)))),
+            n,
+            var,
+            bound,
+            base: Some(pa),
+            shift: 0,
+            adds: true,
         })
     }
 
@@ -3521,12 +4118,31 @@ impl ByClass {
         if !bound.holds() {
             return None;
         }
-        Some(ByClass {
-            root: cls_affine(&self.root, (mul, add))?,
-            n: self.n,
-            var: self.var.clone(),
-            bound,
-        })
+        let mut out = self.clone();
+        out.bound = bound;
+        if mul == 1 {
+            // The tree is kept, so that `t` and `t + c` share it ([`Tx::by_class_if`]).
+            out.shift = self.shift.checked_add(add)?;
+        } else {
+            let f = compose((1, self.shift), (mul, add))?;
+            out.root = cls_affine(&self.root, f)?;
+            out.shift = 0;
+            out.adds = false;
+        }
+        Some(out)
+    }
+
+    /// The tree with `shift` applied to its root.
+    fn shifted(&self) -> Option<Rc<Cls>> {
+        cls_affine(&self.root, (1, self.shift))
+    }
+
+    /// The summary of every class when it is one summary, its leaf made its own.
+    fn uniform(&self) -> Option<Pa> {
+        match &*self.root {
+            Cls::Same(_) => self.get(0),
+            Cls::Split { .. } => None,
+        }
     }
 
     /// `yes` in the classes of the ranges `i..=j` of `ranges`, and `no` in the others.
@@ -3536,15 +4152,33 @@ impl ByClass {
             (Some(v), _) | (_, Some(v)) => Some(v.clone()),
             (None, None) => None,
         };
-        let mut root = no.root.clone();
+        // Two bases are one tree's only when they are the same; an arm that is one summary
+        // in every class holds it as its own.
+        let own = |c: &ByClass| -> Option<ByClass> {
+            let pa = c.uniform()?;
+            ByClass::same(pa, c.var.clone(), c.bound, c.n)
+        };
+        let (yes, no) = match (&yes.base, &no.base) {
+            (Some(u), Some(v)) if !same_pa(u, v) => match (own(yes), own(no)) {
+                (Some(y), _) => (y, no.clone()),
+                (None, Some(n)) => (yes.clone(), n),
+                (None, None) => return None,
+            },
+            _ => (yes.clone(), no.clone()),
+        };
+        let mut root = no.shifted()?;
+        let taken = yes.shifted()?;
         for &(i, j) in ranges {
-            root = cls_splice(&yes.root, &root, (0, no.n), (i, j + 1))?;
+            root = cls_splice(&taken, &root, (0, no.n), (i, j + 1))?;
         }
         Some(ByClass {
             root,
             n: no.n,
             var,
             bound: yes.bound.max(no.bound),
+            base: yes.base.or(no.base),
+            shift: 0,
+            adds: yes.adds && no.adds,
         })
     }
 
@@ -3552,9 +4186,9 @@ impl ByClass {
     fn get(&self, index: usize) -> Option<Pa> {
         let (mut node, (mut lo, mut hi)) = (&self.root, (0, self.n));
         let mut tags = Vec::new();
-        let pa = loop {
+        let leaf = loop {
             match &**node {
-                Cls::Same(pa) => break pa,
+                Cls::Same(leaf) => break leaf,
                 Cls::Split { left, right, tag } => {
                     tags.push(*tag);
                     let mid = lo + (hi - lo) / 2;
@@ -3571,7 +4205,33 @@ impl ByClass {
         for &tag in tags.iter().rev() {
             f = compose(f, tag)?;
         }
-        pa.affine(f.0, f.1)
+        f = compose(f, (1, self.shift))?;
+        match leaf {
+            Leaf::Own(pa) => pa.affine(f.0, f.1),
+            Leaf::Base(g) => {
+                let f = compose(*g, f)?;
+                self.base.as_ref()?.affine(f.0, f.1)
+            }
+        }
+    }
+}
+
+/// Whether `u` and `v` are one summary: equal coefficients, or one shared treap.
+fn same_pa(u: &Pa, v: &Pa) -> bool {
+    match (u, v) {
+        (Pa::Const(a), Pa::Const(b)) => a == b,
+        (Pa::Linear { var, a, b }, Pa::Linear { var: w, a: c, b: d }) => {
+            var == w && a == c && b == d
+        }
+        (Pa::Piecewise { var, root }, Pa::Piecewise { var: w, root: r }) => {
+            var == w
+                && match (root, r) {
+                    (Some(x), Some(y)) => Rc::ptr_eq(x, y),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
+        _ => false,
     }
 }
 
@@ -3581,7 +4241,8 @@ fn cls_affine(node: &Rc<Cls>, f: (i128, i128)) -> Option<Rc<Cls>> {
         return Some(node.clone());
     }
     Some(Rc::new(match &**node {
-        Cls::Same(pa) => Cls::Same(pa.affine(f.0, f.1)?),
+        Cls::Same(Leaf::Own(pa)) => Cls::Same(Leaf::Own(pa.affine(f.0, f.1)?)),
+        Cls::Same(Leaf::Base(g)) => Cls::Same(Leaf::Base(compose(*g, f)?)),
         Cls::Split { left, right, tag } => Cls::Split {
             left: left.clone(),
             right: right.clone(),

@@ -21,10 +21,12 @@ use std::sync::Arc;
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
+use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
-use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage};
+use zedc::store::preimage::{Classes, Demand, Domains, Preimage, exact_preimage, preimage};
 use zedc::store::preimage_ref as before;
+use zedc::store::presburger::{Atom, Model};
 
 use super::check;
 use super::random::{bool_term, domains, int_demand, int_term, with_functions};
@@ -345,8 +347,10 @@ fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
 
 /// The cases compared, the differences found, each shown, the cases whose inexact box is
 /// narrower than the one before and still sound, the other boxes of `c - x` that S22b changed,
-/// and the cases now exact that the transfer before left inexact, refused or listed (by
-/// classes of remainders, COMPLEXITY.md S22e, or by S22b's reflection).
+/// the cases now exact that the transfer before left inexact, refused or listed (by
+/// classes of remainders, COMPLEXITY.md S22e, or by S22b's reflection), and the cases a split
+/// over many periods answers with the classes' relation in place of the linear stage's
+/// (COMPLEXITY.md S22e-wide), each shown with its box now and before when wider.
 #[derive(Default)]
 struct Diffs {
     cases: usize,
@@ -354,6 +358,47 @@ struct Diffs {
     narrower: usize,
     reflected: usize,
     exact: usize,
+    wide: usize,
+    wider: Vec<String>,
+}
+
+/// Whether `p`, not exact, holds the relation of a split by remainders over many periods
+/// (`x div c` and `x mod c` its only auxiliary variables), and the interpreter finds that the
+/// points of the box meeting that relation are those within (-60, 60) that meet `d` under `t`
+/// over `ds`: the relation is exact on the box.
+fn split_relation_exact(t: &Term, ds: &Domains, d: &Demand, p: &Preimage) -> bool {
+    let Some(rel) = &p.relation else {
+        return false;
+    };
+    let [(0, div, _), (1, rem, _)] = &rel.defs[..] else {
+        return false;
+    };
+    let Some((x, c)) = div.split_once(" div ") else {
+        return false;
+    };
+    let c: i64 = c.parse().expect("a modulus is an integer");
+    if p.exact || *rem != format!("{x} mod {c}") {
+        return false;
+    }
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    let at = names
+        .iter()
+        .position(|n| &**n == x)
+        .expect("the split input is an input");
+    let (defs, body) = (rel.defined(), &rel.body);
+    super::points(ds, &names, (-60, 60)).iter().all(|pt| {
+        let inside = names.iter().zip(pt).all(|(n, &v)| p.domains[n].contains(v));
+        let r = pt[at].rem_euclid(c.abs());
+        let mut model: Model = names
+            .iter()
+            .zip(pt)
+            .map(|(n, &v)| (Atom::Sym(n.clone()), Int::from(v)))
+            .collect();
+        model.insert(Atom::Aux(0), Int::from((pt[at] - r) / c));
+        model.insert(Atom::Aux(1), Int::from(r));
+        let held = inside && defs.holds(&model) && body.holds(&model);
+        held == super::meets(t, &names, pt, d)
+    })
 }
 
 /// Whether the interpreter refutes `domains` as the preimage of `d` under `t` over `ds` on
@@ -378,6 +423,41 @@ impl Diffs {
     fn preimage(&mut self, what: &str, t: &Term, ds: &Domains, d: &Demand) {
         let (now, then) = (preimage(t, ds, d), before::preimage(t, ds, &old(d)));
         let (new, old) = (format!("{now:?}"), format!("{then:?}"));
+        // Plan item S22e-wide: a split by remainders over many periods answers with its box and
+        // the classes' relation, exact on the box, where the linear stage stated its own
+        // relation and projected a box from it. The box is narrower than the projection's in
+        // most such cases, and in a few wider (the hull of a class's members joins pieces the
+        // projection kept apart, where the relation holds no point); those are listed. Where
+        // the split's box is small enough to list ([`enumerate`]), the listing is exact, inside
+        // the box before, and equal to it when that was exact.
+        let inside = now.domains.iter().all(|(n, s)| {
+            let o = &then.domains[n];
+            s.pieces()
+                .iter()
+                .all(|(lo, hi)| o.pieces().iter().any(|(l, h)| l <= lo && hi <= h))
+        });
+        let listed = now.exact
+            && now.enumerated
+            && !then.enumerated
+            && inside
+            && (!then.exact || now.domains == then.domains)
+            && !refuted(t, ds, d, &now.domains, true);
+        if new != old && (listed || !then.exact && split_relation_exact(t, ds, d, &now)) {
+            self.cases += 1;
+            self.wide += 1;
+            if !inside {
+                let show = |ds: &Domains| {
+                    let each = ds.iter().map(|(n, s)| format!("{n} {s}"));
+                    each.collect::<Vec<_>>().join(", ")
+                };
+                self.wider.push(format!(
+                    "{} before {}",
+                    show(&now.domains),
+                    show(&then.domains)
+                ));
+            }
+            return;
+        }
         // Both inexact and alike but for the box, and the new box lies inside the one before
         // and holds every point the interpreter finds: the clip narrows a result the map2 cap
         // widened, so Lemma 4's equality does not hold there.
@@ -495,6 +575,23 @@ impl Diffs {
             "the number of other boxes of `c - x` changed by S22b differs"
         );
         assert_eq!(self.exact, exact, "the number of boxes made exact changed");
+        assert_eq!(self.wide, 0, "a split over many periods answered");
+    }
+
+    /// Checks that a split over many periods answered `wide` cases with the classes'
+    /// relation, and that the ones whose box is wider than the one before are `wider`, each its
+    /// box now and before.
+    fn split_wide(mut self, wide: usize, wider: &[&str]) -> Diffs {
+        assert_eq!(
+            self.wide, wide,
+            "the number of splits over many periods changed"
+        );
+        assert_eq!(
+            self.wider, wider,
+            "the wider boxes of splits over many periods"
+        );
+        self.wide = 0;
+        self
     }
 }
 
@@ -767,7 +864,12 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
 
 /// Every kind of guard and arm the summary reads, and some it does not: the cases `from..to`
 /// of one sequence, split in two tests so they run in parallel.
-fn random_guarded_chains(from: usize, to: usize, narrower: usize, reflected: usize, exact: usize) {
+fn random_guarded_chains(
+    from: usize,
+    to: usize,
+    (narrower, reflected, exact): (usize, usize, usize),
+    (wide, wider): (usize, &[&str]),
+) {
     on_big_stack(|| {
         let mut diffs = Diffs::default();
         let mut rng = Rng::new(22);
@@ -787,26 +889,48 @@ fn random_guarded_chains(from: usize, to: usize, narrower: usize, reflected: usi
                 diffs.preimage("random chain", &t, &ds, &d);
             }
         }
-        diffs.none_but(to - from, narrower, reflected, exact);
+        diffs
+            .split_wide(wide, wider)
+            .none_but(to - from, narrower, reflected, exact);
     });
 }
 
-/// Random chains of every kind of guard, the first half.
+/// Random chains of every kind of guard, the first half. S22e-wide changes 87 cases here: 40
+/// more are made exact (79, against 39 on main) by the split over many periods, where its
+/// projection lists the periods and every member lies in its class (`covers`), one of them
+/// a box main narrowed (narrower 2 before, 1 now); and 47 are inexact boxes with the classes'
+/// relation, exact on the box (`split_relation_exact`), where main ran the linear stage.
 #[test]
 fn random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(0, 2000, 2, 6, 39);
+    random_guarded_chains(0, 2000, (1, 6, 79), (47, &[]));
 }
 
 /// Random chains of every kind of guard, the second half. S22b changes 7 boxes of `c - x` here;
-/// two of them, inexact before and exact now, count as made exact (53 by classes of remainders,
-/// S22e, and 2 by S22b): the chains `(if (6 < i) { (if (7 < i) { (0 - …` and
+/// two of them, inexact before and exact now, count as made exact (on main 53 by classes of
+/// remainders, S22e, and 2 by S22b; S22e-wide makes 44 more exact, 99 in all, one of them a
+/// box S22b reflected, so reflected counts 4, not 5): the chains `(if (6 < i) { (if (7 < i) { (0 - …` and
 /// `if ((i mod 3) == 1) { min(if (i >= -9) { …`, whose results are the same on main before S22e
 /// merged (5adc3c2). 53, was 54, since LIVE3: the transfer before, which shares the solver,
 /// now decides by `live3` the gray shadow over three variables that left it inexact on
 /// `(if ((i mod 3) == 2) { (if ((i mod 3) == 2) { (i + 0) } … < 6)`, so both are exact and alike.
+/// S22e-wide answers 49 more with the classes' relation, exact on the box;
+/// three of those boxes are wider than main's, listed below, because the hull of a class's
+/// members joins pieces that main's projection kept apart, where the relation holds no point.
 #[test]
 fn more_random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(2000, 4000, 0, 5, 55);
+    random_guarded_chains(
+        2000,
+        4000,
+        (0, 4, 99),
+        (
+            49,
+            &[
+                "i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]",
+                "i [2..] before i [2..=2, 5..]",
+                "i [4..] before i [4..=4, 7..]",
+            ],
+        ),
+    );
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
@@ -1337,9 +1461,11 @@ fn remainders_compared_every_way_are_read_exactly() {
 }
 
 /// Where the split cannot be exact it is given up, and the preimage is the one before: two
-/// inputs' remainders compared; another input narrowed differently by class (the union of
-/// boxes is not a box); and a stretch where one class keeps its points and another does not
-/// that spans many periods.
+/// inputs' remainders compared, and another input narrowed differently by class (the union of
+/// boxes is not a box). A stretch where one class keeps its points and another does not that
+/// spans many periods is answered by the split since S22e-wide: its box, the projection of the
+/// classes' relation, lists the first and last periods of the stretch, inside the box before,
+/// and is inexact, with that relation.
 #[test]
 fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
     let i = || var("i");
@@ -1367,15 +1493,29 @@ fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
         Arc::new(i()),
         Arc::new(int(0)),
     );
-    for (t, ds, d) in [
-        (both, two.clone(), ints(0, 10)),
-        (other, two, ints(0, 10)),
-        (wide, i_in(-1000, 1000), ints(10, 2000)),
-    ] {
+    for (t, ds, d) in [(both, two.clone(), ints(0, 10)), (other, two, ints(0, 10))] {
         let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
         assert_eq!(format!("{now:?}"), format!("{then:?}"), "{t}");
         check(&t, &ds, &d, &now, (-60, 60));
     }
+    let (ds, d) = (i_in(-1000, 1000), ints(10, 2000));
+    let (now, then) = (
+        preimage(&wide, &ds, &d),
+        before::preimage(&wide, &ds, &old(&d)),
+    );
+    assert!(!now.exact && !then.exact);
+    let listed = [
+        (10, 10),
+        (12, 12),
+        (14, 994),
+        (996, 996),
+        (998, 998),
+        (1000, 1000),
+    ];
+    assert_eq!(now.domains["i"], pieces(&listed));
+    assert_eq!(then.domains["i"], pieces(&[(10, 998), (1000, 1000)]));
+    assert!(split_relation_exact(&wide, &ds, &d, &now));
+    check(&wide, &ds, &d, &now, (-60, 1060));
 }
 
 #[test]
@@ -1739,6 +1879,130 @@ fn remainder_chains_outside_the_shared_summary_keep_their_preimages() {
                 let p = preimage(&t, &ds, &d);
                 let at: Vec<i64> = ends.iter().copied().filter(|&i| dom.contains(i)).collect();
                 check_at(what, &t, &d, &p, &at);
+            }
+        }
+    });
+}
+
+/// `many_remainders(k)` below `if (i mod 1024 == 0) { false }`: over the whole box a stretch
+/// where some classes keep their points and others do not spans many periods, and the split
+/// over the transfer's box is exact (COMPLEXITY.md S22e-wide).
+fn zero_excluded(k: usize) -> Term {
+    let (t, _, _) = many_remainders(k);
+    let g = prim(Prim::Eq, prim(Prim::Mod, var("i"), int(1024)), int(0));
+    Term::If(
+        Arc::new(g),
+        Arc::new(Term::Lit(Value::Bool(false))),
+        Arc::new(t),
+    )
+}
+
+/// COMPLEXITY.md S22e-wide: the four programs of the plan item over `[-5000, 5000]`, about ten
+/// periods of 1024. On main before it, from `k` to `2k`: the `min` chain about `k^2.7` (26.6M,
+/// 136.8M and 868.8M instructions at `k` = 8, 16 and 32), the tests above the chain `k^2`
+/// (28.3M and 109.1M at 16 and 32), the `!=` chain 249M and 763M at 4 and 8, and the chain
+/// below `i mod 1024 == 0` 1.59G and 5.16G at 4 and 8; main left all but the first inexact.
+/// Now, from `k` to `8k`, 2.24M to 17.6M (`k` = 8), 6.44M to 53.7M (16), 17.3M to 20.6M (4)
+/// and 85.9M to 498M (4), and all four are exact.
+#[test]
+fn remainders_over_many_periods_scale() {
+    on_big_stack(|| {
+        let ds = i_in(-5000, 5000);
+        let d = Demand::Bool(true);
+        let families = [
+            (
+                "the min chain of k remainders",
+                8,
+                min_remainders as fn(usize) -> Term,
+            ),
+            ("k tests above k remainders", 16, above_remainders),
+            ("k remainders excluded", 4, no_remainder_of),
+            ("k remainders below i mod 1024 == 0", 4, zero_excluded),
+        ];
+        for (what, n, family) in families {
+            let (a, b) = (family(n), family(n * scaling::FACTOR));
+            scaling::check(what, n, |k| {
+                preimage(if k == n { &a } else { &b }, &ds, &d);
+            });
+        }
+    });
+}
+
+/// COMPLEXITY.md S22e-wide: the four programs over many periods are exact and agree with the
+/// interpreter.
+#[test]
+fn remainders_over_many_periods_keep_their_preimages() {
+    on_big_stack(|| {
+        let ds = i_in(-5000, 5000);
+        let d = Demand::Bool(true);
+        for k in [1, 2, 5, 9] {
+            for t in [
+                min_remainders(k),
+                above_remainders(k),
+                no_remainder_of(k),
+                zero_excluded(k),
+            ] {
+                let p = preimage(&t, &ds, &d);
+                assert!(p.exact, "{t}: {p:?}");
+                check(&t, &ds, &d, &p, (-1100, 1100));
+                check(&t, &ds, &d, &p, (3000, 5000));
+            }
+        }
+    });
+}
+
+/// The split by remainders at the moduli 1, 2, 3, 1024, `i64::MAX` and `i64::MIN + 1`, over an
+/// empty box, a single point, a box within two periods, one over many periods, one at the top
+/// of `i64`, and pieces in which some classes have no members: every preimage agrees with the
+/// interpreter, is exact wherever the one before was, and lies inside it.
+#[test]
+fn remainder_splits_at_their_corners_keep_their_preimages() {
+    on_big_stack(|| {
+        let top = i64::MAX;
+        for m in [1, 2, 3, 1024, i64::MAX, i64::MIN + 1] {
+            let r = 3.min(m.unsigned_abs() - 1) as i64;
+            let rem = || prim(Prim::Mod, var("i"), int(m));
+            let is = |c: i64| prim(Prim::Eq, rem(), int(c));
+            let not = |c: i64, t: Term| {
+                Term::If(
+                    Arc::new(prim(Prim::Ne, rem(), int(c))),
+                    Arc::new(t),
+                    Arc::new(Term::Lit(Value::Bool(false))),
+                )
+            };
+            let picked = Term::If(Arc::new(is(r)), Arc::new(var("i")), Arc::new(int(0)));
+            let terms = [
+                (picked, ints(10, 2000)),
+                (not(1, not(2, ge_i(0))), Demand::Bool(true)),
+                (is(r), Demand::Bool(true)),
+            ];
+            // Pieces holding the remainders 0 to 2 of 10 in each of ten periods.
+            let comb: Vec<(i64, i64)> = (0..10).map(|p| (10 * p, 10 * p + 2)).collect();
+            let boxes = [
+                (IntervalSet::empty(), (-60, 60)),
+                (IntervalSet::of(7, 7), (-60, 60)),
+                (IntervalSet::of(-7, -7), (-60, 60)),
+                (IntervalSet::of(-3, 2), (-60, 60)),
+                (IntervalSet::of(-40, 40), (-60, 60)),
+                (IntervalSet::of(-5000, 5000), (-1100, 1100)),
+                (IntervalSet::of(top - 40, top), (top - 60, top)),
+                (pieces(&comb), (-10, 110)),
+            ];
+            for (t, d) in &terms {
+                for (set, window) in &boxes {
+                    let ds = over(&[("i", set.clone())]);
+                    let (now, then) = (preimage(t, &ds, d), before::preimage(t, &ds, &old(d)));
+                    let what = format!("{t} over {ds:?}, demand {d:?}");
+                    check(t, &ds, d, &now, *window);
+                    assert!(now.exact || !then.exact, "{what}: {now:?} before {then:?}");
+                    let inside = now.domains["i"].pieces().iter().all(|(lo, hi)| {
+                        then.domains["i"]
+                            .pieces()
+                            .iter()
+                            .any(|(l, h)| l <= lo && hi <= h)
+                    });
+                    assert!(inside, "{what}: {now:?} before {then:?}");
+                }
             }
         }
     });

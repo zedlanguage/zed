@@ -22,9 +22,11 @@ fn an_arm_that_fixes_n_mod_4_within_0_to_10_holds_1_to_9() {
     // The hull is `int[1..=9]`, and the congruence keeps the members exactly: 1, 5 and 9.
     assert_eq!(n.ints().hull().to_string(), "[1..=9]");
     assert_eq!(n.cell.congruence.element.to_string(), "1 mod 4");
-    // The other arm loses the two ends; 5 is not listed, so it is kept.
+    // The other arm loses 1, 5 and 9: the split by remainders over many periods reads each
+    // period of `[0..=10]` (row S22e-wide), so the preimage of the test is exactly `{1, 5, 9}`
+    // and its complement is excluded. Before S22e-wide the linear stage left 5 in the box.
     let other = arm(&a, "((n mod 4) == 1)", false).scope.get("n");
-    assert_eq!(other.ints().to_string(), "[..=0, 2..=8, 10..]");
+    assert_eq!(other.ints().to_string(), "[..=0, 2..=4, 6..=8, 10..]");
 }
 
 #[test]

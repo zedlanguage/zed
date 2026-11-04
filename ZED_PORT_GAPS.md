@@ -1141,6 +1141,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | The memo tables a run computes without reading its class moved out with `std::mem::take` and moved back for the next class | `Kept`, `Run::keep`, `Run::restore` | Mutation | The tables are a value passed from one class's run to the next and returned with each result |
 | `u128` saturating multiply and add to bound values and coefficients over every class against `i64::MAX` | `Bound::holds`, `ByClass::affine` | Machine integers | Zed's `int` is unbounded; the check compares with the `i64` limit directly and needs no saturation |
 
+## Entries from S22e-wide (`zedc/src/store/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A Fenwick tree in a `Vec<i64>` changed in place by closures over `&mut`, stepped with `isolate_lowest_one` | `covers` | Mutation | A Zed value threaded through the sweep's fold, or a persistent counting tree over the classes, `O(log G)` per step either way; the step is `bitAnd(i, 0 - i)` on bit words (L1.39a) |
+
 ## Entries from TD-ends (`zedc/src/store/int.rs`, `interval.rs`, `affine.rs`, `presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
