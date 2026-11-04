@@ -61,13 +61,22 @@ impl Out<'_> {
             self.end(lo);
             self.end(hi);
         }
-        match d.class {
+        // A class whose modulus and residue fit in `i64` is two words; one past it is their
+        // decimal texts under a tag of its own, as at `end`.
+        match &d.class {
             Congruence::Bottom => self.tag(0),
-            Congruence::Class { modulus, residue } => {
-                self.tag(1);
-                self.word(modulus);
-                self.word(residue as u64);
-            }
+            Congruence::Class { modulus, residue } => match (modulus.to_i64(), residue.to_i64()) {
+                (Some(m), Some(r)) => {
+                    self.tag(1);
+                    self.word(m as u64);
+                    self.word(r as u64);
+                }
+                _ => {
+                    self.tag(2);
+                    self.str(&modulus.to_string());
+                    self.str(&residue.to_string());
+                }
+            },
         }
     }
 

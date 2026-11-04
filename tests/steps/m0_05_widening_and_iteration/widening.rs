@@ -217,7 +217,7 @@ fn congruence_chains_end_when_the_modulus_stops_dividing() {
     let mut seen = Vec::new();
     for s in steps {
         x = x.widen(&x.join(&s), &Landmarks::none());
-        seen.push(x);
+        seen.push(x.clone());
     }
     assert_eq!(
         seen,

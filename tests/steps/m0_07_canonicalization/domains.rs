@@ -32,8 +32,8 @@ fn index(d: Domain) -> Def {
 #[test]
 fn one_set_of_integers_has_one_normal_form() {
     let one_mod_four = Congruence::new(4, 1);
-    let a = dom(IntervalSet::of(0, 10), one_mod_four, FiniteSet::Top);
-    let b = dom(IntervalSet::of(1, 9), one_mod_four, FiniteSet::Top);
+    let a = dom(IntervalSet::of(0, 10), one_mod_four.clone(), FiniteSet::Top);
+    let b = dom(IntervalSet::of(1, 9), one_mod_four.clone(), FiniteSet::Top);
     let c = dom(
         IntervalSet::top(),
         Congruence::top(),
@@ -41,7 +41,7 @@ fn one_set_of_integers_has_one_normal_form() {
     );
     let d = dom(
         IntervalSet::of(1, 1).join(&IntervalSet::of(5, 9)),
-        one_mod_four,
+        one_mod_four.clone(),
         FiniteSet::Top,
     );
     for x in [&b, &c, &d] {
@@ -51,7 +51,7 @@ fn one_set_of_integers_has_one_normal_form() {
     assert_eq!(a.normal().ints, IntervalSet::of(1, 9));
     assert_eq!(a.normal().class, one_mod_four);
     // `int[2..=4]` with `1 mod 4` admits nothing, like every other empty domain.
-    let empty = dom(IntervalSet::of(2, 4), one_mod_four, FiniteSet::Top);
+    let empty = dom(IntervalSet::of(2, 4), one_mod_four.clone(), FiniteSet::Top);
     let none = dom(IntervalSet::top(), Congruence::top(), FiniteSet::of([]));
     assert_eq!(empty.normal(), none.normal());
     // An HTTP status in 400..=499 among the codes the client handles is just 404.

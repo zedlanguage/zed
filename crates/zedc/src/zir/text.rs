@@ -35,7 +35,7 @@ use zed_kernel::value::Value;
 
 use super::{Derived, Edge, Node, Op, Region, RegionKind, Src, ValueEdge, any_domain, kind_name};
 use crate::canon::Facet;
-use crate::store::interval::{End, IntervalSet};
+use crate::store::interval::{End, IntervalSet, Num};
 use crate::store::lattice::{Congruence, FiniteSet, Lattice};
 
 /// The version of the text and binary forms.
@@ -988,9 +988,9 @@ impl<'a> P<'a> {
         if self.eat_word("any") {
             return Ok(Congruence::top());
         }
-        let r: i64 = self.number()?;
+        let r: Num = self.number()?;
         if self.eat_word("mod") {
-            Ok(Congruence::new(self.number()?, r))
+            Ok(Congruence::new(self.number::<Num>()?, r))
         } else {
             Ok(Congruence::single(r))
         }

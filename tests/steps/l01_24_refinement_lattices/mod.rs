@@ -13,11 +13,12 @@ mod cell;
 mod ends;
 mod float;
 mod loops;
+mod past_i64;
 mod scaling;
 
 use zed_tests::instances::Rng;
 use zedc::store::affine::{Affine, Bound, Bounds, Sym};
-use zedc::store::interval::{End, IntervalSet};
+use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::lattice::Lattice;
 
 /// The symbols the tests use: a count and a second length.
@@ -49,7 +50,7 @@ fn affine(k: [i64; 2], c: i64) -> Affine {
     let mut a = Affine::constant(c);
     for (s, k) in SYMS.iter().zip(k) {
         if k != 0 {
-            a.terms.insert(Sym(s.to_string()), k);
+            a.terms.insert(Sym(s.to_string()), Num::from(k));
         }
     }
     a

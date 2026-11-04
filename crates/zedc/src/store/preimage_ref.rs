@@ -3035,10 +3035,9 @@ fn classes_decide(term: &Term, classes: &Classes, demand: &Demand) -> Option<boo
         Demand::Bool(d) => class_test(term, classes).map(|b| b == *d),
         Demand::Ints(z) => match class_of(term, classes)? {
             Congruence::Bottom => Some(false),
-            Congruence::Class {
-                modulus: 0,
-                residue,
-            } => Some(z.contains(residue)),
+            Congruence::Class { modulus, residue } if modulus.is_zero() => {
+                Some(z.contains_end(&End::Fin(residue)))
+            }
             _ => None,
         },
     }
@@ -3067,17 +3066,17 @@ fn class_test(term: &Term, classes: &Classes) -> Option<bool> {
         },
         (Prim::Eq | Prim::Ne, [a, b]) => {
             let (x, y) = (class_of(a, classes)?, class_of(b, classes)?);
-            let eq = match (x, y) {
+            let eq = match (&x, &y) {
                 (
                     Congruence::Class {
-                        modulus: 0,
+                        modulus: m,
                         residue: u,
                     },
                     Congruence::Class {
-                        modulus: 0,
+                        modulus: n,
                         residue: v,
                     },
-                ) => u == v,
+                ) if m.is_zero() && n.is_zero() => u == v,
                 _ if x.meet(&y) == Congruence::Bottom => false,
                 _ => return None,
             };
@@ -3093,7 +3092,7 @@ fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
     // A class as (modulus, residue) in i128, and back, `None` when it leaves u64 and i64.
     let parts = |c: Congruence| match c {
         Congruence::Bottom => None,
-        Congruence::Class { modulus, residue } => Some((modulus as i128, residue as i128)),
+        Congruence::Class { modulus, residue } => Some((modulus.to_i128()?, residue.to_i128()?)),
     };
     let class = |m: i128, r: i128| -> Option<Congruence> {
         let r = if m == 0 { r } else { r.rem_euclid(m) };
@@ -3107,7 +3106,7 @@ fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
     }
     match term {
         Term::Lit(Value::Int(v)) => Some(Congruence::single(*v)),
-        Term::Var(x) => Some(classes.get(x).copied().unwrap_or(Congruence::new(1, 0))),
+        Term::Var(x) => Some(classes.get(x).cloned().unwrap_or(Congruence::top())),
         Term::Let(x, _, body) => class_of(body, &unbound(classes, x)),
         Term::Prim(p, xs) => match (p, xs.as_slice()) {
             (Prim::Neg, [a]) => {

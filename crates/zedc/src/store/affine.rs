@@ -33,7 +33,7 @@ pub struct Sym(pub String);
 pub struct Affine {
     /// The symbols and their coefficients. Bounds are compared by this first, so the bounds
     /// with one set of terms are neighbors in a `BTreeSet`.
-    pub terms: BTreeMap<Sym, i64>,
+    pub terms: BTreeMap<Sym, Num>,
     /// The constant, exact at any magnitude.
     pub constant: Num,
 }
@@ -50,7 +50,7 @@ impl Affine {
     /// The symbol `s`.
     pub fn sym(s: &str) -> Affine {
         Affine {
-            terms: BTreeMap::from([(Sym(s.into()), 1)]),
+            terms: BTreeMap::from([(Sym(s.into()), Num::ONE)]),
             constant: Num::ZERO,
         }
     }
@@ -63,26 +63,26 @@ impl Affine {
         }
     }
 
-    /// `k · self`, or `None` when a coefficient leaves the 64-bit range (the constant is
-    /// exact).
-    pub fn times(&self, k: i64) -> Option<Affine> {
-        if k == 0 {
-            return Some(Affine::constant(0));
+    /// `k · self`, exact at any magnitude: a coefficient past the 64-bit range is a [`Num`].
+    pub fn times(&self, k: impl Into<Num>) -> Affine {
+        let k = k.into();
+        if k.is_zero() {
+            return Affine::constant(0);
         }
-        let mut terms = BTreeMap::new();
-        for (s, c) in &self.terms {
-            terms.insert(s.clone(), c.checked_mul(k)?);
+        Affine {
+            terms: self
+                .terms
+                .iter()
+                .map(|(s, c)| (s.clone(), c * &k))
+                .collect(),
+            constant: &self.constant * &k,
         }
-        Some(Affine {
-            terms,
-            constant: &self.constant * &Num::from(k),
-        })
     }
 
     /// The value at the given symbol values, exact.
     pub fn eval(&self, at: &impl Fn(&Sym) -> i64) -> Num {
         self.terms.iter().fold(self.constant.clone(), |v, (s, c)| {
-            &v + &Num::from(*c as i128 * at(s) as i128)
+            &v + &(c * &Num::from(at(s)))
         })
     }
 
@@ -95,14 +95,15 @@ impl Affine {
 impl fmt::Display for Affine {
     /// `n`, `-n`, `2 * n - m + 1`, `0`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, (s, &c)) in self.terms.iter().enumerate() {
-            let (sign, k) = (if c < 0 { "-" } else { "+" }, c.unsigned_abs());
+        for (i, (s, c)) in self.terms.iter().enumerate() {
+            let negative = c.signum() < 0;
+            let (sign, k) = (if negative { "-" } else { "+" }, c.abs());
             match i {
-                0 if c < 0 => write!(f, "-")?,
+                0 if negative => write!(f, "-")?,
                 0 => {}
                 _ => write!(f, " {sign} ")?,
             }
-            if k != 1 {
+            if k != Num::ONE {
                 write!(f, "{k} * ")?;
             }
             write!(f, "{}", s.0)?;
@@ -422,7 +423,7 @@ impl Bounds {
 /// a probe with constant 0: `O(log n + k)` for `k` bounds with these terms.
 fn same_terms<'a>(
     set: &'a BTreeSet<Bound>,
-    terms: &'a BTreeMap<Sym, i64>,
+    terms: &'a BTreeMap<Sym, Num>,
 ) -> impl Iterator<Item = &'a Bound> {
     let probe = Bound {
         affine: Affine {

@@ -35,7 +35,7 @@ impl Domain {
     /// Whether `v` is admitted by all three facts.
     pub fn contains(&self, v: i64) -> bool {
         self.ints.contains(v)
-            && self.class.contains(v)
+            && self.class.contains(&Num::from(v))
             && match &self.finite {
                 FiniteSet::Top => true,
                 FiniteSet::Set(vs) => vs.contains(&v),
@@ -84,39 +84,27 @@ impl Domain {
 }
 
 /// The least class holding each of `points`, one or more: `v mod g` for the first point `v`
-/// and the greatest common divisor `g` of the differences. A class's modulus and residue are
-/// `i64`, so when that class does not fit, it is every integer; it is still a function of the
-/// points alone, so the normal form stays unique, and the points themselves are exact.
+/// and the greatest common divisor `g` of the differences. It is exact at every size, a
+/// function of the points alone, so the normal form stays unique.
 fn least_class(points: &[&Num]) -> Congruence {
     let first = points[0];
     let g = points[1..]
         .iter()
         .fold(Num::ZERO, |g, &v| g.gcd(&(v - first)));
-    let (modulus, residue) = if g.is_zero() {
-        (Some(0), first.to_i64())
-    } else {
-        (g.to_i64(), first.mod_floor(&g).to_i64())
-    };
-    match (modulus, residue) {
-        (Some(m), Some(r)) => Congruence::new(m as u64, r),
-        _ => Congruence::top(),
-    }
+    Congruence::new(g, first.clone())
 }
 
 /// The pieces of `ints`, whose finite endpoints are members of `class`, joined wherever the
 /// gap between two pieces holds no member: the next member after a piece's upper endpoint is
 /// the following piece's lower endpoint.
 fn runs(ints: &IntervalSet, class: &Congruence) -> IntervalSet {
-    let Congruence::Class { modulus, .. } = *class else {
+    let Congruence::Class { modulus, .. } = class else {
         return IntervalSet::empty();
     };
-    let modulus = Num::from(modulus as i128);
     let mut out: Vec<(End, End)> = Vec::new();
     for (lo, hi) in ints.pieces() {
         match out.last_mut() {
-            Some((_, last)) if !modulus.is_zero() && joins(last, lo, &modulus) => {
-                *last = hi.clone()
-            }
+            Some((_, last)) if !modulus.is_zero() && joins(last, lo, modulus) => *last = hi.clone(),
             _ => out.push((lo.clone(), hi.clone())),
         }
     }

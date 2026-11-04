@@ -269,7 +269,14 @@ impl Product {
     /// in its interval and its congruence.
     pub fn contains(&self, v: &Value) -> bool {
         let ints = match v {
-            Value::Int(n) => self.ints().contains(*n) && self.cell.congruence.element.contains(*n),
+            Value::Int(n) => {
+                self.ints().contains(*n) && self.cell.congruence.element.contains(&Num::from(*n))
+            }
+            Value::Big(n) => {
+                let n = Num::from(&**n);
+                self.ints().contains_end(&End::Fin(n.clone()))
+                    && self.cell.congruence.element.contains(&n)
+            }
             _ => true,
         };
         let finite = match &self.cell.finite.element {
@@ -1481,16 +1488,17 @@ impl Scope {
                             equality(p, v, equal, prem);
                         }
                     }
-                    (Term::Prim(Prim::Mod, m), Term::Lit(Value::Int(r))) if equal => {
-                        if let [Term::Var(x), Term::Lit(Value::Int(c))] = &m[..]
-                            && *c != 0
+                    (Term::Prim(Prim::Mod, m), Term::Lit(r)) if equal => {
+                        if let [Term::Var(x), Term::Lit(c)] = &m[..]
+                            && let (Some(r), Some(c)) = (int_lit(r), int_lit(c))
+                            && !c.is_zero()
                             && let Some(p) = self.names.get_mut(x)
                         {
-                            let k = c.unsigned_abs();
-                            if *r < 0 || r.unsigned_abs() >= k {
+                            let k = c.abs();
+                            if r.signum() < 0 || r >= k {
                                 p.ty.meet(&!&Type::int(), prem);
                             } else {
-                                p.cell.congruence.meet(&Congruence::new(k, *r), prem);
+                                p.cell.congruence.meet(&Congruence::new(k, r), prem);
                             }
                         }
                     }
@@ -1761,7 +1769,7 @@ impl Scope {
             let mut echo = false;
             for (n, old) in block.names.iter().zip(&before) {
                 let p = self.get(n);
-                if (p.ints(), p.cell.congruence.element) == (&old.1, old.2) {
+                if (p.ints(), &p.cell.congruence.element) == (&old.1, &old.2) {
                     continue;
                 }
                 if p.ints().is_empty() {
@@ -1837,7 +1845,7 @@ impl Scope {
             let mut empty = false;
             for (n, old) in names[i].iter().zip(&before) {
                 let p = self.get(n);
-                if (p.ints(), p.cell.congruence.element) == (&old.1, old.2) {
+                if (p.ints(), &p.cell.congruence.element) == (&old.1, &old.2) {
                     continue;
                 }
                 empty |= p.ints().is_empty();
@@ -1902,13 +1910,13 @@ impl Scope {
         // another name's to match, and the two pass a bound back and forth without end.
         for a in &mentioned {
             if let Atom::Sym(n) = a
-                && let Congruence::Class { modulus, residue } = self.get(n).cell.congruence.element
-                && modulus > 1
+                && let Congruence::Class { modulus, residue } = &self.get(n).cell.congruence.element
+                && *modulus > Num::ONE
             {
                 let k = Lin::atom(Atom::Sym(format!("{n} mod").into()));
                 let rhs = k
-                    .times(Int::from(modulus as i128))
-                    .plus(&Lin::constant(residue));
+                    .times(Int::from(modulus))
+                    .plus(&Lin::constant(Int::from(residue)));
                 parts.push(Formula::Con(Con::eq(&Lin::atom(a.clone()), &rhs)));
             }
         }
@@ -2478,6 +2486,15 @@ fn is_test(t: &Term) -> bool {
     )
 }
 
+/// The integer literal `v`, of any size.
+fn int_lit(v: &Value) -> Option<Num> {
+    match v {
+        Value::Int(n) => Some(Num::from(*n)),
+        Value::Big(n) => Some(Num::from(&**n)),
+        _ => None,
+    }
+}
+
 /// The product of a literal equality's outcome on `p`: the literal itself, or every value but
 /// it, excluded by complement in the type, the interval and the finite set.
 fn equality(p: &mut Product, v: &Value, equal: bool, prem: &Premises) {
@@ -2485,9 +2502,9 @@ fn equality(p: &mut Product, v: &Value, equal: bool, prem: &Premises) {
         let lit = Product::literal(v);
         p.ty.meet(&lit.ty.element, prem);
         p.cell.finite.meet(&lit.cell.finite.element, prem);
-        if let Value::Int(n) = v {
-            p.meet_ints(IntervalSet::single(*n), prem);
-            p.cell.congruence.meet(&Congruence::single(*n), prem);
+        if let Some(n) = int_lit(v) {
+            p.meet_ints(IntervalSet::point(n.clone()), prem);
+            p.cell.congruence.meet(&Congruence::single(n), prem);
         }
         return;
     }

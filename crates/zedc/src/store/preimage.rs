@@ -2401,7 +2401,7 @@ impl<'t> Tx<'t> {
     fn exponent(&mut self, t: Tid, env: Eid) -> Option<Exponent> {
         match self.constant(t, env)? {
             Value::Int(n) if n >= 0 => Some(Int::from(n).into()),
-            Value::Big(k) if !k.is_negative() => Some(Exponent::Big(k)),
+            Value::Big(k) if !k.is_negative() => Some(Num::from(&*k).into()),
             _ => None,
         }
     }
@@ -5264,10 +5264,9 @@ fn classes_decide(term: &Term, classes: &Classes, demand: &Demand) -> Option<boo
         Demand::Bool(d) => class_test(term, classes).map(|b| b == *d),
         Demand::Ints(z) => match class_of(term, classes)? {
             Congruence::Bottom => Some(false),
-            Congruence::Class {
-                modulus: 0,
-                residue,
-            } => Some(z.contains(residue)),
+            Congruence::Class { modulus, residue } if modulus.is_zero() => {
+                Some(z.contains_end(&End::Fin(residue)))
+            }
             _ => None,
         },
     }
@@ -5296,17 +5295,17 @@ fn class_test(term: &Term, classes: &Classes) -> Option<bool> {
         },
         (Prim::Eq | Prim::Ne, [a, b]) => {
             let (x, y) = (class_of(a, classes)?, class_of(b, classes)?);
-            let eq = match (x, y) {
+            let eq = match (&x, &y) {
                 (
                     Congruence::Class {
-                        modulus: 0,
+                        modulus: m,
                         residue: u,
                     },
                     Congruence::Class {
-                        modulus: 0,
+                        modulus: n,
                         residue: v,
                     },
-                ) => u == v,
+                ) if m.is_zero() && n.is_zero() => u == v,
                 _ if x.meet(&y) == Congruence::Bottom => false,
                 _ => return None,
             };
@@ -5317,53 +5316,51 @@ fn class_test(term: &Term, classes: &Classes) -> Option<bool> {
 }
 
 /// The class of the integer `term` at every point with each input in its class, by Granger's
-/// arithmetic of congruences; `None` for a form it does not cover or a class too fine to hold.
+/// arithmetic of congruences, exact at every size; `None` for a form it does not cover.
 fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
-    // A class as (modulus, residue) in i128, and back, `None` when it leaves u64 and i64.
     let parts = |c: Congruence| match c {
         Congruence::Bottom => None,
-        Congruence::Class { modulus, residue } => Some((modulus as i128, residue as i128)),
+        Congruence::Class { modulus, residue } => Some((modulus, residue)),
     };
-    let class = |m: i128, r: i128| -> Option<Congruence> {
-        let r = if m == 0 { r } else { r.rem_euclid(m) };
-        Some(Congruence::new(
-            u64::try_from(m).ok()?,
-            i64::try_from(r).ok()?,
-        ))
-    };
-    fn gcd(a: i128, b: i128) -> i128 {
-        if b == 0 { a.abs() } else { gcd(b, a % b) }
-    }
     match term {
         Term::Lit(Value::Int(v)) => Some(Congruence::single(*v)),
-        Term::Var(x) => Some(classes.get(x).copied().unwrap_or(Congruence::new(1, 0))),
+        Term::Lit(Value::Big(v)) => Some(Congruence::single(Num::from(&**v))),
+        Term::Var(x) => Some(classes.get(x).cloned().unwrap_or(Congruence::top())),
         Term::Let(x, _, body) => class_of(body, &unbound(classes, x)),
         Term::Prim(p, xs) => match (p, xs.as_slice()) {
             (Prim::Neg, [a]) => {
                 let (m, r) = parts(class_of(a, classes)?)?;
-                class(m, -r)
+                Some(Congruence::new(m, -&r))
             }
             (Prim::Add | Prim::Sub, [a, b]) => {
                 let ((m, r), (n, s)) =
                     (parts(class_of(a, classes)?)?, parts(class_of(b, classes)?)?);
-                class(gcd(m, n), if *p == Prim::Add { r + s } else { r - s })
+                let v = if *p == Prim::Add { &r + &s } else { &r - &s };
+                Some(Congruence::new(m.gcd(&n), v))
             }
             (Prim::Mul, [a, b]) => {
                 // (r mod m)(s mod n) is rs mod gcd(mn, rn, sm).
                 let ((m, r), (n, s)) =
                     (parts(class_of(a, classes)?)?, parts(class_of(b, classes)?)?);
-                let g = gcd(gcd(m.checked_mul(n)?, r.checked_mul(n)?), s.checked_mul(m)?);
-                class(g, r.checked_mul(s)?)
+                let g = (&m * &n).gcd(&(&r * &n)).gcd(&(&s * &m));
+                Some(Congruence::new(g, &r * &s))
             }
-            (Prim::Mod, [a, Term::Lit(Value::Int(k))]) if *k > 0 => {
+            (Prim::Mod, [a, Term::Lit(k)]) => {
                 // `x mod k` is Euclidean, so in 0..k; when k divides the modulus it is one value,
                 // and otherwise it is x's residue modulo gcd(m, k).
+                let k = match k {
+                    Value::Int(k) => Num::from(*k),
+                    Value::Big(k) => Num::from(&**k),
+                    _ => return None,
+                };
+                if k.signum() <= 0 {
+                    return None;
+                }
                 let (m, r) = parts(class_of(a, classes)?)?;
-                let k = *k as i128;
-                if m % k == 0 {
-                    class(0, r.rem_euclid(k))
+                if m.rem_euclid(&k).is_zero() {
+                    Some(Congruence::single(r.rem_euclid(&k)))
                 } else {
-                    class(gcd(m, k), r)
+                    Some(Congruence::new(m.gcd(&k), r))
                 }
             }
             _ => None,

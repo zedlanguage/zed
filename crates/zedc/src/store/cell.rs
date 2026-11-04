@@ -287,7 +287,11 @@ impl Cell {
                 c.ints.element = Bounds::ints(IntervalSet::single(*n));
                 c.congruence.element = Congruence::single(*n);
             }
-            Value::Big(n) => c.ints.element = Bounds::ints(IntervalSet::point(Num::from(&**n))),
+            Value::Big(n) => {
+                let n = Num::from(&**n);
+                c.ints.element = Bounds::ints(IntervalSet::point(n.clone()));
+                c.congruence.element = Congruence::single(n);
+            }
             Value::Float(x) => c.float.element = FloatClass::of(x.get()),
             Value::Str(s) => {
                 c.length.element =

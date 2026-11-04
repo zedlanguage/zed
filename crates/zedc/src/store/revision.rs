@@ -12,9 +12,6 @@
 //! checker's copy.
 
 use std::cmp::Ordering;
-use std::sync::Arc;
-
-use zed_kernel::num::Rat;
 
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
@@ -52,9 +49,11 @@ pub enum Op {
 /// factors past `u32::MAX`, held by its parity.
 #[derive(Clone, Debug)]
 pub enum Exponent {
-    /// A solver integer: a constant in the 64-bit range, or the number of factors of a
-    /// product of one value (S30) when it fits in `u32`.
-    Int(Int),
+    /// A constant of any size, or the number of factors of a product of one value (S30) when
+    /// it fits in `u32`. A kernel integer past the 64-bit range is kept as the kernel holds
+    /// it, prime powers unbuilt: `10 ** 10 ** 9` is two kept powers, where it is 3.3·10^9
+    /// bits built.
+    Num(Num),
     /// The number of factors of a product of one value past `u32::MAX`, of which only the
     /// parity is held: nested squaring names reach `2^d` factors at depth `d`, and an exact
     /// count would cost `d` bits per name. Every entry reads no more of it (`Op::Pow`).
@@ -62,49 +61,57 @@ pub enum Exponent {
         /// Whether the count is odd.
         odd: bool,
     },
-    /// A kernel integer past the 64-bit range ([`Value::Big`](zed_kernel::Value::Big)), kept
-    /// as the kernel holds it, prime powers unbuilt: `10 ** 10 ** 9` is two pairs of numbers
-    /// there and 3.3·10^9 bits built, so it is read without being built.
-    Big(Arc<Rat>),
 }
 
 impl Exponent {
     /// Whether `k` is 0.
     pub fn is_zero(&self) -> bool {
         match self {
-            Exponent::Int(k) => k.is_zero(),
-            Exponent::Past { .. } | Exponent::Big(_) => false,
+            Exponent::Num(k) => k.is_zero(),
+            Exponent::Past { .. } => false,
         }
     }
 
-    /// Whether `k` is odd, in O(1) time.
+    /// Whether `k` is odd, in O(1) time for a value that is not kept.
     pub fn is_odd(&self) -> bool {
         match self {
-            Exponent::Int(k) => k.is_odd(),
+            Exponent::Num(k) => k.is_odd(),
             Exponent::Past { odd } => *odd,
-            Exponent::Big(k) => !k.is_even(),
         }
     }
 
-    /// `k` when it fits in `u32`; a count past `u32::MAX` and a kernel integer past the 64-bit
-    /// range never do.
+    /// `k` when it fits in `u32`; a count past `u32::MAX` never does.
     pub fn to_u32(&self) -> Option<u32> {
         match self {
-            Exponent::Int(k) => u32::try_from(k.to_i128()?).ok(),
-            Exponent::Past { .. } | Exponent::Big(_) => None,
+            Exponent::Num(k) => u32::try_from(k.to_i64()?).ok(),
+            Exponent::Past { .. } => None,
         }
+    }
+
+    /// `k`, when it is held exactly.
+    pub fn num(&self) -> Option<&Num> {
+        match self {
+            Exponent::Num(k) => Some(k),
+            Exponent::Past { .. } => None,
+        }
+    }
+}
+
+impl From<Num> for Exponent {
+    fn from(k: Num) -> Exponent {
+        Exponent::Num(k)
     }
 }
 
 impl From<Int> for Exponent {
     fn from(k: Int) -> Exponent {
-        Exponent::Int(k)
+        Exponent::Num(Num::from(&k))
     }
 }
 
 impl From<u32> for Exponent {
     fn from(k: u32) -> Exponent {
-        Exponent::Int(Int::from(i64::from(k)))
+        Exponent::Num(Num::from(i64::from(k)))
     }
 }
 
@@ -489,28 +496,34 @@ pub fn backward(
 
 /// The members of `x` with `x ** k` in `lo..=hi`, for `k >= 1`, as at most two pieces.
 fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
-    // The largest r >= 0 with r ** k <= v, for v >= 0, or a greater bound for a `k` past `u32`.
+    // The largest r >= 0 with r ** k <= v, for v >= 0, or a greater bound when `k` has no
+    // exact form.
     let floor_root = |v: &End| -> End {
         let Fin(v) = v else { return PosInf };
-        Fin(match k.to_u32() {
-            Some(k) => v.floor_root(k),
-            // Complexity tradeoff: see `pow_end`. `r ** k` exceeds `v` for every `r >= 2`
-            // while `v < 2 ** u32::MAX`, so the root is then exact (0 or 1); past that the
-            // bound is the root for `u32::MAX`, which is at least the root for `k`.
-            None if *v <= Num::ONE => v.clone(),
-            None if *v < Num::from(2).pow(u32::MAX) => Num::ONE,
-            None => v.floor_root(u32::MAX),
+        if let Some(r) = k.num().and_then(|k| v.floor_root_by(k)) {
+            return Fin(r);
+        }
+        // Complexity tradeoff: see `pow_end`. `r ** k` exceeds `v` for every `r >= 2` while
+        // `v < 2 ** u32::MAX`, so the root is then exact (0 or 1); past that the bound is the
+        // root for `u32::MAX`, which is at least the root for `k`.
+        Fin(if *v <= Num::ONE {
+            v.clone()
+        } else if *v < Num::from(2).pow(u32::MAX) {
+            Num::ONE
+        } else {
+            v.floor_root(u32::MAX)
         })
     };
-    // The least r >= 0 with r ** k >= v, for v >= 0, or a smaller bound for a `k` past `u32`.
+    // The least r >= 0 with r ** k >= v, for v >= 0, or a smaller bound when `k` has no exact
+    // form.
     let ceil_root = |v: &End| -> End {
         let Fin(v) = v else { return PosInf };
-        Fin(match k.to_u32() {
-            Some(k) => v.ceil_root(k),
-            // Complexity tradeoff: see `pow_end`. The root is `v` for `v <= 1` and at least 2
-            // past it.
-            None => v.clone().min(Num::from(2)),
-        })
+        // Complexity tradeoff: see `pow_end`. The root is `v` for `v <= 1` and at least 2 past
+        // it.
+        Fin(k
+            .num()
+            .and_then(|k| v.ceil_root_by(k))
+            .unwrap_or_else(|| v.clone().min(Num::from(2))))
     };
     if k.is_odd() {
         // Odd powers are increasing, and odd about 0.
@@ -537,21 +550,24 @@ fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
     vec![(-&r_hi, -&r_lo), (r_lo, r_hi)]
 }
 
-/// `x ** k` at a finite end `x`, rounded outward in `dir`: exact when `k` fits in `u32` and for
-/// the bases 0, 1 and -1, and past `u32` bounded by `2 ** u32::MAX` on the side toward 0.
+/// `x ** k` at a finite end `x`, rounded outward in `dir`: exact for every `k` held as a
+/// [`Num`] that is not kept ([`Num::pow_by`]), with a kept power for a result past `i128`.
 ///
-/// Complexity tradeoff: for `k > u32::MAX` and `abs(x) >= 2` the end is not exact: the side
-/// away from 0 is infinite and the side toward 0 is `2 ** u32::MAX` with the result's sign.
-/// Why: `Exponent::Past` holds only the parity of a count of factors (an exact count costs `d`
-/// bits per name at squaring depth `d`), and `Exponent::Big` holds the kernel's unbuilt prime
-/// powers, which cost their digits to build (`10 ** 10 ** 9`, 3.3·10^9 bits). Trigger: an
-/// exponent past `u32::MAX` on a base other than -1, 0 and 1. Test:
-/// `l01_25_preimage_catalog::powers::an_exponent_of_any_size_is_read_by_its_parity`;
-/// COMPLEXITY.md S30b. A complete solution would keep the exponent of a kept power as a kept
-/// value, so `x ** k` is held exactly for any `k`.
+/// Complexity tradeoff: three exponents have no exact form, and for them the end is bounded
+/// by `2 ** u32::MAX` on the side toward 0 and is infinite on the side away from 0, for
+/// `abs(x) >= 2`: `Exponent::Past`, of which only the parity of a count of factors is held
+/// (an exact count costs `d` bits per name at squaring depth `d`); a kept exponent, such as
+/// the kernel's `10 ** 10 ** 9`, whose power would need a kept atom with a kept exponent; and
+/// a kept base that is not bare (a sum) with `k` past `u32`, whose expansion squares its
+/// terms about 32 times. Trigger: `x ** (2 ** 200)` on a base other than -1, 0 and 1, a
+/// squaring name nested 33 deep, or `(2 ** 200 + 1) ** (2 ** 40)`. Test:
+/// `l01_25_preimage_catalog::powers::an_exponent_of_any_size_is_read_by_its_parity` and
+/// `l01_24_refinement_lattices::past_i64::an_exponent_with_no_exact_form_bounds_outward`;
+/// COMPLEXITY.md S30b and S36. A complete solution would keep the exponent of a kept power as
+/// a kept value, and `s ** k` as an atom.
 fn pow_end(x: &Num, k: &Exponent, dir: Dir) -> End {
-    if let Some(k) = k.to_u32() {
-        return Fin(x.pow(k));
+    if let Some(v) = k.num().and_then(|k| x.pow_by(k)) {
+        return Fin(v);
     }
     match x.to_i64() {
         Some(0) => return End::of(0),
@@ -572,35 +588,34 @@ fn pow_end(x: &Num, k: &Exponent, dir: Dir) -> End {
 /// endpoints move inward to the nearest members of the class, and a single value fixes the
 /// other domain.
 pub fn reduce_congruence(x: &IntervalSet, c: &Congruence) -> (IntervalSet, Congruence) {
-    let Congruence::Class { modulus, residue } = *c else {
+    let Congruence::Class {
+        modulus: m,
+        residue,
+    } = c
+    else {
         return (IntervalSet::empty(), Congruence::Bottom);
     };
-    let x = match modulus {
-        0 => x.meet(&IntervalSet::single(residue)),
-        1 => x.clone(),
-        m => {
-            let (m, residue) = (Num::from(m as i128), Num::from(residue));
-            x.lift1(|(lo, hi)| {
-                let up = |e: &End| match e {
-                    Fin(v) => Fin(v + &(&residue - v).rem_euclid(&m)),
-                    e => e.clone(),
-                };
-                let down = |e: &End| match e {
-                    Fin(v) => Fin(v - &(v - &residue).rem_euclid(&m)),
-                    e => e.clone(),
-                };
-                vec![(up(lo), down(hi))]
-            })
-        }
+    let x = if m.is_zero() {
+        x.meet(&IntervalSet::point(residue.clone()))
+    } else if *m == Num::ONE {
+        x.clone()
+    } else {
+        x.lift1(|(lo, hi)| {
+            let up = |e: &End| match e {
+                Fin(v) => Fin(v + &(residue - v).rem_euclid(m)),
+                e => e.clone(),
+            };
+            let down = |e: &End| match e {
+                Fin(v) => Fin(v - &(v - residue).rem_euclid(m)),
+                e => e.clone(),
+            };
+            vec![(up(lo), down(hi))]
+        })
     };
-    // A congruence's residue is an `i64`, so a single value past it leaves the class as it is.
     let c = match x.bounds() {
         None => Congruence::Bottom,
-        Some((Fin(a), Fin(b))) if a == b => match a.to_i64() {
-            Some(a) => c.meet(&Congruence::single(a)),
-            None => *c,
-        },
-        Some(_) => *c,
+        Some((Fin(a), Fin(b))) if a == b => c.meet(&Congruence::single(a.clone())),
+        Some(_) => c.clone(),
     };
     (x, c)
 }
@@ -790,17 +805,17 @@ mod tests {
                     let (x2, c2) = reduce_congruence(&x, &c);
                     assert!(x2.is_subset(&x), "{x} {c:?}");
                     for v in WINDOW {
-                        if x.contains(v) && c.contains(v) {
-                            assert!(x2.contains(v) && c2.contains(v), "{x} {c:?} lost {v}");
+                        if x.contains(v) && c.contains(&Num::from(v)) {
+                            assert!(
+                                x2.contains(v) && c2.contains(&Num::from(v)),
+                                "{x} {c:?} lost {v}"
+                            );
                         }
                     }
                     for (lo, hi) in x2.pieces() {
                         for e in [lo, hi] {
                             if let Fin(v) = e {
-                                assert!(
-                                    c.contains(v.to_i64().unwrap()),
-                                    "{x} {c:?}: endpoint {v} of {x2}"
-                                );
+                                assert!(c.contains(v), "{x} {c:?}: endpoint {v} of {x2}");
                             }
                         }
                     }

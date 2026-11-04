@@ -1159,6 +1159,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `u64` residues multiplied in `u128` and reduced (`pow_mod`), and big integers reduced modulo a power of 2 by a bit mask (`odd_root_mod_pow2`, `pow_mod_pow2`, `inverse_mod_pow2`) | `store::int::{pow_mod, odd_root_mod_pow2, pow_mod_pow2, inverse_mod_pow2}` | Machine integers; bit operations on `int` | `int` products and `%` (the runtime keeps them in a word while they fit), and a mask as `x % 2 ** k` unless Zed gains bit operations on `int` |
 | The S22a summary's pieces as `i128` values with the ends of `i64` standing for the infinities, entered only when every finite end lies strictly inside `i64` (`in_i64`, `small`; since S22-WIDE `in_range`, the ends strictly inside `i128` and the infinities `i128::MIN` and `i128::MAX`), and nodes copied whole with `..(**node).clone()` now that an end is not `Copy` | `store::preimage::{in_range, small, key, input, apply_tag}` | Machine integers; struct update syntax | Vanishes: ends are `int` and the summary holds them as they are |
 
+## Entries from TD-cong (`zedc/src/store/lattice.rs`, `canon/domain.rs`, `canon/serial.rs`, `store/affine.rs`, `store/int.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Congruence` no longer `Copy`, since its modulus and residue are `Num`: `.clone()` where a class is kept and matched again, and patterns on `Class { modulus, .. }` with a guard `modulus.is_zero()` in place of the literal pattern `modulus: 0` | `lattice::Congruence`, `canon::domain`, `store::{preimage, preimage_ref, product, revision}` | None (literal patterns on a boxed integer) | Vanishes: a class is a record of two `int` values, shared, and an `int` literal pattern matches at any size |
+| The extended Euclid and CRT on `&Num` references with `Num` temporaries | `lattice::inverse`, `Congruence::meet` | Machine integers | Vanishes: `int` arithmetic |
+| A serialization tag chosen by whether both values fit in `i64` (tag 1 and two words, else tag 2 and two decimal texts) | `canon::serial` | Machine integers | One tag; the runtime writes an `int` in its own form |
+| An exponent held as `Exponent::Num(Num)` or `Exponent::Past { odd }`, read through `num() -> Option<&Num>` | `revision::Exponent`, `Num::{pow_by, floor_root_by, ceil_root_by}` | Machine integers | An `int` exponent, with the parity form kept only where a count is not built |
+
 ## Entries from F44-memo (`tests/src/scaling.rs`)
 
 | Rust construct | Sites | Gap | At the port |

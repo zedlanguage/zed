@@ -130,7 +130,7 @@ fn bounds_print_in_the_type_syntax() {
             "[0..=n - 1]",
         ),
         (Bounds::range(Some(n()), None), "[n..]"),
-        (Bounds::range(None, n().times(2)), "[..=2 * n]"),
+        (Bounds::range(None, Some(n().times(2))), "[..=2 * n]"),
         (
             Bounds::range(Some(zero()), Some(affine([1, -1], 1))),
             "[0..=-m + n + 1]",

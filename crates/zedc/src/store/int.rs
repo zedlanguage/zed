@@ -1538,13 +1538,19 @@ impl Kept {
 /// Whether `x`, above zero with integer atoms only, is a perfect `k`-th power. Each round
 /// tests one more prime `p` with `g = gcd(k, p - 1) > 1`: a `k`-th power `a` not divisible by
 /// `p` has `a ** ((p - 1) / g) == 1` modulo `p`, so a failure proves `x` is not one, and for a
-/// value that is not a `k`-th power about `1 - 1/g` of such primes show it. The same round
-/// compares `x` with the `k`-th power of its root at twice the last precision, which decides a
-/// perfect power once the precision reaches the bits of `x`.
+/// value that is not a `k`-th power about `1 - 1/g` of such primes show it. When the number
+/// of primes tested reaches a power of two, `x` is also compared with the `k`-th power of its
+/// root at twice the last precision, which decides a perfect power once the precision reaches
+/// the bits of `x`. Each comparison then costs a constant factor more than the last, and the
+/// residue tests cost one per prime. Doubling the precision for every prime instead reached
+/// `2 ** n` bits by the `n`-th prime, while a `k` whose prime factors are all large
+/// (`2 ** 32 + 1 = 641 * 6700417`) gets no residue test below the prime `2 * 641 + 1`, so
+/// `3 ** (2 ** 32 + 1) + 1` did not finish.
 // Complexity tradeoff: a value that is a perfect `k`-th power passes every prime, so it is
-// decided only when the precision reaches the bits of `x`, at the cost of its digits; the
-// answer is exact. Why: a proof that a number given as a sum of powers is a perfect power
-// needs its root in a closed form, and no general closed form is known for a root of a sum.
+// decided only when the precision reaches the bits of `x`, at the cost of its digits and of
+// one residue test for each 64 bits of `x`; the answer is exact. Why: a proof that a number
+// given as a sum of powers is a perfect power needs its root in a closed form, and no general
+// closed form is known for a root of a sum.
 // Trigger: the ceiling root (`ceil_root`) of a kept value that is not a bare power and is a
 // perfect `k`-th power, such as `(2 ** 200 + 1) ** 2` read as a sum. Test:
 // `l01_24_refinement_lattices::ends::kept_values_with_no_kept_form_are_written_out`;
@@ -1553,8 +1559,10 @@ impl Kept {
 fn is_perfect_power(x: &Kept, k: &BigUint) -> bool {
     let mut p: u64 = 2;
     let mut bits = 64;
+    let mut tested: u64 = 0;
     loop {
         p = next_prime(p);
+        tested += 1;
         let g = Integer::gcd(k, &BigUint::from(p - 1));
         if !g.is_one() {
             let n = BigUint::from(p);
@@ -1563,10 +1571,12 @@ fn is_perfect_power(x: &Kept, k: &BigUint) -> bool {
                 return false;
             }
         }
-        if let (_, Some(perfect)) = root_approx(x, k, bits) {
-            return perfect;
+        if tested.is_power_of_two() {
+            if let (_, Some(perfect)) = root_approx(x, k, bits) {
+                return perfect;
+            }
+            bits *= 2;
         }
-        bits *= 2;
     }
 }
 
@@ -1599,6 +1609,12 @@ impl From<i64> for Num {
 impl From<i32> for Num {
     fn from(v: i32) -> Num {
         Num(Word::Small(i64::from(v)))
+    }
+}
+
+impl From<u64> for Num {
+    fn from(v: u64) -> Num {
+        Num::from(i128::from(v))
     }
 }
 
@@ -1813,6 +1829,16 @@ impl Num {
         matches!(self.0, Word::Small(0))
     }
 
+    /// Whether the value is odd. A kept value is read by its residue modulo 2
+    /// ([`Num::mod_floor`]), not written out.
+    pub fn is_odd(&self) -> bool {
+        match &self.0 {
+            Word::Small(v) => v & 1 == 1,
+            Word::Big(v) => v.is_odd(),
+            Word::Kept(_) => !self.mod_floor(&Num::from(2)).is_zero(),
+        }
+    }
+
     /// The absolute value.
     pub fn abs(&self) -> Num {
         if self.signum() < 0 {
@@ -1976,6 +2002,60 @@ impl Num {
                 Num::power(negative, self.big().magnitude().clone(), BigUint::from(k))
             }
         }
+    }
+
+    /// `self ** k` for `k >= 0` of any size, or `None` when no form holds it: when `k` is
+    /// kept, or `self` is a kept value that is not bare and `k` is past `u32`. A power of a
+    /// value that is not kept is kept as a power, with its exponent `k`, never written out.
+    pub fn pow_by(&self, k: &Num) -> Option<Num> {
+        if let Some(k) = k.to_i64().and_then(|k| u32::try_from(k).ok()) {
+            return Some(self.pow(k));
+        }
+        let negative = self.signum() < 0 && k.is_odd();
+        if self.abs() <= Num::ONE {
+            // 0, 1 and -1 are read by the parity of `k`.
+            return Some(if negative { Num::from(-1) } else { self.abs() });
+        }
+        let exp = k.scalar()?.magnitude().clone();
+        match &self.0 {
+            Word::Small(_) | Word::Big(_) => {
+                Some(Num::power(negative, self.big().magnitude().clone(), exp))
+            }
+            // Complexity tradeoff: a kept value that is not bare raised past `u32` has no form;
+            // it is `None` and the caller bounds outward. Why: expanding it squares its terms
+            // about 32 times, past any memory. Trigger: `(2 ** 200 + 1) ** (2 ** 40)`. Test:
+            // `l01_24_refinement_lattices::past_i64::an_exponent_with_no_exact_form_bounds_outward`;
+            // COMPLEXITY.md S36. A complete solution would keep `s ** k` as an atom for a kept
+            // sum `s`.
+            Word::Kept(x) => {
+                let core = x.bare()?;
+                Some(match core.int_power() {
+                    Some((base, e)) => Num::power(negative, base.clone(), e * exp),
+                    None => Num::bare(negative, core.pow(&exp)),
+                })
+            }
+        }
+    }
+
+    /// [`Num::floor_root`] with `k >= 1` of any size, or `None` when `k` is kept.
+    pub fn floor_root_by(&self, k: &Num) -> Option<Num> {
+        self.root_by(k, false)
+    }
+
+    /// [`Num::ceil_root`] with `k >= 1` of any size, or `None` when `k` is kept.
+    pub fn ceil_root_by(&self, k: &Num) -> Option<Num> {
+        self.root_by(k, true)
+    }
+
+    fn root_by(&self, k: &Num, up: bool) -> Option<Num> {
+        if let Some(k) = k.to_i64().and_then(|k| u32::try_from(k).ok()) {
+            return Some(self.root(k, up));
+        }
+        let k = k.scalar()?.magnitude().clone();
+        Some(match &self.0 {
+            Word::Small(_) | Word::Big(_) => self.root_big(&k, up),
+            Word::Kept(x) => x.root(&k, up),
+        })
     }
 
     /// The greatest `r >= 0` with `r ** k <= self`, for `self >= 0` and `k >= 1`. The root of

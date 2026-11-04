@@ -130,61 +130,60 @@ impl Lattice for IntervalSet {
 }
 
 /// A congruence class `residue mod modulus`, or the bottom. Modulus 0 is the one value
-/// `residue`, and modulus 1 is every integer. The residue is kept in `0..modulus`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// `residue`, and modulus 1 is every integer. The residue is kept in `0..modulus`. Both are
+/// [`Num`]s, so a class past the 64-bit range is held exactly.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Congruence {
     /// No value.
     Bottom,
     /// The integers `x` with `x mod modulus == residue`.
     Class {
-        /// The modulus, 0 for a single value.
-        modulus: u64,
+        /// The modulus, at least 0, and 0 for a single value.
+        modulus: Num,
         /// The residue, in `0..modulus`, or the value when the modulus is 0.
-        residue: i64,
+        residue: Num,
     },
 }
 
-fn gcd(a: u64, b: u64) -> u64 {
-    if b == 0 { a } else { gcd(b, a % b) }
-}
-
-/// The inverse of `a` modulo `n`, for `a` and `n` coprime, in `0..n` (1 when `n` is 1).
-fn inverse(a: i128, n: i128) -> i128 {
+/// The inverse of `a` modulo `n`, for `a` and `n` coprime and `n >= 1`, in `0..n` (0 when `n`
+/// is 1).
+fn inverse(a: &Num, n: &Num) -> Num {
     // The extended Euclidean algorithm on (a, n), keeping only the coefficient of a.
-    let (mut r0, mut r1, mut t0, mut t1) = (a.rem_euclid(n), n, 1i128, 0i128);
-    while r1 != 0 {
-        let q = r0 / r1;
-        (r0, r1) = (r1, r0 - q * r1);
-        (t0, t1) = (t1, t0 - q * t1);
+    let (mut r0, mut r1) = (a.rem_euclid(n), n.clone());
+    let (mut t0, mut t1) = (Num::ONE, Num::ZERO);
+    while !r1.is_zero() {
+        let q = r0.div_floor(&r1);
+        let r2 = &r0 - &(&q * &r1);
+        let t2 = &t0 - &(&q * &t1);
+        (r0, r1) = (r1, r2);
+        (t0, t1) = (t1, t2);
     }
     t0.rem_euclid(n)
 }
 
 impl Congruence {
-    /// The class `residue mod modulus`, normalized.
-    pub fn new(modulus: u64, residue: i64) -> Self {
-        let residue = if modulus == 0 {
+    /// The class `residue mod modulus`, normalized: the modulus taken by its magnitude.
+    pub fn new(modulus: impl Into<Num>, residue: impl Into<Num>) -> Self {
+        let (modulus, residue) = (modulus.into().abs(), residue.into());
+        let residue = if modulus.is_zero() {
             residue
         } else {
-            residue.rem_euclid(modulus as i64)
+            residue.rem_euclid(&modulus)
         };
         Congruence::Class { modulus, residue }
     }
 
     /// The one value `v`.
-    pub fn single(v: i64) -> Self {
-        Congruence::new(0, v)
+    pub fn single(v: impl Into<Num>) -> Self {
+        Congruence::new(Num::ZERO, v)
     }
 
     /// Whether `v` is a member.
-    pub fn contains(&self, v: i64) -> bool {
-        match *self {
+    pub fn contains(&self, v: &Num) -> bool {
+        match self {
             Congruence::Bottom => false,
-            Congruence::Class {
-                modulus: 0,
-                residue,
-            } => v == residue,
-            Congruence::Class { modulus, residue } => v.rem_euclid(modulus as i64) == residue,
+            Congruence::Class { modulus, residue } if modulus.is_zero() => v == residue,
+            Congruence::Class { modulus, residue } => v.rem_euclid(modulus) == *residue,
         }
     }
 }
@@ -192,13 +191,10 @@ impl Congruence {
 impl std::fmt::Display for Congruence {
     /// `{}`, `5`, `1 mod 3`, or `any` for every integer.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {
+        match self {
             Congruence::Bottom => write!(f, "{{}}"),
-            Congruence::Class {
-                modulus: 0,
-                residue,
-            } => write!(f, "{residue}"),
-            Congruence::Class { modulus: 1, .. } => write!(f, "any"),
+            Congruence::Class { modulus, residue } if modulus.is_zero() => write!(f, "{residue}"),
+            Congruence::Class { modulus, .. } if *modulus == Num::ONE => write!(f, "any"),
             Congruence::Class { modulus, residue } => write!(f, "{residue} mod {modulus}"),
         }
     }
@@ -209,12 +205,12 @@ impl Lattice for Congruence {
         Congruence::Bottom
     }
     fn top() -> Self {
-        Congruence::new(1, 0)
+        Congruence::new(Num::ONE, Num::ZERO)
     }
     fn join(&self, other: &Self) -> Self {
         use Congruence::*;
-        match (*self, *other) {
-            (Bottom, c) | (c, Bottom) => c,
+        match (self, other) {
+            (Bottom, c) | (c, Bottom) => c.clone(),
             (
                 Class {
                     modulus: m,
@@ -224,19 +220,16 @@ impl Lattice for Congruence {
                     modulus: n,
                     residue: s,
                 },
-            ) => {
-                let d = r.abs_diff(s);
-                Congruence::new(gcd(gcd(m, n), d), r)
-            }
+            ) => Congruence::new(m.gcd(n).gcd(&(r - s)), r.clone()),
         }
     }
     fn meet(&self, other: &Self) -> Self {
         use Congruence::*;
-        match (*self, *other) {
+        match (self, other) {
             (Bottom, _) | (_, Bottom) => Bottom,
             (
                 Class {
-                    modulus: 0,
+                    modulus,
                     residue: v,
                 },
                 c,
@@ -244,12 +237,12 @@ impl Lattice for Congruence {
             | (
                 c,
                 Class {
-                    modulus: 0,
+                    modulus,
                     residue: v,
                 },
-            ) => {
+            ) if modulus.is_zero() => {
                 if c.contains(v) {
-                    Congruence::single(v)
+                    Congruence::single(v.clone())
                 } else {
                     Bottom
                 }
@@ -266,19 +259,16 @@ impl Lattice for Congruence {
             ) => {
                 // The Chinese remainder theorem: solvable iff r ≡ s mod g = gcd(m, n), and then
                 // the solutions are one class modulo lcm(m, n): x = r + m·k, where
-                // (m/g)·k ≡ (s - r)/g mod n/g.
-                let g = gcd(m, n);
-                if (s as i128 - r as i128).rem_euclid(g as i128) != 0 {
+                // (m/g)·k ≡ (s - r)/g mod n/g. Exact for every size: the lcm of two moduli
+                // past the 64-bit range is held as a `Num`.
+                let g = m.gcd(n);
+                let d = s - r;
+                if !d.rem_euclid(&g).is_zero() {
                     return Bottom;
                 }
-                let (m1, n1) = ((m / g) as i128, (n / g) as i128);
-                let Ok(l) = u64::try_from(m1 * n as i128) else {
-                    // The class is too fine to represent; either operand is a sound bound.
-                    return if m >= n { *self } else { *other };
-                };
-                let k = ((s as i128 - r as i128) / g as i128).rem_euclid(n1) * inverse(m1, n1);
-                let x = (r as i128 + m as i128 * k.rem_euclid(n1)).rem_euclid(l as i128);
-                Congruence::new(l, x as i64)
+                let (m1, n1) = (m.div_floor(&g), n.div_floor(&g));
+                let k = &d.div_floor(&g).rem_euclid(&n1) * &inverse(&m1, &n1);
+                Congruence::new(&m1 * n, r + &(m * &k.rem_euclid(&n1)))
             }
         }
     }
@@ -301,9 +291,10 @@ impl Lattice for Congruence {
     /// rule, as the interval narrowing has), which keeps each chain finite.
     fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
         match next {
-            _ if *self == Congruence::top() => *next,
-            Congruence::Bottom | Congruence::Class { modulus: 0, .. } => *next,
-            _ => *self,
+            _ if *self == Congruence::top() => next.clone(),
+            Congruence::Bottom => Congruence::Bottom,
+            Congruence::Class { modulus, .. } if modulus.is_zero() => next.clone(),
+            _ => self.clone(),
         }
     }
 }
@@ -439,14 +430,14 @@ mod tests {
         for a in classes() {
             for b in classes() {
                 let (j, m) = (a.join(&b), a.meet(&b));
-                for v in window.clone() {
+                for v in window.clone().map(Num::from) {
                     assert!(
-                        !(a.contains(v) || b.contains(v)) || j.contains(v),
+                        !(a.contains(&v) || b.contains(&v)) || j.contains(&v),
                         "{a:?} ⊔ {b:?}"
                     );
                     assert_eq!(
-                        m.contains(v),
-                        a.contains(v) && b.contains(v),
+                        m.contains(&v),
+                        a.contains(&v) && b.contains(&v),
                         "{a:?} ⊓ {b:?} at {v}"
                     );
                 }

@@ -9,7 +9,7 @@ use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
-use zedc::store::interval::{End, IntervalSet};
+use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::lattice::Congruence;
 use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage};
 
@@ -363,7 +363,8 @@ fn run_exact(seed: u64, cases: usize, test: bool) -> ExactTally {
             let m = rng.int(2, 4);
             classes.insert("x".into(), Congruence::new(m as u64, rng.int(0, m - 1)));
         }
-        let member = |k: &Arc<str>, v: i64| classes.get(k).is_none_or(|c| c.contains(v));
+        let member =
+            |k: &Arc<str>, v: i64| classes.get(k).is_none_or(|c| c.contains(&Num::from(v)));
         let p = exact_preimage(&term, &ds, &classes, &demand);
         for (k, v) in &p.domains {
             assert!(v.is_subset(&ds[k]), "{term}: {k} {v} is outside its domain");
