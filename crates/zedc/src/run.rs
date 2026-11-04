@@ -30,6 +30,8 @@ pub enum PortKind {
     Lines,
     /// `Files`, a lookup by path.
     Files,
+    /// `CommandLine`, the arguments after `--`, keyed by position from 1 (step L1.19a).
+    CommandLine,
 }
 
 /// A way to run a closed term in an evaluator, in place of [`Evaluator::run`]: through
@@ -61,13 +63,16 @@ pub struct Wave {
     pub record: Record,
 }
 
-/// The inputs a wave read: each `Lines` port's bytes and each `Files` port's reads.
+/// The inputs a wave read: each `Lines` port's bytes, each `Files` port's reads, and the
+/// command-line arguments when a `CommandLine` port reads them.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Record {
     /// The bytes of each `Lines` port.
     pub lines: BTreeMap<String, Vec<u8>>,
     /// The paths read from each `Files` port and what each read gave.
     pub files: BTreeMap<String, BTreeMap<Value, Value>>,
+    /// The arguments after `--`, in order; empty when `main` has no `CommandLine` port.
+    pub args: Vec<String>,
 }
 
 /// The program in `bytes`, or its errors, one per line as `line:col: why`.
@@ -324,8 +329,9 @@ pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, String> {
     let kind = |name: &str, ty: Option<&ast::Type>| match ty.map(|t| &t.kind) {
         Some(TypeKind::Name(n)) if n == "Lines" => Ok(PortKind::Lines),
         Some(TypeKind::Name(n)) if n == "Files" => Ok(PortKind::Files),
+        Some(TypeKind::Name(n)) if n == "CommandLine" => Ok(PortKind::CommandLine),
         _ => Err(format!(
-            "port `{name}` of `main` is `Lines` or `Files` at layer L1"
+            "port `{name}` of `main` is `Lines`, `Files` or `CommandLine` at layer L1"
         )),
     };
     let inputs = main
@@ -387,25 +393,38 @@ impl Program {
         &self.outputs
     }
 
-    /// Runs one wave: `lines` gives the bytes of each `Lines` input, and `files` the lookup
-    /// behind each `Files` input. An error stops the wave before anything is written.
+    /// Runs one wave with no command-line arguments: `lines` gives the bytes of each `Lines`
+    /// input, and `files` the lookup behind each `Files` input. An error stops the wave before
+    /// anything is written.
     pub fn run(
         &self,
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<Wave, String> {
-        Ok(self.wave(lines, files, false, &direct, None)?.0)
+        self.run_args(lines, &[], files)
     }
 
-    /// Runs one wave as [`Program::run`] does, with the wave's term run by `map`: the test
-    /// runner's way to run a program through another form.
+    /// Runs one wave as [`Program::run`] does, with `args` the arguments after `--` that each
+    /// `CommandLine` input holds.
+    pub fn run_args(
+        &self,
+        lines: &BTreeMap<String, Vec<u8>>,
+        args: &[String],
+        files: impl Fn(&str) -> Arc<dyn Lookup>,
+    ) -> Result<Wave, String> {
+        Ok(self.wave(lines, args, files, false, &direct, None)?.0)
+    }
+
+    /// Runs one wave as [`Program::run_args`] does, with the wave's term run by `map`: the
+    /// test runner's way to run a program through another form.
     pub fn run_through(
         &self,
         lines: &BTreeMap<String, Vec<u8>>,
+        args: &[String],
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         map: &Through<'_>,
     ) -> Result<Wave, String> {
-        Ok(self.wave(lines, files, false, map, None)?.0)
+        Ok(self.wave(lines, args, files, false, map, None)?.0)
     }
 
     /// Runs one wave as [`Program::run_through`] does, with `main` in place of the program's
@@ -414,10 +433,11 @@ impl Program {
         &self,
         main: &Term,
         lines: &BTreeMap<String, Vec<u8>>,
+        args: &[String],
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         map: &Through<'_>,
     ) -> Result<Wave, String> {
-        Ok(self.wave(lines, files, false, map, Some(main))?.0)
+        Ok(self.wave(lines, args, files, false, map, Some(main))?.0)
     }
 
     /// Runs one wave as [`Program::run`] does, and records its provenance (step L1.20): the
@@ -427,13 +447,14 @@ impl Program {
         lines: &BTreeMap<String, Vec<u8>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<(Wave, Provenance), String> {
-        let (wave, prov) = self.wave(lines, files, true, &direct, None)?;
+        let (wave, prov) = self.wave(lines, &[], files, true, &direct, None)?;
         Ok((wave, prov.expect("provenance was recorded")))
     }
 
     fn wave(
         &self,
         lines: &BTreeMap<String, Vec<u8>>,
+        args: &[String],
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         trace: bool,
         map: &Through<'_>,
@@ -451,6 +472,10 @@ impl Program {
                     record.lines.insert(name.clone(), bytes.clone());
                 }
                 PortKind::Files => world = world.source(name, files(name)),
+                PortKind::CommandLine => {
+                    world = world.input(name, arguments(args));
+                    record.args = args.to_vec();
+                }
             }
         }
         for name in &self.outputs {
@@ -494,7 +519,7 @@ impl Program {
 
     /// Runs the wave `record` holds, reading nothing from the world.
     pub fn replay(&self, record: &Record) -> Result<Wave, String> {
-        self.run(&record.lines, |name| {
+        self.run_args(&record.lines, &record.args, |name| {
             Arc::new(Recorded(
                 record.files.get(name).cloned().unwrap_or_default(),
             ))
@@ -540,6 +565,15 @@ pub fn split_lines(port: &str, bytes: &[u8]) -> Value {
         (Value::Int(i as i64 + 1), v)
     });
     Value::Family(Family::of(lines))
+}
+
+/// The value of a `CommandLine` input: the family of `args`, keyed by position from 1.
+pub fn arguments(args: &[String]) -> Value {
+    let args = args
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (Value::Int(i as i64 + 1), Value::str(a)));
+    Value::Family(Family::of(args))
 }
 
 /// The bytes a push of `v` writes to `Lines` port `port`: each string, then `\n`.
@@ -605,8 +639,9 @@ impl Record {
     /// its kind and the lengths of its fields, then the fields' bytes and a `\n`:
     /// `lines P B` (port, bytes), `text P K B` (port, path, contents), and `missing P K` and
     /// `error P K O W` (port, path, operation, reason) for a read that gave `#notFound` or
-    /// `#ioError(op: O, path: K, why: W)`. An `error P K` entry, as a record written before the
-    /// payload has it, reads back as a bare `#ioError`.
+    /// `#ioError(op: O, path: K, why: W)`, and `arg A` for each command-line argument, in
+    /// order. An `error P K` entry, as a record written before the payload has it, reads back
+    /// as a bare `#ioError`.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = MAGIC.as_bytes().to_vec();
         let mut entry = |kind: &str, fields: &[&[u8]]| {
@@ -646,6 +681,9 @@ impl Record {
                 }
             }
         }
+        for a in &self.args {
+            entry("arg", &[a.as_bytes()]);
+        }
         out
     }
 
@@ -684,6 +722,7 @@ impl Record {
                     let reads = record.files.entry(text(p)?).or_default();
                     reads.insert(Value::str(&text(k)?), v);
                 }
+                ("arg", [a]) => record.args.push(text(a)?),
                 _ => return Err(bad()),
             }
         }
@@ -691,19 +730,27 @@ impl Record {
     }
 }
 
-/// `zedc run <file> [port=path …] [--record <out>]` and
-/// `zedc replay <file> <record> [port=path …]`, with `args` the words after `zedc`. A
-/// `Lines` input reads the file bound to it, or standard input if it is `stdin`; a `Lines`
-/// output writes the file bound to it, or standard output or error if it is `stdout` or
-/// `stderr`. Returns the exit status: 0, 1 when the program fails or a write fails, 2 for
-/// a usage error.
+/// `zedc run <file> [port=path …] [--record <out>] [-- arg …]` and
+/// `zedc replay <file> <record> [port=path …] [-- arg …]`, with `args` the words after
+/// `zedc`. A `Lines` input reads the file bound to it, or standard input if it is `stdin`; a
+/// `CommandLine` input holds the words after `--`, which a replay ignores for the recorded
+/// ones; a `Lines` output writes the file bound to it, or standard output or error if it is
+/// `stdout` or `stderr`. Returns the exit status: 0, 1 when the program fails or a write
+/// fails, 2 for a usage error, among them a word that is not UTF-8.
 pub fn command(
-    args: &[String],
+    args: &[impl AsRef<std::ffi::OsStr>],
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> u8 {
-    match command_inner(args, stdin, stdout, stderr) {
+    let words = match words(args) {
+        Ok(words) => words,
+        Err(why) => {
+            let _ = writeln!(stderr, "{why}");
+            return 2;
+        }
+    };
+    match command_inner(&words, stdin, stdout, stderr) {
         Ok(()) => 0,
         Err((status, why)) => {
             let _ = writeln!(stderr, "{why}");
@@ -712,8 +759,45 @@ pub fn command(
     }
 }
 
+/// The words of a command line: those before the first `--`, and the arguments after it.
+struct Words<'a> {
+    command: Vec<&'a str>,
+    args: Vec<String>,
+}
+
+/// The words `args` of a command line as text, or why one is not UTF-8: a word before `--`
+/// is named by its place among the words after `zedc`, an argument after it by its position
+/// from 1, the key a `CommandLine` port gives it.
+fn words(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Words<'_>, String> {
+    let args: Vec<&std::ffi::OsStr> = args.iter().map(AsRef::as_ref).collect();
+    let split = args.iter().position(|w| *w == "--");
+    let (before, after) = match split {
+        Some(i) => (&args[..i], &args[i + 1..]),
+        None => (&args[..], &[][..]),
+    };
+    let command = before
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, w)| {
+            w.to_str()
+                .ok_or_else(|| format!("word {} of the command line is not UTF-8", i + 1))
+        })
+        .collect::<Result<_, _>>()?;
+    let args = after
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            w.to_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("command-line argument {} is not UTF-8", i + 1))
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(Words { command, args })
+}
+
 fn command_inner(
-    args: &[String],
+    words: &Words<'_>,
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
@@ -721,21 +805,21 @@ fn command_inner(
     let usage = || {
         (
             2,
-            "usage: zedc run <file> [port=path …] [--record <out>]\n       \
-             zedc replay <file> <record> [port=path …]"
+            "usage: zedc run <file> [port=path …] [--record <out>] [-- arg …]\n       \
+             zedc replay <file> <record> [port=path …] [-- arg …]"
                 .to_string(),
         )
     };
-    let (replay, file, mut rest) = match args {
-        [cmd, file, rest @ ..] if cmd == "run" => (None, file, rest),
-        [cmd, file, record, rest @ ..] if cmd == "replay" => (Some(record), file, rest),
+    let (replay, file, mut rest) = match &words.command[..] {
+        [cmd, file, rest @ ..] if *cmd == "run" => (None, file, rest),
+        [cmd, file, record, rest @ ..] if *cmd == "replay" => (Some(record), file, rest),
         _ => return Err(usage()),
     };
     let mut record_to = None;
     let mut binds = BTreeMap::new();
     while let [word, more @ ..] = rest {
         rest = more;
-        if word == "--record" && replay.is_none() {
+        if *word == "--record" && replay.is_none() {
             let [out, more @ ..] = rest else {
                 return Err(usage());
             };
@@ -795,7 +879,7 @@ fn command_inner(
                 }
                 lines.insert(name.clone(), bytes);
             }
-            program.run(&lines, |_| Arc::new(Disk))
+            program.run_args(&lines, &words.args, |_| Arc::new(Disk))
         }
     }
     .map_err(|e| (1, e))?;

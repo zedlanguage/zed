@@ -231,7 +231,16 @@ fn is_off(a: &Annot) -> bool {
 }
 
 /// The type names of the prelude at L1; a unit declares no type before L2.
-const TYPES: &[&str] = &["int", "rat", "f64", "bool", "String", "Lines", "Files"];
+const TYPES: &[&str] = &[
+    "int",
+    "rat",
+    "f64",
+    "bool",
+    "String",
+    "Lines",
+    "Files",
+    "CommandLine",
+];
 
 /// The carriers, which a bounded type variable ranges over, in the order the checker prints
 /// them.

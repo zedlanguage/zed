@@ -155,7 +155,7 @@ pub fn program(text: &str, input: &[u8], engines: &[Engine<'_>]) -> (Report, Opt
     let files = |_: &str| -> Arc<dyn Lookup> { Arc::new(Same(text.clone())) };
     let want = writes(p.run(&lines, files));
     for (name, engine) in engines {
-        let got = writes(p.run_through(&lines, files, engine));
+        let got = writes(p.run_through(&lines, &[], files, engine));
         r.compare("the wave", name, &want, &got);
     }
     (r, Some(want))

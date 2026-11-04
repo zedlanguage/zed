@@ -62,6 +62,7 @@ fn a_record_round_trips_any_bytes() {
     let record = Record {
         lines,
         files: BTreeMap::from([("fs".to_string(), files)]),
+        args: vec!["--".to_string(), "a\nb".to_string()],
     };
     let bytes = record.to_bytes();
     assert!(bytes.starts_with(b"zed record 1\nlines 5 9\nstdin"));

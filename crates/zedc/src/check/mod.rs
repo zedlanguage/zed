@@ -1918,7 +1918,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Checks that a value of `t` may be pushed to a `Lines` port (L1.19): a `String` or a
     /// family of strings. A failure is disposed of before it reaches a port (sec:failure). A
     /// family writes its stored entries, so the `#notFound` of a key it lacks is not pushed;
-    /// at L1 the families are the `Lines` ports, which store no `#notFound`.
+    /// at L1 the families are the `Lines` and `CommandLine` ports, which store no `#notFound`.
     fn pushed(&mut self, t: &Ty, span: Span) {
         let strings = |t: &KType| t.subtype(&KType::string());
         let plain = |t: &Ty| t.tuples.is_empty() && t.vars.is_empty();
@@ -4277,19 +4277,22 @@ fn io_error() -> Ty {
 /// The type of a port of `main` (L1.19): a `Lines` input is the family of its lines by number
 /// from 1, each a `String` or `#ioError(op:, path:, why:)`, and a `Files` input answers a path
 /// with its text, `#notFound` or `#ioError(op:, path:, why:)`; a lookup outside the family's
-/// keys is `#notFound`.
-fn port(lines: bool) -> Ty {
-    let key = if lines { Carrier::Int } else { Carrier::Str };
+/// keys is `#notFound`. A `CommandLine` input (L1.19a) is the family of the arguments by
+/// position from 1, each a `String`. `key` is the key's carrier and `io` whether a read can be
+/// `#ioError`; a port keyed by `int` is a family, data, and one keyed by path a lookup.
+fn port(key: Carrier, io: bool) -> Ty {
+    let mut result = Ty::carrier(Carrier::Str).union(&Ty::set(KType::atom("notFound")));
+    if io {
+        result = result.union(&io_error());
+    }
     Ty::func(Arc::new(Sig {
         params: positional(1),
         arrows: vec![Arrow {
             params: vec![Ty::carrier(key)],
-            result: Ty::carrier(Carrier::Str)
-                .union(&io_error())
-                .union(&Ty::set(KType::atom("notFound"))),
+            result,
         }],
         bounds: BTreeMap::new(),
-        data: lines,
+        data: key == Carrier::Int,
         needs: Vec::new(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
@@ -4446,8 +4449,9 @@ impl<'a> Denote<'a> {
                 "f64" => Ty::carrier(Carrier::F64),
                 "bool" => Ty::carrier(Carrier::Bool),
                 "String" => Ty::carrier(Carrier::Str),
-                "Lines" => port(true),
-                "Files" => port(false),
+                "Lines" => port(Carrier::Int, true),
+                "Files" => port(Carrier::Str, true),
+                "CommandLine" => port(Carrier::Int, false),
                 v => {
                     // A use outside every function type of its clause, as in `int \ T`, bounds
                     // nothing; resolve rejects it.

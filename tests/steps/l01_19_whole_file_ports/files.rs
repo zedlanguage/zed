@@ -92,7 +92,7 @@ fn ports_are_lines_or_files_at_l1() {
     let e = load(b"main(n: int) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n").err();
     assert_eq!(
         e.as_deref(),
-        Some("port `n` of `main` is `Lines` or `Files` at layer L1")
+        Some("port `n` of `main` is `Lines`, `Files` or `CommandLine` at layer L1")
     );
     let e = load(b"main(fs: Files) -> (out: Files) {\n  out <- fs;\n}\n").err();
     assert_eq!(

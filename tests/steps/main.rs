@@ -19,6 +19,7 @@ mod l01_16_elaboration;
 mod l01_17_value_representation;
 mod l01_18_scalar_interpreter;
 mod l01_19_whole_file_ports;
+mod l01_19a_command_line;
 mod l01_20_provenance;
 mod l01_21_test_runner;
 mod l01_22_type_representation;

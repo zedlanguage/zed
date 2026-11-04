@@ -3,7 +3,8 @@
 //!
 //! A row of a function's table passes when the call equals the expected value under `==`. A
 //! row of `main`'s table is a wave: the key gives the input ports, a `Lines` port as the
-//! `String` of its bytes and a `Files` port as a function from path to contents, and the
+//! `String` of its bytes, a `Files` port as a function from path to contents and a
+//! `CommandLine` port as a `String` holding its arguments one per line, and the
 //! value gives the `String` each output port writes. A unit that is rejected passes when
 //! every diagnostic is on a line marked ✗ and every marked line has one, of the row of the
 //! rejection table its comment names if it names one (`// ✗ Missing argument: …`); its tables
@@ -227,6 +228,8 @@ pub(crate) fn wave(
 ) -> Result<(), String> {
     let mut lines = BTreeMap::new();
     let mut files: BTreeMap<&str, Arc<dyn Lookup>> = BTreeMap::new();
+    // The arguments the first `CommandLine` port is given, and its name.
+    let mut args: Option<(&str, Vec<String>)> = None;
     for ((name, kind), arg) in program.inputs().iter().zip(&t.args) {
         match kind {
             PortKind::Lines => match value(cones, swap, arg, map)? {
@@ -245,15 +248,37 @@ pub(crate) fn wave(
                     Arc::new(Given(interp::prelude(cones.close_with(arg.clone(), swap)))),
                 );
             }
+            PortKind::CommandLine => match value(cones, swap, arg, map)? {
+                Value::Str(s) => {
+                    let given = given_args(&s);
+                    match &args {
+                        Some((first, a)) if *a != given => {
+                            return Err(format!(
+                                "the `CommandLine` ports `{first}` and `{name}` are given \
+                                 different arguments; a run has one command line"
+                            ));
+                        }
+                        Some(_) => {}
+                        None => args = Some((name, given)),
+                    }
+                }
+                v => {
+                    return Err(format!(
+                        "the `CommandLine` port `{name}` is given as a String, one argument \
+                         per line, not {v}"
+                    ));
+                }
+            },
         }
     }
+    let args = args.map(|(_, a)| a).unwrap_or_default();
     let wave = match swap {
-        None => program.run_through(&lines, |name| files[name].clone(), map)?,
+        None => program.run_through(&lines, &args, |name| files[name].clone(), map)?,
         Some(_) => {
             let main = program.unit.defs.iter().find(|d| d.name == "main");
             let main = Term::Var(main.expect("`main` was elaborated").kernel.clone());
             let main = cones.close_with(main, swap);
-            program.run_main_through(&main, &lines, |name| files[name].clone(), map)?
+            program.run_main_through(&main, &lines, &args, |name| files[name].clone(), map)?
         }
     };
     let outputs = program.outputs();
@@ -284,6 +309,20 @@ pub(crate) fn wave(
         }
     }
     Ok(())
+}
+
+/// The arguments a test gives a `CommandLine` port as the `String` `s`, one per line, the
+/// lines read as a `Lines` input's are: a line ends at `\n`, a `\r` before it is dropped, and a
+/// last line needs no `\n`.
+fn given_args(s: &str) -> Vec<String> {
+    let mut lines: Vec<&str> = s.split('\n').collect();
+    if lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    lines
+        .into_iter()
+        .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
+        .collect()
 }
 
 /// A `Files` port a test gives as a function from path to contents.

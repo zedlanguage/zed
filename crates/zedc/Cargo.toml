@@ -22,6 +22,11 @@ zed-kernel.workspace = true
 name = "zedc_binary"
 path = "../../tests/steps/m0_09_kernel_evaluator/binary.rs"
 
+# The executable given command-line arguments (step L1.19a).
+[[test]]
+name = "command_line_binary"
+path = "../../tests/steps/l01_19a_command_line/binary.rs"
+
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build.
