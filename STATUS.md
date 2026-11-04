@@ -986,7 +986,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ISSUE1-else-atoms | repair attempt 1 | 2026-11-03 16:04 | aliases followed: resolver records s = name bindings (Resolution::aliases), check::handled joins them in a union-find; alias probes print 'the body ran'; chain- |
 | KEPT-neg-hash | impl attempt 1 | 2026-11-03 17:39 | correctness control (Neg guard disabled, not committed): 3 of 5 boundary tests fail on the hash of -(kept 2^127), random walk included; load 53 |
 | LIT-adopt | impl attempt 1 | 2026-11-03 16:46 | negative control (ctl, base data() clone walk + base tuple_step): deep-tuple check_order fails, sizes 32/256 allocate 29.1 MB / 4118 MB, 141.7x > 24x; with the  |
-| MATCH-rewrite | repair attempt 3 | 2026-11-03 17:09 | done: L6.12b g calls now g(t, y: 2 * y) and g(t, y: 2 * y + 1); check parsed 154 failed 0 OK, fences 0, load 54; no Rust change (prereqs unmerged) |
 | NAME-ties | repair attempt 2 | 2026-11-03 09:30 | Refusal::Unordered + settle_as_sets built; names incl. disjunctions_whose_atoms_share_a_color: 25/25 pass (was 5/1000 name-dependent); full suite started / load |
 | NARROW-if | impl attempt 1 | 2026-11-03 16:46 | arms.rs: test nodes + lazy reduced-product scopes; pc.zed and the four ** repros pass |
 | PRINT-tyvars | repair attempt 2 | 2026-11-03 16:46 | start: continue wt/print-tyvars c13e06d6; rebase on main 2c3d97ac, fix named_calls pin, resolve fence drift |
