@@ -372,7 +372,7 @@ fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
     // bytes for 8 times n at ab0d3a84. Now a class solved to a type with no variable is
     // replaced outside the lambdas only, and read through the union-find inside them by the
     // comparisons and messages that read them; `finish` settles each signature once
-    // (CHK-carrier, COMPLEXITY.md F71). Per node at n = 100 and 800: 274103 and 274564
+    // (CHK-carrier, COMPLEXITY.md F77). Per node at n = 100 and 800: 274103 and 274564
     // instructions, 49621 and 49236 bytes; replaced at every depth, 798369 and 4944027
     // instructions, 101619 and 481807 bytes.
     assert_eq!(
@@ -821,7 +821,7 @@ fn a_chain_of_calls_on_one_value_checks_in_linear_time() {
     // Each call's result is a function that holds the rest of the chain. A set of functions
     // hashed each whole (`Ty::union`), and `hold` walked each result whole, so each call cost
     // the depth left: n^2. A signature's hash is now made once from those of the functions it
-    // holds ([`Sig::digest`]), and `hold` reads their facts (CHK-carrier, COMPLEXITY.md F71).
+    // holds ([`Sig::digest`]), and `hold` reads their facts (CHK-carrier, COMPLEXITY.md F77).
     // Per node at n = 100 and 800: 413888 and 413130 instructions, 70057 and 69516 bytes;
     // before, 1076078 and 5444818 instructions, 82672 and 166976 bytes.
     let (info, _) = super::info(&call_chain(3));

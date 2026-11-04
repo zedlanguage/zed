@@ -1482,7 +1482,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // as its type wherever a function's arrows are read ([`Self::open`], [`Self::stale`]),
         // and replaced once in what `finish` shows. Replacing it at every depth cost the
         // size of `sig` at each level, n^2 for n nested lambdas whose parameters each take a
-        // carrier (ledger CHK-carrier, COMPLEXITY.md F71).
+        // carrier (ledger CHK-carrier, COMPLEXITY.md F77).
         // Complexity tradeoff: a class bound to another class's variable or to the unknown is
         // still replaced at every depth, O(size of `sig`) at each level that binds one, so n
         // nested lambdas that each bind such a class would cost n^2 (no such family measured);

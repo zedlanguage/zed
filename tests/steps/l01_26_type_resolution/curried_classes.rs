@@ -1,5 +1,5 @@
 //! A class solved to a carrier when a lambda ends is replaced outside the lambdas it holds
-//! and read through the union-find inside them (CHK-carrier, COMPLEXITY.md F71). What the
+//! and read through the union-find inside them (CHK-carrier, COMPLEXITY.md F77). What the
 //! checker finds of the calls, comparisons and messages that read those lambdas is what it
 //! found when the class was replaced at every depth: `curried_classes.txt` is the output
 //! of that build, this checker with `replace` in place of `replace_outside` in `generalize`.
