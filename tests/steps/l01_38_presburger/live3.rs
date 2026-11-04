@@ -30,7 +30,11 @@ fn enumerate(rows: &[Row3], h: i64) -> bool {
     (-h..=h).any(|a| (-h..=h).any(|b| (-h..=h).any(|c| holds(rows, &[a, b, c].map(int)))))
 }
 
-/// The rows `±x_i + h >= 0`.
+/// The rows `±    // The empty slab c·x = 1 of `parity_slabs_are_decided`, c = (10^6 + 1, 10^6 + 3, 10^6 + 5),
+// over the cube |x_i| <= 5, and m rows more with coefficients up to 50, each holding the
+// whole cube with slack 0 to 5, so no row bound settles it. Every stage runs over all the
+// rows: the linear programs, the rounding, LLL (the flat direction is c) and `twovar` on the
+// one plane c·x = 1, which has no point in the cube. The work is O(m log m). + h >= 0`.
 fn cube(h: i64) -> Vec<Row3> {
     (0..3)
         .flat_map(|i| {
@@ -359,4 +363,243 @@ fn wide_coefficients_scale() {
         thin(8, 9, bits(64 * scaling::FACTOR as u32)),
     );
     scales("rows of wide coefficients, in bits", 64, 1, &small, &large);
+}
+
+// Plan item LIVE3-TESTS (from the XR3 round 3 synthesis): the systems the cross-review named,
+// each with its answer found here by hand and by enumeration, and the slab family at `n` and
+// `8n` rows.
+
+/// The rows `a <= c·x <= a + w`.
+fn slab(c: [i64; 3], a: i64, w: i64) -> Vec<Row3> {
+    vec![row(c, -a), row(c.map(|c| -c), a + w)]
+}
+
+/// The rows `-h <= x_i <= h` for each `i` in `which`.
+fn bounds(which: &[usize], h: i64) -> Vec<Row3> {
+    cube(h)
+        .into_iter()
+        .enumerate()
+        .filter(|(j, _)| which.contains(&(j / 2)))
+        .map(|(_, r)| r)
+        .collect()
+}
+
+/// The rows as a formula over `x`, `y` and `z`, for the path through `satisfiable`.
+fn formula(rows: &[Row3]) -> Formula {
+    let v = |n: &str| Lin::atom(zedc::store::presburger::Atom::Sym(n.into()));
+    Formula::and(
+        rows.iter()
+            .map(|(a, k)| {
+                let l = ["x", "y", "z"]
+                    .iter()
+                    .zip(a)
+                    .fold(Lin::constant(k.clone()), |l, (n, c)| {
+                        l.plus(&v(n).times(c.clone()))
+                    });
+                Formula::Con(Con::ge(&l, &Lin::constant(0)))
+            })
+            .collect(),
+    )
+}
+
+/// Both paths, `point` and `satisfiable`, give `expected` (whether a point exists), and a point
+/// either finds holds every row.
+fn decided(rows: &[Row3], expected: bool) {
+    assert_eq!(solve(rows).is_some(), expected, "point: {rows:?}");
+    let f = formula(rows);
+    let m = satisfiable(&f).expect("decided, not refused");
+    assert_eq!(m.is_some(), expected, "satisfiable: {rows:?}");
+    if let Some(m) = &m {
+        assert!(f.holds(m), "{m:?}");
+    }
+}
+
+/// The integer points of `a <= c·x <= a + w` with `|x_0|, |x_1| <= h` and `x_2` free, counted
+/// exactly in `i128`, apart from `Int` and the solver: for each `(x_0, x_1)` the values of `x_2`
+/// lie between two quotients by `c_2 > 0`.
+fn slab_points(c: [i64; 3], a: i64, w: i64, h: i64) -> i128 {
+    let (c, a, w) = (c.map(i128::from), i128::from(a), i128::from(w));
+    assert!(c[2] > 0);
+    let mut n = 0;
+    for x0 in -h..=h {
+        for x1 in -h..=h {
+            let s = c[0] * i128::from(x0) + c[1] * i128::from(x1);
+            // c_2 x_2 >= a - s and c_2 x_2 <= a + w - s.
+            let lo = (a - s).div_euclid(c[2]) + i128::from((a - s).rem_euclid(c[2]) != 0);
+            let hi = (a + w - s).div_euclid(c[2]);
+            n += (hi - lo + 1).max(0);
+        }
+    }
+    n
+}
+
+#[test]
+fn a_slab_of_million_coefficients_is_decided() {
+    // c = (10^6, 10^6 + 1, 10^6 + 3) over the cube |x_i| <= 5: c·x = 10^6 S + t with
+    // S = x_0 + x_1 + x_2 and t = x_1 + 3 x_2, |t| <= 20. So 500,000 <= c·x <= 500,001 has no
+    // integer point, since |10^6 S - 500,000| >= 500,000 > 20 + 1, though it has real points
+    // (x = (1/2, 0, 0)). 2,000,007 <= c·x <= 2,000,008 has one: S = 2 and t = 7 at
+    // (-1, 1, 2), where c·x = -10^6 + 1,000,001 + 2,000,006 = 2,000,007.
+    let c = [1_000_000, 1_000_001, 1_000_003];
+    let empty: Vec<Row3> = [slab(c, 500_000, 1), cube(5)].concat();
+    assert!(!enumerate(&empty, 5));
+    decided(&empty, false);
+    let held: Vec<Row3> = [slab(c, 2_000_007, 1), cube(5)].concat();
+    assert!(holds(&held, &[-1, 1, 2].map(int)));
+    decided(&held, true);
+    // Every value of `a` that the cube reaches and the gaps between them, against enumeration
+    // of the 11^3 points: c·x lies within 20 of a multiple of 10^6, so a slab at
+    // 10^6 S + 19 .. 10^6 S + 22 is held exactly when t can be 19 to 21.
+    for s in -3..=3 {
+        for t in [-22, -21, -20, -1, 0, 19, 20, 21, 22, 500] {
+            let a = 1_000_000 * s + t;
+            let rows: Vec<Row3> = [slab(c, a, 1), cube(5)].concat();
+            assert_eq!(solve(&rows).is_some(), enumerate(&rows, 5), "a = {a}");
+        }
+    }
+}
+
+#[test]
+fn the_cross_reviews_slab_of_million_coefficients_is_decided() {
+    // Cross-review XR3 (Gemini's probe): c = (1,000,003, 1,400,005, 1,800,014), |x_0|, |x_1| <= 5,
+    // x_2 free. c·(1, 1, 1) = 4,200,022, so c·x = 4,200,022 holds there; the slab one wide above
+    // it too. For each value of `a` the exact count of points over the 121 pairs (x_0, x_1)
+    // decides; a random `a` misses, since each pair hits 2 values of `a` in 1,800,014.
+    let c = [1_000_003, 1_400_005, 1_800_014];
+    let free = bounds(&[0, 1], 5);
+    let rows: Vec<Row3> = [slab(c, 4_200_022, 0), free.clone()].concat();
+    assert_eq!(slab_points(c, 4_200_022, 0, 5), 1);
+    assert!(holds(&rows, &[1, 1, 1].map(int)));
+    decided(&rows, true);
+    assert_eq!(solve(&rows), Some([1, 1, 1].map(int)), "the only point");
+    let mut rng = Rng::new(0x1_3a07);
+    let (mut sat, mut unsat) = (0, 0);
+    for i in 0..200 {
+        let a = if i % 2 == 0 {
+            // At or one below the value of a point of the box, so held.
+            let p = [rng.int(-5, 5), rng.int(-5, 5), rng.int(-9, 9)];
+            (0..3).map(|j| c[j] * p[j]).sum::<i64>() - rng.int(0, 1)
+        } else {
+            rng.int(-20_000_000, 20_000_000)
+        };
+        let rows: Vec<Row3> = [slab(c, a, 1), free.clone()].concat();
+        let truth = slab_points(c, a, 1, 5) > 0;
+        assert_eq!(solve(&rows).is_some(), truth, "a = {a}");
+        if truth {
+            sat += 1;
+        } else {
+            unsat += 1;
+        }
+    }
+    assert!(
+        sat >= 100 && unsat > 50,
+        "{sat} with a point, {unsat} without"
+    );
+}
+
+#[test]
+fn the_checkers_three_variable_question_has_a_point() {
+    // The rows of `checker.rs` `a_question_whose_point_lies_past_one_splinter_is_rejected`
+    // before LIVE3, refused then (a splinter of a splinter). (5, 12, -7) holds them:
+    // 4 - 10 - 36 + 42 = 0, -20 + 42 - 22 = 0, 5 - 12 - 28 + 36 = 1, 10 + 36 - 21 - 24 = 1.
+    // Enumeration of [-15, 15]^3 finds points, so the answer is a point.
+    let rows = [
+        row([-2, -3, -6], 4),
+        row([-4, 0, -6], -22),
+        row([1, -1, 4], 36),
+        row([2, 3, 3], -24),
+    ];
+    assert!(holds(&rows, &[5, 12, -7].map(int)));
+    assert!(enumerate(&rows, 15));
+    decided(&rows, true);
+    // Raised by one in the second row (-4x - 6z >= 23): 4x + 6z is even, so 4x + 6z <= -23
+    // means 4x + 6z <= -24, and the rows keep a point only if one survives that; enumeration
+    // over the same cube is the check.
+    let raised = [
+        row([-2, -3, -6], 4),
+        row([-4, 0, -6], -23),
+        row([1, -1, 4], 36),
+        row([2, 3, 3], -24),
+    ];
+    assert_eq!(solve(&raised).is_some(), enumerate(&raised, 15));
+}
+
+#[test]
+fn parity_slabs_are_decided() {
+    // Cross-review XR3 (Gemini's control): 2z - 2x = 1 has real points and no integer point,
+    // since the left side is even. Each row alone settles it, its coefficients having the
+    // common factor 2.
+    let gemini: Vec<Row3> = [
+        vec![row([-2, 0, 2], -1), row([2, 0, -2], 1)],
+        bounds(&[0, 1], 5),
+    ]
+    .concat();
+    decided(&gemini, false);
+    // Rows with no common factor: x + y - 2z = 1 and x - y + 2z = 0 add to 2x = 1, so no
+    // integer point, while x = 1/2, y = 1/2 + 2z is a line of real points. Only the sum shows
+    // it.
+    let parity = |k: i64| -> Vec<Row3> {
+        [slab([1, 1, -2], 1, 0), slab([1, -1, 2], k, 0), cube(6)].concat()
+    };
+    assert!(!enumerate(&parity(0), 6));
+    decided(&parity(0), false);
+    // With x - y + 2z = 1 instead, 2x = 2: (1, 0, 0) holds.
+    assert!(holds(&parity(1), &[1, 0, 0].map(int)));
+    decided(&parity(1), true);
+    // Coefficients near 10^6: c = (10^6 + 1, 10^6 + 3, 10^6 + 5) gives
+    // c·x = (10^6 + 1) S + 2 t with S = x_0 + x_1 + x_2 and t = x_1 + 2 x_2. Over the cube
+    // |x_i| <= 5, |t| <= 15, so c·x = 1 needs S = 0 (else |c·x| >= 10^6 + 1 - 30), and then
+    // c·x = 2t is even: no point, though (-1/2, 1/2, 0) is a real point (S = 0, t = 1/2).
+    // 1 <= c·x <= 2 has one: S = 0, t = 1 at (-1, 1, 0), where
+    // c·x = -(10^6 + 1) + 10^6 + 3 = 2.
+    let c = [1_000_001, 1_000_003, 1_000_005];
+    let empty: Vec<Row3> = [slab(c, 1, 0), cube(5)].concat();
+    assert!(!enumerate(&empty, 5));
+    decided(&empty, false);
+    let held: Vec<Row3> = [slab(c, 1, 1), cube(5)].concat();
+    assert!(holds(&held, &[-1, 1, 0].map(int)));
+    decided(&held, true);
+    // The same thin slab under random unimodular changes of variable, which keep the integer
+    // points: still none, and with the other constant still some.
+    let mut rng = Rng::new(0x1_3a08);
+    let plain = |k: i64| {
+        vec![
+            ([1, 1, -2], -1),
+            ([-1, -1, 2], 1),
+            ([1, -1, 2], -k),
+            ([-1, 1, -2], k),
+        ]
+    };
+    for _ in 0..100 {
+        let u = unimodular(&mut rng);
+        assert_eq!(solve(&change(&plain(0), &u)), None, "U = {u:?}");
+        assert!(solve(&change(&plain(1), &u)).is_some(), "U = {u:?}");
+    }
+}
+
+#[test]
+fn slabs_of_million_coefficients_scale() {
+    // The empty slab 500,000 <= c·x <= 500,001 of `a_slab_of_million_coefficients_is_decided`
+    // over the cube |x_i| <= 5, and m rows more with coefficients up to 50, each holding the
+    // whole cube with slack 0 to 5, so no row bound settles it. The work is O(m log m).
+    let c = [1_000_001, 1_000_003, 1_000_005];
+    let family = |m: usize| -> Vec<Row3> {
+        let mut rng = Rng::new(11);
+        let mut rows: Vec<Row3> = [slab(c, 1, 0), cube(5)].concat();
+        for _ in 0..m {
+            let a = [0; 3].map(|_| rng.int(-50, 50));
+            // The least of a·x over the cube is -5 Σ|a_i|.
+            let least = -5 * a.iter().map(|c| c.abs()).sum::<i64>();
+            rows.push(row(a, rng.int(0, 5) - least));
+        }
+        rows
+    };
+    let (small, large) = (family(256), family(256 * scaling::FACTOR));
+    scales(
+        "rows over a slab of million coefficients",
+        256,
+        1,
+        &small,
+        &large,
+    );
 }

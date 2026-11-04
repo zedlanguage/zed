@@ -143,7 +143,10 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
 
 /// The same four constraints with no constants have the point zero, so their projection is
 /// taken, but the projection onto each name is refused: one warning for each name, in the
-/// order of the names.
+/// order of the names. The projection onto a name adds a bound on it to the four constraints
+/// and asks the solver again (`hull_from` in `presburger.rs`), so all four names stay live and
+/// the refusal is the one for four variables or more; no fifth name is needed (cross-review
+/// XR3 expected one, reading the projection as fixing the name).
 #[test]
 fn a_refused_projection_onto_each_name_gives_one_warning_for_each() {
     let test = "4 * x - 12 * w - 10 * y - 12 * z >= 0 && 4 * w + 10 * x - 10 * y - 11 * z >= 0 \

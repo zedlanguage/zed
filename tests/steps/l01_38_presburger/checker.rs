@@ -4,10 +4,11 @@
 
 use crate::l01_19_whole_file_ports::run;
 
-/// A program whose `main` calls `ok`, defined by `def`, at `args`, and prints whether it held.
+/// A program whose `main` calls `ok`, defined by `def`, at `args`, and prints whether it held;
+/// `a` in `args` is the integer on the first line of the input (lines count from 1), or 0.
 fn program(def: &str, args: &str) -> String {
     format!(
-        "{def}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  a = int(stdin[0] else \"0\") else 0;\n  \
+        "{def}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  a = int(stdin[1] else \"0\") else 0;\n  \
          r = if ok({args}) {{ \"in\" }} else {{ \"out\" }};\n  stdout <- \"${{r}}\";\n}}\n"
     )
 }
@@ -84,6 +85,28 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
          && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * x + 6 \
          * z <= 4 * y + 22"
     );
+}
+
+#[test]
+fn a_question_over_three_names_past_one_splinter_is_decided() {
+    // The question this file rejected before LIVE3 (a splinter of a splinter): over three
+    // names it is now decided by `live3`, so nothing is rejected, and `ok` holds at
+    // (5, 12, -7): 4 - 10 - 36 + 42 = 0, -20 + 42 - 22 = 0, 5 - 12 - 28 + 36 = 1 and
+    // 10 + 36 - 21 - 24 = 1. With input 5 the call is at (5, 12, -7); with 0 at (0, 7, -2),
+    // where the second row is 12 - 22 = -10.
+    let src = program(
+        "ok(x, y, z) = 4 - 2 * x - 3 * y - 6 * z >= 0 && -4 * x - 6 * z - 22 >= 0 && x - y + 4 \
+         * z + 36 >= 0 && 2 * x + 3 * y + 3 * z - 24 >= 0;",
+        "x: a, y: a + 7, z: 0 - a - 2",
+    );
+    for (input, out) in [("5\n", "in\n"), ("0\n", "out\n")] {
+        let o = run("splinter3", &src, input, &[]);
+        assert_eq!(
+            (o.status, o.stdout.as_str(), o.stderr.as_str()),
+            (0, out, ""),
+            "{input}"
+        );
+    }
 }
 
 #[test]
