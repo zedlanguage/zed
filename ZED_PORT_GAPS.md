@@ -1250,3 +1250,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A premise-set node's id, drawn by `zed_kernel::family::fresh_id` (made `pub` for it) and shared by copies, as the key of a `HashSet` of the parts a walk has read and as the "one shared set" test in `extend` and `==` | `Premises::{one, extend, set, eq}`, `Node::id` | Identity (gap 1) | Stable ids from the runtime, as for `deep::walk`, or an id counter threaded as state |
+
+## Entries from ADDR-memory (`zedc/src/zir/memory.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec<Option<Region>>` indexed by occurrence id, an entry filled the first time its occurrence runs (`get_or_insert_with`), and a `HashMap<&str, (usize, &RegionPlan)>` from a region's path to the occurrence id of its first node and its plan, built by one walk of the plan | `zir::memory::Machine::alone`, `Machine::places`, `memory::run` | Mutation (gap 11), lazy cells (gap 3) | A map from occurrence id to region in the machine's state receiver, updated in place by provable last use (L6.13); the path map is a fold over the plan |

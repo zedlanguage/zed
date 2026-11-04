@@ -8,6 +8,7 @@ mod cells;
 mod checks;
 mod corpus;
 mod fusion;
+mod places;
 mod scaling;
 
 use zed_kernel::term::build::{lit, prim};

@@ -772,10 +772,12 @@ struct Cell {
     shared: bool,
 }
 
-/// A closure: its cell, its lambda node, the path of its body and its captures.
+/// A closure: its cell, its lambda node and that node's occurrence id, the path of its body
+/// and its captures.
 struct Clo<'g> {
     cell: usize,
     node: &'g Node,
+    id: usize,
     path: String,
     caps: Vec<Mv<'g>>,
 }
@@ -836,12 +838,24 @@ struct Machine<'g, 'e> {
     touched: Vec<usize>,
     stats: Stats,
     live: u64,
-    alone: HashMap<*const Node, Region>,
+    /// Each planned region by its path, with the occurrence id of its first node: the regions
+    /// are numbered by one walk of the plan in path order, and node `k` of a region is its
+    /// first id plus `k`, so an id depends only on where the node stands in the graph, never
+    /// on where it is in memory (step ADDR-memory).
+    places: HashMap<&'g str, (usize, &'g RegionPlan)>,
+    /// The one-node region of each node occurrence the kernel has run, by its occurrence id.
+    alone: Vec<Option<Region>>,
 }
 
 /// Runs graph `g` under `plan`, the kernel running each scalar and family node in `ev`, and
 /// checks every count; returns the value and the counts.
 pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats), String> {
+    let mut places = HashMap::with_capacity(plan.regions.len());
+    let mut ids = 0;
+    for (path, rp) in &plan.regions {
+        places.insert(path.as_str(), (ids, rp));
+        ids += rp.nodes.len();
+    }
     let mut m = Machine {
         plan,
         ev,
@@ -852,7 +866,8 @@ pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats)
         touched: Vec::new(),
         stats: Stats::default(),
         live: 0,
-        alone: HashMap::new(),
+        places,
+        alone: (0..ids).map(|_| None).collect(),
     };
     let args = g.args.iter().map(|_| (Mv::State, false)).collect();
     let mut out = m.region(g, args)?;
@@ -885,6 +900,7 @@ enum Part<'p> {
 struct Running<'g> {
     r: &'g Region,
     path: &'g str,
+    first: usize,
     rp: &'g RegionPlan,
     u: Uses,
     k: usize,
@@ -898,6 +914,7 @@ enum Out<'g> {
     Call {
         r: &'g Region,
         path: &'g str,
+        first: usize,
         rp: &'g RegionPlan,
         args: Vec<(Mv<'g>, bool)>,
         held: bool,
@@ -908,8 +925,8 @@ impl<'g> Machine<'g, '_> {
     /// Runs region `r` on `args`, and the regions its nodes call, on a stack of running
     /// regions: calls and arms nest as deep as the program and its run (step T2-mid).
     fn region(&mut self, r: &'g Region, args: Vec<(Mv<'g>, bool)>) -> Result<Vec<Mv<'g>>, String> {
-        let (path, rp) = self.plan_of("r")?;
-        let mut stack = vec![self.enter(r, path, rp, args)?];
+        let (path, first, rp) = self.plan_of("r")?;
+        let mut stack = vec![self.enter(r, path, first, rp, args)?];
         loop {
             let top = stack.last_mut().expect("a running region");
             if top.k == top.r.nodes.len() {
@@ -923,29 +940,30 @@ impl<'g> Machine<'g, '_> {
             }
             let ins = self.inputs(top)?;
             let node = &top.r.nodes[top.k];
-            match self.node(node, &top.rp.nodes[top.k], &top.at, ins)? {
+            match self.node(node, top.first + top.k, &top.rp.nodes[top.k], &top.at, ins)? {
                 Out::Done(outs) => self.finish(top, outs)?,
                 Out::Call {
                     r,
                     path,
+                    first,
                     rp,
                     args,
                     held,
                 } => {
                     top.held = held;
-                    let callee = self.enter(r, path, rp, args)?;
+                    let callee = self.enter(r, path, first, rp, args)?;
                     stack.push(callee);
                 }
             }
         }
     }
 
-    /// The plan of the region at `path`, with the path as the plan holds it.
-    fn plan_of(&self, path: &str) -> Result<(&'g str, &'g RegionPlan), String> {
-        let plan: &'g Plan = self.plan;
-        plan.regions
+    /// The plan of the region at `path`, with the path as the plan holds it and the occurrence
+    /// id of the region's first node.
+    fn plan_of(&self, path: &str) -> Result<(&'g str, usize, &'g RegionPlan), String> {
+        self.places
             .get_key_value(path)
-            .map(|(p, rp)| (p.as_str(), rp))
+            .map(|(p, &(first, rp))| (*p, first, rp))
             .ok_or_else(|| {
                 format!(
                     "memory: region `{path}` has no plan; only the root, lambda bodies and arms do"
@@ -953,12 +971,13 @@ impl<'g> Machine<'g, '_> {
             })
     }
 
-    /// Enters region `r`, at `path` under plan `rp`, on `args`: checks how they arrive, and
-    /// makes its frame.
+    /// Enters region `r`, at `path` with first node occurrence `first`, under plan `rp`, on
+    /// `args`: checks how they arrive, and makes its frame.
     fn enter(
         &mut self,
         r: &'g Region,
         path: &'g str,
+        first: usize,
         rp: &'g RegionPlan,
         args: Vec<(Mv<'g>, bool)>,
     ) -> Result<Running<'g>, String> {
@@ -985,6 +1004,7 @@ impl<'g> Machine<'g, '_> {
         Ok(Running {
             r,
             path,
+            first,
             rp,
             u,
             k: 0,
@@ -1082,10 +1102,12 @@ impl<'g> Machine<'g, '_> {
         Ok(out)
     }
 
-    /// Runs one node on its inputs, as the plan takes them; returns its outputs, owned.
+    /// Runs one node, occurrence `id`, on its inputs, as the plan takes them; returns its
+    /// outputs, owned.
     fn node(
         &mut self,
         node: &'g Node,
+        id: usize,
         np: &NodePlan,
         at: &str,
         ins: Vec<Mv<'g>>,
@@ -1099,7 +1121,7 @@ impl<'g> Machine<'g, '_> {
                 vec![Mv::Data(Value::tuple(vals), Some(cell))]
             }
             Op::Prim(Prim::Atom) if ins.iter().all(data) => {
-                let v = self.kernel(node, &ins)?;
+                let v = self.kernel(node, id, &ins)?;
                 let names: &[Value] = match &ins[1] {
                     Mv::Data(Value::Tuple(ns), _) => ns,
                     _ => &[],
@@ -1127,7 +1149,7 @@ impl<'g> Machine<'g, '_> {
                 }
             }
             Op::Prim(Prim::TupleGet) => {
-                let v = self.kernel(node, &ins)?;
+                let v = self.kernel(node, id, &ins)?;
                 match (&ins[0], &ins[1]) {
                     (Mv::Data(Value::Tuple(_), Some(c)), Mv::Data(Value::Int(i), _)) => {
                         let kid = self.heap[*c].kids[*i as usize];
@@ -1142,6 +1164,7 @@ impl<'g> Machine<'g, '_> {
                 vec![Mv::Clo(Rc::new(Clo {
                     cell,
                     node,
+                    id,
                     path: format!("{at}/0"),
                     caps: ins,
                 }))]
@@ -1159,7 +1182,7 @@ impl<'g> Machine<'g, '_> {
                             c.path
                         ));
                     }
-                    let (path, rp) = self.plan_of(&c.path)?;
+                    let (path, first, rp) = self.plan_of(&c.path)?;
                     let mut args = Vec::new();
                     let mut held = Vec::new();
                     for (i, v) in ins[1..].iter().enumerate() {
@@ -1185,13 +1208,14 @@ impl<'g> Machine<'g, '_> {
                     return Ok(Out::Call {
                         r: &callee.regions[0],
                         path,
+                        first,
                         rp,
                         args,
                         held: true,
                     });
                 }
                 _ => {
-                    let v = self.kernel(node, &ins)?;
+                    let v = self.kernel(node, id, &ins)?;
                     self.consume(np, &ins)?;
                     let mut out = vec![self.fresh(v)];
                     out.resize(node.outputs.len(), Mv::State);
@@ -1219,10 +1243,11 @@ impl<'g> Machine<'g, '_> {
                         let args = (1..ins.len())
                             .map(|j| (ins[j].clone(), np.modes[j] == Mode::Owned))
                             .collect();
-                        let (path, rp) = self.plan_of(&format!("{at}/{i}"))?;
+                        let (path, first, rp) = self.plan_of(&format!("{at}/{i}"))?;
                         return Ok(Out::Call {
                             r: &node.regions[i],
                             path,
+                            first,
                             rp,
                             args,
                             held: false,
@@ -1247,12 +1272,12 @@ impl<'g> Machine<'g, '_> {
                 vec![v, Mv::State]
             }
             Op::Push(_) => {
-                let v = self.kernel(node, &ins)?;
+                let v = self.kernel(node, id, &ins)?;
                 self.consume(np, &ins)?;
                 vec![self.fresh(v), Mv::State]
             }
             _ => {
-                let v = self.kernel(node, &ins)?;
+                let v = self.kernel(node, id, &ins)?;
                 self.consume(np, &ins)?;
                 vec![self.fresh(v)]
             }
@@ -1297,7 +1322,7 @@ impl<'g> Machine<'g, '_> {
             v => return self.failed(node, np, &ins, v).map(Out::Done),
         };
         let path = format!("{at}/{i}");
-        let (key, arm) = self.plan_of(&path)?;
+        let (key, first, arm) = self.plan_of(&path)?;
         let mut paths = Vec::new();
         if let Mv::Data(v, _) = &ins[0] {
             binder_paths(&ps[i], v, &mut Vec::new(), &mut paths);
@@ -1341,6 +1366,7 @@ impl<'g> Machine<'g, '_> {
         Ok(Out::Call {
             r: &node.regions[i],
             path: key,
+            first,
             rp: arm,
             args,
             held: false,
@@ -1427,20 +1453,21 @@ impl<'g> Machine<'g, '_> {
         Ok(())
     }
 
-    /// The value the kernel gives node `node` run alone on `ins`.
-    fn kernel(&mut self, node: &'g Node, ins: &[Mv<'g>]) -> Result<Value, String> {
+    /// The value the kernel gives node `node`, occurrence `id`, run alone on `ins`.
+    fn kernel(&mut self, node: &'g Node, id: usize, ins: &[Mv<'g>]) -> Result<Value, String> {
         let mut lets = Lets::default();
         let mut terms = Vec::new();
         for v in ins {
             terms.push(self.term(v, &mut lets)?);
         }
-        let t = raise_with(self.alone(node), &terms)?;
+        let t = raise_with(self.alone(node, id), &terms)?;
         self.ev.run(&wrap(lets, t)).map_err(|e| e.to_string())
     }
 
-    /// A one-node region running `node` on its arguments.
-    fn alone(&mut self, node: &'g Node) -> &Region {
-        self.alone.entry(node as *const Node).or_insert_with(|| {
+    /// A one-node region running `node`, occurrence `id`, on its arguments, made the first time
+    /// the occurrence runs.
+    fn alone(&mut self, node: &'g Node, id: usize) -> &Region {
+        self.alone[id].get_or_insert_with(|| {
             let mut n = node.clone();
             n.inputs = (0..n.inputs.len()).map(Src::Arg).collect();
             Region {
@@ -1478,7 +1505,7 @@ impl<'g> Machine<'g, '_> {
                 Some(v) => got = Some(flat_term(v, lets)),
                 None => {
                     let (c, terms) = stack.pop().expect("a closure");
-                    got = Some(raise_with(self.alone(c.node), &terms)?);
+                    got = Some(raise_with(self.alone(c.node, c.id), &terms)?);
                 }
             }
         }
