@@ -1942,14 +1942,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// `==` and `!=`: any two values; a literal adopts the other side's one numeric carrier,
-    /// and of two literals the integer adopts the other's. Two tuples of one length are paired
-    /// component by component, at any depth, so `p == (1, 2)` with `p: (f64, f64)` reads both
-    /// literals at `f64`.
+    /// `==` and `!=`: any two values; a literal adopts the carrier the other side's type gives
+    /// it by the rule of a parameter ([`carriers_in`]), and of two literals the integer adopts
+    /// the other's. Two tuples of one length are paired component by component, at any depth,
+    /// across every tuple shape of that length a side's type holds, as [`adopted`] pairs them:
+    /// `p == (1, 2)` with `p: (f64, f64) | (String, f64)` reads both literals at `f64`.
     ///
     /// The tuples nest as deep as the text, so the pairs wait on a stack, each with whether it
-    /// is inside a tuple. Each pair borrows its components, so a tuple nested d deep costs
-    /// O(d) and not a copy of each level's type.
+    /// is inside a tuple. Each side borrows its component types, one per shape, so a tuple
+    /// nested d deep at s shapes costs O(d·s) and not a copy of each level's type.
     fn equal(&mut self, x: &Arg, y: &Arg) {
         let mut stack = vec![(side(x), side(y), false)];
         while let Some(((xt, xl, xp), (yt, yl, yp), inner)) = stack.pop() {
@@ -1962,12 +1963,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.adopt_to(m, lc);
                     }
                 }
-                (Some(l), None) => self.follow(l, yt, inner),
-                (None, Some(m)) => self.follow(m, xt, inner),
+                (Some(l), None) => self.follow(l, &yt, inner),
+                (None, Some(m)) => self.follow(m, &xt, inner),
                 (None, None) if xp.is_none() && yp.is_none() => {}
                 (None, None) => {
                     let n = xp.or(yp).map_or(0, <[Part]>::len);
-                    let (Some(xs), Some(ys)) = (sides(xt, xp, n), sides(yt, yp, n)) else {
+                    let (Some(xs), Some(ys)) = (sides(&xt, xp, n), sides(&yt, yp, n)) else {
                         continue;
                     };
                     stack.extend(xs.zip(ys).map(|(a, b)| (a, b, true)));
@@ -1976,18 +1977,32 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// The literal `l` compared with a value of `t`: it adopts `t`'s one numeric carrier, or
-    /// follows its class. Inside a tuple it does not follow a class.
+    /// The literal `l` compared with a value of one of the types `ts`: it follows the class
+    /// of a lone `ts`, outside a tuple, and otherwise adopts the one carrier [`carriers_in`]
+    /// finds; at two or more it keeps its own carrier when one of them is that, and is an
+    /// error otherwise, as at a parameter.
     // A literal in a tuple compared with a class's component keeps its own carrier, because
     // the elaborator's rewrite that follows the class's carrier at run time (`Info::follows`)
     // is built for an operand of `==` only; follow-up LIT-follow-tuple.
-    fn follow(&mut self, l: &Lit, t: &Ty, inner: bool) {
-        if let Some(k) = self.class_of_ty(t) {
+    fn follow(&mut self, l: &Lit, ts: &[&Ty], inner: bool) {
+        if let [t] = ts
+            && let Some(k) = self.class_of_ty(t)
+        {
             if !inner {
                 self.join(k, l, true);
             }
-        } else if let Some(c) = t.numeric_carrier() {
-            self.adopt_to(l, c);
+            return;
+        }
+        let cs = carriers_in(l, ts);
+        match cs[..] {
+            [c] => {
+                self.adopt_to(l, c);
+            }
+            [_, _, ..] if !cs.contains(&lit_carrier(&l.value)) => {
+                let want = Ty::union_all(ts.iter().copied());
+                self.error(l.span, no_one_carrier(l, &want, &cs));
+            }
+            _ => {}
         }
     }
 
@@ -2818,12 +2833,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Ok(None) => Cow::Borrowed(&a.ty),
             };
-            if let Some(l) = &a.lit {
-                let cs = carriers_in(l, &[p]);
-                if cs.len() > 1 && !ty.subtype(p) {
-                    self.error(l.span, no_one_carrier(l, p, &cs));
-                    continue;
-                }
+            if a.lit.is_some() {
                 if !ty.sub(p, &mut binds) {
                     let why = ty.refused(p);
                     return Err(format!("{}{why}", self.rejected(what, args)));
@@ -3540,33 +3550,41 @@ fn only_tuple(t: &Ty, n: usize) -> Option<&[Ty]> {
     }
 }
 
-/// One side of `==` as [`Ck::equal`] reads it: its type, the literal it is, if it is one, and
-/// the literals written in it, by component, if it is a tuple that holds one.
-type Side<'a> = (&'a Ty, Option<&'a Lit>, Option<&'a [Part]>);
+/// One side of `==` as [`Ck::equal`] reads it: the types its value may have, one per tuple
+/// shape it is a component of, the literal it is, if it is one, and the literals written in
+/// it, by component, if it is a tuple that holds one.
+type Side<'a> = (Vec<&'a Ty>, Option<&'a Lit>, Option<&'a [Part]>);
 
 /// The argument `a` as a side of `==`.
 fn side(a: &Arg) -> Side<'_> {
-    (&a.ty, a.lit.as_ref(), a.parts.as_deref())
+    (vec![&a.ty], a.lit.as_ref(), a.parts.as_deref())
 }
 
-/// The components of a side of type `t` with the parts `ps`, borrowed, when it is exactly one
-/// tuple of length `n`.
+/// The components of a side of the types `ts` with the parts `ps`, borrowed: at each, the
+/// component's type in every tuple shape of length `n` the types hold ([`shapes`], as
+/// [`adopted`] reads an expected type). `None` when they hold no such shape, or a variable or
+/// the unknown, which could stand for a tuple of other components.
 fn sides<'a>(
-    t: &'a Ty,
+    ts: &[&'a Ty],
     ps: Option<&'a [Part]>,
     n: usize,
 ) -> Option<impl Iterator<Item = Side<'a>>> {
-    let cs = only_tuple(t, n)?;
+    if ts.iter().any(|t| !t.vars.is_empty() || t.dynamic) {
+        return None;
+    }
+    let want = shapes(ts.iter().copied(), n);
+    if want.is_empty() {
+        return None;
+    }
     let ps = ps.filter(|ps| ps.len() == n);
-    Some(
-        cs.iter()
-            .enumerate()
-            .map(move |(i, c)| match ps.map(|ps| &ps[i]) {
-                Some(Part::Lit(l)) => (c, Some(l), None),
-                Some(Part::Tuple(ps)) => (c, None, Some(&ps[..])),
-                _ => (c, None, None),
-            }),
-    )
+    Some((0..n).map(move |i| {
+        let cs = want.iter().map(|w| &w[i]).collect();
+        match ps.map(|ps| &ps[i]) {
+            Some(Part::Lit(l)) => (cs, Some(l), None),
+            Some(Part::Tuple(ps)) => (cs, None, Some(&ps[..])),
+            _ => (cs, None, None),
+        }
+    }))
 }
 
 /// The components of `a` as arguments when it is exactly one tuple of length `n`: a literal
@@ -3602,7 +3620,8 @@ type Adoptions = Vec<(Span, Value)>;
 /// `(1, 2)` at `(f64, f64) | (String, f64)` is `(1.0, 2.0)`. This is the one place an expected
 /// type decides a literal's carrier. Gives `a`'s type with the adoptions and the adoptions,
 /// `None` when no literal adopts, and the first literal that is not exactly a value of its
-/// carrier with the message.
+/// carrier, or that meets numbers of two or more carriers none of which is its own
+/// ([`no_one_carrier`]), with the message.
 ///
 /// The tuples nest as deep as the text, so the walk keeps its own stack: each open tuple's
 /// parts, the argument's components, the expected shapes there, and the types so far. The
@@ -3610,8 +3629,14 @@ type Adoptions = Vec<(Span, Value)>;
 fn adopted(a: &Arg, p: &Ty) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
     let mut ads = Adoptions::new();
     let lit = |l: &Lit, want: &[&Ty], ads: &mut Adoptions| {
-        let [c] = carriers_in(l, want)[..] else {
-            return Ok(None);
+        let cs = carriers_in(l, want);
+        let c = match cs[..] {
+            [c] => c,
+            [_, _, ..] if !cs.contains(&lit_carrier(&l.value)) => {
+                let at = Ty::union_all(want.iter().copied());
+                return Err((l.span, no_one_carrier(l, &at, &cs)));
+            }
+            _ => return Ok(None),
         };
         match adopt(l, c) {
             Ok(Some(v)) => {

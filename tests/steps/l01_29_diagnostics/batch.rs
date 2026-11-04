@@ -48,6 +48,14 @@ fn units() -> Vec<(String, Vec<u8>)> {
         "literals in a tuple at a union of tuple shapes".into(),
         b"tu(positional p: (f64, f64) | (String, f64)) = p;\nmain() = tu((1, 2));\n".to_vec(),
     ));
+    out.push((
+        "a literal compared with a union of two carriers it can adopt".into(),
+        b"f(positional x: f64 | rat) = x == 1;\nmain() = f(1.0);\n".to_vec(),
+    ));
+    out.push((
+        "literals in a tuple compared with a union of tuple shapes".into(),
+        b"isAt(positional p: (f64, f64) | (String, f64)) = p == (1, 2);\nmain() = isAt((1.0, 2.0));\n".to_vec(),
+    ));
     out
 }
 
@@ -105,5 +113,17 @@ fn batch_and_single_file_checking_agree() {
              1 | f(positional x: f64 | rat) = x;\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
         )
+    );
+    // So is one compared by `==` with a value of such a union.
+    let at = units
+        .iter()
+        .position(|(name, _)| {
+            name == "a literal compared with a union of two carriers it can adopt"
+        })
+        .expect("the unit");
+    let answer = batch[at].as_deref().expect("a rejection");
+    assert!(
+        answer.starts_with("1:35: `1` at `rat | f64` adopts no one carrier"),
+        "{answer}"
     );
 }
