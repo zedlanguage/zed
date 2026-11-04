@@ -478,7 +478,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 5 | HULL3-subsumed | LIVE3 decides every part with three live variables, so HULL3 is subsumed: measure `hull3::shadow` as a first try before `live3`; keep it if faster, else remove it and move its tests to `live3` | S | no | LIVE3 | `crates/zedc/src/store/hull3.rs`, `crates/zedc/src/store/live3.rs` |
 | 5 | INST-bucket | Instance building scans the INSTANCES bucket linearly (4.2 s at 8000, 18.6 s at 16000); replace the scan by a keyed lookup, with a scaling test at n and 8n | S | no | T2-types |  |
 | 0 | ISSUE1-else-atoms | Done: GitHub issue 1: an inferred parameter used as the operand of `else`, or tested by `is #a`, keeps the atoms it handles in its inferred type, so a loose atom is not dropped at the call | M | no | none | `crates/zedc/src/check/` |
-| 1 | JIT-farapart-ge | The FarApart JIT test's slot check uses `==` where `>=` is meant | S | no | JIT-reloc | `crates/zed-native/` |
+| 1 | JIT-farapart-ge | Done: The FarApart JIT test's slot check uses `==` where `>=` is meant | S | no | JIT-reloc | `crates/zed-native/` |
 | 2 | KEPT-neg-hash | Done: `Kept::neg` leaves -2^127 inside `i128`, so its hash differs from that of `Big(-2^127)` though the two are equal | S | no | TD-ends |  |
 | 5 | LIVE3-TESTS | Done: Tests after LIVE3: the 10^6-coefficient slab, the system of `l01_38_presburger/checker.rs:71` and the parity slab; the growth message says four variables or more | S | no | LIVE3 | `tests/steps/l01_38_presburger/` |
 | 6 | LOWER-addr | Done: The `body_uses` memo of `zir/lower.rs` is keyed by pointer address; key it by a stable id, with a determinism test (worked inside ADDR-keys) | S | no | T2-mid | `crates/zedc/src/zir/lower.rs` |
