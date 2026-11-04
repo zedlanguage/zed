@@ -489,12 +489,21 @@ enum Split {
 /// piece for each period, which would be the stretch's width divided by `m` pieces with no
 /// bound in the size of the term. Such a box is not exact ([`covers`] finds a member outside
 /// its class's set) and carries the classes' relation, which is exact; the linear stage is
-/// not run on it, since its answer would be no narrower box at a cost above linear. Given up:
-/// a box listing every period. Trigger: a mixed stretch that the transfer's box does not
-/// narrow to within two periods, for example `i mod 10 == 3` over `[0, 10^9]`. Test:
-/// `l01_25_preimage_catalog::entries` (the `[0, 10^9]` case) and
-/// `l01_25_preimage_catalog::s22::remainders_over_many_periods_scale`; COMPLEXITY.md row
-/// S22e-wide. The cost is the projection over the box's hull, linear in the pieces, and, for
+/// not run on it, since on a mixed stretch it costs more than linear (main: 0.86G to 3.0G
+/// instructions for `k` = 8 to 16 guards). Given up: a box listing every period, and the
+/// narrower box the linear stage could give: [`project_classes`] projects the relation over
+/// the hull of the box, so the hull of a class's members joins pieces that the linear stage's
+/// projection kept apart, and the answer is a wider box (still sound, with the exact
+/// relation). Trigger: a mixed stretch that the transfer's box does not narrow to within two
+/// periods, for example `i mod 10 == 3` over `[0, 10^9]`; the wider box appears where a class
+/// has members in pieces separated by gaps, as in three random guarded chains, which get `i
+/// [-19..]` for main's `i [-19..=2, 5..=5, 8..=8, 11..]`, `i [2..]` for `i [2..=2, 5..]` and
+/// `i [4..]` for `i [4..=4, 7..]`. Test: `l01_25_preimage_catalog::entries` (the `[0, 10^9]`
+/// case), `l01_25_preimage_catalog::s22::remainders_over_many_periods_scale` and
+/// `l01_25_preimage_catalog::s22::more_random_guarded_chains_keep_their_preimages` (the three
+/// wider boxes); COMPLEXITY.md row S22e-wide. A complete solution for the wider boxes would
+/// project over each piece of the box rather than its hull, or keep the congruence facet
+/// below. The cost is the projection over the box's hull, linear in the pieces, and, for
 /// an answer kept before the first transfer, one more transfer and split over the
 /// transfer's box, `O(n log n)`. A complete solution would give the box a congruence facet
 /// (an input's interval together with the set of its remainders mod `m` that it admits), so
