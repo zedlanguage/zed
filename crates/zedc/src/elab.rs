@@ -290,7 +290,8 @@ pub(crate) struct Tables<'a> {
     /// The groups of `uses` naming each binder.
     groups_of: Vec<Vec<usize>>,
     /// Every written type of the unit, each once, in the order of the text: a parameter's, a
-    /// lambda parameter's and an `is` test's. The checker checks their bounds.
+    /// lambda parameter's, an output port's and an `is` test's. The checker checks their
+    /// bounds.
     pub(crate) written: Vec<&'a Type>,
 }
 
@@ -459,6 +460,7 @@ impl<'a> Tables<'a> {
                     self.funcs.insert(id, f);
                 }
                 collect_params(&f.params, todo);
+                todo.extend(f.ports.iter().flatten().map(|p| Collect::Type(&p.ty)));
                 todo.push(Collect::Expr(&f.body));
                 for (a, b) in &f.tests {
                     todo.extend([Collect::Expr(a), Collect::Expr(b)]);

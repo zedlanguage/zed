@@ -627,6 +627,23 @@ impl Resolver {
             }
             StmtKind::Function(f) => {
                 let ports: &[Port] = f.ports.as_deref().unwrap_or_default();
+                // At L1 an output port is `Lines` (DESIGN.md step L1.19). `main`'s ports are
+                // checked with its inputs when the unit is loaded as a program (`run::program`).
+                if f.name != "main" {
+                    for p in ports {
+                        if !matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
+                            self.errors.push(Error {
+                                row: None,
+                                span: p.span,
+                                message: format!(
+                                    "output port `{}` of `{}` is `Lines` at layer L1",
+                                    p.name, f.name
+                                ),
+                                notes: Vec::new(),
+                            });
+                        }
+                    }
+                }
                 todo.push(Task::Function {
                     params: &f.params,
                     ports,

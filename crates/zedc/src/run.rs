@@ -341,7 +341,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, String> {
         .collect::<Result<_, String>>()?;
     let mut outputs = Vec::new();
     for p in main.ports.iter().flatten() {
-        if kind(&p.name, Some(&p.ty))? != PortKind::Lines {
+        if !matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
             return Err(format!(
                 "output port `{}` of `main` is `Lines` at layer L1",
                 p.name

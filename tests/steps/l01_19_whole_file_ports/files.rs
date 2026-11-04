@@ -99,11 +99,41 @@ fn ports_are_lines_or_files_at_l1() {
         e.as_deref(),
         Some("output port `out` of `main` is `Lines` at layer L1")
     );
+    // An output port of a type that is no port at all says it is an output port.
+    let e = load(b"main() -> (out: int) {\n  out <- \"x\";\n}\n").err();
+    assert_eq!(
+        e.as_deref(),
+        Some("output port `out` of `main` is `Lines` at layer L1")
+    );
     let e = load(b"helper = 1;\n").err();
     assert_eq!(
         e.as_deref(),
         Some("a program declares one `main` function; this one declares 0")
     );
+}
+
+/// A function other than `main` may push to an output port, and at L1 that port is `Lines`
+/// too: any other type is rejected where the port is declared, whether or not the function
+/// is called.
+#[test]
+fn a_helper_port_is_lines_at_l1() {
+    let e = load(b"log(positional s) -> (out: Files) {\n  out <- s;\n}\nmain() = 0;\n").err();
+    assert_eq!(
+        e.as_deref(),
+        Some("1:23: output port `out` of `log` is `Lines` at layer L1")
+    );
+    let e = load(
+        b"say(positional s) -> (stdout: Lines, err: int) {\n  stdout <- s;\n}\n\
+          main() -> (stdout: Lines) {\n  a = say(\"one\");\n}\n",
+    )
+    .err();
+    assert_eq!(
+        e.as_deref(),
+        Some("1:38: output port `err` of `say` is `Lines` at layer L1")
+    );
+    let ok = b"say(positional s) -> (stdout: Lines) {\n  stdout <- s;\n}\n\
+               main() -> (stdout: Lines) {\n  a = say(\"one\");\n}\n";
+    assert!(load(ok).is_ok());
 }
 
 #[test]

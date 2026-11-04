@@ -116,3 +116,40 @@ fn the_bound_walk_scales_linearly() {
         assert!(zedc::run::load(programs[&n].as_bytes()).is_ok());
     });
 }
+
+/// An output port's type is a written type too: the bound of a port of `main` is checked
+/// like a parameter's, and a port of another function, whose type at L1 must be `Lines`, is
+/// rejected for that before its bound is read.
+#[test]
+fn a_port_whose_morphism_bound_fails_is_rejected() {
+    rejected_everywhere(
+        "main() -> (out: #a .. #b -> int) {\n  out <- \"x\";\n}\n",
+        &[format!("1:17: {BAD}")],
+    );
+    assert_eq!(
+        through_load("f() -> (out: #a .. #b -> int) { 0 }\nmain() = 0;\n"),
+        ["1:9: output port `out` of `f` is `Lines` at layer L1"]
+    );
+}
+
+/// Reading the output ports, for their type at L1 and for their bounds, is linear in the
+/// ports: loading a program of `n` and of `8n` functions, each with two `Lines` ports, does
+/// work of order n.
+#[test]
+fn the_port_walk_scales_linearly() {
+    let program = |n: usize| {
+        let mut src = String::new();
+        for i in 0..n {
+            src.push_str(&format!(
+                "say{i}(positional s) -> (out{i}: Lines, log{i}: Lines) {{\n  out{i} <- s;\n}}\n"
+            ));
+        }
+        src.push_str("main() = 0;\n");
+        src
+    };
+    let programs: std::collections::HashMap<usize, String> =
+        [250, 2000].into_iter().map(|n| (n, program(n))).collect();
+    zed_tests::scaling::check_order("port walk through load", 250, 1, |n| {
+        assert!(zedc::run::load(programs[&n].as_bytes()).is_ok());
+    });
+}
