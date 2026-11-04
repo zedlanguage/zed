@@ -155,11 +155,17 @@ pub(super) enum Frame<'a> {
     Else2(&'a Expr, Ty),
     If1(&'a Expr),
     If2 {
+        then: &'a Expr,
         otherwise: &'a Expr,
         out: Ty,
         no: Facts,
     },
-    If3(Ty),
+    If3 {
+        then: &'a Expr,
+        otherwise: &'a Expr,
+        out: Ty,
+        a: Box<Ty>,
+    },
     /// Restores what a narrowing changed, and gives the result through.
     Widen(Saved<'a>),
     CondIs(&'a Expr),
@@ -639,17 +645,38 @@ impl<'t, 'a> Ck<'t, 'a> {
                         break;
                     }
                 }
-                m.k(Frame::If2 { otherwise, out, no });
+                m.k(Frame::If2 {
+                    then,
+                    otherwise,
+                    out,
+                    no,
+                });
                 self.under(m, &yes, then);
             }
-            Frame::If2 { otherwise, out, no } => {
+            Frame::If2 {
+                then,
+                otherwise,
+                out,
+                no,
+            } => {
                 let a = m.take_ty();
-                m.k(Frame::If3(out.union(&a)));
+                m.k(Frame::If3 {
+                    then,
+                    otherwise,
+                    out,
+                    a: Box::new(a),
+                });
                 self.under(m, &no, otherwise);
             }
-            Frame::If3(out) => {
+            Frame::If3 {
+                then,
+                otherwise,
+                out,
+                a,
+            } => {
                 let b = m.take_ty();
-                m.ty(out.union(&b));
+                let t = self.branches(then, &a, otherwise, &b);
+                m.ty(out.union(&t));
             }
             Frame::Widen(saved) => {
                 let r = m.take();
@@ -1282,6 +1309,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 true => self.param_ty(*id, t.clone()),
                 false => t.clone(),
             };
+            self.bind_param(*id, &t, &bound, f.body.span);
             self.env.insert(*id, bound);
             s.tys.push(t);
         }
@@ -1568,6 +1596,29 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The type of an `if` whose branches `then` and `otherwise` have the types `a` and `b`:
+    /// their union; but where one branch is a literal `kn`, or of a class of generic literals
+    /// only, as `1n + 1n` is, and the other's type is one class, the literal joins the class,
+    /// generic, or the classes merge, and the `if` has the class's type (L1.26a).
+    fn branches(&mut self, then: &Expr, a: &Ty, otherwise: &Expr, b: &Ty) -> Ty {
+        for (e, t, other) in [(then, a, b), (otherwise, b, a)] {
+            let Some(k) = self.class_of_ty(other) else {
+                continue;
+            };
+            let joined = match self.class_of_ty(t) {
+                Some(g) if self.classes[g].generic => self.merge(k, g, "an `if`", e.span),
+                Some(_) => false,
+                None => literal(exported(e))
+                    .filter(|l| l.n)
+                    .is_some_and(|l| self.join(k, &l.joining(), false)),
+            };
+            if joined {
+                return other.clone();
+            }
+        }
+        a.union(b)
+    }
+
     /// A binary operator other than `&&` and `||` applied to its arguments `x` and `y`, the
     /// second written `b`.
     fn binary_end(
@@ -1583,6 +1634,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !matches!(op, "==" | "!=") {
             for l in [&mut x.lit, &mut y.lit].into_iter().flatten() {
                 l.generic = l.n;
+            }
+            // Two generic operands, as in `1n + 1n`, make a class of their own inside a
+            // function: generic, it takes the carrier of what it meets, the first operand
+            // taking it from a parameter of the class and the second following the first; it
+            // takes int where it meets no carrier.
+            if self.level > 0
+                && let (Some(a), Some(b)) = (&x.lit, &y.lit)
+                && a.n
+                && b.n
+            {
+                let k = self.generic_class(a);
+                x = Arg {
+                    ty: Ty::var(format!("${k}").into()),
+                    lit: None,
+                    ..x
+                };
             }
         }
         match op {
@@ -2312,6 +2379,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some(_) => t.clone(),
                     None => self.param_ty(id, t.clone()),
                 };
+                self.bind_param(id, &t, &bound, body.span);
                 self.env.insert(id, bound);
             }
             ids.push(id);
@@ -2521,5 +2589,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !identity {
             self.put(Undo::Fit(span, Some(Fit::Lambda { order, extra })));
         }
+    }
+}
+
+/// The expression a branch `e` gives: the one expression of a block of nothing else, else `e`.
+fn exported(e: &Expr) -> &Expr {
+    match &e.kind {
+        ExprKind::Block(stmts) => match stmts.as_slice() {
+            [
+                Stmt {
+                    kind: StmtKind::Return(es),
+                    ..
+                },
+            ] if es.len() == 1 => &es[0],
+            _ => e,
+        },
+        _ => e,
     }
 }

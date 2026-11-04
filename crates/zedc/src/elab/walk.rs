@@ -116,6 +116,9 @@ struct SeqF<'a> {
 enum Frame<'a> {
     Seq(Box<SeqF<'a>>),
     Unary(Prim),
+    /// A generic literal of [`check::Info::witness`], by its span, once elaborated: it takes
+    /// the carrier of the value of the parameter of that binder.
+    Witness(Span, usize),
     Binary(&'a Expr),
     Tuple,
     Is(&'a Expr),
@@ -522,6 +525,14 @@ impl<'a> Elab<'a> {
         }
         if let Some(fit) = info.fits.get(&e.span) {
             self.fit(m, e, fit);
+            return;
+        }
+        if let Some(s) = lit_span(e)
+            && let Some(&id) = info.witness.get(&s)
+            && self.guarding.insert(s)
+        {
+            m.k(Frame::Witness(s, id));
+            m.stack.push(Job::Expr(e));
             return;
         }
         if let Some(v) = info.adopt.get(&e.span) {
@@ -1309,6 +1320,11 @@ impl<'a> Elab<'a> {
                 let t = m.t().map(|a| Term::Prim(p, vec![a]));
                 m.give(t);
             }
+            Frame::Witness(s, id) => {
+                self.guarding.remove(&s);
+                let t = m.t().map(|own| self.witnessed(s, id, own));
+                m.give(t);
+            }
             Frame::Binary(e) => {
                 let t = self.binary(e, m.got());
                 m.give(t);
@@ -1677,11 +1693,10 @@ impl<'a> Elab<'a> {
     /// The literal is a constant, so evaluating the other operand first changes nothing.
     fn follow(&mut self, l: &Expr, r: &Expr, p: Prim, mut args: Vec<Term>) -> Term {
         let follows = &self.info.follows;
-        let Some((at, values)) = [l, r]
-            .into_iter()
-            .enumerate()
-            .find_map(|(i, e)| Some((i, follows.get(&lit_span(e)?)?)))
-        else {
+        let Some((at, values)) = [l, r].into_iter().enumerate().find_map(|(i, e)| {
+            let s = lit_span(e).filter(|s| !self.info.witness.contains_key(s))?;
+            Some((i, follows.get(&s)?))
+        }) else {
             return Term::Prim(p, args);
         };
         let other = self.temp();
@@ -1695,6 +1710,18 @@ impl<'a> Elab<'a> {
         arms.push((KPattern::Wild, own));
         args[at] = Term::Match(Shared::new(Term::Var(other.clone())), arms);
         Term::Let(other, Shared::new(x), Shared::new(Term::Prim(p, args)))
+    }
+
+    /// The generic literal at `s`, of term `own`, taking the carrier of the value of the
+    /// parameter `id` (L1.26a): its value at each carrier of [`check::Info::follows`] that
+    /// the parameter's value has, else its own.
+    fn witnessed(&self, s: Span, id: usize, own: Term) -> Term {
+        let mut arms: Vec<(KPattern, Term)> = self.info.follows[&s]
+            .iter()
+            .map(|(c, v)| (KPattern::Is(c.ty()), Term::Lit(v.clone())))
+            .collect();
+        arms.push((KPattern::Wild, own));
+        Term::Match(Shared::new(Term::Var(self.names[id].clone())), arms)
     }
 
     /// `v is t`, its operand and type elaborated.

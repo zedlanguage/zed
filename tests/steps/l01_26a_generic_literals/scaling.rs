@@ -34,3 +34,36 @@ fn a_body_of_many_generic_literals_scales() {
         .join()
         .unwrap();
 }
+
+/// A function that calls a generic `mul` `n` times, each with a generic literal argument:
+/// `n` literals that each take the carrier of the caller's parameter.
+fn calls(n: usize) -> String {
+    let body: Vec<String> = (0..n).map(|i| format!("mul(x, {}n)", i + 1)).collect();
+    format!(
+        "mul(positional x, positional k) = x * k;\nf(positional x) = {};\n",
+        body.join(" + ")
+    )
+}
+
+#[test]
+fn a_body_of_many_generic_literal_arguments_scales() {
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            assert_eq!(sig(&calls(2), "f"), "(T) -> T for T in int | f64 | rat");
+            // At n = 200 a copy of the class's literals at each join stayed under the limit.
+            let n = 1000;
+            let srcs = [calls(n), calls(scaling::FACTOR * n)];
+            scaling::check_order("a body of n generic literal arguments", n, 1, |m| {
+                let src = &srcs[usize::from(m != n)];
+                let (info, _) = info(src);
+                assert!(info.errors.is_empty(), "{:?}", info.errors);
+                assert_eq!(info.witness.len(), m);
+                assert_eq!(info.follows.len(), m);
+                elab(src).unwrap();
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

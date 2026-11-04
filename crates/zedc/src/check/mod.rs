@@ -179,6 +179,11 @@ pub struct Info {
     /// class's carrier"), as does the operator of a generic literal; at any other value the
     /// literal keeps its own.
     pub follows: HashMap<Span, Vec<(Carrier, Value)>>,
+    /// Each generic literal of [`Self::follows`] that has no other operand to take its carrier
+    /// from, by its span: a call's argument, an `if` branch, an operand of an operator whose
+    /// other operand is generic too (L1.26a). Its value is the binder of a parameter of the
+    /// literal's class in scope at it, whose value has the class's carrier at run time.
+    pub witness: HashMap<Span, usize>,
     /// The type errors.
     pub errors: Vec<Error>,
 }
@@ -249,9 +254,10 @@ impl Operands {
 }
 
 /// A numeric literal: its span, its value, whether a `-` is applied to it, its text, whether
-/// it is written with the suffix `n`, and whether it is generic (step L1.26a): written `kn` and
-/// an operand of an operator other than `==` and `!=`, the one place elaboration gives it the
-/// carrier of the other operand at run time. Elsewhere a `kn` is read as `k`.
+/// it is written with the suffix `n`, whether it is generic (step L1.26a): written `kn` where
+/// it joins a class other than under `==` and `!=`, and whether, generic, it has no other
+/// operand to take its carrier from at run time and takes it from a parameter of its class
+/// ([`Info::witness`]). Where it joins no class, a `kn` is read as `k`.
 #[derive(Clone)]
 struct Lit {
     span: Span,
@@ -260,6 +266,19 @@ struct Lit {
     text: String,
     n: bool,
     generic: bool,
+    witness: bool,
+}
+
+impl Lit {
+    /// The literal as it joins a class with no other operand: generic, taking its carrier
+    /// from a parameter of the class, if it is written `kn`.
+    fn joining(&self) -> Lit {
+        Lit {
+            generic: self.n,
+            witness: self.n,
+            ..self.clone()
+        }
+    }
 }
 
 /// An argument: its type, the literal it is, if it is one, the expression it is, if any, and
@@ -471,6 +490,13 @@ struct Class {
     /// The tuples and functions that flowed into it, each with where: every use is checked
     /// on each.
     flowed: Vec<(Ty, Span)>,
+    /// A parameter of the class whose value has the class's carrier at run time, if any:
+    /// its binder and the body it is in scope in; of a merged class, the outer one where one
+    /// body holds the other.
+    binder: Option<(usize, Span)>,
+    /// Whether its values are those of generic literals only, as of `1n + 1n`: of a merged
+    /// class, whether both were. An `if` merges it with the class of its other branch.
+    generic: bool,
 }
 
 struct Ck<'t, 'a> {
@@ -606,6 +632,30 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             None => v,
         }
+    }
+
+    /// Records the parameter `id` of type `t`, bound to `bound` in the body `body`, as the
+    /// binder of its class when `t` is a class and the body sees the class's values only: a
+    /// generic literal of the class with no other operand takes its carrier from the
+    /// parameter's value at run time (L1.26a). A parameter that also holds the atoms its uses
+    /// handle may hold an atom there, and is not recorded.
+    fn bind_param(&mut self, id: usize, t: &Ty, bound: &Ty, body: Span) {
+        if bound != t {
+            return;
+        }
+        if let Some(k) = self.class_of_ty(t) {
+            self.touch(k);
+            self.classes[k].binder.get_or_insert((id, body));
+        }
+    }
+
+    /// A class of its own, of generic literals only, that the literal `l`, written `kn`, joins
+    /// generic with no other operand (L1.26a); it takes int where it meets no carrier.
+    fn generic_class(&mut self, l: &Lit) -> usize {
+        let k = self.class();
+        self.classes[k].generic = true;
+        self.join(k, &l.joining(), false);
+        k
     }
 
     /// The signature of a function of parameters `params`, whose binders are `ids`, of types
@@ -1572,6 +1622,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             name: None,
             uses: Vec::new(),
             flowed: Vec::new(),
+            binder: None,
+            generic: false,
         });
         self.pending[self.level].push(id);
         id
@@ -1651,8 +1703,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut uses = std::mem::take(&mut self.classes[child].uses);
         let mut flowed = std::mem::take(&mut self.classes[child].flowed);
         let level = self.classes[child].level;
+        let binder = self.classes[child].binder;
+        let generic = self.classes[child].generic;
         self.classes[child].parent = root;
         let c = &mut self.classes[root];
+        c.generic &= generic;
+        c.binder = match (c.binder, binder) {
+            (Some(a), Some(b)) if b.1.start <= a.1.start && a.1.end <= b.1.end => Some(b),
+            (a, b) => a.or(b),
+        };
         if c.uses.len() < uses.len() {
             std::mem::swap(&mut c.uses, &mut uses);
         }
@@ -2152,9 +2211,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Gives class `r` its type: the first of int, f64 and rat it may take if a literal that
-    /// neither follows nor is generic joined it, every literal adopting it; a type variable if it may take
-    /// any value; its carrier if one; a type variable bounded by its carriers if several;
-    /// else the unknown.
+    /// neither follows nor is generic joined it, or a generic one with no other operand and no
+    /// parameter of the class in scope at it ([`Info::witness`]), every literal adopting it;
+    /// a type variable if it may take any value; its carrier if one; a type variable bounded
+    /// by its carriers if several; else the unknown.
     ///
     /// Complexity tradeoff: a class that a literal joined takes one carrier, the first of int,
     /// f64 and rat, so a function such as `f(x) = x * 2` takes int only, and a call at f64 is
@@ -2171,10 +2231,23 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// carrier of `x` by one `match` at run time.
     fn resolve(&mut self, r: usize) {
         let (mask, lits) = (self.classes[r].mask, self.classes[r].lits.clone());
+        // A generic literal with no other operand takes the carrier from a parameter of the
+        // class in scope at it; with none, it is read as a plain literal, which fixes the
+        // class's carrier.
+        let binder = self.classes[r].binder;
+        let witness = |l: &Lit| {
+            binder
+                .filter(|(_, s)| s.start <= l.span.start && l.span.end <= s.end)
+                .map(|(id, _)| id)
+        };
         let numeric = [Carrier::Int, Carrier::F64, Carrier::Rat]
             .into_iter()
             .find(|c| mask & c.bit() != 0)
-            .filter(|_| lits.iter().any(|(l, follows)| !follows && !l.generic));
+            .filter(|_| {
+                lits.iter().any(|(l, follows)| {
+                    !follows && (!l.generic || (l.witness && witness(l).is_none()))
+                })
+            });
         let ty = match numeric {
             Some(c) => Ty::carrier(c),
             None if mask == EVERY => Ty::var(format!("${r}").into()),
@@ -2207,6 +2280,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .collect();
                     if !values.is_empty() {
                         self.put(Undo::Follows(l.span, Some(values)));
+                        if l.witness {
+                            let id = witness(l).expect("a witnessed literal's binder");
+                            self.put(Undo::Witness(l.span, Some(id)));
+                        }
                     }
                 }
             }
@@ -3635,6 +3712,68 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// one bounded variable share a carrier: their classes merge, and their literals adopt
     /// it. Every other argument is checked piece by piece, a class taking the carriers its
     /// parameter allows.
+    /// The literal `l` as it joins a class with no other operand, as a call's argument does:
+    /// generic if written `kn` ([`Lit::joining`]), except in a check of a generic function's
+    /// needs at a call, where the literal is of the function's body, which elaborates once for
+    /// every call, and is read as `k`.
+    fn joining(&self, l: &Lit) -> Lit {
+        match self.replaying {
+            0 => l.joining(),
+            _ => l.clone(),
+        }
+    }
+
+    /// The type of the tuple argument `a` at a parameter that is a type variable, with each
+    /// literal `kn` written as a component of it, at any depth, made a class of its own that
+    /// the literal joins, generic (L1.26a): the component joins the class of what it meets in
+    /// the function's body, and takes int where it meets no carrier. `None` outside a
+    /// function, and where no such literal is written.
+    ///
+    /// The tuples nest as deep as the text, so the walk keeps its own stack, as [`adopted`]
+    /// does; it costs the size of the tuple's text.
+    fn generic_parts(&mut self, a: &Arg) -> Option<Ty> {
+        let parts = (a.parts.as_deref()).filter(|_| self.level > 0 && self.replaying == 0)?;
+        let comps = only_tuple(&a.ty, parts.len())?;
+        let mut stack = vec![OpenTuple {
+            parts,
+            comps,
+            want: Vec::new(),
+            out: Vec::new(),
+        }];
+        let mut made = false;
+        loop {
+            let open = stack.last_mut().expect("an open tuple");
+            let i = open.out.len();
+            if i == open.parts.len() {
+                let t = Ty::tuple(stack.pop().expect("an open tuple").out);
+                match stack.last_mut() {
+                    None => return made.then_some(t),
+                    Some(up) => up.out.push(t),
+                }
+                continue;
+            }
+            let c = &open.comps[i];
+            match &open.parts[i] {
+                Part::Lit(l) if l.n => {
+                    let k = self.generic_class(l);
+                    made = true;
+                    let open = stack.last_mut().expect("an open tuple");
+                    open.out.push(Ty::var(format!("${k}").into()));
+                }
+                Part::Tuple(inner) => match only_tuple(c, inner.len()) {
+                    Some(cs) => stack.push(OpenTuple {
+                        parts: inner,
+                        comps: cs,
+                        want: Vec::new(),
+                        out: Vec::new(),
+                    }),
+                    None => open.out.push(c.clone()),
+                },
+                _ => open.out.push(c.clone()),
+            }
+        }
+    }
+
     fn apply_one(
         &mut self,
         what: &str,
@@ -3711,7 +3850,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         return fail(self);
                     }
                     for l in &lits {
-                        if !self.join(k, l, false) {
+                        if !self.join(k, &self.joining(l), false) {
                             return fail(self);
                         }
                     }
@@ -3748,10 +3887,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             let p = &arrow.params[i];
+            let generic = match p.as_var().is_some() {
+                true => self.generic_parts(a),
+                false => None,
+            };
+            let a = &match generic {
+                Some(ty) => Cow::Owned(Arg {
+                    ty,
+                    parts: None,
+                    ..a.clone()
+                }),
+                None => Cow::Borrowed(a),
+            };
             // A parameter that is a class of the function around: the argument flows into it.
             if let Some(k) = self.class_of_ty(p) {
                 let ok = match &a.lit {
-                    Some(l) => self.join(k, l, false),
+                    Some(l) => self.join(k, &self.joining(l), false),
                     None => self.flow(k, &a.ty, what, span),
                 };
                 if !ok {
@@ -4309,6 +4460,7 @@ enum Undo {
     Top(String, Option<Ty>),
     Passes(Span, Option<Vec<(Span, KType)>>),
     Follows(Span, Option<Vec<(Carrier, Value)>>),
+    Witness(Span, Option<usize>),
     /// A class, while a repair is tried.
     Class(usize, Box<Class>),
 }
@@ -4356,6 +4508,7 @@ impl Ck<'_, '_> {
             }
             Undo::Passes(k, v) => Undo::Passes(k, set!(i.passes, k, v)),
             Undo::Follows(k, v) => Undo::Follows(k, set!(i.follows, k, v)),
+            Undo::Witness(k, v) => Undo::Witness(k, set!(i.witness, k, v)),
             Undo::Class(..) => unreachable!("a class is set above"),
         }
     }
@@ -4459,6 +4612,7 @@ fn literal(e: &Expr) -> Option<Lit> {
         text: inner.to_string(),
         n,
         generic: false,
+        witness: false,
     })
 }
 
