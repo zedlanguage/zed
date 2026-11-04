@@ -662,7 +662,10 @@ impl<'a> Elab<'a> {
             .map(|b| {
                 let k = seen.entry(&b.name).or_default();
                 *k += 1;
-                if count[b.name.as_str()] == 1 && prelude_layer(&b.name).is_none() {
+                // A term names a prelude word of L1 by its bare name, so a binder of that name is
+                // renamed; a word of a later layer never reaches a term, since its use stops the
+                // unit at resolution, so a binder `rate` or `order` keeps its name.
+                if count[b.name.as_str()] == 1 && prelude_layer(&b.name) != Some(1) {
                     b.name.as_str().into()
                 } else {
                     format!("{}@{k}", b.name).into()

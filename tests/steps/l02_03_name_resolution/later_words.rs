@@ -1,6 +1,6 @@
-//! The prelude words and types of later layers (DESIGN.md sec:grammar, "Defined words by
-//! layer"): a use of one that no program name shadows is reported with its layer, not as a
-//! name that is not defined.
+//! The prelude words, facet words and types of later layers (DESIGN.md sec:grammar, "Defined
+//! words by layer"): a use of one that no program name shadows is reported with its layer, not
+//! as a name that is not defined.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -28,6 +28,38 @@ fn a_later_word_is_reported_with_its_layer() {
     );
     // A program's own name shadows the word at any layer.
     assert_eq!(errors("find = 0;\nf() = find;\n"), Vec::<String>::new());
+}
+
+/// A facet is a value of the prelude struct `Facet` bound to a name (DESIGN.md
+/// sec:checking_in_zed), so a prelude facet named below its layer is reported with the layer.
+#[test]
+fn a_facet_word_is_reported_with_its_layer() {
+    assert_eq!(
+        errors("f(x) = order(x);\n"),
+        ["`order` is a prelude word of layer L7 [order]"]
+    );
+    assert_eq!(
+        errors("f(s) = units(s);\n"),
+        ["`units` is a prelude word of layer L12 [units]"]
+    );
+    assert_eq!(
+        errors("f(n) = retry(n);\n"),
+        ["`retry` is a prelude word of layer L21 [retry]"]
+    );
+    assert_eq!(
+        errors("f() = target;\n"),
+        ["`target` is a prelude word of layer L24 [target]"]
+    );
+    // A facet a program defines is its own name: not defined until the program binds it.
+    assert_eq!(
+        errors("f() = parity;\n"),
+        ["`parity` is not defined [parity]"]
+    );
+    // A parameter or a binding shadows a facet word at any layer.
+    assert_eq!(
+        errors("area(length, at) = length * at;\nrate = 2;\ng() = rate;\n"),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
@@ -75,9 +107,21 @@ const UNLISTED: &[(&str, u32)] = &[("count", 3)];
 /// and float formats of L14, which are applied to build a value as `int(…)` is.
 const LOWER_TYPES: &[&str] = &["complex", "quat", "oct", "bf16", "f16"];
 
-/// Each row of the table "Defined words by layer" in `design`: its layer, its annotations and
-/// its defined forms, each the text of its code spans.
-fn table(design: &str) -> Vec<(u32, Vec<String>, Vec<String>)> {
+/// The facets of the table's third column that a program defines, as examples of the rule
+/// "every facet a program defines": names of the program, not of the prelude.
+const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency")];
+
+/// A row of the table "Defined words by layer": its layer, and its annotations, facet words and
+/// defined forms, each the text of its code spans.
+struct Row {
+    layer: u32,
+    annots: Vec<String>,
+    facets: Vec<String>,
+    forms: Vec<String>,
+}
+
+/// Each row of the table "Defined words by layer" in `design`.
+fn table(design: &str) -> Vec<Row> {
     let start = design
         .find("**Defined words by layer.**")
         .expect("the table's paragraph");
@@ -94,8 +138,12 @@ fn table(design: &str) -> Vec<(u32, Vec<String>, Vec<String>)> {
         .take_while(|l| l.starts_with("| L"))
         .map(|l| {
             let cells: Vec<&str> = l.split('|').map(str::trim).collect();
-            let layer = cells[1][1..].parse().expect("a layer number");
-            (layer, spans(cells[2]), spans(cells[4]))
+            Row {
+                layer: cells[1][1..].parse().expect("a layer number"),
+                annots: spans(cells[2]),
+                facets: spans(cells[3]),
+                forms: spans(cells[4]),
+            }
         })
         .collect()
 }
@@ -115,15 +163,35 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
     // The first layer a name is listed at is its layer: `Ast` returns at L11 with members.
     let mut words: BTreeMap<String, u32> = BTreeMap::new();
     let mut types: BTreeMap<String, u32> = BTreeMap::new();
-    for (layer, annots, forms) in &rows {
+    for Row {
+        layer,
+        annots,
+        facets,
+        forms,
+    } in &rows
+    {
         for a in annots {
             let name = a.strip_prefix('@').expect("an annotation");
             assert_eq!(annotation_layer(name), Some(*layer), "@{name}");
         }
+        // A facet word is a value word: the prelude binds the `Facet` value to the name.
+        let tag = format!("L{layer}");
+        for f in facets {
+            assert!(
+                f.chars().next().is_some_and(char::is_lowercase)
+                    && f.chars().all(char::is_alphanumeric),
+                "the facet `{f}` of {tag} is not a lower-case name"
+            );
+            if PROGRAM_FACETS.contains(&(tag.as_str(), f.as_str())) {
+                assert_eq!(prelude_layer(f), None, "the program's facet `{f}`");
+            } else {
+                words.entry(f.clone()).or_insert(*layer);
+            }
+        }
         let names = forms.iter().filter(|f| {
             f.chars().next().is_some_and(char::is_alphabetic)
                 && f.chars().all(char::is_alphanumeric)
-                && !NOT_PRELUDE_NAMES.contains(&(format!("L{layer}").as_str(), f.as_str()))
+                && !NOT_PRELUDE_NAMES.contains(&(tag.as_str(), f.as_str()))
         });
         for f in names {
             let upper = f.chars().next().is_some_and(char::is_uppercase);

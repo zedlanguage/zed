@@ -299,8 +299,11 @@ pub struct Resolved {
 /// `String` functions the documentation uses, and `min` and `max`, which the table does not list
 /// and so enter with the scalars they take. The table's other names that are no word are left
 /// out: `main` and the ports `clock` and `log`, which a program names, and `abs` of L14, the L1
-/// word on more types. The step test `l02_03_name_resolution::later_words` checks these tables
-/// against the table in DESIGN.md.
+/// word on more types. The prelude's facet words, the table's third column, are words too: a
+/// facet is a value of the prelude struct `Facet` bound to a name, with no facet keyword
+/// (sec:checking_in_zed), so `with units("m")` names the value `units`. The facets a program
+/// defines (`parity`) are its own names. The step test `l02_03_name_resolution::later_words`
+/// checks these tables against the table in DESIGN.md.
 pub const WORDS: &[(&str, u32)] = &[
     ("String", 1),
     ("int", 1),
@@ -374,9 +377,31 @@ pub const WORDS: &[(&str, u32)] = &[
     ("window", 7),
     ("merge", 7),
     ("latest", 7),
+    ("reducer", 7),
+    ("bound", 7),
+    ("timeout", 7),
+    ("order", 7),
+    ("finite", 7),
+    ("bits", 7),
+    ("endian", 7),
+    ("at", 7),
+    ("length", 7),
+    ("terminated", 7),
+    ("tagged", 7),
+    ("arg", 7),
+    ("release", 7),
+    ("transfer", 7),
+    ("concurrency", 7),
+    ("period", 7),
+    ("priority", 7),
+    ("coalesce", 7),
+    ("cancel", 7),
     ("refine", 10),
     ("meet", 11),
     ("entails", 11),
+    ("units", 12),
+    ("taint", 13),
+    ("layout", 14),
     ("complex", 14),
     ("quat", 14),
     ("oct", 14),
@@ -398,8 +423,15 @@ pub const WORDS: &[(&str, u32)] = &[
     ("anyElim", 15),
     ("allElim", 15),
     ("reflect", 15),
+    ("unique", 16),
     ("compile", 19),
     ("mix", 19),
+    ("store", 21),
+    ("retry", 21),
+    ("hedge", 21),
+    ("breaker", 21),
+    ("rate", 21),
+    ("peers", 21),
     ("ofNat", 22),
     ("additive", 22),
     ("byStrongInduction", 22),
@@ -410,10 +442,12 @@ pub const WORDS: &[(&str, u32)] = &[
     ("simplify", 22),
     ("substitute", 22),
     ("derivative", 22),
+    ("target", 24),
     ("verify", 25),
     ("explain", 25),
     ("obligations", 25),
     ("check", 25),
+    ("recovery", 27),
 ];
 
 /// The layer of the prelude value word `name`, if it is one.
