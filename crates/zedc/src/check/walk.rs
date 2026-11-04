@@ -235,6 +235,8 @@ pub(super) enum Frame<'a> {
     AtIndex(Ty, Option<usize>, Span),
     LambdaEnd {
         names: Vec<SParam>,
+        /// The binder of the parameter in each slot, if a parameter takes it.
+        ids: Vec<Option<usize>>,
         level: usize,
         tys: Vec<Ty>,
     },
@@ -806,8 +808,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::InferEnd(s) => {
                 let result = m.take_ty();
                 let InferF {
-                    params, tys, level, ..
+                    params,
+                    ids,
+                    tys,
+                    level,
+                    ..
                 } = *s;
+                let ids: Vec<Option<usize>> = ids.into_iter().map(Some).collect();
+                let tys = self.handled_tys(&ids, tys);
                 let sig = self.generalize(level, Sig::one(params, tys, result));
                 m.ret = Ret::Sig(sig);
             }
@@ -901,8 +909,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.at_index(&v, i, x, span);
                 m.ty(t);
             }
-            Frame::LambdaEnd { names, level, tys } => {
+            Frame::LambdaEnd {
+                names,
+                ids,
+                level,
+                tys,
+            } => {
                 let result = m.take_ty();
+                let tys = self.handled_tys(&ids, tys);
                 let sig = self.generalize(level, Sig::one(names, tys, result));
                 m.ty(Ty::func(sig));
             }
@@ -1243,7 +1257,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             };
             self.origin(*id, p.span, why, None);
-            self.env.insert(*id, t.clone());
+            self.env.insert(
+                *id,
+                match p.ty.is_none() && t.as_var().is_some() {
+                    true => self.param_ty(*id, t.clone()),
+                    false => t.clone(),
+                },
+            );
             s.tys.push(t);
         }
         s.i = 0;
@@ -2206,19 +2226,30 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.pending.len() <= level {
             self.pending.push(Vec::new());
         }
-        let mut tys = Vec::new();
+        let (mut tys, mut ids) = (Vec::new(), Vec::new());
         for p in slots {
-            let t = match p.and_then(|p| p.ty.as_ref()) {
+            let declared = p.and_then(|p| p.ty.as_ref());
+            let t = match declared {
                 Some(t) => denoted(t),
                 None => Ty::var(format!("${}", self.class()).into()),
             };
-            if let Some(p) = p {
-                let id = self.id(p.span, &p.name);
-                self.env.insert(id, t.clone());
+            let id = p.map(|p| self.id(p.span, &p.name));
+            if let Some(id) = id {
+                let bound = match declared {
+                    Some(_) => t.clone(),
+                    None => self.param_ty(id, t.clone()),
+                };
+                self.env.insert(id, bound);
             }
+            ids.push(id);
             tys.push(t);
         }
-        m.k(Frame::LambdaEnd { names, level, tys });
+        m.k(Frame::LambdaEnd {
+            names,
+            ids,
+            level,
+            tys,
+        });
         m.job(Job::Body(body, Want::default()));
         // The defaults are checked first, in order, each bound before the next.
         for &p in extra.iter().rev() {

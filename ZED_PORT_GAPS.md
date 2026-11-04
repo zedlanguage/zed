@@ -1359,3 +1359,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `.collect::<Result<Vec<_>, String>>()` stopping at the first word that is not UTF-8 | `run::words` | Early exit (gap 12) | A fold that keeps the first failure |
 | `split('\n')`, `Vec::pop` of a last empty piece, `strip_suffix('\r')` | `testing::given_args` | Mutation (gap 11) | The L3 word `lines`, which splits a `String` as a `Lines` input is |
 | A `match` on `&words.command[..]` slice patterns with `*cmd == "run"` | `run::command_inner` | None: Zed's `match` on tuples | The same match on the list of words |
+
+## Entries from ISSUE1-else-atoms (`zedc/src/resolve.rs`, `zedc/src/check/mod.rs`, `check/walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Resolution::handles`, a `Vec` the resolver pushes to as it walks each `else` and `is` | `resolve::Resolver::expr` | Mutation | The walk returns its handled sites with its other results, joined at each node |
+| A `HashMap<usize, KType>` of each parameter's handled atoms, each entry joined in place (`*e = &*e \| &a`) | `check::handled` | Mutation | A fold over the sites into a persistent map, joining the entry's value |

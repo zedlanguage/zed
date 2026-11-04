@@ -105,6 +105,21 @@ pub struct Resolution {
     /// The unit item `@log(#off);`, if the unit has one: it drops the log lines that every
     /// body of the unit writes (DESIGN.md sec:ports). Step L7.3, which writes the lines, reads it.
     pub log_off: Option<Span>,
+    /// Each `e else d`, `e else #a -> d` and `e is T` whose `e` is a name, by the name's text,
+    /// in the order of the text: the atoms the test or the replacement handles. The checker
+    /// gives an undeclared parameter the atoms its uses handle (DESIGN.md sec:type_resolution).
+    pub handles: Vec<(Span, Handle)>,
+}
+
+/// The atoms an `else` or an `is` handles.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Handle {
+    /// Every loose atom: `e else d`.
+    Loose,
+    /// The atom with any payload or none: `e else #a -> d`.
+    Any(String),
+    /// The atom with no payload: `e is #a`, one for each atom of the tested type.
+    Bare(String),
 }
 
 /// The value words of the prelude, each with the layer it belongs to (DESIGN.md, "Defined
@@ -816,6 +831,19 @@ impl Resolver {
                 body,
             }),
             ExprKind::Is { of, ty, .. } => {
+                if let ExprKind::Name(_) = of.kind {
+                    // The written type's atoms: a union nests as deep as its text.
+                    let mut stack = vec![ty];
+                    while let Some(t) = stack.pop() {
+                        match &t.kind {
+                            TypeKind::Atom(a) => {
+                                self.out.handles.push((of.span, Handle::Bare(a.clone())))
+                            }
+                            TypeKind::Union(ts) => stack.extend(ts),
+                            _ => {}
+                        }
+                    }
+                }
                 todo.push(Task::Ty(ty));
                 todo.push(Task::Expr(of));
             }
@@ -824,6 +852,21 @@ impl Resolver {
                 pattern,
                 default,
             } => {
+                if let ExprKind::Name(_) = of.kind {
+                    let h = match pattern {
+                        None => Some(Handle::Loose),
+                        Some(Pattern::Atom {
+                            name,
+                            fields,
+                            items,
+                            ..
+                        }) if fields.is_empty() && items.is_empty() => {
+                            Some(Handle::Any(name.clone()))
+                        }
+                        Some(_) => None,
+                    };
+                    self.out.handles.extend(h.map(|h| (of.span, h)));
+                }
                 todo.push(Task::Else {
                     span: e.span,
                     pattern: pattern.as_ref(),

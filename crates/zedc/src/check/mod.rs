@@ -21,10 +21,12 @@
 //! non-tuple argument is rejected at the call. `_` is the type of every value: it passes only
 //! where any value is accepted (DESIGN.md "Soundness").
 //!
-//! Where DESIGN.md does not say: an
-//! atom passes through the operators and the prelude words, as the kernel's primitives pass
-//! it, but not through a declared function, which binds it; a call matching several arrows
-//! takes the first one's result.
+//! An atom passes through the operators and the prelude words, as the kernel's primitives
+//! pass it, and through a declared function whose parameter's type omits it (rule 6 of
+//! sec:type_resolution). An undeclared parameter's type holds the atoms its uses handle, so
+//! `r(positional line) = trim(line else "")` is `(String | #_) -> String`: a call passing
+//! `#notFound` runs the body, whose `else` replaces it. Where DESIGN.md does not say: a call
+//! matching several arrows takes the first one's result.
 //!
 //! Step L1.27: an atom of a named family is data (sec:failure). `else` strips only the loose
 //! atoms, and a family atom that selects no arrow is an error, where a loose one flows on.
@@ -50,7 +52,7 @@ use crate::ast::{
 use crate::elab::Tables;
 use crate::lex::Span;
 use crate::rejection::Row;
-use crate::resolve::{Ref, Resolution};
+use crate::resolve::{Handle, Ref, Resolution};
 use crate::store::int::Int;
 use crate::store::interval::{
     End::{self, Fin, NegInf, PosInf},
@@ -472,6 +474,9 @@ struct Ck<'t, 'a> {
     defer: BTreeSet<Arc<str>>,
     /// What the last application of one arrow bound, and the needs it left.
     applied: Option<(Binds, Vec<Need>)>,
+    /// The atoms the uses of each binder handle, `else` and `is` on its name: an undeclared
+    /// parameter's type holds them.
+    handled: HashMap<usize, KType>,
 }
 
 /// A need being checked at a call.
@@ -511,7 +516,37 @@ impl<'t, 'a> Ck<'t, 'a> {
             open: Vec::new(),
             defer: BTreeSet::new(),
             applied: None,
+            handled: handled(t.res),
         }
+    }
+
+    /// The type an undeclared parameter `id` of the class variable `v` is bound to in its
+    /// body: `v` and the atoms its uses handle.
+    fn param_ty(&self, id: usize, v: Ty) -> Ty {
+        match self.handled.get(&id) {
+            Some(a) => v.union(&Ty::set(a.clone())),
+            None => v,
+        }
+    }
+
+    /// The signature types of the parameters `ids` of types `tys`, at the end of the body:
+    /// an undeclared one whose class holds only carriers also holds the atoms its uses
+    /// handle, so a call passing one runs the body. A class that may hold other values
+    /// already holds every atom.
+    fn handled_tys(&self, ids: &[Option<usize>], tys: Vec<Ty>) -> Vec<Ty> {
+        tys.into_iter()
+            .zip(ids)
+            .map(|(t, id)| {
+                let a = id.and_then(|id| self.handled.get(&id));
+                let k = t.as_var().and_then(|v| class_id(v));
+                match (a, k) {
+                    (Some(a), Some(k)) if self.classes[self.find(k)].mask & OTHER == 0 => {
+                        t.union(&Ty::set(a.clone()))
+                    }
+                    _ => t,
+                }
+            })
+            .collect()
     }
 
     /// Checks that the guarantee of every `L .. U -> V` in the unit's written types is within
@@ -4440,6 +4475,33 @@ impl<'a> Ck<'_, 'a> {
             }
         }
     }
+}
+
+/// The atoms the uses of each binder handle ([`Resolution::handles`]). Each site adds its
+/// atoms to its binder's set, small into large, so `H` sites cost `O(H log H)`.
+fn handled(res: &Resolution) -> HashMap<usize, KType> {
+    // Complexity tradeoff: only a test on the parameter's own name counts. One on a binding
+    // of it (`s = line; s else ""`) would need the flow of each binding followed back to the
+    // parameter; the parameter then takes no atom for it, and the atom passes the call by
+    // (rule 6), as before.
+    let mut out: HashMap<usize, KType> = HashMap::new();
+    for (span, h) in &res.handles {
+        let Some(Ref::Bound(ids)) = res.uses.get(span) else {
+            continue;
+        };
+        if ids.len() != 1 {
+            continue;
+        }
+        let id = ids[0];
+        let a = match h {
+            Handle::Loose => atoms(),
+            Handle::Any(n) => any_payload(n),
+            Handle::Bare(n) => KType::atom(n),
+        };
+        let e = out.entry(id).or_insert_with(KType::empty);
+        *e = &*e | &a;
+    }
+    out
 }
 
 /// The atom `#name` with any payload or none: what a bare pattern `#name` matches.

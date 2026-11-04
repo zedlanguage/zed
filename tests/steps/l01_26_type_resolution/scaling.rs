@@ -278,3 +278,23 @@ fn bit_words_8000_deep_check_on_a_2_mib_stack() {
         });
     });
 }
+
+/// A function whose undeclared parameter `line` is tested against `n` atoms, each test bound
+/// to a name, then trimmed.
+fn tests_of_atoms(n: usize) -> String {
+    let tests: String = (0..n).map(|i| format!("b{i} = line is #a{i}; ")).collect();
+    format!("r(positional line) = {{ {tests}trim(line) }};\n")
+}
+
+#[test]
+fn a_parameter_tested_against_many_atoms_scales() {
+    // Each test adds its atom to the parameter's set, the small set into the large one.
+    let (i, _) = info(&tests_of_atoms(3));
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
+    let a = &i.sigs.values().next().unwrap().expand()[0];
+    assert!(!a.params[0].atoms().is_empty());
+    scaling::check("a parameter tested against n atoms", 400, |n| {
+        let (info, _) = info(&tests_of_atoms(n));
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
