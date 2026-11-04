@@ -127,7 +127,10 @@ fn sorted(mut s: Shown) -> Shown {
 fn check_piece(piece: usize) -> usize {
     let units = units();
     assert!(units.len() >= 63, "{} units", units.len());
-    let mine: Vec<&(String, String)> = units.iter().skip(piece).step_by(PIECES).collect();
+    let mine: Vec<&(String, String)> = units
+        .iter()
+        .filter(|(name, _)| piece_of(name) == piece)
+        .collect();
     // Alone: each unit on a thread of its own, before anything else is checked there.
     let alone: Vec<Shown> = mine
         .iter()
@@ -193,6 +196,15 @@ fn check_piece(piece: usize) -> usize {
     compared
 }
 
+/// The piece unit `name` is checked in: an FNV-1a hash of its path, so a unit added to the corpus
+/// joins one piece and moves no other unit to the other.
+fn piece_of(name: &str) -> usize {
+    let h = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    (h % PIECES as u64) as usize
+}
+
 /// The pieces the units are checked in, each a test of its own, so each runs in parallel and
 /// within the time of one piece of the suite.
 const PIECES: usize = 2;
@@ -200,9 +212,10 @@ const PIECES: usize = 2;
 /// Fewer types than this compared in a piece means the units no longer reach the checker. Since
 /// step L1.39b a check prints only the types its reported messages show, not every signature
 /// and origin as it is bound, so the pieces compared 48 and 29 types (77 in all, at the merge).
-/// Which piece a unit falls in moves with each unit added before it: after step L1.26a's unit
-/// they compare 20 and 61, so the floor is 10, still far above the none of a broken checker.
-const FEWEST: usize = 10;
+/// While units were split by their index in path order, each unit added moved every later one
+/// to the other piece (after step L1.26a's unit, 20 and 61); split by `piece_of`, they compare
+/// 27 and 54, and a unit added only adds to its own piece.
+const FEWEST: usize = 20;
 
 #[test]
 fn printed_types_do_not_move_0() {

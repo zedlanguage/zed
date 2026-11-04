@@ -9,6 +9,7 @@ use zed_tests::tokens;
 use zedc::lex::lex_fence;
 
 use crate::l01_16_elaboration::value;
+use crate::l01_19_whole_file_ports::run;
 use crate::l01_26_type_resolution::{sig, type_errors};
 
 const INC: &str = "inc(x) = x + 1n;\n";
@@ -39,6 +40,23 @@ fn a_generic_function_fits_a_slot_of_two_arrows() {
         type_errors(&plain),
         ["`inc` is `(x: int) -> int`, not `((x: int) -> int) & ((x: f64) -> f64)` [inc]"]
     );
+}
+
+#[test]
+fn a_program_passes_a_generic_function_to_a_slot_of_two_arrows() {
+    // Run by `zedc run`: `inc` fills a parameter that calls it at `int` and at `f64`, and is
+    // also called at `rat`.
+    let src = format!(
+        "both(f: ((x: int) -> int) & ((x: f64) -> f64)) =\n  \
+           String(f(x: 2)) ++ \" \" ++ String(f(x: 2.5));\n\
+         {INC}\
+         main(stdin: Lines) -> (stdout: Lines) {{\n  \
+           stdout <- both(f: inc) ++ \" \" ++ String(inc(x: 0.1r));\n\
+         }}\n"
+    );
+    let out = run("l01_26a_two_arrows", &src, "", &[]);
+    assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{src}");
+    assert_eq!(out.stdout, "3 3.5 11r/10r\n");
 }
 
 #[test]

@@ -20,17 +20,15 @@ fn a_body_of_many_generic_literals_scales() {
         .stack_size(1 << 29)
         .spawn(|| {
             assert_eq!(sig(&sum(2), "f"), "(T, T) -> T for T in int | f64 | rat");
-            scaling::check(
-                "a body of n generic literals and n class merges",
-                200,
-                |n| {
-                    let src = sum(n);
-                    let (info, _) = info(&src);
-                    assert!(info.errors.is_empty(), "{:?}", info.errors);
-                    assert_eq!(info.follows.len(), n);
-                    elab(&src).unwrap();
-                },
-            );
+            let n = 200;
+            let srcs = [sum(n), sum(scaling::FACTOR * n)];
+            scaling::check("a body of n generic literals and n class merges", n, |m| {
+                let src = &srcs[usize::from(m != n)];
+                let (info, _) = info(src);
+                assert!(info.errors.is_empty(), "{:?}", info.errors);
+                assert_eq!(info.follows.len(), m);
+                elab(src).unwrap();
+            });
         })
         .unwrap()
         .join()
