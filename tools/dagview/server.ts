@@ -6,7 +6,7 @@
 // plan out when the page posts its graph to /api/layout (see layout.ts).
 
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
@@ -119,7 +119,12 @@ const page = `<!doctype html>
 <link rel="stylesheet" href="/style.css"></head>
 <body><script type="module" src="/client.js"></script></body></html>`;
 
-const layouts = new Layouts(layoutInWorker);
+const savedLayouts = join(work, "dagview-layouts.json");
+const layouts = new Layouts(
+  layoutInWorker,
+  JSON.parse(await readFile(savedLayouts, "utf8").catch(() => "{}")),
+  (done) => void writeFile(savedLayouts, JSON.stringify(done)).catch((err) => console.error(`saving layouts failed:`, err)),
+);
 
 async function body(req: IncomingMessage): Promise<string> {
   const parts: Buffer[] = [];

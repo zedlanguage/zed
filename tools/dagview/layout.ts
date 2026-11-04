@@ -73,6 +73,8 @@ export function layoutInWorker(g: Graph): Promise<Layout> {
 // Keeps, for each edge mode, the newest finished layout and the newest graph
 // asked for. One layout runs at a time; a graph asked for while another runs
 // replaces any older request for its mode, so no stale layout is computed.
+// The finished layouts are passed to `save` and given back at startup, so a
+// restarted server shows the last chart while it lays out the current one.
 export class Layouts {
   private done = new Map<string, Layout>();
   private want = new Map<string, { key: string; graph: Graph }>();
@@ -80,9 +82,16 @@ export class Layouts {
   private busy = false;
 
   private compute: (g: Graph) => Promise<Layout>;
+  private save: (done: Record<string, Layout>) => void;
 
-  constructor(compute: (g: Graph) => Promise<Layout>) {
+  constructor(
+    compute: (g: Graph) => Promise<Layout>,
+    saved: Record<string, Layout> = {},
+    save: (done: Record<string, Layout>) => void = () => {},
+  ) {
     this.compute = compute;
+    this.save = save;
+    for (const [mode, l] of Object.entries(saved)) this.done.set(mode, l);
   }
 
   request(mode: string, graph: Graph): { layout: Layout | null; fresh: boolean; error?: string } {
@@ -104,6 +113,7 @@ export class Layouts {
     try {
       const l = await this.compute(graph);
       this.done.set(mode, { ...l, key });
+      this.save(Object.fromEntries(this.done));
     } catch (err) {
       console.error(`layout of ${mode} failed:`, err);
       this.failed.set(mode, key);

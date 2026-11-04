@@ -63,6 +63,21 @@ test("the last layout is served while a newer graph is laid out, and older reque
   assert.deepEqual(layouts.request("all", g("three")), { layout: null, fresh: false });
 });
 
+test("finished layouts are saved and a saved layout is served at startup", async () => {
+  const g: Graph = { nodes: [{ id: "A", w: 1, h: 1 }], edges: [] };
+  const saves: Record<string, Layout>[] = [];
+  const first = new Layouts(() => Promise.resolve({ key: "", w: 1, h: 1, boxes: {}, edges: [] }), {}, (d) => saves.push(d));
+  first.request("direct", g);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].direct.key, graphKey(g));
+  // A restart with the saved layouts serves it at once without laying out again.
+  let calls = 0;
+  const second = new Layouts(() => (calls++, Promise.reject(new Error("no"))), JSON.parse(JSON.stringify(saves[0])));
+  assert.equal(second.request("direct", g).fresh, true);
+  assert.equal(calls, 0);
+});
+
 test("a failed layout is reported and not retried for the same graph", async () => {
   let calls = 0;
   const layouts = new Layouts(() => {
