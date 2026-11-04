@@ -1682,7 +1682,7 @@ impl<'a> Elab<'a> {
         };
         let mut out = Vec::new();
         match &targets[..] {
-            [Target::Name(n)] => {
+            [Target::Name(n, _)] => {
                 let k = self.names[self.id(s.span, n)].clone();
                 out.push((n.clone(), k, v));
             }
@@ -1694,7 +1694,7 @@ impl<'a> Elab<'a> {
                 let t = self.temp();
                 out.push((t.to_string(), t.clone(), v));
                 for (i, target) in targets.iter().enumerate() {
-                    if let Target::Name(n) = target {
+                    if let Target::Name(n, _) = target {
                         let k = self.names[self.id(s.span, n)].clone();
                         let get = Term::Prim(
                             Prim::TupleGet,

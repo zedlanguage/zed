@@ -117,11 +117,11 @@ fn the_form_rule_on_many_nested_lets_calling_a_prelude_word_scales() {
     });
 }
 
-/// `n` functions `f{i}`, each called by a `z{i}` with its own literal.
+/// `n` functions `h{i}`, each called by a `z{i}` with its own literal.
 fn many_callees(n: usize) -> String {
     (0..n)
         .map(|i| {
-            format!("f{i}(x: int, y: int) = x * y + {i};\nz{i}(a: int) = f{i}(x: {i}, y: a);\n")
+            format!("h{i}(x: int, y: int) = x * y + {i};\nz{i}(a: int) = h{i}(x: {i}, y: a);\n")
         })
         .collect()
 }
@@ -138,7 +138,7 @@ fn splitting_many_functions_of_one_unit_scales() {
     scaling::check_order("splitting n functions of a unit", 200, 1, |n| {
         let mut s = Specializer::new(&units[&n]);
         for i in 0..n {
-            let (lam, _) = s.split(&format!("f{i}"), 0, &d).unwrap();
+            let (lam, _) = s.split(&format!("h{i}"), 0, &d).unwrap();
             assert!(matches!(lam, zed_kernel::Term::Lam(..)));
         }
     });

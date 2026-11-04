@@ -18,7 +18,7 @@ fn searching_the_signatures_of_many_functions_scales() {
             let mut text: String = (0..20 * n)
                 .map(|j| format!("k{j} = 0.5 + {j};\n"))
                 .collect();
-            text.extend((0..n).map(|i| format!("f{i}(x) = x / {};\n", i + 1)));
+            text.extend((0..n).map(|i| format!("h{i}(x) = x / {};\n", i + 1)));
             let (info, _) = info(&text);
             assert!(info.errors.is_empty(), "{:?}", info.errors);
             assert_eq!(info.sigs.len(), n);

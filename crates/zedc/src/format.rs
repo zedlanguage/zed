@@ -950,7 +950,7 @@ impl<'a> Formatter<'a> {
                 let ts: Vec<&str> = targets
                     .iter()
                     .map(|t| match t {
-                        Target::Name(n) => n.as_str(),
+                        Target::Name(n, _) => n.as_str(),
                         Target::Wild => "_",
                     })
                     .collect();
@@ -1346,7 +1346,7 @@ impl<'a> Formatter<'a> {
                 let binders: Vec<&str> = binders
                     .iter()
                     .map(|t| match t {
-                        Target::Name(n) => n.as_str(),
+                        Target::Name(n, _) => n.as_str(),
                         Target::Wild => "_",
                     })
                     .collect();

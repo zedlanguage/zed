@@ -243,8 +243,8 @@ pub struct BoundaryItem {
 /// A binding target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
-    /// A name bound.
-    Name(String),
+    /// A name bound, and the name's text.
+    Name(String, Span),
     /// `_`, the component discarded.
     Wild,
 }
@@ -608,7 +608,7 @@ impl Builder<'_, '_> {
     /// The target of node `n`, a `Target`: a name or `_`.
     pub(super) fn target(&self, n: usize) -> Target {
         match self.kids(n) {
-            [_] => Target::Name(self.word(self.tree.nodes[n].start).into()),
+            [_] => Target::Name(self.word(self.tree.nodes[n].start).into(), self.span(n)),
             _ => Target::Wild,
         }
     }

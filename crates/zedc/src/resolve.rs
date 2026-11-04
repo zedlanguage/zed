@@ -25,6 +25,7 @@ use crate::ast::{
 };
 use crate::ast::{Every, Note, Type, TypeBound, TypeKind};
 use crate::lex::Span;
+use crate::rejection::Row;
 
 /// What binds a name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +40,28 @@ pub enum Kind {
     Port,
     /// A name an `else` pattern binds, `#a(f:)`.
     Pattern,
+}
+
+impl Kind {
+    /// The binder of this kind, as a message names it.
+    fn binder(self) -> &'static str {
+        match self {
+            Kind::Binding => "the binding target",
+            Kind::Function => "the function",
+            Kind::Param => "the parameter",
+            Kind::Port => "the output port",
+            Kind::Pattern => "the pattern binder",
+        }
+    }
+}
+
+/// The text of `name` in a declaration whose text `decl` begins with it, as a function's or an
+/// indexed definition's or a port's does (DESIGN.md sec:grammar, `Function`, `IndexedDef`, `Port`).
+fn name_at(decl: Span, name: &str) -> Span {
+    Span {
+        start: decl.start,
+        end: decl.start + name.len(),
+    }
 }
 
 /// A binder: a name, where it is bound, and what binds it.
@@ -271,10 +294,22 @@ struct Bound {
 }
 
 impl Resolver {
-    /// Binds `name` in the innermost scope; `signature` is a function's parameter types.
-    fn bind(&mut self, name: &str, span: Span, kind: Kind, signature: Option<Vec<Option<String>>>) {
+    /// Binds `name`, written at `at`, in the innermost scope; `span` is the text that binds it
+    /// and `signature` a function's parameter types. A name that names a type is an error, and
+    /// is bound all the same, so that its uses are not reported as well.
+    fn bind(
+        &mut self,
+        name: &str,
+        at: Span,
+        span: Span,
+        kind: Kind,
+        signature: Option<Vec<Option<String>>>,
+    ) {
         if name.ends_with('\'') {
             return self.primed(name, span);
+        }
+        if TYPES.contains(&name) {
+            self.names_type(name, at, span, kind.binder());
         }
         let id = self.out.binders.len();
         let level = self.scopes.len();
@@ -398,7 +433,7 @@ impl Resolver {
                 Task::Expr(e) => self.expr(e, &mut todo),
                 Task::Ty(t) => self.ty(t, &mut todo),
                 Task::Pattern(p) => self.pattern(p, &mut todo),
-                Task::BindField(name, span) => self.bind(name, span, Kind::Pattern, None),
+                Task::BindField(name, span) => self.bind(name, span, span, Kind::Pattern, None),
                 Task::Else {
                     span,
                     pattern,
@@ -465,8 +500,8 @@ impl Resolver {
                 let whole = whole || !boundary.is_empty();
                 for t in targets {
                     match t {
-                        Target::Name(n) if whole && n.ends_with('\'') => {}
-                        Target::Name(n) => self.bind(n, s.span, Kind::Binding, None),
+                        Target::Name(n, _) if whole && n.ends_with('\'') => {}
+                        Target::Name(n, at) => self.bind(n, *at, s.span, Kind::Binding, None),
                         Target::Wild => {}
                     }
                 }
@@ -476,7 +511,13 @@ impl Resolver {
                     .params
                     .iter()
                     .map(|p| p.ty.as_ref().map(|t| t.to_string()));
-                self.bind(&f.name, s.span, Kind::Function, Some(signature.collect()));
+                self.bind(
+                    &f.name,
+                    name_at(s.span, &f.name),
+                    s.span,
+                    Kind::Function,
+                    Some(signature.collect()),
+                );
             }
             // The declaration is not annotated again, and a `mutable` holds a binding, so this
             // recursion is one level deep.
@@ -484,7 +525,13 @@ impl Resolver {
             StmtKind::Mutable(decl) => self.declare(decl, true, families),
             StmtKind::IndexedDef(d) => {
                 if !d.name.ends_with('\'') && families.insert(d.name.as_str()) {
-                    self.bind(&d.name, s.span, Kind::Binding, None);
+                    self.bind(
+                        &d.name,
+                        name_at(s.span, &d.name),
+                        s.span,
+                        Kind::Binding,
+                        None,
+                    );
                 }
             }
             StmtKind::Return(_)
@@ -634,6 +681,41 @@ impl Resolver {
         });
     }
 
+    /// The row "Binder naming a type" (DESIGN.md sec:diagnostics): `binder`, the name `name`
+    /// written at `at` in the text `site`, names a type in scope. A unit declares no type before
+    /// L2, so the type is the prelude's. Every binder but a type name in a pattern, which is a
+    /// type test, is such an error (DESIGN.md sec:syntax_tour, the `match` row of the operator
+    /// inventory), so a cast habit such as `y as (int)` is not read as a binding of `int`.
+    fn names_type(&mut self, name: &str, at: Span, site: Span, binder: &str) {
+        let cast = prelude_layer(name).is_some();
+        let repair = if cast {
+            format!(
+                "repair: rename the binder; where a cast was meant, write the type application \
+                 `{name}(…)`"
+            )
+        } else {
+            "repair: rename the binder".into()
+        };
+        self.errors.push(Error {
+            row: Some(Row::BinderNamingType),
+            span: at,
+            message: format!(
+                "{binder} `{name}` names the type `{name}`, which the prelude declares: a binder \
+                 may not name a type in scope"
+            ),
+            notes: vec![
+                Note {
+                    span: site,
+                    text: format!("{binder} `{name}`, which binds `{name}` in this scope"),
+                },
+                Note {
+                    span: at,
+                    text: repair,
+                },
+            ],
+        });
+    }
+
     /// A function's or lambda's parameters, ports and body: one scope, which a body block's
     /// statements share.
     fn function<'a>(
@@ -648,10 +730,10 @@ impl Resolver {
         }
         self.open();
         for p in params {
-            self.bind(&p.name, p.span, Kind::Param, None);
+            self.bind(&p.name, p.name_at, p.span, Kind::Param, None);
         }
         for p in ports {
-            self.bind(&p.name, p.span, Kind::Port, None);
+            self.bind(&p.name, name_at(p.span, &p.name), p.span, Kind::Port, None);
         }
         todo.push(Task::Close);
         todo.push(match &body.kind {
@@ -808,6 +890,12 @@ impl Resolver {
                     self.carriers(&b.name, &b.carriers);
                 }
                 for b in bounds {
+                    // A type name in the type always names the type, so a variable of its name
+                    // binds nothing the type could hold, and is not reported as unheld too.
+                    if TYPES.contains(&b.name.as_str()) {
+                        self.names_type(&b.name, b.span, t.span, "the type variable");
+                        continue;
+                    }
                     if let Some(outer) = self.tvars.get(&b.name) {
                         self.errors.push(Error {
                             row: None,

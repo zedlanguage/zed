@@ -13,7 +13,7 @@ fn tables(n: usize) -> String {
     (0..n)
         .map(|i| {
             format!(
-                "c{i} = {i} * 2;\nf{i}(positional x) = x + {i} test {{ 1 -> {} }}\n",
+                "c{i} = {i} * 2;\nh{i}(positional x) = x + {i} test {{ 1 -> {} }}\n",
                 i + 1
             )
         })

@@ -515,7 +515,7 @@ impl<'a> Tables<'a> {
             StmtKind::Bind { targets, .. } => targets
                 .iter()
                 .filter_map(|t| match t {
-                    Target::Name(n) => Some(self.id(s.span, n)),
+                    Target::Name(n, _) => Some(self.id(s.span, n)),
                     Target::Wild => None,
                 })
                 .collect(),
@@ -1023,7 +1023,7 @@ fn what(s: &Stmt) -> String {
             let names: Vec<String> = targets
                 .iter()
                 .filter_map(|t| match t {
-                    Target::Name(n) => Some(format!("`{n}`")),
+                    Target::Name(n, _) => Some(format!("`{n}`")),
                     Target::Wild => None,
                 })
                 .collect();

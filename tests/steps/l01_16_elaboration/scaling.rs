@@ -11,13 +11,13 @@ use zedc::resolve::{Resolution, resolve};
 
 use super::{elab, term, value};
 
-/// `f0(x = 1) = x;` and `f{i}(x = f{i-1}() + f{i-1}()) = x;` up to `k`, and `main = f{k}();`.
+/// `h0(x = 1) = x;` and `h{i}(x = h{i-1}() + h{i-1}()) = x;` up to `k`, and `main = h{k}();`.
 fn chain(k: usize) -> String {
-    let mut src = "f0(x = 1) = x;\n".to_string();
+    let mut src = "h0(x = 1) = x;\n".to_string();
     for i in 1..=k {
-        src += &format!("f{i}(x = f{j}() + f{j}()) = x;\n", j = i - 1);
+        src += &format!("h{i}(x = h{j}() + h{j}()) = x;\n", j = i - 1);
     }
-    src + &format!("main = f{k}();\n")
+    src + &format!("main = h{k}();\n")
 }
 
 #[test]
@@ -31,10 +31,10 @@ fn defaults_calling_functions_with_defaults_scale() {
         assert!(main.term.to_string().len() < 40, "{}", main.term);
     });
     assert_eq!(value(&chain(3), "main"), "8");
-    assert_eq!(term(&chain(3), "main"), "{ x@4 = f3$x@4(); f3(x@4) }");
+    assert_eq!(term(&chain(3), "main"), "{ x@4 = h3$x@4(); h3(x@4) }");
     assert_eq!(
-        term(&chain(3), "f3$x@4"),
-        "() -> ({ x@3 = f2$x@3(); f2(x@3) } + { x@3 = f2$x@3(); f2(x@3) })"
+        term(&chain(3), "h3$x@4"),
+        "() -> ({ x@3 = h2$x@3(); h2(x@3) } + { x@3 = h2$x@3(); h2(x@3) })"
     );
 }
 
@@ -119,23 +119,23 @@ fn the_dependency_order_scales() {
 fn nested(n: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
-        src += &format!("f{i}(positional x) {{\ny{i} = x + 1;\n");
+        src += &format!("h{i}(positional x) {{\ny{i} = x + 1;\n");
     }
     src += "x\n";
     for i in (0..n).rev() {
         if i + 1 < n {
-            src += &format!("f{}(y{i})\n", i + 1);
+            src += &format!("h{}(y{i})\n", i + 1);
         }
         src += "}\n";
     }
-    src + "main = f0(1);\n"
+    src + "main = h0(1);\n"
 }
 
 /// Functions nested `n` deep, each declaring `w` functions beside the next, and calling one.
 fn wide(n: usize, w: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
-        src += &format!("f{i}(positional x) {{\n");
+        src += &format!("h{i}(positional x) {{\n");
         for j in 0..w {
             src += &format!("g{i}_{j}(positional z) = z;\n");
         }
@@ -144,19 +144,19 @@ fn wide(n: usize, w: usize) -> String {
     src += "x\n";
     for i in (0..n).rev() {
         if i + 1 < n {
-            src += &format!("f{}(y{i})\n", i + 1);
+            src += &format!("h{}(y{i})\n", i + 1);
         }
         src += "}\n";
     }
-    src + "main = f0(1);\n"
+    src + "main = h0(1);\n"
 }
 
-/// The type of `main` in `src` and the signature of `f{last}`, which a search stopped by
+/// The type of `main` in `src` and the signature of `h{last}`, which a search stopped by
 /// its budget does not find.
 fn found(src: &str, last: usize) -> (Option<String>, Option<String>) {
     let (i, names) = crate::l01_26_type_resolution::info(src);
     assert!(i.errors.is_empty(), "{:?}", i.errors);
-    let name = format!("f{last}");
+    let name = format!("h{last}");
     let sig = i.sigs.iter().find(|(id, _)| names[**id] == name);
     (
         i.tops.get("main").map(|t| t.to_string()),
@@ -284,17 +284,17 @@ fn ordering_a_function_with_many_rows_scales() {
 fn open(n: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
-        src += &format!("f{i}(positional x{i}) {{\n");
+        src += &format!("h{i}(positional x{i}) {{\n");
     }
     let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     src += &format!("{}\n", xs.join(" + "));
     for i in (0..n).rev() {
         if i + 1 < n {
-            src += &format!("f{}(x{i})\n", i + 1);
+            src += &format!("h{}(x{i})\n", i + 1);
         }
         src += "}\n";
     }
-    src + "main = f0(1);\n"
+    src + "main = h0(1);\n"
 }
 
 #[test]
@@ -303,7 +303,7 @@ fn searches_through_nested_functions_scale() {
     // tried, so the contexts grew about 1.6 times with each level (167 s at 32 deep), until a
     // cap of 64 contexts gave `_` past it. Each body is now checked once: the parameters
     // added together share one class, of the outermost function, so the innermost one's
-    // signature is in terms of `f0`'s variable at every depth.
+    // signature is in terms of `h0`'s variable at every depth.
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {

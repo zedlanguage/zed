@@ -968,7 +968,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         for st in &s.items {
             if let StmtKind::Bind { targets, .. } = &st.kind
-                && let [Target::Name(n)] = &targets[..]
+                && let [Target::Name(n, _)] = &targets[..]
                 && let Some(ty) = self.env.get(&self.id(st.span, n))
             {
                 self.put(Undo::Top(n.clone(), Some(ty.clone())));
@@ -1092,7 +1092,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             unreachable!("a binding")
         };
         match &targets[..] {
-            [Target::Name(n)] => {
+            [Target::Name(n, _)] => {
                 let id = self.id(s.span, n);
                 let text = format!("`{n}` is defined as this expression, {v}");
                 self.origin(id, value.span, text, Some(value.span));
@@ -1119,7 +1119,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 for (i, target) in targets.iter().enumerate() {
                     let c = self.component(&v, i, n, value.span);
                     match target {
-                        Target::Name(name) => {
+                        Target::Name(name, _) => {
                             let id = self.id(s.span, name);
                             let text = format!("`{name}` is component {i} of this, {c}");
                             self.origin(id, value.span, text, Some(value.span));

@@ -130,6 +130,8 @@ pub struct Param {
     pub default: Option<Expr>,
     /// Its text.
     pub span: Span,
+    /// The text of its name; for a tuple-destructuring parameter, its text.
+    pub name_at: Span,
 }
 
 /// A pattern: an atom pattern, which `else` takes at L1, and from step L2.1 the patterns a
@@ -458,7 +460,7 @@ impl Builder<'_, '_> {
             let text: Vec<&str> = targets
                 .iter()
                 .map(|t| match t {
-                    Target::Name(n) => n.as_str(),
+                    Target::Name(n, _) => n.as_str(),
                     Target::Wild => "_",
                 })
                 .collect();
@@ -469,6 +471,7 @@ impl Builder<'_, '_> {
                 ty: ty.map(|t| self.ty(t)).transpose()?,
                 default: None,
                 span: self.span(n),
+                name_at: self.span(n),
             });
         }
         let mut p = Param {
@@ -478,6 +481,7 @@ impl Builder<'_, '_> {
             ty: None,
             default: None,
             span: self.span(n),
+            name_at: self.span(node.kids[0]),
         };
         for &k in &node.kids[1..] {
             if self.tree.name(k) == "Type" {

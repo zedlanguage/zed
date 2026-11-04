@@ -201,7 +201,7 @@ impl<'t, 'a> Walk<'t, 'a> {
     fn stmt(&mut self, s: &'a Stmt) {
         match &s.kind {
             StmtKind::Bind { targets, value, .. } => match &targets[..] {
-                [Target::Name(n)] => {
+                [Target::Name(n, _)] => {
                     let at = self.root(value, Label::Name(n));
                     if let Some(&id) = self.t.ids.get(&(s.span, n.as_str())) {
                         self.binds.insert(id, at);

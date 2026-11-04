@@ -833,6 +833,7 @@ impl<'a, 's> Builder<'a, 's> {
                 ty: None,
                 default: None,
                 span: self.span(*p),
+                name_at: self.span(*p),
             }],
             [p, _] => self.params(*p, self.span(n))?,
             _ => unreachable!("Lambda = (Name | '(' Params? ')') '->' body"),

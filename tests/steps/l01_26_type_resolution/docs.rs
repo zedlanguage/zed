@@ -110,11 +110,11 @@ fn checking_n_doc_blocks_with_links_scales() {
         let mut s = String::new();
         for i in 0..n {
             s.push_str(&format!(
-                "/// Step {i} of the pipeline; see [f{}] and `[f{i}]`.\nf{i}(x: int) = x + {i};\n",
+                "/// Step {i} of the pipeline; see [h{}] and `[h{i}]`.\nh{i}(x: int) = x + {i};\n",
                 (i + 1) % n
             ));
         }
-        s.push_str("main() -> (stdout: Lines) {\n  stdout <- String(f0(x: 1));\n}\n");
+        s.push_str("main() -> (stdout: Lines) {\n  stdout <- String(h0(x: 1));\n}\n");
         s
     };
     // Lexing, parsing and resolution run before timing, so only the doc check is measured.

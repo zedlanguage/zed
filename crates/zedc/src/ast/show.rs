@@ -272,7 +272,7 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
 
 fn target(t: &Target) -> &str {
     match t {
-        Target::Name(n) => n,
+        Target::Name(n, _) => n,
         Target::Wild => "_",
     }
 }

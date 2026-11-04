@@ -108,7 +108,9 @@ fn a_wildcard_target_binds_nothing() {
     let StmtKind::Bind { targets, .. } = &stmts[0].kind else {
         panic!("a binding");
     };
-    assert_eq!(targets, &[Target::Wild, Target::Name("hi".into())]);
+    let hi = zedc::lex::Span { start: 10, end: 12 };
+    assert_eq!(&text[hi.start..hi.end], "hi");
+    assert_eq!(targets, &[Target::Wild, Target::Name("hi".into(), hi)]);
     assert_eq!(
         &text[stmts[0].span.start..stmts[0].span.end],
         "_, hi = p.bounds;"
