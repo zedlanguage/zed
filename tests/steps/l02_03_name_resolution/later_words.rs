@@ -109,7 +109,7 @@ const LOWER_TYPES: &[&str] = &["complex", "quat", "oct", "bf16", "f16"];
 
 /// The facets of the table's third column that a program defines, as examples of the rule
 /// "every facet a program defines": names of the program, not of the prelude.
-const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency")];
+const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency"), ("L12", "dist")];
 
 /// A row of the table "Defined words by layer": its layer, and its annotations, facet words and
 /// defined forms, each the text of its code spans.
