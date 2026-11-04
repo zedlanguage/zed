@@ -1383,6 +1383,19 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `HashMap<u64, usize>` keyed by `Shared::id` while one term is read, a part held inline having no key | `stage::Reader::ids`, `Reader::read`, `Part::held` | Identity (gap 1), mutation | A state receiver over a map keyed by the term's digest |
 | A closure over a mutable iterator (`move \|\| parts.next()`) passed as `&mut impl FnMut() -> Needs`, so a callee takes the next part's answer only when it is a lambda | `stage::Reader::needs_of`, `Reader::callee` | Mutation | The list of the parts' answers passed as a value, each case taking its head |
 
+## Entries from STAGE-dag (`zedc/src/stage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A memo `HashMap<u64, Summary>` keyed by `Shared::id`, and one `HashMap<Set, Set>` of each set's names less the words, filled through `&mut self` while a term is read and cleared before the next | `Frees::summary`, `Frees::nonwords`, `Mixer::mix_top` | Identity (gap 1), Shared memo (gap 2) | A state receiver over maps keyed by the term's digest |
+| An arena of Patricia-map nodes (`Vec<MapNode>`) with a hash table from node to number (hash-consing) and memos `HashMap<(Map, Set), Map>` of restrictions and `HashMap<Map, bool>` of whether every binding is build-stage | `Maps::make`, `Maps::restrict`, `Maps::all_known` | Shared memo (gap 2), Mutation (gap 11) | As `Sets` (TERM-id and earlier entries): the arena and memos on a threaded state |
+| A memo `HashMap<(u64, Map), (Shared, Summary)>` from a node's id and the bindings of its names to the node it mixed to, read before a part is mixed and filled by a `Store` job after | `Mixer::enter`, `Mixer::mix` | Identity (gap 1), Shared memo (gap 2) | A state receiver over a map keyed by the digest and the bindings' map |
+| Interning tables `BTreeMap<Value, Binding>` and `HashMap<(u64, Map), Binding>` filled through `&mut self`, giving a known binding the number of an earlier one equal to it (by value, or by node id and the bindings it reads) | `Mixer::number` | Identity (gap 1), Shared memo (gap 2) | A family keyed by the value (values are ordered keys in Zed), and one keyed by the digest and the bindings' map, threaded as state |
+| An explicit work stack `Vec<Mix<'t>>` of jobs that borrow parts of the term (`&'t Term`, `&'t Shared`) and an answer stack `Vec<Out>`, in place of recursion, so a deep term does not grow the thread's stack | `Mixer::mix`, `Mixer::enter`, `Frees::summary` | Lifetimes, Mutation (gap 11) | Recursion, once Zed's stack can grow on the heap; else the same jobs as a list on the threaded state, each holding the part itself |
+| `Cow<'t, [Arc<str>]>` for the names a part binds, borrowed from the term or built for a pattern | `subs`, `Mixer::sites` | Lifetimes, ownership | A list of names; values are immutable, so no borrow is needed |
+| `Arc::unwrap_or_clone` to move a term out of a node that nothing else holds | `inline` | Identity (gap 1), ownership | No gap: a value is read, never moved; the runtime may reuse a node it holds alone |
+| The scope's map of names to bindings kept in `Scope::top` and put back from the entry's `prev` on `pop` | `Mixer::push`, `Scope::pop`, `Scope::truncate` | Mutation (gap 11) | The map passed down as a value; leaving a binder returns to the caller's map |
+
 ## Entries from NAME-ties (`zedc/src/store/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |

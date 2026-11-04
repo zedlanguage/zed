@@ -24,7 +24,6 @@ use std::sync::Arc;
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Shared, Term, Value, World};
 
-use crate::canon::binders::{each_child, map_children};
 use crate::elab::{Def, Unit};
 use crate::interp;
 
@@ -44,92 +43,19 @@ pub struct Report {
     pub built: Vec<String>,
     /// The definitions nothing demanded, which the build did not evaluate.
     pub unread: Vec<String>,
-    /// The build-stage terms left to run, each printed with why.
+    /// The build-stage terms left to run, each printed with why: a part held in a node and
+    /// reached under the same bindings of its names from many places is listed once.
     pub left: Vec<(String, String)>,
 }
 
-/// The names `t` reads and does not bind. The subterms still to read wait on a heap stack, so
-/// a deep term does not grow the thread's stack; the order they are read in does not change
-/// the set.
+/// The names `t` reads and does not bind. The term is read as the graph of its distinct parts:
+/// a part held in one [`Shared`] node reached from two places is read once ([`Frees`]), and
+/// the parts still to read wait on a heap stack, so a deep term does not grow the thread's
+/// stack.
 pub fn free(t: &Term) -> BTreeSet<Arc<str>> {
-    /// A step of the walk.
-    enum Job<'t> {
-        Read(&'t Term),
-        Bind(&'t Arc<str>),
-        Unbind(&'t Arc<str>),
-    }
-    /// The jobs that read `t` with `names` bound around it, pushed so that they run in order.
-    fn under<'t>(todo: &mut Vec<Job<'t>>, names: &[&'t Arc<str>], t: &'t Term) {
-        todo.extend(names.iter().map(|x| Job::Unbind(x)));
-        todo.push(Job::Read(t));
-        todo.extend(names.iter().map(|x| Job::Bind(x)));
-    }
-    let mut out = BTreeSet::new();
-    // The names bound around the subterm read, each with how many binders bind it.
-    let mut bound: BTreeMap<Arc<str>, usize> = BTreeMap::new();
-    let mut todo = vec![Job::Read(t)];
-    while let Some(job) = todo.pop() {
-        let t = match job {
-            Job::Read(t) => t,
-            Job::Bind(x) => {
-                *bound.entry(x.clone()).or_default() += 1;
-                continue;
-            }
-            Job::Unbind(x) => {
-                match bound.get_mut(x) {
-                    Some(1) => {
-                        bound.remove(x);
-                    }
-                    Some(k) => *k -= 1,
-                    None => unreachable!("bound above"),
-                }
-                continue;
-            }
-        };
-        match t {
-            Term::Lit(_) | Term::PrimFn(_) | Term::Read(_) => {}
-            Term::Var(x) => {
-                if !bound.contains_key(x) {
-                    out.insert(x.clone());
-                }
-            }
-            Term::Lam(ps, b) => {
-                let names: Vec<&Arc<str>> = ps.iter().collect();
-                under(&mut todo, &names, b);
-            }
-            Term::Let(x, e, b) => {
-                under(&mut todo, &[x], b);
-                todo.push(Job::Read(e));
-            }
-            Term::Match(s, arms) => {
-                for (p, a) in arms {
-                    let names = pattern_names(p);
-                    under(&mut todo, &names, a);
-                }
-                todo.push(Job::Read(s));
-            }
-            Term::Fam { domain, var, body } => {
-                under(&mut todo, &[var], body);
-                todo.push(Job::Read(domain));
-            }
-            Term::Fix {
-                init,
-                step,
-                this,
-                key,
-                kind,
-                ..
-            } => {
-                if let zed_kernel::FixKind::Lattice { join } = kind {
-                    under(&mut todo, &[this, key], join);
-                }
-                under(&mut todo, &[this, key], step);
-                todo.push(Job::Read(init));
-            }
-            _ => each_child(t, |c| todo.push(Job::Read(c))),
-        }
-    }
-    out
+    let mut f = Frees::default();
+    let s = f.summary(Part::inline(t));
+    f.names_in(s.free).into_iter().cloned().collect()
 }
 
 /// The names `p` binds, left to right, borrowed from it.
@@ -145,32 +71,6 @@ fn pattern_names(p: &Pattern) -> Vec<&Arc<str>> {
         }
     }
     out
-}
-
-/// The subterms of a term that binds nothing.
-fn children(t: &Term) -> Vec<&Term> {
-    match t {
-        Term::App(f, args) => std::iter::once(&**f).chain(args).collect(),
-        Term::Prim(_, args) => args.iter().collect(),
-        Term::If(c, a, b) => vec![c, a, b],
-        Term::Reindex { family, kf, vf, .. } => vec![family, kf, vf],
-        Term::Discard { family, sel } => vec![family, sel],
-        Term::Fold {
-            family,
-            op,
-            identity,
-            ..
-        } => [family, op]
-            .into_iter()
-            .chain(identity)
-            .map(|t| &**t)
-            .collect(),
-        Term::Gen {
-            init, step, guard, ..
-        } => vec![init, step, guard],
-        Term::Push(_, t) => vec![t],
-        _ => Vec::new(),
-    }
 }
 
 /// Whether `t` is shown to end by its form (docs/thresholds.md, replacement 6): it has no
@@ -246,12 +146,12 @@ struct Reader {
     sets: Sets,
 }
 
-/// A part of a term to be read: the term, and the id of the [`Shared`] node that holds it,
+/// A part of a term to be read: the term, and the [`Shared`] node that holds it,
 /// when one does.
 #[derive(Clone, Copy)]
 struct Part<'t> {
     term: &'t Term,
-    node: Option<u64>,
+    node: Option<&'t Shared>,
 }
 
 impl<'t> Part<'t> {
@@ -259,7 +159,7 @@ impl<'t> Part<'t> {
     fn held(s: &'t Shared) -> Self {
         Part {
             term: s,
-            node: Some(s.id()),
+            node: Some(s),
         }
     }
 
@@ -298,7 +198,7 @@ impl Reader {
         let mut got = Vec::new();
         while let Some((p, count)) = todo.pop() {
             let Some(k) = count else {
-                if let Some(&i) = p.node.and_then(|id| self.ids.get(&id)) {
+                if let Some(&i) = p.node.and_then(|s| self.ids.get(&s.id())) {
                     done.push(i);
                     continue;
                 }
@@ -313,8 +213,8 @@ impl Reader {
             let needs = self.needs_of(p.term, &got);
             let n = self.needs.len();
             self.needs.push(needs);
-            if let Some(id) = p.node {
-                self.ids.insert(id, n);
+            if let Some(s) = p.node {
+                self.ids.insert(s.id(), n);
             }
             if let Some(reads) = &mut self.reads {
                 reads.push(done[from..].iter().rev().copied().collect());
@@ -498,6 +398,8 @@ enum SetNode {
 /// part), which needs the parts' sets never to be materialized.
 struct Sets {
     nodes: Vec<SetNode>,
+    /// The number of names in each set.
+    sizes: Vec<u32>,
     made: HashMap<SetNode, Set>,
     /// The union of each pair of sets joined, the smaller number first.
     unions: HashMap<(Set, Set), Set>,
@@ -507,6 +409,7 @@ impl Default for Sets {
     fn default() -> Self {
         Sets {
             nodes: vec![SetNode::Empty],
+            sizes: vec![0],
             made: HashMap::from([(SetNode::Empty, EMPTY)]),
             unions: HashMap::new(),
         }
@@ -520,11 +423,57 @@ fn above(x: Name, bit: Name) -> Name {
 
 impl Sets {
     fn make(&mut self, n: SetNode) -> Set {
-        let Sets { nodes, made, .. } = self;
+        let Sets {
+            nodes, sizes, made, ..
+        } = self;
         *made.entry(n).or_insert_with(|| {
+            sizes.push(match n {
+                SetNode::Empty => 0,
+                SetNode::One(_) => 1,
+                SetNode::Split { zero, one, .. } => sizes[zero as usize] + sizes[one as usize],
+            });
             nodes.push(n);
             (nodes.len() - 1) as Set
         })
+    }
+
+    fn size(&self, s: Set) -> u32 {
+        self.sizes[s as usize]
+    }
+
+    /// Whether `x` is in `s`, read along the one path to it.
+    fn contains(&self, mut s: Set, x: Name) -> bool {
+        loop {
+            match self.nodes[s as usize] {
+                SetNode::Empty => return false,
+                SetNode::One(y) => return x == y,
+                SetNode::Split {
+                    prefix,
+                    bit,
+                    zero,
+                    one,
+                } => {
+                    if above(x, bit) != prefix {
+                        return false;
+                    }
+                    s = if x & bit == 0 { zero } else { one };
+                }
+            }
+        }
+    }
+
+    /// The names of `s`, in increasing order.
+    fn members(&self, s: Set) -> Vec<Name> {
+        let mut out = Vec::new();
+        let mut todo = vec![s];
+        while let Some(s) = todo.pop() {
+            match self.nodes[s as usize] {
+                SetNode::Empty => {}
+                SetNode::One(x) => out.push(x),
+                SetNode::Split { zero, one, .. } => todo.extend([one, zero]),
+            }
+        }
+        out
     }
 
     fn one(&mut self, x: Name) -> Set {
@@ -719,25 +668,422 @@ fn binds(p: &Pattern) -> Vec<Arc<str>> {
     pattern_names(p).into_iter().cloned().collect()
 }
 
-/// Whether `t` reads or writes a port. The subterms still to read wait on a heap stack.
-fn effects(t: &Term) -> bool {
-    let mut todo = vec![t];
-    while let Some(t) = todo.pop() {
-        match t {
-            Term::Read(_) | Term::Push(..) => return true,
-            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) => {}
-            Term::Lam(_, b) => todo.push(b),
-            Term::Let(_, e, b) => todo.extend([b, e].map(|t| &**t)),
-            Term::Match(s, arms) => {
-                todo.extend(arms.iter().rev().map(|(_, a)| a));
-                todo.push(s);
+/// What a part of a term reads: the names it reads and does not bind, and whether it reads
+/// or writes a port outside the join of a lattice recursion (a port the join reads is not an
+/// effect of the recursion).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Summary {
+    free: Set,
+    effects: bool,
+}
+
+/// The summaries of the parts of terms, each part held in a [`Shared`] node read once, known
+/// by the node's id as in [`Reader::ids`]: a part shared by two places is one node reached
+/// twice. The names a part reads are a set of [`Sets`], so a union stops where its two sets
+/// share a node.
+#[derive(Default)]
+struct Frees {
+    names: HashMap<Arc<str>, Name>,
+    /// Each name, by its number.
+    list: Vec<Arc<str>>,
+    sets: Sets,
+    /// The summary of each part held in a node, by the node's id.
+    of: HashMap<u64, Summary>,
+    /// The names of each set that are not prelude words.
+    nonwords: HashMap<Set, Set>,
+}
+
+impl Frees {
+    fn name(&mut self, x: &Arc<str>) -> Name {
+        if let Some(&n) = self.names.get(x) {
+            return n;
+        }
+        let n = self.list.len() as Name;
+        self.names.insert(x.clone(), n);
+        self.list.push(x.clone());
+        n
+    }
+
+    /// The names of `s`.
+    fn names_in(&self, s: Set) -> Vec<&Arc<str>> {
+        let members = self.sets.members(s).into_iter();
+        members.map(|x| &self.list[x as usize]).collect()
+    }
+
+    /// What `root` reads. The parts are read with an explicit stack, each after its own parts,
+    /// and each part held in a node only the first time the node is reached: a node reached
+    /// again while its own parts are being read would be a part of itself.
+    fn summary(&mut self, root: Part<'_>) -> Summary {
+        // A part to read, with `None`; or a part whose `k` parts are on their way, with `k`.
+        let mut todo = vec![(root, None)];
+        // The summaries read and not yet taken by the part that reads them: a part's own parts
+        // end up on top, in the reverse of the order they were put on `todo`.
+        let mut done: Vec<Summary> = Vec::new();
+        let mut parts = Vec::new();
+        while let Some((p, count)) = todo.pop() {
+            let Some(k) = count else {
+                if let Some(&s) = p.node.and_then(|s| self.of.get(&s.id())) {
+                    done.push(s);
+                    continue;
+                }
+                let subs = subs(p.term);
+                todo.push((p, Some(subs.len())));
+                todo.extend(subs.into_iter().map(|(q, ..)| (q, None)));
+                continue;
+            };
+            let from = done.len() - k;
+            parts.clear();
+            parts.extend(done[from..].iter().rev().copied());
+            done.truncate(from);
+            let s = self.combine(p.term, &parts);
+            if let Some(n) = p.node {
+                self.of.insert(n.id(), s);
             }
-            Term::Fam { domain, body, .. } => todo.extend([body, domain].map(|t| &**t)),
-            Term::Fix { init, step, .. } => todo.extend([step, init].map(|t| &**t)),
-            _ => each_child(t, |c| todo.push(c)),
+            done.push(s);
+        }
+        done.pop().expect("the root, read")
+    }
+
+    /// What `t` reads, given what its parts read, in the order [`subs`] gives them.
+    fn combine(&mut self, t: &Term, parts: &[Summary]) -> Summary {
+        let mut out = match t {
+            Term::Var(x) => Summary {
+                free: {
+                    let x = self.name(x);
+                    self.sets.one(x)
+                },
+                effects: false,
+            },
+            Term::Read(_) | Term::Push(..) => Summary {
+                free: EMPTY,
+                effects: true,
+            },
+            _ => Summary::default(),
+        };
+        for ((_, names, join), p) in subs(t).iter().zip(parts) {
+            let mut free = p.free;
+            for x in names.iter() {
+                let x = self.name(x);
+                free = self.sets.remove(free, x).unwrap_or(free);
+            }
+            out.free = self.sets.union(out.free, free);
+            out.effects |= p.effects && !join;
+        }
+        out
+    }
+
+    /// The names of `s` that are not prelude words. Each node of a set is read once over the
+    /// life of the summaries.
+    fn nonwords(&mut self, s: Set) -> Set {
+        if let Some(&n) = self.nonwords.get(&s) {
+            return n;
+        }
+        let n = match self.sets.nodes[s as usize] {
+            SetNode::Empty => EMPTY,
+            SetNode::One(x) if interp::word(&self.list[x as usize]) => EMPTY,
+            SetNode::One(_) => s,
+            SetNode::Split {
+                prefix,
+                bit,
+                zero,
+                one,
+            } => {
+                let (zero, one) = (self.nonwords(zero), self.nonwords(one));
+                self.sets.split(prefix, bit, zero, one)
+            }
+        };
+        self.nonwords.insert(s, n);
+        n
+    }
+}
+
+/// The parts of `t`, in the order `mix` meets them, each with the names it is under, borrowed
+/// from the term where it holds them as a list, and whether it is the join of a lattice
+/// recursion.
+fn subs(t: &Term) -> Vec<(Part<'_>, Names<'_>, bool)> {
+    fn held(s: &Shared) -> (Part<'_>, Names<'_>, bool) {
+        (Part::held(s), Cow::Borrowed(&[][..]), false)
+    }
+    fn inline(t: &Term) -> (Part<'_>, Names<'_>, bool) {
+        (Part::inline(t), Cow::Borrowed(&[][..]), false)
+    }
+    let one = std::slice::from_ref;
+    match t {
+        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => Vec::new(),
+        Term::Lam(ps, b) => vec![(Part::held(b), Cow::Borrowed(&ps[..]), false)],
+        Term::App(g, args) => std::iter::once(held(g))
+            .chain(args.iter().map(inline))
+            .collect(),
+        Term::Prim(_, args) => args.iter().map(inline).collect(),
+        Term::Let(x, e, b) => vec![held(e), (Part::held(b), Cow::Borrowed(one(x)), false)],
+        Term::If(c, a, b) => vec![held(c), held(a), held(b)],
+        Term::Match(s, arms) => std::iter::once(held(s))
+            .chain(
+                arms.iter()
+                    .map(|(p, a)| (Part::inline(a), Cow::Owned(binds(p)), false)),
+            )
+            .collect(),
+        Term::Fam { domain, var, body } => vec![
+            held(domain),
+            (Part::held(body), Cow::Borrowed(one(var)), false),
+        ],
+        Term::Reindex { family, kf, vf, .. } => vec![held(family), held(kf), held(vf)],
+        Term::Discard { family, sel } => vec![held(family), held(sel)],
+        Term::Fold {
+            family,
+            op,
+            identity,
+            ..
+        } => [family, op].into_iter().chain(identity).map(held).collect(),
+        Term::Fix {
+            init,
+            step,
+            this,
+            key,
+            kind,
+            ..
+        } => {
+            let names: Names<'_> = Cow::Owned(vec![this.clone(), key.clone()]);
+            let mut out = vec![held(init), (Part::held(step), names.clone(), false)];
+            if let zed_kernel::FixKind::Lattice { join } = kind {
+                out.push((Part::held(join), names, true));
+            }
+            out
+        }
+        Term::Gen {
+            init, step, guard, ..
+        } => vec![held(init), held(step), held(guard)],
+        Term::Push(_, v) => vec![held(v)],
+    }
+}
+
+/// A map of names to bindings, by its number in [`Maps`].
+type Map = u32;
+
+/// The map of no names.
+const NO_MAP: Map = 0;
+
+/// A binding of a name in scope, by its number: [`UNKNOWN`] for every binding not known at
+/// build, else the number [`Mixer::number`] gives to what the binding is.
+type Binding = u32;
+
+/// The number of every binding not known at build (a let bound to a run-stage term, a
+/// parameter). Mixing cannot tell two such bindings of a name apart: the name is left as it
+/// is under either, and nothing evaluates it. So they share one number, and a part reached
+/// under two of them is mixed once.
+const UNKNOWN: Binding = 0;
+
+/// A node of a map of names to bindings as a big-endian Patricia trie, as [`SetNode`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum MapNode {
+    Empty,
+    One(Name, Binding),
+    Split {
+        prefix: Name,
+        bit: Name,
+        zero: Map,
+        one: Map,
+    },
+}
+
+/// The maps of names to bindings of one mixer, each node made once. The scope's map of each
+/// name in scope to its innermost binding is one map, changed along one path when a name is
+/// pushed; the bindings of the names a part reads are that map restricted to the part's set
+/// of names, and two places under the same bindings of those names have one map, so the map's
+/// number is a key of what the part mixes to.
+///
+/// Complexity tradeoff: the time of a restriction is bounded by the number of pairs of a map
+/// and a set it reads that no earlier restriction read, not by the sizes of the map and the
+/// set, and no bound in the size of the term is proved for that number, as for a union of
+/// [`Sets`]: parts that read many sets sharing few nodes, under scopes that differ in many
+/// places, could make it near the product of their sizes. Why: the restricted map is the key
+/// that lets a part shared by two places under the same bindings be mixed once, and a
+/// hash-consed restriction with a memo of the pairs read makes the common case, a scope one
+/// name larger than one seen and a set much like one seen, cost a path. Trigger: many distinct
+/// parts reading many distinct names under scopes unlike those of a program's nesting. Tests:
+/// `l01_28_staging::dag::mixing_nested_ifs_whose_arms_are_one_part_scales`,
+/// `l01_28_staging::dag::mixing_nested_lets_of_a_parameter_over_one_body_scales` and
+/// `l01_28_staging::scaling::mixing_a_chain_of_local_definitions_scales`, each at n and 8n.
+/// COMPLEXITY.md row F80. A complete solution would bound the pairs read, for instance
+/// by keying a part by the innermost binding among the names it reads, found by a query on a
+/// structure over the scope's positions that needs no set materialized.
+struct Maps {
+    nodes: Vec<MapNode>,
+    sizes: Vec<u32>,
+    made: HashMap<MapNode, Map>,
+    /// The restriction of each map to each set read, by the pair.
+    restricted: HashMap<(Map, Set), Map>,
+    /// Whether every binding of each map is build-stage.
+    known: HashMap<Map, bool>,
+}
+
+impl Default for Maps {
+    fn default() -> Self {
+        Maps {
+            nodes: vec![MapNode::Empty],
+            sizes: vec![0],
+            made: HashMap::from([(MapNode::Empty, NO_MAP)]),
+            restricted: HashMap::new(),
+            known: HashMap::new(),
         }
     }
-    false
+}
+
+impl Maps {
+    fn make(&mut self, n: MapNode) -> Map {
+        let Maps {
+            nodes, sizes, made, ..
+        } = self;
+        *made.entry(n).or_insert_with(|| {
+            sizes.push(match n {
+                MapNode::Empty => 0,
+                MapNode::One(..) => 1,
+                MapNode::Split { zero, one, .. } => sizes[zero as usize] + sizes[one as usize],
+            });
+            nodes.push(n);
+            (nodes.len() - 1) as Map
+        })
+    }
+
+    fn size(&self, m: Map) -> u32 {
+        self.sizes[m as usize]
+    }
+
+    fn split(&mut self, prefix: Name, bit: Name, zero: Map, one: Map) -> Map {
+        match (zero, one) {
+            (NO_MAP, m) | (m, NO_MAP) => m,
+            _ => self.make(MapNode::Split {
+                prefix,
+                bit,
+                zero,
+                one,
+            }),
+        }
+    }
+
+    /// The union of the nonempty maps `m` and `n`, whose names start with `p` and `q`, which
+    /// differ above both maps' split bits.
+    fn join(&mut self, p: Name, m: Map, q: Name, n: Map) -> Map {
+        let bit = 1 << (Name::BITS - 1 - (p ^ q).leading_zeros());
+        match p & bit {
+            0 => self.split(above(p, bit), bit, m, n),
+            _ => self.split(above(p, bit), bit, n, m),
+        }
+    }
+
+    /// `m` with `x` mapped to `b`, in place of any binding it had.
+    fn insert(&mut self, m: Map, x: Name, b: Binding) -> Map {
+        match self.nodes[m as usize] {
+            MapNode::Empty => self.make(MapNode::One(x, b)),
+            MapNode::One(y, _) if y == x => self.make(MapNode::One(x, b)),
+            MapNode::One(y, _) => {
+                let o = self.make(MapNode::One(x, b));
+                self.join(x, o, y, m)
+            }
+            MapNode::Split {
+                prefix,
+                bit,
+                zero,
+                one,
+            } => {
+                if above(x, bit) != prefix {
+                    let o = self.make(MapNode::One(x, b));
+                    self.join(x, o, prefix, m)
+                } else if x & bit == 0 {
+                    let zero = self.insert(zero, x, b);
+                    self.split(prefix, bit, zero, one)
+                } else {
+                    let one = self.insert(one, x, b);
+                    self.split(prefix, bit, zero, one)
+                }
+            }
+        }
+    }
+
+    /// The binding `m` maps `x` to, read along the one path to it.
+    fn get(&self, mut m: Map, x: Name) -> Option<Binding> {
+        loop {
+            match self.nodes[m as usize] {
+                MapNode::Empty => return None,
+                MapNode::One(y, b) => return (y == x).then_some(b),
+                MapNode::Split {
+                    prefix,
+                    bit,
+                    zero,
+                    one,
+                } => {
+                    if above(x, bit) != prefix {
+                        return None;
+                    }
+                    m = if x & bit == 0 { zero } else { one };
+                }
+            }
+        }
+    }
+
+    /// `m` restricted to the names of `s`. A pair read before is not read again, and the
+    /// recursion goes no deeper than the bits of a name in each trie.
+    fn restrict(&mut self, sets: &Sets, m: Map, s: Set) -> Map {
+        if m == NO_MAP || s == EMPTY {
+            return NO_MAP;
+        }
+        if let Some(&r) = self.restricted.get(&(m, s)) {
+            return r;
+        }
+        let r = match (self.nodes[m as usize], sets.nodes[s as usize]) {
+            (MapNode::One(x, _), _) => match sets.contains(s, x) {
+                true => m,
+                false => NO_MAP,
+            },
+            (_, SetNode::One(x)) => match self.get(m, x) {
+                Some(b) => self.make(MapNode::One(x, b)),
+                None => NO_MAP,
+            },
+            (
+                MapNode::Split {
+                    prefix: p,
+                    bit: mb,
+                    zero: m0,
+                    one: m1,
+                },
+                SetNode::Split {
+                    prefix: q,
+                    bit: n,
+                    zero: s0,
+                    one: s1,
+                },
+            ) => {
+                if mb == n && p == q {
+                    let zero = self.restrict(sets, m0, s0);
+                    let one = self.restrict(sets, m1, s1);
+                    self.split(p, mb, zero, one)
+                } else if mb > n && above(q, mb) == p {
+                    self.restrict(sets, if q & mb == 0 { m0 } else { m1 }, s)
+                } else if n > mb && above(p, n) == q {
+                    self.restrict(sets, m, if p & n == 0 { s0 } else { s1 })
+                } else {
+                    NO_MAP
+                }
+            }
+            (MapNode::Empty, _) | (_, SetNode::Empty) => unreachable!("empty, answered above"),
+        };
+        self.restricted.insert((m, s), r);
+        r
+    }
+
+    /// Whether every binding of `m` is build-stage: each node is read once.
+    fn all_known(&mut self, m: Map) -> bool {
+        if let Some(&k) = self.known.get(&m) {
+            return k;
+        }
+        let k = match self.nodes[m as usize] {
+            MapNode::Empty => true,
+            MapNode::One(_, b) => b != UNKNOWN,
+            MapNode::Split { zero, one, .. } => self.all_known(zero) && self.all_known(one),
+        };
+        self.known.insert(m, k);
+        k
+    }
 }
 
 /// The stage of each definition of `unit`, by source name, in order.
@@ -780,7 +1126,7 @@ impl Remix {
     /// definition: under the definitions of the unit, which names unique in the unit keep
     /// apart from those `t` does not read. It costs the mixing of `t` alone.
     pub fn mix(&mut self, t: &Term) -> Term {
-        let out = self.m.mix_top(t);
+        let out = inline(self.m.mix_top(Part::inline(t)));
         self.m.report = Report::default();
         out
     }
@@ -815,7 +1161,8 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
             m.report.unread.push(d.name.clone());
             continue;
         }
-        let term = Shared::new(m.mix_top(&d.term));
+        let mixed = m.mix_top(Part::held(&d.term));
+        let term = m.hold(mixed);
         if matches!(*term, Term::Lit(_)) && term != d.term {
             m.report.built.push(d.name.clone());
         }
@@ -913,9 +1260,16 @@ impl<'u> Specializer<'u> {
         let roots: Vec<&str> = unit.defs.iter().map(|d| d.name.as_str()).collect();
         let (mixed, _) = mix(unit, &roots);
         let mut calls: HashMap<(Arc<str>, usize), BTreeSet<Value>> = HashMap::new();
-        let mut todo: Vec<&Term> = mixed.defs.iter().map(|d| &*d.term).collect();
-        while let Some(t) = todo.pop() {
-            if let Term::App(g, args) = t
+        // Each part held in a node is read once, however many places reach it.
+        let mut seen = HashSet::new();
+        let mut todo: Vec<Part<'_>> = mixed.defs.iter().map(|d| Part::held(&d.term)).collect();
+        while let Some(p) = todo.pop() {
+            if let Some(s) = p.node
+                && !seen.insert(s.id())
+            {
+                continue;
+            }
+            if let Term::App(g, args) = p.term
                 && let Term::Var(f) = &**g
             {
                 for (i, x) in args.iter().enumerate() {
@@ -924,17 +1278,9 @@ impl<'u> Specializer<'u> {
                     }
                 }
             }
-            match t {
-                Term::Lam(_, b) => todo.push(b),
-                Term::Let(_, e, b) => todo.extend([&**e, &**b]),
-                Term::Match(e, arms) => {
-                    todo.push(e);
-                    todo.extend(arms.iter().map(|(_, a)| a));
-                }
-                Term::Fam { domain, body, .. } => todo.extend([&**domain, &**body]),
-                Term::Fix { init, step, .. } => todo.extend([&**init, &**step]),
-                _ => todo.extend(children(t)),
-            }
+            // The join of a lattice recursion is not read, as before.
+            let subs = subs(p.term).into_iter();
+            todo.extend(subs.filter(|(_, _, join)| !join).map(|(q, ..)| q));
         }
         let mut cases: HashMap<(&'u str, usize), BTreeSet<Value>> = HashMap::new();
         for t in unit.tests.iter() {
@@ -1001,10 +1347,10 @@ impl<'u> Specializer<'u> {
         let mut arms = Vec::new();
         for v in values {
             m.bind(p.clone(), Stage::Build, &Shared::new(Term::Lit(v.clone())));
-            arms.push((Pattern::Lit(v), m.mix_top(body)));
+            arms.push((Pattern::Lit(v), inline(m.mix_top(Part::held(body)))));
             m.scope.pop();
         }
-        arms.push((Pattern::Wild, m.mix_top(body)));
+        arms.push((Pattern::Wild, inline(m.mix_top(Part::held(body)))));
         m.scope.truncate(n);
         let lam = Term::Lam(
             ps.clone(),
@@ -1014,30 +1360,32 @@ impl<'u> Specializer<'u> {
     }
 }
 
-/// A name in scope: its term when it is build-stage, else nothing, and the names that term
-/// reads.
+/// A name in scope: its term when it is build-stage, else nothing, the names that term reads,
+/// and the map of the scope's bindings before it was pushed.
 struct Entry {
     name: Arc<str>,
     known: Option<Shared>,
-    reads: BTreeSet<Arc<str>>,
+    reads: Set,
+    prev: Map,
 }
 
 /// The names in scope, innermost last, with the positions of each name's entries, so a name
-/// is looked up in `O(log n)` rather than by a scan of the scope.
+/// is looked up in `O(log n)` rather than by a scan of the scope, and the map of each name in
+/// scope to its innermost binding (`top`, in [`Maps`]).
 #[derive(Default)]
 struct Scope {
     entries: Vec<Entry>,
     by_name: BTreeMap<Arc<str>, Vec<usize>>,
+    top: Map,
 }
 
 impl Scope {
-    fn push(&mut self, name: Arc<str>, known: Option<Shared>) {
-        let reads = known.as_deref().map(free).unwrap_or_default();
+    fn push(&mut self, e: Entry) {
         self.by_name
-            .entry(name.clone())
+            .entry(e.name.clone())
             .or_default()
             .push(self.entries.len());
-        self.entries.push(Entry { name, known, reads });
+        self.entries.push(e);
     }
 
     fn len(&self) -> usize {
@@ -1051,6 +1399,7 @@ impl Scope {
         if at.is_empty() {
             self.by_name.remove(&e.name);
         }
+        self.top = e.prev;
     }
 
     fn truncate(&mut self, n: usize) {
@@ -1077,221 +1426,42 @@ impl Scope {
     }
 }
 
-/// The least of the values of a range of positions, with one value changed at a time, in
-/// `O(log n)` each.
-struct Mins {
-    n: usize,
-    tree: Vec<i64>,
-}
-
-impl Mins {
-    fn new(values: Vec<i64>) -> Self {
-        let n = values.len();
-        let mut tree = vec![i64::MAX; n];
-        tree.extend(values);
-        for i in (1..n).rev() {
-            tree[i] = tree[2 * i].min(tree[2 * i + 1]);
-        }
-        Mins { n, tree }
-    }
-
-    fn set(&mut self, i: usize, v: i64) {
-        let mut i = i + self.n;
-        self.tree[i] = v;
-        while i > 1 {
-            i /= 2;
-            self.tree[i] = self.tree[2 * i].min(self.tree[2 * i + 1]);
-        }
-    }
-
-    /// The least value of the positions `l..r`.
-    fn min(&self, l: usize, r: usize) -> i64 {
-        let (mut l, mut r, mut m) = (l + self.n, r + self.n, i64::MAX);
-        while l < r {
-            if l % 2 == 1 {
-                m = m.min(self.tree[l]);
-                l += 1;
-            }
-            if r % 2 == 1 {
-                r -= 1;
-                m = m.min(self.tree[r]);
-            }
-            l /= 2;
-            r /= 2;
-        }
-        m
-    }
-}
-
-/// A value of `Mins`: a name read that cannot be known at build, or a port read.
-const RUN: i64 = -1;
-
 /// The names a subterm is under.
 type Names<'t> = Cow<'t, [Arc<str>]>;
 
-/// The subterms of a term, in the order `mix` meets them, each with the names it is under,
-/// borrowed from the term where it holds them as a list. The join of a lattice recursion is
-/// marked, since a port it reads is not an effect of the recursion (`effects`).
-fn kids(t: &Term) -> Vec<(&Term, Names<'_>, bool)> {
-    let none = || Cow::Borrowed(&[][..]);
-    match t {
-        Term::Lam(ps, b) => vec![(b, Cow::Borrowed(&ps[..]), false)],
-        Term::Let(x, e, b) => vec![
-            (e, none(), false),
-            (b, Cow::Borrowed(std::slice::from_ref(x)), false),
-        ],
-        Term::Match(s, arms) => std::iter::once((&**s, none(), false))
-            .chain(arms.iter().map(|(p, a)| (a, Cow::Owned(binds(p)), false)))
-            .collect(),
-        Term::Fam { domain, var, body } => vec![
-            (domain, none(), false),
-            (body, Cow::Borrowed(std::slice::from_ref(var)), false),
-        ],
-        Term::Fix {
-            init,
-            step,
-            this,
-            key,
-            kind,
-            ..
-        } => {
-            let names: Names<'_> = Cow::Owned(vec![this.clone(), key.clone()]);
-            let mut out = vec![(&**init, none(), false), (&**step, names.clone(), false)];
-            if let zed_kernel::FixKind::Lattice { join } = kind {
-                out.push((join, names, true));
-            }
-            out
+/// Where a part to mix is: held in a node, or held inline at a position of [`Mixer::arena`].
+#[derive(Clone, Copy)]
+enum Site<'t> {
+    Held(&'t Shared),
+    Inline(&'t Term, usize),
+}
+
+/// A part mixed, held in a node when it can be shared, with what it reads.
+struct Out {
+    term: Mixed,
+    sum: Summary,
+}
+
+enum Mixed {
+    Held(Shared),
+    Inline(Term),
+}
+
+impl Out {
+    fn term(&self) -> &Term {
+        match &self.term {
+            Mixed::Held(s) => s,
+            Mixed::Inline(t) => t,
         }
-        _ => children(t)
-            .into_iter()
-            .map(|c| (c, none(), false))
-            .collect(),
     }
 }
 
-/// The term `mix` is mixing, by preorder position: a subterm is build-stage when no name it
-/// reads, bound outside it, is unknown at build and it reads no port. Each position holds
-/// the position of the binder of the unknown name read there, or `RUN`, so a subterm at
-/// `p..p + size` is build-stage exactly when the least value there is at least `p`: its own
-/// binders are at `p` or after. Deciding the stage of a subterm is then one query, where
-/// reading its free names cost `O(size)` at each of the nodes `mix` enters.
-#[derive(Default)]
-struct Index {
-    size: Vec<usize>,
-    /// For a name read, the position of the binder inside the term that binds it.
-    binder: Vec<Option<usize>>,
-    /// The positions reading each binder's names.
-    reads: BTreeMap<usize, Vec<usize>>,
-    /// How many names of each binder the mixed term still reads.
-    kept: BTreeMap<usize, usize>,
-    mins: Option<Mins>,
-}
-
-impl Index {
-    /// The index of `t`, read in preorder. The subterms still to read wait on a heap stack, so
-    /// a deep term does not grow the thread's stack.
-    fn new(t: &Term, scope: &Scope) -> Self {
-        /// A step of the walk.
-        enum Walk<'t> {
-            /// Read `t`, inside the join of a lattice recursion when `join`.
-            Enter(&'t Term, bool),
-            /// Bind `names` to the binder at position `at` and read `t` under them.
-            Kid(&'t Term, Names<'t>, bool, usize),
-            /// Unbind `names`.
-            Unbind(Names<'t>),
-            /// The subterm at `at` is read: record its size.
-            Close(usize),
-        }
-        let mut ix = Index::default();
-        let mut values = Vec::new();
-        let mut bound: BTreeMap<Arc<str>, Vec<usize>> = BTreeMap::new();
-        let mut todo = vec![Walk::Enter(t, false)];
-        while let Some(w) = todo.pop() {
-            match w {
-                Walk::Enter(t, join) => {
-                    let at = ix.size.len();
-                    ix.size.push(0);
-                    ix.binder.push(None);
-                    values.push(i64::MAX);
-                    match t {
-                        Term::Var(x) => match bound.get(x).and_then(|b| b.last()) {
-                            Some(&b) => {
-                                ix.binder[at] = Some(b);
-                                ix.reads.entry(b).or_default().push(at);
-                                values[at] = b as i64;
-                            }
-                            None => {
-                                let known = match scope.lookup(x) {
-                                    Some(t) => t.is_some(),
-                                    None => interp::word(x),
-                                };
-                                if !known {
-                                    values[at] = RUN;
-                                }
-                            }
-                        },
-                        Term::Read(_) | Term::Push(..) if !join => values[at] = RUN,
-                        _ => {}
-                    }
-                    todo.push(Walk::Close(at));
-                    let kids = kids(t).into_iter().rev();
-                    todo.extend(kids.map(|(c, names, j)| Walk::Kid(c, names, join || j, at)));
-                }
-                Walk::Kid(c, names, join, at) => {
-                    for x in names.iter() {
-                        bound.entry(x.clone()).or_default().push(at);
-                    }
-                    todo.extend([Walk::Unbind(names), Walk::Enter(c, join)]);
-                }
-                Walk::Unbind(names) => {
-                    for x in names.iter() {
-                        let b = bound.get_mut(x).expect("pushed above");
-                        b.pop();
-                        if b.is_empty() {
-                            bound.remove(x);
-                        }
-                    }
-                }
-                Walk::Close(at) => ix.size[at] = ix.size.len() - at,
-            }
-        }
-        ix.mins = Some(Mins::new(values));
-        ix
-    }
-
-    fn build(&self, at: usize) -> bool {
-        let mins = self.mins.as_ref().expect("made with the index");
-        mins.min(at, at + self.size[at]) >= at as i64
-    }
-
-    /// The positions of the subterms of the term at `at`, of which there are `n`.
-    fn kids(&self, at: usize, n: usize) -> Vec<usize> {
-        let mut p = at + 1;
-        (0..n)
-            .map(|_| {
-                let k = p;
-                p += self.size[k];
-                k
-            })
-            .collect()
-    }
-
-    /// The binder at `at` is known at build: the names it binds no longer make a term
-    /// run-stage.
-    fn known(&mut self, at: usize) {
-        let mins = self.mins.as_mut().expect("made with the index");
-        for &p in self.reads.get(&at).into_iter().flatten() {
-            mins.set(p, i64::MAX);
-        }
-    }
-
-    /// The subterm at `at` is kept as written: the names it reads are read by the mixed term.
-    fn keep(&mut self, at: usize) {
-        for p in at..at + self.size[at] {
-            if let Some(b) = self.binder[p] {
-                *self.kept.entry(b).or_default() += 1;
-            }
-        }
+/// `o` as a term held inline: moved out of its node when nothing else holds it, else that
+/// node's term copied one level deep (its own parts stay shared).
+fn inline(o: Out) -> Term {
+    match o.term {
+        Mixed::Held(s) => Shared::unwrap_or_clone(s),
+        Mixed::Inline(t) => t,
     }
 }
 
@@ -1299,19 +1469,97 @@ impl Index {
 struct Mixer {
     scope: Scope,
     report: Report,
-    index: Index,
+    frees: Frees,
+    maps: Maps,
+    /// The last number given to a build-stage binding ([`Mixer::number`]). One number is
+    /// never given to two bindings that can evaluate differently, so a map of names to
+    /// bindings says the same of the names it maps for the mixer's whole life.
+    given: Binding,
+    /// The number of each build-stage binding to a literal, by its value.
+    literals: BTreeMap<Value, Binding>,
+    /// The number of each other build-stage binding (a function, or a name of one), by the id
+    /// of its term and the map of the names that term reads to their bindings where it is
+    /// bound.
+    functions: HashMap<(u64, Map), Binding>,
+    /// The part each node held in the term `mix_top` is mixing became, by the node's id and
+    /// the map of the names it reads to their bindings ([`Maps::restrict`]); what a part mixes
+    /// to depends on nothing else, so a part shared by two places under the same bindings of
+    /// its names is mixed once and the two places share the result.
+    memo: HashMap<(u64, Map), (Shared, Summary)>,
+    /// What each part held inline in a node being mixed reads, and how many positions its
+    /// inline parts take, in preorder ([`Mixer::cluster`]).
+    arena: Vec<(Summary, usize)>,
 }
 
 impl Mixer {
+    fn push(&mut self, name: Arc<str>, known: Option<Shared>) {
+        let reads = known
+            .as_ref()
+            .map_or(EMPTY, |k| self.frees.summary(Part::held(k)).free);
+        let x = self.frees.name(&name);
+        let prev = self.scope.top;
+        let b = match &known {
+            Some(k) => self.number(k, reads, prev),
+            None => UNKNOWN,
+        };
+        self.scope.top = self.maps.insert(prev, x, b);
+        self.scope.push(Entry {
+            name,
+            known,
+            reads,
+            prev,
+        });
+    }
+
+    /// The number of a binding to the build-stage term `k`, which reads `reads`, pushed where
+    /// the scope's bindings are `prev`. The number says what the binding is, not when it was
+    /// pushed: a literal is numbered by its value, any other term by its id and the bindings
+    /// of the names it reads, which are the bindings [`Mixer::eval`] closes it under. Two
+    /// bindings with one number evaluate alike, so a part reached under either mixes to one
+    /// term and is mixed once.
+    ///
+    /// Complexity tradeoff: what is given up is sharing, not exactness. Two bindings to
+    /// functions that are different terms, or the same term over different bindings of the
+    /// names it reads, get two numbers even when they compute the same values, so a part that
+    /// reads the name is mixed once under each, and the mixed term holds a copy for each; the
+    /// result is still the tree walk's. Why: whether two functions compute the same values is
+    /// undecidable in general, and a number by structure alone does not help, since functions
+    /// built on different paths differ in structure. Trigger: a part shared below `let`s that
+    /// bind a name to a function reading its earlier binding, as `let f = (y) -> f(y) + 1` and
+    /// `let f = (y) -> f(y) + 2` on the two arms of each of d nested `if`s over one body: the
+    /// 2^d paths bind 2^d different functions, and the mixed term has 2^d nodes where O(d^2)
+    /// would do (1298, 5144, 20510, 81956 nodes at d = 8, 10, 12, 14). A literal has no such
+    /// limit: `let x = x + a` and `let x = x + b` take one number per value. Tests:
+    /// `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives`
+    /// (exact on that family), `..._is_not_exponential` (ignored, open: STAGE-fn), and
+    /// `mixing_nested_lets_of_a_built_value_over_one_body_scales` for literals. COMPLEXITY.md
+    /// row F80. A complete solution would number a function by what the parts that read it
+    /// use of it, here the value `f(1)`, which needs the mixer to record which build-stage
+    /// results of a part depend on a binding and key the part by those results.
+    fn number(&mut self, k: &Shared, reads: Set, prev: Map) -> Binding {
+        let next = self.given + 1;
+        let b = match &**k {
+            Term::Lit(v) => *self.literals.entry(v.clone()).or_insert(next),
+            _ => {
+                let names = self.maps.restrict(&self.frees.sets, prev, reads);
+                *self.functions.entry((k.id(), names)).or_insert(next)
+            }
+        };
+        if b == next {
+            self.given = next;
+        }
+        b
+    }
+
     fn bind(&mut self, name: Arc<str>, stage: Stage, t: &Shared) {
         let known = (stage == Stage::Build).then(|| t.clone());
-        self.scope.push(name, known);
+        self.push(name, known);
     }
 
     /// The stage a name bound to the mixed term `t` has: build when `t` is a literal or a
     /// build-stage function, run when it is left to run, so that nothing evaluates it again.
-    fn known(&self, t: &Term) -> Stage {
-        match t {
+    fn known(&mut self, t: &Shared) -> Stage {
+        match **t {
             Term::Lit(_) => Stage::Build,
             Term::Lam(..) | Term::PrimFn(_) | Term::Var(_) => self.stage(t),
             _ => Stage::Run,
@@ -1320,7 +1568,7 @@ impl Mixer {
 
     fn unknown(&mut self, names: &[Arc<str>]) {
         for x in names {
-            self.scope.push(x.clone(), None);
+            self.push(x.clone(), None);
         }
     }
 
@@ -1328,30 +1576,48 @@ impl Mixer {
         self.scope.lookup(x)
     }
 
-    fn stage(&self, t: &Term) -> Stage {
-        let known = free(t).iter().all(|x| match self.lookup(x) {
-            Some(t) => t.is_some(),
-            None => interp::word(x),
-        });
-        if known && !effects(t) {
+    fn stage(&mut self, t: &Shared) -> Stage {
+        let sum = self.frees.summary(Part::held(t));
+        let names = self
+            .maps
+            .restrict(&self.frees.sets, self.scope.top, sum.free);
+        if self.build(sum, names) {
             Stage::Build
         } else {
             Stage::Run
         }
     }
 
-    /// The value of the build-stage term `t`, under the bindings it needs: the innermost
-    /// build-stage entry of each name it reads, and of each name those read, below them.
-    fn eval(&self, t: &Term) -> Result<Value, String> {
+    /// Whether a part that reads `sum` is build-stage, where `names` maps the names it reads
+    /// that are in scope to their bindings: it reads no port, each of those bindings is
+    /// build-stage, and each name it reads that the scope does not bind is a prelude word.
+    fn build(&mut self, sum: Summary, names: Map) -> bool {
+        if sum.effects || !self.maps.all_known(names) {
+            return false;
+        }
+        let words = self.frees.nonwords(sum.free);
+        let bound = self.maps.restrict(&self.frees.sets, self.scope.top, words);
+        self.maps.size(bound) == self.frees.sets.size(words)
+    }
+
+    /// The value of the build-stage term `t`, which reads `free`, under the bindings it
+    /// needs: the innermost build-stage entry of each name it reads, and of each name those
+    /// read, below them.
+    fn eval(&self, t: &Term, free: Set) -> Result<Value, String> {
         let top = self.scope.len();
-        let mut todo: BTreeSet<usize> = free(t)
-            .iter()
+        let names = |s: Set| self.frees.names_in(s);
+        let mut todo: BTreeSet<usize> = names(free)
+            .into_iter()
             .filter_map(|x| self.scope.known_below(x, top))
             .collect();
         let mut lets = Vec::new();
         while let Some(i) = todo.pop_last() {
             let e = &self.scope.entries[i];
-            todo.extend(e.reads.iter().filter_map(|x| self.scope.known_below(x, i)));
+            todo.extend(
+                names(e.reads)
+                    .into_iter()
+                    .filter_map(|x| self.scope.known_below(x, i)),
+            );
             let known = e.known.clone().expect("a build-stage entry");
             lets.push((e.name.clone(), known));
         }
@@ -1366,181 +1632,393 @@ impl Mixer {
             .map_err(|e| e.to_string())
     }
 
-    /// `t` with its build-stage subterms evaluated.
-    fn mix_top(&mut self, t: &Term) -> Term {
-        self.index = Index::new(t, &self.scope);
-        self.mix(t, 0)
+    /// `o` held in a node, its summary recorded under the node's id.
+    fn hold(&mut self, o: Out) -> Shared {
+        match o.term {
+            Mixed::Held(s) => s,
+            Mixed::Inline(t) => {
+                let s = Shared::new(t);
+                self.frees.of.insert(s.id(), o.sum);
+                s
+            }
+        }
     }
 
-    /// The subterm `t` at position `at` of the term `mix_top` is mixing, with its
-    /// build-stage subterms evaluated. The subterms still to mix and the terms to build from
-    /// them wait on heap stacks, so a deep term does not grow the thread's stack; the walk
-    /// meets the subterms in the order of the recursion it replaces, so the scope, the index
-    /// and the report change in the same order.
-    fn mix(&mut self, t: &Term, at: usize) -> Term {
-        let a = Shared::new;
-        let mut todo = vec![Mix::Term(t, at)];
-        let mut done: Vec<Term> = Vec::new();
+    /// `t` with its build-stage subterms evaluated.
+    fn mix_top(&mut self, t: Part<'_>) -> Out {
+        self.memo.clear();
+        self.arena.clear();
+        self.frees.of.clear();
+        let site = match t.node {
+            Some(s) => Site::Held(s),
+            None => Site::Inline(t.term, self.cluster(t.term)),
+        };
+        self.mix(site)
+    }
+
+    /// Puts on the arena, in preorder from the returned position, what the part `t` and each
+    /// part held inline in it reads, with how many positions each one's inline parts take.
+    /// The parts held in nodes below are read by [`Frees::summary`], once each.
+    fn cluster(&mut self, t: &Term) -> usize {
+        let base = self.arena.len();
+        let mut terms = Vec::new();
+        let mut todo = vec![t];
+        while let Some(u) = todo.pop() {
+            terms.push(u);
+            let parts = subs(u);
+            todo.extend(
+                parts
+                    .iter()
+                    .rev()
+                    .filter_map(|(p, ..)| p.node.is_none().then_some(p.term)),
+            );
+        }
+        self.arena
+            .extend(terms.iter().map(|_| (Summary::default(), 1)));
+        let mut sums = Vec::new();
+        for (i, u) in terms.iter().enumerate().rev() {
+            let at = base + i;
+            let mut next = at + 1;
+            sums.clear();
+            for (p, ..) in subs(u) {
+                match p.node {
+                    Some(s) => sums.push(self.frees.summary(Part::held(s))),
+                    None => {
+                        let (sum, size) = self.arena[next];
+                        sums.push(sum);
+                        next += size;
+                    }
+                }
+            }
+            let sum = self.frees.combine(u, &sums);
+            self.arena[at] = (sum, next - at);
+        }
+        base
+    }
+
+    /// The parts of `t`, whose inline parts are on the arena from `at`, as sites.
+    fn sites<'t>(&self, t: &'t Term, at: usize) -> Vec<(Site<'t>, Names<'t>)> {
+        let mut next = at + 1;
+        subs(t)
+            .into_iter()
+            .map(|(p, names, _)| {
+                let site = match p.node {
+                    Some(s) => Site::Held(s),
+                    None => {
+                        let site = Site::Inline(p.term, next);
+                        next += self.arena[next].1;
+                        site
+                    }
+                };
+                (site, names)
+            })
+            .collect()
+    }
+
+    /// The part at `site` with its build-stage subterms evaluated. The parts still to mix and
+    /// the terms to build from them wait on heap stacks, so a deep term does not grow the
+    /// thread's stack; the walk meets the parts in the order of the recursion it replaces, so
+    /// the scope and the report change in the same order. A part held in a node is mixed once
+    /// under each map of the names it reads to their bindings, and every place that reaches
+    /// it again under that map shares the result, so the parts mixed, and the mixed term's
+    /// distinct parts, are not more than the term's distinct parts times the maps each is
+    /// reached under (COMPLEXITY.md row F80).
+    fn mix(&mut self, site: Site<'_>) -> Out {
+        let mut todo = vec![Mix::Part(site)];
+        let mut done: Vec<Out> = Vec::new();
         while let Some(job) = todo.pop() {
             match job {
-                Mix::Term(t, at) => self.enter(t, at, &mut todo, &mut done),
-                Mix::Under(names, t, at) => {
+                Mix::Part(s) => self.enter(s, &mut todo, &mut done),
+                Mix::Under(names, s) => {
                     let n = self.scope.len();
                     self.unknown(&names);
-                    todo.extend([Mix::Truncate(n), Mix::Term(t, at)]);
+                    todo.extend([Mix::Truncate(n), Mix::Part(s)]);
                 }
                 Mix::Truncate(n) => self.scope.truncate(n),
-                Mix::Let(t, at, k) => {
-                    let Term::Let(x, _, b) = t else {
+                Mix::Let(t, body) => {
+                    let Term::Let(x, ..) = t else {
                         unreachable!("only a `let` binds its name")
                     };
-                    let e = a(done.pop().expect("the bound term"));
+                    let e = done.pop().expect("the bound term");
+                    let e = self.hold(e);
                     let stage = self.known(&e);
                     self.bind(x.clone(), stage, &e);
-                    if stage == Stage::Build {
-                        self.index.known(at);
-                    }
-                    todo.extend([Mix::LetBody(x, at, e), Mix::Term(b, k)]);
+                    todo.extend([Mix::LetBody(t, e), Mix::Part(body)]);
                 }
-                Mix::LetBody(x, at, e) => {
+                Mix::LetBody(t, e) => {
+                    let Term::Let(x, ..) = t else {
+                        unreachable!("only a `let` binds its name")
+                    };
                     let body = done.pop().expect("the body");
                     self.scope.pop();
-                    done.push(
-                        if matches!(*e, Term::Lit(_)) && !self.index.kept.contains_key(&at) {
-                            body
-                        } else {
-                            Term::Let(x.clone(), e, a(body))
-                        },
-                    );
+                    let x = self.frees.name(x);
+                    let read = self.frees.sets.contains(body.sum.free, x);
+                    done.push(if matches!(*e, Term::Lit(_)) && !read {
+                        body
+                    } else {
+                        let sum = self.frees.summary(Part::held(&e));
+                        let e = Out {
+                            term: Mixed::Held(e),
+                            sum,
+                        };
+                        self.build_from(t, vec![e, body])
+                    });
                 }
-                Mix::If(t, kx, ky) => {
-                    let Term::If(_, x, y) = t else {
-                        unreachable!("only an `if` has branches")
-                    };
-                    match done.pop().expect("the condition") {
-                        Term::Lit(Value::Bool(true)) => todo.push(Mix::Term(x, kx)),
-                        Term::Lit(Value::Bool(false)) => todo.push(Mix::Term(y, ky)),
-                        atom @ Term::Lit(Value::Atom(_)) => done.push(atom),
-                        c => todo.extend([Mix::IfBranches(c), Mix::Term(y, ky), Mix::Term(x, kx)]),
+                Mix::If(t, x, y) => {
+                    let c = done.pop().expect("the condition");
+                    match c.term() {
+                        Term::Lit(Value::Bool(true)) => todo.push(Mix::Part(x)),
+                        Term::Lit(Value::Bool(false)) => todo.push(Mix::Part(y)),
+                        Term::Lit(Value::Atom(_)) => done.push(c),
+                        _ => todo.extend([Mix::IfBranches(t, c), Mix::Part(y), Mix::Part(x)]),
                     }
                 }
-                Mix::IfBranches(c) => {
+                Mix::IfBranches(t, c) => {
                     let y = done.pop().expect("the second branch");
                     let x = done.pop().expect("the first branch");
-                    done.push(Term::If(a(c), a(x), a(y)));
+                    let built = self.build_from(t, vec![c, x, y]);
+                    done.push(built);
                 }
                 Mix::Build(t, k) => {
-                    let mut kids = done.drain(done.len() - k..);
-                    let mut next = || kids.next().expect("each subterm, mixed");
-                    let built = match t {
-                        Term::Lam(ps, _) => Term::Lam(ps.clone(), a(next())),
-                        Term::Match(_, arms) => {
-                            let s = a(next());
-                            Term::Match(s, arms.iter().map(|(p, _)| (p.clone(), next())).collect())
-                        }
-                        Term::Fam { var, .. } => Term::Fam {
-                            domain: a(next()),
-                            var: var.clone(),
-                            body: a(next()),
-                        },
-                        _ => map_children(t, &mut |_| next()),
-                    };
-                    drop(kids);
+                    let parts = done.split_off(done.len() - k);
+                    let built = self.build_from(t, parts);
                     done.push(built);
+                }
+                Mix::Store(id, names) => {
+                    let out = done.pop().expect("the part mixed");
+                    let sum = out.sum;
+                    let s = self.hold(out);
+                    self.memo.insert((id, names), (s.clone(), sum));
+                    done.push(Out {
+                        term: Mixed::Held(s),
+                        sum,
+                    });
                 }
             }
         }
         done.pop().expect("the mixed term")
     }
 
-    /// Mixes the subterm `t` at position `at`: puts it on `done` when it is a leaf or is
-    /// evaluated here, and otherwise puts on `todo` the steps that mix its subterms and build
-    /// it from them.
-    fn enter<'t>(&mut self, t: &'t Term, at: usize, todo: &mut Vec<Mix<'t>>, done: &mut Vec<Term>) {
+    /// Mixes the part at `site`: puts it on `done` when it is a leaf, is evaluated here or
+    /// was mixed before under the same bindings of its names, and otherwise puts on `todo` the
+    /// steps that mix its parts and build it from them.
+    fn enter<'t>(&mut self, site: Site<'t>, todo: &mut Vec<Mix<'t>>, done: &mut Vec<Out>) {
+        let (t, held, sum, at) = match site {
+            Site::Held(s) => (&**s, Some(s), self.frees.summary(Part::held(s)), None),
+            Site::Inline(t, at) => (t, None, self.arena[at].0, Some(at)),
+        };
+        let as_written = || Out {
+            term: match held {
+                Some(s) => Mixed::Held(s.clone()),
+                None => Mixed::Inline(t.clone()),
+            },
+            sum,
+        };
         let function = |t: &Term| matches!(t, Term::Lam(..) | Term::PrimFn(_));
         let value = match t {
             Term::Lit(_) | Term::PrimFn(_) | Term::Lam(..) => false,
             Term::Var(x) => matches!(self.lookup(x), Some(Some(e)) if !function(e)),
             _ => true,
         };
-        if value && self.index.build(at) {
-            done.push(match self.eval(t) {
-                Ok(v) => Term::Lit(v),
+        // A name kept here is bound to no literal (one bound to a literal is a value, computed
+        // below), so it does not keep a definition `Let` would drop.
+        // A port read is never build-stage.
+        let leaf = matches!(t, Term::Lit(_) | Term::Var(_) | Term::PrimFn(_));
+        if (!value && leaf) || matches!(t, Term::Read(_)) {
+            done.push(as_written());
+            return;
+        }
+        let names = self
+            .maps
+            .restrict(&self.frees.sets, self.scope.top, sum.free);
+        if let Some(s) = held {
+            if let Some((out, sum)) = self.memo.get(&(s.id(), names)) {
+                done.push(Out {
+                    term: Mixed::Held(out.clone()),
+                    sum: *sum,
+                });
+                return;
+            }
+            todo.push(Mix::Store(s.id(), names));
+        }
+        if value && self.build(sum, names) {
+            done.push(match self.eval(t, sum.free) {
+                Ok(v) => Out {
+                    term: Mixed::Inline(Term::Lit(v)),
+                    sum: Summary::default(),
+                },
                 Err(why) => {
                     self.report.left.push((t.to_string(), why));
-                    self.index.keep(at);
-                    t.clone()
+                    as_written()
                 }
             });
             return;
         }
-        let k = self.index.kids(at, kids(t).len());
+        let at = match at {
+            Some(at) => at,
+            None => self.cluster(t),
+        };
+        let mut parts = self.sites(t, at);
         match t {
-            // A name kept here is bound to no literal (one bound to a literal was computed
-            // above), so it does not keep a definition `Let` would drop.
-            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => done.push(t.clone()),
-            Term::Lam(ps, b) => todo.extend([
-                Mix::Build(t, 1),
-                Mix::Under(Cow::Borrowed(&ps[..]), b, k[0]),
-            ]),
-            Term::Let(x, e, b) => {
-                if self.index.build(k[0]) && !self.index.reads.contains_key(&at) {
-                    self.report.unread.push(x.to_string());
-                    todo.push(Mix::Term(b, k[1]));
-                } else {
-                    todo.extend([Mix::Let(t, at, k[1]), Mix::Term(e, k[0])]);
-                }
-            }
-            Term::If(c, ..) => todo.extend([Mix::If(t, k[1], k[2]), Mix::Term(c, k[0])]),
-            Term::Match(s, arms) => {
-                todo.push(Mix::Build(t, 1 + arms.len()));
-                for ((p, x), &at) in arms.iter().zip(&k[1..]).rev() {
-                    todo.push(Mix::Under(Cow::Owned(binds(p)), x, at));
-                }
-                todo.push(Mix::Term(s, k[0]));
-            }
-            Term::Fam { domain, var, body } => todo.extend([
-                Mix::Build(t, 2),
-                Mix::Under(Cow::Borrowed(std::slice::from_ref(var)), body, k[1]),
-                Mix::Term(domain, k[0]),
-            ]),
             // A recursion's binders are left as written; recursion arrives at L6.
-            Term::Fix { .. } => {
-                self.index.keep(at);
-                done.push(t.clone());
+            Term::Var(_) | Term::Fix { .. } => done.push(as_written()),
+            Term::Lam(..) | Term::Fam { .. } | Term::Match(..) => {
+                todo.push(Mix::Build(t, parts.len()));
+                todo.extend(
+                    parts
+                        .into_iter()
+                        .rev()
+                        .map(|(s, names)| match names.is_empty() {
+                            true => Mix::Part(s),
+                            false => Mix::Under(names, s),
+                        }),
+                );
+            }
+            Term::Let(x, e, b) => {
+                let (body, _) = parts.pop().expect("the body");
+                let bound = self.frees.summary(Part::held(e));
+                let names = self
+                    .maps
+                    .restrict(&self.frees.sets, self.scope.top, bound.free);
+                let name = self.frees.name(x);
+                let read = self.frees.summary(Part::held(b)).free;
+                let read = self.frees.sets.contains(read, name);
+                if self.build(bound, names) && !read {
+                    self.report.unread.push(x.to_string());
+                    todo.push(Mix::Part(body));
+                } else {
+                    let (e, _) = parts.pop().expect("the bound term");
+                    todo.extend([Mix::Let(t, body), Mix::Part(e)]);
+                }
+            }
+            Term::If(..) => {
+                let [(c, _), (x, _), (y, _)] = <[_; 3]>::try_from(parts).ok().expect("three parts");
+                todo.extend([Mix::If(t, x, y), Mix::Part(c)]);
             }
             _ => {
-                todo.push(Mix::Build(t, k.len()));
-                let start = todo.len();
-                let mut at = k.iter();
-                each_child(t, |c| {
-                    todo.push(Mix::Term(c, *at.next().expect("a position per subterm")))
-                });
-                todo[start..].reverse();
+                todo.push(Mix::Build(t, parts.len()));
+                todo.extend(parts.into_iter().rev().map(|(s, _)| Mix::Part(s)));
             }
+        }
+    }
+
+    /// The term of the form of `t` whose parts are `parts`, mixed, in the order [`subs`]
+    /// gives them.
+    fn build_from(&mut self, t: &Term, parts: Vec<Out>) -> Out {
+        let sums: Vec<Summary> = parts.iter().map(|o| o.sum).collect();
+        let mut parts = parts.into_iter();
+        let mut next = || parts.next().expect("each part, mixed");
+        let built = match t {
+            Term::Lam(ps, _) => Term::Lam(ps.clone(), self.hold(next())),
+            Term::App(_, args) => {
+                let g = self.hold(next());
+                Term::App(g, args.iter().map(|_| inline(next())).collect())
+            }
+            Term::Prim(p, args) => Term::Prim(*p, args.iter().map(|_| inline(next())).collect()),
+            Term::Let(x, ..) => {
+                let e = self.hold(next());
+                Term::Let(x.clone(), e, self.hold(next()))
+            }
+            Term::If(..) => {
+                let c = self.hold(next());
+                let x = self.hold(next());
+                Term::If(c, x, self.hold(next()))
+            }
+            Term::Match(_, arms) => {
+                let s = self.hold(next());
+                Term::Match(
+                    s,
+                    arms.iter()
+                        .map(|(p, _)| (p.clone(), inline(next())))
+                        .collect(),
+                )
+            }
+            Term::Fam { var, .. } => {
+                let domain = self.hold(next());
+                Term::Fam {
+                    domain,
+                    var: var.clone(),
+                    body: self.hold(next()),
+                }
+            }
+            Term::Reindex { witness, .. } => {
+                let family = self.hold(next());
+                let kf = self.hold(next());
+                Term::Reindex {
+                    family,
+                    kf,
+                    vf: self.hold(next()),
+                    witness: witness.clone(),
+                }
+            }
+            Term::Discard { .. } => {
+                let family = self.hold(next());
+                Term::Discard {
+                    family,
+                    sel: self.hold(next()),
+                }
+            }
+            Term::Fold {
+                identity,
+                depth,
+                ev,
+                ..
+            } => {
+                let family = self.hold(next());
+                let op = self.hold(next());
+                Term::Fold {
+                    family,
+                    op,
+                    identity: identity.as_ref().map(|_| self.hold(next())),
+                    depth: *depth,
+                    ev: ev.clone(),
+                }
+            }
+            Term::Gen { pos, .. } => {
+                let init = self.hold(next());
+                let step = self.hold(next());
+                Term::Gen {
+                    init,
+                    step,
+                    guard: self.hold(next()),
+                    pos: *pos,
+                }
+            }
+            Term::Push(port, _) => Term::Push(port.clone(), self.hold(next())),
+            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) | Term::Fix { .. } => {
+                unreachable!("leaves and recursions are kept as written")
+            }
+        };
+        let sum = self.frees.combine(&built, &sums);
+        Out {
+            term: Mixed::Inline(built),
+            sum,
         }
     }
 }
 
 /// A step of [`Mixer::mix`], on its heap stack.
 enum Mix<'t> {
-    /// Mix the subterm `t` at the position.
-    Term(&'t Term, usize),
-    /// Mix the subterm `t` at the position with `names` bound to values not known at build.
-    Under(Names<'t>, &'t Term, usize),
+    /// Mix the part at the site.
+    Part(Site<'t>),
+    /// Mix the part at the site with `names` bound to values not known at build.
+    Under(Names<'t>, Site<'t>),
     /// Unbind all but the first `n` names in scope.
     Truncate(usize),
-    /// The bound term of the `let` `t` at the position, mixed, is on the results: bind its
-    /// name and mix the body, at the second position.
-    Let(&'t Term, usize, usize),
-    /// The body of the `let` at the position, binding the name to the mixed term, is on the
-    /// results: unbind the name and build the `let`, or drop it when nothing reads it.
-    LetBody(&'t Arc<str>, usize, Shared),
+    /// The bound term of the `let` `t`, mixed, is on the results: bind its name and mix the
+    /// body, at the site.
+    Let(&'t Term, Site<'t>),
+    /// The body of the `let` `t`, binding the name to the mixed term, is on the results:
+    /// unbind the name and build the `let`, or drop it when nothing reads it.
+    LetBody(&'t Term, Shared),
     /// The condition of the `if` `t`, mixed, is on the results: mix the branch it chooses, or
-    /// both, at the positions.
-    If(&'t Term, usize, usize),
-    /// Both branches of an `if` with the condition, mixed, are on the results: build it.
-    IfBranches(Term),
-    /// The `k` subterms of `t`, mixed, are on the results: build it.
+    /// both, at the sites.
+    If(&'t Term, Site<'t>, Site<'t>),
+    /// Both branches of the `if` `t` with the condition, mixed, are on the results: build it.
+    IfBranches(&'t Term, Out),
+    /// The `k` parts of `t`, mixed, are on the results: build it.
     Build(&'t Term, usize),
+    /// The part held in the node with this id, mixed under this map of the names it reads to
+    /// their bindings, is on the results: hold it in a node and remember it.
+    Store(u64, Map),
 }
