@@ -2007,3 +2007,39 @@ fn remainder_splits_at_their_corners_keep_their_preimages() {
         }
     });
 }
+
+/// A stamp sheet of 1024 slots a page: slot 0 of a page is never stamped, slots below 512
+/// always are, and the rest only within the six runs `[1024t + 300, 1024t + 1100]`. Each run
+/// is shorter than a page and wraps past its page end with both ends in one class of the
+/// split (`[1, 511]`), so the check that a box lies in its classes' sets must split the run
+/// at the page end by remainder, not by the order of its end classes: the box `[2049, 5119]`
+/// holds `3072`, slot 0 of a page, which is never stamped.
+#[test]
+fn a_stretch_wrapping_past_the_modulus_inside_one_class_is_checked_by_remainder() {
+    on_big_stack(|| {
+        let rem = || prim(Prim::Mod, var("i"), int(1024));
+        let tt = || Term::Lit(Value::Bool(true));
+        let ff = || Term::Lit(Value::Bool(false));
+        let ite = |g: Term, a: Term, b: Term| Term::If(Arc::new(g), Arc::new(a), Arc::new(b));
+        for periods in [3i64, 4, 6, 9] {
+            let mut runs = ff();
+            for t in (0..periods).rev() {
+                let run = prim(
+                    Prim::And,
+                    prim(Prim::Ge, var("i"), int(1024 * t + 300)),
+                    prim(Prim::Le, var("i"), int(1024 * t + 1100)),
+                );
+                runs = ite(run, tt(), runs);
+            }
+            let stamped = ite(
+                prim(Prim::Eq, rem(), int(0)),
+                ff(),
+                ite(prim(Prim::Lt, rem(), int(512)), tt(), runs),
+            );
+            let ds = i_in(0, 1024 * periods + 1023);
+            let d = Demand::Bool(true);
+            let p = preimage(&stamped, &ds, &d);
+            check(&stamped, &ds, &d, &p, (0, 1024 * periods + 1023));
+        }
+    });
+}

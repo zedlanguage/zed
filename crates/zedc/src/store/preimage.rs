@@ -478,7 +478,8 @@ enum Split {
 /// `l01_25_preimage_catalog::s22::chain_mod7_scales`,
 /// `l01_25_preimage_catalog::s22::many_remainders_scales`,
 /// `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`
-/// and `l01_25_preimage_catalog::s22::a_split_by_remainders_is_given_up_where_it_cannot_be_exact`.
+/// and `l01_25_preimage_catalog::s22::a_split_by_remainders_is_given_up_where_it_cannot_be_exact`;
+/// COMPLEXITY.md rows S22e, S22e-quad and S22e-wide.
 /// A complete solution would hold the congruence facet in the backward transfer's sets (`x mod
 /// m` in a set of classes beside the interval), so that one transfer carries every class at
 /// once.
@@ -490,10 +491,14 @@ enum Split {
 /// its class's set) and carries the classes' relation, which is exact; the linear stage is
 /// not run on it, since its answer would be no narrower box at a cost above linear. Given up:
 /// a box listing every period. Trigger: a mixed stretch that the transfer's box does not
-/// narrow to within two periods, for example `i mod 10 == 3` over `[0, 10^9]`. Test: `l01_25_preimage_catalog::entries` (the `[0, 10^9]` case) and
-/// `l01_25_preimage_catalog::s22::remainders_over_many_periods_scale`. The cost is the
-/// projection over the box's hull, linear in the pieces, and, for an answer kept before the
-/// first transfer, one more transfer and split over the transfer's box, `O(n log n)`.
+/// narrow to within two periods, for example `i mod 10 == 3` over `[0, 10^9]`. Test:
+/// `l01_25_preimage_catalog::entries` (the `[0, 10^9]` case) and
+/// `l01_25_preimage_catalog::s22::remainders_over_many_periods_scale`; COMPLEXITY.md row
+/// S22e-wide. The cost is the projection over the box's hull, linear in the pieces, and, for
+/// an answer kept before the first transfer, one more transfer and split over the
+/// transfer's box, `O(n log n)`. A complete solution would give the box a congruence facet
+/// (an input's interval together with the set of its remainders mod `m` that it admits), so
+/// that the middle periods are one piece and the box is still exact.
 fn split_residues(
     tx: &mut Tx<'_>,
     root: Tid,
@@ -713,7 +718,7 @@ fn covers(out: &IntervalSet, sets: &[&IntervalSet], cuts: &[i128], m: i128) -> b
     let full = |tree: &[i64], (a, b): (usize, usize)| {
         below(tree, b + 1) - below(tree, a) == (b - a + 1) as i64
     };
-    let class = |r: Num| {
+    let class = |r: &Num| {
         let r = r.to_i128().expect("a remainder lies below the modulus");
         cuts.partition_point(|&c| c <= r) - 1
     };
@@ -737,8 +742,12 @@ fn covers(out: &IntervalSet, sets: &[&IntervalSet], cuts: &[i128], m: i128) -> b
         let covered = match (&at, ends.get(i).map(|e| &e.0)) {
             (Fin(u), Some(Fin(next))) if (next - u) < m => {
                 let v = next - &Num::ONE;
-                let (a, b) = (class(u.rem_euclid(&m)), class(v.rem_euclid(&m)));
-                if a <= b {
+                let (ru, rv) = (u.rem_euclid(&m), v.rem_euclid(&m));
+                // The stretch wraps past `m` when its last remainder is below its first.
+                // Its two ends may fall in one class, so the order of the classes does
+                // not tell; the remainders do.
+                let (a, b) = (class(&ru), class(&rv));
+                if ru <= rv {
                     full(&tree, (a, b))
                 } else {
                     full(&tree, (a, g - 1)) && full(&tree, (0, b))
