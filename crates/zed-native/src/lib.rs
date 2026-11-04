@@ -384,7 +384,7 @@ mod placement {
             kind: JITMemoryKind,
         ) -> io::Result<*mut u8> {
             let slot = self.used.fetch_add(1, Ordering::SeqCst);
-            if slot == SLOTS {
+            if slot >= SLOTS {
                 return Err(io::Error::other(format!("all {SLOTS} slots are used")));
             }
             if align > 4096 || size > SLOT {
@@ -442,6 +442,23 @@ mod placement {
             );
             let_(&format!("f{i}"), f, b)
         })
+    }
+
+    /// Every allocation past the last slot is refused, not only the first: an address past
+    /// the reservation may belong to another mapping, whose protection `allocate` would change.
+    #[test]
+    fn far_apart_refuses_every_allocation_past_its_slots() {
+        let used = Arc::new(AtomicUsize::new(0));
+        let mut memory = FarApart::new(used);
+        for _ in 0..SLOTS {
+            memory
+                .allocate(1, 16, JITMemoryKind::ReadOnly)
+                .expect("a slot is free");
+        }
+        for _ in 0..2 {
+            let err = memory.allocate(1, 16, JITMemoryKind::ReadOnly).unwrap_err();
+            assert_eq!(err.to_string(), format!("all {SLOTS} slots are used"));
+        }
     }
 
     #[test]
