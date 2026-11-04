@@ -14,7 +14,7 @@ use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, Ty};
 use super::{carrier_mask, denoted_with};
-use crate::ast::{self, TypeKind};
+use crate::ast::{self, Type, TypeKind};
 use crate::lex::{self, Part, Tok};
 use crate::parse::{self, TOP};
 
@@ -38,7 +38,11 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
             }
             TypeKind::Array(_) => return Err(format!("`{text}` holds a form of layer L3")),
             TypeKind::Name(_) | TypeKind::Atom(_) | TypeKind::Every(_) | TypeKind::AtomAny(_) => {}
-            TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => stack.extend(ts),
+            TypeKind::Tuple(ts) | TypeKind::Union(ts) => stack.extend(ts),
+            TypeKind::And(ts) => {
+                Type::overload(ts).map_err(|why| format!("`{text}`: {why}"))?;
+                stack.extend(ts);
+            }
             TypeKind::AtomApply(_, ps) => stack.extend(ps.iter().map(|p| &p.ty)),
             TypeKind::Diff(a, b) => stack.extend([&**a, &**b]),
             TypeKind::Arrow { params, result, .. } => {

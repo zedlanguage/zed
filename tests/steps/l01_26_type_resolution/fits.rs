@@ -2,9 +2,13 @@
 //! in any order; a lambda by its own names; a parameter the type leaves out only with a
 //! default.
 
-use super::{info, type_errors};
+use super::{info, sig, type_errors};
 use crate::l01_16_elaboration::value;
+use zedc::ast::unit;
 use zedc::check::Fit;
+use zedc::lex::lex_fence;
+use zedc::parse::{TOP, parse};
+use zedc::resolve::resolve;
 
 const APPLY: &str = "apply(f: (a: int, b: int) -> int) = f(a: 1, b: 2);\n";
 
@@ -75,5 +79,52 @@ fn a_lambdas_result_must_fit() {
     assert_eq!(
         type_errors("apply(f: (int) -> String) = f(1);\ny = apply(f: n -> n + 1);\n"),
         ["the lambda returns int, and `(int) -> String` returns String [n + 1]"]
+    );
+}
+
+/// A slot written as an intersection of function types expects one function with an arrow for
+/// each (DESIGN.md sec:type_language, "Relation to semantic subtyping" (2)): a generic `neg`
+/// has both, and `half`, on `int` alone, has one.
+const BOTH: &str = "both(f: ((x: int) -> int) & ((x: f64) -> f64)) = (f(x: 2), f(x: 0.5));\n";
+
+#[test]
+fn a_slot_written_as_an_intersection_of_function_types_takes_each_arrow() {
+    assert_eq!(
+        sig(BOTH, "both"),
+        "(f: (((x: int) -> int) & ((x: f64) -> f64))) -> (int, f64)"
+    );
+    let neg = format!("{BOTH}neg(x) = -x;\ny = both(f: neg);\n");
+    assert!(type_errors(&neg).is_empty(), "{:?}", type_errors(&neg));
+    assert_eq!(value(&neg, "y"), "(-2, -0.5)");
+    let half = format!("{BOTH}half(x: int) = x div 2;\ny = both(f: half);\n");
+    assert_eq!(
+        type_errors(&half),
+        ["`half` is `(x: int) -> int`, not `((x: int) -> int) & ((x: f64) -> f64)` [half]"]
+    );
+    // A call through the slot that no arrow takes is refused with each arrow.
+    let text = "both(f: ((x: int) -> int) & ((x: f64) -> f64)) = f(x: \"a\");\n";
+    assert_eq!(
+        type_errors(text),
+        ["`f` does not take (\"a\") [f(x: \"a\")]"]
+    );
+}
+
+#[test]
+fn an_intersection_of_function_types_with_different_parameters_is_an_error() {
+    let text = "both(f: ((x: int) -> int) & ((y: f64) -> f64)) = f(x: 2);\n";
+    let tokens = lex_fence(text).unwrap();
+    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
+    let stmts = unit(text, &tokens, &tree).unwrap();
+    let errors: Vec<String> = resolve(&stmts)
+        .expect_err("refused")
+        .into_iter()
+        .map(|e| format!("{} [{}]", e.message, &text[e.span.start..e.span.end]))
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            "the arrows of an intersection of function types share one parameter list, but one \
+             takes (x) and another (y) [((x: int) -> int) & ((y: f64) -> f64)]"
+        ]
     );
 }

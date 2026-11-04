@@ -1794,35 +1794,23 @@ fn fits_in(s: &Sig, se: &Env, q: &Sig, qe: &Env, cx: &mut Cx) -> bool {
     };
     let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
     let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
+    // Each arrow of `q` is tried first on an arrow of `s` equal to it, found by hash, so that
+    // an overload passed where the same overload is expected costs one comparison per arrow.
+    // Complexity tradeoff: none is given up, every arrow of `q` gets an answer, but an arrow of
+    // `q` that no arrow of `s` equals is compared with each arrow of `s`, so `s` and `q` of n
+    // arrows that differ cost n^2 comparisons. The subtyping order on parameter types has no
+    // index this search could use; an overload of n arrows with n distinct parameter types
+    // triggers it (probe l01_26_type_resolution::scaling::
+    // passing_an_overload_to_a_slot_of_other_arrows_is_quadratic, #[ignore]; COMPLEXITY.md
+    // F77; open: AND-fns-fit). A complete solution needs an index of the arrows of `s`
+    // by parameter type, as overload resolution at L2.6 needs one.
+    let mut equal: HashMap<&Arrow, &Arrow> = HashMap::with_capacity(sas.len());
+    for sa in &sas {
+        equal.entry(sa).or_insert(sa);
+    }
     let fits = qas.iter().all(|qa| {
-        sas.iter().any(|sa| {
-            let mut b = Binds::new();
-            qa.params
-                .iter()
-                .zip(&sa.params)
-                .all(|(x, y)| x.sub_in(y, &mut b, cx))
-                && s.bounds.iter().all(|(v, &m)| {
-                    b.get(v)
-                        .is_none_or(|t| match t.as_var().and_then(|w| cx.rigid.get(w)) {
-                            // Each carrier the caller of `q` may pick is one `s` takes.
-                            Some(&mq) => mq & !m == 0,
-                            // `v` is one carrier at a call, so it cannot be a rigid variable and
-                            // something else at once.
-                            None => t.pieces().iter().all(|p| match p.carrier() {
-                                Some(c) => m & c.bit() != 0,
-                                None => {
-                                    m & OTHER != 0
-                                        && !matches!(p, Piece::Dyn)
-                                        && !matches!(p, Piece::Var(w) if cx.rigid.contains_key(w))
-                                }
-                            }),
-                        })
-                })
-                && {
-                    let mut rb = Binds::new();
-                    sa.result.subst(&b).sub_in(&qa.result, &mut rb, cx) && rb.is_empty()
-                }
-        })
+        equal.get(qa).is_some_and(|sa| arrow_fits(s, sa, qa, cx))
+            || sas.iter().any(|sa| arrow_fits(s, sa, qa, cx))
     });
     cx.forget(mark);
     fits
@@ -1832,6 +1820,37 @@ impl std::hash::Hash for Sig {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         h.write_u64(self.digest());
     }
+}
+
+/// Whether the arrow `sa` of `s` takes the parameters of the arrow `qa` and returns within its
+/// result, each bounded variable of `s` bound to carriers of its bound ([`fits_in`]).
+fn arrow_fits(s: &Sig, sa: &Arrow, qa: &Arrow, cx: &mut Cx) -> bool {
+    let mut b = Binds::new();
+    qa.params
+        .iter()
+        .zip(&sa.params)
+        .all(|(x, y)| x.sub_in(y, &mut b, cx))
+        && s.bounds.iter().all(|(v, &m)| {
+            b.get(v)
+                .is_none_or(|t| match t.as_var().and_then(|w| cx.rigid.get(w)) {
+                    // Each carrier the caller of `q` may pick is one `s` takes.
+                    Some(&mq) => mq & !m == 0,
+                    // `v` is one carrier at a call, so it cannot be a rigid variable and
+                    // something else at once.
+                    None => t.pieces().iter().all(|p| match p.carrier() {
+                        Some(c) => m & c.bit() != 0,
+                        None => {
+                            m & OTHER != 0
+                                && !matches!(p, Piece::Dyn)
+                                && !matches!(p, Piece::Var(w) if cx.rigid.contains_key(w))
+                        }
+                    }),
+                })
+        })
+        && {
+            let mut rb = Binds::new();
+            sa.result.subst(&b).sub_in(&qa.result, &mut rb, cx) && rb.is_empty()
+        }
 }
 
 impl Sig {

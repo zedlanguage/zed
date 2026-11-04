@@ -844,3 +844,67 @@ fn a_chain_of_calls_on_one_value_checks_in_linear_time() {
         });
     });
 }
+
+/// A unit whose function `q` passes its parameter, an overload of `n` arrows, to `p`, whose
+/// slot is the same overload: `q`'s function has an arrow for each of `p`'s.
+fn overloads(n: usize) -> String {
+    let ov = (0..n)
+        .map(|i| format!("((x: #a{i}) -> #b{i})"))
+        .collect::<Vec<_>>()
+        .join(" & ");
+    format!("p(f: {ov}) = 0;\nq(g: {ov}) = p(f: g);\n")
+}
+
+#[test]
+fn passing_an_overload_of_many_arrows_scales() {
+    let n = 200;
+    let inputs = [(n, overloads(n)), (8 * n, overloads(8 * n))];
+    scaling::check(
+        "an overload of n arrows passed to a slot of n arrows",
+        n,
+        |m| {
+            let text = &inputs
+                .iter()
+                .find(|(k, _)| *k == m)
+                .expect("a built size")
+                .1;
+            let (info, _) = info(text);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+            assert_eq!(info.sigs.len(), 2);
+        },
+    );
+}
+
+/// Like [`overloads`], but each arrow of `q`'s function takes its atom or `#z`, so no arrow
+/// of it equals the arrow of the slot it fits.
+fn wider_overloads(n: usize) -> String {
+    let ov = |wide: &str| {
+        (0..n)
+            .map(|i| format!("((x: #a{i}{wide}) -> #b{i})"))
+            .collect::<Vec<_>>()
+            .join(" & ")
+    };
+    format!("p(f: {}) = 0;\nq(g: {}) = p(f: g);\n", ov(""), ov(" | #z"))
+}
+
+/// Probe of the case `fits_in` leaves at n^2 comparisons (COMPLEXITY.md F77; open:
+/// AND-fns-fit): each arrow of the slot is compared with the arrows of the function before it.
+#[test]
+#[ignore = "n^2 comparisons, open: AND-fns-fit"]
+fn passing_an_overload_to_a_slot_of_other_arrows_is_quadratic() {
+    let n = 100;
+    let inputs = [(n, wider_overloads(n)), (8 * n, wider_overloads(8 * n))];
+    scaling::check(
+        "an overload of n arrows passed to a slot of n other arrows",
+        n,
+        |m| {
+            let text = &inputs
+                .iter()
+                .find(|(k, _)| *k == m)
+                .expect("a built size")
+                .1;
+            let (info, _) = info(text);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
+}

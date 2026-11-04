@@ -1037,7 +1037,18 @@ impl Resolver {
                 todo.push(Task::Ty(ty));
             }
             TypeKind::Atom(_) | TypeKind::Every(Every::Atom | Every::Tuple) => {}
-            TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => {
+            TypeKind::Tuple(ts) | TypeKind::Union(ts) => {
+                todo.extend(ts.iter().rev().map(Task::Ty));
+            }
+            TypeKind::And(ts) => {
+                if let Err(message) = Type::overload(ts) {
+                    self.errors.push(Error {
+                        row: None,
+                        span: t.span,
+                        message,
+                        notes: Vec::new(),
+                    });
+                }
                 todo.extend(ts.iter().rev().map(Task::Ty));
             }
             TypeKind::Diff(a, b) => {

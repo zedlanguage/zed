@@ -256,6 +256,71 @@ fn a_bound_clause_reads_back_onto_its_signature() {
     assert_eq!(t.to_string(), "(((T) -> T for T in int | rat), int)");
 }
 
+/// An intersection of function types is one function's list of arrows, an overload, as the
+/// checker prints a signature of several arrows (DESIGN.md sec:type_language, "Relation to
+/// semantic subtyping" (2)): `show` here is defined at least on `int` and at least on `f64`.
+#[test]
+fn an_intersection_of_function_types_reads_back_as_one_overload() {
+    let text = "((x: int) -> String) & ((x: f64) -> String)";
+    let show = back(text);
+    assert_eq!(show.fns.len(), 1);
+    assert_eq!(show.fns[0].arrows.len(), 2);
+    assert_eq!(show.fns[0].to_string(), text);
+    // Positional parameters, as an operator's arrows are printed.
+    let text = "((int, int) -> int) & ((f64, f64) -> f64) & ((rat, rat) -> rat)";
+    let plus = back(text);
+    assert_eq!(plus.fns[0].arrows.len(), 3);
+    assert_eq!(plus.fns[0].to_string(), text);
+    // Each arrow's variable is bounded on the one signature.
+    let text = "((x: T, n: int) -> T) & ((x: U, n: int) -> U) for T in int | rat, U in f64";
+    let scale = back(text);
+    assert_eq!(scale.fns.len(), 1);
+    assert_eq!(scale.fns[0].to_string(), text);
+    let both = Carrier::Int.bit() | Carrier::Rat.bit();
+    assert_eq!(
+        scale.fns[0].bounds,
+        [("T".into(), both), ("U".into(), Carrier::F64.bit())].into()
+    );
+    // An overload in a tuple reads as one too.
+    let pair = back("(((x: int) -> int) & ((x: f64) -> f64), int)");
+    assert_eq!(pair.tuples[0][0].fns[0].arrows.len(), 2);
+}
+
+/// The arrows of one function share its parameter list, so an intersection of function types
+/// whose parameters differ in number, name or `positional` mark is no type.
+#[test]
+fn an_intersection_of_function_types_with_different_parameters_is_an_error() {
+    let cases = [
+        (
+            "((x: int) -> int) & ((y: f64) -> f64)",
+            "the arrows of an intersection of function types share one parameter list, but one \
+             takes (x) and another (y)",
+        ),
+        (
+            "((x: T) -> T) & ((y: U) -> U) for T in int, U in f64",
+            "the arrows of an intersection of function types share one parameter list, but one \
+             takes (x) and another (y)",
+        ),
+        (
+            "((x: int) -> int) & ((x: int, n: int) -> int)",
+            "the arrows of an intersection of function types share one parameter list, but one \
+             takes (x) and another (x, n)",
+        ),
+        (
+            "((int) -> int) & ((x: int) -> int)",
+            "the arrows of an intersection of function types share one parameter list, but one \
+             takes (_) and another (x)",
+        ),
+    ];
+    for (text, want) in cases {
+        assert_eq!(
+            parse_type(text).err(),
+            Some(format!("`{text}`: {want}")),
+            "{text}"
+        );
+    }
+}
+
 #[test]
 fn what_is_no_printed_type_is_an_error() {
     let cases = [
@@ -352,5 +417,29 @@ fn printing_atoms_with_payloads_scales() {
     scaling::check("reading back a union of n atoms with payloads", n, |size| {
         let (_, t, text) = input(size);
         assert_eq!(&back(text), t);
+    });
+}
+
+/// Reading back an intersection of `n` function types of one parameter list: the parameter
+/// lists are compared with the first once each, and the arrows joined into one signature.
+#[test]
+fn reading_an_overload_of_many_arrows_back_scales() {
+    let n = 200;
+    let overload = |m: usize| {
+        (0..m)
+            .map(|i| format!("((x: #a{i}) -> #b{i})"))
+            .collect::<Vec<_>>()
+            .join(" & ")
+    };
+    let inputs = [(n, overload(n)), (8 * n, overload(8 * n))];
+    scaling::check("reading back an overload of n arrows", n, |size| {
+        let text = &inputs
+            .iter()
+            .find(|(m, _)| *m == size)
+            .expect("a built size")
+            .1;
+        let ty = back(text);
+        assert_eq!(ty.fns.len(), 1);
+        assert_eq!(ty.fns[0].arrows.len(), size);
     });
 }

@@ -79,6 +79,60 @@ pub enum TypeKind {
     },
 }
 
+impl Type {
+    /// Its parameter list if it is a function type, a bounds clause around one included: `x`
+    /// for a parameter named and not `positional`, and `_` for the others, which a call does
+    /// not name.
+    fn param_list(&self) -> Option<Vec<&str>> {
+        let mut t = self;
+        while let TypeKind::For { ty, .. } = &t.kind {
+            t = ty;
+        }
+        match &t.kind {
+            TypeKind::Arrow { params, .. } => Some(
+                params
+                    .iter()
+                    .map(|p| match &p.name {
+                        Some(n) if !p.positional => n.as_str(),
+                        _ => "_",
+                    })
+                    .collect(),
+            ),
+            TypeKind::Bounded { .. } => Some(vec!["_"]),
+            _ => None,
+        }
+    }
+
+    /// Of `ts`, the operands of an intersection: whether they are all function types, and so
+    /// one function's list of arrows, an overload (DESIGN.md sec:type_language, "Relation to
+    /// semantic subtyping"), or why they are no type, when they are function types that take
+    /// different parameter lists: the arrows of one function share its parameters.
+    pub fn overload(ts: &[Type]) -> Result<bool, String> {
+        let Some((first, rest)) = ts.split_first() else {
+            return Ok(false);
+        };
+        let Some(list) = first.param_list() else {
+            return Ok(false);
+        };
+        let mut lists = Vec::with_capacity(rest.len());
+        for t in rest {
+            match t.param_list() {
+                Some(l) => lists.push(l),
+                None => return Ok(false),
+            }
+        }
+        match lists.into_iter().find(|l| *l != list) {
+            None => Ok(true),
+            Some(other) => Err(format!(
+                "the arrows of an intersection of function types share one parameter list, but \
+                 one takes ({}) and another ({})",
+                list.join(", "),
+                other.join(", ")
+            )),
+        }
+    }
+}
+
 /// The kind a kind-wide type `#_`, `(..)` or `{..}` names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Every {

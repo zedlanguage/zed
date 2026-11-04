@@ -5557,6 +5557,22 @@ impl<'a> Denote<'a> {
                 let ts: Vec<Ty> = ts.iter().map(|t| self.ty(t)).collect();
                 Ty::union_all(&ts)
             }
+            // Function types that share a parameter list are one function's arrows, in written
+            // order; resolve rejects function types that do not.
+            TypeKind::And(ts) if Type::overload(ts) == Ok(true) => {
+                let mut sigs = ts.iter().map(|t| self.ty(t)).map(|mut t| {
+                    let s = t.fns.pop().expect("a function type denotes one signature");
+                    Arc::unwrap_or_clone(s)
+                });
+                let mut sig = sigs.next().expect("an intersection has operands");
+                for s in sigs {
+                    sig.arrows.extend(s.arrows);
+                    sig.bounds.extend(s.bounds);
+                    sig.own.extend(s.own);
+                    sig.held.extend(s.held);
+                }
+                Ty::func(Arc::new(sig))
+            }
             TypeKind::And(ts) => {
                 let ts: Vec<Ty> = ts.iter().map(|t| self.ty(t)).collect();
                 // An intersection of function types of one arity is one function with each

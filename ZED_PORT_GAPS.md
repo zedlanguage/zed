@@ -793,6 +793,10 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `std::mem::take` of a buffer, used as a borrowed slice, then cleared and put back | `with_args`, `matched` (`outs`) | Mutation | A state receiver; the runtime reuses a list held once |
 | `Vec<Option<_>>` filled at first use, indexed by node or constant | `Run::shapes` (and `Run::ropes`, removed by T14-rope) | Mutation | A map in the run's state, or the shape computed once at compile time for constant names |
 
+## Entries from AND-fns (`ast/types.rs`, `check/mod.rs`, `check/read.rs`, `check/ty.rs`, `resolve.rs`)
+
+- No new gap. `Arc::unwrap_or_clone` of a signature is a copy of a shared value, which in Zed is the value itself (gap 1 covers identity). `fits_in` keys a `HashMap<&Arrow, &Arrow>` by the arrows' content (`Hash`, `Eq`), which in Zed is a map keyed by the arrow value; the `entry().or_insert` loop is a fold that keeps the first arrow per key.
+
 ## Entries from LR4 (`zedc/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
 
 - No new gap. `Builder::make_expr`, arm `"Expr12"`, reads its two children with `let [l, t] = kids[..] else { unreachable!(..) }`, a slice pattern in a `let … else`; both are rows of the appendix (`let_else`, slice patterns) with the rewrite already listed: test the length, then index.
