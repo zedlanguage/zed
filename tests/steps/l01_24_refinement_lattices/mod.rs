@@ -7,6 +7,7 @@
 //! equations of ordinary loops with the M0.5 strategy and compares the solution with the
 //! values a run takes, and `cell` follows the premises through meets, joins and widenings.
 
+mod boundary;
 mod bounds;
 mod cell;
 mod ends;

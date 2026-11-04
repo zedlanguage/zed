@@ -1290,7 +1290,9 @@ impl Kept {
         num / BigInt::from(self.den.clone())
     }
 
-    /// The negation.
+    /// The negation of the form. Its value lies outside `i128` except when `self` is `2^127`,
+    /// whose negation `i128::MIN` is a big value: so only `Neg for &Num`, which gives that
+    /// value its form, calls this.
     fn neg(&self) -> Kept {
         Kept {
             terms: self
@@ -2072,13 +2074,14 @@ impl Num {
             (Word::Small(a), Word::Small(b)) => {
                 return Integer::div_floor(&(*a as i128), &(*b as i128)).into();
             }
+            // floor(x / d) = floor(-x / -d), so a negative divisor is turned around by negating
+            // both in their one forms: the negation of a kept 2^127 is i128::MIN, a big value,
+            // and no kept form ever holds a value inside i128.
+            (Word::Kept(_), Word::Small(_) | Word::Big(_)) if d.signum() < 0 => {
+                return (-self).div_floor(&-d);
+            }
             (Word::Kept(x), _) if let Some(s) = d.scalar() => {
-                let (x, n) = if below_zero(&s) {
-                    (Cow::Owned(x.neg()), s.magnitude().clone())
-                } else {
-                    (Cow::Borrowed(&**x), s.magnitude().clone())
-                };
-                if let Some(q) = x.div_floor_by(&n) {
+                if let Some(q) = x.div_floor_by(s.magnitude()) {
                     return q;
                 }
             }
