@@ -749,18 +749,27 @@ fn chains_of_shared_terms_keep_their_preimages() {
     );
 }
 
-/// The families whose constants grow with the chain (`c_j = j`), at the sizes above.
+/// The families whose constants grow with the chain (`c_j = j`), at the sizes above, one test
+/// per family so that each runs in well under 60 s; the cases, 68 + 72 + 68 + 72, are the 280
+/// of the one test they were.
 #[test]
-fn chains_of_growing_constants_keep_their_preimages() {
-    chain_families(
-        &[
-            ("cj", &[]),
-            ("cj_live", &[24]),
-            ("altj", &[]),
-            ("altj_live", &[24]),
-        ],
-        280,
-    );
+fn chains_of_growing_constants_keep_their_preimages_cj() {
+    chain_families(&[("cj", &[])], 68);
+}
+
+#[test]
+fn chains_of_growing_constants_keep_their_preimages_cj_live() {
+    chain_families(&[("cj_live", &[24])], 72);
+}
+
+#[test]
+fn chains_of_growing_constants_keep_their_preimages_altj() {
+    chain_families(&[("altj", &[])], 68);
+}
+
+#[test]
+fn chains_of_growing_constants_keep_their_preimages_altj_live() {
+    chain_families(&[("altj_live", &[24])], 72);
 }
 
 /// Families whose transfer is slow or whose values leave `i64` at larger sizes.
@@ -863,7 +872,7 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
 }
 
 /// Every kind of guard and arm the summary reads, and some it does not: the cases `from..to`
-/// of one sequence, split in two tests so they run in parallel.
+/// of one sequence, split in tests of 250 cases each ([`GUARDED`]) so they run in parallel.
 fn random_guarded_chains(
     from: usize,
     to: usize,
@@ -895,41 +904,134 @@ fn random_guarded_chains(
     });
 }
 
-/// Random chains of every kind of guard, the first half. S22e-wide changes 87 cases here: 40
-/// more are made exact (79, against 39 on main) by the split over many periods, where its
-/// projection lists the periods and every member lies in its class (`covers`), one of them
-/// a box main narrowed (narrower 2 before, 1 now); and 47 are inexact boxes with the classes'
-/// relation, exact on the box (`split_relation_exact`), where main ran the linear stage.
-#[test]
-fn random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(0, 2000, (1, 6, 79), (47, &[]));
-}
+/// The counts of each test of [`random_guarded_chains`]: the first case of its 250, the
+/// narrower, reflected and exact boxes, and the splits over many periods with the wider of
+/// them. The rows of each half sum to that half's counts as one test
+/// (`random_guarded_chains_sum_to_the_counts_of_each_half`).
+type Counts = (
+    usize,
+    (usize, usize, usize),
+    (usize, &'static [&'static str]),
+);
 
-/// Random chains of every kind of guard, the second half. S22b changes 7 boxes of `c - x` here;
-/// two of them, inexact before and exact now, count as made exact (on main 53 by classes of
-/// remainders, S22e, and 2 by S22b; S22e-wide makes 44 more exact, 99 in all, one of them a
-/// box S22b reflected, so reflected counts 4, not 5): the chains `(if (6 < i) { (if (7 < i) { (0 - …` and
-/// `if ((i mod 3) == 1) { min(if (i >= -9) { …`, whose results are the same on main before S22e
-/// merged (5adc3c2). 53, was 54, since LIVE3: the transfer before, which shares the solver,
-/// now decides by `live3` the gray shadow over three variables that left it inexact on
-/// `(if ((i mod 3) == 2) { (if ((i mod 3) == 2) { (i + 0) } … < 6)`, so both are exact and alike.
-/// S22e-wide answers 49 more with the classes' relation, exact on the box;
-/// three of those boxes are wider than main's, listed below, because the hull of a class's
-/// members joins pieces that main's projection kept apart, where the relation holds no point.
-#[test]
-fn more_random_guarded_chains_keep_their_preimages() {
-    random_guarded_chains(
-        2000,
-        4000,
-        (0, 4, 99),
+const GUARDED: [Counts; 16] = [
+    (0, (0, 0, 12), (7, &[])),
+    (250, (0, 3, 11), (4, &[])),
+    (500, (0, 0, 11), (4, &[])),
+    (750, (0, 0, 6), (8, &[])),
+    (1000, (1, 0, 13), (8, &[])),
+    (1250, (0, 2, 11), (1, &[])),
+    (1500, (0, 0, 9), (8, &[])),
+    (1750, (0, 1, 6), (7, &[])),
+    (2000, (0, 1, 17), (11, &[])),
+    (2250, (0, 1, 9), (10, &[])),
+    (2500, (0, 0, 11), (6, &[])),
+    (2750, (0, 0, 9), (5, &[])),
+    (
+        3000,
+        (0, 0, 18),
+        (4, &["i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]"]),
+    ),
+    (3250, (0, 0, 14), (3, &[])),
+    (3500, (0, 0, 13), (3, &[])),
+    (
+        3750,
+        (0, 2, 8),
         (
-            49,
+            7,
             &[
-                "i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]",
                 "i [2..] before i [2..=2, 5..]",
                 "i [4..] before i [4..=4, 7..]",
             ],
         ),
+    ),
+];
+
+/// One test per row of [`GUARDED`], each under 60 s at load 120.
+macro_rules! guarded_ranges {
+    ($($name:ident $row:literal),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                let (from, counts, wide) = GUARDED[$row];
+                random_guarded_chains(from, from + 250, counts, wide);
+            }
+        )*
+    };
+}
+
+guarded_ranges!(
+    random_guarded_chains_keep_their_preimages_0000 0,
+    random_guarded_chains_keep_their_preimages_0250 1,
+    random_guarded_chains_keep_their_preimages_0500 2,
+    random_guarded_chains_keep_their_preimages_0750 3,
+    random_guarded_chains_keep_their_preimages_1000 4,
+    random_guarded_chains_keep_their_preimages_1250 5,
+    random_guarded_chains_keep_their_preimages_1500 6,
+    random_guarded_chains_keep_their_preimages_1750 7,
+    more_random_guarded_chains_keep_their_preimages_2000 8,
+    more_random_guarded_chains_keep_their_preimages_2250 9,
+    more_random_guarded_chains_keep_their_preimages_2500 10,
+    more_random_guarded_chains_keep_their_preimages_2750 11,
+    more_random_guarded_chains_keep_their_preimages_3000 12,
+    more_random_guarded_chains_keep_their_preimages_3250 13,
+    more_random_guarded_chains_keep_their_preimages_3500 14,
+    more_random_guarded_chains_keep_their_preimages_3750 15,
+);
+
+/// The rows of [`GUARDED`] cover cases 0 to 4000 of the sequence, one after another, and the
+/// rows of each half sum to the counts below.
+///
+/// The first half, cases 0 to 2000: S22e-wide changes 87 cases here: 40 more are made exact
+/// (79, against 39 on main) by the split over many periods, where its projection lists the
+/// periods and every member lies in its class (`covers`), one of them a box main narrowed
+/// (narrower 2 before, 1 now); and 47 are inexact boxes with the classes' relation, exact on
+/// the box (`split_relation_exact`), where main ran the linear stage.
+///
+/// The second half, cases 2000 to 4000: S22b changes 7 boxes of `c - x` here; two of them,
+/// inexact before and exact now, count as made exact (on main 53 by classes of remainders,
+/// S22e, and 2 by S22b; S22e-wide makes 44 more exact, 99 in all, one of them a box S22b
+/// reflected, so reflected counts 4, not 5): the chains `(if (6 < i) { (if (7 < i) { (0 - …`
+/// and `if ((i mod 3) == 1) { min(if (i >= -9) { …`, whose results are the same on main before
+/// S22e merged (5adc3c2). 53, was 54, since LIVE3: the transfer before, which shares the
+/// solver, now decides by `live3` the gray shadow over three variables that left it inexact on
+/// `(if ((i mod 3) == 2) { (if ((i mod 3) == 2) { (i + 0) } … < 6)`, so both are exact and
+/// alike. S22e-wide answers 49 more with the classes' relation, exact on the box; three of
+/// those boxes are wider than main's, listed below, because the hull of a class's members
+/// joins pieces that main's projection kept apart, where the relation holds no point.
+#[test]
+fn random_guarded_chains_sum_to_the_counts_of_each_half() {
+    let sum = |rows: &[Counts]| {
+        let mut s = (0, 0, 0, 0, Vec::new());
+        for &(_, (narrower, reflected, exact), (wide, wider)) in rows {
+            s = (
+                s.0 + narrower,
+                s.1 + reflected,
+                s.2 + exact,
+                s.3 + wide,
+                s.4,
+            );
+            s.4.extend_from_slice(wider);
+        }
+        s
+    };
+    for (row, &(from, ..)) in GUARDED.iter().enumerate() {
+        assert_eq!(from, 250 * row, "row {row} does not follow the one before");
+    }
+    assert_eq!(sum(&GUARDED[..8]), (1, 6, 79, 47, vec![]));
+    assert_eq!(
+        sum(&GUARDED[8..]),
+        (
+            0,
+            4,
+            99,
+            49,
+            vec![
+                "i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]",
+                "i [2..] before i [2..=2, 5..]",
+                "i [4..] before i [4..=4, 7..]",
+            ]
+        )
     );
 }
 

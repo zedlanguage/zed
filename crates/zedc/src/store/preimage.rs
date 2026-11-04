@@ -500,8 +500,8 @@ enum Split {
 /// [-19..]` for main's `i [-19..=2, 5..=5, 8..=8, 11..]`, `i [2..]` for `i [2..=2, 5..]` and
 /// `i [4..]` for `i [4..=4, 7..]`. Test: `l01_25_preimage_catalog::entries` (the `[0, 10^9]`
 /// case), `l01_25_preimage_catalog::s22::remainders_over_many_periods_scale` and
-/// `l01_25_preimage_catalog::s22::more_random_guarded_chains_keep_their_preimages` (the three
-/// wider boxes); COMPLEXITY.md row S22e-wide. A complete solution for the wider boxes would
+/// `l01_25_preimage_catalog::s22::more_random_guarded_chains_keep_their_preimages_3000` and
+/// `_3750` (the three wider boxes); COMPLEXITY.md row S22e-wide. A complete solution for the wider boxes would
 /// project over each piece of the box rather than its hull, or keep the congruence facet
 /// below. The cost is the projection over the box's hull, linear in the pieces, and, for
 /// an answer kept before the first transfer, one more transfer and split over the
