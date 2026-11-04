@@ -60,6 +60,10 @@ in docs/layout.md.
 - Done: **L1.19**, whole-file ports (`zedc::run`, `zedc run` and `zedc replay`): `Lines` and
   `Files` inputs read once, `Lines` outputs written once when the wave ends, acknowledgments,
   and the replay record.
+- Done: **L1.19a**, the `CommandLine` input port (`run::words`, `run::arguments`, `check::port`):
+  the words after the first `--` keyed by position from 1, a word that is not UTF-8 a usage
+  error naming its position, the arguments recorded as `arg` entries and replayed, a `main` row
+  giving them as a `String` one per line (COMPLEXITY.md CMDLINE) (b8a294bb, cc12eb9e).
 - Done: **L1.20**, provenance (`zed_kernel::provenance`, `Evaluator::with_provenance`,
   `Program::provenance`): fact addresses, the run graph, and the origin sets of failures.
 - Done: **L1.21**, the test runner (`zedc::testing`, `zedc test <file> …`): function tables,
@@ -1026,7 +1030,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CHK-cost | repair attempt 4 | 2026-11-03 15:48 | CHK-carrier in progress, uncommitted: generalize (crates/zedc/src/check/mod.rs:955-971) replaces a class solved to a carrier only outside nested functions; Sig: |
 | CHK-curried | repair attempt 4 (item CHK-cost) | 2026-11-03 19:35 | CHK-carrier in progress, uncommitted: generalize (crates/zedc/src/check/mod.rs:955-971) replaces a class solved to a carrier only outside nested functions; Sig: |
 | ISSUE1-else-atoms | verify attempt 6 | 2026-11-03 16:04 | fmt, clippy -D warnings pass; probes vs main zedc: blocking regression: g(positional x) = if x is #notFound { "nf" } else { trim(x) } (also trim(x else #notFoun |
-| L1.19a | impl attempt 1 | 2026-11-03 23:00 | start: CommandLine input port |
 | L1.29a | impl attempt 1 | 2026-11-03 16:32 | start |
 | L1.37a | impl attempt 1 | 2026-11-03 16:32 | started |
 | L1.39b | impl attempt 1 | 2026-11-03 16:32 | start: derivations and @exact preimages on demand |
