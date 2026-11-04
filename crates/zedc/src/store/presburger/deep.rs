@@ -524,6 +524,16 @@ impl<'a> Level<'a> {
                     self.b.left.pop();
                     equal.extend(entries[s].take());
                 }
+                // Two levels entered with other partners, the later entry first: its partner,
+                // entered after the other's, is no longer open, while the other's partner may
+                // be the next level out and run out here too.
+                (Some(Some(s)), Some(Some(t))) => {
+                    if s > t {
+                        self.a.left.pop();
+                    } else {
+                        self.b.left.pop();
+                    }
+                }
                 // A part entered with a partner whose parts are not yet all read: the pair is
                 // not kept, and its partner's level is left alone when its parts run out.
                 (Some(Some(_)), _) => {
@@ -549,12 +559,18 @@ impl Ord for Formula {
     /// kind met at one point of the two flattened sequences are entered together, and kept as
     /// equal when their parts run out together, so a pair met again is passed over.
     // Complexity tradeoff: a kept part entered on one side alone, against a part of the other
-    // side that is not kept, is read through at each place it is met, since its parts are then
-    // compared against parts grouped otherwise. Two formulas whose kept parts line up (a named
-    // chain against an equal one or one extended at either end, built apart) are compared at a
-    // cost linear in their distinct parts (`l01_38_presburger::shared`); two that group one
-    // sequence differently at many shared places cost the size of the sequence written out. A
-    // complete solution compares the sequences as compressed strings, which no test needs.
+    // side that is not kept, or entered with a partner whose parts run out at another place, is
+    // read through at each place it is met, since its parts are then compared against parts
+    // grouped otherwise. No answer is given up; the cost is. Two formulas whose kept parts line
+    // up (a named chain against an equal one or one extended at either end, built apart, or
+    // pairs whose inner parts end apart inside outer ones that end together) are compared at a
+    // cost linear in their distinct parts (`l01_38_presburger::shared`, the two scaling tests
+    // of chains). Two that group one sequence at other places on each side, at many shared
+    // places, cost the size of the sequence written out: exponential in the depth of sharing,
+    // 211 ms at d = 20 for 2^21 - 1 constraints (`shared::shifted_chains`, checked for order
+    // at d up to 9; COMPLEXITY.md S31b). A complete solution compares the sequences as
+    // compressed strings (a hash of each part's sequence and its prefixes, searched for the
+    // first difference), which no program seen so far needs.
     fn cmp(&self, other: &Formula) -> Ordering {
         match self.cmp_node(other) {
             Ordering::Equal => {}

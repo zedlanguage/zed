@@ -369,3 +369,210 @@ fn parts_entered_together_that_end_apart_are_not_taken_as_equal() {
         }
     }
 }
+
+/// Two chains of `d` levels with the same constraints written out, grouped apart: on one
+/// side level `i` is `[[t, t], ci]` and on the other `[[t', t', ci]]`, where `t` and `t'` are
+/// the level below, each a part held twice. Each level's outer pair is entered together, and
+/// so is its inner pair, which ends at another place on each side; the outer pair still ends
+/// at one place on both. With `x` the conjunction or disjunction of a constraint, each side
+/// written out holds `2^d` copies of `c0`.
+fn split_chains(d: usize, join: fn(Vec<Formula>) -> Formula) -> (Formula, Formula) {
+    let c0 = con(0, 1, 0, false);
+    let (mut a, mut b) = (join(vec![c0.clone()]), join(vec![c0]));
+    for i in 1..=d as i64 {
+        let ci = con(1, 0, -i, false);
+        a = join(vec![join(vec![a.clone(), a]), ci.clone()]);
+        b = join(vec![join(vec![b.clone(), b, ci])]);
+    }
+    (a, b)
+}
+
+#[test]
+fn chains_whose_inner_parts_end_apart_compare_in_time_near_linear_in_their_length() {
+    let built: BTreeMap<usize, Vec<(Formula, Formula)>> = [30, 240]
+        .map(|d| (d, vec![split_chains(d, and), split_chains(d, or)]))
+        .into();
+    scaling::check(
+        "two chains of d levels whose inner parts end at other places on each side",
+        30,
+        |d| {
+            for (a, b) in &built[&d] {
+                assert!(a == b);
+                std::hint::black_box(b.cmp(a));
+            }
+        },
+    );
+    let (a, b) = split_chains(6, and);
+    assert_eq!(flat(&a), flat(&b));
+    assert_eq!(hash(&a), hash(&b));
+}
+
+/// A formula written out with each conjunction directly in a conjunction, and each
+/// disjunction directly in a disjunction, flattened into it: the order the derived one gives
+/// on it is the order [`Formula::cmp`] must give.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Written {
+    Con(Con),
+    Not(Box<Written>),
+    And(Vec<Written>),
+    Or(Vec<Written>),
+}
+
+fn written(f: &Formula) -> Written {
+    fn parts(gs: &[Formula], and: bool, out: &mut Vec<Written>) {
+        for g in gs {
+            match g {
+                Formula::And(hs) if and => parts(hs, and, out),
+                Formula::Or(hs) if !and => parts(hs, and, out),
+                g => out.push(written(g)),
+            }
+        }
+    }
+    match f {
+        Formula::Con(c) => Written::Con(c.clone()),
+        Formula::Not(g) => Written::Not(Box::new(written(g))),
+        Formula::And(gs) => {
+            let mut out = Vec::new();
+            parts(gs, true, &mut out);
+            Written::And(out)
+        }
+        Formula::Or(gs) => {
+            let mut out = Vec::new();
+            parts(gs, false, &mut out);
+            Written::Or(out)
+        }
+    }
+}
+
+/// A node of a formula to be built: a constraint, or a variant over earlier nodes.
+enum Spec {
+    Con(Formula),
+    Not(usize),
+    And(Vec<usize>),
+    Or(Vec<usize>),
+}
+
+/// Random specs: constraints, then nodes over earlier ones, conjunctions and disjunctions
+/// often of the same variant as some of their parts, some of them empty.
+fn random_specs(rng: &mut Rng) -> Vec<Spec> {
+    let mut specs: Vec<Spec> = (0..3)
+        .map(|_| Spec::Con(con(rng.int(-1, 1), rng.int(-1, 1), rng.int(-2, 2), false)))
+        .collect();
+    for _ in 0..7 {
+        let n = specs.len();
+        let kids = |rng: &mut Rng| (0..rng.below(4)).map(|_| rng.below(n)).collect();
+        specs.push(match rng.below(6) {
+            0 => Spec::Not(rng.below(n)),
+            1..=3 => Spec::And(kids(rng)),
+            _ => Spec::Or(kids(rng)),
+        });
+    }
+    specs
+}
+
+/// Node `i` of `specs` built with the parts of each conjunction and disjunction grouped at
+/// random into nodes of its own variant, empty ones among them. Each place that uses a node
+/// takes, at random, the one node built for it before (`kept`) or one grouped anew.
+fn build(specs: &[Spec], i: usize, rng: &mut Rng, kept: &mut [Option<Formula>]) -> Formula {
+    if let Some(f) = &kept[i]
+        && rng.below(2) == 0
+    {
+        return f.clone();
+    }
+    let f = match &specs[i] {
+        Spec::Con(c) => c.clone(),
+        Spec::Not(j) => not(build(specs, *j, rng, kept)),
+        Spec::And(js) | Spec::Or(js) => {
+            let join = if matches!(specs[i], Spec::And(_)) {
+                and
+            } else {
+                or
+            };
+            let mut parts: Vec<Formula> = js.iter().map(|&j| build(specs, j, rng, kept)).collect();
+            // Wrap random runs of the parts, empty runs too, in nodes of the variant.
+            for _ in 0..rng.below(3) {
+                let at = rng.below(parts.len() + 1);
+                let len = rng.below(parts.len() - at + 1);
+                let run: Vec<Formula> = parts.drain(at..at + len).collect();
+                parts.insert(at, join(run));
+            }
+            join(parts)
+        }
+    };
+    if kept[i].is_none() {
+        kept[i] = Some(f.clone());
+    }
+    f
+}
+
+#[test]
+fn formulas_grouped_and_shared_at_random_compare_and_hash_as_written_out() {
+    // Each round builds several formulas from one set of specs, so that they share parts at
+    // several depths, group the same parts otherwise and often are equal; and one from
+    // specs with a constraint changed, so that they differ late.
+    let mut rng = Rng::new(0x533);
+    for round in 0..400 {
+        let mut specs = random_specs(&mut rng);
+        let mut kept: Vec<Option<Formula>> = vec![None; specs.len()];
+        let top = specs.len() - 1;
+        let mut fs: Vec<Formula> = (0..4)
+            .map(|_| build(&specs, top, &mut rng, &mut kept))
+            .collect();
+        fs.push(build(&specs, top - 1, &mut rng, &mut kept));
+        specs[rng.below(3)] = Spec::Con(con(1, 1, 3, true));
+        let mut fresh: Vec<Option<Formula>> = vec![None; specs.len()];
+        fs.push(build(&specs, top, &mut rng, &mut fresh));
+        for p in &fs {
+            for q in &fs {
+                let o = written(p).cmp(&written(q));
+                assert_eq!(p.cmp(q), o, "round {round}: {p} against {q}");
+                assert_eq!(
+                    p == q,
+                    o == Ordering::Equal,
+                    "round {round}: {p} against {q}"
+                );
+                if o == Ordering::Equal {
+                    assert_eq!(hash(p), hash(q), "round {round}: {p}");
+                }
+            }
+        }
+    }
+}
+
+/// One sequence of constraints grouped at other places on each side: `t0 = [c]` and
+/// `ti = [t(i-1), t(i-1), ci]` on one, and on the other `[c, rd]` with `r0 = []` and
+/// `ri = [r(i-1), c, r(i-1), ci]`, so that no node on one side begins and ends where one on
+/// the other does. Compare reads it at the cost of the `2^(d+1) - 1` constraints written out
+/// (the tradeoff at [`Formula::cmp`], COMPLEXITY.md S31b).
+fn shifted_chains(d: usize, join: fn(Vec<Formula>) -> Formula) -> (Formula, Formula) {
+    let c = con(0, 1, 0, false);
+    let (mut t, mut r) = (join(vec![c.clone()]), join(vec![]));
+    for i in 1..=d as i64 {
+        let ci = con(1, 0, -i, false);
+        t = join(vec![t.clone(), t, ci.clone()]);
+        r = join(vec![r.clone(), c.clone(), r, ci]);
+    }
+    (t, join(vec![c, r]))
+}
+
+#[test]
+fn one_sequence_grouped_at_other_places_on_each_side_compares_as_written_out() {
+    for d in 0..=9 {
+        for join in [and as fn(Vec<Formula>) -> Formula, or] {
+            let (t, r) = shifted_chains(d, join);
+            let (split_a, split_b) = split_chains(d, join);
+            let fs = [t, r, split_a, split_b];
+            for p in &fs {
+                for q in &fs {
+                    let o = written(p).cmp(&written(q));
+                    assert_eq!(p.cmp(q), o, "d = {d}: {p} against {q}");
+                    if o == Ordering::Equal {
+                        assert_eq!(hash(p), hash(q), "d = {d}: {p}");
+                    }
+                }
+            }
+            assert_eq!(fs[0], fs[1]);
+            assert_eq!(fs[2], fs[3]);
+        }
+    }
+}
