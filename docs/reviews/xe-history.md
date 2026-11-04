@@ -4,7 +4,7 @@ Round 1: baseline zed-impl e135800; all three reported. Author's decisions of 20
 
 | ID | raised (round, agents) | short statement | decision and reason | changed in (round, commit) | status |
 |---|---|---|---|---|---|
-| X1 | r1 Sol, Claude | `no_morphism` read "not proved empty" as "inhabited": unsound | accepted | 967100a (Rust), ad73799 (Dart): a key must be shown by a built value | fixed |
+| X1 | r1 Sol, Claude | `no_morphism` read "not proved empty" as "inhabited": unsound | accepted | 967100a: a key must be shown by a built value | fixed |
 | X2 | r1 Gemini, Sol | `forced` (dominator walk) missed an atom on two nodes; quadratic walk | accepted | f881a39: exact, O(n log n) | fixed |
 | X3 | r1 Sol | equal Expr DAGs built separately compared in 2^depth | accepted | 96e1bec: pairs compared once | fixed |
 | X4 | r1 all | decision tree cubic in c | accepted; input is Theta(c^2), so Omega(c^2) is the lower bound and O(c log c) impossible | 6530287 is Claude's Cuts table: O(c^2) in either column order (c=128 181 ms, reversed 191 ms). Sol's trie: 6.6x faster in order, cubic reversed (c=256 17.2 s); not adopted as a second path; its constant to study in round 2 | fixed |
@@ -18,7 +18,7 @@ Round 1: baseline zed-impl e135800; all three reported. Author's decisions of 20
 | X12 | r1 Claude | "not proved" vs "counterexample" messages | each error condition gets its own message | | open |
 | X13 | r1 measured | still exponential at HEAD or in prototypes: E4b n=3 (HEAD >60 s); choice-chain build (HEAD 18.4 s at d=23); mux = mux2 must stay true and fast; union of nth_from_end(1..n) (Gemini 23 s at n=11) | must become polynomial, ideally O(n log n), for the vast majority of reasonable cases; pathological cases may be refused by a structural error, never by a size switch | | open |
 
-Round 2: baseline zed-impl f425b32, zed cb3d910. The Dart port was deleted in cd2d30b; Rust only. Sol triage of round 1 is folded into BRIEF2. X12, X13, X5, X6 remain open.
+Round 2: baseline zed-impl f425b32, zed cb3d910. Sol triage of round 1 is folded into BRIEF2. X12, X13, X5, X6 remain open.
 
 Round 2 finished 2026-11-02: baseline zed-impl f425b32, zed cb3d910; same models; all three reported, exit 0. Reports: archive/r2/R2_{CLAUDE,CODEX,GEMINI}.md. No round 2 design has been merged. Implementation waits for round 3 and the orchestrator's synthesis, by the author's order: all three reports, then each agent critiques the others, then the orchestrator checks everything and synthesizes one unified design, and only then is it implemented. Meanwhile item T4 (Omega test, S18) failed three implementation attempts, on branch t4 (cfb4985), for the reasons listed under Q9 of BRIEF3; it was stopped to wait for this synthesis. Status of X5, X6, X12, X13: still open, pending round 3.
 

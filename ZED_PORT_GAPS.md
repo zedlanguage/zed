@@ -44,7 +44,7 @@ is inferred. Everything in the class "workaround" that names L6.13 falls with it
 
 ## Method
 
-A scanner written for this audit (Dart, not committed; this item adds one file) blanked comments
+A scanner written for this audit (not committed; this item adds one file) blanked comments
 and string contents, removed `#[cfg(test)]` and `#[test]` items, and counted about 165 regular
 expressions on the rest of `crates/*/src`, recording file, line and enclosing function. Then
 each low-count construct was read at every site and each large one sampled.
@@ -59,7 +59,7 @@ each low-count construct was read at every site and each large one sampled.
 - Same-scope rebinding counts plain `let name` only, not names inside tuples.
 - `let_mut` is 871: 826 matches of `let mut`, plus 45 `let` tuple patterns holding a `mut`, each
   counted once however many `mut` names it holds.
-- Gap 10 comes from a second scanner (also Dart, not committed), which resolves each `use` and
+- Gap 10 comes from a second scanner (also not committed), which resolves each `use` and
   each qualified path to the file defining the item, following `pub use`. It finds 8 strongly
   connected components among 76 files. Since neither scanner is in the repository, the counts
   cannot be reproduced from it; committing them is the author's call.
