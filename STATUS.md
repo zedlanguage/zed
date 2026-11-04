@@ -996,18 +996,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BEND-spec | running | 2026-11-03 20:17 | start: reading BEND-study report |
 | CHK-cost | repair attempt 1 | 2026-11-03 15:48 | curried probe 15.7M->130.6M instr at n=125..1000 (was 187M->12418M); steps groups pass; full suite started; load 51.63 |
-| ISSUE1-else-atoms | verify attempt 4 | 2026-11-03 16:04 | start; verifying a2b8d5dd on wt/issue1-else-atoms (repair#3); no earlier verify#4 lines; load 25.99 43.22 41.43 |
-| LIT-adopt | verify attempt 2 | 2026-11-03 16:46 | BLOCKING: == misses the union rules: x == 1 with x: f64 / rat accepted and false at 1.0 and 1r (spec sentence says rejected); p == (1, 2) with p: (f64, f64) / ( |
+| ISSUE1-else-atoms | verify attempt 4 | 2026-11-03 16:04 | done: ok=false (1 blocking: method form x.r() of a two-arrow function in a handler, g(" a ") at a Lines port ran on main, now rejected; walk.rs:529 Src::Call on |
+| LIT-adopt | repair attempt 2 | 2026-11-03 16:46 | == now uses carriers_in (f64/rat literal rejected, int/f64 keeps int) and pairs tuple components across all shapes of the length; 15/15 literal tests pass; nega |
 | LOOP-boundary-spec merge | running | 2026-11-03 20:16 | plan-loopbound merged 72e14a7e + spec copies synced; l01_07_fences 11/11; pushed; lock released |
-| NAME-ties | verify attempt 4 | 2026-11-03 09:30 | probe (ctl worktree, not committed): decide((C4 && x<=4) // (C4 && x<=3)) with C4 the tied cycle -x_i+3x_{i+1}>=10 = Ok(true), but it has no point (sum gives 2* |
+| NAME-ties | verify attempt 4 | 2026-11-03 09:30 | done: ok=false; blocking: unsound decide Ok(true) on a formula with no point (settle_as_sets presburger.rs:1087 keeps disjuncts whose solve was refused; alone() |
 | NARROW-if | verify attempt 2 | 2026-11-03 16:46 | returning ok=false: one blocking item, quadratic rejection notes (arms.rs deciding lists tests on unrelated names), easy fix, not hard; everything else verified |
 | plan-loopbound | merge attempt  | 2026-11-03 20:10 | lock taken |
 
-Merged into local main and not yet pushed (1 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
-- ec78d613 STATUS: in progress as of 2026-11-03 20:20
 
 ## Open points
 
