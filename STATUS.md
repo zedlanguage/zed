@@ -974,11 +974,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHK-cost | impl attempt 1 | 2026-11-03 15:48 | kernel Type::split + scalar is_empty fast path: + 570k->187k/node, neg 74k, calls 82k, lines 270k, lambdas 734k |
-| ISSUE1-else-atoms | impl attempt 1 | 2026-11-03 16:04 | per-parameter handled atoms (resolver handles + Ck.handled): row 7 now (int / #_) -> int, rows 3,4,6,8 (String / #_), others unchanged |
-| S22e-wide | impl attempt 1 | 2026-11-03 11:28 | started; worktree wt/s22e-wide from c076719 |
-| SCALE-threads | verify attempt 1 | 2026-11-03 12:56 | DEFECT: the_bytes_of_a_bare_thread_a_run_starts_count is flaky in the zed_kernel test binary (shares tests/src/scaling.rs): fails at scaling.rs:608 nested > joi |
-| WIDE-copies | verify attempt 1 | 2026-11-03 12:51 | negative control (rem by one word made O(n^2) in wt/wide-copies-ctl, not committed): scaling test fails, mod 3 63.4x at 2^18 to 2^21 bits vs limit 24 (load 37.6 |
+| BINDER-type | impl attempt 1 | 2026-11-03 16:46 | docs rows written; clippy and full suite |
+| CHK-cost | impl attempt 1 | 2026-11-03 15:48 | negative control at b0a733ff (old code, new tests, sizes cut to fit 60 s): nested lambdas 54.2x bytes at 8n, nested tuples 212.8x, variable in nested tuples 201 |
+| ISSUE1-else-atoms | repair attempt 1 | 2026-11-03 16:04 | start; continuing wt/issue1-else-atoms at 9393be30; load 28.87 31.42 37.07 |
+| KEPT-neg-hash | impl attempt 1 | 2026-11-03 17:39 | start |
+| LIT-adopt | impl attempt 1 | 2026-11-03 16:46 | control at base 29d86d1e: readings.zed rejected (0 passed, 3 failed), eqlit prints false true false true; with the fix 18 passed and true true true true |
+| NAME-ties | repair attempt 2 | 2026-11-03 09:30 | Refusal::Unordered + settle_as_sets built; names incl. disjunctions_whose_atoms_share_a_color: 25/25 pass (was 5/1000 name-dependent); full suite started / load |
+| PRINT-tyvars | impl attempt 1 | 2026-11-03 16:46 | scaling (instructions, 300 vs 2400, limit 24): wide signature 7.88x work 7.91x bytes; nested shadowing chain 8.01x work 8.00x bytes; negative control (fresh cou |
+| RAT-parse | impl attempt 1 | 2026-11-03 16:46 | negative control 2 (decimal reduced by Stein gcd, not committed): x.y decimal 20k->160k digits 56.6M->2,768.5M instr 48.9x fails; new over_ten_to 8.4M->168.1M 1 |
+| S22e-wide | verify attempt 2 | 2026-11-03 11:28 | fmt clean, clippy -D warnings exit 0; starting tools/run_tests.sh 4, load 26.05 30.19 36.24 |
+| SCALE-threads | verify attempt 2 | 2026-11-03 12:56 | negative control (standalone copy of zed-alloc-count with the parent link dropped, /home/luke/Work/wt/scale-threads-ctl, not committed): 2 of 6 fail (a_thread_c |
+| T6-kinds | merge attempt 1 | 2026-11-03 03:42 | start; lock held by DAGVIEW-persist since 17:32, waiting |
+| WIDE-copies | verify attempt 2 | 2026-11-03 12:51 | fmt check, clippy -D warnings clean; tools/run_tests.sh 4 started (load5 29.59) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
