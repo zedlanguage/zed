@@ -61,6 +61,7 @@
 //! which can have as many pieces as the box has points; it asks [`witness`] for one point
 //! that meets the demand, and the same search stops at the first.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
@@ -71,6 +72,7 @@ use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval, on_stack};
 
 use super::int::Int;
+use super::frames::{Deep, Stack};
 use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Congruence, Landmarks, Lattice};
 use super::presburger::{self, Con, Formula, Joining, Lin, Mark, Refusal, Relation};
@@ -2425,58 +2427,10 @@ impl<'t> Tx<'t> {
         }
     }
 
-    /// The term with every bound name replaced by the closed term it is bound to, for a term
-    /// that reads no input. `local` holds the names bound within the term being closed: to
-    /// the closed term a `let` binds, or to `None` for a lambda's parameter, which stays.
-    fn close(&self, t: Tid, env: Eid, local: &Local) -> Option<Term> {
-        // Temporary: stacker through `deeper` until PRE-stack-explicit.
-        deeper(|| self.close_at(t, env, local))
-    }
-
-    fn close_at(&self, t: Tid, env: Eid, local: &Local) -> Option<Term> {
-        let c = |t: Tid| self.close(t, env, local);
-        let all = |args: Span| {
-            (0..args.len())
-                .map(|i| c(self.arg(args, i)))
-                .collect::<Option<Vec<Term>>>()
-        };
-        Some(match self.node(t) {
-            Node::Var(x) => match (local.get(&x), self.lookup(env, x)) {
-                (Some(Some(bound)), _) => (**bound).clone(),
-                (Some(None), _) | (None, None) => Term::Var(self.name(x).clone()),
-                (None, Some((bt, be))) => self.close(bt, be, &Local::new())?,
-            },
-            Node::Int(n) => Term::Lit(Value::Int(n)),
-            Node::Bool(b) => Term::Lit(Value::Bool(b)),
-            Node::Lit(v) => Term::Lit(v.clone()),
-            Node::PrimFn(p) => Term::PrimFn(p),
-            Node::Let(n, e, b) => {
-                // The body reads `n` as the closed bound term.
-                let e = c(e)?;
-                self.close(b, env, &local.update(n, Some(Rc::new(e))))?
-            }
-            Node::Lam(ps, b) => {
-                let mut inner = local.clone();
-                let mut names = Vec::with_capacity(ps.len());
-                for i in 0..ps.len() {
-                    let p = self.param(ps, i);
-                    inner.insert(p, None);
-                    names.push(self.name(p).clone());
-                }
-                Term::Lam(names, Shared::new(self.close(b, env, &inner)?))
-            }
-            Node::App(f, args) => Term::App(Shared::new(c(f)?), all(args)?),
-            Node::Prim(p, args) => Term::Prim(p, all(args)?),
-            Node::If(g, a, b) => {
-                Term::If(Shared::new(c(g)?), Shared::new(c(a)?), Shared::new(c(b)?))
-            }
-            Node::Follow(v, own, arms) => {
-                let mut arms = arms.to_vec();
-                arms.push((Pattern::Wild, c(own)?));
-                Term::Match(Shared::new(c(v)?), arms)
-            }
-            Node::Other => return None,
-        })
+    /// [`Walk::close`] with no name bound within the term.
+    fn close(&mut self, t: Tid, env: Eid) -> Option<Term> {
+        let w = Walk::new(self);
+        w.stack.run(w.close(t, env, Rc::new(Local::new())))
     }
 
     /// The value of a term that reads no input, when the evaluator can compute it.
@@ -2515,9 +2469,9 @@ impl<'t> Tx<'t> {
                     Node::If(g, a, b) => match s.constant(g, env)? {
                         Value::Bool(true) => s.constant(a, env),
                         Value::Bool(false) => s.constant(b, env),
-                        _ => run_closed(&s.close(t, env, &Local::new())?),
+                        _ => run_closed(&s.close(t, env)?),
                     },
-                    _ => run_closed(&s.close(t, env, &Local::new())?),
+                    _ => run_closed(&s.close(t, env)?),
                 }
             },
         )
@@ -4141,6 +4095,111 @@ impl<'t> Tx<'t> {
     }
 }
 
+/// The analyses of the transfer that recurse on the depth of the term, each call that may
+/// recurse on a frame of [`frames::Stack`], so that the depth is limited by memory alone. A
+/// frame holds this by a shared reference, so what it reads of the [`Tx`] it reads through
+/// [`Walk::with`], whose borrow ends before any call.
+struct Walk<'m, 't> {
+    tx: RefCell<&'m mut Tx<'t>>,
+    stack: Stack<'m>,
+}
+
+impl<'m, 't> Walk<'m, 't> {
+    fn new(tx: &'m mut Tx<'t>) -> Self {
+        Walk {
+            tx: RefCell::new(tx),
+            stack: Stack::default(),
+        }
+    }
+
+    /// `f` on the transfer's state. `f` must not reach `self`, which it could only borrow again.
+    fn with<R>(&self, f: impl FnOnce(&mut Tx<'t>) -> R) -> R {
+        f(&mut self.tx.borrow_mut())
+    }
+
+    fn node(&self, t: Tid) -> Node<'t> {
+        self.with(|tx| tx.node(t))
+    }
+
+    fn arg(&self, args: Span, i: usize) -> Tid {
+        self.with(|tx| tx.arg(args, i))
+    }
+
+    fn param(&self, ps: Span, i: usize) -> Name {
+        self.with(|tx| tx.param(ps, i))
+    }
+
+    fn lookup(&self, env: Eid, x: Name) -> Option<At> {
+        self.with(|tx| tx.lookup(env, x))
+    }
+
+    fn name(&self, x: Name) -> Arc<str> {
+        self.with(|tx| tx.name(x).clone())
+    }
+
+    /// The term with every bound name replaced by the closed term it is bound to, for a term
+    /// that reads no input. `local` holds the names bound within the term being closed: to
+    /// the closed term a `let` binds, or to `None` for a lambda's parameter, which stays.
+    fn close(&'m self, t: Tid, env: Eid, local: Rc<Local>) -> Deep<'m, Option<Term>> {
+        self.stack.call(self.close_at(t, env, local))
+    }
+
+    async fn close_all(&'m self, args: Span, env: Eid, local: &Rc<Local>) -> Option<Vec<Term>> {
+        let mut out = Vec::with_capacity(args.len());
+        for i in 0..args.len() {
+            out.push(self.close(self.arg(args, i), env, local.clone()).await?);
+        }
+        Some(out)
+    }
+
+    async fn close_at(&'m self, t: Tid, env: Eid, local: Rc<Local>) -> Option<Term> {
+        Some(match self.node(t) {
+            Node::Var(x) => match (local.get(&x), self.lookup(env, x)) {
+                (Some(Some(bound)), _) => (**bound).clone(),
+                (Some(None), _) | (None, None) => Term::Var(self.name(x)),
+                (None, Some((bt, be))) => self.close(bt, be, Rc::new(Local::new())).await?,
+            },
+            Node::Int(n) => Term::Lit(Value::Int(n)),
+            Node::Bool(b) => Term::Lit(Value::Bool(b)),
+            Node::Lit(v) => Term::Lit(v.clone()),
+            Node::PrimFn(p) => Term::PrimFn(p),
+            Node::Let(n, e, b) => {
+                // The body reads `n` as the closed bound term.
+                let e = self.close(e, env, local.clone()).await?;
+                let inner = Rc::new(local.update(n, Some(Rc::new(e))));
+                self.close(b, env, inner).await?
+            }
+            Node::Lam(ps, b) => {
+                let mut inner = (*local).clone();
+                let mut names = Vec::with_capacity(ps.len());
+                for i in 0..ps.len() {
+                    let p = self.param(ps, i);
+                    inner.insert(p, None);
+                    names.push(self.name(p));
+                }
+                Term::Lam(names, Shared::new(self.close(b, env, Rc::new(inner)).await?))
+            }
+            Node::App(f, args) => {
+                let f = self.close(f, env, local.clone()).await?;
+                Term::App(Shared::new(f), self.close_all(args, env, &local).await?)
+            }
+            Node::Prim(p, args) => Term::Prim(p, self.close_all(args, env, &local).await?),
+            Node::If(g, a, b) => {
+                let g = self.close(g, env, local.clone()).await?;
+                let a = self.close(a, env, local.clone()).await?;
+                let b = self.close(b, env, local).await?;
+                Term::If(Shared::new(g), Shared::new(a), Shared::new(b))
+            }
+            Node::Follow(v, own, arms) => {
+                let mut arms = arms.to_vec();
+                arms.push((Pattern::Wild, self.close(own, env, local.clone()).await?));
+                Term::Match(Shared::new(self.close(v, env, local).await?), arms)
+            }
+            Node::Other => return None,
+        })
+    }
+}
+
 /// An integer term as a function of one input `var` (R1_GEMINI Thm 3.1: the value of a term
 /// built from one input by `if`s on that input, constants, negation, adding a constant and
 /// multiplying by one is affine on each of finitely many intervals of the input, cut at the
@@ -5693,7 +5752,7 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> 
 mod tests {
     use super::presburger::TWO_AT_A_TIME;
     use super::*;
-    use std::cell::{Cell, RefCell};
+    use std::cell::Cell;
     use std::collections::BTreeSet;
 
     thread_local! {
