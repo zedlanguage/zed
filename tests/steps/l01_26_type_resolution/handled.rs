@@ -178,3 +178,35 @@ fn a_function_that_calls_itself_waits_for_layer_l6() {
     let e = crate::l01_16_elaboration::errors(&format!("{text}y = r(#again);\n"));
     assert!(e[0].contains("recursion arrives at layer L6"), "{e:?}");
 }
+
+#[test]
+fn a_line_bound_to_another_name_takes_the_atoms_that_name_handles() {
+    // `s` is `line` under another name, so `s else ""` handles every loose atom for `line`,
+    // in whichever order the block writes its bindings, and through a chain of names.
+    for body in [
+        "{ s = line; trim(s else \"\") }",
+        "{ t = s; s = line; trim(t else \"\") }",
+    ] {
+        let a = arrow(body);
+        assert!(
+            same(&a.params[0], &string().union(&loose())),
+            "{body}: {}",
+            a.params[0]
+        );
+        assert!(same(&a.result, &string()), "{body}: {}", a.result);
+    }
+    let a = arrow("{ s = line; if s is #notFound { \"\" } else { trim(s) } }");
+    assert!(
+        same(&a.params[0], &string().union(&atom("notFound"))),
+        "{}",
+        a.params[0]
+    );
+}
+
+#[test]
+fn a_name_bound_to_a_computed_value_handles_nothing_for_the_line() {
+    // `s` is `trim(line)`, not `line`: the `else` handles the atoms of the trimmed value, and
+    // `line` takes no atom, so an atom passed to `r` passes the call by (rule 6).
+    let a = arrow("{ s = trim(line); s else \"\" }");
+    assert!(same(&a.params[0], &string()), "{}", a.params[0]);
+}

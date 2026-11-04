@@ -474,9 +474,9 @@ struct Ck<'t, 'a> {
     defer: BTreeSet<Arc<str>>,
     /// What the last application of one arrow bound, and the needs it left.
     applied: Option<(Binds, Vec<Need>)>,
-    /// The atoms the uses of each binder handle, `else` and `is` on its name: an undeclared
-    /// parameter's type holds them.
-    handled: HashMap<usize, KType>,
+    /// The atoms the uses of each binder handle, `else` and `is` on its name or on a name
+    /// bound to it: an undeclared parameter's type holds them.
+    handled: Handled,
 }
 
 /// A need being checked at a call.
@@ -523,7 +523,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The type an undeclared parameter `id` of the class variable `v` is bound to in its
     /// body: `v` and the atoms its uses handle.
     fn param_ty(&self, id: usize, v: Ty) -> Ty {
-        match self.handled.get(&id) {
+        match self.handled.get(id) {
             Some(a) => v.union(&Ty::set(a.clone())),
             None => v,
         }
@@ -537,7 +537,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         tys.into_iter()
             .zip(ids)
             .map(|(t, id)| {
-                let a = id.and_then(|id| self.handled.get(&id));
+                let a = id.and_then(|id| self.handled.get(id));
                 let k = t.as_var().and_then(|v| class_id(v));
                 match (a, k) {
                     (Some(a), Some(k)) if self.classes[self.find(k)].mask & OTHER == 0 => {
@@ -4477,31 +4477,71 @@ impl<'a> Ck<'_, 'a> {
     }
 }
 
-/// The atoms the uses of each binder handle ([`Resolution::handles`]). Each site adds its
-/// atoms to its binder's set, small into large, so `H` sites cost `O(H log H)`.
-fn handled(res: &Resolution) -> HashMap<usize, KType> {
-    // Complexity tradeoff: only a test on the parameter's own name counts. One on a binding
-    // of it (`s = line; s else ""`) would need the flow of each binding followed back to the
-    // parameter; the parameter then takes no atom for it, and the atom passes the call by
-    // (rule 6), as before.
-    let mut out: HashMap<usize, KType> = HashMap::new();
-    for (span, h) in &res.handles {
-        let Some(Ref::Bound(ids)) = res.uses.get(span) else {
-            continue;
-        };
-        if ids.len() != 1 {
-            continue;
+/// The atoms the uses of each binder handle, by binder: an alias class of binders, joined by
+/// the bindings that are another name (`s = line`), shares one set.
+struct Handled {
+    /// The class of each binder: the binder that stands for it.
+    root: Vec<usize>,
+    /// The atoms each class handles, by its root.
+    atoms: HashMap<usize, KType>,
+}
+
+impl Handled {
+    /// The atoms the uses of binder `id` and of the names bound to it handle.
+    fn get(&self, id: usize) -> Option<&KType> {
+        self.atoms.get(&self.root[id])
+    }
+}
+
+/// The atoms the uses of each binder handle ([`Resolution::handles`]), through the bindings
+/// that are another name ([`Resolution::aliases`]), so `s = line; s else ""` handles them for
+/// `line`, in whatever order the block writes its bindings. A union-find over the `B`
+/// binders, by size with path halving, joins the `A` aliases; then each of the `H` sites
+/// joins its atoms into its class's persistent set at `O(log H)` each, so the whole costs
+/// `O(B + A α(B) + H log H)`. Each alias has one value, so a class holds at most one binder
+/// that is not an alias, its parameter if it has one.
+fn handled(res: &Resolution) -> Handled {
+    let n = res.binders.len();
+    let mut root: Vec<usize> = (0..n).collect();
+    let mut size = vec![1usize; n];
+    fn find(root: &mut [usize], mut x: usize) -> usize {
+        while root[x] != x {
+            root[x] = root[root[x]];
+            x = root[x];
         }
-        let id = ids[0];
+        x
+    }
+    let one = |span: &Span| match res.uses.get(span) {
+        Some(Ref::Bound(ids)) if ids.len() == 1 => Some(ids[0]),
+        _ => None,
+    };
+    for (id, span) in &res.aliases {
+        let Some(of) = one(span) else { continue };
+        let (a, b) = (find(&mut root, *id), find(&mut root, of));
+        if a != b {
+            let (big, small) = if size[a] >= size[b] { (a, b) } else { (b, a) };
+            root[small] = big;
+            size[big] += size[small];
+        }
+    }
+    for x in 0..n {
+        root[x] = find(&mut root, x);
+    }
+    let mut atoms_of: HashMap<usize, KType> = HashMap::new();
+    for (span, h) in &res.handles {
+        let Some(id) = one(span) else { continue };
         let a = match h {
             Handle::Loose => atoms(),
             Handle::Any(n) => any_payload(n),
             Handle::Bare(n) => KType::atom(n),
         };
-        let e = out.entry(id).or_insert_with(KType::empty);
+        let e = atoms_of.entry(root[id]).or_insert_with(KType::empty);
         *e = &*e | &a;
     }
-    out
+    Handled {
+        root,
+        atoms: atoms_of,
+    }
 }
 
 /// The atom `#name` with any payload or none: what a bare pattern `#name` matches.

@@ -109,6 +109,9 @@ pub struct Resolution {
     /// in the order of the text: the atoms the test or the replacement handles. The checker
     /// gives an undeclared parameter the atoms its uses handle (DESIGN.md sec:type_resolution).
     pub handles: Vec<(Span, Handle)>,
+    /// Each binding that is another name, `s = line`: the binder of `s` and the text of
+    /// `line`. The uses of `s` handle atoms for `line` (DESIGN.md sec:type_resolution).
+    pub aliases: Vec<(usize, Span)>,
 }
 
 /// The atoms an `else` or an `is` handles.
@@ -546,15 +549,24 @@ impl Resolver {
     fn declare<'s>(&mut self, s: &'s Stmt, whole: bool, families: &mut HashSet<&'s str>) {
         match &s.kind {
             StmtKind::Bind {
-                targets, boundary, ..
+                targets,
+                value,
+                boundary,
             } => {
                 let whole = whole || !boundary.is_empty();
+                let id = self.out.binders.len();
                 for t in targets {
                     match t {
                         Target::Name(n, _) if whole && n.ends_with('\'') => {}
                         Target::Name(n, at) => self.bind(n, *at, s.span, Kind::Binding, None),
                         Target::Wild => {}
                     }
+                }
+                if let ([Target::Name(_)], ExprKind::Name(_)) = (targets.as_slice(), &value.kind)
+                    && !whole
+                    && self.out.binders.len() == id + 1
+                {
+                    self.out.aliases.push((id, value.span));
                 }
             }
             StmtKind::Function(f) => {

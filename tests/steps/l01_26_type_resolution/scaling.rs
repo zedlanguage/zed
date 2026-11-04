@@ -3,7 +3,9 @@
 //! everything found so far. An untyped parameter is now a class of a union-find forest, and
 //! each body is checked once.
 
+use zed_kernel::types::Type as KType;
 use zed_tests::scaling;
+use zedc::check::ty::Ty;
 
 use super::{info, sig, sig_of};
 
@@ -295,6 +297,36 @@ fn a_parameter_tested_against_many_atoms_scales() {
     assert!(!a.params[0].atoms().is_empty());
     scaling::check("a parameter tested against n atoms", 400, |n| {
         let (info, _) = info(&tests_of_atoms(n));
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
+
+/// A function whose undeclared parameter `line` is bound to `n` names in a chain, written
+/// last first, each tested against an atom of its own, the last trimmed.
+fn chain_of_names(n: usize) -> String {
+    let names: String = (1..n)
+        .rev()
+        .map(|i| format!("s{i} = s{}; b{i} = s{i} is #a{i}; ", i - 1))
+        .collect();
+    format!(
+        "r(positional line) = {{ {names}s0 = line; b0 = s0 is #a0; trim(s{}) }};\n",
+        n - 1
+    )
+}
+
+#[test]
+fn a_parameter_bound_to_a_chain_of_names_scales() {
+    // The union-find joins each name to the chain's class in near-constant time, whatever
+    // order the bindings are written in, and each test then adds its atom to the class's set.
+    let (i, _) = info(&chain_of_names(3));
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
+    let a = &i.sigs.values().next().unwrap().expand()[0];
+    for k in 0..3 {
+        let atom = Ty::set(KType::atom(&format!("a{k}")));
+        assert!(atom.subtype(&a.params[0]), "{}", a.params[0]);
+    }
+    scaling::check_order("a parameter bound to a chain of n names", 400, 0, |n| {
+        let (info, _) = info(&chain_of_names(n));
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
