@@ -1197,20 +1197,19 @@ impl Scope {
     /// This scope where `test` gave `outcome`, reduced.
     pub fn assume(&self, test: &Term, outcome: bool, premises: &Premises) -> Scope {
         let mut s = self.clone();
-        s.narrow(test, outcome, premises);
+        let plain = plain_test(test, &s);
+        s.narrow(plain.as_ref().unwrap_or(test), outcome, premises);
         s.reduce();
         s
     }
 
-    /// Narrows by `test` giving `outcome`. The test is read as a [`Tree`]; when it has cases,
-    /// the linear relation of the whole test, taken before any narrowing, is kept with the
-    /// join of the cases, which keeps only what the cases share.
+    /// Narrows by `test`, read by [`plain_test`], giving `outcome`. The test is read as a
+    /// [`Tree`]; when it has cases, the linear relation of the whole test, taken before any
+    /// narrowing, is kept with the join of the cases, which keeps only what the cases share.
     fn narrow(&mut self, test: &Term, outcome: bool, prem: &Premises) {
         if self.bottom {
             return;
         }
-        let plain = plain_test(test, self);
-        let test = plain.as_ref().unwrap_or(test);
         let (tree, pol) = Tree::of(test);
         self.narrow_linear(&tree, 0, outcome == pol, prem);
     }
@@ -2468,38 +2467,83 @@ fn join_cases(mut cases: Vec<Scope>) -> Scope {
     cases.pop().expect("a test has a case")
 }
 
-/// The comparison `t` is when it compares a literal with a value whose carrier is inferred
-/// (the match [`follow_own`] reads, bound around the comparison) and the value is an integer
-/// in `scope`: the value compared with the literal itself, since no other arm is taken.
-fn plain_comparison(t: &Term, scope: &mut Scope) -> Option<Term> {
+/// A comparison of a literal with a value whose carrier is inferred, as the elaborator writes
+/// it: `let v = x in v op m`, or `m op v`, where `m` is the match [`follow_own`] reads on `v`.
+struct Follow<'t> {
+    op: Prim,
+    /// The value compared, `x`.
+    value: &'t Term,
+    /// The side the match is on.
+    at: usize,
+    /// The literal's own term.
+    own: &'t Term,
+}
+
+impl Follow<'_> {
+    /// The comparison of `x`, found as `value`, with the literal itself: what the comparison
+    /// is when `x` is an integer, since no other arm is taken.
+    fn plain(&self, value: Term) -> Term {
+        let mut args = vec![value, self.own.clone()];
+        if self.at == 0 {
+            args.swap(0, 1);
+        }
+        Term::Prim(self.op, args)
+    }
+}
+
+/// `t` read as a [`Follow`], by its form alone.
+fn follow<'t>(t: &'t Term) -> Option<Follow<'t>> {
     let Term::Let(v, x, body) = t else {
         return None;
     };
-    let Term::Prim(p, args) = &**body else {
+    let Term::Prim(op, args) = &**body else {
         return None;
     };
-    if !is_comparison(*p) || args.len() != 2 {
+    if !is_comparison(*op) || args.len() != 2 {
         return None;
     }
     let bound = |a: &Term| matches!(a, Term::Var(w) if w == v);
-    let own = |a: &Term| match a {
-        Term::Match(s, arms) if bound(s) => follow_own(arms).cloned(),
+    let own = |a: &'t Term| match a {
+        Term::Match(s, arms) if bound(s) => follow_own(arms),
         _ => None,
     };
-    let at = (0..2).find(|&i| bound(&args[1 - i]) && own(&args[i]).is_some())?;
-    if !forward_in(x, scope).ty.element.subtype(&Type::int()) {
+    (0..2).find_map(|at| {
+        Some(Follow {
+            op: *op,
+            value: x,
+            at,
+            own: own(&args[at]).filter(|_| bound(&args[1 - at]))?,
+        })
+    })
+}
+
+/// The comparison `t` is when it is a [`Follow`] whose value is a name that is an integer in
+/// `scope`: the name compared with the literal itself, which the narrowing reads as an equality
+/// of the name with a literal. A [`Follow`] whose value is not a name is left as written: the
+/// preimage catalog reads its match as the literal itself where the value is an integer
+/// (`preimage::Node::Follow`), so its preimage and its linear relation are those of the plain
+/// comparison. Deciding here that such a value is an integer would mean finding its product,
+/// and a value can hold tests of the same kind, each found again for every test around it: a
+/// chain `d` deep of `if` tests, each comparing the `if` below with a literal, cost about `2^d`
+/// that way (6.1 s at `d = 12`), and `d` times the plain chain when found once per test.
+/// `l01_39_reduced_product::follow` tests both (COMPLEXITY.md row F69).
+fn plain_comparison(t: &Term, scope: &Scope) -> Option<Term> {
+    let f = follow(t)?;
+    let Term::Var(x) = f.value else {
         return None;
-    }
-    let mut plain = args.clone();
-    plain[at] = own(&args[at])?;
-    plain[1 - at] = (**x).clone();
-    Some(Term::Prim(*p, plain))
+    };
+    scope
+        .get(x)
+        .ty
+        .element
+        .subtype(&Type::int())
+        .then(|| f.plain(f.value.clone()))
 }
 
 /// `test` with each comparison [`plain_comparison`] reads made plain, through its
 /// connectives; `None` when it holds none. An explicit stack, since a test nests as deep as
 /// it is written.
-fn plain_test(test: &Term, scope: &mut Scope) -> Option<Term> {
+fn plain_test(test: &Term, scope: &Scope) -> Option<Term> {
     enum Step<'a> {
         Visit(&'a Term),
         Build(&'a Term),
@@ -2629,11 +2673,15 @@ fn forward_in(e: &Term, scope: &mut Scope) -> Product {
     match e {
         Term::Lit(v) => return Product::literal(v),
         Term::Var(x) => return scope.get(x),
-        Term::Let(..) if let Some(t) = plain_comparison(e, scope) => return forward_in(&t, scope),
         Term::Let(x, v, b) => {
             let p = forward_in(v, scope);
+            // A literal compared with the bound value that follows its carrier is, at an
+            // integer, the literal itself, compared with the value just found.
+            let plain = follow(e)
+                .filter(|_| p.ty.element.subtype(&Type::int()))
+                .map(|f| f.plain(Term::Var(x.clone())));
             let u = scope.bind(x, p, v);
-            let out = forward_in(b, scope);
+            let out = forward_in(plain.as_ref().unwrap_or(b), scope);
             scope.unbind(u);
             return out;
         }

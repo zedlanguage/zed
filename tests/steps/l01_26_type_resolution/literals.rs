@@ -105,15 +105,15 @@ fn a_literal_keeps_its_carrier_at_a_union_of_two_it_can_adopt() {
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x;\ny = f(1);\n"),
         [
-            "`1` at `rat | f64` adopts no one carrier: the type holds numbers of f64 and rat; \
-             write the one meant, as `1.0` or `1r` [1]"
+            "`1` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
+             write the one meant, as `1r` or `1.0` [1]"
         ]
     );
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x;\ny = f(-1);\n"),
         [
-            "`-1` at `rat | f64` adopts no one carrier: the type holds numbers of f64 and rat; \
-             write the one meant, as `-1.0` or `-1r` [1]"
+            "`-1` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
+             write the one meant, as `-1r` or `-1.0` [1]"
         ]
     );
 }
@@ -131,6 +131,59 @@ fn literals_in_a_tuple_adopt_its_components_carriers() {
     assert_eq!(
         type_errors("f(positional p: (f64, f64)) = p;\ny = f((9007199254740993, 1));\n"),
         ["`9007199254740993` is not an f64 [9007199254740993]"]
+    );
+}
+
+#[test]
+fn literals_in_a_tuple_adopt_the_carrier_every_shape_of_its_length_holds_there() {
+    // A position is a point or a named place with a distance from it: at the second
+    // component both shapes hold f64, at the first only one holds a number.
+    let ty = "(f64, f64) | (String, f64)";
+    let text = format!("tu(positional p: {ty}) = p == (1.0, 2.0);\ny = tu((1, 2));\n");
+    assert_eq!(adopted(&text), [f64(1.0), f64(2.0)]);
+    assert_eq!(value(&text, "y"), "true");
+    let text = format!("tu(positional p: {ty}) = p == (\"a\", 2.0);\ny = tu((\"a\", 2));\n");
+    assert_eq!(adopted(&text), [f64(2.0)]);
+    assert_eq!(value(&text, "y"), "true");
+    // A shape of another length does not count.
+    let text = "tu(positional p: (f64, f64) | (rat, rat, rat)) = p == (1.0, 2.0);\n\
+                y = tu((1, 2));\n";
+    assert_eq!(value(text, "y"), "true");
+    // Nested: the inner shapes are those of every outer shape at that component.
+    let text = "tu(positional p: ((f64, String), int) | ((String, f64), int)) = \
+                p == ((1.0, \"a\"), 3);\ny = tu(((1, \"a\"), 3));\n";
+    assert_eq!(adopted(text), [f64(1.0)]);
+    assert_eq!(value(text, "y"), "true");
+    // Numbers of two carriers at a component across the shapes: no one carrier, so the
+    // literal keeps int, which no shape takes there.
+    let errors =
+        type_errors("tu(positional p: (f64, String) | (rat, String)) = p;\ny = tu((1, \"a\"));\n");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("does not take"), "{errors:?}");
+}
+
+/// `tu` at a union of `w` tuple shapes of length 2, all but the last with a string first,
+/// called on `(1, 2)`, and on a tuple of `(1, 2)` nested 2 deep at the same shapes inside.
+fn shapes(w: usize) -> String {
+    let mut ty: Vec<String> = (0..w - 1)
+        .map(|i| format!("(String, f64) | (#a{i}, f64)"))
+        .collect();
+    ty.push("(f64, f64)".into());
+    let one = ty.join(" | ");
+    format!(
+        "tu(positional p: {one}) = 0;\ny = tu((1, 2));\n\
+         tv(positional p: ({one}, {one})) = 0;\nz = tv(((1, 2), (3, 4)));\n"
+    )
+}
+
+#[test]
+fn adopting_at_a_union_of_many_tuple_shapes_scales() {
+    assert_eq!(adopted(&shapes(3)), [1.0, 2.0, 1.0, 2.0, 3.0, 4.0].map(f64));
+    checks_linearly(
+        "adopting the literals of tuples at n tuple shapes",
+        64,
+        shapes,
+        |_| 6,
     );
 }
 

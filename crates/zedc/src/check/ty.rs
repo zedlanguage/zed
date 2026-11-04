@@ -806,7 +806,7 @@ impl Ty {
     /// unknown, which could stand for numbers of another. Its other members (atoms, strings,
     /// booleans, tuples, functions) do not count, so `1` at `f64 | String` is `1.0`; a type
     /// with numbers of two carriers, as `f64 | rat`, gives none: there a literal keeps its own
-    /// carrier when the type holds it and is an error otherwise (`check::carriers_at`; DESIGN.md
+    /// carrier when the type holds it and is an error otherwise (`check::carriers_in`; DESIGN.md
     /// L1.26: the carrier "an operator or a parameter expects").
     pub fn numeric_carrier(&self) -> Option<Carrier> {
         if !self.vars.is_empty() || self.dynamic {

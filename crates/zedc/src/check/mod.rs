@@ -2819,7 +2819,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Ok(None) => Cow::Borrowed(&a.ty),
             };
             if let Some(l) = &a.lit {
-                let cs = carriers_at(l, p);
+                let cs = carriers_in(l, &[p]);
                 if cs.len() > 1 && !ty.subtype(p) {
                     self.error(l.span, no_one_carrier(l, p, &cs));
                     continue;
@@ -3531,15 +3531,6 @@ fn parts(e: &Expr) -> Option<Rc<[Part]>> {
     }
 }
 
-/// The components of `t`'s one tuple shape of length `n`, if it has exactly one.
-fn shape(t: &Ty, n: usize) -> Option<&[Ty]> {
-    let mut it = t.tuples.iter().filter(|cs| cs.len() == n);
-    match (it.next(), it.next()) {
-        (Some(cs), None) => Some(cs),
-        _ => None,
-    }
-}
-
 /// The components of `t` when it is exactly one tuple of length `n` and nothing else.
 fn only_tuple(t: &Ty, n: usize) -> Option<&[Ty]> {
     let one = t.set.is_empty() && t.fns.is_empty() && t.vars.is_empty() && !t.dynamic;
@@ -3606,18 +3597,20 @@ fn components(a: &Arg, n: usize) -> Option<Vec<Arg>> {
 type Adoptions = Vec<(Span, Value)>;
 
 /// `a` where a value of `p` is expected: a literal adopts `p`'s numeric carrier
-/// ([`Ty::numeric_carrier`]), and a literal in a tuple the carrier of its component in `p`'s
-/// one tuple shape of that length, at any depth (DESIGN.md L1.26, sec:domains). This is the
-/// one place an expected type decides a literal's carrier. Gives `a`'s type with the
-/// adoptions and the adoptions, `None` when no literal adopts, and the first literal that is
-/// not exactly a value of its carrier with the message.
+/// ([`Ty::numeric_carrier`]), and a literal in a tuple the one carrier its component holds
+/// across `p`'s tuple shapes of that length, at any depth (DESIGN.md L1.26, sec:domains):
+/// `(1, 2)` at `(f64, f64) | (String, f64)` is `(1.0, 2.0)`. This is the one place an expected
+/// type decides a literal's carrier. Gives `a`'s type with the adoptions and the adoptions,
+/// `None` when no literal adopts, and the first literal that is not exactly a value of its
+/// carrier with the message.
 ///
 /// The tuples nest as deep as the text, so the walk keeps its own stack: each open tuple's
-/// parts, the argument's components and the expected ones there, and the types so far.
+/// parts, the argument's components, the expected shapes there, and the types so far. The
+/// shapes are borrowed from `p`: no union of them is built.
 fn adopted(a: &Arg, p: &Ty) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
     let mut ads = Adoptions::new();
-    let lit = |l: &Lit, want: &Ty, ads: &mut Adoptions| -> Result<Option<Ty>, (Span, String)> {
-        let [c] = carriers_at(l, want)[..] else {
+    let lit = |l: &Lit, want: &[&Ty], ads: &mut Adoptions| {
+        let [c] = carriers_in(l, want)[..] else {
             return Ok(None);
         };
         match adopt(l, c) {
@@ -3631,12 +3624,13 @@ fn adopted(a: &Arg, p: &Ty) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
         }
     };
     if let Some(l) = &a.lit {
-        return Ok(lit(l, p, &mut ads)?.map(|t| (t, ads)));
+        return Ok(lit(l, &[p], &mut ads)?.map(|t| (t, ads)));
     }
     let Some(parts) = &a.parts else {
         return Ok(None);
     };
-    let (Some(comps), Some(want)) = (only_tuple(&a.ty, parts.len()), shape(p, parts.len())) else {
+    let want = shapes([p], parts.len());
+    let Some(comps) = only_tuple(&a.ty, parts.len()).filter(|_| !want.is_empty()) else {
         return Ok(None);
     };
     let mut stack = vec![OpenTuple {
@@ -3661,34 +3655,46 @@ fn adopted(a: &Arg, p: &Ty) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
             }
             continue;
         }
-        let (c, w) = (&comps[i], &want[i]);
+        let c = &comps[i];
+        let ws = want.iter().map(|w| &w[i]);
         match &ps[i] {
             Part::Lit(l) => {
-                let t = lit(l, w, &mut ads)?.unwrap_or_else(|| c.clone());
+                let ws: Vec<&Ty> = ws.collect();
+                let t = lit(l, &ws, &mut ads)?.unwrap_or_else(|| c.clone());
                 out.push(t);
             }
-            Part::Tuple(inner) => match (only_tuple(c, inner.len()), shape(w, inner.len())) {
-                (Some(cs), Some(ws)) => {
-                    stack.push(OpenTuple {
+            Part::Tuple(inner) => {
+                let ws = shapes(ws, inner.len());
+                match only_tuple(c, inner.len()).filter(|_| !ws.is_empty()) {
+                    Some(cs) => stack.push(OpenTuple {
                         parts: inner,
                         comps: cs,
                         want: ws,
                         out: Vec::new(),
-                    });
+                    }),
+                    None => out.push(c.clone()),
                 }
-                _ => out.push(c.clone()),
-            },
+            }
             Part::Other => out.push(c.clone()),
         }
     }
 }
 
-/// A tuple [`adopted`] has open: its parts as written, the argument's components and the
-/// expected ones there, and the component types so far.
+/// The tuple shapes of length `n` of the types `ts`, borrowed.
+fn shapes<'a>(ts: impl IntoIterator<Item = &'a Ty>, n: usize) -> Vec<&'a [Ty]> {
+    ts.into_iter()
+        .flat_map(|t| t.tuples.iter())
+        .filter(|cs| cs.len() == n)
+        .map(|cs| &cs[..])
+        .collect()
+}
+
+/// A tuple [`adopted`] has open: its parts as written, the argument's components, the
+/// expected shapes there, and the component types so far.
 struct OpenTuple<'a> {
     parts: &'a [Part],
     comps: &'a [Ty],
-    want: &'a [Ty],
+    want: Vec<&'a [Ty]>,
     out: Vec<Ty>,
 }
 
@@ -3782,18 +3788,19 @@ fn no_one_carrier(l: &Lit, want: &Ty, cs: &[Carrier]) -> String {
     m
 }
 
-/// The numeric carriers of `want` the literal `l` can adopt, in the order int, f64, rat;
-/// none when `want` holds a variable or the unknown, which could stand for any. The literal
-/// adopts the one carrier when there is one (DESIGN.md L1.26: the carrier "an operator or a
-/// parameter expects"); at two, as `1` at `f64 | rat`, the expected type names no one carrier
-/// and the literal keeps its own.
-fn carriers_at(l: &Lit, want: &Ty) -> Vec<Carrier> {
-    if !want.vars.is_empty() || want.dynamic {
+/// The numeric carriers the literal `l` can adopt that one of the types `want` holds, in the
+/// order a type prints them: int, rat, f64. None when one of them holds a variable or the
+/// unknown, which could stand for any. The literal adopts the one carrier when there is one
+/// (DESIGN.md L1.26: the carrier "an operator or a parameter expects"); at two, as `1` at
+/// `f64 | rat`, the expected type names no one carrier and the literal keeps its own. Several
+/// types are the component of each tuple shape of one length (`adopted`).
+fn carriers_in(l: &Lit, want: &[&Ty]) -> Vec<Carrier> {
+    if want.iter().any(|w| !w.vars.is_empty() || w.dynamic) {
         return Vec::new();
     }
-    [Carrier::Int, Carrier::F64, Carrier::Rat]
+    [Carrier::Int, Carrier::Rat, Carrier::F64]
         .into_iter()
-        .filter(|&c| adoptable(l, c) && !(&want.set & &c.ty()).is_empty())
+        .filter(|&c| adoptable(l, c) && want.iter().any(|w| !(&w.set & &c.ty()).is_empty()))
         .collect()
 }
 
