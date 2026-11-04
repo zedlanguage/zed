@@ -73,7 +73,7 @@ use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval, on_
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Congruence, Landmarks, Lattice};
-use super::presburger::{self, Con, Formula, Lin, Refusal, Relation};
+use super::presburger::{self, Con, Formula, Joining, Lin, Mark, Refusal, Relation};
 use super::revision::{self, Exponent, Op, Tonicity, reduce_congruence};
 use crate::stage;
 use End::{Fin, NegInf, PosInf};
@@ -2796,18 +2796,7 @@ impl<'t> Tx<'t> {
                 );
                 match p {
                     Not => Some(Formula::negate(self.formula(tr, a, env)?)),
-                    And | Or => {
-                        let b = b.expect("two operands");
-                        // The formula of a name is kept whole, so a named part used at many
-                        // places is one node and not copied into each (COMPLEXITY.md S31b).
-                        let named = [a, b].map(|t| matches!(self.node(t), Node::Var(_)));
-                        let (a, b) = (self.formula(tr, a, env)?, self.formula(tr, b, env)?);
-                        Some(if p == And {
-                            Formula::and_keeping(vec![a, b], |i| named[i])
-                        } else {
-                            Formula::or_keeping(vec![a, b], |i| named[i])
-                        })
-                    }
+                    And | Or => self.chain(tr, p, [a, b.expect("two operands")], env),
                     Lt | Le | Gt | Ge | Eq | Ne => {
                         let b = b.expect("two operands");
                         let (mark, logged) = (tr.defs.len(), self.run.memo.log.len());
@@ -2841,6 +2830,52 @@ impl<'t> Tx<'t> {
             }
             _ => None,
         }
+    }
+
+    /// The formula of a `&&` (`p` is `And`) or a `||` with the given operands: the operands
+    /// of the chain of `p` it heads, each operand that is itself a `p` with no constant value
+    /// read through, joined as [`Formula::and_keeping`] or [`Formula::or_keeping`] would join
+    /// them two at a time, but in one [`Joining`], so a chain of k operands costs O(k log k)
+    /// and not O(k²) (ST-formula-k2). The formula of a name is kept whole, so a named part
+    /// used at many places is one node and not copied into each (COMPLEXITY.md S31b). The
+    /// operands are read in order, as the two-at-a-time translation reads them, and the
+    /// first that has no formula gives none for the whole. An operand of a primitive is held
+    /// in its parent alone ([`Terms::ids`]), so the chain is a tree, and each of its nodes is
+    /// met once without a visited set.
+    fn chain(&mut self, tr: &mut Tr, p: Prim, operands: [Tid; 2], env: Eid) -> Option<Formula> {
+        /// An operand to read, or the end of an inner `p`, with where the joining was before
+        /// its operands ([`Joining::close`]).
+        enum Step {
+            Operand(Tid),
+            Close(Mark),
+        }
+        let mut j = Joining::new(p == Prim::And);
+        let mut todo = vec![Step::Operand(operands[1]), Step::Operand(operands[0])];
+        while let Some(step) = todo.pop() {
+            let u = match step {
+                Step::Close(mark) => {
+                    j.close(mark);
+                    continue;
+                }
+                Step::Operand(u) => u,
+            };
+            match self.node(u) {
+                Node::Prim(q, args)
+                    if q == p
+                        && q.arity().is_none_or(|n| n == args.len())
+                        && self.constant(u, env).is_none() =>
+                {
+                    todo.push(Step::Close(j.mark()));
+                    todo.push(Step::Operand(self.arg(args, 1)));
+                    todo.push(Step::Operand(self.arg(args, 0)));
+                }
+                node => {
+                    let f = self.formula(tr, u, env)?;
+                    j.operand(f, matches!(node, Node::Var(_)));
+                }
+            }
+        }
+        Some(j.finish())
     }
 
     // ---- Forward transfer -------------------------------------------------------------

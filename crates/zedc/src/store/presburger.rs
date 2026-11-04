@@ -511,7 +511,7 @@ impl Formula {
 
     /// [`Formula::and`], with each conjunction at an index of `fs` where `keep` holds kept
     /// whole, as one conjunct, and not flattened into this one. The translator keeps the
-    /// formula of a name used as an operand of `&&` (`preimage::Tx::formula_at`), and the
+    /// formula of a name used as an operand of `&&` (`preimage::Tx::chain`), and the
     /// maps of a formula keep a conjunction that was kept in the node they rebuild
     /// ([`Formula::rebuild`]), so whether a part is kept follows the program and never how
     /// many handles hold it. A kept conjunction is read as flattened by compare, hash
@@ -528,47 +528,11 @@ impl Formula {
     // COMPLEXITY.md S31b. A complete merge needs the conjunction as a persistent map from each
     // left-hand side to its constraint, shared with the named part and extended at each place.
     pub fn and_keeping(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
-        let mut flat = Vec::new();
+        let mut j = Joining::new(true);
         for (i, f) in fs.into_iter().enumerate() {
-            match f {
-                Formula::And(ref gs) if gs.is_empty() => {}
-                Formula::And(_) if keep(i) => flat.push(f),
-                Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
-                Formula::Or(ref gs) if gs.is_empty() => return Formula::bottom(),
-                g => flat.push(g),
-            }
+            j.operand(f, keep(i));
         }
-        // Of two constraints on one term, the tighter alone, in the place of the first.
-        let mut out: Vec<Formula> = Vec::new();
-        let mut at: BTreeMap<(BTreeMap<Atom, Int>, Rel), usize> = BTreeMap::new();
-        for g in flat {
-            let Formula::Con(c) = &g else {
-                out.push(g);
-                continue;
-            };
-            let key = (c.lin.terms.clone(), c.rel);
-            match at.get(&key) {
-                Some(&i) => {
-                    let Formula::Con(old) = &out[i] else {
-                        unreachable!("a constraint")
-                    };
-                    if c.rel == Rel::Ge && c.lin.constant < old.lin.constant {
-                        out[i] = g;
-                    } else if c.rel == Rel::Eq && c.lin.constant != old.lin.constant {
-                        return Formula::bottom();
-                    }
-                }
-                None => {
-                    at.insert(key, out.len());
-                    out.push(g);
-                }
-            }
-        }
-        if out.len() == 1 {
-            out.pop().expect("one")
-        } else {
-            Formula::And(Arc::new(out))
-        }
+        j.finish()
     }
 
     /// The disjunction, flattened, `false` dropped and `true` absorbing, and `true` when two
@@ -589,24 +553,11 @@ impl Formula {
     // COMPLEXITY.md S31b. A complete check needs each kept part's constraints indexed in its
     // node, so that the lookup across it costs O(1) per disjunct.
     pub fn or_keeping(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
-        let mut out = Vec::new();
+        let mut j = Joining::new(false);
         for (i, f) in fs.into_iter().enumerate() {
-            match f {
-                Formula::Or(ref gs) if gs.is_empty() => {}
-                Formula::Or(_) if keep(i) => out.push(f),
-                Formula::Or(_) => out.extend(f.into_parts().expect("a disjunction")),
-                Formula::And(ref gs) if gs.is_empty() => return Formula::top(),
-                g => out.push(g),
-            }
+            j.operand(f, keep(i));
         }
-        if Formula::complementary(&out) {
-            return Formula::top();
-        }
-        if out.len() == 1 {
-            out.pop().expect("one")
-        } else {
-            Formula::Or(Arc::new(out))
-        }
+        j.finish()
     }
 
     /// Whether two of `fs` are each other's complements, so that their disjunction is `true`:
@@ -797,6 +748,162 @@ impl Formula {
             }
         }
         out
+    }
+}
+
+/// A conjunction or a disjunction made one operand at a time: [`Formula::and_keeping`] and
+/// [`Formula::or_keeping`] give it their operands, and the translator gives it each operand of
+/// a chain of `&&` or of `||` (`preimage::Tx::chain`), so that a chain of k operands costs
+/// O(k log k), and not the O(k²) that making the conjunction of each prefix in turn costs,
+/// which copied and tightened the prefix again at each operand (ST-formula-k2).
+pub struct Joining {
+    /// A conjunction, or a disjunction.
+    and: bool,
+    /// The parts so far.
+    out: Vec<Formula>,
+    /// Of a conjunction, the place in `out` of the constraint on each term and comparison.
+    at: BTreeMap<(BTreeMap<Atom, Int>, Rel), usize>,
+    /// Whether an operand decided the whole: `false` met in a conjunction, two constraints on
+    /// one term that cannot both hold, or `true` met in a disjunction.
+    decided: bool,
+    /// How many parts were added, a constraint merged into an earlier one counted too.
+    added: usize,
+}
+
+/// Where a [`Joining`] was, from [`Joining::mark`].
+#[derive(Clone, Copy)]
+pub struct Mark {
+    /// The count of parts added, a constraint merged into an earlier one counted too.
+    added: usize,
+    /// The length of `out`.
+    len: usize,
+}
+
+impl Joining {
+    /// An empty conjunction when `and`, otherwise an empty disjunction.
+    pub fn new(and: bool) -> Joining {
+        Joining {
+            and,
+            out: Vec::new(),
+            at: BTreeMap::new(),
+            decided: false,
+            added: 0,
+        }
+    }
+
+    /// Adds the operand `f`. A part of the joining's own kind is kept whole where `kept`, and
+    /// otherwise its parts are added; the empty one of that kind is dropped, and the empty
+    /// one of the other kind decides the whole.
+    pub fn operand(&mut self, f: Formula, kept: bool) {
+        if self.decided {
+            return;
+        }
+        let (own, empty) = match &f {
+            Formula::And(gs) => (self.and, gs.is_empty()),
+            Formula::Or(gs) => (!self.and, gs.is_empty()),
+            Formula::Con(_) | Formula::Not(_) => (false, false),
+        };
+        match (own, empty) {
+            (true, true) => {}
+            (false, true) => self.decided = true,
+            (true, false) if !kept => {
+                for g in f.into_parts().expect("a conjunction or a disjunction") {
+                    self.part(g);
+                }
+            }
+            _ => self.part(f),
+        }
+    }
+
+    /// Adds `g` as a part. Of two constraints in a conjunction on one term and comparison,
+    /// the tighter alone, in the place of the first.
+    fn part(&mut self, g: Formula) {
+        if self.decided {
+            return;
+        }
+        self.added += 1;
+        let Formula::Con(c) = &g else {
+            self.out.push(g);
+            return;
+        };
+        if !self.and {
+            self.out.push(g);
+            return;
+        }
+        let key = (c.lin.terms.clone(), c.rel);
+        match self.at.get(&key) {
+            Some(&i) => {
+                let Formula::Con(old) = &self.out[i] else {
+                    unreachable!("a constraint")
+                };
+                if c.rel == Rel::Ge && c.lin.constant < old.lin.constant {
+                    self.out[i] = g;
+                } else if c.rel == Rel::Eq && c.lin.constant != old.lin.constant {
+                    self.decided = true;
+                }
+            }
+            None => {
+                self.at.insert(key, self.out.len());
+                self.out.push(g);
+            }
+        }
+    }
+
+    /// Where the joining is now, to pass to [`Joining::close`].
+    pub fn mark(&self) -> Mark {
+        Mark {
+            added: self.added,
+            len: self.out.len(),
+        }
+    }
+
+    /// Ends an inner operand of the chain, one that is itself a `&&` in a chain of `&&` (or a
+    /// `||` in one of `||`), whose operands are those added since `mark`. Made apart, such an
+    /// operand is the formula `finish` gives, which is its one part where it has one, and
+    /// the chain around it adds that part as an operand that is not kept: its parts when it
+    /// is of the joining's kind, nothing when it is the empty one of that kind, and the whole
+    /// decided when it is the empty one of the other. This does the same, so that the chain
+    /// gives the formula of its operands joined two at a time as written.
+    pub fn close(&mut self, mark: Mark) {
+        // One part added since `mark` and one more in `out`: the operand made apart is that
+        // part alone, the last of `out`. A constraint merged into an earlier one is counted in
+        // `added` alone, and the operand made apart holds it as a part of its own.
+        if self.decided || self.added - mark.added != 1 || self.out.len() - mark.len != 1 {
+            return;
+        }
+        let unwraps = match self.out.last() {
+            Some(Formula::And(gs)) => self.and || gs.is_empty(),
+            Some(Formula::Or(gs)) => !self.and || gs.is_empty(),
+            _ => false,
+        };
+        if !unwraps {
+            return;
+        }
+        let last = self.out.pop().expect("the last part");
+        self.added -= 1;
+        self.operand(last, false);
+    }
+
+    /// The conjunction or disjunction: its one part where it has one, and `true` for a
+    /// disjunction of two complementary parts ([`Formula::complementary`]).
+    pub fn finish(mut self) -> Formula {
+        if self.decided {
+            return if self.and {
+                Formula::bottom()
+            } else {
+                Formula::top()
+            };
+        }
+        if !self.and && Formula::complementary(&self.out) {
+            return Formula::top();
+        }
+        if self.out.len() == 1 {
+            self.out.pop().expect("one")
+        } else if self.and {
+            Formula::And(Arc::new(self.out))
+        } else {
+            Formula::Or(Arc::new(self.out))
+        }
     }
 }
 
@@ -6696,5 +6803,209 @@ mod tests {
             let rows = [(a, -&Int::from(p - 1)), (b, Int::from(r))];
             assert_eq!(box_test(2, &rows, &lo, &hi), empty, "R = P - {}", p - r);
         }
+    }
+
+    /// A chain of `&&` or `||` as the translator reads it: a leaf is an operand's formula
+    /// and whether it is a name's (kept whole), and an inner node joins two chains.
+    enum Chain {
+        Leaf(Formula, bool),
+        Join(Box<Chain>, Box<Chain>),
+    }
+
+    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % n
+        }
+    }
+
+    /// A small random formula over `x` and `y`: a constraint `>= 0` or `== 0` on a term
+    /// with a small constant, `true`, `false`, a negation, or a conjunction or disjunction
+    /// of one to three of these built directly, so one with a single part occurs too.
+    fn small(rng: &mut Rng, depth: u32) -> Formula {
+        let con = |rng: &mut Rng| {
+            let terms: &[(&str, i128)] = match rng.below(3) {
+                0 => &[("x", 1)],
+                1 => &[("y", -1)],
+                _ => &[("x", 1), ("y", 1)],
+            };
+            let rel = if rng.below(4) == 0 { Rel::Eq } else { Rel::Ge };
+            Formula::Con(Con {
+                lin: lin(terms, rng.below(3) as i128 - 1),
+                rel,
+            })
+        };
+        match rng.below(if depth == 0 { 4 } else { 8 }) {
+            0 | 1 => con(rng),
+            2 => Formula::top(),
+            3 => Formula::bottom(),
+            4 => Formula::negate(con(rng)),
+            k => {
+                let parts = (0..=rng.below(3)).map(|_| small(rng, depth - 1)).collect();
+                if k % 2 == 0 {
+                    Formula::And(Arc::new(parts))
+                } else {
+                    Formula::Or(Arc::new(parts))
+                }
+            }
+        }
+    }
+
+    fn chain(rng: &mut Rng, depth: u32) -> Chain {
+        if depth == 0 || rng.below(3) == 0 {
+            Chain::Leaf(small(rng, 2), rng.below(2) == 0)
+        } else {
+            Chain::Join(
+                Box::new(chain(rng, depth - 1)),
+                Box::new(chain(rng, depth - 1)),
+            )
+        }
+    }
+
+    /// `Formula::and_keeping` as it was before `Joining`, to compare against.
+    fn and_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
+        let mut flat = Vec::new();
+        for (i, f) in fs.into_iter().enumerate() {
+            match f {
+                Formula::And(ref gs) if gs.is_empty() => {}
+                Formula::And(_) if keep(i) => flat.push(f),
+                Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
+                Formula::Or(ref gs) if gs.is_empty() => return Formula::bottom(),
+                g => flat.push(g),
+            }
+        }
+        // Of two constraints on one term, the tighter alone, in the place of the first.
+        let mut out: Vec<Formula> = Vec::new();
+        let mut at: BTreeMap<(BTreeMap<Atom, Int>, Rel), usize> = BTreeMap::new();
+        for g in flat {
+            let Formula::Con(c) = &g else {
+                out.push(g);
+                continue;
+            };
+            let key = (c.lin.terms.clone(), c.rel);
+            match at.get(&key) {
+                Some(&i) => {
+                    let Formula::Con(old) = &out[i] else {
+                        unreachable!("a constraint")
+                    };
+                    if c.rel == Rel::Ge && c.lin.constant < old.lin.constant {
+                        out[i] = g;
+                    } else if c.rel == Rel::Eq && c.lin.constant != old.lin.constant {
+                        return Formula::bottom();
+                    }
+                }
+                None => {
+                    at.insert(key, out.len());
+                    out.push(g);
+                }
+            }
+        }
+        if out.len() == 1 {
+            out.pop().expect("one")
+        } else {
+            Formula::And(Arc::new(out))
+        }
+    }
+
+    /// `Formula::or_keeping` as it was before `Joining`, to compare against.
+    fn or_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
+        let mut out = Vec::new();
+        for (i, f) in fs.into_iter().enumerate() {
+            match f {
+                Formula::Or(ref gs) if gs.is_empty() => {}
+                Formula::Or(_) if keep(i) => out.push(f),
+                Formula::Or(_) => out.extend(f.into_parts().expect("a disjunction")),
+                Formula::And(ref gs) if gs.is_empty() => return Formula::top(),
+                g => out.push(g),
+            }
+        }
+        if Formula::complementary(&out) {
+            return Formula::top();
+        }
+        if out.len() == 1 {
+            out.pop().expect("one")
+        } else {
+            Formula::Or(Arc::new(out))
+        }
+    }
+
+    /// The chain joined two at a time, as the translator joined it before `Joining`: an
+    /// inner node is no name, so its formula is not kept.
+    fn two_at_a_time(c: &Chain, and: bool) -> (Formula, bool) {
+        match c {
+            Chain::Leaf(f, kept) => (f.clone(), *kept),
+            Chain::Join(a, b) => {
+                let ((fa, ka), (fb, kb)) = (two_at_a_time(a, and), two_at_a_time(b, and));
+                let keep = |i: usize| [ka, kb][i];
+                let f = if and {
+                    and_keeping_before(vec![fa, fb], keep)
+                } else {
+                    or_keeping_before(vec![fa, fb], keep)
+                };
+                (f, false)
+            }
+        }
+    }
+
+    /// The chain in one `Joining`, read as `preimage::Tx::chain` reads it.
+    fn in_one(c: &Chain, and: bool) -> Formula {
+        fn add(c: &Chain, j: &mut Joining) {
+            match c {
+                Chain::Leaf(f, kept) => j.operand(f.clone(), *kept),
+                Chain::Join(a, b) => {
+                    let mark = j.mark();
+                    add(a, j);
+                    add(b, j);
+                    j.close(mark);
+                }
+            }
+        }
+        let Chain::Join(a, b) = c else {
+            unreachable!("a chain of two operands")
+        };
+        let mut j = Joining::new(and);
+        add(a, &mut j);
+        add(b, &mut j);
+        j.finish()
+    }
+
+    /// The formula's tree as built, each node and its parts, with kept parts shown as such:
+    /// compare, hash and show read a kept part as flattened, and this must not.
+    fn built(f: &Formula) -> String {
+        match f {
+            Formula::Con(c) => format!("({c})"),
+            Formula::Not(g) => format!("!{}", built(g)),
+            Formula::And(gs) => format!(
+                "and[{}]",
+                gs.iter().map(built).collect::<Vec<_>>().join(", ")
+            ),
+            Formula::Or(gs) => format!(
+                "or[{}]",
+                gs.iter().map(built).collect::<Vec<_>>().join(", ")
+            ),
+        }
+    }
+
+    #[test]
+    fn a_chain_joined_in_one_pass_is_built_as_joined_two_at_a_time() {
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut kinds = std::collections::BTreeSet::new();
+        for round in 0..20_000 {
+            // A chain is a `&&` or `||` of two operands, never one operand alone.
+            let c = Chain::Join(Box::new(chain(&mut rng, 4)), Box::new(chain(&mut rng, 4)));
+            for and in [true, false] {
+                let (old, _) = two_at_a_time(&c, and);
+                let new = in_one(&c, and);
+                assert_eq!(built(&new), built(&old), "round {round}, and = {and}");
+                kinds.insert(built(&old).chars().take(3).collect::<String>());
+            }
+        }
+        // `true`, `false`, constraints, negations, conjunctions and disjunctions all occur.
+        assert!(kinds.len() >= 5, "{kinds:?}");
     }
 }

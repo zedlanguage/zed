@@ -1017,6 +1017,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Unbounded counts of repeats (`num_bigint::BigUint`), since a run can be longer than 2^64 | `Sym::Run`, `Canon::cmp_seqs`, `Finger::cut` | None (`int` is unbounded) | `int` |
 | Bit operations on symbol numbers for deterministic coin tossing (`^`, `trailing_zeros`, `>>`, `& 1`) | `Canon::chunk` | Bit operations (gap 4, built) | The bit words of L1.39a |
 
+## Entries from ST-formula-k2 (`zedc/src/store/presburger.rs`, `preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A builder struct changed through `&mut self` one operand at a time (`Joining`: the parts, a `BTreeMap` from each term and comparison to its place, the count of parts added), with `mark` and `close` around an inner operand of a chain, popping its one part back off the `Vec` | `presburger::Joining`, `Formula::and_keeping`, `or_keeping`, `preimage::Tx::chain` | Mutation (gap 11) | A fold over the chain's operands with the joining in its state, `close` a step of that fold |
+| An enum declared inside a function (`Step`: an operand to read, or the end of an inner `&&`), the frames of an explicit stack | `preimage::Tx::chain` | None | A sum type private to the unit |
+
 ## Entries from OSP-drop (`zedc/src/check/mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |
