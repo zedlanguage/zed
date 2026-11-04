@@ -127,6 +127,17 @@ pub enum Prim {
     Rotr,
     /// `f64Bits(x)`: the IEEE 754 binary64 encoding of a float, an int in `0 ..< 2^64`.
     F64Bits,
+    /// `codePoint(s)`: the Unicode scalar value of a string of one scalar, an int in
+    /// `0 ..= 1114111`; `#notScalar` for any other string (step L1.39c).
+    CodePoint,
+    /// `scalar(n)`: the string of the one scalar `n`; `#notScalar` for a surrogate or an `n`
+    /// outside `0 ..= 1114111`.
+    Scalar,
+    /// `utf8(s)`: the family of the UTF-8 bytes of `s`, keyed by position from 1.
+    Utf8,
+    /// `fromUtf8(b)`: the string the bytes of `b`, in key order, encode; `#badUtf8` when they
+    /// are not well-formed UTF-8.
+    FromUtf8,
 }
 
 impl Prim {
@@ -135,7 +146,8 @@ impl Prim {
         use Prim::*;
         match self {
             Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | Abs | Len
-            | Lower | Upper | Trim | Sum | PopCount | F64Bits => Some(1),
+            | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
+            | FromUtf8 => Some(1),
             Rotl | Rotr => Some(3),
             Path | Tuple | Atom => None,
             _ => Some(2),

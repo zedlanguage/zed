@@ -41,6 +41,7 @@ mod l01_37_oracle;
 mod l01_38_presburger;
 mod l01_39_reduced_product;
 mod l01_39a_bit_words;
+mod l01_39c_code_points;
 mod l02_01_parser_structs;
 mod l02_02_parser_match_imports;
 mod l03_01_parser;

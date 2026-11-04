@@ -2251,7 +2251,11 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             | Prim::Len
             | Prim::Lower
             | Prim::Upper
-            | Prim::Trim,
+            | Prim::Trim
+            | Prim::CodePoint
+            | Prim::Scalar
+            | Prim::Utf8
+            | Prim::FromUtf8,
             [x],
         ) => crate::words::word(p, x)?,
         _ if crate::bits::is_bit_word(p) => crate::bits::word(p, &vals)?,

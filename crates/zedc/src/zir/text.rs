@@ -42,7 +42,7 @@ use crate::store::lattice::{Congruence, FiniteSet, Lattice};
 pub const VERSION: u32 = 1;
 
 /// Every primitive, in the order the binary form numbers them.
-pub const PRIMS: [Prim; 51] = {
+pub const PRIMS: [Prim; 55] = {
     use Prim::*;
     [
         Add,
@@ -96,6 +96,10 @@ pub const PRIMS: [Prim; 51] = {
         Rotl,
         Rotr,
         F64Bits,
+        CodePoint,
+        Scalar,
+        Utf8,
+        FromUtf8,
     ]
 };
 
@@ -154,6 +158,10 @@ pub fn spell(p: Prim) -> &'static str {
         Rotl => "rotl",
         Rotr => "rotr",
         F64Bits => "f64Bits",
+        CodePoint => "codePoint",
+        Scalar => "scalar",
+        Utf8 => "utf8",
+        FromUtf8 => "fromUtf8",
     }
 }
 

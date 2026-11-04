@@ -1,5 +1,6 @@
 //! The L1 prelude words on scalars (step L1.18): `String`, the checked casts `int`, `rat`
-//! and `f64`, `abs`, and the string words `len`, `lower`, `upper` and `trim`.
+//! and `f64`, `abs`, the string words `len`, `lower`, `upper` and `trim`, and the code point
+//! and UTF-8 words `codePoint`, `scalar`, `utf8` and `fromUtf8` (step L1.39c).
 //!
 //! A cast is a domain proof (DESIGN.md, "Casts are domain proofs"): `T(x)` is `x` as a `T`
 //! when the value is the same number, `#inexact` when a numeric source has no equal `T`, and
@@ -13,6 +14,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
+use crate::family::Family;
 use crate::num::{Exact, Rat, TooLarge, exact_f64, read_decimal, room, show_f64};
 use crate::term::Prim;
 use crate::value::Value;
@@ -110,9 +112,67 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         (Prim::Lower, Value::Str(s)) => Value::str(&s.to_lowercase()),
         (Prim::Upper, Value::Str(s)) => Value::str(&s.to_uppercase()),
         (Prim::Trim, Value::Str(s)) => Value::str(s.trim()),
+        // A string of one scalar is read; a longer one is known by its count, never written out.
+        (Prim::CodePoint, Value::Str(s)) => match s.char_count() {
+            1 => Value::Int(i64::from(u32::from(first_char(s)))),
+            _ => Value::atom("notScalar"),
+        },
+        (Prim::Scalar, Value::Int(n)) => match u32::try_from(*n).ok().and_then(char::from_u32) {
+            Some(c) => Value::str(c.encode_utf8(&mut [0; 4])),
+            None => Value::atom("notScalar"),
+        },
+        (Prim::Scalar, Value::Big(_)) => Value::atom("notScalar"),
+        (Prim::Utf8, Value::Str(s)) => Value::Family(utf8(s)),
+        (Prim::FromUtf8, Value::Family(f)) => match from_utf8(f) {
+            Some(r) => r,
+            None => return type_err(p, x),
+        },
         _ => return type_err(p, x),
     };
     Ok(out)
+}
+
+/// The first character of the non-empty text `s`.
+fn first_char(s: &str) -> char {
+    s.chars().next().expect("a string of one scalar")
+}
+
+/// The family of the UTF-8 bytes of `s`, keyed by position from 1. The keys are made in
+/// increasing order, so the map is built in `O(n log n)` for `n` bytes.
+fn utf8(s: &str) -> Family {
+    Family::from_map(
+        s.bytes()
+            .zip(1i64..)
+            .map(|(b, i)| (Value::Int(i), Value::Int(i64::from(b))))
+            .collect(),
+    )
+}
+
+/// The string the values of `f`, read in key order, encode as UTF-8, or `#badUtf8` when they
+/// are not well-formed: an overlong form, a surrogate, a scalar past `0x10FFFF`, or a truncated
+/// or stray continuation byte (the Unicode Standard, table 3-7, as [`std::str::from_utf8`] checks it). An
+/// int outside `0 ..= 255` is not a byte, so it gives `#badUtf8` too; `None` when a value is not
+/// an int at all.
+fn from_utf8(f: &Family) -> Option<Value> {
+    let mut bytes = Vec::with_capacity(f.len());
+    let mut byte = true;
+    for v in f.iter().map(|(_, v)| v) {
+        match v {
+            Value::Int(n) => match u8::try_from(*n) {
+                Ok(b) => bytes.push(b),
+                Err(_) => byte = false,
+            },
+            Value::Big(_) => byte = false,
+            _ => return None,
+        }
+    }
+    Some(match byte {
+        true => match String::from_utf8(bytes) {
+            Ok(s) => Value::Str(s.into()),
+            Err(_) => Value::atom("badUtf8"),
+        },
+        false => Value::atom("badUtf8"),
+    })
 }
 
 fn type_err(p: Prim, x: &Value) -> Result<Value, KernelError> {

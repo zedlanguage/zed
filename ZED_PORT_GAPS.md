@@ -24,7 +24,7 @@ the form it has may not meet the cost the compiler needs:
 | 4 | Bit operations, float bits | up to 192 | built (L1.39a) | S.2, S.3 | The bit words at L1, built by step L1.39a |
 | 5 | Bytes: spans, binary files, hashing input | 95 | partly planned (L1.39c: `utf8`; no byte port) | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
 | 6 | Command line, computed output paths, exit status | 9 | closed for the command line (built, L1.19a); executables planned (L1.36a); no computed paths | S.5 | `CommandLine` port; `Files` writes, an exit value |
-| 7 | Scalar to and from code point | 18 | planned (L1.39c, S.1c) | S.2 | Two L1 words |
+| 7 | Scalar to and from code point | 18 | built (L1.39c) | S.2 | Four L1 words: `codePoint`, `scalar`, `utf8`, `fromUtf8` |
 | 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | planned (S.1d, decision pending) | S.2 | A word whose type is empty (conflicts with G5 and line 711), or an atom in each codomain |
 | 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
 | 10 | File import cycles | 3 cycles, 5 parent/child groups | Rust must change (S.1f) | S.2 | Move definitions in five, merge files in three; no Zed change |
@@ -252,21 +252,25 @@ arguments through this port from S.5 on. Still open: an executable that binds it
 line is step L1.36a; a write to a path computed at run time and an exit status from `main`'s
 result have no step.
 
-### Gap 7. Code points and text tables (missing)
+### Gap 7. Code points and text tables (code points built; text tables missing)
 
-Confirmed: there is no character type, and the L1 string words are `len`, `lower`, `upper`, `trim`,
-`++`, the `String` and `f64` casts (`Prim`, `term.rs`), and `split`, `lines`, `concat` at L3. Text
-is one-element strings ordered by code point (line 368), so comparing `c >= "a"` works, but no
-word turns a scalar into its number or back. `\u{…}` decoding (`lex/string.rs:149`, `:292`) needs that, as does
-`zir/text.rs:983`. `char` 18, `.chars()`, `.char_indices()` 37.
+Built by step L1.39c: `codePoint : String -> int | #notScalar`, `scalar : int -> String |
+#notScalar`, `utf8 : String -> (int ->? int)` (keys `1 ..= n`) and `fromUtf8 : (int ->? int) ->
+String | #badUtf8` are kernel primitives (`zed_kernel::words`, `Prim`) and prelude words of layer
+L1 (COMPLEXITY.md row C28). So `\u{…}` decoding (`lex/string.rs:149`, `:292`) and
+`zir/text.rs:983` can be written in Zed. The implementation uses `char::from_u32`, `str::chars`,
+`str::bytes` and `String::from_utf8`; in Zed these are the four words themselves, so the step adds
+no new gap. There is still no character type: text is one-element strings ordered by code point
+(line 368), and `char` 18, `.chars()`, `.char_indices()` 37 become `codePoint` and `scalar` on
+one-element strings.
 
-Fix: L1 words `codePoint : String -> int` and `scalar : int -> String | #invalid`. The rest
-(`starts_with`, `strip_prefix`, `split_once` and similar, 86 matches) are ordinary standard library
-functions in Zed (step L2.10), needing no spec change. `is_xid_*`, script and NFC data
-(`unicode-ident`, `unicode-script`, `unicode-normalization`, in `lex/name.rs` and `source.rs`) are
-tables in Zed, or built-ins for now. Substring slices are O(1) in Rust as `&str`; in Zed the cost
-is that of `slice` on a rope, inferred O(log n), and 150 range slices exist across all types.
-A recursion on `&xs[1..]` would become O(n log n) in total, not O(n); check at S.2.
+Missing: the rest (`starts_with`, `strip_prefix`, `split_once` and similar, 86 matches) are
+ordinary standard library functions in Zed (step L2.10), needing no spec change. `is_xid_*`,
+script and NFC data (`unicode-ident`, `unicode-script`, `unicode-normalization`, in `lex/name.rs`
+and `source.rs`) are tables in Zed, or built-ins for now. Substring slices are O(1) in Rust as
+`&str`; in Zed the cost is that of `slice` on a rope, inferred O(log n), and 150 range slices
+exist across all types. A recursion on `&xs[1..]` would become O(n log n) in total, not O(n);
+check at S.2.
 
 ### Gap 8. Broken invariants and unproved indexing (missing)
 

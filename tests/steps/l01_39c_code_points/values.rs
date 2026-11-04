@@ -1,0 +1,86 @@
+//! The cases DESIGN.md step L1.39c names, through the surface, and the forms a lexer writes.
+
+use super::x;
+
+#[test]
+fn the_named_code_points() {
+    assert_eq!(x("codePoint(\"a\")"), "97");
+    assert_eq!(x("codePoint(\"é\")"), "233");
+    assert_eq!(x("codePoint(\"ab\")"), "#notScalar");
+    assert_eq!(x("codePoint(\"\")"), "#notScalar");
+}
+
+#[test]
+fn a_surrogate_is_not_a_scalar_and_an_emoji_round_trips() {
+    assert_eq!(x("scalar(55296)"), "#notScalar");
+    assert_eq!(x("scalar(128512)"), "\"😀\"");
+    assert_eq!(x("codePoint(scalar(128512))"), "128512");
+}
+
+#[test]
+fn scalar_refuses_every_int_that_is_not_a_scalar_value() {
+    for n in [
+        "-1",
+        "55296",
+        "56000",
+        "57343",
+        "1114112",
+        "2 ** 64",
+        "-(2 ** 70)",
+    ] {
+        assert_eq!(x(&format!("scalar({n})")), "#notScalar", "{n}");
+    }
+    for n in ["0", "55295", "57344", "1114111"] {
+        assert_eq!(x(&format!("codePoint(scalar({n}) else \"\")")), n, "{n}");
+    }
+}
+
+#[test]
+fn utf8_gives_the_bytes_keyed_from_one() {
+    assert_eq!(x("utf8(\"aé\")"), "{1 -> 97, 2 -> 195, 3 -> 169}");
+    assert_eq!(x("utf8(\"€\")"), "{1 -> 226, 2 -> 130, 3 -> 172}");
+    assert_eq!(
+        x("utf8(\"😀\")"),
+        "{1 -> 240, 2 -> 159, 3 -> 152, 4 -> 128}"
+    );
+    assert_eq!(x("utf8(\"\")"), "{}");
+}
+
+#[test]
+fn from_utf8_of_utf8_is_the_string() {
+    for s in ["", "a", "naïve", "€ 5", "a😀b"] {
+        assert_eq!(x(&format!("fromUtf8(utf8(\"{s}\"))")), format!("\"{s}\""));
+        assert_eq!(x(&format!("fromUtf8(utf8(\"{s}\")) == \"{s}\"")), "true");
+    }
+    // The last scalar prints escaped; the round trip still compares equal.
+    assert_eq!(
+        x("fromUtf8(utf8(scalar(1114111) else \"\")) == scalar(1114111)"),
+        "true"
+    );
+}
+
+#[test]
+fn a_receiver_is_the_string() {
+    assert_eq!(x("\"z\".codePoint"), "122");
+    assert_eq!(x("\"z\".codePoint()"), "122");
+    assert_eq!(x("\"ok\".utf8.fromUtf8"), "\"ok\"");
+    assert_eq!(x("955.scalar"), "\"λ\"");
+}
+
+#[test]
+fn a_rope_is_read_as_its_text() {
+    assert_eq!(x("codePoint(\"\" ++ \"é\" ++ \"\")"), "233");
+    assert_eq!(x("codePoint(\"a\" ++ \"b\")"), "#notScalar");
+    assert_eq!(x("utf8(\"a\" ++ \"é\")"), "{1 -> 97, 2 -> 195, 3 -> 169}");
+}
+
+#[test]
+fn the_failures_pass_through_else() {
+    let src = "digit = codePoint(\"7\") - codePoint(\"0\") else -1;\n\
+               none = codePoint(\"77\") else -1;\n\
+               shown = scalar(55296) else \"?\";\n";
+    let v = |n| crate::l01_16_elaboration::value(src, n);
+    assert_eq!(v("digit"), "7");
+    assert_eq!(v("none"), "-1");
+    assert_eq!(v("shown"), "\"?\"");
+}

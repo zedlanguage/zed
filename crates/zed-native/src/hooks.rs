@@ -378,6 +378,18 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
                 _ => slow(t, s, ni, ins),
             }
         }
+        // A string of one scalar is never a join, whose parts are each at least one scalar, so
+        // its text is read in place; any other string gives `#notScalar`, which the kernel makes.
+        Op::Prim(Prim::CodePoint) if ins.len() == 1 => {
+            if let Some(r) = text(s, ins[0])?
+                && r.char_count() == 1
+                && let Some(c) = r.chars().next()
+            {
+                consume(s, ni, ins)?;
+                return Ok(Word::int(i64::from(u32::from(c))));
+            }
+            slow(t, s, ni, ins)
+        }
         Op::Lambda => Ok(s.heap.alloc(Obj::Clo {
             lambda: ni.lambda.expect("a lambda's index"),
             caps: ins.to_vec(),

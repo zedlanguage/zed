@@ -116,6 +116,10 @@ fn name(p: Prim) -> &'static str {
         Rotl => "rotl",
         Rotr => "rotr",
         F64Bits => "f64Bits",
+        CodePoint => "codePoint",
+        Scalar => "scalar",
+        Utf8 => "utf8",
+        FromUtf8 => "fromUtf8",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),

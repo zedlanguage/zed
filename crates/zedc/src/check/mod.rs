@@ -3926,6 +3926,16 @@ fn word_sig(w: &str) -> Arc<Sig> {
         ],
         "abs" => arrows(&[Int, F64, Rat], 1, Ty::carrier),
         "len" => vec![arrow(Str, Int, &[])],
+        "codePoint" => vec![arrow(Str, Int, &["notScalar"])],
+        "scalar" => vec![arrow(Int, Str, &["notScalar"])],
+        "utf8" => vec![Arrow {
+            params: vec![Ty::carrier(Str)],
+            result: bytes(),
+        }],
+        "fromUtf8" => vec![Arrow {
+            params: vec![bytes()],
+            result: Ty::carrier(Str).union(&a(&["badUtf8"])),
+        }],
         _ => vec![arrow(Str, Str, &[])],
     };
     Arc::new(Sig {
@@ -3937,6 +3947,14 @@ fn word_sig(w: &str) -> Arc<Sig> {
         own: BTreeSet::new(),
         held: BTreeSet::new(),
     })
+}
+
+/// The type of the bytes `utf8` gives and `fromUtf8` reads (step L1.39c): a family of ints keyed
+/// by ints. The checker has no int-range types before step L10 (COMPLEXITY.md C28), so neither the keys
+/// from 1 nor the bytes in `0 ..< 256` are stated here; the kernel gives `#badUtf8` for an int
+/// that is not a byte.
+fn bytes() -> Ty {
+    Ty::set(KType::partial(KType::int(), KType::int()))
 }
 
 /// The primitive of the bit word `w`, if it is one (step L1.39a).
@@ -4035,7 +4053,7 @@ impl IntRange {
 
 /// What the text of an expression shows of its `int` value: an interval holding it and, for an
 /// expression built from int literals, the names bound to such expressions, the integer
-/// operators and the bit words, the value itself.
+/// operators and the bit words, the value itself. A call of `codePoint` lies in `0 ..= 1114111`.
 #[derive(Clone)]
 struct Known {
     ints: IntervalSet,
@@ -4136,6 +4154,32 @@ impl<'a> Ck<'_, 'a> {
         }
     }
 
+    /// Whether `e` calls the prelude word `codePoint` (step L1.39c), `codePoint(s)`, `s.codePoint()`
+    /// or `s.codePoint`, whose int value lies in `0 ..= 1114111`.
+    fn code_point_call(&self, e: &Expr) -> bool {
+        let uses = &self.t.res.uses;
+        let member = |x: &Expr| {
+            matches!(&x.kind, ExprKind::Member { name, safe: false, .. } if name == "codePoint")
+                && !matches!(uses.get(&x.span), Some(Ref::Bound(_)))
+        };
+        match &e.kind {
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+            } if named.is_empty() => match &callee.kind {
+                ExprKind::Name(w) => {
+                    w == "codePoint"
+                        && positional.len() == 1
+                        && matches!(uses.get(&callee.span), Some(Ref::Prelude(_)))
+                }
+                _ => positional.is_empty() && member(callee),
+            },
+            _ => member(e),
+        }
+    }
+
     /// The bit word `e` calls and its operands in parameter order, when `e` is such a call.
     fn bit_call(&self, e: &'a Expr) -> Option<(Prim, Vec<&'a Expr>)> {
         let ExprKind::Call {
@@ -4220,6 +4264,10 @@ impl<'a> Ck<'_, 'a> {
                     }
                 }
                 None => Known::top(),
+            },
+            _ if self.code_point_call(e) => Known {
+                ints: IntervalSet::of(0, 1_114_111),
+                value: None,
             },
             _ => {
                 let Some((p, es)) = self.bit_call(e) else {

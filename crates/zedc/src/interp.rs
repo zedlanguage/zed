@@ -30,6 +30,10 @@ const WORDS: &[(&str, Prim)] = &[
     ("rotl", Prim::Rotl),
     ("rotr", Prim::Rotr),
     ("f64Bits", Prim::F64Bits),
+    ("codePoint", Prim::CodePoint),
+    ("scalar", Prim::Scalar),
+    ("utf8", Prim::Utf8),
+    ("fromUtf8", Prim::FromUtf8),
 ];
 
 /// Whether `name` is a prelude word.
