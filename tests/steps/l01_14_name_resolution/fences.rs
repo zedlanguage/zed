@@ -6,8 +6,8 @@ use zedc::parse::{TOP, parse};
 /// Every documentation unit that builds resolves, or fails only on what a fragment leaves to
 /// the text around it: a name or type it does not bind, or a rebinding the fence marks ✗; or
 /// on a form of layer L2, L3, L5 or L6 that the parser builds and a later step compiles, or an
-/// annotation of a later layer; or on an import, which a fragment read alone, with no package
-/// around it, cannot follow.
+/// annotation or prelude type of a later layer; or on an import, which a fragment read alone,
+/// with no package around it, cannot follow.
 #[test]
 fn every_building_fence_resolves_but_for_its_free_names() {
     let (mut resolved, mut built) = (0, 0);
@@ -29,7 +29,8 @@ fn every_building_fence_resolves_but_for_its_free_names() {
                         || e.contains(" is compiled from step L5.")
                         || e.contains(" is compiled from step L6.")
                         || e.contains(" is linked from step L2.4")
-                        || e.contains(" is an annotation of layer L");
+                        || e.contains(" is an annotation of layer L")
+                        || e.contains(" is a prelude type of layer L");
                     // A fragment read alone has no package around it, so it imports no unit.
                     let alone = e.contains("cannot be imported: no manifest");
                     assert!(free || marked || later || alone, "{}: {e}", f.at);

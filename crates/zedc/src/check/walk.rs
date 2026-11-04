@@ -861,6 +861,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if let Some(p) = bit_prim(w) {
                         return self.bits(m, w, p, None, positional, named, curry, span);
                     }
+                    if word_arity(w) != 1 {
+                        let args = Args::of(positional, named);
+                        return self.call_value(m, &f, what.into(), None, args, curry, span);
+                    }
                     if named.is_empty() && !curry && positional.len() == 1 {
                         return self.word(m, w, positional, None, span);
                     }
@@ -2223,8 +2227,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(1) if let Some(p) = bit_prim(name) => {
                     self.bits(m, name, p, Some((x, of)), positional, named, curry, span)
                 }
-                Some(1) if positional.is_empty() && named.is_empty() && !curry => {
+                Some(1)
+                    if positional.is_empty()
+                        && named.is_empty()
+                        && !curry
+                        && word_arity(name) == 1 =>
+                {
                     self.word(m, name, &[], Some(x), span)
+                }
+                Some(1) if word_arity(name) != 1 => {
+                    let f = Ty::func(word_sig(name));
+                    let args = Args::of(positional, named);
+                    self.call_value(m, &f, name.into(), Some(x), args, curry, span);
                 }
                 _ => m.ty(Ty::dynamic()),
             },

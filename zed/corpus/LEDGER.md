@@ -144,7 +144,11 @@ so a different decision changes the named `.out` files.
    `Scalar`, a type DESIGN names but does not define and the compiler does
    not bind; it became `scalar(cp)` once resolution walked match arms and
    reported `Scalar` as not defined.
-4. **`mix(f, x)`** fixes the first parameter of `f` to `x` (10).
+4. **`mix(f, x)`** fixes the first parameter of `f` to `x` (10). `mix` is the
+   partial evaluator of DESIGN sec:staging, a prelude word of layer L19 (the
+   table "Defined words by layer", step L19.2), and resolution reports its use
+   with that layer. The reference calls the matcher on each line, which
+   specializing it does not change.
 5. **JSON (07):** the error position is the farthest position any
    alternative reached, after skipping whitespace; `X* sep ","` allows zero
    items; true/false/null are a token type, not atoms; there is no syntax to
@@ -162,7 +166,9 @@ so a different decision changes the named `.out` files.
    with a reading dropped when its window's end is at or below the watermark
    (largest event time seen so far, minus the lateness) at its arrival.
 9. **Stream port type** `Stream(String)` for a socket or sensor feed (18,
-   29); the harness feeds it from the `.in` file in line order.
+   29); the harness feeds it from the `.in` file in line order. `Stream` is the
+   prelude type of layer L7 (sec:type_notation), and resolution reports its
+   use with that layer.
 10. **Pushing a nested family to `stdout`** writes it in keypath order, and
     `.rank` of a keyed or two-level family densifies it in keypath order (19,
     23, 31).
@@ -192,6 +198,10 @@ so a different decision changes the named `.out` files.
     programs are multi-unit (7, 10, 13, 21, 30, 31), and every program states
     how its imports resolve; single-unit programs import nothing, since the
     prelude needs no import.
+19. **`min(a, b)` and `max(a, b)`** (03, 05, 08, 13, 14, 16, 31) are the
+    prelude words that DESIGN uses on numbers (lines 176, 814, 1739). The
+    table "Defined words by layer" does not list them, so they enter at L1 with
+    the scalars they take: two `int`, two `f64` or two `rat`.
 
 ## Known limits of the layer tool
 

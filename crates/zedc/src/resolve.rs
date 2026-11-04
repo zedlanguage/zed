@@ -284,14 +284,17 @@ pub struct Resolved {
 }
 
 /// The value words of the prelude, each with the layer it belongs to (DESIGN.md, "Defined
-/// words by layer"): at L1 the numeric casts, the `String` cast that interpolation calls, and
-/// the `String` functions the documentation uses.
+/// words by layer"): at L1 the numeric casts, the `String` cast that interpolation calls, the
+/// `String` functions the documentation uses, and `min` and `max`, which the table does not list
+/// and so enter with the scalars they take.
 const WORDS: &[(&str, u32)] = &[
     ("String", 1),
     ("int", 1),
     ("rat", 1),
     ("f64", 1),
     ("abs", 1),
+    ("min", 1),
+    ("max", 1),
     ("len", 1),
     ("lower", 1),
     ("upper", 1),
@@ -349,6 +352,7 @@ const WORDS: &[(&str, u32)] = &[
     ("takeWhile", 5),
     ("chunkBy", 5),
     ("fix", 6),
+    ("mix", 19),
 ];
 
 /// The layer of the prelude value word `name`, if it is one.
@@ -421,6 +425,10 @@ const TYPES: &[&str] = &[
     "Files",
     "CommandLine",
 ];
+
+/// The type names of the prelude's later layers, each with its layer (DESIGN.md, "Defined words
+/// by layer"). A use below its layer is an error naming the layer, as for a value word.
+const LATER_TYPES: &[(&str, u32)] = &[("Stream", 7)];
 
 /// The carriers, which a bounded type variable ranges over, in the order the checker prints
 /// them.
@@ -1849,7 +1857,10 @@ impl Resolver<'_> {
                 }
                 format!("the type `{n}` is not defined")
             }
-            Some(Found::Word(_)) | None => format!("the type `{n}` is not defined"),
+            Some(Found::Word(_)) | None => match LATER_TYPES.iter().find(|(t, _)| *t == n) {
+                Some((_, layer)) => format!("the type `{n}` is a prelude type of layer L{layer}"),
+                None => format!("the type `{n}` is not defined"),
+            },
         };
         self.errors.push(Error {
             row: None,

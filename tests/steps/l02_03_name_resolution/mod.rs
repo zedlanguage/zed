@@ -7,6 +7,7 @@
 
 mod binders;
 mod command;
+mod corpus_words;
 mod imports;
 mod manifest;
 mod queries;

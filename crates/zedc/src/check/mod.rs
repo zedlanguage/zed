@@ -1301,7 +1301,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(Ref::Bound(_)) => None,
                 _ if crate::resolve::prelude_layer(name) == Some(1)
                     && name != "sum"
-                    && bit_prim(name).is_none() =>
+                    && bit_prim(name).is_none()
+                    && word_arity(name) == 1 =>
                 {
                     Some((name.as_str(), of.span))
                 }
@@ -1336,7 +1337,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             _ => return None,
         };
-        (named.is_empty() && w != "sum" && bit_prim(w).is_none()).then_some((w.as_str(), x))
+        (named.is_empty() && w != "sum" && bit_prim(w).is_none() && word_arity(w) == 1)
+            .then_some((w.as_str(), x))
     }
 
     /// `_` bound to a value of `e`, or its component `i`, in the binding at `span`, where
@@ -4849,6 +4851,15 @@ fn op_sig(op: &str) -> Sig {
     }
 }
 
+/// The number of operands of the prelude word `w` that [`word_sig`] types: two for `min` and
+/// `max`, one for every other.
+fn word_arity(w: &str) -> usize {
+    match w {
+        "min" | "max" => 2,
+        _ => 1,
+    }
+}
+
 /// A prelude word's arrows.
 fn word_sig(w: &str) -> Arc<Sig> {
     use Carrier::*;
@@ -4885,6 +4896,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
             arrow(Str, F64, &["inexact", "invalid"]),
         ],
         "abs" => arrows(&[Int, F64, Rat], 1, Ty::carrier),
+        "min" | "max" => arrows(&[Int, F64, Rat], 2, Ty::carrier),
         "len" => vec![arrow(Str, Int, &[])],
         "codePoint" => vec![arrow(Str, Int, &["notScalar"])],
         "scalar" => vec![arrow(Int, Str, &["notScalar"])],
@@ -4899,7 +4911,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
         _ => vec![arrow(Str, Str, &[])],
     };
     Arc::new(Sig {
-        params: positional(1),
+        params: positional(word_arity(w)),
         arrows,
         bounds: BTreeMap::new(),
         data: false,

@@ -6,9 +6,7 @@ expression: out
 02-histogram.zed (L4): does not load: 10:12: a reduction `><` is compiled from step L3.2
 11:12: a `for` is compiled from step L3.2
 12:13: a `for` is compiled from step L3.2
-03-edit-distance.zed (L6): does not load: 13:12: `min` is not defined
-13:16: `min` is not defined
-14:6: a metadata read `::` is compiled from step L3.2
+03-edit-distance.zed (L6): does not load: 14:6: a metadata read `::` is compiled from step L3.2
 14:14: a metadata read `::` is compiled from step L3.2
 18:3: an indexed definition is compiled from step L6.2
 22:5: a metadata read `::` is compiled from step L3.2
@@ -18,8 +16,7 @@ expression: out
 10:16: an operator section is compiled from step L3.2
 11:32: an operator section is compiled from step L3.2
 12:13: a `for` is compiled from step L3.2
-05-max-prefix-sum.zed (L5): does not load: 9:12: `max` is not defined
-9:19: a reduction `><` is compiled from step L3.2
+05-max-prefix-sum.zed (L5): does not load: 9:19: a reduction `><` is compiled from step L3.2
 10:35: a tuple-destructuring parameter is compiled from step L2.4
 11:13: an array display is compiled from step L3.2
 06-matrix-multiply.zed (L5): does not load: 16:23: a `for` is compiled from step L3.2
@@ -36,7 +33,7 @@ expression: out
 10:13: `map` is a prelude word of layer L3
 10-regex-matcher.zed (L19): does not load: 9:1: the unit `regex` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
 9:1: an import is linked from step L2.4, which ties each name it brings in to the other unit's definition
-16:10: `mix` is not defined
+16:10: `mix` is a prelude word of layer L19
 11-csv-split.zed (L5): does not load: 9:1: a struct declaration is compiled from step L2.4
 20:11: a `for` is compiled from step L3.2
 21:11: an array display is compiled from step L3.2
@@ -66,7 +63,7 @@ expression: out
 16-game-tick.zed (L7): does not load: 16:3: this form (Signature) is built from layer L7
 17-sensor-pipeline.zed (L7): does not load: 12:1: a struct declaration is compiled from step L2.4
 22:13: a `for` is compiled from step L3.2
-18-socket-wordfreq.zed (L7): does not load: 9:12: the type `Stream` is not defined
+18-socket-wordfreq.zed (L7): does not load: 9:12: the type `Stream` is a prelude type of layer L7
 9:12: an applied type is compiled from step L2.5
 15:13: a `for` is compiled from step L3.2
 19-bank-ledger.zed (L6): does not load: 13:1: a type declaration is compiled from step L2.5
@@ -133,7 +130,7 @@ expression: out
 41:28: an array display is compiled from step L3.2
 45:9: a `loop` is compiled from step L6.3
 29-late-dedup.zed (L7): does not load: 14:1: a struct declaration is compiled from step L2.4
-21:15: the type `Stream` is not defined
+21:15: the type `Stream` is a prelude type of layer L7
 21:15: an applied type is compiled from step L2.5
 24:13: a `for` is compiled from step L3.2
 30-client-server.zed (L20): does not load: 11:1: the unit `api` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit
