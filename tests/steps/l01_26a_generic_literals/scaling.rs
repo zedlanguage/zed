@@ -2,9 +2,9 @@
 //! once, and each takes its carrier at run time by one `match` on the other operand.
 //!
 //! Each test times elaboration alone, from the checker's findings made before timing: parsing
-//! and checking cost about 570,000 instructions per term and elaboration about 2% of the
-//! whole, so a quadratic in elaboration that allocates nothing passes a test that times them
-//! all (COMPLEXITY.md F85). The checker's own cost on these bodies is timed in
+//! and checking cost about 430,000 to 460,000 instructions per term and elaboration about 4%
+//! of the whole, so a quadratic in elaboration that allocates nothing passes a test that times
+//! them all (COMPLEXITY.md F85, F86). The checker's own cost on these bodies is timed in
 //! `l01_26_type_resolution::scaling`.
 
 use zed_tests::scaling;

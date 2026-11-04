@@ -3,7 +3,8 @@
 //! A test of elaboration times it alone, from units parsed, resolved and checked before timing
 //! ([`Checked`]): on all but one of these families the parser and the checker do 4 to 92 times
 //! the work of elaboration, and a test that times them too lets through an added quadratic
-//! whose cost at size n is less than 0.4 times all it times (COMPLEXITY.md F85).
+//! whose cost at size n is less than 0.4 times all it times (COMPLEXITY.md F85, measured before
+//! F86 cut the parser's work by 3 to 4 times).
 
 use std::collections::BTreeMap;
 

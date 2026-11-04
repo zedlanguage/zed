@@ -5,7 +5,7 @@
 //! A left-recursive rule grows from a failed seed, by the Squirrel parser's algorithm
 //! (`squirrel_parser.tex`, fig. Code); a grammar with no left recursion never reaches that code.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 use super::grammar::{Expr, Grammar, Kind};
 
@@ -117,9 +117,16 @@ const BRANCH: usize = 1 << (usize::BITS - 1);
 /// A rule's result at a position: the end and node of its match, or `None` for no match.
 type Res = Option<(usize, usize)>;
 
+/// No entry: the end of a position's list of entries.
+const NO_ENTRY: usize = usize::MAX;
+
 /// What is known of a rule at a position.
 #[derive(Clone, Copy, Default)]
 struct Entry {
+    /// The rule and `head`, as `2 * rule + head`.
+    slot: usize,
+    /// The entry made before this one at its position, or [`NO_ENTRY`].
+    prev: usize,
     /// The longest result so far, once there is one.
     best: Option<Res>,
     /// The rule is being matched here, on the current path of calls.
@@ -143,8 +150,8 @@ struct Entry {
 #[derive(Clone, Copy)]
 enum Frame<'g> {
     /// The alternatives of rule `r` at `pos`. `next` is the first not yet tried, `base` is the
-    /// height of the kids stack below this match's kids, and `caller` is the `low` of the match
-    /// this one began in.
+    /// height of the kids stack below this match's kids, `caller` is the `low` of the match
+    /// this one began in, and `at` is the rule's entry in `Parser::memo`.
     Rule {
         r: usize,
         pos: usize,
@@ -152,6 +159,7 @@ enum Frame<'g> {
         next: usize,
         base: usize,
         caller: u32,
+        at: usize,
     },
     /// The items of a sequence not yet matched.
     Seq {
@@ -197,8 +205,11 @@ pub struct Parser<'g, I: Input + ?Sized> {
     g: &'g Grammar,
     ring: u32,
     input: &'g I,
-    /// (rule, position, head) to what is known there.
-    memo: HashMap<(usize, usize, bool), Entry>,
+    /// What is known of a rule at a position, in the order first called. The entries of one
+    /// position form a list through `prev`, from the last one made there, which `last` holds.
+    memo: Vec<Entry>,
+    /// The last entry made at each position, or [`NO_ENTRY`].
+    last: Vec<usize>,
     /// How many times a left-recursive match has grown at each position, for both values of
     /// `head`. An entry with `reads_seed` behind its position's version may read a longer seed
     /// now, so it is matched again.
@@ -214,12 +225,13 @@ pub struct Parser<'g, I: Input + ?Sized> {
     kids: Vec<usize>,
     /// The farthest position a match failed at.
     pub far: usize,
-    /// What was expected there.
-    pub expected: BTreeSet<Expected<'g>>,
-    /// `far` and `expected` as each open `!` found them. The set is moved here, not copied:
-    /// what the `!` adds to the empty set left behind is dropped when the `!` ends, and nothing
+    /// What was expected there, once for each failure there: most failures are at `far`, and a
+    /// push costs less than an insert into a set. [`Parser::expected`] gives each once.
+    expected: Vec<Expected<'g>>,
+    /// `far` and `expected` as each open `!` found them. The list is moved here, not copied:
+    /// what the `!` adds to the empty list left behind is dropped when the `!` ends, and nothing
     /// reads `expected` before the parse ends.
-    saved: Vec<(usize, BTreeSet<Expected<'g>>)>,
+    saved: Vec<(usize, Vec<Expected<'g>>)>,
 }
 
 impl<'g, I: Input + ?Sized> Parser<'g, I> {
@@ -229,16 +241,22 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
             g,
             ring,
             input,
-            memo: HashMap::new(),
+            memo: Vec::new(),
+            last: vec![NO_ENTRY; input.len() + 1],
             versions: vec![0; input.len() + 1],
             open: vec![0; input.len() + 1],
             low: u32::MAX,
             nodes: Vec::new(),
             kids: Vec::new(),
             far: 0,
-            expected: BTreeSet::new(),
+            expected: Vec::new(),
             saved: Vec::new(),
         }
+    }
+
+    /// What was expected at [`Parser::far`], each once.
+    pub fn expected(&self) -> BTreeSet<Expected<'g>> {
+        self.expected.iter().copied().collect()
     }
 
     /// Records that `what` was expected at `pos`.
@@ -248,7 +266,7 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
             self.expected.clear();
         }
         if pos == self.far {
-            self.expected.insert(what);
+            self.expected.push(what);
         }
         None
     }
@@ -285,7 +303,26 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
         stack: &mut Vec<Frame<'g>>,
     ) -> Option<usize> {
         let now = self.versions[pos];
-        let entry = self.memo.entry((r, pos, head)).or_default();
+        // A position holds at most one entry for each rule and value of `head`, so this walk is
+        // bounded by the grammar, not by the input: on the scaling texts of steps L1.16, L1.26
+        // and L1.26a a position holds 4.6 to 13.6 entries on average and at most 67
+        // (COMPLEXITY.md F86). A hash map keyed by position and rule took 6% to 27% more
+        // instructions and, its table scattered over memory, 1.9 times the cycles.
+        let slot = 2 * r + usize::from(head);
+        let mut at = self.last[pos];
+        while at != NO_ENTRY && self.memo[at].slot != slot {
+            at = self.memo[at].prev;
+        }
+        if at == NO_ENTRY {
+            at = self.memo.len();
+            self.memo.push(Entry {
+                slot,
+                prev: self.last[pos],
+                ..Entry::default()
+            });
+            self.last[pos] = at;
+        }
+        let entry = &mut self.memo[at];
         let res = match entry.best {
             _ if entry.in_path => {
                 // Left recursion: the first time, this call fails, which seeds the growth.
@@ -313,6 +350,7 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                     next: 0,
                     base: self.kids.len(),
                     caller: std::mem::replace(&mut self.low, u32::MAX),
+                    at,
                 });
                 return None;
             }
@@ -329,9 +367,8 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
     /// Any other read does, for good, since `best` may keep what that read gave. A marked entry
     /// marks every rule on the path, at earlier positions too, since each of them may keep what
     /// it read from this one.
-    fn grown(&mut self, key: (usize, usize, bool), res: Res, caller: u32) -> Option<Res> {
-        let pos = key.1;
-        let entry = self.memo.get_mut(&key).expect("`call` made this entry");
+    fn grown(&mut self, at: usize, pos: usize, res: Res, caller: u32) -> Option<Res> {
+        let entry = &mut self.memo[at];
         let end = |res: Res| res.map(|(end, _)| end);
         let longer = entry.best.is_none_or(|best| end(res) > end(best));
         if longer {
@@ -368,6 +405,7 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                         next,
                         base,
                         caller,
+                        at,
                     } => {
                         let res = match done {
                             Some(end) => {
@@ -400,8 +438,7 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                                 None
                             }
                         };
-                        let key = (*r, *pos, *head);
-                        match self.grown(key, res, *caller) {
+                        match self.grown(*at, *pos, res, *caller) {
                             Some(res) => {
                                 stack.pop();
                                 done = res.map(|(end, node)| {

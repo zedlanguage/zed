@@ -202,7 +202,7 @@ fn parse_one<'t>(
         None => None,
     };
     let Some(root) = matched else {
-        let mut expected: Vec<String> = p.expected.iter().map(shown).collect();
+        let mut expected: Vec<String> = p.expected().iter().map(shown).collect();
         expected.sort();
         let dots = dots_in_list(&toks, p.far);
         return Err(Error {

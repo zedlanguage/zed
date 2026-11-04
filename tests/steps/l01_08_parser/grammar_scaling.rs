@@ -106,3 +106,37 @@ fn a_program_of_many_functions_is_linear() {
         "double(x) = x * 2 + 1;\nhalf(y) = y.value / 2 - 1;\n".repeat(n)
     });
 }
+
+/// The shape of `l01_16_elaboration::scaling`'s nested functions: function `i` binds `y{i}` and
+/// calls function `i + 1`, so the unit nests `n` deep. A position holds an entry for each rule
+/// called there, found by a walk of its list of entries (COMPLEXITY.md F86).
+#[test]
+fn functions_nested_many_deep_are_linear() {
+    scales("n nested functions", 1_000, "Unit", |n| {
+        let mut text = String::new();
+        for i in 0..n {
+            text += &format!("h{i}(positional x) {{\ny{i} = x + 1;\n");
+        }
+        text += "x\n";
+        for i in (0..n).rev() {
+            if i + 1 < n {
+                text += &format!("h{}(y{i})\n", i + 1);
+            }
+            text += "}\n";
+        }
+        text + "main = h0(1);\n"
+    });
+}
+
+/// The shape of `l01_26a_generic_literals::scaling`'s calls: a sum of `n` calls, each with a
+/// generic literal, the input with the most parser work per byte of those measured for F86.
+#[test]
+fn a_sum_of_many_calls_with_literals_is_linear() {
+    scales("a sum of n calls", 1_000, "Unit", |n| {
+        let calls: Vec<String> = (0..n).map(|i| format!("mul(x, {}n)", i + 1)).collect();
+        format!(
+            "mul(positional x, positional k) = x * k;\nf(positional x) = {};\n",
+            calls.join(" + ")
+        )
+    });
+}

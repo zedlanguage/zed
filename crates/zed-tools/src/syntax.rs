@@ -262,7 +262,7 @@ pub fn parse(
     let root = match p.rule_node(r, 0, false) {
         Some((end, node)) if end == toks.0.len() => node,
         _ => {
-            let expected = expected_strings(p.expected.iter().copied());
+            let expected = expected_strings(p.expected());
             return Err(describe_fail(p.far, &expected, toks, 0));
         }
     };
@@ -271,7 +271,7 @@ pub fn parse(
             let ht = lex(lexical, h)?;
             let mut q = Parser::new(g, ring, &ht);
             if then_end(g, &mut q, &ht, "Expr").is_none_or(|(end, _)| end != ht.0.len()) {
-                let expected = expected_strings(q.expected.iter().copied());
+                let expected = expected_strings(q.expected());
                 return Err(describe_fail(q.far, &expected, &ht, t.line - 1));
             }
         }

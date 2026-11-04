@@ -82,14 +82,14 @@ fn show(lexical: &Grammar, syn: &Grammar, text: &str, start: &str, ring: u32) ->
             };
             let mut q = Parser::new(syn, ring, &ht);
             if then_end(syn, &mut q, &ht, "Expr").is_none() {
-                let expected = expected_strings(q.expected.iter().copied());
+                let expected = expected_strings(q.expected());
                 return format!("ERROR in hole {}", describe_fail(q.far, &expected, &ht, 0));
             }
         }
     }
     let mut p = Parser::new(syn, ring, &toks);
     let Some((_, root)) = then_end(syn, &mut p, &toks, start) else {
-        let expected = expected_strings(p.expected.iter().copied());
+        let expected = expected_strings(p.expected());
         return format!("ERROR@{} {}", p.far, expected.join(" "));
     };
     let tree = Tree {
