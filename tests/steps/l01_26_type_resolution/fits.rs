@@ -222,12 +222,14 @@ fn arrows_that_cover_together_must_each_return_within_the_slots_result() {
     );
 }
 
-/// Two cases rule 6 accepts that the checker rejects, each a Complexity tradeoff of
+/// Three cases rule 6 accepts that the checker rejects, each a Complexity tradeoff of
 /// `check::ty::covered` (COMPLEXITY.md F82): arrows that cover a slot only by splitting two
-/// parameters at once (whether a union of products covers a product is coNP-complete), and
+/// parameters at once (whether a union of products covers a product is coNP-complete);
 /// arrows that overlap on the slot's parameter, each returning outside its result while the
 /// intersection of their results, which rule 6 gives there, is within it (the all-subsets
-/// condition of semantic subtyping, exponential in the arrows that overlap).
+/// condition of semantic subtyping, exponential in the arrows that overlap); and an arrow whose
+/// parameter type is a function type, read as a variable (which part of the parameter it is
+/// bound to is a choice per arrow).
 #[test]
 fn arrows_that_cover_only_across_two_parameters_or_by_intersected_results_are_refused() {
     let text = "p(f: (x: int | bool, y: int | bool) -> String) = f(x: 1, y: 2);\n\
@@ -242,4 +244,26 @@ fn arrows_that_cover_only_across_two_parameters_or_by_intersected_results_are_re
     let text = "p(f: (x: int) -> String) = f(x: 1);\n\
                 q(g: ((x: int) -> String | #a) & ((x: int) -> String | #b)) = p(f: g);\n";
     assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+    // An arrow whose parameter type is a function type takes no part in a cover (case 2).
+    let text = "p(f: (x: int | ((y: int) -> int)) -> String) = 0;\n\
+                q(g: ((x: int) -> String) & ((x: (y: int) -> int) -> String)) = p(f: g);\n";
+    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+}
+
+/// An arrow whose parameter type holds a bounded variable inside a tuple takes no part in a
+/// cover: `(x: (T,)) -> String for T in int | f64` does not take `(bool,)`, and a union with
+/// the other arrows' types would bind `T` to `bool` with no check of its bound
+/// (`check::ty::covered`). Alone, it fits where its bound holds and not elsewhere.
+#[test]
+fn an_arrow_with_a_variable_in_a_tuple_takes_no_part_in_a_cover() {
+    let text = "p(f: (x: int | (bool,)) -> String) = f(x: 1);\n\
+                q(g: ((x: int) -> String) & ((x: (T,)) -> String for T in int | f64)) = \
+                p(f: g);\n";
+    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+    let text = "p(f: (x: (bool,)) -> String) = 0;\n\
+                q(g: (x: (T,)) -> String for T in int | f64) = p(f: g);\n";
+    assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+    let text = "p(f: (x: (int,)) -> String) = 0;\n\
+                q(g: (x: (T,)) -> String for T in int | f64) = p(f: g);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
 }

@@ -7,7 +7,7 @@ use zed_kernel::types::Type as KType;
 use zed_tests::scaling;
 use zedc::check::ty::Ty;
 
-use super::{info, sig, sig_of};
+use super::{info, sig, sig_of, type_errors};
 
 #[test]
 fn searching_the_signatures_of_many_functions_scales() {
@@ -972,4 +972,70 @@ fn a_slot_written_as_an_overload_nested_in_parentheses_scales() {
         assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(info.sigs.len(), 1);
     });
+}
+
+/// A slot `(x: #a0 | ... | #a(n-1)) -> String` and an overload of `n` arrows `(x: #ai) ->
+/// String` that cover it only together: each arrow is compared once with the slot's arrow, and
+/// the union of their parameter types once with its parameter (`check::ty::covered`,
+/// COMPLEXITY.md F82).
+fn covering_overload(n: usize) -> String {
+    let slot = (0..n)
+        .map(|i| format!("#a{i}"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let ov = (0..n)
+        .map(|i| format!("((x: #a{i}) -> String)"))
+        .collect::<Vec<_>>()
+        .join(" & ");
+    format!("p(f: (x: {slot}) -> String) = 0;\nq(g: {ov}) = p(f: g);\n")
+}
+
+#[test]
+fn an_overload_of_many_arrows_that_cover_a_slot_together_scales() {
+    let n = 100;
+    let inputs = [(n, covering_overload(n)), (8 * n, covering_overload(8 * n))];
+    scaling::check("an overload of n arrows covering a slot together", n, |m| {
+        let text = &inputs
+            .iter()
+            .find(|(k, _)| *k == m)
+            .expect("a built size")
+            .1;
+        assert_eq!(type_errors(text), Vec::<String>::new());
+    });
+}
+
+/// A slot of `w` parameters and a function of one arrow that takes all but the last, where it
+/// takes `int` and the slot passes `int | bool`: the cover compares the arrow's parameters in
+/// one pass, not once for each parameter left out (`check::ty::sole_miss`; that cost the
+/// square of the width, 38.8 times the bytes at w = 100 and 800).
+fn wide_arrows(w: usize) -> String {
+    let params = |last: &str| {
+        (0..w)
+            .map(|j| format!("x{j}: {}", if j + 1 == w { last } else { "int" }))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "p(f: ({}) -> String) = 0;\nq(g: ({}) -> String) = p(f: g);\n",
+        params("int | bool"),
+        params("int")
+    )
+}
+
+#[test]
+fn a_function_of_many_parameters_that_misses_one_scales() {
+    let n = 100;
+    let inputs = [(n, wide_arrows(n)), (8 * n, wide_arrows(8 * n))];
+    scaling::check(
+        "an arrow of w parameters that misses the slot's last",
+        n,
+        |m| {
+            let text = &inputs
+                .iter()
+                .find(|(k, _)| *k == m)
+                .expect("a built size")
+                .1;
+            assert_eq!(type_errors(text).len(), 1, "{:?}", type_errors(text));
+        },
+    );
 }

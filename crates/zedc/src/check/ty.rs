@@ -1864,9 +1864,11 @@ fn every_arrow_fits(s: &Sig, sas: &[Arrow], qas: &[Arrow], cx: &mut Cx) -> bool 
 /// return within its result and have a closed parameter type at `j` together hold `qa`'s
 /// parameter type at `j`: the union of their parameter types there holds it. Each value of
 /// `qa`'s parameters then reaches one of them, so rule 6 of sec:type_resolution gives a result
-/// within `qa`'s, whatever other arrows it reaches. The arrows are the candidates of the index
-/// at the other parameters and the result, or those offering a key of `qa`'s parameter at `j`,
-/// whichever list is shortest, each compared once; the union is built once per `j`.
+/// within `qa`'s, whatever other arrows it reaches. A parameter type at `j` that holds a
+/// variable at any depth, as `(T,)`, takes no part: the union would bind it with no check of
+/// its bound. The arrows are the candidates of the index ([`ArrowIndex::covering`]), each
+/// compared once, its parameters in one pass ([`sole_miss`]), so the cost is linear in the
+/// width, not its square; the union is built once for each `j` that some arrow misses.
 ///
 /// Complexity tradeoff: some overloads whose arrows together cover `qa` are rejected, with the
 /// error that the function is not taken (`p` does not take ...). (1) Arrows that cover `qa`
@@ -1875,8 +1877,10 @@ fn every_arrow_fits(s: &Sig, sas: &[Arrow], qas: &[Arrow], cx: &mut Cx) -> bool 
 /// y: int | bool) -> R`, and is rejected. Whether a union of products covers a product is DNF
 /// tautology when each parameter has two values, coNP-complete, so a complete check is
 /// exponential in the number of parameters. (2) An arrow whose parameter type at `j` holds a
-/// type variable or the unknown takes no part in a union: which part of `qa`'s parameter the
-/// variable would be bound to is a choice per arrow, exponential in the arrows so bound. (3)
+/// type variable, a function type (read as a variable) or the unknown, at any depth, takes no
+/// part in a union: which part of `qa`'s parameter the variable would be bound to is a choice
+/// per arrow, exponential in the arrows so bound; `((x: int) -> R) & ((x: (y: int) -> int) ->
+/// R)` is rejected for `(x: int | ((y: int) -> int)) -> R`. (3)
 /// Arrows whose parameter types overlap within `qa`'s parameter with results each outside
 /// `qa`'s result but whose intersection is within it: rule 6 intersects the codomains of the
 /// arrows covering a region, so `((x: int) -> int | #a) & ((x: int) -> int | #b)` gives `int`
@@ -1888,17 +1892,47 @@ fn every_arrow_fits(s: &Sig, sas: &[Arrow], qas: &[Arrow], cx: &mut Cx) -> bool 
 /// and the rejected cases (1) and (3)), and the differential tests below, against every subset
 /// of arrows; COMPLEXITY.md F82. A complete solution would split `qa`'s parameters into the
 /// regions the arrows' parameter types cut, and intersect the results per region.
+///
+/// Complexity tradeoff: the candidates, as those of one arrow ([`every_arrow_fits`]), are not
+/// below n·m in the worst case. Arrows that all offer one piece of the slot's parameter are
+/// each compared with each arrow of the slot: `(x: #c | #ai) -> String` for i below n, passed
+/// where `(x: #c | #ak | #a(k+1)) -> String | #zk` is expected for each k, cost n·m
+/// comparisons (63.3 times the bytes at n = 100 and 800). Covering together includes fitting
+/// by one arrow, so the containment join of [`every_arrow_fits`] bounds it from below; stopping
+/// at the first arrow that holds each key is not exact, since a key (a carrier, an atom's name)
+/// does not decide which values of it an arrow holds.
 fn covered(s: &Sig, sas: &[Arrow], index: &ArrowIndex, qa: &Arrow, cx: &mut Cx) -> bool {
-    (0..qa.params.len().min(s.params.len())).any(|j| {
-        let mut parts: Vec<&Ty> = Vec::new();
-        for i in index.covering(qa, j) {
-            let p = &sas[i].params[j];
-            if p.vars.is_empty() && !p.dynamic && arrow_fits_but(s, &sas[i], qa, Some(j), cx) {
-                parts.push(p);
-            }
+    // The parts at each parameter, by parameter; a BTreeMap, so the parameters are tried in
+    // order, and only those some arrow misses are held.
+    let mut parts: BTreeMap<usize, Vec<&Ty>> = BTreeMap::new();
+    for i in index.covering(qa) {
+        if let Some(j) = sole_miss(s, &sas[i], qa, cx) {
+            parts.entry(j).or_default().push(&sas[i].params[j]);
         }
-        !parts.is_empty() && qa.params[j].sub_in(&Ty::union_all(parts), &mut Binds::new(), cx)
-    })
+    }
+    parts
+        .into_iter()
+        .any(|(j, ps)| qa.params[j].sub_in(&Ty::union_all(ps), &mut Binds::new(), cx))
+}
+
+/// The one parameter `j` at which the arrow `sa` of `s` does not take `qa`'s, when `sa` takes
+/// the others, its type at `j` is closed ([`Ty::closed`]), each bounded variable of `s` it
+/// binds is bound to carriers of its bound and it returns within `qa`'s result: [`arrow_fits`]
+/// with `j` left out. A closed type binds nothing, so the pass over every parameter binds what
+/// the pass without `j` binds.
+fn sole_miss(s: &Sig, sa: &Arrow, qa: &Arrow, cx: &mut Cx) -> Option<usize> {
+    let mut b = Binds::new();
+    let mut miss = None;
+    for (j, (x, y)) in qa.params.iter().zip(&sa.params).enumerate() {
+        if !x.sub_in(y, &mut b, cx) {
+            if miss.is_some() || !y.closed() {
+                return None;
+            }
+            miss = Some(j);
+        }
+    }
+    let j = miss?;
+    (bounds_hold(s, &b, cx) && result_within(sa, qa, &b, cx)).then_some(j)
 }
 
 /// What a parameter type of an arrow must hold to hold a piece of a parameter type: the
@@ -2056,15 +2090,12 @@ impl<'t> ArrowIndex<'t> {
         }
     }
 
-    /// For each key `qa`'s parameters need, at each parameter but `skip`: the parameter and the
-    /// arrows whose closed type there offers the key.
-    fn needed(&self, qa: &'t Arrow, skip: Option<usize>) -> Vec<(usize, &[usize])> {
+    /// For each key `qa`'s parameters need, at each parameter: the parameter and the arrows
+    /// whose closed type there offers the key.
+    fn needed(&self, qa: &'t Arrow) -> Vec<(usize, &[usize])> {
         let mut need = Vec::new();
         let mut keys = Vec::new();
         for (j, t) in qa.params.iter().enumerate().take(self.open.len()) {
-            if Some(j) == skip {
-                continue;
-            }
             keys.clear();
             needed_keys(t, &mut keys);
             need.extend(
@@ -2129,7 +2160,7 @@ impl<'t> ArrowIndex<'t> {
     /// offers every key `qa` needs there, and its result needs no key `qa`'s closed result
     /// lacks.
     fn first(&self, qa: &'t Arrow, fits: impl FnMut(usize) -> bool) -> bool {
-        let need = self.needed(qa, None);
+        let need = self.needed(qa);
         let result = Self::result_keys(qa);
         let mut sources: Vec<Vec<&[usize]>> = need
             .iter()
@@ -2143,30 +2174,78 @@ impl<'t> ArrowIndex<'t> {
             .any(fits)
     }
 
-    /// The arrows that may take part in covering `qa` at parameter `j` ([`covered`]): those
-    /// that may take `qa`'s other parameters and return within its result, as in
-    /// [`Self::first`], drawn also, when each piece of `qa`'s parameter at `j` has a key
-    /// ([`piece_keys`]), from the arrows that offer one of them there or are open there.
-    fn covering(&self, qa: &'t Arrow, j: usize) -> Vec<usize> {
-        let need = self.needed(qa, Some(j));
-        let result = Self::result_keys(qa);
-        let mut sources: Vec<Vec<&[usize]>> = need
-            .iter()
-            .map(|&(k, l)| vec![l, &self.always[k][..]])
-            .collect();
-        if let Some(r) = &result {
-            sources.push(self.by_results(r));
-        }
+    /// The arrows that offer one key of `qa`'s parameter at `j` there, or are open there, when
+    /// each piece of it has a key ([`piece_keys`]): an arrow outside them holds no value of it.
+    fn pieces_at(&self, qa: &'t Arrow, j: usize) -> Option<Vec<&[usize]>> {
         let mut keys = Vec::new();
-        if piece_keys(&qa.params[j], &mut keys) {
+        piece_keys(&qa.params[j], &mut keys).then(|| {
             let mut lists: Vec<&[usize]> = keys
                 .iter()
                 .map(|k| self.post.get(&(j, *k)).map_or(&[][..], Vec::as_slice))
                 .collect();
             lists.push(&self.always[j]);
-            sources.push(lists);
+            lists
+        })
+    }
+
+    /// The arrows that may take part in covering `qa` at some parameter ([`covered`]): those
+    /// that, at every parameter but at most one, are open or offer every key `qa` needs there,
+    /// and whose results need no key `qa`'s closed result lacks. They come from the shortest
+    /// source that holds every such arrow: the arrows whose results may be within `qa`'s; or
+    /// the arrows that offer the key of the shortest list, at parameter `a`, or are open there,
+    /// which hold each arrow that misses another parameter, with, for the arrows that miss
+    /// `a`, the shortest list at another parameter or the arrows that offer a piece of `qa`'s
+    /// parameter at `a`; or, when `qa` needs no key at any parameter, the arrows that offer a
+    /// piece at some parameter. Every arrow when there is no source.
+    fn covering(&self, qa: &'t Arrow) -> Vec<usize> {
+        let need = self.needed(qa);
+        let result = Self::result_keys(qa);
+        let len = |lists: &[&[usize]]| lists.iter().map(|l| l.len()).sum::<usize>();
+        let mut sources: Vec<Vec<&[usize]>> = Vec::new();
+        if let Some(r) = &result {
+            sources.push(self.by_results(r));
         }
-        self.candidates(&need, result.as_ref(), sources)
+        // The shortest source of one needed key, at a parameter `at` admits, with its parameter.
+        let shortest = |at: &dyn Fn(usize) -> bool| {
+            need.iter()
+                .filter(|e| at(e.0))
+                .map(|&(k, l)| (k, vec![l, &self.always[k][..]]))
+                .min_by_key(|(_, lists)| len(lists))
+        };
+        if let Some((a, first)) = shortest(&|_| true) {
+            let other = [shortest(&|k| k != a).map(|e| e.1), self.pieces_at(qa, a)]
+                .into_iter()
+                .flatten()
+                .min_by_key(|lists| len(lists));
+            if let Some(other) = other {
+                sources.push(first.into_iter().chain(other).collect());
+            }
+        } else {
+            let width = qa.params.len().min(self.open.len());
+            let pieces: Option<Vec<Vec<&[usize]>>> =
+                (0..width).map(|j| self.pieces_at(qa, j)).collect();
+            if let Some(pieces) = pieces.filter(|p| !p.is_empty()) {
+                sources.push(pieces.into_iter().flatten().collect());
+            }
+        }
+        let keep = |i: usize| {
+            let mut missed = None;
+            need.iter().all(|&(k, l)| {
+                self.open[k][i]
+                    || l.binary_search(&i).is_ok()
+                    || missed.replace(k).is_none_or(|m| m == k)
+            }) && result
+                .as_ref()
+                .is_none_or(|r| self.result_needs[i].iter().all(|k| r.contains(k)))
+        };
+        let mut out: Vec<usize> = match sources.into_iter().min_by_key(|lists| len(lists)) {
+            Some(lists) => lists.into_iter().flatten().copied().collect(),
+            None => (0..self.n).collect(),
+        };
+        out.sort_unstable();
+        out.dedup();
+        out.retain(|&i| keep(i));
+        out
     }
 }
 
@@ -2179,38 +2258,40 @@ impl std::hash::Hash for Sig {
 /// Whether the arrow `sa` of `s` takes the parameters of the arrow `qa` and returns within its
 /// result, each bounded variable of `s` bound to carriers of its bound ([`fits_in`]).
 fn arrow_fits(s: &Sig, sa: &Arrow, qa: &Arrow, cx: &mut Cx) -> bool {
-    arrow_fits_but(s, sa, qa, None, cx)
-}
-
-/// [`arrow_fits`] with the parameter `skip` left out, when given ([`covered`]).
-fn arrow_fits_but(s: &Sig, sa: &Arrow, qa: &Arrow, skip: Option<usize>, cx: &mut Cx) -> bool {
     let mut b = Binds::new();
     qa.params
         .iter()
         .zip(&sa.params)
-        .enumerate()
-        .all(|(j, (x, y))| Some(j) == skip || x.sub_in(y, &mut b, cx))
-        && s.bounds.iter().all(|(v, &m)| {
-            b.get(v)
-                .is_none_or(|t| match t.as_var().and_then(|w| cx.rigid.get(w)) {
-                    // Each carrier the caller of `q` may pick is one `s` takes.
-                    Some(&mq) => mq & !m == 0,
-                    // `v` is one carrier at a call, so it cannot be a rigid variable and
-                    // something else at once.
-                    None => t.pieces().iter().all(|p| match p.carrier() {
-                        Some(c) => m & c.bit() != 0,
-                        None => {
-                            m & OTHER != 0
-                                && !matches!(p, Piece::Dyn)
-                                && !matches!(p, Piece::Var(w) if cx.rigid.contains_key(w))
-                        }
-                    }),
-                })
-        })
-        && {
-            let mut rb = Binds::new();
-            sa.result.subst(&b).sub_in(&qa.result, &mut rb, cx) && rb.is_empty()
-        }
+        .all(|(x, y)| x.sub_in(y, &mut b, cx))
+        && bounds_hold(s, &b, cx)
+        && result_within(sa, qa, &b, cx)
+}
+
+/// Whether each bounded variable of `s` that `b` binds is bound to carriers of its bound.
+fn bounds_hold(s: &Sig, b: &Binds, cx: &Cx) -> bool {
+    s.bounds.iter().all(|(v, &m)| {
+        b.get(v)
+            .is_none_or(|t| match t.as_var().and_then(|w| cx.rigid.get(w)) {
+                // Each carrier the caller of `q` may pick is one `s` takes.
+                Some(&mq) => mq & !m == 0,
+                // `v` is one carrier at a call, so it cannot be a rigid variable and
+                // something else at once.
+                None => t.pieces().iter().all(|p| match p.carrier() {
+                    Some(c) => m & c.bit() != 0,
+                    None => {
+                        m & OTHER != 0
+                            && !matches!(p, Piece::Dyn)
+                            && !matches!(p, Piece::Var(w) if cx.rigid.contains_key(w))
+                    }
+                }),
+            })
+    })
+}
+
+/// Whether the result of `sa`, its variables bound by `b`, is within `qa`'s, binding nothing.
+fn result_within(sa: &Arrow, qa: &Arrow, b: &Binds, cx: &mut Cx) -> bool {
+    let mut rb = Binds::new();
+    sa.result.subst(b).sub_in(&qa.result, &mut rb, cx) && rb.is_empty()
 }
 
 impl Sig {
@@ -2748,6 +2829,18 @@ mod tests {
         })
     }
 
+    /// [`arrow_fits`] with the parameter `skip` left out.
+    fn fits_but(s: &Sig, sa: &Arrow, qa: &Arrow, skip: usize, cx: &mut Cx) -> bool {
+        let mut b = Binds::new();
+        qa.params
+            .iter()
+            .zip(&sa.params)
+            .enumerate()
+            .all(|(j, (x, y))| j == skip || x.sub_in(y, &mut b, cx))
+            && bounds_hold(s, &b, cx)
+            && result_within(sa, qa, &b, cx)
+    }
+
     /// Whether, at some parameter, a set of arrows of `sas` covers `qa`: each arrow of the set
     /// has a closed parameter type there, takes `qa`'s other parameters and returns within its
     /// result, and the union of their parameter types there holds `qa`'s. Every nonempty set is
@@ -2759,7 +2852,7 @@ mod tests {
                 .iter()
                 .map(|sa| {
                     let p = &sa.params[j];
-                    p.vars.is_empty() && !p.dynamic && arrow_fits_but(s, sa, qa, Some(j), cx)
+                    p.closed() && fits_but(s, sa, qa, j, cx)
                 })
                 .collect();
             let holds = |set: &dyn Fn(usize) -> bool, cx: &mut Cx| {
@@ -2996,52 +3089,91 @@ mod tests {
             for qa in &qas {
                 let q = sig(vec![qa.clone()], width, false);
                 counts.compare(&s, &q, &format!("case {case}"));
+                same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
             }
             let q = sig(qas.clone(), width, false);
             counts.compare(&s, &q, &format!("case {case}, the whole of q"));
-            // Every pair and every arrow, on the arrows as written: the index never leaves out
-            // an arrow that fits, or one that may cover together with others.
-            let index = ArrowIndex::new(&s.arrows, width);
-            let mut cx = Cx::default();
-            for qa in &qas {
-                let mut candidates = Vec::new();
-                index.first(qa, |i| {
-                    candidates.push(i);
-                    false
-                });
-                for (i, sa) in s.arrows.iter().enumerate() {
-                    if arrow_fits(&s, sa, qa, &mut cx) {
-                        assert!(
-                            candidates.binary_search(&i).is_ok(),
-                            "case {case}: arrow {i} fits but is no candidate"
-                        );
-                    }
+            same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
+            index_keeps(&s, &qas, width, &format!("case {case}"));
+        }
+        counts.enough();
+    }
+
+    /// Every pair and every arrow, on the arrows as written: the index never leaves out an
+    /// arrow of `s` that fits an arrow of `qas`, or one that may cover one together with
+    /// others, whichever key list or result list it draws from.
+    fn index_keeps(s: &Sig, qas: &[Arrow], width: usize, what: &str) {
+        let index = ArrowIndex::new(&s.arrows, width);
+        let mut cx = Cx::default();
+        for qa in qas {
+            let mut candidates = Vec::new();
+            index.first(qa, |i| {
+                candidates.push(i);
+                false
+            });
+            for (i, sa) in s.arrows.iter().enumerate() {
+                if arrow_fits(s, sa, qa, &mut cx) {
+                    assert!(
+                        candidates.binary_search(&i).is_ok(),
+                        "{what}: arrow {i} fits but is no candidate"
+                    );
                 }
-                for j in 0..width {
-                    let covering = index.covering(qa, j);
-                    for (i, sa) in s.arrows.iter().enumerate() {
-                        let p = &sa.params[j];
-                        if p.vars.is_empty()
-                            && !p.dynamic
-                            && p.meets(&qa.params[j])
-                            && arrow_fits_but(&s, sa, qa, Some(j), &mut cx)
-                        {
-                            assert!(
-                                covering.binary_search(&i).is_ok(),
-                                "case {case}: arrow {i} may cover at {j} but is no candidate"
-                            );
-                        }
+            }
+            let covering = index.covering(qa);
+            for j in 0..width {
+                for (i, sa) in s.arrows.iter().enumerate() {
+                    let p = &sa.params[j];
+                    if p.closed() && p.meets(&qa.params[j]) && fits_but(s, sa, qa, j, &mut cx) {
+                        assert!(
+                            covering.binary_search(&i).is_ok(),
+                            "{what}: arrow {i} may cover at {j} but is no candidate"
+                        );
                     }
                 }
             }
         }
-        counts.enough();
+    }
+
+    /// The verdict on `q` in `s` is the same with the arrows of `s` reversed, rotated by one
+    /// and shuffled, and with the arrows of `q` reversed: the index and the cover try arrows
+    /// in their order, and the verdict must not depend on it.
+    fn same_in_every_order(s: &Sig, q: &Sig, seed: u64, what: &str) {
+        let verdict = fits_sig(s, q);
+        let mut rng = Rng(seed ^ 0x0bde_5eed);
+        let n = s.arrows.len();
+        let mut shuffled = s.arrows.clone();
+        for i in (1..n).rev() {
+            shuffled.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        let mut rotated = s.arrows.clone();
+        rotated.rotate_left(1.min(n));
+        let reversed: Vec<Arrow> = s.arrows.iter().rev().cloned().collect();
+        for (how, arrows) in [
+            ("reversed", reversed),
+            ("rotated", rotated),
+            ("shuffled", shuffled),
+        ] {
+            let p = Sig {
+                arrows,
+                ..s.clone()
+            };
+            assert_eq!(fits_sig(&p, q), verdict, "{what}: s {how}: {q} in {s}");
+        }
+        let q_reversed = Sig {
+            arrows: q.arrows.iter().rev().cloned().collect(),
+            ..q.clone()
+        };
+        assert_eq!(
+            fits_sig(s, &q_reversed),
+            verdict,
+            "{what}: q reversed: {q} in {s}"
+        );
     }
 
     /// A random member of the wider family: those of [`member`], and a cofinite set of atoms,
     /// every atom, an atom whose payload type is empty, a `bool` literal, every `rat`
     /// and `f64`, tuples of carriers and atoms, a kind-wide part, and, when `open`, a tuple
-    /// holding a variable.
+    /// holding the variable `T` or the bounded variable `B`.
     fn wider_member(rng: &mut Rng, open: bool) -> Ty {
         match rng.below(if open { 13 } else { 12 }) {
             0..=1 => member(rng, open),
@@ -3060,7 +3192,9 @@ mod tests {
             ]),
             10 => Ty::set(KType::tuple(vec![KType::top(); 2])),
             11 => Ty::set(wide()),
-            _ => Ty::tuple(vec![Ty::var("T".into())]),
+            _ => Ty::tuple(vec![Ty::var(
+                if rng.below(2) == 0 { "T" } else { "B" }.into(),
+            )]),
         }
     }
 
@@ -3124,9 +3258,12 @@ mod tests {
             for qa in &qas {
                 let q = sig_mask(vec![qa.clone()], width, qm);
                 counts.compare(&s, &q, &format!("case {case}"));
+                same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
             }
+            index_keeps(&s, &qas, width, &format!("wider case {case}"));
             let q = sig_mask(qas, width, qm);
             counts.compare(&s, &q, &format!("case {case}, the whole of q"));
+            same_in_every_order(&s, &q, case as u64, &format!("case {case}, the whole of q"));
         }
         counts.enough();
     }
