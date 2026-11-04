@@ -41,7 +41,7 @@ export interface LedgerEntry {
 }
 
 export interface Override {
-  state?: "done" | "active" | "unstarted" | "waiting" | "blocked";
+  state?: "done" | "active" | "unstarted" | "waiting" | "blocked" | "dropped";
   note?: string;
   title?: string;
   started?: string;

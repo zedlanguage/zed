@@ -974,12 +974,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BUGCLASS-hunt | research attempt 1 | 2026-11-03 16:14 | started (workflow wf_65aea058-632, labels find:* and verify:*) |
 | CHK-cost | impl attempt 1 | 2026-11-03 15:48 | kernel Type::split + scalar is_empty fast path: + 570k->187k/node, neg 74k, calls 82k, lines 270k, lambdas 734k |
 | ISSUE1-else-atoms | impl attempt 1 | 2026-11-03 16:04 | per-parameter handled atoms (resolver handles + Ck.handled): row 7 now (int / #_) -> int, rows 3,4,6,8 (String / #_), others unchanged |
 | S22e-wide | impl attempt 1 | 2026-11-03 11:28 | started; worktree wt/s22e-wide from c076719 |
 | SCALE-threads | verify attempt 1 | 2026-11-03 12:56 | DEFECT: the_bytes_of_a_bare_thread_a_run_starts_count is flaky in the zed_kernel test binary (shares tests/src/scaling.rs): fails at scaling.rs:608 nested > joi |
-| T11-S22 | orchestrator attempt  | 2026-11-03 04:28 | parent of S22b-e, S22b-rest, LIN-cross, BOX-5pt: S22b, S22d merged; S22c merging; S22e verify#1; S22b-rest impl#1 |
 | WIDE-copies | verify attempt 1 | 2026-11-03 12:51 | negative control (rem by one word made O(n^2) in wt/wide-copies-ctl, not committed): scaling test fails, mod 3 63.4x at 2^18 to 2^21 bits vs limit 24 (load 37.6 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
