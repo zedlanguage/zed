@@ -112,3 +112,31 @@ fn the_utf8_corpus_program_resolves_the_code_points_its_match_arms_write() {
     assert_eq!(describe(&text, &r, "b", 2), ["pattern #byte(b:)"]);
     assert_eq!(describe(&text, &r, "scalar", 1), ["prelude scalar"]);
 }
+
+/// A tuple-destructuring parameter binds its names in the lambda's body, as a `match` arm's
+/// pattern binds its own, though both are elaborated from step L2.4: a name in the body that
+/// nothing binds is not defined. The corpus's maximum prefix sum folds with such a lambda.
+#[test]
+fn a_tuple_destructuring_parameter_binds_its_names_in_the_body() {
+    let text = "f = ((s, b), x) -> (s + x, max(b, s + x), total);\nleak = s;\n";
+    let r = alone(text);
+    assert_eq!(describe(text, &r, "s", 1), ["param s"]);
+    assert_eq!(describe(text, &r, "b", 1), ["param b"]);
+    assert_eq!(describe(text, &r, "x", 1), ["param x"]);
+    assert_eq!(describe(text, &r, "max", 0), ["prelude max"]);
+    assert_eq!(
+        errors(text),
+        ["`total` is not defined [total]", "`s` is not defined [s]"]
+    );
+    assert_eq!(
+        errors("f = ((a, a)) -> a;\n"),
+        ["`a` is already bound in this scope [a]; the first binding of `a` [a]"]
+    );
+    let text =
+        std::fs::read_to_string(zed_tests::oracle::corpus_dir().join("05-max-prefix-sum.zed"))
+            .unwrap();
+    let r = alone(&text);
+    // Occurrence 0 is in the header comment and 2 inside `><`, which step L3.2 compiles.
+    assert_eq!(describe(&text, &r, "max", 3), ["prelude max"]);
+    assert_eq!(errors(&text), Vec::<String>::new());
+}

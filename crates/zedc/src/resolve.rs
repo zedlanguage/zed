@@ -1480,15 +1480,26 @@ impl Resolver<'_> {
         this: Option<Span>,
         todo: &mut Vec<Task<'a>>,
     ) {
+        // Step L2.4 elaborates a tuple-destructuring parameter; its names are binders of a
+        // pattern, which this step resolves (DESIGN.md L2.3), so the body is walked with them.
         if let Some(p) = params.iter().find(|p| p.tuple.is_some()) {
-            return self.later(p.span, "a tuple-destructuring parameter", "L2.4");
+            self.later(p.span, "a tuple-destructuring parameter", "L2.4");
         }
         self.open();
         if let Some(at) = this {
             self.bind("this", at, at, Kind::Receiver, None);
         }
         for p in params {
-            self.bind(&p.name, p.name_at, p.span, Kind::Param, None);
+            match &p.tuple {
+                None => self.bind(&p.name, p.name_at, p.span, Kind::Param, None),
+                Some(targets) => {
+                    for t in targets {
+                        if let Target::Name(n, at) = t {
+                            self.bind(n, *at, *at, Kind::Param, None);
+                        }
+                    }
+                }
+            }
         }
         for p in ports {
             self.bind(&p.name, name_at(p.span, &p.name), p.span, Kind::Port, None);

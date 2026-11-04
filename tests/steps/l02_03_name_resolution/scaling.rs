@@ -110,6 +110,17 @@ fn names(k: usize) -> Vec<(String, String)> {
     ]
 }
 
+/// One lambda of `k` tuple-destructuring parameters, like a fold over `k` running pairs, whose
+/// body reads every name they bind: each name is bound and found once.
+fn pairs(k: usize) -> Vec<(String, String)> {
+    let params: Vec<String> = (0..k).map(|i| format!("(s{i}, b{i})")).collect();
+    let body: Vec<String> = (0..k).map(|i| format!("max(s{i}, b{i})")).collect();
+    vec![(
+        "main.zed".into(),
+        format!("f = ({}) -> {};\n", params.join(", "), body.join(" + ")),
+    )]
+}
+
 #[test]
 fn many_units_each_importing_two_load_in_linear_time() {
     linear("a ladder of units", 200, ladder);
@@ -161,6 +172,11 @@ fn closed(k: usize, to: usize) -> Vec<(String, String)> {
     let mut fs = chain(k);
     fs[0].1 = format!("import c{to}.{{step{to}}};\nstep0 = 0;\n");
     fs
+}
+
+#[test]
+fn a_lambda_of_many_tuple_parameters_resolves_in_linear_time() {
+    linear("a lambda of many tuple parameters", 2000, pairs);
 }
 
 #[test]

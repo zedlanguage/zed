@@ -72,7 +72,8 @@ fn a_type_of_the_program_named_stream_is_its_own() {
 }
 
 /// Every corpus file that reaches resolution names only defined words; a word of a later layer
-/// is reported with its layer instead.
+/// is reported with its layer instead. A file that does not reach resolution holds a form of a
+/// later layer, or is the control that does not parse; any other such file fails the test.
 #[test]
 fn no_corpus_file_uses_an_undefined_name() {
     let dir = zed_tests::oracle::corpus_dir();
@@ -89,33 +90,37 @@ fn no_corpus_file_uses_an_undefined_name() {
         }
     }
     files.sort();
-    let mut resolved = 0;
+    let (mut resolved, mut later_layer) = (0, 0);
     let mut undefined = Vec::new();
     for p in &files {
+        let name = p.strip_prefix(&dir).unwrap().display().to_string();
         let text = std::fs::read_to_string(p).unwrap();
-        let Ok(tokens) = lex(&text) else { continue };
-        let Ok(tree) = parse(&text, &tokens, "Unit", TOP) else {
-            continue;
+        let tokens = lex(&text).unwrap_or_else(|e| panic!("{name} does not lex: {e:?}"));
+        let tree = match parse(&text, &tokens, "Unit", TOP) {
+            Ok(tree) => tree,
+            Err(_) if name == "controls/neg-parse-error.zed" => continue,
+            Err(e) => panic!("{name} does not parse: {e}"),
         };
-        let Ok(stmts) = unit(&text, &tokens, &tree) else {
-            continue;
+        let stmts = match unit(&text, &tokens, &tree) {
+            Ok(stmts) => stmts,
+            Err(e) if e.to_string().contains(" is built from layer L") => {
+                later_layer += 1;
+                continue;
+            }
+            Err(e) => panic!("{name} does not build: {e}"),
         };
         resolved += 1;
         let r = resolve_in(&stmts, &Alone);
         for e in r.errors.iter().chain(&r.later) {
             if !later(&e.message) && e.message.contains("is not defined") {
-                undefined.push(format!(
-                    "{}: {}",
-                    p.strip_prefix(&dir).unwrap().display(),
-                    e.message
-                ));
+                undefined.push(format!("{name}: {}", e.message));
             }
         }
     }
-    assert!(
-        resolved >= 39,
-        "only {resolved} of {} files reached resolution",
-        files.len()
-    );
     assert_eq!(undefined, Vec::<String>::new());
+    assert_eq!(
+        (resolved, later_layer, files.len()),
+        (39, 10, 50),
+        "files resolved, files holding a later layer's form, files"
+    );
 }
