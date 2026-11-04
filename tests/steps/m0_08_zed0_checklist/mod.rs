@@ -48,7 +48,7 @@ fn the_completing_layer_is_the_highest_item_and_program_31_is_labeled_there() {
     let a = table_layers(CHECKLIST);
     let b = part_b_layers(CHECKLIST);
     assert_eq!(a, [1, 2, 3, 4, 5, 6]);
-    assert_eq!(b.len(), 9);
+    assert_eq!(b.len(), 18);
     assert_eq!(a.iter().chain(&b).max(), Some(&stated));
     assert_eq!(
         PROGRAM_31.lines().next(),
